@@ -1,0 +1,37 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- Every colour the shell paints, once per theme. A control names a token, never a colour,
+         so a theme is this file and nothing else. -->
+    <ResourceDictionary.ThemeDictionaries>
+        <ResourceDictionary x:Key="Dark">
+            <SolidColorBrush x:Key="Passenger.Chrome" Color="#2B2D30" />
+            <SolidColorBrush x:Key="Passenger.Editor" Color="#1E1F22" />
+            <SolidColorBrush x:Key="Passenger.Divider" Color="#1E1F22" />
+            <SolidColorBrush x:Key="Passenger.Text" Color="#DFE1E5" />
+            <SolidColorBrush x:Key="Passenger.TextMuted" Color="#868A91" />
+            <SolidColorBrush x:Key="Passenger.Icon" Color="#CED0D6" />
+            <SolidColorBrush x:Key="Passenger.Hover" Color="#393B40" />
+            <SolidColorBrush x:Key="Passenger.Selected" Color="#43454A" />
+            <SolidColorBrush x:Key="Passenger.Accent" Color="#3D7BF5" />
+            <SolidColorBrush x:Key="Passenger.AccentHover" Color="#5A8FF7" />
+            <SolidColorBrush x:Key="Passenger.AccentText" Color="#FFFFFF" />
+            <SolidColorBrush x:Key="Passenger.Run" Color="#5FAD65" />
+            <SolidColorBrush x:Key="Passenger.Badge" Color="#4A6FA8" />
+        </ResourceDictionary>
+        <ResourceDictionary x:Key="Light">
+            <SolidColorBrush x:Key="Passenger.Chrome" Color="#F7F8FA" />
+            <SolidColorBrush x:Key="Passenger.Editor" Color="#FFFFFF" />
+            <SolidColorBrush x:Key="Passenger.Divider" Color="#EBECF0" />
+            <SolidColorBrush x:Key="Passenger.Text" Color="#1E1F22" />
+            <SolidColorBrush x:Key="Passenger.TextMuted" Color="#6C707E" />
+            <SolidColorBrush x:Key="Passenger.Icon" Color="#6C707E" />
+            <SolidColorBrush x:Key="Passenger.Hover" Color="#DFE1E5" />
+            <SolidColorBrush x:Key="Passenger.Selected" Color="#D3D5DB" />
+            <SolidColorBrush x:Key="Passenger.Accent" Color="#3D7BF5" />
+            <SolidColorBrush x:Key="Passenger.AccentHover" Color="#2F6AE0" />
+            <SolidColorBrush x:Key="Passenger.AccentText" Color="#FFFFFF" />
+            <SolidColorBrush x:Key="Passenger.Run" Color="#208A3C" />
+            <SolidColorBrush x:Key="Passenger.Badge" Color="#5C84C4" />
+        </ResourceDictionary>
+    </ResourceDictionary.ThemeDictionaries>
+</ResourceDictionary>

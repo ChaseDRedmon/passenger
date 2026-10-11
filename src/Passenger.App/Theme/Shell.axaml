@@ -1,0 +1,107 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- The shell's controls over the Fluent theme. Fluent paints a button's hover and press on its
+         content presenter, so each state is restyled there. -->
+
+    <Style Selector="TextBlock.muted">
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.TextMuted}" />
+    </Style>
+    <Style Selector="TextBlock.paneTitle">
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.Text}" />
+    </Style>
+    <Style Selector="PathIcon">
+        <Setter Property="Width" Value="16" />
+        <Setter Property="Height" Value="16" />
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.Icon}" />
+    </Style>
+    <Style Selector="PathIcon.chevron">
+        <Setter Property="Width" Value="10" />
+        <Setter Property="Height" Value="10" />
+    </Style>
+
+    <!-- A stripe button: an icon down the window's edge that opens a tool window. -->
+    <Style Selector="ToggleButton.stripe">
+        <Setter Property="Width" Value="30" />
+        <Setter Property="Height" Value="30" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="CornerRadius" Value="6" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="ToggleButton.stripe:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource Passenger.Hover}" />
+    </Style>
+    <Style Selector="ToggleButton.stripe:checked /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource Passenger.Selected}" />
+    </Style>
+    <Style Selector="ToggleButton.stripe:pressed /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource Passenger.Selected}" />
+    </Style>
+
+    <!-- A toolbar widget (a name and a chevron) or a toolbar icon button. -->
+    <Style Selector="Button.widget">
+        <Setter Property="Height" Value="28" />
+        <Setter Property="Padding" Value="8,0" />
+        <Setter Property="CornerRadius" Value="6" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.Text}" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Button.tool">
+        <Setter Property="Width" Value="30" />
+        <Setter Property="Height" Value="28" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="CornerRadius" Value="6" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Button.widget:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource Passenger.Hover}" />
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.Text}" />
+    </Style>
+    <Style Selector="Button.tool:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource Passenger.Hover}" />
+    </Style>
+    <Style Selector="Button.widget:pressed /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource Passenger.Selected}" />
+    </Style>
+    <Style Selector="Button.tool:pressed /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource Passenger.Selected}" />
+    </Style>
+
+    <!-- A splitter that draws nothing: a hairline Border beside it is what shows, and the splitter
+         overhangs its 1 px column so there is something to grab. -->
+    <Style Selector="GridSplitter.hairline">
+        <Setter Property="MinWidth" Value="0" />
+        <Setter Property="Width" Value="7" />
+        <Setter Property="Margin" Value="-3,0" />
+        <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="GridSplitter.hairline:pointerover">
+        <Setter Property="Background" Value="Transparent" />
+    </Style>
+
+    <!-- The one emphasised action on a page. -->
+    <Style Selector="Button.primary">
+        <Setter Property="Padding" Value="16,7" />
+        <Setter Property="CornerRadius" Value="6" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Background" Value="{DynamicResource Passenger.Accent}" />
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.AccentText}" />
+    </Style>
+    <Style Selector="Button.primary:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource Passenger.AccentHover}" />
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.AccentText}" />
+    </Style>
+    <Style Selector="Button.primary:pressed /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource Passenger.Accent}" />
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.AccentText}" />
+    </Style>
+</Styles>

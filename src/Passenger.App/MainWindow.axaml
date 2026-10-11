@@ -1,0 +1,133 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Passenger.App.MainWindow"
+        Title="Passenger"
+        Width="1400" Height="900" MinWidth="800" MinHeight="500"
+        Background="{DynamicResource Passenger.Editor}">
+    <Grid RowDefinitions="Auto,*,Auto">
+
+        <!-- The toolbar. On macOS it is also the title bar, so its empty space drags the window. -->
+        <Border Name="Toolbar" Grid.Row="0" Height="40"
+                Background="{DynamicResource Passenger.Chrome}"
+                BorderBrush="{DynamicResource Passenger.Divider}" BorderThickness="0,0,0,1"
+                PointerPressed="OnToolbarPressed">
+            <DockPanel Name="ToolbarContent" Margin="8,0">
+                <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
+                    <Button Classes="widget" ToolTip.Tip="Open a solution, project or folder" Click="OnOpenClicked">
+                        <StackPanel Orientation="Horizontal" Spacing="7">
+                            <Border Name="ProjectBadge" IsVisible="False" Width="20" Height="20" CornerRadius="4"
+                                    Background="{DynamicResource Passenger.Badge}">
+                                <TextBlock Name="ProjectBadgeText" FontSize="10" FontWeight="Bold"
+                                           Foreground="{DynamicResource Passenger.AccentText}"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                            <TextBlock Name="ProjectName" Text="No solution" FontWeight="SemiBold" VerticalAlignment="Center" />
+                            <PathIcon Classes="chevron" Data="{StaticResource Icon.ChevronDown}" />
+                        </StackPanel>
+                    </Button>
+                    <Button Classes="widget" ToolTip.Tip="Version control">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <PathIcon Data="{StaticResource Icon.Branch}" />
+                            <TextBlock Text="Version control" VerticalAlignment="Center" />
+                            <PathIcon Classes="chevron" Data="{StaticResource Icon.ChevronDown}" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
+                    <Button Classes="widget" ToolTip.Tip="Run configuration">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <TextBlock Text="Current file" VerticalAlignment="Center" />
+                            <PathIcon Classes="chevron" Data="{StaticResource Icon.ChevronDown}" />
+                        </StackPanel>
+                    </Button>
+                    <Button Classes="tool" ToolTip.Tip="Run">
+                        <PathIcon Data="{StaticResource Icon.Run}" Foreground="{DynamicResource Passenger.Run}" />
+                    </Button>
+                    <Button Classes="tool" ToolTip.Tip="Debug">
+                        <PathIcon Data="{StaticResource Icon.Debug}" />
+                    </Button>
+                    <Border Width="1" Height="18" Margin="6,0" Background="{DynamicResource Passenger.Hover}" />
+                    <Button Classes="tool" ToolTip.Tip="Search everywhere">
+                        <PathIcon Data="{StaticResource Icon.Search}" />
+                    </Button>
+                    <Button Classes="tool" ToolTip.Tip="Settings">
+                        <PathIcon Data="{StaticResource Icon.Settings}" />
+                    </Button>
+                </StackPanel>
+
+                <Panel />
+            </DockPanel>
+        </Border>
+
+        <Grid Grid.Row="1" ColumnDefinitions="40,260,1,*,40">
+
+            <!-- The left stripe: tool windows that dock left (top group) and bottom (bottom group). -->
+            <Border Grid.Column="0" Background="{DynamicResource Passenger.Chrome}"
+                    BorderBrush="{DynamicResource Passenger.Divider}" BorderThickness="0,0,1,0">
+                <DockPanel Margin="0,6">
+                    <StackPanel DockPanel.Dock="Top" Spacing="4" HorizontalAlignment="Center">
+                        <ToggleButton Classes="stripe" IsChecked="True" ToolTip.Tip="Explorer">
+                            <PathIcon Data="{StaticResource Icon.Explorer}" />
+                        </ToggleButton>
+                        <ToggleButton Classes="stripe" ToolTip.Tip="Structure">
+                            <PathIcon Data="{StaticResource Icon.Structure}" />
+                        </ToggleButton>
+                        <ToggleButton Classes="stripe" ToolTip.Tip="Commit">
+                            <PathIcon Data="{StaticResource Icon.Branch}" />
+                        </ToggleButton>
+                    </StackPanel>
+                    <StackPanel DockPanel.Dock="Bottom" Spacing="4" HorizontalAlignment="Center" VerticalAlignment="Bottom">
+                        <ToggleButton Classes="stripe" ToolTip.Tip="Terminal">
+                            <PathIcon Data="{StaticResource Icon.Terminal}" />
+                        </ToggleButton>
+                        <ToggleButton Classes="stripe" ToolTip.Tip="Problems">
+                            <PathIcon Data="{StaticResource Icon.Problems}" />
+                        </ToggleButton>
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+
+            <!-- The Explorer tool window. -->
+            <Border Grid.Column="1" Background="{DynamicResource Passenger.Chrome}">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Top" Classes="paneTitle" Text="Explorer" Margin="12,10,12,6" />
+                    <TextBlock Name="ExplorerHint" Classes="muted" Text="Nothing open"
+                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                </DockPanel>
+            </Border>
+
+            <!-- A 1 px line to see, under a wider invisible splitter to grab. -->
+            <Border Grid.Column="2" Background="{DynamicResource Passenger.Divider}" />
+            <GridSplitter Grid.Column="2" ResizeDirection="Columns" Classes="hairline" />
+
+
+            <!-- The editor area, empty until a file opens. -->
+            <StackPanel Grid.Column="3" Spacing="10" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <TextBlock Text="Passenger" FontSize="28" FontWeight="SemiBold" HorizontalAlignment="Center"
+                           Foreground="{DynamicResource Passenger.Text}" />
+                <TextBlock Classes="muted" Text="Open a solution, project or folder to start." HorizontalAlignment="Center" />
+                <Button Classes="primary" Content="Open…" HorizontalAlignment="Center" Margin="0,8,0,0" Click="OnOpenClicked" />
+            </StackPanel>
+
+            <!-- The right stripe. -->
+            <Border Grid.Column="4" Background="{DynamicResource Passenger.Chrome}"
+                    BorderBrush="{DynamicResource Passenger.Divider}" BorderThickness="1,0,0,0">
+                <StackPanel Margin="0,6" Spacing="4" HorizontalAlignment="Center">
+                    <ToggleButton Classes="stripe" ToolTip.Tip="Notifications">
+                        <PathIcon Data="{StaticResource Icon.Notifications}" />
+                    </ToggleButton>
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <!-- The status bar. -->
+        <Border Grid.Row="2" Height="26" Background="{DynamicResource Passenger.Chrome}"
+                BorderBrush="{DynamicResource Passenger.Divider}" BorderThickness="0,1,0,0">
+            <DockPanel Margin="12,0">
+                <TextBlock Name="RuntimeText" DockPanel.Dock="Right" Classes="muted" FontSize="12" VerticalAlignment="Center" />
+                <TextBlock Name="StatusText" Classes="muted" FontSize="12" Text="No solution" VerticalAlignment="Center" />
+            </DockPanel>
+        </Border>
+    </Grid>
+</Window>
