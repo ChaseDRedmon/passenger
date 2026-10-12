@@ -204,9 +204,8 @@ public partial class ManagedDebugger
         ICorDebugBreakpoint breakpoint = breakpointCorDebugManagedCallbackEventArgs.Breakpoint;
         ArgumentNullException.ThrowIfNull(breakpoint);
 
-        if (EvalStatus.IsRunning)
+        if (PutOffDuringEvaluation(breakpointCorDebugManagedCallbackEventArgs, breakpointCorDebugManagedCallbackEventArgs.Thread))
         {
-            Continue();
             return;
         }
 
@@ -455,9 +454,31 @@ public partial class ManagedDebugger
         OnStopped2?.Invoke(corThread.Id, sourceFilePath, line, column, "step", null);
     }
 
+    /// <summary>An event that came while an evaluation ran: the evaluated code's own is let go, since an evaluation never
+    /// stops part way; another thread's was queued with the event the evaluation began from, and waits, its thread
+    /// suspended where the event found it, until the evaluation's own stop is over. True when the event was either.</summary>
+    private bool PutOffDuringEvaluation(CorDebugManagedCallbackEventArgs callbackEvent, ICorDebugThread thread)
+    {
+        if (EvalStatus.ThreadId is not { } evaluating)
+        {
+            return false;
+        }
+        if (thread.Id != evaluating)
+        {
+            _logger?.Invoke($"Put off: {callbackEvent.GetType().Name} on thread {thread.Id}, during an evaluation on thread {evaluating}");
+            _deferredEvents.Enqueue(callbackEvent);
+        }
+        _process!.Continue(false);
+        return true;
+    }
+
     private void HandleBreak(object? sender, BreakCorDebugManagedCallbackEventArgs breakEventArgs)
     {
         ICorDebugThread corThread = breakEventArgs.Thread;
+        if (PutOffDuringEvaluation(breakEventArgs, corThread))
+        {
+            return;
+        }
         _asyncStepper?.Disable();
         if (_stepper is not null)
         {
@@ -476,12 +497,13 @@ public partial class ManagedDebugger
 
     private void HandleException2(object? sender, Exception2CorDebugManagedCallbackEventArgs exceptionEventArgs)
     {
-        if (EvalStatus.IsRunning)
+        ICorDebugThread corThread = exceptionEventArgs.Thread;
+        if (EvalStatus.ThreadId == corThread.Id)
         {
-            Continue();
+            // The evaluated code's own: caught inside it, or the evaluation's result.
+            _process!.Continue(false);
             return;
         }
-        ICorDebugThread corThread = exceptionEventArgs.Thread;
 
         ThreadId threadId = new ThreadId(corThread.Id);
         string exceptionType = GetCurrentExceptionType(corThread);
@@ -535,18 +557,34 @@ public partial class ManagedDebugger
                 break;
         }
 
+        if (EvalStatus.IsRunning)
+        {
+            // Another thread's, queued with the evaluation's own event: decided while its frame is good, its stop put off.
+            if (shouldStop)
+            {
+                _logger?.Invoke($"Put off: a stop at an exception on thread {corThread.Id}, during an evaluation on thread {EvalStatus.ThreadId}");
+                _deferredEvents.Enqueue(new DeferredExceptionStop(corThread, breakMode));
+            }
+            _process!.Continue(false);
+            return;
+        }
         if (shouldStop is false)
         {
             ContinueWithVariableClear();
             return;
         }
+        StopAtException(corThread, breakMode);
+    }
+
+    private void StopAtException(ICorDebugThread corThread, ExceptionBreakMode breakMode)
+    {
         _asyncStepper?.Disable();
         if (_stepper is not null)
         {
             _stepper.Deactivate();
             _stepper = null;
         }
-        _exceptionBreakModes[threadId] = breakMode;
+        _exceptionBreakModes[new ThreadId(corThread.Id)] = breakMode;
         OnStopped?.Invoke(corThread.Id, "exception");
     }
 

@@ -279,6 +279,11 @@ public partial class ManagedDebugger
         _pauseRequested = false;
         _variableManager.ClearAndDisposeHandleValues();
         _frameReferenceManager.Clear();
+        // Another thread's event put off while this stop's evaluations ran comes next, rather than lost to the continue.
+        if (TakeDeferredEvent())
+        {
+            return;
+        }
 
         int result = _process.TryContinue(false);
         if (result is Cor.CORDBG_E_SUPERFLOUS_CONTINUE)
@@ -295,6 +300,11 @@ public partial class ManagedDebugger
         _pauseRequested = false;
         _variableManager.ClearAndDisposeHandleValues();
         _frameReferenceManager.Clear();
+        // As at the person's continue: a condition tested or a step begun lets nothing put off pass unseen.
+        if (TakeDeferredEvent())
+        {
+            return;
+        }
 
         _process.Continue(false);
     }
@@ -1081,24 +1091,32 @@ public partial class ManagedDebugger
         }
 
         FrameStackDepth frameStackDepth = new FrameStackDepth(0);
-        (string? friendlyTypeName, _, _, _) = await GetValueForCorDebugValueAsync(currentException, threadId, frameStackDepth, false);
-
-        string source = await GetExceptionPropertyValue(currentException, "Source");
-        string message = await GetExceptionPropertyValue(currentException, "Message");
-        ExceptionInfo.ExceptionDetails details = await Details(currentException, friendlyTypeName, "$exception", depth: 0);
-        string innermost = Innermost(details);
-
-        ExceptionInfo exceptionInfo = new ExceptionInfo
+        try
         {
-            ExceptionId = $"CLR/{friendlyTypeName}",
-            // With an inner exception, the line netcoredbg and Visual Studio add, naming the innermost.
-            Description = $"Exception thrown: '{friendlyTypeName}' in {source}.dll: '{message}'"
-                + (details.InnerException.Count > 0 ? $"\n Inner exceptions found, see $exception in variables window for more details.\n Innermost exception: {innermost}" : ""),
-            BreakMode = _exceptionBreakModes.GetValueOrDefault(threadId, ExceptionBreakMode.Unknown),
-            Code = 0,
-            Details = details,
-        };
-        return exceptionInfo;
+            (string? friendlyTypeName, _, _, _) = await GetValueForCorDebugValueAsync(currentException, threadId, frameStackDepth, false);
+
+            string source = await GetExceptionPropertyValue(currentException, "Source");
+            string message = await GetExceptionPropertyValue(currentException, "Message");
+            ExceptionInfo.ExceptionDetails details = await Details(currentException, friendlyTypeName, "$exception", depth: 0);
+            string innermost = Innermost(details);
+
+            ExceptionInfo exceptionInfo = new ExceptionInfo
+            {
+                ExceptionId = $"CLR/{friendlyTypeName}",
+                // With an inner exception, the line netcoredbg and Visual Studio add, naming the innermost.
+                Description = $"Exception thrown: '{friendlyTypeName}' in {source}.dll: '{message}'"
+                    + (details.InnerException.Count > 0 ? $"\n Inner exceptions found, see $exception in variables window for more details.\n Innermost exception: {innermost}" : ""),
+                BreakMode = _exceptionBreakModes.GetValueOrDefault(threadId, ExceptionBreakMode.Unknown),
+                Code = 0,
+                Details = details,
+            };
+            return exceptionInfo;
+        }
+        catch (COMException error) when (error.HResult is Cor.CORDBG_E_ILLEGAL_AT_GC_UNSAFE_POINT or Cor.CORDBG_E_FUNC_EVAL_BAD_START_POINT)
+        {
+            // A thread whose exception came while another thread's evaluation ran is held where no code can run on it.
+            return UnevaluatedExceptionInfo(thread, threadId, currentException);
+        }
 
         // An exception's details, its inner exceptions' within (upstream #50), as deep as they go,
         // within reason.
@@ -1157,6 +1175,35 @@ public partial class ManagedDebugger
                 }
             }
         }
+    }
+
+    /// <summary>An exception as its own fields give it, read without running code on its thread: its type and the message
+    /// it was made with, and why there is no more.</summary>
+    private ExceptionInfo UnevaluatedExceptionInfo(ICorDebugThread thread, ThreadId threadId, ICorDebugValue exception)
+    {
+        string typeName = GetCorDebugTypeFriendlyName(exception.ExactType);
+        ICorDebugValue? field = exception.UnwrapDebugValueToObjectOrNull()?.GetClassFieldValue((ICorDebugILFrame)thread.ActiveFrame, "_message");
+        string message = field?.UnwrapDebugValue() is ICorDebugStringValue text ? text.String : "";
+        int lastDot = typeName.LastIndexOf('.');
+        return new ExceptionInfo
+        {
+            ExceptionId = $"CLR/{typeName}",
+            Description = $"Exception thrown: '{typeName}': '{message}'\n It was thrown while the debugger ran code on another thread, so its thread is held where no code can run, and its properties cannot be read.",
+            BreakMode = _exceptionBreakModes.GetValueOrDefault(threadId, ExceptionBreakMode.Unknown),
+            Code = 0,
+            Details = new ExceptionInfo.ExceptionDetails
+            {
+                Message = message,
+                TypeName = lastDot is not -1 ? typeName[(lastDot + 1)..] : typeName,
+                FullTypeName = typeName,
+                EvaluateName = "$exception",
+                StackTrace = "",
+                InnerException = [],
+                FormattedDescription = $"**{typeName}:** '{message}'",
+                HResult = 0,
+                Source = "",
+            },
+        };
     }
 
     /// <summary>Text for the launched program's standard input, or the end of its input when

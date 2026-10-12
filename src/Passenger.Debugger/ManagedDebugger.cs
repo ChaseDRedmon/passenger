@@ -114,10 +114,11 @@ public partial class ManagedDebugger
         _callbacks = new CorDebugManagedCallback();
         EvalStatus = new EvalStatus();
         _asyncStepper = new AsyncStepper(_modules, this);
+        // The runtime's callback thread writes, and so does whichever thread hands back an event put off during an evaluation.
         _runtimeEventChannel = Channel.CreateUnbounded<CorDebugManagedCallbackEventArgs>(new UnboundedChannelOptions
         {
             SingleReader = false,
-            SingleWriter = true
+            SingleWriter = false
         });
         _callbacks.OnAnyEvent += QueueEvent;
         _runtimeEventCallbackProcessing = Task.Run(ProcessRuntimeEventQueue);
@@ -210,6 +211,7 @@ public partial class ManagedDebugger
                 case BreakCorDebugManagedCallbackEventArgs a: HandleBreak(sender, a); break;
                 case ExceptionCorDebugManagedCallbackEventArgs a: HandleException(sender, a); break;
                 case Exception2CorDebugManagedCallbackEventArgs a: HandleException2(sender, a); break;
+                case DeferredExceptionStop a: StopAtException(a.Thread, a.BreakMode); break;
                 case EvalCompleteCorDebugManagedCallbackEventArgs or EvalExceptionCorDebugManagedCallbackEventArgs: break; // don't continue on these, as they are being used for expression evaluation
                 default:
                     if (_process is not null)
@@ -289,15 +291,39 @@ public partial class ManagedDebugger
         }
     }
 
-    /// <summary>Lets the process go on after one of the runtime's own events, unless a pause waits to be taken there.</summary>
+    /// <summary>Lets the process go on after one of the runtime's own events, unless another thread's event put off during
+    /// an evaluation is handled first, or a pause waits to be taken there. During an evaluation it only lets that go on.</summary>
     private void Continue()
     {
         ArgumentNullException.ThrowIfNull(_process);
-        if (TakePendingPause())
+        if (!EvalStatus.IsRunning && (TakeDeferredEvent() || TakePendingPause()))
         {
             return;
         }
         _process.Continue(false);
+    }
+
+    /// <summary>Hands the first event put off during an evaluation to the event loop in place of a continue, the process
+    /// still stopped and its thread still where the event found it; true when there was one.</summary>
+    private bool TakeDeferredEvent()
+    {
+        if (EvalStatus.IsRunning || !_deferredEvents.TryDequeue(out CorDebugManagedCallbackEventArgs? later))
+        {
+            return false;
+        }
+        _runtimeEventChannel.Writer.TryWrite(later);
+        return true;
+    }
+
+    /// <summary>Other threads' events queued with the one an evaluation began from, which the runtime hands over before the
+    /// evaluation can run: their threads stay suspended where they were until each is handled, in order.</summary>
+    private readonly Queue<CorDebugManagedCallbackEventArgs> _deferredEvents = new();
+
+    /// <summary>An exception on another thread that stops the program, found while an evaluation ran.</summary>
+    private sealed class DeferredExceptionStop(ICorDebugThread thread, ExceptionBreakMode breakMode) : CorDebugManagedCallbackEventArgs
+    {
+        public ICorDebugThread Thread { get; } = thread;
+        public ExceptionBreakMode BreakMode { get; } = breakMode;
     }
 
     private void ConfigureExceptionCallbacks()
@@ -638,6 +664,7 @@ public partial class ManagedDebugger
         _asyncStepper = null;
         _stepper = null!;
         _threads.Clear();
+        _deferredEvents.Clear();
         _mainThreadId = null;
         _exceptionStates.Clear();
         _exceptionBreakModes.Clear();
@@ -712,5 +739,8 @@ public partial class ManagedDebugger
 
 public class EvalStatus
 {
-    public bool IsRunning { get; set; }
+    /// <summary>The thread an evaluation runs on, while one runs: the only thread of the program let go meanwhile.</summary>
+    public int? ThreadId { get; set; }
+
+    public bool IsRunning => ThreadId is not null;
 }

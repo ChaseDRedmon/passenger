@@ -223,10 +223,14 @@ public static class Extensions
 
         startEval();
 
-        evalStatus.IsRunning = true;
+        ICorDebugThread thread = eval.Thread;
+        ICorDebugProcess process = thread.Process;
+        evalStatus.ThreadId = thread.Id;
         try
         {
-            eval.Thread.Process.Continue(false);
+            // Only the evaluation's thread runs, as in Visual Studio: the others' values hold still and none meets a breakpoint unseen.
+            process.SetAllThreadsDebugState(CorDebugThreadState.THREAD_SUSPEND, thread);
+            process.Continue(false);
             Task<CorDebugManagedCallbackEventArgs> waiting = processEventsUntilEvalEventFunc();
             if (await Task.WhenAny(waiting, Task.Delay(EvaluationTimeout)) != waiting)
             {
@@ -241,7 +245,7 @@ public static class Extensions
                 {
                     handle.TryDispose();
                 }
-                throw new ManagedDebugger.EvalException($"The evaluation took longer than {EvaluationTimeout.TotalSeconds:0} s and was stopped");
+                throw new ManagedDebugger.EvalException($"The evaluation took longer than {EvaluationTimeout.TotalSeconds:0} s and was stopped: it may wait on another thread, which stays paused while it runs");
             }
             CorDebugManagedCallbackEventArgs evalEvent = await waiting;
             if (evalEvent is EvalCompleteCorDebugManagedCallbackEventArgs completeEvent)
@@ -281,7 +285,9 @@ public static class Extensions
         }
         finally
         {
-            evalStatus.IsRunning = false;
+            evalStatus.ThreadId = null;
+            // Taken at the next Continue; a process that ended meanwhile has no threads to set.
+            process.TrySetAllThreadsDebugState(CorDebugThreadState.THREAD_RUN, thread);
         }
     }
 
