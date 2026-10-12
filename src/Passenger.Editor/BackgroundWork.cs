@@ -7,29 +7,61 @@ namespace Passenger.Editor;
 /// is drawn enters here, best through <see cref="Scope"/> or <see cref="Track"/>, which no path out can forget.</summary>
 public static class BackgroundWork
 {
-    private static int pending;
+    /// <summary>The count of holds in the low half, and in the high half the generation they belong to, which
+    /// <see cref="Forget"/> moves on: one value, so a hold and the generation it was counted in are taken together.</summary>
+    private static long state;
 
-    public static int Pending => Volatile.Read(ref pending);
+    public static int Pending => (int)Volatile.Read(ref state);
 
-    public static void Begin() => Interlocked.Increment(ref pending);
+    public static void Begin() => Interlocked.Increment(ref state);
 
-    public static void End() => Interlocked.Decrement(ref pending);
+    /// <summary>Lets go of one hold, on the UI thread that began it: work that ends on another thread holds a
+    /// <see cref="Scope"/>, which a later generation's count never loses to. Never below none.</summary>
+    public static void End() => Release(null);
 
-    /// <summary>Work held until the scope is disposed, once however often it is.</summary>
-    public static IDisposable Scope()
+    /// <summary>Lets go of every hold, for a UI thread that is gone: what would have ended them (a callback, an await's
+    /// continuation) was to run on its dispatcher, which never runs again, as a headless test's once the test is over.
+    /// A test starts with this, so work an earlier one left can never hold it; a running IDE has one dispatcher.</summary>
+    public static void Forget()
     {
-        Begin();
-        return new Held();
+        long seen = Volatile.Read(ref state);
+        while (true)
+        {
+            long was = Interlocked.CompareExchange(ref state, ((seen >> 32) + 1) << 32, seen);
+            if (was == seen)
+            {
+                return;
+            }
+            seen = was;
+        }
     }
+
+    /// <summary>Work held until the scope is disposed, once however often it is, and not at all once forgotten.</summary>
+    public static IDisposable Scope() => new Held(Interlocked.Increment(ref state) >> 32);
 
     /// <summary>Work held until a task ends, however it ends; released after what the UI thread was given to do on it.</summary>
     public static void Track(Task task)
     {
-        Begin();
-        _ = task.ContinueWith(_ => Dispatcher.UIThread.Post(End), TaskScheduler.Default);
+        IDisposable held = Scope();
+        _ = task.ContinueWith(_ => Dispatcher.UIThread.Post(held.Dispose), TaskScheduler.Default);
     }
 
-    private sealed class Held : IDisposable
+    /// <summary>Takes one hold off the count, if there is one and, for a scope's, the count is still of its generation.</summary>
+    private static void Release(long? generation)
+    {
+        long seen = Volatile.Read(ref state);
+        while ((int)seen > 0 && (generation is null || seen >> 32 == generation))
+        {
+            long was = Interlocked.CompareExchange(ref state, seen - 1, seen);
+            if (was == seen)
+            {
+                return;
+            }
+            seen = was;
+        }
+    }
+
+    private sealed class Held(long generation) : IDisposable
     {
         private int ended;
 
@@ -37,7 +69,7 @@ public static class BackgroundWork
         {
             if (Interlocked.Exchange(ref ended, 1) == 0)
             {
-                End();
+                Release(generation);
             }
         }
     }

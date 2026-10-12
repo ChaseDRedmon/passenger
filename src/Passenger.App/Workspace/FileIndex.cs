@@ -34,7 +34,7 @@ public sealed class FileIndex
         Root = root;
         int walk = ++walks;
         // Held through the walk, then by the crossing, which lets go of what it can never deliver.
-        BackgroundWork.Begin();
+        IDisposable held = BackgroundWork.Scope();
         Task.Run(() => Walk(root)).ContinueWith(walked =>
         {
             UiThread.Post(() =>
@@ -44,7 +44,7 @@ public sealed class FileIndex
                     files = walked.Result;
                 }
             });
-            BackgroundWork.End();
+            held.Dispose();
         }, TaskScheduler.Default);
     }
 

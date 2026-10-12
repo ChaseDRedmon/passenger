@@ -1,12 +1,16 @@
+using System.Reflection;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
+using Avalonia.Headless.XUnit;
 using Avalonia.Input;
 using Avalonia.Threading;
 using Passenger.Editor;
 using Passenger.Text;
+using Xunit.v3;
 
 [assembly: Avalonia.Headless.AvaloniaTestApplication(typeof(Passenger.Tests.TestApp))]
+[assembly: Passenger.Tests.WindowTestsStartIdle]
 
 namespace Passenger.Tests;
 
@@ -19,6 +23,21 @@ public static class TestApp
         .UseHarfBuzz()
         .WithInterFont()
         .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false });
+}
+
+/// <summary>A window test starts with no background work held. Each test has a dispatcher of its own, and work a test
+/// left running (one that failed before its window settled, or closed it mid-parse) ends on that dispatcher, which
+/// never runs again: held for ever, it would fail every window test after it on <see cref="Ui.Settle"/>'s limit.</summary>
+[AttributeUsage(AttributeTargets.Assembly)]
+public sealed class WindowTestsStartIdleAttribute : BeforeAfterTestAttribute
+{
+    public override void Before(MethodInfo methodUnderTest, IXunitTest test)
+    {
+        if (methodUnderTest.GetCustomAttribute<AvaloniaFactAttribute>() is not null || methodUnderTest.GetCustomAttribute<AvaloniaTheoryAttribute>() is not null)
+        {
+            BackgroundWork.Forget();
+        }
+    }
 }
 
 /// <summary>A code editor alone in a window, driven the way a person drives it: keys by Rider's

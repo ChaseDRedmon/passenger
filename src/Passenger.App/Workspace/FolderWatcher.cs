@@ -120,11 +120,11 @@ public sealed class FolderWatcher : IDisposable
             pending = true;
         }
         // Held while the changes gather, then by the crossing, which lets go of what it can never deliver.
-        BackgroundWork.Begin();
+        IDisposable held = BackgroundWork.Scope();
         _ = Task.Delay(Gather).ContinueWith(_ =>
         {
             UiThread.Post(Deliver);
-            BackgroundWork.End();
+            held.Dispose();
         }, TaskScheduler.Default);
     }
 
