@@ -44,6 +44,14 @@ public sealed class TestsView : DockPanel
             }
         };
         tree.KeyDown += OnTreeKey;
+        ListMenus.Attach(tree, () => tree.SelectedItem is not TestNode chosen ? [] :
+        [
+            ListMenus.Item("Run", Keys(AppActions.RunTests), () => RunRequested?.Invoke(this, false)),
+            ListMenus.Item("Debug", Keys(AppActions.DebugTests), () => RunRequested?.Invoke(this, true)),
+            ListMenus.Item("Run Until Failure", Keys(AppActions.RunTestsUntilFailure), () => UntilFailureRequested?.Invoke(this, EventArgs.Empty)),
+            new Separator(),
+            ListMenus.Item("Go to Source", "F4", () => GoToRequested?.Invoke(this, chosen), chosen.Path is not null),
+        ]);
         details = new TextBox
         {
             IsReadOnly = true,
@@ -102,8 +110,24 @@ public sealed class TestsView : DockPanel
     /// <summary>A toolbar button pressed: the app action it runs.</summary>
     public event EventHandler<string>? ActionRequested;
 
+    /// <summary>The rows chosen to run (false) or debug (true), from their menu.</summary>
+    public event EventHandler<bool>? RunRequested;
+
+    /// <summary>The rows chosen to run until one fails, from their menu.</summary>
+    public event EventHandler? UntilFailureRequested;
+
+    /// <summary>Chooses a row and shows its details (a failed test's output), opening what holds it.</summary>
+    public void Choose(TestNode node)
+    {
+        tree.SelectedItem = node;
+        tree.ScrollIntoView(node);
+    }
+
     /// <summary>A test's source to show.</summary>
     public event EventHandler<TestNode>? GoToRequested;
+
+    private static string? Keys(string action) =>
+        AppActions.Keymap().ShortcutsFor(action).FirstOrDefault(s => s.Second is null) is { } shortcut ? new Avalonia.Input.KeyGesture(shortcut.First.Key, shortcut.First.Modifiers).ToString() : null;
 
     /// <summary>The rows chosen, for Run Selected and Debug Selected.</summary>
     public IReadOnlyList<TestNode> Selected => [.. tree.SelectedItems?.OfType<TestNode>() ?? []];

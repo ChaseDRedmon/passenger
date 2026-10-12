@@ -90,41 +90,22 @@ public sealed class DebuggerTests : IDisposable
         Passenger.App.ToolWindows.DebugView view = window.BottomPanel.Debug;
 
         view.VariablesList.SelectedItem = view.Tree.Rows.First(r => r.Depth == 0 && r.Name == "i");
-        Choose(view.VariablesList, "Copy Value");
-        Ui.WaitFor(() => Clipboard(window) == "1", "the value on the clipboard");
-        Choose(view.VariablesList, "Add to Watches");
+        Ui.ChooseFromMenu(view.VariablesList, "Copy Value");
+        Ui.WaitFor(() => Ui.Clipboard(window) == "1", "the value on the clipboard");
+        Ui.ChooseFromMenu(view.VariablesList, "Add to Watches");
         Ui.WaitFor(() => view.Tree.Rows.Any(r => r.Role == VariableRole.Watch && r.Name == "i" && r.Value == "1"), "the watch");
 
         Avalonia.Controls.ListBox frames = view.GetVisualDescendants().OfType<Avalonia.Controls.ListBox>().First(l => ReferenceEquals(l.ItemsSource, view.Frames));
-        Choose(frames, "Copy Stack");
-        Ui.WaitFor(() => Clipboard(window)?.Contains("<Main>$", StringComparison.Ordinal) == true, "the stack on the clipboard");
-        Assert.Contains("Program.cs:4", Clipboard(window), StringComparison.Ordinal);
+        Ui.ChooseFromMenu(frames, "Copy Stack");
+        Ui.WaitFor(() => Ui.Clipboard(window)?.Contains("<Main>$", StringComparison.Ordinal) == true, "the stack on the clipboard");
+        Assert.Contains("Program.cs:4", Ui.Clipboard(window), StringComparison.Ordinal);
 
         Ui.Run(window, AppActions.Stop);
         Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
         window.Close();
     }
 
-    /// <summary>Opens a list's menu for its chosen row, as a right-click does, and chooses an item.</summary>
-    private static void Choose(Avalonia.Controls.Control list, string item)
-    {
-        Avalonia.Controls.ContextMenu menu = list.ContextMenu!;
-        list.RaiseEvent(new Avalonia.Input.ContextRequestedEventArgs());
-        Ui.Settle();
-        Assert.True(menu.IsOpen, "The list's menu did not open");
-        Avalonia.Controls.MenuItem chosen = menu.Items.OfType<Avalonia.Controls.MenuItem>().First(i => (string?)i.Header == item);
-        Assert.True(chosen.IsEnabled, $"{item} is disabled");
-        chosen.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.MenuItem.ClickEvent));
-        menu.Close();
-        Ui.Settle();
-    }
 
-    private static string? Clipboard(MainWindow window)
-    {
-        Task<string?> text = Avalonia.Input.Platform.ClipboardExtensions.TryGetTextAsync(window.Clipboard!);
-        Ui.WaitFor(() => text.IsCompleted, "the clipboard");
-        return text.Result;
-    }
 
     [AvaloniaFact]
     public void Dragging_the_execution_arrow_past_the_loop_goes_on_from_there_and_skips_it()

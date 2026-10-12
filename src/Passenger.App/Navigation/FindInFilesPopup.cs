@@ -71,6 +71,12 @@ public sealed class FindInFilesPopup : UserControl
         };
         results.SelectionChanged += (_, _) => ShowPreview();
         results.DoubleTapped += (_, _) => Choose();
+        ToolWindows.ListMenus.Attach(results, () => results.SelectedItem is not SearchMatch chosen ? [] :
+        [
+            ToolWindows.ListMenus.Item("Go to", "Enter", Choose),
+            ToolWindows.ListMenus.Item("Copy Path", null, () => _ = ToolWindows.ListMenus.CopyAsync(this, chosen.Path)),
+            ToolWindows.ListMenus.Item("Copy Line", null, () => _ = ToolWindows.ListMenus.CopyAsync(this, chosen.LineText.Trim())),
+        ]);
         preview = new CodeEditor { IsReadOnly = true, ShowErrorStripe = false, Height = 180, Focusable = false };
         Border previewFrame = new() { BorderThickness = new Thickness(0, 1, 0, 0), Child = preview };
         previewFrame.Bind(Border.BorderBrushProperty, previewFrame.GetResourceObservable("Passenger.Divider"));

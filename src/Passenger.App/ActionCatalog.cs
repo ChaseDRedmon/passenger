@@ -57,6 +57,7 @@ public static class ActionCatalog
         [AppActions.RunTests] = "Run Unit Tests",
         [AppActions.DebugTests] = "Debug Unit Tests",
         [AppActions.RunAllTests] = "Run All Tests",
+        [AppActions.RunTestsUntilFailure] = "Run Unit Tests Until Failure",
         [AppActions.RerunTests] = "Rerun Unit Tests",
         [AppActions.RerunFailedTests] = "Rerun Failed Tests",
         [AppActions.StopTests] = "Stop Unit Tests",

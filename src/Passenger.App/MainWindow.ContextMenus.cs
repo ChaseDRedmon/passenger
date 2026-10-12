@@ -48,6 +48,7 @@ public partial class MainWindow
             items.Add(new Separator());
             items.Add(Command($"Run '{name}'", () => RunTestsAt(test.Type, test.Method, debug: false)));
             items.Add(Command($"Debug '{name}'", () => RunTestsAt(test.Type, test.Method, debug: true)));
+            items.Add(Command($"Run '{name}' Until Failure", () => RunTestsAt(test.Type, test.Method, debug: false, untilFailure: true)));
         }
         Add(separator);
         if (debug.Session is { State: DebugState.Paused })

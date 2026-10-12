@@ -109,6 +109,34 @@ public static class Ui
         }
     }
 
+    /// <summary>Opens a control's right-click menu for what it has chosen, as the menu key does, and chooses an item,
+    /// failing if it is not there or cannot run.</summary>
+    public static void ChooseFromMenu(Control owner, string item)
+    {
+        ContextMenu menu = owner.ContextMenu ?? throw new InvalidOperationException($"{owner.GetType().Name} has no menu");
+        owner.RaiseEvent(new ContextRequestedEventArgs());
+        Settle();
+        MenuItem? chosen = menu.Items.OfType<MenuItem>().FirstOrDefault(i => (string?)i.Header == item);
+        if (chosen is null || !chosen.IsEnabled)
+        {
+            throw new InvalidOperationException($"The menu has no {item} to choose: [{string.Join(", ", menu.Items.OfType<MenuItem>().Select(i => $"{i.Header}{(i.IsEnabled ? "" : " (disabled)")}"))}]");
+        }
+        chosen.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
+        menu.Close();
+        Settle();
+    }
+
+    /// <summary>The clipboard's text, read as a paste would read it.</summary>
+    public static string? Clipboard(TopLevel window)
+    {
+        Task<string?> text = Avalonia.Input.Platform.ClipboardExtensions.TryGetTextAsync(window.Clipboard!);
+        while (!text.IsCompleted)
+        {
+            Settle();
+        }
+        return text.Result;
+    }
+
     /// <summary>Presses the platform's first shortcut for an IDE action, both keystrokes of a chord.</summary>
     public static void Run(TopLevel window, string action)
     {

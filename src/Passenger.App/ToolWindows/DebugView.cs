@@ -104,9 +104,9 @@ public sealed class DebugView : DockPanel
             }
         };
         variables.KeyDown += OnVariablesKey;
-        Menu(variables, VariablesMenu);
-        Menu(frames, FramesMenu);
-        Menu(threads, ThreadsMenu);
+        ListMenus.Attach(variables, VariablesMenu);
+        ListMenus.Attach(frames, FramesMenu);
+        ListMenus.Attach(threads, ThreadsMenu);
         DockPanel variablesPane = new() { Children = { evaluate, variables } };
 
         Grid split = new() { ColumnDefinitions = new ColumnDefinitions("320,1,*") };
@@ -339,19 +339,6 @@ public sealed class DebugView : DockPanel
         }
     }
 
-    /// <summary>Gives a list its right-click menu, made again for the row chosen whenever the choice moves, so a right-click
-    /// or the menu key finds it ready; with nothing to offer, it has none.</summary>
-    private static void Menu(SelectingItemsControl list, Func<IReadOnlyList<Control>> items)
-    {
-        void Make()
-        {
-            IReadOnlyList<Control> made = items();
-            list.ContextMenu = made.Count == 0 ? null : new ContextMenu { ItemsSource = made };
-        }
-        list.SelectionChanged += (_, _) => Make();
-        Make();
-    }
-
     /// <summary>Rider's Variables and Watches menu: Set Value, Copy Value and Copy Name, Add to Watches, Inspect (the
     /// value evaluated on its own, to open), and Remove Watch for a watch.</summary>
     private IReadOnlyList<Control> VariablesMenu()
@@ -362,17 +349,17 @@ public sealed class DebugView : DockPanel
         }
         List<Control> items =
         [
-            Item("Set Value...", "F2", () => EditSelectedValue(), node.Expression is not null),
-            Item("Copy Value", null, () => _ = Copy(node.Value)),
-            Item("Copy Name", null, () => _ = Copy(node.Name)),
+            ListMenus.Item("Set Value...", "F2", () => EditSelectedValue(), node.Expression is not null),
+            ListMenus.Item("Copy Value", null, () => _ = ListMenus.CopyAsync(this, node.Value)),
+            ListMenus.Item("Copy Name", null, () => _ = ListMenus.CopyAsync(this, node.Name)),
             new Separator(),
-            Item("Add to Watches", null, () => EvaluateRequested?.Invoke(this, (node.Expression!, true)), node.Expression is not null && node.Role != VariableRole.Watch),
-            Item("Inspect", null, () => EvaluateRequested?.Invoke(this, (node.Expression!, false)), node.Expression is not null),
+            ListMenus.Item("Add to Watches", null, () => EvaluateRequested?.Invoke(this, (node.Expression!, true)), node.Expression is not null && node.Role != VariableRole.Watch),
+            ListMenus.Item("Inspect", null, () => EvaluateRequested?.Invoke(this, (node.Expression!, false)), node.Expression is not null),
         ];
         if (node.Role == VariableRole.Watch)
         {
             items.Add(new Separator());
-            items.Add(Item("Remove Watch", "Delete", () => WatchRemoved?.Invoke(this, node.Name)));
+            items.Add(ListMenus.Item("Remove Watch", "Delete", () => WatchRemoved?.Invoke(this, node.Name)));
         }
         return items;
     }
@@ -387,31 +374,13 @@ public sealed class DebugView : DockPanel
         DapStackFrame? chosen = frames.SelectedItem as DapStackFrame;
         return
         [
-            Item("Copy Stack", null, () => _ = Copy(string.Join('\n', Frames.Select(f => f.Source?.Path is { } path ? $"{f.Name} in {path}:{f.Line}" : f.Name)))),
-            Item("Go to Source", "F4", () => FrameChosen?.Invoke(this, chosen!), chosen?.Source is not null),
+            ListMenus.Item("Copy Stack", null, () => _ = ListMenus.CopyAsync(this, string.Join('\n', Frames.Select(f => f.Source?.Path is { } path ? $"{f.Name} in {path}:{f.Line}" : f.Name)))),
+            ListMenus.Item("Go to Source", "F4", () => FrameChosen?.Invoke(this, chosen!), chosen?.Source is not null),
         ];
     }
 
     private IReadOnlyList<Control> ThreadsMenu() =>
-        threads.SelectedItem is DapThread thread ? [Item("Copy Name", null, () => _ = Copy(ThreadLabel(thread)))] : [];
-
-    private static MenuItem Item(string header, string? keys, Action run, bool enabled = true)
-    {
-        MenuItem item = new() { Header = header, IsEnabled = enabled, InputGesture = keys is null ? null : KeyGesture.Parse(keys) };
-        item.Click += (_, _) => run();
-        return item;
-    }
-
-    private async Task Copy(string text)
-    {
-        if (TopLevel.GetTopLevel(this)?.Clipboard is { } clipboard)
-        {
-            await clipboard.SetTextAsync(text);
-        }
-    }
-
-    /// <summary>The Variables view's menu while it is open, for a test to choose from.</summary>
-    public ContextMenu? VariablesMenuOpen => variables.ContextMenu is { IsOpen: true } menu ? menu : null;
+        threads.SelectedItem is DapThread thread ? [ListMenus.Item("Copy Name", null, () => _ = ListMenus.CopyAsync(this, ThreadLabel(thread)))] : [];
 
     private Button Tool(string action, string icon, string tip)
     {

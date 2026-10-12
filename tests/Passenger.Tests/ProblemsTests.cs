@@ -61,6 +61,15 @@ public sealed class ProblemsTests : IDisposable
         Ui.WaitFor(() => problems.FileProblems.Any(p => p.Severity == ProblemSeverity.Error), "the open file's error");
         Assert.Empty(problems.Problems);
 
+        // A problem's menu copies its message.
+        window.Perform(AppActions.ShowProblems);
+        problems.Shown = ProblemsTab.File;
+        Avalonia.Controls.ListBox rows = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(problems).OfType<Avalonia.Controls.ListBox>().First();
+        ProblemRow chosen = problems.Rows.First(r => r.Problem is { Severity: ProblemSeverity.Error });
+        rows.SelectedItem = chosen;
+        Ui.ChooseFromMenu(rows, "Copy Message");
+        Ui.WaitFor(() => Ui.Clipboard(window) == chosen.Problem!.Message, "the message on the clipboard");
+
         window.Perform(AppActions.ToggleSolutionAnalysis);
         Assert.Null(problems.SolutionProblems);
         Assert.Equal(ProblemsTab.File, problems.Shown);

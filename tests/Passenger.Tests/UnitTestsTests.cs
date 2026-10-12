@@ -87,6 +87,39 @@ public sealed class UnitTestsTests : IDisposable
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void Run_until_failure_repeats_a_test_until_it_fails_and_shows_that_run()
+    {
+        // Passes twice, then fails: it counts its runs in a file of its own.
+        string count = Path.Combine(folder, "runs.txt");
+        Write("FlakyTests.cs",
+            "using Xunit;\n\nnamespace Sums.Tests;\n\npublic class FlakyTests\n{\n    [Fact]\n    public void Flaky()\n    {\n" +
+            $"        string path = @\"{count}\";\n" +
+            "        int run = (File.Exists(path) ? int.Parse(File.ReadAllText(path)) : 0) + 1;\n        File.WriteAllText(path, run.ToString());\n" +
+            "        Assert.True(run < 3, $\"failed on its run {run}\");\n    }\n}\n");
+        MainWindow window = Open();
+        Task<string?> found = window.Tests.DiscoverAsync(window.Folder!);
+        Ui.WaitFor(() => found.IsCompleted, "the tests to be found", TimeSpan.FromSeconds(120));
+        Assert.Null(found.Result);
+
+        window.Perform(AppActions.ShowTests);
+        Avalonia.Controls.ListBox tree = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(window.BottomPanel.Tests)
+            .OfType<Avalonia.Controls.ListBox>().First(l => ReferenceEquals(l.ItemsSource, window.Tests.Tree.Rows));
+        Ui.WaitFor(() => window.Tests.Tree.Rows.Any(r => r.Name == "FlakyTests"), "the flaky test's class in the tree");
+        if (window.Tests.Tree.Rows.First(r => r.Name == "FlakyTests") is { IsExpanded: false } flaky)
+        {
+            window.Tests.Tree.Toggle(flaky);
+        }
+        tree.SelectedItem = window.Tests.Tree.Rows.First(r => r.Name == "Flaky");
+        Ui.ChooseFromMenu(tree, "Run Until Failure");
+        Ui.WaitFor(() => !window.Tests.IsBusy && Method(window, "Flaky")?.State == TestState.Failed, "the run that fails", TimeSpan.FromSeconds(180));
+        Assert.Equal(3, window.Tests.Runs);
+        Assert.Equal("Flaky failed on run 3", window.Status);
+        Assert.Contains("failed on its run 3", Method(window, "Flaky")!.Details, StringComparison.Ordinal);
+        Assert.Same(Method(window, "Flaky"), tree.SelectedItem);
+        window.Close();
+    }
+
     private static TestNode? Method(MainWindow window, string name) =>
         window.Tests.Tree.Roots.SelectMany(r => r.Methods).FirstOrDefault(m => m.Name == name);
 

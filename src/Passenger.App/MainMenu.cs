@@ -65,7 +65,7 @@ public static class MainMenu
             Item(A.SetNextStatement), Item(A.ShowExecutionPoint), Item(A.Evaluate), Separator,
             Item(A.ToggleBreakpoint), Item(A.ToggleBreakpointEnabled), Item(A.EditBreakpoint), Item(A.ViewBreakpoints)),
         Menu("Tests",
-            Item(A.RunTests), Item(A.DebugTests), Item(A.RunAllTests), Separator,
+            Item(A.RunTests), Item(A.DebugTests), Item(A.RunTestsUntilFailure), Item(A.RunAllTests), Separator,
             Item(A.RerunTests), Item(A.RerunFailedTests), Item(A.StopTests), Separator,
             Item(A.ShowTests)),
         Menu("Tools",

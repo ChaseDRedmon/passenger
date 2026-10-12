@@ -49,6 +49,24 @@ public partial class MainWindow
         commitView.OpenRequested += (_, path) => OpenFile(path);
         commitView.DiffRequested += (_, path) => _ = ShowDiffAsync(path);
         commitView.RollbackRequested += async (_, changes) => await RollbackAsync(changes);
+        commitView.DeleteRequested += async (_, path) => await DeleteAsync(path);
+        commitView.IgnoreRequested += (_, path) => Ignore(path);
+        gitLog.NewBranchRequested += (_, commit) =>
+        {
+            NamePopup popup = new($"New Branch from {commit.Short}", string.Empty, name => vcs.NewBranchAtAsync(name, commit.Hash));
+            popup.Done += (_, _) => ClosePopup();
+            ShowPopup(popup);
+        };
+        gitLog.ResetRequested += async (_, reset) =>
+        {
+            if (reset.Mode == ResetMode.Hard && !await Confirm("Reset Current Branch to Here",
+                $"Move {vcs.Branch ?? "HEAD"} to {reset.Commit.Short} and drop every change since, committed or not?", "Reset"))
+            {
+                return;
+            }
+            Editors.SaveAll();
+            await vcs.ResetAsync(reset.Commit.Hash, reset.Mode);
+        };
         vcs.BeforeCommit = () => Editors.SaveAll();
         vcs.Message += (_, message) => StatusText.Text = message;
         vcs.Changed += (_, _) => OnVcsChanged();
@@ -484,5 +502,20 @@ public partial class MainWindow
         }
         int start = text.GetLineStart(hunk.NewStart);
         return new TextEdit(start, text.Length - start, old);
+    }
+
+    /// <summary>Rider's Add to .gitignore: the file's path from the repository's top, a line of its .gitignore.</summary>
+    private void Ignore(string path)
+    {
+        if (vcs.Repository is not { } repository)
+        {
+            return;
+        }
+        string ignore = Path.Combine(repository.Root, ".gitignore");
+        string line = Path.GetRelativePath(repository.Root, path).Replace('\\', '/');
+        string before = File.Exists(ignore) ? File.ReadAllText(ignore) : string.Empty;
+        File.WriteAllText(ignore, before + (before.Length > 0 && !before.EndsWith('\n') ? "\n" : string.Empty) + line + "\n");
+        StatusText.Text = $"Added {line} to .gitignore";
+        _ = vcs.RefreshAsync();
     }
 }

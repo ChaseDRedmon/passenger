@@ -40,6 +40,20 @@ public sealed class GitLogView : DockPanel
             ItemTemplate = new FuncDataTemplate<GraphRow>((row, _) => row is null ? new TextBlock() : Row(row), supportsRecycling: false),
         };
         list.SelectionChanged += (_, _) => _ = ShowCommitAsync();
+        ListMenus.Attach(list, () => Selected is not { } commit ? [] :
+        [
+            ListMenus.Item("Copy Revision Number", null, () => _ = ListMenus.CopyAsync(this, commit.Hash)),
+            new Separator(),
+            ListMenus.Item("Checkout Revision", null, () => _ = vcs.CheckoutRevisionAsync(commit.Hash)),
+            ListMenus.Item("New Branch...", null, () => NewBranchRequested?.Invoke(this, commit)),
+            new Separator(),
+            ListMenus.Item("Cherry-Pick", null, () => _ = vcs.CherryPickAsync(commit.Hash)),
+            ListMenus.Item("Revert Commit", null, () => _ = vcs.RevertAsync(commit.Hash)),
+            ListMenus.Sub("Reset Current Branch to Here",
+                ListMenus.Item("Soft: the changes since kept staged", null, () => ResetRequested?.Invoke(this, (commit, ResetMode.Soft))),
+                ListMenus.Item("Mixed: the changes since kept in the files", null, () => ResetRequested?.Invoke(this, (commit, ResetMode.Mixed))),
+                ListMenus.Item("Hard: the changes since dropped...", null, () => ResetRequested?.Invoke(this, (commit, ResetMode.Hard)))),
+        ]);
         fileList = new ListBox
         {
             Classes = { "tree" },
@@ -120,6 +134,12 @@ public sealed class GitLogView : DockPanel
 
     /// <summary>A file of a commit whose change to show: the commit and the file.</summary>
     public event EventHandler<(CommitInfo Commit, FileChange File)>? DiffRequested;
+
+    /// <summary>A branch to make at a commit, its name to be asked for.</summary>
+    public event EventHandler<CommitInfo>? NewBranchRequested;
+
+    /// <summary>The current branch to move to a commit, in a mode (a hard reset to be agreed to first).</summary>
+    public event EventHandler<(CommitInfo Commit, ResetMode Mode)>? ResetRequested;
 
     /// <summary>The rows listed, after the filter.</summary>
     public IReadOnlyList<GraphRow> Rows => rows;

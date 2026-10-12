@@ -60,12 +60,21 @@ public sealed class StructureView : DockPanel
             settle.Stop();
             _ = Refresh();
         };
+        ListMenus.Attach(list, () => list.SelectedItem is not SymbolRow chosen ? [] :
+        [
+            ListMenus.Item("Go to", "F4", () => GoToRequested?.Invoke(this, chosen)),
+            ListMenus.Item("Find Usages", null, () => UsagesRequested?.Invoke(this, chosen)),
+            ListMenus.Item("Copy Name", null, () => _ = ListMenus.CopyAsync(this, chosen.Name)),
+        ]);
         Children.Add(new Panel { Children = { list, placeholder } });
         this.Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Chrome"));
     }
 
     /// <summary>A member to go to.</summary>
     public event EventHandler<SymbolRow>? GoToRequested;
+
+    /// <summary>A member whose usages to find, from its menu.</summary>
+    public event EventHandler<SymbolRow>? UsagesRequested;
 
     public IReadOnlyList<SymbolRow> Rows => list.ItemsSource as IReadOnlyList<SymbolRow> ?? [];
 

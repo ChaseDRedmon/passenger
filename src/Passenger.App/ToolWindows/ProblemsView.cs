@@ -65,8 +65,18 @@ public sealed class ProblemsView : DockPanel
                 e.Handled = true;
             }
         }, Avalonia.Interactivity.RoutingStrategies.Tunnel);
+        ListMenus.Attach(list, () => list.SelectedItem is not ProblemRow { Problem: { } problem } ? [] :
+        [
+            ListMenus.Item("Go to", "F4", Choose, problem.Path is not null),
+            ListMenus.Item("Copy Message", null, () => _ = ListMenus.CopyAsync(this, problem.Message)),
+            new Separator(),
+            ListMenus.Item("Show Context Actions", null, () => FixRequested?.Invoke(this, problem), problem.Path is not null),
+        ]);
         Refresh();
     }
+
+    /// <summary>A problem's fixes asked for (Rider's Alt+Enter on it): the editor goes there and offers them.</summary>
+    public event EventHandler<Problem>? FixRequested;
 
     /// <summary>A problem chosen to go to.</summary>
     public event EventHandler<Problem>? Chosen;

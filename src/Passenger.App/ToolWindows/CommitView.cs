@@ -61,6 +61,17 @@ public sealed class CommitView : DockPanel
                 _ => new TextBlock(),
             }, supportsRecycling: false),
         };
+        ListMenus.Attach(list, () => list.SelectedItem is not CommitRow chosen ? [] :
+        [
+            ListMenus.Item("Show Diff", "Enter", () => DiffRequested?.Invoke(this, chosen.Change.Path)),
+            ListMenus.Item("Jump to Source", "F4", () => OpenRequested?.Invoke(this, chosen.Change.Path), chosen.Change.Kind is not ChangeKind.Deleted),
+            new Separator(),
+            ListMenus.Item("Rollback...", null, () => RollbackRequested?.Invoke(this, [.. ChosenChanges(chosen)])),
+            ListMenus.Item("Delete...", null, () => DeleteRequested?.Invoke(this, chosen.Change.Path), chosen.Change.Kind is not ChangeKind.Deleted),
+            ListMenus.Item("Add to .gitignore", null, () => IgnoreRequested?.Invoke(this, chosen.Change.Path), chosen.Change.Kind is ChangeKind.Unversioned),
+            new Separator(),
+            ListMenus.Item("Copy Path", null, () => _ = ListMenus.CopyAsync(this, chosen.Change.Path)),
+        ]);
         // Double-click shows the diff and F4 the file, as in Rider's Commit window.
         list.DoubleTapped += (_, _) =>
         {
@@ -198,6 +209,19 @@ public sealed class CommitView : DockPanel
 
     /// <summary>A file to open in the editor.</summary>
     public event EventHandler<string>? OpenRequested;
+
+    /// <summary>A changed file to move to the Trash, from its menu.</summary>
+    public event EventHandler<string>? DeleteRequested;
+
+    /// <summary>An unversioned file to leave out of Git for good, by its path in the repository's .gitignore.</summary>
+    public event EventHandler<string>? IgnoreRequested;
+
+    /// <summary>The rows chosen with the one the menu is for: every one when it is among them, else it alone.</summary>
+    private IEnumerable<FileChange> ChosenChanges(CommitRow row)
+    {
+        List<CommitRow> chosen = [.. list.SelectedItems?.OfType<CommitRow>() ?? []];
+        return chosen.Contains(row) ? chosen.Select(r => r.Change) : [row.Change];
+    }
 
     /// <summary>A file's diff against the last commit, to show.</summary>
     public event EventHandler<string>? DiffRequested;

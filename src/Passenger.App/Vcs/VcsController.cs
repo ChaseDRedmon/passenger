@@ -218,6 +218,27 @@ public sealed class VcsController
     public async Task<bool> CheckoutAsync(string branch) =>
         (await SwitchAsync(repository => repository.CheckoutAsync(branch), $"Checked out {branch}")).Succeeded;
 
+    /// <summary>The Git log's commit actions, as Rider's: each saves first, and the open files follow what it did.</summary>
+    public async Task<bool> CheckoutRevisionAsync(string hash) =>
+        (await SwitchAsync(repository => repository.CheckoutRevisionAsync(hash), $"Checked out {Short(hash)}")).Succeeded;
+
+    public async Task<string?> NewBranchAtAsync(string name, string hash)
+    {
+        GitResult created = await SwitchAsync(repository => repository.NewBranchAtAsync(name, hash), $"Created and checked out {name} at {Short(hash)}");
+        return created.Succeeded ? null : created.Message;
+    }
+
+    public async Task<bool> CherryPickAsync(string hash) =>
+        (await SwitchAsync(repository => repository.CherryPickAsync(hash), $"Cherry-picked {Short(hash)}")).Succeeded;
+
+    public async Task<bool> RevertAsync(string hash) =>
+        (await SwitchAsync(repository => repository.RevertAsync(hash), $"Reverted {Short(hash)}")).Succeeded;
+
+    public async Task<bool> ResetAsync(string hash, ResetMode mode) =>
+        (await SwitchAsync(repository => repository.ResetAsync(hash, mode), $"Reset {Branch ?? "HEAD"} to {Short(hash)} ({mode.ToString().ToLowerInvariant()})")).Succeeded;
+
+    private static string Short(string hash) => hash.Length > 8 ? hash[..8] : hash;
+
     /// <summary>Creates a branch from the head and checks it out; null when it worked, else git's reason.</summary>
     public async Task<string?> NewBranchAsync(string name)
     {

@@ -201,6 +201,20 @@ public sealed class BreakpointsWindow : UserControl
         };
         list.DoubleTapped += (_, _) => GoTo();
         list.AddHandler(KeyDownEvent, OnListKeyDown, RoutingStrategies.Tunnel);
+        ToolWindows.ListMenus.Attach(list, () => Chosen is not { } breakpoint ? [] :
+        [
+            ToolWindows.ListMenus.Item("Go to Source", "F4", GoTo),
+            ToolWindows.ListMenus.Item(breakpoint.Enabled ? "Disable" : "Enable", null, () =>
+            {
+                store.Update(breakpoint, !breakpoint.Enabled, breakpoint.Suspend, breakpoint.Condition, breakpoint.HitCondition, breakpoint.LogMessage);
+                Fill(breakpoint);
+            }),
+            ToolWindows.ListMenus.Item("Remove", "Delete", () =>
+            {
+                store.Remove(breakpoint);
+                Fill(null);
+            }),
+        ]);
         // Escape closes it wherever the focus is in it, as a dialog's does.
         AddHandler(KeyDownEvent, (_, e) =>
         {

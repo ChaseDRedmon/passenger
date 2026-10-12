@@ -232,6 +232,22 @@ public partial class MainWindow : Window
             }
         };
         Bottom.Tests.ActionRequested += (_, action) => RunAppAction(action);
+        Bottom.Tests.RunRequested += (_, debugging) =>
+        {
+            IReadOnlyList<Testing.TestNode> chosen = Bottom.Tests.Selected;
+            RunTests(() => tests.RunAsync(folder!, chosen, debugging));
+        };
+        Bottom.Tests.UntilFailureRequested += (_, _) => RunUntilFailure(Bottom.Tests.Selected);
+        Bottom.Problems.FixRequested += (_, problem) =>
+        {
+            NavigateTo(problem.Path!, problem.Position);
+            assist.Run(AppActions.QuickFix);
+        };
+        Structure.UsagesRequested += (_, row) =>
+        {
+            NavigateTo(row.Path, row.Position);
+            assist.Run(AppActions.FindUsages);
+        };
         Bottom.Tests.GoToRequested += (_, node) =>
         {
             if (node.Path is { } path && File.Exists(path))
@@ -567,6 +583,9 @@ public partial class MainWindow : Window
                 break;
             case AppActions.RunTests or AppActions.DebugTests:
                 RunTestsInContext(debug: action == AppActions.DebugTests);
+                break;
+            case AppActions.RunTestsUntilFailure:
+                RunTestsInContext(debug: false, untilFailure: true);
                 break;
             case AppActions.RerunTests:
                 RunTests(() => tests.RerunAsync(folder!));
@@ -1484,14 +1503,17 @@ public partial class MainWindow : Window
         run.Click += (_, _) => RunTestsAt(chosen.Type, chosen.Method, debug: false);
         MenuItem debugIt = new() { Header = $"Debug '{name}'" };
         debugIt.Click += (_, _) => RunTestsAt(chosen.Type, chosen.Method, debug: true);
+        MenuItem untilFailure = new() { Header = $"Run '{name}' Until Failure" };
+        untilFailure.Click += (_, _) => RunTestsAt(chosen.Type, chosen.Method, debug: false, untilFailure: true);
         menu.Items.Add(run);
         menu.Items.Add(debugIt);
+        menu.Items.Add(untilFailure);
         menu.ShowAt(editor, showAtPointer: true);
     }
 
     /// <summary>Rider's Run (or Debug) Unit Tests in context: the Unit Tests window's chosen rows when it has the
     /// focus, else the test method or class at the editor's caret, found once the tests have been.</summary>
-    private void RunTestsInContext(bool debug)
+    private void RunTestsInContext(bool debug, bool untilFailure = false)
     {
         if (folder is null)
         {
@@ -1500,6 +1522,11 @@ public partial class MainWindow : Window
         if (Bottom.Tests.HasFocus && Bottom.Tests.Selected.Count > 0)
         {
             IReadOnlyList<Testing.TestNode> chosen = Bottom.Tests.Selected;
+            if (untilFailure)
+            {
+                RunUntilFailure(chosen);
+                return;
+            }
             RunTests(() => tests.RunAsync(folder, chosen, debug));
             return;
         }
@@ -1508,11 +1535,29 @@ public partial class MainWindow : Window
             StatusText.Text = "No test is at the caret";
             return;
         }
-        RunTestsAt(context.Type, context.Method, debug);
+        RunTestsAt(context.Type, context.Method, debug, untilFailure);
+    }
+
+    /// <summary>Runs tests until one fails, as Rider's Run Until Failure, and shows the failed one's output.</summary>
+    private void RunUntilFailure(IReadOnlyList<Testing.TestNode> chosen)
+    {
+        if (folder is null || chosen.Count == 0)
+        {
+            return;
+        }
+        RunTests(async () =>
+        {
+            string? problem = await tests.RunUntilFailureAsync(folder, chosen);
+            if (tests.FirstFailed(chosen) is { } failed)
+            {
+                Bottom.Tests.Choose(failed);
+            }
+            return problem;
+        });
     }
 
     /// <summary>Runs (or debugs) a test method, or every test of a type, finding the tests first if need be.</summary>
-    private void RunTestsAt(string type, string? method, bool debug)
+    private void RunTestsAt(string type, string? method, bool debug, bool untilFailure = false)
     {
         if (folder is null)
         {
@@ -1529,9 +1574,20 @@ public partial class MainWindow : Window
                     return problem;
                 }
             }
-            return Matching() is { Count: > 0 } found
-                ? await tests.RunAsync(folder, found, debug)
-                : $"No test of {context.Method ?? context.Type} was found; is the project a test project?";
+            if (Matching() is not { Count: > 0 } found)
+            {
+                return $"No test of {context.Method ?? context.Type} was found; is the project a test project?";
+            }
+            if (!untilFailure)
+            {
+                return await tests.RunAsync(folder, found, debug);
+            }
+            string? stopped = await tests.RunUntilFailureAsync(folder, found);
+            if (tests.FirstFailed(found) is { } failed)
+            {
+                Bottom.Tests.Choose(failed);
+            }
+            return stopped;
         });
 
         List<Testing.TestNode> Matching() =>

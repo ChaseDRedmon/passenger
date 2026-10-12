@@ -355,6 +355,20 @@ public sealed class Git
 
     public Task<GitResult> NewBranchAsync(string name) => RunAsync(Root, ["switch", "-c", name]);
 
+    /// <summary>A branch made at a commit and checked out.</summary>
+    public Task<GitResult> NewBranchAtAsync(string name, string hash) => RunAsync(Root, ["switch", "-c", name, hash]);
+
+    /// <summary>A commit checked out on its own, with no branch (a detached head), as Rider's Checkout Revision does.</summary>
+    public Task<GitResult> CheckoutRevisionAsync(string hash) => RunAsync(Root, ["switch", "--detach", hash]);
+
+    public Task<GitResult> CherryPickAsync(string hash) => RunAsync(Root, ["cherry-pick", hash]);
+
+    /// <summary>A commit undone by a new one, with git's own message.</summary>
+    public Task<GitResult> RevertAsync(string hash) => RunAsync(Root, ["revert", "--no-edit", hash]);
+
+    /// <summary>The branch moved to a commit: soft keeps the changes staged, mixed keeps them in the files, hard drops them.</summary>
+    public Task<GitResult> ResetAsync(string hash, ResetMode mode) => RunAsync(Root, ["reset", $"--{mode.ToString().ToLowerInvariant()}", hash]);
+
     /// <summary>Puts files back as the last commit has them (Rider's Rollback); new files are deleted.</summary>
     public async Task<GitResult> RollbackAsync(IReadOnlyList<FileChange> changes)
     {
@@ -413,4 +427,12 @@ public sealed class Git
             return new GitResult(127, string.Empty, $"git is not installed: {missing.Message}");
         }
     }
+}
+
+/// <summary>How Reset Current Branch to Here treats the changes after the commit.</summary>
+public enum ResetMode
+{
+    Soft,
+    Mixed,
+    Hard,
 }

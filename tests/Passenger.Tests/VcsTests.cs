@@ -368,6 +368,53 @@ public sealed class VcsTests : IDisposable
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void The_commit_and_log_menus_ignore_a_file_revert_a_commit_and_branch_from_one()
+    {
+        File.WriteAllText(Path.Combine(folder, "Shop.cs"), Original.Replace("count++", "count += 2", StringComparison.Ordinal));
+        Git("commit", "-q", "-am", "Twice");
+        File.WriteAllText(Path.Combine(folder, "notes.txt"), "scratch\n");
+        MainWindow window = Open();
+        Ui.WaitFor(() => window.Vcs.Branch == "main", "the branch to be read");
+
+        // The Commit window's Add to .gitignore: the file leaves the changes.
+        window.Perform(AppActions.ShowCommit);
+        Avalonia.Controls.ListBox changes = Find(window.CommitView, window.CommitView.Rows);
+        Ui.WaitFor(() => window.CommitView.Rows.OfType<CommitRow>().Any(r => r.Change.Name == "notes.txt"), "the unversioned file listed");
+        changes.SelectedItem = window.CommitView.Rows.OfType<CommitRow>().First(r => r.Change.Name == "notes.txt");
+        Ui.ChooseFromMenu(changes, "Add to .gitignore");
+        Assert.Equal("notes.txt\n", File.ReadAllText(Path.Combine(folder, ".gitignore")));
+        Ui.WaitFor(() => window.Vcs.Changes.All(c => c.Name != "notes.txt"), "the ignored file to leave the changes");
+
+        // The log's Revert Commit undoes "Twice" with a commit of its own, and the open file follows.
+        window.Perform(AppActions.ShowGit);
+        GitLogView log = window.GitLog;
+        Ui.WaitFor(() => log.Rows.Any(r => r.Commit.Subject == "Twice"), "the log");
+        Avalonia.Controls.ListBox commits = Find(log, log.Rows);
+        log.Select(log.Rows.First(r => r.Commit.Subject == "Twice").Commit);
+        Ui.ChooseFromMenu(commits, "Revert Commit");
+        Ui.WaitFor(() => Git("log", "-1", "--format=%s").Trim() == "Revert \"Twice\"", "the revert's commit");
+        Ui.WaitFor(() => Text(window).Contains("count++", StringComparison.Ordinal), "the open file to follow the revert");
+
+        // Copy Revision Number and New Branch from the first commit.
+        Ui.WaitFor(() => log.Rows.Any(r => r.Commit.Subject == "First"), "the first commit in the log");
+        Passenger.App.Vcs.CommitInfo first = log.Rows.First(r => r.Commit.Subject == "First").Commit;
+        log.Select(first);
+        Ui.ChooseFromMenu(commits, "Copy Revision Number");
+        Ui.WaitFor(() => Ui.Clipboard(window) == first.Hash, "the hash on the clipboard");
+        Ui.ChooseFromMenu(commits, "New Branch...");
+        NamePopup popup = Assert.IsType<NamePopup>(window.Popup);
+        popup.Text = "from-first";
+        Task named = popup.SubmitAsync();
+        Ui.WaitFor(() => named.IsCompleted && window.Vcs.Branch == "from-first", "the new branch checked out");
+        Assert.Equal(first.Hash, Git("rev-parse", "HEAD").Trim());
+        window.Close();
+    }
+
+    private static Avalonia.Controls.ListBox Find(Avalonia.Controls.Control view, object rows) =>
+        Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(view).OfType<Avalonia.Controls.ListBox>().First(l => ReferenceEquals(l.ItemsSource, rows));
+
+
     private MainWindow Open()
     {
         MainWindow window = new() { Width = 1200, Height = 800 };

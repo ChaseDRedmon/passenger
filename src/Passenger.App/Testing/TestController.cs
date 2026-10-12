@@ -67,8 +67,43 @@ public sealed class TestController : IAsyncDisposable
         }
     }
 
+    /// <summary>Rider's Run Until Failure: these rows' tests run again and again, built once, until one fails or Stop is
+    /// pressed, each run counted as it goes; the failing run's results stay to read.</summary>
+    public async Task<string?> RunUntilFailureAsync(string workspace, IEnumerable<TestNode> rows)
+    {
+        List<TestNode> chosen = [.. rows];
+        stopRequested = false;
+        for (int run = 1; ; run++)
+        {
+            if (await RunAsync(workspace, chosen, debug: false, build: run == 1, prefix: $"Run {run}: ") is { } problem)
+            {
+                return problem;
+            }
+            Runs = run;
+            if (FirstFailed(chosen) is { } failed)
+            {
+                Message?.Invoke(this, $"{failed.Name} failed on run {run}");
+                return null;
+            }
+            if (stopRequested)
+            {
+                Message?.Invoke(this, $"Stopped after {run} run{(run == 1 ? "" : "s")}; none failed");
+                return null;
+            }
+        }
+    }
+
+    /// <summary>How many runs the last Run Until Failure made.</summary>
+    public int Runs { get; private set; }
+
+    /// <summary>The first of these rows' tests that failed in the last run, if one did.</summary>
+    public TestNode? FirstFailed(IEnumerable<TestNode> rows) =>
+        rows.SelectMany(r => r.Methods).FirstOrDefault(m => m.State == TestState.Failed);
+
+    private bool stopRequested;
+
     /// <summary>Runs tests: these rows' (all when none), building and finding them first when nothing has been found.</summary>
-    public async Task<string?> RunAsync(string workspace, IEnumerable<TestNode>? rows = null, bool debug = false)
+    public async Task<string?> RunAsync(string workspace, IEnumerable<TestNode>? rows = null, bool debug = false, bool build = true, string prefix = "")
     {
         if (IsBusy)
         {
@@ -87,7 +122,7 @@ public sealed class TestController : IAsyncDisposable
                     return problem;
                 }
             }
-            else if (!await build())
+            else if (build && !await this.build())
             {
                 return "The build failed; Problems lists why";
             }
@@ -99,7 +134,7 @@ public sealed class TestController : IAsyncDisposable
             lastRun = methods;
             Tree.Begin(methods);
             Changed?.Invoke(this, EventArgs.Empty);
-            Message?.Invoke(this, $"Running {Count(methods)}");
+            Message?.Invoke(this, $"{prefix}Running {Count(methods)}");
             HashSet<TestResult> applied = new(ReferenceEqualityComparer.Instance);
             void Apply(TestResult result)
             {
@@ -119,7 +154,7 @@ public sealed class TestController : IAsyncDisposable
                 Apply(result);
             }
             Tree.End();
-            Summary = Tally(methods, summary);
+            Summary = prefix + Tally(methods, summary);
             Message?.Invoke(this, Summary);
             return null;
         }
@@ -158,7 +193,11 @@ public sealed class TestController : IAsyncDisposable
         return failed.Count == 0 ? Task.FromResult<string?>("No test failed") : RunAsync(workspace, failed);
     }
 
-    public void Stop() => runner?.Cancel();
+    public void Stop()
+    {
+        stopRequested = true;
+        runner?.Cancel();
+    }
 
     public async ValueTask DisposeAsync()
     {

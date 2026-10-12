@@ -101,6 +101,7 @@ public static class AppActions
     public const string RunTests = "app.tests.run";
     public const string DebugTests = "app.tests.debug";
     public const string RunAllTests = "app.tests.runAll";
+    public const string RunTestsUntilFailure = "app.tests.runUntilFailure";
     public const string RerunTests = "app.tests.rerun";
     public const string RerunFailedTests = "app.tests.rerunFailed";
     public const string StopTests = "app.tests.stop";

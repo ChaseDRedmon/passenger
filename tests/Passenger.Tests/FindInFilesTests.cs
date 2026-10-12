@@ -137,6 +137,14 @@ public sealed class FindInFilesTests : IDisposable
         Ui.Run(window, AppActions.ToggleBookmark);
         Assert.Equal(["Alpha.cs"], window.Bookmarks.All.Select(b => b.Name));
         Assert.Empty(window.EditorArea.Active!.Bookmarks);
+
+        // The Bookmarks window's menu takes the last one away.
+        Ui.Run(window, AppActions.ShowBookmarks);
+        Avalonia.Controls.ListBox listed = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(window.DockHost)
+            .OfType<Avalonia.Controls.ListBox>().First(l => l.Items.OfType<Passenger.App.Navigation.Bookmark>().Any());
+        listed.SelectedIndex = 0;
+        Ui.ChooseFromMenu(listed, "Remove Bookmark");
+        Assert.Empty(window.Bookmarks.All);
         window.Close();
     }
 
