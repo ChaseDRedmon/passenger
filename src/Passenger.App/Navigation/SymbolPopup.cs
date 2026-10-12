@@ -164,7 +164,8 @@ public sealed class SymbolPopup : UserControl
         }
     }
 
-    private static Control Row(SymbolRow? row)
+    /// <summary>A symbol's row as every symbol list draws it: its badge, its name and type, where it is.</summary>
+    public static Control Row(SymbolRow? row)
     {
         if (row is null)
         {

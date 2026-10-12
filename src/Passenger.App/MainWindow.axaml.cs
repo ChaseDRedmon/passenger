@@ -38,6 +38,7 @@ public partial class MainWindow : Window
     private RunConfiguration? configuration;
     private readonly Passenger.App.Explorer.ExplorerView Explorer = new();
     private readonly ToolWindows.ToolViews Bottom = new();
+    private readonly ToolWindows.StructureView Structure = new();
     private int historyAt = -1;
     private readonly List<string> recent = [];
     private string? folder;
@@ -57,6 +58,19 @@ public partial class MainWindow : Window
         AddHandler(KeyDownEvent, OnKeyDownFirst, RoutingStrategies.Tunnel);
         AddToolWindows();
         Explorer.FileOpened += (_, path) => OpenFile(path);
+        Structure.Follow(() => Editors.Active is { } shown
+            ? (shown.Path, csharp?.For(shown)?.Lsp, Editors.CodeEditor.CaretPosition.Line)
+            : null);
+        Structure.GoToRequested += (_, row) => NavigateTo(row.Path, row.Position);
+        Editors.ActiveChanged += (_, _) => Structure.Invalidate();
+        Editors.CaretMoved += (_, _) => Structure.FollowCaret();
+        Editors.Opened += (_, document) => document.Text.Changed += (_, _) =>
+        {
+            if (Editors.Active == document)
+            {
+                Structure.Invalidate();
+            }
+        };
         Editors.OpenRequested += (_, _) => _ = PickFolder();
         Editors.ActiveChanged += (_, _) => UpdateStatus();
         Editors.CaretMoved += (_, _) => UpdateCaret();
@@ -348,6 +362,10 @@ public partial class MainWindow : Window
                 break;
             case AppActions.ShowTests:
                 ShowToolWindow("tests");
+                break;
+            case AppActions.ShowStructure:
+                ShowToolWindow("structure");
+                _ = Structure.Refresh();
                 break;
             case AppActions.SplitRight when Editors.Active is { } splitting:
                 Editors.Split(Editors.ActiveGroup, splitting, Avalonia.Layout.Orientation.Horizontal, move: false);
@@ -672,6 +690,7 @@ public partial class MainWindow : Window
             Action = AppActions.FocusExplorer,
             HeaderTools = Explorer.TakeHeaderTools(),
         });
+        Dock.Add(new Docking.ToolWindow("structure", "Structure", "Icon.Structure", Structure, Docking.ToolAnchor.LeftBottom) { Action = AppActions.ShowStructure });
         Dock.Add(new Docking.ToolWindow("run", "Run", "Icon.RunOutline", Bottom.Run, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowRun });
         Dock.Add(new Docking.ToolWindow("debug", "Debug", "Icon.Debug", Bottom.Debug, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowDebug });
         Dock.Add(new Docking.ToolWindow("tests", "Unit Tests", "Icon.Tests", Bottom.Tests, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowTests });
@@ -690,6 +709,9 @@ public partial class MainWindow : Window
         Dock.LayoutChanged += (_, _) => Dock.Capture().Save();
         Closing += (_, _) => Dock.Capture().Save();
     }
+
+    /// <summary>The Structure tool window.</summary>
+    public ToolWindows.StructureView StructureView => Structure;
 
     /// <summary>The tool windows' host, for the layout and the tests.</summary>
     public Docking.DockHost DockHost => Dock;
@@ -907,22 +929,7 @@ public partial class MainWindow : Window
         ShowPopup(popup);
 
         static IReadOnlyList<Navigation.SymbolRow> Flatten(IReadOnlyList<Lsp.DocumentSymbol> symbols, int depth, string path) =>
-            [.. symbols.SelectMany(symbol => (IEnumerable<Navigation.SymbolRow>)[Row(symbol, depth, path), .. Flatten(symbol.Children ?? [], depth + 1, path)])];
-
-        // Roslyn names a member with its type ("Main() : void"); Rider shows the type after the name, muted.
-        static Navigation.SymbolRow Row(Lsp.DocumentSymbol symbol, int depth, string path)
-        {
-            string name = symbol.Name;
-            string? type = string.IsNullOrEmpty(symbol.Detail) || symbol.Detail == symbol.Name ? null : symbol.Detail;
-            int typed = name.LastIndexOf(" : ", StringComparison.Ordinal);
-            if (typed > 0)
-            {
-                type = name[(typed + 3)..];
-                name = name[..typed];
-            }
-            return new Navigation.SymbolRow(name, type is null ? null : $": {type}", null, symbol.Kind, path,
-                new TextPosition(symbol.SelectionRange.Start.Line, symbol.SelectionRange.Start.Character), depth, symbol.Range.End.Line);
-        }
+            ToolWindows.StructureView.Flatten(symbols, depth, path);
     }
 
     private static IReadOnlyList<Navigation.SymbolRow> FilterOutline(IReadOnlyList<Navigation.SymbolRow> outline, string query)

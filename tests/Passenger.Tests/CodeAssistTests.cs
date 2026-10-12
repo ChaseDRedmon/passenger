@@ -56,6 +56,24 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
     }
 
     [AvaloniaFact]
+    public void The_structure_window_follows_the_editor_and_goes_to_a_member()
+    {
+        MainWindow window = project.Open("Program.cs");
+        window.EditorArea.CodeEditor.GoTo(new TextPosition(4, 8));
+        Ui.Run(window, AppActions.ShowStructure);
+        Passenger.App.ToolWindows.StructureView structure = window.StructureView;
+        Ui.WaitFor(() => structure.Rows.Count > 0, "the outline");
+        Assert.Equal(["Program", "Main()"], structure.Rows.Select(r => r.Name));
+        Assert.Equal("Main()", structure.Selected?.Name);
+
+        // Another file shown, its outline follows.
+        window.OpenFile(project.PathOf("Helper.cs"));
+        Ui.WaitFor(() => structure.Rows.FirstOrDefault()?.Name == "Helper", "the other file's outline");
+        Assert.Contains(structure.Rows, r => r.Name == "Twice(int)");
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Typing_after_a_dot_opens_completion_filtered_as_you_type_and_enter_commits_it()
     {
         MainWindow window = project.Open("Program.cs");

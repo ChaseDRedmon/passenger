@@ -69,6 +69,7 @@ public static class AppActions
     public const string RerunFailedTests = "app.tests.rerunFailed";
     public const string StopTests = "app.tests.stop";
     public const string ShowTests = "app.showTests";
+    public const string ShowStructure = "app.showStructure";
 
     // Editor splits: Rider's, from the tab's menu (no keys in its Visual Studio keymaps).
     public const string SplitRight = "app.editor.splitRight";
@@ -133,6 +134,7 @@ public static class AppActions
                 .Bind(RerunTests, "meta U , U", "meta U , meta U")
                 .Bind(RerunFailedTests, "meta U , F", "meta U , meta F")
                 .Bind(ShowTests, "meta 8")
+                .Bind(ShowStructure, "meta alt F", "control alt F")
                 .Bind(MaximizeToolWindow, "meta shift QUOTE")
                 .Bind(HideAllToolWindows, "meta shift F12")
                 .Bind(HideToolWindow, "shift ESCAPE")
@@ -193,6 +195,7 @@ public static class AppActions
             .Bind(RerunTests, "control U , U", "control U , control U")
             .Bind(RerunFailedTests, "control U , F", "control U , control F")
             .Bind(ShowTests, "alt 8")
+            .Bind(ShowStructure, "control alt F")
             .Bind(MaximizeToolWindow, "control shift QUOTE")
             .Bind(HideAllToolWindows, "control shift F12")
             .Bind(HideToolWindow, "shift ESCAPE")
