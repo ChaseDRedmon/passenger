@@ -32,6 +32,8 @@ public partial class ManagedDebugger
 
     private readonly Dictionary<int, ThreadInfo> _threads = new();
     private int? _mainThreadId;
+    /// <summary>The operating system's thread the launched program was started on, which runs its Main, where it can be told.</summary>
+    private int? _initialThreadId;
     private readonly Dictionary<CORDB_ADDRESS, ModuleInfo> _modules = new();
     private readonly HashSet<COR_TYPEID> _initializedStaticTypes = [];
     private ICorDebugFunction? _suppressFinalizeFunction;
@@ -667,6 +669,7 @@ public partial class ManagedDebugger
         _threads.Clear();
         _deferredEvents.Clear();
         _mainThreadId = null;
+        _initialThreadId = null;
         _exceptionStates.Clear();
         _exceptionBreakModes.Clear();
         _initializedStaticTypes.Clear();

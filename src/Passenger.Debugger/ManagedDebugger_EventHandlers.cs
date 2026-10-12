@@ -35,11 +35,22 @@ public partial class ManagedDebugger
     private void HandleThreadCreated(object? sender, CreateThreadCorDebugManagedCallbackEventArgs createThreadCorDebugManagedCallbackEventArgs)
     {
         ICorDebugThread corThread = createThreadCorDebugManagedCallbackEventArgs.Thread;
-        // The runtime announces the thread running Main first, as netcoredbg relies on (upstream #59).
-        _mainThreadId ??= corThread.Id;
+        NoteMainThread(corThread);
         _threads[corThread.Id] = new ThreadInfo(corThread);
         OnThreadStarted?.Invoke(corThread.Id);
         Continue();
+    }
+
+    /// <summary>Notes the thread running Main. The runtime announces it first (as netcoredbg relies on, upstream #59), but
+    /// to a debugger that takes hold once the program is under way (Windows' launch, through the diagnostic port) it lists
+    /// the threads in the order they were made, and Windows makes the finalizer's before Main's. So where the thread the
+    /// program was started on is known (<see cref="_initialThreadId"/>), that one is Main's.</summary>
+    private void NoteMainThread(ICorDebugThread thread)
+    {
+        if (_mainThreadId is null || thread.Id == _initialThreadId)
+        {
+            _mainThreadId = thread.Id;
+        }
     }
 
     private void HandleThreadExited(object? sender, ExitThreadCorDebugManagedCallbackEventArgs exitThreadCorDebugManagedCallbackEventArgs)

@@ -60,6 +60,21 @@ public partial class ManagedDebugger
         return program;
     }
 
+    /// <summary>The thread Windows started a process on, its earliest: the .NET host runs the program's Main on it. Null
+    /// when it cannot be told (the process gone, its threads not to be read).</summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static int? InitialThread(Process process)
+    {
+        try
+        {
+            return process.Threads.Cast<ProcessThread>().MinBy(thread => thread.StartTime)?.Id;
+        }
+        catch (Exception error) when (error is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException)
+        {
+            return null;
+        }
+    }
+
     private static Process StartHeldByDiagnosticPort(LaunchInfo launchInfo)
     {
         ProcessStartInfo processStartInfo = new ProcessStartInfo
@@ -111,6 +126,7 @@ public partial class ManagedDebugger
             Process process = StartHeldByDiagnosticPort(launchInfo);
             _debuggeeProcess = process;
             _launchOutput = Task.WhenAll(Forward(process.StandardOutput.BaseStream, isError: false), Forward(process.StandardError.BaseStream, isError: true));
+            _initialThreadId = InitialThread(process);
             processId = process.Id;
             resume = () => DiagnosticClientHelper.DiagnosticClientResumeRuntime(process.Id);
             kill = () => process.Kill();
