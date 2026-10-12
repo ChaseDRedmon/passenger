@@ -21,6 +21,9 @@ public sealed class FileIndex
 
     public int Count => files.Count;
 
+    /// <summary>Every file indexed, by its path from the root.</summary>
+    public IReadOnlyList<string> Files => files;
+
     public void Build(string root)
     {
         Root = root;

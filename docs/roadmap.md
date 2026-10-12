@@ -167,7 +167,9 @@ Still to come: word-level highlights in the diff, merge conflicts, stashes, and 
 The terminal is built: Rider's Terminal window (Ctrl+Alt+1, Cmd+Ctrl+1 on the Mac) with a shell per tab in the open
 folder, an emulator of Passenger's own that runs full-screen programs (vim, less, htop), selection and the clipboard,
 the scrollback, and the mouse for programs that ask for it. Find Action (Ctrl+Shift+A, Cmd+Shift+A) runs any action
-by name, the ones without a shortcut too. Settings (Ctrl+Alt+S, Cmd+, on the Mac) has Rider's search over its pages
+by name, the ones without a shortcut too. Find in Files and Replace in Files (Ctrl+Shift+F and H, Cmd on the Mac) search
+every text file of the folder, open files as the editor has them, matching as the Find bar does, with a preview of the
+chosen match; Replace All edits open files undoably and writes closed ones. Settings (Ctrl+Alt+S, Cmd+, on the Mac) has Rider's search over its pages
 (Appearance, Editor, Terminal, and the Keymap, where Add takes the next keys pressed, Remove unbinds and Reset goes
 back to the Visual Studio keymap's), applies a change at once and keeps it beside the layout. The NuGet window (Alt+7, Cmd+7) lists the solution's packages, searches nuget.org, and installs, updates and
 removes a package per project through `dotnet add` and `dotnet remove package`, central package management included.

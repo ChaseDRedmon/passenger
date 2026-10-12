@@ -18,6 +18,8 @@ public static class AppActions
     public const string GoToEverything = "app.goToEverything";
     public const string FileStructure = "app.fileStructure";
     public const string FindAction = "app.findAction";
+    public const string FindInFiles = "app.findInFiles";
+    public const string ReplaceInFiles = "app.replaceInFiles";
     public const string ShowSettings = "app.settings";
     public const string ShowNuGet = "app.showNuGet";
     public const string Profile = "app.profile";
@@ -171,6 +173,8 @@ public static class AppActions
                 .Bind(GoToSymbol, "meta shift alt T")
                 .Bind(GoToEverything, "meta T")
                 .Bind(FindAction, "meta shift A")
+                .Bind(FindInFiles, "meta shift F")
+                .Bind(ReplaceInFiles, "meta shift H")
                 .Bind(ShowSettings, "meta COMMA")
                 .Bind(ShowNuGet, "meta 7", "meta shift 7")
                 .Bind(FileStructure, "alt BACK_SLASH")
@@ -248,6 +252,8 @@ public static class AppActions
             .Bind(GoToSymbol, "control shift alt T")
             .Bind(GoToEverything, "control T")
             .Bind(FindAction, "control shift A")
+            .Bind(FindInFiles, "control shift F")
+            .Bind(ReplaceInFiles, "control shift H")
             .Bind(ShowSettings, "control alt S")
             .Bind(ShowNuGet, "alt 7", "alt shift 7")
             .Bind(FileStructure, "alt BACK_SLASH")

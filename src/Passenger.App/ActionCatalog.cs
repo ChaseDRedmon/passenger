@@ -67,6 +67,8 @@ public static class ActionCatalog
         [AppActions.Branches] = "Branches...",
         [AppActions.RollbackLines] = "Rollback Lines",
         [AppActions.FindAction] = "Find Action...",
+        [AppActions.FindInFiles] = "Find in Files...",
+        [AppActions.ReplaceInFiles] = "Replace in Files...",
         [AppActions.ShowSettings] = "Settings...",
         [AppActions.ShowNuGet] = "NuGet",
         [AppActions.Profile] = "Profile",

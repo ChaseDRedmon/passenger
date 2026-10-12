@@ -427,6 +427,9 @@ public partial class MainWindow : Window
             case AppActions.FindAction:
                 ShowFindAction();
                 break;
+            case AppActions.FindInFiles or AppActions.ReplaceInFiles:
+                ShowFindInFiles(replace: action == AppActions.ReplaceInFiles);
+                break;
             case AppActions.ShowSettings:
                 ShowSettings();
                 break;
