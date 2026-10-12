@@ -172,7 +172,8 @@ the scrollback, and the mouse for programs that ask for it. Find Action (Ctrl+Sh
 by name, the ones without a shortcut too. Find in Files and Replace in Files (Ctrl+Shift+F and H, Cmd on the Mac) search
 every text file of the folder, open files as the editor has them, matching as the Find bar does, with a preview of the
 chosen match; Replace All edits open files undoably and writes closed ones. Recent Files (Ctrl+,) lists the files
-opened last and reopens one where its caret was left. Settings (Ctrl+Alt+S, Cmd+, on the Mac) has Rider's search over its pages
+opened last and reopens one where its caret was left. The status bar's path names the file and the type and member the
+caret is in, as Rider's new UI does, each part a way there. Settings (Ctrl+Alt+S, Cmd+, on the Mac) has Rider's search over its pages
 (Appearance, Editor, Terminal, and the Keymap, where Add takes the next keys pressed, Remove unbinds and Reset goes
 back to the Visual Studio keymap's), applies a change at once and keeps it beside the layout. The NuGet window (Alt+7, Cmd+7) lists the solution's packages, searches nuget.org, and installs, updates and
 removes a package per project through `dotnet add` and `dotnet remove package`, central package management included.

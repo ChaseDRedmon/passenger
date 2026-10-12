@@ -187,6 +187,21 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
     }
 
     [AvaloniaFact]
+    public void The_status_bar_path_names_the_file_and_the_member_the_caret_is_in()
+    {
+        MainWindow window = project.Open("Program.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "Helper.Tw");
+        Ui.WaitFor(() => window.Breadcrumbs.Count == 3, "the member the caret is in");
+        Assert.Equal(["Program.cs", "Program", "Main()"], window.Breadcrumbs);
+        // Out of the method, only the type is left.
+        editor.GoTo(new TextPosition(1, 0));
+        Ui.Settle();
+        Assert.Equal(["Program.cs", "Program"], window.Breadcrumbs);
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Rename_changes_the_name_in_every_file_that_uses_it()
     {
         string helper = File.ReadAllText(project.PathOf("Helper.cs"));

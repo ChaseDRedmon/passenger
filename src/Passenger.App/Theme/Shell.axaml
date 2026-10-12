@@ -284,6 +284,21 @@
         <Setter Property="Foreground" Value="{DynamicResource Passenger.AccentText}" />
     </Style>
 
+    <!-- The status bar's path: a part is a quiet button, underlined under the pointer. -->
+    <Style Selector="Button.crumb">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Padding" Value="2,0" />
+        <Setter Property="MinHeight" Value="0" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.TextMuted}" />
+    </Style>
+    <Style Selector="Button.crumb:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource Passenger.Hover}" />
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.Text}" />
+    </Style>
+
     <!-- A file's name in the colour of how version control says it changed, as Rider's Project view has it. -->
     <Style Selector="TextBlock.vcsModified">
         <Setter Property="Foreground" Value="{DynamicResource Passenger.Vcs.File.Modified}" />

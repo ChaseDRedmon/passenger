@@ -93,7 +93,8 @@
                     <TextBlock Name="IndentText" Classes="status" />
                     <TextBlock Name="LanguageText" Classes="status" />
                 </StackPanel>
-                <TextBlock Name="StatusText" Classes="status" Text="No solution" VerticalAlignment="Center" />
+                <StackPanel Name="BreadcrumbHost" DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center" />
+                <TextBlock Name="StatusText" Classes="status" Text="No solution" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
             </DockPanel>
         </Border>
     </Grid>

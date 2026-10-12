@@ -62,6 +62,7 @@ public partial class MainWindow : Window
         AddSettings();
         AddPackages();
         AddProfiler();
+        AddBreadcrumbs();
         Explorer.FileOpened += (_, path) => OpenFile(path);
         Structure.Follow(() => Editors.Active is { } shown
             ? (shown.Path, csharp?.For(shown)?.Lsp, Editors.CodeEditor.CaretPosition.Line)
@@ -1378,7 +1379,8 @@ public partial class MainWindow : Window
                 ? Path.GetRelativePath(folder, active.Path)
                 : active.Path;
         }
-        StatusText.Text = where;
+        // With a file open the status bar's path names it, so the message line is left for messages.
+        StatusText.Text = active is null ? where : string.Empty;
         Title = active is null ? where : $"{(folder is null ? "" : Path.GetFileName(folder) + " – ")}{active.Name}";
         LineEndingText.Text = active is null ? "" : active.Text.LineEnding == "\r\n" ? "CRLF" : "LF";
         EncodingText.Text = active?.EncodingName ?? "";
