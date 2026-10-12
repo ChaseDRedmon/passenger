@@ -73,13 +73,14 @@ public sealed class ProfilerTests : IDisposable
         string program = Debuggees.Program("ReadsInputConsoleApp");
         ProfileTarget target = new(Passenger.Lsp.Dotnet.Host(), [program], Path.GetDirectoryName(program)!, new Dictionary<string, string>());
         await using ProfilingSession run = await ProfilingSession.StartAsync(target, folder, cancellation: TestContext.Current.CancellationToken);
+        Task<MemorySnapshot>? taking = null;
         try
         {
             // It waits on its input, so it is still there to be looked at.
             await Task.Delay(500, TestContext.Current.CancellationToken);
             // Bounded, so a createdump that never finishes (CI's macOS runner was left with one) fails this test rather
             // than holding the whole run until it is stopped as hung.
-            Task<MemorySnapshot> taking = run.TakeMemorySnapshotAsync(TestContext.Current.CancellationToken);
+            taking = run.TakeMemorySnapshotAsync(TestContext.Current.CancellationToken);
             Assert.True(await Task.WhenAny(taking, Task.Delay(TimeSpan.FromMinutes(2), TestContext.Current.CancellationToken)) == taking,
                 "the runtime's createdump had not written the program's heap after 2 minutes");
             MemorySnapshot heap = await taking;
@@ -92,6 +93,8 @@ public sealed class ProfilerTests : IDisposable
         finally
         {
             run.Kill();
+            // A dump given up on fails with its program; observed, so the window test beside this one is not failed for it.
+            _ = taking?.ContinueWith(dump => dump.Exception, TaskScheduler.Default);
         }
     }
 
