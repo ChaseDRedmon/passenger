@@ -650,7 +650,7 @@ public partial class MainWindow : Window
                 break;
             case AppActions.FocusExplorer:
                 Dock.Show("explorer");
-                Explorer.Focus();
+                Explorer.FocusRows();
                 break;
             case AppActions.GoToFile:
                 ShowGoToFile();

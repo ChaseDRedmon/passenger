@@ -18,7 +18,7 @@
             <TextBlock Name="Hint" Classes="muted" Text="Nothing open"
                        HorizontalAlignment="Center" VerticalAlignment="Center" />
             <ListBox Name="Rows" Classes="tree" IsVisible="False" SelectionMode="Multiple"
-                     DoubleTapped="OnRowDoubleTapped" KeyDown="OnRowsKeyDown">
+                     DoubleTapped="OnRowDoubleTapped">
                 <ListBox.ItemTemplate>
                     <DataTemplate x:DataType="explorer:ExplorerNode">
                         <StackPanel Orientation="Horizontal" Margin="{Binding Indent}" Opacity="{Binding Opacity}" Height="24">

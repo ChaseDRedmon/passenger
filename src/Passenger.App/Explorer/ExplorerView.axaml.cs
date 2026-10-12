@@ -28,6 +28,8 @@ public partial class ExplorerView : UserControl
     {
         InitializeComponent();
         Rows.ItemsSource = Tree.Rows;
+        // Ahead of the list's own keys: it takes Enter for its selection, so a row would never open.
+        Rows.AddHandler(KeyDownEvent, OnRowsKeyDown, Avalonia.Interactivity.RoutingStrategies.Tunnel);
         Rows.ContextRequested += (_, e) =>
         {
             if (Rows.SelectedItem is ExplorerNode node && Menu(node) is { } menu)
@@ -188,6 +190,25 @@ public partial class ExplorerView : UserControl
     }
 
     private void OnViewSwitchClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e) => Show(!Tree.IsSolutionView);
+
+    /// <summary>Gives the tree the keys on its chosen row (the first when none is), as Rider's Project view takes them: the
+    /// view itself cannot take the focus, only a row.</summary>
+    public void FocusRows()
+    {
+        if (!Rows.IsVisible || Tree.Rows.Count == 0)
+        {
+            return;
+        }
+        if (Rows.SelectedIndex < 0)
+        {
+            Rows.SelectedIndex = 0;
+        }
+        int index = Rows.SelectedIndex;
+        // A row scrolled out of sight, or in a window just shown, has no container until it is laid out in view.
+        Rows.ScrollIntoView(index);
+        Rows.UpdateLayout();
+        Rows.ContainerFromIndex(index)?.Focus();
+    }
 
     /// <summary>Opens the folders down to a file and selects its row.</summary>
     public void Reveal(string path)

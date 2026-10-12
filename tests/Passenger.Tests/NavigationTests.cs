@@ -66,6 +66,26 @@ public sealed class NavigationTests : IDisposable
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void The_explorers_shortcut_gives_it_the_keys_on_the_open_files_row()
+    {
+        Write("One.cs", "class One { }");
+        Write("Two.cs", "class Two { }");
+        MainWindow window = Open();
+        window.OpenFile("Two.cs");
+        Ui.Settle();
+        Assert.True(window.EditorArea.CodeEditor.IsFocused);
+
+        Ui.Run(window, AppActions.FocusExplorer);
+        Assert.False(window.EditorArea.CodeEditor.IsFocused, "The Explorer's shortcut left the keys with the editor");
+        // The keys go on from the open file's row, as in Rider's Project view, and Enter opens the row they reach.
+        Ui.Press(window, "UP");
+        Assert.Equal("One.cs", window.ExplorerView.Selected?.Name);
+        Ui.Press(window, "ENTER");
+        Assert.Equal("One.cs", window.EditorArea.Active?.Name);
+        window.Close();
+    }
+
     private void Write(string relative, string text)
     {
         string path = Path.Combine(folder, relative);
