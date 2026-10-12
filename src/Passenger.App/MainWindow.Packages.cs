@@ -26,7 +26,8 @@ public partial class MainWindow
         {
             return;
         }
-        Solution = SolutionModel.Find(folder) is { } solutionPath ? SolutionModel.Load(solutionPath) : null;
+        string? solution = namedSolution is { } named && File.Exists(named) ? named : SolutionModel.Find(folder);
+        Solution = solution is not null ? SolutionModel.Load(solution) : null;
         Explorer.Reload(Solution);
         string? chosen = configuration?.Name;
         configurations = Configure();

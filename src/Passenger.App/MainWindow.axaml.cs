@@ -283,6 +283,9 @@ public partial class MainWindow : Window
     /// <summary>The open folder's solution, read from its files, or null for a folder without one.</summary>
     public SolutionModel? Solution { get; private set; }
 
+    /// <summary>The solution opened by name, which a folder with several keeps over the one its name would pick.</summary>
+    private string? namedSolution;
+
     /// <summary>Opens what the command line named: a folder, files in it, a caret position.</summary>
     public void Start(LaunchOptions options)
     {
@@ -306,9 +309,19 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>Opens a folder, or a solution (.sln, .slnx) and its folder, as the workspace. The workspace already open is
+    /// only read again: its language server and open files are kept.</summary>
     public void OpenFolder(string path)
     {
-        string opening = PathNames.Canonical(path);
+        string named = PathNames.Canonical(path);
+        bool solutionNamed = File.Exists(named) && (named.EndsWith(".sln", StringComparison.OrdinalIgnoreCase) || named.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase));
+        string opening = solutionNamed ? Path.GetDirectoryName(named)! : named;
+        string? solution = solutionNamed ? named : (opening == folder ? namedSolution : null) ?? SolutionModel.Find(opening);
+        if (opening == folder && solution == Solution?.Path)
+        {
+            ReloadSolution();
+            return;
+        }
         if (folder is not null && folder != opening)
         {
             // Another folder's files are its own: this one's are kept with it and close, saved, as Rider's do.
@@ -321,8 +334,9 @@ public partial class MainWindow : Window
         }
         Autosave();
         folder = opening;
+        namedSolution = solutionNamed ? named : null;
         string name = Path.GetFileName(folder);
-        Solution = SolutionModel.Find(folder) is { } solutionPath ? SolutionModel.Load(solutionPath) : null;
+        Solution = solution is not null ? SolutionModel.Load(solution) : null;
         Explorer.Load(folder, Solution);
         _ = vcs.OpenAsync(folder);
         Explorer.Tree.Unloaded.Clear();
@@ -339,7 +353,12 @@ public partial class MainWindow : Window
             csharp.StateChanged += (_, _) => LanguageText.Text = LanguageLabel();
             csharp.Stopped += (_, message) => StatusText.Text = message;
             WatchProblems(csharp);
-            csharp.Start(folder);
+            csharp.Start(folder, Solution?.Path);
+            // Files open since before (the same folder with another solution) are this server's too.
+            foreach (OpenDocument open in Editors.Documents)
+            {
+                csharp.Attach(open);
+            }
         }
         ShowSolutionProblems();
         Editors.ShowFolderHint(folder);

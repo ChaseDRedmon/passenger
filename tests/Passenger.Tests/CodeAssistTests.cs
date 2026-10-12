@@ -312,6 +312,25 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
     }
 
     [AvaloniaFact]
+    public void Opening_the_open_folder_again_through_mcp_keeps_the_open_files_language_server()
+    {
+        MainWindow window = project.Open("Program.cs");
+        Passenger.App.Workspace.OpenDocument program = window.EditorArea.Active!;
+        Passenger.App.CSharp.CSharpService server = window.CSharpService!;
+        Passenger.App.Mcp.PassengerTools tools = new(window);
+
+        // Agents open the workspace first, often the one already open.
+        Task<Passenger.App.Mcp.Workspace> opened = tools.Open(Path.GetDirectoryName(project.PathOf("Program.cs"))!);
+        Ui.WaitFor(() => opened.IsCompleted, "the open", TimeSpan.FromSeconds(10));
+        Assert.Same(server, window.CSharpService);
+        Assert.NotNull(server.For(program));
+        Task<IReadOnlyList<Passenger.App.Mcp.Finding>> found = tools.Diagnostics("Program.cs");
+        Ui.WaitFor(() => found.IsCompleted, "the diagnostics of the file open before", TimeSpan.FromSeconds(15));
+        Assert.True(found.IsCompletedSuccessfully, found.Exception?.Message);
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Go_to_declaration_opens_the_other_file_at_the_method()
     {
         MainWindow window = project.Open("Program.cs");

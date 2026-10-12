@@ -33,7 +33,7 @@ public sealed partial class PassengerTools(MainWindow window)
         string full = Resolve(path);
         if (Directory.Exists(full) || full.EndsWith(".sln", StringComparison.OrdinalIgnoreCase) || full.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase))
         {
-            window.OpenFolder(Directory.Exists(full) ? full : Path.GetDirectoryName(full)!);
+            window.OpenFolder(full);
         }
         else if (File.Exists(full))
         {

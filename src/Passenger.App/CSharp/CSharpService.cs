@@ -21,6 +21,7 @@ public sealed class CSharpService : IAsyncDisposable
     private RoslynSession? session;
     private CancellationTokenSource? starting;
     private string? folder;
+    private string? solution;
     private bool disposed;
 
     /// <summary>The state changed (starting, loading projects, ready, failed); raised on the UI thread.</summary>
@@ -196,15 +197,17 @@ public sealed class CSharpService : IAsyncDisposable
         }
     }
 
-    public void Start(string folder)
+    /// <summary>Starts the server on a folder, with the solution named (else the one Roslyn finds there).</summary>
+    public void Start(string folder, string? solution = null)
     {
         this.folder = folder;
+        this.solution = solution;
         starting?.Cancel();
         CancellationTokenSource cancel = new();
         starting = cancel;
         SetState("Starting C#…");
         BackgroundWork.Begin();
-        _ = Run(folder, cancel.Token);
+        _ = Run(folder, solution, cancel.Token);
     }
 
     /// <summary>Gives an open document its C# features, now or once the server is ready.</summary>
@@ -248,18 +251,18 @@ public sealed class CSharpService : IAsyncDisposable
         }
     }
 
-    private async Task Run(string folder, CancellationToken cancel)
+    private async Task Run(string folder, string? solution, CancellationToken cancel)
     {
         try
         {
             string logs = Path.Combine(Path.GetTempPath(), "passenger", "logs", $"roslyn-{Environment.ProcessId}");
-            RoslynSession started = await RoslynSession.StartAsync(folder, logs, cancel, solutionWide ? FullSolution : null);
+            RoslynSession started = await RoslynSession.StartAsync(folder, logs, cancel, solutionWide ? FullSolution : null, solution);
             TaskCompletionSource loaded = new(TaskCreationOptions.RunContinuationsAsynchronously);
             started.Loaded += (_, _) => loaded.TrySetResult();
             started.Server.RefreshRequested += (_, _) => Dispatcher.UIThread.Post(RefreshAll);
             started.Server.Exited += (_, why) => Dispatcher.UIThread.Post(() => OnExited(started, why));
             session = started;
-            SetState(started.Solution is { } solution ? $"Loading {Path.GetFileName(solution)}…" : "Loading projects…");
+            SetState(started.Solution is { } opened ? $"Loading {Path.GetFileName(opened)}…" : "Loading projects…");
             foreach (CSharpDocument features in documents.Values)
             {
                 features.Connect(started);
@@ -313,7 +316,7 @@ public sealed class CSharpService : IAsyncDisposable
         }
         restarts.Add(now);
         Stopped?.Invoke(this, "The C# language server ended; starting it again");
-        Start(folder);
+        Start(folder, solution);
     }
 
     private void RefreshAll()

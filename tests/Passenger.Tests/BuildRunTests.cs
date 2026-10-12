@@ -41,6 +41,22 @@ public sealed class BuildRunTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void Opening_a_solution_by_name_opens_that_one_of_the_folders_several()
+    {
+        Write("Zebra.slnx", "<Solution>\n  <Project Path=\"src/Hello/Hello.csproj\" />\n</Solution>\n");
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(Path.Combine(folder, "Zebra.slnx"));
+        Ui.Settle();
+        Assert.Equal("Zebra", window.Solution?.Name);
+        Assert.Equal(Passenger.App.Workspace.PathNames.Canonical(Path.Combine(folder, "Zebra.slnx")), window.CSharpService?.Session?.Solution);
+        // Read again (a package added), it stays the one opened, not the one the folder's files would pick.
+        window.ReloadSolution();
+        Assert.Equal("Zebra", window.Solution?.Name);
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void A_project_whose_framework_the_repository_sets_shows_it_beside_its_name()
     {
         // As Passenger's own projects are: the framework is in Directory.Build.props, and the project names none.
