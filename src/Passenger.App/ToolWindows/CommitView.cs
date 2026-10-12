@@ -23,11 +23,29 @@ public sealed class CommitRow(FileChange change, bool chosen) : Observable
     }
 }
 
-/// <summary>A group of the Commit window's files: Changes, or Unversioned Files.</summary>
-public sealed class CommitGroup(string name, IReadOnlyList<CommitRow> rows)
+/// <summary>A group of the Commit window's files: Changes, or Unversioned Files, and whether every one of them goes in
+/// (true), none (false) or some (null).</summary>
+public sealed class CommitGroup(string name, IReadOnlyList<CommitRow> rows) : Observable
 {
+    private bool? isChosen = State(rows);
+
     public string Name { get; } = name;
     public IReadOnlyList<CommitRow> Rows { get; } = rows;
+
+    public bool? IsChosen
+    {
+        get => isChosen;
+        private set => Set(ref isChosen, value);
+    }
+
+    /// <summary>Works out <see cref="IsChosen"/> again, after a row's box changed.</summary>
+    internal void Update() => IsChosen = State(Rows);
+
+    private static bool? State(IReadOnlyList<CommitRow> rows)
+    {
+        int count = rows.Count(r => r.IsChosen);
+        return count == rows.Count ? true : count == 0 ? false : null;
+    }
 }
 
 /// <summary>Rider's Commit window: the changed files under Changes and the new ones under Unversioned Files, each
@@ -204,6 +222,7 @@ public sealed class CommitView : DockPanel
         Children.Add(bottom);
         Children.Add(new Panel { Children = { list, placeholder } });
         vcs.Changed += (_, _) => Fill();
+        vcs.BusyChanged += (_, _) => UpdateButtons();
         Fill();
     }
 
@@ -269,31 +288,44 @@ public sealed class CommitView : DockPanel
         return selected.Length > 0 ? [.. selected.Select(r => r.Change)] : Chosen;
     }
 
-    /// <summary>Lists the status again, keeping each file's box as it was.</summary>
+    /// <summary>Lists the status again in place: a file still changed as it was keeps its row, its box and whether it is
+    /// selected, so a refresh with nothing new (the window coming to the front, a save) leaves the list as it was, and
+    /// what Rollback acts on with it. A file changed another way (modified, now deleted) is selected again by path.</summary>
     private void Fill()
     {
+        HashSet<string> selected = [.. list.SelectedItems?.OfType<CommitRow>().Select(r => r.Change.Path) ?? []];
+        Dictionary<FileChange, CommitRow> kept = [];
         foreach (CommitRow row in rows.OfType<CommitRow>())
         {
             chosen[row.Change.Path] = row.IsChosen;
+            kept.TryAdd(row.Change, row);
         }
-        rows.Clear();
         IReadOnlyList<FileChange> changes = vcs.Changes;
-        CommitRow[] tracked = [.. changes.Where(c => c.Kind is not ChangeKind.Unversioned).OrderBy(c => c.Path, StringComparer.Ordinal).Select(c => Row(c, true))];
-        CommitRow[] added = [.. changes.Where(c => c.Kind is ChangeKind.Unversioned).OrderBy(c => c.Path, StringComparer.Ordinal).Select(c => Row(c, false))];
-        if (tracked.Length > 0)
+        List<object> wanted = [];
+        Group("Changes", [.. changes.Where(c => c.Kind is not ChangeKind.Unversioned).OrderBy(c => c.Path, StringComparer.Ordinal).Select(c => Row(c, true))]);
+        Group("Unversioned Files", [.. changes.Where(c => c.Kind is ChangeKind.Unversioned).OrderBy(c => c.Path, StringComparer.Ordinal).Select(c => Row(c, false))]);
+
+        // What went is taken out and what came put in at its place; rows kept are in the same order in both lists.
+        HashSet<object> keep = new(wanted, ReferenceEqualityComparer.Instance);
+        for (int i = rows.Count - 1; i >= 0; i--)
         {
-            rows.Add(new CommitGroup("Changes", tracked));
-            foreach (CommitRow row in tracked)
+            if (!keep.Contains(rows[i]))
             {
-                rows.Add(row);
+                rows.RemoveAt(i);
             }
         }
-        if (added.Length > 0)
+        for (int i = 0; i < wanted.Count; i++)
         {
-            rows.Add(new CommitGroup("Unversioned Files", added));
-            foreach (CommitRow row in added)
+            if (i == rows.Count || !ReferenceEquals(rows[i], wanted[i]))
             {
-                rows.Add(row);
+                rows.Insert(i, wanted[i]);
+            }
+        }
+        for (int i = 0; i < rows.Count; i++)
+        {
+            if (rows[i] is CommitRow row && selected.Contains(row.Change.Path) && !list.Selection.IsSelected(i))
+            {
+                list.Selection.Select(i);
             }
         }
         placeholder.Text = vcs.Repository is null ? "The folder is not in a Git repository" : "No changes";
@@ -302,35 +334,51 @@ public sealed class CommitView : DockPanel
 
         CommitRow Row(FileChange change, bool byDefault)
         {
+            if (kept.Remove(change, out CommitRow? same))
+            {
+                return same;
+            }
             CommitRow row = new(change, chosen.TryGetValue(change.Path, out bool was) ? was : byDefault);
-            row.PropertyChanged += (_, _) => UpdateButtons();
+            row.PropertyChanged += (_, _) =>
+            {
+                foreach (CommitGroup group in rows.OfType<CommitGroup>())
+                {
+                    group.Update();
+                }
+                UpdateButtons();
+            };
             return row;
+        }
+
+        void Group(string name, CommitRow[] members)
+        {
+            if (members.Length == 0)
+            {
+                return;
+            }
+            wanted.Add(rows.OfType<CommitGroup>().FirstOrDefault(g => g.Name == name && g.Rows.SequenceEqual(members)) ?? new CommitGroup(name, members));
+            wanted.AddRange(members);
         }
     }
 
     private void UpdateButtons()
     {
-        bool ready = vcs.Repository is not null && Message.Trim().Length > 0 && (Amend || rows.OfType<CommitRow>().Any(r => r.IsChosen));
+        // Off while a commit (or a stash, a rollback) runs, so a second press cannot start another on git's index lock.
+        bool ready = !vcs.IsBusy && vcs.Repository is not null && Message.Trim().Length > 0 && (Amend || rows.OfType<CommitRow>().Any(r => r.IsChosen));
         commit.IsEnabled = ready;
         commitAndPush.IsEnabled = ready;
     }
 
-    private Control GroupRow(CommitGroup group)
+    private static Control GroupRow(CommitGroup group)
     {
         CheckBox box = new() { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 2, 0) };
         bool setting = false;
-        void Refresh()
+        Follow(box, group, () =>
         {
             setting = true;
-            int count = group.Rows.Count(r => r.IsChosen);
-            box.IsChecked = count == group.Rows.Count ? true : count == 0 ? false : null;
+            box.IsChecked = group.IsChosen;
             setting = false;
-        }
-        Refresh();
-        foreach (CommitRow row in group.Rows)
-        {
-            row.PropertyChanged += (_, _) => Refresh();
-        }
+        });
         box.IsCheckedChanged += (_, _) =>
         {
             if (setting)
@@ -363,8 +411,48 @@ public sealed class CommitView : DockPanel
     {
         CheckBox box = new() { IsChecked = row.IsChosen, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(22, 0, 2, 0) };
         box.IsCheckedChanged += (_, _) => row.IsChosen = box.IsChecked == true;
-        row.PropertyChanged += (_, _) => box.IsChecked = row.IsChosen;
-        FileChange change = row.Change;
+        Follow(box, row, () => box.IsChecked = row.IsChosen);
+        StackPanel line = FileLine(row.Change, vcs.Repository);
+        line.Children.Insert(0, box);
+        return line;
+    }
+
+    /// <summary>The files as this window lists them, without their boxes, for Rollback's question to name.</summary>
+    internal static Control FileList(IReadOnlyList<FileChange> changes, Git? repository)
+    {
+        StackPanel lines = new() { Margin = new Thickness(8, 2) };
+        foreach (FileChange change in changes.OrderBy(c => c.Kind is ChangeKind.Unversioned).ThenBy(c => c.Path, StringComparer.Ordinal))
+        {
+            lines.Children.Add(FileLine(change, repository));
+        }
+        Border frame = new()
+        {
+            BorderThickness = new Thickness(1),
+            MaxHeight = (24 * 8) + 6,
+            Child = new ScrollViewer { Content = lines, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled },
+        };
+        frame.Bind(Border.BorderBrushProperty, frame.GetResourceObservable("Passenger.Divider"));
+        return frame;
+    }
+
+    /// <summary>Shows an item's state now and as it changes while the control is on screen, so a control the list's
+    /// scrolling let go of is not kept by a row, which lives through refreshes.</summary>
+    private static void Follow(Control control, Observable item, Action show)
+    {
+        void Changed(object? sender, System.ComponentModel.PropertyChangedEventArgs e) => show();
+        show();
+        control.AttachedToVisualTree += (_, _) =>
+        {
+            show();
+            item.PropertyChanged += Changed;
+        };
+        control.DetachedFromVisualTree += (_, _) => item.PropertyChanged -= Changed;
+    }
+
+    /// <summary>A changed file as the window shows it: its icon, its name in its change's colour (struck through when
+    /// deleted) and its folder from the repository's top.</summary>
+    private static StackPanel FileLine(FileChange change, Git? repository)
+    {
         PathIcon icon = new()
         {
             Data = Explorer.FileIcons.ForFile(change.Path),
@@ -379,14 +467,14 @@ public sealed class CommitView : DockPanel
         {
             name.TextDecorations = TextDecorations.Strikethrough;
         }
-        string where = vcs.Repository is { } repository ? Path.GetDirectoryName(repository.Relative(change.Path))?.Replace('\\', '/') ?? string.Empty : string.Empty;
+        string where = repository is not null ? Path.GetDirectoryName(repository.Relative(change.Path))?.Replace('\\', '/') ?? string.Empty : string.Empty;
         TextBlock folder = new() { Text = where, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0), FontSize = 12 };
         folder.Bind(TextBlock.ForegroundProperty, folder.GetResourceObservable("Passenger.TextMuted"));
         StackPanel line = new()
         {
             Orientation = Orientation.Horizontal,
             Height = 24,
-            Children = { box, icon, name, folder },
+            Children = { icon, name, folder },
         };
         ToolTip.SetTip(line, change.From is { } from ? $"{change.Kind}: {from} -> {change.Path}" : $"{change.Kind}: {change.Path}");
         return line;

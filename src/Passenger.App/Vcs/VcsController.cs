@@ -13,6 +13,8 @@ public sealed class VcsController
     /// <summary>How long typing pauses before a file's change bars are worked out again.</summary>
     private static readonly TimeSpan MarksDelay = TimeSpan.FromMilliseconds(120);
 
+    private const string Busy = "Git is still busy with the last change";
+
     private readonly Dictionary<OpenDocument, Tracked> documents = [];
     private readonly Dictionary<string, Task<string?>> heads = [];
     private Git? git;
@@ -42,6 +44,13 @@ public sealed class VcsController
 
     /// <summary>What happened, for the status bar: a commit made, a push refused and git's reason.</summary>
     public event EventHandler<string>? Message;
+
+    /// <summary>A commit, a rollback, a stash or a change of branch is running. Another is refused until it ends, since
+    /// git's index lock would fail it halfway (a double-click on Commit).</summary>
+    public bool IsBusy { get; private set; }
+
+    /// <summary>Raised when <see cref="IsBusy"/> changes, for the buttons that start one.</summary>
+    public event EventHandler? BusyChanged;
 
     /// <summary>Saves every open file, run before anything git does to the files (a commit, a checkout, a stash, a
     /// rollback, an update), as Rider saves first: what is committed is what the editor shows, and nothing unsaved is
@@ -170,24 +179,27 @@ public sealed class VcsController
             Message?.Invoke(this, "The commit message is empty");
             return false;
         }
-        SaveFirst?.Invoke();
-        string[] paths = [.. chosen.SelectMany(c => c.From is { } from ? new[] { c.Path, from } : [c.Path])];
-        GitResult commit = await repository.CommitAsync(paths, message, amend);
-        if (!commit.Succeeded)
+        return await OneAtATimeAsync(async () =>
         {
-            Message?.Invoke(this, commit.Message);
+            SaveFirst?.Invoke();
+            string[] paths = [.. chosen.SelectMany(c => c.From is { } from ? new[] { c.Path, from } : [c.Path])];
+            GitResult commit = await repository.CommitAsync(paths, message, amend);
+            if (!commit.Succeeded)
+            {
+                Message?.Invoke(this, commit.Message);
+                await RefreshAsync();
+                return false;
+            }
+            int count = chosen.Count;
+            string committed = count == 1 ? "1 file committed" : $"{count} files committed";
+            Message?.Invoke(this, $"{committed}: {FirstLine(message)}");
             await RefreshAsync();
-            return false;
-        }
-        int count = chosen.Count;
-        string committed = count == 1 ? "1 file committed" : $"{count} files committed";
-        Message?.Invoke(this, $"{committed}: {FirstLine(message)}");
-        await RefreshAsync();
-        if (push)
-        {
-            await PushAsync();
-        }
-        return true;
+            if (push)
+            {
+                await PushAsync();
+            }
+            return true;
+        }, false);
     }
 
     public async Task<bool> PushAsync()
@@ -293,12 +305,37 @@ public sealed class VcsController
         {
             return false;
         }
-        SaveFirst?.Invoke();
-        GitResult rolled = await repository.RollbackAsync(changes);
-        ReloadOpenFiles();
-        await RefreshAsync();
-        Message?.Invoke(this, rolled.Succeeded ? $"Rolled back {Files(changes.Count)}" : rolled.Message);
-        return rolled.Succeeded;
+        return await OneAtATimeAsync(async () =>
+        {
+            SaveFirst?.Invoke();
+            GitResult rolled = await repository.RollbackAsync(changes);
+            ReloadOpenFiles();
+            await RefreshAsync();
+            Message?.Invoke(this, rolled.Succeeded ? $"Rolled back {Files(changes.Count)}" : rolled.Message);
+            return rolled.Succeeded;
+        }, false);
+    }
+
+    /// <summary>Runs a change to the working tree unless another is still running, which it refuses with
+    /// <paramref name="refused"/>.</summary>
+    private async Task<T> OneAtATimeAsync<T>(Func<Task<T>> change, T refused)
+    {
+        if (IsBusy)
+        {
+            Message?.Invoke(this, Busy);
+            return refused;
+        }
+        IsBusy = true;
+        BusyChanged?.Invoke(this, EventArgs.Empty);
+        try
+        {
+            return await change();
+        }
+        finally
+        {
+            IsBusy = false;
+            BusyChanged?.Invoke(this, EventArgs.Empty);
+        }
     }
 
     /// <summary>The open files take their text from disk again where something else changed it and they have no
@@ -317,15 +354,18 @@ public sealed class VcsController
         {
             return new GitResult(1, string.Empty, "The folder is not in a Git repository");
         }
-        SaveFirst?.Invoke();
-        GitResult switched = await change(repository);
-        if (switched.Succeeded)
+        return await OneAtATimeAsync(async () =>
         {
-            ReloadOpenFiles();
-        }
-        await RefreshAsync();
-        Message?.Invoke(this, switched.Succeeded ? done : switched.Message);
-        return switched;
+            SaveFirst?.Invoke();
+            GitResult switched = await change(repository);
+            if (switched.Succeeded)
+            {
+                ReloadOpenFiles();
+            }
+            await RefreshAsync();
+            Message?.Invoke(this, switched.Succeeded ? done : switched.Message);
+            return switched;
+        }, new GitResult(1, string.Empty, Busy));
     }
 
     private async Task RefreshStatusAsync()

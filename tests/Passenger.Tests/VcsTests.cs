@@ -12,7 +12,8 @@ namespace Passenger.Tests;
 
 /// <summary>Git as Rider shows it, over a real working tree: an edit grows a change bar, the Commit window commits the
 /// chosen files and the bars go; Rollback Lines puts a change back; a branch made from the toolbar's menu is checked
-/// out, and switching back takes the open file's text from disk; Rollback restores a file and deletes a new one.</summary>
+/// out, and switching back takes the open file's text from disk; Rollback restores a file and deletes a new one, and
+/// acts on the file chosen before a refresh; Commit and Stash run one at a time.</summary>
 public sealed class VcsTests : IDisposable
 {
     private const string Original = "class Shop\n{\n    int count;\n\n    void Add() { count++; }\n}\n";
@@ -512,6 +513,98 @@ public sealed class VcsTests : IDisposable
         Assert.Equal(loads, window.GitLog.Loads);
         Assert.Equal(3, window.FileIndex.Files.Count);
         Assert.Empty(Directory.EnumerateFiles(folder, "*" + Passenger.App.Workspace.FileText.SaveSuffix, SearchOption.AllDirectories));
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_file_chosen_in_the_commit_window_stays_chosen_through_a_refresh_and_rollback_names_and_rolls_back_it_alone()
+    {
+        foreach (string name in new[] { "A.cs", "B.cs", "C.cs" })
+        {
+            File.WriteAllText(Path.Combine(folder, name), $"class {name[0]} {{ }}\n");
+        }
+        Git("add", "-A");
+        Git("commit", "-q", "-m", "Three");
+        foreach (string name in new[] { "A.cs", "B.cs", "C.cs", "Shop.cs" })
+        {
+            File.AppendAllText(Path.Combine(folder, name), "// changed\n");
+        }
+        MainWindow window = Open();
+        window.Perform(AppActions.ShowCommit);
+        CommitView commit = window.CommitView;
+        Ui.WaitFor(() => commit.Rows.OfType<CommitRow>().Count() == 4, "the four changed files listed");
+        Assert.Equal(4, commit.Chosen.Count);
+        Avalonia.Controls.ListBox changes = Find(commit, commit.Rows);
+        CommitRow a = commit.Rows.OfType<CommitRow>().First(r => r.Change.Name == "A.cs");
+        changes.SelectedItem = a;
+
+        // Read again with nothing new (the window coming to the front), then with a new file: A.cs stays chosen, its row kept.
+        Task again = window.Vcs.RefreshAsync();
+        Ui.WaitFor(() => again.IsCompleted, "the status read again");
+        File.WriteAllText(Path.Combine(folder, "Notes.txt"), "new\n");
+        Task newer = window.Vcs.RefreshAsync();
+        Ui.WaitFor(() => newer.IsCompleted, "the status read with the new file");
+        Assert.Contains(commit.Rows.OfType<CommitRow>(), r => r.Change.Name == "Notes.txt");
+        Assert.Same(a, commit.Rows.OfType<CommitRow>().First(r => r.Change.Name == "A.cs"));
+        Assert.Equal(["A.cs"], changes.SelectedItems!.OfType<CommitRow>().Select(r => r.Change.Name));
+
+        // Deleted meanwhile, A.cs is listed anew, and is still the file chosen.
+        File.Delete(Path.Combine(folder, "A.cs"));
+        Task deleted = window.Vcs.RefreshAsync();
+        Ui.WaitFor(() => deleted.IsCompleted, "the status read with A.cs deleted");
+        Assert.Equal([("A.cs", ChangeKind.Deleted)], changes.SelectedItems!.OfType<CommitRow>().Select(r => (r.Change.Name, r.Change.Kind)));
+
+        // Rollback asks naming the file it will roll back, and rolls back that one alone.
+        RollbackChosen(commit);
+        Ui.WaitFor(() => window.OwnedWindows.OfType<ConfirmDialog>().Any(), "the Rollback Changes dialog");
+        ConfirmDialog dialog = window.OwnedWindows.OfType<ConfirmDialog>().Single();
+        string[] shown = [.. Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(dialog).OfType<Avalonia.Controls.TextBlock>().Select(t => t.Text ?? string.Empty)];
+        Assert.Contains("A.cs", shown);
+        Assert.DoesNotContain(shown, t => t is "B.cs" or "C.cs" or "Shop.cs" or "Notes.txt");
+        Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(dialog).OfType<Avalonia.Controls.Button>().First(b => (string?)b.Content == "Rollback")
+            .RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+        Ui.WaitFor(() => window.Vcs.Changes.All(c => c.Name != "A.cs"), "A.cs rolled back");
+        Assert.Equal("class A { }\n", File.ReadAllText(Path.Combine(folder, "A.cs")));
+        Assert.Equal(["B.cs", "C.cs", "Notes.txt", "Shop.cs"], window.Vcs.Changes.Select(c => c.Name).Order(StringComparer.Ordinal));
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Commit_and_stash_are_off_while_one_runs_so_a_second_press_makes_no_second()
+    {
+        MainWindow window = Open();
+        File.AppendAllText(Path.Combine(folder, "Shop.cs"), "// more\n");
+        window.Perform(AppActions.ShowCommit);
+        CommitView commit = window.CommitView;
+        _ = window.Vcs.RefreshAsync();
+        Ui.WaitFor(() => commit.Chosen.Any(c => c.Name == "Shop.cs"), "Shop.cs listed");
+        commit.Message = "More";
+        Ui.Settle();
+        Avalonia.Controls.Button[] buttons = [.. Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(commit).OfType<Avalonia.Controls.Button>()
+            .Where(b => b.Content is "Commit" or "Commit and Push...")];
+        Assert.Equal(2, buttons.Length);
+        Assert.All(buttons, b => Assert.True(b.IsEnabled));
+
+        // Pressed twice, as a double-click does: the buttons are off from the first press until it is done.
+        Avalonia.Controls.Button press = buttons.First(b => b.Content is "Commit");
+        press.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+        Assert.All(buttons, b => Assert.False(b.IsEnabled, "A commit can be pressed again while one runs"));
+        press.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+        Ui.WaitFor(() => window.Vcs.Changes.Count == 0 && window.Status?.StartsWith("1 file committed", StringComparison.Ordinal) == true, $"the commit ({window.Status})");
+        Assert.Equal("2", Git("rev-list", "--count", "HEAD").Trim());
+
+        // Stash Changes asked twice while the first runs: one stash and no complaint, and Commit off meanwhile.
+        File.AppendAllText(Path.Combine(folder, "Shop.cs"), "// stashed\n");
+        commit.Message = "Not now";
+        NamePopup stash = window.ShowStash()!;
+        Ui.Settle();
+        stash.Text = "Later";
+        Task first = stash.SubmitAsync();
+        Task second = stash.SubmitAsync();
+        Assert.All(buttons, b => Assert.False(b.IsEnabled, "A commit can be pressed while a stash runs"));
+        Ui.WaitFor(() => first.IsCompleted && second.IsCompleted, "the stash");
+        Assert.Null(stash.Problem);
+        Assert.Single(Git("stash", "list").Split('\n', StringSplitOptions.RemoveEmptyEntries));
         window.Close();
     }
 

@@ -33,11 +33,15 @@ public partial class MainWindow
     /// and the button that does it. Tests answer for them.</summary>
     public Func<string, string, string, Task<bool>> Confirm
     {
-        get => confirm ?? ((title, text, yes) => new ConfirmDialog(title, text, yes).ShowDialog<bool>(this));
+        get => confirm ?? ((title, text, yes) => ConfirmAsync(title, text, yes, null));
         set => confirm = value;
     }
 
     private Func<string, string, string, Task<bool>>? confirm;
+
+    /// <summary>Asks as <see cref="Confirm"/> does, with what it applies to under the question (Rollback's files).</summary>
+    private Task<bool> ConfirmAsync(string title, string text, string yes, Control? detail) =>
+        confirm is { } answer ? answer(title, text, yes) : new ConfirmDialog(title, text, yes, detail: detail).ShowDialog<bool>(this);
 
     private void AddVcs()
     {
@@ -411,12 +415,13 @@ public partial class MainWindow
             StatusText.Text = "No files are chosen to roll back";
             return;
         }
-        string what = changes.Count == 1 ? changes[0].Name : $"{changes.Count} files";
+        // The files are listed, as Rider's Rollback Changes lists them, so what goes back is seen before it does.
+        string what = changes.Count == 1 ? changes[0].Name : $"these {changes.Count} files";
         bool added = changes.Any(c => c.Kind is ChangeKind.Unversioned);
         string text = added
             ? $"Roll back the changes to {what}? New files are deleted, and this cannot be undone."
             : $"Roll back the changes to {what}? This cannot be undone.";
-        if (await Confirm("Rollback Changes", text, "Rollback"))
+        if (await ConfirmAsync("Rollback Changes", text, "Rollback", ToolWindows.CommitView.FileList(changes, vcs.Repository)))
         {
             await vcs.RollbackAsync(changes);
         }

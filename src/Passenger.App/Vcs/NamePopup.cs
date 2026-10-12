@@ -14,6 +14,7 @@ public sealed class NamePopup : UserControl
     private readonly TextBox name;
     private readonly TextBlock problem;
     private readonly Func<string, Task<string?>> attempt;
+    private bool trying;
 
     /// <param name="attempt">Tries the name: null when it worked, else why not.</param>
     public NamePopup(string title, string initial, Func<string, Task<string?>> attempt)
@@ -52,11 +53,24 @@ public sealed class NamePopup : UserControl
     /// <summary>Why the last name tried did not work, or null.</summary>
     public string? Problem => problem.IsVisible ? problem.Text : null;
 
-    /// <summary>Tries the name typed, as Enter does.</summary>
+    /// <summary>Tries the name typed, as Enter does; Enter again while it is being tried (a stash running) does nothing.</summary>
     public async Task SubmitAsync()
     {
+        if (trying)
+        {
+            return;
+        }
         string typed = Text.Trim();
-        string? failed = typed.Length == 0 ? "A name is needed" : await attempt(typed);
+        trying = true;
+        string? failed;
+        try
+        {
+            failed = typed.Length == 0 ? "A name is needed" : await attempt(typed);
+        }
+        finally
+        {
+            trying = false;
+        }
         if (failed is null)
         {
             Done?.Invoke(this, true);
