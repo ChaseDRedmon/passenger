@@ -38,6 +38,11 @@ public static class AppActions
     public const string FindPrevious = "app.findPrevious";
     public const string FocusExplorer = "app.focusExplorer";
     public const string Build = "app.build";
+    public const string RebuildSolution = "app.build.rebuildSolution";
+    public const string CleanSolution = "app.build.cleanSolution";
+    public const string BuildSelected = "app.build.selected";
+    public const string RebuildSelected = "app.build.rebuildSelected";
+    public const string CleanSelected = "app.build.cleanSelected";
     public const string RunProgram = "app.run";
     public const string Debug = "app.debug";
     public const string Stop = "app.stop";

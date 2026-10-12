@@ -15,6 +15,11 @@ public static class ActionCatalog
     {
         [AppActions.Open] = "Open...",
         [AppActions.Build] = "Build Solution",
+        [AppActions.RebuildSolution] = "Rebuild Solution",
+        [AppActions.CleanSolution] = "Clean Solution",
+        [AppActions.BuildSelected] = "Build Selected Projects",
+        [AppActions.RebuildSelected] = "Rebuild Selected Projects",
+        [AppActions.CleanSelected] = "Clean Selected Projects",
         [AppActions.RunProgram] = "Run",
         [AppActions.Debug] = "Debug",
         [AppActions.Stop] = "Stop",
@@ -158,6 +163,7 @@ public static class ActionCatalog
         _ when id is AppActions.ShowLog => "Help",
         _ when id.StartsWith("app.window.", StringComparison.Ordinal) || id.StartsWith("app.show", StringComparison.Ordinal) || id is AppActions.FocusExplorer or AppActions.HideToolWindow => "Tool Windows",
         _ when id.StartsWith("app.goTo", StringComparison.Ordinal) || id is AppActions.FileStructure or AppActions.Back or AppActions.Forward => "Navigate",
+        _ when id.StartsWith("app.build.", StringComparison.Ordinal) => "Build",
         _ when id is AppActions.Build or AppActions.RunProgram or AppActions.Debug or AppActions.Stop or AppActions.Rerun or AppActions.Profile => "Run",
         _ => "IDE",
     };

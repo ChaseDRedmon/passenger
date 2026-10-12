@@ -57,14 +57,26 @@ public sealed record RunConfiguration(string Name, ProjectModel Project, LaunchP
     }
 }
 
+/// <summary>What a build does: Rider's Build, Rebuild (everything again, nothing taken from the last build) and Clean.</summary>
+public enum BuildKind
+{
+    Build,
+    Rebuild,
+    Clean,
+}
+
 /// <summary>Reads MSBuild's error and warning lines ("File.cs(12,5): error CS0103: ... [Project.csproj]")
 /// out of a build's output.</summary>
 public static partial class BuildOutput
 {
-    /// <summary>The arguments a build runs with: no terminal logger animation, no repeated summary,
+    /// <summary>The arguments a build, rebuild or clean runs with: no terminal logger animation, no repeated summary,
     /// lines not wrapped, so every problem is one line read once.</summary>
-    public static IReadOnlyList<string> Arguments(string target) =>
-        ["build", target, "-nologo", "-tl:off", "-clp:NoSummary;ForceNoAlign"];
+    public static IReadOnlyList<string> Arguments(string target, BuildKind kind = BuildKind.Build) => kind switch
+    {
+        BuildKind.Clean => ["clean", target, "-nologo", "-tl:off", "-clp:NoSummary;ForceNoAlign"],
+        BuildKind.Rebuild => ["build", target, "--no-incremental", "-nologo", "-tl:off", "-clp:NoSummary;ForceNoAlign"],
+        _ => ["build", target, "-nologo", "-tl:off", "-clp:NoSummary;ForceNoAlign"],
+    };
 
     public static Problem? Parse(string line)
     {

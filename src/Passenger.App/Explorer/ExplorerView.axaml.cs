@@ -13,6 +13,9 @@ public enum ExplorerAction
     Delete,
     CopyPath,
     Reveal,
+    Build,
+    Rebuild,
+    Clean,
 }
 
 public partial class ExplorerView : UserControl
@@ -40,6 +43,19 @@ public partial class ExplorerView : UserControl
     /// <summary>The row chosen, if any.</summary>
     public ExplorerNode? Selected => Rows.SelectedItem as ExplorerNode;
 
+    /// <summary>Every row chosen: several with Shift or Cmd (Ctrl), as Rider's Solution view allows.</summary>
+    public IReadOnlyList<ExplorerNode> SelectedNodes => [.. Rows.SelectedItems?.OfType<ExplorerNode>() ?? []];
+
+    /// <summary>Chooses rows, as clicks with Cmd (Ctrl) held would.</summary>
+    public void Choose(params ExplorerNode[] nodes)
+    {
+        Rows.SelectedItems?.Clear();
+        foreach (ExplorerNode node in nodes)
+        {
+            Rows.SelectedItems?.Add(node);
+        }
+    }
+
     /// <summary>Reads the folder again, keeping the folders that were open open and the chosen row chosen.</summary>
     public void Refresh()
     {
@@ -60,8 +76,8 @@ public partial class ExplorerView : UserControl
         }
     }
 
-    /// <summary>Rider's menu for a row: New (a file, a folder, a class) where things can go, Rename and Delete for what
-    /// is on disk, and its path.</summary>
+    /// <summary>Rider's menu for a row: Build, Rebuild and Clean for the solution or the projects chosen, New (a file, a
+    /// folder, a class) where things can go, Rename and Delete for what is on disk, and its path.</summary>
     private ContextMenu? Menu(ExplorerNode node)
     {
         bool onDisk = node.Kind is NodeKind.File or NodeKind.Folder or NodeKind.Project;
@@ -76,6 +92,14 @@ public partial class ExplorerView : UserControl
             MenuItem item = new() { Header = keys is null ? header : $"{header}    {keys}" };
             item.Click += (_, _) => ActionRequested?.Invoke(this, (action, node));
             return item;
+        }
+        if (node.Kind is NodeKind.Solution or NodeKind.Project)
+        {
+            string what = node.Kind == NodeKind.Solution ? "Solution" : "Selected Projects";
+            menu.Items.Add(Item($"Build {what}", ExplorerAction.Build));
+            menu.Items.Add(Item($"Rebuild {what}", ExplorerAction.Rebuild));
+            menu.Items.Add(Item($"Clean {what}", ExplorerAction.Clean));
+            menu.Items.Add(new Separator());
         }
         if (holds)
         {

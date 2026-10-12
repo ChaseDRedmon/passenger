@@ -449,6 +449,21 @@ public partial class MainWindow : Window
             case AppActions.Build:
                 BuildSolution();
                 break;
+            case AppActions.RebuildSolution:
+                Build(BuildKind.Rebuild);
+                break;
+            case AppActions.CleanSolution:
+                Build(BuildKind.Clean);
+                break;
+            case AppActions.BuildSelected:
+                BuildSelected(BuildKind.Build);
+                break;
+            case AppActions.RebuildSelected:
+                BuildSelected(BuildKind.Rebuild);
+                break;
+            case AppActions.CleanSelected:
+                BuildSelected(BuildKind.Clean);
+                break;
             case AppActions.RunProgram:
                 RunSelected();
                 break;
@@ -740,22 +755,70 @@ public partial class MainWindow : Window
     /// <summary>Builds the solution (or the folder's project) with the .NET command line, its output
     /// in the Build window and what it finds in Problems; <paramref name="then"/> hears whether it
     /// succeeded.</summary>
-    public void BuildSolution(Action<bool>? then = null)
+    public void BuildSolution(Action<bool>? then = null) => Build(BuildKind.Build, null, then);
+
+    /// <summary>Builds, rebuilds or cleans the solution, or the projects given one after another (stopping at the first
+    /// that fails), as Rider's Build menu and the Solution view's do: the output in the Build window, the problems of all
+    /// of them in Problems.</summary>
+    public void Build(BuildKind kind, IReadOnlyList<string>? projects = null, Action<bool>? then = null)
     {
         if (folder is null || builder.IsRunning)
         {
             return;
         }
         afterBuild = then;
-        string target = Solution?.Path ?? Directory.EnumerateFiles(folder, "*.csproj").FirstOrDefault() ?? folder;
+        buildKind = kind;
+        string solution = Solution?.Path ?? Directory.EnumerateFiles(folder, "*.csproj").FirstOrDefault() ?? folder;
+        buildQueue.Clear();
+        foreach (string target in projects is { Count: > 0 } ? projects : [solution])
+        {
+            buildQueue.Enqueue(target);
+        }
         Editors.SaveAll();
         problems.Clear();
         Bottom.Build.Document.Clear();
         Bottom.Build.SetRunning(true);
         ShowToolWindow("build");
-        StatusText.Text = $"Building {Path.GetFileName(target)}…";
         BackgroundWork.Begin();
-        builder.Start(Lsp.Dotnet.Host(), BuildOutput.Arguments(target), folder);
+        BuildNext();
+    }
+
+    /// <summary>Whether a build, rebuild or clean is under way, with more of its projects to come.</summary>
+    public bool IsBuilding => builder.IsRunning || buildQueue.Count > 0;
+
+    private readonly Queue<string> buildQueue = new();
+    private BuildKind buildKind;
+
+    private void BuildNext()
+    {
+        string target = buildQueue.Dequeue();
+        string verb = buildKind switch { BuildKind.Rebuild => "Rebuilding", BuildKind.Clean => "Cleaning", _ => "Building" };
+        StatusText.Text = $"{verb} {Path.GetFileName(target)}…";
+        builder.Start(Lsp.Dotnet.Host(), BuildOutput.Arguments(target, buildKind), folder!);
+    }
+
+    /// <summary>The projects Build Selected Projects means: those chosen in the Explorer, else the active file's.</summary>
+    public IReadOnlyList<string> SelectedProjects()
+    {
+        List<string> chosen = [.. Explorer.SelectedNodes.Where(n => n.Kind == Passenger.App.Explorer.NodeKind.Project && n.Path is not null).Select(n => n.Path!)];
+        if (chosen.Count == 0 && Editors.Active is { } file
+            && Projects.Where(p => file.Path.StartsWith(p.Folder + Path.DirectorySeparatorChar, StringComparison.Ordinal)).MaxBy(p => p.Folder.Length) is { } owner)
+        {
+            chosen.Add(owner.Path);
+        }
+        return chosen;
+    }
+
+    private void BuildSelected(BuildKind kind)
+    {
+        if (SelectedProjects() is { Count: > 0 } chosen)
+        {
+            Build(kind, chosen);
+        }
+        else
+        {
+            StatusText.Text = "No project is chosen in the Explorer or open in the editor";
+        }
     }
 
     /// <summary>Runs the chosen configuration with <c>dotnet run</c>, its output in the Run window, with these
@@ -814,6 +877,13 @@ public partial class MainWindow : Window
 
     private void OnBuilt(int code)
     {
+        if (code == 0 && buildQueue.Count > 0)
+        {
+            Bottom.Build.Document.Append("\n");
+            BuildNext();
+            return;
+        }
+        buildQueue.Clear();
         BackgroundWork.End();
         Action<bool>? then = afterBuild;
         afterBuild = null;
@@ -825,9 +895,10 @@ public partial class MainWindow : Window
         {
             problemsWindow.Title = problems.Count == 0 ? "Problems" : $"Problems {problems.Count}";
         }
+        string noun = buildKind switch { BuildKind.Rebuild => "Rebuild", BuildKind.Clean => "Clean", _ => "Build" };
         StatusText.Text = code == 0
-            ? $"Build succeeded{(warnings > 0 ? $" with {warnings} warning{(warnings == 1 ? "" : "s")}" : "")}"
-            : $"Build failed: {errors} error{(errors == 1 ? "" : "s")}, {warnings} warning{(warnings == 1 ? "" : "s")}";
+            ? $"{noun} succeeded{(warnings > 0 ? $" with {warnings} warning{(warnings == 1 ? "" : "s")}" : "")}"
+            : $"{noun} failed: {errors} error{(errors == 1 ? "" : "s")}, {warnings} warning{(warnings == 1 ? "" : "s")}";
         if (code != 0 && errors > 0)
         {
             ShowToolWindow("problems");

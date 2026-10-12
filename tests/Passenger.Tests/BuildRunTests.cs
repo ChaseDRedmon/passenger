@@ -121,6 +121,46 @@ public sealed class BuildRunTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void The_projects_chosen_in_the_explorer_build_rebuild_and_clean_on_their_own()
+    {
+        Write("Sample.slnx", "<Solution>\n  <Folder Name=\"/src/\">\n    <Project Path=\"src/Hello/Hello.csproj\" />\n    <Project Path=\"src/Tools/Tools.csproj\" />\n  </Folder>\n</Solution>\n");
+        Write("src/Tools/Tools.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+        Write("src/Tools/Tool.cs", "public static class Tool\n{\n    public static int Count => \"none\";\n}\n");
+        string hello = Path.Combine(folder, "src", "Hello", "bin", "Debug", "net10.0", "Hello.dll");
+        string tools = Path.Combine(folder, "src", "Tools", "bin", "Debug", "net10.0", "Tools.dll");
+        using (Process restore = Process.Start(new ProcessStartInfo("dotnet", ["restore", Path.Combine(folder, "Sample.slnx")]) { RedirectStandardOutput = true, RedirectStandardError = true })!)
+        {
+            restore.WaitForExit();
+        }
+        MainWindow window = Open();
+        ExplorerTree tree = window.ExplorerView.Tree;
+        tree.Expand(Assert.Single(tree.Rows, r => r.Kind == NodeKind.SolutionFolder && r.Name == "src"));
+        window.ExplorerView.Choose(Assert.Single(tree.Rows, r => r.Kind == NodeKind.Project && r.Name == "Hello"));
+
+        // Hello alone builds, though Tools has an error.
+        window.Perform(AppActions.BuildSelected);
+        Ui.WaitFor(() => !window.IsBuilding, "the build", TimeSpan.FromMinutes(2));
+        Assert.Equal("Build succeeded", window.Status);
+        Assert.True(File.Exists(hello), "Build Selected Projects did not build the chosen project");
+        Assert.False(File.Exists(tools), "Build Selected Projects built a project that was not chosen");
+
+        // Clean takes its output away.
+        window.Perform(AppActions.CleanSelected);
+        Ui.WaitFor(() => !window.IsBuilding, "the clean", TimeSpan.FromMinutes(2));
+        Assert.Equal("Clean succeeded", window.Status);
+        Assert.False(File.Exists(hello), "Clean Selected Projects left the project's output");
+
+        // Both chosen, Tools' error stops the rebuild and is in Problems as the solution's would be.
+        window.ExplorerView.Choose([.. tree.Rows.Where(r => r.Kind == NodeKind.Project)]);
+        window.Perform(AppActions.RebuildSelected);
+        Ui.WaitFor(() => !window.IsBuilding, "the rebuild", TimeSpan.FromMinutes(2));
+        Assert.StartsWith("Rebuild failed: 1 error", window.Status, StringComparison.Ordinal);
+        Problem problem = Assert.Single(window.BottomPanel.Problems.Problems, p => p.Code == "CS0029");
+        Assert.EndsWith("Tool.cs", problem.Path, StringComparison.Ordinal);
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Running_the_project_shows_its_output_in_the_run_window()
     {
         MainWindow window = Open();

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Avalonia.Input.Platform;
 using Passenger.App.Explorer;
+using Passenger.App.Run;
 using Passenger.App.Workspace;
 using Passenger.Text;
 
@@ -46,6 +47,11 @@ public partial class MainWindow
                 break;
             case ExplorerAction.Reveal when path is not null:
                 Reveal(path);
+                break;
+            case ExplorerAction.Build or ExplorerAction.Rebuild or ExplorerAction.Clean:
+                BuildKind kind = action switch { ExplorerAction.Rebuild => BuildKind.Rebuild, ExplorerAction.Clean => BuildKind.Clean, _ => BuildKind.Build };
+                // A project's menu builds every project chosen with it; the solution's, the solution.
+                Build(kind, node.Kind == NodeKind.Project ? SelectedProjects() : null);
                 break;
         }
     }
