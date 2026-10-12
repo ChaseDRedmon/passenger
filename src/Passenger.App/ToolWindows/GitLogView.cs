@@ -29,6 +29,7 @@ public sealed class GitLogView : DockPanel
     private IReadOnlyList<GraphRow> all = [];
     private bool stale = true;
     private int loads;
+    private int showing;
 
     public GitLogView(VcsController vcs)
     {
@@ -184,20 +185,24 @@ public sealed class GitLogView : DockPanel
         return -1;
     }
 
+    /// <summary>Shows the chosen commit's files and message; when the choice moves (or the log is read again) while
+    /// they are read, only the newest reading lands.</summary>
     private async Task ShowCommitAsync()
     {
-        files.Clear();
+        int reading = ++showing;
         if (Selected is not { } commit || vcs.Repository is not { } repository)
         {
+            files.Clear();
             details.Text = string.Empty;
             return;
         }
         IReadOnlyList<FileChange> changed = await repository.CommitFilesAsync(commit.Hash);
         string message = await repository.MessageAsync(commit.Hash);
-        if (Selected?.Hash != commit.Hash)
+        if (reading != showing)
         {
             return;
         }
+        files.Clear();
         foreach (FileChange change in changed)
         {
             files.Add(change);
