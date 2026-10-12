@@ -19,6 +19,7 @@
     <Project Path="tests/Debuggees/AsyncEntryConsoleApp/AsyncEntryConsoleApp.csproj" />
     <Project Path="tests/Debuggees/AsyncTopLevelStatementsConsoleApp/AsyncTopLevelStatementsConsoleApp.csproj" />
     <Project Path="tests/Debuggees/DebuggableConsoleApp/DebuggableConsoleApp.csproj" />
+    <Project Path="tests/Debuggees/LoopingConsoleApp/LoopingConsoleApp.csproj" />
     <Project Path="tests/Debuggees/PassengerCases/PassengerCases.csproj" />
     <Project Path="tests/Debuggees/ReadsInputConsoleApp/ReadsInputConsoleApp.csproj" />
     <Project Path="tests/Debuggees/TopLevelStatementsConsoleApp/TopLevelStatementsConsoleApp.csproj" />

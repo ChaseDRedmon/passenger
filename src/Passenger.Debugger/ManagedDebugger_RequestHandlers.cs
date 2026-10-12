@@ -276,6 +276,7 @@ public partial class ManagedDebugger
     private void ContinueWithVariableClearAllowSuperfluousContinue()
     {
         ArgumentNullException.ThrowIfNull(_process);
+        _pauseRequested = false;
         _variableManager.ClearAndDisposeHandleValues();
         _frameReferenceManager.Clear();
 
@@ -291,6 +292,7 @@ public partial class ManagedDebugger
     private void ContinueWithVariableClear()
     {
         ArgumentNullException.ThrowIfNull(_process);
+        _pauseRequested = false;
         _variableManager.ClearAndDisposeHandleValues();
         _frameReferenceManager.Clear();
 
@@ -306,11 +308,82 @@ public partial class ManagedDebugger
         ArgumentNullException.ThrowIfNull(_process);
         if (_process.IsRunning is false)
         {
-            throw new InvalidOperationException("The process is not running, so it cannot be paused - it has either already stopped or has not finished starting");
+            // Held for one of the runtime's own events (a module loading, a thread starting): the pause is taken where
+            // the engine would let it go on, in Continue.
+            _pauseRequested = true;
+            return;
         }
 
         _process.Stop(0);
         _asyncStepper?.Disable();
+        if (_stepper is not null)
+        {
+            _stepper.Deactivate();
+            _stepper = null;
+        }
+        // ICorDebug's Stop is synchronous and raises no callback of its own, so the stop is reported here.
+        if (PausedThread() is { } thread)
+        {
+            OnStopped?.Invoke(thread, "pause");
+            return;
+        }
+        // No thread runs managed code yet (the runtime is still starting): the pause is taken at its next event.
+        _pauseRequested = true;
+        _process.Continue(false);
+    }
+
+    /// <summary>A pause asked for while the process was held for the runtime's own event, taken instead of letting it go
+    /// on once a thread runs managed code; true when it was.</summary>
+    private bool TakePendingPause()
+    {
+        if (!_pauseRequested || PausedThread() is not { } thread)
+        {
+            return false;
+        }
+        _pauseRequested = false;
+        OnStopped?.Invoke(thread, "pause");
+        return true;
+    }
+
+    /// <summary>The thread a pause shows: the main thread, else the first running managed code; none before any does.</summary>
+    private int? PausedThread()
+    {
+        if (_mainThreadId is { } main && _threads.TryGetValue(main, out ThreadInfo? mainThread) && HasManagedFrames(mainThread.Thread))
+        {
+            return main;
+        }
+        foreach ((int id, ThreadInfo info) in _threads)
+        {
+            if (HasManagedFrames(info.Thread))
+            {
+                return id;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>A thread paused outside managed code (in a sleep, a wait, a read) has no line to step from: any step runs
+    /// it out to managed code first, where the step completes as one from the caller would.</summary>
+    private bool StepOutToManagedCode(ICorDebugThread thread)
+    {
+        if (thread.ActiveFrame is ICorDebugILFrame)
+        {
+            return false;
+        }
+        if (_stepper is not null)
+        {
+            throw new InvalidOperationException("A step operation is already in progress");
+        }
+        ICorDebugStepper stepper = thread.CreateStepper();
+        stepper.SetUnmappedStopMask(CorDebugUnmappedStop.STOP_NONE);
+        if (_justMyCode)
+        {
+            stepper.SetJMC(true);
+        }
+        stepper.StepOut();
+        _stepper = stepper;
+        ContinueWithVariableClear();
+        return true;
     }
 
     /// <summary>
@@ -322,6 +395,10 @@ public partial class ManagedDebugger
         if (_threads.TryGetValue(threadId, out ThreadInfo? threadInfo))
         {
             ICorDebugThread thread = threadInfo.Thread;
+            if (StepOutToManagedCode(thread))
+            {
+                return;
+            }
             ICorDebugFrame frame = thread.ActiveFrame;
             if (frame is not ICorDebugILFrame ilFrame)
             {
@@ -361,6 +438,10 @@ public partial class ManagedDebugger
         if (_threads.TryGetValue(threadId, out ThreadInfo? threadInfo))
         {
             ICorDebugThread thread = threadInfo.Thread;
+            if (StepOutToManagedCode(thread))
+            {
+                return;
+            }
             ICorDebugFrame? frame = thread.ActiveFrame;
             if (frame is not null)
             {
@@ -393,6 +474,10 @@ public partial class ManagedDebugger
         if (_threads.TryGetValue(threadId, out ThreadInfo? threadInfo))
         {
             ICorDebugThread thread = threadInfo.Thread;
+            if (StepOutToManagedCode(thread))
+            {
+                return;
+            }
             ICorDebugFrame? frame = thread.ActiveFrame;
             if (frame is not null)
             {

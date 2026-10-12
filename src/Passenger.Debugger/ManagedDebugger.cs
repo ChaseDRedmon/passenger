@@ -211,7 +211,12 @@ public partial class ManagedDebugger
                 case ExceptionCorDebugManagedCallbackEventArgs a: HandleException(sender, a); break;
                 case Exception2CorDebugManagedCallbackEventArgs a: HandleException2(sender, a); break;
                 case EvalCompleteCorDebugManagedCallbackEventArgs or EvalExceptionCorDebugManagedCallbackEventArgs: break; // don't continue on these, as they are being used for expression evaluation
-                default: _process?.Continue(false); break;
+                default:
+                    if (_process is not null)
+                    {
+                        Continue();
+                    }
+                    break;
             }
         }
         catch (Exception ex)
@@ -284,9 +289,14 @@ public partial class ManagedDebugger
         }
     }
 
+    /// <summary>Lets the process go on after one of the runtime's own events, unless a pause waits to be taken there.</summary>
     private void Continue()
     {
         ArgumentNullException.ThrowIfNull(_process);
+        if (TakePendingPause())
+        {
+            return;
+        }
         _process.Continue(false);
     }
 
@@ -305,6 +315,9 @@ public partial class ManagedDebugger
     }
 
     private ICorDebugStepper? _stepper;
+
+    /// <summary>A pause that came while the process was held for an event of its own, taken at the next Continue.</summary>
+    private bool _pauseRequested;
 
     /// <summary>
     /// Setup a stepper without continuing execution

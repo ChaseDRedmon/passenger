@@ -318,6 +318,28 @@ public sealed class DebuggerTests : IDisposable
     private static string? Value(MainWindow window, string name) =>
         window.BottomPanel.Debug.Tree.Rows.FirstOrDefault(r => r.Depth == 0 && r.Name == name)?.Value;
 
+    [AvaloniaFact]
+    public void Pause_stops_a_running_program_and_shows_where_it_is_in_its_loop()
+    {
+        Write("Program.cs", "long turns = 0;\nConsole.WriteLine(\"looping\");\nwhile (true)\n{\n    turns++;\n}\n");
+        MainWindow window = Open();
+        try
+        {
+            Ui.Run(window, AppActions.Debug);
+            Ui.WaitFor(() => window.BottomPanel.Debug.Console.Document.Snapshot.ToString().Contains("looping", StringComparison.Ordinal), "the program to be in its loop");
+            window.Perform(AppActions.Pause);
+            Ui.WaitFor(() => window.Debugger.Session?.State == DebugState.Paused && window.BottomPanel.Debug.Frames.Count > 0, "the pause to be shown");
+            Assert.InRange(window.BottomPanel.Debug.Frames[0].Line, 3, 6);
+            Assert.Contains(window.EditorArea.CodeEditor.LineMarks, m => m.Kind == LineMarkKind.ExecutionPoint && m.Line is >= 2 and <= 5);
+        }
+        finally
+        {
+            window.Perform(AppActions.Stop);
+            Ui.WaitFor(() => !window.Debugger.IsDebugging, "the program to stop");
+            window.Close();
+        }
+    }
+
     private MainWindow Open()
     {
         MainWindow window = new() { Width = 1200, Height = 800 };
