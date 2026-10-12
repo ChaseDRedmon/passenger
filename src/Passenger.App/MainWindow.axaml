@@ -139,6 +139,8 @@
                 BorderBrush="{DynamicResource Passenger.Divider}" BorderThickness="0,1,0,0">
             <DockPanel Margin="12,0">
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="18" VerticalAlignment="Center">
+                    <TextBlock Name="AgentText" Classes="status" IsVisible="False"
+                               ToolTip.Tip="An agent is using this window through Passenger's MCP server" />
                     <TextBlock Name="CaretText" Classes="status" />
                     <TextBlock Name="LineEndingText" Classes="status" />
                     <TextBlock Name="EncodingText" Classes="status" />

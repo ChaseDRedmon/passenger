@@ -29,6 +29,13 @@ internal static class Program
         }
 
         Options = options;
+        switch (options.Mcp)
+        {
+            case McpMode.Attach:
+                return Mcp.McpHost.Attach(options.AttachTo);
+            case McpMode.Stdio:
+                return Mcp.McpHost.RunStdio(options);
+        }
         if (options.Screenshot is { } screenshot)
         {
             return Screenshot.Run(options, screenshot);

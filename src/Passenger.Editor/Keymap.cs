@@ -153,6 +153,9 @@ public sealed class Keymap
         return this;
     }
 
+    /// <summary>Every action something is bound to.</summary>
+    public IEnumerable<string> Actions => byAction.Keys;
+
     public IReadOnlyList<Shortcut> ShortcutsFor(string action) =>
         byAction.TryGetValue(action, out List<Shortcut>? list) ? list : [];
 

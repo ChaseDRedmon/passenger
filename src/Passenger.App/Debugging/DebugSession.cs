@@ -183,6 +183,10 @@ public sealed class DebugSession
     public async Task<IReadOnlyList<DapVariable>> VariablesAsync(int reference) =>
         (await connection.RequestAsync<VariablesResponse>("variables", new VariablesArguments(reference))).Variables;
 
+    /// <summary>The exception a thread stopped on: its type, message and inner exceptions.</summary>
+    public Task<ExceptionInfoResponse> ExceptionInfoAsync(int threadId) =>
+        connection.RequestAsync<ExceptionInfoResponse>("exceptionInfo", new ThreadArguments(threadId));
+
     /// <summary>An expression's value in a frame; context is watch, hover or repl.</summary>
     public Task<EvaluateResponse> EvaluateAsync(string expression, int? frameId, string context) =>
         connection.RequestAsync<EvaluateResponse>("evaluate", new EvaluateArguments(expression, frameId, context));

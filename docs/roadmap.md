@@ -76,6 +76,14 @@ Upstream SharpDbg's open issues that reach Passenger's users are listed in `docs
 
 **Done when:** Passenger debugs itself.
 
+## Alongside: agents (built)
+
+Passenger as an MCP server (`architecture.md`, Passenger for agents): the workspace and the editor's text,
+diagnostics, Go to Symbol, a file's structure, definitions, usages, implementations, rename, fixes and reformatting,
+build and run, and the debugger (breakpoints with conditions, launch, step, run to a line, pause, evaluate, members,
+the program's console both ways), with screenshots and the IDE's actions. Headless with `--mcp`, or attached to a
+window with `--mcp-attach`. Each milestone after this adds its tools beside its UI (tests, the profiler, git).
+
 ## M5: tests
 
 Discovery and runs (the server's `runTests` first), a test tree with results, debugging a test, rerunning failures.

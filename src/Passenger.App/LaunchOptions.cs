@@ -5,11 +5,21 @@ using Passenger.Text;
 
 namespace Passenger.App;
 
-/// <summary>The command line: <c>passenger [PATH] [--file F]... [--caret L:C] [--theme T]</c>, and a
-/// screenshot with the steps to take before it. A flag it does not know, or a value it cannot read,
-/// is fatal rather than ignored, so a typo never runs something other than what was asked.</summary>
+/// <summary>The command line: <c>passenger [PATH] [--file F]... [--caret L:C] [--theme T]</c>, a
+/// screenshot with the steps to take before it, or the Model Context Protocol server: <c>--mcp</c> (an IDE
+/// with no window, on standard input and output), <c>--mcp-attach [PID]</c> (a running IDE's), and
+/// <c>--no-mcp</c> (a window that does not listen for agents). A flag it does not know, or a value it
+/// cannot read, is fatal rather than ignored, so a typo never runs something other than what was asked.</summary>
 public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, TextPosition? Caret, ThemeChoice? Theme, ScreenshotOptions? Screenshot)
 {
+    public McpMode Mcp { get; init; }
+
+    /// <summary>The IDE <c>--mcp-attach</c> names, or null for the newest that answers.</summary>
+    public int? AttachTo { get; init; }
+
+    /// <summary>Whether the window listens for agents on its socket (<c>--no-mcp</c> says not).</summary>
+    public bool ListenForAgents { get; init; } = true;
+
     public static LaunchOptions Empty { get; } = new(null, [], null, null, null);
 
     public static LaunchOptions Parse(IReadOnlyList<string> args)
@@ -23,11 +33,28 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
         double scale = 2;
         Rect? crop = null;
         List<ScriptStep> steps = [];
+        McpMode mcp = McpMode.None;
+        int? attachTo = null;
+        bool listen = true;
         for (int i = 0; i < args.Count; i++)
         {
             string flag = args[i];
             switch (flag)
             {
+                case "--mcp":
+                    mcp = McpMode.Stdio;
+                    break;
+                case "--mcp-attach":
+                    mcp = McpMode.Attach;
+                    if (i + 1 < args.Count && int.TryParse(args[i + 1], NumberStyles.None, CultureInfo.InvariantCulture, out int pid))
+                    {
+                        attachTo = pid;
+                        i++;
+                    }
+                    break;
+                case "--no-mcp":
+                    listen = false;
+                    break;
                 case "--file":
                     files.Add(Value(args, ref i, flag));
                     break;
@@ -91,8 +118,12 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
         {
             throw new FormatException("--type, --key, --click, --hover, --wait and --crop are steps of a --screenshot");
         }
+        if (mcp != McpMode.None && shot is not null)
+        {
+            throw new FormatException("--mcp and --mcp-attach do not take a --screenshot");
+        }
         ScreenshotOptions? screenshot = shot is null ? null : new ScreenshotOptions(shot, size, scale, steps, crop);
-        return new LaunchOptions(folder, files, caret, theme, screenshot);
+        return new LaunchOptions(folder, files, caret, theme, screenshot) { Mcp = mcp, AttachTo = attachTo, ListenForAgents = listen };
     }
 
     private static string Value(IReadOnlyList<string> args, ref int i, string flag)
@@ -176,6 +207,18 @@ public abstract record ScriptStep
 
     /// <summary>Time for what the screenshot does not wait on by itself: a program running.</summary>
     public sealed record Wait(TimeSpan For) : ScriptStep;
+}
+
+/// <summary>How the command line asks for the Model Context Protocol server.</summary>
+public enum McpMode
+{
+    None,
+
+    /// <summary>An IDE with no window, its tools on standard input and output.</summary>
+    Stdio,
+
+    /// <summary>Standard input and output joined to a running IDE's socket.</summary>
+    Attach,
 }
 
 /// <summary>A theme forced from the command line over the app's own (<c>App.axaml</c>).</summary>

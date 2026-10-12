@@ -14,7 +14,14 @@ public partial class App : Application
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             MainWindow window = new();
-            window.Opened += (_, _) => window.Start(Program.Options);
+            window.Opened += (_, _) =>
+            {
+                window.Start(Program.Options);
+                if (Program.Options.ListenForAgents)
+                {
+                    Mcp.McpHost.Listen(window);
+                }
+            };
             desktop.MainWindow = window;
         }
         base.OnFrameworkInitializationCompleted();

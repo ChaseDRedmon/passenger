@@ -70,6 +70,11 @@ public sealed class RoslynSession : IAsyncDisposable
 
     internal void Forget(LspDocument document) => documents.Remove(document.Uri);
 
+    /// <summary>Symbols across the workspace whose names match a query, as Go to Symbol finds them
+    /// (Roslyn matches by pattern: initials and camel humps as well as substrings).</summary>
+    public async Task<IReadOnlyList<SymbolInformation>> SymbolsAsync(string query, CancellationToken cancel = default) =>
+        await Server.RequestAsync<List<SymbolInformation>>("workspace/symbol", new WorkspaceSymbolParams(query), cancel) ?? [];
+
     public async ValueTask DisposeAsync()
     {
         foreach (LspDocument document in documents.Values.ToList())
@@ -206,6 +211,10 @@ public sealed class LspDocument : IDisposable
 
     public Task<CodeAction?> ResolveAsync(CodeAction action, CancellationToken cancel = default) =>
         Server.RequestAsync<CodeAction>("codeAction/resolve", action, cancel);
+
+    /// <summary>The document's outline: its types, and their members under them.</summary>
+    public async Task<IReadOnlyList<DocumentSymbol>> OutlineAsync(CancellationToken cancel = default) =>
+        await Server.RequestAsync<List<DocumentSymbol>>("textDocument/documentSymbol", new DocumentSymbolParams(Identifier), cancel) ?? [];
 
     public async Task<IReadOnlyList<LspTextEdit>> FormatAsync(IndentOptions indent, CancellationToken cancel = default) =>
         await Server.RequestAsync<List<LspTextEdit>>("textDocument/formatting",

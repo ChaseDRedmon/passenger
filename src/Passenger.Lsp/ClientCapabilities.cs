@@ -20,7 +20,8 @@ public static class ClientCapabilities
         "semanticTokens": { "refreshSupport": true },
         "diagnostics": { "refreshSupport": true },
         "inlayHint": { "refreshSupport": true },
-        "didChangeWatchedFiles": { "dynamicRegistration": false }
+        "didChangeWatchedFiles": { "dynamicRegistration": false },
+        "symbol": {}
       },
       "textDocument": {
         "synchronization": { "didSave": true, "dynamicRegistration": false },

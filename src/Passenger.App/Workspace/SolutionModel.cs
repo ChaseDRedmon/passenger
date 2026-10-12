@@ -170,7 +170,9 @@ public sealed record ProjectModel(
         try
         {
             XElement project = XDocument.Load(path).Root!;
-            string? Property(string key) => project.Descendants().FirstOrDefault(e => e.Name.LocalName == key)?.Value.Trim();
+            IReadOnlyList<XElement> shared = SharedProperties(System.IO.Path.GetDirectoryName(path)!);
+            // The project's own value wins over the one Directory.Build.props gives every project, as MSBuild's order has it.
+            string? Property(string key) => Declared(project, key) ?? shared.Select(props => Declared(props, key)).FirstOrDefault(v => v is not null);
             List<string> frameworks = (Property("TargetFrameworks") ?? Property("TargetFramework") ?? string.Empty)
                 .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .ToList();
@@ -193,5 +195,30 @@ public sealed record ProjectModel(
         {
             return new ProjectModel(path, name, null, [], [], [], true);
         }
+    }
+
+    private static string? Declared(XElement root, string key) =>
+        root.Descendants().FirstOrDefault(e => e.Name.LocalName == key)?.Value.Trim() is { Length: > 0 } value ? value : null;
+
+    /// <summary>The Directory.Build.props files above a project, nearest first: where a repository sets
+    /// the target framework for all its projects. Read as declared, until MSBuild evaluates projects.</summary>
+    private static IReadOnlyList<XElement> SharedProperties(string folder)
+    {
+        List<XElement> found = [];
+        for (DirectoryInfo? at = new(folder); at is not null; at = at.Parent)
+        {
+            string props = System.IO.Path.Combine(at.FullName, "Directory.Build.props");
+            if (File.Exists(props))
+            {
+                try
+                {
+                    found.Add(XDocument.Load(props).Root!);
+                }
+                catch (System.Xml.XmlException)
+                {
+                }
+            }
+        }
+        return found;
     }
 }

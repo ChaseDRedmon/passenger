@@ -345,6 +345,97 @@ public partial class MainWindow : Window
 
     public DebugController Debugger => debug;
 
+    /// <summary>The open folder, canonical, or null before one is opened.</summary>
+    public string? Folder => folder;
+
+    public IReadOnlyList<RunConfiguration> Configurations => configurations;
+
+    public RunConfiguration? Configuration => configuration;
+
+    /// <summary>The program the Run window shows, while it runs or since it last did.</summary>
+    public ProcessRunner Runner => runner;
+
+    /// <summary>Chooses the run configuration by name, as the toolbar's menu does; false when there is none.</summary>
+    public bool SelectConfiguration(string name)
+    {
+        if (configurations.FirstOrDefault(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase)) is not { } chosen)
+        {
+            return false;
+        }
+        configuration = chosen;
+        RunConfigName.Text = chosen.Name;
+        return true;
+    }
+
+    /// <summary>Builds as Build does, and says whether it succeeded once it has.</summary>
+    public Task<bool> BuildAsync()
+    {
+        TaskCompletionSource<bool> built = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (folder is null || builder.IsRunning)
+        {
+            built.SetResult(false);
+            return built.Task;
+        }
+        BuildSolution(succeeded => built.TrySetResult(succeeded));
+        return built.Task;
+    }
+
+    /// <summary>Builds and launches the chosen configuration under the debugger, as Debug does; null once it
+    /// runs, or what stopped it (a failed build, no configuration, the adapter's refusal).</summary>
+    public async Task<string?> DebugAsync()
+    {
+        if (configuration is not { } chosen)
+        {
+            return "Nothing to debug: no executable project";
+        }
+        if (!await BuildAsync())
+        {
+            return "The build failed; Problems lists why";
+        }
+        try
+        {
+            DebugTarget target = await DebugTarget.ResolveAsync(chosen.Project);
+            ShowBottom("Debug");
+            Bottom.Debug.ShowTab(console: true);
+            await debug.StartAsync(target, chosen.Name);
+            return debug.IsDebugging ? null : StatusText.Text;
+        }
+        catch (Exception error) when (error is InvalidOperationException or IOException)
+        {
+            return error.Message;
+        }
+    }
+
+    /// <summary>Runs an action by id, as its shortcut would: the IDE's own (app.*) wherever the focus is,
+    /// an editor's on the active editor. False for one that does nothing here.</summary>
+    public bool Perform(string action)
+    {
+        if (AppActions.IsApp(action))
+        {
+            RunAppAction(action);
+            return true;
+        }
+        return Editors.Active is not null && Editors.CodeEditor.TryExecute(action);
+    }
+
+    /// <summary>The status bar's text, which says what the last action came to.</summary>
+    public string? Status => StatusText.Text;
+
+    /// <summary>Agents attached to this window's MCP socket, shown in the status bar so the person knows
+    /// another hand is on the IDE.</summary>
+    public int Agents
+    {
+        get => agents;
+        set
+        {
+            agents = value;
+            AgentText.IsVisible = value > 0;
+            AgentText.Text = value == 1 ? "Agent connected" : $"{value} agents connected";
+        }
+    }
+
+    private int agents;
+
     /// <summary>Builds the solution (or the folder's project) with the .NET command line, its output
     /// in the Build window and what it finds in Problems; <paramref name="then"/> hears whether it
     /// succeeded.</summary>

@@ -19,7 +19,14 @@ just screenshot X.png ...  # the main window drawn off-screen to a PNG, after th
 just publish RID           # self-contained Release build, ReadyToRun (osx-arm64, osx-x64, win-x64, win-arm64)
 just icons                 # rewrite Theme/Icons.axaml from the list in tools/icons.py
 just test [filter]         # every test, or those whose name matches
+just mcp [FOLDER]          # Passenger as an MCP server over a folder (this one by default), from a clone of the last build
 ```
+
+**Use Passenger on itself.** `.mcp.json` starts Passenger's MCP server over this repository (`tools/mcp.sh`), so its
+tools are the quickest way to ask Roslyn about Passenger's code (`diagnostics`, `find_symbol`, `outline`, `usages`),
+to debug the IDE's own projects, and to look at the window (`screenshot`). It runs from an APFS clone of the last
+Debug build, so `just build` never changes the files under it; reconnect the server to pick a new build up. A tool's
+lines and columns count from 1 and its paths are the folder's. Anything it gets wrong is a Passenger bug to fix.
 
 The screenshot is the self-check for anything visible. It opens what the command line names, takes
 its steps in order through the window's real input, waits for background work to land, and captures
@@ -69,6 +76,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   solutions and projects for the Explorer's Solution view.
 - `src/Passenger.App`: the shell. One window-wide keymap (`AppActions.cs`) routes IDE actions
   itself and editor actions to the focused editor. Explorer, editor tabs, files on disk.
+- `src/Passenger.App/Mcp`: Passenger as an MCP server (the official C# SDK). `PassengerTools` is every tool, each
+  run on the UI thread as the window's own commands are; `McpHost` hosts them three ways: `--mcp [FOLDER]` (a
+  headless IDE on standard input and output), the window's socket, and `--mcp-attach [PID]` (standard input and
+  output joined to that socket).
 - The debugger, Passenger's own, started from SharpDbg and ICorDebugSharp (`docs/architecture.md`, The debugger):
   `src/Passenger.Debugger.Interop` (ICorDebug, IMetaDataImport and dbgshim for the COM source generator),
   `src/Passenger.Debugger` (the engine), `src/Passenger.Dap` (the Debug Adapter Protocol, both ends) and
@@ -108,6 +119,9 @@ the line index and undo honest; keep it passing rather than narrowing it.
 The debugger's tests (`tests/Passenger.Tests/Debugging`) run the adapter from the tests' own `debugger/` folder, as
 the IDE does, and launch or attach to the programs in `tests/Debuggees`, whose lines and columns (tabs included) they
 stop at: moving a line there means moving the tests that name it. They run one at a time (`DebugSession.Collection`).
+
+The MCP server's tests (`McpTests`) are agents using the SDK's own client: one starts `Passenger --mcp` and debugs a
+project through it, one attaches to a window with `--mcp-attach` and changes what the window shows.
 
 ## Code style
 

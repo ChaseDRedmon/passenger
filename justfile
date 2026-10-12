@@ -28,3 +28,8 @@ publish rid:
 # Rewrite Theme/Icons.axaml from the list in tools/icons.py (fetches any icon not yet cached).
 icons:
     python3 -I tools/icons.py
+
+# Passenger as an MCP server over a folder, its tools on standard input and output, run from a clone of the
+# last build so rebuilding Passenger never changes the files under it (tools/mcp.sh). `.mcp.json` starts it.
+mcp folder="":
+    @tools/mcp.sh {{folder}}

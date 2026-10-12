@@ -149,6 +149,31 @@ public sealed record DocumentFormattingParams(TextDocumentIdentifier TextDocumen
 
 public sealed record DocumentRangeFormattingParams(TextDocumentIdentifier TextDocument, LspRange Range, FormattingOptions Options);
 
+// Symbols
+
+public sealed record WorkspaceSymbolParams(string Query);
+
+public sealed record DocumentSymbolParams(TextDocumentIdentifier TextDocument);
+
+/// <summary>A symbol found by name across the workspace. Kind is the protocol's SymbolKind number.</summary>
+public sealed record SymbolInformation(string Name, int Kind, LspLocation Location, string? ContainerName = null);
+
+/// <summary>A symbol in a document's outline, its members as children. Range is the whole
+/// declaration; SelectionRange is its name.</summary>
+public sealed record DocumentSymbol(string Name, string? Detail, int Kind, LspRange Range, LspRange SelectionRange, IReadOnlyList<DocumentSymbol>? Children = null);
+
+public static class SymbolKinds
+{
+    private static readonly string[] Names =
+    [
+        "file", "module", "namespace", "package", "class", "method", "property", "field", "constructor", "enum", "interface",
+        "function", "variable", "constant", "string", "number", "boolean", "array", "object", "key", "null", "enum member",
+        "struct", "event", "operator", "type parameter",
+    ];
+
+    public static string Name(int kind) => kind >= 1 && kind <= Names.Length ? Names[kind - 1] : "symbol";
+}
+
 // Semantic tokens
 
 public sealed record SemanticTokensParams(TextDocumentIdentifier TextDocument);

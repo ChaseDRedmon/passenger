@@ -38,6 +38,20 @@ public sealed class BuildRunTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void A_project_whose_framework_the_repository_sets_shows_it_beside_its_name()
+    {
+        // As Passenger's own projects are: the framework is in Directory.Build.props, and the project names none.
+        Write("Directory.Build.props", "<Project>\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+        Write("src/Hello/Hello.csproj",
+            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
+        MainWindow window = Open();
+        ExplorerTree tree = window.ExplorerView.Tree;
+        tree.Expand(Assert.Single(tree.Rows, r => r.Kind == NodeKind.SolutionFolder && r.Name == "src"));
+        Assert.Equal("net10.0", Assert.Single(tree.Rows, r => r.Kind == NodeKind.Project && r.Name == "Hello").Detail);
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void A_build_with_an_error_lists_it_in_problems_at_its_file_and_line()
     {
         Write("src/Hello/Program.cs", "Console.WriteLine(\"Hello\");\nint count = \"three\";\n");

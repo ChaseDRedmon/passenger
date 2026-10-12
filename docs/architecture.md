@@ -183,6 +183,27 @@ stays the reference for what a mature engine does.
 - **Line-level and tracing modes** need ICorProfiler, a native interface. It can still be written in C# and compiled
   with Native AOT (Kevin Gosse's Silhouette does this).
 
+## Passenger for agents
+
+Passenger is a Model Context Protocol server, so an agent works through the IDE rather than beside it: Roslyn's
+answers about the code, builds and runs, the debugger, and the window itself.
+
+- **The official C# SDK** (`ModelContextProtocol.Core`, Apache-2.0), with no hosting framework: tools are the public
+  methods of `Mcp/PassengerTools.cs`, found by their `[McpServerTool]` attributes.
+- **A tool is a user's command.** Each runs on the UI thread through the window's own code paths (OpenFile, Build,
+  the breakpoint store, the debug session), so the agent and the person see one IDE in one state, and a tool cannot
+  do what the window could not. Lines and columns count from 1, as the editor shows them; paths are the folder's.
+- **The debugger's tools wait.** `debug_start`, `debug_continue`, `debug_step` and `debug_run_to` return when the
+  program stops or ends, with the location, the stack and the top frame's locals (and an exception's type and
+  message), so a stop costs an agent one call.
+- **Three ways in.** `--mcp [FOLDER]` is a headless IDE on standard input and output (Avalonia's headless platform
+  with Skia drawing, so `screenshot` captures real frames), for an agent to start as its own. A window listens on a
+  Unix domain socket under the user's local application data, in a folder only they can open (Windows has AF_UNIX
+  too); `--mcp-attach [PID]` joins an agent's standard input and output to it, the newest window's by default.
+  `--no-mcp` keeps a window from listening. Each connection is a server of its own over the same window.
+- **Passenger works on itself through it**, from a clone of the last build (`tools/mcp.sh`), since the agent's own
+  build of Passenger would otherwise replace the files the running server loads from.
+
 ## The UI
 
 - **Avalonia 12** with the Fluent theme as a base, restyled by `Theme/Shell.axaml`. Every colour is a token in

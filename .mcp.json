@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "passenger": {
+      "command": "tools/mcp.sh",
+      "args": []
+    }
+  }
+}

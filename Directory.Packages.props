@@ -12,6 +12,7 @@
     <PackageVersion Include="Avalonia.Skia" Version="12.1.4" />
     <PackageVersion Include="Avalonia.Themes.Fluent" Version="12.1.4" />
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
+    <PackageVersion Include="ModelContextProtocol.Core" Version="2.2.0" />
     <PackageVersion Include="StreamJsonRpc" Version="2.25.29" />
   </ItemGroup>
   <!-- The debugger's engine. The expression compiler is Roslyn's, packed from its own source (Roslyn does not

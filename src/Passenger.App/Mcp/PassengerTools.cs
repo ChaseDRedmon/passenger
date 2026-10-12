@@ -1,0 +1,657 @@
+using System.ComponentModel;
+using Avalonia.Threading;
+using ModelContextProtocol.Protocol;
+using ModelContextProtocol.Server;
+using Passenger.App.CSharp;
+using Passenger.App.Debugging;
+using Passenger.App.Run;
+using Passenger.App.Workspace;
+using Passenger.Dap;
+using Passenger.Editor;
+using Passenger.Lsp;
+using Passenger.Text;
+
+namespace Passenger.App.Mcp;
+
+/// <summary>Passenger's tools for an agent, over the Model Context Protocol: the window's own workspace,
+/// the language server's knowledge of the code, builds and runs, the debugger, and the IDE itself
+/// (screenshots, actions, typing), each run on the UI thread as the window's own commands are. Lines and
+/// columns count from one, as an editor shows them; a relative path is the open folder's.</summary>
+public sealed class PassengerTools(MainWindow window)
+{
+    private static readonly TimeSpan ServerLimit = TimeSpan.FromSeconds(120);
+
+    // Workspace and editor
+
+    [McpServerTool(Name = "open", Title = "Open a folder, solution or file"), Description(
+        "Opens a folder or solution (a directory, .sln or .slnx) as the workspace, or a file in the editor (opening its folder " +
+        "first if none is open). Starts the C# language server for the workspace. Returns the workspace.")]
+    public Task<Workspace> Open([Description("Absolute path, or relative to the open folder")] string path) => OnUi(async () =>
+    {
+        string full = Resolve(path);
+        if (Directory.Exists(full) || full.EndsWith(".sln", StringComparison.OrdinalIgnoreCase) || full.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase))
+        {
+            window.OpenFolder(Directory.Exists(full) ? full : Path.GetDirectoryName(full)!);
+        }
+        else if (File.Exists(full))
+        {
+            if (window.Folder is null)
+            {
+                window.OpenFolder(Path.GetDirectoryName(full)!);
+            }
+            window.OpenFile(full);
+        }
+        else
+        {
+            throw new FileNotFoundException($"No folder or file at {full}");
+        }
+        await Task.Yield();
+        return Snapshot();
+    });
+
+    [McpServerTool(Name = "workspace", Title = "The workspace", ReadOnly = true), Description(
+        "The open folder and solution, its projects (output type, frameworks), the run configurations and the chosen one, " +
+        "the language server's state, the open files (unsaved ones marked) and the active file with its caret.")]
+    public Task<Workspace> GetWorkspace() => OnUi(() => Task.FromResult(Snapshot()));
+
+    [McpServerTool(Name = "open_file", Title = "Show a file"), Description("Opens a file in the editor, at a line and column if given, as the user would see it.")]
+    public Task<string> OpenFile(string path, [Description("From 1")] int? line = null, [Description("From 1")] int? column = null) => OnUi(() =>
+    {
+        OpenDocument document = Document(path);
+        if (line is int l)
+        {
+            window.NavigateTo(document.Path, new TextPosition(Math.Max(0, l - 1), Math.Max(0, (column ?? 1) - 1)));
+        }
+        return Task.FromResult($"{Relative(document.Path)} is open");
+    });
+
+    [McpServerTool(Name = "editor_text", Title = "A file's text in the editor", ReadOnly = true), Description(
+        "The text of a file as the editor holds it, unsaved changes included, with line numbers. The file is opened if it is not.")]
+    public Task<string> EditorText(string path, [Description("First line, from 1")] int? from = null, [Description("Last line")] int? to = null) => OnUi(() =>
+    {
+        TextSnapshot text = Document(path).Text.Snapshot;
+        int first = Math.Clamp((from ?? 1) - 1, 0, text.LineCount - 1);
+        int last = Math.Clamp((to ?? text.LineCount) - 1, first, text.LineCount - 1);
+        return Task.FromResult(string.Join('\n', Enumerable.Range(first, last - first + 1).Select(i => $"{i + 1,6}\t{text.GetLineText(i)}")));
+    });
+
+    [McpServerTool(Name = "save_all", Title = "Save every file"), Description("Saves every open file with unsaved changes.")]
+    public Task<string> SaveAll() => OnUi(() =>
+    {
+        int unsaved = window.EditorArea.Documents.Count(d => d.IsModified);
+        window.EditorArea.SaveAll();
+        return Task.FromResult(unsaved == 0 ? "Nothing to save" : $"Saved {unsaved} file{(unsaved == 1 ? "" : "s")}");
+    });
+
+    // Code: the language server's
+
+    [McpServerTool(Name = "diagnostics", Title = "Errors and warnings in a file", ReadOnly = true), Description(
+        "The C# language server's errors, warnings and messages for a file, as the editor marks them, fresh.")]
+    public Task<IReadOnlyList<Finding>> Diagnostics(string path) => OnUi(async () =>
+    {
+        (OpenDocument document, LspDocument lsp) = await Code(path);
+        (IReadOnlyList<Diagnostic> found, _) = await lsp.DiagnosticsAsync();
+        return (IReadOnlyList<Finding>)[.. found.Select(d => new Finding(
+            d.Severity switch { 1 => "error", 2 => "warning", 3 => "info", _ => "hint" },
+            d.Code?.ToString(),
+            d.Message,
+            Relative(document.Path),
+            d.Range.Start.Line + 1,
+            d.Range.Start.Character + 1))];
+    });
+
+    [McpServerTool(Name = "symbol_info", Title = "What a symbol is", ReadOnly = true), Description(
+        "What the language server says about the symbol at a position: its declaration and documentation (the hover card).")]
+    public Task<string> SymbolInfo(string path, int line, int column) => OnUi(async () =>
+    {
+        (OpenDocument document, LspDocument lsp) = await Code(path);
+        Hover? hover = await lsp.HoverAsync(Offset(document, line, column));
+        return hover is null ? "Nothing is known about this position" : Shapes.Text(hover.Contents).Trim();
+    });
+
+    [McpServerTool(Name = "definition", Title = "Go to definition", ReadOnly = true), Description(
+        "Where the symbol at a position is defined. A symbol from a package or the framework has no source, and says so.")]
+    public Task<IReadOnlyList<Place>> Definition(string path, int line, int column) => OnUi(async () =>
+    {
+        (OpenDocument document, LspDocument lsp) = await Code(path);
+        return Places(await lsp.DefinitionAsync(Offset(document, line, column)));
+    });
+
+    [McpServerTool(Name = "usages", Title = "Find usages", ReadOnly = true), Description("Every place the symbol at a position is used, its declaration included, with each line's text.")]
+    public Task<IReadOnlyList<Place>> Usages(string path, int line, int column) => OnUi(async () =>
+    {
+        (OpenDocument document, LspDocument lsp) = await Code(path);
+        return Places(await lsp.ReferencesAsync(Offset(document, line, column)));
+    });
+
+    [McpServerTool(Name = "implementations", Title = "Go to implementation", ReadOnly = true), Description("The implementations of the interface, abstract or virtual member at a position.")]
+    public Task<IReadOnlyList<Place>> Implementations(string path, int line, int column) => OnUi(async () =>
+    {
+        (OpenDocument document, LspDocument lsp) = await Code(path);
+        return Places(await lsp.ImplementationAsync(Offset(document, line, column)));
+    });
+
+    [McpServerTool(Name = "rename", Title = "Rename a symbol", Destructive = true), Description(
+        "Renames the symbol at a position everywhere it is used, as the IDE's Rename does, and saves the files it changes.")]
+    public Task<string> Rename(string path, int line, int column, [Description("The new name")] string newName) => OnUi(async () =>
+    {
+        (OpenDocument document, LspDocument lsp) = await Code(path);
+        if (await lsp.RenameAsync(Offset(document, line, column), newName) is not { } edit)
+        {
+            return "This can't be renamed";
+        }
+        IReadOnlyList<string> files = [.. Shapes.WorkspaceEdit(edit).Select(f => new Uri(f.Uri).LocalPath).Distinct()];
+        WorkspaceEdits.Apply(window.EditorArea, edit);
+        window.EditorArea.SaveAll();
+        return $"Renamed in {files.Count} file{(files.Count == 1 ? "" : "s")}: {string.Join(", ", files.Select(Relative))}";
+    });
+
+    [McpServerTool(Name = "code_actions", Title = "Fixes and refactorings", ReadOnly = true), Description(
+        "The fixes and refactorings the language server offers at a position (Alt+Enter), by title.")]
+    public Task<IReadOnlyList<string>> CodeActions(string path, int line, int column) => OnUi(async () =>
+        (IReadOnlyList<string>)[.. (await Actions(path, line, column)).Actions.Select(a => a.Title)]);
+
+    [McpServerTool(Name = "apply_code_action", Title = "Apply a fix or refactoring", Destructive = true), Description(
+        "Applies the fix or refactoring with this title at a position, as choosing it from Alt+Enter does, and saves the files.")]
+    public Task<string> ApplyCodeAction(string path, int line, int column, string title) => OnUi(async () =>
+    {
+        (LspDocument lsp, IReadOnlyList<CodeAction> actions) = await Actions(path, line, column);
+        CodeAction chosen = actions.FirstOrDefault(a => a.Title == title)
+            ?? throw new InvalidOperationException($"No action '{title}' here; there are: {string.Join("; ", actions.Select(a => a.Title))}");
+        if (chosen.Edit is null && chosen.Data is not null)
+        {
+            chosen = await lsp.ResolveAsync(chosen) ?? chosen;
+        }
+        if (chosen.Edit is not { } edit)
+        {
+            return $"'{title}' changes nothing it can apply";
+        }
+        int files = WorkspaceEdits.Apply(window.EditorArea, edit);
+        window.EditorArea.SaveAll();
+        return $"Applied '{title}' to {files} file{(files == 1 ? "" : "s")}";
+    });
+
+    [McpServerTool(Name = "format", Title = "Reformat a file", Destructive = true), Description("Reformats a file as the IDE's Reformat Code does, and saves it.")]
+    public Task<string> Format(string path) => OnUi(async () =>
+    {
+        (OpenDocument document, LspDocument lsp) = await Code(path);
+        window.OpenFile(document.Path);
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        IReadOnlyList<LspTextEdit> edits = await lsp.FormatAsync(editor.Indent);
+        editor.ApplyEdits(WorkspaceEdits.Convert(editor.Document.Snapshot, edits));
+        document.Save();
+        return edits.Count == 0 ? "Already formatted" : $"Reformatted ({edits.Count} edits)";
+    });
+
+    [McpServerTool(Name = "find_symbol", Title = "Go to symbol", ReadOnly = true), Description(
+        "Types, members and other symbols across the workspace whose names match a query, as Go to Symbol finds them: by " +
+        "substring, initials or camel humps (\"GH\" finds GetHashCode). Only the solution's own code, not packages'.")]
+    public Task<IReadOnlyList<SymbolFound>> FindSymbol(
+        string query,
+        [Description("Only symbols of this kind: class, interface, struct, enum, method, property, field, event, constructor...")] string? kind = null,
+        int limit = 50) => OnUi(async () =>
+    {
+        RoslynSession session = await Server();
+        IReadOnlyList<SymbolInformation> found = await session.SymbolsAsync(query);
+        return (IReadOnlyList<SymbolFound>)[.. found
+            .Where(s => kind is null || SymbolKinds.Name(s.Kind).Equals(kind, StringComparison.OrdinalIgnoreCase))
+            .Take(limit)
+            .Select(s => new SymbolFound(s.Name, SymbolKinds.Name(s.Kind), s.ContainerName, Relative(new Uri(s.Location.Uri).LocalPath), s.Location.Range.Start.Line + 1, s.Location.Range.Start.Character + 1))];
+    });
+
+    [McpServerTool(Name = "outline", Title = "A file's structure", ReadOnly = true), Description(
+        "A file's types and their members, indented, each with its line, as the File Structure window shows them.")]
+    public Task<string> Outline(string path) => OnUi(async () =>
+    {
+        (_, LspDocument lsp) = await Code(path);
+        System.Text.StringBuilder text = new();
+        Write(await lsp.OutlineAsync(), 0);
+        return text.Length == 0 ? "Nothing is declared in this file" : text.ToString().TrimEnd();
+
+        void Write(IReadOnlyList<DocumentSymbol> symbols, int depth)
+        {
+            foreach (DocumentSymbol symbol in symbols)
+            {
+                text.Append(' ', depth * 2).Append(symbol.Name);
+                if (!string.IsNullOrEmpty(symbol.Detail) && symbol.Detail != symbol.Name)
+                {
+                    text.Append(" : ").Append(symbol.Detail);
+                }
+                text.Append(" (").Append(SymbolKinds.Name(symbol.Kind)).Append(", line ").Append(symbol.SelectionRange.Start.Line + 1).Append(")\n");
+                Write(symbol.Children ?? [], depth + 1);
+            }
+        }
+    });
+
+    // Build and run
+
+    [McpServerTool(Name = "build", Title = "Build"), Description(
+        "Builds the solution (or the folder's project) as Build does, waiting for it, and returns whether it succeeded with every error and warning.")]
+    public Task<BuildResult> Build() => OnUi(async () =>
+    {
+        bool succeeded = await window.BuildAsync();
+        IReadOnlyList<Finding> problems = [.. window.BottomPanel.Problems.Problems.Select(p => new Finding(
+            p.Severity == ProblemSeverity.Error ? "error" : "warning", p.Code, p.Message, p.Path is { } at ? Relative(at) : p.Project, p.Position.Line + 1, p.Position.Column + 1))];
+        return new BuildResult(succeeded, problems.Count(p => p.Severity == "error"), problems.Count(p => p.Severity == "warning"), problems, Tail(window.BottomPanel.Build.Document, 20));
+    });
+
+    [McpServerTool(Name = "run", Title = "Run a configuration"), Description(
+        "Runs a run configuration (the chosen one if none is named) as Run does, and waits up to waitSeconds for it to end. " +
+        "Returns its output so far and its exit code once it has one.")]
+    public Task<RunResult> Run(string? configuration = null, int waitSeconds = 30) => OnUi(async () =>
+    {
+        Choose(configuration);
+        window.RunSelected();
+        await Until(() => !window.Runner.IsRunning, TimeSpan.FromSeconds(waitSeconds));
+        return new RunResult(window.Runner.IsRunning, window.Status, Tail(window.BottomPanel.Run.Document, 200));
+    });
+
+    [McpServerTool(Name = "stop", Title = "Stop"), Description("Stops whatever is running or being debugged, as Stop does.")]
+    public Task<string> Stop() => OnUi(async () =>
+    {
+        window.Runner.Stop();
+        await window.Debugger.StopAsync();
+        return "Stopped";
+    });
+
+    // The debugger
+
+    [McpServerTool(Name = "breakpoint_set", Title = "Set a breakpoint"), Description(
+        "Sets a line breakpoint, with a condition (a C# bool expression) or a hit condition (\"==3\", \">=2\", \"%2\") if given, or changes " +
+        "those of the one already there. Bound at once while debugging.")]
+    public Task<IReadOnlyList<BreakpointInfo>> SetBreakpoint(string path, int line, string? condition = null, string? hitCondition = null) => OnUi(() =>
+    {
+        string full = Resolve(path);
+        BreakpointStore store = window.Debugger.Breakpoints;
+        if (store.In(full).FirstOrDefault(b => b.Line == line - 1) is not { } breakpoint)
+        {
+            store.Toggle(full, line - 1);
+            breakpoint = store.In(full).First(b => b.Line == line - 1);
+        }
+        store.SetCondition(breakpoint, condition, hitCondition);
+        return Task.FromResult(Breakpoints(full));
+    });
+
+    [McpServerTool(Name = "breakpoint_remove", Title = "Remove a breakpoint"), Description("Removes the breakpoint on a line.")]
+    public Task<IReadOnlyList<BreakpointInfo>> RemoveBreakpoint(string path, int line) => OnUi(() =>
+    {
+        string full = Resolve(path);
+        if (window.Debugger.Breakpoints.In(full).FirstOrDefault(b => b.Line == line - 1) is { } breakpoint)
+        {
+            window.Debugger.Breakpoints.Remove(breakpoint);
+        }
+        return Task.FromResult(Breakpoints(full));
+    });
+
+    [McpServerTool(Name = "breakpoints", Title = "Every breakpoint", ReadOnly = true), Description("Every breakpoint, and whether the running debugger bound it.")]
+    public Task<IReadOnlyList<BreakpointInfo>> ListBreakpoints() => OnUi(() => Task.FromResult(Breakpoints(null)));
+
+    [McpServerTool(Name = "debug_start", Title = "Debug a configuration"), Description(
+        "Builds and launches a run configuration (the chosen one if none is named) under the debugger, as Debug (Alt+F5) does, then " +
+        "waits up to waitSeconds for it to stop at a breakpoint or exception, or end. Returns where it is.")]
+    public Task<DebugSnapshot> DebugStart(string? configuration = null, int waitSeconds = 60) => OnUi(async () =>
+    {
+        Choose(configuration);
+        if (await window.DebugAsync() is { } problem)
+        {
+            throw new InvalidOperationException(problem);
+        }
+        return await AfterResume(TimeSpan.FromSeconds(waitSeconds));
+    });
+
+    [McpServerTool(Name = "debug_state", Title = "Where the debugger is", ReadOnly = true), Description(
+        "The debugger's state, and while paused where: the reason, the stopped thread's frames, and the chosen frame's variables.")]
+    public Task<DebugSnapshot> GetDebugState() => OnUi(DebugSnapshotAsync);
+
+    [McpServerTool(Name = "debug_continue", Title = "Resume"), Description("Resumes the program, and waits up to waitSeconds for it to stop again or end.")]
+    public Task<DebugSnapshot> DebugContinue(int waitSeconds = 30) => Resume(s => s.ContinueAsync(), waitSeconds);
+
+    [McpServerTool(Name = "debug_step", Title = "Step"), Description("Steps over, into or out of the current line, and waits for the step to stop.")]
+    public Task<DebugSnapshot> DebugStep([Description("over, into or out")] string kind = "over", int waitSeconds = 30) => Resume(kind switch
+    {
+        "over" => s => s.StepOverAsync(),
+        "into" => s => s.StepIntoAsync(),
+        "out" => s => s.StepOutAsync(),
+        _ => throw new ArgumentException($"A step is over, into or out, not '{kind}'"),
+    }, waitSeconds);
+
+    [McpServerTool(Name = "debug_pause", Title = "Pause"), Description("Pauses the running program wherever it is.")]
+    public Task<DebugSnapshot> DebugPause(int waitSeconds = 10) => OnUi(async () =>
+    {
+        DebugSession session = Session();
+        await session.PauseAsync();
+        await Until(() => session.State != DebugState.Running, TimeSpan.FromSeconds(waitSeconds));
+        return await DebugSnapshotAsync();
+    });
+
+    [McpServerTool(Name = "debug_run_to", Title = "Run to a line"), Description(
+        "Runs on to a line, as Run to Cursor does, stopping sooner at a breakpoint, and waits up to waitSeconds for the stop.")]
+    public Task<DebugSnapshot> DebugRunTo(string path, int line, int waitSeconds = 30) => OnUi(async () =>
+    {
+        await Paused().RunToCursorAsync(Resolve(path), line - 1);
+        return await AfterResume(TimeSpan.FromSeconds(waitSeconds));
+    });
+
+    [McpServerTool(Name = "debug_input", Title = "Type into the program's console"), Description(
+        "Sends a line to the debugged program's standard input, as the Debug window's console does. The program reads it when it next reads.")]
+    public Task<string> DebugInput(string text, [Description("End the line with a newline")] bool newline = true) => OnUi(async () =>
+    {
+        await Session().InputAsync(newline ? text + "\n" : text);
+        return "Sent";
+    });
+
+    [McpServerTool(Name = "debug_evaluate", Title = "Evaluate an expression", ReadOnly = true), Description(
+        "Evaluates a C# expression in a frame of the stopped thread (0, the top, by default), as the Debug window's evaluate box does. " +
+        "A result with members has a reference debug_variables opens.")]
+    public Task<VariableInfo> DebugEvaluate(string expression, int frame = 0) => OnUi(async () =>
+    {
+        DebugSession session = Paused();
+        DapStackFrame chosen = (await Stack(session))[frame];
+        EvaluateResponse value = await session.EvaluateAsync(expression, chosen.Id, "repl");
+        return new VariableInfo(expression, value.Result, value.Type, value.VariablesReference);
+    });
+
+    [McpServerTool(Name = "debug_variables", Title = "A value's members", ReadOnly = true), Description(
+        "The members, elements or locals behind a reference from debug_state, debug_evaluate or an earlier call.")]
+    public Task<IReadOnlyList<VariableInfo>> DebugVariables(int reference) => OnUi(async () =>
+    {
+        DebugSession session = Paused();
+        return (IReadOnlyList<VariableInfo>)[.. (await session.VariablesAsync(reference)).Select(v => new VariableInfo(v.Name, v.Value, v.Type, v.VariablesReference))];
+    });
+
+    [McpServerTool(Name = "debug_output", Title = "The program's output", ReadOnly = true), Description("What the debugged program has written, the last lines of it.")]
+    public Task<string> DebugOutput(int lines = 200) => OnUi(() => Task.FromResult(Tail(window.BottomPanel.Debug.Console.Document, lines)));
+
+    // The IDE itself
+
+    [McpServerTool(Name = "screenshot", Title = "What the window shows", ReadOnly = true), Description(
+        "A PNG of the IDE's window as drawn now, or of a part of it (logical units, the window's own coordinates).")]
+    public Task<ImageContentBlock> Screenshot(int? x = null, int? y = null, int? width = null, int? height = null) => OnUi(() =>
+        Task.FromResult(ImageContentBlock.FromBytes(WindowPicture.Png(window, x is null ? null : new Avalonia.Rect(x.Value, y ?? 0, width ?? 400, height ?? 300)), "image/png")));
+
+    [McpServerTool(Name = "ide_action", Title = "Run an IDE action"), Description(
+        "Runs one of the IDE's actions by its id, as its shortcut would: app.* (app.build, app.debug.stepOver, app.code.rename and the rest) " +
+        "or an editor action on the active editor. ide_actions lists them.")]
+    public Task<string> IdeAction(string action) => OnUi(() => Task.FromResult(window.Perform(action) ? $"Ran {action}" : $"{action} did nothing here"));
+
+    [McpServerTool(Name = "ide_actions", Title = "The IDE's actions", ReadOnly = true), Description("Every action ide_action runs, with its shortcut on this platform.")]
+    public Task<IReadOnlyList<string>> IdeActions() => OnUi(() =>
+    {
+        Keymap keymap = AppActions.Keymap();
+        return Task.FromResult((IReadOnlyList<string>)[.. keymap.Actions.Order(StringComparer.Ordinal).Select(a =>
+            keymap.ShortcutsFor(a) is { Count: > 0 } keys ? $"{a} ({keys[0].Display()})" : a)]);
+    });
+
+    [McpServerTool(Name = "type", Title = "Type into the editor", Destructive = true), Description(
+        "Types text into the active editor at its caret, as the keyboard would (typing a closing bracket over one already there, and so on).")]
+    public Task<string> Type(string text) => OnUi(() =>
+    {
+        if (window.EditorArea.Active is null)
+        {
+            throw new InvalidOperationException("No file is open in the editor");
+        }
+        window.EditorArea.CodeEditor.Type(text);
+        return Task.FromResult($"Typed at {window.EditorArea.CodeEditor.CaretPosition.Line + 1}:{window.EditorArea.CodeEditor.CaretPosition.Column + 1}");
+    });
+
+    // The work behind them
+
+    private static Task<T> OnUi<T>(Func<Task<T>> work) => Dispatcher.UIThread.InvokeAsync(work);
+
+    private Task<DebugSnapshot> Resume(Func<DebugSession, Task> resume, int waitSeconds) => OnUi(async () =>
+    {
+        await resume(Paused());
+        return await AfterResume(TimeSpan.FromSeconds(waitSeconds));
+    });
+
+    /// <summary>Waits for the program to stop or end after it was set going, then says where it is.</summary>
+    private async Task<DebugSnapshot> AfterResume(TimeSpan limit)
+    {
+        await Until(() => window.Debugger.Session is not { State: DebugState.Running or DebugState.Starting }, limit);
+        // A stop is shown (its frames chosen) a moment after the state says paused.
+        await Until(() => window.Debugger.Session is not { State: DebugState.Paused } || window.BottomPanel.Debug.Frames.Count > 0, TimeSpan.FromSeconds(5));
+        return await DebugSnapshotAsync();
+    }
+
+    private async Task<DebugSnapshot> DebugSnapshotAsync()
+    {
+        if (window.Debugger.Session is not { } session || session.State == DebugState.Ended)
+        {
+            return new DebugSnapshot("not debugging", null, null, [], [], window.Debugger.Session?.ExitCode, window.Status);
+        }
+        if (session.State != DebugState.Paused || session.StoppedThread is null)
+        {
+            return new DebugSnapshot(session.State.ToString().ToLowerInvariant(), null, null, [], [], null, window.Status);
+        }
+        IReadOnlyList<DapStackFrame> frames = await Stack(session);
+        DapStackFrame? top = frames.FirstOrDefault(f => f.Source?.Path is not null) ?? (frames.Count > 0 ? frames[0] : null);
+        List<VariableInfo> locals = [];
+        if (top is not null)
+        {
+            foreach (DapScope scope in await session.ScopesAsync(top.Id))
+            {
+                locals.AddRange((await session.VariablesAsync(scope.VariablesReference)).Select(v => new VariableInfo(v.Name, v.Value, v.Type, v.VariablesReference)));
+            }
+        }
+        string? exception = null;
+        if (session.StopReason == "exception")
+        {
+            try
+            {
+                ExceptionInfoResponse info = await session.ExceptionInfoAsync(session.StoppedThread.Value);
+                exception = Describe(info.Details) ?? $"{info.ExceptionId}: {info.Description}";
+            }
+            catch (DapException error)
+            {
+                exception = error.Message;
+            }
+        }
+        return new DebugSnapshot(
+            "paused",
+            session.StopReason,
+            top?.Source?.Path is { } path ? $"{Relative(path)}:{top.Line}:{top.Column}" : null,
+            [.. frames.Take(20).Select((f, i) => $"{i}: {f.Name}{(f.Source?.Path is { } p ? $" at {Relative(p)}:{f.Line}" : "")}")],
+            locals,
+            null,
+            window.Status,
+            exception);
+    }
+
+    /// <summary>An exception as its type and message, its inner exceptions after it.</summary>
+    private static string? Describe(DapExceptionDetails? details)
+    {
+        if (details is null)
+        {
+            return null;
+        }
+        string text = $"{details.FullTypeName ?? details.TypeName}: {details.Message}";
+        foreach (DapExceptionDetails inner in details.InnerException ?? [])
+        {
+            text += $"\n ---> {Describe(inner)}";
+        }
+        return text;
+    }
+
+    private static async Task<IReadOnlyList<DapStackFrame>> Stack(DebugSession session) =>
+        await session.StackTraceAsync(session.StoppedThread ?? throw new InvalidOperationException("No thread is stopped"));
+
+    private DebugSession Session() => window.Debugger.Session is { State: not DebugState.Ended } session
+        ? session
+        : throw new InvalidOperationException("Nothing is being debugged; debug_start starts it");
+
+    private DebugSession Paused() => Session() is { State: DebugState.Paused } session
+        ? session
+        : throw new InvalidOperationException("The program is running; debug_pause stops it where it is");
+
+    private void Choose(string? configuration)
+    {
+        if (configuration is not null && !window.SelectConfiguration(configuration))
+        {
+            throw new InvalidOperationException($"No run configuration '{configuration}'; there are: {string.Join(", ", window.Configurations.Select(c => c.Name))}");
+        }
+    }
+
+    private IReadOnlyList<BreakpointInfo> Breakpoints(string? path) =>
+        [.. (path is null ? window.Debugger.Breakpoints.All : window.Debugger.Breakpoints.In(path))
+            .Select(b => new BreakpointInfo(Relative(b.Path), b.Line + 1, b.Enabled, b.Status.ToString().ToLowerInvariant(), b.Condition, b.HitCondition, b.Message))];
+
+    private async Task<(LspDocument Lsp, IReadOnlyList<CodeAction> Actions)> Actions(string path, int line, int column)
+    {
+        (OpenDocument document, LspDocument lsp) = await Code(path);
+        int offset = Offset(document, line, column);
+        CSharpDocument? csharp = window.CSharpService?.For(document);
+        IReadOnlyList<Diagnostic> here = [.. (csharp?.Diagnostics ?? []).Where(d => d.Range.Start.Line <= line - 1 && line - 1 <= d.Range.End.Line)];
+        IReadOnlyList<CodeAction> actions = await lsp.CodeActionsAsync(new TextRange(offset, 0), here);
+        return (lsp, [.. actions.Where(a => a.Disabled is null)]);
+    }
+
+    /// <summary>The language server, once it has loaded the workspace.</summary>
+    private async Task<RoslynSession> Server()
+    {
+        if (window.CSharpService is null)
+        {
+            throw new InvalidOperationException("No C# language server runs for this folder");
+        }
+        await Until(() => window.CSharpService.IsReady, ServerLimit);
+        return window.CSharpService is { IsReady: true, Session: { } session }
+            ? session
+            : throw new TimeoutException($"The language server has not loaded the workspace ({window.CSharpService.State})");
+    }
+
+    /// <summary>A file opened as the editor would, with the language server's document for it once the
+    /// server has loaded the workspace.</summary>
+    private async Task<(OpenDocument Document, LspDocument Lsp)> Code(string path)
+    {
+        OpenDocument document = Document(path);
+        if (window.CSharpService is null)
+        {
+            throw new InvalidOperationException("No C# language server runs for this folder");
+        }
+        // Answers before the server has loaded the solution come from a file it knows alone, and are wrong.
+        await Until(() => window.CSharpService.IsReady && window.CSharpService.For(document)?.Lsp is not null, ServerLimit);
+        return (document, window.CSharpService.For(document)?.Lsp
+            ?? throw new TimeoutException($"The language server has not loaded {Path.GetFileName(document.Path)} ({window.CSharpService.State})"));
+    }
+
+    private OpenDocument Document(string path)
+    {
+        string full = Resolve(path);
+        if (window.EditorArea.Documents.FirstOrDefault(d => d.Path == full) is { } open)
+        {
+            return open;
+        }
+        window.OpenFile(full);
+        return window.EditorArea.Documents.FirstOrDefault(d => d.Path == full)
+            ?? throw new FileNotFoundException($"{full} could not be opened: {window.Status}");
+    }
+
+    private static int Offset(OpenDocument document, int line, int column)
+    {
+        TextSnapshot text = document.Text.Snapshot;
+        int l = Math.Clamp(line - 1, 0, text.LineCount - 1);
+        return Math.Min(text.GetLineStart(l) + Math.Max(0, column - 1), text.GetLine(l).End);
+    }
+
+    private IReadOnlyList<Place> Places(IReadOnlyList<LspLocation> locations) =>
+        [.. locations.Select(l =>
+        {
+            string path = new Uri(l.Uri).LocalPath;
+            return new Place(Relative(path), l.Range.Start.Line + 1, l.Range.Start.Character + 1, LineText(path, l.Range.Start.Line));
+        })];
+
+    private string LineText(string path, int line)
+    {
+        if (window.EditorArea.Documents.FirstOrDefault(d => d.Path == path) is { } open && line < open.Text.Snapshot.LineCount)
+        {
+            return open.Text.Snapshot.GetLineText(line).Trim();
+        }
+        try
+        {
+            return File.ReadLines(path).Skip(line).FirstOrDefault()?.Trim() ?? string.Empty;
+        }
+        catch (IOException)
+        {
+            return string.Empty;
+        }
+    }
+
+    private Workspace Snapshot()
+    {
+        OpenDocument? active = window.EditorArea.Active;
+        TextPosition? caret = active is null ? null : window.EditorArea.CodeEditor.CaretPosition;
+        return new Workspace(
+            window.Folder,
+            window.Solution?.Path,
+            [.. (window.Solution?.Projects ?? []).Select(p => new ProjectInfo(p.Name, Relative(p.Path), p.OutputType, p.TargetFrameworks))],
+            [.. window.Configurations.Select(c => c.Name)],
+            window.Configuration?.Name,
+            window.CSharpService is null ? "none" : window.CSharpService.IsReady ? "ready" : window.CSharpService.State,
+            [.. window.EditorArea.Documents.Select(d => Relative(d.Path) + (d.IsModified ? " (unsaved)" : ""))],
+            active is null ? null : $"{Relative(active.Path)}:{caret!.Value.Line + 1}:{caret.Value.Column + 1}",
+            window.Debugger.Session?.State.ToString().ToLowerInvariant() ?? "not debugging");
+    }
+
+    private string Resolve(string path)
+    {
+        string full = Path.IsPathRooted(path) || window.Folder is null ? Path.GetFullPath(path) : Path.GetFullPath(Path.Combine(window.Folder, path));
+        return File.Exists(full) || Directory.Exists(full) ? PathNames.Canonical(full) : full;
+    }
+
+    private string Relative(string path) => window.Folder is { } folder && path.StartsWith(folder + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+        ? Path.GetRelativePath(folder, path)
+        : path;
+
+    private static string Tail(TextDocument document, int lines)
+    {
+        TextSnapshot text = document.Snapshot;
+        int first = Math.Max(0, text.LineCount - lines);
+        return text.GetText(text.GetLineStart(first), text.Length - text.GetLineStart(first));
+    }
+
+    /// <summary>Waits on the UI thread, letting it run, until something holds or the time is up.</summary>
+    private static async Task Until(Func<bool> condition, TimeSpan limit)
+    {
+        DateTime until = DateTime.UtcNow + limit;
+        while (!condition() && DateTime.UtcNow < until)
+        {
+            await Task.Delay(50);
+        }
+    }
+}
+
+public sealed record Workspace(
+    string? Folder,
+    string? Solution,
+    IReadOnlyList<ProjectInfo> Projects,
+    IReadOnlyList<string> RunConfigurations,
+    string? ChosenConfiguration,
+    string LanguageServer,
+    IReadOnlyList<string> OpenFiles,
+    string? ActiveFile,
+    string Debugger);
+
+public sealed record ProjectInfo(string Name, string Path, string? OutputType, IReadOnlyList<string> TargetFrameworks);
+
+public sealed record Finding(string Severity, string? Code, string Message, string? Path, int Line, int Column);
+
+public sealed record Place(string Path, int Line, int Column, string Text);
+
+public sealed record BuildResult(bool Succeeded, int Errors, int Warnings, IReadOnlyList<Finding> Problems, string OutputTail);
+
+public sealed record RunResult(bool StillRunning, string? Status, string Output);
+
+public sealed record BreakpointInfo(string Path, int Line, bool Enabled, string Status, string? Condition, string? HitCondition, string? Message);
+
+public sealed record VariableInfo(string Name, string Value, string? Type, int Reference);
+
+public sealed record DebugSnapshot(
+    string State,
+    string? Reason,
+    string? Location,
+    IReadOnlyList<string> Frames,
+    IReadOnlyList<VariableInfo> Locals,
+    int? ExitCode,
+    string? Status,
+    string? Exception = null);
+
+public sealed record SymbolFound(string Name, string Kind, string? Container, string Path, int Line, int Column);
