@@ -120,8 +120,11 @@ Tests and Debug Tests at the caret or on the window's selection (⌘U R and ⌘U
 Studio keymaps), Repeat the last run (⌘U U), Rerun Failed (⌘U F) and Stop. Debugging attaches Passenger's debugger to
 the test host VSTest starts, before a test runs in it. The MCP server has tests_run and tests_list.
 
-Still to do: run marks in the editor's gutter beside each test, a tree that follows edits without a run, filters and
-grouping, running until failure, and Microsoft.Testing.Platform projects with no VSTest adapter.
+Run marks in the gutter beside each test method and class, found from the file's syntax and coloured by the last run
+(Rider's green triangle, red with a mark for a failure), a click on one offering Run and Debug.
+
+Still to do: a tree that follows edits without a run, filters and grouping, running until failure, and
+Microsoft.Testing.Platform projects with no VSTest adapter.
 
 ## M6: the profiler
 

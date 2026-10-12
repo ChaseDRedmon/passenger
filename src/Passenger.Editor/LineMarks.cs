@@ -42,3 +42,15 @@ public enum LineAnnotationKind
 /// <summary>Text drawn after a line's (from zero) code, part of no document: never selected, copied or
 /// typed over.</summary>
 public readonly record struct LineAnnotation(int Line, string Text, LineAnnotationKind Kind);
+
+/// <summary>A test's mark in the gutter, as Rider's run icons beside a test method or class: how it last ran.</summary>
+public enum TestMarkKind
+{
+    NotRun,
+    Passed,
+    Failed,
+    Running,
+}
+
+/// <summary>A test's run icon on a line (from zero), right of the line numbers; a click on it asks the host to run it.</summary>
+public readonly record struct TestMark(int Line, TestMarkKind Kind);

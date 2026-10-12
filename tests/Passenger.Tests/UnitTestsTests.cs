@@ -37,6 +37,10 @@ public sealed class UnitTestsTests : IDisposable
     public void Run_all_marks_each_test_and_run_at_the_caret_runs_that_test_alone()
     {
         MainWindow window = Open();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        // Before any run, each test and its class has a run icon, not yet run.
+        Assert.Contains(new TestMark(4, TestMarkKind.NotRun), editor.TestMarks);
+        Assert.Contains(new TestMark(7, TestMarkKind.NotRun), editor.TestMarks);
         // Run All has no key of Rider's: the Unit Tests window's button runs it.
         Assert.True(window.Perform(AppActions.RunAllTests));
         Ui.WaitFor(() => !window.Tests.IsBusy && Method(window, "Two_and_two_make_four")?.State == TestState.Passed, "the run of every test", TimeSpan.FromSeconds(120));
@@ -47,6 +51,10 @@ public sealed class UnitTestsTests : IDisposable
         // A failure says where it failed, so its stack leads back to the line.
         Assert.Contains("SumTests.cs:line 17", Method(window, "Two_and_two_make_five")!.Details, StringComparison.Ordinal);
         Assert.Equal(TestState.Failed, window.Tests.Tree.Roots[0].State);
+        // The icons take the results: the passing test's green, the failing test's and its class's red.
+        Assert.Contains(new TestMark(7, TestMarkKind.Passed), editor.TestMarks);
+        Assert.Contains(new TestMark(14, TestMarkKind.Failed), editor.TestMarks);
+        Assert.Contains(new TestMark(4, TestMarkKind.Failed), editor.TestMarks);
 
         // The caret in a test: Run Tests runs it and nothing else, so only its result is new.
         var four = Method(window, "Two_and_two_make_four")!.Results[0];

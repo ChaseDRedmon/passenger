@@ -145,6 +145,8 @@ public sealed class TestRunner : IDisposable
 
     private sealed class Run(Action<TestResult> result, Action<IReadOnlyList<TestCase>>? started, Action<string>? log) : ITestRunEventsHandler
     {
+        private readonly List<TestResult> all = [];
+
         public TaskCompletionSource<RunSummary> Done { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public void HandleTestRunStatsChange(TestRunChangedEventArgs? testRunChangedArgs)
@@ -155,6 +157,10 @@ public sealed class TestRunner : IDisposable
             }
             foreach (TestResult each in testRunChangedArgs?.NewTestResults ?? [])
             {
+                lock (all)
+                {
+                    all.Add(each);
+                }
                 result(each);
             }
         }
@@ -166,7 +172,12 @@ public sealed class TestRunner : IDisposable
             {
                 log?.Invoke(error.Message);
             }
-            Done.TrySetResult(new RunSummary(testRunCompleteArgs.ElapsedTimeInRunningTests, testRunCompleteArgs.IsCanceled, testRunCompleteArgs.IsAborted, testRunCompleteArgs.Error?.Message));
+            List<TestResult> results;
+            lock (all)
+            {
+                results = [.. all];
+            }
+            Done.TrySetResult(new RunSummary(testRunCompleteArgs.ElapsedTimeInRunningTests, testRunCompleteArgs.IsCanceled, testRunCompleteArgs.IsAborted, testRunCompleteArgs.Error?.Message) { Results = results });
         }
 
         public int LaunchProcessWithDebuggerAttached(TestProcessStartInfo testProcessStartInfo) => -1;
@@ -186,4 +197,8 @@ public sealed class TestRunner : IDisposable
 }
 
 /// <summary>How a run ended: how long its tests took, and whether it was stopped or broke off.</summary>
-public sealed record RunSummary(TimeSpan Elapsed, bool Canceled, bool Aborted, string? Error);
+public sealed record RunSummary(TimeSpan Elapsed, bool Canceled, bool Aborted, string? Error)
+{
+    /// <summary>Every result of the run, which the run's end holds to whatever order they were told in.</summary>
+    public IReadOnlyList<TestResult> Results { get; init; } = [];
+}

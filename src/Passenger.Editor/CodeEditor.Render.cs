@@ -264,12 +264,24 @@ public sealed partial class CodeEditor
             return;
         }
         double right = gutter - GutterPadRight;
+        Dictionary<int, TestMarkKind> tests = [];
+        foreach (TestMark test in TestMarks)
+        {
+            if (test.Line >= first && test.Line <= last)
+            {
+                tests[test.Line] = test.Kind;
+            }
+        }
         for (int line = first; line <= last; line++)
         {
             double top = line * metrics.LineHeight - scroll.Y;
             if (marks.Executing.Contains(line))
             {
                 DrawExecutionArrow(context, right, top);
+            }
+            else if (tests.TryGetValue(line, out TestMarkKind test))
+            {
+                DrawTestMark(context, test, right, top);
             }
             if (marks.Breakpoints.TryGetValue(line, out LineMark mark))
             {
@@ -358,6 +370,41 @@ public sealed partial class CodeEditor
             default:
                 context.DrawEllipse(null, new Pen(palette.LineNumber, 1.5), centre, radius - 0.75, radius - 0.75);
                 break;
+        }
+    }
+
+    /// <summary>A test's run icon right of the line numbers: Rider's green triangle, in its last result's colour, a
+    /// dot for one running.</summary>
+    private void DrawTestMark(DrawingContext context, TestMarkKind kind, double right, double top)
+    {
+        IBrush brush = kind switch
+        {
+            TestMarkKind.Passed => palette.TestPassed,
+            TestMarkKind.Failed => palette.Error,
+            TestMarkKind.Running => palette.ExecutionPoint,
+            _ => palette.TestNotRun,
+        };
+        double size = Math.Min(metrics.LineHeight - 8, 11);
+        double x = right + 6;
+        double y = top + ((metrics.LineHeight - size) / 2);
+        if (kind == TestMarkKind.Running)
+        {
+            context.DrawEllipse(brush, null, new Point(x + (size / 2), y + (size / 2)), size / 2.6, size / 2.6);
+            return;
+        }
+        StreamGeometry triangle = new();
+        using (StreamGeometryContext path = triangle.Open())
+        {
+            path.BeginFigure(new Point(x, y), true);
+            path.LineTo(new Point(x + (size * 0.9), y + (size / 2)));
+            path.LineTo(new Point(x, y + size));
+            path.EndFigure(true);
+        }
+        context.DrawGeometry(brush, null, triangle);
+        if (kind == TestMarkKind.Failed)
+        {
+            // Rider's failed test: the run icon with a red mark on it.
+            context.DrawEllipse(palette.Error, new Pen(palette.Gutter, 1.2), new Point(x + size, y + size - 1), 2.6, 2.6);
         }
     }
 
@@ -575,6 +622,8 @@ public sealed partial class CodeEditor
         public IBrush ExecutionPoint { get; private init; } = Brush("#5E9CF0");
         public IBrush InlineValue { get; private init; } = Brush("#868A91");
         public IBrush Tracepoint { get; private init; } = Brush("#E5A336");
+        public IBrush TestPassed { get; private init; } = Brush("#5FAD65");
+        public IBrush TestNotRun { get; private init; } = Brush("#5FAD65");
         public IBrush ExceptionBack { get; private init; } = Brush("#4A2629");
 
         public IBrush Syntax(TokenKind kind) => syntax.TryGetValue(kind, out IBrush? brush) ? brush : Text;
@@ -606,6 +655,8 @@ public sealed partial class CodeEditor
                 ExecutionPoint = Find(control, "Passenger.Editor.ExecutionPoint") ?? defaults.ExecutionPoint,
                 InlineValue = Find(control, "Passenger.Editor.InlineValue") ?? defaults.InlineValue,
                 Tracepoint = Find(control, "Passenger.Editor.Tracepoint") ?? defaults.Tracepoint,
+                TestPassed = Find(control, "Passenger.Test.Passed") ?? defaults.TestPassed,
+                TestNotRun = Find(control, "Passenger.Run") ?? defaults.TestNotRun,
                 ExceptionBack = Find(control, "Passenger.Editor.ExceptionBack") ?? defaults.ExceptionBack,
             };
             foreach (TokenKind kind in Enum.GetValues<TokenKind>())

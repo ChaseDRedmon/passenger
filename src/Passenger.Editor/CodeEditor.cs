@@ -109,6 +109,19 @@ public sealed partial class CodeEditor : Control
         InvalidateVisual();
     }
 
+    /// <summary>The tests' run icons in the gutter, from the host.</summary>
+    public IReadOnlyList<TestMark> TestMarks { get; private set; } = [];
+
+    public void SetTestMarks(IReadOnlyList<TestMark> marks)
+    {
+        TestMarks = marks;
+        InvalidateVisual();
+    }
+
+    /// <summary>Whether a point (in the editor's coordinates) is in the gutter's column of run icons and the
+    /// execution arrow, right of the line numbers.</summary>
+    public bool IsInMarkColumn(Point at) => ShowLineNumbers && at.X >= GutterWidth - GutterPadRight && at.X < GutterWidth;
+
     /// <summary>Text after lines' code (the debugger's inline values, an exception), from the host.</summary>
     public IReadOnlyList<LineAnnotation> LineAnnotations { get; private set; } = [];
 

@@ -91,6 +91,12 @@ public partial class MainWindow : Window
             {
                 return;
             }
+            if (!click.Context && editor.IsInMarkColumn(click.Position) && active.TestMarks.Any(m => m.Line == click.Line))
+            {
+                // A test's run icon: Rider's menu of Run and Debug for it.
+                ShowTestMenu(editor, active, click.Line);
+                return;
+            }
             if (click.Context)
             {
                 // A right-click on a breakpoint opens its properties, as in Rider.
@@ -147,6 +153,32 @@ public partial class MainWindow : Window
             Bottom.Tests.Status = message;
         };
         tests.LaunchUnderDebugger = LaunchTestHost;
+        Closing += (_, _) => _ = tests.DisposeAsync();
+        DispatcherTimer marksTimer = new() { Interval = TimeSpan.FromMilliseconds(150) };
+        marksTimer.Tick += (_, _) =>
+        {
+            marksTimer.Stop();
+            UpdateAllTestMarks();
+        };
+        Bottom.TestTree.Updated += (_, _) =>
+        {
+            marksTimer.Stop();
+            UpdateAllTestMarks();
+        };
+        Bottom.TestTree.ResultApplied += (_, _) =>
+        {
+            marksTimer.Stop();
+            marksTimer.Start();
+        };
+        Editors.Opened += (_, document) =>
+        {
+            UpdateTestMarks(document);
+            document.Text.Changed += (_, _) =>
+            {
+                marksTimer.Stop();
+                marksTimer.Start();
+            };
+        };
         tests.AttachDebugger = async processId =>
         {
             ShowToolWindow("debug");
@@ -1064,6 +1096,64 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>The run icons of a file's tests, coloured by how each last ran (a class's by all of its tests').</summary>
+    private void UpdateTestMarks(OpenDocument document)
+    {
+        if (!document.Path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+        string text = document.Text.Snapshot.ToString();
+        List<TestMark> marks = [];
+        foreach ((string type, int line) in Testing.TestsAtCaret.DeclaredTypes(text))
+        {
+            marks.Add(new TestMark(line, MarkOf(Found(type, null))));
+        }
+        foreach ((string type, string method, int line) in Testing.TestsAtCaret.Declared(text))
+        {
+            marks.Add(new TestMark(line, MarkOf(Found(type, method))));
+        }
+        document.TestMarks = marks;
+
+        IReadOnlyList<Testing.TestNode> Found(string type, string? method) =>
+            [.. tests.Tree.Roots.SelectMany(r => r.Methods).Where(m => m.Cases.Any(c => Testing.TestsAtCaret.Matches(c.FullyQualifiedName, type, method)))];
+
+        static TestMarkKind MarkOf(IReadOnlyList<Testing.TestNode> methods) =>
+            methods.Any(m => m.State == Testing.TestState.Running) ? TestMarkKind.Running
+            : methods.Any(m => m.State == Testing.TestState.Failed) ? TestMarkKind.Failed
+            : methods.Count > 0 && methods.All(m => m.State is Testing.TestState.Passed or Testing.TestState.Skipped) && methods.Any(m => m.State == Testing.TestState.Passed) ? TestMarkKind.Passed
+            : TestMarkKind.NotRun;
+    }
+
+    private void UpdateAllTestMarks()
+    {
+        foreach (OpenDocument document in Editors.Documents)
+        {
+            UpdateTestMarks(document);
+        }
+    }
+
+    /// <summary>Rider's menu on a test's run icon: run or debug that test, or all of its class's.</summary>
+    private void ShowTestMenu(CodeEditor editor, OpenDocument document, int line)
+    {
+        string text = document.Text.Snapshot.ToString();
+        (string Type, string? Method)? target = Testing.TestsAtCaret.Declared(text).Where(d => d.Line == line).Select(d => ((string, string?)?)(d.Type, d.Method)).FirstOrDefault()
+            ?? Testing.TestsAtCaret.DeclaredTypes(text).Where(d => d.Line == line).Select(d => ((string, string?)?)(d.Type, null)).FirstOrDefault();
+        if (target is not { } chosen)
+        {
+            return;
+        }
+        string name = chosen.Method ?? chosen.Type[(chosen.Type.LastIndexOfAny(['.', '+']) + 1)..];
+        MenuFlyout menu = new();
+        MenuItem run = new() { Header = $"Run '{name}'" };
+        run.Click += (_, _) => RunTestsAt(chosen.Type, chosen.Method, debug: false);
+        MenuItem debugIt = new() { Header = $"Debug '{name}'" };
+        debugIt.Click += (_, _) => RunTestsAt(chosen.Type, chosen.Method, debug: true);
+        menu.Items.Add(run);
+        menu.Items.Add(debugIt);
+        menu.ShowAt(editor, showAtPointer: true);
+    }
+
     /// <summary>Rider's Run (or Debug) Unit Tests in context: the Unit Tests window's chosen rows when it has the
     /// focus, else the test method or class at the editor's caret, found once the tests have been.</summary>
     private void RunTestsInContext(bool debug)
@@ -1083,6 +1173,17 @@ public partial class MainWindow : Window
             StatusText.Text = "No test is at the caret";
             return;
         }
+        RunTestsAt(context.Type, context.Method, debug);
+    }
+
+    /// <summary>Runs (or debugs) a test method, or every test of a type, finding the tests first if need be.</summary>
+    private void RunTestsAt(string type, string? method, bool debug)
+    {
+        if (folder is null)
+        {
+            return;
+        }
+        (string Type, string? Method) context = (type, method);
         RunTests(async () =>
         {
             if (Matching() is not { Count: > 0 })

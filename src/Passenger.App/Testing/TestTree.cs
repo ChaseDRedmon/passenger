@@ -138,6 +138,12 @@ public sealed class TestTree
 
     public ObservableCollection<TestNode> Rows { get; } = [];
 
+    /// <summary>Tests were found, or a run began or ended: what shows their state follows.</summary>
+    public event EventHandler? Updated;
+
+    /// <summary>A result came in during a run, of which there may be thousands: worth following a moment later.</summary>
+    public event EventHandler? ResultApplied;
+
     public IReadOnlyList<TestNode> Roots { get; private set; } = [];
 
     /// <summary>The tree for what discovery found, project by project; what was open stays open.</summary>
@@ -161,6 +167,7 @@ public sealed class TestTree
         }
         Roots = roots;
         Flatten();
+        Updated?.Invoke(this, EventArgs.Empty);
     }
 
     public TestNode? Node(TestCase test) => byCase.GetValueOrDefault(test.Id);
@@ -173,6 +180,7 @@ public sealed class TestTree
             method.Begin();
         }
         Recompute();
+        Updated?.Invoke(this, EventArgs.Empty);
     }
 
     public void Apply(TestResult result)
@@ -184,6 +192,7 @@ public sealed class TestTree
             {
                 group.Recompute();
             }
+            ResultApplied?.Invoke(this, EventArgs.Empty);
         }
     }
 
@@ -194,6 +203,7 @@ public sealed class TestTree
             method.End();
         }
         Recompute();
+        Updated?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>The test methods declared in a file, for the editor's gutter.</summary>

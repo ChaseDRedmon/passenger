@@ -100,12 +100,24 @@ public sealed class TestController : IAsyncDisposable
             Tree.Begin(methods);
             Changed?.Invoke(this, EventArgs.Empty);
             Message?.Invoke(this, $"Running {Count(methods)}");
+            HashSet<TestResult> applied = new(ReferenceEqualityComparer.Instance);
+            void Apply(TestResult result)
+            {
+                if (applied.Add(result))
+                {
+                    Tree.Apply(result);
+                }
+            }
             RunSummary summary = await runner!.RunAsync(
                 [.. methods.SelectMany(m => m.Cases)],
-                result => Dispatcher.UIThread.Post(() => Tree.Apply(result)),
+                result => Dispatcher.UIThread.Post(() => Apply(result)),
                 log: line => Dispatcher.UIThread.Post(() => log(line)),
                 debugger: debug ? new DebugLauncher(this) : null);
-            // The results were posted before the run's end was, so they are all in.
+            // VSTest may tell a result on another thread behind the run's end: every one is in before the end is.
+            foreach (TestResult result in summary.Results)
+            {
+                Apply(result);
+            }
             Tree.End();
             Summary = Tally(methods, summary);
             Message?.Invoke(this, Summary);

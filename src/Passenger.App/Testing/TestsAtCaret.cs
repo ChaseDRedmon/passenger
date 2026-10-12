@@ -41,6 +41,15 @@ public static class TestsAtCaret
             .Select(m => (FullName((TypeDeclarationSyntax)m.Parent!), m.Identifier.ValueText, m.Identifier.GetLocation().GetLineSpan().StartLinePosition.Line))];
     }
 
+    /// <summary>Every type the file declares that has a test method, with the line (from zero) its name is on.</summary>
+    public static IReadOnlyList<(string Type, int Line)> DeclaredTypes(string text)
+    {
+        SyntaxTree tree = CSharpSyntaxTree.ParseText(text);
+        return [.. tree.GetRoot().DescendantNodes().OfType<TypeDeclarationSyntax>()
+            .Where(t => t.Members.OfType<MethodDeclarationSyntax>().Any(m => m.AttributeLists.SelectMany(l => l.Attributes).Any(IsTest)))
+            .Select(t => (FullName(t), t.Identifier.GetLocation().GetLineSpan().StartLinePosition.Line))];
+    }
+
     /// <summary>Whether a discovered test belongs to a type and method (a theory's rows, NUnit's cases included).</summary>
     public static bool Matches(string fullyQualifiedName, string type, string? method)
     {

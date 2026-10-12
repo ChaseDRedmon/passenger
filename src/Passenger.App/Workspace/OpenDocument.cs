@@ -14,6 +14,7 @@ public sealed class OpenDocument : Observable
     private IReadOnlyList<Marker> markers = [];
     private IReadOnlyList<LineMark> lineMarks = [];
     private IReadOnlyList<LineAnnotation> lineAnnotations = [];
+    private IReadOnlyList<TestMark> testMarks = [];
 
     public OpenDocument(string path, FileText file)
     {
@@ -50,6 +51,13 @@ public sealed class OpenDocument : Observable
     {
         get => lineMarks;
         set => Set(ref lineMarks, value);
+    }
+
+    /// <summary>The tests' run icons beside the test methods and classes it declares.</summary>
+    public IReadOnlyList<TestMark> TestMarks
+    {
+        get => testMarks;
+        set => Set(ref testMarks, value);
     }
 
     /// <summary>The debugger's text after lines: inline values, the exception it stopped on.</summary>

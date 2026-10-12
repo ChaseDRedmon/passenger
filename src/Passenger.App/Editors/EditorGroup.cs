@@ -127,6 +127,7 @@ public sealed class EditorGroup : DockPanel
         Editor.SetMarkers(document.Markers);
         Editor.SetLineMarks(document.LineMarks);
         Editor.SetLineAnnotations(document.LineAnnotations);
+        Editor.SetTestMarks(document.TestMarks);
         Find.Attach(Editor);
         Editor.IsVisible = true;
         tabBar.IsVisible = true;
@@ -224,6 +225,9 @@ public sealed class EditorGroup : DockPanel
                 break;
             case nameof(OpenDocument.Markers):
                 Editor.SetMarkers(document.Markers);
+                break;
+            case nameof(OpenDocument.TestMarks):
+                Editor.SetTestMarks(document.TestMarks);
                 break;
         }
     }
