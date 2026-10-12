@@ -16,6 +16,8 @@ public static class AppActions
     public const string GoToLine = "app.goToLine";
     public const string Find = "app.find";
     public const string Replace = "app.replace";
+    public const string FindNext = "app.findNext";
+    public const string FindPrevious = "app.findPrevious";
     public const string FocusExplorer = "app.focusExplorer";
     public const string FocusEditor = "app.focusEditor";
 
@@ -37,6 +39,8 @@ public static class AppActions
                 .Bind(GoToLine, "meta G")
                 .Bind(Find, "meta F")
                 .Bind(Replace, "control H")
+                .Bind(FindNext, "F3", "meta alt PAGE_DOWN")
+                .Bind(FindPrevious, "shift F3", "meta alt PAGE_UP")
                 .Bind(FocusExplorer, "meta 1", "meta alt L");
         }
         return keymap
@@ -50,6 +54,8 @@ public static class AppActions
             .Bind(GoToLine, "control G")
             .Bind(Find, "control F")
             .Bind(Replace, "control H")
+            .Bind(FindNext, "F3", "control alt PAGE_DOWN")
+            .Bind(FindPrevious, "shift F3", "control alt PAGE_UP")
             .Bind(FocusExplorer, "alt 1", "control alt L");
     }
 }

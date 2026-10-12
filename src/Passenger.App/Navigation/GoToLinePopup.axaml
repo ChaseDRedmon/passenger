@@ -1,0 +1,12 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="Passenger.App.Navigation.GoToLinePopup"
+             Width="320">
+    <Border Classes="popup" Padding="12,10">
+        <StackPanel Spacing="8">
+            <TextBlock Classes="paneTitle" Text="Go to Line:Column" />
+            <TextBox Name="Query" Classes="search" />
+            <TextBlock Name="Problem" Classes="muted" FontSize="12" IsVisible="False" />
+        </StackPanel>
+    </Border>
+</UserControl>

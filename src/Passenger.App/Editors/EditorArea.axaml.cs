@@ -92,6 +92,7 @@ public partial class EditorArea : UserControl
         Editor.Indent = new IndentOptions(document.Language.IndentSize);
         Editor.Show(document.Text, document.Selections, document.Scroll);
         Editor.Highlighter = document.Highlighter;
+        Find.Attach(Editor);
         ShowEditor(true);
         Editor.Focus();
         ActiveChanged?.Invoke(this, EventArgs.Empty);
@@ -122,11 +123,23 @@ public partial class EditorArea : UserControl
             }
             else
             {
+                Find.Close();
                 ShowEditor(false);
                 ActiveChanged?.Invoke(this, EventArgs.Empty);
             }
         }
         return true;
+    }
+
+    public FindBar FindBar => Find;
+
+    /// <summary>Opens the find bar over the active file, with the replace row if asked.</summary>
+    public void ShowFind(bool replace)
+    {
+        if (active is not null)
+        {
+            Find.Open(replace);
+        }
     }
 
     public void SaveActive() => active?.Save();

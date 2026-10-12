@@ -212,6 +212,25 @@ public sealed partial class CodeEditor : Control
         SelectionChanged?.Invoke(this, EventArgs.Empty);
     }
 
+    /// <summary>Ranges a search found (sorted), drawn behind the text, the current one stronger. The
+    /// search owns them and sets them again when the text changes.</summary>
+    public IReadOnlyList<TextRange> Highlights { get; private set; } = [];
+
+    public int CurrentHighlight { get; private set; } = -1;
+
+    public void SetHighlights(IReadOnlyList<TextRange> ranges, int current)
+    {
+        Highlights = ranges;
+        CurrentHighlight = current;
+        InvalidateVisual();
+    }
+
+    /// <summary>Selects a range and scrolls it into view, as finding it does.</summary>
+    public void Select(TextRange range)
+    {
+        SetSelections(SelectionSet.Single(new Selection(range.Start, range.End)), reveal: true);
+    }
+
     /// <summary>Where an offset's caret would stand, as the top of its line, in this control's
     /// coordinates: what a popup anchors to, and where a click lands on that offset.</summary>
     public Point PointOf(int offset)

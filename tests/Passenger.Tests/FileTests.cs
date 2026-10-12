@@ -32,7 +32,7 @@ public sealed class FileTests : IDisposable
         Ui.Press(window, "ENTER");
         window.KeyTextInput("// added");
         Ui.Settle();
-        Ui.Press(window, Shortcut(AppActions.Save));
+        Ui.Press(window, Ui.Shortcut(AppActions.Save));
 
         byte[] saved = File.ReadAllBytes(path);
         Assert.Equal(bom, saved[..3]);
@@ -53,30 +53,5 @@ public sealed class FileTests : IDisposable
         Ui.Settle();
         Assert.Null(window.EditorArea.Active);
         window.Close();
-    }
-
-    /// <summary>The first shortcut the platform's keymap gives an action, in keymap notation.</summary>
-    private static string Shortcut(string action)
-    {
-        Keystroke stroke = AppActions.Keymap().ShortcutsFor(action)[0].First;
-        List<string> parts = [];
-        if (stroke.Modifiers.HasFlag(Avalonia.Input.KeyModifiers.Meta))
-        {
-            parts.Add("meta");
-        }
-        if (stroke.Modifiers.HasFlag(Avalonia.Input.KeyModifiers.Control))
-        {
-            parts.Add("control");
-        }
-        if (stroke.Modifiers.HasFlag(Avalonia.Input.KeyModifiers.Alt))
-        {
-            parts.Add("alt");
-        }
-        if (stroke.Modifiers.HasFlag(Avalonia.Input.KeyModifiers.Shift))
-        {
-            parts.Add("shift");
-        }
-        parts.Add(stroke.Key.ToString());
-        return string.Join(' ', parts);
     }
 }

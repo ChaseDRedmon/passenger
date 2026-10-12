@@ -167,6 +167,50 @@
         <Setter Property="Background" Value="{DynamicResource Passenger.Selected}" />
     </Style>
 
+    <!-- A search field (the find bar, Go to File): flat, the chrome's own colour, an accent edge when
+         focused, and room at its right for toggles drawn inside it. -->
+    <Style Selector="TextBox.search">
+        <Setter Property="MinHeight" Value="28" />
+        <Setter Property="CornerRadius" Value="5" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="FontSize" Value="13" />
+    </Style>
+    <Style Selector="ToggleButton.option">
+        <Setter Property="Width" Value="24" />
+        <Setter Property="Height" Value="22" />
+        <Setter Property="MinWidth" Value="0" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="CornerRadius" Value="4" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.Icon}" />
+    </Style>
+    <Style Selector="ToggleButton.option PathIcon">
+        <Setter Property="Width" Value="14" />
+        <Setter Property="Height" Value="14" />
+    </Style>
+    <Style Selector="ToggleButton.option:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource Passenger.Hover}" />
+    </Style>
+    <Style Selector="ToggleButton.option:checked /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource Passenger.Accent}" />
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.AccentText}" />
+    </Style>
+    <Style Selector="ToggleButton.option:checked PathIcon">
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.AccentText}" />
+    </Style>
+
+    <!-- A popup over the window (Go to File, Go to Line): the chrome's colour, a soft shadow. -->
+    <Style Selector="Border.popup">
+        <Setter Property="Background" Value="{DynamicResource Passenger.Chrome}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Passenger.Selected}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="8" />
+        <Setter Property="BoxShadow" Value="0 10 30 0 #70000000" />
+    </Style>
+
     <!-- The one emphasised action on a page. -->
     <Style Selector="Button.primary">
         <Setter Property="Padding" Value="16,7" />

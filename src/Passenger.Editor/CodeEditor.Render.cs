@@ -48,6 +48,7 @@ public sealed partial class CodeEditor
                     context.FillRectangle(palette.CurrentLine, new Rect(gutter, y, size.Width - gutter, lineHeight));
                 }
                 DrawSelections(context, span, layout, left, y, size.Width, focused);
+                DrawHighlights(context, span, layout, left, y);
                 layout.Draw(context, new Point(left, y + (lineHeight - layout.Height) / 2));
             }
 
@@ -118,6 +119,45 @@ public sealed partial class CodeEditor
             if (x2 > x1)
             {
                 context.FillRectangle(brush, new Rect(x1, y, x2 - x1, metrics.LineHeight));
+            }
+        }
+    }
+
+    private void DrawHighlights(DrawingContext context, LineSpan span, TextLine layout, double left, double y)
+    {
+        IReadOnlyList<TextRange> ranges = Highlights;
+        int low = 0;
+        int high = ranges.Count;
+        while (low < high)
+        {
+            int middle = (low + high) / 2;
+            if (ranges[middle].End <= span.Start)
+            {
+                low = middle + 1;
+            }
+            else
+            {
+                high = middle;
+            }
+        }
+        for (int i = low; i < ranges.Count && ranges[i].Start <= span.End; i++)
+        {
+            int from = Math.Max(ranges[i].Start, span.Start) - span.Start;
+            int to = Math.Min(ranges[i].End, span.End) - span.Start;
+            double x1 = left + layout.GetDistanceFromCharacterHit(new CharacterHit(from));
+            double x2 = left + layout.GetDistanceFromCharacterHit(new CharacterHit(to));
+            if (x2 > x1)
+            {
+                Rect box = new(x1, y + 1, x2 - x1, metrics.LineHeight - 2);
+                if (i == CurrentHighlight)
+                {
+                    // The current match stands out from the rest, outlined in the caret's colour.
+                    context.DrawRectangle(palette.SearchCurrent, new Pen(palette.Caret, 1), box, 2, 2);
+                }
+                else
+                {
+                    context.FillRectangle(palette.SearchMatch, box, 2);
+                }
             }
         }
     }
@@ -316,6 +356,8 @@ public sealed partial class CodeEditor
         public IBrush SelectionInactive { get; private init; } = Brush("#2C3341");
         public IBrush Caret { get; private init; } = Brush("#CED0D6");
         public IBrush Preedit { get; private init; } = Brush("#CED0D6");
+        public IBrush SearchMatch { get; private init; } = Brush("#2F4A36");
+        public IBrush SearchCurrent { get; private init; } = Brush("#4F9A5F");
 
         public IBrush Syntax(TokenKind kind) => syntax.TryGetValue(kind, out IBrush? brush) ? brush : Text;
 
@@ -334,6 +376,8 @@ public sealed partial class CodeEditor
                 SelectionInactive = Find(control, "Passenger.Editor.SelectionInactive") ?? defaults.SelectionInactive,
                 Caret = Find(control, "Passenger.Editor.Caret") ?? defaults.Caret,
                 Preedit = Find(control, "Passenger.Editor.Text") ?? defaults.Preedit,
+                SearchMatch = Find(control, "Passenger.Editor.SearchMatch") ?? defaults.SearchMatch,
+                SearchCurrent = Find(control, "Passenger.Editor.SearchCurrent") ?? defaults.SearchCurrent,
             };
             foreach (TokenKind kind in Enum.GetValues<TokenKind>())
             {

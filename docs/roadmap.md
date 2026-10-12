@@ -11,13 +11,15 @@ the UI without opening a window.
 
 **Done when:** `just run` opens it on macOS and Windows.
 
-## M1: the editor
+## M1: the editor (built)
 
-Our own text control: a piece-table buffer, cached line layout, caret and selection (multiple carets included),
-undo and redo, scrolling, a line-number gutter, and fast large files. Opening a folder fills a file tree in the
-Explorer; clicking a file opens it in a tab; saving writes it back.
+Our own text control over an immutable rope (not the piece table first planned: a rope's versions are free
+snapshots for background readers), cached line layout, multiple carets, undo grouped by word, a line-number gutter,
+Rider's Visual Studio keymaps with chords, C# colour from Roslyn's parser off the UI thread, find and replace, Go to
+File and Go to Line. The Explorer's file tree, tabs that keep their carets and scroll, saving that keeps encoding, BOM,
+line endings and permissions.
 
-**Done when:** editing a 50,000-line file feels instant, and the editor holds a frame per keystroke.
+**Done when:** editing a 50,000-line file feels instant, and the editor holds a frame per keystroke. Still to measure.
 
 ## M2: C# intelligence
 

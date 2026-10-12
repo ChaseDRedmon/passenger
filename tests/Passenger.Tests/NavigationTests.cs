@@ -1,0 +1,84 @@
+using Avalonia.Headless;
+using Avalonia.Headless.XUnit;
+using Passenger.App;
+using Passenger.Text;
+
+namespace Passenger.Tests;
+
+/// <summary>Getting to a file or a line from the keyboard, through the window.</summary>
+public sealed class NavigationTests : IDisposable
+{
+    private readonly string folder = Directory.CreateTempSubdirectory("passenger-nav-").FullName;
+
+    public void Dispose() => Directory.Delete(folder, recursive: true);
+
+    [AvaloniaFact]
+    public void Go_to_file_finds_a_file_by_its_camel_humps_and_enter_opens_it()
+    {
+        Write("src/Editor/CodeEditor.cs", "class CodeEditor { }");
+        Write("src/Editor/Commands.cs", "class Commands { }");
+        Write("notes/Changes.txt", "nothing");
+        MainWindow window = Open();
+
+        Ui.Press(window, Ui.Shortcut(AppActions.GoToFile));
+        Assert.True(window.IsPopupOpen);
+        window.KeyTextInput("CE");
+        Ui.Settle();
+        Ui.Press(window, "ENTER");
+
+        Assert.False(window.IsPopupOpen);
+        Assert.Equal("CodeEditor.cs", window.EditorArea.Active?.Name);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Go_to_file_with_nothing_typed_offers_the_files_opened_before_this_one()
+    {
+        Write("First.cs", "class First { }");
+        Write("Second.cs", "class Second { }");
+        MainWindow window = Open();
+        window.OpenFile("First.cs");
+        window.OpenFile("Second.cs");
+        Ui.Settle();
+
+        Ui.Press(window, Ui.Shortcut(AppActions.GoToFile));
+        Ui.Press(window, "ENTER");
+
+        Assert.Equal("First.cs", window.EditorArea.Active?.Name);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Go_to_line_takes_a_line_and_column_counted_from_one()
+    {
+        Write("Lines.txt", string.Join('\n', Enumerable.Range(1, 40).Select(i => $"line number {i}")));
+        MainWindow window = Open();
+        window.OpenFile("Lines.txt");
+        Ui.Settle();
+
+        Ui.Press(window, Ui.Shortcut(AppActions.GoToLine));
+        window.KeyTextInput("25:6");
+        Ui.Settle();
+        Ui.Press(window, "ENTER");
+
+        Assert.False(window.IsPopupOpen);
+        Assert.Equal(new TextPosition(24, 5), window.EditorArea.CodeEditor.CaretPosition);
+        window.Close();
+    }
+
+    private void Write(string relative, string text)
+    {
+        string path = Path.Combine(folder, relative);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, text);
+    }
+
+    private MainWindow Open()
+    {
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(folder);
+        Ui.Settle();
+        return window;
+    }
+}

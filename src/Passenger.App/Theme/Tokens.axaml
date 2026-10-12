@@ -38,6 +38,8 @@
             <SolidColorBrush x:Key="Passenger.Editor.Selection" Color="#214283" />
             <SolidColorBrush x:Key="Passenger.Editor.SelectionInactive" Color="#2C3341" />
             <SolidColorBrush x:Key="Passenger.Editor.Caret" Color="#CED0D6" />
+            <SolidColorBrush x:Key="Passenger.Editor.SearchMatch" Color="#2F4A36" />
+            <SolidColorBrush x:Key="Passenger.Editor.SearchCurrent" Color="#4F9A5F" />
 
             <SolidColorBrush x:Key="Passenger.Syntax.Keyword" Color="#6C95EB" />
             <SolidColorBrush x:Key="Passenger.Syntax.ControlKeyword" Color="#6C95EB" />
@@ -95,6 +97,8 @@
             <SolidColorBrush x:Key="Passenger.Editor.Selection" Color="#A6D2FF" />
             <SolidColorBrush x:Key="Passenger.Editor.SelectionInactive" Color="#D5DDE9" />
             <SolidColorBrush x:Key="Passenger.Editor.Caret" Color="#000000" />
+            <SolidColorBrush x:Key="Passenger.Editor.SearchMatch" Color="#FCEBA4" />
+            <SolidColorBrush x:Key="Passenger.Editor.SearchCurrent" Color="#F2B230" />
 
             <SolidColorBrush x:Key="Passenger.Syntax.Keyword" Color="#0F54D6" />
             <SolidColorBrush x:Key="Passenger.Syntax.ControlKeyword" Color="#0F54D6" />

@@ -2,8 +2,9 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:editor="using:Passenger.Editor"
              xmlns:ws="using:Passenger.App.Workspace"
+             xmlns:editors="using:Passenger.App.Editors"
              x:Class="Passenger.App.Editors.EditorArea">
-    <Grid RowDefinitions="Auto,*">
+    <Grid RowDefinitions="Auto,Auto,*">
         <!-- The tabs: one per open file, the active one underlined. -->
         <Border Name="TabBar" Grid.Row="0" Height="36" IsVisible="False"
                 Background="{DynamicResource Passenger.Chrome}"
@@ -36,10 +37,12 @@
             </ScrollViewer>
         </Border>
 
-        <editor:CodeEditor Name="Editor" Grid.Row="1" IsVisible="False" />
+        <editors:FindBar Name="Find" Grid.Row="1" />
+
+        <editor:CodeEditor Name="Editor" Grid.Row="2" IsVisible="False" />
 
         <!-- What the area shows with no file open. -->
-        <StackPanel Name="EmptyState" Grid.Row="1" Spacing="10" HorizontalAlignment="Center" VerticalAlignment="Center">
+        <StackPanel Name="EmptyState" Grid.Row="2" Spacing="10" HorizontalAlignment="Center" VerticalAlignment="Center">
             <TextBlock Name="EmptyTitle" Text="Passenger" FontSize="28" FontWeight="SemiBold" HorizontalAlignment="Center"
                        Foreground="{DynamicResource Passenger.Text}" />
             <TextBlock Name="EmptyHint" Classes="muted" Text="Open a solution, project or folder to start." HorizontalAlignment="Center" />

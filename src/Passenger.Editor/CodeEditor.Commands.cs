@@ -190,6 +190,20 @@ public sealed partial class CodeEditor
         return false;
     }
 
+    /// <summary>Applies edits made outside the keyboard (a replace, a fix from the language server)
+    /// as one undo step, the carets carried through them or set to <paramref name="after"/>.</summary>
+    public void ApplyEdits(IReadOnlyList<TextEdit> edits, SelectionSet? after = null)
+    {
+        if (edits.Count == 0 || IsReadOnly)
+        {
+            return;
+        }
+        List<TextEdit> sorted = edits.OrderBy(e => e.Start).ToList();
+        document.BreakUndoGroup();
+        Apply(new EditPlan(sorted, after ?? TextEditing.MapThrough(selections, sorted), EditKind.Other));
+        document.BreakUndoGroup();
+    }
+
     /// <summary>Types text at every caret as if from the keyboard, the editor's typing help
     /// included. What tests and scripted captures type through.</summary>
     public void Type(string typed) => Apply(TextEditing.Type(document.Snapshot, selections, typed));

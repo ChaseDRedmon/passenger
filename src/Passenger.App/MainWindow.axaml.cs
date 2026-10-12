@@ -15,7 +15,12 @@ public partial class MainWindow : Window
     /// <summary>Room at the toolbar's left for macOS's window buttons once the toolbar is the title bar.</summary>
     private const double MacWindowButtons = 72;
 
+    /// <summary>How many recently opened files Go to File offers before anything is typed.</summary>
+    private const int RecentLimit = 25;
+
     private readonly KeymapDispatcher keys = new(AppActions.Keymap());
+    private readonly FileIndex index = new();
+    private readonly List<string> recent = [];
     private string? folder;
 
     public MainWindow()
@@ -63,6 +68,7 @@ public partial class MainWindow : Window
         folder = Path.GetFullPath(path);
         string name = Path.GetFileName(folder);
         Explorer.Load(folder);
+        index.Build(folder);
         Editors.ShowFolderHint(folder);
         ProjectName.Text = name;
         ProjectBadgeText.Text = Initials(name);
@@ -77,6 +83,12 @@ public partial class MainWindow : Window
         {
             StatusText.Text = problem;
             return;
+        }
+        recent.Remove(full);
+        recent.Insert(0, full);
+        if (recent.Count > RecentLimit)
+        {
+            recent.RemoveAt(recent.Count - 1);
         }
         Explorer.Reveal(full);
     }
@@ -113,6 +125,12 @@ public partial class MainWindow : Window
         {
             e.Handled = true;
         }
+        else if (action == EditorActions.Escape && editor.IsFocused && Editors.FindBar.IsVisible)
+        {
+            // Escape with nothing of the editor's own to undo closes what sits over it, as in Rider.
+            Editors.FindBar.Close();
+            e.Handled = true;
+        }
     }
 
     private void RunAppAction(string action)
@@ -143,6 +161,87 @@ public partial class MainWindow : Window
             case AppActions.FocusExplorer:
                 Explorer.Focus();
                 break;
+            case AppActions.GoToFile:
+                ShowGoToFile();
+                break;
+            case AppActions.GoToLine:
+                ShowGoToLine();
+                break;
+            case AppActions.Find:
+                Editors.ShowFind(replace: false);
+                break;
+            case AppActions.Replace:
+                Editors.ShowFind(replace: true);
+                break;
+            case AppActions.FindNext:
+                Editors.FindBar.Next();
+                break;
+            case AppActions.FindPrevious:
+                Editors.FindBar.Previous();
+                break;
+        }
+    }
+
+    public bool IsPopupOpen => Overlay.IsVisible;
+
+    private void ShowGoToFile()
+    {
+        if (folder is null)
+        {
+            return;
+        }
+        Navigation.GoToFilePopup popup = new(index, recent.Skip(Editors.Active is null ? 0 : 1).ToList());
+        popup.Done += (_, path) =>
+        {
+            ClosePopup();
+            if (path is not null)
+            {
+                OpenFile(path);
+            }
+        };
+        ShowPopup(popup);
+    }
+
+    private void ShowGoToLine()
+    {
+        if (Editors.Active is null)
+        {
+            return;
+        }
+        CodeEditor editor = Editors.CodeEditor;
+        Navigation.GoToLinePopup popup = new(editor.CaretPosition, editor.Document.Snapshot.LineCount);
+        popup.Done += (_, position) =>
+        {
+            ClosePopup();
+            if (position is { } at)
+            {
+                editor.GoTo(at);
+            }
+        };
+        ShowPopup(popup);
+    }
+
+    private void ShowPopup(Control popup)
+    {
+        OverlayHost.Content = popup;
+        Overlay.IsVisible = true;
+    }
+
+    private void ClosePopup()
+    {
+        Overlay.IsVisible = false;
+        OverlayHost.Content = null;
+        if (Editors.Active is not null)
+        {
+            Editors.CodeEditor.Focus();
+        }
+    }
+
+    private void OnOverlayPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (e.Source == Overlay)
+        {
+            ClosePopup();
         }
     }
 

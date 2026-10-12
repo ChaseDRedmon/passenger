@@ -92,6 +92,31 @@ public static class Ui
         throw new TimeoutException("Background work never finished.");
     }
 
+    /// <summary>The first shortcut the platform's keymap gives an IDE action, in keymap notation.</summary>
+    public static string Shortcut(string action)
+    {
+        Keystroke stroke = Passenger.App.AppActions.Keymap().ShortcutsFor(action)[0].First;
+        List<string> parts = [];
+        if (stroke.Modifiers.HasFlag(KeyModifiers.Meta))
+        {
+            parts.Add("meta");
+        }
+        if (stroke.Modifiers.HasFlag(KeyModifiers.Control))
+        {
+            parts.Add("control");
+        }
+        if (stroke.Modifiers.HasFlag(KeyModifiers.Alt))
+        {
+            parts.Add("alt");
+        }
+        if (stroke.Modifiers.HasFlag(KeyModifiers.Shift))
+        {
+            parts.Add("shift");
+        }
+        parts.Add(stroke.Key.ToString());
+        return string.Join(' ', parts);
+    }
+
     public static RawInputModifiers Raw(KeyModifiers modifiers)
     {
         RawInputModifiers raw = RawInputModifiers.None;
