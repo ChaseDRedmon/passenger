@@ -8,7 +8,7 @@ It's early, but it's a working IDE: an editor of its own (a rope, multiple caret
 keymaps), Roslyn's colours, diagnostics, completion, hovers, fixes, refactorings, rename and navigation through the
 Roslyn language server, a Solution view, building, running and unit tests, a debugger and a profiler of its own, Git,
 NuGet and a terminal. An MCP server gives an agent the same IDE. The [MVP milestone](https://github.com/Zaneris/passenger/milestone/1)
-lists what comes next, and `docs/architecture.md` says how it's built and why.
+lists what comes next.
 
 The pictures here are of a small sample shop, drawn by Passenger itself on Avalonia's headless platform.
 

@@ -5,10 +5,9 @@ Guidance for Claude Code working in this repository.
 ## What this is
 
 **Passenger** is a Rider-inspired IDE for C# and modern .NET (CoreCLR only: no .NET Framework, Mono or Unity),
-written in C# on .NET 11 with an Avalonia 12 UI, for Windows and macOS first. `docs/architecture.md` holds every
-decision and why; the work still to do is the issues of the GitHub MVP milestone
-(https://github.com/Zaneris/passenger/milestone/1), each saying what Rider does and when it is done. Read the
-architecture and the issue before starting anything larger than a fix, and close or tick the issue when it lands. When a reference for how something should behave is needed, JetBrains
+written in C# on .NET 11 with an Avalonia 12 UI, for Windows and macOS first. The work still to do is the issues of
+the GitHub MVP milestone (https://github.com/Zaneris/passenger/milestone/1), each saying what Rider does and when it
+is done. Read the issue before starting anything larger than a fix, and close or tick it when it lands. When a reference for how something should behave is needed, JetBrains
 Rider is installed at `~/Applications/Rider.app`.
 
 ## Commands
@@ -106,7 +105,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   run on the UI thread as the window's own commands are; `McpHost` hosts them three ways: `--mcp [FOLDER]` (a
   headless IDE on standard input and output), the window's socket, and `--mcp-attach [PID]` (standard input and
   output joined to that socket).
-- The debugger, Passenger's own, started from SharpDbg and ICorDebugSharp (`docs/architecture.md`, The debugger):
+- The debugger, Passenger's own, started from SharpDbg and ICorDebugSharp (MIT; `THIRD_PARTY_NOTICES.md` says what came from where):
   `src/Passenger.Debugger.Interop` (ICorDebug, IMetaDataImport and dbgshim for the COM source generator),
   `src/Passenger.Debugger` (the engine), `src/Passenger.Dap` (the Debug Adapter Protocol, both ends) and
   `src/Passenger.DebugAdapter` (the engine behind the protocol, its own process, carried under `debugger/`).
