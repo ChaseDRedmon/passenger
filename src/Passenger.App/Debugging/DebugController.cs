@@ -151,6 +151,9 @@ public sealed class DebugController
             case AppActions.ShowExecutionPoint when executionPoint is { } point:
                 Navigate?.Invoke(this, (point.Path, new TextPosition(point.Line, 0)));
                 break;
+            case AppActions.AddToWatches when Session is { State: DebugState.Paused } && SelectedOrWord() is { Length: > 0 } watched:
+                _ = Evaluate(watched, watch: true);
+                break;
             case AppActions.Evaluate when Session is { State: DebugState.Paused }:
                 view.FocusEvaluate(SelectedOrWord());
                 break;

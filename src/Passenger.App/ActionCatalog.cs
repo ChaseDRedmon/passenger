@@ -50,6 +50,8 @@ public static class ActionCatalog
         [AppActions.Pause] = "Pause Program",
         [AppActions.ShowExecutionPoint] = "Show Execution Point",
         [AppActions.Evaluate] = "Evaluate Expression...",
+        [AppActions.AddToWatches] = "Add to Watches",
+        [AppActions.ShowContextMenu] = "Show Context Menu",
         [AppActions.EditBreakpoint] = "Edit Breakpoint...",
         [AppActions.ViewBreakpoints] = "View Breakpoints...",
         [AppActions.RunTests] = "Run Unit Tests",

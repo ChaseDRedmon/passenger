@@ -217,6 +217,58 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
     }
 
     [AvaloniaFact]
+    public void A_right_click_on_a_call_puts_the_caret_there_and_its_menu_renames_it_and_goes_to_an_implementation()
+    {
+        string helper = File.ReadAllText(project.PathOf("Helper.cs"));
+        MainWindow window = project.Open("Program.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        try
+        {
+            int call = editor.Document.Snapshot.ToString().IndexOf("Twice", StringComparison.Ordinal) + 2;
+            RightClick(window, editor, call);
+            Assert.InRange(editor.Selections.Primary.Caret, call - 1, call + 1);
+            Choose(window, "Refactor", "Rename...");
+            window.KeyTextInput("Double");
+            Ui.Press(window, "ENTER");
+            Ui.Settle();
+            Assert.Contains("Helper.Double(", editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
+
+            window.OpenFile(project.PathOf("Shapes.cs"));
+            Ui.Settle();
+            int sides = editor.Document.Snapshot.ToString().IndexOf("Sides", StringComparison.Ordinal) + 1;
+            RightClick(window, editor, sides);
+            Choose(window, "Go To", "Go to Implementation");
+            Ui.WaitFor(() => editor.CaretPosition.Line == 7, "the implementation in Square");
+            Assert.Null(window.OpenContextMenu);
+        }
+        finally
+        {
+            File.WriteAllText(project.PathOf("Helper.cs"), helper);
+            window.Close();
+        }
+    }
+
+    private static void RightClick(MainWindow window, CodeEditor editor, int offset)
+    {
+        Point at = editor.TranslatePoint(editor.PointOf(offset) + new Vector(1, editor.LineHeight / 2), window)!.Value;
+        window.MouseDown(at, Avalonia.Input.MouseButton.Right);
+        window.MouseUp(at, Avalonia.Input.MouseButton.Right);
+        Ui.Settle();
+    }
+
+    /// <summary>Chooses a submenu's item in the open context menu, as clicks on them would.</summary>
+    private static void Choose(MainWindow window, string submenu, string item)
+    {
+        Avalonia.Controls.ContextMenu menu = window.OpenContextMenu ?? throw new InvalidOperationException("No context menu is open");
+        Avalonia.Controls.MenuItem parent = menu.Items.OfType<Avalonia.Controls.MenuItem>().First(i => (string?)i.Header == submenu);
+        Avalonia.Controls.MenuItem chosen = parent.Items.OfType<Avalonia.Controls.MenuItem>().First(i => (string?)i.Header == item);
+        Assert.True(chosen.IsEnabled, $"{submenu}, {item} is disabled");
+        chosen.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.MenuItem.ClickEvent));
+        menu.Close();
+        Ui.Settle();
+    }
+
+    [AvaloniaFact]
     public void Go_to_declaration_opens_the_other_file_at_the_method()
     {
         MainWindow window = project.Open("Program.cs");

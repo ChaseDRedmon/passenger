@@ -211,7 +211,7 @@ public partial class MainWindow
             AppActions.Resume => paused || (!debug.IsDebugging && configuration is not null),
             AppActions.Pause => debug.Session is { State: DebugState.Running },
             AppActions.StepOver or AppActions.StepInto or AppActions.StepOut or AppActions.RunToCursor or AppActions.SetNextStatement
-                or AppActions.ShowExecutionPoint or AppActions.Evaluate => paused,
+                or AppActions.ShowExecutionPoint or AppActions.Evaluate or AppActions.AddToWatches => paused,
             AppActions.ToggleSolutionAnalysis => csharp is not null,
             _ when action.StartsWith("app.vcs.", StringComparison.Ordinal) => vcs.Repository is not null,
             _ when action.StartsWith("app.tests.", StringComparison.Ordinal) => folder is not null,

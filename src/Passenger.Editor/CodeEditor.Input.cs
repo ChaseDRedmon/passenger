@@ -76,6 +76,19 @@ public sealed partial class CodeEditor
             }
             return;
         }
+        if (point.Properties.IsRightButtonPressed && point.Position.X >= GutterWidth)
+        {
+            // Rider's right-click: the caret goes to the click, unless the click is in the selection it would act on.
+            Focus();
+            int at = OffsetAt(point.Position);
+            if (!selections.Items.Any(s => !s.IsEmpty && s.Start <= at && at <= s.End))
+            {
+                SetSelections(SelectionSet.Single(at), reveal: false);
+            }
+            ContextMenuRequested?.Invoke(this, point.Position);
+            e.Handled = true;
+            return;
+        }
         if (!point.Properties.IsLeftButtonPressed)
         {
             return;

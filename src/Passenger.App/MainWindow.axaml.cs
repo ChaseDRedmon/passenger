@@ -248,6 +248,7 @@ public partial class MainWindow : Window
         AddFind();
         AddProblems();
         AddMainMenu();
+        AddContextMenus();
         UpdateStatus();
     }
 
@@ -604,6 +605,9 @@ public partial class MainWindow : Window
                 break;
             case AppActions.Exit:
                 Close();
+                break;
+            case AppActions.ShowContextMenu:
+                ShowFocusedContextMenu();
                 break;
             case AppActions.Save:
                 Editors.SaveActive();

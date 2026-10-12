@@ -94,6 +94,8 @@ public static class AppActions
     public const string ShrinkSelection = "app.editor.shrinkSelection";
     public const string ShowExecutionPoint = "app.debug.showExecutionPoint";
     public const string Evaluate = "app.debug.evaluate";
+    public const string AddToWatches = "app.debug.addToWatches";
+    public const string ShowContextMenu = "app.contextMenu";
 
     // Unit tests: run where the caret or the Unit Tests window's selection is, as Rider's context actions do.
     public const string RunTests = "app.tests.run";
@@ -238,6 +240,7 @@ public static class AppActions
                 .Bind(ShrinkSelection, "meta alt LEFT")
                 .Bind(ShowExecutionPoint, "alt MULTIPLY")
                 .Bind(Evaluate, "shift F9")
+                .Bind(ShowContextMenu, "shift F10")
                 .Bind(EditBreakpoint, "alt F9")
                 .Bind(ViewBreakpoints, "meta alt B")
                 .Bind(RunTests, "meta U , R", "meta U , meta R")
@@ -329,6 +332,7 @@ public static class AppActions
             .Bind(ShrinkSelection, "control shift W", "shift alt MINUS", "control alt LEFT")
             .Bind(ShowExecutionPoint, "alt MULTIPLY")
             .Bind(Evaluate, "shift F9")
+            .Bind(ShowContextMenu, "shift F10", "CONTEXT_MENU")
             .Bind(EditBreakpoint, "alt F9")
             .Bind(ViewBreakpoints, "control alt B")
             .Bind(RunTests, "control U , R", "control U , control R")

@@ -97,6 +97,13 @@ public sealed partial class CodeEditor : Control
 
     public event EventHandler? HoverEnded;
 
+    /// <summary>The context menu is asked for: by a right-click on the text, at its point, or from the keyboard (the menu
+    /// key, Shift+F10), with no point, at the caret.</summary>
+    public event EventHandler<Point?>? ContextMenuRequested;
+
+    /// <summary>Asks for the context menu at the caret, as the keyboard's menu key does.</summary>
+    public void RequestContextMenu() => ContextMenuRequested?.Invoke(this, null);
+
     /// <summary>Text arrived from the keyboard and was typed into the document, so completion and
     /// signature help can decide whether to open.</summary>
     public event EventHandler<string>? Typed;

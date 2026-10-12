@@ -135,6 +135,7 @@ public readonly record struct Keystroke(Key Key, KeyModifiers Modifiers)
         "DOWN" => Key.Down,
         "LEFT" => Key.Left,
         "RIGHT" => Key.Right,
+        "CONTEXT_MENU" => Key.Apps,
         { Length: 1 } single when char.IsAsciiLetter(single[0]) => Enum.Parse<Key>(single),
         { Length: 1 } digit when char.IsAsciiDigit(digit[0]) => Key.D0 + (digit[0] - '0'),
         _ when Enum.TryParse(name, true, out Key parsed) => parsed,
