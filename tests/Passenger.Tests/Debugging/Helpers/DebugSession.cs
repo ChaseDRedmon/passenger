@@ -82,6 +82,29 @@ public sealed class DebugSession : IDisposable
     /// <summary>The adapter alone, to launch a program itself; the program ends with the session.</summary>
     public static DebugSession ForLaunch(ITestOutputHelper output) => new(output, null, terminateDebuggee: true);
 
+    /// <summary>A debuggee launched with a breakpoint on one line of its Program.cs and the exception
+    /// filters given, running.</summary>
+    public static async Task<DebugSession> LaunchToBreakpoint(ITestOutputHelper output, string debuggee, int line, IReadOnlyList<string> exceptionFilters)
+    {
+        DebugSession host = ForLaunch(output);
+        await host
+            .WithInitializeRequest()
+            .WithLaunchRequest(Debuggees.Program(debuggee), stopAtEntry: false, justMyCode: true)
+            .WaitForInitializedEvent();
+        host.Request("setExceptionBreakpoints", new SetExceptionBreakpointsArguments(exceptionFilters));
+        host.WithBreakpointsRequest(line, Debuggees.Source(debuggee, "Program.cs")).WithConfigurationDoneRequest();
+        return host;
+    }
+
+    /// <summary>The top frame's variables at a stop, by name.</summary>
+    public List<DapVariable> Locals(StoppedEvent stop)
+    {
+        DapStackFrame top = GetTopStackFrame(stop.ThreadId!.Value);
+        WithScopesRequest(top.Id, out ScopesResponse scopes);
+        WithVariablesRequest(scopes.Scopes.Single().VariablesReference, out List<DapVariable> variables);
+        return variables;
+    }
+
     public T Request<T>(string command, object? arguments = null) =>
         Connection.RequestAsync<T>(command, arguments ?? new DapEmpty(), TestContext.Current.CancellationToken).GetAwaiter().GetResult();
 

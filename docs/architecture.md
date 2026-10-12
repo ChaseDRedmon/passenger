@@ -153,12 +153,13 @@ Passenger:
   runtime's first created thread, as netcoredbg names it); a breakpoint condition that cannot be evaluated (an unknown
   name, a throw, not a bool) passed silently (#54; now it stops, and says why on the breakpoint and in the Console);
   function evaluation with no time limit, so a getter that never returns hung the debugger (#30; now it is aborted after
-  five seconds and answers that it was stopped).
+  five seconds and answers that it was stopped); a lambda's captured parameter listed twice (#58; the closure's copy,
+  the live one, takes the stale slot's place).
 - Reaching Passenger's users now: breakpoints in methods marked not the user's still stopping under Just My Code
   (#54's tail); an empty runtime thread listed (#59).
 - Visible, less often: `[DebuggerDisplay]` rendering (#51: quotes, `\{` escapes, a failed fragment replacing the whole
-  value, `Name` and `Type`, inheritance), values nested in another's display shown by `ToString()` (#53), a lambda's
-  captured parameter listed twice (#58), inner exceptions never reported (#50), `RootHidden` on an object (#55), a
+  value, `Name` and `Type`, inheritance), values nested in another's display shown by `ToString()` (#53), inner
+  exceptions never reported (#50), `RootHidden` on an object (#55), a
   throwing type proxy shown as the exception (#56), the rest of the IL interpreter's list (#30).
 - Planned anyway: Edit and Continue (#10, M8's hot reload), synthetic variables (#26), remote debugging (#14).
 

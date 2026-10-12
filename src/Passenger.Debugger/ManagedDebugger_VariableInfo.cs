@@ -80,7 +80,22 @@ public partial class ManagedDebugger
     /// kind <see cref="GeneratedNameKind.DisplayClassLocalOrField"/> (e.g. "&lt;&gt;8__1").
     private async Task AddClosureChainMembers(ICorDebugValue closureValue, ThreadId threadId, FrameStackDepth stackDepth, List<VariableInfo> result)
     {
-        await AddMembers(closureValue, closureValue.ExactType, threadId, stackDepth, result);
+        // A captured parameter or local is in the closure and in its own slot too, which the method no
+        // longer updates: the closure's copy is the live one, and takes the other's place (upstream #58).
+        List<VariableInfo> members = [];
+        await AddMembers(closureValue, closureValue.ExactType, threadId, stackDepth, members);
+        foreach (VariableInfo member in members)
+        {
+            int existing = result.FindIndex(v => v.Name == member.Name);
+            if (existing >= 0)
+            {
+                result[existing] = member;
+            }
+            else
+            {
+                result.Add(member);
+            }
+        }
 
         // Follow the DisplayClassLocalOrField link to the parent closure, if any
         ICorDebugObjectValue objectValue = closureValue.UnwrapDebugValueToObject();

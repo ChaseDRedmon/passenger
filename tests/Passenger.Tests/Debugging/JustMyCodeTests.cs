@@ -10,7 +10,7 @@ namespace Passenger.Tests.Debugging;
 [Collection(DebugSession.Collection)]
 public class JustMyCodeTests(ITestOutputHelper testOutputHelper)
 {
-    private static string Source => Debuggees.Source("NonUserCodeConsoleApp", "Program.cs");
+    private static string Source => Debuggees.Source("PassengerCases", "Program.cs");
 
     [Fact]
     public async Task Step_into_passes_over_methods_the_code_marks_as_not_the_users()
@@ -61,15 +61,6 @@ public class JustMyCodeTests(ITestOutputHelper testOutputHelper)
         Assert.Equal(("step", 7), (stop.Reason, stop.ReadStopInfo().line));
     }
 
-    private async Task<DebugSession> Launch(int breakpointLine, IReadOnlyList<string> exceptionFilters)
-    {
-        DebugSession host = DebugSession.ForLaunch(testOutputHelper);
-        await host
-            .WithInitializeRequest()
-            .WithLaunchRequest(Debuggees.Program("NonUserCodeConsoleApp"), stopAtEntry: false, justMyCode: true)
-            .WaitForInitializedEvent();
-        host.Request("setExceptionBreakpoints", new SetExceptionBreakpointsArguments(exceptionFilters));
-        host.WithBreakpointsRequest(breakpointLine, Source).WithConfigurationDoneRequest();
-        return host;
-    }
+    private Task<DebugSession> Launch(int breakpointLine, IReadOnlyList<string> exceptionFilters) =>
+        DebugSession.LaunchToBreakpoint(testOutputHelper, "PassengerCases", breakpointLine, exceptionFilters);
 }
