@@ -12,7 +12,7 @@ namespace Passenger.Tests;
 
 /// <summary>Tool windows as IntelliJ docks them: a stripe button shows its window and hides the one in its place,
 /// a button or a header dragged elsewhere moves the window there, and the person's window opens on the layout
-/// they left.</summary>
+/// they left, fitted to the window it opens in.</summary>
 public sealed class DockingTests
 {
     [AvaloniaFact]
@@ -173,6 +173,134 @@ public sealed class DockingTests
         Assert.True(dock.IsShown("debug"));
         Assert.True(dock.IsShown("explorer"));
         window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_tool_window_maximised_when_the_window_closes_opens_again_at_the_size_it_had_before()
+    {
+        string settings = Directory.CreateTempSubdirectory("passenger-settings-").FullName;
+        string? before = Environment.GetEnvironmentVariable("PASSENGER_SETTINGS");
+        Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", settings);
+        try
+        {
+            MainWindow first = Open();
+            first.KeepLayout();
+            DockHost dock = first.DockHost;
+            dock.Show("build");
+            Ui.Settle();
+            // The person's own size, dragged above the default.
+            Control splitter = dock.Children.First(c => Grid.GetRow(c) == 1).GetVisualDescendants().OfType<GridSplitter>().Single();
+            Point grip = Middle(first, splitter);
+            Drag(first, grip, grip - new Point(0, 60));
+            double restored = dock.RowDefinitions[2].ActualHeight;
+            Assert.True(restored > 320, $"The bottom area was not dragged taller: {restored}");
+            Ui.Run(first, AppActions.MaximizeToolWindow);
+            // A window shown while it is maximised keeps the layout as well.
+            dock.Show("structure");
+            Ui.Settle();
+            Assert.True(dock.RowDefinitions[2].ActualHeight > restored + 100);
+            first.Close();
+
+            MainWindow second = Open();
+            second.KeepLayout();
+            Ui.Settle();
+            Assert.True(second.DockHost.IsShown("build"));
+            Assert.False(second.DockHost.IsMaximized);
+            Assert.True(Math.Abs(second.DockHost.RowDefinitions[2].ActualHeight - restored) < 1,
+                $"The Build window opened {second.DockHost.RowDefinitions[2].ActualHeight} tall, the maximised height kept, not the {restored} it had before");
+            second.Close();
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", before);
+            TestFolders.Delete(settings);
+        }
+    }
+
+    [AvaloniaFact]
+    public void A_floating_window_closed_is_let_go_and_not_kept_alive_by_its_tool_window()
+    {
+        MainWindow window = Open();
+        DockHost dock = window.DockHost;
+        dock.Show("debug");
+        dock.SetMode(dock["debug"]!, ToolMode.Floating);
+        Ui.Settle();
+        // Hidden by its stripe button, and closed by the system.
+        WeakReference<Window> hidden = Closed(window, () => dock.Toggle("debug"));
+        dock.Toggle("debug");
+        Ui.Settle();
+        WeakReference<Window> closed = Closed(window, () => window.OwnedWindows[0].Close());
+        dock.SetMode(dock["debug"]!, ToolMode.Docked);
+        dock.Show("debug");
+        Ui.Settle();
+
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        Assert.False(hidden.TryGetTarget(out _), "The floating window hidden by its button is still alive, held by its tool window");
+        Assert.False(closed.TryGetTarget(out _), "The floating window the system closed is still alive, held by its tool window");
+        Assert.Contains(window.BottomPanel.Debug, dock.GetVisualDescendants());
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Areas_kept_on_a_larger_screen_leave_the_editor_its_share_of_a_smaller_window_and_come_back_on_a_larger()
+    {
+        string settings = Directory.CreateTempSubdirectory("passenger-settings-").FullName;
+        string? before = Environment.GetEnvironmentVariable("PASSENGER_SETTINGS");
+        Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", settings);
+        try
+        {
+            File.WriteAllText(Path.Combine(settings, "layout.json"), """
+                {
+                  "version": 1,
+                  "windows": {
+                    "explorer": { "anchor": "LeftTop", "order": 0, "shown": true },
+                    "tests": { "anchor": "RightTop", "order": 0, "shown": true },
+                    "build": { "anchor": "BottomLeft", "order": 0, "shown": true }
+                  },
+                  "leftWidth": 1400,
+                  "rightWidth": 900,
+                  "bottomHeight": 1100
+                }
+                """);
+            MainWindow window = Open();
+            window.KeepLayout();
+            Ui.Settle();
+            DockHost dock = window.DockHost;
+            double inner = dock.Bounds.Width - 80;
+            Assert.True(dock.ColumnDefinitions[3].ActualWidth >= inner / 4 - 1,
+                $"The editor was left {dock.ColumnDefinitions[3].ActualWidth} of {inner} between the side areas");
+            Assert.True(dock.RowDefinitions[0].ActualHeight >= dock.Bounds.Height / 4 - 1,
+                $"The editor was left {dock.RowDefinitions[0].ActualHeight} of {dock.Bounds.Height} above the bottom area");
+            // The sides keep the proportion they were kept in, and the right stripe is still in the window.
+            Assert.True(Math.Abs((dock.ColumnDefinitions[1].ActualWidth / dock.ColumnDefinitions[5].ActualWidth) - (1400.0 / 900)) < 0.01);
+            Control rightStripe = dock.Children.First(c => Grid.GetColumn(c) == 6);
+            Assert.True(rightStripe.Bounds.Right <= dock.Bounds.Width, $"The right stripe was pushed out of the window, to {rightStripe.Bounds}");
+
+            // On a screen as large as the one they were kept on, they are as large as they were.
+            window.Width = 3200;
+            window.Height = 2000;
+            Ui.Settle();
+            Assert.Equal((1400, 900, 1100), (dock.ColumnDefinitions[1].ActualWidth, dock.ColumnDefinitions[5].ActualWidth, dock.RowDefinitions[2].ActualHeight));
+            window.Close();
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", before);
+            TestFolders.Delete(settings);
+        }
+    }
+
+    /// <summary>A floating window, closed as given, held only weakly here.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static WeakReference<Window> Closed(MainWindow window, Action close)
+    {
+        WeakReference<Window> weak = new(Assert.Single(window.OwnedWindows));
+        close();
+        Ui.Settle();
+        Assert.Empty(window.OwnedWindows);
+        return weak;
     }
 
     private static MainWindow Open()

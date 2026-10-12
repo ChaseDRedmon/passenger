@@ -18,12 +18,17 @@ public sealed record DockLayout : IStateDocument<DockLayout>
 
     public static IReadOnlyList<Action<JsonObject>> Upgrades { get; } = [StateStore.Unversioned];
 
-    /// <summary>A window placed where this build has no place (a later build's) stays where it was added, and a size or
-    /// a window's bounds out of reach are the defaults'.</summary>
+    /// <summary>A window placed where this build has no place (a later build's) stays where it was added, one in a mode it
+    /// does not have is docked, and a size or a window's bounds out of reach are the defaults'.</summary>
     public DockLayout Clamped() => this with
     {
-        Windows = (Windows ?? []).Where(w => w.Value is { } placed && Enum.IsDefined(placed.Anchor) && Enum.IsDefined(placed.Mode))
-            .ToDictionary(w => w.Key, w => w.Value with { Order = Math.Max(0, w.Value.Order), Bounds = w.Value.Bounds is [_, _, > 0, > 0] ? w.Value.Bounds : null }),
+        Windows = (Windows ?? []).Where(w => w.Value is { } placed && Enum.IsDefined(placed.Anchor))
+            .ToDictionary(w => w.Key, w => w.Value with
+            {
+                Order = Math.Max(0, w.Value.Order),
+                Mode = Enum.IsDefined(w.Value.Mode) ? w.Value.Mode : ToolMode.Docked,
+                Bounds = w.Value.Bounds is [_, _, > 0, > 0] ? w.Value.Bounds : null,
+            }),
         LeftWidth = Size(LeftWidth),
         RightWidth = Size(RightWidth),
         BottomHeight = Size(BottomHeight),

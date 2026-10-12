@@ -226,6 +226,38 @@ public sealed class StateTests : IDisposable
         TestFolders.Delete(other);
     }
 
+    [AvaloniaFact]
+    public void A_layout_kept_for_a_screen_no_longer_there_or_by_a_later_build_opens_every_tool_window_where_it_can_be_reached()
+    {
+        File.WriteAllText(Path.Combine(settings, "layout.json"), """
+            {
+              "version": 1,
+              "windows": {
+                "debug": { "anchor": "BottomLeft", "order": 0, "shown": true, "mode": "Floating", "bounds": [-40000, -40000, 600, 400] },
+                "run": { "anchor": "BottomLeft", "order": 1, "shown": true, "mode": "Floating", "bounds": [100, 100, 700, 90000] },
+                "tests": { "anchor": "Sideways", "order": 0, "shown": false },
+                "problems": { "anchor": 42, "order": 0, "shown": false },
+                "structure": { "anchor": "RightTop", "order": 0, "shown": true, "mode": "Tabbed" }
+              }
+            }
+            """);
+
+        MainWindow window = Keeping();
+        Ui.Settle();
+        Avalonia.Platform.Screen[] screens = [.. window.Screens.All];
+        foreach (Avalonia.Controls.Window floating in window.OwnedWindows)
+        {
+            Avalonia.PixelRect at = new(floating.Position, Avalonia.PixelSize.FromSize(floating.Bounds.Size, 1));
+            Assert.True(screens.Any(s => s.WorkingArea.Contains(at.TopLeft) && floating.Bounds.Height * s.Scaling <= s.WorkingArea.Height),
+                $"{floating.Title} opened at {at}, off every screen: [{string.Join(", ", screens.Select(s => s.WorkingArea))}]");
+        }
+        Assert.Equal(["Debug", "Run"], window.OwnedWindows.Select(w => w.Title).Order());
+        // A place or a mode this build does not have is its default: where the window was added, docked.
+        Assert.Equal((ToolAnchor.BottomLeft, ToolAnchor.BottomLeft), (window.DockHost["tests"]!.Anchor, window.DockHost["problems"]!.Anchor));
+        Assert.Equal((ToolAnchor.RightTop, ToolMode.Docked, true), (window.DockHost["structure"]!.Anchor, window.DockHost["structure"]!.Mode, window.DockHost.IsShown("structure")));
+        window.Close();
+    }
+
     /// <summary>The window a person uses, as the app makes it: one that keeps its layout and folders.</summary>
     private static MainWindow Keeping(string? open = null)
     {

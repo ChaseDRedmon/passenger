@@ -6,6 +6,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Platform;
 using Avalonia.VisualTree;
 
 namespace Passenger.App.Docking;
@@ -18,6 +19,10 @@ public sealed class DockHost : Grid
 {
     private const double StripeWidth = 40;
     private const double DragThreshold = 6;
+
+    /// <summary>The part of the frame's width, and of its height, the editor keeps however large the areas were kept (on
+    /// a larger screen, say) or dragged, unless a window is maximised.</summary>
+    private const double EditorShare = 0.25;
 
     private readonly List<ToolWindow> windows = [];
     private readonly Dictionary<ToolAnchor, ToolPane> panes = [];
@@ -33,6 +38,10 @@ public sealed class DockHost : Grid
     private double leftWidth = 280;
     private double rightWidth = 300;
     private double bottomHeight = 280;
+
+    /// <summary>The sizes the areas were last given, fitted to the frame: a definition no longer its size was dragged.</summary>
+    private (double Left, double Right, double Bottom) given;
+
     private readonly Dictionary<ToolWindow, FloatWindow> floats = [];
 
     /// <summary>The places a layout applied gave windows this build does not have (a later build's), kept for the next.</summary>
@@ -196,17 +205,16 @@ public sealed class DockHost : Grid
         Remember();
         maximized = (target, leftWidth, rightWidth, bottomHeight);
         double width = Bounds.Width - (2 * StripeWidth) - 80;
-        double height = Bounds.Height - 80;
         switch (target.Anchor)
         {
             case ToolAnchor.BottomLeft or ToolAnchor.BottomRight:
-                bottomHeight = Math.Max(bottomHeight, height);
+                bottomHeight = Bounds.Height - 80;
                 break;
             case ToolAnchor.LeftTop or ToolAnchor.LeftBottom:
-                leftWidth = Math.Max(leftWidth, width - (IsAreaOpen(right: true) ? rightWidth : 0));
+                leftWidth = width - given.Right;
                 break;
             default:
-                rightWidth = Math.Max(rightWidth, width - (IsAreaOpen(right: false) ? leftWidth : 0));
+                rightWidth = width - given.Left;
                 break;
         }
         Layout();
@@ -243,9 +251,6 @@ public sealed class DockHost : Grid
             Layout();
         }
     }
-
-    private bool IsAreaOpen(bool right) => windows.Any(w => w.IsShown && w.Mode == ToolMode.Docked
-        && (right ? w.Anchor is ToolAnchor.RightTop or ToolAnchor.RightBottom : w.Anchor is ToolAnchor.LeftTop or ToolAnchor.LeftBottom));
 
     /// <summary>A floating or windowed window's own window, opened (where it last stood) or brought forward.</summary>
     private void Float(ToolWindow window)
@@ -329,10 +334,11 @@ public sealed class DockHost : Grid
         }
     }
 
-    /// <summary>The layout as it stands, to keep.</summary>
+    /// <summary>The layout as it stands, to keep: while a window is maximised, with the sizes it gives back.</summary>
     public DockLayout Capture()
     {
         Remember();
+        (double left, double right, double bottom) = maximized is { } was ? (was.Left, was.Right, was.Bottom) : (leftWidth, rightWidth, bottomHeight);
         Dictionary<string, DockedWindow> placed = windows.ToDictionary(w => w.Id, w => new DockedWindow(w.Anchor, w.Order, w.IsShown)
         {
             Mode = w.Mode,
@@ -342,7 +348,7 @@ public sealed class DockHost : Grid
         {
             placed.TryAdd(id, other);
         }
-        return new DockLayout { Windows = placed, LeftWidth = leftWidth, RightWidth = rightWidth, BottomHeight = bottomHeight };
+        return new DockLayout { Windows = placed, LeftWidth = left, RightWidth = right, BottomHeight = bottom };
     }
 
     /// <summary>A kept layout over the windows there are; one it does not name stays where it was added. Applied over
@@ -355,7 +361,7 @@ public sealed class DockHost : Grid
             open.CloseQuietly();
         }
         floats.Clear();
-        maximized = null;
+        Restore();
         hiddenAll = null;
         others = layout.Windows.Where(w => this[w.Key] is null).ToDictionary();
         foreach (ToolWindow window in windows)
@@ -523,55 +529,94 @@ public sealed class DockHost : Grid
         {
             pane.Show(windows.FirstOrDefault(w => w.Anchor == anchor && w.IsShown && w.Mode == ToolMode.Docked));
         }
-        bool leftOpen = Split(leftArea, panes[ToolAnchor.LeftTop], panes[ToolAnchor.LeftBottom], rows: true);
-        bool rightOpen = Split(rightArea, panes[ToolAnchor.RightTop], panes[ToolAnchor.RightBottom], rows: true);
-        bool bottomOpen = Split(bottomArea, panes[ToolAnchor.BottomLeft], panes[ToolAnchor.BottomRight], rows: false);
-        ColumnDefinitions[1].Width = leftOpen ? new GridLength(leftWidth) : new GridLength(0);
-        ColumnDefinitions[2].Width = new GridLength(leftOpen ? 1 : 0);
-        ColumnDefinitions[4].Width = new GridLength(rightOpen ? 1 : 0);
-        ColumnDefinitions[5].Width = rightOpen ? new GridLength(rightWidth) : new GridLength(0);
-        RowDefinitions[1].Height = new GridLength(bottomOpen ? 1 : 0);
-        RowDefinitions[2].Height = bottomOpen ? new GridLength(bottomHeight) : new GridLength(0);
+        Split(leftArea, panes[ToolAnchor.LeftTop], panes[ToolAnchor.LeftBottom], rows: true);
+        Split(rightArea, panes[ToolAnchor.RightTop], panes[ToolAnchor.RightBottom], rows: true);
+        Split(bottomArea, panes[ToolAnchor.BottomLeft], panes[ToolAnchor.BottomRight], rows: false);
         leftStripe.Fill(windows);
         rightStripe.Fill(windows);
+        Fit();
     }
 
-    /// <summary>A side's two halves: both shown share it, one shown fills it. False when neither is.</summary>
-    private static bool Split(Grid area, ToolPane first, ToolPane second, bool rows)
+    protected override void OnSizeChanged(SizeChangedEventArgs e)
+    {
+        base.OnSizeChanged(e);
+        // A size the splitter's keys changed, which no drag's end kept, is kept before the sizes are fitted again.
+        Remember();
+        Fit();
+    }
+
+    /// <summary>Gives the open areas their sizes, fitted to the frame as it is: on one smaller than they were kept on (a
+    /// laptop's, after a monitor's), the sides shrink alike, and the bottom, until the editor keeps its share, where a
+    /// splitter stops too. Maximised, a window may take all of the frame but its edge.</summary>
+    private void Fit()
+    {
+        bool leftOpen = panes[ToolAnchor.LeftTop].Window is not null || panes[ToolAnchor.LeftBottom].Window is not null;
+        bool rightOpen = panes[ToolAnchor.RightTop].Window is not null || panes[ToolAnchor.RightBottom].Window is not null;
+        bool bottomOpen = panes[ToolAnchor.BottomLeft].Window is not null || panes[ToolAnchor.BottomRight].Window is not null;
+        double share = maximized is null ? EditorShare : 0;
+        // Before the first layout there is no frame: the sizes are fitted once there is.
+        double across = Math.Max(0, Bounds.Width - (2 * StripeWidth) - 2);
+        double down = Math.Max(0, Bounds.Height - 1);
+        double left = leftOpen ? leftWidth : 0;
+        double right = rightOpen ? rightWidth : 0;
+        double bottom = bottomOpen ? bottomHeight : 0;
+        if (across > 0 && left + right > across * (1 - share))
+        {
+            double scale = across * (1 - share) / (left + right);
+            (left, right) = (left * scale, right * scale);
+        }
+        if (down > 0)
+        {
+            bottom = Math.Min(bottom, down * (1 - share));
+        }
+        ColumnDefinitions[1].Width = new GridLength(left);
+        ColumnDefinitions[2].Width = new GridLength(leftOpen ? 1 : 0);
+        ColumnDefinitions[3].MinWidth = across * share;
+        ColumnDefinitions[4].Width = new GridLength(rightOpen ? 1 : 0);
+        ColumnDefinitions[5].Width = new GridLength(right);
+        RowDefinitions[0].MinHeight = down * share;
+        RowDefinitions[1].Height = new GridLength(bottomOpen ? 1 : 0);
+        RowDefinitions[2].Height = new GridLength(bottom);
+        given = (left, right, bottom);
+    }
+
+    /// <summary>A side's two halves: both shown share it, as the person last split it while both were; one shown fills
+    /// it.</summary>
+    private static void Split(Grid area, ToolPane first, ToolPane second, bool rows)
     {
         bool a = first.Window is not null;
         bool b = second.Window is not null;
-        GridLength Star(bool on) => on ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
+        GridLength firstHalf = rows ? area.RowDefinitions[0].Height : area.ColumnDefinitions[0].Width;
+        GridLength secondHalf = rows ? area.RowDefinitions[2].Height : area.ColumnDefinitions[2].Width;
+        bool kept = a && b && firstHalf is { IsStar: true, Value: > 0 } && secondHalf is { IsStar: true, Value: > 0 };
+        GridLength Star(bool on, GridLength was) => kept ? was : on ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
         if (rows)
         {
-            area.RowDefinitions[0].Height = Star(a);
+            area.RowDefinitions[0].Height = Star(a, firstHalf);
             area.RowDefinitions[1].Height = new GridLength(a && b ? 1 : 0);
-            area.RowDefinitions[2].Height = Star(b);
+            area.RowDefinitions[2].Height = Star(b, secondHalf);
         }
         else
         {
-            area.ColumnDefinitions[0].Width = Star(a);
+            area.ColumnDefinitions[0].Width = Star(a, firstHalf);
             area.ColumnDefinitions[1].Width = new GridLength(a && b ? 1 : 0);
-            area.ColumnDefinitions[2].Width = Star(b);
+            area.ColumnDefinitions[2].Width = Star(b, secondHalf);
         }
-        return a || b;
     }
 
-    /// <summary>The sizes the person dragged the areas to, kept while an area is closed.</summary>
+    /// <summary>Keeps the size the person dragged an area to (its definition no longer the size it was given), kept
+    /// while the area is closed. While a window is maximised, the sizes kept are the ones it gives back.</summary>
     private void Remember()
     {
-        if (ColumnDefinitions[1].ActualWidth > 40)
+        if (maximized is not null)
         {
-            leftWidth = ColumnDefinitions[1].ActualWidth;
+            return;
         }
-        if (ColumnDefinitions[5].ActualWidth > 40)
-        {
-            rightWidth = ColumnDefinitions[5].ActualWidth;
-        }
-        if (RowDefinitions[2].ActualHeight > 40)
-        {
-            bottomHeight = RowDefinitions[2].ActualHeight;
-        }
+        leftWidth = Dragged(ColumnDefinitions[1].Width, given.Left, leftWidth);
+        rightWidth = Dragged(ColumnDefinitions[5].Width, given.Right, rightWidth);
+        bottomHeight = Dragged(RowDefinitions[2].Height, given.Bottom, bottomHeight);
+
+        static double Dragged(GridLength now, double given, double kept) => now.IsAbsolute && now.Value > 40 && now.Value != given ? now.Value : kept;
     }
 
     private void Renumber()
@@ -607,7 +652,7 @@ public sealed class DockHost : Grid
 
     private Control Splitter(GridResizeDirection direction)
     {
-        GridSplitter splitter = new() { Classes = { direction == GridResizeDirection.Columns ? "hairline" : "hairlineRows" }, ResizeDirection = direction };
+        HairlineSplitter splitter = new() { Classes = { direction == GridResizeDirection.Columns ? "hairline" : "hairlineRows" }, ResizeDirection = direction };
         splitter.DragCompleted += (_, _) =>
         {
             Remember();
@@ -620,7 +665,7 @@ public sealed class DockHost : Grid
 
     private static Control InnerSplitter(GridResizeDirection direction, int row = 0, int column = 0)
     {
-        GridSplitter splitter = new() { Classes = { direction == GridResizeDirection.Columns ? "hairline" : "hairlineRows" }, ResizeDirection = direction };
+        HairlineSplitter splitter = new() { Classes = { direction == GridResizeDirection.Columns ? "hairline" : "hairlineRows" }, ResizeDirection = direction };
         Border line = new() { IsHitTestVisible = false };
         line.Bind(Border.BackgroundProperty, line.GetResourceObservable("Passenger.Divider"));
         Panel panel = new() { Children = { line, splitter } };
@@ -719,6 +764,7 @@ public sealed class DockHost : Grid
             }
             Window = window;
             body.Content = null;
+            tools.Content = null;
             if (window is not null)
             {
                 window.PropertyChanged += OnWindowChanged;
@@ -821,18 +867,19 @@ public sealed class DockHost : Grid
             pane.Show(window);
             Content = pane;
             this.Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Chrome"));
-            if (window.WindowBounds is { } at)
+            if (window.WindowBounds is { } kept && OnScreen(kept) is { } at)
             {
                 WindowStartupLocation = WindowStartupLocation.Manual;
-                Position = new PixelPoint(at.X, at.Y);
-                Width = at.Width;
-                Height = at.Height;
+                Position = at.Position;
+                (Width, Height) = (at.Size.Width, at.Size.Height);
             }
             else
             {
+                // Never placed, or placed on a screen no longer there (one unplugged): over the IDE.
                 WindowStartupLocation = WindowStartupLocation.CenterOwner;
-                Width = 520;
-                Height = 420;
+                Screen? ide = (TopLevel.GetTopLevel(host) is null ? null : Screens.ScreenFromVisual(host)) ?? Screens.Primary;
+                Size size = Fitted(window.WindowBounds is { } was ? new Size(was.Width, was.Height) : new Size(520, 420), ide);
+                (Width, Height) = (size.Width, size.Height);
             }
             Closed += (_, _) =>
             {
@@ -840,6 +887,8 @@ public sealed class DockHost : Grid
                 {
                     host.FloatClosed(window, this);
                 }
+                // The tool window outlives this window: the pane lets it go, or it holds this window's whole tree.
+                pane.Show(null);
             };
         }
 
@@ -855,6 +904,35 @@ public sealed class DockHost : Grid
             closingQuietly = true;
             Close();
         }
+
+        /// <summary>Where a kept window opens again: moved and shrunk into the working area of the screen it stood on
+        /// most, as IntelliJ fits a window to its screen; null when none of it stood on a screen there is now.</summary>
+        private (PixelPoint Position, Size Size)? OnScreen(PixelRect kept)
+        {
+            Screen? on = null;
+            long most = 0;
+            foreach (Screen screen in Screens.All)
+            {
+                PixelRect shown = new PixelRect(kept.X, kept.Y, (int)(kept.Width * screen.Scaling), (int)(kept.Height * screen.Scaling)).Intersect(screen.WorkingArea);
+                if ((long)shown.Width * shown.Height > most)
+                {
+                    (on, most) = (screen, (long)shown.Width * shown.Height);
+                }
+            }
+            if (on is null)
+            {
+                return null;
+            }
+            Size size = Fitted(new Size(kept.Width, kept.Height), on);
+            PixelRect area = on.WorkingArea;
+            int x = Math.Clamp(kept.X, area.X, Math.Max(area.X, area.Right - (int)Math.Ceiling(size.Width * on.Scaling)));
+            int y = Math.Clamp(kept.Y, area.Y, Math.Max(area.Y, area.Bottom - (int)Math.Ceiling(size.Height * on.Scaling)));
+            return (new PixelPoint(x, y), size);
+        }
+
+        /// <summary>A size in a window's own units, no larger than a screen's working area.</summary>
+        private static Size Fitted(Size size, Screen? screen) => screen is null ? size
+            : new Size(Math.Min(size.Width, screen.WorkingArea.Width / screen.Scaling), Math.Min(size.Height, screen.WorkingArea.Height / screen.Scaling));
     }
 
     /// <summary>A stripe of buttons down one edge: the side's upper and lower windows at its top (a gap between
