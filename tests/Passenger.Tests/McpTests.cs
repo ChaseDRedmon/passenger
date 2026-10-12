@@ -83,6 +83,51 @@ public sealed class McpTests : IDisposable
         Assert.Contains("debug_start starts it", Assert.IsType<TextContentBlock>(Assert.Single(refused.Content)).Text, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task An_agent_reads_and_commits_changes_and_runs_a_command_in_the_ides_terminal()
+    {
+        string repository = Directory.CreateTempSubdirectory("passenger-mcp-git-").FullName;
+        try
+        {
+            void Git(params string[] arguments)
+            {
+                using System.Diagnostics.Process git = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("git", arguments) { WorkingDirectory = repository, RedirectStandardOutput = true, RedirectStandardError = true })!;
+                git.WaitForExit();
+            }
+            Git("init", "-q", "-b", "main");
+            Git("config", "user.email", "tests@passenger.invalid");
+            Git("config", "user.name", "Passenger Tests");
+            File.WriteAllText(Path.Combine(repository, "Notes.txt"), "one\ntwo\nthree\n");
+            Git("add", "-A");
+            Git("commit", "-q", "-m", "First");
+            File.WriteAllText(Path.Combine(repository, "Notes.txt"), "one\n2\nthree\n");
+            File.WriteAllText(Path.Combine(repository, "New.txt"), "new\n");
+
+            await using McpClient client = await Start(["--mcp", repository]);
+            JsonElement status = await Call(client, "vcs_status");
+            Assert.Equal("main", status.GetProperty("branch").GetString());
+            Assert.Equal(["Notes.txt modified", "New.txt unversioned"], status.GetProperty("changes").EnumerateArray()
+                .Select(c => $"{c.GetProperty("path").GetString()} {c.GetProperty("kind").GetString()}").Order(StringComparer.Ordinal).Reverse());
+            string diff = (await Call(client, "vcs_diff", new() { ["path"] = "Notes.txt" })).GetString()!;
+            Assert.Contains("-two\n+2\n", diff, StringComparison.Ordinal);
+
+            // With no paths, every change but the new file goes in, as the Commit window has them chosen.
+            Assert.EndsWith(" Two as a number", (await Call(client, "vcs_commit", new() { ["message"] = "Two as a number" })).GetString(), StringComparison.Ordinal);
+            JsonElement log = await Call(client, "vcs_log", new() { ["count"] = 5 });
+            Assert.Equal(["Two as a number", "First"], log.EnumerateArray().Select(c => c.GetProperty("subject").GetString()));
+            Assert.Equal(["New.txt"], (await Call(client, "vcs_status")).GetProperty("changes").EnumerateArray().Select(c => c.GetProperty("path").GetString()));
+
+            // The IDE's own terminal runs it in the folder, and its answer comes back.
+            string answer = (await Call(client, "terminal_run", new() { ["command"] = "echo $((6*7)) && ls" })).GetString()!;
+            Assert.Contains("42", answer, StringComparison.Ordinal);
+            Assert.Contains("Notes.txt", answer, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.Delete(repository, recursive: true);
+        }
+    }
+
     [AvaloniaFact]
     public void An_agent_attached_to_the_window_sets_a_breakpoint_the_person_sees()
     {

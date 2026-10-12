@@ -23,8 +23,9 @@ just publish osx-arm64     # a self-contained Release build (osx-x64, win-x64, w
 ## For agents
 
 Passenger is a Model Context Protocol server, so a coding agent can use what the IDE knows: diagnostics, symbols,
-definitions, usages, renames and fixes from Roslyn, builds and runs, the debugger (breakpoints, stepping, evaluation,
-the stopped program's variables), and screenshots of the window. Two ways to connect, shown here for Claude Code:
+definitions, usages, renames and fixes from Roslyn, builds and runs, unit tests, the debugger (breakpoints, stepping,
+evaluation, the stopped program's variables), Git (status, diffs of unsaved text, commits, the log, branches), NuGet,
+the IDE's own terminal, and screenshots of the window. Two ways to connect, shown here for Claude Code:
 
 ```sh
 # Passenger with no window, its own IDE over a folder or solution

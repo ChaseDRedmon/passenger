@@ -17,7 +17,7 @@ namespace Passenger.App.Mcp;
 /// the language server's knowledge of the code, builds and runs, the debugger, and the IDE itself
 /// (screenshots, actions, typing), each run on the UI thread as the window's own commands are. Lines and
 /// columns count from one, as an editor shows them; a relative path is the open folder's.</summary>
-public sealed class PassengerTools(MainWindow window)
+public sealed partial class PassengerTools(MainWindow window)
 {
     private static readonly TimeSpan ServerLimit = TimeSpan.FromSeconds(120);
 

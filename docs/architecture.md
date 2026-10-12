@@ -251,6 +251,10 @@ answers about the code, builds and runs, the debugger, and the window itself.
 - **The debugger's tools wait.** `debug_start`, `debug_continue`, `debug_step` and `debug_run_to` return when the
   program stops or ends, with the location, the stack and the top frame's locals (and an exception's type and
   message), so a stop costs an agent one call.
+- **The daily loop has its tools too**: `vcs_status`, `vcs_diff` (the editor's unsaved text against the last commit),
+  `vcs_commit`, `vcs_log` and `vcs_checkout` drive the Commit and Git windows' code; `nuget_search`, `nuget_install`
+  and `nuget_remove` the NuGet window's; `terminal_run` types a command into the IDE's terminal, where the person
+  watches it run, and returns what it printed once the output goes quiet.
 - **`screenshot` sees what the person would**: the frontmost window, so a diff or a dialog open over the IDE is what
   it captures.
 - **Three ways in.** `--mcp [FOLDER]` is a headless IDE on standard input and output (Avalonia's headless platform

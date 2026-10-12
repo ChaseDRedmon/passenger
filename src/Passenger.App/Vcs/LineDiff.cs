@@ -66,6 +66,60 @@ public static class LineDiff
             : h.NewCount == 0 ? new ChangeMark(h.NewStart, 0, ChangeMarkKind.Deleted)
             : new ChangeMark(h.NewStart, h.NewCount, ChangeMarkKind.Modified))];
 
+    /// <summary>The difference as `git diff` prints it: a header, then each hunk with three lines of context around it,
+    /// hunks whose context touches merged into one.</summary>
+    public static string Unified(string before, string after, string name, int context = 3)
+    {
+        string[] a = Lines(before);
+        string[] b = Lines(after);
+        IReadOnlyList<DiffHunk> hunks = Hunks(before, after);
+        if (hunks.Count == 0)
+        {
+            return string.Empty;
+        }
+        System.Text.StringBuilder text = new();
+        text.Append($"--- a/{name}\n+++ b/{name}\n");
+        int i = 0;
+        while (i < hunks.Count)
+        {
+            // A run of hunks whose context overlaps is printed as one.
+            int j = i;
+            while (j + 1 < hunks.Count && hunks[j + 1].OldStart - (hunks[j].OldStart + hunks[j].OldCount) <= context * 2)
+            {
+                j++;
+            }
+            int oldFrom = Math.Max(0, hunks[i].OldStart - context);
+            int oldTo = Math.Min(a.Length, hunks[j].OldStart + hunks[j].OldCount + context);
+            int newFrom = Math.Max(0, hunks[i].NewStart - context);
+            int newTo = Math.Min(b.Length, hunks[j].NewStart + hunks[j].NewCount + context);
+            text.Append($"@@ -{oldFrom + 1},{oldTo - oldFrom} +{newFrom + 1},{newTo - newFrom} @@\n");
+            int at = oldFrom;
+            for (int k = i; k <= j; k++)
+            {
+                DiffHunk hunk = hunks[k];
+                for (; at < hunk.OldStart; at++)
+                {
+                    text.Append(' ').Append(a[at]).Append('\n');
+                }
+                for (int line = hunk.OldStart; line < hunk.OldStart + hunk.OldCount; line++)
+                {
+                    text.Append('-').Append(a[line]).Append('\n');
+                }
+                for (int line = hunk.NewStart; line < hunk.NewStart + hunk.NewCount; line++)
+                {
+                    text.Append('+').Append(b[line]).Append('\n');
+                }
+                at = hunk.OldStart + hunk.OldCount;
+            }
+            for (; at < oldTo; at++)
+            {
+                text.Append(' ').Append(a[at]).Append('\n');
+            }
+            i = j + 1;
+        }
+        return text.ToString();
+    }
+
     private static string[] Lines(string text) => text.Length == 0 ? [] : text.Replace("\r\n", "\n", StringComparison.Ordinal).TrimEnd('\n').Split('\n');
 
     /// <summary>The matching lines of the shortest edit (each a pair of indices), or null past the work limit.</summary>
