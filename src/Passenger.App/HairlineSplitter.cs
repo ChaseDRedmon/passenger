@@ -1,7 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
 
-namespace Passenger.App.Docking;
+namespace Passenger.App;
 
 /// <summary>A splitter that shares a panel with the hairline drawn under it and resizes the grid that panel stands in.
 /// Avalonia's looks for its grid, and its row or column, on its own parent only, so one in a panel resized nothing.</summary>

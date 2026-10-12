@@ -633,6 +633,33 @@ public sealed class VcsTests : IDisposable
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void The_divider_under_a_commits_files_drags_from_anywhere_along_it_giving_its_details_the_room_they_give_up()
+    {
+        MainWindow window = Open();
+        window.Perform(AppActions.ShowGit);
+        GitLogView log = window.GitLog;
+        Ui.WaitFor(() => log.Rows.Count == 1, "the log");
+        log.Select(log.Rows[0].Commit);
+        Ui.WaitFor(() => log.Files.Count == 1, "the commit's file");
+        Avalonia.Controls.ListBox files = Find(log, log.Files);
+        Avalonia.Controls.TextBox details = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(log).OfType<Avalonia.Controls.TextBox>().Single(t => t.Text == log.Details);
+        (double filesHeight, double detailsHeight) = (files.Bounds.Height, details.Bounds.Height);
+
+        // A quarter of the way along the line between them, not at its middle.
+        Point grip = files.TranslatePoint(new Point(files.Bounds.Width / 4, files.Bounds.Height + 0.5), window)!.Value;
+        window.MouseDown(grip, Avalonia.Input.MouseButton.Left);
+        for (int step = 1; step <= 10; step++)
+        {
+            window.MouseMove(grip + new Point(0, 4 * step), Avalonia.Input.RawInputModifiers.LeftMouseButton);
+        }
+        window.MouseUp(grip + new Point(0, 40), Avalonia.Input.MouseButton.Left);
+        Ui.Settle();
+        Assert.True(Math.Abs(files.Bounds.Height - (filesHeight + 40)) < 2 && Math.Abs(details.Bounds.Height - (detailsHeight - 40)) < 2,
+            $"The commit's files and its details were {filesHeight} and {detailsHeight} tall, and {files.Bounds.Height} and {details.Bounds.Height} once the line between them was dragged 40 px down");
+        window.Close();
+    }
+
     private static Avalonia.Controls.ListBox Find(Avalonia.Controls.Control view, object rows) =>
         Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(view).OfType<Avalonia.Controls.ListBox>().First(l => ReferenceEquals(l.ItemsSource, rows));
 

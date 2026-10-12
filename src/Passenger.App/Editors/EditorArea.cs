@@ -698,7 +698,7 @@ public sealed class EditorArea : UserControl
         }
         Border line = new() { IsHitTestVisible = false };
         line.Bind(Border.BackgroundProperty, line.GetResourceObservable("Passenger.Divider"));
-        GridSplitter splitter = new() { Classes = { across ? "hairline" : "hairlineRows" }, ResizeDirection = across ? GridResizeDirection.Columns : GridResizeDirection.Rows };
+        HairlineSplitter splitter = new() { Classes = { across ? "hairline" : "hairlineRows" }, ResizeDirection = across ? GridResizeDirection.Columns : GridResizeDirection.Rows };
         Panel divider = new() { Children = { line, splitter } };
         if (across)
         {

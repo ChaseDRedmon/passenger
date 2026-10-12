@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Avalonia;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
+using Avalonia.VisualTree;
 using Passenger.App;
 using Passenger.App.Navigation;
 using Passenger.App.ToolWindows;
@@ -163,6 +164,31 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
         Ui.Press(window, "ENTER");
         Assert.Equal("Loop.cs", window.EditorArea.Active?.Name);
         Assert.Equal(new TextPosition(9, 15), window.EditorArea.CodeEditor.CaretPosition);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void The_find_windows_divider_dragged_gives_the_preview_the_room_the_usages_give_up()
+    {
+        MainWindow window = project.Open("Loop.cs");
+        PlaceAfter(window.EditorArea.CodeEditor, "int tot");
+        Ui.Run(window, AppActions.FindUsages);
+        FindView find = window.Find;
+        Ui.WaitFor(() => find.Rows.Count > 0, "the usages in the Find window");
+        Avalonia.Controls.ListBox usages = find.GetVisualDescendants().OfType<Avalonia.Controls.ListBox>().Single();
+        (double usagesWidth, double previewWidth) = (usages.Bounds.Width, find.Preview.Bounds.Width);
+
+        Avalonia.Controls.GridSplitter divider = find.GetVisualDescendants().OfType<Avalonia.Controls.GridSplitter>().Single();
+        Point grip = divider.TranslatePoint(new Point(divider.Bounds.Width / 2, divider.Bounds.Height / 2), window)!.Value;
+        window.MouseDown(grip, Avalonia.Input.MouseButton.Left);
+        for (int step = 1; step <= 10; step++)
+        {
+            window.MouseMove(grip - new Point(15 * step, 0), Avalonia.Input.RawInputModifiers.LeftMouseButton);
+        }
+        window.MouseUp(grip - new Point(150, 0), Avalonia.Input.MouseButton.Left);
+        Ui.Settle();
+        Assert.True(Math.Abs(usages.Bounds.Width - (usagesWidth - 150)) < 2 && Math.Abs(find.Preview.Bounds.Width - (previewWidth + 150)) < 2,
+            $"The usages and the preview were {usagesWidth} and {previewWidth} wide, and {usages.Bounds.Width} and {find.Preview.Bounds.Width} once the divider between them was dragged 150 px left");
         window.Close();
     }
 

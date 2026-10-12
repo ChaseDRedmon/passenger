@@ -83,6 +83,33 @@ public sealed class EditorSplitTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void The_divider_between_two_splits_dragged_gives_one_the_room_the_other_gives_up_beside_and_below()
+    {
+        MainWindow window = Open("One.cs");
+        EditorArea area = window.EditorArea;
+        Assert.True(window.Perform(AppActions.SplitRight));
+        Assert.True(window.Perform(AppActions.SplitDown));
+        Ui.Settle();
+        Assert.Equal(3, area.Groups.Count);
+        EditorGroup left = area.Groups[0];
+        EditorGroup top = area.Groups[1];
+        EditorGroup bottom = area.Groups[2];
+        (double leftWidth, double rightWidth) = (left.Bounds.Width, top.Bounds.Width);
+        (double topHeight, double bottomHeight) = (top.Bounds.Height, bottom.Bounds.Height);
+
+        Point across = Middle(window, Divider(area, GridResizeDirection.Columns));
+        Drag(window, across, across - new Point(120, 0));
+        Assert.True(Math.Abs(left.Bounds.Width - (leftWidth - 120)) < 2 && Math.Abs(top.Bounds.Width - (rightWidth + 120)) < 2,
+            $"The splits beside each other were {leftWidth} and {rightWidth} wide, and {left.Bounds.Width} and {top.Bounds.Width} once their divider was dragged 120 px left");
+
+        Point down = Middle(window, Divider(area, GridResizeDirection.Rows));
+        Drag(window, down, down + new Point(0, 80));
+        Assert.True(Math.Abs(top.Bounds.Height - (topHeight + 80)) < 2 && Math.Abs(bottom.Bounds.Height - (bottomHeight - 80)) < 2,
+            $"The splits one over the other were {topHeight} and {bottomHeight} tall, and {top.Bounds.Height} and {bottom.Bounds.Height} once their divider was dragged 80 px down");
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Find_action_finds_an_action_with_no_shortcut_by_name_and_runs_it()
     {
         MainWindow window = Open("One.cs");
@@ -172,6 +199,9 @@ public sealed class EditorSplitTests : IDisposable
 
     private static Control Tab(EditorGroup group, string name) =>
         group.GetVisualDescendants().OfType<TextBlock>().First(t => t.Text == name && t.Classes.Contains("tabName")).FindAncestorOfType<Border>()!;
+
+    private static GridSplitter Divider(EditorArea area, GridResizeDirection direction) =>
+        area.GetVisualDescendants().OfType<GridSplitter>().Single(s => s.ResizeDirection == direction);
 
     private static Point Middle(MainWindow window, Control control) =>
         control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)!.Value;

@@ -91,7 +91,7 @@ public sealed class FindView : DockPanel
         Grid body = new() { ColumnDefinitions = new ColumnDefinitions("*,1,*") };
         Border line = new() { IsHitTestVisible = false };
         line.Bind(Border.BackgroundProperty, line.GetResourceObservable("Passenger.Divider"));
-        GridSplitter splitter = new() { Classes = { "hairline" }, ResizeDirection = GridResizeDirection.Columns };
+        HairlineSplitter splitter = new() { Classes = { "hairline" }, ResizeDirection = GridResizeDirection.Columns };
         Panel divider = new() { [Grid.ColumnProperty] = 1, Children = { line, splitter } };
         preview[Grid.ColumnProperty] = 2;
         body.Children.Add(list);
