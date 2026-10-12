@@ -163,7 +163,7 @@ public static class TextEditing
 
     /// <summary>Enter: a line break carrying the line's indentation, one level more after an opening
     /// bracket, and the closer pushed to its own line when the caret sat between a pair. Spaces right
-    /// after the caret go, so the new line starts at its indentation.</summary>
+    /// after the caret go, up to the next caret, so the new line starts at its indentation.</summary>
     public static EditPlan NewLine(TextSnapshot text, SelectionSet selections, string eol, IndentOptions indent)
     {
         List<Replacement> replacements = [];
@@ -176,13 +176,15 @@ public static class TextEditing
             string lineIndent = content[..Math.Min(TextNavigation.IndentLength(content), column)];
 
             LineSpan endLine = text.GetLine(text.GetLineFromOffset(s.End));
+            // A later caret in these spaces breaks the line itself, so this one's spaces, and any pair, stop at it.
+            int limit = i + 1 < selections.Count ? Math.Min(endLine.End, selections.Items[i + 1].Start) : endLine.End;
             int end = s.End;
-            while (end < endLine.End && text[end] is ' ' or '\t')
+            while (end < limit && text[end] is ' ' or '\t')
             {
                 end++;
             }
             string before = content[..column].TrimEnd();
-            char next = end < endLine.End ? text[end] : '\0';
+            char next = end < limit ? text[end] : '\0';
             int opener = before.Length > 0 ? Openers.IndexOf(before[^1]) : -1;
             string extra = opener >= 0 ? indent.Unit : string.Empty;
 
@@ -489,35 +491,42 @@ public static class TextEditing
         return Insert(text, selections, normalized, EditKind.Other);
     }
 
-    /// <summary>Joins each touched line with the next, the next line's indentation replaced by one
-    /// space; every caret lands at a join.</summary>
+    /// <summary>Join Lines, as Rider: a caret joins its line with the next, a selection the lines it covers.
+    /// Each run of joined lines is worked out once: its blank lines go, and every other line meets the
+    /// text before it with one space. A caret lands where the next line's text begins on the joined
+    /// line (its end if none has text); a selection keeps covering what it did.</summary>
     public static EditPlan? JoinLines(TextSnapshot text, SelectionSet selections)
     {
-        List<TextEdit> edits = [];
-        List<int> joins = [];
-        int shift = 0;
-        foreach (int lineNumber in TouchedLines(text, selections))
+        SortedSet<int> joins = [];
+        foreach (Selection s in selections.Items)
         {
-            if (lineNumber >= text.LineCount - 1)
+            (int first, int last) = CoveredLines(text, s);
+            // A caret joins its line with the next; a selection within one line joins nothing, as in Rider.
+            last = s.IsEmpty ? first + 1 : last;
+            for (int line = first; line < last && line < text.LineCount - 1; line++)
             {
-                continue;
+                joins.Add(line);
             }
-            LineSpan line = text.GetLine(lineNumber);
-            LineSpan next = text.GetLine(lineNumber + 1);
-            int keep = text.GetText(line.Start, line.Length).TrimEnd().Length;
-            string following = text.GetText(next.Start, next.Length);
-            int skip = TextNavigation.IndentLength(following);
-            string glue = keep == 0 || skip == following.Length ? string.Empty : " ";
-            TextEdit edit = new(line.Start + keep, next.Start + skip - (line.Start + keep), glue);
-            edits.Add(edit);
-            joins.Add(edit.Start + shift + glue.Length);
-            shift += glue.Length - edit.Length;
         }
-        if (edits.Count == 0)
+        if (joins.Count == 0)
         {
             return null;
         }
-        return new EditPlan(edits, SelectionSet.Create(joins.Select(Selection.At).ToList(), joins.Count - 1), EditKind.Other);
+        List<TextEdit> edits = [];
+        Dictionary<int, int> landings = [];
+        foreach ((int first, int last) in Runs(joins))
+        {
+            JoinRun(text, first, last + 1, edits, landings);
+        }
+        return new EditPlan(edits, selections.With(s =>
+        {
+            if (!s.IsEmpty)
+            {
+                return new Selection(Map(edits, s.Start, false), Map(edits, s.End, true));
+            }
+            int line = text.GetLineFromOffset(s.Caret);
+            return Selection.At(Map(edits, landings.TryGetValue(line, out int landing) ? landing : s.Caret, true));
+        }), EditKind.Other);
     }
 
     public static EditPlan? ToggleCase(TextSnapshot text, SelectionSet selections)
@@ -587,12 +596,7 @@ public static class TextEditing
         SortedSet<int> lines = [];
         foreach (Selection s in selections.Items)
         {
-            int first = text.GetLineFromOffset(s.Start);
-            int last = text.GetLineFromOffset(s.End);
-            if (last > first && s.End == text.GetLineStart(last))
-            {
-                last--;
-            }
+            (int first, int last) = CoveredLines(text, s);
             for (int line = first; line <= last; line++)
             {
                 lines.Add(line);
@@ -601,22 +605,78 @@ public static class TextEditing
         return lines;
     }
 
-    /// <summary>The touched lines as runs of consecutive lines.</summary>
-    private static List<(int First, int Last)> Blocks(TextSnapshot text, SelectionSet selections)
+    /// <summary>The first and last line a selection covers; a selection ending at a line's very start does
+    /// not count that line.</summary>
+    private static (int First, int Last) CoveredLines(TextSnapshot text, Selection s)
     {
-        List<(int First, int Last)> blocks = [];
-        foreach (int line in TouchedLines(text, selections))
+        int first = text.GetLineFromOffset(s.Start);
+        int last = text.GetLineFromOffset(s.End);
+        return last > first && s.End == text.GetLineStart(last) ? (first, last - 1) : (first, last);
+    }
+
+    /// <summary>The touched lines as runs of consecutive lines.</summary>
+    private static List<(int First, int Last)> Blocks(TextSnapshot text, SelectionSet selections) =>
+        Runs(TouchedLines(text, selections));
+
+    /// <summary>Sorted line numbers as runs of consecutive lines.</summary>
+    private static List<(int First, int Last)> Runs(IEnumerable<int> lines)
+    {
+        List<(int First, int Last)> runs = [];
+        foreach (int line in lines)
         {
-            if (blocks.Count > 0 && blocks[^1].Last == line - 1)
+            if (runs.Count > 0 && runs[^1].Last == line - 1)
             {
-                blocks[^1] = (blocks[^1].First, line);
+                runs[^1] = (runs[^1].First, line);
             }
             else
             {
-                blocks.Add((line, line));
+                runs.Add((line, line));
             }
         }
-        return blocks;
+        return runs;
+    }
+
+    /// <summary>Lines <paramref name="first"/> to <paramref name="last"/> made one in edits that never overlap: blank
+    /// lines go whole, the first line with text keeps its indentation and the last its trailing spaces. Each line but
+    /// the last gets its landing: where the text after it begins, or the run's end if none has text.</summary>
+    private static void JoinRun(TextSnapshot text, int first, int last, List<TextEdit> edits, Dictionary<int, int> landings)
+    {
+        int[] textStarts = new int[last - first + 1];
+        int textEnd = -1;
+        for (int line = first; line <= last; line++)
+        {
+            LineSpan span = text.GetLine(line);
+            string content = text.GetText(span.Start, span.Length);
+            int indent = TextNavigation.IndentLength(content);
+            bool blank = indent == content.Length;
+            textStarts[line - first] = blank ? -1 : span.Start + indent;
+            if (blank)
+            {
+                continue;
+            }
+            if (textEnd >= 0)
+            {
+                edits.Add(new TextEdit(textEnd, span.Start + indent - textEnd, " "));
+            }
+            else if (line > first)
+            {
+                int start = text.GetLine(first).Start;
+                edits.Add(new TextEdit(start, span.Start - start, string.Empty));
+            }
+            textEnd = span.Start + content.TrimEnd(' ', '\t').Length;
+        }
+        int end = text.GetLine(last).End;
+        if (textStarts[^1] < 0)
+        {
+            int from = textEnd >= 0 ? textEnd : text.GetLine(first).Start;
+            edits.Add(new TextEdit(from, end - from, string.Empty));
+        }
+        int following = end;
+        for (int line = last; line > first; line--)
+        {
+            following = textStarts[line - first] >= 0 ? textStarts[line - first] : following;
+            landings[line - 1] = following;
+        }
     }
 
     /// <summary>Removes whole lines with their breaks; the last line has none, so it takes the break

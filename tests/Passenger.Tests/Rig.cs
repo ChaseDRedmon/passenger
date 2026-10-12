@@ -80,6 +80,9 @@ public sealed class EditorRig
 
     /// <summary>Puts the caret where a click on that offset would.</summary>
     public void PlaceCaret(int offset) => Editor.Selections = SelectionSet.Single(offset);
+
+    /// <summary>Adds a caret where an alt+shift click on that offset would, there being none there, as the primary.</summary>
+    public void AddCaret(int offset) => Editor.Selections = Editor.Selections.Add(Selection.At(offset));
 }
 
 /// <summary>A test's temporary folders, deleted as Windows lets them be: git writes its objects read-only, which Windows

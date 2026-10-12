@@ -94,6 +94,49 @@ public sealed class EditingBehaviourTests
     }
 
     [AvaloniaFact]
+    public void Joining_three_selected_lines_whose_middle_one_is_only_spaces_gives_one_line_and_leaves_the_next_alone()
+    {
+        EditorRig rig = new("        Start();\n        \n        Stop();\n    }");
+        rig.PlaceCaret(0);
+        rig.Press("shift DOWN");
+        rig.Press("shift DOWN");
+        rig.Press("shift meta RIGHT");
+        rig.Press("control shift J");
+        Assert.Equal("        Start(); Stop();\n    }", rig.Text);
+        Assert.Equal(new TextRange(0, "        Start(); Stop();".Length), rig.Editor.Selections.Primary.Range);
+        rig.Press("meta Z");
+        Assert.Equal("        Start();\n        \n        Stop();\n    }", rig.Text);
+    }
+
+    [AvaloniaFact]
+    public void Enter_at_two_carets_in_one_run_of_spaces_splits_the_line_at_both()
+    {
+        EditorRig rig = new("    one    two");
+        rig.PlaceCaret("    one".Length);
+        Point second = Within(rig, rig.Editor.PointOf("    one  ".Length) + new Point(1, 4));
+        rig.Window.MouseDown(second, MouseButton.Left, RawInputModifiers.Alt | RawInputModifiers.Shift);
+        rig.Window.MouseUp(second, MouseButton.Left, RawInputModifiers.Alt | RawInputModifiers.Shift);
+        Ui.Settle();
+        Assert.Equal(2, rig.Editor.Selections.Count);
+        rig.Press("ENTER");
+        Assert.Equal("    one\n    \n    two", rig.Text);
+        Assert.Equal([new TextPosition(1, 4), new TextPosition(2, 4)], rig.Editor.Selections.Items.Select(s => rig.Document.Snapshot.GetPosition(s.Caret)));
+    }
+
+    [AvaloniaFact]
+    public void Enter_with_each_space_of_a_run_selected_splits_the_line_at_each()
+    {
+        EditorRig rig = new("first  second");
+        rig.PlaceCaret("first".Length);
+        rig.Press("shift RIGHT");
+        rig.Press("alt shift SEMICOLON");
+        Assert.Equal(2, rig.Editor.Selections.Count);
+        rig.Press("ENTER");
+        Assert.Equal("first\n\nsecond", rig.Text);
+        Assert.Equal([new TextPosition(1, 0), new TextPosition(2, 0)], rig.Editor.Selections.Items.Select(s => rig.Document.Snapshot.GetPosition(s.Caret)));
+    }
+
+    [AvaloniaFact]
     public void The_comment_chords_add_and_remove_comments_and_the_toggle_undoes_itself()
     {
         EditorRig rig = new("    Run();\n    Stop();");
