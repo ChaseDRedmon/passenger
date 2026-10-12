@@ -172,7 +172,8 @@ public sealed class DebuggerTests : IDisposable
         Ui.Run(window, AppActions.Debug);
         Ui.WaitFor(() => Value(window, "here") is not null, "the stop with the program's locals");
         Assert.Equal("\"Hi\"", Value(window, "greeting"));
-        Assert.Equal($"\"{window.Folder}\"", Value(window, "here"));
+        // A string shows as C# writes it, so a Windows path's backslashes are doubled.
+        Assert.Equal(Microsoft.CodeAnalysis.CSharp.SymbolDisplay.FormatLiteral(window.Folder!, quote: true), Value(window, "here"));
         Assert.Equal("string[2]", Value(window, "args"));
         Ui.Run(window, AppActions.Stop);
         Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
