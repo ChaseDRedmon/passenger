@@ -292,6 +292,45 @@ public sealed class DockingTests
         }
     }
 
+    [AvaloniaFact]
+    public void The_frames_dividers_take_the_pointer_on_either_side_of_their_line_and_a_closed_areas_divider_takes_none()
+    {
+        MainWindow window = Open();
+        DockHost dock = window.DockHost;
+        dock.Show("explorer");
+        dock.Show("hierarchy");
+        dock.Show("build");
+        Ui.Settle();
+        (double left, double right, double bottom) = (dock.ColumnDefinitions[1].ActualWidth, dock.ColumnDefinitions[5].ActualWidth, dock.RowDefinitions[2].ActualHeight);
+
+        // Each grabbed 3 px past its line, over the area after it.
+        Point grip = Middle(window, Divider(dock, c => Grid.GetColumn(c) == 2)) + new Point(3, 0);
+        Drag(window, grip, grip + new Point(60, 0));
+        Assert.True(Math.Abs(dock.ColumnDefinitions[1].ActualWidth - (left + 60)) < 1,
+            $"The left area was {left} wide, and {dock.ColumnDefinitions[1].ActualWidth} once its divider, grabbed right of its line, was dragged 60 px right");
+        grip = Middle(window, Divider(dock, c => Grid.GetColumn(c) == 4)) + new Point(3, 0);
+        Drag(window, grip, grip - new Point(60, 0));
+        Assert.True(Math.Abs(dock.ColumnDefinitions[5].ActualWidth - (right + 60)) < 1,
+            $"The right area was {right} wide, and {dock.ColumnDefinitions[5].ActualWidth} once its divider, grabbed right of its line, was dragged 60 px left");
+        grip = Middle(window, Divider(dock, c => Grid.GetRow(c) == 1)) + new Point(0, 3);
+        Drag(window, grip, grip - new Point(0, 60));
+        Assert.True(Math.Abs(dock.RowDefinitions[2].ActualHeight - (bottom + 60)) < 1,
+            $"The bottom area was {bottom} tall, and {dock.RowDefinitions[2].ActualHeight} once its divider, grabbed below its line, was dragged 60 px up");
+
+        // Closed, the right area leaves the editor's edge to the editor: a drag there opens no empty area.
+        dock.Hide("hierarchy");
+        Ui.Settle();
+        Control center = dock.Center!;
+        Point edge = center.TranslatePoint(new Point(center.Bounds.Width - 2, center.Bounds.Height / 2), window)!.Value;
+        Drag(window, edge, edge - new Point(60, 0));
+        Assert.True(dock.ColumnDefinitions[5].ActualWidth == 0,
+            $"A drag at the editor's right edge, the right area closed, opened {dock.ColumnDefinitions[5].ActualWidth} px of empty area there");
+        window.Close();
+    }
+
+    private static GridSplitter Divider(DockHost dock, Func<Control, bool> place) =>
+        dock.Children.First(place).GetVisualDescendants().OfType<GridSplitter>().Single();
+
     /// <summary>A floating window, closed as given, held only weakly here.</summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static WeakReference<Window> Closed(MainWindow window, Action close)

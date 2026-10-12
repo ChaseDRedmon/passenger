@@ -83,7 +83,7 @@ public sealed class EditorSplitTests : IDisposable
     }
 
     [AvaloniaFact]
-    public void The_divider_between_two_splits_dragged_gives_one_the_room_the_other_gives_up_beside_and_below()
+    public void The_divider_between_two_splits_grabbed_either_side_of_its_line_gives_one_the_room_the_other_gives_up_beside_and_below()
     {
         MainWindow window = Open("One.cs");
         EditorArea area = window.EditorArea;
@@ -97,15 +97,21 @@ public sealed class EditorSplitTests : IDisposable
         (double leftWidth, double rightWidth) = (left.Bounds.Width, top.Bounds.Width);
         (double topHeight, double bottomHeight) = (top.Bounds.Height, bottom.Bounds.Height);
 
-        Point across = Middle(window, Divider(area, GridResizeDirection.Columns));
+        // Grabbed 3 px right of its line, over the split after it.
+        Point across = Middle(window, Divider(area, GridResizeDirection.Columns)) + new Point(3, 0);
         Drag(window, across, across - new Point(120, 0));
         Assert.True(Math.Abs(left.Bounds.Width - (leftWidth - 120)) < 2 && Math.Abs(top.Bounds.Width - (rightWidth + 120)) < 2,
-            $"The splits beside each other were {leftWidth} and {rightWidth} wide, and {left.Bounds.Width} and {top.Bounds.Width} once their divider was dragged 120 px left");
+            $"The splits beside each other were {leftWidth} and {rightWidth} wide, and {left.Bounds.Width} and {top.Bounds.Width} once their divider, grabbed right of its line, was dragged 120 px left");
 
-        Point down = Middle(window, Divider(area, GridResizeDirection.Rows));
+        // Grabbed 3 px below its line, and 2 px above.
+        Point down = Middle(window, Divider(area, GridResizeDirection.Rows)) + new Point(0, 3);
         Drag(window, down, down + new Point(0, 80));
         Assert.True(Math.Abs(top.Bounds.Height - (topHeight + 80)) < 2 && Math.Abs(bottom.Bounds.Height - (bottomHeight - 80)) < 2,
-            $"The splits one over the other were {topHeight} and {bottomHeight} tall, and {top.Bounds.Height} and {bottom.Bounds.Height} once their divider was dragged 80 px down");
+            $"The splits one over the other were {topHeight} and {bottomHeight} tall, and {top.Bounds.Height} and {bottom.Bounds.Height} once their divider, grabbed below its line, was dragged 80 px down");
+        Point up = Middle(window, Divider(area, GridResizeDirection.Rows)) - new Point(0, 2);
+        Drag(window, up, up - new Point(0, 40));
+        Assert.True(Math.Abs(top.Bounds.Height - (topHeight + 40)) < 2 && Math.Abs(bottom.Bounds.Height - (bottomHeight - 40)) < 2,
+            $"The splits one over the other were {topHeight + 80} and {bottomHeight - 80} tall, and {top.Bounds.Height} and {bottom.Bounds.Height} once their divider, grabbed above its line, was dragged 40 px up");
         window.Close();
     }
 

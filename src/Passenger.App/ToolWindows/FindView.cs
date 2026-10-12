@@ -89,10 +89,7 @@ public sealed class FindView : DockPanel
         list.AddHandler(KeyDownEvent, OnKey, Avalonia.Interactivity.RoutingStrategies.Tunnel);
         preview = new CodeEditor { IsReadOnly = true, ShowErrorStripe = false, LineCommentPrefix = null, FontSize = 12.5, Document = new TextDocument() };
         Grid body = new() { ColumnDefinitions = new ColumnDefinitions("*,1,*") };
-        Border line = new() { IsHitTestVisible = false };
-        line.Bind(Border.BackgroundProperty, line.GetResourceObservable("Passenger.Divider"));
-        HairlineSplitter splitter = new() { Classes = { "hairline" }, ResizeDirection = GridResizeDirection.Columns };
-        Panel divider = new() { [Grid.ColumnProperty] = 1, Children = { line, splitter } };
+        HairlineDivider divider = new(GridResizeDirection.Columns) { [Grid.ColumnProperty] = 1 };
         preview[Grid.ColumnProperty] = 2;
         body.Children.Add(list);
         body.Children.Add(divider);

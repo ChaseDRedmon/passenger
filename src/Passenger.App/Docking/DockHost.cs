@@ -32,7 +32,11 @@ public sealed class DockHost : Grid
     private readonly Grid rightArea = new() { RowDefinitions = new RowDefinitions("*,0,*") };
     private readonly Grid bottomArea = new() { ColumnDefinitions = new ColumnDefinitions("*,0,*") };
     private readonly ContentControl center = new();
-    private readonly Canvas dropLayer = new() { IsHitTestVisible = false, IsVisible = false };
+    private readonly HairlineDivider leftDivider;
+    private readonly HairlineDivider rightDivider;
+    private readonly HairlineDivider bottomDivider;
+    // Above the dividers, which stand above the areas.
+    private readonly Canvas dropLayer = new() { IsHitTestVisible = false, IsVisible = false, ZIndex = 2 };
     private readonly Border dropZone = new() { BorderThickness = new Thickness(2), CornerRadius = new CornerRadius(4) };
     private readonly TextBlock dropLabel = new() { FontWeight = FontWeight.SemiBold, Margin = new Thickness(10, 8) };
     private double leftWidth = 280;
@@ -59,12 +63,15 @@ public sealed class DockHost : Grid
         rightStripe = new Stripe(this, ToolAnchor.RightTop, ToolAnchor.RightBottom, ToolAnchor.BottomRight, new Thickness(1, 0, 0, 0));
         Place(leftStripe, 0, 0, rowSpan: 3);
         Place(rightStripe, 0, 6, rowSpan: 3);
+        leftDivider = Divider(GridResizeDirection.Columns);
+        rightDivider = Divider(GridResizeDirection.Columns);
+        bottomDivider = Divider(GridResizeDirection.Rows);
         Place(leftArea, 0, 1);
-        Place(Splitter(GridResizeDirection.Columns), 0, 2);
+        Place(leftDivider, 0, 2);
         Place(center, 0, 3);
-        Place(Splitter(GridResizeDirection.Columns), 0, 4);
+        Place(rightDivider, 0, 4);
         Place(rightArea, 0, 5);
-        Place(Splitter(GridResizeDirection.Rows), 1, 1, columnSpan: 5);
+        Place(bottomDivider, 1, 1, columnSpan: 5);
         Place(bottomArea, 2, 1, columnSpan: 5);
         foreach (ToolAnchor anchor in Enum.GetValues<ToolAnchor>())
         {
@@ -81,9 +88,9 @@ public sealed class DockHost : Grid
             }
             area.Children.Add(pane);
         }
-        leftArea.Children.Add(InnerSplitter(GridResizeDirection.Rows, row: 1));
-        rightArea.Children.Add(InnerSplitter(GridResizeDirection.Rows, row: 1));
-        bottomArea.Children.Add(InnerSplitter(GridResizeDirection.Columns, column: 1));
+        leftArea.Children.Add(new HairlineDivider(GridResizeDirection.Rows) { [Grid.RowProperty] = 1 });
+        rightArea.Children.Add(new HairlineDivider(GridResizeDirection.Rows) { [Grid.RowProperty] = 1 });
+        bottomArea.Children.Add(new HairlineDivider(GridResizeDirection.Columns) { [Grid.ColumnProperty] = 1 });
         dropZone.Child = dropLabel;
         dropZone.Bind(Border.BorderBrushProperty, dropZone.GetResourceObservable("Passenger.Accent"));
         dropZone.Bind(Border.BackgroundProperty, dropZone.GetResourceObservable("Passenger.DropZone"));
@@ -577,6 +584,10 @@ public sealed class DockHost : Grid
         RowDefinitions[0].MinHeight = down * share;
         RowDefinitions[1].Height = new GridLength(bottomOpen ? 1 : 0);
         RowDefinitions[2].Height = new GridLength(bottom);
+        // A closed area's divider, over the editor's edge, would drag an empty area open.
+        leftDivider.IsVisible = leftOpen;
+        rightDivider.IsVisible = rightOpen;
+        bottomDivider.IsVisible = bottomOpen;
         given = (left, right, bottom);
     }
 
@@ -602,6 +613,7 @@ public sealed class DockHost : Grid
             area.ColumnDefinitions[1].Width = new GridLength(a && b ? 1 : 0);
             area.ColumnDefinitions[2].Width = Star(b, secondHalf);
         }
+        area.Children.OfType<HairlineDivider>().Single().IsVisible = a && b;
     }
 
     /// <summary>Keeps the size the person dragged an area to (its definition no longer the size it was given), kept
@@ -650,28 +662,15 @@ public sealed class DockHost : Grid
         Children.Add(control);
     }
 
-    private Control Splitter(GridResizeDirection direction)
+    private HairlineDivider Divider(GridResizeDirection direction)
     {
-        HairlineSplitter splitter = new() { Classes = { direction == GridResizeDirection.Columns ? "hairline" : "hairlineRows" }, ResizeDirection = direction };
-        splitter.DragCompleted += (_, _) =>
+        HairlineDivider divider = new(direction);
+        divider.Splitter.DragCompleted += (_, _) =>
         {
             Remember();
             LayoutChanged?.Invoke(this, EventArgs.Empty);
         };
-        Border line = new() { IsHitTestVisible = false };
-        line.Bind(Border.BackgroundProperty, line.GetResourceObservable("Passenger.Divider"));
-        return new Panel { Children = { line, splitter } };
-    }
-
-    private static Control InnerSplitter(GridResizeDirection direction, int row = 0, int column = 0)
-    {
-        HairlineSplitter splitter = new() { Classes = { direction == GridResizeDirection.Columns ? "hairline" : "hairlineRows" }, ResizeDirection = direction };
-        Border line = new() { IsHitTestVisible = false };
-        line.Bind(Border.BackgroundProperty, line.GetResourceObservable("Passenger.Divider"));
-        Panel panel = new() { Children = { line, splitter } };
-        SetRow(panel, row);
-        SetColumn(panel, column);
-        return panel;
+        return divider;
     }
 
     private static double Distance(Point a, Point b) => Math.Sqrt(((a.X - b.X) * (a.X - b.X)) + ((a.Y - b.Y) * (a.Y - b.Y)));

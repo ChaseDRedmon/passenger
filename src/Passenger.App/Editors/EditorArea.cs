@@ -696,10 +696,7 @@ public sealed class EditorArea : UserControl
             grid.RowDefinitions[0].Height = new GridLength(ratio, GridUnitType.Star);
             grid.RowDefinitions[2].Height = new GridLength(1 - ratio, GridUnitType.Star);
         }
-        Border line = new() { IsHitTestVisible = false };
-        line.Bind(Border.BackgroundProperty, line.GetResourceObservable("Passenger.Divider"));
-        HairlineSplitter splitter = new() { Classes = { across ? "hairline" : "hairlineRows" }, ResizeDirection = across ? GridResizeDirection.Columns : GridResizeDirection.Rows };
-        Panel divider = new() { Children = { line, splitter } };
+        HairlineDivider divider = new(across ? GridResizeDirection.Columns : GridResizeDirection.Rows);
         if (across)
         {
             Grid.SetColumn(second, 2);
