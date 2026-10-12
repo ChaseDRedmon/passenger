@@ -42,8 +42,10 @@ public sealed class VcsController
     /// <summary>What happened, for the status bar: a commit made, a push refused and git's reason.</summary>
     public event EventHandler<string>? Message;
 
-    /// <summary>Run before a commit, so what is committed is what the editor shows (Rider saves every file first).</summary>
-    public Action? BeforeCommit { get; set; }
+    /// <summary>Saves every open file, run before anything git does to the files (a commit, a checkout, a stash, a
+    /// rollback, an update), as Rider saves first: what is committed is what the editor shows, and nothing unsaved is
+    /// left behind for the next save to write over what git put there.</summary>
+    public Action? SaveFirst { get; set; }
 
     /// <summary>Finds the folder's working tree and reads it; a folder in none leaves the window without Git.</summary>
     public async Task OpenAsync(string folder)
@@ -167,7 +169,7 @@ public sealed class VcsController
             Message?.Invoke(this, "The commit message is empty");
             return false;
         }
-        BeforeCommit?.Invoke();
+        SaveFirst?.Invoke();
         string[] paths = [.. chosen.SelectMany(c => c.From is { } from ? new[] { c.Path, from } : [c.Path])];
         GitResult commit = await repository.CommitAsync(paths, message, amend);
         if (!commit.Succeeded)
@@ -206,6 +208,7 @@ public sealed class VcsController
         {
             return false;
         }
+        SaveFirst?.Invoke();
         Message?.Invoke(this, "Updating...");
         GitResult pulled = await repository.PullAsync();
         ReloadOpenFiles();
@@ -289,6 +292,7 @@ public sealed class VcsController
         {
             return false;
         }
+        SaveFirst?.Invoke();
         GitResult rolled = await repository.RollbackAsync(changes);
         ReloadOpenFiles();
         await RefreshAsync();
@@ -312,6 +316,7 @@ public sealed class VcsController
         {
             return new GitResult(1, string.Empty, "The folder is not in a Git repository");
         }
+        SaveFirst?.Invoke();
         GitResult switched = await change(repository);
         if (switched.Succeeded)
         {

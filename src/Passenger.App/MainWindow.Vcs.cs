@@ -64,10 +64,9 @@ public partial class MainWindow
             {
                 return;
             }
-            Editors.SaveAll();
             await vcs.ResetAsync(reset.Commit.Hash, reset.Mode);
         };
-        vcs.BeforeCommit = () => Editors.SaveAll();
+        vcs.SaveFirst = () => Editors.SaveAll();
         vcs.Message += (_, message) => StatusText.Text = message;
         vcs.Changed += (_, _) => OnVcsChanged();
         Editors.Opened += (_, document) => vcs.Attach(document);
@@ -149,11 +148,7 @@ public partial class MainWindow
             StatusText.Text = "The folder is not in a Git repository";
             return null;
         }
-        NamePopup popup = new("Stash Changes", string.Empty, message =>
-        {
-            Editors.SaveAll();
-            return vcs.StashAsync(message);
-        });
+        NamePopup popup = new("Stash Changes", string.Empty, vcs.StashAsync);
         popup.Done += (_, _) => ClosePopup();
         ShowPopup(popup);
         return popup;
@@ -167,11 +162,7 @@ public partial class MainWindow
             StatusText.Text = "The folder is not in a Git repository";
             return null;
         }
-        UnstashPopup popup = new(await vcs.StashesAsync(), (stash, pop) =>
-        {
-            Editors.SaveAll();
-            return vcs.UnstashAsync(stash, pop);
-        }, vcs.DropStashAsync);
+        UnstashPopup popup = new(await vcs.StashesAsync(), vcs.UnstashAsync, vcs.DropStashAsync);
         popup.Done += (_, _) => ClosePopup();
         ShowPopup(popup);
         return popup;
@@ -402,8 +393,6 @@ public partial class MainWindow
                 _ = ToggleAnnotationsAsync(annotated);
                 break;
             case AppActions.UpdateProject:
-                // Rider saves first, so the merge meets what the editors show.
-                Editors.SaveAll();
                 _ = vcs.UpdateAsync();
                 break;
             case AppActions.Fetch:

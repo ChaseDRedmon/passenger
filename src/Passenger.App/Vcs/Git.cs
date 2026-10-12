@@ -298,7 +298,7 @@ public sealed class Git
         // No paths is an amend of the message alone: "add -A --" with none would add the whole tree.
         if (relative.Length > 0)
         {
-            GitResult add = await RunAsync(Root, ["add", "-A", "--", .. relative]);
+            GitResult add = await RunAsync(Root, ["add", "-A", "--", .. relative.Select(Literal)]);
             if (!add.Succeeded)
             {
                 return add;
@@ -308,7 +308,7 @@ public sealed class Git
         await File.WriteAllTextAsync(file, message);
         try
         {
-            string[] only = relative.Length > 0 ? ["--only", "--", .. relative] : [];
+            string[] only = relative.Length > 0 ? ["--only", "--", .. relative.Select(Literal)] : [];
             return await RunAsync(Root, ["commit", "-F", file, .. amend ? new[] { "--amend" } : [], .. only]);
         }
         finally
@@ -390,11 +390,15 @@ public sealed class Git
         {
             return new GitResult(0, string.Empty, string.Empty);
         }
-        GitResult restore = await RunAsync(Root, ["restore", "--source=HEAD", "--staged", "--worktree", "--", .. tracked]);
+        GitResult restore = await RunAsync(Root, ["restore", "--source=HEAD", "--staged", "--worktree", "--", .. tracked.Select(Literal)]);
         return restore;
     }
 
     public string Relative(string path) => System.IO.Path.GetRelativePath(Root, path).Replace('\\', '/');
+
+    /// <summary>A file's name as git takes it for that file alone, never a pattern: "[ab].cs" is not also "a.cs", nor is
+    /// a name starting ":" pathspec magic. (The environment's GIT_LITERAL_PATHSPECS would also stop a stash's own magic.)</summary>
+    private static string Literal(string relative) => $":(literal){relative}";
 
     private string Full(string relative) => System.IO.Path.GetFullPath(System.IO.Path.Combine(Root, relative));
 

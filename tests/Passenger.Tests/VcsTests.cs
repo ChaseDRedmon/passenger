@@ -412,6 +412,75 @@ public sealed class VcsTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void Open_files_are_saved_before_a_checkout_or_a_rollback_and_take_what_git_puts_there_with_no_question()
+    {
+        File.WriteAllText(Path.Combine(folder, "Notes.cs"), "class Notes { }\n");
+        Git("add", "-A");
+        Git("commit", "-q", "-m", "Notes");
+        Git("switch", "-q", "-c", "other");
+        File.WriteAllText(Path.Combine(folder, "Shop.cs"), Original.Replace("count++", "count += 5", StringComparison.Ordinal));
+        Git("commit", "-q", "-am", "Fives");
+        Git("switch", "-q", "main");
+        MainWindow window = Open();
+        int asked = 0;
+        window.AskConflict = _ => Task.FromResult(asked++ < 0);
+        window.OpenFile(Path.Combine(folder, "Notes.cs"));
+        Ui.Settle();
+        window.EditorArea.CodeEditor.Selections = SelectionSet.Single(0);
+        window.KeyTextInput("sealed ");
+        Ui.WaitFor(() => window.Vcs.Branch == "main", "the branch");
+
+        // The unsaved edit to Notes.cs is saved and goes along; Shop.cs, open, takes the other branch's text.
+        Task<bool> checkout = window.Vcs.CheckoutAsync("other");
+        Ui.WaitFor(() => checkout.IsCompleted, "the checkout");
+        Assert.True(checkout.Result, window.Status);
+        Assert.Equal("sealed class Notes { }\n", File.ReadAllText(Path.Combine(folder, "Notes.cs")));
+        window.OpenFile(Path.Combine(folder, "Shop.cs"));
+        Ui.WaitFor(() => Text(window).Contains("count += 5", StringComparison.Ordinal), "the other branch's text");
+        Assert.False(window.EditorArea.Active!.IsModified);
+
+        // Rolled back with unsaved edits on top of saved ones: the editor and the disk are both at HEAD.
+        window.EditorArea.CodeEditor.Selections = SelectionSet.Single(0);
+        window.KeyTextInput("// saved\n");
+        window.Perform(AppActions.Save);
+        window.KeyTextInput("// unsaved\n");
+        Ui.WaitFor(() => window.Vcs.Changes.Any(c => c.Name == "Shop.cs"), "Shop.cs changed");
+        Task<bool> rollback = window.Vcs.RollbackAsync([.. window.Vcs.Changes.Where(c => c.Name == "Shop.cs")]);
+        Ui.WaitFor(() => rollback.IsCompleted, "the rollback");
+        string head = Git("show", "HEAD:Shop.cs");
+        Assert.Equal(head, File.ReadAllText(Path.Combine(folder, "Shop.cs")));
+        Ui.WaitFor(() => Text(window) == head, "the editor at HEAD");
+        Assert.Equal(0, asked);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_file_name_with_brackets_is_that_file_alone_to_roll_back_and_to_commit()
+    {
+        File.WriteAllText(Path.Combine(folder, "[ab].cs"), "class Ab { }\n");
+        File.WriteAllText(Path.Combine(folder, "a.cs"), "class A { }\n");
+        Git("add", "-A");
+        Git("commit", "-q", "-m", "Brackets");
+        File.WriteAllText(Path.Combine(folder, "[ab].cs"), "class Ab { int x; }\n");
+        File.WriteAllText(Path.Combine(folder, "a.cs"), "class A { int x; }\n");
+        MainWindow window = Open();
+        Ui.WaitFor(() => window.Vcs.Changes.Count == 2, "both files changed");
+
+        Task<bool> rollback = window.Vcs.RollbackAsync([.. window.Vcs.Changes.Where(c => c.Name == "[ab].cs")]);
+        Ui.WaitFor(() => rollback.IsCompleted, "the rollback");
+        Assert.Equal("class Ab { }\n", File.ReadAllText(Path.Combine(folder, "[ab].cs")));
+        Assert.Equal("class A { int x; }\n", File.ReadAllText(Path.Combine(folder, "a.cs")));
+
+        File.WriteAllText(Path.Combine(folder, "[ab].cs"), "class Ab { int y; }\n");
+        Ui.WaitFor(() => window.Vcs.Changes.Count == 2, "both files changed again");
+        Task<bool> commit = window.Vcs.CommitAsync([.. window.Vcs.Changes.Where(c => c.Name == "[ab].cs")], "Only brackets", amend: false, push: false);
+        Ui.WaitFor(() => commit.IsCompleted, "the commit");
+        Assert.True(commit.Result, window.Status);
+        Assert.Equal("[ab].cs", Git("show", "--name-only", "--format=", "HEAD").Trim());
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void A_save_leaves_the_explorers_chosen_rows_the_git_log_and_go_to_file_as_they_were()
     {
         Directory.CreateDirectory(Path.Combine(folder, "Models"));
