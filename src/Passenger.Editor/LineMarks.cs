@@ -43,6 +43,23 @@ public enum LineAnnotationKind
 /// typed over.</summary>
 public readonly record struct LineAnnotation(int Line, string Text, LineAnnotationKind Kind);
 
+/// <summary>The gutter's columns right of the line numbers, left to right.</summary>
+public enum GutterColumn
+{
+    /// <summary>The execution arrow and the tests' run icons.</summary>
+    Marks,
+
+    /// <summary>The change bars.</summary>
+    Changes,
+
+    /// <summary>The folds' chevrons, against the code.</summary>
+    Folding,
+}
+
+/// <summary>A stretch that folds: from <see cref="Start"/>, the end of its first line's code where its placeholder
+/// stands while folded, to <see cref="End"/>; folded, the lines after the first are hidden.</summary>
+public readonly record struct FoldRegion(int Start, int End, string Placeholder, bool Folded = false);
+
 /// <summary>A word drawn inside a line before an offset, part of no document: a parameter's name before its argument,
 /// as Rider's parameter name hints. Padding leaves a space on that side of its chip.</summary>
 public readonly record struct InlayHint(int Offset, string Label, bool PadLeft = false, bool PadRight = false);

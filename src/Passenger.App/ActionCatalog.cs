@@ -81,6 +81,11 @@ public static class ActionCatalog
         [AppActions.Profile] = "Profile",
         [AppActions.ShowProfiler] = "Performance Profiler",
         [EditorActions.ToggleLineComment] = "Comment with Line Comment",
+        [EditorActions.ToggleFold] = "Expand/Collapse",
+        [EditorActions.Fold] = "Collapse",
+        [EditorActions.Unfold] = "Expand",
+        [EditorActions.FoldAll] = "Collapse All",
+        [EditorActions.UnfoldAll] = "Expand All",
     };
 
     private static readonly string[] SmallWords = ["to", "of", "in", "on", "and", "a", "by", "with", "at"];

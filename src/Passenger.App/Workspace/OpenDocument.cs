@@ -19,6 +19,7 @@ public sealed class OpenDocument : Observable
     private IReadOnlyList<ChangeMark> changeMarks = [];
     private IReadOnlyList<string?> gutterAnnotations = [];
     private IReadOnlyList<int> bookmarks = [];
+    private IReadOnlyList<FoldRegion> foldRegions = [];
 
     public OpenDocument(string path, FileText file)
     {
@@ -29,7 +30,27 @@ public sealed class OpenDocument : Observable
         EncodingName = file.EncodingName;
         Language = Language.ForPath(path);
         highlighter = Language.Name == "C#" ? new CSharpHighlighter(Text) : null;
-        Text.Changed += (_, _) => Raise(nameof(IsModified));
+        if (highlighter is CSharpHighlighter csharp)
+        {
+            // Each parse's regions keep the folds of the ones they replace, matched by where they start.
+            csharp.FoldsChanged += (_, _) =>
+            {
+                HashSet<int> folded = [.. foldRegions.Where(r => r.Folded).Select(r => r.Start)];
+                FoldRegions = [.. csharp.Folds.Select(r => r with { Folded = folded.Contains(r.Start) })];
+            };
+        }
+        Text.Changed += (_, change) =>
+        {
+            if (foldRegions.Count > 0)
+            {
+                FoldRegions = [.. foldRegions.Select(r => r with
+                {
+                    Start = TextEditing.MapOffset(r.Start, change.Edits, afterInsertions: true),
+                    End = TextEditing.MapOffset(r.End, change.Edits, afterInsertions: true),
+                })];
+            }
+            Raise(nameof(IsModified));
+        };
     }
 
     /// <summary>Raised after a save, so the language server hears of it.</summary>
@@ -69,6 +90,13 @@ public sealed class OpenDocument : Observable
     {
         get => changeMarks;
         set => Set(ref changeMarks, value);
+    }
+
+    /// <summary>What folds in the text and which of it is folded, in this text's offsets.</summary>
+    public IReadOnlyList<FoldRegion> FoldRegions
+    {
+        get => foldRegions;
+        set => Set(ref foldRegions, value);
     }
 
     /// <summary>The bookmarked lines.</summary>

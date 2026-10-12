@@ -281,11 +281,8 @@ public sealed class DebuggerTests : IDisposable
     }
 
     /// <summary>Where a line's execution arrow is drawn, right of its number, in the window's coordinates.</summary>
-    private static Point Arrow(MainWindow window, CodeEditor editor, int line)
-    {
-        Point bottom = editor.GutterPoint(line);
-        return editor.TranslatePoint(new Point(bottom.X - 10, bottom.Y - 8), window)!.Value;
-    }
+    private static Point Arrow(MainWindow window, CodeEditor editor, int line) =>
+        editor.TranslatePoint(editor.GutterColumnPoint(GutterColumn.Marks, line), window)!.Value;
 
     /// <summary>A top-level row of the Variables view, by name.</summary>
     private static string? Value(MainWindow window, string name) =>

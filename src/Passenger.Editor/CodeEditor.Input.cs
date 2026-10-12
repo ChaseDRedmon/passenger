@@ -68,7 +68,7 @@ public sealed partial class CodeEditor
         PointerPoint point = e.GetCurrentPoint(this);
         if (point.Properties.IsRightButtonPressed && point.Position.X < GutterWidth && GutterClicked is not null && ShowLineNumbers)
         {
-            int line = (int)((point.Position.Y + scroll.Y) / metrics.LineHeight);
+            int line = LineAtY(point.Position.Y);
             if (line < document.Snapshot.LineCount)
             {
                 GutterClicked(this, new GutterClick(line, e.KeyModifiers, point.Position, Context: true));
@@ -81,13 +81,18 @@ public sealed partial class CodeEditor
             return;
         }
         Focus();
+        if (ClickFold(point.Position))
+        {
+            e.Handled = true;
+            return;
+        }
         document.BreakUndoGroup();
         TextSnapshot text = document.Snapshot;
         int offset = OffsetAt(point.Position);
         KeyModifiers mods = e.KeyModifiers;
         KeyModifiers command = OperatingSystem.IsMacOS() ? KeyModifiers.Meta : KeyModifiers.Control;
 
-        int pressed = (int)((point.Position.Y + scroll.Y) / metrics.LineHeight);
+        int pressed = LineAtY(point.Position.Y);
         if (ExecutionPointDragged is not null && IsInMarkColumn(point.Position) && LineMarks.Any(m => m.Kind == LineMarkKind.ExecutionPoint && m.Line == pressed))
         {
             drag = new Drag(DragMode.ExecutionPoint, pressed, point.Position);
@@ -163,6 +168,12 @@ public sealed partial class CodeEditor
         Point position = e.GetPosition(this);
         RestartHover(position);
         Cursor = position.X < GutterWidth || drag.Mode == DragMode.ExecutionPoint ? Cursor.Default : new Cursor(StandardCursorType.Ibeam);
+        bool inGutter = position.X < GutterWidth;
+        if (inGutter != overGutter)
+        {
+            overGutter = inGutter;
+            InvalidateVisual();
+        }
         if (drag.Mode == DragMode.None || !e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
         {
             return;
@@ -193,7 +204,7 @@ public sealed partial class CodeEditor
                 SetSelections(ColumnSelection(text, drag.Start, position), reveal: true);
                 break;
             case DragMode.ExecutionPoint:
-                arrowAt = Math.Clamp((int)((position.Y + scroll.Y) / metrics.LineHeight), 0, text.LineCount - 1);
+                arrowAt = Math.Clamp(LineAtY(position.Y), 0, text.LineCount - 1);
                 InvalidateVisual();
                 break;
         }
@@ -224,6 +235,11 @@ public sealed partial class CodeEditor
     protected override void OnPointerExited(PointerEventArgs e)
     {
         base.OnPointerExited(e);
+        if (overGutter)
+        {
+            overGutter = false;
+            InvalidateVisual();
+        }
         hoverTimer.Stop();
         EndHover();
     }
@@ -248,7 +264,7 @@ public sealed partial class CodeEditor
             return;
         }
         TextSnapshot text = document.Snapshot;
-        int line = (int)Math.Floor((hoverAt.Y + scroll.Y) / metrics.LineHeight);
+        int line = LineAtY(hoverAt.Y);
         if (line < 0 || line >= text.LineCount)
         {
             return;
@@ -288,7 +304,11 @@ public sealed partial class CodeEditor
     private int OffsetAt(Point point)
     {
         TextSnapshot text = document.Snapshot;
-        int line = (int)Math.Floor((point.Y + scroll.Y) / metrics.LineHeight);
+        if (point.Y + scroll.Y < 0)
+        {
+            return 0;
+        }
+        int line = LineAtY(point.Y);
         if (line < 0)
         {
             return 0;
@@ -318,8 +338,8 @@ public sealed partial class CodeEditor
     /// spanning the same columns on each.</summary>
     private SelectionSet ColumnSelection(TextSnapshot text, Point start, Point end)
     {
-        int firstLine = Math.Clamp((int)Math.Floor((start.Y + scroll.Y) / metrics.LineHeight), 0, text.LineCount - 1);
-        int lastLine = Math.Clamp((int)Math.Floor((end.Y + scroll.Y) / metrics.LineHeight), 0, text.LineCount - 1);
+        int firstLine = Math.Clamp(start.Y + scroll.Y < 0 ? 0 : LineAtY(start.Y), 0, text.LineCount - 1);
+        int lastLine = Math.Clamp(end.Y + scroll.Y < 0 ? 0 : LineAtY(end.Y), 0, text.LineCount - 1);
         double fromX = start.X - TextLeft + scroll.X;
         double toX = end.X - TextLeft + scroll.X;
         List<Selection> rows = [];
@@ -343,7 +363,7 @@ public sealed partial class CodeEditor
         }
         int caret = selections.Primary.Caret;
         double x = left + XOf(text, caret);
-        double y = text.GetLineFromOffset(caret) * metrics.LineHeight - scroll.Y;
+        double y = TopOf(text.GetLineFromOffset(caret)) - scroll.Y;
         using TextLine line = Format(preedit, [], RunWith(palette.Preedit));
         context.FillRectangle(palette.Background, new Rect(x, y, line.WidthIncludingTrailingWhitespace, metrics.LineHeight));
         line.Draw(context, new Point(x, y + (metrics.LineHeight - line.Height) / 2));

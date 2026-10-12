@@ -180,7 +180,9 @@ opened last and reopens one where its caret was left. The status bar's path name
 caret is in, as Rider's new UI does, each part a way there. Bookmarks (Ctrl+K, K to toggle, N and P to move between
 them across files, W for the Bookmarks window) mark lines and move with them as they are edited. Extend Selection (Ctrl+W, Cmd+Alt+Right on the
 Mac) grows every caret's selection through the code around it, from the syntax tree in C#, and Shrink Selection
-takes it back. The Explorer's menu
+takes it back. Code folding folds a member's, a type's or a namespace's braces, the usings, #regions and long
+comments, from the file's own parse: Ctrl+M, M toggles the fold at the caret, Ctrl+M, S and E fold and unfold, A and X
+all of them, the gutter's chevrons and a fold's placeholder too, and a caret that goes into folded code opens it. The Explorer's menu
 adds files, folders and classes (in the namespace their folder gives), renames (F2) and deletes to the Trash (Delete),
 its open tabs following, and copies or reveals a path. Settings (Ctrl+Alt+S, Cmd+, on the Mac) has Rider's search over its pages
 (Appearance, Editor, Terminal, and the Keymap, where Add takes the next keys pressed, Remove unbinds and Reset goes

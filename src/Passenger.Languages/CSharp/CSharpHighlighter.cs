@@ -40,6 +40,12 @@ public sealed class CSharpHighlighter : IHighlighter, IDisposable
 
     public event EventHandler? Changed;
 
+    /// <summary>What folds in the text (<see cref="FoldRegions"/>), from the newest parse of the text as it stands.</summary>
+    public IReadOnlyList<FoldRegion> Folds { get; private set; } = [];
+
+    /// <summary>A parse of the text as it stands found its folds.</summary>
+    public event EventHandler? FoldsChanged;
+
     public IReadOnlyList<SyntaxSpan> GetSpans(TextSnapshot snapshot, int start, int length)
     {
         if (tree is null)
@@ -109,7 +115,7 @@ public sealed class CSharpHighlighter : IHighlighter, IDisposable
             SyntaxNode root = parsed.GetRoot();
             int end = root.FullSpan.End;
             CSharpClassifier.Classify(root, TextSpan.FromBounds(Math.Min(warm.Start, end), Math.Min(warm.Start + warm.Length, end)));
-            return parsed;
+            return (Tree: parsed, Folds: FoldRegions.Of(root));
         }).ContinueWith(done => OnUi(() =>
         {
             try
@@ -117,11 +123,16 @@ public sealed class CSharpHighlighter : IHighlighter, IDisposable
                 parsing = false;
                 if (done.IsCompletedSuccessfully && !disposed)
                 {
-                    tree = done.Result;
+                    tree = done.Result.Tree;
                     parsedText.ForgetHistory();
                     sinceTree.RemoveAll(batch => batch.Version <= parsedVersion);
                     cached = (-1, 0, 0, []);
                     Changed?.Invoke(this, EventArgs.Empty);
+                    if (parsedVersion == version)
+                    {
+                        Folds = done.Result.Folds;
+                        FoldsChanged?.Invoke(this, EventArgs.Empty);
+                    }
                 }
                 if (parsedVersion != version)
                 {

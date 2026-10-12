@@ -51,6 +51,11 @@ public static class EditorActions
     public const string CloneCaretAbove = "editor.cloneCaretAbove";
     public const string CloneCaretBelow = "editor.cloneCaretBelow";
     public const string Escape = "editor.escape";
+    public const string ToggleFold = "editor.toggleFold";
+    public const string Fold = "editor.fold";
+    public const string Unfold = "editor.unfold";
+    public const string FoldAll = "editor.foldAll";
+    public const string UnfoldAll = "editor.unfoldAll";
 
     private static readonly HashSet<string> Movements =
         [Left, Right, Up, Down, WordLeft, WordRight, LineStart, LineEnd, TextStart, TextEnd, PageUp, PageDown];
@@ -109,6 +114,11 @@ public static class DefaultKeymaps
         .Bind(EditorActions.CaretPerLine, "shift alt G")
         .Bind(EditorActions.CloneCaretAbove, "alt shift UP")
         .Bind(EditorActions.CloneCaretBelow, "alt shift DOWN")
+        .Bind(EditorActions.ToggleFold, "control M , M", "control M , control M")
+        .Bind(EditorActions.Fold, "control M , S", "control M , control S")
+        .Bind(EditorActions.Unfold, "control M , E", "control M , control E")
+        .Bind(EditorActions.FoldAll, "control M , A", "control M , control A")
+        .Bind(EditorActions.UnfoldAll, "control M , X", "control M , control X")
         .Bind(EditorActions.Escape, "ESCAPE");
 
     public static Keymap VisualStudio() => new Keymap("Visual Studio")
@@ -156,5 +166,10 @@ public static class DefaultKeymaps
         .Bind(EditorActions.CaretPerLine, "shift alt G")
         .Bind(EditorActions.CloneCaretAbove, "alt shift UP")
         .Bind(EditorActions.CloneCaretBelow, "alt shift DOWN")
+        .Bind(EditorActions.ToggleFold, "control M , M", "control M , control M")
+        .Bind(EditorActions.Fold, "control M , S", "control M , control S")
+        .Bind(EditorActions.Unfold, "control M , E", "control M , control E")
+        .Bind(EditorActions.FoldAll, "control M , A", "control M , control A")
+        .Bind(EditorActions.UnfoldAll, "control M , X", "control M , control X")
         .Bind(EditorActions.Escape, "ESCAPE");
 }

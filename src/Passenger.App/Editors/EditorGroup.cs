@@ -45,6 +45,13 @@ public sealed class EditorGroup : DockPanel
     {
         this.area = area;
         Editor = new CodeEditor { IsVisible = false };
+        Editor.FoldsToggled += (_, regions) =>
+        {
+            if (active is not null)
+            {
+                active.Document.FoldRegions = regions;
+            }
+        };
         Find = new FindBar { [DockProperty] = Dock.Top };
         ItemsControl strip = new()
         {
@@ -133,6 +140,7 @@ public sealed class EditorGroup : DockPanel
         Editor.Show(document.Text, selections, scroll);
         Editor.Highlighter = document.Highlighter;
         Editor.SetMarkers(document.Markers);
+        Editor.SetFoldRegions(document.FoldRegions);
         Editor.SetInlayHints(document.InlayHints);
         Editor.SetLineMarks(document.LineMarks);
         Editor.SetLineAnnotations(document.LineAnnotations);
@@ -244,6 +252,9 @@ public sealed class EditorGroup : DockPanel
                 break;
             case nameof(OpenDocument.InlayHints):
                 Editor.SetInlayHints(document.InlayHints);
+                break;
+            case nameof(OpenDocument.FoldRegions):
+                Editor.SetFoldRegions(document.FoldRegions);
                 break;
             case nameof(OpenDocument.TestMarks):
                 Editor.SetTestMarks(document.TestMarks);

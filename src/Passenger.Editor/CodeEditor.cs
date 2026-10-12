@@ -153,7 +153,7 @@ public sealed partial class CodeEditor : Control
     public bool ChangeBackgrounds { get; set; }
 
     /// <summary>Whether a point (in this control) is on the change bars' strip at the gutter's edge.</summary>
-    public bool IsInChangeColumn(Point at) => ShowLineNumbers && at.X >= GutterWidth - 8 && at.X < GutterWidth;
+    public bool IsInChangeColumn(Point at) => ShowLineNumbers && at.X >= GutterWidth - FoldWidth - 8 && at.X < GutterWidth - FoldWidth;
 
     /// <summary>The tests' run icons in the gutter, from the host.</summary>
     public IReadOnlyList<TestMark> TestMarks { get; private set; } = [];
@@ -166,7 +166,7 @@ public sealed partial class CodeEditor : Control
 
     /// <summary>Whether a point (in the editor's coordinates) is in the gutter's column of run icons and the
     /// execution arrow, right of the line numbers.</summary>
-    public bool IsInMarkColumn(Point at) => ShowLineNumbers && at.X >= GutterWidth - GutterPadRight && at.X < GutterWidth;
+    public bool IsInMarkColumn(Point at) => ShowLineNumbers && at.X >= GutterWidth - FoldWidth - GutterPadRight && at.X < GutterWidth - FoldWidth;
 
     /// <summary>Text after lines' code (the debugger's inline values, an exception), from the host.</summary>
     public IReadOnlyList<LineAnnotation> LineAnnotations { get; private set; } = [];
@@ -187,7 +187,21 @@ public sealed partial class CodeEditor : Control
 
     /// <summary>Where a line's number is drawn, in the editor's coordinates: what a popup about its breakpoint
     /// is placed beside.</summary>
-    public Point GutterPoint(int line) => new(GutterWidth, (line + 1) * metrics.LineHeight - scroll.Y);
+    public Point GutterPoint(int line) => new(GutterWidth, TopOf(line) + metrics.LineHeight - scroll.Y);
+
+    /// <summary>The middle of one of the gutter's columns at a line, in the editor's coordinates: where a click on the
+    /// execution arrow or a test's icon, a change bar or a fold's chevron lands.</summary>
+    public Point GutterColumnPoint(GutterColumn column, int line)
+    {
+        double right = GutterWidth - FoldWidth;
+        double x = column switch
+        {
+            GutterColumn.Folding => GutterWidth - (FoldWidth / 2),
+            GutterColumn.Changes => right - 4,
+            _ => right - (GutterPadRight / 2),
+        };
+        return new Point(x, TopOf(line) - scroll.Y + (metrics.LineHeight / 2));
+    }
 
     /// <summary>The markers at an offset, for a tooltip.</summary>
     public IEnumerable<Marker> MarkersAt(int offset) =>
@@ -238,7 +252,7 @@ public sealed partial class CodeEditor : Control
     /// <summary>Scrolls so the last line sits at the bottom of the view, as output follows its end.</summary>
     public void ScrollToEnd()
     {
-        double bottom = document.Snapshot.LineCount * metrics.LineHeight - Viewport.Height + horizontal.DesiredSize.Height;
+        double bottom = RowCount * metrics.LineHeight - Viewport.Height + horizontal.DesiredSize.Height;
         ScrollTo(new Vector(0, Math.Max(0, bottom)));
     }
 
@@ -303,7 +317,7 @@ public sealed partial class CodeEditor : Control
     private Typeface Typeface => new(FontFamily);
 
     private double GutterWidth => ShowLineNumbers
-        ? annotationWidth + GutterPadLeft + Math.Max(2, Digits(document.Snapshot.LineCount)) * metrics.CharWidth + GutterPadRight
+        ? annotationWidth + GutterPadLeft + Math.Max(2, Digits(document.Snapshot.LineCount)) * metrics.CharWidth + GutterPadRight + FoldWidth
         : 4;
 
     private double TextLeft => GutterWidth + TextPadLeft;
@@ -322,7 +336,7 @@ public sealed partial class CodeEditor : Control
             pendingGoTo = offset;
             return;
         }
-        double y = document.Snapshot.GetLineFromOffset(offset) * metrics.LineHeight;
+        double y = TopOf(document.Snapshot.GetLineFromOffset(offset));
         ScrollTo(new Vector(scroll.X, y - Viewport.Height / 3));
         Reveal(offset);
     }
@@ -364,12 +378,12 @@ public sealed partial class CodeEditor : Control
     {
         TextSnapshot text = document.Snapshot;
         int line = text.GetLineFromOffset(offset);
-        return new Point(TextLeft - scroll.X + XOf(text, offset), line * metrics.LineHeight - scroll.Y);
+        return new Point(TextLeft - scroll.X + XOf(text, offset), TopOf(line) - scroll.Y);
     }
 
     public void ScrollTo(Vector offset)
     {
-        double maxY = Math.Max(0, (document.Snapshot.LineCount - 1) * metrics.LineHeight);
+        double maxY = Math.Max(0, (RowCount - 1) * metrics.LineHeight);
         double maxX = Math.Max(0, widestLine + TextPadLeft + metrics.CharWidth * 4 - Viewport.Width);
         Vector clamped = new(Math.Clamp(offset.X, 0, maxX), Math.Clamp(offset.Y, 0, maxY));
         if (clamped == scroll)
@@ -440,6 +454,7 @@ public sealed partial class CodeEditor : Control
     private void SetSelections(SelectionSet value, bool reveal)
     {
         SelectionSet clamped = value.Clamp(document.Snapshot.Length);
+        UnfoldAroundCarets(clamped);
         bool changed = !clamped.SameAs(selections) || clamped.PrimaryIndex != selections.PrimaryIndex;
         selections = clamped;
         if (reveal)
@@ -464,7 +479,7 @@ public sealed partial class CodeEditor : Control
         }
         TextSnapshot text = document.Snapshot;
         int line = text.GetLineFromOffset(offset);
-        double top = line * metrics.LineHeight;
+        double top = TopOf(line);
         double y = scroll.Y;
         Size viewport = Viewport;
         double usable = viewport.Height - horizontal.DesiredSize.Height;
@@ -527,13 +542,13 @@ public sealed partial class CodeEditor : Control
     {
         updatingBars = true;
         Size viewport = Viewport;
-        double maxY = Math.Max(0, (document.Snapshot.LineCount - 1) * metrics.LineHeight);
+        double maxY = Math.Max(0, (RowCount - 1) * metrics.LineHeight);
         vertical.Maximum = maxY;
         vertical.ViewportSize = viewport.Height;
         vertical.LargeChange = viewport.Height;
         vertical.SmallChange = metrics.LineHeight;
         vertical.Value = scroll.Y;
-        vertical.IsVisible = document.Snapshot.LineCount * metrics.LineHeight > viewport.Height;
+        vertical.IsVisible = RowCount * metrics.LineHeight > viewport.Height;
         double maxX = Math.Max(0, widestLine + TextPadLeft + metrics.CharWidth * 4 - viewport.Width);
         horizontal.Maximum = maxX;
         horizontal.ViewportSize = viewport.Width;

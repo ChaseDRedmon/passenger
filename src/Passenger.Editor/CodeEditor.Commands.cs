@@ -17,6 +17,10 @@ public sealed partial class CodeEditor
     public bool TryExecute(string action, bool extend = false)
     {
         TextSnapshot text = document.Snapshot;
+        if (RunFolding(action))
+        {
+            return true;
+        }
         switch (action)
         {
             case EditorActions.Left:
@@ -242,10 +246,10 @@ public sealed partial class CodeEditor
         TextSnapshot text = document.Snapshot;
         SetSelections(selections.With(s =>
         {
-            int line = text.GetLineFromOffset(s.Caret);
+            int row = RowOf(text.GetLineFromOffset(s.Caret));
             double x = double.IsNaN(s.PreferredX) ? XOf(text, s.Caret) : s.PreferredX;
-            int target = line + lines;
-            int offset = target < 0 ? 0 : target >= text.LineCount ? text.Length : OffsetAtX(text, target, x);
+            int target = row + lines;
+            int offset = target < 0 ? 0 : target >= RowCount ? text.Length : OffsetAtX(text, LineOfRow(target), x);
             return s.MoveTo(offset, extend) with { PreferredX = x };
         }), reveal: true);
     }
@@ -254,11 +258,12 @@ public sealed partial class CodeEditor
     {
         TextSnapshot text = document.Snapshot;
         Selection edge = direction < 0 ? selections.Items[0] : selections.Items[^1];
-        int line = text.GetLineFromOffset(edge.Caret) + direction;
-        if (line < 0 || line >= text.LineCount)
+        int row = RowOf(text.GetLineFromOffset(edge.Caret)) + direction;
+        if (row < 0 || row >= RowCount)
         {
             return;
         }
+        int line = LineOfRow(row);
         double x = double.IsNaN(edge.PreferredX) ? XOf(text, edge.Caret) : edge.PreferredX;
         SetSelections(selections.Add(Selection.At(OffsetAtX(text, line, x)) with { PreferredX = x }), reveal: true);
     }

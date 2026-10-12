@@ -191,8 +191,7 @@ public sealed class VcsTests : IDisposable
         window.KeyTextInput("public ");
         Ui.WaitFor(() => Marks(window).Count == 1, "a change bar on line 5");
 
-        Avalonia.Point bar = editor.GutterPoint(4);
-        Avalonia.Point at = editor.TranslatePoint(new Avalonia.Point(bar.X - 4, bar.Y - (editor.LineHeight / 2)), window)!.Value;
+        Avalonia.Point at = editor.TranslatePoint(editor.GutterColumnPoint(GutterColumn.Changes, 4), window)!.Value;
         window.MouseDown(at, Avalonia.Input.MouseButton.Left);
         window.MouseUp(at, Avalonia.Input.MouseButton.Left);
         Ui.WaitFor(() => window.Popup is ChangePopup, "the change's popup");

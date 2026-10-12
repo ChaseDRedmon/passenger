@@ -24,8 +24,9 @@ public sealed partial class CodeEditor
 
         context.FillRectangle(palette.Background, new Rect(size));
 
-        int first = Math.Clamp((int)(scroll.Y / lineHeight), 0, text.LineCount - 1);
-        int last = Math.Clamp((int)((scroll.Y + size.Height) / lineHeight), 0, text.LineCount - 1);
+        int first = Math.Clamp(LineOfRow(Math.Max(0, (int)(scroll.Y / lineHeight))), 0, text.LineCount - 1);
+        int last = Math.Clamp(LineOfRow(Math.Max(0, (int)((scroll.Y + size.Height) / lineHeight))), 0, text.LineCount - 1);
+        placeholders.Clear();
         int rangeStart = text.GetLineStart(first);
         int rangeEnd = text.GetLine(last).EndIncludingBreak;
         IReadOnlyList<SyntaxSpan> spans = highlighter?.GetSpans(text, rangeStart, rangeEnd - rangeStart) ?? [];
@@ -46,8 +47,12 @@ public sealed partial class CodeEditor
         {
             for (int line = first; line <= last; line++)
             {
+                if (IsHidden(line))
+                {
+                    continue;
+                }
                 LineSpan span = text.GetLine(line);
-                double y = line * lineHeight - scroll.Y;
+                double y = TopOf(line) - scroll.Y;
                 string content = text.GetText(span.Start, span.Length);
                 TextLine layout = Layout(content, span, spans, ref spanIndex);
                 Gap[] gaps = GapsOn(span);
@@ -76,9 +81,14 @@ public sealed partial class CodeEditor
                     DrawWithHints(context, layout, gaps, left, y);
                 }
                 DrawMarkers(context, span, layout, gaps, left, y);
+                double end = left + layout.Width + HintsWidth(gaps);
+                if (FoldedAt(text, line) is { } fold)
+                {
+                    end = DrawPlaceholder(context, line, fold, end, y);
+                }
                 if (annotations.TryGetValue(line, out List<LineAnnotation>? here))
                 {
-                    DrawAnnotations(context, here, left + layout.Width + HintsWidth(gaps), y);
+                    DrawAnnotations(context, here, end, y);
                 }
             }
 
@@ -92,7 +102,7 @@ public sealed partial class CodeEditor
                         continue;
                     }
                     double x = left + XOf(text, s.Caret);
-                    double y = line * lineHeight - scroll.Y;
+                    double y = TopOf(line) - scroll.Y;
                     context.FillRectangle(palette.Caret, new Rect(Math.Round(x), y, 2, lineHeight));
                 }
             }
@@ -288,12 +298,13 @@ public sealed partial class CodeEditor
         }
         foreach (int marked in Bookmarks)
         {
-            if (marked >= first && marked <= last)
+            if (marked >= first && marked <= last && !IsHidden(marked))
             {
-                DrawBookmark(context, annotationWidth + 3, marked * metrics.LineHeight - scroll.Y);
+                DrawBookmark(context, annotationWidth + 3, TopOf(marked) - scroll.Y);
             }
         }
-        double right = gutter - GutterPadRight;
+        DrawFoldMarkers(context, text, first, last, gutter);
+        double right = gutter - FoldWidth - GutterPadRight;
         Dictionary<int, TestMarkKind> tests = [];
         foreach (TestMark test in TestMarks)
         {
@@ -304,7 +315,11 @@ public sealed partial class CodeEditor
         }
         for (int line = first; line <= last; line++)
         {
-            double top = line * metrics.LineHeight - scroll.Y;
+            if (IsHidden(line))
+            {
+                continue;
+            }
+            double top = TopOf(line) - scroll.Y;
             if (marks.Executing.Contains(line))
             {
                 DrawExecutionArrow(context, right, top);
@@ -331,7 +346,7 @@ public sealed partial class CodeEditor
             string label = (line + 1).ToString();
             TextLine number = lines.Get(new LineKey(label, current ? -1 : -2), () =>
                 Format(label, [], current ? numberRuns.Current : numberRuns.Other));
-            double y = line * metrics.LineHeight - scroll.Y + (metrics.LineHeight - number.Height) / 2;
+            double y = top + (metrics.LineHeight - number.Height) / 2;
             number.Draw(context, new Point(right - number.WidthIncludingTrailingWhitespace, y));
         }
     }
@@ -435,12 +450,12 @@ public sealed partial class CodeEditor
         context.FillRectangle(palette.CurrentLine, new Rect(0, 0, annotationWidth - 6, Bounds.Height));
         for (int line = first; line <= last && line < GutterAnnotations.Count; line++)
         {
-            if (GutterAnnotations[line] is not { Length: > 0 } label)
+            if (GutterAnnotations[line] is not { Length: > 0 } label || IsHidden(line))
             {
                 continue;
             }
             TextLine text = lines.Get(new LineKey(label, -3), () => Format(label, [], numberRuns.Other));
-            double y = line * metrics.LineHeight - scroll.Y + (metrics.LineHeight - text.Height) / 2;
+            double y = TopOf(line) - scroll.Y + (metrics.LineHeight - text.Height) / 2;
             text.Draw(context, new Point(8, y));
         }
     }
@@ -476,7 +491,7 @@ public sealed partial class CodeEditor
                     ChangeMarkKind.Deleted => palette.ChangeDeleted,
                     _ => palette.ChangeModified,
                 };
-                context.FillRectangle(brush, new Rect(gutter, (change.Line * metrics.LineHeight) - scroll.Y - 1, width - gutter, 2));
+                context.FillRectangle(brush, new Rect(gutter, TopOf(change.Line) - scroll.Y - 1, width - gutter, 2));
             }
         }
     }
@@ -485,14 +500,14 @@ public sealed partial class CodeEditor
     /// a grey wedge where lines were deleted.</summary>
     private void DrawChanges(DrawingContext context, int first, int last, double gutter)
     {
-        double x = gutter - 5;
+        double x = gutter - FoldWidth - 5;
         foreach (ChangeMark change in ChangeMarks)
         {
             if (change.Line + Math.Max(1, change.Count) <= first || change.Line > last + 1)
             {
                 continue;
             }
-            double top = (change.Line * metrics.LineHeight) - scroll.Y;
+            double top = TopOf(change.Line) - scroll.Y;
             if (change.Kind == ChangeMarkKind.Deleted)
             {
                 StreamGeometry wedge = new();
@@ -507,7 +522,8 @@ public sealed partial class CodeEditor
                 continue;
             }
             IBrush brush = change.Kind == ChangeMarkKind.Added ? palette.ChangeAdded : palette.ChangeModified;
-            context.FillRectangle(brush, new Rect(x, top + 1, 3, (change.Count * metrics.LineHeight) - 2), 1);
+            double bottom = TopOf(change.Line + change.Count - 1) + metrics.LineHeight - scroll.Y;
+            context.FillRectangle(brush, new Rect(x, top + 1, 3, Math.Max(1, bottom - top - 2)), 1);
         }
     }
 
