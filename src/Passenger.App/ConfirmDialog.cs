@@ -6,10 +6,11 @@ using Avalonia.Media;
 namespace Passenger.App;
 
 /// <summary>Asks before something that cannot be undone, as Rider's Rollback Changes does: what happens, the button
-/// that does it and Cancel, closing with whether the person agreed. Escape cancels.</summary>
+/// that does it and the one that does not (Cancel, or a choice of its own, as File Cache Conflict's Keep Memory
+/// Changes), closing with whether the person agreed. Escape answers no.</summary>
 public sealed class ConfirmDialog : Window
 {
-    public ConfirmDialog(string title, string text, string yes)
+    public ConfirmDialog(string title, string text, string yes, string no = "Cancel")
     {
         Title = title;
         Width = 420;
@@ -19,7 +20,7 @@ public sealed class ConfirmDialog : Window
         Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Chrome"));
 
         Button confirm = new() { Content = yes, IsDefault = true, Classes = { "primary" } };
-        Button cancel = new() { Content = "Cancel", IsCancel = true };
+        Button cancel = new() { Content = no, IsCancel = true };
         confirm.Click += (_, _) => Close(true);
         cancel.Click += (_, _) => Close(false);
 

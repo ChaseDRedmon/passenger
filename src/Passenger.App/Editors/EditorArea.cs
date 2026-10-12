@@ -62,6 +62,10 @@ public sealed class EditorArea : UserControl
     /// <summary>A file that could not be written, and why: it stays open with its edits.</summary>
     public event EventHandler<string>? SaveFailed;
 
+    /// <summary>A file not written because something else changed it on disk since it was last loaded or saved: which
+    /// to keep is the person's question (File Cache Conflict), never settled by writing over the disk's.</summary>
+    public event EventHandler<OpenDocument>? SaveConflicted;
+
     /// <summary>The active group's editor: the one keys and the IDE's actions go to.</summary>
     public CodeEditor CodeEditor => activeGroup.Editor;
 
@@ -281,19 +285,27 @@ public sealed class EditorArea : UserControl
         }
     }
 
-    /// <summary>Saves every changed file; whether all of them were written.</summary>
-    public bool SaveAll()
+    /// <summary>Saves every changed file, but those <paramref name="waiting"/> on a question; whether all were written.</summary>
+    public bool SaveAll(IReadOnlySet<OpenDocument>? waiting = null)
     {
         bool all = true;
-        foreach (OpenDocument document in documents.Where(d => d.IsModified).ToList())
+        foreach (OpenDocument document in documents.Where(d => d.IsModified && waiting?.Contains(d) != true).ToList())
         {
             all &= TrySave(document);
         }
         return all;
     }
 
-    private bool TrySave(OpenDocument document)
+    /// <summary>Writes a file even over a version on disk newer than its own, as Keep Memory Changes does.</summary>
+    public bool SaveOver(OpenDocument document) => TrySave(document, overDisk: true);
+
+    private bool TrySave(OpenDocument document, bool overDisk = false)
     {
+        if (!overDisk && document.ChangedOnDisk())
+        {
+            SaveConflicted?.Invoke(this, document);
+            return false;
+        }
         try
         {
             document.Save();

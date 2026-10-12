@@ -47,29 +47,88 @@ public sealed class FolderWatchTests : IDisposable
         Ui.Settle();
         List<string> asked = [];
         bool loadDisk = false;
-        window.Confirm = (title, _, _) =>
+        window.AskConflict = document =>
         {
-            asked.Add(title);
+            asked.Add(document.Name);
             return Task.FromResult(loadDisk);
         };
-        window.EditorArea.CodeEditor.Selections = Passenger.Text.SelectionSet.Single(0);
-        window.KeyTextInput("public ");
-        Ui.Settle();
+        Type(window, "public ");
 
-        // Keep Memory Changes: the edits stay, to be saved over the disk's.
+        // Keep Memory Changes: the edits are written over the disk's.
         File.WriteAllText(path, "class One { int disk; }\n");
         Ui.WaitFor(() => asked.Count == 1, "the File Cache Conflict question");
-        Assert.Equal("File Cache Conflict", asked[0]);
+        Assert.Equal("One.cs", asked[0]);
         Assert.Equal("public class One { }\n", Text(window));
-        Assert.True(window.EditorArea.Active!.IsModified);
+        Assert.Equal("public class One { }\n", File.ReadAllText(path));
+        Assert.False(window.EditorArea.Active!.IsModified);
 
-        // Load File System Changes: the disk's text replaces them.
+        // Load File System Changes: the disk's text replaces the edits.
+        Type(window, "sealed ");
         loadDisk = true;
         File.WriteAllText(path, "class One { int again; }\n");
         Ui.WaitFor(() => asked.Count == 2, "the question again for the next change");
         Ui.WaitFor(() => Text(window) == "class One { int again; }\n", "the disk's text");
         Assert.False(window.EditorArea.Active!.IsModified);
         window.Close();
+    }
+
+    [AvaloniaFact]
+    public void While_the_conflict_question_is_open_nothing_is_saved_over_the_disks_version()
+    {
+        string path = Path.Combine(folder, "One.cs");
+        File.WriteAllText(path, "class One { }\n");
+        MainWindow window = Open();
+        window.OpenFile("One.cs");
+        Ui.Settle();
+        window.ApplySettings(window.Settings with { SaveWhenIdle = true, IdleSeconds = 1 });
+        Type(window, "public ");
+
+        File.WriteAllText(path, "class One { int disk; }\n");
+        Ui.WaitFor(() => window.OwnedWindows.OfType<ConfirmDialog>().Any(), "the File Cache Conflict dialog");
+        // The dialog has the focus and the idle wait goes by: neither writes over the disk's version, nor does Save.
+        Passenger.App.Screenshot.Pump(TimeSpan.FromSeconds(1.5));
+        window.Perform(AppActions.Save);
+        Ui.Settle();
+        Assert.Equal("class One { int disk; }\n", File.ReadAllText(path));
+        Assert.Single(window.OwnedWindows.OfType<ConfirmDialog>());
+
+        ConfirmDialog dialog = window.OwnedWindows.OfType<ConfirmDialog>().Single();
+        Avalonia.Controls.Button load = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(dialog)
+            .OfType<Avalonia.Controls.Button>().First(b => (string?)b.Content == "Load File System Changes");
+        load.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+        Ui.WaitFor(() => Text(window) == "class One { int disk; }\n", "the disk's text in the editor");
+        Assert.False(window.EditorArea.Active!.IsModified);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_file_with_unsaved_edits_deleted_on_disk_stays_open_and_saving_writes_it_back()
+    {
+        string path = Path.Combine(folder, "Gone", "One.cs");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, "class One { }\n");
+        MainWindow window = Open();
+        window.OpenFile(path);
+        Ui.Settle();
+        Type(window, "public ");
+
+        // Deleted with its folder (a git clean), the file keeps its tab and its edits.
+        Directory.Delete(Path.GetDirectoryName(path)!, recursive: true);
+        Ui.WaitFor(() => !window.ExplorerView.Tree.Rows.Any(r => r.Name == "Gone"), "the deletion to be seen");
+        Assert.Equal("public class One { }\n", Text(window));
+
+        window.Perform(AppActions.Save);
+        Assert.Equal("public class One { }\n", File.ReadAllText(path));
+        Assert.False(window.EditorArea.Active!.IsModified);
+        window.Close();
+        Assert.False(window.IsVisible, "The window would not close");
+    }
+
+    private static void Type(MainWindow window, string text)
+    {
+        window.EditorArea.CodeEditor.Selections = Passenger.Text.SelectionSet.Single(0);
+        window.KeyTextInput(text);
+        Ui.Settle();
     }
 
     [AvaloniaFact]

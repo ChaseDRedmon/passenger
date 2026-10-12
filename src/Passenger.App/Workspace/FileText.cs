@@ -52,10 +52,16 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom)
 
     /// <summary>Writes through a temporary file beside the target, so a failed write never leaves a
     /// half-written file where the old one was. A symlink is written through to its target, and the
-    /// file keeps its permissions (a script stays executable).</summary>
+    /// file keeps its permissions (a script stays executable). A file deleted since it was opened (a
+    /// git clean, another program) is written anew, its folder too.</summary>
     public static void Save(string path, string text, Encoding encoding, bool bom)
     {
-        string target = File.ResolveLinkTarget(path, returnFinalTarget: true)?.FullName ?? path;
+        bool there = File.Exists(path) || new FileInfo(path).LinkTarget is not null;
+        string target = there ? File.ResolveLinkTarget(path, returnFinalTarget: true)?.FullName ?? path : path;
+        if (!there)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+        }
         byte[] preamble = bom ? encoding.GetPreamble() : [];
         byte[] body = encoding.GetBytes(text);
         string temporary = target + ".passenger-save";

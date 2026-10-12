@@ -11,6 +11,14 @@ public partial class MainWindow
     private readonly HashSet<OpenDocument> conflicted = [];
 
     /// <summary>Starts watching the folder just opened, and stops watching the one before.</summary>
+    private void AddConflicts() => Editors.SaveConflicted += (_, document) =>
+    {
+        if (conflicted.Add(document))
+        {
+            _ = ResolveConflictAsync(document);
+        }
+    };
+
     private void Watch(string opened)
     {
         watcher?.Dispose();
@@ -67,17 +75,20 @@ public partial class MainWindow
         }
     }
 
-    /// <summary>Rider's File Cache Conflict: the disk's version, or the edits made here (which the next save writes).</summary>
+    /// <summary>Rider's File Cache Conflict: the disk's version, or the edits made here, written over the disk's. Until it
+    /// is answered the file is never saved, so the answer is the person's.</summary>
     private async Task ResolveConflictAsync(OpenDocument document)
     {
         try
         {
-            bool fromDisk = await Confirm("File Cache Conflict",
-                $"Changes have been made to {document.Name} in memory and on disk. Load the version on disk, losing the changes made here, or keep the changes made here?",
-                "Load File System Changes");
+            bool fromDisk = await AskConflict(document);
             if (fromDisk)
             {
                 document.Reload(overUnsaved: true);
+            }
+            else
+            {
+                Editors.SaveOver(document);
             }
         }
         finally
@@ -85,4 +96,15 @@ public partial class MainWindow
             conflicted.Remove(document);
         }
     }
+
+    /// <summary>The question itself: true for Load File System Changes. Tests answer for the person.</summary>
+    public Func<OpenDocument, Task<bool>> AskConflict
+    {
+        get => askConflict ?? (document => new ConfirmDialog("File Cache Conflict",
+            $"Changes have been made to {document.Name} in memory and on disk. Load the version on disk, losing the changes made here, or keep the changes made here, writing them over it?",
+            "Load File System Changes", "Keep Memory Changes").ShowDialog<bool>(this));
+        set => askConflict = value;
+    }
+
+    private Func<OpenDocument, Task<bool>>? askConflict;
 }

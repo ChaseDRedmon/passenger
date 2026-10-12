@@ -67,6 +67,7 @@ public partial class MainWindow : Window
         AddHierarchy();
         AddFileOperations();
         AddAutosave();
+        AddConflicts();
         AddErrors();
         Explorer.FileOpened += (_, path) => OpenFile(path);
         Structure.Follow(() => Editors.Active is { } shown

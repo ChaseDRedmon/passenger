@@ -25,7 +25,14 @@ public partial class MainWindow
                 Autosave();
             }
         };
-        Deactivated += (_, _) => SaveOnLeaving();
+        // Leaving Passenger saves; going to one of its own windows (a dialog, Settings, a diff) does not, as in Rider.
+        Deactivated += (_, _) => Dispatcher.UIThread.Post(() =>
+        {
+            if (!OwnWindowActive())
+            {
+                SaveOnLeaving();
+            }
+        }, DispatcherPriority.Background);
         terminal!.View.GotFocus += (_, _) => SaveOnLeaving();
         // Any key or click is activity, which the idle wait starts again from.
         AddHandler(KeyDownEvent, (_, _) => RestartIdleSave(), RoutingStrategies.Tunnel, handledEventsToo: true);
@@ -63,6 +70,13 @@ public partial class MainWindow
         base.OnClosing(e);
     }
 
-    /// <summary>Saves every changed file, unless this window does not autosave; whether nothing was left unsaved.</summary>
-    private bool Autosave() => !Autosaves || Editors.SaveAll();
+    /// <summary>Saves every changed file but those awaiting a File Cache Conflict answer, unless this window does not
+    /// autosave; whether nothing was left unsaved.</summary>
+    private bool Autosave() => !Autosaves || (Editors.SaveAll(conflicted) && conflicted.Count == 0);
+
+    /// <summary>Whether one of Passenger's own windows has the focus (this one, a dialog over it, another window).</summary>
+    private bool OwnWindowActive() =>
+        IsActive || OwnedWindows.Any(w => w.IsActive)
+        || (Avalonia.Application.Current?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop
+            && desktop.Windows.Any(w => w.IsActive));
 }
