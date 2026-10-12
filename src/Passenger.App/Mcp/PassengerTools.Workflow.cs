@@ -84,6 +84,37 @@ public sealed partial class PassengerTools
         return $"On {vcs.Branch}";
     });
 
+    [McpServerTool(Name = "vcs_stash", Title = "Stash or unstash changes", Destructive = true), Description(
+        "Rider's Stash Changes and Unstash Changes. action: list (the stashes, the newest first, by index), push (every "
+        + "uncommitted change, new files too, put away under message, open files saved first), pop or apply (stash index's "
+        + "changes back in the files; pop drops it after), drop (throw stash index away).")]
+    public Task<IReadOnlyList<StashSummary>> VcsStash(string action = "list", string message = "", int index = 0) => OnUi<IReadOnlyList<StashSummary>>(async () =>
+    {
+        VcsController vcs = window.Vcs;
+        if (action != "list")
+        {
+            IReadOnlyList<StashInfo> before = await vcs.StashesAsync();
+            StashInfo? stash = before.FirstOrDefault(s => s.Index == index);
+            if (action != "push" && stash is null)
+            {
+                throw new InvalidOperationException($"No stash {index}; there are {before.Count}");
+            }
+            window.EditorArea.SaveAll();
+            bool done = action switch
+            {
+                "push" => await vcs.StashAsync(message) is null,
+                "pop" or "apply" => await vcs.UnstashAsync(stash!, action == "pop"),
+                "drop" => await vcs.DropStashAsync(stash!),
+                _ => throw new ArgumentException($"No stash action '{action}'; there are list, push, pop, apply and drop", nameof(action)),
+            };
+            if (!done)
+            {
+                throw new InvalidOperationException(window.Status ?? $"Could not {action} the stash");
+            }
+        }
+        return [.. (await vcs.StashesAsync()).Select(s => new StashSummary(s.Index, s.Message, s.Time))];
+    });
+
     // Packages
 
     [McpServerTool(Name = "nuget_search", Title = "Search NuGet", ReadOnly = true), Description(
@@ -258,3 +289,6 @@ public sealed record ProfileInfo(double DurationMs, int Samples, int Threads, IR
 
 /// <summary>A type on the heap of a memory snapshot: its live objects and their bytes.</summary>
 public sealed record HeapTypeInfo(string Type, int Count, long Bytes);
+
+/// <summary>A stash as the vcs_stash tool lists it.</summary>
+public sealed record StashSummary(int Index, string Message, DateTimeOffset Time);

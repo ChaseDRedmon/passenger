@@ -109,6 +109,8 @@ public partial class MainWindow
         menu.Items.Add(Item("New Branch...", ShowNewBranch));
         menu.Items.Add(Item("Commit...", () => RunAppAction(AppActions.Commit), AppActions.Commit));
         menu.Items.Add(Item("Push...", () => RunAppAction(AppActions.Push), AppActions.Push));
+        menu.Items.Add(Item("Stash Changes...", () => ShowStash()));
+        menu.Items.Add(Item("Unstash Changes...", () => _ = ShowUnstashAsync()));
         menu.Items.Add(new Separator());
         menu.Items.Add(new MenuItem { Header = "Local", IsEnabled = false });
         foreach (string branch in await vcs.Repository.BranchesAsync())
@@ -119,6 +121,42 @@ public partial class MainWindow
             menu.Items.Add(item);
         }
         menu.Open(BranchButton);
+    }
+
+    /// <summary>Stash Changes: what is open saved first, then every change put away under the message given.</summary>
+    public NamePopup? ShowStash()
+    {
+        if (vcs.Repository is null)
+        {
+            StatusText.Text = "The folder is not in a Git repository";
+            return null;
+        }
+        NamePopup popup = new("Stash Changes", string.Empty, message =>
+        {
+            Editors.SaveAll();
+            return vcs.StashAsync(message);
+        });
+        popup.Done += (_, _) => ClosePopup();
+        ShowPopup(popup);
+        return popup;
+    }
+
+    /// <summary>Unstash Changes: the stashes to pop, apply or drop.</summary>
+    public async Task<UnstashPopup?> ShowUnstashAsync()
+    {
+        if (vcs.Repository is null)
+        {
+            StatusText.Text = "The folder is not in a Git repository";
+            return null;
+        }
+        UnstashPopup popup = new(await vcs.StashesAsync(), (stash, pop) =>
+        {
+            Editors.SaveAll();
+            return vcs.UnstashAsync(stash, pop);
+        }, vcs.DropStashAsync);
+        popup.Done += (_, _) => ClosePopup();
+        ShowPopup(popup);
+        return popup;
     }
 
     /// <summary>Create New Branch: from the head, checked out at once, as Rider's is.</summary>
@@ -326,6 +364,12 @@ public partial class MainWindow
                 break;
             case AppActions.Branches:
                 ShowBranches();
+                break;
+            case AppActions.Stash:
+                ShowStash();
+                break;
+            case AppActions.Unstash:
+                _ = ShowUnstashAsync();
                 break;
             case AppActions.NextChange or AppActions.PreviousChange:
                 GoToChange(action == AppActions.NextChange ? 1 : -1);

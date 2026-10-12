@@ -67,6 +67,8 @@ public static class ActionCatalog
         [AppActions.Push] = "Push...",
         [AppActions.UpdateProject] = "Update Project...",
         [AppActions.Branches] = "Branches...",
+        [AppActions.Stash] = "Stash Changes...",
+        [AppActions.Unstash] = "Unstash Changes...",
         [AppActions.RollbackLines] = "Rollback Lines",
         [AppActions.FindAction] = "Find Action...",
         [AppActions.FindInFiles] = "Find in Files...",

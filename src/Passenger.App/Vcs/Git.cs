@@ -36,6 +36,9 @@ public sealed record BlameLine(string Hash, string Author, DateTimeOffset Time, 
     public string Short => Hash[..Math.Min(8, Hash.Length)];
 }
 
+/// <summary>A stash: its place in the list (stash@{Index}), what it says, and when it was made.</summary>
+public sealed record StashInfo(int Index, string Message, DateTimeOffset Time);
+
 /// <summary>What `git` says, and whether it said it without failing.</summary>
 public sealed record GitResult(int Code, string Output, string Error)
 {
@@ -320,6 +323,36 @@ public sealed class Git
 
     public Task<GitResult> CheckoutAsync(string branch) => RunAsync(Root, ["switch", branch]);
 
+    /// <summary>The stashes, the newest first.</summary>
+    public async Task<IReadOnlyList<StashInfo>> StashesAsync()
+    {
+        GitResult list = await RunAsync(Root, ["stash", "list", "--format=%gd%x1f%gs%x1f%ct"]);
+        if (!list.Succeeded)
+        {
+            return [];
+        }
+        List<StashInfo> stashes = [];
+        foreach (string line in list.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            string[] parts = line.Split('\x1f');
+            if (parts.Length == 3 && parts[0].StartsWith("stash@{", StringComparison.Ordinal) && int.TryParse(parts[0][7..^1], out int index)
+                && long.TryParse(parts[2], out long seconds))
+            {
+                stashes.Add(new StashInfo(index, parts[1], DateTimeOffset.FromUnixTimeSeconds(seconds)));
+            }
+        }
+        return stashes;
+    }
+
+    /// <summary>Puts the uncommitted changes, new files too, away in a stash; the files go back to the head's.</summary>
+    public Task<GitResult> StashAsync(string message) =>
+        RunAsync(Root, ["stash", "push", "--include-untracked", .. message.Length > 0 ? new[] { "-m", message } : []]);
+
+    /// <summary>Applies a stash to the files, and with <paramref name="pop"/> drops it once it applied.</summary>
+    public Task<GitResult> UnstashAsync(int index, bool pop) => RunAsync(Root, ["stash", pop ? "pop" : "apply", $"stash@{{{index}}}"]);
+
+    public Task<GitResult> DropStashAsync(int index) => RunAsync(Root, ["stash", "drop", $"stash@{{{index}}}"]);
+
     public Task<GitResult> NewBranchAsync(string name) => RunAsync(Root, ["switch", "-c", name]);
 
     /// <summary>Puts files back as the last commit has them (Rider's Rollback); new files are deleted.</summary>
@@ -358,6 +391,9 @@ public sealed class Git
         };
         // Git never stops to ask on a terminal it does not have.
         start.Environment["GIT_TERMINAL_PROMPT"] = "0";
+        // A status or a diff read in the background never takes the index's lock, so a stash, a commit or a checkout
+        // started at the same moment does not fail on it.
+        start.Environment["GIT_OPTIONAL_LOCKS"] = "0";
         try
         {
             using Process process = Process.Start(start) ?? throw new InvalidOperationException("git did not start");

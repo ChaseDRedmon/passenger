@@ -225,6 +225,24 @@ public sealed class VcsController
         return created.Succeeded ? null : created.Message;
     }
 
+    /// <summary>Rider's Stash Changes: every uncommitted change, new files too, put away under a message; the open files
+    /// take the head's text again. Null when it worked, else git's reason.</summary>
+    public async Task<string?> StashAsync(string message)
+    {
+        GitResult stashed = await SwitchAsync(repository => repository.StashAsync(message.Trim()), "Stashed the changes");
+        return stashed.Succeeded ? null : stashed.Message;
+    }
+
+    public async Task<IReadOnlyList<StashInfo>> StashesAsync() => git is { } repository ? await repository.StashesAsync() : [];
+
+    /// <summary>Rider's Unstash Changes: a stash's changes back in the files, the stash dropped after with
+    /// <paramref name="pop"/>.</summary>
+    public async Task<bool> UnstashAsync(StashInfo stash, bool pop) =>
+        (await SwitchAsync(repository => repository.UnstashAsync(stash.Index, pop), pop ? $"Unstashed {stash.Message}" : $"Applied {stash.Message}")).Succeeded;
+
+    public async Task<bool> DropStashAsync(StashInfo stash) =>
+        (await SwitchAsync(repository => repository.DropStashAsync(stash.Index), $"Dropped {stash.Message}")).Succeeded;
+
     /// <summary>Puts files back as the last commit has them; the open ones take their text from disk again.</summary>
     public async Task<bool> RollbackAsync(IReadOnlyList<FileChange> changes)
     {

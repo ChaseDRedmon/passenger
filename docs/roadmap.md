@@ -168,7 +168,9 @@ chosen commit's files (a double-click shows what it did to one) and message. Upd
 Open files reload from disk after a checkout, a rollback or an update, and when the window comes back to the front.
 Annotate with Git Blame (the gutter's right-click menu, or Find Action) names each line's commit at the gutter's
 left, a block at its first line, lines typed since as not committed yet, and a click chooses the commit in the log.
-Still to come: word-level highlights in the diff, merge conflicts, stashes, and the log's branch tree.
+Stash Changes puts every change, unsaved and new files too, away under a message, and Unstash Changes pops, applies
+or drops one (the branch menu, Find Action, and vcs_stash over MCP).
+Still to come: word-level highlights in the diff, merge conflicts, and the log's branch tree.
 
 The terminal is built: Rider's Terminal window (Ctrl+Alt+1, Cmd+Ctrl+1 on the Mac) with a shell per tab in the open
 folder, an emulator of Passenger's own that runs full-screen programs (vim, less, htop), selection and the clipboard,

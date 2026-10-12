@@ -333,6 +333,41 @@ public sealed class VcsTests : IDisposable
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void Stashing_puts_every_change_away_unsaved_and_new_files_too_and_unstashing_brings_them_back()
+    {
+        MainWindow window = Open();
+        Ui.WaitFor(() => window.Vcs.Branch == "main", "the branch to be read");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        editor.GoTo(new TextPosition(2, 4));
+        window.KeyTextInput("long ");
+        string notes = Path.Combine(folder, "Notes.txt");
+        File.WriteAllText(notes, "a new file\n");
+
+        // Stash Changes saves what is open, then puts it and the new file away under the message.
+        NamePopup stash = window.ShowStash()!;
+        Ui.Settle();
+        stash.Text = "Half-done count";
+        Task stashing = stash.SubmitAsync();
+        Ui.WaitFor(() => stashing.IsCompleted, "the stash");
+        Ui.WaitFor(() => Text(window) == Original, $"the file back as the commit has it ({window.Status})");
+        Assert.False(File.Exists(notes));
+        Assert.False(window.EditorArea.Active!.IsModified);
+        Assert.Contains("Half-done count", Git("stash", "list"), StringComparison.Ordinal);
+
+        // Unstash Changes lists it; Pop puts both back and drops it.
+        Task<UnstashPopup?> showing = window.ShowUnstashAsync();
+        Ui.WaitFor(() => showing.IsCompleted, "the stashes");
+        UnstashPopup unstash = showing.Result!;
+        Assert.Contains("Half-done count", Assert.Single(unstash.Stashes).Message, StringComparison.Ordinal);
+        Task popping = unstash.PopAsync();
+        Ui.WaitFor(() => popping.IsCompleted && Text(window).Contains("long int count", StringComparison.Ordinal), "the change back in the open file");
+        Assert.True(File.Exists(notes));
+        Assert.Empty(Git("stash", "list"));
+        Assert.False(window.IsPopupOpen);
+        window.Close();
+    }
+
     private MainWindow Open()
     {
         MainWindow window = new() { Width = 1200, Height = 800 };

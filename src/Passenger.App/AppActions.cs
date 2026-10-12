@@ -123,6 +123,8 @@ public static class AppActions
     public const string Annotate = "app.vcs.annotate";
     public const string UpdateProject = "app.vcs.update";
     public const string Fetch = "app.vcs.fetch";
+    public const string Stash = "app.vcs.stash";
+    public const string Unstash = "app.vcs.unstash";
 
     public static bool IsApp(string action) => action.StartsWith("app.", StringComparison.Ordinal);
 
