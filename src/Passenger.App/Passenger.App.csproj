@@ -39,6 +39,17 @@
     <ProjectReference Include="../Passenger.DebugAdapter/Passenger.DebugAdapter.csproj" ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>
 
+  <!-- TraceEvent's props give every build it is in its Windows-only natives (msdia140, KernelTraceControl) under x86/,
+       amd64/ and arm64/, since the profiler's own build is for any processor; a publish for another system leaves
+       them out. -->
+  <Target Name="LeaveOutWindowsTraceNatives" AfterTargets="ComputeResolvedFilesToPublishList"
+          Condition="'$(RuntimeIdentifier)' != '' And !$(RuntimeIdentifier.StartsWith('win-'))">
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)"
+                             Condition="'%(Filename)' == 'msdia140' Or $([System.String]::Copy('%(Filename)').StartsWith('KernelTraceControl'))" />
+    </ItemGroup>
+  </Target>
+
   <!-- The debug adapter's output becomes this project's output items under debugger/, so every project that
        references this one (the tests) gets it beside its own binaries, as the roslyn/ server comes. -->
   <Target Name="IncludeDebugAdapter" BeforeTargets="AssignTargetPaths">
