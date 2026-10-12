@@ -124,4 +124,21 @@ public class LaunchTests(ITestOutputHelper testOutputHelper)
             .WithEvaluateRequest(stack.StackFrames[0].Id, "line", out EvaluateResponse line);
         Assert.Equal("\"hello\"", line.Result);
     }
+
+    [Fact]
+    public async Task The_thread_running_Main_is_the_one_named_Main_Thread()
+    {
+        using DebugSession host = DebugSession.ForLaunch(testOutputHelper);
+
+        await host
+            .WithInitializeRequest()
+            .WithLaunchRequest(Debuggees.Program("TopLevelStatementsConsoleApp"), stopAtEntry: true, justMyCode: true)
+            .WaitForInitializedEvent();
+        host.WithConfigurationDoneRequest();
+
+        StoppedEvent stopped = await host.WaitForStoppedEvent();
+        IReadOnlyList<DapThread> threads = host.Request<ThreadsResponse>("threads").Threads;
+        Assert.Equal("Main Thread", Assert.Single(threads, t => t.Id == stopped.ThreadId).Name);
+        Assert.Single(threads, t => t.Name == "Main Thread");
+    }
 }

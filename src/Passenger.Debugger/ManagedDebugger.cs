@@ -25,6 +25,7 @@ public partial class ManagedDebugger
     }
 
     private readonly Dictionary<int, ThreadInfo> _threads = new();
+    private int? _mainThreadId;
     private readonly Dictionary<CORDB_ADDRESS, ModuleInfo> _modules = new();
     private readonly HashSet<COR_TYPEID> _initializedStaticTypes = [];
     private ICorDebugFunction? _suppressFinalizeFunction;
@@ -575,6 +576,7 @@ public partial class ManagedDebugger
         _asyncStepper = null;
         _stepper = null!;
         _threads.Clear();
+        _mainThreadId = null;
         _exceptionStates.Clear();
         _exceptionBreakModes.Clear();
         _initializedStaticTypes.Clear();

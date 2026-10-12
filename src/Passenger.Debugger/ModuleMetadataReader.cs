@@ -22,6 +22,66 @@ public partial class ModuleMetadataReader : IDisposable
     internal Guid Mvid => _mvid ??= _peMetadataReader.GetGuid(_peMetadataReader.GetModuleDefinition().Mvid);
     public bool HasSymbols => _pdbMetadataReader is not null;
 
+    /// <summary>The methods a module's own code says are not the user's: marked [DebuggerNonUserCode],
+    /// [DebuggerStepThrough] or [DebuggerHidden], or declared in a type (or a type nested in one) marked
+    /// with either of the first two. Just My Code leaves them out, as Visual Studio and Rider do.</summary>
+    internal IEnumerable<int> NonUserCodeMethodTokens()
+    {
+        MetadataReader reader = _peMetadataReader;
+        Dictionary<TypeDefinitionHandle, bool> typeOptsOut = [];
+        foreach (TypeDefinitionHandle typeHandle in reader.TypeDefinitions)
+        {
+            bool wholeType = OptsOut(typeHandle);
+            foreach (MethodDefinitionHandle methodHandle in reader.GetTypeDefinition(typeHandle).GetMethods())
+            {
+                if (wholeType || HasAttribute(reader, reader.GetMethodDefinition(methodHandle).GetCustomAttributes(), AttributeConstants.JmcMethodAttributeNames))
+                {
+                    yield return MetadataTokens.GetToken(methodHandle);
+                }
+            }
+        }
+
+        bool OptsOut(TypeDefinitionHandle handle)
+        {
+            if (!typeOptsOut.TryGetValue(handle, out bool optsOut))
+            {
+                TypeDefinition type = reader.GetTypeDefinition(handle);
+                TypeDefinitionHandle declaring = type.GetDeclaringType();
+                optsOut = HasAttribute(reader, type.GetCustomAttributes(), AttributeConstants.JmcTypeAttributeNames)
+                    || (!declaring.IsNil && OptsOut(declaring));
+                typeOptsOut[handle] = optsOut;
+            }
+            return optsOut;
+        }
+    }
+
+    private static bool HasAttribute(MetadataReader reader, CustomAttributeHandleCollection attributes, string[] names)
+    {
+        foreach (CustomAttributeHandle handle in attributes)
+        {
+            EntityHandle constructor = reader.GetCustomAttribute(handle).Constructor;
+            EntityHandle type = constructor.Kind switch
+            {
+                HandleKind.MemberReference => reader.GetMemberReference((MemberReferenceHandle)constructor).Parent,
+                HandleKind.MethodDefinition => reader.GetMethodDefinition((MethodDefinitionHandle)constructor).GetDeclaringType(),
+                _ => default,
+            };
+            string? name = type.Kind switch
+            {
+                HandleKind.TypeReference when reader.GetTypeReference((TypeReferenceHandle)type) is var reference =>
+                    $"{reader.GetString(reference.Namespace)}.{reader.GetString(reference.Name)}",
+                HandleKind.TypeDefinition when reader.GetTypeDefinition((TypeDefinitionHandle)type) is var definition =>
+                    $"{reader.GetString(definition.Namespace)}.{reader.GetString(definition.Name)}",
+                _ => null,
+            };
+            if (name is not null && names.Contains(name, StringComparer.Ordinal))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     internal (int MethodToken, int ILOffset)? ResolveManagedEntryPoint()
     {
         CorHeader? corHeader = _peReader.PEHeaders.CorHeader;

@@ -471,7 +471,7 @@ public partial class ManagedDebugger
             foreach ((int id, ThreadInfo? threadInfo) in _threads)
             {
                 threadInfo.Name ??= threadInfo.Thread.GetThreadNameOrNull();
-                result.Add((id, threadInfo.Name ?? "<No Name>"));
+                result.Add((id, threadInfo.Name ?? (id == _mainThreadId ? "Main Thread" : "<No Name>")));
             }
         }
         catch (Exception ex)

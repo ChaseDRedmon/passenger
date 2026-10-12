@@ -209,19 +209,10 @@ public static class CorDebugValueExtensions
         ICorDebugClass corClass = threadObject.Class;
         IMetaDataImport metadataImport = corClass.Module.GetMetaDataInterface<IMetaDataImport>();
 
+        // Only the name the program gave it: which thread is Main's the debugger knows from the runtime's
+        // first thread-created callback, not from managed id 1, which may be a runtime thread's (upstream #59).
         string? name = GetThreadNameField(threadObject, corClass, metadataImport);
-        if (string.IsNullOrEmpty(name) is false)
-        {
-            return name;
-        }
-
-        int? managedThreadId = GetManagedThreadIdField(threadObject, corClass, metadataImport);
-        if (managedThreadId is 1)
-        {
-            return "Main Thread";
-        }
-
-        return null;
+        return string.IsNullOrEmpty(name) ? null : name;
     }
 
     private static string? GetThreadNameField(ICorDebugObjectValue threadObject, ICorDebugClass corClass, IMetaDataImport metadataImport)
@@ -241,20 +232,4 @@ public static class CorDebugValueExtensions
         return stringValue.String;
     }
 
-    private static int? GetManagedThreadIdField(ICorDebugObjectValue threadObject, ICorDebugClass corClass, IMetaDataImport metadataImport)
-    {
-        mdFieldDef fieldDef = metadataImport.EnumFieldsWithName(corClass.Token, "_managedThreadId").SingleOrDefault();
-        if (fieldDef.IsNil)
-        {
-            return null;
-        }
-
-        ICorDebugValue fieldValue = threadObject.GetFieldValue(corClass, fieldDef);
-        if (fieldValue?.UnwrapDebugValue() is not ICorDebugGenericValue genericValue)
-        {
-            return null;
-        }
-
-        return BitConverter.ToInt32(genericValue.GetValueAsBytes(), 0);
-    }
 }

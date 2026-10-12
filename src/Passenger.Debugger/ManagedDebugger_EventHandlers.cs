@@ -32,6 +32,8 @@ public partial class ManagedDebugger
     private void HandleThreadCreated(object? sender, CreateThreadCorDebugManagedCallbackEventArgs createThreadCorDebugManagedCallbackEventArgs)
     {
         ICorDebugThread corThread = createThreadCorDebugManagedCallbackEventArgs.Thread;
+        // The runtime announces the thread running Main first, as netcoredbg relies on (upstream #59).
+        _mainThreadId ??= corThread.Id;
         _threads[corThread.Id] = new ThreadInfo(corThread);
         OnThreadStarted?.Invoke(corThread.Id);
         Continue();
@@ -99,8 +101,16 @@ public partial class ManagedDebugger
         bool isUserCode = corModule.JITCompilerFlags is CorDebugJITCompilerFlags.CORDEBUG_JIT_DISABLE_OPTIMIZATION or CorDebugJITCompilerFlags.CORDEBUG_JIT_ENABLE_ENC;
         if (_justMyCode && isUserCode && metadataReader.HasSymbols)
         {
-            // JMC Status starts as false
+            // JMC Status starts as false. The module is the user's, but not the methods its own code says are
+            // not (upstream #49, #52): steppers pass over them and their catch blocks are not the user's.
             corModule.SetJMCStatus(true, 0, []);
+            foreach (int token in metadataReader.NonUserCodeMethodTokens())
+            {
+                if (corModule.GetFunctionFromToken(token) is ICorDebugFunction2 function)
+                {
+                    function.TrySetJMCStatus(false);
+                }
+            }
         }
 
         ModuleInfo moduleInfo = new ModuleInfo(corModule, modulePath, metadataReader, isUserCode);
@@ -524,7 +534,8 @@ public partial class ManagedDebugger
 
         try
         {
-            return frame is not null && _modules.TryGetValue(frame.Function.Module.BaseAddress, out ModuleInfo? module) && module.IsUserCode;
+            return frame is not null && _modules.TryGetValue(frame.Function.Module.BaseAddress, out ModuleInfo? module) && module.IsUserCode
+                && (frame.Function is not ICorDebugFunction2 function || function.TryGetJMCStatus(out bool isJustMyCode) is not Cor.S_OK || isJustMyCode);
         }
         catch
         {
