@@ -170,6 +170,19 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
     }
 
     [AvaloniaFact]
+    public void Generate_lists_what_the_server_can_write_for_the_type_and_nothing_else()
+    {
+        MainWindow window = project.Open("Point.cs");
+        PlaceAfter(window.EditorArea.CodeEditor, "public int X");
+        Ui.Run(window, AppActions.Generate);
+        Ui.WaitFor(() => window.Assist.Offered.Count > 0, "what can be generated");
+        Assert.Contains("Generate Equals and GetHashCode", window.Assist.Offered);
+        Assert.All(window.Assist.Offered, title => Assert.StartsWith("Generate", title, StringComparison.Ordinal));
+        Ui.Press(window, "ESCAPE");
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Refactor_this_lists_only_the_refactorings_at_the_selection()
     {
         MainWindow window = project.Open("Loop.cs");
@@ -256,6 +269,7 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
                 "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
             File.WriteAllText(PathOf("Program.cs"), "class Program\n{\n    static void Main()\n    {\n        int result = Helper.Twice(2);\n    }\n}\n");
             File.WriteAllText(PathOf("Helper.cs"), "static class Helper\n{\n    public static int Twice(int value) => value * 2;\n}\n");
+            File.WriteAllText(PathOf("Point.cs"), "class Point\n{\n    public int X { get; }\n    public int Y { get; }\n}\n");
             File.WriteAllText(PathOf("Loop.cs"), "static class Loop\n{\n    public static int Sum()\n    {\n        int total = 0;\n        for (int i = 0; i < 10; i++)\n        {\n            total += i * 2;\n        }\n        return total;\n    }\n}\n");
             File.WriteAllText(PathOf("Messy.cs"), "using System.Text;\nusing System;\nusing System.Collections.Generic;\n\nstatic class Messy\n{\n    public static int Count()\n    {\n          List<string> names = [];\n        Console.WriteLine(names.Count);\n      return names.Count;\n    }\n}\n");
             using Process restore = Process.Start(new ProcessStartInfo("dotnet", ["restore", folder]) { RedirectStandardOutput = true, RedirectStandardError = true })!;

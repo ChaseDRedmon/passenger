@@ -194,7 +194,8 @@ and sorts the rest with the language server's own fixes, then reformats the file
 configuration under `dotnet watch`, so each save applies its edits to the running program, and an edit that cannot be
 applied restarts it. Refactor This (Ctrl+Shift+R, Cmd+Shift+R) lists the language server's refactorings at the caret or
 selection, and Extract Method, Introduce Variable and Inline have Rider's own chords (Ctrl+R, M / V / I), Extract Method
-then asking for the new method's name. Still to come: Edit and Continue while debugging, Change Signature and the other
+then asking for the new method's name. Generate (Alt+Insert or Ctrl+N, Cmd+N on the Mac) lists what the server can write
+for the type: constructors, Equals and GetHashCode, interface members, overrides. Still to come: Edit and Continue while debugging, Change Signature and the other
 refactorings that need a dialog, a Windows installer, and updates. `just package-mac` makes
 Passenger.app from the ReadyToRun publish, with the debugger and Roslyn's server inside, signed under the hardened
 runtime with the debugger's entitlements when PASSENGER_SIGN_IDENTITY names a Developer ID (ad hoc otherwise), and

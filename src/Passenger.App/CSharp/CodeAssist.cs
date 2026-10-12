@@ -142,6 +142,11 @@ public sealed class CodeAssist
             case AppActions.QuickFix:
                 _ = ShowFixes();
                 return true;
+            case AppActions.Generate:
+                // Rider's Generate: the server's actions that write code for the type (constructors, equality,
+                // interface members, overrides).
+                _ = ShowFixes(a => GenerateWords.Any(w => a.Title.StartsWith(w, StringComparison.Ordinal)), "Generate");
+                return true;
             case AppActions.RefactorThis:
                 _ = ShowFixes(a => a.Kind?.StartsWith("refactor", StringComparison.Ordinal) == true, "Refactor This");
                 return true;
@@ -187,6 +192,8 @@ public sealed class CodeAssist
         }
         return false;
     }
+
+    private static readonly string[] GenerateWords = ["Generate", "Implement", "Override", "Add parameter", "Add null check", "Create and assign"];
 
     /// <summary>What the open list of choices (fixes, refactorings, definitions) offers, by its words; empty with none open.</summary>
     public IReadOnlyList<string> Offered => layer.Children.OfType<ChoicePopup>().LastOrDefault()?.Titles ?? [];

@@ -34,6 +34,7 @@ public static class ActionCatalog
         [AppActions.Reformat] = "Reformat Code",
         [AppActions.CodeCleanup] = "Code Cleanup",
         [AppActions.RefactorThis] = "Refactor This...",
+        [AppActions.Generate] = "Generate...",
         [AppActions.ExtractMethod] = "Extract Method...",
         [AppActions.IntroduceVariable] = "Introduce Variable...",
         [AppActions.Inline] = "Inline...",

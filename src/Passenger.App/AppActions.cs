@@ -59,6 +59,7 @@ public static class AppActions
     public const string Reformat = "app.code.reformat";
     public const string CodeCleanup = "app.code.cleanup";
     public const string RefactorThis = "app.code.refactorThis";
+    public const string Generate = "app.code.generate";
     public const string ExtractMethod = "app.code.extractMethod";
     public const string IntroduceVariable = "app.code.introduceVariable";
     public const string Inline = "app.code.inline";
@@ -246,6 +247,7 @@ public static class AppActions
                 .Bind(ParameterInfo, "control P")
                 .Bind(CodeCleanup, "meta E , C", "meta E , meta C", "meta E , F", "meta E , meta F")
                 .Bind(RefactorThis, "meta shift R")
+                .Bind(Generate, "meta N")
                 .Bind(ExtractMethod, "meta R , M", "meta R , meta M")
                 .Bind(IntroduceVariable, "meta R , V", "meta R , meta V")
                 .Bind(Inline, "meta R , I", "meta R , meta I")
@@ -330,6 +332,7 @@ public static class AppActions
             .Bind(ParameterInfo, "shift control SPACE")
             .Bind(CodeCleanup, "control E , C", "control E , control C", "control E , F", "control E , control F")
             .Bind(RefactorThis, "control shift R")
+            .Bind(Generate, "alt INSERT", "control N")
             .Bind(ExtractMethod, "control R , M", "control R , control M")
             .Bind(IntroduceVariable, "control R , V", "control R , control V")
             .Bind(Inline, "control R , I", "control R , control I")
