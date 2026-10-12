@@ -97,6 +97,36 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
     }
 
     [AvaloniaFact]
+    public void A_commit_character_types_the_chosen_item_before_it_and_the_items_documentation_shows_beside_the_list()
+    {
+        MainWindow window = project.Open("Program.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "static void Main()\n    {\n");
+        window.KeyTextInput("        System.");
+        Ui.Settle();
+        window.KeyTextInput("C");
+        Ui.Settle();
+        window.KeyTextInput("onso");
+        Ui.Settle();
+        Assert.Equal("Console", window.Assist.CompletionLabels.FirstOrDefault());
+        Ui.WaitFor(() => window.Assist.ItemDocumentation?.Contains("standard input", StringComparison.Ordinal) == true, "the chosen item's documentation");
+
+        // The dot commits Console and is typed after it, and lists Console's members in turn.
+        window.KeyTextInput(".");
+        Ui.Settle();
+        Assert.True(editor.Document.Snapshot.ToString().Contains("System.Console.", StringComparison.Ordinal), editor.Document.Snapshot.ToString());
+        Ui.WaitFor(() => window.Assist.IsCompletionOpen, "Console's members");
+        window.KeyTextInput("WriteL");
+        Ui.Settle();
+        window.KeyTextInput("(");
+        Ui.Settle();
+        Assert.Contains("System.Console.WriteLine(", editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
+        Assert.False(window.Assist.IsCompletionOpen);
+        Assert.Null(window.Assist.ItemDocumentation);
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Go_to_declaration_opens_the_other_file_at_the_method()
     {
         MainWindow window = project.Open("Program.cs");

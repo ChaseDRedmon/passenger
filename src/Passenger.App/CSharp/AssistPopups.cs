@@ -134,6 +134,8 @@ internal sealed class CompletionPopup : Border
 
     public CompletionRow? Selected => List.SelectedItem as CompletionRow;
 
+    public IReadOnlyList<CompletionRow> Rows => List.ItemsSource as IReadOnlyList<CompletionRow> ?? [];
+
     public void Show(IReadOnlyList<CompletionRow> rows)
     {
         List.ItemsSource = rows;

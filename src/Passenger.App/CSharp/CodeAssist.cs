@@ -22,10 +22,12 @@ public sealed class CodeAssist
     private readonly InfoCard hoverCard = new();
     private readonly InfoCard signatureCard = new();
     private readonly CompletionPopup completion = new();
+    private readonly InfoCard itemCard = new();
     private readonly Dictionary<CompletionItem, LiveTemplate> templatesOffered = [];
     private readonly Dictionary<CompletionItem, (PostfixTemplate Template, PostfixTarget Target)> postfixOffered = [];
     private CancellationTokenSource? hovering;
     private CancellationTokenSource? completing;
+    private CancellationTokenSource? describing;
     private Completion? open;
     private Control? modal;
 
@@ -34,7 +36,7 @@ public sealed class CodeAssist
         this.editors = editors;
         this.layer = layer;
         this.service = service;
-        foreach (Control popup in new Control[] { hoverCard, signatureCard, completion })
+        foreach (Control popup in new Control[] { hoverCard, signatureCard, completion, itemCard })
         {
             popup.IsVisible = false;
             layer.Children.Add(popup);
@@ -74,6 +76,7 @@ public sealed class CodeAssist
         });
         editors.ActiveChanged += (_, _) => CloseAll();
         completion.List.DoubleTapped += (_, _) => _ = Commit();
+        completion.List.SelectionChanged += (_, _) => _ = DescribeSelected();
     }
 
     /// <summary>A place to go: a file and a line and column (from zero).</summary>
@@ -83,6 +86,12 @@ public sealed class CodeAssist
     public event EventHandler<string>? Message;
 
     public bool IsCompletionOpen => completion.IsVisible;
+
+    /// <summary>What the card beside the completion list says about the chosen item while it shows, null otherwise.</summary>
+    public string? ItemDocumentation => itemCard.IsVisible ? itemCard.Text : null;
+
+    /// <summary>The completion list's labels, in order, while it shows.</summary>
+    public IReadOnlyList<string> CompletionLabels => completion.IsVisible ? [.. completion.Rows.Select(r => r.Item.Label)] : [];
 
     /// <summary>What the hover card says while it shows, null otherwise.</summary>
     public string? HoverText => hoverCard.IsVisible ? hoverCard.Text : null;
@@ -208,16 +217,65 @@ public sealed class CodeAssist
     private void OnTyped(string text)
     {
         HideHover();
-        char last = text[^1];
         if (completion.IsVisible)
         {
             if (text.All(IsIdentifierChar))
             {
                 Filter();
+                if (open is { IsIncomplete: true })
+                {
+                    // The server listed only some of what fits: what is typed now narrows it to the rest.
+                    _ = StartCompletion(null, incomplete: true);
+                }
+                return;
+            }
+            if (CommitsOn(text) is { } end)
+            {
+                _ = CommitOn(text, end);
                 return;
             }
             CloseCompletion();
         }
+        AfterTyped(text);
+    }
+
+    /// <summary>Where the name typed so far ends, when what was just typed is one of the chosen item's commit characters
+    /// (the server's: a dot, a bracket, a semicolon), so the item goes in before it; null otherwise. Space is not one, as
+    /// in Rider, and nothing commits before a letter of the name is typed.</summary>
+    private int? CommitsOn(string text)
+    {
+        if (open is null || text.Length != 1 || text == " " || completion.Selected is not { } row
+            || templatesOffered.ContainsKey(row.Item) || postfixOffered.ContainsKey(row.Item))
+        {
+            return null;
+        }
+        int end = Editor.Selections.Primary.Caret - 1;
+        if (end <= open.Start || end > Editor.Document.Snapshot.Length || Editor.Document.Snapshot[end] != text[0])
+        {
+            return null;
+        }
+        return (row.Item.CommitCharacters ?? open.CommitCharacters).Contains(text) ? end : null;
+    }
+
+    /// <summary>The chosen item goes in before the commit character typed, and the character then does what it does
+    /// after any name: a dot lists members, a bracket shows the signature.</summary>
+    private async Task CommitOn(string text, int end)
+    {
+        BackgroundWork.Begin();
+        try
+        {
+            await CommitCore(end);
+            AfterTyped(text);
+        }
+        finally
+        {
+            BackgroundWork.End();
+        }
+    }
+
+    private void AfterTyped(string text)
+    {
+        char last = text[^1];
         if (last == '.')
         {
             _ = StartCompletion(".");
@@ -236,20 +294,22 @@ public sealed class CodeAssist
         }
     }
 
+    /// <summary>Filters once the move's input is done: a typed character moves the caret before the editor says what was
+    /// typed, and a commit character must find the list still open.</summary>
     private void OnCaretMoved()
     {
         if (completion.IsVisible)
         {
-            Filter();
+            Avalonia.Threading.Dispatcher.UIThread.Post(Filter);
         }
     }
 
-    private async Task StartCompletion(string? trigger)
+    private async Task StartCompletion(string? trigger, bool incomplete = false)
     {
         BackgroundWork.Begin();
         try
         {
-            await StartCompletionCore(trigger);
+            await StartCompletionCore(trigger, incomplete);
         }
         finally
         {
@@ -257,7 +317,7 @@ public sealed class CodeAssist
         }
     }
 
-    private async Task StartCompletionCore(string? trigger)
+    private async Task StartCompletionCore(string? trigger, bool incomplete)
     {
         if (Current?.Lsp is not { } lsp)
         {
@@ -269,7 +329,7 @@ public sealed class CodeAssist
         int caret = Editor.Selections.Primary.Caret;
         try
         {
-            (CompletionList? list, _) = await lsp.CompletionAsync(caret, trigger, cancel.Token);
+            (CompletionList? list, _) = await lsp.CompletionAsync(caret, trigger, cancel.Token, incomplete);
             if (cancel.IsCancellationRequested || list is null || list.Items.Count == 0)
             {
                 if (!cancel.IsCancellationRequested)
@@ -294,7 +354,8 @@ public sealed class CodeAssist
             {
                 postfixOffered[new CompletionItem { Label = postfix.Name, Kind = 15, Detail = postfix.Example, SortText = "~" + postfix.Name }] = (postfix, target);
             }
-            open = new Completion([.. list.Items, .. templatesOffered.Keys, .. postfixOffered.Keys], Math.Min(start, Editor.Selections.Primary.Caret));
+            open = new Completion([.. list.Items, .. templatesOffered.Keys, .. postfixOffered.Keys], Math.Min(start, Editor.Selections.Primary.Caret),
+                list.ItemDefaults?.CommitCharacters ?? [], list.IsIncomplete);
             Filter();
         }
         catch (Exception error) when (IsServerFailure(error))
@@ -355,7 +416,8 @@ public sealed class CodeAssist
         }
     }
 
-    private async Task CommitCore()
+    /// <summary>The chosen item in place of the name typed, up to <paramref name="end"/> (the caret when not given).</summary>
+    private async Task CommitCore(int? end = null)
     {
         if (open is null || completion.Selected is not { } row || Current?.Lsp is not { } lsp)
         {
@@ -384,7 +446,7 @@ public sealed class CodeAssist
         catch (Exception error) when (IsServerFailure(error))
         {
         }
-        int caret = Editor.Selections.Primary.Caret;
+        int caret = Math.Min(end ?? Editor.Selections.Primary.Caret, Editor.Document.Snapshot.Length);
         string insert = item.TextEdit?.NewText ?? item.TextEditText ?? item.InsertText ?? item.Label;
         List<Passenger.Text.TextEdit> edits = [new Passenger.Text.TextEdit(start, Math.Max(0, caret - start), insert)];
         if (item.AdditionalTextEdits is { Count: > 0 } extra)
@@ -464,8 +526,75 @@ public sealed class CodeAssist
     private void CloseCompletion()
     {
         completing?.Cancel();
+        describing?.Cancel();
         open = null;
         completion.IsVisible = false;
+        itemCard.IsVisible = false;
+    }
+
+    /// <summary>Rider's documentation beside the completion list: the chosen item's signature and summary, resolved
+    /// once the choice rests a moment.</summary>
+    private async Task DescribeSelected()
+    {
+        describing?.Cancel();
+        itemCard.IsVisible = false;
+        if (!completion.IsVisible || completion.Selected is not { } row || Current?.Lsp is not { } lsp)
+        {
+            return;
+        }
+        CancellationTokenSource cancel = new();
+        describing = cancel;
+        BackgroundWork.Begin();
+        try
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(120), cancel.Token);
+            CompletionItem item = row.Item;
+            if (item.Data is not null && item.Documentation is null)
+            {
+                item = await lsp.ResolveAsync(item, cancel.Token) ?? item;
+            }
+            if (cancel.IsCancellationRequested || !completion.IsVisible || completion.Selected != row)
+            {
+                return;
+            }
+            itemCard.Clear();
+            if (item.Detail is { Length: > 0 } detail)
+            {
+                itemCard.AddCode(detail);
+            }
+            if (Shapes.Text(item.Documentation) is { Length: > 0 } documentation)
+            {
+                itemCard.AddMarkdown(documentation);
+            }
+            if (itemCard.IsEmpty)
+            {
+                return;
+            }
+            itemCard.IsVisible = true;
+            PlaceBeside(itemCard, completion);
+        }
+        catch (Exception error) when (error is OperationCanceledException || IsServerFailure(error))
+        {
+        }
+        finally
+        {
+            BackgroundWork.End();
+        }
+    }
+
+    /// <summary>A card to the right of a popup, at its top; to its left when the right has no room.</summary>
+    private void PlaceBeside(Control card, Control beside)
+    {
+        card.Measure(Size.Infinity);
+        double left = Canvas.GetLeft(beside);
+        double width = card.DesiredSize.Width;
+        double x = left + beside.Bounds.Width + 4;
+        if (x + width > layer.Bounds.Width && left - width - 4 >= 0)
+        {
+            x = left - width - 4;
+        }
+        Canvas.SetLeft(card, x);
+        Canvas.SetTop(card, Canvas.GetTop(beside));
     }
 
     private async Task ShowHover(int offset, Point point)
@@ -1159,5 +1288,7 @@ public sealed class CodeAssist
 
     /// <summary>An open completion list: every item the server gave, and where the word it completes
     /// began.</summary>
-    private sealed record Completion(IReadOnlyList<CompletionItem> Items, int Start);
+    /// <summary>An open completion list: its items, where the name it completes starts, the characters that commit an
+    /// item that names none of its own, and whether the server left items out until more is typed.</summary>
+    private sealed record Completion(IReadOnlyList<CompletionItem> Items, int Start, IReadOnlyList<string> CommitCharacters, bool IsIncomplete);
 }

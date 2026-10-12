@@ -165,10 +165,12 @@ public sealed class LspDocument : IDisposable
         }
     }
 
-    public async Task<(CompletionList? List, int Version)> CompletionAsync(int offset, string? trigger, CancellationToken cancel = default)
+    /// <summary>Completion at an offset: invoked, after a trigger character, or asked again as more is typed into a list
+    /// the server said was incomplete.</summary>
+    public async Task<(CompletionList? List, int Version)> CompletionAsync(int offset, string? trigger, CancellationToken cancel = default, bool incomplete = false)
     {
         int version = Text.Version;
-        CompletionContext context = trigger is null ? new CompletionContext(1) : new CompletionContext(2, trigger);
+        CompletionContext context = incomplete ? new CompletionContext(3) : trigger is null ? new CompletionContext(1) : new CompletionContext(2, trigger);
         JsonElement result = await Server.RequestAsync<JsonElement>("textDocument/completion",
             new CompletionParams(Identifier, PositionOf(offset), context), cancel);
         return (Shapes.CompletionList(result), version);
