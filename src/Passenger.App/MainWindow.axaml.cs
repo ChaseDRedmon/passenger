@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
+using Passenger.App.CSharp;
 using Passenger.App.Editors;
 using Passenger.App.Workspace;
 using Passenger.Editor;
@@ -20,6 +21,7 @@ public partial class MainWindow : Window
 
     private readonly KeymapDispatcher keys = new(AppActions.Keymap());
     private readonly FileIndex index = new();
+    private CSharpService? csharp;
     private readonly List<string> recent = [];
     private string? folder;
 
@@ -41,8 +43,14 @@ public partial class MainWindow : Window
         Editors.ActiveChanged += (_, _) => UpdateStatus();
         Editors.CaretMoved += (_, _) => UpdateCaret();
         Editors.AskToSave = AskToSave;
+        Editors.Opened += (_, document) => csharp?.Attach(document);
+        Editors.Closed += (_, document) => csharp?.Detach(document);
+        Closing += (_, _) => _ = csharp?.DisposeAsync();
         UpdateStatus();
     }
+
+    /// <summary>The C# service for the open folder, or null when it has no projects.</summary>
+    public CSharpService? CSharpService => csharp;
 
     public EditorArea EditorArea => Editors;
 
@@ -69,6 +77,14 @@ public partial class MainWindow : Window
         string name = Path.GetFileName(folder);
         Explorer.Load(folder);
         index.Build(folder);
+        _ = csharp?.DisposeAsync();
+        csharp = null;
+        if (CSharpService.Wants(folder))
+        {
+            csharp = new CSharpService();
+            csharp.StateChanged += (_, _) => LanguageText.Text = LanguageLabel();
+            csharp.Start(folder);
+        }
         Editors.ShowFolderHint(folder);
         ProjectName.Text = name;
         ProjectBadgeText.Text = Initials(name);
@@ -275,8 +291,19 @@ public partial class MainWindow : Window
         LineEndingText.Text = active is null ? "" : active.Text.LineEnding == "\r\n" ? "CRLF" : "LF";
         EncodingText.Text = active?.EncodingName ?? "";
         IndentText.Text = active is null ? "" : $"{active.Language.IndentSize} spaces";
-        LanguageText.Text = active?.Language.Name ?? "";
+        LanguageText.Text = LanguageLabel();
         UpdateCaret();
+    }
+
+    /// <summary>The file's language, with the language server's state beside it while it is not ready.</summary>
+    private string LanguageLabel()
+    {
+        string language = Editors.Active?.Language.Name ?? string.Empty;
+        if (csharp is { IsReady: false, State: { Length: > 0 } state })
+        {
+            return language.Length > 0 ? $"{language} · {state}" : state;
+        }
+        return language;
     }
 
     private void UpdateCaret()

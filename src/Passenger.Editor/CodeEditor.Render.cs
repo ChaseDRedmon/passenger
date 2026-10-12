@@ -50,6 +50,7 @@ public sealed partial class CodeEditor
                 DrawSelections(context, span, layout, left, y, size.Width, focused);
                 DrawHighlights(context, span, layout, left, y);
                 layout.Draw(context, new Point(left, y + (lineHeight - layout.Height) / 2));
+                DrawMarkers(context, span, layout, left, y);
             }
 
             if (focused && caretOn)
@@ -160,6 +161,62 @@ public sealed partial class CodeEditor
                 }
             }
         }
+    }
+
+    /// <summary>Squiggles under errors, warnings and suggestions; unnecessary code is faded by laying
+    /// the background over it, half see-through.</summary>
+    private void DrawMarkers(DrawingContext context, LineSpan span, TextLine layout, double left, double y)
+    {
+        foreach (Marker marker in Markers)
+        {
+            if (marker.Range.Start > span.End)
+            {
+                break;
+            }
+            if (marker.Range.End < span.Start)
+            {
+                continue;
+            }
+            int from = Math.Max(marker.Range.Start, span.Start) - span.Start;
+            int to = Math.Min(marker.Range.End, span.End) - span.Start;
+            double x1 = left + layout.GetDistanceFromCharacterHit(new CharacterHit(from));
+            double x2 = left + layout.GetDistanceFromCharacterHit(new CharacterHit(to));
+            if (x2 - x1 < metrics.CharWidth / 2)
+            {
+                // A zero-width diagnostic (a missing semicolon) still needs something to see.
+                x2 = x1 + metrics.CharWidth;
+            }
+            if (marker.Kind == MarkerKind.Unnecessary)
+            {
+                context.FillRectangle(palette.Faded, new Rect(x1, y, x2 - x1, metrics.LineHeight));
+                continue;
+            }
+            IBrush brush = marker.Kind switch
+            {
+                MarkerKind.Error => palette.Error,
+                MarkerKind.Warning => palette.Warning,
+                _ => palette.Info,
+            };
+            DrawWave(context, brush, x1, x2, y + metrics.LineHeight - 3);
+        }
+    }
+
+    private static void DrawWave(DrawingContext context, IBrush brush, double x1, double x2, double y)
+    {
+        const double Step = 2.5;
+        StreamGeometry wave = new();
+        using (StreamGeometryContext path = wave.Open())
+        {
+            path.BeginFigure(new Point(x1, y), false);
+            bool up = true;
+            for (double x = x1 + Step; x < x2 + Step; x += Step)
+            {
+                path.LineTo(new Point(Math.Min(x, x2), up ? y - 2 : y));
+                up = !up;
+            }
+            path.EndFigure(false);
+        }
+        context.DrawGeometry(null, new Pen(brush, 1), wave);
     }
 
     private void DrawGutter(DrawingContext context, TextSnapshot text, int first, int last, HashSet<int> caretLines, double gutter, double height)
@@ -357,6 +414,10 @@ public sealed partial class CodeEditor
         public IBrush Caret { get; private init; } = Brush("#CED0D6");
         public IBrush Preedit { get; private init; } = Brush("#CED0D6");
         public IBrush SearchMatch { get; private init; } = Brush("#2F4A36");
+        public IBrush Error { get; private init; } = Brush("#F75464");
+        public IBrush Warning { get; private init; } = Brush("#E5A336");
+        public IBrush Info { get; private init; } = Brush("#8A8F97");
+        public IBrush Faded { get; private init; } = new SolidColorBrush(Color.Parse("#1E1F22"), 0.5).ToImmutable();
         public IBrush SearchCurrent { get; private init; } = Brush("#4F9A5F");
 
         public IBrush Syntax(TokenKind kind) => syntax.TryGetValue(kind, out IBrush? brush) ? brush : Text;
@@ -377,6 +438,10 @@ public sealed partial class CodeEditor
                 Caret = Find(control, "Passenger.Editor.Caret") ?? defaults.Caret,
                 Preedit = Find(control, "Passenger.Editor.Text") ?? defaults.Preedit,
                 SearchMatch = Find(control, "Passenger.Editor.SearchMatch") ?? defaults.SearchMatch,
+                Error = Find(control, "Passenger.Editor.Error") ?? defaults.Error,
+                Warning = Find(control, "Passenger.Editor.Warning") ?? defaults.Warning,
+                Info = Find(control, "Passenger.Editor.Info") ?? defaults.Info,
+                Faded = Fade(Find(control, "Passenger.Editor.Background")) ?? defaults.Faded,
                 SearchCurrent = Find(control, "Passenger.Editor.SearchCurrent") ?? defaults.SearchCurrent,
             };
             foreach (TokenKind kind in Enum.GetValues<TokenKind>())
@@ -388,6 +453,9 @@ public sealed partial class CodeEditor
             }
             return palette;
         }
+
+        private static IBrush? Fade(IBrush? background) =>
+            background is ISolidColorBrush solid ? new SolidColorBrush(solid.Color, 0.5).ToImmutable() : null;
 
         private static IBrush? Find(Control control, string key) =>
             control.TryFindResource(key, control.ActualThemeVariant, out object? value) ? value as IBrush : null;

@@ -17,7 +17,7 @@ namespace Passenger.App;
 internal static class Screenshot
 {
     /// <summary>How long to wait for background work (colouring, indexing) before capturing anyway.</summary>
-    private static readonly TimeSpan SettleLimit = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan SettleLimit = TimeSpan.FromSeconds(90);
 
     public static int Run(LaunchOptions launch, ScreenshotOptions options)
     {

@@ -11,6 +11,8 @@ namespace Passenger.App.Workspace;
 public sealed class OpenDocument : Observable
 {
     private bool isActive;
+    private IHighlighter? highlighter;
+    private IReadOnlyList<Marker> markers = [];
 
     public OpenDocument(string path, FileText file)
     {
@@ -20,12 +22,27 @@ public sealed class OpenDocument : Observable
         HasBom = file.HasBom;
         EncodingName = file.EncodingName;
         Language = Language.ForPath(path);
-        Highlighter = Language.Name == "C#" ? new CSharpHighlighter(Text) : null;
+        highlighter = Language.Name == "C#" ? new CSharpHighlighter(Text) : null;
         Text.Changed += (_, _) => Raise(nameof(IsModified));
     }
 
-    /// <summary>Colours from the in-process parser, or null for a language without one yet.</summary>
-    public IHighlighter? Highlighter { get; }
+    /// <summary>Raised after a save, so the language server hears of it.</summary>
+    public event EventHandler? Saved;
+
+    /// <summary>Colours from the in-process parser, replaced by the language server's layered over it
+    /// once that is running; null for a language with neither.</summary>
+    public IHighlighter? Highlighter
+    {
+        get => highlighter;
+        set => Set(ref highlighter, value);
+    }
+
+    /// <summary>The language service's markers (diagnostics), in this text's offsets.</summary>
+    public IReadOnlyList<Marker> Markers
+    {
+        get => markers;
+        set => Set(ref markers, value);
+    }
 
     /// <summary>Lets go of everything the open file holds beyond its text, when its tab closes.</summary>
     public void Close() => (Highlighter as IDisposable)?.Dispose();
@@ -55,6 +72,7 @@ public sealed class OpenDocument : Observable
         FileText.Save(Path, Text.Snapshot.ToString(), Encoding, HasBom);
         Text.MarkSaved();
         Raise(nameof(IsModified));
+        Saved?.Invoke(this, EventArgs.Empty);
     }
 }
 

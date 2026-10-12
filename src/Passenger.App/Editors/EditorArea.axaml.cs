@@ -32,6 +32,11 @@ public partial class EditorArea : UserControl
     }
 
     public event EventHandler? ActiveChanged;
+
+    /// <summary>A file opened in a tab, before it is shown; and one whose tab closed.</summary>
+    public event EventHandler<OpenDocument>? Opened;
+
+    public event EventHandler<OpenDocument>? Closed;
     public event EventHandler? CaretMoved;
     public event EventHandler? OpenRequested;
 
@@ -73,6 +78,8 @@ public partial class EditorArea : UserControl
             return $"{Path.GetFileName(full)} looks like a binary file.";
         }
         OpenDocument document = new(full, file);
+        document.PropertyChanged += OnDocumentPropertyChanged;
+        Opened?.Invoke(this, document);
         documents.Insert(active is null ? documents.Count : documents.IndexOf(active) + 1, document);
         Activate(document);
         return null;
@@ -92,6 +99,7 @@ public partial class EditorArea : UserControl
         Editor.Indent = new IndentOptions(document.Language.IndentSize);
         Editor.Show(document.Text, document.Selections, document.Scroll);
         Editor.Highlighter = document.Highlighter;
+        Editor.SetMarkers(document.Markers);
         Find.Attach(Editor);
         ShowEditor(true);
         Editor.Focus();
@@ -113,6 +121,8 @@ public partial class EditorArea : UserControl
         }
         int index = documents.IndexOf(document);
         documents.Remove(document);
+        document.PropertyChanged -= OnDocumentPropertyChanged;
+        Closed?.Invoke(this, document);
         document.Close();
         if (document == active)
         {
@@ -161,6 +171,22 @@ public partial class EditorArea : UserControl
         }
         int index = (documents.IndexOf(active) + step + documents.Count) % documents.Count;
         Activate(documents[index]);
+    }
+
+    private void OnDocumentPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (sender != active || active is null)
+        {
+            return;
+        }
+        if (e.PropertyName == nameof(OpenDocument.Highlighter))
+        {
+            Editor.Highlighter = active.Highlighter;
+        }
+        else if (e.PropertyName == nameof(OpenDocument.Markers))
+        {
+            Editor.SetMarkers(active.Markers);
+        }
     }
 
     private void ShowEditor(bool visible)

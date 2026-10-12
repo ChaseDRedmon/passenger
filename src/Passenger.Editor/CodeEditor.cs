@@ -78,6 +78,29 @@ public sealed partial class CodeEditor : Control
     /// <summary>Cmd+click (Ctrl+click on Windows) at an offset: the host's go-to-definition.</summary>
     public event EventHandler<int>? NavigateRequested;
 
+    /// <summary>The pointer has rested on the text: the offset under it and where it is, for a hover
+    /// card. Raised once per rest; moving off clears it (<see cref="HoverEnded"/>).</summary>
+    public event EventHandler<HoverEventArgs>? Hovered;
+
+    public event EventHandler? HoverEnded;
+
+    /// <summary>Text arrived from the keyboard and was typed into the document, so completion and
+    /// signature help can decide whether to open.</summary>
+    public event EventHandler<string>? Typed;
+
+    /// <summary>The markers drawn over the text (sorted), from the language service.</summary>
+    public IReadOnlyList<Marker> Markers { get; private set; } = [];
+
+    public void SetMarkers(IReadOnlyList<Marker> markers)
+    {
+        Markers = [.. markers.OrderBy(m => m.Range.Start)];
+        InvalidateVisual();
+    }
+
+    /// <summary>The markers at an offset, for a tooltip.</summary>
+    public IEnumerable<Marker> MarkersAt(int offset) =>
+        Markers.Where(m => m.Range.Start <= offset && (offset < m.Range.End || (m.Range.Length == 0 && offset == m.Range.Start)));
+
     public double FontSize
     {
         get => GetValue(FontSizeProperty);

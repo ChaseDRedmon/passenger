@@ -12,7 +12,13 @@ public sealed partial class CodeEditor
     /// <summary>Wheel and trackpad travel per unit of delta, the same as Avalonia's scroll viewers.</summary>
     private const double WheelStep = 50;
 
+    /// <summary>How long the pointer rests before a hover card is asked for, as in Rider.</summary>
+    private static readonly TimeSpan HoverDelay = TimeSpan.FromMilliseconds(500);
+
     private KeymapDispatcher? ownKeys;
+    private Avalonia.Threading.DispatcherTimer? hover;
+    private Point hoverAt;
+    private bool hovering;
     private Drag drag;
     private EditorInputMethod? inputMethod;
     private string preedit = string.Empty;
@@ -52,6 +58,7 @@ public sealed partial class CodeEditor
         preedit = string.Empty;
         Apply(TextEditing.Type(document.Snapshot, selections, typed));
         e.Handled = true;
+        Typed?.Invoke(this, typed);
     }
 
     protected override void OnPointerPressed(PointerPressedEventArgs e)
@@ -123,6 +130,7 @@ public sealed partial class CodeEditor
     {
         base.OnPointerMoved(e);
         Point position = e.GetPosition(this);
+        RestartHover(position);
         Cursor = position.X < GutterWidth ? Cursor.Default : new Cursor(StandardCursorType.Ibeam);
         if (drag.Mode == DragMode.None || !e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
         {
@@ -163,6 +171,13 @@ public sealed partial class CodeEditor
         e.Pointer.Capture(null);
     }
 
+    protected override void OnPointerExited(PointerEventArgs e)
+    {
+        base.OnPointerExited(e);
+        hoverTimer.Stop();
+        EndHover();
+    }
+
     protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
     {
         base.OnPointerWheelChanged(e);
@@ -173,6 +188,50 @@ public sealed partial class CodeEditor
         }
         ScrollTo(scroll - delta * WheelStep);
         e.Handled = true;
+    }
+
+    private Avalonia.Threading.DispatcherTimer hoverTimer => hover ??= new Avalonia.Threading.DispatcherTimer(HoverDelay, Avalonia.Threading.DispatcherPriority.Background, (_, _) =>
+    {
+        hover!.Stop();
+        if (drag.Mode != DragMode.None || hoverAt.X < GutterWidth || !IsPointerOver)
+        {
+            return;
+        }
+        TextSnapshot text = document.Snapshot;
+        int line = (int)Math.Floor((hoverAt.Y + scroll.Y) / metrics.LineHeight);
+        if (line < 0 || line >= text.LineCount)
+        {
+            return;
+        }
+        int offset = OffsetAt(hoverAt);
+        // Past the end of a line is not over any code.
+        if (hoverAt.X - TextLeft + scroll.X > XOf(text, text.GetLine(line).End) + metrics.CharWidth)
+        {
+            return;
+        }
+        hovering = true;
+        Hovered?.Invoke(this, new HoverEventArgs(offset, hoverAt));
+    });
+
+    private void RestartHover(Point position)
+    {
+        if (Math.Abs(position.X - hoverAt.X) < 2 && Math.Abs(position.Y - hoverAt.Y) < 2)
+        {
+            return;
+        }
+        hoverAt = position;
+        EndHover();
+        hoverTimer.Stop();
+        hoverTimer.Start();
+    }
+
+    private void EndHover()
+    {
+        if (hovering)
+        {
+            hovering = false;
+            HoverEnded?.Invoke(this, EventArgs.Empty);
+        }
     }
 
     /// <summary>The offset under a point in the control, its line clamped to the document.</summary>

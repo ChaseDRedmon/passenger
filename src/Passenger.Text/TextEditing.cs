@@ -562,6 +562,15 @@ public static class TextEditing
         return (Build(Union(replacements), selections, EditKind.Other), string.Concat(removed));
     }
 
+    /// <summary>A range carried through edits (sorted, in the old text's coordinates): its ends move
+    /// with the text around them, so a marked word stays marked as the line it is on is edited.</summary>
+    public static TextRange MapRange(TextRange range, IReadOnlyList<TextEdit> edits)
+    {
+        int start = Map(edits, range.Start, false);
+        int end = Math.Max(start, Map(edits, range.End, range.Length > 0));
+        return TextRange.FromBounds(start, end);
+    }
+
     /// <summary>Carries carets through edits someone else made (sorted, non-overlapping, in the old
     /// text's coordinates): a caret inside a replaced range lands at its start.</summary>
     public static SelectionSet MapThrough(SelectionSet selections, IReadOnlyList<TextEdit> edits) =>
