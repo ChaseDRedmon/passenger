@@ -7,6 +7,8 @@ namespace Passenger.Tests.Debugging;
 [Collection(DebugSession.Collection)]
 public class StepTests(ITestOutputHelper testOutputHelper)
 {
+    private const string Looping = "LoopingConsoleApp";
+
     [Fact]
     public async Task SharpDbgCli_StepRequests_Returns_StoppedEventsAtCorrectLocation()
     {
@@ -170,5 +172,72 @@ public class StepTests(ITestOutputHelper testOutputHelper)
         (string filePath, int line, int column) stopInfo3 = stoppedEvent3.ReadStopInfo();
         Assert.EndsWith("Program.cs", stopInfo3.filePath);
         Assert.Equal(27, stopInfo3.line);
+    }
+
+    [Fact]
+    public async Task A_step_over_goes_on_past_another_threads_breakpoint_whose_condition_is_false()
+    {
+        using DebugSession host = DebugSession.ForLaunch(testOutputHelper);
+        await StepOverWhileAnotherThreadPasses(host, "step", "step over the call while another thread passes", "a step lost runs on to here",
+            new DapSourceBreakpoint(Debuggees.Line(Looping, "passed by another thread"), Condition: "pass < 0"));
+        AssertStepEnded(await host.WaitForStoppedEvent(), "the call's step ends here");
+    }
+
+    [Fact]
+    public async Task A_step_over_goes_on_past_another_threads_tracepoint_which_logs_meanwhile()
+    {
+        using DebugSession host = DebugSession.ForLaunch(testOutputHelper);
+        await StepOverWhileAnotherThreadPasses(host, "step", "step over the call while another thread passes", "a step lost runs on to here",
+            new DapSourceBreakpoint(Debuggees.Line(Looping, "passed by another thread"), LogMessage: "pass {pass}"));
+        await host.WaitForEvent<OutputEvent>(output => output.Output.StartsWith("pass ", StringComparison.Ordinal));
+        AssertStepEnded(await host.WaitForStoppedEvent(), "the call's step ends here");
+    }
+
+    [Fact]
+    public async Task A_step_over_a_call_goes_on_past_a_breakpoint_inside_it_whose_condition_is_false()
+    {
+        using DebugSession host = DebugSession.ForLaunch(testOutputHelper);
+        await StepOverWhileAnotherThreadPasses(host, "step", "step over the call while another thread passes", "a step lost runs on to here",
+            new DapSourceBreakpoint(Debuggees.Line(Looping, "wait for the other thread"), Condition: "times == 0"));
+        AssertStepEnded(await host.WaitForStoppedEvent(), "the call's step ends here");
+    }
+
+    [Fact]
+    public async Task A_step_over_an_await_goes_on_past_another_threads_breakpoint_whose_condition_is_false()
+    {
+        using DebugSession host = DebugSession.ForLaunch(testOutputHelper);
+        await StepOverWhileAnotherThreadPasses(host, "await", "step over the await while another thread passes", "a step over the await lost runs on to here",
+            new DapSourceBreakpoint(Debuggees.Line(Looping, "passed by another thread"), Condition: "pass < 0"));
+        AssertStepEnded(await host.WaitForStoppedEvent(), "the await's step ends here");
+    }
+
+    /// <summary>LoopingConsoleApp launched in a mode where its first thread waits for a second to pass a line, stopped on
+    /// the line that waits and stepping over it, with the other breakpoint given and one where a step lost runs on to.</summary>
+    private static async Task StepOverWhileAnotherThreadPasses(DebugSession host, string mode, string from, string runsOnTo, DapSourceBreakpoint other)
+    {
+        string program = Debuggees.Program(Looping);
+        host.WithInitializeRequest().Request("launch", new LaunchArguments
+        {
+            Program = program,
+            Args = [mode],
+            Cwd = Path.GetDirectoryName(program),
+            Console = "internalConsole",
+            JustMyCode = true,
+            StopAtEntry = false,
+        });
+        await host.WaitForInitializedEvent();
+        host.WithBreakpointsRequest(Debuggees.Source(Looping, "Program.cs"),
+            [new DapSourceBreakpoint(Debuggees.Line(Looping, from)), other, new DapSourceBreakpoint(Debuggees.Line(Looping, runsOnTo))])
+            .WithConfigurationDoneRequest();
+        StoppedEvent stopped = await host.WaitForStoppedEvent();
+        Assert.Equal(Debuggees.Line(Looping, from), stopped.Line);
+        host.WithStepOverRequest(stopped.ThreadId!.Value);
+    }
+
+    private static void AssertStepEnded(StoppedEvent stepped, string at)
+    {
+        int line = Debuggees.Line(Looping, at);
+        Assert.True(stepped.Reason == "step" && stepped.Line == line,
+            $"The step was lost to a breakpoint that did not stop, and the program ran on: it stopped for {stepped.Reason} at line {stepped.Line}, where the step would have stopped at line {line}");
     }
 }

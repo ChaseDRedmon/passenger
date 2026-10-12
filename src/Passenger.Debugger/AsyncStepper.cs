@@ -357,9 +357,7 @@ public class AsyncStepper
             // Check if breakpoint matches our async step
             if (!MatchesBreakpoint(breakpoint, _currentAsyncStep.Breakpoint!, thread))
             {
-                // Different breakpoint hit - cancel async stepping
-                _currentAsyncStep?.Dispose();
-                _currentAsyncStep = null;
+                // Another breakpoint ends the async step only if it stops, which the debugger tells once its condition is tested.
                 return (false, null);
             }
 

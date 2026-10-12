@@ -209,23 +209,13 @@ public partial class ManagedDebugger
             return;
         }
 
-        if (_stepper is not null)
+        if (_stepper is { IsActive: false })
         {
-            // We have hit a breakpoint. If _stepper is not null, it means we have hit a breakpoint during an in progress step.
-            // _stepper.IsActive tells us if the step is complete or not, IsActive true: incomplete, false: complete
-            // If it is false, ie the step is complete, remembering that we are handling the breakpoint event currently,
-            // it means a StepComplete event is queued, and will be received on the next Continue.
-            // If we have a StepComplete event queued, we want to suppress this breakpoint event and Continue, as this means the breakpoint and the step destination are at the same location.
-            if (_stepper.IsActive is false)
-            {
-                ContinueWithVariableClear();
-                return;
-            }
-            // Inversely, if the stepper is still Active, ie incomplete, it means the breakpoint occurred before the step destination, and therefore should override/disable/abandon the step, and we should stop at the breakpoint.
-            // Example: stepping over a method, with a breakpoint inside the method.
-            _stepper.Deactivate();
-            _stepper = null;
+            // The step is complete and its StepComplete queued behind this, at the same place: the step's stop stands for both.
+            ContinueWithVariableClear();
+            return;
         }
+        // A step still going is ended only once this breakpoint stops (EndStepForStop), never by one that tests false or logs.
 
         if (breakpoint is not ICorDebugFunctionBreakpoint functionBreakpoint)
         {
@@ -245,6 +235,7 @@ public partial class ManagedDebugger
 
             _entryBreakpoint = null;
             _stopAtEntry = false;
+            EndStepForStop();
             SourceInfo? sourceInfo = GetSourceInfoAtFrame(corThread.ActiveFrame, _justMyCode is false);
             if (sourceInfo is null)
             {
@@ -261,9 +252,16 @@ public partial class ManagedDebugger
         // Check if async stepper handles this breakpoint
         if (_asyncStepper is not null)
         {
+            ICorDebugStepper? steppingHere = _stepper;
             (bool asyncHandled, bool? shouldStop) = await _asyncStepper.TryHandleBreakpoint(corThread, functionBreakpoint);
             if (asyncHandled)
             {
+                if (steppingHere is not null && _stepper == steppingHere)
+                {
+                    // The step's own breakpoint at an await, where the async step takes over from the stepper that ran to it.
+                    steppingHere.Deactivate();
+                    _stepper = null;
+                }
                 if (shouldStop is false)
                 {
                     ContinueWithVariableClear();
@@ -340,6 +338,7 @@ public partial class ManagedDebugger
             return;
         }
 
+        EndStepForStop();
         if (managedBreakpoint.IsFunctionBreakpoint)
         {
             SourceInfo? sourceInfo = GetSourceInfoAtFrame(corThread.ActiveFrame, _justMyCode is false);
@@ -452,6 +451,18 @@ public partial class ManagedDebugger
         int column = sourceInfo.Value.StartColumn;
         //_logger?.Invoke($"StepComplete: method 0x{ilFrame.Function.Token} IL offset {ilFrame.IP.pnOffset}, reason: {stepCompleteEventArgs.Reason}");
         OnStopped2?.Invoke(corThread.Id, sourceFilePath, line, column, "step", null);
+    }
+
+    /// <summary>A breakpoint that stops ends the step in progress, on its own thread or another, as Rider's does: the
+    /// stepper and an async step's breakpoints at an await. One whose condition is false, or a tracepoint, leaves it going.</summary>
+    private void EndStepForStop()
+    {
+        _asyncStepper?.Disable();
+        if (_stepper is not null)
+        {
+            _stepper.Deactivate();
+            _stepper = null;
+        }
     }
 
     /// <summary>An event that came while an evaluation ran: the evaluated code's own is let go, since an evaluation never
