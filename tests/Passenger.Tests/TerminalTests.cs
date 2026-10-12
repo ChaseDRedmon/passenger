@@ -1,6 +1,11 @@
+using System.Diagnostics;
+using System.Globalization;
+using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
+using Avalonia.Input.Platform;
+using Avalonia.Threading;
 using Passenger.App;
 using Passenger.Terminal;
 
@@ -8,7 +13,8 @@ namespace Passenger.Tests;
 
 /// <summary>The terminal as programs use it: the screen reads xterm's sequences as xterm does (wrapping, scroll regions,
 /// the alternate screen, colours, wide characters, answers to a program's questions, resizing into the scrollback),
-/// and the Terminal window runs a real shell in a pseudo-terminal that takes typed commands and keys ahead of the IDE.</summary>
+/// and the Terminal window runs a real shell in a pseudo-terminal that takes typed commands and keys ahead of the IDE,
+/// whose floods of output and stuck pastes never hold the window, and whose pastes stay text.</summary>
 public sealed class TerminalTests
 {
     [Fact]
@@ -182,6 +188,192 @@ public sealed class TerminalTests
         finally
         {
             Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [AvaloniaFact]
+    public void A_flood_of_output_leaves_the_window_taking_keys_and_Ctrl_C_stops_it()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            // sh, cat and a terminal's own Ctrl+C are Unix's.
+            return;
+        }
+        string folder = Directory.CreateTempSubdirectory("passenger-terminal-").FullName;
+        try
+        {
+            // 50 MB of lines, the last one saying so.
+            using (StreamWriter big = new(Path.Combine(folder, "big.txt")))
+            {
+                string filler = new('x', 86);
+                for (int i = 0; i < 500_000; i++)
+                {
+                    big.Write($"line {i.ToString("D7", CultureInfo.InvariantCulture)} {filler}\n");
+                }
+                big.Write("the end of big.txt\n");
+            }
+            (MainWindow window, TerminalSession shell) = Open(folder, "/bin/sh");
+            using (InputWait waits = new())
+            {
+                window.KeyTextInput("cat big.txt");
+                Ui.Press(window, "ENTER");
+                Ui.WaitFor(() => shell.Screen.ScreenText().Contains("xxxxxxxx", StringComparison.Ordinal), "the file pouring onto the screen");
+                // A second more of the flood, the window running as it does on a desktop.
+                Screenshot.Pump(TimeSpan.FromSeconds(1));
+                waits.Stop();
+                Assert.True(waits.Answered >= 20, $"only {waits.Answered} looks at the window's thread");
+                Assert.True(waits.Longest < TimeSpan.FromMilliseconds(250),
+                    $"a key waited {waits.Longest.TotalMilliseconds:F0} ms for the window while cat's output poured in");
+            }
+
+            // The window falls behind for a moment, as it would drawing a heavy frame: cat waits for it, its output not
+            // read into memory meanwhile, so Ctrl+C still finds it running.
+            Thread.Sleep(2000);
+            Ui.Press(window, "control C");
+            window.KeyTextInput("echo after-$((6*7))");
+            Ui.Press(window, "ENTER");
+            Ui.WaitFor(() => shell.Screen.ScreenText().Contains("after-42", StringComparison.Ordinal), $"the shell's answer after Ctrl+C:\n{shell.Screen.ScreenText()}", TimeSpan.FromSeconds(30));
+            Assert.False(Screen(shell).Contains("the end of big.txt", StringComparison.Ordinal),
+                "cat ran to the end of its 50 MB: Ctrl+C never reached it while the window took the output");
+            window.Close();
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [AvaloniaFact]
+    public void A_paste_into_a_program_that_reads_nothing_leaves_the_window_taking_keys()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            // A Unix pseudo-terminal's input queue holds a kilobyte or so; past that, a write waits for the program.
+            return;
+        }
+        string folder = Directory.CreateTempSubdirectory("passenger-terminal-").FullName;
+        try
+        {
+            (MainWindow window, TerminalSession shell) = Open(folder, "/bin/sh");
+            window.KeyTextInput("sleep 30");
+            Ui.Press(window, "ENTER");
+            Ui.WaitFor(() => shell.Screen.CursorRow > 0 && shell.Screen.Lines[shell.Screen.CursorRow - 1].Text().Contains("sleep 30", StringComparison.Ordinal),
+                "sleep to start");
+
+            // Far more than the pseudo-terminal holds, while sleep reads none of it.
+            Copy(window, string.Concat(Enumerable.Range(0, 2000).Select(i => $"echo pasted {i}\n")));
+            Stopwatch pasting = Stopwatch.StartNew();
+            Ui.Press(window, PasteKey);
+            Assert.True(pasting.Elapsed < TimeSpan.FromSeconds(1), $"the paste held the window for {pasting.ElapsedMilliseconds} ms");
+            // What the pseudo-terminal took it echoes, so the paste did go.
+            Ui.WaitFor(() => Screen(shell).Contains("echo pasted 0", StringComparison.Ordinal), "the start of the paste echoed", TimeSpan.FromSeconds(10));
+
+            // The window still takes the IDE's keys: Shift+Escape hides the terminal.
+            Ui.Press(window, "shift ESCAPE");
+            Assert.False(window.DockHost.IsShown("terminal"), "the terminal is still shown after Shift+Escape");
+            window.Close();
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [AvaloniaFact]
+    public void A_paste_cannot_end_its_own_bracket_and_run_the_line_after_it()
+    {
+        if (!File.Exists("/bin/zsh"))
+        {
+            // zsh's line editor brackets pastes (as the Mac's own shell, it is always there on a Mac).
+            return;
+        }
+        string folder = Directory.CreateTempSubdirectory("passenger-terminal-").FullName;
+        try
+        {
+            (MainWindow window, TerminalSession shell) = Open(folder, "/bin/zsh", "-f");
+            Ui.WaitFor(() => shell.Screen.BracketedPaste, "zsh to ask for bracketed pastes");
+
+            // A clipboard that ends the bracket itself, then a line to run, as a web page can put there.
+            Copy(window, "echo a\x1b[201~\rtouch hacked\n");
+            Ui.Press(window, PasteKey);
+            Ui.WaitFor(() => shell.Screen.ScreenText().Contains("touch hacked", StringComparison.Ordinal), $"the paste in zsh's line:\n{shell.Screen.ScreenText()}");
+
+            // The paste is text in the line being edited, which Ctrl+C throws away; anything run would have run by the answer.
+            Ui.Press(window, "control C");
+            window.KeyTextInput("echo checked-$((6*7))");
+            Ui.Press(window, "ENTER");
+            Ui.WaitFor(() => shell.Screen.ScreenText().Contains("checked-42", StringComparison.Ordinal), $"zsh's answer:\n{shell.Screen.ScreenText()}");
+            Assert.False(File.Exists(Path.Combine(folder, "hacked")), "the paste ended its own bracket and ran the line after it");
+            window.Close();
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    /// <summary>The window over a folder, its Terminal open on a shell of the test's and the keys going to it.</summary>
+    private static (MainWindow Window, TerminalSession Shell) Open(string folder, string shell, params string[] arguments)
+    {
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(folder);
+        window.TerminalPanel.Shell = (shell, arguments);
+        Ui.Run(window, AppActions.ShowTerminal);
+        Ui.WaitFor(() => window.TerminalPanel.Active is { IsRunning: true }, "the shell to start");
+        Ui.WaitFor(() => window.TerminalPanel.View.IsFocused, "the keys to go to the terminal");
+        Ui.WaitFor(() => window.TerminalPanel.Active!.Screen.CursorColumn > 0, "the shell's prompt");
+        return (window, window.TerminalPanel.Active!);
+    }
+
+    /// <summary>The terminal's Paste: Cmd+V on the Mac, Ctrl+Shift+V elsewhere.</summary>
+    private static string PasteKey => OperatingSystem.IsMacOS() ? "meta V" : "control shift V";
+
+    private static void Copy(TopLevel window, string text)
+    {
+        Task copied = window.Clipboard!.SetTextAsync(text);
+        while (!copied.IsCompleted)
+        {
+            Ui.Settle();
+        }
+    }
+
+    /// <summary>How long a key waits for the window's thread: work posted at input's priority every 20 ms, as the
+    /// platform's keys wait for the thread between jobs, the longest wait kept until <see cref="Stop"/>.</summary>
+    private sealed class InputWait : IDisposable
+    {
+        private volatile bool stopped;
+
+        public InputWait()
+        {
+            _ = Task.Run(async () =>
+            {
+                while (!stopped)
+                {
+                    long posted = Stopwatch.GetTimestamp();
+                    Dispatcher.UIThread.Post(() => Answer(Stopwatch.GetElapsedTime(posted)), DispatcherPriority.Input);
+                    await Task.Delay(20);
+                }
+            });
+        }
+
+        public TimeSpan Longest { get; private set; }
+
+        public int Answered { get; private set; }
+
+        /// <summary>Stops measuring, on the window's thread, so a wait while it is not running never counts.</summary>
+        public void Stop() => stopped = true;
+
+        public void Dispose() => Stop();
+
+        private void Answer(TimeSpan waited)
+        {
+            if (stopped)
+            {
+                return;
+            }
+            Answered++;
+            Longest = waited > Longest ? waited : Longest;
         }
     }
 
