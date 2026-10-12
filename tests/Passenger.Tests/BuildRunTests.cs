@@ -251,6 +251,33 @@ public sealed class BuildRunTests : IDisposable
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void A_web_project_is_a_run_configuration_and_runs_though_its_file_names_no_output_type()
+    {
+        // As dotnet new web writes it: the Web SDK makes it an executable, the project file never says so.
+        Write("Sample.slnx", "<Solution>\n  <Project Path=\"src/Hello/Hello.csproj\" />\n  <Project Path=\"src/Site/Site.csproj\" />\n</Solution>\n");
+        Write("src/Site/Site.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Web\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
+        Write("src/Site/Program.cs", "WebApplication app = WebApplication.Create(args);\napp.Urls.Add(\"http://127.0.0.1:0\");\napp.MapGet(\"/\", () => \"Hello\");\napp.Run();\n");
+        using (Process restore = Process.Start(new ProcessStartInfo("dotnet", ["restore", Path.Combine(folder, "src", "Site")]) { RedirectStandardOutput = true, RedirectStandardError = true })!)
+        {
+            restore.WaitForExit();
+        }
+        MainWindow window = Open();
+        Assert.Equal(["Hello", "Site"], window.Configurations.Select(c => c.Name));
+        try
+        {
+            Assert.True(window.SelectConfiguration("Site"));
+            window.Perform(AppActions.RunProgram);
+            Ui.WaitFor(() => Output(window).Contains("Now listening on: http://127.0.0.1:", StringComparison.Ordinal), "the site to listen", TimeSpan.FromMinutes(2));
+        }
+        finally
+        {
+            window.Perform(AppActions.Stop);
+            Ui.WaitFor(() => !window.Runner.IsRunning, "the site to stop");
+            window.Close();
+        }
+    }
+
     private static string RunToEnd(MainWindow window)
     {
         if (!window.Runner.IsRunning)
