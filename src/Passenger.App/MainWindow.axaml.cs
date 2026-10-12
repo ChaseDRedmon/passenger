@@ -247,6 +247,7 @@ public partial class MainWindow : Window
         Closing += (_, _) => _ = debug.StopAsync();
         AddFind();
         AddProblems();
+        AddMainMenu();
         UpdateStatus();
     }
 
@@ -600,6 +601,9 @@ public partial class MainWindow : Window
                 break;
             case AppActions.Open:
                 _ = PickFolder();
+                break;
+            case AppActions.Exit:
+                Close();
                 break;
             case AppActions.Save:
                 Editors.SaveActive();

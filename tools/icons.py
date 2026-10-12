@@ -62,6 +62,7 @@ ICONS = [
     ("Tests", "Beaker", "20_regular"),
     ("Commit", "Checkmark", "20_regular"),
     ("Check", "Checkmark", "16_regular"),
+    ("Menu", "Line Horizontal 3", "20_regular"),
     ("Rollback", "Arrow Undo", "20_regular"),
     ("Push", "Arrow Upload", "20_regular"),
     ("Diff", "Split Vertical", "20_regular"),

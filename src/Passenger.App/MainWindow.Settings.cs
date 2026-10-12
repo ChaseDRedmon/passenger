@@ -45,6 +45,10 @@ public partial class MainWindow
         AppActions.UserShortcuts = next.Shortcuts;
         keys.Keymap = AppActions.Keymap();
         keys.Reset();
+        if (menuBar is not null)
+        {
+            BuildMenuBar();
+        }
         foreach (Editors.EditorGroup group in Editors.Groups)
         {
             ApplyTo(group.Editor, next);

@@ -1,4 +1,5 @@
 using Avalonia;
+using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 
@@ -29,6 +30,13 @@ public partial class App : Application
                 }
             };
             desktop.MainWindow = window;
+            if (OperatingSystem.IsMacOS())
+            {
+                // The application menu's own items, as Rider's: Settings (Cmd+,) beside About and Quit.
+                NativeMenuItem settings = new("Settings...") { Gesture = new Avalonia.Input.KeyGesture(Avalonia.Input.Key.OemComma, Avalonia.Input.KeyModifiers.Meta) };
+                settings.Click += (_, _) => window.Perform(AppActions.ShowSettings);
+                NativeMenu.SetMenu(this, new NativeMenu { Items = { settings } });
+            }
         }
         base.OnFrameworkInitializationCompleted();
     }

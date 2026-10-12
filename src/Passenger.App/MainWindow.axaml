@@ -17,6 +17,10 @@
                 PointerPressed="OnToolbarPressed">
             <DockPanel Name="ToolbarContent" Margin="8,0">
                 <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
+                    <!-- Rider's main menu behind a button, where the system has no menu bar of its own. -->
+                    <Button Name="MenuButton" Classes="tool" ToolTip.Tip="Main menu" Click="OnMenuClicked">
+                        <PathIcon Data="{StaticResource Icon.Menu}" />
+                    </Button>
                     <Button Classes="widget" ToolTip.Tip="Open a solution, project or folder" Click="OnOpenClicked">
                         <StackPanel Orientation="Horizontal" Spacing="7">
                             <Border Name="ProjectBadge" IsVisible="False" Width="20" Height="20" CornerRadius="4"

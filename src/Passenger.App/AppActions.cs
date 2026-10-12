@@ -7,6 +7,7 @@ namespace Passenger.App;
 public static class AppActions
 {
     public const string Open = "app.open";
+    public const string Exit = "app.exit";
     public const string Save = "app.save";
     public const string SaveAll = "app.saveAll";
     public const string CloseTab = "app.closeTab";
