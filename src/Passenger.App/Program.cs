@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Avalonia;
+using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Styling;
 
 namespace Passenger.App;
@@ -41,9 +42,13 @@ internal static class Program
         {
             return Screenshot.Run(options, screenshot);
         }
-        return BuildAvaloniaApp()
+        IClassicDesktopStyleApplicationLifetime? desktop = null;
+        int code = BuildAvaloniaApp()
             .AfterSetup(builder => ApplyTheme(builder.Instance!, options.Theme))
-            .StartWithClassicDesktopLifetime(args);
+            .StartWithClassicDesktopLifetime(args, lifetime => desktop = lifetime);
+        // The loop has stopped with the window; what it ended as it closed (the debugger, Roslyn) still has a moment.
+        (desktop?.MainWindow as MainWindow)?.Ended?.Wait();
+        return code;
     }
 
     public static void ApplyTheme(Application app, ThemeChoice? theme)

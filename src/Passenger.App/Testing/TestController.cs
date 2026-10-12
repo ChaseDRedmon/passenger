@@ -201,11 +201,14 @@ public sealed class TestController : IAsyncDisposable
         runner?.Cancel();
     }
 
-    public async ValueTask DisposeAsync()
+    /// <summary>Ends vstest.console on a worker thread, since its end waits for the process; it needs no UI thread, so the
+    /// process can wait for it once the window's loop has stopped.</summary>
+    public ValueTask DisposeAsync()
     {
-        await Task.Yield();
-        runner?.Dispose();
+        UiThread.Check();
+        TestRunner? ending = runner;
         runner = null;
+        return ending is null ? ValueTask.CompletedTask : new ValueTask(Task.Run(ending.Dispose));
     }
 
     private async Task<string?> DiscoverCore(string workspace)

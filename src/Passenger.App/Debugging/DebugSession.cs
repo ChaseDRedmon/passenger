@@ -28,7 +28,7 @@ public sealed class DebugSession
     private readonly Queue<string> errors = new();
     private readonly TaskCompletionSource errorsRead = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private (string Path, int Line)? runToCursor;
-    private bool killed;
+    private volatile bool killed;
 
     private DebugSession(BreakpointStore breakpoints, Action<string> log)
     {
@@ -109,6 +109,9 @@ public sealed class DebugSession
     public string? Failure { get; private set; }
 
     public string Program { get; private set; } = string.Empty;
+
+    /// <summary>The adapter's process, for a test to see it gone.</summary>
+    public int AdapterProcessId => adapter.Id;
 
     /// <summary>Starts the adapter and launches a program under it (an apphost or a .dll run under
     /// dotnet), with the breakpoints the store has, stopping on exceptions the user's code leaves
@@ -202,20 +205,34 @@ public sealed class DebugSession
         {
             return;
         }
+        await EndProcessesAsync(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(3));
+        End(ExitCode);
+    }
+
+    /// <summary>Ends the program and the adapter as the IDE closes, on a worker thread, so the process can wait for it
+    /// once the window's loop has stopped; the session's state, which nothing will show, is left as it is.</summary>
+    public Task CloseAsync()
+    {
+        UiThread.Check();
+        return State == DebugState.Ended ? Task.CompletedTask : Task.Run(() => EndProcessesAsync(TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2)));
+    }
+
+    /// <summary>Asks the adapter to end the program and itself, and kills both when it has not gone in time.</summary>
+    private async Task EndProcessesAsync(TimeSpan answer, TimeSpan exit)
+    {
         try
         {
-            using CancellationTokenSource limit = new(TimeSpan.FromSeconds(5));
+            using CancellationTokenSource limit = new(answer);
             await connection.RequestAsync("disconnect", new DisconnectArguments(TerminateDebuggee: true), limit.Token);
         }
         catch (Exception error) when (error is DapException or OperationCanceledException)
         {
         }
-        if (!adapter.WaitForExit(TimeSpan.FromSeconds(3)))
+        if (!adapter.WaitForExit(exit))
         {
             killed = true;
             adapter.Kill(entireProcessTree: true);
         }
-        End(ExitCode);
     }
 
     /// <summary>The adapter's process ended: with exit code 0 as asked, or killed when it would not go; any other end is

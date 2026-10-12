@@ -221,8 +221,11 @@ public sealed class CSharpService : IAsyncDisposable
 
     public CSharpDocument? For(OpenDocument document) => documents.GetValueOrDefault(document);
 
-    public async ValueTask DisposeAsync()
+    /// <summary>Lets the open files go and ends the server. The server's end (shutdown, exit, a kill when it will not go)
+    /// runs on a worker thread, so the process can wait for it once the window's loop has stopped.</summary>
+    public ValueTask DisposeAsync()
     {
+        UiThread.Check();
         disposed = true;
         analysing?.Cancel();
         starting?.Cancel();
@@ -231,10 +234,8 @@ public sealed class CSharpService : IAsyncDisposable
             features.Dispose();
         }
         documents.Clear();
-        if (session is not null)
-        {
-            await session.DisposeAsync();
-        }
+        RoslynSession? ending = session;
+        return ending is null ? ValueTask.CompletedTask : new ValueTask(Task.Run(() => ending.DisposeAsync().AsTask()));
     }
 
     private async Task Run(WorkspaceModel opening, CancellationToken cancel)

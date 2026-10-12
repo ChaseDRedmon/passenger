@@ -34,7 +34,6 @@ public partial class MainWindow
         profilerView.OpenRequested += (_, method) => _ = OpenMethodAsync(method);
         profilerView.OpenSnapshotRequested += (_, _) => _ = PickSnapshotAsync();
         profilerView.MemoryRequested += (_, _) => _ = MemorySnapshotAsync();
-        Closing += (_, _) => profiling?.Kill();
     }
 
     /// <summary>Builds, then starts the chosen configuration under the profiler from its first instruction, as Rider's

@@ -58,7 +58,9 @@ public static class Screenshot
         }
 
         double elapsed = Stopwatch.GetElapsedTime(Program.StartedAt).TotalMilliseconds;
+        // A program or a build the steps started ends with the window, as it does with the person's.
         window.Close();
+        window.Ended?.Wait();
         if (!settled)
         {
             // The picture is kept to show what was still going on, but it is not the settled window.

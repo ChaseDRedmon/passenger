@@ -93,8 +93,9 @@ public static class McpHost
         });
         // The UI thread runs the dispatcher's loop, timers and all, until the agent goes.
         Dispatcher.UIThread.MainLoop(done.Token);
-        _ = window.Debugger.StopAsync();
+        // What the agent left running (a program, a debugger) ends with the window, as it does with the person's.
         window.Close();
+        window.Ended?.Wait();
         return 0;
     }
 

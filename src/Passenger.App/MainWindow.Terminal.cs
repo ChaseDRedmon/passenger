@@ -28,7 +28,6 @@ public partial class MainWindow
                 Editors.CodeEditor.Focus();
             }
         };
-        Closing += (_, _) => _ = terminal.CloseAllAsync();
     }
 
     /// <summary>The terminal's shortcut: to the terminal from anywhere, and back to the editor from the terminal.</summary>

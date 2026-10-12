@@ -72,6 +72,7 @@ public partial class MainWindow : Window
         AddConflicts();
         AddErrors();
         AddAgents();
+        AddShutdown();
         Explorer.FileOpened += (_, path) => OpenFile(path);
         Structure.Follow(() => Editors.Active is { } shown
             ? (shown.Path, csharp?.For(shown)?.Lsp, Editors.CodeEditor.CaretPosition.Line)
@@ -152,7 +153,6 @@ public partial class MainWindow : Window
                 debug.Breakpoints.Toggle(active.Path, click.Line);
             }
         });
-        Closing += (_, _) => _ = csharp?.DisposeAsync();
         Closing += (_, _) => watcher?.Dispose();
         assist = new CodeAssist(Editors, Editors.AssistLayer, () => csharp);
         assist.Navigate += (_, target) => NavigateTo(target.Path, target.Position);
@@ -192,7 +192,6 @@ public partial class MainWindow : Window
             Bottom.Tests.Status = message;
         };
         tests.LaunchUnderDebugger = LaunchTestHost;
-        Closing += (_, _) => _ = tests.DisposeAsync();
         DispatcherTimer marksTimer = new() { Interval = TimeSpan.FromMilliseconds(150) };
         marksTimer.Tick += (_, _) =>
         {
@@ -265,7 +264,6 @@ public partial class MainWindow : Window
         debug.Navigate += (_, target) => ShowStop(target.Path, target.Position);
         debug.StateChanged += (_, _) => OnDebugStateChanged();
         assist.DebuggerValue = debug.ValueAt;
-        Closing += (_, _) => _ = debug.StopAsync();
         AddFind();
         AddProblems();
         AddMainMenu();

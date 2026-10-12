@@ -337,6 +337,79 @@ public sealed class BuildRunTests : IDisposable
         }
     }
 
+    [AvaloniaFact]
+    public void A_program_still_running_when_the_window_closes_ends_with_it()
+    {
+        string started = Path.Combine(folder, "program.pid");
+        Write("src/Hello/Program.cs", $"File.WriteAllText(@\"{started}\", Environment.ProcessId.ToString());\nThread.Sleep(Timeout.Infinite);\n");
+        MainWindow window = Open();
+        window.Perform(AppActions.RunProgram);
+        AssertEndsWithTheWindow(window, started, "the program Run started");
+    }
+
+    [AvaloniaFact]
+    public void With_hot_reload_the_program_and_its_watcher_end_when_the_window_closes()
+    {
+        string started = Path.Combine(folder, "program.pid");
+        Write("src/Hello/Program.cs", $"File.WriteAllText(@\"{started}\", Environment.ProcessId.ToString());\nwhile (true)\n{{\n    Thread.Sleep(200);\n}}\n");
+        MainWindow window = Open();
+        window.ApplySettings(window.Settings with { HotReload = true });
+        try
+        {
+            window.Perform(AppActions.RunProgram);
+            AssertEndsWithTheWindow(window, started, "the program dotnet watch started");
+        }
+        finally
+        {
+            window.ApplySettings(new Passenger.App.Settings.AppSettings());
+        }
+    }
+
+    [AvaloniaFact]
+    public void A_build_still_running_when_the_window_closes_ends_with_it()
+    {
+        // A step of the build that would run for ten minutes, as a slow tool or a hung test would: its process names itself.
+        Write("src/Hello/Hello.csproj", """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <OutputType>Exe</OutputType>
+                <TargetFramework>net10.0</TargetFramework>
+                <ImplicitUsings>enable</ImplicitUsings>
+              </PropertyGroup>
+              <Target Name="Linger" BeforeTargets="Build" Condition="'$(DesignTimeBuild)' != 'true'">
+                <Exec Condition="'$(OS)' != 'Windows_NT'" Command="echo $$ &gt; build.pid; exec sleep 600" />
+                <Exec Condition="'$(OS)' == 'Windows_NT'" Command="powershell -NoProfile -Command &quot;Set-Content -Path build.pid -Value $PID; Start-Sleep -Seconds 600&quot;" />
+              </Target>
+            </Project>
+            """);
+        MainWindow window = Open();
+        window.Perform(AppActions.Build);
+        AssertEndsWithTheWindow(window, Path.Combine(folder, "src", "Hello", "build.pid"), "the build's step");
+    }
+
+    /// <summary>Waits for a process the window started to write its id to a file, closes the window, and checks that the
+    /// process, and so whatever it holds (a port, its files, a watch on the sources), is gone, and that the IDE's process
+    /// may end: the window's end finishes within its limit. Whatever a failure leaves running is ended.</summary>
+    private static void AssertEndsWithTheWindow(MainWindow window, string idFile, string what)
+    {
+        int process = 0;
+        try
+        {
+            process = Processes.WrittenId(idFile, $"{what} to start");
+            int command = window.Runner.IsRunning ? window.Runner.ProcessId ?? 0 : 0;
+            window.Close();
+            Assert.True(window.Ended?.Wait(MainWindow.EndLimit + TimeSpan.FromSeconds(5)), "The window closed without ending what it started within its limit, so the IDE's process would not end");
+            Assert.True(Processes.Gone(process), $"After the window closed, {what} went on running, holding what it held for the next run");
+            Assert.True(Processes.Gone(command), $"After the window closed, the dotnet command that started {what} went on running (dotnet watch would start it again on a save)");
+        }
+        finally
+        {
+            Processes.Kill(process);
+            window.Perform(AppActions.Stop);
+            Ui.WaitFor(() => !window.Runner.IsRunning && !window.IsBuilding, "the window to hear the run and the build end");
+        }
+    }
+
     private static string RunToEnd(MainWindow window)
     {
         if (!window.Runner.IsRunning)

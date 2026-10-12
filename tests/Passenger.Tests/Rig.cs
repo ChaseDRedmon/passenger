@@ -298,3 +298,81 @@ public static class Ui
         return raw;
     }
 }
+
+/// <summary>Programs the IDE started for a test, by id, as a process list would show them.</summary>
+public static class Processes
+{
+    /// <summary>The id a program wrote to a file once it was running, the window's loop running meanwhile (not settling,
+    /// which a build under way would not let it do).</summary>
+    public static int WrittenId(string file, string what)
+    {
+        DateTime until = DateTime.UtcNow.AddMinutes(2);
+        int id;
+        while (!int.TryParse(ReadShared(file).Trim(), out id) || id <= 0)
+        {
+            if (DateTime.UtcNow > until)
+            {
+                throw new TimeoutException($"Waited 2 minutes for {what}");
+            }
+            Passenger.App.Screenshot.Pump(TimeSpan.FromMilliseconds(50));
+        }
+        return id;
+
+        // The writer may still have it open, which Windows refuses a reader.
+        static string ReadShared(string file)
+        {
+            try
+            {
+                return File.Exists(file) ? File.ReadAllText(file) : string.Empty;
+            }
+            catch (IOException)
+            {
+                return string.Empty;
+            }
+        }
+    }
+
+    public static bool IsRunning(int id)
+    {
+        if (id <= 0)
+        {
+            return false;
+        }
+        try
+        {
+            using System.Diagnostics.Process process = System.Diagnostics.Process.GetProcessById(id);
+            return !process.HasExited;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Whether a process has gone within a few seconds, the time a killed one may take to leave the list.</summary>
+    public static bool Gone(int id)
+    {
+        DateTime until = DateTime.UtcNow.AddSeconds(15);
+        while (IsRunning(id) && DateTime.UtcNow < until)
+        {
+            Thread.Sleep(100);
+        }
+        return !IsRunning(id);
+    }
+
+    /// <summary>Ends what a failed test left running, its children with it.</summary>
+    public static void Kill(int id)
+    {
+        try
+        {
+            if (IsRunning(id))
+            {
+                using System.Diagnostics.Process left = System.Diagnostics.Process.GetProcessById(id);
+                left.Kill(entireProcessTree: true);
+            }
+        }
+        catch (Exception gone) when (gone is ArgumentException or InvalidOperationException)
+        {
+        }
+    }
+}

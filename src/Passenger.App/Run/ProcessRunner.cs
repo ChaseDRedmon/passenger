@@ -35,6 +35,9 @@ public sealed partial class ProcessRunner
     /// <summary>Whether the last run ended because Stop was pressed.</summary>
     public bool WasStopped { get; private set; }
 
+    /// <summary>The process last started (dotnet run, dotnet watch, a build), for a test to see it gone.</summary>
+    public int? ProcessId => process?.Id;
+
     /// <summary>Starts the .NET command line; why it could not, or null once it runs.</summary>
     public string? StartDotnet(IReadOnlyList<string> arguments, string folder, IReadOnlyDictionary<string, string>? environment = null)
     {

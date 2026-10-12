@@ -380,6 +380,36 @@ public sealed class DebuggerTests : IDisposable
         }
     }
 
+    [AvaloniaFact]
+    public void Closing_the_window_while_debugging_leaves_no_program_debugger_or_language_server_running()
+    {
+        string started = Path.Combine(folder, "program.pid");
+        Write("Program.cs", $"File.WriteAllText(@\"{started}\", Environment.ProcessId.ToString());\nThread.Sleep(Timeout.Infinite);\n");
+        MainWindow window = Open();
+        int debuggee = 0;
+        int adapter = 0;
+        int server = window.CSharpService?.Session?.Server.ProcessId ?? throw new InvalidOperationException("The language server did not start");
+        try
+        {
+            Ui.Run(window, AppActions.Debug);
+            debuggee = Processes.WrittenId(started, "the program to run under the debugger");
+            Ui.WaitFor(() => window.Debugger.Session is { State: DebugState.Running }, "the session to say the program runs");
+            adapter = window.Debugger.Session!.AdapterProcessId;
+            window.Close();
+
+            // The IDE's process waits for these before it ends, a few seconds at most.
+            Assert.True(window.Ended?.Wait(MainWindow.EndLimit + TimeSpan.FromSeconds(5)), "The window closed without ending what it started within its limit, so the IDE's process would not end");
+            Assert.True(Processes.Gone(debuggee), "After the window closed, the program being debugged went on running");
+            Assert.True(Processes.Gone(adapter), "After the window closed, the debugger went on running");
+            Assert.True(Processes.Gone(server), "After the window closed, the language server went on running until the IDE's own end");
+        }
+        finally
+        {
+            Processes.Kill(debuggee);
+            Processes.Kill(adapter);
+        }
+    }
+
     private MainWindow Open()
     {
         MainWindow window = new() { Width = 1200, Height = 800 };

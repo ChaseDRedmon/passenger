@@ -14,6 +14,9 @@ public sealed class PackageManager
     /// <summary>What .NET says of a file Windows would not open because another program had it open.</summary>
     private const string InUse = "being used by another process";
 
+    private Process? running;
+    private bool stopped;
+
     /// <summary>A line the command printed, for the NuGet window's log; raised on the UI thread.</summary>
     public event EventHandler<string>? Line;
 
@@ -22,6 +25,21 @@ public sealed class PackageManager
         RunAsync(["add", project, "package", id, "--version", version]);
 
     public Task<bool> RemoveAsync(string project, string id) => RunAsync(["remove", project, "package", id]);
+
+    /// <summary>Ends a change still under way, its whole process tree, as the IDE closes.</summary>
+    public void Stop()
+    {
+        UiThread.Check();
+        stopped = true;
+        try
+        {
+            running?.Kill(entireProcessTree: true);
+        }
+        catch (InvalidOperationException)
+        {
+            // It ended on its own as the IDE closed.
+        }
+    }
 
     private async Task<bool> RunAsync(IReadOnlyList<string> arguments)
     {
@@ -53,7 +71,7 @@ public sealed class PackageManager
         {
             Line?.Invoke(this, command);
             (bool succeeded, bool fileInUse) = await RunOnceAsync(start);
-            if (succeeded || !fileInUse || attempt == Attempts)
+            if (succeeded || !fileInUse || attempt == Attempts || stopped)
             {
                 return succeeded;
             }
@@ -77,13 +95,21 @@ public sealed class PackageManager
             Line?.Invoke(this, $"Could not start dotnet: {failed.Message}");
             return (false, false);
         }
-        using Process running = process;
+        running = process;
         bool fileInUse = false;
-        Task output = Pump(process.StandardOutput);
-        Task error = Pump(process.StandardError);
-        await process.WaitForExitAsync();
-        await Task.WhenAll(output, error);
-        return (process.ExitCode == 0, fileInUse);
+        try
+        {
+            Task output = Pump(process.StandardOutput);
+            Task error = Pump(process.StandardError);
+            await process.WaitForExitAsync();
+            await Task.WhenAll(output, error);
+            return (process.ExitCode == 0, fileInUse);
+        }
+        finally
+        {
+            running = null;
+            process.Dispose();
+        }
 
         async Task Pump(StreamReader reader)
         {

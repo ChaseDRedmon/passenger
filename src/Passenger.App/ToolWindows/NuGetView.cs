@@ -196,6 +196,9 @@ public sealed class NuGetView : DockPanel
     public Task<bool> RemoveAsync(ProjectModel project) =>
         Selected is { } row ? ChangeAsync(() => manager.RemoveAsync(project.Path, row.Id)) : Task.FromResult(false);
 
+    /// <summary>Ends a package change still under way, as the IDE closes.</summary>
+    public void StopChange() => manager.Stop();
+
     private async Task<bool> ChangeAsync(Func<Task<bool>> change)
     {
         if (busy)

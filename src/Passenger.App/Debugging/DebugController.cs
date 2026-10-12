@@ -115,6 +115,13 @@ public sealed class DebugController
         }
     }
 
+    /// <summary>Ends the session's program and adapter as the IDE closes (<see cref="DebugSession.CloseAsync"/>).</summary>
+    public Task CloseAsync()
+    {
+        UiThread.Check();
+        return Session?.CloseAsync() ?? Task.CompletedTask;
+    }
+
     /// <summary>Runs one of the debugger's actions (<c>app.debug.*</c>) on the active editor and the
     /// session. Resume without a session is the caller's Debug, as F5 is in Visual Studio's keymap.</summary>
     public void Run(string action)
