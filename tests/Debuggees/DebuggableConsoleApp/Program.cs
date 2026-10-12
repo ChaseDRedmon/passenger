@@ -1,0 +1,47 @@
+using DebuggableConsoleApp.Lambdas;
+using DebuggableConsoleApp.Namespace2;
+
+namespace DebuggableConsoleApp;
+
+public static class Program
+{
+	public static void Main(string[] args)
+	{
+		Console.WriteLine("DebuggableConsoleApp is running");
+		Console.WriteLine("Log2");
+		var myLambdaClass = new MyLambdaClass();var myClassWithGenericMethod = new MyClassWithGenericMethod();
+		var myClass = new MyClass();
+		var myAsyncClass = new MyAsyncClass();
+		var myAsyncMethodEvalClass = new AsyncMethodEvalClass();
+		var myClassNoMembers = new MyClassNoMembers();
+		var hitConditionClass = new HitConditionClass();
+		var variablesClass = new VariablesClass();
+		var columnBreakpointClass = new ColumnBreakpointClass();
+		var exceptionToThrow = ExceptionToThrow.None;
+		while (true)
+		{
+			// Keep the application running to allow debugging
+			myLambdaClass.Test();
+			myClass.MyMethod(13, 6);
+			myClassNoMembers.MyMethod(42);
+			hitConditionClass.Test();
+			variablesClass.Test();
+			columnBreakpointClass.Test();
+			MultilineSwitchInMethodCall.Test();
+			ClassWithBclCall.Test(4);
+			var asyncResult = myAsyncClass.MyMethodAsync(4).GetAwaiter().GetResult();
+			myAsyncMethodEvalClass.Test().GetAwaiter().GetResult();
+			Exceptions.Test(exceptionToThrow);
+			MyGenericClassContainingAnotherGenericClass<int, string>.MyNestedGenericClass<double, bool>.Test();
+			SameNamedClass.Test();
+			Namespace3.SameNamedClass.Test();
+			OverloadedMethodsClass.CallAllMethods();
+			MyStaticClass.Test();
+			myLambdaClass.VariableShadowingMethod();
+			myClassWithGenericMethod.Test(4);
+			AsyncStackTraceClass.TestAsync().GetAwaiter().GetResult();
+			Thread.Sleep(100);
+			//await Task.Delay(500);
+		}
+	}
+}

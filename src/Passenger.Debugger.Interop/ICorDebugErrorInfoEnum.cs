@@ -1,0 +1,28 @@
+using System.CodeDom.Compiler;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.Marshalling;
+
+namespace ICorDebugSharp;
+
+/// <summary>
+/// <para><c>ICorDebugErrorInfoEnum</c> is obsolete. Do not use this interface.</para>
+/// </summary>
+/// <remarks>
+/// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugerrorinfoenum-interface">Microsoft Learn</see>.</para>
+/// </remarks>
+[GeneratedComInterface]
+[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+[Guid("F0E18809-72B5-11D2-976F-00A0C9B4D50C")]
+public partial interface ICorDebugErrorInfoEnum : ICorDebugEnum
+{
+	/// <summary>
+	/// <para><c>ICorDebugErrorInfoEnum::Next</c> is obsolete. Do not call this method.</para>
+	/// </summary>
+	/// <remarks>
+	/// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugerrorinfoenum-next-method">Microsoft Learn</see>.</para>
+	/// </remarks>
+	[PreserveSig]
+	int TryNext(uint celt, [Out][MarshalUsing(CountElementName = "celt")] ICorDebugEditAndContinueErrorInfo[] errors, out uint pceltFetched);
+
+}

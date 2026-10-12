@@ -14,6 +14,46 @@ What Passenger uses that others made, and under what terms.
 | roslyn-language-server (Roslyn's language server, copied beside the app under `roslyn/`) | MIT | https://github.com/dotnet/roslyn |
 | StreamJsonRpc | MIT | https://github.com/microsoft/vs-streamjsonrpc |
 
+## SharpDbg and ICorDebugSharp
+
+Passenger's debugger began as a copy of two MIT-licensed projects by Matthew Parker (MattParkerDev), and is
+Passenger's own from there:
+
+- `src/Passenger.Debugger` (the engine), `src/Passenger.DebugAdapter` (its adapter), `tests/Debuggees` and the tests
+  under `tests/Passenger.Tests/Debugging` started from SharpDbg, https://github.com/MattParkerDev/sharpdbg, at commit
+  93b25ac (September 15, 2026).
+- `src/Passenger.Debugger.Interop` (the ICorDebug, IMetaDataImport and dbgshim declarations) started from ICorDebugSharp
+  0.1.8, whose package declares the MIT licence. Its source is not published, so this copy was recovered from the
+  package's assembly with ILSpy, keeping only what its author wrote: the source generators' output was dropped, since
+  the build generates it again. Its declarations were generated from Microsoft's MIT-licensed `cordebug.h` and
+  `cor.h` (https://github.com/dotnet/runtime), and its documentation comments are adapted from the Microsoft .NET
+  documentation (https://github.com/dotnet/docs), licensed under the Creative Commons Attribution 4.0 International
+  Public License (https://creativecommons.org/licenses/by/4.0/), changed from Markdown into XML documentation comments.
+
+```
+MIT License
+
+Copyright (c) 2026 Matthew Parker
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ## JetBrains Mono
 
 `src/Passenger.Editor/Fonts/` holds JetBrains Mono 2.304 (Regular, Bold, Italic, Bold Italic), the

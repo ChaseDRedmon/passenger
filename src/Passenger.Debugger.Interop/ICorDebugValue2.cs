@@ -1,0 +1,30 @@
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.Marshalling;
+
+namespace ICorDebugSharp;
+
+/// <summary>
+/// <para>Extends the "ICorDebugValue" interface to provide support for "ICorDebugType" objects.</para>
+/// </summary>
+/// <remarks>
+/// <para><b>Note:</b> This interface does not support being called remotely, either cross-machine or cross-process.</para>
+/// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugvalue2-interface">Microsoft Learn</see>.</para>
+/// </remarks>
+[GeneratedComInterface]
+[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+[Guid("5E0B54E7-D88A-4626-9420-A691E0A78B49")]
+public partial interface ICorDebugValue2
+{
+	/// <summary>
+	/// <para>Gets an interface pointer to an "ICorDebugType" object that represents the  of this value.</para>
+	/// </summary>
+	/// <param name="ppType">
+	/// <para>A pointer to the address of an <c>ICorDebugType</c> object that represents the  of the value represented by this "ICorDebugValue2" object.</para>
+	/// </param>
+	/// <remarks>
+	/// <para>The generics-aware <c>GetExactType</c> method supersedes both the <see cref="M:ICorDebugSharp.ICorDebugObjectValue.TryGetClass(ICorDebugSharp.ICorDebugClass@)">ICorDebugObjectValue::GetClass</see> and the <see cref="M:ICorDebugSharp.ICorDebugValue.TryGetType(ICorDebugSharp.CorElementType@)">ICorDebugValue::GetType</see> methods, each of which return information about the type of a value.</para>
+	/// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugvalue2-getexacttype-method">Microsoft Learn</see>.</para>
+	/// </remarks>
+	[PreserveSig]
+	int TryGetExactType(out ICorDebugType ppType);
+}

@@ -18,5 +18,7 @@
 
   <ItemGroup>
     <Using Include="Xunit" />
+    <!-- Imported from SharpDbg as they are; the next commit ports them. -->
+    <Compile Remove="Debugging/**" />
   </ItemGroup>
 </Project>
