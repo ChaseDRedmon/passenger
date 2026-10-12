@@ -1,0 +1,126 @@
+using System.Buffers;
+using System.Runtime.CompilerServices;
+using Passenger.Text;
+
+namespace Passenger.Lsp;
+
+/// <summary>A snapshot's lines as Roslyn counts them, which every position to and from the server is in: a lone '\r',
+/// U+0085, U+2028 and U+2029 end a line there as '\n' and "\r\n" do, though the editor's lines end only at '\n', so a
+/// server position read as a <see cref="TextPosition"/> lands lines away in a file holding one. Kept per snapshot as
+/// the offsets just past those extra breaks; a file without them converts as the editor's lines do.</summary>
+public sealed class ServerLines
+{
+    private static readonly SearchValues<char> Breaks = SearchValues.Create("\r\u0085\u2028\u2029");
+
+    private static readonly ConditionalWeakTable<TextSnapshot, ServerLines> Known = new();
+
+    /// <summary>The offset just past each break the server counts and the editor does not, in order.</summary>
+    private readonly int[] extra;
+
+    private ServerLines(TextSnapshot text, int[] extra)
+    {
+        Text = text;
+        this.extra = extra;
+    }
+
+    public TextSnapshot Text { get; }
+
+    public int LineCount => Text.LineCount + extra.Length;
+
+    /// <summary>The lines of a snapshot, found once and kept with it; safe from any thread.</summary>
+    public static ServerLines Of(TextSnapshot text) => Known.GetValue(text, Find);
+
+    /// <summary>An offset as the server's line and column (UTF-16 units); between the halves of "\r\n" it is the
+    /// column past the '\r', as Roslyn counts it.</summary>
+    public LspPosition PositionOf(int offset)
+    {
+        int line = Text.GetLineFromOffset(offset);
+        int start = Text.GetLineStart(line);
+        int before = Before(offset);
+        if (before > 0)
+        {
+            start = Math.Max(start, extra[before - 1]);
+        }
+        return new LspPosition(line + before, offset - start);
+    }
+
+    public LspRange RangeOf(TextRange range) => new(PositionOf(range.Start), PositionOf(range.End));
+
+    /// <summary>The offset of the server's line and column, the column clamped to the line's content.</summary>
+    public int OffsetOf(LspPosition position) => OffsetOf(position.Line, position.Character);
+
+    public int OffsetOf(int line, int character)
+    {
+        if (extra.Length == 0)
+        {
+            return Text.GetOffset(new TextPosition(line, character));
+        }
+        line = Math.Clamp(line, 0, LineCount - 1);
+        // How many extra breaks come before the line: they and the editor's lines before it add up to its number.
+        int low = 0;
+        int high = extra.Length;
+        while (low < high)
+        {
+            int middle = (low + high) / 2;
+            if (LineAfter(middle) <= line)
+            {
+                low = middle + 1;
+            }
+            else
+            {
+                high = middle;
+            }
+        }
+        LineSpan span = Text.GetLine(line - low);
+        int start = low > 0 && LineAfter(low - 1) == line ? extra[low - 1] : span.Start;
+        int end = low < extra.Length && extra[low] <= span.End ? extra[low] - 1 : span.End;
+        return start + Math.Clamp(character, 0, end - start);
+    }
+
+    /// <summary>The server's line that starts just past an extra break.</summary>
+    private int LineAfter(int index) => Text.GetLineFromOffset(extra[index]) + index + 1;
+
+    /// <summary>How many extra breaks end at or before an offset.</summary>
+    private int Before(int offset)
+    {
+        int found = Array.BinarySearch(extra, offset);
+        return found >= 0 ? found + 1 : ~found;
+    }
+
+    private static ServerLines Find(TextSnapshot text)
+    {
+        List<int> extra = [];
+        int at = 0;
+        bool carriage = false;
+        text.VisitChunks(0, text.Length, chunk =>
+        {
+            ReadOnlySpan<char> span = chunk.Span;
+            // A '\r' that ended the chunk before is a break of its own unless this one starts with its '\n'.
+            if (carriage && span[0] != '\n')
+            {
+                extra.Add(at);
+            }
+            carriage = false;
+            int i = 0;
+            while (i < span.Length && span[i..].IndexOfAny(Breaks) is int found and >= 0)
+            {
+                i += found;
+                if (span[i] != '\r' || (i + 1 < span.Length && span[i + 1] != '\n'))
+                {
+                    extra.Add(at + i + 1);
+                }
+                else if (i + 1 == span.Length)
+                {
+                    carriage = true;
+                }
+                i++;
+            }
+            at += span.Length;
+        });
+        if (carriage)
+        {
+            extra.Add(at);
+        }
+        return new ServerLines(text, [.. extra]);
+    }
+}

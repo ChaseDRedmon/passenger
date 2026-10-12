@@ -92,16 +92,20 @@ public static class WorkspaceEdits
         return asked.Map(Convert(asked.Snapshot, change.Edits)) is { } mapped ? [.. mapped] : null;
     }
 
-    /// <summary>LSP edits as the editor's, in one snapshot's offsets, sorted.</summary>
-    public static List<TextEdit> Convert(TextSnapshot snapshot, IReadOnlyList<LspTextEdit> edits) => edits
-        .Select(e =>
-        {
-            int start = snapshot.GetOffset(new TextPosition(e.Range.Start.Line, e.Range.Start.Character));
-            int end = snapshot.GetOffset(new TextPosition(e.Range.End.Line, e.Range.End.Character));
-            return new TextEdit(start, Math.Max(0, end - start), e.NewText);
-        })
-        .OrderBy(e => e.Start)
-        .ToList();
+    /// <summary>LSP edits as the editor's, in one snapshot's offsets (its lines as the server counts them), sorted.</summary>
+    public static List<TextEdit> Convert(TextSnapshot snapshot, IReadOnlyList<LspTextEdit> edits)
+    {
+        ServerLines lines = ServerLines.Of(snapshot);
+        return edits
+            .Select(e =>
+            {
+                int start = lines.OffsetOf(e.Range.Start);
+                int end = lines.OffsetOf(e.Range.End);
+                return new TextEdit(start, Math.Max(0, end - start), e.NewText);
+            })
+            .OrderBy(e => e.Start)
+            .ToList();
+    }
 
     /// <summary>Why an edit's file operations cannot all be made, found before any is: each is played over what the
     /// ones before it leave. The open files a rename moves are saved now, so one that cannot be stops it here too.</summary>

@@ -268,31 +268,32 @@ public sealed class LspDocument : IDisposable
         return (distinct, version);
     }
 
-    /// <summary>An offset as an LSP position: a line, and a column in UTF-16 units, which is what the
-    /// editor's columns already are.</summary>
-    public LspPosition PositionOf(int offset)
-    {
-        TextPosition position = Text.Snapshot.GetPosition(offset);
-        return new LspPosition(position.Line, position.Column);
-    }
+    /// <summary>An offset as an LSP position: the server's line (<see cref="ServerLines"/>), and a column in UTF-16
+    /// units, which is what the editor's columns already are.</summary>
+    public LspPosition PositionOf(int offset) => ServerLines.Of(Text.Snapshot).PositionOf(offset);
 
-    public LspRange RangeOf(TextRange range) => new(PositionOf(range.Start), PositionOf(range.End));
+    public LspRange RangeOf(TextRange range) => ServerLines.Of(Text.Snapshot).RangeOf(range);
 
-    public int OffsetOf(LspPosition position) => Text.Snapshot.GetOffset(new TextPosition(position.Line, position.Character));
+    public int OffsetOf(LspPosition position) => ServerLines.Of(Text.Snapshot).OffsetOf(position);
 
+    /// <summary>The edits sent last to first, the order an incremental sync is read in, so each change's place in the text
+    /// before the edit is its place in the text the changes sent before it left. Edits that touch go as one change: the
+    /// later one can decide whether a '\r' where they meet ends a line.</summary>
     private void OnChanged(object? sender, DocumentChangedEventArgs e)
     {
-        // Applied last to first, each change is valid in the text the one before left, which is the
-        // order an incremental sync is read in; positions come from the text before the change.
-        TextSnapshot before = e.Before;
+        ServerLines before = ServerLines.Of(e.Before);
         List<TextDocumentContentChangeEvent> changes = [];
-        for (int i = e.Edits.Count - 1; i >= 0; i--)
+        for (int last = e.Edits.Count - 1; last >= 0;)
         {
-            Passenger.Text.TextEdit edit = e.Edits[i];
-            TextPosition start = before.GetPosition(edit.Start);
-            TextPosition end = before.GetPosition(edit.End);
-            changes.Add(new TextDocumentContentChangeEvent(
-                new LspRange(new LspPosition(start.Line, start.Column), new LspPosition(end.Line, end.Column)), edit.Text));
+            int first = last;
+            while (first > 0 && e.Edits[first - 1].End == e.Edits[first].Start)
+            {
+                first--;
+            }
+            TextRange range = TextRange.FromBounds(e.Edits[first].Start, e.Edits[last].End);
+            string text = first == last ? e.Edits[last].Text : string.Concat(e.Edits.Skip(first).Take(last - first + 1).Select(edit => edit.Text));
+            changes.Add(new TextDocumentContentChangeEvent(before.RangeOf(range), text));
+            last = first - 1;
         }
         _ = Server.NotifyAsync("textDocument/didChange", new DidChangeTextDocumentParams(new VersionedTextDocumentIdentifier(Uri, e.Version), changes));
     }

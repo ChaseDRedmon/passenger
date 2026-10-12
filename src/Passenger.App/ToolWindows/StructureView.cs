@@ -116,7 +116,7 @@ public sealed class StructureView : DockPanel
             {
                 return;
             }
-            list.ItemsSource = Flatten(outline, 0, now.Path);
+            list.ItemsSource = Flatten(outline, 0, now.Path, ServerLines.Of(lsp.Text.Snapshot));
             placeholder.IsVisible = Rows.Count == 0;
             Choose(now.CaretLine);
         }
@@ -136,11 +136,12 @@ public sealed class StructureView : DockPanel
         choosing = false;
     }
 
-    /// <summary>The outline as rows, a member's type after its name as Roslyn names it ("Main() : void").</summary>
-    public static IReadOnlyList<SymbolRow> Flatten(IReadOnlyList<DocumentSymbol> symbols, int depth, string path) =>
-        [.. symbols.SelectMany(symbol => (IEnumerable<SymbolRow>)[Row(symbol, depth, path), .. Flatten(symbol.Children ?? [], depth + 1, path)])];
+    /// <summary>The outline as rows, a member's type after its name as Roslyn names it ("Main() : void"), at the editor's
+    /// lines of the text the server's lines are of.</summary>
+    public static IReadOnlyList<SymbolRow> Flatten(IReadOnlyList<DocumentSymbol> symbols, int depth, string path, ServerLines lines) =>
+        [.. symbols.SelectMany(symbol => (IEnumerable<SymbolRow>)[Row(symbol, depth, path, lines), .. Flatten(symbol.Children ?? [], depth + 1, path, lines)])];
 
-    private static SymbolRow Row(DocumentSymbol symbol, int depth, string path)
+    private static SymbolRow Row(DocumentSymbol symbol, int depth, string path, ServerLines lines)
     {
         string name = symbol.Name;
         string? type = string.IsNullOrEmpty(symbol.Detail) || symbol.Detail == symbol.Name ? null : symbol.Detail;
@@ -151,6 +152,6 @@ public sealed class StructureView : DockPanel
             name = name[..typed];
         }
         return new SymbolRow(name, type is null ? null : $": {type}", null, symbol.Kind, path,
-            new TextPosition(symbol.SelectionRange.Start.Line, symbol.SelectionRange.Start.Character), depth, symbol.Range.End.Line);
+            lines.Text.GetPosition(lines.OffsetOf(symbol.SelectionRange.Start)), depth, lines.Text.GetLineFromOffset(lines.OffsetOf(symbol.Range.End)));
     }
 }

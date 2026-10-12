@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using Avalonia;
+using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Passenger.App;
 using Passenger.App.Debugging;
@@ -65,6 +67,30 @@ public sealed class UnitTestsTests : IDisposable
         Assert.Equal(TestState.Passed, Method(window, "Two_and_two_make_four")!.State);
         Assert.Same(five, Method(window, "Two_and_two_make_five")!.Results[0]);
         Assert.Equal(TestState.Failed, Method(window, "Two_and_two_make_five")!.State);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Below_a_comment_holding_line_breaks_only_roslyn_counts_each_tests_icon_and_menu_stay_on_its_line()
+    {
+        // Roslyn counts four more lines in the comment than the editor does.
+        File.WriteAllText(source, File.ReadAllText(source).Replace("public class SumTests",
+            "/* Pasted:\u2028a line separator,\u2029a paragraph separator,\u0085a next line,\ra carriage return. */\npublic class SumTests", StringComparison.Ordinal));
+        MainWindow window = Open();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Assert.Contains(new TestMark(5, TestMarkKind.NotRun), editor.TestMarks);
+        Assert.Contains(new TestMark(8, TestMarkKind.NotRun), editor.TestMarks);
+        Assert.Contains(new TestMark(15, TestMarkKind.NotRun), editor.TestMarks);
+
+        // A right-click on the second test's name offers to run that test, not the one four lines above.
+        int name = editor.Document.Snapshot.ToString().IndexOf("Two_and_two_make_five", StringComparison.Ordinal) + 2;
+        Point at = editor.TranslatePoint(editor.PointOf(name) + new Vector(1, editor.LineHeight / 2), window)!.Value;
+        window.MouseDown(at, Avalonia.Input.MouseButton.Right);
+        window.MouseUp(at, Avalonia.Input.MouseButton.Right);
+        Ui.Settle();
+        Avalonia.Controls.ContextMenu menu = window.OpenContextMenu ?? throw new InvalidOperationException("No context menu opened");
+        Assert.Contains("Run 'Two_and_two_make_five'", menu.Items.OfType<Avalonia.Controls.MenuItem>().Select(i => i.Header as string));
+        menu.Close();
         window.Close();
     }
 

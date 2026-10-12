@@ -1369,7 +1369,7 @@ public partial class MainWindow : Window
         int caretLine = Editors.CodeEditor.CaretPosition.Line;
         Navigation.SymbolPopup popup = new($"File Structure: {active.Name}", "Filter by name, CamelHumps too", async (query, cancel) =>
         {
-            outline ??= Flatten(await lsp.OutlineAsync(cancel), 0, active.Path);
+            outline ??= ToolWindows.StructureView.Flatten(await lsp.OutlineAsync(cancel), 0, active.Path, Lsp.ServerLines.Of(lsp.Text.Snapshot));
             return FilterOutline(outline, query.Trim());
         })
         {
@@ -1385,9 +1385,6 @@ public partial class MainWindow : Window
             }
         };
         ShowPopup(popup);
-
-        static IReadOnlyList<Navigation.SymbolRow> Flatten(IReadOnlyList<Lsp.DocumentSymbol> symbols, int depth, string path) =>
-            ToolWindows.StructureView.Flatten(symbols, depth, path);
     }
 
     private static IReadOnlyList<Navigation.SymbolRow> FilterOutline(IReadOnlyList<Navigation.SymbolRow> outline, string query)
@@ -1550,7 +1547,7 @@ public partial class MainWindow : Window
         {
             return;
         }
-        string text = document.Text.Snapshot.ToString();
+        TextSnapshot text = document.Text.Snapshot;
         List<TestMark> marks = [];
         foreach ((string type, int line) in Testing.TestsAtCaret.DeclaredTypes(text))
         {
@@ -1583,7 +1580,7 @@ public partial class MainWindow : Window
     /// <summary>Rider's menu on a test's run icon: run or debug that test, or all of its class's.</summary>
     private void ShowTestMenu(CodeEditor editor, OpenDocument document, int line)
     {
-        string text = document.Text.Snapshot.ToString();
+        TextSnapshot text = document.Text.Snapshot;
         (string Type, string? Method)? target = Testing.TestsAtCaret.Declared(text).Where(d => d.Line == line).Select(d => ((string, string?)?)(d.Type, d.Method)).FirstOrDefault()
             ?? Testing.TestsAtCaret.DeclaredTypes(text).Where(d => d.Line == line).Select(d => ((string, string?)?)(d.Type, null)).FirstOrDefault();
         if (target is not { } chosen)
@@ -1623,7 +1620,7 @@ public partial class MainWindow : Window
             RunTests(() => tests.RunAsync(folder, chosen, debug));
             return;
         }
-        if (Editors.Active is not { } active || Testing.TestsAtCaret.At(active.Text.Snapshot.ToString(), Editors.CodeEditor.CaretPosition.Line) is not { } context)
+        if (Editors.Active is not { } active || Testing.TestsAtCaret.At(active.Text.Snapshot, Editors.CodeEditor.CaretPosition.Line) is not { } context)
         {
             StatusText.Text = "No test is at the caret";
             return;

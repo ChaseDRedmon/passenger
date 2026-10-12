@@ -762,9 +762,9 @@ public sealed class CodeAssist
             return;
         }
         Selection primary = Editor.Selections.Primary;
-        TextPosition caret = Editor.Document.Snapshot.GetPosition(primary.Caret);
+        int line = lsp.PositionOf(primary.Caret).Line;
         List<Diagnostic> here = current.Diagnostics
-            .Where(d => d.Range.Start.Line <= caret.Line && caret.Line <= d.Range.End.Line)
+            .Where(d => d.Range.Start.Line <= line && line <= d.Range.End.Line)
             .ToList();
         try
         {
@@ -1094,7 +1094,7 @@ public sealed class CodeAssist
         try
         {
             List<Diagnostic> unused = [.. current.Diagnostics.Where(d => d.Code is { ValueKind: System.Text.Json.JsonValueKind.String } code && code.GetString() == "IDE0005")];
-            if (unused.Count > 0 && await ApplyNamed(lsp, LineRange(unused[0].Range.Start.Line), unused, "Remove unnecessary usings"))
+            if (unused.Count > 0 && await ApplyNamed(lsp, LineRange(Editor.Document.Snapshot.GetLineFromOffset(lsp.OffsetOf(unused[0].Range.Start))), unused, "Remove unnecessary usings"))
             {
                 done.Add("removed unused usings");
             }

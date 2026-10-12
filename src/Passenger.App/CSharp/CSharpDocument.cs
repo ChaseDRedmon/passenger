@@ -79,7 +79,9 @@ public sealed class CSharpDocument : IDisposable
         if (Diagnostics.Count > 0)
         {
             // Moved with the text, as the markers are, so a fix asked for at the caret finds the problems on its line.
-            Diagnostics = [.. Diagnostics.Select(d => Moved(d, e))];
+            ServerLines before = ServerLines.Of(e.Before);
+            ServerLines after = ServerLines.Of(e.After);
+            Diagnostics = [.. Diagnostics.Select(d => Moved(d, e.Edits, before, after))];
         }
         if (document.Markers.Count > 0)
         {
@@ -97,15 +99,14 @@ public sealed class CSharpDocument : IDisposable
 
     private void OnSaved(object? sender, EventArgs e) => Lsp?.Saved();
 
-    private static Diagnostic Moved(Diagnostic diagnostic, DocumentChangedEventArgs change)
+    private static Diagnostic Moved(Diagnostic diagnostic, IReadOnlyList<TextEdit> edits, ServerLines before, ServerLines after)
     {
-        TextRange before = TextRange.FromBounds(Offset(change.Before, diagnostic.Range.Start), Offset(change.Before, diagnostic.Range.End));
-        TextRange after = TextEditing.MapRange(before, change.Edits);
-        TextPosition start = change.After.GetPosition(Math.Min(after.Start, change.After.Length));
-        TextPosition end = change.After.GetPosition(Math.Min(after.End, change.After.Length));
+        TextRange was = TextRange.FromBounds(before.OffsetOf(diagnostic.Range.Start), before.OffsetOf(diagnostic.Range.End));
+        TextRange now = TextEditing.MapRange(was, edits);
+        int length = after.Text.Length;
         return new Diagnostic
         {
-            Range = new LspRange(new LspPosition(start.Line, start.Column), new LspPosition(end.Line, end.Column)),
+            Range = new LspRange(after.PositionOf(Math.Min(now.Start, length)), after.PositionOf(Math.Min(now.End, length))),
             Severity = diagnostic.Severity,
             Code = diagnostic.Code,
             Source = diagnostic.Source,
@@ -113,9 +114,6 @@ public sealed class CSharpDocument : IDisposable
             Tags = diagnostic.Tags,
             Data = diagnostic.Data,
         };
-
-        static int Offset(TextSnapshot text, LspPosition at) =>
-            text.GetOffset(new TextPosition(Math.Min(at.Line, text.LineCount - 1), at.Character));
     }
 
     private void Pull(TimeSpan delay)

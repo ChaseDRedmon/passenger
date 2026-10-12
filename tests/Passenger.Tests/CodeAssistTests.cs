@@ -285,6 +285,34 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
     }
 
     [AvaloniaFact]
+    public void Code_typed_below_a_comment_holding_line_breaks_only_roslyn_counts_is_squiggled_coloured_and_reformatted_in_place()
+    {
+        MainWindow window = project.Open("Separators.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        OpenDocument document = window.EditorArea.Active!;
+        string before = editor.Document.Snapshot.ToString();
+        PlaceAfter(editor, "int total = 1;");
+        window.KeyTextInput(" int wrong = \"text\";");
+
+        Ui.WaitFor(() => document.Markers.Any(m => m.Kind == MarkerKind.Error), "the squiggle under the error typed");
+        TextSnapshot text = editor.Document.Snapshot;
+        Marker error = Assert.Single(document.Markers, m => m.Kind == MarkerKind.Error);
+        Assert.Equal("\"text\"", text.GetText(error.Range));
+        Assert.Equal(5, text.GetLineFromOffset(error.Range.Start));
+
+        // A use of the local is coloured as one only by the server, whose colours must land on the editor's line.
+        int use = text.ToString().IndexOf("return total", StringComparison.Ordinal) + "return ".Length;
+        Ui.WaitFor(() => document.Highlighter!.GetSpans(editor.Document.Snapshot, use, 1).Any(s => s.Start == use && s.Kind == TokenKind.Local),
+            "the server's colour on the local's use");
+
+        Ui.Run(window, AppActions.Reformat);
+        Ui.WaitFor(() => window.Status is "Reformatted" or "Already formatted", "the reformat");
+        Assert.Equal(before.Replace("int total = 1;\n          return", "int total = 1; int wrong = \"text\";\n        return", StringComparison.Ordinal),
+            editor.Document.Snapshot.ToString());
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void A_line_typed_while_a_rename_is_out_still_leaves_the_new_name_on_the_symbol()
     {
         string helper = File.ReadAllText(project.PathOf("Helper.cs"));
@@ -723,6 +751,8 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
             File.WriteAllText(PathOf("Area.cs"), "static class Area\n{\n    public static int Of(int width, int height) => width * height;\n    public static int Room() => Of(3, 4);\n}\n");
             File.WriteAllText(PathOf("Point.cs"), "class Point\n{\n    public int X { get; }\n    public int Y { get; }\n}\n");
             File.WriteAllText(PathOf("Loop.cs"), "static class Loop\n{\n    public static int Sum()\n    {\n        int total = 0;\n        for (int i = 0; i < 10; i++)\n        {\n            total += i * 2;\n        }\n        return total;\n    }\n}\n");
+            // Roslyn ends a line at each of these in the comment; the editor's lines end only at '\n'.
+            File.WriteAllText(PathOf("Separators.cs"), "static class Separators\n{\n    /* Pasted:\u2028a line separator,\u2029a paragraph separator,\u0085a next line,\ra carriage return. */\n    public static int Value()\n    {\n        int total = 1;\n          return total;\n    }\n}\n");
             File.WriteAllText(PathOf("Messy.cs"), "using System.Text;\nusing System;\nusing System.Collections.Generic;\n\nstatic class Messy\n{\n    public static int Count()\n    {\n          List<string> names = [];\n        Console.WriteLine(names.Count);\n      return names.Count;\n    }\n}\n");
             using Process restore = Process.Start(new ProcessStartInfo("dotnet", ["restore", folder]) { RedirectStandardOutput = true, RedirectStandardError = true })!;
             restore.WaitForExit();

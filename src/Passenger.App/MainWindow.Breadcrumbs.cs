@@ -93,7 +93,8 @@ public partial class MainWindow
         {
             return;
         }
-        int line = Editors.CodeEditor.CaretPosition.Line;
+        ServerLines lines = ServerLines.Of(document.Text.Snapshot);
+        int line = lines.PositionOf(Editors.CodeEditor.Selections.Primary.Caret).Line;
         IReadOnlyList<DocumentSymbol> level = outline;
         while (level.FirstOrDefault(s => s.Range.Start.Line <= line && line <= s.Range.End.Line) is { } symbol)
         {
@@ -101,7 +102,7 @@ public partial class MainWindow
             if (symbol.Kind != 3)
             {
                 string name = symbol.Name.Split(" : ")[0];
-                TextPosition target = new(symbol.SelectionRange.Start.Line, symbol.SelectionRange.Start.Character);
+                TextPosition target = lines.Text.GetPosition(lines.OffsetOf(symbol.SelectionRange.Start));
                 Crumb(name, () => NavigateTo(document.Path, target), muted: false);
             }
             level = symbol.Children ?? [];

@@ -140,6 +140,7 @@ public sealed class SemanticHighlighter : IHighlighter, IDisposable
     /// modifiers) turned into offsets in the snapshot it was asked for.</summary>
     private SyntaxSpan[] Decode(int[] data, TextSnapshot snapshot)
     {
+        ServerLines lines = ServerLines.Of(snapshot);
         List<SyntaxSpan> spans = new(data.Length / 5);
         int line = 0;
         int column = 0;
@@ -148,11 +149,11 @@ public sealed class SemanticHighlighter : IHighlighter, IDisposable
             line += data[i];
             column = data[i] == 0 ? column + data[i + 1] : data[i + 1];
             int type = data[i + 3];
-            if (line >= snapshot.LineCount || type >= kinds.Length || kinds[type] is not { } kind)
+            if (line >= lines.LineCount || type >= kinds.Length || kinds[type] is not { } kind)
             {
                 continue;
             }
-            int start = snapshot.GetOffset(new TextPosition(line, column));
+            int start = lines.OffsetOf(line, column);
             spans.Add(new SyntaxSpan(start, data[i + 2], kind));
         }
         return [.. spans];

@@ -29,9 +29,10 @@ public partial class MainWindow
         foreach (IGrouping<string, LspLocation> file in locations.GroupBy(l => PathNames.Canonical(new Uri(l.Uri).LocalPath)))
         {
             TextSnapshot snapshot = TextOf(file.Key) ?? TextSnapshot.Empty;
+            ServerLines lines = ServerLines.Of(snapshot);
             string text = snapshot.ToString();
             List<LspLocation> here = [.. file];
-            List<int> offsets = [.. here.Select(l => snapshot.GetOffset(new TextPosition(Math.Min(l.Range.Start.Line, snapshot.LineCount - 1), l.Range.Start.Character)))];
+            List<int> offsets = [.. here.Select(l => lines.OffsetOf(l.Range.Start))];
             IReadOnlyList<UsageKind> kinds = file.Key.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)
                 ? UsageKinds.Classify(text, offsets)
                 : [.. here.Select(_ => UsageKind.Other)];
@@ -39,9 +40,9 @@ public partial class MainWindow
             for (int i = 0; i < here.Count; i++)
             {
                 LspRange range = here[i].Range;
-                int line = Math.Min(range.Start.Line, snapshot.LineCount - 1);
+                TextPosition start = snapshot.GetPosition(offsets[i]);
                 int length = range.End.Line == range.Start.Line ? range.End.Character - range.Start.Character : 0;
-                usages.Add(new Usage(file.Key, line, range.Start.Character, Math.Max(0, length), snapshot.GetLineText(line), kinds[i], project));
+                usages.Add(new Usage(file.Key, start.Line, start.Column, Math.Max(0, length), snapshot.GetLineText(start.Line), kinds[i], project));
             }
         }
         Find.Show(title, usages);

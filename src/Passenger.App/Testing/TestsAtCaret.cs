@@ -1,6 +1,7 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Passenger.Text;
 
 namespace Passenger.App.Testing;
 
@@ -14,40 +15,39 @@ public static class TestsAtCaret
         "Fact", "Theory", "AvaloniaFact", "AvaloniaTheory", "Test", "TestCase", "TestCaseSource", "TestMethod", "DataTestMethod",
     };
 
-    /// <summary>The type (its full name, nested types after a '+') and method the caret's line (from zero) is in;
-    /// the method is null in a type but outside its methods.</summary>
-    public static (string Type, string? Method)? At(string text, int line)
+    /// <summary>The type (its full name, nested types after a '+') and method the caret's line (from zero, the editor's
+    /// line, which Roslyn may count as several) is in; the method is null in a type but outside its methods.</summary>
+    public static (string Type, string? Method)? At(TextSnapshot text, int line)
     {
-        SyntaxTree tree = CSharpSyntaxTree.ParseText(text);
-        Microsoft.CodeAnalysis.Text.SourceText source = tree.GetText();
-        if (line < 0 || line >= source.Lines.Count)
+        if (line < 0 || line >= text.LineCount)
         {
             return null;
         }
-        Microsoft.CodeAnalysis.Text.TextLine at = source.Lines[line];
-        SyntaxNode? node = tree.GetRoot().FindToken(at.Start + (at.ToString().Length - at.ToString().TrimStart().Length)).Parent;
+        SyntaxTree tree = CSharpSyntaxTree.ParseText(text.ToString());
+        string content = text.GetLineText(line);
+        SyntaxNode? node = tree.GetRoot().FindToken(text.GetLineStart(line) + (content.Length - content.TrimStart().Length)).Parent;
         MethodDeclarationSyntax? method = node?.AncestorsAndSelf().OfType<MethodDeclarationSyntax>().FirstOrDefault();
         TypeDeclarationSyntax? type = (method?.Parent as TypeDeclarationSyntax) ?? node?.AncestorsAndSelf().OfType<TypeDeclarationSyntax>().FirstOrDefault();
         return type is null ? null : (FullName(type), method?.Identifier.ValueText);
     }
 
-    /// <summary>Every method with a test attribute the file declares, with its type's full name and the line (from
-    /// zero) its name is on.</summary>
-    public static IReadOnlyList<(string Type, string Method, int Line)> Declared(string text)
+    /// <summary>Every method with a test attribute the file declares, with its type's full name and the editor's line
+    /// (from zero) its name is on.</summary>
+    public static IReadOnlyList<(string Type, string Method, int Line)> Declared(TextSnapshot text)
     {
-        SyntaxTree tree = CSharpSyntaxTree.ParseText(text);
+        SyntaxTree tree = CSharpSyntaxTree.ParseText(text.ToString());
         return [.. tree.GetRoot().DescendantNodes().OfType<MethodDeclarationSyntax>()
             .Where(m => m.Parent is TypeDeclarationSyntax && m.AttributeLists.SelectMany(l => l.Attributes).Any(IsTest))
-            .Select(m => (FullName((TypeDeclarationSyntax)m.Parent!), m.Identifier.ValueText, m.Identifier.GetLocation().GetLineSpan().StartLinePosition.Line))];
+            .Select(m => (FullName((TypeDeclarationSyntax)m.Parent!), m.Identifier.ValueText, text.GetLineFromOffset(m.Identifier.SpanStart)))];
     }
 
-    /// <summary>Every type the file declares that has a test method, with the line (from zero) its name is on.</summary>
-    public static IReadOnlyList<(string Type, int Line)> DeclaredTypes(string text)
+    /// <summary>Every type the file declares that has a test method, with the editor's line (from zero) its name is on.</summary>
+    public static IReadOnlyList<(string Type, int Line)> DeclaredTypes(TextSnapshot text)
     {
-        SyntaxTree tree = CSharpSyntaxTree.ParseText(text);
+        SyntaxTree tree = CSharpSyntaxTree.ParseText(text.ToString());
         return [.. tree.GetRoot().DescendantNodes().OfType<TypeDeclarationSyntax>()
             .Where(t => t.Members.OfType<MethodDeclarationSyntax>().Any(m => m.AttributeLists.SelectMany(l => l.Attributes).Any(IsTest)))
-            .Select(t => (FullName(t), t.Identifier.GetLocation().GetLineSpan().StartLinePosition.Line))];
+            .Select(t => (FullName(t), text.GetLineFromOffset(t.Identifier.SpanStart)))];
     }
 
     /// <summary>Whether a discovered test belongs to a type and method (a theory's rows, NUnit's cases included).</summary>
