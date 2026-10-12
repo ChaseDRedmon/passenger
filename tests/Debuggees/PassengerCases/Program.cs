@@ -8,6 +8,7 @@ if (args is ["child"])
 if (args is ["busy"])
 {
 	Busy.Spin(TimeSpan.FromMilliseconds(800));
+	Console.WriteLine($"allocated {Busy.Allocate(60_000)}");
 	Children.Run();
 	return;
 }
@@ -230,5 +231,18 @@ static class Busy
 		}
 		Console.WriteLine($"spun {total > 0}");
 		return total;
+	}
+
+	/// <summary>About 60 MB of short-lived kilobyte arrays: allocation ticks and young collections.</summary>
+	public static long Allocate(int count)
+	{
+		long kept = 0;
+		for (int i = 0; i < count; i++)
+		{
+			byte[] block = new byte[1024];
+			block[i % 1024] = 1;
+			kept += block.Length;
+		}
+		return kept;
 	}
 }

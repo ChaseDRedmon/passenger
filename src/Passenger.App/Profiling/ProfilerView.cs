@@ -12,12 +12,19 @@ using Passenger.Profiler;
 namespace Passenger.App.Profiling;
 
 /// <summary>A row of the call tree: a node, how deep it sits, and whether its callees are listed under it.</summary>
-public sealed class TreeRow(CallNode node, int depth) : Observable
+public sealed class TreeRow(CallNode node, int depth, ObservableCollection<TreeRow> list, string unit, int whole) : Observable
 {
     private bool isExpanded;
 
     public CallNode Node { get; } = node;
     public int Depth { get; } = depth;
+
+    /// <summary>The list the row is in, which its callees join when it opens.</summary>
+    public ObservableCollection<TreeRow> List { get; } = list;
+
+    /// <summary>What its weight counts (ms of samples, KB allocated), and the whole a share is of.</summary>
+    public string Unit { get; } = unit;
+    public int Whole { get; } = whole;
 
     public bool IsExpanded
     {
@@ -34,6 +41,13 @@ public sealed class ProfilerView : DockPanel
     private readonly ObservableCollection<TreeRow> rows = [];
     private readonly ListBox tree;
     private readonly ListBox spots;
+    private readonly ObservableCollection<TreeRow> traces = [];
+    private readonly ListBox types;
+    private readonly ListBox backTraces;
+    private readonly Grid allocations;
+    private readonly TextBlock collectionsSummary;
+    private readonly ListBox collections;
+    private readonly DockPanel garbage;
     private readonly FlameGraph flame;
     private readonly ScrollViewer flameScroll;
     private readonly TextBlock status;
@@ -73,6 +87,43 @@ public sealed class ProfilerView : DockPanel
                 Open(spot.Name);
             }
         };
+        types = new ListBox
+        {
+            Classes = { "tree" },
+            ItemTemplate = new FuncDataTemplate<AllocatedType>((type, _) => type is null ? new TextBlock() : Allocated(type), supportsRecycling: false),
+        };
+        types.SelectionChanged += (_, _) => ShowBackTraces();
+        backTraces = new ListBox
+        {
+            Classes = { "tree" },
+            ItemsSource = traces,
+            ItemTemplate = new FuncDataTemplate<TreeRow>((row, _) => row is null ? new TextBlock() : Row(row), supportsRecycling: false),
+        };
+        backTraces.KeyDown += OnTreeKey;
+        backTraces.DoubleTapped += (_, _) =>
+        {
+            if (backTraces.SelectedItem is TreeRow row)
+            {
+                Open(row.Node.Name);
+            }
+        };
+        allocations = new Grid { ColumnDefinitions = new ColumnDefinitions("2*,1,3*") };
+        GridSplitter between = new() { Classes = { "hairline" }, ResizeDirection = GridResizeDirection.Columns };
+        Grid.SetColumn(between, 1);
+        Grid.SetColumn(backTraces, 2);
+        allocations.Children.Add(types);
+        allocations.Children.Add(between);
+        allocations.Children.Add(backTraces);
+        collectionsSummary = new TextBlock { Margin = new Thickness(12, 8), TextWrapping = TextWrapping.Wrap };
+        collections = new ListBox
+        {
+            Classes = { "tree" },
+            ItemTemplate = new FuncDataTemplate<Collection>((gc, _) => gc is null ? new TextBlock() : CollectionRow(gc), supportsRecycling: false),
+        };
+        garbage = new DockPanel();
+        DockPanel.SetDock(collectionsSummary, Dock.Top);
+        garbage.Children.Add(collectionsSummary);
+        garbage.Children.Add(collections);
         flame = new FlameGraph();
         flameScroll = new ScrollViewer { Content = flame, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
         placeholder = new TextBlock
@@ -88,7 +139,7 @@ public sealed class ProfilerView : DockPanel
         stop.Click += (_, _) => StopRequested?.Invoke(this, EventArgs.Empty);
         kill = new Button { Content = "Kill", Padding = new Thickness(10, 3), IsVisible = false };
         kill.Click += (_, _) => KillRequested?.Invoke(this, EventArgs.Empty);
-        pages = [PageButton("Call Tree"), PageButton("Hot Spots"), PageButton("Flame Graph")];
+        pages = [PageButton("Call Tree"), PageButton("Hot Spots"), PageButton("Flame Graph"), PageButton("Allocations"), PageButton("GC")];
         StackPanel left = new() { Orientation = Orientation.Horizontal, Spacing = 2, Margin = new Thickness(6, 0), VerticalAlignment = VerticalAlignment.Center };
         foreach (ToggleButton page in pages)
         {
@@ -108,7 +159,7 @@ public sealed class ProfilerView : DockPanel
         Border top = new() { [DockProperty] = Dock.Top, Height = 34, BorderThickness = new Thickness(0, 0, 0, 1), Child = bar };
         top.Bind(Border.BorderBrushProperty, top.GetResourceObservable("Passenger.Divider"));
         Children.Add(top);
-        Children.Add(new Panel { Children = { tree, spots, flameScroll, placeholder } });
+        Children.Add(new Panel { Children = { tree, spots, flameScroll, allocations, garbage, placeholder } });
         ticking = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
         ticking.Tick += (_, _) => status.Text = $"Profiling {running}: {elapsed?.Invoke().TotalSeconds:0.0} s";
         ShowPage(0);
@@ -175,7 +226,7 @@ public sealed class ProfilerView : DockPanel
         rows.Clear();
         foreach (CallNode thread in snapshot.Threads)
         {
-            rows.Add(new TreeRow(thread, 0));
+            rows.Add(new TreeRow(thread, 0, rows, "ms", snapshot.Samples));
         }
         // The heaviest thread's hot path opened, as dotTrace opens it.
         if (rows.Count > 0)
@@ -195,7 +246,72 @@ public sealed class ProfilerView : DockPanel
         }
         spots.ItemsSource = snapshot.HotSpots;
         flame.Root = snapshot.All;
+        types.ItemsSource = snapshot.Allocations;
+        types.SelectedIndex = snapshot.Allocations.Count > 0 ? 0 : -1;
+        ShowBackTraces();
+        IReadOnlyList<Collection> gcs = snapshot.Collections;
+        collections.ItemsSource = gcs;
+        collectionsSummary.Text = gcs.Count == 0
+            ? "No garbage collections ran"
+            : $"{gcs.Count} collections ({string.Join(", ", gcs.GroupBy(c => c.Generation).OrderBy(g => g.Key).Select(g => $"{g.Count()} of generation {g.Key}"))}), "
+              + $"the program paused {gcs.Sum(c => c.PauseMs):0.0} ms in all, {gcs.Max(c => c.PauseMs):0.0} ms at the longest";
         ShowPage(0);
+    }
+
+    /// <summary>The types allocated, the most first.</summary>
+    public IReadOnlyList<AllocatedType> Types => types.ItemsSource as IReadOnlyList<AllocatedType> ?? [];
+
+    /// <summary>The chosen type's back traces as listed now.</summary>
+    public IReadOnlyList<TreeRow> BackTraces => traces;
+
+    /// <summary>The GC page's summary line.</summary>
+    public string CollectionsSummary => collectionsSummary.Text ?? string.Empty;
+
+    /// <summary>Chooses a type on the Allocations page.</summary>
+    public void SelectType(AllocatedType type) => types.SelectedItem = type;
+
+    private void ShowBackTraces()
+    {
+        traces.Clear();
+        if (types.SelectedItem is not AllocatedType type)
+        {
+            return;
+        }
+        TreeRow root = new(type.BackTraces, 0, traces, "KB", type.BackTraces.Total);
+        traces.Add(root);
+        // The allocating methods and their heaviest callers open, as dotMemory's back traces open.
+        Expand(root);
+        TreeRow at = root;
+        for (int depth = 0; depth < 12 && at.Node.Children.Count > 0; depth++)
+        {
+            CallNode heaviest = at.Node.Ordered[0];
+            at = traces.First(r => r.Node == heaviest);
+            Expand(at);
+        }
+    }
+
+    private Control Allocated(AllocatedType type)
+    {
+        long whole = Snapshot?.Allocations.Sum(a => a.Bytes) ?? 0;
+        TextBlock size = Muted($"{(whole > 0 ? 100.0 * type.Bytes / whole : 0),5:0.0}%  {type.Bytes / 1048576.0,8:N1} MB", 170);
+        size.FontFamily = CSharp.Fonts.Mono;
+        size.FontSize = 12;
+        return new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Height = 22,
+            Margin = new Thickness(6, 0),
+            Children = { size, new TextBlock { Text = type.Name, VerticalAlignment = VerticalAlignment.Center, FontWeight = FontWeight.SemiBold } },
+        };
+    }
+
+    private static Control CollectionRow(Collection gc)
+    {
+        TextBlock what = new() { Text = $"#{gc.Number}  generation {gc.Generation}", Width = 170, VerticalAlignment = VerticalAlignment.Center };
+        TextBlock when = Muted($"at {gc.AtMs:N0} ms", 110);
+        TextBlock pause = Muted($"paused {gc.PauseMs:0.00} ms", 140);
+        TextBlock why = Muted(gc.Reason, double.NaN);
+        return new StackPanel { Orientation = Orientation.Horizontal, Height = 22, Margin = new Thickness(6, 0), Children = { what, when, pause, why } };
     }
 
     public void Toggle(TreeRow row)
@@ -210,33 +326,33 @@ public sealed class ProfilerView : DockPanel
         }
     }
 
-    private void Expand(TreeRow row)
+    private static void Expand(TreeRow row)
     {
         if (row.IsExpanded || row.Node.Children.Count == 0)
         {
             return;
         }
         row.IsExpanded = true;
-        int at = rows.IndexOf(row) + 1;
+        int at = row.List.IndexOf(row) + 1;
         foreach (CallNode child in row.Node.Ordered)
         {
-            rows.Insert(at++, new TreeRow(child, row.Depth + 1));
+            row.List.Insert(at++, new TreeRow(child, row.Depth + 1, row.List, row.Unit, row.Whole));
         }
     }
 
-    private void Collapse(TreeRow row)
+    private static void Collapse(TreeRow row)
     {
-        int at = rows.IndexOf(row) + 1;
-        while (at < rows.Count && rows[at].Depth > row.Depth)
+        int at = row.List.IndexOf(row) + 1;
+        while (at < row.List.Count && row.List[at].Depth > row.Depth)
         {
-            rows.RemoveAt(at);
+            row.List.RemoveAt(at);
         }
         row.IsExpanded = false;
     }
 
     private void OnTreeKey(object? sender, KeyEventArgs e)
     {
-        if (tree.SelectedItem is not TreeRow row)
+        if ((sender as ListBox)?.SelectedItem is not TreeRow row)
         {
             return;
         }
@@ -275,7 +391,7 @@ public sealed class ProfilerView : DockPanel
     /// <summary>Shows the call tree (0), the hot spots (1) or the flame graph (2).</summary>
     public void ShowPage(int page)
     {
-        Control[] views = [tree, spots, flameScroll];
+        Control[] views = [tree, spots, flameScroll, allocations, garbage];
         for (int i = 0; i < views.Length; i++)
         {
             views[i].IsVisible = i == page && Snapshot is not null;
@@ -297,7 +413,8 @@ public sealed class ProfilerView : DockPanel
             Toggle(row);
             e.Handled = true;
         };
-        TextBlock share = Muted($"{Share(row.Node.Total)}  {row.Node.Total,7:N0} ms", 170);
+        string percent = row.Whole > 0 ? $"{100.0 * row.Node.Total / row.Whole,5:0.0}%" : string.Empty;
+        TextBlock share = Muted($"{percent}  {row.Node.Total,7:N0} {row.Unit}", 170);
         share.FontFamily = CSharp.Fonts.Mono;
         share.FontSize = 12;
         return new StackPanel

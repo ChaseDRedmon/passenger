@@ -19,7 +19,7 @@ public sealed record ProfileTarget(string Program, IReadOnlyList<string> Argumen
 public sealed class ProfilingSession : IAsyncDisposable
 {
     /// <summary>The runtime's events dotnet-trace's cpu-sampling profile asks for: what names the frames (loader, JIT,
-    /// rundown) and the GC, at Informational.</summary>
+    /// rundown) and the GC.</summary>
     private const long RuntimeKeywords = 0x14C14FCCBD;
 
     private readonly Process process;
@@ -99,7 +99,8 @@ public sealed class ProfilingSession : IAsyncDisposable
             session = await client.StartEventPipeSessionAsync(
                 [
                     new EventPipeProvider(Snapshot.SampleProvider, EventLevel.Informational),
-                    new EventPipeProvider("Microsoft-Windows-DotNETRuntime", EventLevel.Informational, RuntimeKeywords),
+                    // Verbose for the GC's allocation ticks: a type and a stack every 100 KB or so allocated.
+                    new EventPipeProvider("Microsoft-Windows-DotNETRuntime", EventLevel.Verbose, RuntimeKeywords),
                 ],
                 requestRundown: true,
                 circularBufferMB: 512,

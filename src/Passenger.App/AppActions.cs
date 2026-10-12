@@ -109,10 +109,23 @@ public static class AppActions
 
     /// <summary>The person's own shortcuts over the Visual Studio keymap's, by action (an empty list unbinds it), as
     /// Settings keeps them.</summary>
-    public static IReadOnlyDictionary<string, string[]> UserShortcuts { get; set; } = new Dictionary<string, string[]>();
+    public static IReadOnlyDictionary<string, string[]> UserShortcuts
+    {
+        get => userShortcuts;
+        set
+        {
+            userShortcuts = value;
+            inForce = null;
+        }
+    }
 
-    /// <summary>The keymap in force: the platform's Visual Studio keymap with the person's shortcuts over it.</summary>
-    public static Keymap Keymap() => Keymap(UserShortcuts);
+    private static IReadOnlyDictionary<string, string[]> userShortcuts = new Dictionary<string, string[]>();
+    private static Keymap? inForce;
+
+    /// <summary>The keymap in force: the platform's Visual Studio keymap with the person's shortcuts over it. Made once
+    /// until those change (the profiler found every tooltip and menu parsing the whole keymap again at startup); a
+    /// caller reads it and never binds into it.</summary>
+    public static Keymap Keymap() => inForce ??= Keymap(UserShortcuts);
 
     /// <summary>The keymap with these shortcuts over the platform's; one that does not read is passed over.</summary>
     public static Keymap Keymap(IReadOnlyDictionary<string, string[]> overrides)

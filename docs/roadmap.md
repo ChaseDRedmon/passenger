@@ -139,7 +139,10 @@ Profile (the toolbar's gauge) builds the chosen configuration and starts it held
 the run begins at its first instruction; the Performance Profiler window follows it, Get Snapshot ends the run and the
 program's own end does too. The snapshot is a call tree by thread with the hot path opened, hot spots by their own
 time and a flame graph that zooms; a double-click goes to a method's source, and a .nettrace file (Passenger's or
-dotnet-trace's) opens as a snapshot. Still to come: the timeline, allocations and GC, memory snapshots with ClrMD.
+dotnet-trace's) opens as a snapshot. Allocations lists the types allocated with each one's back traces (the runtime's
+allocation ticks), and GC each collection with its generation, reason and pause. Its first find in Passenger itself:
+every tooltip and menu parsed the whole keymap again, 46% of the strings allocated at startup; the keymap is now made
+once. Still to come: the timeline, memory snapshots with ClrMD.
 
 ## M7: the rest of the daily loop
 

@@ -44,6 +44,14 @@ public sealed class ProfilerTests : IDisposable
         Assert.InRange(spin.Total, 400, 1200);
         Assert.Contains(spin.Children, c => c.Name.Contains("Stopwatch", StringComparison.Ordinal));
         Assert.True(File.Exists(snapshot.TracePath));
+
+        // The arrays it allocated lead the allocations, Allocate first in their back traces, and young collections ran.
+        AllocatedType arrays = snapshot.Allocations[0];
+        Assert.Equal("System.Byte[]", arrays.Name);
+        Assert.InRange(arrays.Bytes, 30_000_000, 120_000_000);
+        Assert.Contains("Busy.Allocate", arrays.BackTraces.Ordered[0].Name, StringComparison.Ordinal);
+        Assert.Contains(snapshot.Collections, c => c.Generation == 0);
+        Assert.All(snapshot.Collections, c => Assert.True(c.PauseMs >= 0));
     }
 
     [AvaloniaFact]
