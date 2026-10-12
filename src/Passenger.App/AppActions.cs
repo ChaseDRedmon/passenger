@@ -80,6 +80,8 @@ public static class AppActions
     public const string RunToCursor = "app.debug.runToCursor";
     public const string SetNextStatement = "app.debug.setNextStatement";
     public const string ExtendSelection = "app.editor.extendSelection";
+    public const string CallHierarchy = "app.hierarchy.calls";
+    public const string TypeHierarchy = "app.hierarchy.types";
     public const string ShrinkSelection = "app.editor.shrinkSelection";
     public const string ShowExecutionPoint = "app.debug.showExecutionPoint";
     public const string Evaluate = "app.debug.evaluate";
@@ -221,6 +223,8 @@ public static class AppActions
                 .Bind(RunToCursor, "meta F10")
                 .Bind(SetNextStatement, "meta shift F10")
                 .Bind(ExtendSelection, "meta alt RIGHT")
+                .Bind(CallHierarchy, "control alt H")
+                .Bind(TypeHierarchy, "meta E , H", "meta E , meta H")
                 .Bind(ShrinkSelection, "meta alt LEFT")
                 .Bind(ShowExecutionPoint, "alt MULTIPLY")
                 .Bind(Evaluate, "shift F9")
@@ -309,6 +313,8 @@ public static class AppActions
             .Bind(RunToCursor, "control F10")
             .Bind(SetNextStatement, "control shift F10")
             .Bind(ExtendSelection, "control W", "shift alt EQUALS", "control alt RIGHT")
+            .Bind(CallHierarchy, "control alt H")
+            .Bind(TypeHierarchy, "control E , H", "control E , control H")
             .Bind(ShrinkSelection, "control shift W", "shift alt MINUS", "control alt LEFT")
             .Bind(ShowExecutionPoint, "alt MULTIPLY")
             .Bind(Evaluate, "shift F9")

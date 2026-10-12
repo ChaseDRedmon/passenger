@@ -227,6 +227,14 @@ public sealed class LspDocument : IDisposable
         return (tokens, version);
     }
 
+    /// <summary>The symbol at an offset as a call hierarchy's root, if it is one that calls or is called.</summary>
+    public async Task<HierarchyItem?> PrepareCallHierarchyAsync(int offset, CancellationToken cancel = default) =>
+        (await Server.RequestAsync<List<HierarchyItem>>("textDocument/prepareCallHierarchy", new TextDocumentPositionParams(Identifier, PositionOf(offset)), cancel))?.FirstOrDefault();
+
+    /// <summary>The type at an offset as a type hierarchy's root.</summary>
+    public async Task<HierarchyItem?> PrepareTypeHierarchyAsync(int offset, CancellationToken cancel = default) =>
+        (await Server.RequestAsync<List<HierarchyItem>>("textDocument/prepareTypeHierarchy", new TextDocumentPositionParams(Identifier, PositionOf(offset)), cancel))?.FirstOrDefault();
+
     /// <summary>The words the server would show inside the document's lines (parameter names before their
     /// arguments), and the version they are for.</summary>
     public async Task<(IReadOnlyList<LspInlayHint> Hints, int Version)> InlayHintsAsync(CancellationToken cancel = default)

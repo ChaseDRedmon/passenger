@@ -4,6 +4,8 @@ using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Passenger.App;
 using Passenger.App.Navigation;
+using Passenger.App.ToolWindows;
+using Passenger.App.Workspace;
 using Passenger.Editor;
 using Passenger.Text;
 
@@ -388,6 +390,40 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void Call_and_type_hierarchies_show_who_calls_a_method_and_what_derives_from_a_type()
+    {
+        MainWindow window = project.Open("Helper.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "static int Tw");
+        Task<string?> calls = window.ShowCallHierarchyAsync();
+        Ui.WaitFor(() => calls.IsCompleted, "the call hierarchy");
+        Assert.Null(calls.Result);
+        Assert.True(window.DockHost.IsShown("hierarchy"));
+        Assert.Equal(2, window.Hierarchy.Rows.Count);
+        Assert.Contains("Twice", window.Hierarchy.Rows[0].Node.Item.Name, StringComparison.Ordinal);
+        Assert.Contains("Main", window.Hierarchy.Rows[1].Node.Item.Name, StringComparison.Ordinal);
+        HierarchyRow caller = window.Hierarchy.Rows[1];
+        Assert.Equal(PathNames.Canonical(project.PathOf("Program.cs")), caller.Node.Path);
+        Assert.Equal(4, caller.Node.Where.Line);
+
+        // Callees of Twice: none it calls of the project's own.
+        Task callees = window.Hierarchy.ChooseAsync(first: false);
+        Ui.WaitFor(() => callees.IsCompleted, "the callees");
+        Assert.False(window.Hierarchy.IsFirst);
+        window.Close();
+
+        window = project.Open("Shapes.cs");
+        editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "interface ISh");
+        Task<string?> types = window.ShowTypeHierarchyAsync();
+        Ui.WaitFor(() => types.IsCompleted, "the type hierarchy");
+        Task subtypes = window.Hierarchy.ChooseAsync(first: false);
+        Ui.WaitFor(() => subtypes.IsCompleted, "the subtypes");
+        Assert.Contains(window.Hierarchy.Rows, r => r.Depth == 1 && r.Node.Item.Name.Contains("Square", StringComparison.Ordinal));
+        window.Close();
+    }
+
     private static void PlaceAfter(CodeEditor editor, string text)
     {
         int at = editor.Document.Snapshot.ToString().IndexOf(text, StringComparison.Ordinal);
@@ -406,6 +442,7 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
                 "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
             File.WriteAllText(PathOf("Program.cs"), "class Program\n{\n    static void Main()\n    {\n        int result = Helper.Twice(2);\n    }\n}\n");
             File.WriteAllText(PathOf("Helper.cs"), "static class Helper\n{\n    public static int Twice(int value) => value * 2;\n}\n");
+            File.WriteAllText(PathOf("Shapes.cs"), "interface IShape\n{\n    int Sides { get; }\n}\n\nclass Square : IShape\n{\n    public int Sides => 4;\n}\n");
             File.WriteAllText(PathOf("Area.cs"), "static class Area\n{\n    public static int Of(int width, int height) => width * height;\n    public static int Room() => Of(3, 4);\n}\n");
             File.WriteAllText(PathOf("Point.cs"), "class Point\n{\n    public int X { get; }\n    public int Y { get; }\n}\n");
             File.WriteAllText(PathOf("Loop.cs"), "static class Loop\n{\n    public static int Sum()\n    {\n        int total = 0;\n        for (int i = 0; i < 10; i++)\n        {\n            total += i * 2;\n        }\n        return total;\n    }\n}\n");

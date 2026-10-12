@@ -13,6 +13,27 @@ public sealed record LspRange(LspPosition Start, LspPosition End);
 
 public sealed record LspLocation(string Uri, LspRange Range);
 
+/// <summary>A call or type hierarchy's item: a symbol, where it is and its name's place there; Data is the server's,
+/// sent back as it came when its callers, callees, supertypes or subtypes are asked for.</summary>
+public sealed class HierarchyItem
+{
+    public string Name { get; init; } = string.Empty;
+    public int Kind { get; init; }
+    public string? Detail { get; init; }
+    public string Uri { get; init; } = string.Empty;
+    public LspRange Range { get; init; } = new(new LspPosition(0, 0), new LspPosition(0, 0));
+    public LspRange SelectionRange { get; init; } = new(new LspPosition(0, 0), new LspPosition(0, 0));
+    public System.Text.Json.JsonElement? Data { get; init; }
+}
+
+public sealed record HierarchyItemParams(HierarchyItem Item);
+
+/// <summary>A caller and where in it the calls are.</summary>
+public sealed record IncomingCall(HierarchyItem From, IReadOnlyList<LspRange> FromRanges);
+
+/// <summary>A callee and where in the caller the calls to it are.</summary>
+public sealed record OutgoingCall(HierarchyItem To, IReadOnlyList<LspRange> FromRanges);
+
 public sealed record LspLocationLink(LspRange? OriginSelectionRange, string TargetUri, LspRange TargetRange, LspRange TargetSelectionRange);
 
 public sealed record TextDocumentIdentifier(string Uri);

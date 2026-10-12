@@ -108,6 +108,19 @@ public sealed class LanguageServer : IAsyncDisposable
 
     public Task NotifyAsync(string method, object parameters) => rpc.NotifyWithParameterObjectAsync(method, parameters);
 
+    /// <summary>A call hierarchy item's callers, each with where the calls are.</summary>
+    public async Task<IReadOnlyList<IncomingCall>> IncomingCallsAsync(HierarchyItem item, CancellationToken cancel = default) =>
+        await RequestAsync<List<IncomingCall>>("callHierarchy/incomingCalls", new HierarchyItemParams(item), cancel) ?? [];
+
+    public async Task<IReadOnlyList<OutgoingCall>> OutgoingCallsAsync(HierarchyItem item, CancellationToken cancel = default) =>
+        await RequestAsync<List<OutgoingCall>>("callHierarchy/outgoingCalls", new HierarchyItemParams(item), cancel) ?? [];
+
+    public async Task<IReadOnlyList<HierarchyItem>> SupertypesAsync(HierarchyItem item, CancellationToken cancel = default) =>
+        await RequestAsync<List<HierarchyItem>>("typeHierarchy/supertypes", new HierarchyItemParams(item), cancel) ?? [];
+
+    public async Task<IReadOnlyList<HierarchyItem>> SubtypesAsync(HierarchyItem item, CancellationToken cancel = default) =>
+        await RequestAsync<List<HierarchyItem>>("typeHierarchy/subtypes", new HierarchyItemParams(item), cancel) ?? [];
+
     public async ValueTask DisposeAsync()
     {
         try

@@ -126,6 +126,35 @@ public sealed partial class PassengerTools(MainWindow window)
         return Places(await lsp.ReferencesAsync(Offset(document, line, column)));
     });
 
+    [McpServerTool(Name = "hierarchy", Title = "Call or type hierarchy", ReadOnly = true), Description(
+        "One level of the symbol at a position's hierarchy, as Rider's Hierarchy window: direction callers (each at its call), "
+        + "callees, supertypes (base types and interfaces) or subtypes. Each entry names the symbol.")]
+    public Task<IReadOnlyList<HierarchyEntry>> Hierarchy(string path, int line, int column, string direction = "callers") => OnUi<IReadOnlyList<HierarchyEntry>>(async () =>
+    {
+        (OpenDocument document, LspDocument lsp) = await Code(path);
+        int offset = Offset(document, line, column);
+        LanguageServer server = window.CSharpService?.Session?.Server ?? throw new InvalidOperationException("C# is not ready");
+        bool calls = direction is "callers" or "callees";
+        if (!calls && direction is not ("supertypes" or "subtypes"))
+        {
+            throw new ArgumentException($"No direction '{direction}'; there are callers, callees, supertypes and subtypes", nameof(direction));
+        }
+        HierarchyItem item = (calls ? await lsp.PrepareCallHierarchyAsync(offset) : await lsp.PrepareTypeHierarchyAsync(offset))
+            ?? throw new InvalidOperationException(calls ? "No method, property or event there" : "No type there");
+        IEnumerable<(HierarchyItem Item, LspRange At)> found = direction switch
+        {
+            "callers" => (await server.IncomingCallsAsync(item)).Select(c => (c.From, c.FromRanges.FirstOrDefault() ?? c.From.SelectionRange)),
+            "callees" => (await server.OutgoingCallsAsync(item)).Select(c => (c.To, c.To.SelectionRange)),
+            "supertypes" => (await server.SupertypesAsync(item)).Select(t => (t, t.SelectionRange)),
+            _ => (await server.SubtypesAsync(item)).Select(t => (t, t.SelectionRange)),
+        };
+        return [.. found.Select(f =>
+        {
+            string at = new Uri(f.Item.Uri).LocalPath;
+            return new HierarchyEntry(f.Item.Name, f.Item.Detail, Relative(at), f.At.Start.Line + 1, f.At.Start.Character + 1, LineText(at, f.At.Start.Line));
+        })];
+    });
+
     [McpServerTool(Name = "implementations", Title = "Go to implementation", ReadOnly = true), Description("The implementations of the interface, abstract or virtual member at a position.")]
     public Task<IReadOnlyList<Place>> Implementations(string path, int line, int column) => OnUi(async () =>
     {
@@ -753,6 +782,8 @@ public sealed record ProjectInfo(string Name, string Path, string? OutputType, I
 public sealed record Finding(string Severity, string? Code, string Message, string? Path, int Line, int Column);
 
 public sealed record Place(string Path, int Line, int Column, string Text);
+
+public sealed record HierarchyEntry(string Name, string? Detail, string Path, int Line, int Column, string Text);
 
 public sealed record BuildResult(bool Succeeded, int Errors, int Warnings, IReadOnlyList<Finding> Problems, string OutputTail);
 

@@ -64,6 +64,7 @@ public partial class MainWindow : Window
         AddProfiler();
         AddBreadcrumbs();
         AddBookmarks();
+        AddHierarchy();
         AddFileOperations();
         Explorer.FileOpened += (_, path) => OpenFile(path);
         Structure.Follow(() => Editors.Active is { } shown
@@ -400,6 +401,12 @@ public partial class MainWindow : Window
         {
             case AppActions.ExtendSelection:
                 ExtendSelection();
+                break;
+            case AppActions.CallHierarchy:
+                _ = ShowCallHierarchyAsync();
+                break;
+            case AppActions.TypeHierarchy:
+                _ = ShowTypeHierarchyAsync();
                 break;
             case AppActions.ShrinkSelection:
                 ShrinkSelection();

@@ -48,6 +48,8 @@ public static class ClientCapabilities
         "typeDefinition": { "linkSupport": true },
         "implementation": { "linkSupport": true },
         "references": {},
+        "callHierarchy": {},
+        "typeHierarchy": {},
         "documentHighlight": {},
         "documentSymbol": { "hierarchicalDocumentSymbolSupport": true },
         "codeAction": {
