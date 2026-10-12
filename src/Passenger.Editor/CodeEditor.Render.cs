@@ -279,6 +279,13 @@ public sealed partial class CodeEditor
         {
             DrawAnnotations(context, first, last);
         }
+        foreach (int marked in Bookmarks)
+        {
+            if (marked >= first && marked <= last)
+            {
+                DrawBookmark(context, annotationWidth + 3, marked * metrics.LineHeight - scroll.Y);
+            }
+        }
         double right = gutter - GutterPadRight;
         Dictionary<int, TestMarkKind> tests = [];
         foreach (TestMark test in TestMarks)
@@ -387,6 +394,24 @@ public sealed partial class CodeEditor
                 context.DrawEllipse(null, new Pen(palette.LineNumber, 1.5), centre, radius - 0.75, radius - 0.75);
                 break;
         }
+    }
+
+    /// <summary>A bookmark's ribbon: a strip with a notch cut from its foot.</summary>
+    private void DrawBookmark(DrawingContext context, double x, double top)
+    {
+        double height = Math.Min(metrics.LineHeight - 4, 12);
+        double y = top + ((metrics.LineHeight - height) / 2);
+        StreamGeometry ribbon = new();
+        using (StreamGeometryContext path = ribbon.Open())
+        {
+            path.BeginFigure(new Point(x, y), true);
+            path.LineTo(new Point(x + 8, y));
+            path.LineTo(new Point(x + 8, y + height));
+            path.LineTo(new Point(x + 4, y + height - 3));
+            path.LineTo(new Point(x, y + height));
+            path.EndFigure(true);
+        }
+        context.DrawGeometry(palette.Bookmark, null, ribbon);
     }
 
     /// <summary>The annotation column (Git blame): each line's text muted at the gutter's left, a rule after it.</summary>
@@ -721,6 +746,7 @@ public sealed partial class CodeEditor
         public IBrush InlineValue { get; private init; } = Brush("#868A91");
         public IBrush Tracepoint { get; private init; } = Brush("#E5A336");
         public IBrush TestPassed { get; private init; } = Brush("#5FAD65");
+        public IBrush Bookmark { get; private init; } = Brush("#548AF7");
         public IBrush DiffAdded { get; private init; } = Brush("#2B4234");
         public IBrush DiffModified { get; private init; } = Brush("#2C3A55");
         public IBrush DiffDeleted { get; private init; } = Brush("#3B3D42");
@@ -760,6 +786,7 @@ public sealed partial class CodeEditor
                 InlineValue = Find(control, "Passenger.Editor.InlineValue") ?? defaults.InlineValue,
                 Tracepoint = Find(control, "Passenger.Editor.Tracepoint") ?? defaults.Tracepoint,
                 TestPassed = Find(control, "Passenger.Test.Passed") ?? defaults.TestPassed,
+                Bookmark = Find(control, "Passenger.Editor.Bookmark") ?? defaults.Bookmark,
                 DiffAdded = Find(control, "Passenger.Diff.Added") ?? defaults.DiffAdded,
                 DiffModified = Find(control, "Passenger.Diff.Modified") ?? defaults.DiffModified,
                 DiffDeleted = Find(control, "Passenger.Diff.Deleted") ?? defaults.DiffDeleted,

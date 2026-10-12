@@ -105,6 +105,41 @@ public sealed class FindInFilesTests : IDisposable
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void Bookmarks_toggle_move_with_their_lines_and_next_goes_round_the_files()
+    {
+        MainWindow window = Open();
+        window.OpenFile(Path.Combine(folder, "Alpha.cs"));
+        Ui.Settle();
+        Passenger.Editor.CodeEditor editor = window.EditorArea.CodeEditor;
+        editor.GoTo(new TextPosition(2, 0));
+        Ui.Run(window, AppActions.ToggleBookmark);
+        OpenDocument alpha = window.EditorArea.Active!;
+        Assert.Equal([2], alpha.Bookmarks);
+        Assert.Equal([2], editor.Bookmarks);
+
+        // A line added above takes the bookmark down with its line.
+        editor.ApplyEdits([new TextEdit(0, 0, "// top\n")]);
+        Assert.Equal([3], alpha.Bookmarks);
+
+        window.OpenFile(Path.Combine(folder, "Beta.cs"));
+        Ui.Settle();
+        editor.GoTo(new TextPosition(3, 0));
+        Ui.Run(window, AppActions.ToggleBookmark);
+        // Next from Beta's goes round to Alpha's, and Previous comes back.
+        Ui.Run(window, AppActions.NextBookmark);
+        Assert.Equal(("Alpha.cs", 3), (window.EditorArea.Active!.Name, editor.CaretPosition.Line));
+        Ui.Run(window, AppActions.PreviousBookmark);
+        Assert.Equal(("Beta.cs", 3), (window.EditorArea.Active!.Name, editor.CaretPosition.Line));
+
+        // The window lists both; Toggle on a marked line takes it away.
+        Assert.Equal(2, window.Bookmarks.All.Count);
+        Ui.Run(window, AppActions.ToggleBookmark);
+        Assert.Equal(["Alpha.cs"], window.Bookmarks.All.Select(b => b.Name));
+        Assert.Empty(window.EditorArea.Active!.Bookmarks);
+        window.Close();
+    }
+
     private static void Search(FindInFilesPopup popup, string text)
     {
         popup.Text = text;

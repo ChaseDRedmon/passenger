@@ -65,6 +65,7 @@ ICONS = [
     ("Push", "Arrow Upload", "20_regular"),
     ("Diff", "Split Vertical", "20_regular"),
     ("Profile", "Top Speed", "20_regular"),
+    ("Bookmark", "Bookmark", "20_regular"),
 ]
 
 

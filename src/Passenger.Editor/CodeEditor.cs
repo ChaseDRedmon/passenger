@@ -121,6 +121,15 @@ public sealed partial class CodeEditor : Control
         InvalidateVisual();
     }
 
+    /// <summary>The bookmarked lines, drawn as ribbons at the line numbers' left.</summary>
+    public IReadOnlyList<int> Bookmarks { get; private set; } = [];
+
+    public void SetBookmarks(IReadOnlyList<int> lines)
+    {
+        Bookmarks = lines;
+        InvalidateVisual();
+    }
+
     /// <summary>Text per line in a column at the gutter's left (Git blame's author and date), null for a line with none;
     /// empty for no column.</summary>
     public IReadOnlyList<string?> GutterAnnotations { get; private set; } = [];

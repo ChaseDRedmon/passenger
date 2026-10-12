@@ -17,6 +17,7 @@ public sealed class OpenDocument : Observable
     private IReadOnlyList<TestMark> testMarks = [];
     private IReadOnlyList<ChangeMark> changeMarks = [];
     private IReadOnlyList<string?> gutterAnnotations = [];
+    private IReadOnlyList<int> bookmarks = [];
 
     public OpenDocument(string path, FileText file)
     {
@@ -67,6 +68,13 @@ public sealed class OpenDocument : Observable
     {
         get => changeMarks;
         set => Set(ref changeMarks, value);
+    }
+
+    /// <summary>The bookmarked lines.</summary>
+    public IReadOnlyList<int> Bookmarks
+    {
+        get => bookmarks;
+        set => Set(ref bookmarks, value);
     }
 
     /// <summary>Text per line at the gutter's left (Git blame's), empty for none.</summary>

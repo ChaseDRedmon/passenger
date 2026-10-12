@@ -138,6 +138,7 @@ public sealed class EditorGroup : DockPanel
         Editor.SetTestMarks(document.TestMarks);
         Editor.SetChangeMarks(document.ChangeMarks);
         Editor.SetGutterAnnotations(document.GutterAnnotations);
+        Editor.SetBookmarks(document.Bookmarks);
         Editor.IsReadOnly = document.IsDecompiled;
         banner.IsVisible = document.IsDecompiled;
         bannerText.Text = document.Origin;
@@ -248,6 +249,9 @@ public sealed class EditorGroup : DockPanel
                 break;
             case nameof(OpenDocument.GutterAnnotations):
                 Editor.SetGutterAnnotations(document.GutterAnnotations);
+                break;
+            case nameof(OpenDocument.Bookmarks):
+                Editor.SetBookmarks(document.Bookmarks);
                 break;
         }
     }

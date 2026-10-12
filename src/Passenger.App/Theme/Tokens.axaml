@@ -29,6 +29,7 @@
             <SolidColorBrush x:Key="Passenger.Vcs.Modified" Color="#375FAD" />
             <SolidColorBrush x:Key="Passenger.Vcs.Deleted" Color="#868A91" />
             <SolidColorBrush x:Key="Passenger.Banner" Color="#2E3440" />
+            <SolidColorBrush x:Key="Passenger.Editor.Bookmark" Color="#548AF7" />
             <SolidColorBrush x:Key="Passenger.Diff.Added" Color="#2B4234" />
             <SolidColorBrush x:Key="Passenger.Diff.Modified" Color="#2C3A55" />
             <SolidColorBrush x:Key="Passenger.Diff.Deleted" Color="#3B3D42" />
@@ -146,6 +147,7 @@
             <SolidColorBrush x:Key="Passenger.Vcs.Modified" Color="#3D7BF5" />
             <SolidColorBrush x:Key="Passenger.Vcs.Deleted" Color="#8C8C8C" />
             <SolidColorBrush x:Key="Passenger.Banner" Color="#EEF3FE" />
+            <SolidColorBrush x:Key="Passenger.Editor.Bookmark" Color="#3574F0" />
             <SolidColorBrush x:Key="Passenger.Diff.Added" Color="#D9F2D5" />
             <SolidColorBrush x:Key="Passenger.Diff.Modified" Color="#DCE6FB" />
             <SolidColorBrush x:Key="Passenger.Diff.Deleted" Color="#E6E7EA" />

@@ -63,6 +63,7 @@ public partial class MainWindow : Window
         AddPackages();
         AddProfiler();
         AddBreadcrumbs();
+        AddBookmarks();
         Explorer.FileOpened += (_, path) => OpenFile(path);
         Structure.Follow(() => Editors.Active is { } shown
             ? (shown.Path, csharp?.For(shown)?.Lsp, Editors.CodeEditor.CaretPosition.Line)
@@ -380,6 +381,11 @@ public partial class MainWindow : Window
         if (action.StartsWith("app.vcs.", StringComparison.Ordinal))
         {
             RunVcsAction(action);
+            return;
+        }
+        if (action.StartsWith("app.bookmarks.", StringComparison.Ordinal))
+        {
+            RunBookmarkAction(action);
             return;
         }
         switch (action)

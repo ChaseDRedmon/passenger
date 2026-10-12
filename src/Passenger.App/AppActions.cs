@@ -20,6 +20,12 @@ public static class AppActions
     public const string FindAction = "app.findAction";
     public const string FindInFiles = "app.findInFiles";
     public const string RecentFiles = "app.recentFiles";
+
+    // Bookmarks: Rider's, on the Visual Studio keymaps' Ctrl+K chords.
+    public const string ToggleBookmark = "app.bookmarks.toggle";
+    public const string NextBookmark = "app.bookmarks.next";
+    public const string PreviousBookmark = "app.bookmarks.previous";
+    public const string ShowBookmarks = "app.bookmarks.show";
     public const string ReplaceInFiles = "app.replaceInFiles";
     public const string ShowSettings = "app.settings";
     public const string ShowNuGet = "app.showNuGet";
@@ -177,6 +183,10 @@ public static class AppActions
                 .Bind(FindAction, "meta shift A")
                 .Bind(FindInFiles, "meta shift F")
                 .Bind(RecentFiles, "control COMMA")
+                .Bind(ToggleBookmark, "meta K , K", "meta K , meta K", "meta F2")
+                .Bind(NextBookmark, "meta K , N", "meta K , meta N")
+                .Bind(PreviousBookmark, "meta K , P", "meta K , meta P")
+                .Bind(ShowBookmarks, "meta K , W", "meta K , meta W", "control BACK_QUOTE")
                 .Bind(ReplaceInFiles, "meta shift H")
                 .Bind(ShowSettings, "meta COMMA")
                 .Bind(ShowNuGet, "meta 7", "meta shift 7")
@@ -257,6 +267,10 @@ public static class AppActions
             .Bind(FindAction, "control shift A")
             .Bind(FindInFiles, "control shift F")
             .Bind(RecentFiles, "control COMMA")
+            .Bind(ToggleBookmark, "control K , K", "control K , control K")
+            .Bind(NextBookmark, "control K , N", "control K , control N")
+            .Bind(PreviousBookmark, "control K , P", "control K , control P")
+            .Bind(ShowBookmarks, "control K , W", "control K , control W", "control BACK_QUOTE")
             .Bind(ReplaceInFiles, "control shift H")
             .Bind(ShowSettings, "control alt S")
             .Bind(ShowNuGet, "alt 7", "alt shift 7")
