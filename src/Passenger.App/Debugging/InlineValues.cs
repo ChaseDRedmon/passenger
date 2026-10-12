@@ -1,0 +1,75 @@
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Text;
+using Passenger.Editor;
+
+namespace Passenger.App.Debugging;
+
+/// <summary>Rider's inline values: after each line of the stopped method, from its first line to the one it
+/// stopped on, the value of each local and parameter that line names, read from the frame's variables. A name
+/// that is a member of something else (the <c>count</c> of <c>list.count</c>) is not the local's.</summary>
+public static class InlineValues
+{
+    /// <summary>The longest value shown in full; a longer one is cut, as Rider cuts them.</summary>
+    private const int Longest = 60;
+
+    public static IReadOnlyList<LineAnnotation> For(string text, int stopLine, IReadOnlyDictionary<string, string> values)
+    {
+        if (values.Count == 0)
+        {
+            return [];
+        }
+        SyntaxTree tree = CSharpSyntaxTree.ParseText(text);
+        SourceText source = tree.GetText();
+        if (stopLine < 0 || stopLine >= source.Lines.Count)
+        {
+            return [];
+        }
+        SyntaxNode root = tree.GetRoot();
+        TextLine stop = source.Lines[stopLine];
+        int position = stop.Start + (source.ToString(stop.Span).Length - source.ToString(stop.Span).TrimStart().Length);
+        SyntaxNode? at = root.FindToken(Math.Min(position, Math.Max(0, root.FullSpan.End - 1))).Parent;
+        SyntaxNode? body = at?.AncestorsAndSelf().FirstOrDefault(n => n is BaseMethodDeclarationSyntax or LocalFunctionStatementSyntax
+            or AccessorDeclarationSyntax or AnonymousFunctionExpressionSyntax);
+        // Top-level statements are Main's body: from the first of them.
+        int start = body?.SpanStart ?? root.ChildNodes().OfType<GlobalStatementSyntax>().FirstOrDefault()?.SpanStart ?? stop.Start;
+        TextSpan span = TextSpan.FromBounds(Math.Min(start, stop.Start), stop.End);
+
+        Dictionary<int, List<string>> named = [];
+        foreach (SyntaxToken token in root.DescendantTokens(span))
+        {
+            if (!token.IsKind(SyntaxKind.IdentifierToken) || !values.ContainsKey(token.ValueText) || !NamesVariable(token))
+            {
+                continue;
+            }
+            int line = source.Lines.GetLineFromPosition(token.SpanStart).LineNumber;
+            List<string> onLine = named.TryGetValue(line, out List<string>? list) ? list : named[line] = [];
+            if (!onLine.Contains(token.ValueText))
+            {
+                onLine.Add(token.ValueText);
+            }
+        }
+        return [.. named.OrderBy(p => p.Key).SelectMany(p => p.Value.Select(name =>
+            new LineAnnotation(p.Key, $"{name}: {Cut(values[name])}", LineAnnotationKind.InlineValue)))];
+    }
+
+    /// <summary>A token that names a local or parameter: declaring one, or used alone (not as a member of
+    /// something, not a method called by that name).</summary>
+    private static bool NamesVariable(SyntaxToken token) => token.Parent switch
+    {
+        VariableDeclaratorSyntax or ForEachStatementSyntax or ParameterSyntax or SingleVariableDesignationSyntax or CatchDeclarationSyntax => true,
+        IdentifierNameSyntax name => name.Parent switch
+        {
+            MemberAccessExpressionSyntax access => access.Expression == name,
+            MemberBindingExpressionSyntax => false,
+            InvocationExpressionSyntax invocation => invocation.Expression != name,
+            NameColonSyntax or NameEqualsSyntax => false,
+            QualifiedNameSyntax => false,
+            _ => true,
+        },
+        _ => false,
+    };
+
+    private static string Cut(string value) => value.Length <= Longest ? value : value[..(Longest - 1)] + "…";
+}

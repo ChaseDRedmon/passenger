@@ -45,6 +45,7 @@ public sealed partial class CodeEditor : Control
     private bool ligatures;
     private Metrics metrics;
     private Palette palette;
+    private (TextRunProperties Value, TextRunProperties Exception) annotationRuns;
 
     public CodeEditor()
     {
@@ -70,6 +71,7 @@ public sealed partial class CodeEditor : Control
         numberRuns = (
             RunWith(palette.LineNumberCurrent),
             RunWith(palette.LineNumber));
+        annotationRuns = (ItalicRunWith(palette.InlineValue), ItalicRunWith(palette.Error));
     }
 
     /// <summary>Raised when any caret or selection changes, by an edit or a move.</summary>
@@ -103,6 +105,15 @@ public sealed partial class CodeEditor : Control
     public void SetLineMarks(IReadOnlyList<LineMark> marks)
     {
         LineMarks = marks;
+        InvalidateVisual();
+    }
+
+    /// <summary>Text after lines' code (the debugger's inline values, an exception), from the host.</summary>
+    public IReadOnlyList<LineAnnotation> LineAnnotations { get; private set; } = [];
+
+    public void SetLineAnnotations(IReadOnlyList<LineAnnotation> annotations)
+    {
+        LineAnnotations = annotations;
         InvalidateVisual();
     }
 
@@ -471,6 +482,7 @@ public sealed partial class CodeEditor : Control
         numberRuns = (
             RunWith(palette.LineNumberCurrent),
             RunWith(palette.LineNumber));
+        annotationRuns = (ItalicRunWith(palette.InlineValue), ItalicRunWith(palette.Error));
         lines.Clear();
         InvalidateArrange();
         InvalidateVisual();

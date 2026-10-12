@@ -101,6 +101,7 @@ public partial class EditorArea : UserControl
         Editor.Highlighter = document.Highlighter;
         Editor.SetMarkers(document.Markers);
         Editor.SetLineMarks(document.LineMarks);
+        Editor.SetLineAnnotations(document.LineAnnotations);
         Find.Attach(Editor);
         ShowEditor(true);
         Editor.Focus();
@@ -190,6 +191,10 @@ public partial class EditorArea : UserControl
         else if (e.PropertyName == nameof(OpenDocument.LineMarks))
         {
             Editor.SetLineMarks(active.LineMarks);
+        }
+        else if (e.PropertyName == nameof(OpenDocument.LineAnnotations))
+        {
+            Editor.SetLineAnnotations(active.LineAnnotations);
         }
         else if (e.PropertyName == nameof(OpenDocument.Markers))
         {

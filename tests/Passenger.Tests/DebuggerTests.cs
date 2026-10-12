@@ -47,11 +47,17 @@ public sealed class DebuggerTests : IDisposable
         DapStackFrame top = window.BottomPanel.Debug.Frames[0];
         Assert.Contains("<Main>$", top.Name, StringComparison.Ordinal);
         Assert.Equal(4, top.Line);
+        // Each line of the method down to the stop shows the values it names, as Rider's inline values do.
+        Assert.Contains(new LineAnnotation(0, "total: 0", LineAnnotationKind.InlineValue), editor.LineAnnotations);
+        Assert.Contains(new LineAnnotation(1, "i: 1", LineAnnotationKind.InlineValue), editor.LineAnnotations);
+        Assert.Contains(new LineAnnotation(3, "total: 0", LineAnnotationKind.InlineValue), editor.LineAnnotations);
+        Assert.DoesNotContain(editor.LineAnnotations, a => a.Line > 3);
 
         // Resume runs on to the breakpoint's next hit, the loop's second turn.
         Ui.Run(window, AppActions.Resume);
         Ui.WaitFor(() => Value(window, "i") == "2", "the second stop");
         Assert.Equal("1", Value(window, "total"));
+        Assert.Contains(new LineAnnotation(1, "i: 2", LineAnnotationKind.InlineValue), editor.LineAnnotations);
 
         // Step Over leaves the line: the execution point moves on with the program.
         Ui.Run(window, AppActions.StepOver);
@@ -62,6 +68,7 @@ public sealed class DebuggerTests : IDisposable
         Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
         Assert.DoesNotContain(editor.LineMarks, m => m.Kind == LineMarkKind.ExecutionPoint);
         Assert.Contains(new LineMark(3, LineMarkKind.Breakpoint), editor.LineMarks);
+        Assert.Empty(editor.LineAnnotations);
         window.Close();
     }
 
@@ -107,6 +114,24 @@ public sealed class DebuggerTests : IDisposable
         Assert.Equal("\"Hi\"", Value(window, "greeting"));
         Assert.Equal($"\"{window.Folder}\"", Value(window, "here"));
         Assert.Equal("string[2]", Value(window, "args"));
+        Ui.Run(window, AppActions.Stop);
+        Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void An_exception_stop_names_the_exception_at_the_line_that_threw_it()
+    {
+        Write("Program.cs", "int[] values = [1, 2];\nint index = 5;\nConsole.WriteLine(values[index]);\n");
+        MainWindow window = Open();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Ui.Run(window, AppActions.Debug);
+        Ui.WaitFor(() => editor.LineAnnotations.Any(a => a.Kind == LineAnnotationKind.Exception), "the exception at its line");
+        LineAnnotation thrown = Assert.Single(editor.LineAnnotations, a => a.Kind == LineAnnotationKind.Exception);
+        Assert.Equal(2, thrown.Line);
+        Assert.StartsWith("IndexOutOfRangeException", thrown.Text, StringComparison.Ordinal);
+        Assert.Contains(new LineAnnotation(2, "index: 5", LineAnnotationKind.InlineValue), editor.LineAnnotations);
+        Assert.Contains("IndexOutOfRangeException", window.Status, StringComparison.Ordinal);
         Ui.Run(window, AppActions.Stop);
         Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
         window.Close();

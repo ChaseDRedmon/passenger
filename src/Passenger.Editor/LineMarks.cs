@@ -23,3 +23,17 @@ public enum LineMarkKind
 
 /// <summary>A mark on a line (from zero) of the document the editor shows.</summary>
 public readonly record struct LineMark(int Line, LineMarkKind Kind);
+
+/// <summary>What a line-end annotation says, and so how it is drawn.</summary>
+public enum LineAnnotationKind
+{
+    /// <summary>A value the debugger read, as Rider shows them after the code that uses them: grey italic.</summary>
+    InlineValue,
+
+    /// <summary>The exception the debugger stopped on, at the line that threw it: in the error colour.</summary>
+    Exception,
+}
+
+/// <summary>Text drawn after a line's (from zero) code, part of no document: never selected, copied or
+/// typed over.</summary>
+public readonly record struct LineAnnotation(int Line, string Text, LineAnnotationKind Kind);

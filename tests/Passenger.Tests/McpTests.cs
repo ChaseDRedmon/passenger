@@ -76,6 +76,11 @@ public sealed class McpTests : IDisposable
 
         await Call(client, "stop");
         Assert.Equal("not debugging", (await Call(client, "debug_state")).GetProperty("state").GetString());
+
+        // What a tool refuses reaches the agent in words that say what to do instead.
+        CallToolResult refused = await client.CallToolAsync("debug_continue", cancellationToken: Cancel);
+        Assert.True(refused.IsError);
+        Assert.Contains("debug_start starts it", Assert.IsType<TextContentBlock>(Assert.Single(refused.Content)).Text, StringComparison.Ordinal);
     }
 
     [AvaloniaFact]

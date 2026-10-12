@@ -38,7 +38,12 @@ internal static class WindowPicture
             return;
         }
         PixelRect pixels = PixelRect.FromRect(box, scale).Intersect(new PixelRect(picture.PixelSize));
-        using WriteableBitmap part = new(pixels.Size, picture.Dpi, Avalonia.Platform.PixelFormat.Bgra8888, Avalonia.Platform.AlphaFormat.Premul);
+        if (pixels.Width <= 0 || pixels.Height <= 0)
+        {
+            throw new ArgumentException($"That area is outside the window, which is {picture.PixelSize.Width / scale:0} by {picture.PixelSize.Height / scale:0}");
+        }
+        // The copy is bytes as they are, so the part keeps the frame's own layout (the headless frame's is RGBA).
+        using WriteableBitmap part = new(pixels.Size, picture.Dpi, picture.Format ?? Avalonia.Platform.PixelFormat.Bgra8888, picture.AlphaFormat ?? Avalonia.Platform.AlphaFormat.Premul);
         using (Avalonia.Platform.ILockedFramebuffer target = part.Lock())
         {
             picture.CopyPixels(pixels, target.Address, target.RowBytes * pixels.Height, target.RowBytes);

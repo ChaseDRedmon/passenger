@@ -20,6 +20,9 @@ public sealed class DebugController
     private (string Expression, string Value)? lastResult;
     private DapStackFrame? frame;
 
+    /// <summary>The exception the program stopped on, and the frame it was thrown in, shown at that frame's line.</summary>
+    private (string Text, int FrameId)? stopException;
+
     public DebugController(EditorArea editors, DebugView view)
     {
         this.editors = editors;
@@ -235,17 +238,21 @@ public sealed class DebugController
         {
             case DebugState.Paused:
                 await ShowStop(session);
-                Message?.Invoke(this, $"{name}: paused ({session.StopReason})");
+                Message?.Invoke(this, stopException is { } thrown
+                    ? $"{name}: paused on {thrown.Text}"
+                    : $"{name}: paused ({session.StopReason})");
                 break;
             case DebugState.Running:
                 executionPoint = null;
                 UpdateAllMarks();
+                ClearInlineValues();
                 Message?.Invoke(this, $"{name}: running");
                 break;
             case DebugState.Ended:
                 executionPoint = null;
                 frame = null;
                 UpdateAllMarks();
+                ClearInlineValues();
                 view.ShowFrames([], null, [], null);
                 view.Tree.Show([]);
                 view.SetState(DebugState.Ended);
@@ -263,8 +270,16 @@ public sealed class DebugController
         {
             return;
         }
+        stopException = null;
         try
         {
+            if (session.StopReason == "exception")
+            {
+                ExceptionInfoResponse info = await session.ExceptionInfoAsync(thread);
+                IReadOnlyList<DapStackFrame> stack = await session.StackTraceAsync(thread);
+                DapStackFrame? thrown = stack.FirstOrDefault(f => f.Source?.Path is not null);
+                stopException = (Describe(info), thrown?.Id ?? -1);
+            }
             await ChooseThread(thread);
         }
         catch (DapException error)
@@ -317,15 +332,21 @@ public sealed class DebugController
         {
             rows.Add(await Evaluated(session, current, result.Expression, VariableRole.Result));
         }
+        Dictionary<string, string> values = [];
         try
         {
             IReadOnlyList<DapScope> scopes = await session.ScopesAsync(current.Id);
             foreach (DapScope scope in scopes)
             {
+                IReadOnlyList<DapVariable> variables = await session.VariablesAsync(scope.VariablesReference);
+                foreach (DapVariable variable in variables)
+                {
+                    values.TryAdd(variable.Name, variable.Value);
+                }
                 if (scopes.Count == 1)
                 {
                     // One scope (the locals) needs no node of its own, as Rider shows them.
-                    rows.AddRange((await session.VariablesAsync(scope.VariablesReference)).Select(v => VariableNode.From(v, 0)));
+                    rows.AddRange(variables.Select(v => VariableNode.From(v, 0)));
                 }
                 else
                 {
@@ -340,6 +361,42 @@ public sealed class DebugController
         if (frame == current)
         {
             view.Tree.Show(rows);
+            ShowInlineValues(current, values);
+        }
+    }
+
+    /// <summary>The chosen frame's values after the lines of its method, in its file and no other.</summary>
+    private void ShowInlineValues(DapStackFrame current, IReadOnlyDictionary<string, string> values)
+    {
+        string? path = current.Source?.Path is { } source ? PathNames.Canonical(source) : null;
+        foreach (OpenDocument document in editors.Documents)
+        {
+            if (document.Path != path)
+            {
+                document.LineAnnotations = [];
+                continue;
+            }
+            IReadOnlyList<LineAnnotation> inline = InlineValues.For(document.Text.Snapshot.ToString(), current.Line - 1, values);
+            document.LineAnnotations = stopException is { } thrown && thrown.FrameId == current.Id
+                ? [new LineAnnotation(current.Line - 1, thrown.Text, LineAnnotationKind.Exception), .. inline]
+                : inline;
+        }
+    }
+
+    /// <summary>An exception as Rider's stop names it: its type without the namespace, and its message.</summary>
+    public static string Describe(ExceptionInfoResponse info)
+    {
+        string type = info.Details?.TypeName ?? info.ExceptionId.Replace("CLR/", "", StringComparison.Ordinal);
+        string shortType = type[(type.LastIndexOf('.') + 1)..];
+        string? message = info.Details?.Message ?? info.Description;
+        return string.IsNullOrEmpty(message) ? shortType : $"{shortType}: {message}";
+    }
+
+    private void ClearInlineValues()
+    {
+        foreach (OpenDocument document in editors.Documents)
+        {
+            document.LineAnnotations = [];
         }
     }
 

@@ -32,6 +32,14 @@ public sealed partial class CodeEditor
         int spanIndex = 0;
         HashSet<int> caretLines = selections.Items.Select(s => text.GetLineFromOffset(s.Caret)).ToHashSet();
         VisibleMarks marks = new(LineMarks, first, last);
+        Dictionary<int, List<LineAnnotation>> annotations = [];
+        foreach (LineAnnotation annotation in LineAnnotations)
+        {
+            if (annotation.Line >= first && annotation.Line <= last)
+            {
+                (annotations.TryGetValue(annotation.Line, out List<LineAnnotation>? list) ? list : annotations[annotation.Line] = []).Add(annotation);
+            }
+        }
         bool focused = IsFocused;
 
         using (context.PushClip(new Rect(gutter, 0, Math.Max(0, size.Width - gutter), size.Height)))
@@ -56,6 +64,10 @@ public sealed partial class CodeEditor
                 DrawHighlights(context, span, layout, left, y);
                 layout.Draw(context, new Point(left, y + (lineHeight - layout.Height) / 2));
                 DrawMarkers(context, span, layout, left, y);
+                if (annotations.TryGetValue(line, out List<LineAnnotation>? here))
+                {
+                    DrawAnnotations(context, here, left + layout.Width, y);
+                }
             }
 
             if (focused && caretOn)
@@ -203,6 +215,26 @@ public sealed partial class CodeEditor
                 _ => palette.Info,
             };
             DrawWave(context, brush, x1, x2, y + metrics.LineHeight - 3);
+        }
+    }
+
+    /// <summary>A line's annotations after its code, a few spaces on, as Rider spaces inline values; an
+    /// exception's on a tinted ground so it reads as the stop's reason.</summary>
+    private void DrawAnnotations(DrawingContext context, List<LineAnnotation> annotations, double x, double y)
+    {
+        x += metrics.CharWidth * 3;
+        foreach (LineAnnotation annotation in annotations)
+        {
+            bool exception = annotation.Kind == LineAnnotationKind.Exception;
+            TextLine text = lines.Get(new LineKey(annotation.Text, exception ? -4 : -3), () =>
+                Format(annotation.Text, [], exception ? annotationRuns.Exception : annotationRuns.Value));
+            double top = y + (metrics.LineHeight - text.Height) / 2;
+            if (exception)
+            {
+                context.FillRectangle(palette.ExceptionBack, new Rect(x - metrics.CharWidth / 2, y + 1, text.WidthIncludingTrailingWhitespace + metrics.CharWidth, metrics.LineHeight - 2), 3);
+            }
+            text.Draw(context, new Point(x, top));
+            x += text.WidthIncludingTrailingWhitespace + metrics.CharWidth * 2;
         }
     }
 
@@ -388,6 +420,9 @@ public sealed partial class CodeEditor
     private GenericTextRunProperties RunWith(IBrush brush) =>
         new(Typeface, FontSize, foregroundBrush: brush, fontFeatures: ligatures ? null : NoLigatures);
 
+    private GenericTextRunProperties ItalicRunWith(IBrush brush) =>
+        new(new Typeface(FontFamily, FontStyle.Italic), FontSize, foregroundBrush: brush, fontFeatures: ligatures ? null : NoLigatures);
+
     private static int Hash(LineRun[] runs)
     {
         HashCode hash = new();
@@ -529,6 +564,8 @@ public sealed partial class CodeEditor
         public IBrush BreakpointLine { get; private init; } = Brush("#3A2627");
         public IBrush ExecutionLine { get; private init; } = Brush("#253553");
         public IBrush ExecutionPoint { get; private init; } = Brush("#5E9CF0");
+        public IBrush InlineValue { get; private init; } = Brush("#868A91");
+        public IBrush ExceptionBack { get; private init; } = Brush("#4A2629");
 
         public IBrush Syntax(TokenKind kind) => syntax.TryGetValue(kind, out IBrush? brush) ? brush : Text;
 
@@ -557,6 +594,8 @@ public sealed partial class CodeEditor
                 BreakpointLine = Find(control, "Passenger.Editor.BreakpointLine") ?? defaults.BreakpointLine,
                 ExecutionLine = Find(control, "Passenger.Editor.ExecutionLine") ?? defaults.ExecutionLine,
                 ExecutionPoint = Find(control, "Passenger.Editor.ExecutionPoint") ?? defaults.ExecutionPoint,
+                InlineValue = Find(control, "Passenger.Editor.InlineValue") ?? defaults.InlineValue,
+                ExceptionBack = Find(control, "Passenger.Editor.ExceptionBack") ?? defaults.ExceptionBack,
             };
             foreach (TokenKind kind in Enum.GetValues<TokenKind>())
             {

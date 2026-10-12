@@ -14,6 +14,7 @@ public sealed class OpenDocument : Observable
     private IHighlighter? highlighter;
     private IReadOnlyList<Marker> markers = [];
     private IReadOnlyList<LineMark> lineMarks = [];
+    private IReadOnlyList<LineAnnotation> lineAnnotations = [];
 
     public OpenDocument(string path, FileText file)
     {
@@ -50,6 +51,13 @@ public sealed class OpenDocument : Observable
     {
         get => lineMarks;
         set => Set(ref lineMarks, value);
+    }
+
+    /// <summary>The debugger's text after lines: inline values, the exception it stopped on.</summary>
+    public IReadOnlyList<LineAnnotation> LineAnnotations
+    {
+        get => lineAnnotations;
+        set => Set(ref lineAnnotations, value);
     }
 
     /// <summary>Lets go of everything the open file holds beyond its text, when its tab closes.</summary>

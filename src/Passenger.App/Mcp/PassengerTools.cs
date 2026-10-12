@@ -404,7 +404,19 @@ public sealed class PassengerTools(MainWindow window)
 
     // The work behind them
 
-    private static Task<T> OnUi<T>(Func<Task<T>> work) => Dispatcher.UIThread.InvokeAsync(work);
+    /// <summary>A tool's work on the UI thread. What it refuses (nothing to debug, no such file) reaches the agent
+    /// in its own words: the SDK passes only an McpException's message on, and hides every other's.</summary>
+    private static async Task<T> OnUi<T>(Func<Task<T>> work)
+    {
+        try
+        {
+            return await Dispatcher.UIThread.InvokeAsync(work);
+        }
+        catch (Exception error) when (error is InvalidOperationException or ArgumentException or IOException or TimeoutException or DapException)
+        {
+            throw new ModelContextProtocol.McpException(error is DapException dap ? $"The debugger refused: {dap.Reason}" : error.Message, error);
+        }
+    }
 
     private Task<DebugSnapshot> Resume(Func<DebugSession, Task> resume, int waitSeconds) => OnUi(async () =>
     {
@@ -590,7 +602,8 @@ public sealed class PassengerTools(MainWindow window)
         return new Workspace(
             window.Folder,
             window.Solution?.Path,
-            [.. (window.Solution?.Projects ?? []).Select(p => new ProjectInfo(p.Name, Relative(p.Path), p.OutputType, p.TargetFrameworks))],
+            // A folder with no solution has the projects its run configurations come from.
+            [.. (window.Solution?.Projects ?? window.Configurations.Select(c => c.Project).Distinct()).Select(p => new ProjectInfo(p.Name, Relative(p.Path), p.OutputType, p.TargetFrameworks))],
             [.. window.Configurations.Select(c => c.Name)],
             window.Configuration?.Name,
             window.CSharpService is null ? "none" : window.CSharpService.IsReady ? "ready" : window.CSharpService.State,
