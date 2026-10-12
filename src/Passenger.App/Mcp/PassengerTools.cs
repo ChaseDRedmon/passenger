@@ -259,6 +259,68 @@ public sealed class PassengerTools(MainWindow window)
         return "Stopped";
     });
 
+    // Unit tests
+
+    [McpServerTool(Name = "tests_run", Title = "Run unit tests"), Description(
+        "Builds and runs unit tests through VSTest, as the Unit Tests window does: all of them, or those whose full name (Namespace.Class.Method) " +
+        "contains filter. With debug, under the debugger (breakpoints stop in tests). Waits for the run and returns the tally and every failure " +
+        "with its message and stack trace.")]
+    public Task<TestRunInfo> TestsRun(
+        [Description("Part of a test's full name: a method, a class, a namespace")] string? filter = null,
+        bool debug = false) => OnUi(async () =>
+    {
+        string folder = window.Folder ?? throw new InvalidOperationException("No folder is open");
+        Testing.TestController tests = window.Tests;
+        if (filter is not null && tests.Tree.Roots.Count == 0 && await tests.DiscoverAsync(folder) is { } discovery)
+        {
+            throw new InvalidOperationException(discovery);
+        }
+        List<Testing.TestNode>? chosen = filter is null ? null
+            : [.. tests.Tree.Roots.SelectMany(r => r.Methods).Where(m => m.Cases.Any(c => c.FullyQualifiedName.Contains(filter, StringComparison.Ordinal)))];
+        if (chosen is { Count: 0 })
+        {
+            throw new InvalidOperationException($"No test's name contains '{filter}'");
+        }
+        Task<string?> run = tests.RunAsync(folder, chosen, debug);
+        if (debug)
+        {
+            // A debugged test that stops is the agent's to look at: the stop comes back, the run goes on after it.
+            await Until(() => run.IsCompleted || window.Debugger.Session is { State: DebugState.Paused }, TimeSpan.FromMinutes(5));
+            if (!run.IsCompleted)
+            {
+                await Until(() => window.BottomPanel.Debug.Frames.Count > 0, TimeSpan.FromSeconds(5));
+                return TestInfo(tests) with { Debugger = await DebugSnapshotAsync() };
+            }
+        }
+        if (await run is { } problem)
+        {
+            throw new InvalidOperationException(problem);
+        }
+        return TestInfo(tests);
+    });
+
+    [McpServerTool(Name = "tests_list", Title = "The unit tests", ReadOnly = true), Description(
+        "Every test found (after tests_run or Run All), each with its state from the last run: passed, failed, skipped, notRun.")]
+    public Task<IReadOnlyList<TestInfoRow>> TestsList() => OnUi(() => Task.FromResult((IReadOnlyList<TestInfoRow>)[.. window.Tests.Tree.Roots
+        .SelectMany(r => r.Methods)
+        .Select(m => new TestInfoRow(string.Join('.', Ancestry(m)), m.State.ToString().ToLowerInvariant(), m.Path is { } at ? $"{Relative(at)}:{m.Line}" : null))]));
+
+    private TestRunInfo TestInfo(Testing.TestController tests)
+    {
+        List<Testing.TestNode> failed = [.. tests.Tree.Roots.SelectMany(r => r.Methods).Where(m => m.State == Testing.TestState.Failed)];
+        return new TestRunInfo(tests.Summary, [.. failed.Select(m => new TestFailure(string.Join('.', Ancestry(m)), m.Path is { } at ? $"{Relative(at)}:{m.Line}" : null, m.Details))]);
+    }
+
+    private static IEnumerable<string> Ancestry(Testing.TestNode method)
+    {
+        Stack<string> names = new();
+        for (Testing.TestNode? node = method; node is { Kind: not Testing.TestNodeKind.Project }; node = node.Parent)
+        {
+            names.Push(node.Name);
+        }
+        return names;
+    }
+
     // The debugger
 
     [McpServerTool(Name = "breakpoint_set", Title = "Set a breakpoint"), Description(
@@ -693,5 +755,11 @@ public sealed record DebugSnapshot(
     int? ExitCode,
     string? Status,
     string? Exception = null);
+
+public sealed record TestRunInfo(string Summary, IReadOnlyList<TestFailure> Failures, DebugSnapshot? Debugger = null);
+
+public sealed record TestFailure(string Test, string? Location, string Details);
+
+public sealed record TestInfoRow(string Test, string State, string? Location);
 
 public sealed record SymbolFound(string Name, string Kind, string? Container, string Path, int Line, int Column);

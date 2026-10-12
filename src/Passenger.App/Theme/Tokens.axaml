@@ -19,6 +19,11 @@
             <SolidColorBrush x:Key="Passenger.AccentHover" Color="#5A8FF7" />
             <SolidColorBrush x:Key="Passenger.AccentText" Color="#FFFFFF" />
             <SolidColorBrush x:Key="Passenger.Run" Color="#5FAD65" />
+            <SolidColorBrush x:Key="Passenger.Test.Passed" Color="#5FAD65" />
+            <SolidColorBrush x:Key="Passenger.Test.Failed" Color="#E55765" />
+            <SolidColorBrush x:Key="Passenger.Test.Skipped" Color="#868A91" />
+            <SolidColorBrush x:Key="Passenger.Test.Running" Color="#5E9CF0" />
+            <SolidColorBrush x:Key="Passenger.Test.NotRun" Color="#6F737A" />
             <SolidColorBrush x:Key="Passenger.Badge" Color="#4A6FA8" />
             <SolidColorBrush x:Key="Passenger.Modified" Color="#6F9BF5" />
 
@@ -90,6 +95,11 @@
             <SolidColorBrush x:Key="Passenger.AccentHover" Color="#2F6AE0" />
             <SolidColorBrush x:Key="Passenger.AccentText" Color="#FFFFFF" />
             <SolidColorBrush x:Key="Passenger.Run" Color="#208A3C" />
+            <SolidColorBrush x:Key="Passenger.Test.Passed" Color="#4E9A54" />
+            <SolidColorBrush x:Key="Passenger.Test.Failed" Color="#D9414F" />
+            <SolidColorBrush x:Key="Passenger.Test.Skipped" Color="#8C8C8C" />
+            <SolidColorBrush x:Key="Passenger.Test.Running" Color="#3D7BF5" />
+            <SolidColorBrush x:Key="Passenger.Test.NotRun" Color="#A8ADBD" />
             <SolidColorBrush x:Key="Passenger.Badge" Color="#5C84C4" />
             <SolidColorBrush x:Key="Passenger.Modified" Color="#3D7BF5" />
 

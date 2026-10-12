@@ -99,6 +99,11 @@ public sealed class DebugSession
 
     public int? ExitCode { get; private set; }
 
+    /// <summary>The program's process, once the adapter has said which it is.</summary>
+    public Task<int> ProcessStarted => processStarted.Task;
+
+    private readonly TaskCompletionSource<int> processStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     /// <summary>Why the session ended other than by the program ending or being stopped: the adapter crashed.</summary>
     public string? Failure { get; private set; }
 
@@ -107,9 +112,26 @@ public sealed class DebugSession
     /// <summary>Starts the adapter and launches a program under it (an apphost or a .dll run under
     /// dotnet), with the breakpoints the store has, stopping on exceptions the user's code leaves
     /// unhandled, as Rider does by default.</summary>
-    public static async Task<DebugSession> LaunchAsync(DebugTarget target, BreakpointStore breakpoints, Action<string> log)
+    public static Task<DebugSession> LaunchAsync(DebugTarget target, BreakpointStore breakpoints, Action<string> log) =>
+        StartAsync(target.Program, "launch", new LaunchArguments
+        {
+            Program = target.Program,
+            Args = target.Arguments,
+            Cwd = target.WorkingDirectory,
+            Env = target.Environment,
+            Console = "internalConsole",
+            JustMyCode = true,
+            StopAtEntry = false,
+        }, breakpoints, log);
+
+    /// <summary>Starts the adapter and attaches it to a running .NET process (a test host VSTest started), with the
+    /// store's breakpoints, as Attach to Process does.</summary>
+    public static Task<DebugSession> AttachAsync(int processId, BreakpointStore breakpoints, Action<string> log) =>
+        StartAsync($"process {processId}", "attach", new AttachArguments { ProcessId = processId, JustMyCode = true }, breakpoints, log);
+
+    private static async Task<DebugSession> StartAsync(string program, string request, object arguments, BreakpointStore breakpoints, Action<string> log)
     {
-        DebugSession session = new(breakpoints, log) { Program = target.Program };
+        DebugSession session = new(breakpoints, log) { Program = program };
         session.connection.Start();
         try
         {
@@ -123,16 +145,7 @@ public sealed class DebugSession
                 PathFormat = "path",
                 SupportsVariableType = true,
             });
-            await session.connection.RequestAsync("launch", new LaunchArguments
-            {
-                Program = target.Program,
-                Args = target.Arguments,
-                Cwd = target.WorkingDirectory,
-                Env = target.Environment,
-                Console = "internalConsole",
-                JustMyCode = true,
-                StopAtEntry = false,
-            });
+            await session.connection.RequestAsync(request, arguments);
             await session.initialized.Task.WaitAsync(TimeSpan.FromSeconds(30));
             foreach (string path in breakpoints.Files)
             {
@@ -300,6 +313,12 @@ public sealed class DebugSession
                 if (changed.Breakpoint.Id is int id && byId.TryGetValue(id, out LineBreakpoint? breakpoint))
                 {
                     breakpoints.Report(breakpoint.Path, [Status(changed.Breakpoint)], [breakpoint]);
+                }
+                break;
+            case "process":
+                if (body.Read<ProcessEvent>().SystemProcessId is int processId)
+                {
+                    processStarted.TrySetResult(processId);
                 }
                 break;
             case "exited":

@@ -31,6 +31,7 @@ public partial class MainWindow : Window
     private readonly ProcessRunner builder;
     private readonly ProcessRunner runner;
     private readonly DebugController debug;
+    private readonly Testing.TestController tests;
     private Action<bool>? afterBuild;
     private readonly List<Problem> problems = [];
     private IReadOnlyList<RunConfiguration> configurations = [];
@@ -125,6 +126,39 @@ public partial class MainWindow : Window
         };
         Bottom.HideRequested += (_, _) => HideBottom();
         debug = new DebugController(Editors, Bottom.Debug);
+        tests = new Testing.TestController(Bottom.TestTree, BuildAsync, () => Projects, line => Bottom.Build.Document.Append($"{line}\n"));
+        tests.Message += (_, message) =>
+        {
+            StatusText.Text = message;
+            Bottom.Tests.Status = message;
+        };
+        tests.LaunchUnderDebugger = LaunchTestHost;
+        tests.AttachDebugger = async processId =>
+        {
+            ShowBottom("Debug");
+            await debug.AttachAsync(processId, "Tests");
+            if (debug.Session is not { } session)
+            {
+                return false;
+            }
+            // VSTest runs the tests the moment this says yes: it waits until the debugger has hold of the test host.
+            try
+            {
+                return await session.ProcessStarted.WaitAsync(TimeSpan.FromSeconds(30)) == processId;
+            }
+            catch (TimeoutException)
+            {
+                return false;
+            }
+        };
+        Bottom.Tests.ActionRequested += (_, action) => RunAppAction(action);
+        Bottom.Tests.GoToRequested += (_, node) =>
+        {
+            if (node.Path is { } path && File.Exists(path))
+            {
+                NavigateTo(PathNames.Canonical(path), new TextPosition(Math.Max(0, node.Line - 1), 0));
+            }
+        };
         debug.ActionRequested += (_, action) => RunAppAction(action);
         debug.Message += (_, message) => StatusText.Text = message;
         debug.Navigate += (_, target) => ShowStop(target.Path, target.Position);
@@ -311,6 +345,24 @@ public partial class MainWindow : Window
                 break;
             case AppActions.ViewBreakpoints:
                 ShowBreakpoints(null);
+                break;
+            case AppActions.ShowTests:
+                ShowBottom("Tests");
+                break;
+            case AppActions.RunAllTests:
+                RunTests(() => tests.RunAsync(folder!));
+                break;
+            case AppActions.RunTests or AppActions.DebugTests:
+                RunTestsInContext(debug: action == AppActions.DebugTests);
+                break;
+            case AppActions.RerunTests:
+                RunTests(() => tests.RerunAsync(folder!));
+                break;
+            case AppActions.RerunFailedTests:
+                RunTests(() => tests.RerunFailedAsync(folder!));
+                break;
+            case AppActions.StopTests:
+                tests.Stop();
                 break;
             case AppActions.ShowBuild:
                 ShowBottom("Build");
@@ -978,6 +1030,88 @@ public partial class MainWindow : Window
                 ClosePopup();
                 break;
         }
+    }
+
+    /// <summary>The unit test runner, its tree and its runs.</summary>
+    public Testing.TestController Tests => tests;
+
+    /// <summary>The projects of the solution, or the folder's with none.</summary>
+    public IReadOnlyList<ProjectModel> Projects => Solution is { } solution
+        ? [.. solution.Projects]
+        : folder is null ? [] : [.. Directory.EnumerateFiles(folder, "*.csproj").Select(ProjectModel.Load)];
+
+    /// <summary>A run of tests shown in the Unit Tests window; what stopped it, if anything, in the status bar.</summary>
+    private void RunTests(Func<Task<string?>> run)
+    {
+        if (folder is null)
+        {
+            return;
+        }
+        ShowBottom("Tests");
+        _ = Go();
+
+        async Task Go()
+        {
+            if (await run() is { } problem)
+            {
+                StatusText.Text = problem;
+                Bottom.Tests.Status = problem;
+            }
+        }
+    }
+
+    /// <summary>Rider's Run (or Debug) Unit Tests in context: the Unit Tests window's chosen rows when it has the
+    /// focus, else the test method or class at the editor's caret, found once the tests have been.</summary>
+    private void RunTestsInContext(bool debug)
+    {
+        if (folder is null)
+        {
+            return;
+        }
+        if (Bottom.Tests.HasFocus && Bottom.Tests.Selected.Count > 0)
+        {
+            IReadOnlyList<Testing.TestNode> chosen = Bottom.Tests.Selected;
+            RunTests(() => tests.RunAsync(folder, chosen, debug));
+            return;
+        }
+        if (Editors.Active is not { } active || Testing.TestsAtCaret.At(active.Text.Snapshot.ToString(), Editors.CodeEditor.CaretPosition.Line) is not { } context)
+        {
+            StatusText.Text = "No test is at the caret";
+            return;
+        }
+        RunTests(async () =>
+        {
+            if (Matching() is not { Count: > 0 })
+            {
+                // Tests not yet found are found first, as a build would make them.
+                if (await tests.DiscoverAsync(folder) is { } problem)
+                {
+                    return problem;
+                }
+            }
+            return Matching() is { Count: > 0 } found
+                ? await tests.RunAsync(folder, found, debug)
+                : $"No test of {context.Method ?? context.Type} was found; is the project a test project?";
+        });
+
+        List<Testing.TestNode> Matching() =>
+            [.. tests.Tree.Roots.SelectMany(r => r.Methods).Where(m => m.Cases.Any(c => Testing.TestsAtCaret.Matches(c.FullyQualifiedName, context.Type, context.Method)))];
+    }
+
+    /// <summary>A test host VSTest would start, started under the debugger; its process for VSTest to talk to.</summary>
+    private async Task<int> LaunchTestHost(Microsoft.VisualStudio.TestPlatform.ObjectModel.TestProcessStartInfo start)
+    {
+        DebugTarget target = new(start.FileName ?? throw new InvalidOperationException("VSTest gave no test host"),
+            start.WorkingDirectory ?? folder ?? Environment.CurrentDirectory,
+            CommandLine.Split(start.Arguments),
+            start.EnvironmentVariables?.Where(v => v.Value is not null).ToDictionary(v => v.Key, v => v.Value!) ?? []);
+        ShowBottom("Debug");
+        await debug.StartAsync(target, "Tests");
+        if (debug.Session is not { } session)
+        {
+            throw new InvalidOperationException("The debugger could not start the test host");
+        }
+        return await session.ProcessStarted.WaitAsync(TimeSpan.FromSeconds(30));
     }
 
     /// <summary>A breakpoint's properties beside its line in the gutter, its condition ready to type.</summary>

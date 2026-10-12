@@ -153,12 +153,21 @@ public sealed record ProjectModel(
     IReadOnlyList<string> TargetFrameworks,
     IReadOnlyList<(string Name, string? Version)> Packages,
     IReadOnlyList<string> ProjectReferences,
-    bool Exists) : SolutionEntry(Name)
+    bool Exists,
+    bool DeclaredTest = false) : SolutionEntry(Name)
 {
+    private static readonly HashSet<string> TestPackages = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Microsoft.NET.Test.Sdk", "xunit.runner.visualstudio", "NUnit3TestAdapter", "MSTest.TestAdapter", "MSTest",
+    };
+
     public string Folder => System.IO.Path.GetDirectoryName(Path)!;
 
+    /// <summary>Whether it holds tests VSTest runs: it says so (IsTestProject), or references a test SDK or adapter.</summary>
+    public bool IsTestProject => DeclaredTest || Packages.Any(p => TestPackages.Contains(p.Name));
+
     /// <summary>Whether it builds something that runs: an executable, not a library or a test.</summary>
-    public bool IsRunnable => OutputType is "Exe" or "WinExe";
+    public bool IsRunnable => OutputType is "Exe" or "WinExe" && !IsTestProject;
 
     public static ProjectModel Load(string path)
     {
@@ -189,7 +198,8 @@ public sealed record ProjectModel(
             {
                 name = $"{name} ({assembly})";
             }
-            return new ProjectModel(path, name, outputType, frameworks, packages, references, true);
+            return new ProjectModel(path, name, outputType, frameworks, packages, references, true,
+                string.Equals(Property("IsTestProject"), "true", StringComparison.OrdinalIgnoreCase));
         }
         catch (System.Xml.XmlException)
         {

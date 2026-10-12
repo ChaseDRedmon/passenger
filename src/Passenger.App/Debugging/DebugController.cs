@@ -69,7 +69,14 @@ public sealed class DebugController
 
     /// <summary>Launches a program under the debugger (after it is built), its output in the Debug
     /// window's Console.</summary>
-    public async Task StartAsync(DebugTarget target, string name)
+    public Task StartAsync(DebugTarget target, string name) =>
+        OpenAsync(log => DebugSession.LaunchAsync(target, Breakpoints, log), name);
+
+    /// <summary>Attaches the debugger to a running .NET process, its output (if any) in the Console.</summary>
+    public Task AttachAsync(int processId, string name) =>
+        OpenAsync(log => DebugSession.AttachAsync(processId, Breakpoints, log), name);
+
+    private async Task OpenAsync(Func<Action<string>, Task<DebugSession>> open, string name)
     {
         if (IsDebugging)
         {
@@ -83,7 +90,7 @@ public sealed class DebugController
         Message?.Invoke(this, $"Debugging {name}");
         try
         {
-            DebugSession session = await DebugSession.LaunchAsync(target, Breakpoints, line => view.Console.Document.Append($"{line}\n"));
+            DebugSession session = await open(line => view.Console.Document.Append($"{line}\n"));
             Session = session;
             view.Tree.Load = reference => session.VariablesAsync(reference);
             session.Output += (_, output) => view.Console.Document.Append(output.Output);

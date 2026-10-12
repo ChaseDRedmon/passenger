@@ -195,6 +195,17 @@ Edit and Continue (Roslyn's EnC, applied through ICorDebug or the runtime's meta
 with Apple's debugger entitlement that attaching to a process we did not start needs. Samsung's netcoredbg (MIT, DAP)
 stays the reference for what a mature engine does.
 
+## Tests
+
+Tests are VSTest's to find and run, as in Rider and Visual Studio: the IDE drives the `vstest.console` that ships in
+the SDK the folder builds with (`dotnet --version` there, so its global.json's), through VSTest's own translation layer
+(`Microsoft.TestPlatform.TranslationLayer`, MIT), so every framework with a VSTest adapter is found with its source
+locations and run with structured results. Two things about that layer are not what its API suggests: its public
+constructors run a `.dll` console under the current process's executable, which is Passenger's apphost, so the internal
+constructor that names the dotnet host is used; and its async calls wait for the console's handshake before they start
+the console, so its blocking calls run on worker threads. Debugging a test attaches the debugger to the test host
+VSTest starts and answers VSTest only once the attach has hold of it, since VSTest runs the tests at that answer.
+
 ## The profiler
 
 - **Sampling** (CPU, allocations, GC, lock contention, exceptions) comes from EventPipe through

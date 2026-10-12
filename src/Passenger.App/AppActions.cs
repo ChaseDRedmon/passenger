@@ -61,6 +61,15 @@ public static class AppActions
     public const string ShowExecutionPoint = "app.debug.showExecutionPoint";
     public const string Evaluate = "app.debug.evaluate";
 
+    // Unit tests: run where the caret or the Unit Tests window's selection is, as Rider's context actions do.
+    public const string RunTests = "app.tests.run";
+    public const string DebugTests = "app.tests.debug";
+    public const string RunAllTests = "app.tests.runAll";
+    public const string RerunTests = "app.tests.rerun";
+    public const string RerunFailedTests = "app.tests.rerunFailed";
+    public const string StopTests = "app.tests.stop";
+    public const string ShowTests = "app.showTests";
+
     // The breakpoints' windows, the window's to show.
     public const string EditBreakpoint = "app.breakpoints.edit";
     public const string ViewBreakpoints = "app.breakpoints.view";
@@ -110,6 +119,11 @@ public static class AppActions
                 .Bind(Evaluate, "shift F9")
                 .Bind(EditBreakpoint, "alt F9")
                 .Bind(ViewBreakpoints, "meta alt B")
+                .Bind(RunTests, "meta U , R", "meta U , meta R")
+                .Bind(DebugTests, "meta U , D", "meta U , meta D")
+                .Bind(RerunTests, "meta U , U", "meta U , meta U")
+                .Bind(RerunFailedTests, "meta U , F", "meta U , meta F")
+                .Bind(ShowTests, "meta 8")
                 .Bind(HideToolWindow, "shift ESCAPE")
                 .Bind(Back, "meta MINUS")
                 .Bind(Forward, "meta shift MINUS")
@@ -163,6 +177,11 @@ public static class AppActions
             .Bind(Evaluate, "shift F9")
             .Bind(EditBreakpoint, "alt F9")
             .Bind(ViewBreakpoints, "control alt B")
+            .Bind(RunTests, "control U , R", "control U , control R")
+            .Bind(DebugTests, "control U , D", "control U , control D")
+            .Bind(RerunTests, "control U , U", "control U , control U")
+            .Bind(RerunFailedTests, "control U , F", "control U , control F")
+            .Bind(ShowTests, "alt 8")
             .Bind(HideToolWindow, "shift ESCAPE")
             .Bind(Back, "control MINUS")
             .Bind(Forward, "control shift MINUS")

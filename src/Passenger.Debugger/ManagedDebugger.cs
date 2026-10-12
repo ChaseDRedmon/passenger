@@ -92,6 +92,10 @@ public partial class ManagedDebugger
     /// <summary>What the debugger itself has to tell the user, beside the program's output.</summary>
     public event Action<string>? OnConsole;
     public event Action<int, string>? OnProcessStarted;
+
+    /// <summary>The debugger has hold of a process it attached to: the attach completes after the request does, since
+    /// a process started suspended has no runtime to attach to until its client lets it go.</summary>
+    public event Action<int>? OnAttached;
     public event Action<BreakpointManager.BreakpointInfo>? OnBreakpointChanged;
     public event Func<LaunchInfo, int> SendRunInTerminalRequest = null!;
 
@@ -247,6 +251,7 @@ public partial class ManagedDebugger
             ConfigureExceptionCallbacks();
 
             _logger?.Invoke($"Attached to process: {processId}");
+            OnAttached?.Invoke(processId);
             SendAllBreakpointEvents();
         });
     }

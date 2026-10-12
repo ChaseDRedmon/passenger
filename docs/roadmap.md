@@ -99,9 +99,20 @@ build and run, and the debugger (breakpoints with conditions, launch, step, run 
 the program's console both ways), with screenshots and the IDE's actions. Headless with `--mcp`, or attached to a
 window with `--mcp-attach`. Each milestone after this adds its tools beside its UI (tests, the profiler, git).
 
-## M5: tests
+## M5: tests (in progress)
 
-Discovery and runs (the server's `runTests` first), a test tree with results, debugging a test, rerunning failures.
+Discovery and runs, a test tree with results, debugging a test, rerunning failures.
+
+Built: tests found and run through VSTest (the vstest.console of the SDK the folder builds with, through VSTest's own
+translation layer, so xUnit, NUnit and MSTest alike), after a build; the Unit Tests window (⌘8, Alt+8) with the tests
+by project, namespace, class and method, each marked passed, failed, skipped, running or not run with its time, and a
+theory's cases under their method; the chosen test's message, stack trace and output beside the tree; Run All, Run
+Tests and Debug Tests at the caret or on the window's selection (⌘U R and ⌘U D, Ctrl+U R and Ctrl+U D, as Rider's Visual
+Studio keymaps), Repeat the last run (⌘U U), Rerun Failed (⌘U F) and Stop. Debugging attaches Passenger's debugger to
+the test host VSTest starts, before a test runs in it. The MCP server has tests_run and tests_list.
+
+Still to do: run marks in the editor's gutter beside each test, a tree that follows edits without a run, filters and
+grouping, running until failure, and Microsoft.Testing.Platform projects with no VSTest adapter.
 
 ## M6: the profiler
 

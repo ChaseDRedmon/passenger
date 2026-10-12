@@ -15,6 +15,7 @@ What Passenger uses that others made, and under what terms.
 | StreamJsonRpc | MIT | https://github.com/microsoft/vs-streamjsonrpc |
 | ModelContextProtocol.Core (the C# MCP SDK, for Passenger's MCP server) | Apache-2.0 | https://github.com/modelcontextprotocol/csharp-sdk |
 | Microsoft.Extensions.AI.Abstractions (the MCP SDK's content types) | MIT | https://github.com/dotnet/extensions |
+| Microsoft.TestPlatform.TranslationLayer, Microsoft.TestPlatform.ObjectModel (VSTest's client, for finding, running and debugging tests) | MIT | https://github.com/microsoft/vstest |
 | Microsoft.Diagnostics.DbgShim, Microsoft.Diagnostics.NETCore.Client (the debugger's runtime interface) | MIT | https://github.com/dotnet/diagnostics |
 | ICSharpCode.Decompiler (ILSpy's decompiler, for frames without source) | MIT | https://github.com/icsharpcode/ILSpy |
 | MP.Microsoft.CodeAnalysis.CSharp.ExpressionEvaluator.ExpressionCompiler (Roslyn's expression compiler, packed from Roslyn's source by MattParkerDev) | MIT | https://github.com/MattParkerDev/roslyn (branch custom-ee-5.9.0) |
