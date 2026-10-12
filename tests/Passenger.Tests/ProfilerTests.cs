@@ -52,6 +52,17 @@ public sealed class ProfilerTests : IDisposable
         Assert.Contains("Busy.Allocate", arrays.BackTraces.Ordered[0].Name, StringComparison.Ordinal);
         Assert.Contains(snapshot.Collections, c => c.Generation == 0);
         Assert.All(snapshot.Collections, c => Assert.True(c.PauseMs >= 0));
+
+        // The stretch Spin ran is Spin's: narrowed to it, the run has no allocating, and the timeline's busiest row is
+        // the main thread.
+        (double From, double To) spun = snapshot.Span("Busy.Spin") ?? throw new InvalidOperationException("Spin never ran");
+        Assert.InRange(spun.To - spun.From, 500, 1200);
+        Snapshot spinning = snapshot.Within(spun.From, spun.To);
+        Assert.Same(snapshot, spinning.Whole);
+        Assert.NotNull(Find(spinning.Threads, n => n.Name.Contains("Busy.Spin", StringComparison.Ordinal)));
+        Assert.Null(Find(spinning.Threads, n => n.Name.Contains("Busy.Allocate", StringComparison.Ordinal)));
+        Assert.True(spinning.Samples < snapshot.Samples);
+        Assert.StartsWith("Main thread", snapshot.Timeline[0].Name, StringComparison.Ordinal);
     }
 
     [AvaloniaFact]
@@ -100,6 +111,15 @@ public sealed class ProfilerTests : IDisposable
         Assert.Contains(view.Rows, r => r.Node.Name.StartsWith("Work.Spin", StringComparison.Ordinal));
         Assert.StartsWith("Spinner-", Path.GetFileName(snapshot.TracePath), StringComparison.Ordinal);
         Assert.Contains("spun True", window.BottomPanel.Run.Document.Snapshot.ToString(), StringComparison.Ordinal);
+
+        // A stretch chosen on the timeline is what the other views show; a click goes back to the whole run.
+        view.Timeline.Select(snapshot.StartMs, snapshot.StartMs + ((snapshot.EndMs - snapshot.StartMs) / 2));
+        Assert.NotSame(snapshot, view.Snapshot);
+        Assert.Same(snapshot, view.Snapshot!.Whole);
+        Assert.True(view.Snapshot.Samples < snapshot.Samples);
+        Assert.Contains("ms of", view.Status, StringComparison.Ordinal);
+        view.Timeline.ClearSelection();
+        Assert.Same(snapshot, view.Snapshot);
         window.Close();
     }
 

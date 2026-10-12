@@ -8,5 +8,6 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Diagnostics.NETCore.Client" />
     <PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" />
+    <PackageReference Include="Microsoft.Diagnostics.Runtime" />
   </ItemGroup>
 </Project>

@@ -48,6 +48,10 @@ public sealed class ProfilerView : DockPanel
     private readonly TextBlock collectionsSummary;
     private readonly ListBox collections;
     private readonly DockPanel garbage;
+    private readonly DockPanel memory;
+    private readonly ListBox heapTypes;
+    private readonly TextBlock memorySummary;
+    private readonly Button heap;
     private readonly FlameGraph flame;
     private readonly ScrollViewer flameScroll;
     private readonly TextBlock status;
@@ -56,6 +60,9 @@ public sealed class ProfilerView : DockPanel
     private readonly Button kill;
     private readonly ToggleButton[] pages;
     private readonly DispatcherTimer ticking;
+    private readonly Timeline timeline;
+    private readonly Border timelineBand;
+    private string snapshotName = string.Empty;
     private Func<TimeSpan>? elapsed;
     private string running = string.Empty;
 
@@ -124,6 +131,16 @@ public sealed class ProfilerView : DockPanel
         DockPanel.SetDock(collectionsSummary, Dock.Top);
         garbage.Children.Add(collectionsSummary);
         garbage.Children.Add(collections);
+        heapTypes = new ListBox
+        {
+            Classes = { "tree" },
+            ItemTemplate = new FuncDataTemplate<HeapType>((type, _) => type is null ? new TextBlock() : HeapRow(type), supportsRecycling: false),
+        };
+        memorySummary = new TextBlock { Margin = new Thickness(12, 8), TextWrapping = TextWrapping.Wrap };
+        memory = new DockPanel();
+        DockPanel.SetDock(memorySummary, Dock.Top);
+        memory.Children.Add(memorySummary);
+        memory.Children.Add(heapTypes);
         flame = new FlameGraph();
         flameScroll = new ScrollViewer { Content = flame, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
         placeholder = new TextBlock
@@ -139,7 +156,7 @@ public sealed class ProfilerView : DockPanel
         stop.Click += (_, _) => StopRequested?.Invoke(this, EventArgs.Empty);
         kill = new Button { Content = "Kill", Padding = new Thickness(10, 3), IsVisible = false };
         kill.Click += (_, _) => KillRequested?.Invoke(this, EventArgs.Empty);
-        pages = [PageButton("Call Tree"), PageButton("Hot Spots"), PageButton("Flame Graph"), PageButton("Allocations"), PageButton("GC")];
+        pages = [PageButton("Call Tree"), PageButton("Hot Spots"), PageButton("Flame Graph"), PageButton("Allocations"), PageButton("GC"), PageButton("Memory")];
         StackPanel left = new() { Orientation = Orientation.Horizontal, Spacing = 2, Margin = new Thickness(6, 0), VerticalAlignment = VerticalAlignment.Center };
         foreach (ToggleButton page in pages)
         {
@@ -149,7 +166,9 @@ public sealed class ProfilerView : DockPanel
         ((PathIcon)open.Content).Bind(PathIcon.DataProperty, open.GetResourceObservable("Icon.FolderOpen"));
         ToolTip.SetTip(open, "Open Snapshot");
         open.Click += (_, _) => OpenSnapshotRequested?.Invoke(this, EventArgs.Empty);
-        StackPanel right = new() { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(6, 0), VerticalAlignment = VerticalAlignment.Center, Children = { stop, kill, open } };
+        heap = new Button { Content = "Get Memory Snapshot", Padding = new Thickness(10, 3), IsVisible = false };
+        heap.Click += (_, _) => MemoryRequested?.Invoke(this, EventArgs.Empty);
+        StackPanel right = new() { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(6, 0), VerticalAlignment = VerticalAlignment.Center, Children = { heap, stop, kill, open } };
         DockPanel bar = new();
         DockPanel.SetDock(left, Dock.Left);
         DockPanel.SetDock(right, Dock.Right);
@@ -159,7 +178,18 @@ public sealed class ProfilerView : DockPanel
         Border top = new() { [DockProperty] = Dock.Top, Height = 34, BorderThickness = new Thickness(0, 0, 0, 1), Child = bar };
         top.Bind(Border.BorderBrushProperty, top.GetResourceObservable("Passenger.Divider"));
         Children.Add(top);
-        Children.Add(new Panel { Children = { tree, spots, flameScroll, allocations, garbage, placeholder } });
+        timeline = new Timeline();
+        timeline.Chosen += (_, stretch) =>
+        {
+            if (timeline.Snapshot is { } whole)
+            {
+                Fill(stretch is { } chosen ? whole.Within(chosen.From, chosen.To) : whole);
+            }
+        };
+        timelineBand = new Border { [DockProperty] = Dock.Top, BorderThickness = new Thickness(0, 0, 0, 1), Child = timeline, IsVisible = false, Padding = new Thickness(0, 4) };
+        timelineBand.Bind(Border.BorderBrushProperty, timelineBand.GetResourceObservable("Passenger.Divider"));
+        Children.Add(timelineBand);
+        Children.Add(new Panel { Children = { tree, spots, flameScroll, allocations, garbage, memory, placeholder } });
         ticking = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
         ticking.Tick += (_, _) => status.Text = $"Profiling {running}: {elapsed?.Invoke().TotalSeconds:0.0} s";
         ShowPage(0);
@@ -173,6 +203,44 @@ public sealed class ProfilerView : DockPanel
     public event EventHandler? StopRequested;
 
     public event EventHandler? KillRequested;
+
+    /// <summary>Get Memory Snapshot pressed: the running program's heap to read.</summary>
+    public event EventHandler? MemoryRequested;
+
+    /// <summary>The last memory snapshot shown, or null.</summary>
+    public MemorySnapshot? Memory { get; private set; }
+
+    /// <summary>The Memory page's types as listed.</summary>
+    public IReadOnlyList<HeapType> HeapTypes => heapTypes.ItemsSource as IReadOnlyList<HeapType> ?? [];
+
+    /// <summary>Shows a memory snapshot on the Memory page.</summary>
+    public void ShowMemory(MemorySnapshot snapshot)
+    {
+        Memory = snapshot;
+        heapTypes.ItemsSource = snapshot.Types;
+        memorySummary.Text = $"{snapshot.Objects:N0} objects, {snapshot.Bytes / 1048576.0:N1} MB live, in {snapshot.Types.Count:N0} types (read in {snapshot.Took.TotalSeconds:0.0} s)";
+        pages[5].IsEnabled = true;
+        placeholder.IsVisible = false;
+        ShowPage(5);
+    }
+
+    private Control HeapRow(HeapType type)
+    {
+        long whole = Memory?.Bytes ?? 0;
+        TextBlock size = Muted($"{(whole > 0 ? 100.0 * type.Bytes / whole : 0),5:0.0}%  {type.Bytes / 1048576.0,8:N2} MB", 170);
+        size.FontFamily = CSharp.Fonts.Mono;
+        size.FontSize = 12;
+        TextBlock count = Muted($"{type.Count,9:N0}", 90);
+        count.FontFamily = CSharp.Fonts.Mono;
+        count.FontSize = 12;
+        return new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Height = 22,
+            Margin = new Thickness(6, 0),
+            Children = { size, count, new TextBlock { Text = type.Name, VerticalAlignment = VerticalAlignment.Center, FontWeight = FontWeight.SemiBold, Margin = new Thickness(10, 0, 0, 0) } },
+        };
+    }
 
     /// <summary>Open Snapshot pressed: a .nettrace file to read.</summary>
     public event EventHandler? OpenSnapshotRequested;
@@ -196,6 +264,7 @@ public sealed class ProfilerView : DockPanel
         elapsed = clock;
         stop.IsVisible = true;
         kill.IsVisible = true;
+        heap.IsVisible = true;
         placeholder.Text = $"Profiling {name}. Get Snapshot when it has done what is to be measured.";
         placeholder.IsVisible = Snapshot is null;
         ticking.Start();
@@ -207,6 +276,7 @@ public sealed class ProfilerView : DockPanel
         ticking.Stop();
         stop.IsVisible = false;
         kill.IsVisible = false;
+        heap.IsVisible = false;
         if (why is not null)
         {
             status.Text = why;
@@ -216,8 +286,24 @@ public sealed class ProfilerView : DockPanel
     public void Show(Snapshot snapshot, string name)
     {
         Stopped();
+        snapshotName = name;
+        timeline.Snapshot = snapshot;
+        timelineBand.IsVisible = true;
+        Fill(snapshot);
+    }
+
+    /// <summary>The timeline, where a drag chooses the stretch the other views show.</summary>
+    public Timeline Timeline => timeline;
+
+    /// <summary>Shows a snapshot, the whole run's or a stretch of it, in every view but the timeline.</summary>
+    private void Fill(Snapshot snapshot)
+    {
+        int current = Math.Max(0, Array.FindIndex(pages, p => p.IsChecked == true));
         Snapshot = snapshot;
-        status.Text = $"{name}: {snapshot.Duration.TotalSeconds:0.0} s, {snapshot.Threads.Count} threads, {snapshot.Samples:N0} samples";
+        Snapshot whole = snapshot.Whole;
+        status.Text = ReferenceEquals(whole, snapshot)
+            ? $"{snapshotName}: {snapshot.Duration.TotalSeconds:0.0} s, {snapshot.Threads.Count} threads, {snapshot.Samples:N0} samples"
+            : $"{snapshotName}: {snapshot.StartMs - whole.StartMs:N0} to {snapshot.EndMs - whole.StartMs:N0} ms of {whole.Duration.TotalMilliseconds:N0}, {snapshot.Samples:N0} samples";
         placeholder.IsVisible = false;
         foreach (ToggleButton page in pages)
         {
@@ -246,6 +332,7 @@ public sealed class ProfilerView : DockPanel
         }
         spots.ItemsSource = snapshot.HotSpots;
         flame.Root = snapshot.All;
+        ShowPageLater(current);
         types.ItemsSource = snapshot.Allocations;
         types.SelectedIndex = snapshot.Allocations.Count > 0 ? 0 : -1;
         ShowBackTraces();
@@ -255,8 +342,12 @@ public sealed class ProfilerView : DockPanel
             ? "No garbage collections ran"
             : $"{gcs.Count} collections ({string.Join(", ", gcs.GroupBy(c => c.Generation).OrderBy(g => g.Key).Select(g => $"{g.Count()} of generation {g.Key}"))}), "
               + $"the program paused {gcs.Sum(c => c.PauseMs):0.0} ms in all, {gcs.Max(c => c.PauseMs):0.0} ms at the longest";
-        ShowPage(0);
+        ShowPage(shownPage);
     }
+
+    private int shownPage;
+
+    private void ShowPageLater(int page) => shownPage = page;
 
     /// <summary>The types allocated, the most first.</summary>
     public IReadOnlyList<AllocatedType> Types => types.ItemsSource as IReadOnlyList<AllocatedType> ?? [];
@@ -391,10 +482,10 @@ public sealed class ProfilerView : DockPanel
     /// <summary>Shows the call tree (0), the hot spots (1) or the flame graph (2).</summary>
     public void ShowPage(int page)
     {
-        Control[] views = [tree, spots, flameScroll, allocations, garbage];
+        Control[] views = [tree, spots, flameScroll, allocations, garbage, memory];
         for (int i = 0; i < views.Length; i++)
         {
-            views[i].IsVisible = i == page && Snapshot is not null;
+            views[i].IsVisible = i == page && (Snapshot is not null || (i == 5 && Memory is not null));
             pages[i].IsChecked = i == page;
         }
     }

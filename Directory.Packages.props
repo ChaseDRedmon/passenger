@@ -26,6 +26,8 @@
     <PackageVersion Include="Microsoft.Diagnostics.DbgShim" Version="9.0.661903" />
     <PackageVersion Include="Microsoft.Diagnostics.NETCore.Client" Version="0.2.661903" />
     <PackageVersion Include="Microsoft.Diagnostics.Tracing.TraceEvent" Version="3.2.6" />
+    <!-- ClrMD 3: 4 brings Azure.Identity for symbol servers, which a heap's types do not need. -->
+    <PackageVersion Include="Microsoft.Diagnostics.Runtime" Version="3.1.512801" />
     <PackageVersion Include="MP.Microsoft.CodeAnalysis.CSharp.ExpressionEvaluator.ExpressionCompiler" Version="5.9.0" />
     <PackageVersion Include="NeoSmart.AsyncLock" Version="3.2.1" />
     <PackageVersion Include="ZLinq" Version="1.5.6" />

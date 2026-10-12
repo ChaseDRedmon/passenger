@@ -167,6 +167,10 @@ public sealed class ProfilingSession : IAsyncDisposable
         return await Task.Run(() => Snapshot.Read(TracePath), cancellation);
     }
 
+    /// <summary>What the program's heap holds now, as dotMemory's Get Snapshot; the run goes on.</summary>
+    public Task<MemorySnapshot> TakeMemorySnapshotAsync(CancellationToken cancellation = default) =>
+        process.HasExited ? throw new InvalidOperationException("The program has ended; a memory snapshot needs it running") : MemorySnapshot.TakeAsync(process.Id, cancellation);
+
     /// <summary>Finishes when the program has ended, by itself or killed.</summary>
     public Task ExitedAsync() => process.WaitForExitAsync();
 

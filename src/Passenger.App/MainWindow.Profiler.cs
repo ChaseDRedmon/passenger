@@ -2,6 +2,7 @@ using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using Passenger.App.Debugging;
 using Passenger.App.Workspace;
+using Microsoft.Diagnostics.NETCore.Client;
 using Passenger.Profiler;
 using Passenger.Text;
 
@@ -32,6 +33,7 @@ public partial class MainWindow
         profilerView.KillRequested += (_, _) => profiling?.Kill();
         profilerView.OpenRequested += (_, method) => _ = OpenMethodAsync(method);
         profilerView.OpenSnapshotRequested += (_, _) => _ = PickSnapshotAsync();
+        profilerView.MemoryRequested += (_, _) => _ = MemorySnapshotAsync();
         Closing += (_, _) => profiling?.Kill();
     }
 
@@ -117,6 +119,29 @@ public partial class MainWindow
         finally
         {
             await run.DisposeAsync();
+        }
+    }
+
+    /// <summary>Get Memory Snapshot: the running program's heap by type, on the Memory page; the run goes on.</summary>
+    public async Task<MemorySnapshot?> MemorySnapshotAsync()
+    {
+        if (profiling is not { } run)
+        {
+            StatusText.Text = "A memory snapshot needs a program being profiled";
+            return null;
+        }
+        StatusText.Text = $"Taking a memory snapshot of {profilingName}...";
+        try
+        {
+            MemorySnapshot heap = await run.TakeMemorySnapshotAsync();
+            profilerView!.ShowMemory(heap);
+            StatusText.Text = $"Memory snapshot of {profilingName}: {heap.Objects:N0} objects, {heap.Bytes / 1048576.0:N1} MB";
+            return heap;
+        }
+        catch (Exception error) when (error is InvalidOperationException or IOException or ServerNotAvailableException)
+        {
+            StatusText.Text = $"No memory snapshot: {error.Message}";
+            return null;
         }
     }
 

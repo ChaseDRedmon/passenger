@@ -142,7 +142,8 @@ time and a flame graph that zooms; a double-click goes to a method's source, and
 dotnet-trace's) opens as a snapshot. Allocations lists the types allocated with each one's back traces (the runtime's
 allocation ticks), and GC each collection with its generation, reason and pause. Its first find in Passenger itself:
 every tooltip and menu parsed the whole keymap again, 46% of the strings allocated at startup; the keymap is now made
-once. Still to come: the timeline, memory snapshots with ClrMD.
+once. The timeline above the views shows each busy thread's samples and the collections in time; a drag across it
+narrows every view to that stretch. Still to come: memory snapshots with ClrMD.
 
 ## M7: the rest of the daily loop
 
