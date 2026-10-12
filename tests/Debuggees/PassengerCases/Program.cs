@@ -21,6 +21,7 @@ Captures.Outer(41);
 Nested.Throw();
 Displays.Show();
 Interpreter.Run();
+Jumps.Run();
 Threads.Run();
 Children.Run();
 
@@ -196,6 +197,19 @@ static class Threads
 	{
 		Started.Signal();
 		Gate.Wait();
+	}
+}
+
+// Set Next Statement's case: three additions to skip over or go back to.
+static class Jumps
+{
+	public static void Run()
+	{
+		int jumps = 0;
+		jumps += 1;
+		jumps += 10;
+		jumps += 100;
+		Console.WriteLine($"jumps {jumps}");
 	}
 }
 

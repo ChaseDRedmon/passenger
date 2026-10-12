@@ -145,6 +145,9 @@ public sealed class DebugController
             case AppActions.RunToCursor when active is not null && Session is { State: DebugState.Paused } session:
                 _ = session.RunToCursorAsync(active.Path, caretLine);
                 break;
+            case AppActions.SetNextStatement when active is not null && Session is { State: DebugState.Paused } session:
+                _ = SetNextStatementAsync(session, active.Path, caretLine);
+                break;
             case AppActions.ShowExecutionPoint when executionPoint is { } point:
                 Navigate?.Invoke(this, (point.Path, new TextPosition(point.Line, 0)));
                 break;
@@ -152,6 +155,37 @@ public sealed class DebugController
                 view.FocusEvaluate(SelectedOrWord());
                 break;
         }
+    }
+
+    /// <summary>Rider's Set Next Statement: the paused thread goes on from a line (from zero) of the method it is
+    /// in, skipping or repeating what lies between; null when it went, else why not.</summary>
+    public async Task<string?> SetNextStatementAsync(DebugSession session, string path, int line)
+    {
+        string? problem = null;
+        try
+        {
+            if (session.StoppedThread is not int thread)
+            {
+                problem = "No thread is paused";
+            }
+            else if (await session.GotoTargetAsync(path, line + 1) is not { } target)
+            {
+                problem = $"Line {line + 1} is not in the method the program is paused in";
+            }
+            else
+            {
+                await session.GotoAsync(thread, target);
+            }
+        }
+        catch (DapException error)
+        {
+            problem = error.Reason;
+        }
+        if (problem is not null)
+        {
+            Message?.Invoke(this, $"Set Next Statement: {problem}");
+        }
+        return problem;
     }
 
     /// <summary>A file opened in a tab: its breakpoints follow its edits, and its gutter shows them.</summary>

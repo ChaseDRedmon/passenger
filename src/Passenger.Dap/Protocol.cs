@@ -174,6 +174,19 @@ public sealed record EvaluateResponse
 }
 
 /// <summary>Assign a value to what an expression names in a frame (a local, a member, an element): Set Value.</summary>
+/// <summary>Where a paused thread could go on from in a source at a line (Set Next Statement's question).</summary>
+public sealed record GotoTargetsArguments(DapSource Source, int Line, int? Column = null);
+
+public sealed record GotoTarget(int Id, string Label, int Line, int? Column = null);
+
+public sealed record GotoTargetsResponse
+{
+    public IReadOnlyList<GotoTarget> Targets { get; init; } = [];
+}
+
+/// <summary>Set Next Statement: the thread goes on from a target gotoTargets gave.</summary>
+public sealed record GotoArguments(int ThreadId, int TargetId);
+
 public sealed record SetExpressionArguments(string Expression, string Value, int? FrameId = null);
 
 public sealed record SetExpressionResponse

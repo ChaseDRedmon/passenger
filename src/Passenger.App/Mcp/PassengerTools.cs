@@ -411,6 +411,20 @@ public sealed partial class PassengerTools(MainWindow window)
         return await AfterResume(TimeSpan.FromSeconds(waitSeconds));
     });
 
+    [McpServerTool(Name = "debug_set_next_statement", Title = "Set Next Statement"), Description(
+        "Moves where the paused program goes on from to another line of the method it is paused in, as Rider's Set Next Statement: "
+        + "the lines between are skipped, or done again when the line is earlier. Nothing runs; the snapshot is the new stop.")]
+    public Task<DebugSnapshot> DebugSetNextStatement(string path, int line) => OnUi(async () =>
+    {
+        DebugSession session = Paused();
+        if (await window.Debugger.SetNextStatementAsync(session, Resolve(path), line - 1) is { } problem)
+        {
+            throw new InvalidOperationException(problem);
+        }
+        await Until(() => session.StopReason == "goto", TimeSpan.FromSeconds(10));
+        return await DebugSnapshotAsync();
+    });
+
     [McpServerTool(Name = "debug_input", Title = "Type into the program's console"), Description(
         "Sends a line to the debugged program's standard input, as the Debug window's console does. The program reads it when it next reads.")]
     public Task<string> DebugInput(string text, [Description("End the line with a newline")] bool newline = true) => OnUi(async () =>

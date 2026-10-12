@@ -78,6 +78,7 @@ public static class AppActions
     public const string StepInto = "app.debug.stepInto";
     public const string StepOut = "app.debug.stepOut";
     public const string RunToCursor = "app.debug.runToCursor";
+    public const string SetNextStatement = "app.debug.setNextStatement";
     public const string ShowExecutionPoint = "app.debug.showExecutionPoint";
     public const string Evaluate = "app.debug.evaluate";
 
@@ -214,6 +215,7 @@ public static class AppActions
                 .Bind(StepInto, "F11", "meta F11")
                 .Bind(StepOut, "shift F11")
                 .Bind(RunToCursor, "meta F10")
+                .Bind(SetNextStatement, "meta shift F10")
                 .Bind(ShowExecutionPoint, "alt MULTIPLY")
                 .Bind(Evaluate, "shift F9")
                 .Bind(EditBreakpoint, "alt F9")
@@ -299,6 +301,7 @@ public static class AppActions
             .Bind(StepInto, "F11")
             .Bind(StepOut, "shift F11")
             .Bind(RunToCursor, "control F10")
+            .Bind(SetNextStatement, "control shift F10")
             .Bind(ShowExecutionPoint, "alt MULTIPLY")
             .Bind(Evaluate, "shift F9")
             .Bind(EditBreakpoint, "alt F9")

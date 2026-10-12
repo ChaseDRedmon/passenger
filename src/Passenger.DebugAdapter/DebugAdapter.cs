@@ -16,6 +16,7 @@ public sealed class DebugAdapter
     private readonly DapConnection connection;
     private readonly Action<string>? log;
     private bool linesStartAt1 = true;
+    private int? stoppedThread;
     private bool columnsStartAt1 = true;
     private int shutdownRequested;
 
@@ -96,6 +97,28 @@ public sealed class DebugAdapter
                 PresentationHint = ToProtocol(value.PresentationHint),
             };
         });
+        // Set Next Statement: a target per line asked of, in the method the last stopped thread is in; its id is the
+        // IL offset, which goto hands back.
+        connection.Handle<GotoTargetsArguments, GotoTargetsResponse>("gotoTargets", async arguments =>
+        {
+            if (stoppedThread is not int thread || arguments.Source.Path is not { } path)
+            {
+                return new GotoTargetsResponse();
+            }
+            (int Line, int Column, int ILOffset)? target = await Locked(() => debugger.GotoTarget(thread, path, LineIn(arguments.Line)));
+            return target is { } found
+                ? new GotoTargetsResponse { Targets = [new GotoTarget(found.ILOffset, $"Line {found.Line}", LineOut(found.Line), ColumnOut(found.Column))] }
+                : new GotoTargetsResponse();
+        });
+        connection.Handle<GotoArguments, object>("goto", async arguments =>
+        {
+            await Locked(() =>
+            {
+                debugger.SetNextStatement(arguments.ThreadId, arguments.TargetId);
+                return 0;
+            });
+            return new object();
+        });
         connection.Handle<SetExpressionArguments, SetExpressionResponse>("setExpression", async arguments =>
         {
             // The expression compiler compiles an assignment as it does any expression, and the interpreter writes it
@@ -130,6 +153,8 @@ public sealed class DebugAdapter
 
     private void Subscribe()
     {
+        debugger.OnStopped += (threadId, _) => stoppedThread = threadId;
+        debugger.OnStopped2 += (threadId, _, _, _, _, _) => stoppedThread = threadId;
         debugger.OnStopped += (threadId, reason) => connection.SendEvent("stopped", new StoppedEvent
         {
             Reason = StopReason(reason),
@@ -181,7 +206,7 @@ public sealed class DebugAdapter
             SupportsExceptionInfoRequest = true,
             SupportsExceptionFilterOptions = true,
             SupportsStepInTargetsRequest = false,
-            SupportsGotoTargetsRequest = false,
+            SupportsGotoTargetsRequest = true,
             ExceptionBreakpointFilters =
             [
                 new DapExceptionFilter("all", "All Exceptions", Default: false),

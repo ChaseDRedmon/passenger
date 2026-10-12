@@ -92,6 +92,10 @@ conditional and tracepoint marks in the gutter, and the Breakpoints window (⌥�
 Set Value: F2 or a double-click on a value types over it in its row, a C# expression assigned through the
 protocol's setExpression.
 
+Set Next Statement (Ctrl+Shift+F10, ⌘⇧F10, and `debug_set_next_statement` over MCP): the paused thread goes on
+from the caret's line of the method it is in, skipping or repeating what lies between, through the protocol's
+gotoTargets and goto and the runtime's SetIP, refused with the runtime's reason where the move is unsafe.
+
 **Still to do:** exception breakpoints in the Breakpoints window, smart step into, a terminal for the program's
 input, and the macOS signing.
 Upstream SharpDbg's open issues that reach Passenger's users are listed in `docs/architecture.md`.

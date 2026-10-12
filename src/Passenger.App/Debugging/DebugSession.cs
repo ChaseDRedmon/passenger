@@ -232,6 +232,13 @@ public sealed class DebugSession
     public Task<SetExpressionResponse> SetExpressionAsync(string expression, string value, int frameId) =>
         connection.RequestAsync<SetExpressionResponse>("setExpression", new SetExpressionArguments(expression, value, frameId));
 
+    /// <summary>Where the paused thread could go on from at a line of a file (from one), if the line is in its method.</summary>
+    public async Task<GotoTarget?> GotoTargetAsync(string path, int line) =>
+        (await connection.RequestAsync<GotoTargetsResponse>("gotoTargets", new GotoTargetsArguments(new DapSource { Path = path }, line))).Targets.FirstOrDefault();
+
+    /// <summary>Set Next Statement: the paused thread goes on from a target; it stops there anew.</summary>
+    public Task GotoAsync(int thread, GotoTarget target) => connection.RequestAsync<object>("goto", new GotoArguments(thread, target.Id));
+
     /// <summary>An expression's value in a frame; context is watch, hover or repl.</summary>
     public Task<EvaluateResponse> EvaluateAsync(string expression, int? frameId, string context) =>
         connection.RequestAsync<EvaluateResponse>("evaluate", new EvaluateArguments(expression, frameId, context));
