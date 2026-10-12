@@ -63,7 +63,14 @@ public sealed class CSharpDocument : IDisposable
         pulling?.Cancel();
         document.Text.Changed -= OnChanged;
         document.Saved -= OnSaved;
-        semantic?.Dispose();
+        if (semantic is not null)
+        {
+            semantic.Dispose();
+            if (document.Highlighter == semantic)
+            {
+                document.Highlighter = semantic.Syntax;
+            }
+        }
         Lsp?.Dispose();
     }
 

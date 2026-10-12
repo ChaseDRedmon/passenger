@@ -10,6 +10,7 @@ public partial class App : Application
 
     public override void OnFrameworkInitializationCompleted()
     {
+        IdeErrors.Install();
         // The screenshot mode has no lifetime and makes its own window.
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {

@@ -13,6 +13,7 @@ public sealed class LanguageServer : IAsyncDisposable
     private readonly Process process;
     private readonly JsonRpc rpc;
     private readonly ClientTarget client;
+    private volatile bool disposing;
 
     private LanguageServer(Process process, JsonRpc rpc, ClientTarget client, string logFolder)
     {
@@ -20,7 +21,22 @@ public sealed class LanguageServer : IAsyncDisposable
         this.rpc = rpc;
         this.client = client;
         LogFolder = logFolder;
+        ProcessId = process.Id;
+        rpc.Disconnected += (_, e) =>
+        {
+            if (!disposing)
+            {
+                Exited?.Invoke(this, e.Description);
+            }
+        };
     }
+
+    /// <summary>The connection to the server ended without being asked to (it crashed or was killed), with why;
+    /// raised on the thread pool.</summary>
+    public event EventHandler<string>? Exited;
+
+    /// <summary>The server's process, for the IDE's log and for a test to end it; kept once the process is gone.</summary>
+    public int ProcessId { get; }
 
     public event EventHandler<LogMessageParams>? Logged;
 
@@ -123,6 +139,7 @@ public sealed class LanguageServer : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        disposing = true;
         try
         {
             if (!process.HasExited)

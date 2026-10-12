@@ -95,6 +95,18 @@
         <Setter Property="Background" Value="Transparent" />
     </Style>
 
+    <!-- A status bar item that does something on a click, framed only under the pointer. -->
+    <Style Selector="Button.statusItem">
+        <Setter Property="Height" Value="22" />
+        <Setter Property="Padding" Value="6,0" />
+        <Setter Property="CornerRadius" Value="4" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Button.statusItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource Passenger.Hover}" />
+    </Style>
     <Style Selector="TextBlock.status">
         <Setter Property="FontSize" Value="12" />
         <Setter Property="Foreground" Value="{DynamicResource Passenger.TextMuted}" />

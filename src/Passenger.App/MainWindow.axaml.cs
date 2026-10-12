@@ -66,6 +66,7 @@ public partial class MainWindow : Window
         AddBookmarks();
         AddHierarchy();
         AddFileOperations();
+        AddErrors();
         Explorer.FileOpened += (_, path) => OpenFile(path);
         Structure.Follow(() => Editors.Active is { } shown
             ? (shown.Path, csharp?.For(shown)?.Lsp, Editors.CodeEditor.CaretPosition.Line)
@@ -294,6 +295,7 @@ public partial class MainWindow : Window
         {
             csharp = new CSharpService();
             csharp.StateChanged += (_, _) => LanguageText.Text = LanguageLabel();
+            csharp.Stopped += (_, message) => StatusText.Text = message;
             csharp.Start(folder);
         }
         Editors.ShowFolderHint(folder);
@@ -332,7 +334,21 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>A key's action that throws is reported as an IDE error, never the IDE's end.</summary>
     private void OnKeyDownFirst(object? sender, KeyEventArgs e)
+    {
+        try
+        {
+            OnKey(e);
+        }
+        catch (Exception error)
+        {
+            IdeErrors.Report(error);
+            e.Handled = true;
+        }
+    }
+
+    private void OnKey(KeyEventArgs e)
     {
         if (e.Key == Key.Escape && e.KeyModifiers == KeyModifiers.None && Overlay.IsVisible)
         {
@@ -472,6 +488,9 @@ public partial class MainWindow : Window
                 break;
             case AppActions.ShowSettings:
                 ShowSettings();
+                break;
+            case AppActions.ShowLog:
+                ErrorsPopup.ShowLog();
                 break;
             case AppActions.ShowNuGet:
                 ShowToolWindow("nuget");

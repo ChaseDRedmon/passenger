@@ -81,6 +81,7 @@ public static class ActionCatalog
         [AppActions.ShowBookmarks] = "Bookmarks",
         [AppActions.ReplaceInFiles] = "Replace in Files...",
         [AppActions.ShowSettings] = "Settings...",
+        [AppActions.ShowLog] = "Show Log in Finder",
         [AppActions.ShowNuGet] = "NuGet",
         [AppActions.Profile] = "Profile",
         [AppActions.ShowProfiler] = "Performance Profiler",
@@ -123,6 +124,10 @@ public static class ActionCatalog
 
     public static string Title(string id)
     {
+        if (id == AppActions.ShowLog && !OperatingSystem.IsMacOS())
+        {
+            return "Show Log in Explorer";
+        }
         if (Titles.TryGetValue(id, out string? title))
         {
             return title;
@@ -150,6 +155,7 @@ public static class ActionCatalog
         _ when id.StartsWith("app.vcs.", StringComparison.Ordinal) => "Git",
         _ when id.StartsWith("app.editor.", StringComparison.Ordinal) => "Editor Tabs",
         _ when id.StartsWith("app.bookmarks.", StringComparison.Ordinal) => "Bookmarks",
+        _ when id is AppActions.ShowLog => "Help",
         _ when id.StartsWith("app.window.", StringComparison.Ordinal) || id.StartsWith("app.show", StringComparison.Ordinal) || id is AppActions.FocusExplorer or AppActions.HideToolWindow => "Tool Windows",
         _ when id.StartsWith("app.goTo", StringComparison.Ordinal) || id is AppActions.FileStructure or AppActions.Back or AppActions.Forward => "Navigate",
         _ when id is AppActions.Build or AppActions.RunProgram or AppActions.Debug or AppActions.Stop or AppActions.Rerun or AppActions.Profile => "Run",

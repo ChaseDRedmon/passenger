@@ -66,6 +66,9 @@ public sealed class SemanticHighlighter : IHighlighter, IDisposable
         return merged;
     }
 
+    /// <summary>The parser's colours this layers over, which stand alone again once the server is gone.</summary>
+    public IHighlighter Syntax => syntax;
+
     public void Dispose()
     {
         disposed = true;

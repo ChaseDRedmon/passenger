@@ -28,6 +28,7 @@ public static class AppActions
     public const string ShowBookmarks = "app.bookmarks.show";
     public const string ReplaceInFiles = "app.replaceInFiles";
     public const string ShowSettings = "app.settings";
+    public const string ShowLog = "app.showLog";
     public const string ShowNuGet = "app.showNuGet";
     public const string Profile = "app.profile";
     public const string ShowProfiler = "app.showProfiler";

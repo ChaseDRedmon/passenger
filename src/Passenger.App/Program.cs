@@ -58,10 +58,10 @@ internal static class Program
         }
     }
 
-    /// <summary>The XAML previewer calls this by name, so it stays public and parameterless.</summary>
+    /// <summary>The XAML previewer calls this by name, so it stays public and parameterless. Avalonia's log goes to the
+    /// IDE's own (<see cref="IdeErrors"/>), which the app installs.</summary>
     public static AppBuilder BuildAvaloniaApp() =>
         AppBuilder.Configure<App>()
             .UsePlatformDetect()
-            .WithInterFont()
-            .LogToTrace();
+            .WithInterFont();
 }
