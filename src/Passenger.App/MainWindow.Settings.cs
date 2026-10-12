@@ -80,6 +80,7 @@ public partial class MainWindow
         editor.LineSpacing = with.EditorLineSpacing;
         editor.Ligatures = with.Ligatures;
         editor.ShowLineNumbers = with.ShowLineNumbers;
+        editor.ShowInlayHints = with.ParameterHints;
         editor.InvalidateVisual();
     }
 }

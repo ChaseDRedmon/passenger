@@ -50,7 +50,8 @@ public sealed partial class CodeEditor
                 double y = line * lineHeight - scroll.Y;
                 string content = text.GetText(span.Start, span.Length);
                 TextLine layout = Layout(content, span, spans, ref spanIndex);
-                widestLine = Math.Max(widestLine, layout.WidthIncludingTrailingWhitespace);
+                Gap[] gaps = GapsOn(span);
+                widestLine = Math.Max(widestLine, layout.WidthIncludingTrailingWhitespace + HintsWidth(gaps));
 
                 if (caretLines.Contains(line) && selections.Items.All(s => s.IsEmpty))
                 {
@@ -64,13 +65,20 @@ public sealed partial class CodeEditor
                 {
                     context.FillRectangle(tint, new Rect(gutter, y, size.Width - gutter, lineHeight));
                 }
-                DrawSelections(context, span, layout, left, y, size.Width, focused);
-                DrawHighlights(context, span, layout, left, y);
-                layout.Draw(context, new Point(left, y + (lineHeight - layout.Height) / 2));
-                DrawMarkers(context, span, layout, left, y);
+                DrawSelections(context, span, layout, gaps, left, y, size.Width, focused);
+                DrawHighlights(context, span, layout, gaps, left, y);
+                if (gaps.Length == 0)
+                {
+                    layout.Draw(context, new Point(left, y + (lineHeight - layout.Height) / 2));
+                }
+                else
+                {
+                    DrawWithHints(context, layout, gaps, left, y);
+                }
+                DrawMarkers(context, span, layout, gaps, left, y);
                 if (annotations.TryGetValue(line, out List<LineAnnotation>? here))
                 {
-                    DrawAnnotations(context, here, left + layout.Width, y);
+                    DrawAnnotations(context, here, left + layout.Width + HintsWidth(gaps), y);
                 }
             }
 
@@ -110,7 +118,7 @@ public sealed partial class CodeEditor
     {
         LineSpan span = text.GetLine(text.GetLineFromOffset(offset));
         TextLine layout = PlainLayout(text.GetText(span.Start, span.Length));
-        return layout.GetDistanceFromCharacterHit(new CharacterHit(Math.Min(offset, span.End) - span.Start));
+        return XWith(layout, GapsOn(span), Math.Min(offset, span.End) - span.Start);
     }
 
     /// <summary>The offset nearest to x on a line.</summary>
@@ -119,8 +127,7 @@ public sealed partial class CodeEditor
         LineSpan span = text.GetLine(Math.Clamp(line, 0, text.LineCount - 1));
         string content = text.GetText(span.Start, span.Length);
         TextLine layout = PlainLayout(content);
-        CharacterHit hit = layout.GetCharacterHitFromDistance(x);
-        int column = Math.Clamp(hit.FirstCharacterIndex + hit.TrailingLength, 0, content.Length);
+        int column = ColumnWith(layout, GapsOn(span), x, content.Length);
         if (column > 0 && column < content.Length && char.IsLowSurrogate(content[column]))
         {
             column--;
@@ -128,7 +135,7 @@ public sealed partial class CodeEditor
         return span.Start + column;
     }
 
-    private void DrawSelections(DrawingContext context, LineSpan span, TextLine layout, double left, double y, double width, bool focused)
+    private void DrawSelections(DrawingContext context, LineSpan span, TextLine layout, Gap[] gaps, double left, double y, double width, bool focused)
     {
         IBrush brush = focused ? palette.Selection : palette.SelectionInactive;
         foreach (Selection s in selections.Items)
@@ -139,9 +146,9 @@ public sealed partial class CodeEditor
             }
             int from = Math.Max(s.Start, span.Start) - span.Start;
             int to = Math.Min(s.End, span.End) - span.Start;
-            double x1 = left + layout.GetDistanceFromCharacterHit(new CharacterHit(from));
+            double x1 = left + XWith(layout, gaps, from);
             // A selection that runs on through the line break fills to the edge, as Rider draws it.
-            double x2 = s.End > span.End ? width : left + layout.GetDistanceFromCharacterHit(new CharacterHit(to));
+            double x2 = s.End > span.End ? width : left + XWith(layout, gaps, to, beforeHints: true);
             if (x2 > x1)
             {
                 context.FillRectangle(brush, new Rect(x1, y, x2 - x1, metrics.LineHeight));
@@ -149,7 +156,7 @@ public sealed partial class CodeEditor
         }
     }
 
-    private void DrawHighlights(DrawingContext context, LineSpan span, TextLine layout, double left, double y)
+    private void DrawHighlights(DrawingContext context, LineSpan span, TextLine layout, Gap[] gaps, double left, double y)
     {
         IReadOnlyList<TextRange> ranges = Highlights;
         int low = 0;
@@ -170,8 +177,8 @@ public sealed partial class CodeEditor
         {
             int from = Math.Max(ranges[i].Start, span.Start) - span.Start;
             int to = Math.Min(ranges[i].End, span.End) - span.Start;
-            double x1 = left + layout.GetDistanceFromCharacterHit(new CharacterHit(from));
-            double x2 = left + layout.GetDistanceFromCharacterHit(new CharacterHit(to));
+            double x1 = left + XWith(layout, gaps, from);
+            double x2 = left + XWith(layout, gaps, to, beforeHints: true);
             if (x2 > x1)
             {
                 Rect box = new(x1, y + 1, x2 - x1, metrics.LineHeight - 2);
@@ -190,7 +197,7 @@ public sealed partial class CodeEditor
 
     /// <summary>Squiggles under errors, warnings and suggestions; unnecessary code is faded by laying
     /// the background over it, half see-through.</summary>
-    private void DrawMarkers(DrawingContext context, LineSpan span, TextLine layout, double left, double y)
+    private void DrawMarkers(DrawingContext context, LineSpan span, TextLine layout, Gap[] gaps, double left, double y)
     {
         foreach (Marker marker in Markers)
         {
@@ -204,8 +211,8 @@ public sealed partial class CodeEditor
             }
             int from = Math.Max(marker.Range.Start, span.Start) - span.Start;
             int to = Math.Min(marker.Range.End, span.End) - span.Start;
-            double x1 = left + layout.GetDistanceFromCharacterHit(new CharacterHit(from));
-            double x2 = left + layout.GetDistanceFromCharacterHit(new CharacterHit(to));
+            double x1 = left + XWith(layout, gaps, from);
+            double x2 = left + XWith(layout, gaps, to, beforeHints: true);
             if (x2 - x1 < metrics.CharWidth / 2)
             {
                 // A zero-width diagnostic (a missing semicolon) still needs something to see.
@@ -755,6 +762,8 @@ public sealed partial class CodeEditor
         public IBrush ChangeDeleted { get; private init; } = Brush("#868A91");
         public IBrush TestNotRun { get; private init; } = Brush("#5FAD65");
         public IBrush ExceptionBack { get; private init; } = Brush("#4A2629");
+        public IBrush InlayHint { get; private init; } = Brush("#8F9298");
+        public IBrush InlayHintBack { get; private init; } = Brush("#2B2D30");
 
         public IBrush Syntax(TokenKind kind) => syntax.TryGetValue(kind, out IBrush? brush) ? brush : Text;
 
@@ -795,6 +804,8 @@ public sealed partial class CodeEditor
                 ChangeDeleted = Find(control, "Passenger.Vcs.Deleted") ?? defaults.ChangeDeleted,
                 TestNotRun = Find(control, "Passenger.Run") ?? defaults.TestNotRun,
                 ExceptionBack = Find(control, "Passenger.Editor.ExceptionBack") ?? defaults.ExceptionBack,
+                InlayHint = Find(control, "Passenger.Editor.InlayHint") ?? defaults.InlayHint,
+                InlayHintBack = Find(control, "Passenger.Editor.InlayHintBack") ?? defaults.InlayHintBack,
             };
             foreach (TokenKind kind in Enum.GetValues<TokenKind>())
             {

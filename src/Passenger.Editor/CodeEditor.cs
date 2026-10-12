@@ -544,6 +544,7 @@ public sealed partial class CodeEditor : Control
     {
         palette = Palette.From(this);
         questionRun = null;
+        hintRun = null;
         runProperties.Clear();
         numberRuns = (
             RunWith(palette.LineNumberCurrent),

@@ -227,6 +227,16 @@ public sealed class LspDocument : IDisposable
         return (tokens, version);
     }
 
+    /// <summary>The words the server would show inside the document's lines (parameter names before their
+    /// arguments), and the version they are for.</summary>
+    public async Task<(IReadOnlyList<LspInlayHint> Hints, int Version)> InlayHintsAsync(CancellationToken cancel = default)
+    {
+        int version = Text.Version;
+        LspRange whole = new(new LspPosition(0, 0), PositionOf(Text.Snapshot.Length));
+        JsonElement result = await Server.RequestAsync<JsonElement>("textDocument/inlayHint", new InlayHintParams(Identifier, whole), cancel);
+        return (Shapes.InlayHints(result), version);
+    }
+
     /// <summary>Every diagnostic the server has for the document, pulled from each source it
     /// registered, and the version they are for.</summary>
     public async Task<(IReadOnlyList<Diagnostic> Diagnostics, int Version)> DiagnosticsAsync(CancellationToken cancel = default)

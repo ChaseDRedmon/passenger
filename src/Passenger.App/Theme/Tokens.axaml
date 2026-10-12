@@ -98,6 +98,8 @@
             <SolidColorBrush x:Key="Passenger.Editor.InlineValue" Color="#868A91" />
             <SolidColorBrush x:Key="Passenger.Editor.Tracepoint" Color="#E5A336" />
             <SolidColorBrush x:Key="Passenger.Editor.ExceptionBack" Color="#4A2629" />
+            <SolidColorBrush x:Key="Passenger.Editor.InlayHint" Color="#8F9298" />
+            <SolidColorBrush x:Key="Passenger.Editor.InlayHintBack" Color="#2B2D30" />
             <SolidColorBrush x:Key="Passenger.Editor.ExecutionPoint" Color="#5E9CF0" />
 
             <SolidColorBrush x:Key="Passenger.Syntax.Keyword" Color="#6C95EB" />
@@ -216,6 +218,8 @@
             <SolidColorBrush x:Key="Passenger.Editor.InlineValue" Color="#8C8C8C" />
             <SolidColorBrush x:Key="Passenger.Editor.Tracepoint" Color="#D9A343" />
             <SolidColorBrush x:Key="Passenger.Editor.ExceptionBack" Color="#FBE3E4" />
+            <SolidColorBrush x:Key="Passenger.Editor.InlayHint" Color="#7F8187" />
+            <SolidColorBrush x:Key="Passenger.Editor.InlayHintBack" Color="#EEEFF1" />
             <SolidColorBrush x:Key="Passenger.Editor.ExecutionPoint" Color="#3574F0" />
 
             <SolidColorBrush x:Key="Passenger.Syntax.Keyword" Color="#0F54D6" />

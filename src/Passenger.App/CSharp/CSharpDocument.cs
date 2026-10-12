@@ -71,6 +71,11 @@ public sealed class CSharpDocument : IDisposable
                 .Select(m => m with { Range = TextEditing.MapRange(m.Range, e.Edits) })
                 .ToList();
         }
+        if (document.InlayHints.Count > 0)
+        {
+            // A hint keeps its place before its argument; text typed at its place goes after it.
+            document.InlayHints = [.. document.InlayHints.Select(h => h with { Offset = TextEditing.MapOffset(h.Offset, e.Edits, afterInsertions: false) })];
+        }
         Pull(Settle);
     }
 
@@ -104,6 +109,11 @@ public sealed class CSharpDocument : IDisposable
             }
             Diagnostics = found;
             document.Markers = found.Select(Marker).OfType<Marker>().ToList();
+            (IReadOnlyList<LspInlayHint> hints, int hinted) = await lsp.InlayHintsAsync(cancel);
+            if (!cancel.IsCancellationRequested && hinted == document.Text.Version)
+            {
+                document.InlayHints = [.. hints.Where(h => h.Kind is null or 2).Select(h => new InlayHint(lsp.OffsetOf(h.Position), h.Label.TrimEnd(), h.PaddingLeft, h.PaddingRight))];
+            }
         }
         catch (Exception error) when (error is OperationCanceledException or StreamJsonRpc.RemoteInvocationException or StreamJsonRpc.ConnectionLostException or ObjectDisposedException)
         {

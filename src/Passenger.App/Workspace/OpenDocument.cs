@@ -14,6 +14,7 @@ public sealed class OpenDocument : Observable
     private IReadOnlyList<Marker> markers = [];
     private IReadOnlyList<LineMark> lineMarks = [];
     private IReadOnlyList<LineAnnotation> lineAnnotations = [];
+    private IReadOnlyList<InlayHint> inlayHints = [];
     private IReadOnlyList<TestMark> testMarks = [];
     private IReadOnlyList<ChangeMark> changeMarks = [];
     private IReadOnlyList<string?> gutterAnnotations = [];
@@ -82,6 +83,13 @@ public sealed class OpenDocument : Observable
     {
         get => gutterAnnotations;
         set => Set(ref gutterAnnotations, value);
+    }
+
+    /// <summary>The language service's words inside lines (parameter names before arguments), in this text's offsets.</summary>
+    public IReadOnlyList<InlayHint> InlayHints
+    {
+        get => inlayHints;
+        set => Set(ref inlayHints, value);
     }
 
     /// <summary>The debugger's text after lines: inline values, the exception it stopped on.</summary>

@@ -160,6 +160,7 @@ public sealed class SettingsDialog : Window
         Add(EditorPage, "Line spacing", Number(Working.EditorLineSpacing, 0.8, 3, 0.1, v => Change(s => s with { EditorLineSpacing = v })), "font line height");
         Add(EditorPage, "Enable ligatures", Check(Working.Ligatures, v => Change(s => s with { Ligatures = v })), "font arrows");
         Add(EditorPage, "Show line numbers", Check(Working.ShowLineNumbers, v => Change(s => s with { ShowLineNumbers = v })), "gutter appearance");
+        Add(EditorPage, "Show parameter name hints", Check(Working.ParameterHints, v => Change(s => s with { ParameterHints = v })), "inlay hints parameter names arguments");
 
         Add(RunPage, "Hot Reload on save", Check(Working.HotReload, v => Change(s => s with { HotReload = v })), "dotnet watch apply changes edit continue running");
 

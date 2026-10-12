@@ -133,6 +133,7 @@ public sealed class EditorGroup : DockPanel
         Editor.Show(document.Text, selections, scroll);
         Editor.Highlighter = document.Highlighter;
         Editor.SetMarkers(document.Markers);
+        Editor.SetInlayHints(document.InlayHints);
         Editor.SetLineMarks(document.LineMarks);
         Editor.SetLineAnnotations(document.LineAnnotations);
         Editor.SetTestMarks(document.TestMarks);
@@ -240,6 +241,9 @@ public sealed class EditorGroup : DockPanel
                 break;
             case nameof(OpenDocument.Markers):
                 Editor.SetMarkers(document.Markers);
+                break;
+            case nameof(OpenDocument.InlayHints):
+                Editor.SetInlayHints(document.InlayHints);
                 break;
             case nameof(OpenDocument.TestMarks):
                 Editor.SetTestMarks(document.TestMarks);

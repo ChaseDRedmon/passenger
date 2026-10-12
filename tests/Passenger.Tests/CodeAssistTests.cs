@@ -251,6 +251,26 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void A_literal_argument_shows_its_parameters_name_before_it_and_the_text_after_makes_room()
+    {
+        MainWindow window = project.Open("Program.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        int argument = editor.Document.Snapshot.ToString().IndexOf("Twice(2)", StringComparison.Ordinal) + "Twice(".Length;
+        Ui.WaitFor(() => editor.InlayHints.Any(h => h.Label == "value:"), "the parameter name hint");
+        Assert.Equal(argument, Assert.Single(editor.InlayHints).Offset);
+
+        // The argument stands a hint's room past the parenthesis; the caret at it stands after the hint.
+        double Step(int offset) => editor.PointOf(offset + 1).X - editor.PointOf(offset).X;
+        double character = Step(argument);
+        Assert.True(Step(argument - 1) > character * 4, $"{Step(argument - 1)} against a character's {character}");
+
+        // Off in Settings, the line stands as typed.
+        editor.ShowInlayHints = false;
+        Assert.Equal(character, Step(argument - 1), 3);
+        window.Close();
+    }
+
     private static void PlaceAfter(CodeEditor editor, string text)
     {
         int at = editor.Document.Snapshot.ToString().IndexOf(text, StringComparison.Ordinal);

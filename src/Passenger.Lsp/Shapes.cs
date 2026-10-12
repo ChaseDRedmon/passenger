@@ -29,6 +29,33 @@ public static class Shapes
         return result.EnumerateArray().Select(Location).ToList();
     }
 
+    /// <summary>Inlay hints, each label as one string whether the server sent it whole or in parts.</summary>
+    public static IReadOnlyList<LspInlayHint> InlayHints(JsonElement result)
+    {
+        if (result.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+        List<LspInlayHint> hints = [];
+        foreach (JsonElement item in result.EnumerateArray())
+        {
+            if (!item.TryGetProperty("position", out JsonElement position) || !item.TryGetProperty("label", out JsonElement label))
+            {
+                continue;
+            }
+            string text = label.ValueKind == JsonValueKind.Array
+                ? string.Concat(label.EnumerateArray().Select(part => part.TryGetProperty("value", out JsonElement value) ? value.GetString() : null))
+                : label.GetString() ?? string.Empty;
+            hints.Add(new LspInlayHint(
+                position.Deserialize<LspPosition>(Json.Options)!,
+                text,
+                item.TryGetProperty("kind", out JsonElement kind) && kind.ValueKind == JsonValueKind.Number ? kind.GetInt32() : null,
+                item.TryGetProperty("paddingLeft", out JsonElement left) && left.ValueKind == JsonValueKind.True,
+                item.TryGetProperty("paddingRight", out JsonElement right) && right.ValueKind == JsonValueKind.True));
+        }
+        return hints;
+    }
+
     public static IReadOnlyList<CodeAction> CodeActions(JsonElement result)
     {
         if (result.ValueKind != JsonValueKind.Array)

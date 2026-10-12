@@ -43,6 +43,10 @@ public enum LineAnnotationKind
 /// typed over.</summary>
 public readonly record struct LineAnnotation(int Line, string Text, LineAnnotationKind Kind);
 
+/// <summary>A word drawn inside a line before an offset, part of no document: a parameter's name before its argument,
+/// as Rider's parameter name hints. Padding leaves a space on that side of its chip.</summary>
+public readonly record struct InlayHint(int Offset, string Label, bool PadLeft = false, bool PadRight = false);
+
 /// <summary>A test's mark in the gutter, as Rider's run icons beside a test method or class: how it last ran.</summary>
 public enum TestMarkKind
 {

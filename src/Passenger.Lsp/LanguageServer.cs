@@ -130,8 +130,23 @@ public sealed class LanguageServer : IAsyncDisposable
         process.Dispose();
     }
 
-    /// <summary>What the client answers when the server asks: every setting left to its default, every
-    /// registration and progress token accepted.</summary>
+    /// <summary>The server's options Passenger sets: parameter name hints where Rider shows them (before a literal,
+    /// a null, an indexer's or a constructor's argument), and never where the argument already says the name.</summary>
+    private static readonly Dictionary<string, object?> Settings = new(StringComparer.Ordinal)
+    {
+        ["dotnet_enable_inlay_hints_for_parameters"] = true,
+        ["dotnet_enable_inlay_hints_for_literal_parameters"] = true,
+        ["dotnet_enable_inlay_hints_for_indexer_parameters"] = true,
+        ["dotnet_enable_inlay_hints_for_object_creation_parameters"] = true,
+        ["dotnet_enable_inlay_hints_for_other_parameters"] = false,
+        ["dotnet_suppress_inlay_hints_for_parameters_that_differ_only_by_suffix"] = true,
+        ["dotnet_suppress_inlay_hints_for_parameters_that_match_method_intent"] = true,
+        ["dotnet_suppress_inlay_hints_for_parameters_that_match_argument_name"] = true,
+        ["csharp_enable_inlay_hints_for_types"] = false,
+    };
+
+    /// <summary>What the client answers when the server asks: the options in <see cref="Settings"/>, the rest left to
+    /// their defaults, every registration and progress token accepted.</summary>
     private sealed class ClientTarget
     {
         private readonly List<string?> diagnosticSources = [];
@@ -158,8 +173,11 @@ public sealed class LanguageServer : IAsyncDisposable
         [JsonRpcMethod("window/showMessage")]
         public void ShowMessage(LogMessageParams message) => Owner?.Logged?.Invoke(Owner, message);
 
+        /// <summary>Roslyn asks for each option as <c>csharp|group.name</c> or <c>group.name</c>; the ones named in
+        /// <see cref="Settings"/> are answered, the rest left to the server's defaults.</summary>
         [JsonRpcMethod("workspace/configuration")]
-        public object?[] Configuration(ConfigurationParams request) => new object?[request.Items.Count];
+        public object?[] Configuration(ConfigurationParams request) =>
+            [.. request.Items.Select(item => item.Section is { } section && Settings.TryGetValue(section[(section.LastIndexOfAny(['.', '|']) + 1)..], out object? value) ? value : null)];
 
         [JsonRpcMethod("client/registerCapability")]
         public object? RegisterCapability(RegistrationParams request)

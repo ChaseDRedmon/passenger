@@ -20,6 +20,9 @@ public sealed record AppSettings
     public double EditorLineSpacing { get; init; } = 1.2;
     public bool Ligatures { get; init; }
     public bool ShowLineNumbers { get; init; } = true;
+
+    /// <summary>Rider's parameter name hints: an argument's parameter shown before it where the call does not say it.</summary>
+    public bool ParameterHints { get; init; } = true;
     public double TerminalFontSize { get; init; } = 13;
 
     /// <summary>Whether Run runs under dotnet watch, so a save applies its edits to the running program (Hot Reload),
