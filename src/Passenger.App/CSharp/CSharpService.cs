@@ -266,7 +266,14 @@ public sealed class CSharpService : IAsyncDisposable
             }
             if (!started.IsLoaded)
             {
-                await loaded.Task.WaitAsync(TimeSpan.FromMinutes(5), cancel);
+                // A wait with no fault to leave behind: a window gone meanwhile (a test's, its dispatcher with it) never hears its end.
+                await Task.WhenAny(loaded.Task, Task.Delay(TimeSpan.FromMinutes(5), cancel));
+                cancel.ThrowIfCancellationRequested();
+                if (!loaded.Task.IsCompleted)
+                {
+                    SetState("C# unavailable: the projects did not load in 5 minutes (the language server's log says where it stopped)");
+                    return;
+                }
             }
             SetState("C# ready");
             RefreshAll();
