@@ -10,7 +10,7 @@ public partial class MainWindow
     private FolderWatcher? watcher;
     private readonly HashSet<OpenDocument> conflicted = [];
 
-    /// <summary>Starts watching the folder just opened, and stops watching the one before.</summary>
+    /// <summary>A save that found the file changed on disk asks which version to keep, as a change seen does.</summary>
     private void AddConflicts() => Editors.SaveConflicted += (_, document) =>
     {
         if (conflicted.Add(document))
@@ -19,12 +19,19 @@ public partial class MainWindow
         }
     };
 
+    /// <summary>Starts watching the folder just opened, and stops watching the one before.</summary>
     private void Watch(string opened)
     {
         watcher?.Dispose();
-        watcher = new FolderWatcher(opened);
+        watcher = new FolderWatcher(opened, Watching);
         watcher.Changed += (_, changes) => OnFolderChanged(changes);
     }
+
+    /// <summary>How the folders opened from now on are watched: the system's way, unless a test chooses Linux's.</summary>
+    public FolderWatching Watching { get; set; } = FolderWatching.Platform;
+
+    /// <summary>The open folder's watcher.</summary>
+    public FolderWatcher? FolderWatcher => watcher;
 
     private void OnFolderChanged(FolderChanges changes)
     {

@@ -12,8 +12,6 @@ public sealed record WorkspaceModel(string Folder, SolutionModel? Solution, IRea
     /// <summary>The most folders searched for them, so a folder that is really a disk does not hold the window up.</summary>
     private const int FolderLimit = 5_000;
 
-    private static readonly HashSet<string> Skipped = ["bin", "obj", "artifacts", "node_modules", "packages", "TestResults"];
-
     /// <summary>Reads a folder, with the solution it was opened by, which stays its solution while it is there.</summary>
     public static WorkspaceModel Read(string folder, string? named = null)
     {
@@ -50,7 +48,7 @@ public sealed record WorkspaceModel(string Folder, SolutionModel? Solution, IRea
                 foreach (DirectoryInfo child in at.EnumerateDirectories().OrderBy(d => d.Name, StringComparer.Ordinal))
                 {
                     // Hidden folders are version control's, IDEs' and tools' own (a worktree's copy of the projects).
-                    if (!child.Name.StartsWith('.') && !Skipped.Contains(child.Name) && child.LinkTarget is null)
+                    if (!child.Name.StartsWith('.') && !IgnoredFolders.Contains(child.Name) && child.LinkTarget is null)
                     {
                         folders.Enqueue(child);
                     }

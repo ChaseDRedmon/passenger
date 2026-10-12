@@ -11,9 +11,6 @@ public sealed class FileIndex
     /// <summary>The most files indexed, so a folder that is really a disk does not hold the IDE up.</summary>
     private const int Limit = 200_000;
 
-    private static readonly HashSet<string> Skipped =
-        [".git", ".hg", ".svn", "bin", "obj", "artifacts", "node_modules", "packages", ".vs", ".idea", "TestResults"];
-
     private IReadOnlyList<string> files = [];
 
     public string? Root { get; private set; }
@@ -85,7 +82,7 @@ public sealed class FileIndex
             {
                 if (entry is DirectoryInfo directory)
                 {
-                    if (!Skipped.Contains(directory.Name) && directory.LinkTarget is null)
+                    if (!IgnoredFolders.Contains(directory.Name) && directory.LinkTarget is null)
                     {
                         folders.Push(directory);
                     }

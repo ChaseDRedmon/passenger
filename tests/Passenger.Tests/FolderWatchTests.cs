@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Reflection;
 using System.Text;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
@@ -10,7 +12,8 @@ namespace Passenger.Tests;
 /// <summary>Changes another program makes in the folder, seen at once as Rider's fsnotifier sees them: the Explorer,
 /// Go to File and the open files follow, an open file with unsaved edits asks which version to keep, a project added on
 /// disk joins the Solution view and the run configurations, and the solution the folder's files now pick is the one
-/// the Explorer and the language server both open.</summary>
+/// the Explorer and the language server both open. Linux's way of watching, a watch for each kept folder from a pool
+/// with a limit, is chosen here on any system, since only the kernel's own running out is Linux's alone.</summary>
 public sealed class FolderWatchTests : IDisposable
 {
     private readonly string folder = PathNames.Canonical(Directory.CreateTempSubdirectory("passenger-watch-").FullName);
@@ -189,6 +192,131 @@ public sealed class FolderWatchTests : IDisposable
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void Watching_each_folder_as_on_Linux_leaves_build_output_dependencies_and_gits_objects_unwatched_and_follows_new_folders()
+    {
+        Write("src/App/App.cs", "class App { }\n");
+        Write("src/App/bin/Debug/App.dll", "");
+        Write("src/App/obj/project.assets.json", "{}\n");
+        Write("node_modules/left-pad/index.js", "");
+        Write("artifacts/bin/App/debug/App.dll", "");
+        Write("packages/Some.Package/Some.Package.nupkg", "");
+        Write("TestResults/run.trx", "");
+        Write(".vs/state", "");
+        Git("init", "-q", "-b", "main");
+        Git("-c", "user.email=tests@passenger.invalid", "-c", "user.name=Passenger Tests", "commit", "-q", "--allow-empty", "-m", "First");
+        MainWindow window = Open(FolderWatching.Inotify);
+        window.OpenFile("src/App/App.cs");
+        Ui.WaitFor(() => window.Vcs.Branch == "main", "the branch to be read");
+
+        string[] watched = Watched(window);
+        foreach (string kept in new[] { ".", ".git", ".git/refs", ".git/refs/heads", "src", "src/App" })
+        {
+            Assert.True(watched.Contains(kept), $"{kept} is not watched, so what other programs change in it goes unseen");
+        }
+        Assert.All(watched, path => Assert.True(path is "." or ".git" or "src" or "src/App" || path.StartsWith(".git/refs", StringComparison.Ordinal),
+            $"{path} is watched, spending one of the user's inotify watches on a folder nothing in the IDE looks at"));
+
+        // Each kept folder's own watch is what hears of its files, Git's HEAD among them.
+        File.WriteAllText(Path.Combine(folder, "src", "App", "App.cs"), "class App { int changed; }\n");
+        Ui.WaitFor(() => Text(window) == "class App { int changed; }\n", "the open file deep in the folder to take the text on disk");
+        Git("switch", "-q", "-c", "side");
+        Ui.WaitFor(() => window.Vcs.Branch == "side", "the branch checked out elsewhere to show");
+
+        // A folder made later is watched with the kept folders in it, before a file is made there.
+        Directory.CreateDirectory(Path.Combine(folder, "src", "Feature", "Deep"));
+        Directory.CreateDirectory(Path.Combine(folder, "src", "Feature", "obj"));
+        Ui.WaitFor(() => Watched(window).Contains("src/Feature/Deep"), "the folders made to be watched");
+        Ui.Settle();
+        Assert.DoesNotContain("src/Feature/obj", Watched(window));
+        string deep = Path.Combine("src", "Feature", "Deep", "Deep.cs");
+        Assert.DoesNotContain(deep, window.FileIndex.Files);
+        Write("src/Feature/Deep/Deep.cs", "class Deep { }\n");
+        Ui.WaitFor(() => window.FileIndex.Files.Contains(deep), "the file made in the new folder in Go to File, which only that folder's watch hears of");
+
+        // Windows moves or deletes a watched folder only once its watch lets go; there one watch covers the tree anyway.
+        if (!OperatingSystem.IsWindows())
+        {
+            // A folder renamed is watched under its new name, its old name's watches let go of.
+            Directory.Move(Path.Combine(folder, "src", "Feature"), Path.Combine(folder, "src", "Moved"));
+            Ui.WaitFor(() => Watched(window).Contains("src/Moved/Deep") && !Watched(window).Any(p => p.StartsWith("src/Feature", StringComparison.Ordinal)),
+                "the renamed folders to be watched under their new names alone");
+            Ui.Settle();
+            string moved = Path.Combine("src", "Moved", "Deep", "Moved.cs");
+            Write("src/Moved/Deep/Moved.cs", "class Moved { }\n");
+            Ui.WaitFor(() => window.FileIndex.Files.Contains(moved), "the file made in the renamed folder in Go to File");
+
+            Directory.Delete(Path.Combine(folder, "src", "Moved"), recursive: true);
+            Ui.WaitFor(() => !Watched(window).Any(p => p.StartsWith("src/Moved", StringComparison.Ordinal)), "the deleted folders' watches to be let go of");
+            Ui.WaitFor(() => !window.FileIndex.Files.Contains(moved), "the deleted file to leave Go to File");
+        }
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Running_out_of_inotify_watches_is_one_ide_error_saying_how_to_raise_the_limit()
+    {
+        string settings = Directory.CreateTempSubdirectory("passenger-settings-").FullName;
+        string? before = Environment.GetEnvironmentVariable("PASSENGER_SETTINGS");
+        Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", settings);
+        try
+        {
+            Write("One/One.cs", "class One { }\n");
+            Write("Two/Two.cs", "class Two { }\n");
+            MainWindow window = Open(FolderWatching.Inotify);
+            IReadOnlyDictionary<string, FileSystemWatcher> watches = window.FolderWatcher!.Watches;
+
+            // What .NET's watcher raises on Linux when inotify_add_watch fails with ENOSPC, from each folder's own watcher.
+            RaiseError(watches[Path.Combine(folder, "One")], OutOfWatches());
+            RaiseError(watches[Path.Combine(folder, "Two")], OutOfWatches());
+            Ui.WaitFor(() => window.Status?.Contains("fs.inotify.max_user_watches", StringComparison.Ordinal) == true,
+                "the status bar to say the inotify watches ran out");
+            Ui.Settle();
+            IdeError error = Assert.Single(IdeErrors.Errors);
+            Assert.StartsWith("Changes made outside Passenger in some folders will go unseen", error.Message, StringComparison.Ordinal);
+            Assert.Contains("sudo sysctl --system", error.Message, StringComparison.Ordinal);
+            Assert.Contains("fs.inotify.max_user_watches", File.ReadAllText(IdeErrors.LogPath), StringComparison.Ordinal);
+            Assert.Equal(["."], Watched(window));
+
+            // The folders still watched still say what changes in them.
+            Write("Three.cs", "class Three { }\n");
+            Ui.WaitFor(() => window.FileIndex.Files.Contains("Three.cs"), "a file made in a folder still watched in Go to File");
+            // Reported on purpose: the check that fails a test over a caught error is not to see it.
+            IdeErrors.Clear();
+            window.Close();
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", before);
+            TestFolders.Delete(settings);
+        }
+    }
+
+    private static IOException OutOfWatches() =>
+        new("The configured user limit (8192) on the number of inotify watches has been reached, or the operating system failed to allocate a required resource.", 28);
+
+    /// <summary>A watcher's error raised as the system's watcher raises it, which no kernel but Linux's gives for this.</summary>
+    private static void RaiseError(FileSystemWatcher watcher, Exception error) =>
+        typeof(FileSystemWatcher).GetMethod("OnError", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(watcher, [new ErrorEventArgs(error)]);
+
+    /// <summary>The folders watched, from the open folder, with forward slashes.</summary>
+    private string[] Watched(MainWindow window) =>
+        [.. window.FolderWatcher!.Watches.Keys.Select(p => Path.GetRelativePath(folder, p).Replace('\\', '/')).Order(StringComparer.Ordinal)];
+
+    private void Git(params string[] arguments)
+    {
+        using Process process = Process.Start(new ProcessStartInfo("git", arguments)
+        {
+            WorkingDirectory = folder,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        })!;
+        process.StandardOutput.ReadToEnd();
+        string error = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        Assert.True(process.ExitCode == 0, $"git {string.Join(' ', arguments)}: {error}");
+    }
+
     private static string? EncodingShown(MainWindow window) => Avalonia.Controls.ControlExtensions.FindControl<Avalonia.Controls.TextBlock>(window, "EncodingText")!.Text;
 
     private static void Type(MainWindow window, string text)
@@ -284,9 +412,9 @@ public sealed class FolderWatchTests : IDisposable
         File.WriteAllText(path, text);
     }
 
-    private MainWindow Open()
+    private MainWindow Open(FolderWatching? watching = null)
     {
-        MainWindow window = new() { Width = 1200, Height = 800 };
+        MainWindow window = new() { Width = 1200, Height = 800, Watching = watching ?? FolderWatching.Platform };
         window.Show();
         window.OpenFolder(folder);
         Ui.Settle();
