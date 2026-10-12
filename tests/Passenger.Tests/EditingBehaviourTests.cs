@@ -154,6 +154,28 @@ public sealed class EditingBehaviourTests
         Assert.Equal(Passenger.Editor.TokenKind.Method, KindAt(highlighter, rig, method + 5));
     }
 
+    [AvaloniaFact]
+    public void Brackets_take_turns_in_three_colours_by_how_deeply_they_nest_and_a_comparison_is_not_one()
+    {
+        const string source = "class C\n{\n    bool M(List<int> xs)\n    {\n        return Call(xs[0], 1 < 2);\n    }\n}\n";
+        EditorRig rig = new(source);
+        using CSharpHighlighter highlighter = new(rig.Document);
+        rig.Editor.Highlighter = highlighter;
+        Ui.Settle();
+        Passenger.Editor.TokenKind? At(string before) => KindAt(highlighter, rig, source.IndexOf(before, StringComparison.Ordinal) + before.Length - 1);
+
+        Assert.Equal(Passenger.Editor.TokenKind.Brace1, At("C\n{"));
+        Assert.Equal(Passenger.Editor.TokenKind.Brace2, At("M("));
+        Assert.Equal(Passenger.Editor.TokenKind.Brace3, At("List<"));
+        Assert.Equal(Passenger.Editor.TokenKind.Brace3, At("int>"));
+        Assert.Equal(Passenger.Editor.TokenKind.Brace3, At("Call("));
+        // The fourth level comes round to the first colour.
+        Assert.Equal(Passenger.Editor.TokenKind.Brace1, At("xs["));
+        Assert.Equal(Passenger.Editor.TokenKind.Brace1, At("0]"));
+        Assert.NotEqual(Passenger.Editor.TokenKind.Brace1, At("1 <"));
+        Assert.Equal(Passenger.Editor.TokenKind.Brace1, KindAt(highlighter, rig, source.LastIndexOf('}')));
+    }
+
     private static Passenger.Editor.TokenKind? KindAt(CSharpHighlighter highlighter, EditorRig rig, int offset) =>
         highlighter.GetSpans(rig.Document.Snapshot, offset, 1)
             .Where(s => s.Start <= offset && offset < s.End)

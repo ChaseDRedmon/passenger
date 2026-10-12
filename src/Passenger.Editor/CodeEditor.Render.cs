@@ -617,6 +617,10 @@ public sealed partial class CodeEditor
     /// <summary>The font and colour a token kind is drawn in, made once per theme.</summary>
     private TextRunProperties Run(TokenKind kind)
     {
+        if (!rainbowBraces && kind is TokenKind.Brace1 or TokenKind.Brace2 or TokenKind.Brace3)
+        {
+            kind = TokenKind.Text;
+        }
         if (!runProperties.TryGetValue(kind, out TextRunProperties? props))
         {
             runProperties[kind] = props = RunWith(palette.Syntax(kind));

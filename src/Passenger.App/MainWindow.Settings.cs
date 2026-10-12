@@ -81,6 +81,7 @@ public partial class MainWindow
         editor.Ligatures = with.Ligatures;
         editor.ShowLineNumbers = with.ShowLineNumbers;
         editor.ShowInlayHints = with.ParameterHints;
+        editor.RainbowBraces = with.RainbowBraces;
         editor.InvalidateVisual();
     }
 }

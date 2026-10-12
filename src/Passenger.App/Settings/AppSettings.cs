@@ -21,6 +21,9 @@ public sealed record AppSettings
     public bool Ligatures { get; init; }
     public bool ShowLineNumbers { get; init; } = true;
 
+    /// <summary>Rider's rainbow braces: brackets coloured by how deeply they nest.</summary>
+    public bool RainbowBraces { get; init; } = true;
+
     /// <summary>Rider's parameter name hints: an argument's parameter shown before it where the call does not say it.</summary>
     public bool ParameterHints { get; init; } = true;
     public double TerminalFontSize { get; init; } = 13;

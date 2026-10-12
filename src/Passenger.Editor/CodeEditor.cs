@@ -45,6 +45,7 @@ public sealed partial class CodeEditor : Control
     private bool ligatures;
     private Metrics metrics;
     private Palette palette;
+    private bool rainbowBraces = true;
     private (TextRunProperties Value, TextRunProperties Exception) annotationRuns;
     private TextRunProperties? questionRun;
 
@@ -229,6 +230,20 @@ public sealed partial class CodeEditor : Control
 
     /// <summary>Whether the font may join characters into ligatures (=> drawn as one arrow). Off, as
     /// in Rider, so every character stays the one typed.</summary>
+    /// <summary>Whether brackets take a colour by their depth (Rider's rainbow braces), or the text's.</summary>
+    public bool RainbowBraces
+    {
+        get => rainbowBraces;
+        set
+        {
+            if (rainbowBraces != value)
+            {
+                rainbowBraces = value;
+                RefreshStyle();
+            }
+        }
+    }
+
     public bool Ligatures
     {
         get => ligatures;

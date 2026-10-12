@@ -35,6 +35,11 @@ public enum TokenKind
     Parameter,
     Label,
     Excluded,
+
+    /// <summary>A bracket at a nesting depth, the three colours taking turns: Rider's rainbow braces.</summary>
+    Brace1,
+    Brace2,
+    Brace3,
 }
 
 /// <summary>Where the pointer rested: the offset under it and the point, in the editor's coordinates.</summary>
