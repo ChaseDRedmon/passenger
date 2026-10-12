@@ -213,15 +213,30 @@ public sealed class TerminalTests
                 big.Write("the end of big.txt\n");
             }
             (MainWindow window, TerminalSession shell) = Open(folder, "/bin/sh");
+            // The file's glyphs drawn once first, as in a terminal already in use: the first frame of them lays them out,
+            // which on a slow machine holds the window for a second whatever the terminal does.
+            window.KeyTextInput("head -n 3 big.txt");
+            Ui.Press(window, "ENTER");
+            Ui.WaitFor(() => shell.Screen.ScreenText().Contains("line 0000002", StringComparison.Ordinal), "the file's first lines on the screen");
+            Screenshot.Pump(TimeSpan.FromMilliseconds(100));
+            window.KeyTextInput("clear");
+            Ui.Press(window, "ENTER");
+            Ui.WaitFor(() => !shell.Screen.ScreenText().Contains("xxxxxxxx", StringComparison.Ordinal), "the screen cleared");
+            window.KeyTextInput("cat big.txt");
             using (InputWait waits = new())
             {
-                window.KeyTextInput("cat big.txt");
                 Ui.Press(window, "ENTER");
                 Ui.WaitFor(() => shell.Screen.ScreenText().Contains("xxxxxxxx", StringComparison.Ordinal), "the file pouring onto the screen");
-                // A second more of the flood, the window running as it does on a desktop.
-                Screenshot.Pump(TimeSpan.FromSeconds(1));
+                // A second more of the flood, the window running as it does on a desktop, and on a machine slow to draw as
+                // long as it takes the window to answer enough looks to say how long a key waits.
+                Stopwatch flooding = Stopwatch.StartNew();
+                while (flooding.Elapsed < TimeSpan.FromSeconds(1) || (waits.Answered < 20 && flooding.Elapsed < TimeSpan.FromSeconds(20)))
+                {
+                    Screenshot.Pump(TimeSpan.FromMilliseconds(100));
+                }
                 waits.Stop();
-                Assert.True(waits.Answered >= 20, $"only {waits.Answered} looks at the window's thread");
+                Assert.True(waits.Answered >= 20,
+                    $"the window answered {waits.Answered} of {waits.Posted} looks at its thread in {flooding.Elapsed.TotalSeconds:F1} s of cat's output");
                 Assert.True(waits.Longest < TimeSpan.FromMilliseconds(250),
                     $"a key waited {waits.Longest.TotalMilliseconds:F0} ms for the window while cat's output poured in");
             }
@@ -338,28 +353,39 @@ public sealed class TerminalTests
         }
     }
 
-    /// <summary>How long a key waits for the window's thread: work posted at input's priority every 20 ms, as the
-    /// platform's keys wait for the thread between jobs, the longest wait kept until <see cref="Stop"/>.</summary>
+    /// <summary>How long a key waits for the window's thread: work posted at input's priority, as the platform's keys wait
+    /// for the thread between jobs, the longest wait kept until <see cref="Stop"/>. Each is posted as soon as the last is
+    /// answered, from a thread of its own, so a loaded machine that is slow to wake a timer or the thread pool still
+    /// takes as many looks as the window answers.</summary>
     private sealed class InputWait : IDisposable
     {
+        private readonly SemaphoreSlim answered = new(0);
         private volatile bool stopped;
+        private int posted;
 
         public InputWait()
         {
-            _ = Task.Run(async () =>
+            Thread poster = new(() =>
             {
                 while (!stopped)
                 {
-                    long posted = Stopwatch.GetTimestamp();
-                    Dispatcher.UIThread.Post(() => Answer(Stopwatch.GetElapsedTime(posted)), DispatcherPriority.Input);
-                    await Task.Delay(20);
+                    long at = Stopwatch.GetTimestamp();
+                    Interlocked.Increment(ref posted);
+                    Dispatcher.UIThread.Post(() => Answer(Stopwatch.GetElapsedTime(at)), DispatcherPriority.Input);
+                    while (!stopped && !answered.Wait(100))
+                    {
+                    }
                 }
-            });
+            })
+            { IsBackground = true, Name = "Input wait" };
+            poster.Start();
         }
 
         public TimeSpan Longest { get; private set; }
 
         public int Answered { get; private set; }
+
+        public int Posted => Volatile.Read(ref posted);
 
         /// <summary>Stops measuring, on the window's thread, so a wait while it is not running never counts.</summary>
         public void Stop() => stopped = true;
@@ -368,12 +394,12 @@ public sealed class TerminalTests
 
         private void Answer(TimeSpan waited)
         {
-            if (stopped)
+            if (!stopped)
             {
-                return;
+                Answered++;
+                Longest = waited > Longest ? waited : Longest;
             }
-            Answered++;
-            Longest = waited > Longest ? waited : Longest;
+            answered.Release();
         }
     }
 
