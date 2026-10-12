@@ -116,14 +116,14 @@ public sealed partial class PassengerTools(MainWindow window)
     public Task<IReadOnlyList<Place>> Definition(string path, int line, int column, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         (OpenDocument document, LspDocument lsp) = await Code(path, cancel);
-        return Places(await lsp.DefinitionAsync(Offset(document, line, column)));
+        return await Places(await lsp.DefinitionAsync(Offset(document, line, column)), cancel);
     });
 
     [McpServerTool(Name = "usages", Title = "Find usages", ReadOnly = true), Description("Every place the symbol at a position is used, its declaration included, with each line's text.")]
     public Task<IReadOnlyList<Place>> Usages(string path, int line, int column, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         (OpenDocument document, LspDocument lsp) = await Code(path, cancel);
-        return Places(await lsp.ReferencesAsync(Offset(document, line, column)));
+        return await Places(await lsp.ReferencesAsync(Offset(document, line, column)), cancel);
     });
 
     [McpServerTool(Name = "hierarchy", Title = "Call or type hierarchy", ReadOnly = true), Description(
@@ -141,25 +141,22 @@ public sealed partial class PassengerTools(MainWindow window)
         }
         HierarchyItem item = (calls ? await lsp.PrepareCallHierarchyAsync(offset) : await lsp.PrepareTypeHierarchyAsync(offset))
             ?? throw new InvalidOperationException(calls ? "No method, property or event there" : "No type there");
-        IEnumerable<(HierarchyItem Item, LspRange At)> found = direction switch
+        IReadOnlyList<(HierarchyItem Item, LspRange At)> found = direction switch
         {
-            "callers" => (await server.IncomingCallsAsync(item)).Select(c => (c.From, c.FromRanges.FirstOrDefault() ?? c.From.SelectionRange)),
-            "callees" => (await server.OutgoingCallsAsync(item)).Select(c => (c.To, c.To.SelectionRange)),
-            "supertypes" => (await server.SupertypesAsync(item)).Select(t => (t, t.SelectionRange)),
-            _ => (await server.SubtypesAsync(item)).Select(t => (t, t.SelectionRange)),
+            "callers" => [.. (await server.IncomingCallsAsync(item)).Select(c => (c.From, c.FromRanges.FirstOrDefault() ?? c.From.SelectionRange))],
+            "callees" => [.. (await server.OutgoingCallsAsync(item)).Select(c => (c.To, c.To.SelectionRange))],
+            "supertypes" => [.. (await server.SupertypesAsync(item)).Select(t => (t, t.SelectionRange))],
+            _ => [.. (await server.SubtypesAsync(item)).Select(t => (t, t.SelectionRange))],
         };
-        return [.. found.Select(f =>
-        {
-            string at = new Uri(f.Item.Uri).LocalPath;
-            return new HierarchyEntry(f.Item.Name, f.Item.Detail, Relative(at), f.At.Start.Line + 1, f.At.Start.Character + 1, LineText(at, f.At.Start.Line));
-        })];
+        IReadOnlyList<(string Path, string Text)> lines = await Lines([.. found.Select(f => (f.Item.Uri, f.At.Start.Line))], cancel);
+        return [.. found.Select((f, i) => new HierarchyEntry(f.Item.Name, f.Item.Detail, lines[i].Path, f.At.Start.Line + 1, f.At.Start.Character + 1, lines[i].Text))];
     });
 
     [McpServerTool(Name = "implementations", Title = "Go to implementation", ReadOnly = true), Description("The implementations of the interface, abstract or virtual member at a position.")]
     public Task<IReadOnlyList<Place>> Implementations(string path, int line, int column, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         (OpenDocument document, LspDocument lsp) = await Code(path, cancel);
-        return Places(await lsp.ImplementationAsync(Offset(document, line, column)));
+        return await Places(await lsp.ImplementationAsync(Offset(document, line, column)), cancel);
     });
 
     [McpServerTool(Name = "rename", Title = "Rename a symbol", Destructive = true), Description(
@@ -546,7 +543,7 @@ public sealed partial class PassengerTools(MainWindow window)
         {
             return await UiThread.InvokeAsync(work);
         }
-        catch (Exception error) when (error is InvalidOperationException or ArgumentException or IOException or TimeoutException or DapException)
+        catch (Exception error) when (error is InvalidOperationException or ArgumentException or IOException or UnauthorizedAccessException or TimeoutException or DapException)
         {
             throw new ModelContextProtocol.McpException(error is DapException dap ? $"The debugger refused: {dap.Reason}" : error.Message, error);
         }
@@ -707,27 +704,74 @@ public sealed partial class PassengerTools(MainWindow window)
         return Math.Min(text.GetLineStart(l) + Math.Max(0, column - 1), text.GetLine(l).End);
     }
 
-    private IReadOnlyList<Place> Places(IReadOnlyList<LspLocation> locations) =>
-        [.. locations.Select(l =>
-        {
-            string path = new Uri(l.Uri).LocalPath;
-            return new Place(Relative(path), l.Range.Start.Line + 1, l.Range.Start.Character + 1, LineText(path, l.Range.Start.Line));
-        })];
-
-    private string LineText(string path, int line)
+    private async Task<IReadOnlyList<Place>> Places(IReadOnlyList<LspLocation> locations, CancellationToken cancel)
     {
-        if (window.EditorArea.Documents.FirstOrDefault(d => d.Path == path) is { } open && line < open.Text.Snapshot.LineCount)
+        IReadOnlyList<(string Path, string Text)> lines = await Lines([.. locations.Select(l => (l.Uri, l.Range.Start.Line))], cancel);
+        return [.. locations.Select((l, i) => new Place(lines[i].Path, l.Range.Start.Line + 1, l.Range.Start.Character + 1, lines[i].Text))];
+    }
+
+    /// <summary>Each place's path as the agent is shown it and its line's text, trimmed, worked out on the thread pool,
+    /// each file read once: a symbol used thousands of times in a large solution never holds the person's window.</summary>
+    private Task<IReadOnlyList<(string Path, string Text)>> Lines(IReadOnlyList<(string Uri, int Line)> places, CancellationToken cancel)
+    {
+        string? folder = window.Folder;
+        // An editor's snapshot is immutable, so an open file's lines (unsaved edits and all) are read off the UI thread too.
+        Dictionary<string, TextSnapshot> open = new(StringComparer.Ordinal);
+        foreach (OpenDocument document in window.EditorArea.Documents)
         {
-            return open.Text.Snapshot.GetLineText(line).Trim();
+            open.TryAdd(document.Path, document.Text.Snapshot);
         }
-        try
+        return Task.Run(() =>
         {
-            return File.ReadLines(path).Skip(line).FirstOrDefault()?.Trim() ?? string.Empty;
-        }
-        catch (IOException)
+            string[] paths = [.. places.Select(p => new Uri(p.Uri).LocalPath)];
+            Dictionary<(string Path, int Line), string> texts = ReadLines([.. paths.Select((path, i) => (path, places[i].Line))], open, cancel);
+            return (IReadOnlyList<(string, string)>)[.. paths.Select((path, i) => (Relative(folder, path), texts.GetValueOrDefault((path, places[i].Line), string.Empty)))];
+        }, cancel);
+    }
+
+    /// <summary>The lines asked for, trimmed: an open file's from the editor, any other's from disk, read once and only as
+    /// far as its last line asked for. A file that cannot be read has no lines, rather than failing the tool.</summary>
+    private static Dictionary<(string Path, int Line), string> ReadLines(IReadOnlyList<(string Path, int Line)> wanted, Dictionary<string, TextSnapshot> open, CancellationToken cancel)
+    {
+        Dictionary<(string Path, int Line), string> texts = [];
+        foreach (IGrouping<string, int> file in wanted.GroupBy(w => w.Path, w => w.Line, StringComparer.Ordinal))
         {
-            return string.Empty;
+            cancel.ThrowIfCancellationRequested();
+            HashSet<int> lines = [.. file];
+            if (open.TryGetValue(file.Key, out TextSnapshot? text))
+            {
+                foreach (int line in lines.Where(l => l < text.LineCount))
+                {
+                    texts[(file.Key, line)] = text.GetLineText(line).Trim();
+                }
+                lines.RemoveWhere(l => l < text.LineCount);
+            }
+            if (lines.Count == 0)
+            {
+                continue;
+            }
+            int last = lines.Max();
+            try
+            {
+                int at = 0;
+                foreach (string line in File.ReadLines(file.Key))
+                {
+                    if (lines.Contains(at))
+                    {
+                        texts[(file.Key, at)] = line.Trim();
+                    }
+                    if (++at > last)
+                    {
+                        break;
+                    }
+                }
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                // Gone or refused since the language server read it: its places are still places, without their text.
+            }
         }
+        return texts;
     }
 
     private Workspace Snapshot()
@@ -752,7 +796,9 @@ public sealed partial class PassengerTools(MainWindow window)
         return File.Exists(full) || Directory.Exists(full) ? PathNames.Canonical(full) : full;
     }
 
-    private string Relative(string path) => window.Folder is { } folder && path.StartsWith(folder + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+    private string Relative(string path) => Relative(window.Folder, path);
+
+    private static string Relative(string? folder, string path) => folder is not null && path.StartsWith(folder + Path.DirectorySeparatorChar, StringComparison.Ordinal)
         ? Path.GetRelativePath(folder, path)
         : path;
 

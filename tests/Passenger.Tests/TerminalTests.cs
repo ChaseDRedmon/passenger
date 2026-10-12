@@ -5,7 +5,6 @@ using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
 using Avalonia.Input.Platform;
-using Avalonia.Threading;
 using Passenger.App;
 using Passenger.Terminal;
 
@@ -350,56 +349,6 @@ public sealed class TerminalTests
         while (!copied.IsCompleted)
         {
             Ui.Settle();
-        }
-    }
-
-    /// <summary>How long a key waits for the window's thread: work posted at input's priority, as the platform's keys wait
-    /// for the thread between jobs, the longest wait kept until <see cref="Stop"/>. Each is posted as soon as the last is
-    /// answered, from a thread of its own, so a loaded machine that is slow to wake a timer or the thread pool still
-    /// takes as many looks as the window answers.</summary>
-    private sealed class InputWait : IDisposable
-    {
-        private readonly SemaphoreSlim answered = new(0);
-        private volatile bool stopped;
-        private int posted;
-
-        public InputWait()
-        {
-            Thread poster = new(() =>
-            {
-                while (!stopped)
-                {
-                    long at = Stopwatch.GetTimestamp();
-                    Interlocked.Increment(ref posted);
-                    Dispatcher.UIThread.Post(() => Answer(Stopwatch.GetElapsedTime(at)), DispatcherPriority.Input);
-                    while (!stopped && !answered.Wait(100))
-                    {
-                    }
-                }
-            })
-            { IsBackground = true, Name = "Input wait" };
-            poster.Start();
-        }
-
-        public TimeSpan Longest { get; private set; }
-
-        public int Answered { get; private set; }
-
-        public int Posted => Volatile.Read(ref posted);
-
-        /// <summary>Stops measuring, on the window's thread, so a wait while it is not running never counts.</summary>
-        public void Stop() => stopped = true;
-
-        public void Dispose() => Stop();
-
-        private void Answer(TimeSpan waited)
-        {
-            if (!stopped)
-            {
-                Answered++;
-                Longest = waited > Longest ? waited : Longest;
-            }
-            answered.Release();
         }
     }
 

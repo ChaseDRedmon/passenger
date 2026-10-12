@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
@@ -344,6 +345,79 @@ public sealed class McpTests : IDisposable
         await using McpClient client = await Start(["--mcp-attach"], workingDirectory);
         return (await Call(client, "workspace")).GetProperty("folder").GetString();
     }), $"an agent attaching from {workingDirectory}");
+
+    [AvaloniaFact]
+    public void The_window_takes_keys_while_an_attached_agent_finds_ten_thousand_usages_each_with_its_line()
+    {
+        UseSettings();
+        // Four files calling Helper.Twice 2,500 times each, every call under a long comment: a usage's line read from its
+        // file's start every time reads each file 2,500 times over.
+        for (int file = 0; file < 4; file++)
+        {
+            System.Text.StringBuilder text = new($"static class Uses{file}\n{{\n    public static int All()\n    {{\n        int total = 0;\n");
+            for (int call = 0; call < 2500; call++)
+            {
+                text.Append("        // ").Append('=', 100).Append('\n');
+                text.Append("        total += Helper.Twice(").Append(call).Append(");\n");
+            }
+            Write($"Uses{file}.cs", text.Append("        return total;\n    }\n}\n").ToString());
+        }
+        Write("Notes.txt", string.Empty);
+        MainWindow window = AgentsWindow(folder);
+        window.OpenFile(Path.Combine(window.Folder!, "Helper.cs"));
+        window.OpenFile(Path.Combine(window.Folder!, "Notes.txt"));
+        window.EditorArea.CodeEditor.Focus();
+        Ui.Settle();
+        McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
+        try
+        {
+            // The language server has the folder loaded before the window is timed, which is the server's work, not the agent's.
+            Await(Task.Run(() => Call(client, "diagnostics", new() { ["path"] = "Helper.cs" })), "the language server");
+
+            // The person types in another file while the agent asks for every usage of Twice.
+            Task<JsonElement> usages = Task.Run(() => Call(client, "usages", new() { ["path"] = "Helper.cs", ["line"] = 3, ["column"] = 23 }));
+            int typed = 0;
+            TimeSpan longest;
+            using (InputWait waits = new())
+            {
+                // The call's own limit ends this if Passenger never answers.
+                while (!usages.IsCompleted)
+                {
+                    window.KeyTextInput("x");
+                    typed++;
+                    Screenshot.Pump(TimeSpan.FromMilliseconds(50));
+                }
+                waits.Stop();
+                longest = waits.Longest;
+            }
+            JsonElement[] found = [.. usages.GetAwaiter().GetResult().EnumerateArray()];
+            Ui.Settle();
+
+            // Every usage comes back, each with its own line, and every key the person typed meanwhile landed at once.
+            Assert.Equal(10_002, found.Length);
+            Assert.All(found, place => Assert.Contains("Twice(", place.GetProperty("text").GetString(), StringComparison.Ordinal));
+            Assert.Contains(found, place => place.GetProperty("path").GetString() == "Uses3.cs" && place.GetProperty("line").GetInt32() == 5005
+                && place.GetProperty("text").GetString() == "total += Helper.Twice(2499);");
+            Assert.Equal(new string('x', typed), window.EditorArea.Active!.Text.Snapshot.ToString());
+            Assert.True(longest < TimeSpan.FromMilliseconds(250),
+                $"a key waited {longest.TotalMilliseconds:F0} ms for the window while the agent's {found.Length} usages were found");
+
+            // The callers' hierarchy has each caller's line the same way: each file's method at its first call.
+            JsonElement callers = Await(Task.Run(() => Call(client, "hierarchy", new() { ["path"] = "Helper.cs", ["line"] = 3, ["column"] = 23 })), "the callers");
+            Assert.Equal(["Uses0.cs:7 total += Helper.Twice(0);", "Uses1.cs:7 total += Helper.Twice(0);", "Uses2.cs:7 total += Helper.Twice(0);", "Uses3.cs:7 total += Helper.Twice(0);"],
+                callers.EnumerateArray().Select(c => $"{c.GetProperty("path").GetString()}:{c.GetProperty("line").GetInt32()} {c.GetProperty("text").GetString()}")
+                    .Where(c => c.StartsWith("Uses", StringComparison.Ordinal)).Order(StringComparer.Ordinal));
+        }
+        finally
+        {
+            Await(Task.Run(async () =>
+            {
+                await client.DisposeAsync();
+                return true;
+            }), "the agent going");
+            window.Close();
+        }
+    }
 
     [Fact]
     public async Task Started_as_the_Finder_starts_it_Passenger_runs_the_git_the_login_shell_finds()

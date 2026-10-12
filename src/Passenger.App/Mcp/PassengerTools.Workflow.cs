@@ -32,10 +32,11 @@ public sealed partial class PassengerTools
     public Task<string> VcsDiff(string path, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         string full = Resolve(path);
+        string name = Relative(full).Replace('\\', '/');
         string head = await window.Vcs.HeadTextAsync(full) ?? string.Empty;
-        string now = window.EditorArea.Documents.FirstOrDefault(d => d.Path == full)?.Text.Snapshot.ToString()
-            ?? (File.Exists(full) ? File.ReadAllText(full) : string.Empty);
-        string diff = LineDiff.Unified(head, now, Relative(full).Replace('\\', '/'));
+        TextSnapshot? open = window.EditorArea.Documents.FirstOrDefault(d => d.Path == full)?.Text.Snapshot;
+        // Reading and comparing a large file would hold the person's window: the thread pool does both.
+        string diff = await Task.Run(() => LineDiff.Unified(head, open?.ToString() ?? (File.Exists(full) ? File.ReadAllText(full) : string.Empty), name), cancel);
         return diff.Length == 0 ? "No changes" : diff;
     });
 
