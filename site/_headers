@@ -7,6 +7,13 @@
 /images/*
   Cache-Control: public, max-age=604800
 
+# The policy is the pages'; on these it only stops a browser's own viewer from drawing them.
+/sitemap.xml
+  ! Content-Security-Policy
+
+/robots.txt
+  ! Content-Security-Policy
+
 # Only passenger-ide.net is for search engines; the project's pages.dev names, previews included, are copies.
 https://:project.pages.dev/*
   X-Robots-Tag: noindex
