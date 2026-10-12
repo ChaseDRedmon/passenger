@@ -49,9 +49,9 @@ public partial class MainWindow
         {
             return "Nothing to profile: no executable project";
         }
-        if (!await BuildAsync())
+        if (await BuildAsync() is { Succeeded: false } unbuilt)
         {
-            return "The build failed; Problems lists why";
+            return unbuilt.Message;
         }
         try
         {

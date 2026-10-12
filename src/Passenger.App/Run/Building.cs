@@ -24,7 +24,7 @@ public sealed record RunConfiguration(string Name, ProjectModel Project, LaunchP
     public static IReadOnlyList<RunConfiguration> From(SolutionModel? solution, string folder)
     {
         IEnumerable<ProjectModel> projects = solution?.Projects
-            ?? Directory.EnumerateFiles(folder, "*.csproj").Select(ProjectModel.Load);
+            ?? ProjectModel.InFolder(folder);
         List<RunConfiguration> configurations = [];
         foreach (ProjectModel project in projects.Where(p => p.Exists && p.IsRunnable))
         {
@@ -55,6 +55,26 @@ public sealed record RunConfiguration(string Name, ProjectModel Project, LaunchP
         }
         return arguments;
     }
+}
+
+/// <summary>How a build ended, as each caller hears it.</summary>
+public enum BuildStatus
+{
+    Succeeded,
+    Failed,
+    Stopped,
+
+    /// <summary>Not begun: another build was under way, or there was nothing to build.</summary>
+    Refused,
+
+    /// <summary>The .NET command line could not be started (no SDK, a folder gone).</summary>
+    NotStarted,
+}
+
+/// <summary>A build's end and what to tell the person about it.</summary>
+public sealed record BuildOutcome(BuildStatus Status, string Message)
+{
+    public bool Succeeded => Status == BuildStatus.Succeeded;
 }
 
 /// <summary>What a build does: Rider's Build, Rebuild (everything again, nothing taken from the last build) and Clean.</summary>

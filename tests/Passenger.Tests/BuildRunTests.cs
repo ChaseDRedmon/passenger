@@ -278,6 +278,31 @@ public sealed class BuildRunTests : IDisposable
         }
     }
 
+    [AvaloniaFact]
+    public void A_build_that_cannot_start_says_why_and_leaves_nothing_waiting()
+    {
+        MainWindow window = Open();
+        Directory.Delete(folder, recursive: true);
+        try
+        {
+            // The window sees the folder go (and survives it) before Build is pressed.
+            Ui.WaitFor(() => window.Configurations.Count == 0, "the deletion to be seen");
+            Task<BuildOutcome> built = window.BuildAsync();
+            // Settle fails if the build left background work held.
+            Ui.Settle();
+            Assert.True(built.IsCompleted, "The build's caller never heard how it ended");
+            Assert.Equal(BuildStatus.NotStarted, built.Result.Status);
+            Assert.False(window.IsBuilding);
+            Assert.Contains("is gone", window.Status, StringComparison.Ordinal);
+            Assert.Contains("is gone", window.BottomPanel.Build.Document.Snapshot.ToString(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.CreateDirectory(folder);
+            window.Close();
+        }
+    }
+
     private static string RunToEnd(MainWindow window)
     {
         if (!window.Runner.IsRunning)

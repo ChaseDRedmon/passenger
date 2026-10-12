@@ -16,6 +16,7 @@ public sealed partial class ProcessRunner
     private readonly StringBuilder partialLine = new();
     private readonly ToolWindows.OutputView console;
     private Process? process;
+    private bool running;
     private bool flushQueued;
 
     public ProcessRunner(ToolWindows.OutputView console) => this.console = console;
@@ -28,14 +29,36 @@ public sealed partial class ProcessRunner
 
     public TextDocument Output => console.Document;
 
-    public bool IsRunning => process is { HasExited: false };
+    /// <summary>From the start until <see cref="Exited"/> is raised, so nothing starts again before whoever waits hears the end.</summary>
+    public bool IsRunning => running;
 
-    public void Start(string file, IReadOnlyList<string> arguments, string folder, IReadOnlyDictionary<string, string>? environment = null)
+    /// <summary>Whether the last run ended because Stop was pressed.</summary>
+    public bool WasStopped { get; private set; }
+
+    /// <summary>Starts the .NET command line; why it could not, or null once it runs.</summary>
+    public string? StartDotnet(IReadOnlyList<string> arguments, string folder, IReadOnlyDictionary<string, string>? environment = null)
+    {
+        string host;
+        try
+        {
+            host = Lsp.Dotnet.Host();
+        }
+        catch (FileNotFoundException missing)
+        {
+            console.Append($"{missing.Message}\n", error: true);
+            return missing.Message;
+        }
+        return Start(host, arguments, folder, environment);
+    }
+
+    /// <summary>Starts a program; why it could not (a working folder gone, a missing program), or null once it runs.</summary>
+    public string? Start(string file, IReadOnlyList<string> arguments, string folder, IReadOnlyDictionary<string, string>? environment = null)
     {
         if (IsRunning)
         {
             throw new InvalidOperationException("The process is still running.");
         }
+        WasStopped = false;
         ProcessStartInfo start = new(file)
         {
             WorkingDirectory = folder,
@@ -57,8 +80,19 @@ public sealed partial class ProcessRunner
         }
         Output.Append($"{file} {string.Join(' ', arguments.Select(Quote))}\n");
         Process started = new() { StartInfo = start, EnableRaisingEvents = true };
-        started.Start();
+        try
+        {
+            started.Start();
+        }
+        catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
+        {
+            started.Dispose();
+            string problem = Directory.Exists(folder) ? $"Could not start {Path.GetFileName(file)}: {error.Message}" : $"Could not start {Path.GetFileName(file)}: the folder {folder} is gone";
+            console.Append($"{problem}\n", error: true);
+            return problem;
+        }
         process = started;
+        running = true;
         Task outputs = Task.WhenAll(Pump(started.StandardOutput, error: false), Pump(started.StandardError, error: true));
         _ = outputs.ContinueWith(_ =>
         {
@@ -73,16 +107,26 @@ public sealed partial class ProcessRunner
                     partialLine.Clear();
                 }
                 Output.Append($"\nProcess finished with exit code {code}.\n");
+                running = false;
                 Exited?.Invoke(this, code);
             });
         }, TaskScheduler.Default);
+        return null;
     }
 
     public void Stop()
     {
-        if (process is { HasExited: false } running)
+        if (running && process is { HasExited: false } alive)
         {
-            running.Kill(entireProcessTree: true);
+            WasStopped = true;
+            try
+            {
+                alive.Kill(entireProcessTree: true);
+            }
+            catch (InvalidOperationException)
+            {
+                // It ended on its own as Stop was pressed.
+            }
         }
     }
 

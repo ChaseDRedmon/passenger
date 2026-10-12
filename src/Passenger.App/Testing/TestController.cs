@@ -12,14 +12,14 @@ namespace Passenger.App.Testing;
 /// own debugger. Everything a run says reaches the UI thread before it changes the tree.</summary>
 public sealed class TestController : IAsyncDisposable
 {
-    private readonly Func<Task<bool>> build;
+    private readonly Func<Task<Run.BuildOutcome>> build;
     private readonly Func<IReadOnlyList<ProjectModel>> projects;
     private readonly Action<string> log;
     private TestRunner? runner;
     private string? folder;
     private IReadOnlyList<TestNode> lastRun = [];
 
-    public TestController(TestTree tree, Func<Task<bool>> build, Func<IReadOnlyList<ProjectModel>> projects, Action<string> log)
+    public TestController(TestTree tree, Func<Task<Run.BuildOutcome>> build, Func<IReadOnlyList<ProjectModel>> projects, Action<string> log)
     {
         Tree = tree;
         this.build = build;
@@ -122,9 +122,9 @@ public sealed class TestController : IAsyncDisposable
                     return problem;
                 }
             }
-            else if (build && !await this.build())
+            else if (build && await this.build() is { Succeeded: false } unbuilt)
             {
-                return "The build failed; Problems lists why";
+                return unbuilt.Message;
             }
             List<TestNode> methods = [.. (rows ?? Tree.Roots).SelectMany(r => r.Methods).Distinct()];
             if (methods.Count == 0)
@@ -208,9 +208,9 @@ public sealed class TestController : IAsyncDisposable
 
     private async Task<string?> DiscoverCore(string workspace)
     {
-        if (!await build())
+        if (await build() is { Succeeded: false } unbuilt)
         {
-            return "The build failed; Problems lists why";
+            return unbuilt.Message;
         }
         IReadOnlyList<ProjectModel> tests = [.. projects().Where(p => p.Exists && p.IsTestProject)];
         if (tests.Count == 0)

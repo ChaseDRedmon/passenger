@@ -32,13 +32,13 @@ public static class Screenshot
         MainWindow window = new() { Width = options.Size.Width, Height = options.Size.Height, Autosaves = false };
         window.SetRenderScaling(options.Scale);
         window.Show();
-        Settle();
+        bool settled = Settle();
         window.Start(launch);
-        Settle();
+        settled &= Settle();
         foreach (ScriptStep step in options.Steps)
         {
             Take(window, step);
-            Settle();
+            settled &= Settle();
         }
 
         // A diff or a dialog the steps opened is what the person would be looking at.
@@ -58,8 +58,14 @@ public static class Screenshot
         }
 
         double elapsed = Stopwatch.GetElapsedTime(Program.StartedAt).TotalMilliseconds;
-        Console.WriteLine($"screenshot: {options.Path} after {elapsed:F0} ms");
         window.Close();
+        if (!settled)
+        {
+            // The picture is kept to show what was still going on, but it is not the settled window.
+            Console.Error.WriteLine($"screenshot: {options.Path} taken with background work still pending after {SettleLimit.TotalSeconds:0} s");
+            return 1;
+        }
+        Console.WriteLine($"screenshot: {options.Path} after {elapsed:F0} ms");
         return 0;
     }
 
@@ -115,8 +121,8 @@ public static class Screenshot
     }
 
     /// <summary>Lets queued UI work, rendering and background work finish, so the picture shows the
-    /// settled state rather than a frame mid-way.</summary>
-    private static void Settle()
+    /// settled state rather than a frame mid-way; false when work was still pending at the limit.</summary>
+    private static bool Settle()
     {
         Stopwatch waited = Stopwatch.StartNew();
         do
@@ -126,11 +132,12 @@ public static class Screenshot
             Dispatcher.UIThread.RunJobs();
             if (BackgroundWork.Pending == 0)
             {
-                break;
+                return true;
             }
             Thread.Sleep(5);
         }
         while (waited.Elapsed < SettleLimit);
+        return false;
     }
 
     /// <summary>A copy of one region of a frame, clamped to the frame.</summary>

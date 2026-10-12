@@ -32,7 +32,8 @@ public partial class MainWindow : Window
     private readonly ProcessRunner runner;
     private readonly DebugController debug;
     private readonly Testing.TestController tests;
-    private Action<bool>? afterBuild;
+    private Action<BuildOutcome>? afterBuild;
+    private TaskCompletionSource? building;
     private readonly List<Problem> problems = [];
     private IReadOnlyList<RunConfiguration> configurations = [];
     private RunConfiguration? configuration;
@@ -169,7 +170,7 @@ public partial class MainWindow : Window
             StopButton.IsVisible = false;
             StatusText.Text = $"{configuration?.Name} exited with code {code}";
         };
-        Bottom.Build.RerunClicked += (_, _) => BuildSolution();
+        Bottom.Build.RerunClicked += (_, _) => Build(buildKind, lastProjects);
         Bottom.Build.StopClicked += (_, _) => builder.Stop();
         Bottom.Run.RerunClicked += (_, _) => RunSelected();
         Bottom.Run.StopClicked += (_, _) => runner.Stop();
@@ -509,7 +510,6 @@ public partial class MainWindow : Window
                 _ = debug.StopAsync();
                 runner.Stop();
                 builder.Stop();
-                afterBuild = null;
                 break;
             case AppActions.ShowDebug:
                 ShowToolWindow("debug");
@@ -716,16 +716,11 @@ public partial class MainWindow : Window
         return true;
     }
 
-    /// <summary>Builds as Build does, and says whether it succeeded once it has.</summary>
-    public Task<bool> BuildAsync()
+    /// <summary>Builds as Build does, and says how it ended once it has: built, failed, stopped, refused or unable to start.</summary>
+    public Task<BuildOutcome> BuildAsync()
     {
-        TaskCompletionSource<bool> built = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        if (folder is null || builder.IsRunning)
-        {
-            built.SetResult(false);
-            return built.Task;
-        }
-        BuildSolution(succeeded => built.TrySetResult(succeeded));
+        TaskCompletionSource<BuildOutcome> built = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        BuildSolution(outcome => built.TrySetResult(outcome));
         return built.Task;
     }
 
@@ -739,9 +734,9 @@ public partial class MainWindow : Window
         {
             return "Nothing to debug: no executable project";
         }
-        if (!await BuildAsync())
+        if (await BuildAsync() is { Succeeded: false } unbuilt)
         {
-            return "The build failed; Problems lists why";
+            return unbuilt.Message;
         }
         BackgroundWork.Begin();
         try
@@ -793,22 +788,24 @@ public partial class MainWindow : Window
     private int agents;
 
     /// <summary>Builds the solution (or the folder's project) with the .NET command line, its output
-    /// in the Build window and what it finds in Problems; <paramref name="then"/> hears whether it
-    /// succeeded.</summary>
-    public void BuildSolution(Action<bool>? then = null) => Build(BuildKind.Build, null, then);
+    /// in the Build window and what it finds in Problems; <paramref name="then"/> hears how it ended.</summary>
+    public void BuildSolution(Action<BuildOutcome>? then = null) => Build(BuildKind.Build, null, then);
 
     /// <summary>Builds, rebuilds or cleans the solution, or the projects given one after another (stopping at the first
     /// that fails), as Rider's Build menu and the Solution view's do: the output in the Build window, the problems of all
-    /// of them in Problems.</summary>
-    public void Build(BuildKind kind, IReadOnlyList<string>? projects = null, Action<bool>? then = null)
+    /// of them in Problems. <paramref name="then"/> always hears how it ended, a build refused or never started included.</summary>
+    public void Build(BuildKind kind, IReadOnlyList<string>? projects = null, Action<BuildOutcome>? then = null)
     {
-        if (folder is null || builder.IsRunning)
+        if (folder is null || IsBuilding)
         {
+            BuildOutcome refused = new(BuildStatus.Refused, folder is null ? "Nothing to build: no folder is open" : "Another build is running");
+            StatusText.Text = refused.Message;
+            then?.Invoke(refused);
             return;
         }
-        afterBuild = then;
         buildKind = kind;
-        string solution = Solution?.Path ?? Directory.EnumerateFiles(folder, "*.csproj").FirstOrDefault() ?? folder;
+        lastProjects = projects;
+        string solution = Solution?.Path ?? ProjectModel.InFolder(folder).FirstOrDefault()?.Path ?? folder;
         // With projects unloaded, the solution is the projects still loaded, built one after another.
         IReadOnlyList<string> whole = Solution is not null && Explorer.Tree.Unloaded.Count > 0 ? [.. Projects.Select(p => p.Path)] : [solution];
         buildQueue.Clear();
@@ -818,32 +815,38 @@ public partial class MainWindow : Window
         }
         if (buildQueue.Count == 0)
         {
-            StatusText.Text = "Nothing to build: every project is unloaded";
-            afterBuild = null;
-            then?.Invoke(false);
+            BuildOutcome nothing = new(BuildStatus.Refused, "Nothing to build: every project is unloaded");
+            StatusText.Text = nothing.Message;
+            then?.Invoke(nothing);
             return;
         }
+        afterBuild = then;
         Editors.SaveAll();
         problems.Clear();
         Bottom.Build.Document.Clear();
         Bottom.Build.SetRunning(true);
         ShowToolWindow("build");
-        BackgroundWork.Begin();
+        building = new TaskCompletionSource();
+        BackgroundWork.Track(building.Task);
         BuildNext();
     }
 
-    /// <summary>Whether a build, rebuild or clean is under way, with more of its projects to come.</summary>
-    public bool IsBuilding => builder.IsRunning || buildQueue.Count > 0;
+    /// <summary>Whether a build, rebuild or clean is under way, from its start until its callers have heard how it ended.</summary>
+    public bool IsBuilding => building is not null;
 
     private readonly Queue<string> buildQueue = new();
     private BuildKind buildKind;
+    private IReadOnlyList<string>? lastProjects;
 
     private void BuildNext()
     {
         string target = buildQueue.Dequeue();
         string verb = buildKind switch { BuildKind.Rebuild => "Rebuilding", BuildKind.Clean => "Cleaning", _ => "Building" };
         StatusText.Text = $"{verb} {Path.GetFileName(target)}…";
-        builder.Start(Lsp.Dotnet.Host(), BuildOutput.Arguments(target, buildKind), folder!);
+        if (builder.StartDotnet(BuildOutput.Arguments(target, buildKind), folder!) is { } problem)
+        {
+            FinishBuild(new BuildOutcome(BuildStatus.NotStarted, problem));
+        }
     }
 
     /// <summary>The projects Build Selected Projects means: those chosen in the Explorer, else the active file's.</summary>
@@ -889,12 +892,23 @@ public partial class MainWindow : Window
             // dotnet watch applies each save to the running program, as Rider's Hot Reload does, and restarts it
             // for an edit that cannot be applied rather than asking.
             StatusText.Text = $"Running {chosen.Name} with Hot Reload: a save applies its changes";
-            runner.Start(Lsp.Dotnet.Host(), ["watch", "--non-interactive", .. chosen.RunArguments(arguments)], chosen.Project.Folder,
-                new Dictionary<string, string> { ["DOTNET_WATCH_SUPPRESS_EMOJIS"] = "1", ["DOTNET_WATCH_RESTART_ON_RUDE_EDIT"] = "true" });
+            Started(runner.StartDotnet(["watch", "--non-interactive", .. chosen.RunArguments(arguments)], chosen.Project.Folder,
+                new Dictionary<string, string> { ["DOTNET_WATCH_SUPPRESS_EMOJIS"] = "1", ["DOTNET_WATCH_RESTART_ON_RUDE_EDIT"] = "true" }));
             return;
         }
         StatusText.Text = $"Running {chosen.Name}";
-        runner.Start(Lsp.Dotnet.Host(), chosen.RunArguments(arguments), chosen.Project.Folder);
+        Started(runner.StartDotnet(chosen.RunArguments(arguments), chosen.Project.Folder));
+    }
+
+    /// <summary>A run that could not start leaves the Run window idle, Stop hidden, and says why.</summary>
+    private void Started(string? problem)
+    {
+        if (problem is not null)
+        {
+            Bottom.Run.SetRunning(false);
+            StopButton.IsVisible = debug.IsDebugging;
+            StatusText.Text = problem;
+        }
     }
 
     /// <summary>Debug, from its key or the toolbar: what stopped it, if anything, goes to the status bar.</summary>
@@ -926,33 +940,48 @@ public partial class MainWindow : Window
 
     private void OnBuilt(int code)
     {
-        if (code == 0 && buildQueue.Count > 0)
+        if (code == 0 && buildQueue.Count > 0 && !builder.WasStopped)
         {
             Bottom.Build.Document.Append("\n");
             BuildNext();
             return;
         }
-        buildQueue.Clear();
-        BackgroundWork.End();
-        Action<bool>? then = afterBuild;
-        afterBuild = null;
-        Bottom.Build.SetRunning(false);
         int errors = problems.Count(p => p.Severity == ProblemSeverity.Error);
         int warnings = problems.Count - errors;
+        string noun = buildKind switch { BuildKind.Rebuild => "Rebuild", BuildKind.Clean => "Clean", _ => "Build" };
+        FinishBuild(builder.WasStopped ? new BuildOutcome(BuildStatus.Stopped, $"{noun} stopped")
+            : code == 0 ? new BuildOutcome(BuildStatus.Succeeded, $"{noun} succeeded{(warnings > 0 ? $" with {warnings} warning{(warnings == 1 ? "" : "s")}" : "")}")
+            : new BuildOutcome(BuildStatus.Failed, $"{noun} failed: {errors} error{(errors == 1 ? "" : "s")}, {warnings} warning{(warnings == 1 ? "" : "s")}; Problems lists them"));
+    }
+
+    /// <summary>The one way a build that began ends: its window, Problems and the status bar say how, its caller hears it,
+    /// and the background work it held is let go.</summary>
+    private void FinishBuild(BuildOutcome outcome)
+    {
+        buildQueue.Clear();
+        Action<BuildOutcome>? then = afterBuild;
+        afterBuild = null;
+        TaskCompletionSource? held = building;
+        building = null;
+        Bottom.Build.SetRunning(false);
         Bottom.Problems.Show(problems);
         if (Dock["problems"] is { } problemsWindow)
         {
             problemsWindow.Title = problems.Count == 0 ? "Problems" : $"Problems {problems.Count}";
         }
-        string noun = buildKind switch { BuildKind.Rebuild => "Rebuild", BuildKind.Clean => "Clean", _ => "Build" };
-        StatusText.Text = code == 0
-            ? $"{noun} succeeded{(warnings > 0 ? $" with {warnings} warning{(warnings == 1 ? "" : "s")}" : "")}"
-            : $"{noun} failed: {errors} error{(errors == 1 ? "" : "s")}, {warnings} warning{(warnings == 1 ? "" : "s")}";
-        if (code != 0 && errors > 0)
+        StatusText.Text = outcome.Message;
+        if (outcome.Status == BuildStatus.Failed && problems.Any(p => p.Severity == ProblemSeverity.Error))
         {
             ShowToolWindow("problems");
         }
-        then?.Invoke(code == 0);
+        try
+        {
+            then?.Invoke(outcome);
+        }
+        finally
+        {
+            held?.TrySetResult();
+        }
     }
 
     /// <summary>Opens a tool window in its place ("debug", "build", "tests"...), as its stripe button does.</summary>
@@ -1408,7 +1437,7 @@ public partial class MainWindow : Window
     /// <summary>The projects of the solution, or the folder's with none.</summary>
     public IReadOnlyList<ProjectModel> Projects => Solution is { } solution
         ? [.. solution.Projects.Where(p => !Explorer.Tree.Unloaded.Contains(p.Path))]
-        : folder is null ? [] : [.. Directory.EnumerateFiles(folder, "*.csproj").Select(ProjectModel.Load)];
+        : folder is null ? [] : ProjectModel.InFolder(folder);
 
     /// <summary>The run configurations of the projects loaded.</summary>
     private IReadOnlyList<RunConfiguration> Configure() =>

@@ -27,10 +27,19 @@ public sealed record SolutionModel(string Path, string Name, IReadOnlyList<Solut
         }
     }
 
-    /// <summary>The solution at a folder's top, the one named for the folder if there are several.</summary>
+    /// <summary>The solution at a folder's top, the one named for the folder if there are several; none in a folder that
+    /// is gone (deleted under the window) or cannot be read.</summary>
     public static string? Find(string folder)
     {
-        List<string> found = Directory.EnumerateFiles(folder, "*.slnx").Concat(Directory.EnumerateFiles(folder, "*.sln")).ToList();
+        List<string> found;
+        try
+        {
+            found = [.. Directory.EnumerateFiles(folder, "*.slnx").Concat(Directory.EnumerateFiles(folder, "*.sln"))];
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
         string name = System.IO.Path.GetFileName(folder);
         return found.FirstOrDefault(f => System.IO.Path.GetFileNameWithoutExtension(f).Equals(name, StringComparison.OrdinalIgnoreCase))
             ?? found.OrderBy(f => f.EndsWith(".slnx", StringComparison.Ordinal) ? 0 : 1).ThenBy(f => f, StringComparer.Ordinal).FirstOrDefault();

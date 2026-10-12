@@ -264,13 +264,14 @@ public sealed partial class PassengerTools(MainWindow window)
     // Build and run
 
     [McpServerTool(Name = "build", Title = "Build"), Description(
-        "Builds the solution (or the folder's project) as Build does, waiting for it, and returns whether it succeeded with every error and warning.")]
+        "Builds the solution (or the folder's project) as Build does, waiting for it, and returns whether it succeeded, how it ended " +
+        "(failed, stopped, refused while another build runs, unable to start) and every error and warning.")]
     public Task<BuildResult> Build() => OnUi(async () =>
     {
-        bool succeeded = await window.BuildAsync();
+        BuildOutcome built = await window.BuildAsync();
         IReadOnlyList<Finding> problems = [.. window.BottomPanel.Problems.Problems.Select(p => new Finding(
             p.Severity == ProblemSeverity.Error ? "error" : "warning", p.Code, p.Message, p.Path is { } at ? Relative(at) : p.Project, p.Position.Line + 1, p.Position.Column + 1))];
-        return new BuildResult(succeeded, problems.Count(p => p.Severity == "error"), problems.Count(p => p.Severity == "warning"), problems, Tail(window.BottomPanel.Build.Document, 20));
+        return new BuildResult(built.Succeeded, built.Message, problems.Count(p => p.Severity == "error"), problems.Count(p => p.Severity == "warning"), problems, Tail(window.BottomPanel.Build.Document, 20));
     });
 
     [McpServerTool(Name = "run", Title = "Run a configuration"), Description(
@@ -790,7 +791,7 @@ public sealed record Place(string Path, int Line, int Column, string Text);
 
 public sealed record HierarchyEntry(string Name, string? Detail, string Path, int Line, int Column, string Text);
 
-public sealed record BuildResult(bool Succeeded, int Errors, int Warnings, IReadOnlyList<Finding> Problems, string OutputTail);
+public sealed record BuildResult(bool Succeeded, string Outcome, int Errors, int Warnings, IReadOnlyList<Finding> Problems, string OutputTail);
 
 public sealed record RunResult(bool StillRunning, string? Status, string Output);
 

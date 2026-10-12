@@ -120,6 +120,22 @@ public sealed class UnitTestsTests : IDisposable
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void Stop_during_the_tests_build_leaves_the_runner_idle_and_the_next_run_is_taken()
+    {
+        MainWindow window = Open();
+        Assert.True(window.Perform(AppActions.RunAllTests));
+        Assert.True(window.IsBuilding, "Run All did not build first");
+        window.Perform(AppActions.Stop);
+        Ui.WaitFor(() => !window.Tests.IsBusy, "the runner to hear the build was stopped");
+        Assert.False(window.IsBuilding);
+        Assert.Equal("Build stopped", window.Status);
+
+        Assert.True(window.Perform(AppActions.RunAllTests));
+        Ui.WaitFor(() => !window.Tests.IsBusy && Method(window, "Two_and_two_make_four")?.State == TestState.Passed, "the second run", TimeSpan.FromSeconds(120));
+        window.Close();
+    }
+
     private static TestNode? Method(MainWindow window, string name) =>
         window.Tests.Tree.Roots.SelectMany(r => r.Methods).FirstOrDefault(m => m.Name == name);
 
