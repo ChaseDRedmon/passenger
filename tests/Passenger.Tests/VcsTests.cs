@@ -25,6 +25,8 @@ public sealed class VcsTests : IDisposable
         Git("init", "-q", "-b", "main");
         Git("config", "user.email", "tests@passenger.invalid");
         Git("config", "user.name", "Passenger Tests");
+        // Files go back as they were written, not as the machine's git would convert them (Git for Windows' autocrlf).
+        Git("config", "core.autocrlf", "false");
         File.WriteAllText(Path.Combine(folder, "Shop.cs"), Original);
         Git("add", "-A");
         Git("commit", "-q", "-m", "First");
@@ -289,7 +291,7 @@ public sealed class VcsTests : IDisposable
         string clone = Directory.CreateTempSubdirectory("passenger-git-clone-").FullName;
         try
         {
-            Git("clone", "-q", folder, clone);
+            Git("clone", "-q", "-c", "core.autocrlf=false", folder, clone);
             File.WriteAllText(Path.Combine(folder, "Shop.cs"), Original.Replace("int count", "long count", StringComparison.Ordinal));
             Git("commit", "-q", "-am", "Long");
 

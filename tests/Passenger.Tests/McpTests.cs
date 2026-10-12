@@ -97,6 +97,8 @@ public sealed class McpTests : IDisposable
             Git("init", "-q", "-b", "main");
             Git("config", "user.email", "tests@passenger.invalid");
             Git("config", "user.name", "Passenger Tests");
+            // Files are as they were written, not as the machine's git would convert them (Git for Windows' autocrlf).
+            Git("config", "core.autocrlf", "false");
             File.WriteAllText(Path.Combine(repository, "Notes.txt"), "one\ntwo\nthree\n");
             Git("add", "-A");
             Git("commit", "-q", "-m", "First");
