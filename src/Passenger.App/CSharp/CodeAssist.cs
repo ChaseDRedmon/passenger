@@ -894,6 +894,10 @@ public sealed class CodeAssist
             {
                 Message?.Invoke(this, "Rename failed");
             }
+            catch (WorkspaceEditFailed failed)
+            {
+                Message?.Invoke(this, $"Rename failed: {failed.Message}");
+            }
         });
     }
 
@@ -1145,7 +1149,15 @@ public sealed class CodeAssist
     private bool ApplyWorkspace(System.Text.Json.JsonElement edit, Asked? asked, string what)
     {
         List<string> dropped = [];
-        WorkspaceEdits.Apply(editors, edit, asked, dropped);
+        try
+        {
+            WorkspaceEdits.Apply(editors, edit, asked, dropped);
+        }
+        catch (WorkspaceEditFailed failed)
+        {
+            Message?.Invoke(this, $"{what} was not applied: {failed.Message}");
+            return false;
+        }
         if (dropped.Count > 0)
         {
             Message?.Invoke(this, $"{what} was not applied to {string.Join(", ", dropped)}: it was edited meanwhile");

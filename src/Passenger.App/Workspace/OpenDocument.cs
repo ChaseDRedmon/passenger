@@ -10,6 +10,7 @@ namespace Passenger.App.Workspace;
 /// switching tabs returns to the same carets and scroll.</summary>
 public sealed class OpenDocument : Observable
 {
+    private IHighlighter? parser;
     private IHighlighter? highlighter;
     private IReadOnlyList<Marker> markers = [];
     private IReadOnlyList<LineMark> lineMarks = [];
@@ -29,16 +30,8 @@ public sealed class OpenDocument : Observable
         HasBom = file.HasBom;
         EncodingName = file.EncodingName;
         Language = Language.ForPath(path);
-        highlighter = Language.Name == "C#" ? new CSharpHighlighter(Text) : null;
-        if (highlighter is CSharpHighlighter csharp)
-        {
-            // Each parse's regions keep the folds of the ones they replace, matched by where they start.
-            csharp.FoldsChanged += (_, _) =>
-            {
-                HashSet<int> folded = [.. foldRegions.Where(r => r.Folded).Select(r => r.Start)];
-                FoldRegions = [.. csharp.Folds.Select(r => r with { Folded = folded.Contains(r.Start) })];
-            };
-        }
+        parser = Parser();
+        highlighter = parser;
         Text.Changed += (_, change) =>
         {
             Selections = TextEditing.MapThrough(Selections, change.Edits).Clamp(change.After.Length);
@@ -135,8 +128,43 @@ public sealed class OpenDocument : Observable
     /// <summary>Lets go of everything the open file holds beyond its text, when its tab closes.</summary>
     public void Close() => (Highlighter as IDisposable)?.Dispose();
 
-    public string Path { get; }
+    public string Path { get; private set; }
     public string Name => System.IO.Path.GetFileName(Path);
+
+    /// <summary>Takes the file's new path once it moved on disk, keeping its text, undo, carets and folds; a new name
+    /// of another language takes that language's parser.</summary>
+    public void MoveTo(string path)
+    {
+        Path = path;
+        Language language = Language.ForPath(path);
+        if (language != Language)
+        {
+            Language = language;
+            (parser as IDisposable)?.Dispose();
+            parser = Parser();
+            FoldRegions = [];
+            Highlighter = parser;
+        }
+        Raise(nameof(Path));
+        Raise(nameof(Name));
+    }
+
+    /// <summary>The in-process parser's colours and folds for the file's language; null for a language with none.</summary>
+    private IHighlighter? Parser()
+    {
+        if (Language.Name != "C#")
+        {
+            return null;
+        }
+        CSharpHighlighter csharp = new(Text);
+        // Each parse's regions keep the folds of the ones they replace, matched by where they start.
+        csharp.FoldsChanged += (_, _) =>
+        {
+            HashSet<int> folded = [.. foldRegions.Where(r => r.Folded).Select(r => r.Start)];
+            FoldRegions = [.. csharp.Folds.Select(r => r with { Folded = folded.Contains(r.Start) })];
+        };
+        return csharp;
+    }
 
     /// <summary>Whether the language server made this file from an assembly's metadata (Go to Declaration on a
     /// library's symbol): Roslyn decompiles it, or takes its source from Source Link or the PDB, into a folder of its
@@ -153,7 +181,7 @@ public sealed class OpenDocument : Observable
     public Encoding Encoding { get; private set; }
     public bool HasBom { get; private set; }
     public string EncodingName { get; private set; }
-    public Language Language { get; }
+    public Language Language { get; private set; }
     public bool IsModified => Text.IsModified;
     public Avalonia.Media.Geometry Icon => Explorer.FileIcons.ForFile(Path);
     public Avalonia.Media.IBrush IconBrush => Explorer.FileIcons.BrushForFile(Path);

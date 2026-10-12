@@ -6,25 +6,38 @@ using Passenger.Text;
 
 namespace Passenger.App.CSharp;
 
-/// <summary>Applies a workspace edit (a rename, a fix) across files: a file open in a tab is edited
-/// through its document, one undo step per file and through the editor when it is the one showing;
-/// a file not open is edited on disk, keeping its encoding and line endings; files the edit creates,
-/// renames or deletes are made so. An open file's edits were made for its text when the request went
-/// out: they are carried through what was typed since, and a file whose edited text changed meanwhile,
-/// or that the server answered for another version, is left alone and named in <paramref name="dropped"/>.</summary>
+/// <summary>Applies a workspace edit (a rename, a fix) across files: an open file is edited through its document, one undo
+/// step per file and through the editor when it is the one showing; a file not open is edited on disk, keeping its
+/// encoding and line endings; files the edit creates, renames or deletes are made so, an open one's tab going with it. An
+/// open file's edits are carried through what was typed since the request; one whose edited text changed meanwhile, or
+/// that the server answered for another version, is left alone and named in <c>dropped</c>.</summary>
 public static class WorkspaceEdits
 {
     /// <summary>Every open document followed from now, for a request about to be sent; disposed once its answer is applied.</summary>
-    public static Asked Track(EditorArea editors) => new(editors.Documents.ToDictionary(d => d.Path, d => new ChangeTracker(d.Text)));
+    public static Asked Track(EditorArea editors) => new(editors.Documents.ToDictionary(d => d, d => new ChangeTracker(d.Text)));
 
+    /// <summary>The edit applied; the number of files it changed. Throws <see cref="WorkspaceEditFailed"/> when its
+    /// file operations cannot all be made, found before anything changed, or when the disk refuses one on the way.</summary>
     public static int Apply(EditorArea editors, JsonElement edit, Asked? asked = null, List<string>? dropped = null)
     {
+        IReadOnlyList<FileEdits> changes = Shapes.WorkspaceEdit(edit);
+        if (Refusal(editors, changes) is { } refused)
+        {
+            throw new WorkspaceEditFailed(refused);
+        }
         int files = 0;
-        foreach (FileEdits change in Shapes.WorkspaceEdit(edit))
+        foreach (FileEdits change in changes)
         {
             if (change.Operation is { } operation)
             {
-                Operate(operation);
+                try
+                {
+                    Operate(editors, Resource.Read(operation));
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                {
+                    throw new WorkspaceEditFailed(error.Message);
+                }
                 files++;
                 continue;
             }
@@ -32,7 +45,7 @@ public static class WorkspaceEdits
             OpenDocument? open = editors.Documents.FirstOrDefault(d => d.Path == path);
             if (open is not null)
             {
-                if (Placed(open, change, asked?.Trackers.GetValueOrDefault(open.Path)) is not { } edits)
+                if (Placed(open, change, asked?.Trackers.GetValueOrDefault(open)) is not { } edits)
                 {
                     dropped?.Add(open.Name);
                     continue;
@@ -90,37 +103,123 @@ public static class WorkspaceEdits
         .OrderBy(e => e.Start)
         .ToList();
 
-    private static void Operate(JsonElement operation)
+    /// <summary>Why an edit's file operations cannot all be made, found before any is: each is played over what the
+    /// ones before it leave. The open files a rename moves are saved now, so one that cannot be stops it here too.</summary>
+    private static string? Refusal(EditorArea editors, IReadOnlyList<FileEdits> changes)
     {
-        string kind = operation.GetProperty("kind").GetString() ?? string.Empty;
-        switch (kind)
+        Dictionary<string, bool> there = [];
+        bool Exists(string path) => there.TryGetValue(path, out bool known) ? known : File.Exists(path) || Directory.Exists(path);
+        foreach (Resource resource in changes.Select(c => c.Operation).OfType<JsonElement>().Select(Resource.Read))
         {
-            case "create":
-                string created = new Uri(operation.GetProperty("uri").GetString()!).LocalPath;
-                Directory.CreateDirectory(Path.GetDirectoryName(created)!);
-                if (!File.Exists(created))
+            bool overwrite = resource.Option("overwrite");
+            bool ignored = !overwrite && resource.Option("ignoreIfExists");
+            // A new name differing only in case is the same file on macOS and Windows, not one already there.
+            bool taken = resource.To is { } to && Exists(to) && !string.Equals(to, resource.Path, StringComparison.OrdinalIgnoreCase);
+            switch (resource.Kind)
+            {
+                case "create" when Exists(resource.Path) && !overwrite && !ignored:
+                case "rename" when taken && !ignored && (!overwrite || Directory.Exists(resource.To)):
+                    return $"{Path.GetFileName(resource.To ?? resource.Path)} is already there";
+                case "rename" when !Exists(resource.Path):
+                case "delete" when !Exists(resource.Path) && !resource.Option("ignoreIfNotExists"):
+                    return $"{Path.GetFileName(resource.Path)} is not there to {resource.Kind}";
+                case "create":
+                    there[resource.Path] = true;
+                    break;
+                case "rename" when !(taken && ignored):
+                    there[resource.Path] = false;
+                    there[resource.To!] = true;
+                    foreach (OpenDocument document in editors.Documents.Where(d => d.IsModified && PathNames.Within(d.Path, resource.Path)))
+                    {
+                        if (!editors.Save(document))
+                        {
+                            return $"{document.Name} could not be saved before it moved";
+                        }
+                    }
+                    break;
+                case "delete":
+                    there[resource.Path] = false;
+                    break;
+            }
+        }
+        return null;
+    }
+
+    private static void Operate(EditorArea editors, Resource resource)
+    {
+        bool exists = File.Exists(resource.Path) || Directory.Exists(resource.Path);
+        switch (resource.Kind)
+        {
+            case "create" when !exists || resource.Option("overwrite"):
+                Directory.CreateDirectory(Path.GetDirectoryName(resource.Path)!);
+                File.WriteAllText(resource.Path, string.Empty);
+                editors.Documents.FirstOrDefault(d => d.Path == resource.Path)?.Reload(overUnsaved: true);
+                break;
+            case "rename" when resource.To is { } to:
+                if ((File.Exists(to) || Directory.Exists(to)) && !string.Equals(to, resource.Path, StringComparison.OrdinalIgnoreCase))
                 {
-                    File.WriteAllText(created, string.Empty);
+                    // Ignored, as its options ask: the refusal stopped every other rename onto something there.
+                    if (!resource.Option("overwrite") || Directory.Exists(to))
+                    {
+                        return;
+                    }
+                    Delete(editors, to, recursive: false);
+                }
+                Directory.CreateDirectory(Path.GetDirectoryName(to)!);
+                if (editors.MoveFile(resource.Path, to) is { } failed)
+                {
+                    throw new WorkspaceEditFailed(failed);
                 }
                 break;
-            case "rename":
-                File.Move(new Uri(operation.GetProperty("oldUri").GetString()!).LocalPath, new Uri(operation.GetProperty("newUri").GetString()!).LocalPath);
-                break;
-            case "delete":
-                string deleted = new Uri(operation.GetProperty("uri").GetString()!).LocalPath;
-                if (File.Exists(deleted))
-                {
-                    File.Delete(deleted);
-                }
+            case "delete" when exists:
+                Delete(editors, resource.Path, resource.Option("recursive"));
                 break;
         }
     }
+
+    /// <summary>Deletes a file or folder, closing the open files that went with it.</summary>
+    private static void Delete(EditorArea editors, string path, bool recursive)
+    {
+        if (Directory.Exists(path))
+        {
+            Directory.Delete(path, recursive);
+        }
+        else
+        {
+            File.Delete(path);
+        }
+        foreach (OpenDocument document in editors.Documents.Where(d => PathNames.Within(d.Path, path)).ToList())
+        {
+            document.Text.MarkSaved();
+            editors.Close(document);
+        }
+    }
+
+    /// <summary>One of an edit's file operations (create, rename or delete): its paths and its options.</summary>
+    private sealed record Resource(string Kind, string Path, string? To, JsonElement Options)
+    {
+        public static Resource Read(JsonElement operation)
+        {
+            string kind = operation.GetProperty("kind").GetString() ?? string.Empty;
+            string path = new Uri(operation.GetProperty(kind == "rename" ? "oldUri" : "uri").GetString()!).LocalPath;
+            string? to = kind == "rename" ? new Uri(operation.GetProperty("newUri").GetString()!).LocalPath : null;
+            return new Resource(kind, path, to, operation.TryGetProperty("options", out JsonElement options) ? options : default);
+        }
+
+        public bool Option(string name) =>
+            Options.ValueKind == JsonValueKind.Object && Options.TryGetProperty(name, out JsonElement value) && value.ValueKind == JsonValueKind.True;
+    }
 }
 
+/// <summary>A workspace edit that could not be made, and why: a file it renames onto is there already, one it renames
+/// or deletes is not, an open file it moves could not be saved first, or the disk refused. An MCP tool says it as its
+/// error.</summary>
+public sealed class WorkspaceEditFailed(string message) : InvalidOperationException(message);
+
 /// <summary>The open documents followed from a request's sending until its answer is applied.</summary>
-public sealed class Asked(Dictionary<string, ChangeTracker> trackers) : IDisposable
+public sealed class Asked(Dictionary<OpenDocument, ChangeTracker> trackers) : IDisposable
 {
-    public IReadOnlyDictionary<string, ChangeTracker> Trackers => trackers;
+    public IReadOnlyDictionary<OpenDocument, ChangeTracker> Trackers => trackers;
 
     public void Dispose()
     {

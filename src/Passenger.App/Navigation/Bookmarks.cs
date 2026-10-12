@@ -7,7 +7,7 @@ namespace Passenger.App.Navigation;
 /// <summary>A bookmark: a file and a line (from zero) in it.</summary>
 public sealed class Bookmark(string path, int line)
 {
-    public string Path { get; } = path;
+    public string Path { get; internal set; } = path;
 
     public int Line { get; internal set; } = line;
 
@@ -106,6 +106,22 @@ public sealed class BookmarkStore
         return step > 0
             ? ordered.FirstOrDefault(b => Compare(b) > 0) ?? ordered[0]
             : ordered.LastOrDefault(b => Compare(b) < 0) ?? ordered[^1];
+    }
+
+    /// <summary>Carries the bookmarks of a file, or of every file in a folder, to where it moved.</summary>
+    public void Move(string from, string to)
+    {
+        HashSet<string> changed = [];
+        foreach (Bookmark bookmark in all.Where(b => Workspace.PathNames.Within(b.Path, from)))
+        {
+            changed.Add(bookmark.Path);
+            bookmark.Path = Workspace.PathNames.Moved(bookmark.Path, from, to);
+            changed.Add(bookmark.Path);
+        }
+        foreach (string path in changed)
+        {
+            Changed?.Invoke(this, path);
+        }
     }
 
     /// <summary>Carries a file's bookmarks through an edit to it, with their lines' first characters.</summary>

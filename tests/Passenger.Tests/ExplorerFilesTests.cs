@@ -5,8 +5,11 @@ using Avalonia.Headless.XUnit;
 using Avalonia.Input;
 using Avalonia.VisualTree;
 using Passenger.App;
+using Passenger.App.Editors;
 using Passenger.App.Explorer;
 using Passenger.App.Workspace;
+using Passenger.Editor;
+using Passenger.Text;
 
 namespace Passenger.Tests;
 
@@ -157,6 +160,56 @@ public sealed class ExplorerFilesTests : IDisposable
         Assert.Null(window.Rename(models, "Domain"));
         Assert.Equal(PathNames.Canonical(Path.Combine(folder, "Domain", "Alpha.cs")), window.EditorArea.Active?.Path);
         Assert.Equal(2, window.EditorArea.Documents.Count);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_file_renamed_in_the_explorer_keeps_its_tab_in_both_splits_its_undo_its_bookmark_and_its_breakpoint()
+    {
+        string models = PathNames.Canonical(Path.Combine(folder, "Models"));
+        string order = Path.Combine(models, "Order.cs");
+        File.WriteAllText(order, "namespace Shop.Models;\n\npublic class Order\n{\n    public int Total;\n}\n");
+        MainWindow window = Open();
+        window.Autosaves = false;
+        window.OpenFile(order);
+        EditorArea area = window.EditorArea;
+        OpenDocument document = Assert.Single(area.Documents);
+        area.CodeEditor.GoTo(new TextPosition(4, 21));
+        window.KeyTextInput(" // the sum");
+        area.CodeEditor.GoTo(new TextPosition(4, 0));
+        Ui.Run(window, AppActions.ToggleBreakpoint);
+        Ui.Run(window, AppActions.ToggleBookmark);
+        Assert.True(window.Perform(AppActions.SplitRight));
+        Ui.Settle();
+
+        Assert.Null(window.Rename(order, "Purchase.cs"));
+        // The folder watcher hears of the move after it, and must not take it for the file deleted.
+        Passenger.App.Screenshot.Pump(TimeSpan.FromMilliseconds(500));
+        Ui.Settle();
+        string purchase = Path.Combine(models, "Purchase.cs");
+        Assert.False(File.Exists(order), "Order.cs is still on disk after its rename");
+        Assert.Equal("namespace Shop.Models;\n\npublic class Order\n{\n    public int Total; // the sum\n}\n", File.ReadAllText(purchase));
+        Assert.True(ReferenceEquals(document, Assert.Single(area.Documents)), "The renamed file was closed and opened again, losing its undo and carets");
+        Assert.Equal(purchase, document.Path);
+        Assert.True(area.Groups.Count == 2, "The rename closed the file's second split");
+        Assert.All(area.Groups, group => Assert.Same(document, Assert.Single(group.Tabs).Document));
+        Assert.Equal(["Purchase.cs", "Purchase.cs"], window.GetVisualDescendants().OfType<TextBlock>().Where(t => t.Classes.Contains("tabName")).Select(t => t.Text));
+        Assert.Empty(window.Debugger.Breakpoints.In(order));
+        Assert.Equal(4, Assert.Single(window.Debugger.Breakpoints.In(purchase)).Line);
+        Assert.Contains(new LineMark(4, LineMarkKind.Breakpoint), area.CodeEditor.LineMarks);
+        Assert.Equal(purchase, Assert.Single(window.Bookmarks.All).Path);
+        Assert.Equal([4], document.Bookmarks);
+
+        // The breakpoint still follows its line at the new path, and undo reaches back past the rename.
+        area.CodeEditor.GoTo(new TextPosition(0, 0));
+        area.CodeEditor.Focus();
+        Ui.Press(window, "Enter");
+        Assert.Equal(5, Assert.Single(window.Debugger.Breakpoints.In(purchase)).Line);
+        area.CodeEditor.TryExecute(EditorActions.Undo);
+        area.CodeEditor.TryExecute(EditorActions.Undo);
+        Ui.Settle();
+        Assert.Equal("namespace Shop.Models;\n\npublic class Order\n{\n    public int Total;\n}\n", document.Text.Snapshot.ToString());
+        Assert.Equal(4, Assert.Single(window.Debugger.Breakpoints.In(purchase)).Line);
         window.Close();
     }
 

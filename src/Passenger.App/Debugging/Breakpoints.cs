@@ -8,7 +8,7 @@ namespace Passenger.App.Debugging;
 /// debugger last said of it, and goes back to unknown when the session ends.</summary>
 public sealed class LineBreakpoint(string path, int line)
 {
-    public string Path { get; } = path;
+    public string Path { get; internal set; } = path;
     public int Line { get; internal set; } = line;
     public bool Enabled { get; internal set; } = true;
     public string? Condition { get; internal set; }
@@ -216,6 +216,25 @@ public sealed class BreakpointStore
                 }
                 Changed?.Invoke(this, path);
             }
+        }
+    }
+
+    /// <summary>Carries the breakpoints of a file, or of every file in a folder, to where it moved: the debugger hears
+    /// that the old path has none and the new one has them.</summary>
+    public void Move(string from, string to)
+    {
+        foreach (string path in byPath.Keys.Where(p => Workspace.PathNames.Within(p, from)).ToList())
+        {
+            string moved = Workspace.PathNames.Moved(path, from, to);
+            List<LineBreakpoint> list = byPath[path];
+            byPath.Remove(path);
+            foreach (LineBreakpoint breakpoint in list)
+            {
+                breakpoint.Path = moved;
+            }
+            byPath[moved] = list;
+            Changed?.Invoke(this, path);
+            Changed?.Invoke(this, moved);
         }
     }
 

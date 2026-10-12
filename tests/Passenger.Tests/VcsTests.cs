@@ -10,10 +10,10 @@ using Passenger.Text;
 
 namespace Passenger.Tests;
 
-/// <summary>Git as Rider shows it, over a real working tree: an edit grows a change bar, the Commit window commits the
-/// chosen files and the bars go; Rollback Lines puts a change back; a branch made from the toolbar's menu is checked
-/// out, and switching back takes the open file's text from disk; Rollback restores a file and deletes a new one, and
-/// acts on the file chosen before a refresh; Commit and Stash run one at a time.</summary>
+/// <summary>Git as Rider shows it, over a real working tree: an edit grows a change bar, which a rename keeps, the Commit
+/// window commits the chosen files and the bars go; Rollback Lines puts a change back; a branch made from the toolbar's
+/// menu is checked out, and switching back takes the open file's text from disk; Rollback restores a file and deletes a
+/// new one, and acts on the file chosen before a refresh; Commit and Stash run one at a time.</summary>
 public sealed class VcsTests : IDisposable
 {
     private const string Original = "class Shop\n{\n    int count;\n\n    void Add() { count++; }\n}\n";
@@ -59,6 +59,25 @@ public sealed class VcsTests : IDisposable
         Ui.WaitFor(() => Marks(window).Count == 0 && window.Vcs.Changes.Count == 0, "the bars and the changes to clear");
         Assert.Empty(commit.Rows);
         Assert.Empty(commit.Message);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_renamed_file_keeps_its_change_bars_against_what_the_last_commit_has_where_it_was()
+    {
+        MainWindow window = Open();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Ui.WaitFor(() => window.Vcs.Repository is not null, "the working tree");
+        editor.GoTo(new TextPosition(2, 4));
+        window.KeyTextInput("long ");
+        Ui.WaitFor(() => Marks(window).Any(m => m.Kind == ChangeMarkKind.Modified && m.Line == 2), "a modified bar on line 3");
+
+        Assert.Null(window.Rename(Passenger.App.Workspace.PathNames.Canonical(Path.Combine(folder, "Shop.cs")), "Store.cs"));
+        editor.GoTo(new TextPosition(0, 0));
+        window.KeyTextInput("sealed ");
+        Ui.WaitFor(() => Marks(window).Any(m => m.Line == 0), "a bar for the line typed after the rename, against the last commit's Shop.cs", TimeSpan.FromSeconds(20));
+        Assert.Equal("Store.cs", window.EditorArea.Active?.Name);
+        Assert.Contains(Marks(window), m => m.Kind == ChangeMarkKind.Modified && m.Line == 2);
         window.Close();
     }
 

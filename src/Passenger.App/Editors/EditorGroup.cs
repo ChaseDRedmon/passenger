@@ -294,6 +294,10 @@ public sealed class EditorGroup : DockPanel
             case nameof(OpenDocument.Bookmarks):
                 Editor.SetBookmarks(document.Bookmarks);
                 break;
+            case nameof(OpenDocument.Path):
+                Editor.LineCommentPrefix = document.Language.LineComment;
+                Editor.Indent = new IndentOptions(document.Language.IndentSize);
+                break;
         }
     }
 
@@ -343,6 +347,13 @@ public sealed class EditorGroup : DockPanel
             if (e.PropertyName == nameof(OpenDocument.IsModified))
             {
                 modified.IsVisible = document.IsModified;
+            }
+            else if (e.PropertyName == nameof(OpenDocument.Path))
+            {
+                name.Text = document.Name;
+                icon.Data = document.Icon;
+                icon.Foreground = document.IconBrush;
+                ToolTip.SetTip(border, document.Path);
             }
         };
         border.ContextMenu = TabMenu(document);

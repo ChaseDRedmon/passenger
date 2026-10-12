@@ -29,6 +29,13 @@ public static partial class PathNames
         }
     }
 
+    /// <summary>Whether a path is a file or folder, or under it.</summary>
+    public static bool Within(string path, string place) =>
+        path == place || path.StartsWith(place + Path.DirectorySeparatorChar, StringComparison.Ordinal);
+
+    /// <summary>Where a path is once a file or folder moved: the new place when it was that or under it, else itself.</summary>
+    public static string Moved(string path, string from, string to) => Within(path, from) ? to + path[from.Length..] : path;
+
     [LibraryImport("libc", EntryPoint = "realpath", StringMarshalling = StringMarshalling.Utf8)]
     private static partial IntPtr RealPath(string path, IntPtr resolved);
 

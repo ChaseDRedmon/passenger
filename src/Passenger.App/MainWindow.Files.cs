@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Avalonia.Input.Platform;
+using Passenger.App.Editors;
 using Passenger.App.Explorer;
 using Passenger.App.Run;
 using Passenger.App.Workspace;
@@ -14,7 +15,11 @@ namespace Passenger.App;
 /// read again after.</summary>
 public partial class MainWindow
 {
-    private void AddFileOperations() => Explorer.ActionRequested += (_, asked) => _ = ExplorerActionAsync(asked.Action, asked.Node);
+    private void AddFileOperations()
+    {
+        Explorer.ActionRequested += (_, asked) => _ = ExplorerActionAsync(asked.Action, asked.Node);
+        Editors.Moved += (_, move) => OnFileMoved(move);
+    }
 
     private async Task ExplorerActionAsync(ExplorerAction action, ExplorerNode node)
     {
@@ -138,7 +143,8 @@ public partial class MainWindow
         return string.Join('.', parts.Select(p => new string([.. p.Select(c => char.IsLetterOrDigit(c) || c == '_' ? c : '_')])));
     }
 
-    /// <summary>Renames a file or folder in place; its open files are saved, then shown again at their new paths.</summary>
+    /// <summary>Renames a file or folder in place. Its open files keep their tabs, splits and undo, saved first, and
+    /// its bookmarks and breakpoints go with it.</summary>
     public string? Rename(string path, string name)
     {
         if (Invalid(name) is { } problem)
@@ -154,45 +160,31 @@ public partial class MainWindow
         {
             return $"{name} is already there";
         }
-        bool isFolder = Directory.Exists(path);
-        List<(OpenDocument Document, string To)> moving = [.. Editors.Documents
-            .Where(d => d.Path == path || (isFolder && d.Path.StartsWith(path + Path.DirectorySeparatorChar, StringComparison.Ordinal)))
-            .Select(d => (d, target + d.Path[path.Length..]))];
-        OpenDocument? active = Editors.Active;
-        foreach ((OpenDocument document, _) in moving)
+        if (Editors.MoveFile(path, target) is { } failed)
         {
-            if (!Editors.Close(document))
-            {
-                return $"{document.Name} could not be saved before it moved";
-            }
-        }
-        try
-        {
-            if (isFolder)
-            {
-                Directory.Move(path, target);
-            }
-            else
-            {
-                File.Move(path, target);
-            }
-        }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-        {
-            return error.Message;
-        }
-        FilesChanged();
-        // The file that was in front is opened last, so it is in front again.
-        foreach ((_, string to) in moving.OrderBy(m => m.Document == active))
-        {
-            OpenFile(to);
-        }
-        if (active is not null && moving.All(m => m.Document != active))
-        {
-            OpenFile(active.Path);
+            return failed;
         }
         Explorer.Reveal(PathNames.Canonical(target));
         return null;
+    }
+
+    /// <summary>A file or folder moved, by a rename here or a code fix: what knows a file by its path follows it. The
+    /// language server knows one by its URI, so each open file is closed there and opened at the new one.</summary>
+    private void OnFileMoved(FileMove move)
+    {
+        bookmarks.Move(move.From, move.To);
+        debug.Breakpoints.Move(move.From, move.To);
+        vcs.Moved(move.From, move.To);
+        for (int i = 0; i < recent.Count; i++)
+        {
+            recent[i] = PathNames.Moved(recent[i], move.From, move.To);
+        }
+        foreach (OpenDocument document in move.Documents)
+        {
+            csharp?.Detach(document);
+            csharp?.Attach(document);
+        }
+        FilesChanged();
     }
 
     /// <summary>Rider's Delete on a project: it leaves the solution and its files stay. Moving its folder to the Trash is a

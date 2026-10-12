@@ -451,6 +451,49 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
     }
 
     [AvaloniaFact]
+    public void Renaming_a_file_to_match_its_type_with_unsaved_edits_leaves_one_file_of_the_new_name_holding_them()
+    {
+        string foo = project.PathOf("Foo.cs");
+        string bar = project.PathOf("Bar.cs");
+        File.WriteAllText(foo, "class Bar\n{\n}\n");
+        MainWindow window = project.Open("Foo.cs");
+        try
+        {
+            CodeEditor editor = window.EditorArea.CodeEditor;
+            OpenDocument document = window.EditorArea.Active!;
+            PlaceAfter(editor, "{");
+            window.KeyTextInput(" public int Edited; ");
+            PlaceAfter(editor, "class B");
+            Ui.Run(window, AppActions.QuickFix);
+            Ui.WaitFor(() => window.Assist.Offered.Contains("Rename file to Bar.cs"), "the offer to rename the file");
+            for (int i = window.Assist.Offered.ToList().IndexOf("Rename file to Bar.cs"); i > 0; i--)
+            {
+                Ui.Press(window, "DOWN");
+            }
+            Ui.Press(window, "ENTER");
+            Ui.WaitFor(() => !File.Exists(foo), "Foo.cs to be renamed");
+
+            Assert.True(File.ReadAllText(bar) == "class Bar\n{ public int Edited; \n}\n", "Bar.cs does not hold the edits made before the rename");
+            Assert.True(ReferenceEquals(document, Assert.Single(window.EditorArea.Documents)), "The renamed file's tab did not move to Bar.cs");
+            Assert.Equal(PathNames.Canonical(bar), document.Path);
+            Assert.Equal("Bar.cs", window.EditorArea.Active?.Name);
+            Assert.EndsWith("/Bar.cs", window.CSharpService?.For(document)?.Lsp?.Uri, StringComparison.Ordinal);
+
+            // A later save writes Bar.cs, never Foo.cs back.
+            window.KeyTextInput("// ");
+            window.EditorArea.SaveAll();
+            Assert.False(File.Exists(foo), "Saving the moved file wrote Foo.cs back");
+            Assert.StartsWith("class B// ar", File.ReadAllText(bar), StringComparison.Ordinal);
+        }
+        finally
+        {
+            window.Close();
+            File.Delete(foo);
+            File.Delete(bar);
+        }
+    }
+
+    [AvaloniaFact]
     public void Rename_changes_the_name_in_every_file_that_uses_it()
     {
         string helper = File.ReadAllText(project.PathOf("Helper.cs"));

@@ -17,6 +17,7 @@ public sealed class VcsController
 
     private readonly Dictionary<OpenDocument, Tracked> documents = [];
     private readonly Dictionary<string, Task<string?>> heads = [];
+    private readonly List<(string From, string To)> moves = [];
     private Git? git;
     private int opened;
 
@@ -69,6 +70,7 @@ public sealed class VcsController
         }
         git = found;
         heads.Clear();
+        moves.Clear();
         await RefreshAsync();
     }
 
@@ -404,10 +406,32 @@ public sealed class VcsController
         }
         if (!heads.TryGetValue(path, out Task<string?>? head))
         {
-            head = repository.HeadTextAsync(path);
+            string origin = Origin(path);
+            head = origin == path ? repository.HeadTextAsync(path) : HeadOrOriginAsync(repository, path, origin);
             heads[path] = head;
         }
         return head;
+
+        static async Task<string?> HeadOrOriginAsync(Git repository, string path, string origin) =>
+            await repository.HeadTextAsync(path) ?? await repository.HeadTextAsync(origin);
+    }
+
+    /// <summary>A file or folder moved here (a rename, a code fix): until a commit has its files at their new paths,
+    /// their change bars, diff and rollback compare with what the last commit has where they were, as Rider's do.</summary>
+    public void Moved(string from, string to)
+    {
+        moves.Add((from, to));
+        heads.Clear();
+    }
+
+    /// <summary>Where a path was before every move since the folder opened.</summary>
+    private string Origin(string path)
+    {
+        for (int i = moves.Count - 1; i >= 0; i--)
+        {
+            path = PathNames.Moved(path, moves[i].To, moves[i].From);
+        }
+        return path;
     }
 
     /// <summary>Works out a file's change bars from the last commit's text against the editor's, off the window's

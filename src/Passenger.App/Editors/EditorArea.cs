@@ -66,6 +66,9 @@ public sealed class EditorArea : UserControl
     /// to keep is the person's question (File Cache Conflict), never settled by writing over the disk's.</summary>
     public event EventHandler<OpenDocument>? SaveConflicted;
 
+    /// <summary>A file or folder moved through <see cref="MoveFile"/>, with the open files that went with it.</summary>
+    public event EventHandler<FileMove>? Moved;
+
     /// <summary>The active group's editor: the one keys and the IDE's actions go to.</summary>
     public CodeEditor CodeEditor => activeGroup.Editor;
 
@@ -298,6 +301,52 @@ public sealed class EditorArea : UserControl
 
     /// <summary>Writes a file even over a version on disk newer than its own, as Keep Memory Changes does.</summary>
     public bool SaveOver(OpenDocument document) => TrySave(document, overDisk: true);
+
+    /// <summary>Writes a file, unless something else changed it on disk meanwhile; whether it was written.</summary>
+    public bool Save(OpenDocument document) => TrySave(document);
+
+    /// <summary>Moves a file or folder on disk with its open files, which keep their tabs in every split, their undo
+    /// and carets: each is saved first, so what moves is what the editor shows. Null when it moved, else why not, with
+    /// nothing moved.</summary>
+    public string? MoveFile(string from, string to)
+    {
+        string source = PathNames.Canonical(from);
+        List<OpenDocument> moving = [.. documents.Where(d => PathNames.Within(d.Path, source))];
+        foreach (OpenDocument document in moving)
+        {
+            if (document.IsModified && !TrySave(document))
+            {
+                return $"{document.Name} could not be saved before it moved";
+            }
+        }
+        try
+        {
+            if (Directory.Exists(from))
+            {
+                Directory.Move(from, to);
+            }
+            else
+            {
+                File.Move(from, to);
+            }
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return error.Message;
+        }
+        string target = PathNames.Canonical(to);
+        foreach (OpenDocument document in moving)
+        {
+            document.MoveTo(PathNames.Moved(document.Path, source, target));
+        }
+        Moved?.Invoke(this, new FileMove(source, target, moving));
+        if (Active is { } shown && moving.Contains(shown))
+        {
+            // What names the file shown (the title, the status bar's path, the structure) reads it again.
+            ActiveChanged?.Invoke(this, EventArgs.Empty);
+        }
+        return null;
+    }
 
     private bool TrySave(OpenDocument document, bool overDisk = false)
     {
@@ -726,3 +775,6 @@ public sealed class EditorArea : UserControl
         }
     }
 }
+
+/// <summary>A file or folder that moved on disk (both paths canonical), and the open files that went with it.</summary>
+public sealed record FileMove(string From, string To, IReadOnlyList<OpenDocument> Documents);
