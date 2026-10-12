@@ -13,6 +13,9 @@ namespace Passenger.App.CSharp;
 /// set in the editor's font, prose in the interface's, a problem in its severity's colour.</summary>
 internal sealed class InfoCard : Border
 {
+    // Styled as the Border it is, so the theme's Border.popup reaches it.
+    protected override Type StyleKeyOverride => typeof(Border);
+
     private readonly StackPanel parts = new() { Spacing = 6 };
 
     public InfoCard()
@@ -106,6 +109,9 @@ internal sealed record CompletionRow(Lsp.CompletionItem Item, string Letter, IBr
 /// <summary>The completion list: rows under the caret, the selected one highlighted, ten at a time.</summary>
 internal sealed class CompletionPopup : Border
 {
+    // Styled as the Border it is, so the theme's Border.popup reaches it.
+    protected override Type StyleKeyOverride => typeof(Border);
+
     public CompletionPopup()
     {
         Classes.Add("popup");
@@ -203,6 +209,9 @@ internal sealed class CompletionPopup : Border
 /// Escape or a click away to dismiss.</summary>
 internal sealed class ChoicePopup : Border
 {
+    // Styled as the Border it is, so the theme's Border.popup reaches it.
+    protected override Type StyleKeyOverride => typeof(Border);
+
     private readonly ListBox list;
 
     public ChoicePopup(string title, IReadOnlyList<Choice> choices)
@@ -292,6 +301,9 @@ internal sealed record Choice(string Text, string Detail, object Value, bool Det
 /// Escape leaves it.</summary>
 internal sealed class RenameBox : Border
 {
+    // Styled as the Border it is, so the theme's Border.popup reaches it.
+    protected override Type StyleKeyOverride => typeof(Border);
+
     private readonly TextBox name;
 
     public RenameBox(string current)
