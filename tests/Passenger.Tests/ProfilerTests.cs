@@ -83,8 +83,13 @@ public sealed class ProfilerTests : IDisposable
             // Bounded, so a createdump that never finishes (CI's macOS runner was left with one) fails this test rather
             // than holding the whole run until it is stopped as hung.
             taking = run.TakeMemorySnapshotAsync(TestContext.Current.CancellationToken);
-            Assert.True(await Task.WhenAny(taking, Task.Delay(TimeSpan.FromMinutes(2), TestContext.Current.CancellationToken)) == taking,
-                "the runtime's createdump had not written the program's heap after 2 minutes");
+            if (await Task.WhenAny(taking, Task.Delay(TimeSpan.FromMinutes(2), TestContext.Current.CancellationToken)) != taking)
+            {
+                string createdump = NativeStacks.ChildNamed(run.ProcessId, "createdump") is int dumper
+                    ? NativeStacks.Describe("createdump's threads", dumper, "createdump")
+                    : "\nNo createdump was running under the program.";
+                Assert.Fail($"the runtime's createdump had not written the program's heap after 2 minutes.{createdump}");
+            }
             MemorySnapshot heap = await taking;
             HeapType strings = Assert.Single(heap.Types, t => t.Name == "System.String");
             Assert.True(strings.Count > 10, $"{strings.Count} strings");

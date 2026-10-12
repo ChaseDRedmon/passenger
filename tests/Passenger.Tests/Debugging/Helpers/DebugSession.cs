@@ -376,7 +376,19 @@ public sealed class DebugSession : IDisposable
         {
             logged = [$"(not readable: {error.Message})"];
         }
-        return $"What the adapter said last:\n  {said}\nThe engine's log ends:\n  {string.Join("\n  ", logged)}";
+        return $"What the adapter said last:\n  {said}\nThe engine's log ends:\n  {string.Join("\n  ", logged)}{Stacks()}";
+    }
+
+    /// <summary>On macOS, where the adapter's debugger and the debuggee's runtime were waiting: the engine's log says which
+    /// step never ended, this says in which call.</summary>
+    private string Stacks()
+    {
+        string stacks = adapter.HasExited ? string.Empty : NativeStacks.Describe("Where the adapter's debugger was", adapter.Id, "libmscordbi", "libdbgshim");
+        if (debuggee is { HasExited: false })
+        {
+            stacks += NativeStacks.Describe("Where the debuggee's runtime was", debuggee.Id, "Debugger", "DbgTransport", "TwoWayPipe");
+        }
+        return stacks;
     }
 
     private DebugSession Step(string command, int threadId)

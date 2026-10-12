@@ -490,3 +490,116 @@ public static class Processes
     [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "kill", SetLastError = true)]
     private static extern int Signal(int process, int signal);
 }
+
+/// <summary>Where a process's threads wait, as macOS's sample sees them (it may read any of the user's processes): each
+/// thread with a frame naming one of the markers, from the first such frame to its last. On CI, where no one can attach
+/// a debugger to what hangs, this names the call that never returned. Empty on other systems.</summary>
+public static partial class NativeStacks
+{
+    public static string Describe(string what, int processId, params string[] markers)
+    {
+        if (!OperatingSystem.IsMacOS())
+        {
+            return string.Empty;
+        }
+        string file = Path.Combine(Path.GetTempPath(), $"passenger-sample-{Guid.NewGuid():N}.txt");
+        try
+        {
+            using System.Diagnostics.Process sample = System.Diagnostics.Process.Start(new ProcessStartInfo("/usr/bin/sample", [processId.ToString(System.Globalization.CultureInfo.InvariantCulture), "1", "-file", file])
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            })!;
+            Task<string> said = sample.StandardOutput.ReadToEndAsync();
+            Task<string> complained = sample.StandardError.ReadToEndAsync();
+            if (!sample.WaitForExit(TimeSpan.FromMinutes(1)))
+            {
+                sample.Kill();
+                return $"\n{what}: sample did not finish in a minute";
+            }
+            if (!File.Exists(file))
+            {
+                return $"\n{what}: sample could not look ({said.Result.Trim()} {complained.Result.Trim()})";
+            }
+            List<string> threads = [];
+            string? thread = null;
+            List<string> frames = [];
+            foreach (string line in File.ReadLines(file).SkipWhile(l => !l.StartsWith("Call graph:", StringComparison.Ordinal)).Skip(1).TakeWhile(l => l.Trim().Length > 0))
+            {
+                if (ThreadLine().Match(line) is { Success: true } header)
+                {
+                    Keep();
+                    thread = header.Groups[1].Value.Trim();
+                }
+                else if (FrameLine().Match(line) is { Success: true } frame)
+                {
+                    // A C++ frame's parameter list says nothing its name does not.
+                    string name = frame.Groups[1].Value;
+                    frames.Add($"{(name.IndexOf('(') is > 0 and int open ? name[..open] : name)} ({frame.Groups[2].Value})");
+                }
+            }
+            Keep();
+            return threads.Count == 0 ? $"\n{what}: no thread had a frame in {string.Join(" or ", markers)}" : $"\n{what}:\n{string.Join('\n', threads)}";
+
+            void Keep()
+            {
+                int first = frames.FindIndex(f => markers.Any(m => f.Contains(m, StringComparison.Ordinal)));
+                if (thread is not null && first >= 0)
+                {
+                    threads.Add($"  {thread}\n{string.Join('\n', frames.Skip(first).TakeLast(24).Select(f => $"    {f}"))}");
+                }
+                frames.Clear();
+            }
+        }
+        catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            return $"\n{what}: sample failed: {error.Message}";
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(file);
+            }
+            catch (IOException)
+            {
+            }
+        }
+    }
+
+    /// <summary>A child of a process by its program's name, from the process list (macOS and Linux); null when there is
+    /// none, or elsewhere.</summary>
+    public static int? ChildNamed(int parent, string name)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return null;
+        }
+        using System.Diagnostics.Process ps = System.Diagnostics.Process.Start(new ProcessStartInfo("ps", ["-A", "-o", "pid=,ppid=,comm="])
+        {
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+        })!;
+        string listed = ps.StandardOutput.ReadToEnd();
+        ps.WaitForExit();
+        foreach (string line in listed.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            string[] columns = line.Split(' ', 3, StringSplitOptions.RemoveEmptyEntries);
+            if (columns.Length == 3 && columns[1] == parent.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                && Path.GetFileName(columns[2]) == name && int.TryParse(columns[0], out int child))
+            {
+                return child;
+            }
+        }
+        return null;
+    }
+
+    // "    881 Thread_57752918   DispatchQueue_1: com.apple.main-thread  (serial)"
+    [System.Text.RegularExpressions.GeneratedRegex(@"^\s+\d+\s+(Thread_\d+.*)$")]
+    private static partial System.Text.RegularExpressions.Regex ThreadLine();
+
+    // "    +   881 main  (in ReadsInputConsoleApp) + 184  [0x1024fa124]"
+    [System.Text.RegularExpressions.GeneratedRegex(@"^[\s+!:|]*\d+\s+(.+?)\s+\(in ([^)]+)\)")]
+    private static partial System.Text.RegularExpressions.Regex FrameLine();
+}
