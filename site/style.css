@@ -1,0 +1,221 @@
+/* Passenger's own tokens (src/Passenger.App/Theme/Tokens.axaml), light first, dark when the system asks. */
+:root {
+    --bg: #FFFFFF;
+    --surface: #F7F8FA;
+    --raised: #FFFFFF;
+    --text: #1E1F22;
+    --muted: #6C707E;
+    --border: #DFE1E5;
+    --accent: #3D7BF5;
+    --accent-hover: #2F6AE0;
+    --accent-text: #FFFFFF;
+    --code-bg: #F2F3F5;
+    --seat: #E59A1F;
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.06), 0 12px 40px rgb(30 31 34 / 0.12);
+    color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #1E1F22;
+        --surface: #2B2D30;
+        --raised: #2B2D30;
+        --text: #DFE1E5;
+        --muted: #868A91;
+        --border: #393B40;
+        --accent: #3D7BF5;
+        --accent-hover: #5A8FF7;
+        --accent-text: #FFFFFF;
+        --code-bg: #2B2D30;
+        --seat: #FFB547;
+        --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 16px 48px rgb(0 0 0 / 0.45);
+        color-scheme: dark;
+    }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+
+body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+}
+
+img { max-width: 100%; height: auto; display: block; }
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+code, pre { font-family: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.875em; }
+:not(pre) > code { background: var(--code-bg); border: 1px solid var(--border); border-radius: 4px; padding: 0.1em 0.35em; }
+
+pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    line-height: 1.55;
+    margin: 0 0 20px;
+}
+pre .comment { color: var(--muted); }
+
+.wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px; }
+@media (min-width: 720px) { .wrap { padding: 0 32px; } }
+
+/* The top bar. */
+.top {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: saturate(1.4) blur(10px);
+    -webkit-backdrop-filter: saturate(1.4) blur(10px);
+    border-bottom: 1px solid var(--border);
+}
+.top .wrap { display: flex; align-items: center; gap: 24px; height: 60px; }
+.brand { display: flex; align-items: center; gap: 10px; color: var(--text); font-weight: 650; font-size: 18px; }
+.brand:hover { text-decoration: none; }
+.brand img { width: 28px; height: 28px; }
+.top nav { margin-left: auto; display: flex; gap: 22px; font-size: 15px; }
+.top nav a { color: var(--muted); }
+.top nav a:hover { color: var(--text); text-decoration: none; }
+@media (max-width: 640px) { .top nav .wide { display: none; } }
+
+/* The opening. */
+.hero { padding: 72px 0 40px; text-align: center; }
+.eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 20px;
+    padding: 4px 12px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: var(--muted);
+    font-size: 14px;
+}
+.eyebrow::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--seat); }
+h1 {
+    margin: 0 auto 18px;
+    max-width: 15em;
+    font-size: clamp(36px, 6vw, 60px);
+    line-height: 1.08;
+    letter-spacing: -0.025em;
+    font-weight: 750;
+}
+h1 .lead {
+    display: block;
+    background: linear-gradient(100deg, #2F6BF2, #14B8A6);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+}
+.lede { margin: 0 auto 32px; max-width: 40em; color: var(--muted); font-size: clamp(17px, 2.2vw, 20px); }
+.actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; }
+.button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 46px;
+    padding: 0 22px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--raised);
+    color: var(--text);
+    font-weight: 600;
+    font-size: 16px;
+}
+.button:hover { text-decoration: none; border-color: var(--muted); }
+.button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.button.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.button small { font-weight: 400; opacity: 0.85; }
+.under { margin: 14px 0 0; color: var(--muted); font-size: 14px; }
+
+.shot {
+    margin: 48px 0 0;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--shadow);
+    background: #1E1F22;
+}
+.shot img { width: 100%; aspect-ratio: 16 / 10; }
+figcaption { color: var(--muted); font-size: 14px; margin-top: 12px; text-align: center; }
+
+/* Sections. */
+section { padding: 72px 0; }
+section + section { border-top: 1px solid var(--border); }
+h2 { margin: 0 0 12px; font-size: clamp(28px, 4vw, 38px); line-height: 1.15; letter-spacing: -0.02em; font-weight: 720; }
+h3 { margin: 0 0 8px; font-size: 19px; line-height: 1.3; font-weight: 650; }
+.intro { margin: 0 0 40px; max-width: 42em; color: var(--muted); font-size: 18px; }
+
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+.card { padding: 22px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.card p { margin: 0; color: var(--muted); }
+
+.feature { display: grid; gap: 28px; align-items: center; margin-top: 64px; }
+.feature p { margin: 0; color: var(--muted); font-size: 17px; }
+.feature .shot { margin: 0; }
+@media (min-width: 900px) {
+    .feature { grid-template-columns: 1fr 1.9fr; gap: 48px; }
+    .feature.flip { grid-template-columns: 1.9fr 1fr; }
+    .feature.flip .text { order: 2; }
+}
+
+.agents { display: grid; gap: 32px; }
+/* A grid item grows to its widest line unless told otherwise, and a long command would widen the page. */
+.agents > *, .feature > * { min-width: 0; }
+@media (min-width: 900px) { .agents { grid-template-columns: 1fr 1.2fr; gap: 48px; align-items: start; } }
+.agents p { color: var(--muted); margin: 0 0 16px; }
+
+/* Downloads. */
+.downloads { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-top: 28px; }
+.platform { padding: 20px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.platform h3 { margin-bottom: 12px; }
+.platform ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.platform li > a, .platform li > span {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--raised);
+    color: var(--text);
+}
+.platform li > a:hover { text-decoration: none; border-color: var(--accent); }
+.platform li .kind { color: var(--muted); font-size: 14px; }
+.platform li [aria-disabled="true"] { color: var(--muted); }
+.platform .more { display: inline-block; margin-top: 12px; font-size: 15px; }
+.status {
+    margin: 0 0 8px;
+    padding: 12px 16px;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--seat);
+    border-radius: 8px;
+    background: var(--surface);
+    max-width: 52em;
+}
+.status:empty { display: none; }
+.needs { margin-top: 28px; color: var(--muted); max-width: 52em; }
+
+/* The Linux page. */
+.page { padding: 56px 0 72px; max-width: 760px; }
+.page h1 { margin: 0 0 16px; text-align: left; max-width: none; font-size: clamp(32px, 5vw, 44px); }
+.page h2 { font-size: 24px; margin-top: 44px; }
+.page p, .page li { color: var(--muted); }
+.page p strong, .page li strong { color: var(--text); }
+.page ol, .page ul { padding-left: 1.3em; }
+
+footer { border-top: 1px solid var(--border); padding: 32px 0 48px; color: var(--muted); font-size: 14px; }
+footer .wrap { display: flex; flex-wrap: wrap; gap: 8px 24px; justify-content: space-between; }
+footer p { margin: 0; }
+footer nav { display: flex; flex-wrap: wrap; gap: 18px; }
+footer a { color: var(--muted); }

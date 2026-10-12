@@ -2,7 +2,7 @@
 
 An IDE for C# and modern .NET, inspired by JetBrains Rider, written in C# with Avalonia. Windows and macOS first.
 
-![Passenger's editor: completion open after a dot, parameter name hints before literal arguments, and the change bars of uncommitted lines](docs/images/editor.png)
+![Passenger's editor: completion open after a dot, parameter name hints before literal arguments, and the change bars of uncommitted lines](site/images/editor.webp)
 
 It's early, but it's a working IDE: an editor of its own (a rope, multiple carets, code folding, Rider's Visual Studio
 keymaps), Roslyn's colours, diagnostics, completion, hovers, fixes, refactorings, rename and navigation through the
@@ -18,7 +18,7 @@ Passenger's own debugger (started from SharpDbg, over ICorDebug): breakpoints wi
 messages, stepping, Run to Cursor and Set Next Statement, the call stack and threads, variables you can open and set,
 watches and evaluation, and the values each line used drawn after it, as Rider does.
 
-![Stopped at a breakpoint: the line's values after its code, and the Debug window's frames and variables](docs/images/debugger.png)
+![Stopped at a breakpoint: the line's values after its code, and the Debug window's frames and variables](site/images/debugger.webp)
 
 ### Profiling
 
@@ -26,21 +26,21 @@ A sampling profiler like dotTrace's, over the runtime's EventPipe: a configurati
 instruction, then its call tree, hot spots, flame graph, allocations and garbage collections, narrowed to any stretch
 of the timeline. A memory snapshot counts a running program's heap by type.
 
-![A profile of the sample's forecast: the timeline above the call tree, its hot path opened](docs/images/profiler.png)
+![A profile of the sample's forecast: the timeline above the call tree, its hot path opened](site/images/profiler.webp)
 
 ### Git
 
 The Commit window with its changes and unversioned files, the log with its branch graph and each commit's files,
 diffs, blame annotations, change bars in the gutter that roll back a hunk, branches, push, pull and fetch.
 
-![The Commit window beside the editor, and the Git log with a commit's details](docs/images/git.png)
+![The Commit window beside the editor, and the Git log with a commit's details](site/images/git.webp)
 
 ### Search
 
 Search Everywhere, Go to File, Go to Symbol and Find Action, Find and Replace in Files with a preview, Recent Files,
 bookmarks, and Extend Selection through the syntax tree.
 
-![Find in Files: every match with its file and line, the chosen one previewed below](docs/images/find-in-files.png)
+![Find in Files: every match with its file and line, the chosen one previewed below](site/images/find-in-files.webp)
 
 ## Building
 

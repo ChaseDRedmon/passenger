@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Passenger: an IDE for C# and .NET</title>
+    <meta name="description" content="A Rider-inspired IDE for C# and .NET, written in C#: its own editor over Roslyn, its own debugger and profiler, unit tests, Git, NuGet, a terminal, and an MCP server so agents can use it too.">
+    <link rel="canonical" href="https://passenger-ide.net/">
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <meta property="og:title" content="Passenger: an IDE for C# and .NET">
+    <meta property="og:description" content="Its own editor over Roslyn, its own debugger and profiler, unit tests, Git, NuGet and a terminal. Open source, for Windows, macOS and Linux.">
+    <meta property="og:image" content="https://passenger-ide.net/images/editor.webp">
+    <meta property="og:url" content="https://passenger-ide.net/">
+    <meta name="theme-color" content="#1E1F22" media="(prefers-color-scheme: dark)">
+    <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+    <link rel="stylesheet" href="/style.css">
+    <script src="/site.js" defer></script>
+</head>
+<body>
+<header class="top">
+    <div class="wrap">
+        <a class="brand" href="/"><img src="/favicon.svg" alt="" width="28" height="28">Passenger</a>
+        <nav>
+            <a class="wide" href="#features">Features</a>
+            <a class="wide" href="#agents">For agents</a>
+            <a href="#download">Download</a>
+            <a href="https://github.com/Zaneris/passenger">GitHub</a>
+        </nav>
+    </div>
+</header>
+
+<main>
+    <div class="wrap hero">
+        <p class="eyebrow">Early development · Open source, MIT</p>
+        <h1><span class="lead">An IDE for C# and .NET,</span> written in C#.</h1>
+        <p class="lede">Inspired by Rider: an editor of its own over Roslyn, a debugger and a profiler of its own, unit tests,
+            Git, NuGet and a terminal. And an MCP server, so your agent works in the same IDE you do.</p>
+        <div class="actions">
+            <a class="button primary" id="primary-download" href="#download">Download</a>
+            <a class="button" href="https://github.com/Zaneris/passenger">Source on GitHub</a>
+        </div>
+        <p class="under" id="primary-note">For Windows and macOS, with builds for Linux.</p>
+        <figure class="shot">
+            <img src="/images/editor.webp" width="2400" height="1500" fetchpriority="high"
+                 alt="Passenger's editor: completion open after a dot, parameter name hints before literal arguments, and the change bars of uncommitted lines">
+        </figure>
+    </div>
+
+    <section id="features">
+        <div class="wrap">
+            <h2>A whole IDE, in one language</h2>
+            <p class="intro">Everything in Passenger is .NET, from the window to the debugger, built on the libraries a C# IDE
+                needs: Roslyn, MSBuild, ICorDebug, EventPipe and VSTest.</p>
+            <div class="grid">
+                <div class="card">
+                    <h3>The editor</h3>
+                    <p>A text control of its own over an immutable rope: multiple carets, code folding, Extend Selection, live and
+                        postfix templates, and Rider's Visual Studio keymaps with their chords. It keeps up with every keystroke in a
+                        50,000-line file.</p>
+                </div>
+                <div class="card">
+                    <h3>C# from Roslyn</h3>
+                    <p>Colours, diagnostics, completion, hovers and signature help, quick fixes and refactorings, rename, Go to
+                        Declaration and Implementation, Find Usages, call and type hierarchies, and decompiled library sources.</p>
+                </div>
+                <div class="card">
+                    <h3>Build and run</h3>
+                    <p>A Solution view of your projects, builds with their errors in Problems, run configurations from your launch
+                        profiles, and Hot Reload under <code>dotnet watch</code>.</p>
+                </div>
+                <div class="card">
+                    <h3>Unit tests</h3>
+                    <p>xUnit, NUnit and MSTest found and run through VSTest, run marks in the gutter, results by project, class and
+                        method, failures rerun, and any test debugged.</p>
+                </div>
+                <div class="card">
+                    <h3>NuGet</h3>
+                    <p>Search nuget.org, then install, update and remove packages for each project, with central package
+                        management.</p>
+                </div>
+                <div class="card">
+                    <h3>Terminal</h3>
+                    <p>A terminal emulator of its own with a shell per tab, where vim, less and htop run full-screen.</p>
+                </div>
+            </div>
+
+            <div class="feature">
+                <div class="text">
+                    <h3>A debugger of its own</h3>
+                    <p>Over the runtime's ICorDebug: breakpoints with conditions, hit counts and log messages, stepping through async
+                        code, Run to Cursor and Set Next Statement, the call stack and threads, variables you can open and set,
+                        watches and evaluation, and the values each line used drawn after it.</p>
+                </div>
+                <figure class="shot">
+                    <img src="/images/debugger.webp" width="2400" height="1500" loading="lazy"
+                         alt="Stopped at a breakpoint: the line's values after its code, and the Debug window's frames and variables">
+                </figure>
+            </div>
+
+            <div class="feature flip">
+                <div class="text">
+                    <h3>A profiler too</h3>
+                    <p>Sampling over EventPipe, from a program's first instruction: its call tree, hot spots, flame graph,
+                        allocations and garbage collections, narrowed to any stretch of the timeline. A memory snapshot counts a
+                        running program's heap by type.</p>
+                </div>
+                <figure class="shot">
+                    <img src="/images/profiler.webp" width="2400" height="1500" loading="lazy"
+                         alt="A profile of a sample program: the timeline above the call tree, its hot path opened">
+                </figure>
+            </div>
+
+            <div class="feature">
+                <div class="text">
+                    <h3>Git</h3>
+                    <p>The Commit window with its changes, the log with its branch graph, side-by-side diffs, blame, change bars in
+                        the gutter that roll a change back, branches, stashes, push, pull and fetch.</p>
+                </div>
+                <figure class="shot">
+                    <img src="/images/git.webp" width="2400" height="1500" loading="lazy"
+                         alt="The Commit window beside the editor, and the Git log with a commit's details">
+                </figure>
+            </div>
+
+            <div class="feature flip">
+                <div class="text">
+                    <h3>Find anything</h3>
+                    <p>Search Everywhere, Go to File, Go to Symbol and Find Action, Find and Replace in Files with a preview, Recent
+                        Files, bookmarks and File Structure.</p>
+                </div>
+                <figure class="shot">
+                    <img src="/images/find-in-files.webp" width="2400" height="1500" loading="lazy"
+                         alt="Find in Files: every match with its file and line, the chosen one previewed below">
+                </figure>
+            </div>
+        </div>
+    </section>
+
+    <section id="agents">
+        <div class="wrap agents">
+            <div>
+                <h2>Your agent, in the same IDE</h2>
+                <p>Passenger is a Model Context Protocol server. A coding agent can ask Roslyn about your code and use its fixes and
+                    renames, build and run, run tests, debug (breakpoints, stepping, evaluation, the stopped program's
+                    variables), use Git and NuGet, type into the terminal, and see the window in screenshots.</p>
+                <p>Attach it to the window you have open, and its breakpoints and stops show there as you watch. A window listens
+                    on a socket only you can reach.</p>
+            </div>
+            <div>
+<pre><span class="comment"># a Passenger of the agent's own, with no window</span>
+claude mcp add passenger -- \
+    /path/to/Passenger --mcp /path/to/solution
+
+<span class="comment"># the Passenger window you have open</span>
+claude mcp add passenger -- \
+    /path/to/Passenger --mcp-attach</pre>
+                <p>Those are Claude Code's commands; any MCP client works the same way.</p>
+            </div>
+        </div>
+    </section>
+
+    <section id="download">
+        <div class="wrap">
+            <h2>Download</h2>
+            <p class="status" id="release-status"></p>
+            <div class="downloads">
+                <div class="platform">
+                    <h3>macOS</h3>
+                    <ul>
+                        <li><a data-asset="Passenger-macos-arm64.dmg" href="https://github.com/Zaneris/passenger/releases/latest/download/Passenger-macos-arm64.dmg">Apple Silicon <span class="kind">.dmg</span></a></li>
+                        <li><a data-asset="Passenger-macos-x64.dmg" href="https://github.com/Zaneris/passenger/releases/latest/download/Passenger-macos-x64.dmg">Intel <span class="kind">.dmg</span></a></li>
+                    </ul>
+                </div>
+                <div class="platform">
+                    <h3>Windows</h3>
+                    <ul>
+                        <li><a data-asset="Passenger-windows-x64.exe" href="https://github.com/Zaneris/passenger/releases/latest/download/Passenger-windows-x64.exe">x64 <span class="kind">installer</span></a></li>
+                        <li><a data-asset="Passenger-windows-arm64.exe" href="https://github.com/Zaneris/passenger/releases/latest/download/Passenger-windows-arm64.exe">Arm64 <span class="kind">installer</span></a></li>
+                    </ul>
+                </div>
+                <div class="platform">
+                    <h3>Linux</h3>
+                    <ul>
+                        <li><a data-asset="Passenger-linux-x64.tar.gz" href="https://github.com/Zaneris/passenger/releases/latest/download/Passenger-linux-x64.tar.gz">x64 <span class="kind">.tar.gz</span></a></li>
+                        <li><a data-asset="Passenger-linux-arm64.tar.gz" href="https://github.com/Zaneris/passenger/releases/latest/download/Passenger-linux-arm64.tar.gz">Arm64 <span class="kind">.tar.gz</span></a></li>
+                    </ul>
+                    <a class="more" href="/linux">How to install on Linux</a>
+                </div>
+            </div>
+            <p class="needs">Passenger needs a <a href="https://dotnet.microsoft.com/download">.NET SDK</a>, version 10 or later: it
+                builds and runs your projects with it, and Roslyn's language server runs on it. Version control needs
+                <a href="https://git-scm.com/downloads">Git</a>. Every release, with its notes and checksums, is on
+                <a href="https://github.com/Zaneris/passenger/releases">GitHub</a>.</p>
+        </div>
+    </section>
+</main>
+
+<footer>
+    <div class="wrap">
+        <p>Passenger is open source under the MIT licence. It is not affiliated with JetBrains; Rider is their trademark.</p>
+        <nav>
+            <a href="https://github.com/Zaneris/passenger">GitHub</a>
+            <a href="https://github.com/Zaneris/passenger/blob/main/LICENSE">Licence</a>
+            <a href="https://github.com/Zaneris/passenger/blob/main/THIRD_PARTY_NOTICES.md">Third-party notices</a>
+            <a href="/linux">Linux</a>
+        </nav>
+    </div>
+</footer>
+</body>
+</html>

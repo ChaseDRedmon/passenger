@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Passenger on Linux</title>
+    <meta name="description" content="How to install Passenger, an IDE for C# and .NET, on Linux.">
+    <link rel="canonical" href="https://passenger-ide.net/linux">
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <meta name="theme-color" content="#1E1F22" media="(prefers-color-scheme: dark)">
+    <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+    <link rel="stylesheet" href="/style.css">
+    <script src="/site.js" defer></script>
+</head>
+<body>
+<header class="top">
+    <div class="wrap">
+        <a class="brand" href="/"><img src="/favicon.svg" alt="" width="28" height="28">Passenger</a>
+        <nav>
+            <a class="wide" href="/#features">Features</a>
+            <a href="/#download">Download</a>
+            <a href="https://github.com/Zaneris/passenger">GitHub</a>
+        </nav>
+    </div>
+</header>
+
+<main class="wrap page">
+    <h1>Passenger on Linux</h1>
+    <p>Passenger is made for Windows and macOS first. Its Linux builds come from the same code and are newer and less
+        tested, so please <a href="https://github.com/Zaneris/passenger/issues">report</a> anything that goes wrong.</p>
+    <p class="status" id="linux-status"></p>
+
+    <h2>1. What it needs</h2>
+    <p>A 64-bit Intel or Arm machine with a desktop, and:</p>
+    <ul>
+        <li><strong>A .NET SDK, version 10 or later</strong>, from <a href="https://learn.microsoft.com/dotnet/core/install/linux">Microsoft's
+            Linux packages or install script</a>, with <code>dotnet</code> on your PATH (or <code>DOTNET_ROOT</code> naming its
+            folder). Passenger builds and runs your projects with it, and Roslyn's language server runs on it.</li>
+        <li><strong>Git</strong>, and the X11 and fontconfig libraries most desktops already have. On a Wayland desktop,
+            Passenger runs through XWayland.</li>
+    </ul>
+<pre><span class="comment"># Ubuntu, Debian</span>
+sudo apt install git libx11-6 libice6 libsm6 libfontconfig1
+
+<span class="comment"># Fedora</span>
+sudo dnf install git libX11 libICE libSM fontconfig</pre>
+
+    <h2>2. Download and unpack</h2>
+<pre>arch=$(uname -m | sed 's/x86_64/x64/; s/aarch64/arm64/')
+curl -LO \
+    https://github.com/Zaneris/passenger/releases/latest/download/Passenger-linux-$arch.tar.gz
+tar -xzf Passenger-linux-$arch.tar.gz</pre>
+    <p>That makes a <code>passenger</code> folder. Passenger is self-contained: it can run from there as it is
+        (<code>./passenger/passenger</code>), with nothing installed.</p>
+
+    <h2>3. Install</h2>
+<pre>./passenger/install.sh</pre>
+    <p>For you alone, with no root needed. It copies Passenger to <code>~/.local/opt/passenger</code>, links
+        <code>~/.local/bin/passenger</code>, and adds Passenger to your applications menu with its icon. If
+        <code>~/.local/bin</code> is not on your PATH yet, add it:</p>
+<pre>echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.profile</pre>
+    <p>For everyone on the machine, run it with <code>sudo ./passenger/install.sh --system</code>, which uses
+        <code>/opt/passenger</code>, <code>/usr/local/bin</code> and <code>/usr/share/applications</code> instead.</p>
+    <p>Then open a folder or a solution from the menu, or from a shell:</p>
+<pre>passenger ~/src/MySolution</pre>
+
+    <h2>Updating</h2>
+    <p>Download and unpack the newer release, then run its <code>install.sh</code> as before. It replaces the old files
+        and keeps your settings.</p>
+
+    <h2>Uninstalling</h2>
+<pre>~/.local/opt/passenger/install.sh --uninstall
+<span class="comment"># or, if it was installed for everyone</span>
+sudo /opt/passenger/install.sh --uninstall --system</pre>
+    <p>Your settings and layout stay in <code>~/.local/share/Passenger</code>; delete that folder to remove them too.</p>
+
+    <h2>If something goes wrong</h2>
+    <ul>
+        <li><strong>C# has colour but no completion or errors:</strong> Passenger could not start Roslyn's language server.
+            Check that <code>dotnet --list-sdks</code> shows a version 10 or later SDK.</li>
+        <li><strong>Attach to Process is refused:</strong> most distributions only let a debugger attach to its own child
+            processes. Debugging a program Passenger starts works as it is; to attach to one it did not start, allow it
+            until the next restart with <code>sudo sysctl kernel.yama.ptrace_scope=0</code>.</li>
+        <li><strong>The window does not open:</strong> run <code>passenger</code> from a shell to see why, and check the
+            libraries in step 1.</li>
+    </ul>
+</main>
+
+<footer>
+    <div class="wrap">
+        <p>Passenger is open source under the MIT licence. It is not affiliated with JetBrains; Rider is their trademark.</p>
+        <nav>
+            <a href="https://github.com/Zaneris/passenger">GitHub</a>
+            <a href="https://github.com/Zaneris/passenger/blob/main/LICENSE">Licence</a>
+            <a href="https://github.com/Zaneris/passenger/blob/main/THIRD_PARTY_NOTICES.md">Third-party notices</a>
+            <a href="/">Home</a>
+        </nav>
+    </div>
+</footer>
+</body>
+</html>

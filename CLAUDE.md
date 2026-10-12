@@ -109,6 +109,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   `src/Passenger.Debugger.Interop` (ICorDebug, IMetaDataImport and dbgshim for the COM source generator),
   `src/Passenger.Debugger` (the engine), `src/Passenger.Dap` (the Debug Adapter Protocol, both ends) and
   `src/Passenger.DebugAdapter` (the engine behind the protocol, its own process, carried under `debugger/`).
+- `site/`: passenger-ide.net, plain HTML and CSS, deployed to Cloudflare Pages by `.github/workflows/site.yml` on a push that
+  touches it. Its downloads are the latest GitHub release's assets, by fixed names (#56).
 
 ## Rules
 
