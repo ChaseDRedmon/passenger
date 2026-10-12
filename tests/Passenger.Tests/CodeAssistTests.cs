@@ -269,6 +269,49 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
     }
 
     [AvaloniaFact]
+    public void A_reformat_started_before_switching_tabs_changes_only_its_own_file()
+    {
+        MainWindow window = project.Open("Messy.cs");
+        string helper = File.ReadAllText(project.PathOf("Helper.cs"));
+        window.Perform(AppActions.Reformat);
+        // Before the server answers, another file is shown.
+        window.OpenFile(project.PathOf("Helper.cs"));
+        Ui.Settle();
+        Passenger.App.Workspace.OpenDocument messy = window.EditorArea.Documents.First(d => d.Name == "Messy.cs");
+        Ui.WaitFor(() => messy.Text.Snapshot.ToString().Contains("        List<string> names = [];", StringComparison.Ordinal), "Messy.cs reformatted");
+        Assert.Equal("Helper.cs", window.EditorArea.Active!.Name);
+        Assert.Equal(helper, window.EditorArea.CodeEditor.Document.Snapshot.ToString());
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_line_typed_while_a_rename_is_out_still_leaves_the_new_name_on_the_symbol()
+    {
+        string helper = File.ReadAllText(project.PathOf("Helper.cs"));
+        MainWindow window = project.Open("Program.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        try
+        {
+            PlaceAfter(editor, "Helper.Tw");
+            Ui.Run(window, AppActions.Rename);
+            window.KeyTextInput("Double");
+            Ui.Settle();
+            // Enter sends the rename; a line is typed above before the answer comes.
+            window.KeyPress(Avalonia.Input.Key.Enter, Avalonia.Input.RawInputModifiers.None, Avalonia.Input.PhysicalKey.None, null);
+            editor.ApplyEdits([new TextEdit(0, 0, "// typed meanwhile\n")]);
+            Ui.Settle();
+            string text = editor.Document.Snapshot.ToString();
+            Assert.StartsWith("// typed meanwhile\nclass Program", text, StringComparison.Ordinal);
+            Assert.Contains("int result = Helper.Double(2);", text, StringComparison.Ordinal);
+        }
+        finally
+        {
+            File.WriteAllText(project.PathOf("Helper.cs"), helper);
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
     public void Go_to_declaration_opens_the_other_file_at_the_method()
     {
         MainWindow window = project.Open("Program.cs");

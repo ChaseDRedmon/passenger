@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
 using Passenger.App.Editors;
+using Passenger.App.Workspace;
 using Passenger.Editor;
 using Passenger.Languages.CSharp;
 using Passenger.Lsp;
@@ -28,6 +29,7 @@ public sealed class CodeAssist
     private CancellationTokenSource? hovering;
     private CancellationTokenSource? completing;
     private CancellationTokenSource? describing;
+    private CancellationTokenSource? signing;
     private Completion? open;
     private Control? modal;
 
@@ -293,6 +295,7 @@ public sealed class CodeAssist
         }
         else if (last == ')' || last == ';')
         {
+            signing?.Cancel();
             signatureCard.IsVisible = false;
         }
     }
@@ -439,6 +442,8 @@ public sealed class CodeAssist
             ExpandPostfix(postfix.Template, postfix.Target, Editor.Selections.Primary.Caret);
             return;
         }
+        TextDocument document = Editor.Document;
+        using ChangeTracker asked = new(document);
         try
         {
             if (item.Data is not null && item.AdditionalTextEdits is null)
@@ -449,12 +454,18 @@ public sealed class CodeAssist
         catch (Exception error) when (IsServerFailure(error))
         {
         }
-        int caret = Math.Min(end ?? Editor.Selections.Primary.Caret, Editor.Document.Snapshot.Length);
+        // The editor shows another file now: the item was for the one it showed.
+        if (Editor.Document != document)
+        {
+            return;
+        }
+        start = asked.MapOffset(start);
+        int caret = Math.Min(asked.MapOffset(end ?? Editor.Selections.Primary.Caret), Editor.Document.Snapshot.Length);
         string insert = item.TextEdit?.NewText ?? item.TextEditText ?? item.InsertText ?? item.Label;
         List<Passenger.Text.TextEdit> edits = [new Passenger.Text.TextEdit(start, Math.Max(0, caret - start), insert)];
-        if (item.AdditionalTextEdits is { Count: > 0 } extra)
+        if (item.AdditionalTextEdits is { Count: > 0 } extra && asked.Map(WorkspaceEdits.Convert(asked.Snapshot, extra)) is { } placed)
         {
-            edits.AddRange(WorkspaceEdits.Convert(Editor.Document.Snapshot, extra).Where(e => e.End <= start || e.Start >= caret));
+            edits.AddRange(placed.Where(e => e.End <= start || e.Start >= caret));
         }
         Editor.ApplyEdits(edits);
     }
@@ -693,9 +704,18 @@ public sealed class CodeAssist
             return;
         }
         int caret = Editor.Selections.Primary.Caret;
+        TextDocument document = Editor.Document;
+        signing?.Cancel();
+        CancellationTokenSource cancel = new();
+        signing = cancel;
         try
         {
-            SignatureHelp? help = await lsp.SignatureHelpAsync(caret);
+            SignatureHelp? help = await lsp.SignatureHelpAsync(caret, cancel.Token);
+            // A late answer is for a call the caret has left, or a file no longer shown.
+            if (cancel.IsCancellationRequested || Editor.Document != document)
+            {
+                return;
+            }
             if (help is null || help.Signatures.Count == 0)
             {
                 signatureCard.IsVisible = false;
@@ -770,7 +790,7 @@ public sealed class CodeAssist
                 }
                 if (chosen.Edit is { } edit)
                 {
-                    WorkspaceEdits.Apply(editors, edit);
+                    ApplyWorkspace(edit, null, chosen.Title);
                 }
             });
         }
@@ -791,6 +811,7 @@ public sealed class CodeAssist
         try
         {
             Selection primary = Editor.Selections.Primary;
+            using Asked asked = WorkspaceEdits.Track(editors);
             CodeAction? action = (await lsp.CodeActionsAsync(primary.Range, [])).Where(a => a.Disabled is null).FirstOrDefault(pick);
             if (action is null)
             {
@@ -805,7 +826,10 @@ public sealed class CodeAssist
             {
                 return;
             }
-            WorkspaceEdits.Apply(editors, edit);
+            if (!ApplyWorkspace(edit, asked, name))
+            {
+                return;
+            }
             Message?.Invoke(this, $"{name} done");
             if (renameAfter is not null)
             {
@@ -842,18 +866,24 @@ public sealed class CodeAssist
             return;
         }
         RenameBox box = new(text.GetText(word));
+        ChangeTracker opened = new(Editor.Document);
         ShowModal(box, word.Start, async name =>
         {
+            int at = opened.MapOffset(word.Start);
+            opened.Dispose();
             if (name is null)
             {
                 return;
             }
             try
             {
-                if (await lsp.RenameAsync(word.Start, name) is { } edit)
+                using Asked asked = WorkspaceEdits.Track(editors);
+                if (await lsp.RenameAsync(at, name) is { } edit)
                 {
-                    int files = WorkspaceEdits.Apply(editors, edit);
-                    Message?.Invoke(this, files > 1 ? $"Renamed in {files} files" : "Renamed");
+                    List<string> dropped = [];
+                    int files = WorkspaceEdits.Apply(editors, edit, asked, dropped);
+                    Message?.Invoke(this, dropped.Count > 0 ? $"Renamed, but not in {string.Join(", ", dropped)}: it was edited meanwhile"
+                        : files > 1 ? $"Renamed in {files} files" : "Renamed");
                 }
                 else
                 {
@@ -1017,15 +1047,18 @@ public sealed class CodeAssist
 
     private async Task ReformatCore()
     {
-        if (Current?.Lsp is not { } lsp)
+        if (Current?.Lsp is not { } lsp || editors.Active is not { } document)
         {
             return;
         }
         try
         {
+            using ChangeTracker asked = new(document.Text);
             IReadOnlyList<LspTextEdit> edits = await lsp.FormatAsync(Editor.Indent);
-            Editor.ApplyEdits(WorkspaceEdits.Convert(Editor.Document.Snapshot, edits));
-            Message?.Invoke(this, edits.Count == 0 ? "Already formatted" : "Reformatted");
+            if (ApplyAnswer(document, asked, edits, "Reformat Code"))
+            {
+                Message?.Invoke(this, edits.Count == 0 ? "Already formatted" : "Reformatted");
+            }
         }
         catch (Exception error) when (IsServerFailure(error))
         {
@@ -1049,7 +1082,7 @@ public sealed class CodeAssist
     /// removed (IDE0005's fix), the usings sorted, then the file reformatted.</summary>
     private async Task CleanupCore()
     {
-        if (Current is not { Lsp: { } lsp } current)
+        if (Current is not { Lsp: { } lsp } current || editors.Active is not { } document)
         {
             return;
         }
@@ -1071,10 +1104,10 @@ public sealed class CodeAssist
                     done.Add("sorted the usings");
                 }
             }
-            string unformatted = Editor.Document.Snapshot.ToString();
+            string unformatted = document.Text.Snapshot.ToString();
+            using ChangeTracker asked = new(document.Text);
             IReadOnlyList<LspTextEdit> edits = await lsp.FormatAsync(Editor.Indent);
-            Editor.ApplyEdits(WorkspaceEdits.Convert(Editor.Document.Snapshot, edits));
-            if (Editor.Document.Snapshot.ToString() != unformatted)
+            if (ApplyAnswer(document, asked, edits, "Code Cleanup") && document.Text.Snapshot.ToString() != unformatted)
             {
                 done.Add("reformatted");
             }
@@ -1094,6 +1127,7 @@ public sealed class CodeAssist
     /// <summary>Runs the server's action of that title at a range, if it offers one; whether it did.</summary>
     private async Task<bool> ApplyNamed(LspDocument lsp, TextRange range, IReadOnlyList<Diagnostic> diagnostics, string title)
     {
+        using Asked asked = WorkspaceEdits.Track(editors);
         IReadOnlyList<CodeAction> actions = await lsp.CodeActionsAsync(range, diagnostics);
         if (actions.FirstOrDefault(a => a.Title == title && a.Disabled is null) is not { } action)
         {
@@ -1103,11 +1137,40 @@ public sealed class CodeAssist
         {
             action = await lsp.ResolveAsync(action) ?? action;
         }
-        if (action.Edit is not { } edit)
+        return action.Edit is { } edit && ApplyWorkspace(edit, asked, title);
+    }
+
+    /// <summary>A workspace edit applied, its open files' edits carried through what was typed since the request; one
+    /// whose edited text changed meanwhile is left alone and named in the status bar. Whether every file took it.</summary>
+    private bool ApplyWorkspace(System.Text.Json.JsonElement edit, Asked? asked, string what)
+    {
+        List<string> dropped = [];
+        WorkspaceEdits.Apply(editors, edit, asked, dropped);
+        if (dropped.Count > 0)
+        {
+            Message?.Invoke(this, $"{what} was not applied to {string.Join(", ", dropped)}: it was edited meanwhile");
+        }
+        return dropped.Count == 0;
+    }
+
+    /// <summary>Edits answered for a document's text as it was asked about, applied to that document as it is now (through
+    /// the editor when it shows it), never to whatever file the editor shows by then; refused, said in the status bar,
+    /// when the code they change was edited meanwhile.</summary>
+    private bool ApplyAnswer(OpenDocument document, ChangeTracker asked, IReadOnlyList<LspTextEdit> answer, string what)
+    {
+        if (!editors.Documents.Contains(document))
         {
             return false;
         }
-        WorkspaceEdits.Apply(editors, edit);
+        if (asked.Map(WorkspaceEdits.Convert(asked.Snapshot, answer)) is not { } edits)
+        {
+            Message?.Invoke(this, $"{what} was not applied: the code it changes was edited meanwhile");
+            return false;
+        }
+        if (edits.Count > 0)
+        {
+            WorkspaceEdits.ApplyTo(editors, document, edits);
+        }
         return true;
     }
 
@@ -1187,6 +1250,7 @@ public sealed class CodeAssist
     {
         CloseCompletion();
         HideHover();
+        signing?.Cancel();
         signatureCard.IsVisible = false;
         CloseModal();
     }

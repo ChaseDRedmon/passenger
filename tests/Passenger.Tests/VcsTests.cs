@@ -492,6 +492,9 @@ public sealed class VcsTests : IDisposable
         window.Perform(AppActions.ShowGit);
         Ui.WaitFor(() => window.GitLog.Rows.Count == 2, "the log");
         Ui.WaitFor(() => window.FileIndex.Files.Count == 3, "the files for Go to File");
+        // The log may be read once before the window's first look at the repository knows its history, and once after.
+        Task known = window.Vcs.RefreshAsync();
+        Ui.WaitFor(() => known.IsCompleted, "the repository's history to be known");
         Passenger.App.Explorer.ExplorerTree tree = window.ExplorerView.Tree;
         tree.Expand(tree.Rows.First(r => r.Name == "Models"));
         Passenger.App.Explorer.ExplorerNode[] chosen = [.. tree.Rows.Where(r => r.Name is "Order.cs" or "Line.cs")];

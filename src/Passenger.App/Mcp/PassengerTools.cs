@@ -210,8 +210,13 @@ public sealed partial class PassengerTools(MainWindow window)
         (OpenDocument document, LspDocument lsp) = await Code(path);
         window.OpenFile(document.Path);
         CodeEditor editor = window.EditorArea.CodeEditor;
+        using Passenger.Text.ChangeTracker asked = new(document.Text);
         IReadOnlyList<LspTextEdit> edits = await lsp.FormatAsync(editor.Indent);
-        editor.ApplyEdits(WorkspaceEdits.Convert(editor.Document.Snapshot, edits));
+        if (asked.Map(WorkspaceEdits.Convert(asked.Snapshot, edits)) is not { } placed)
+        {
+            return "Not reformatted: the file was edited while the language server worked on it";
+        }
+        WorkspaceEdits.ApplyTo(window.EditorArea, document, placed);
         document.Save();
         return edits.Count == 0 ? "Already formatted" : $"Reformatted ({edits.Count} edits)";
     });

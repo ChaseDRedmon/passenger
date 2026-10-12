@@ -34,7 +34,7 @@ public sealed class CSharpDocument : IDisposable
 
     public LspDocument? Lsp { get; private set; }
 
-    /// <summary>The diagnostics last pulled, mapped to the text as it is now.</summary>
+    /// <summary>The diagnostics last pulled, moved with the text since, so their lines are the text's as it is now.</summary>
     public IReadOnlyList<Diagnostic> Diagnostics { get; private set; } = [];
 
     internal void Connect(RoslynSession session)
@@ -76,6 +76,11 @@ public sealed class CSharpDocument : IDisposable
 
     private void OnChanged(object? sender, DocumentChangedEventArgs e)
     {
+        if (Diagnostics.Count > 0)
+        {
+            // Moved with the text, as the markers are, so a fix asked for at the caret finds the problems on its line.
+            Diagnostics = [.. Diagnostics.Select(d => Moved(d, e))];
+        }
         if (document.Markers.Count > 0)
         {
             document.Markers = document.Markers
@@ -91,6 +96,27 @@ public sealed class CSharpDocument : IDisposable
     }
 
     private void OnSaved(object? sender, EventArgs e) => Lsp?.Saved();
+
+    private static Diagnostic Moved(Diagnostic diagnostic, DocumentChangedEventArgs change)
+    {
+        TextRange before = TextRange.FromBounds(Offset(change.Before, diagnostic.Range.Start), Offset(change.Before, diagnostic.Range.End));
+        TextRange after = TextEditing.MapRange(before, change.Edits);
+        TextPosition start = change.After.GetPosition(Math.Min(after.Start, change.After.Length));
+        TextPosition end = change.After.GetPosition(Math.Min(after.End, change.After.Length));
+        return new Diagnostic
+        {
+            Range = new LspRange(new LspPosition(start.Line, start.Column), new LspPosition(end.Line, end.Column)),
+            Severity = diagnostic.Severity,
+            Code = diagnostic.Code,
+            Source = diagnostic.Source,
+            Message = diagnostic.Message,
+            Tags = diagnostic.Tags,
+            Data = diagnostic.Data,
+        };
+
+        static int Offset(TextSnapshot text, LspPosition at) =>
+            text.GetOffset(new TextPosition(Math.Min(at.Line, text.LineCount - 1), at.Character));
+    }
 
     private void Pull(TimeSpan delay)
     {

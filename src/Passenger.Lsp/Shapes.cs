@@ -118,7 +118,8 @@ public static class Shapes
             {
                 if (change.TryGetProperty("textDocument", out JsonElement document) && change.TryGetProperty("edits", out JsonElement edits))
                 {
-                    files.Add(new FileEdits(document.GetProperty("uri").GetString()!, edits.Deserialize<List<LspTextEdit>>(Json.Options) ?? [], null));
+                    int? version = document.TryGetProperty("version", out JsonElement v) && v.ValueKind == JsonValueKind.Number ? v.GetInt32() : null;
+                    files.Add(new FileEdits(document.GetProperty("uri").GetString()!, edits.Deserialize<List<LspTextEdit>>(Json.Options) ?? [], null) { Version = version });
                 }
                 else if (change.TryGetProperty("kind", out JsonElement kind))
                 {
@@ -149,4 +150,9 @@ public static class Shapes
 
 /// <summary>What a workspace edit does to one file: text edits, or a resource operation (create,
 /// rename, delete) as its JSON.</summary>
-public sealed record FileEdits(string Uri, IReadOnlyList<LspTextEdit> Edits, JsonElement? Operation);
+/// <summary>A workspace edit's change to one file: its edits (or an operation: create, rename, delete), and the version of
+/// the document they were made for, when the server says.</summary>
+public sealed record FileEdits(string Uri, IReadOnlyList<LspTextEdit> Edits, JsonElement? Operation)
+{
+    public int? Version { get; init; }
+}
