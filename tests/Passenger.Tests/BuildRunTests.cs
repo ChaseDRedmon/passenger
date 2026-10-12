@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using Avalonia;
+using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Passenger.App;
 using Passenger.App.Explorer;
@@ -157,6 +159,53 @@ public sealed class BuildRunTests : IDisposable
         Assert.StartsWith("Rebuild failed: 1 error", window.Status, StringComparison.Ordinal);
         Problem problem = Assert.Single(window.BottomPanel.Problems.Problems, p => p.Code == "CS0029");
         Assert.EndsWith("Tool.cs", problem.Path, StringComparison.Ordinal);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void An_unloaded_project_is_dimmed_and_leaves_the_run_configurations_until_it_is_reloaded()
+    {
+        MainWindow window = Open();
+        ExplorerTree tree = window.ExplorerView.Tree;
+        tree.Expand(Assert.Single(tree.Rows, r => r.Kind == NodeKind.SolutionFolder && r.Name == "src"));
+        string hello = Assert.Single(tree.Rows, r => r.Kind == NodeKind.Project && r.Name == "Hello").Path!;
+        Assert.Equal(["Hello"], window.Configurations.Select(c => c.Name));
+
+        window.SetUnloaded(hello, unloaded: true);
+        ExplorerNode unloaded = Assert.Single(tree.Rows, r => r.Kind == NodeKind.Project && r.Name == "Hello");
+        Assert.Equal("(unloaded)", unloaded.Detail);
+        Assert.True(unloaded.IsDimmed);
+        Assert.False(unloaded.HasChildren);
+        Assert.Empty(window.Configurations);
+        window.Perform(AppActions.Build);
+        Assert.Equal("Nothing to build: every project is unloaded", window.Status);
+
+        window.SetUnloaded(hello, unloaded: false);
+        Assert.Equal(["Hello"], window.Configurations.Select(c => c.Name));
+        Assert.Equal("net10.0", Assert.Single(tree.Rows, r => r.Kind == NodeKind.Project && r.Name == "Hello").Detail);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void The_consoles_menu_copies_and_clears_its_output()
+    {
+        MainWindow window = Open();
+        window.ShowToolWindow("run");
+        Passenger.App.ToolWindows.OutputView run = window.BottomPanel.Run;
+        run.Append("first line\nsecond line\n");
+        Ui.Settle();
+        // Below the first line's top, which is the splitter's to grab.
+        Avalonia.Point inText = run.Editor.TranslatePoint(run.Editor.PointOf(14) + new Avalonia.Vector(1, run.Editor.LineHeight / 2), window)!.Value;
+        window.MouseDown(inText, Avalonia.Input.MouseButton.Right);
+        window.MouseUp(inText, Avalonia.Input.MouseButton.Right);
+        Ui.Settle();
+        Avalonia.Controls.ContextMenu menu = Assert.IsType<Avalonia.Controls.ContextMenu>(run.Menu);
+        Assert.Equal(["Copy", "Select All", "Clear All"], menu.Items.OfType<Avalonia.Controls.MenuItem>().Select(i => (string?)i.Header));
+        Assert.False(menu.Items.OfType<Avalonia.Controls.MenuItem>().First().IsEnabled, "Copy is offered with nothing chosen");
+        menu.Items.OfType<Avalonia.Controls.MenuItem>().Last().RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.MenuItem.ClickEvent));
+        Ui.Settle();
+        Assert.Equal(string.Empty, run.Document.Snapshot.ToString());
+        menu.Close();
         window.Close();
     }
 

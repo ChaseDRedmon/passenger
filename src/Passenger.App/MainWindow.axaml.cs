@@ -307,7 +307,8 @@ public partial class MainWindow : Window
         Solution = SolutionModel.Find(folder) is { } solutionPath ? SolutionModel.Load(solutionPath) : null;
         Explorer.Load(folder, Solution);
         _ = vcs.OpenAsync(folder);
-        configurations = RunConfiguration.From(Solution, folder);
+        Explorer.Tree.Unloaded.Clear();
+        configurations = Configure();
         configuration = configurations.FirstOrDefault();
         RunConfigName.Text = configuration?.Name ?? "No configurations";
         index.Build(folder);
@@ -788,10 +789,19 @@ public partial class MainWindow : Window
         afterBuild = then;
         buildKind = kind;
         string solution = Solution?.Path ?? Directory.EnumerateFiles(folder, "*.csproj").FirstOrDefault() ?? folder;
+        // With projects unloaded, the solution is the projects still loaded, built one after another.
+        IReadOnlyList<string> whole = Solution is not null && Explorer.Tree.Unloaded.Count > 0 ? [.. Projects.Select(p => p.Path)] : [solution];
         buildQueue.Clear();
-        foreach (string target in projects is { Count: > 0 } ? projects : [solution])
+        foreach (string target in projects is { Count: > 0 } ? projects : whole)
         {
             buildQueue.Enqueue(target);
+        }
+        if (buildQueue.Count == 0)
+        {
+            StatusText.Text = "Nothing to build: every project is unloaded";
+            afterBuild = null;
+            then?.Invoke(false);
+            return;
         }
         Editors.SaveAll();
         problems.Clear();
@@ -976,7 +986,7 @@ public partial class MainWindow : Window
     {
         if (keepsWorkspace && folder is not null)
         {
-            new WorkspaceState { Editors = Editors.Capture(), RecentFiles = [.. recent] }.Save(folder);
+            new WorkspaceState { Editors = Editors.Capture(), RecentFiles = [.. recent], UnloadedProjects = [.. Explorer.Tree.Unloaded] }.Save(folder);
         }
     }
 
@@ -985,6 +995,17 @@ public partial class MainWindow : Window
         if (!keepsWorkspace || folder is null || WorkspaceState.Load(folder) is not { } kept)
         {
             return;
+        }
+        if (kept.UnloadedProjects.Count > 0)
+        {
+            foreach (string project in kept.UnloadedProjects)
+            {
+                Explorer.Tree.Unloaded.Add(project);
+            }
+            Explorer.Refresh();
+            configurations = Configure();
+            configuration = configurations.FirstOrDefault();
+            RunConfigName.Text = configuration?.Name ?? "No configurations";
         }
         if (kept.Editors is { } editors)
         {
@@ -1366,8 +1387,29 @@ public partial class MainWindow : Window
 
     /// <summary>The projects of the solution, or the folder's with none.</summary>
     public IReadOnlyList<ProjectModel> Projects => Solution is { } solution
-        ? [.. solution.Projects]
+        ? [.. solution.Projects.Where(p => !Explorer.Tree.Unloaded.Contains(p.Path))]
         : folder is null ? [] : [.. Directory.EnumerateFiles(folder, "*.csproj").Select(ProjectModel.Load)];
+
+    /// <summary>The run configurations of the projects loaded.</summary>
+    private IReadOnlyList<RunConfiguration> Configure() =>
+        folder is null ? [] : [.. RunConfiguration.From(Solution, folder).Where(c => !Explorer.Tree.Unloaded.Contains(c.Project.Path))];
+
+    /// <summary>Rider's Unload Project: the project shows dimmed with nothing under it, and leaves the run configurations,
+    /// the solution's builds and the test runner until it is reloaded; the folder keeps the choice.</summary>
+    public void SetUnloaded(string project, bool unloaded)
+    {
+        if (unloaded ? !Explorer.Tree.Unloaded.Add(project) : !Explorer.Tree.Unloaded.Remove(project))
+        {
+            return;
+        }
+        Explorer.Refresh();
+        string? chosen = configuration?.Name;
+        configurations = Configure();
+        configuration = configurations.FirstOrDefault(c => c.Name == chosen) ?? configurations.FirstOrDefault();
+        RunConfigName.Text = configuration?.Name ?? "No configurations";
+        StatusText.Text = $"{Path.GetFileNameWithoutExtension(project)} {(unloaded ? "unloaded" : "reloaded")}";
+        KeepWorkspace();
+    }
 
     /// <summary>A run of tests shown in the Unit Tests window; what stopped it, if anything, in the status bar.</summary>
     private void RunTests(Func<Task<string?>> run)

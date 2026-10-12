@@ -142,7 +142,10 @@ public sealed class ExplorerTree
         Expand(root);
     }
 
-    private static ExplorerNode Entry(SolutionEntry entry, int depth) => entry switch
+    /// <summary>The projects unloaded, by path: shown dimmed, with nothing under them.</summary>
+    public ISet<string> Unloaded { get; } = new HashSet<string>(StringComparer.Ordinal);
+
+    private ExplorerNode Entry(SolutionEntry entry, int depth) => entry switch
     {
         SolutionFolder folder => new ExplorerNode(NodeKind.SolutionFolder, folder.Name, null, depth, false,
             node => folder.Children.Select(c => Entry(c, node.Depth + 1)).ToList()),
@@ -150,8 +153,9 @@ public sealed class ExplorerTree
         _ => throw new InvalidOperationException($"Unknown solution entry {entry}"),
     };
 
-    private static ExplorerNode Project(ProjectModel project, int depth) =>
-        new(NodeKind.Project, project.Name, project.Path, depth, !project.Exists, node =>
+    private ExplorerNode Project(ProjectModel project, int depth) => Unloaded.Contains(project.Path)
+        ? new(NodeKind.Project, project.Name, project.Path, depth, dimmed: true, null, "(unloaded)")
+        : new(NodeKind.Project, project.Name, project.Path, depth, !project.Exists, node =>
         {
             List<ExplorerNode> children = [Dependencies(project, node.Depth + 1)];
             children.AddRange(Contents(project.Folder, node.Depth + 1, dimmed: false, skip: project.Path));

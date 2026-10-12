@@ -28,6 +28,22 @@ public sealed class TerminalTests
     }
 
     [Fact]
+    public void Clear_buffer_leaves_only_the_prompt_at_the_top()
+    {
+        TerminalScreen screen = new(20, 3);
+        for (int i = 0; i < 6; i++)
+        {
+            screen.Feed($"output {i}\r\n");
+        }
+        screen.Feed("$ ls");
+        Assert.NotEmpty(screen.Scrollback);
+        screen.ClearBuffer();
+        Assert.Empty(screen.Scrollback);
+        Assert.Equal("$ ls\n\n", screen.ScreenText());
+        Assert.Equal((0, 4), (screen.CursorRow, screen.CursorColumn));
+    }
+
+    [Fact]
     public void Cursor_addressing_and_erasing_work_as_a_full_screen_program_uses_them()
     {
         TerminalScreen screen = new(10, 4);

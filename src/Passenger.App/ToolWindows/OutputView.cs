@@ -45,6 +45,7 @@ public sealed class OutputView : DockPanel
         toolbar.Bind(Border.BorderBrushProperty, toolbar.GetResourceObservable("Passenger.Divider"));
         Children.Add(toolbar);
         Children.Add(Editor);
+        Editor.ContextMenuRequested += (_, at) => ShowMenu(at);
         Document.Changed += (_, change) =>
         {
             // Output only ever grows at the end; anything taken away is a Clear, which takes the colours with it.
@@ -61,6 +62,46 @@ public sealed class OutputView : DockPanel
 
     public TextDocument Document { get; }
     public CodeEditor Editor { get; }
+
+    /// <summary>The console's menu, as Rider's: Copy the selection, Select All, and Clear All.</summary>
+    private void ShowMenu(Point? at)
+    {
+        Keymap keymap = AppActions.Keymap();
+        MenuItem Item(string header, string? action, Action run)
+        {
+            MenuItem item = new() { Header = header };
+            if (action is not null && keymap.ShortcutsFor(action).FirstOrDefault(s => s.Second is null) is { } keys)
+            {
+                item.InputGesture = new Avalonia.Input.KeyGesture(keys.First.Key, keys.First.Modifiers);
+            }
+            item.Click += (_, _) => run();
+            return item;
+        }
+        MenuItem copy = Item("Copy", EditorActions.Copy, () => Editor.TryExecute(EditorActions.Copy));
+        copy.IsEnabled = !Editor.Selections.Primary.IsEmpty;
+        ContextMenu menu = new()
+        {
+            PlacementTarget = Editor,
+            Items =
+            {
+                copy,
+                Item("Select All", EditorActions.SelectAll, () => Editor.TryExecute(EditorActions.SelectAll)),
+                new Separator(),
+                Item("Clear All", null, Document.Clear),
+            },
+        };
+        if (at is null)
+        {
+            menu.Placement = PlacementMode.BottomEdgeAlignedLeft;
+            menu.PlacementRect = new Rect(Editor.PointOf(Editor.Selections.Primary.Caret), new Size(1, Editor.LineHeight));
+        }
+        Menu = menu;
+        menu.Closed += (_, _) => Menu = null;
+        menu.Open(Editor);
+    }
+
+    /// <summary>The console's menu while it is open.</summary>
+    public ContextMenu? Menu { get; private set; }
 
     /// <summary>Adds a program's output at the end; standard error's in its own colour.</summary>
     public void Append(string text, bool error = false)

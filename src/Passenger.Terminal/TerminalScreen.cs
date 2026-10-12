@@ -122,6 +122,24 @@ public sealed class TerminalScreen
     /// <summary>The lines scrolled off the top, oldest first.</summary>
     public IReadOnlyList<TerminalLine> Scrollback => scrollback;
 
+    /// <summary>Rider's Clear Buffer: the scrollback and the screen go, but for the cursor's line (the prompt waiting),
+    /// which moves to the top. A full-screen program's alternate screen is its own, and stays.</summary>
+    public void ClearBuffer()
+    {
+        if (IsAlternate)
+        {
+            return;
+        }
+        scrollback.Clear();
+        TerminalLine prompt = Lines[CursorRow];
+        for (int row = 0; row < Rows; row++)
+        {
+            Lines[row] = row == 0 ? prompt : new TerminalLine(Columns, CellStyle.Plain);
+        }
+        CursorRow = 0;
+        Version++;
+    }
+
     /// <summary>A line by its place in the scrollback and the screen together, from the oldest.</summary>
     public TerminalLine LineAt(int line) => line < scrollback.Count ? scrollback[line] : Lines[line - scrollback.Count];
 

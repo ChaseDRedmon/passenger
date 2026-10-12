@@ -42,6 +42,7 @@ public sealed partial class CodeEditor : Control
     private bool updatingBars;
     private bool editing;
     private int? pendingGoTo;
+    private bool pendingEnd;
     private bool ligatures;
     private Metrics metrics;
     private Palette palette;
@@ -279,9 +280,15 @@ public sealed partial class CodeEditor : Control
     /// <summary>Whether the gutter shows line numbers; a console's output goes without.</summary>
     public bool ShowLineNumbers { get; set; } = true;
 
-    /// <summary>Scrolls so the last line sits at the bottom of the view, as output follows its end.</summary>
+    /// <summary>Scrolls so the last line sits at the bottom of the view, as output follows its end; not yet laid out (a
+    /// console written to while its window is hidden), once it is.</summary>
     public void ScrollToEnd()
     {
+        if (Bounds.Height <= 0)
+        {
+            pendingEnd = true;
+            return;
+        }
         double bottom = RowCount * metrics.LineHeight - Viewport.Height + horizontal.DesiredSize.Height;
         ScrollTo(new Vector(0, Math.Max(0, bottom)));
     }
@@ -444,6 +451,11 @@ public sealed partial class CodeEditor : Control
         ArrangeStripe(bar);
         horizontal.Arrange(new Rect(GutterWidth, finalSize.Height - barHeight, Math.Max(0, finalSize.Width - GutterWidth - barWidth), barHeight));
         UpdateScrollBars();
+        if (pendingEnd && finalSize.Height > 0)
+        {
+            pendingEnd = false;
+            Dispatcher.UIThread.Post(ScrollToEnd);
+        }
         if (pendingGoTo is { } offset)
         {
             pendingGoTo = null;

@@ -43,6 +43,36 @@ public sealed class TerminalView : Control
         Cursor = new Cursor(StandardCursorType.Ibeam);
         ActualThemeVariantChanged += (_, _) => Refresh();
         AttachedToVisualTree += (_, _) => Refresh();
+        ContextMenu = Menu();
+    }
+
+    /// <summary>Rider's terminal menu: Copy, Paste and Clear Buffer, with their keys.</summary>
+    private ContextMenu Menu()
+    {
+        bool mac = OperatingSystem.IsMacOS();
+        KeyModifiers clipboard = mac ? KeyModifiers.Meta : KeyModifiers.Control | KeyModifiers.Shift;
+        MenuItem copy = new() { Header = "Copy", InputGesture = new KeyGesture(Key.C, clipboard) };
+        copy.Click += (_, _) => _ = CopyAsync();
+        MenuItem paste = new() { Header = "Paste", InputGesture = new KeyGesture(Key.V, clipboard) };
+        paste.Click += (_, _) => _ = PasteAsync();
+        MenuItem clear = new() { Header = "Clear Buffer", InputGesture = mac ? new KeyGesture(Key.K, KeyModifiers.Meta) : null };
+        clear.Click += (_, _) => ClearBuffer();
+        ContextMenu menu = new() { Items = { copy, paste, new Separator(), clear } };
+        menu.Opening += (_, _) => copy.IsEnabled = SelectedText.Length > 0;
+        return menu;
+    }
+
+    /// <summary>Clears the scrollback and the screen but for the prompt, as Rider's Clear Buffer does.</summary>
+    public void ClearBuffer()
+    {
+        if (session is null)
+        {
+            return;
+        }
+        session.Screen.ClearBuffer();
+        ClearSelection();
+        scrolledBack = 0;
+        InvalidateVisual();
     }
 
     public double FontSize
@@ -558,6 +588,12 @@ public sealed class TerminalView : Control
             e.Handled = true;
             return;
         }
+        if (mac && mods == KeyModifiers.Meta && e.Key == Key.K)
+        {
+            ClearBuffer();
+            e.Handled = true;
+            return;
+        }
         if (mods == KeyModifiers.Shift && e.Key is Key.PageUp or Key.PageDown)
         {
             ScrollLines((e.Key == Key.PageUp ? 1 : -1) * Math.Max(1, session.Screen.Rows - 1));
@@ -659,7 +695,8 @@ public sealed class TerminalView : Control
         _ => null,
     };
 
-    private async Task CopyAsync()
+    /// <summary>Copies the selection to the clipboard, as Copy does.</summary>
+    public async Task CopyAsync()
     {
         if (SelectedText is { Length: > 0 } text && TopLevel.GetTopLevel(this)?.Clipboard is { } clipboard)
         {
@@ -667,7 +704,8 @@ public sealed class TerminalView : Control
         }
     }
 
-    private async Task PasteAsync()
+    /// <summary>Types the clipboard's text into the shell, as Paste does.</summary>
+    public async Task PasteAsync()
     {
         if (TopLevel.GetTopLevel(this)?.Clipboard is { } clipboard && await clipboard.TryGetTextAsync() is { Length: > 0 } text)
         {

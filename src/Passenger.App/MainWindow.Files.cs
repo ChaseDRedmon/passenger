@@ -48,6 +48,15 @@ public partial class MainWindow
             case ExplorerAction.Reveal when path is not null:
                 Reveal(path);
                 break;
+            case ExplorerAction.ManageNuGet:
+                ShowToolWindow("nuget");
+                break;
+            case ExplorerAction.EditProjectFile when path is not null:
+                OpenFile(path);
+                break;
+            case ExplorerAction.Unload or ExplorerAction.Reload when path is not null:
+                SetUnloaded(path, action == ExplorerAction.Unload);
+                break;
             case ExplorerAction.Build or ExplorerAction.Rebuild or ExplorerAction.Clean:
                 BuildKind kind = action switch { ExplorerAction.Rebuild => BuildKind.Rebuild, ExplorerAction.Clean => BuildKind.Clean, _ => BuildKind.Build };
                 // A project's menu builds every project chosen with it; the solution's, the solution.

@@ -47,8 +47,9 @@ public partial class MainWindow
         terminal.FocusView();
     }
 
-    /// <summary>Whether a key goes to the focused terminal rather than the IDE: everything but Cmd's keys on the Mac,
-    /// the second key of a chord already begun, and the shortcuts that move between tool windows.</summary>
+    /// <summary>Whether a key goes to the focused terminal rather than the IDE: everything but Cmd's keys on the Mac (save
+    /// Cmd+K, its Clear Buffer), the second key of a chord already begun, and the shortcuts that move between tool
+    /// windows.</summary>
     private bool TerminalTakes(KeyEventArgs e)
     {
         if (FocusManager?.GetFocusedElement() is not Terminal.TerminalView || keys.IsPending)
@@ -57,7 +58,8 @@ public partial class MainWindow
         }
         if (OperatingSystem.IsMacOS() && e.KeyModifiers.HasFlag(KeyModifiers.Meta))
         {
-            return false;
+            // Cmd's keys are the IDE's, but for Cmd+K, the terminal's Clear Buffer (the editor's chords begin with it).
+            return e.KeyModifiers == KeyModifiers.Meta && e.Key == Key.K;
         }
         string? action = keys.Keymap.ActionFor(new Shortcut(Keystroke.From(e)));
         bool ides = action is AppActions.ShowTerminal or AppActions.HideToolWindow or AppActions.HideAllToolWindows

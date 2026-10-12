@@ -17,6 +17,9 @@ public sealed record WorkspaceState
     /// <summary>The files opened lately, the latest first, for Recent Files and Go to File.</summary>
     public List<string> RecentFiles { get; init; } = [];
 
+    /// <summary>The projects unloaded in the Solution view, by path.</summary>
+    public List<string> UnloadedProjects { get; init; } = [];
+
     /// <summary>The folder's file: its name and a hash of its path, under the settings folder's <c>workspaces</c>.</summary>
     public static string PathFor(string folder)
     {

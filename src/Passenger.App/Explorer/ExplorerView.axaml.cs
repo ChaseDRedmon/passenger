@@ -16,6 +16,10 @@ public enum ExplorerAction
     Build,
     Rebuild,
     Clean,
+    ManageNuGet,
+    EditProjectFile,
+    Unload,
+    Reload,
 }
 
 public partial class ExplorerView : UserControl
@@ -59,13 +63,15 @@ public partial class ExplorerView : UserControl
     /// <summary>Reads the folder again, keeping the folders that were open open and the chosen row chosen.</summary>
     public void Refresh()
     {
-        HashSet<string> open = [.. Tree.Rows.Where(r => r.IsExpanded && r.Path is not null).Select(r => r.Path!)];
+        // A row is known by its path, or (a solution folder, the dependencies) by where it is and what it is called.
+        static string Key(ExplorerNode row) => row.Path ?? $"{row.Depth}/{row.Kind}/{row.Name}";
+        List<(int Depth, string Key)> open = [.. Tree.Rows.Where(r => r.IsExpanded).Select(r => (r.Depth, Key(r)))];
         string? chosen = Selected?.Path;
         Show(Tree.IsSolutionView);
         // Outermost first, so each opens inside one already open.
-        foreach (string path in open.OrderBy(p => p.Length))
+        foreach ((_, string key) in open.OrderBy(o => o.Depth))
         {
-            if (Tree.Rows.FirstOrDefault(r => r.Path == path) is { HasChildren: true } row)
+            if (Tree.Rows.FirstOrDefault(r => Key(r) == key) is { HasChildren: true, IsExpanded: false } row)
             {
                 Tree.Expand(row);
             }
@@ -76,8 +82,9 @@ public partial class ExplorerView : UserControl
         }
     }
 
-    /// <summary>Rider's menu for a row: Build, Rebuild and Clean for the solution or the projects chosen, New (a file, a
-    /// folder, a class) where things can go, Rename and Delete for what is on disk, and its path.</summary>
+    /// <summary>Rider's menu for a row: Build, Rebuild and Clean for the solution or the projects chosen, a project's
+    /// packages, file and unloading, New (a file, a folder, a class) where things can go, Rename and Delete for what is on
+    /// disk, and its path.</summary>
     private ContextMenu? Menu(ExplorerNode node)
     {
         bool onDisk = node.Kind is NodeKind.File or NodeKind.Folder or NodeKind.Project;
@@ -99,6 +106,14 @@ public partial class ExplorerView : UserControl
             menu.Items.Add(Item($"Build {what}", ExplorerAction.Build));
             menu.Items.Add(Item($"Rebuild {what}", ExplorerAction.Rebuild));
             menu.Items.Add(Item($"Clean {what}", ExplorerAction.Clean));
+            menu.Items.Add(new Separator());
+        }
+        if (node.Kind == NodeKind.Project)
+        {
+            bool unloaded = node.Path is { } project && Tree.Unloaded.Contains(project);
+            menu.Items.Add(Item("Manage NuGet Packages", ExplorerAction.ManageNuGet));
+            menu.Items.Add(Item("Edit Project File", ExplorerAction.EditProjectFile));
+            menu.Items.Add(unloaded ? Item("Reload Project", ExplorerAction.Reload) : Item("Unload Project", ExplorerAction.Unload));
             menu.Items.Add(new Separator());
         }
         if (holds)

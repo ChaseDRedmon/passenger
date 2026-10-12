@@ -29,7 +29,7 @@ public partial class MainWindow
         Solution = SolutionModel.Find(folder) is { } solutionPath ? SolutionModel.Load(solutionPath) : null;
         Explorer.Reload(Solution);
         string? chosen = configuration?.Name;
-        configurations = RunConfiguration.From(Solution, folder);
+        configurations = Configure();
         configuration = configurations.FirstOrDefault(c => c.Name == chosen) ?? configurations.FirstOrDefault();
         RunConfigName.Text = configuration?.Name ?? "No configurations";
     }
