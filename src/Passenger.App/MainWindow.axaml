@@ -4,6 +4,7 @@
         xmlns:docking="using:Passenger.App.Docking"
         x:Class="Passenger.App.MainWindow"
         Title="Passenger"
+        Icon="/Assets/passenger.png"
         Width="1400" Height="900" MinWidth="800" MinHeight="500"
         Background="{DynamicResource Passenger.Editor.Background}">
     <Panel>
@@ -60,7 +61,7 @@
                         <PathIcon Data="{StaticResource Icon.Stop}" Foreground="{DynamicResource Passenger.Editor.Error}" />
                     </Button>
                     <Border Width="1" Height="18" Margin="6,0" Background="{DynamicResource Passenger.Hover}" />
-                    <Button Classes="tool" ToolTip.Tip="Search everywhere">
+                    <Button Classes="tool" ToolTip.Tip="Search everywhere" Click="OnSearchClicked">
                         <PathIcon Data="{StaticResource Icon.Search}" />
                     </Button>
                     <Button Classes="tool" ToolTip.Tip="Settings" Click="OnSettingsClicked">

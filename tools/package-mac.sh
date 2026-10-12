@@ -19,6 +19,7 @@ rm -rf "$publish" "$app"
 dotnet publish "$root/src/Passenger.App" -c Release -r "$rid" --self-contained -p:PublishReadyToRun=true -o "$publish" -nologo -v quiet
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp -R "$publish/." "$app/Contents/MacOS/"
+cp "$root/src/Passenger.App/Assets/Passenger.icns" "$app/Contents/Resources/Passenger.icns"
 cat > "$app/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -29,6 +30,7 @@ cat > "$app/Contents/Info.plist" <<EOF
     <key>CFBundleIdentifier</key><string>io.github.zaneris.passenger</string>
     <key>CFBundleExecutable</key><string>Passenger</string>
     <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleIconFile</key><string>Passenger</string>
     <key>CFBundleShortVersionString</key><string>$short</string>
     <key>CFBundleVersion</key><string>$version</string>
     <key>LSMinimumSystemVersion</key><string>13.0</string>

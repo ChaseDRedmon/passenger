@@ -9,6 +9,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- The window's icon; Passenger.icns is the macOS bundle's (tools/package-mac.sh), both from Assets/passenger.svg. -->
+    <AvaloniaResource Include="Assets/passenger.png" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Avalonia" />
     <PackageReference Include="Avalonia.Desktop" />
     <PackageReference Include="Avalonia.Fonts.Inter" />

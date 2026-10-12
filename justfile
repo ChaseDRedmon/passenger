@@ -30,6 +30,10 @@ publish rid:
 package-mac rid="osx-arm64":
     tools/package-mac.sh {{rid}}
 
+# Passenger's own icon (Assets/Passenger.icns and passenger.png) from Assets/passenger.svg; macOS, through QuickLook.
+app-icon:
+    tools/app-icon.sh
+
 # Rewrite Theme/Icons.axaml from the list in tools/icons.py (fetches any icon not yet cached).
 icons:
     python3 -I tools/icons.py
