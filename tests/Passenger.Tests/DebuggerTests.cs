@@ -340,6 +340,45 @@ public sealed class DebuggerTests : IDisposable
         }
     }
 
+    [AvaloniaFact]
+    public void A_debugger_that_dies_with_an_exception_leaves_the_window_up_with_its_words_in_the_console_and_the_log()
+    {
+        // The engine's log is opened as the adapter starts, so a folder in its place kills the adapter with an unhandled
+        // exception: its stack trace comes on standard error, read off the UI thread while the session starts.
+        string folderForLog = Directory.CreateTempSubdirectory("passenger-engine-log-").FullName;
+        string settings = Directory.CreateTempSubdirectory("passenger-settings-").FullName;
+        string? engineLog = Environment.GetEnvironmentVariable("PASSENGER_ENGINE_LOG");
+        string? settingsBefore = Environment.GetEnvironmentVariable("PASSENGER_SETTINGS");
+        Environment.SetEnvironmentVariable("PASSENGER_ENGINE_LOG", folderForLog);
+        Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", settings);
+        try
+        {
+            MainWindow window = Open();
+            Ui.Run(window, AppActions.Debug);
+            Ui.WaitFor(() => File.Exists(IdeErrors.LogPath) && File.ReadAllText(IdeErrors.LogPath).Contains("Passenger's debugger (process", StringComparison.Ordinal),
+                "the debugger's end in the IDE's log");
+
+            Assert.True(window.IsVisible, "The IDE went down with its debugger");
+            Assert.False(window.Debugger.IsDebugging);
+            Assert.Contains("Could not debug", window.Status, StringComparison.Ordinal);
+            // Every line of the stack trace, to its last frame: a line that failed on the wrong thread would end the reading.
+            string console = window.BottomPanel.Debug.Console.Document.Snapshot.ToString();
+            Assert.Contains("Unhandled exception. System.UnauthorizedAccessException", console, StringComparison.Ordinal);
+            Assert.Contains("at Program.<Main>", console, StringComparison.Ordinal);
+            string log = File.ReadAllText(IdeErrors.LogPath);
+            Assert.Contains("UnauthorizedAccessException", log, StringComparison.Ordinal);
+            Assert.Contains("at Program.<Main>", log, StringComparison.Ordinal);
+            window.Close();
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PASSENGER_ENGINE_LOG", engineLog);
+            Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", settingsBefore);
+            Directory.Delete(folderForLog, recursive: true);
+            Directory.Delete(settings, recursive: true);
+        }
+    }
+
     private MainWindow Open()
     {
         MainWindow window = new() { Width = 1200, Height = 800 };

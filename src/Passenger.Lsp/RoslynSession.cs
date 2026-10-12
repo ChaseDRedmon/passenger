@@ -28,8 +28,8 @@ public sealed class RoslynSession : IAsyncDisposable
         };
     }
 
-    /// <summary>The projects have loaded, so answers now know the whole solution. Raised on the
-    /// thread pool.</summary>
+    /// <summary>The projects have loaded, so answers now know the whole solution. Raised on any
+    /// thread.</summary>
     public event EventHandler? Loaded;
 
     public LanguageServer Server { get; }

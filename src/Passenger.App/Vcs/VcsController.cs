@@ -7,7 +7,7 @@ namespace Passenger.App.Vcs;
 
 /// <summary>The open folder's Git working tree as the window shows it: the branch, the changed files, each open file's
 /// change bars against the last commit, and committing, pushing, switching branches and rolling back, after which the
-/// open files take what is on disk again.</summary>
+/// open files take what is on disk again. A UI-thread object.</summary>
 public sealed class VcsController
 {
     /// <summary>How long typing pauses before a file's change bars are worked out again.</summary>
@@ -60,6 +60,7 @@ public sealed class VcsController
     /// <summary>Finds the folder's working tree and reads it; a folder in none leaves the window without Git.</summary>
     public async Task OpenAsync(string folder)
     {
+        UiThread.Check();
         int generation = ++opened;
         Git? found = await Git.OpenAsync(folder);
         if (generation != opened)
@@ -87,6 +88,7 @@ public sealed class VcsController
     /// <summary>Reads the branch and the changed files again, and every open file's change bars.</summary>
     public async Task RefreshAsync()
     {
+        UiThread.Check();
         if (git is not { } repository)
         {
             Branch = null;
@@ -128,6 +130,7 @@ public sealed class VcsController
     /// <summary>Starts showing a file's change bars, worked out again as it is edited.</summary>
     public void Attach(OpenDocument document)
     {
+        UiThread.Check();
         if (documents.ContainsKey(document))
         {
             return;
@@ -153,6 +156,7 @@ public sealed class VcsController
 
     public void Detach(OpenDocument document)
     {
+        UiThread.Check();
         if (documents.Remove(document, out Tracked? tracked))
         {
             tracked.Timer.Stop();
@@ -204,6 +208,7 @@ public sealed class VcsController
 
     public async Task<bool> PushAsync()
     {
+        UiThread.Check();
         if (git is not { } repository)
         {
             return false;
@@ -217,6 +222,7 @@ public sealed class VcsController
     /// <summary>Rider's Update Project: the upstream's commits brought in, then the open files and Git read again.</summary>
     public async Task<bool> UpdateAsync()
     {
+        UiThread.Check();
         if (git is not { } repository)
         {
             return false;
@@ -232,6 +238,7 @@ public sealed class VcsController
 
     public async Task<bool> FetchAsync()
     {
+        UiThread.Check();
         if (git is not { } repository)
         {
             return false;
@@ -320,6 +327,7 @@ public sealed class VcsController
     /// <paramref name="refused"/>.</summary>
     private async Task<T> OneAtATimeAsync<T>(Func<Task<T>> change, T refused)
     {
+        UiThread.Check();
         if (IsBusy)
         {
             Message?.Invoke(this, Busy);
@@ -342,6 +350,7 @@ public sealed class VcsController
     /// unsaved changes.</summary>
     public void ReloadOpenFiles()
     {
+        UiThread.Check();
         foreach (OpenDocument document in documents.Keys)
         {
             document.Reload();
@@ -388,6 +397,7 @@ public sealed class VcsController
     /// <summary>A file's text as the last commit has it, or null when it has none (new, or outside the tree).</summary>
     public Task<string?> HeadTextAsync(string path)
     {
+        UiThread.Check();
         if (git is not { } repository || repository.Relative(path).StartsWith("..", StringComparison.Ordinal))
         {
             return Task.FromResult<string?>(null);

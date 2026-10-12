@@ -6,8 +6,8 @@ namespace Passenger.Lsp;
 
 /// <summary>A language server process and the JSON-RPC connection to it over its standard input and
 /// output. Requests and notifications go out typed; what the server asks of the client (its settings,
-/// a capability it registers, a refresh) is answered here and surfaced as events, raised on the thread
-/// pool. Its standard error and its own logs go to <see cref="LogFolder"/>.</summary>
+/// a capability it registers, a refresh) is answered here and surfaced as events, each raised on any
+/// thread. Its standard error and its own logs go to <see cref="LogFolder"/>.</summary>
 public sealed class LanguageServer : IAsyncDisposable
 {
     private readonly Process process;
@@ -35,19 +35,20 @@ public sealed class LanguageServer : IAsyncDisposable
     }
 
     /// <summary>The connection to the server ended without being asked to (it crashed or was killed), with why;
-    /// raised on the thread pool.</summary>
+    /// raised on any thread.</summary>
     public event EventHandler<string>? Exited;
 
     /// <summary>The server's process, for the IDE's log and for a test to end it; kept once the process is gone.</summary>
     public int ProcessId { get; }
 
+    /// <summary>A message the server logged or showed; raised on any thread.</summary>
     public event EventHandler<LogMessageParams>? Logged;
 
-    /// <summary>Roslyn has finished loading the projects it was asked to open.</summary>
+    /// <summary>Roslyn has finished loading the projects it was asked to open; raised on any thread.</summary>
     public event EventHandler? ProjectsLoaded;
 
     /// <summary>The server's view of the code moved in a way only it knows (a project reloaded, a
-    /// file changed elsewhere): colours and diagnostics should be asked for again.</summary>
+    /// file changed elsewhere): colours and diagnostics should be asked for again. Raised on any thread.</summary>
     public event EventHandler? RefreshRequested;
 
     public string LogFolder { get; }

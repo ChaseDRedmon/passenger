@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using Avalonia.Threading;
 using Passenger.Dap;
 
 namespace Passenger.App.Debugging;
@@ -13,21 +12,29 @@ public enum DebugState
 }
 
 /// <summary>One program under the debugger: the adapter's process (debugger/ beside the app), the
-/// conversation with it, and what the program is doing. Every event and state change lands on the
-/// UI thread. The file's breakpoints go to the adapter whenever they change, while it runs.</summary>
+/// conversation with it, and what the program is doing. A UI-thread object: every event and state change
+/// lands on the UI thread. The file's breakpoints go to the adapter whenever they change, while it runs.</summary>
 public sealed class DebugSession
 {
+    /// <summary>How many of the adapter's last lines on standard error go to the IDE's log when it dies.</summary>
+    private const int ErrorLines = 40;
+
     private readonly Process adapter;
     private readonly DapConnection connection;
     private readonly BreakpointStore breakpoints;
     private readonly Dictionary<string, string> sent = new(StringComparer.Ordinal);
     private readonly Dictionary<int, LineBreakpoint> byId = [];
     private readonly TaskCompletionSource initialized = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly Queue<string> errors = new();
+    private readonly TaskCompletionSource errorsRead = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private (string Path, int Line)? runToCursor;
+    private bool killed;
 
     private DebugSession(BreakpointStore breakpoints, Action<string> log)
     {
         this.breakpoints = breakpoints;
+        // The log is called from the adapter's error stream and the connection's own threads: each line lands on the UI's.
+        log = UiThread.Marshal(log);
         string path = Path.Combine(AppContext.BaseDirectory, "debugger", "Passenger.DebugAdapter.dll");
         if (!File.Exists(path))
         {
@@ -49,37 +56,31 @@ public sealed class DebugSession
         }) ?? throw new InvalidOperationException("The debug adapter did not start");
         adapter.ErrorDataReceived += (_, e) =>
         {
-            if (e.Data is not null)
+            if (e.Data is null)
             {
-                log(e.Data);
+                errorsRead.TrySetResult();
+                return;
             }
+            lock (errors)
+            {
+                errors.Enqueue(e.Data);
+                if (errors.Count > ErrorLines)
+                {
+                    errors.Dequeue();
+                }
+            }
+            log(e.Data);
         };
         adapter.BeginErrorReadLine();
         adapter.EnableRaisingEvents = true;
-        adapter.Exited += (_, _) => Dispatcher.UIThread.Post(() =>
-        {
-            // The adapter goes with exit code 0 once disconnected; anything else while the session lives is a crash.
-            if (State != DebugState.Ended && adapter.ExitCode != 0)
-            {
-                if (ExitCode is null)
-                {
-                    Failure = $"the debugger itself stopped (exit code {adapter.ExitCode})";
-                    log($"Passenger's debugger stopped unexpectedly with exit code {adapter.ExitCode}");
-                }
-                else
-                {
-                    // The runtime's debugging library can crash tearing a session down once the program has gone
-                    // (a race in its transport); the program's end was already told, so nothing was lost.
-                    log($"Passenger's debugger stopped with exit code {adapter.ExitCode} after the program ended");
-                }
-            }
-            End(null);
-        });
+        // After the last of its error stream, so a crash's own words reach the console and the log before its end.
+        adapter.Exited += (_, _) => Task.WhenAny(errorsRead.Task, Task.Delay(TimeSpan.FromSeconds(2)))
+            .ContinueWith(_ => UiThread.Post(() => OnAdapterExited(log)), TaskScheduler.Default);
         connection = new DapConnection(adapter.StandardOutput.BaseStream, adapter.StandardInput.BaseStream, log);
         connection.EventReceived += (name, body) =>
         {
             JsonElementCopy copy = new(body);
-            Dispatcher.UIThread.Post(() => OnEvent(name, copy));
+            UiThread.Post(() => OnEvent(name, copy));
         };
         breakpoints.Changed += OnBreakpointsChanged;
     }
@@ -131,6 +132,7 @@ public sealed class DebugSession
 
     private static async Task<DebugSession> StartAsync(string program, string request, object arguments, BreakpointStore breakpoints, Action<string> log)
     {
+        UiThread.Check();
         DebugSession session = new(breakpoints, log) { Program = program };
         session.connection.Start();
         try
@@ -174,6 +176,7 @@ public sealed class DebugSession
     /// <summary>Runs on to a line: a breakpoint the user never sees, gone again at the next stop.</summary>
     public async Task RunToCursorAsync(string path, int line)
     {
+        UiThread.Check();
         runToCursor = (path, line);
         await SendBreakpointsAsync(path);
         await ContinueAsync();
@@ -184,6 +187,7 @@ public sealed class DebugSession
 
     public async Task PauseAsync()
     {
+        UiThread.Check();
         if (State == DebugState.Running)
         {
             await connection.RequestAsync("pause", new ThreadArguments(0));
@@ -193,6 +197,7 @@ public sealed class DebugSession
     /// <summary>Ends the program and the adapter. A program that will not go is killed with the adapter.</summary>
     public async Task StopAsync()
     {
+        UiThread.Check();
         if (State == DebugState.Ended)
         {
             return;
@@ -207,9 +212,39 @@ public sealed class DebugSession
         }
         if (!adapter.WaitForExit(TimeSpan.FromSeconds(3)))
         {
+            killed = true;
             adapter.Kill(entireProcessTree: true);
         }
         End(ExitCode);
+    }
+
+    /// <summary>The adapter's process ended: with exit code 0 as asked, or killed when it would not go; any other end is
+    /// a crash, written to the IDE's log with its last words, and told in the console while the session lived.</summary>
+    private void OnAdapterExited(Action<string> log)
+    {
+        int code = adapter.ExitCode;
+        if (code != 0 && !killed)
+        {
+            string said;
+            lock (errors)
+            {
+                said = string.Join('\n', errors);
+            }
+            IdeErrors.Write($"Passenger's debugger (process {adapter.Id}) stopped with exit code {code} debugging {Program}"
+                + (said.Length > 0 ? $":\n{said}" : string.Empty));
+            if (State != DebugState.Ended && ExitCode is null)
+            {
+                Failure = $"the debugger itself stopped (exit code {code})";
+                log($"Passenger's debugger stopped unexpectedly with exit code {code}");
+            }
+            else if (State != DebugState.Ended)
+            {
+                // The runtime's debugging library can crash tearing a session down once the program has gone
+                // (a race in its transport); the program's end was already told, so nothing was lost.
+                log($"Passenger's debugger stopped with exit code {code} after the program ended");
+            }
+        }
+        End(null);
     }
 
     public async Task<IReadOnlyList<DapThread>> ThreadsAsync() =>
@@ -245,6 +280,7 @@ public sealed class DebugSession
 
     private async Task Resume(string command)
     {
+        UiThread.Check();
         if (State != DebugState.Paused || StoppedThread is not int thread)
         {
             return;

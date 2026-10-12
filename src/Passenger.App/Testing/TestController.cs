@@ -1,4 +1,3 @@
-using Avalonia.Threading;
 using Microsoft.VisualStudio.TestPlatform.ObjectModel;
 using Microsoft.VisualStudio.TestPlatform.ObjectModel.Client.Interfaces;
 using Passenger.App.Debugging;
@@ -9,7 +8,7 @@ namespace Passenger.App.Testing;
 
 /// <summary>Unit testing in the IDE, as Rider's: the solution's test projects built and their tests found, runs of
 /// all of them, a chosen few or the ones that failed, results as they come, and a test debugged under Passenger's
-/// own debugger. Everything a run says reaches the UI thread before it changes the tree.</summary>
+/// own debugger. A UI-thread object: everything a run says crosses to the UI thread before it changes the tree.</summary>
 public sealed class TestController : IAsyncDisposable
 {
     private readonly Func<Task<Run.BuildOutcome>> build;
@@ -49,6 +48,7 @@ public sealed class TestController : IAsyncDisposable
     /// <summary>Builds, then finds the tests of every test project. Null once found, or what stopped it.</summary>
     public async Task<string?> DiscoverAsync(string workspace)
     {
+        UiThread.Check();
         if (IsBusy)
         {
             return "Tests are already running";
@@ -105,6 +105,7 @@ public sealed class TestController : IAsyncDisposable
     /// <summary>Runs tests: these rows' (all when none), building and finding them first when nothing has been found.</summary>
     public async Task<string?> RunAsync(string workspace, IEnumerable<TestNode>? rows = null, bool debug = false, bool build = true, string prefix = "")
     {
+        UiThread.Check();
         if (IsBusy)
         {
             return "Tests are already running";
@@ -145,8 +146,8 @@ public sealed class TestController : IAsyncDisposable
             }
             RunSummary summary = await runner!.RunAsync(
                 [.. methods.SelectMany(m => m.Cases)],
-                result => Dispatcher.UIThread.Post(() => Apply(result)),
-                log: line => Dispatcher.UIThread.Post(() => log(line)),
+                UiThread.Marshal<TestResult>(Apply),
+                log: UiThread.Marshal(log),
                 debugger: debug ? new DebugLauncher(this) : null);
             // VSTest may tell a result on another thread behind the run's end: every one is in before the end is.
             foreach (TestResult result in summary.Results)
@@ -195,6 +196,7 @@ public sealed class TestController : IAsyncDisposable
 
     public void Stop()
     {
+        UiThread.Check();
         stopRequested = true;
         runner?.Cancel();
     }
@@ -236,7 +238,7 @@ public sealed class TestController : IAsyncDisposable
             runner = await TestRunner.StartAsync(workspace);
             folder = workspace;
         }
-        IReadOnlyList<TestCase> found = await runner.DiscoverAsync([.. assemblies.Select(a => a.Assembly)], line => Dispatcher.UIThread.Post(() => log(line)));
+        IReadOnlyList<TestCase> found = await runner.DiscoverAsync([.. assemblies.Select(a => a.Assembly)], UiThread.Marshal(log));
         Tree.Load([.. assemblies.Select(a => (DisplayName(a.Project), (IReadOnlyList<TestCase>)[.. found.Where(c => SamePath(c.Source, a.Assembly))]))]);
         Message?.Invoke(this, $"Found {found.Count} test{(found.Count == 1 ? "" : "s")} in {assemblies.Count} project{(assemblies.Count == 1 ? "" : "s")}");
         return null;
@@ -272,7 +274,7 @@ public sealed class TestController : IAsyncDisposable
 
         public int LaunchTestHost(TestProcessStartInfo defaultTestHostStartInfo, CancellationToken cancellationToken) =>
             owner.LaunchUnderDebugger is { } launch
-                ? Dispatcher.UIThread.InvokeAsync(() =>
+                ? UiThread.InvokeAsync(() =>
                 {
                     owner.ReleaseWork();
                     return launch(defaultTestHostStartInfo);
@@ -283,7 +285,7 @@ public sealed class TestController : IAsyncDisposable
 
         // VSTest starts a .NET test host itself and waits on this before it runs a test in it.
         public bool AttachDebuggerToProcess(int pid, CancellationToken cancellationToken) =>
-            owner.AttachDebugger is { } attach && Dispatcher.UIThread.InvokeAsync(() =>
+            owner.AttachDebugger is { } attach && UiThread.InvokeAsync(() =>
             {
                 owner.ReleaseWork();
                 return attach(pid);

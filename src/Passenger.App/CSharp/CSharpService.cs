@@ -8,7 +8,8 @@ namespace Passenger.App.CSharp;
 /// <summary>C# for the open folder: Roslyn's language server started when the folder has a solution
 /// or a project, its state for the status bar, and a <see cref="CSharpDocument"/> for every C# file
 /// open in a tab. Files opened before the server is ready are attached once it is. A server that ends
-/// on its own is started again with the open files, as Rider restarts its backend, a few times at most.</summary>
+/// on its own is started again with the open files, as Rider restarts its backend, a few times at most. A UI-thread
+/// object: what the server says from its own threads crosses through <see cref="UiThread"/>.</summary>
 public sealed class CSharpService : IAsyncDisposable
 {
     /// <summary>How many times a server that keeps ending is started again within <see cref="RestartWindow"/>.</summary>
@@ -56,6 +57,7 @@ public sealed class CSharpService : IAsyncDisposable
         get => solutionWide;
         set
         {
+            UiThread.Check();
             if (solutionWide == value)
             {
                 return;
@@ -200,6 +202,7 @@ public sealed class CSharpService : IAsyncDisposable
     /// <summary>Starts the server on a folder, with the solution named (else the one Roslyn finds there).</summary>
     public void Start(string folder, string? solution = null)
     {
+        UiThread.Check();
         this.folder = folder;
         this.solution = solution;
         starting?.Cancel();
@@ -213,6 +216,7 @@ public sealed class CSharpService : IAsyncDisposable
     /// <summary>Gives an open document its C# features, now or once the server is ready.</summary>
     public void Attach(OpenDocument document)
     {
+        UiThread.Check();
         if (document.Language.Name != "C#" || documents.ContainsKey(document))
         {
             return;
@@ -227,6 +231,7 @@ public sealed class CSharpService : IAsyncDisposable
 
     public void Detach(OpenDocument document)
     {
+        UiThread.Check();
         if (documents.Remove(document, out CSharpDocument? features))
         {
             features.Dispose();
@@ -259,8 +264,8 @@ public sealed class CSharpService : IAsyncDisposable
             RoslynSession started = await RoslynSession.StartAsync(folder, logs, cancel, solutionWide ? FullSolution : null, solution);
             TaskCompletionSource loaded = new(TaskCreationOptions.RunContinuationsAsynchronously);
             started.Loaded += (_, _) => loaded.TrySetResult();
-            started.Server.RefreshRequested += (_, _) => Dispatcher.UIThread.Post(RefreshAll);
-            started.Server.Exited += (_, why) => Dispatcher.UIThread.Post(() => OnExited(started, why));
+            started.Server.RefreshRequested += (_, _) => UiThread.Post(RefreshAll);
+            started.Server.Exited += (_, why) => UiThread.Post(() => OnExited(started, why));
             session = started;
             SetState(started.Solution is { } opened ? $"Loading {Path.GetFileName(opened)}…" : "Loading projects…");
             foreach (CSharpDocument features in documents.Values)
@@ -327,7 +332,7 @@ public sealed class CSharpService : IAsyncDisposable
         }
     }
 
-    private void SetState(string state) => Dispatcher.UIThread.Post(() =>
+    private void SetState(string state) => UiThread.Post(() =>
     {
         State = state;
         StateChanged?.Invoke(this, EventArgs.Empty);

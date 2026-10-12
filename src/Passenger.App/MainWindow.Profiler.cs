@@ -59,24 +59,19 @@ public partial class MainWindow
             ProfileTarget profiled = new(Lsp.Dotnet.Host(), [target.Program, .. target.Arguments], target.WorkingDirectory, target.Environment);
             ShowToolWindow("profiler");
             Bottom.Run.Document.Clear();
-            profiling = await ProfilingSession.StartAsync(profiled, SnapshotFolder, line =>
-                Avalonia.Threading.Dispatcher.UIThread.Post(() => Bottom.Run.Document.Append(line + "\n")));
+            profiling = await ProfilingSession.StartAsync(profiled, SnapshotFolder, UiThread.Marshal<string>(line => Bottom.Run.Document.Append(line + "\n")));
             profilingName = chosen.Name;
             ProfilingSession running = profiling;
             profilerView!.Running(chosen.Name, () => running.Elapsed);
             StatusText.Text = $"Profiling {chosen.Name}";
             // A program that ends by itself ends the run, and its snapshot shows.
-            _ = Task.Run(async () =>
+            _ = running.ExitedAsync().ContinueWith(_ => UiThread.Post(() =>
             {
-                await running.ExitedAsync();
-                await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(async () =>
+                if (profiling == running)
                 {
-                    if (profiling == running)
-                    {
-                        await SnapshotAsync();
-                    }
-                });
-            });
+                    _ = SnapshotAsync();
+                }
+            }), TaskScheduler.Default);
             return null;
         }
         catch (Exception error) when (error is InvalidOperationException or IOException or TimeoutException)

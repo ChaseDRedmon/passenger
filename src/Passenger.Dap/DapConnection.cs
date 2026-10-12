@@ -31,6 +31,7 @@ public sealed class DapConnection : IAsyncDisposable
     private Task? dispatching;
     private int sequence;
 
+    /// <param name="log">What went wrong in the conversation, a line at a time; called on any thread.</param>
     public DapConnection(Stream input, Stream output, Action<string>? log = null)
     {
         this.input = input;
@@ -48,7 +49,7 @@ public sealed class DapConnection : IAsyncDisposable
     /// <summary>Completes when the other end closes its stream, or this end is disposed.</summary>
     public Task Completion => reading ?? Task.CompletedTask;
 
-    /// <summary>An event with no handler of its own: its name and body.</summary>
+    /// <summary>An event with no handler of its own: its name and body; raised on any thread.</summary>
     public event Action<string, JsonElement>? EventReceived;
 
     public void Start()

@@ -83,7 +83,7 @@ public static class McpHost
             }
             finally
             {
-                Dispatcher.UIThread.Post(done.Cancel);
+                UiThread.Post(done.Cancel);
             }
         });
         // The UI thread runs the dispatcher's loop, timers and all, until the agent goes.
@@ -137,7 +137,7 @@ public static class McpHost
     private static async Task Serve(MainWindow window, Socket client, CancellationToken closed)
     {
         await using NetworkStream stream = new(client, ownsSocket: true);
-        McpServerOptions options = await Dispatcher.UIThread.InvokeAsync(() =>
+        McpServerOptions options = await UiThread.InvokeAsync(() =>
         {
             window.Agents++;
             return Options(window);
@@ -152,7 +152,7 @@ public static class McpHost
         }
         finally
         {
-            Dispatcher.UIThread.Post(() => window.Agents--);
+            UiThread.Post(() => window.Agents--);
         }
     }
 

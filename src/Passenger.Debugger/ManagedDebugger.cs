@@ -78,6 +78,7 @@ public partial class ManagedDebugger
         OnExited?.Invoke(exitCode);
     }
 
+    // Every event below is raised on any thread (the runtime's callback thread, a request's, an output reader).
     public event Action<int, string>? OnStopped;
     // ThreadId, FilePath, Line, Column, Reason, HitBreakpointIds, DecompiledSourceInfo
     public event Action<int, string, int, int, string, List<int>?>? OnStopped2;

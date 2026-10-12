@@ -127,6 +127,13 @@ window or takes the focus; it shows everything but the system's own window chrom
 - **A malformed flag or value is fatal**, never a silent default (`LaunchOptions.cs`).
 - **Work off the UI thread that changes what is drawn goes through `BackgroundWork`**, so a
   screenshot waits for it instead of capturing a half-finished frame.
+- **One threading rule.** Controls, the documents editors show, controllers and views belong to the UI thread
+  (controllers call `UiThread.Check()` in their entry points, which fails at once in a Debug build). The projects
+  without UI (Text, Lsp, Dap, Debugger, Profiler) never reference Avalonia, and their events and callbacks come on
+  any thread; Editor, Languages and Terminal raise theirs on the UI thread. The App crosses from another thread only through `UiThread`: `Post`, or `Marshal` for a handler given to
+  a library, holds `BackgroundWork` and reports an exception to `IdeErrors` rather than ending the IDE; `InvokeAsync`
+  is for a caller that waits for the answer. An `await` on the UI thread comes back to it; `Dispatcher.UIThread.Post`
+  only defers work already there.
 - **Paths are canonical** (`PathNames.Canonical`, symlinks resolved), because MSBuild and Roslyn
   report resolved paths; a path compared with another must come from the same function.
 - **Shortcuts follow Rider's.** A new action takes the binding Rider's Visual Studio (Windows) or

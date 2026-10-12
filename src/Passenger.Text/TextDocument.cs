@@ -48,6 +48,8 @@ public sealed class TextDocument
         LineEnding = DetectLineEnding(text);
     }
 
+    /// <summary>Raised on the thread that made the change, before the change returns: a document an editor shows is
+    /// changed on the UI thread alone.</summary>
     public event EventHandler<DocumentChangedEventArgs>? Changed;
 
     public TextSnapshot Snapshot { get; private set; }

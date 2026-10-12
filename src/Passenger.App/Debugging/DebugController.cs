@@ -9,7 +9,7 @@ namespace Passenger.App.Debugging;
 
 /// <summary>The debugger in the IDE: the breakpoints in the gutter, a session's stops shown where
 /// they are (the execution line, the Debug window's frames and variables), the stepping actions, and
-/// a value when the pointer rests on an expression while paused.</summary>
+/// a value when the pointer rests on an expression while paused. A UI-thread object.</summary>
 public sealed class DebugController
 {
     private readonly EditorArea editors;
@@ -78,6 +78,7 @@ public sealed class DebugController
 
     private async Task OpenAsync(Func<Action<string>, Task<DebugSession>> open, string name)
     {
+        UiThread.Check();
         if (IsDebugging)
         {
             await StopAsync();
@@ -107,6 +108,7 @@ public sealed class DebugController
 
     public async Task StopAsync()
     {
+        UiThread.Check();
         if (Session is { } session)
         {
             await session.StopAsync();
@@ -117,6 +119,7 @@ public sealed class DebugController
     /// session. Resume without a session is the caller's Debug, as F5 is in Visual Studio's keymap.</summary>
     public void Run(string action)
     {
+        UiThread.Check();
         OpenDocument? active = editors.Active;
         int caretLine = active is null ? 0 : editors.CodeEditor.CaretPosition.Line;
         switch (action)
@@ -164,6 +167,7 @@ public sealed class DebugController
     /// in, skipping or repeating what lies between; null when it went, else why not.</summary>
     public async Task<string?> SetNextStatementAsync(DebugSession session, string path, int line)
     {
+        UiThread.Check();
         string? problem = null;
         try
         {
@@ -194,6 +198,7 @@ public sealed class DebugController
     /// <summary>A file opened in a tab: its breakpoints follow its edits, and its gutter shows them.</summary>
     public void Attach(OpenDocument document)
     {
+        UiThread.Check();
         EventHandler<DocumentChangedEventArgs> follow = (_, change) => Breakpoints.Follow(document.Path, change);
         following[document] = follow;
         document.Text.Changed += follow;
@@ -202,6 +207,7 @@ public sealed class DebugController
 
     public void Detach(OpenDocument document)
     {
+        UiThread.Check();
         if (following.Remove(document, out EventHandler<DocumentChangedEventArgs>? follow))
         {
             document.Text.Changed -= follow;
@@ -212,6 +218,7 @@ public sealed class DebugController
     /// hovered), in the chosen frame; null when there is none or it does not evaluate.</summary>
     public async Task<string?> ValueAt(int offset, CancellationToken cancellation)
     {
+        UiThread.Check();
         if (Session is not { State: DebugState.Paused } session || frame is null || ExpressionAt(editors.CodeEditor.Document.Snapshot, offset) is not { } expression)
         {
             return null;
@@ -364,6 +371,7 @@ public sealed class DebugController
     /// <summary>The chosen frame's variables, under its watches and the last result evaluated.</summary>
     private async Task ShowVariables()
     {
+        UiThread.Check();
         if (Session is not { State: DebugState.Paused } session || frame is not { } current)
         {
             return;
@@ -465,6 +473,7 @@ public sealed class DebugController
     /// variables and inline values show what it now is; a refusal is said in the status bar.</summary>
     public async Task SetValue(VariableNode node, string value)
     {
+        UiThread.Check();
         node.IsEditing = false;
         if (Session is not { State: DebugState.Paused } session || frame is not { } current || node.Expression is not { } expression)
         {

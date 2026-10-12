@@ -48,7 +48,7 @@ public sealed class ProfilingSession : IAsyncDisposable
     public string TracePath { get; }
 
     /// <summary>Starts a program under the profiler. The trace goes into <paramref name="folder"/>; the program's output
-    /// comes to <paramref name="output"/> a line at a time, on a worker thread.</summary>
+    /// comes to <paramref name="output"/> a line at a time, on any thread.</summary>
     public static async Task<ProfilingSession> StartAsync(ProfileTarget target, string folder, Action<string>? output = null, CancellationToken cancellation = default)
     {
         Directory.CreateDirectory(folder);

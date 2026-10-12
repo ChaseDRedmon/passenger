@@ -1,4 +1,3 @@
-using Avalonia.Threading;
 using Passenger.Editor;
 using Passenger.Text;
 
@@ -34,15 +33,19 @@ public sealed class FileIndex
         }
         Root = root;
         int walk = ++walks;
+        // Held through the walk, then by the crossing, which lets go of what it can never deliver.
         BackgroundWork.Begin();
-        Task.Run(() => Walk(root)).ContinueWith(walked => Dispatcher.UIThread.Post(() =>
+        Task.Run(() => Walk(root)).ContinueWith(walked =>
         {
-            if (walked.IsCompletedSuccessfully && walk == walks)
+            UiThread.Post(() =>
             {
-                files = walked.Result;
-            }
+                if (walked.IsCompletedSuccessfully && walk == walks)
+                {
+                    files = walked.Result;
+                }
+            });
             BackgroundWork.End();
-        }), TaskScheduler.Default);
+        }, TaskScheduler.Default);
     }
 
     private int walks;

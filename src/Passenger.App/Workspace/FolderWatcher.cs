@@ -1,4 +1,3 @@
-using Avalonia.Threading;
 using Passenger.Editor;
 
 namespace Passenger.App.Workspace;
@@ -120,8 +119,13 @@ public sealed class FolderWatcher : IDisposable
             }
             pending = true;
         }
+        // Held while the changes gather, then by the crossing, which lets go of what it can never deliver.
         BackgroundWork.Begin();
-        _ = Task.Delay(Gather).ContinueWith(_ => Dispatcher.UIThread.Post(Deliver), TaskScheduler.Default);
+        _ = Task.Delay(Gather).ContinueWith(_ =>
+        {
+            UiThread.Post(Deliver);
+            BackgroundWork.End();
+        }, TaskScheduler.Default);
     }
 
     private void Deliver()
@@ -135,16 +139,9 @@ public sealed class FolderWatcher : IDisposable
             structure = projects = git = pending = false;
             live = !disposed;
         }
-        try
+        if (live)
         {
-            if (live)
-            {
-                Changed?.Invoke(this, changes);
-            }
-        }
-        finally
-        {
-            BackgroundWork.End();
+            Changed?.Invoke(this, changes);
         }
     }
 }

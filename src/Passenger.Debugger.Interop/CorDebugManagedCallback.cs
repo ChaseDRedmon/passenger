@@ -4,6 +4,8 @@ using System.Runtime.InteropServices.Marshalling;
 
 namespace Passenger.Debugger.Interop;
 
+/// <summary>The runtime's debugging callbacks as events, each raised on the runtime's own callback thread (any thread
+/// to a subscriber).</summary>
 [GeneratedComClass]
 public partial class CorDebugManagedCallback : ICorDebugManagedCallback, ICorDebugManagedCallback3, ICorDebugManagedCallback4, ICorDebugManagedCallback2
 {

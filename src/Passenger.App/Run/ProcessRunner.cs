@@ -54,6 +54,7 @@ public sealed partial class ProcessRunner
     /// <summary>Starts a program; why it could not (a working folder gone, a missing program), or null once it runs.</summary>
     public string? Start(string file, IReadOnlyList<string> arguments, string folder, IReadOnlyDictionary<string, string>? environment = null)
     {
+        UiThread.Check();
         if (IsRunning)
         {
             throw new InvalidOperationException("The process is still running.");
@@ -98,7 +99,7 @@ public sealed partial class ProcessRunner
         {
             started.WaitForExit();
             int code = started.ExitCode;
-            Dispatcher.UIThread.Post(() =>
+            UiThread.Post(() =>
             {
                 Flush();
                 if (partialLine.Length > 0)
@@ -116,6 +117,7 @@ public sealed partial class ProcessRunner
 
     public void Stop()
     {
+        UiThread.Check();
         if (running && process is { HasExited: false } alive)
         {
             WasStopped = true;

@@ -30,7 +30,7 @@ public sealed class DebugAdapter
     }
 
     /// <summary>Raised once a disconnect has been answered: the session is over and the process may end.
-    /// A terminate is not the end, since a client may still disconnect after it.</summary>
+    /// A terminate is not the end, since a client may still disconnect after it. Raised on any thread.</summary>
     public event Action? ShutdownRequested;
 
     /// <summary>Lets the debuggee go when the client went away without disconnecting. Does nothing

@@ -46,6 +46,7 @@ public partial class MainWindow : Window
 
     public MainWindow()
     {
+        UiThread.Own();
         InitializeComponent();
         if (OperatingSystem.IsMacOS())
         {

@@ -1,5 +1,4 @@
 using System.ComponentModel;
-using Avalonia.Threading;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using Passenger.App.CSharp;
@@ -541,7 +540,7 @@ public sealed partial class PassengerTools(MainWindow window)
     {
         try
         {
-            return await Dispatcher.UIThread.InvokeAsync(work);
+            return await UiThread.InvokeAsync(work);
         }
         catch (Exception error) when (error is InvalidOperationException or ArgumentException or IOException or TimeoutException or DapException)
         {

@@ -8,7 +8,7 @@ namespace Passenger.App.Packages;
 /// management it writes the version into Directory.Packages.props. What the command says goes to the log.</summary>
 public sealed class PackageManager
 {
-    /// <summary>A line the command printed, for the NuGet window's log.</summary>
+    /// <summary>A line the command printed, for the NuGet window's log; raised on the UI thread.</summary>
     public event EventHandler<string>? Line;
 
     /// <summary>Adds a package at a version, or moves it to that version when the project has it.</summary>
@@ -19,6 +19,7 @@ public sealed class PackageManager
 
     private async Task<bool> RunAsync(IReadOnlyList<string> arguments)
     {
+        UiThread.Check();
         string dotnet;
         try
         {
@@ -64,7 +65,7 @@ public sealed class PackageManager
             while (await reader.ReadLineAsync() is { } line)
             {
                 string text = line;
-                Avalonia.Threading.Dispatcher.UIThread.Post(() => Line?.Invoke(this, text));
+                UiThread.Post(() => Line?.Invoke(this, text));
             }
         }
     }
