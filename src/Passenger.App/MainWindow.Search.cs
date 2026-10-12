@@ -34,8 +34,8 @@ public partial class MainWindow
             string what = $"{asked.Matches.Count} match{(asked.Matches.Count == 1 ? "" : "es")} in {files} file{(files == 1 ? "" : "s")}";
             if (await Confirm("Replace in Files", $"Replace {what} with '{asked.Replacement}'? An open file's change can be undone there; a closed file is written.", "Replace All"))
             {
-                ReplaceInFiles(asked.Query, asked.Replacement, [.. asked.Matches.Select(m => m.Path).Distinct()]);
-                StatusText.Text = $"Replaced {what}";
+                IReadOnlyList<string> converted = ReplaceInFiles(asked.Query, asked.Replacement, [.. asked.Matches.Select(m => m.Path).Distinct()]);
+                StatusText.Text = string.Join("; ", [$"Replaced {what}", .. converted]);
                 await popup.SearchAsync();
             }
         };
@@ -44,9 +44,11 @@ public partial class MainWindow
     }
 
     /// <summary>Replaces a query's matches in these files: an open one as one undoable step changing only its matches,
-    /// so its carets, folds and breakpoints stay put; a closed one written in its own encoding.</summary>
-    public void ReplaceInFiles(SearchQuery query, string replacement, IReadOnlyList<string> paths)
+    /// so its carets, folds and breakpoints stay put; a closed one written in its own encoding, or as UTF-8 when that
+    /// cannot hold the replacement, which is said of each such file in what this returns.</summary>
+    public IReadOnlyList<string> ReplaceInFiles(SearchQuery query, string replacement, IReadOnlyList<string> paths)
     {
+        List<string> converted = [];
         foreach (string path in paths)
         {
             if (Editors.Documents.FirstOrDefault(d => d.Path == path) is { } open)
@@ -62,12 +64,13 @@ public partial class MainWindow
             else if (FileText.Load(path) is { } file)
             {
                 string after = FileSearch.ReplaceAll(file.Text, query, replacement);
-                if (after != file.Text)
+                if (after != file.Text && FileText.Save(path, after, file.Encoding, file.HasBom).Converted is { } note)
                 {
-                    FileText.Save(path, after, file.Encoding, file.HasBom);
+                    converted.Add(note);
                 }
             }
         }
+        return converted;
     }
 
     /// <summary>Recent Files (Ctrl+,): the files opened last, the latest first, narrowed as a name is typed; a file

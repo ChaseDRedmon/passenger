@@ -7,7 +7,7 @@ using Passenger.Editor;
 namespace Passenger.Tests;
 
 /// <summary>Files through the whole window: opened from a folder, edited, saved with the platform's
-/// own Save shortcut, and written back the way they were stored.</summary>
+/// own Save shortcut, and written back the way they were stored, or as UTF-8 when that would lose a character.</summary>
 public sealed class FileTests : IDisposable
 {
     private readonly string folder = Directory.CreateTempSubdirectory("passenger-test-").FullName;
@@ -37,6 +37,37 @@ public sealed class FileTests : IDisposable
         byte[] saved = File.ReadAllBytes(path);
         Assert.Equal(bom, saved[..3]);
         Assert.Equal("class A\r\n// added\r\n{\r\n}\r\n", Encoding.UTF8.GetString(saved, 3, saved.Length - 3));
+        Assert.False(window.EditorArea.Active!.IsModified);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_character_Latin_1_cannot_hold_typed_into_a_Latin_1_file_is_never_saved_as_a_question_mark()
+    {
+        string path = Path.Combine(folder, "Prices.cs");
+        File.WriteAllBytes(path, Encoding.Latin1.GetBytes("// Café prices\nclass Prices { }\n"));
+        MainWindow window = Open();
+        window.OpenFile("Prices.cs");
+        Ui.Settle();
+        Assert.Equal("ISO-8859-1", EncodingShown(window));
+
+        // A character Latin-1 holds leaves the file Latin-1.
+        window.EditorArea.CodeEditor.Selections = Text.SelectionSet.Single("// Café".Length);
+        window.KeyTextInput(" señor");
+        Ui.Settle();
+        Ui.Press(window, Ui.Shortcut(AppActions.Save));
+        Assert.Equal(Encoding.Latin1.GetBytes("// Café señor prices\nclass Prices { }\n"), File.ReadAllBytes(path));
+        Assert.Equal("ISO-8859-1", EncodingShown(window));
+
+        // One it cannot hold: the file is written as UTF-8 with every character, and the status bar says so.
+        window.KeyTextInput(" € → 🚀");
+        Ui.Settle();
+        Ui.Press(window, Ui.Shortcut(AppActions.Save));
+        byte[] saved = File.ReadAllBytes(path);
+        Assert.False(Array.IndexOf(saved, (byte)'?') >= 0, "A character Latin-1 cannot hold was saved as a question mark");
+        Assert.Equal("// Café señor € → 🚀 prices\nclass Prices { }\n", new UTF8Encoding(false, throwOnInvalidBytes: true).GetString(saved));
+        Assert.Equal("UTF-8", EncodingShown(window));
+        Assert.Equal("Prices.cs was saved as UTF-8: ISO-8859-1 cannot hold '€'", window.Status);
         Assert.False(window.EditorArea.Active!.IsModified);
         window.Close();
     }
@@ -123,6 +154,8 @@ public sealed class FileTests : IDisposable
         Ui.Settle();
         return window;
     }
+
+    private static string? EncodingShown(MainWindow window) => Avalonia.Controls.ControlExtensions.FindControl<Avalonia.Controls.TextBlock>(window, "EncodingText")!.Text;
 
     /// <summary>Types text at the start of a file, leaving it unsaved.</summary>
     private static void Edit(MainWindow window, string file, string text)

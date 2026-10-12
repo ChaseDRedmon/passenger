@@ -2,8 +2,9 @@ using System.Text;
 
 namespace Passenger.App.Workspace;
 
-/// <summary>A file's text and how it was stored, so saving writes it back the same way: the same
-/// encoding, a byte-order mark only if it had one, and its own line endings (kept by the document).</summary>
+/// <summary>A file's text and how it was stored, so saving writes it back the same way: the same encoding (or UTF-8,
+/// when that cannot hold what was typed), a byte-order mark only if it had one, and its own line endings (kept by the
+/// document).</summary>
 public sealed record FileText(string Text, Encoding Encoding, bool HasBom)
 {
     /// <summary>How much of a file is checked for a NUL byte before it is called binary.</summary>
@@ -11,12 +12,14 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom)
 
     private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
-    public string EncodingName => Encoding switch
+    public string EncodingName => NameOf(Encoding, HasBom);
+
+    private static string NameOf(Encoding encoding, bool bom) => encoding switch
     {
-        UTF8Encoding => HasBom ? "UTF-8 BOM" : "UTF-8",
+        UTF8Encoding => bom ? "UTF-8 BOM" : "UTF-8",
         UnicodeEncoding { CodePage: 1201 } => "UTF-16 BE",
         UnicodeEncoding => "UTF-16",
-        _ => Encoding.WebName.ToUpperInvariant(),
+        _ => encoding.WebName.ToUpperInvariant(),
     };
 
     /// <summary>Reads a file as text, or returns null for one that looks binary. Without a BOM it is
@@ -50,10 +53,6 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom)
         }
     }
 
-    /// <summary>Writes through a temporary file beside the target, so a failed write never leaves a
-    /// half-written file where the old one was. A symlink is written through to its target, and the
-    /// file keeps its permissions (a script stays executable). A file deleted since it was opened (a
-    /// git clean, another program) is written anew, its folder too.</summary>
     /// <summary>A file about to be written by a save, so a folder watcher takes it for the change it is rather than a
     /// new file (a save writes a temporary file beside it and moves it over).</summary>
     public static event Action<string>? Writing;
@@ -61,8 +60,14 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom)
     /// <summary>The temporary file a save writes first, which nothing but the save should see.</summary>
     public const string SaveSuffix = ".passenger-save";
 
-    public static void Save(string path, string text, Encoding encoding, bool bom)
+    /// <summary>Writes through a temporary file beside the target, so a failed write never leaves a half-written file
+    /// where the old one was; a symlink is written through to its target, the file keeps its permissions, and one
+    /// deleted since it was opened is written anew. A text the encoding cannot hold is written as UTF-8 instead, never
+    /// with a question mark for each such character; the result is how it was written, with why when it changed.</summary>
+    public static (FileText Written, string? Converted) Save(string path, string text, Encoding encoding, bool bom)
     {
+        string? unheld = Unheld(encoding, text);
+        FileText written = unheld is null ? new FileText(text, encoding, bom) : new FileText(text, new UTF8Encoding(false), false);
         Writing?.Invoke(path);
         bool there = File.Exists(path) || new FileInfo(path).LinkTarget is not null;
         string target = there ? File.ResolveLinkTarget(path, returnFinalTarget: true)?.FullName ?? path : path;
@@ -70,8 +75,8 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
         }
-        byte[] preamble = bom ? encoding.GetPreamble() : [];
-        byte[] body = encoding.GetBytes(text);
+        byte[] preamble = written.HasBom ? written.Encoding.GetPreamble() : [];
+        byte[] body = written.Encoding.GetBytes(text);
         string temporary = target + SaveSuffix;
         try
         {
@@ -93,5 +98,34 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom)
             File.Delete(temporary);
             throw;
         }
+        return (written, unheld is null ? null : $"{Path.GetFileName(path)} was saved as UTF-8: {NameOf(encoding, bom)} cannot hold '{unheld}'");
     }
+
+    /// <summary>The first character of a text that an encoding cannot hold (Latin-1 has no € and no emoji), which its
+    /// encoder would write as a question mark; null when it holds them all, as every Unicode encoding does.</summary>
+    private static string? Unheld(Encoding encoding, string text)
+    {
+        if (encoding is UTF8Encoding or UnicodeEncoding or UTF32Encoding)
+        {
+            return null;
+        }
+        Encoding strict = (Encoding)encoding.Clone();
+        strict.EncoderFallback = EncoderFallback.ExceptionFallback;
+        try
+        {
+            strict.GetByteCount(text);
+            return null;
+        }
+        catch (EncoderFallbackException unheld)
+        {
+            return unheld.IsUnknownSurrogate() ? new string([unheld.CharUnknownHigh, unheld.CharUnknownLow]) : unheld.CharUnknown.ToString();
+        }
+    }
+
+    /// <summary>Whether writing this text in that encoding, with a BOM or without, makes the bytes this file has. ASCII
+    /// is the same bytes in UTF-8 and Latin-1, so a Latin-1 file left with only ASCII (read as UTF-8) has not changed.</summary>
+    public bool IsStoredAs(Encoding encoding, bool bom) =>
+        (bom == HasBom && encoding.CodePage == Encoding.CodePage) || Bytes(encoding, bom).AsSpan().SequenceEqual(Bytes(Encoding, HasBom));
+
+    private byte[] Bytes(Encoding encoding, bool bom) => [.. bom ? encoding.GetPreamble() : [], .. encoding.GetBytes(Text)];
 }

@@ -88,6 +88,27 @@ public sealed class FindInFilesTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void Replace_all_with_a_character_a_closed_Latin_1_file_cannot_hold_writes_it_as_UTF_8_not_a_question_mark()
+    {
+        string path = Path.Combine(folder, "Gamma.cs");
+        File.WriteAllBytes(path, System.Text.Encoding.Latin1.GetBytes("// Prix: 5 francs, déjà payés\nclass Gamma { }\n"));
+        MainWindow window = Open();
+        FindInFilesPopup popup = window.ShowFindInFiles(replace: true)!;
+        Search(popup, "francs");
+        Assert.Single(popup.Matches);
+
+        window.Confirm = (_, _, _) => Task.FromResult(true);
+        popup.Replacement = "€";
+        popup.RequestReplace();
+        Ui.WaitFor(() => window.Status?.StartsWith("Replaced", StringComparison.Ordinal) == true, "the replacement");
+        byte[] saved = File.ReadAllBytes(path);
+        Assert.False(Array.IndexOf(saved, (byte)'?') >= 0, "The € Latin-1 cannot hold was written as a question mark");
+        Assert.Equal("// Prix: 5 €, déjà payés\nclass Gamma { }\n", new System.Text.UTF8Encoding(false, throwOnInvalidBytes: true).GetString(saved));
+        Assert.Equal("Replaced 1 match in 1 file; Gamma.cs was saved as UTF-8: ISO-8859-1 cannot hold '€'", window.Status);
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Replace_all_over_an_open_file_keeps_its_caret_folds_and_breakpoints()
     {
         const string Source = "class Gamma\n{\n    int Count()\n    {\n        int count = 0;\n        return count;\n    }\n\n"

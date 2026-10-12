@@ -2,12 +2,14 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
+using Passenger.App.Workspace;
 
 namespace Passenger.App;
 
 /// <summary>Rider's autosave: an edit is never lost and closing never asks. Every changed file is saved before the
 /// window closes (quitting included) or another folder opens, and, each as Settings says, when the focus goes to
-/// another program or to the terminal and once the IDE has been idle a while.</summary>
+/// another program or to the terminal and once the IDE has been idle a while. Nor is a character the file's encoding
+/// cannot hold: the file is saved as UTF-8 instead, and the status bar says so.</summary>
 public partial class MainWindow
 {
     private readonly DispatcherTimer idleSave = new();
@@ -38,6 +40,18 @@ public partial class MainWindow
         AddHandler(KeyDownEvent, (_, _) => RestartIdleSave(), RoutingStrategies.Tunnel, handledEventsToo: true);
         AddHandler(PointerPressedEvent, (_, _) => RestartIdleSave(), RoutingStrategies.Tunnel, handledEventsToo: true);
         Editors.Opened += (_, document) => document.Text.Changed += (_, _) => RestartIdleSave();
+        Editors.Opened += (_, document) =>
+        {
+            document.Converted += (_, message) => StatusText.Text = message;
+            // The status bar's encoding follows a file's: saved as UTF-8, or a BOM added on disk.
+            document.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName == nameof(OpenDocument.EncodingName) && Editors.Active == document)
+                {
+                    EncodingText.Text = document.EncodingName;
+                }
+            };
+        };
     }
 
     private void SaveOnLeaving()

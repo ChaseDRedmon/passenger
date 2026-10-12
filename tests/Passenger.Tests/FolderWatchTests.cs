@@ -1,3 +1,4 @@
+using System.Text;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Passenger.App;
@@ -149,6 +150,44 @@ public sealed class FolderWatchTests : IDisposable
         Assert.Equal(new Passenger.Text.TextPosition(30, 4), editor.CaretPosition);
         window.Close();
     }
+
+    [AvaloniaFact]
+    public void A_BOM_added_on_disk_or_a_conversion_to_UTF_8_survives_the_next_save_without_a_question()
+    {
+        string path = Path.Combine(folder, "One.cs");
+        File.WriteAllText(path, "class One { }\n");
+        File.WriteAllBytes(Path.Combine(folder, "Two.cs"), Encoding.Latin1.GetBytes("// Café\n"));
+        MainWindow window = Open();
+        window.OpenFile("One.cs");
+        Ui.Settle();
+        List<string> asked = [];
+        window.AskConflict = document =>
+        {
+            asked.Add(document.Name);
+            return Task.FromResult(false);
+        };
+        Type(window, "public ");
+
+        // dotnet format with charset = utf-8-bom: the same text, a BOM before it, under unsaved edits.
+        File.WriteAllBytes(path, [0xEF, 0xBB, 0xBF, .. Encoding.UTF8.GetBytes("class One { }\n")]);
+        Ui.WaitFor(() => EncodingShown(window) == "UTF-8 BOM", "the status bar to show the BOM added on disk");
+        window.Perform(AppActions.Save);
+        Assert.Equal([0xEF, 0xBB, 0xBF, .. Encoding.UTF8.GetBytes("public class One { }\n")], File.ReadAllBytes(path));
+
+        // A Latin-1 file converted to UTF-8 elsewhere is saved as UTF-8 from then on.
+        window.OpenFile("Two.cs");
+        Ui.Settle();
+        Assert.Equal("ISO-8859-1", EncodingShown(window));
+        File.WriteAllBytes(Path.Combine(folder, "Two.cs"), Encoding.UTF8.GetBytes("// Café\n"));
+        Ui.WaitFor(() => EncodingShown(window) == "UTF-8", "the status bar to show the file converted on disk");
+        Type(window, "// señor ");
+        window.Perform(AppActions.Save);
+        Assert.Equal(Encoding.UTF8.GetBytes("// señor // Café\n"), File.ReadAllBytes(Path.Combine(folder, "Two.cs")));
+        Assert.Empty(asked);
+        window.Close();
+    }
+
+    private static string? EncodingShown(MainWindow window) => Avalonia.Controls.ControlExtensions.FindControl<Avalonia.Controls.TextBlock>(window, "EncodingText")!.Text;
 
     private static void Type(MainWindow window, string text)
     {

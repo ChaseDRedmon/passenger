@@ -57,6 +57,10 @@ public sealed class OpenDocument : Observable
     /// <summary>Raised after a save, so the language server hears of it.</summary>
     public event EventHandler? Saved;
 
+    /// <summary>Raised when a save wrote the file as UTF-8 because its own encoding could not hold the text, with what
+    /// the status bar says of it.</summary>
+    public event EventHandler<string>? Converted;
+
     /// <summary>Colours from the in-process parser, replaced by the language server's layered over it
     /// once that is running; null for a language with neither.</summary>
     public IHighlighter? Highlighter
@@ -144,9 +148,11 @@ public sealed class OpenDocument : Observable
         ? "Source from the library's Source Link or PDB, read-only"
         : "Decompiled code: the language server made this from the assembly, so it is read-only";
     public TextDocument Text { get; }
-    public Encoding Encoding { get; }
-    public bool HasBom { get; }
-    public string EncodingName { get; }
+    /// <summary>How the file is stored, which a save keeps: as it was read, as it is on disk since (a BOM a formatter
+    /// added), or UTF-8 once a save needed it.</summary>
+    public Encoding Encoding { get; private set; }
+    public bool HasBom { get; private set; }
+    public string EncodingName { get; private set; }
     public Language Language { get; }
     public bool IsModified => Text.IsModified;
     public Avalonia.Media.Geometry Icon => Explorer.FileIcons.ForFile(Path);
@@ -156,22 +162,35 @@ public sealed class OpenDocument : Observable
     public SelectionSet Selections { get; set; } = SelectionSet.Single(0);
     public Vector Scroll { get; set; }
 
-    /// <summary>Whether something other than this IDE changed the file on disk since it was last loaded or saved.</summary>
+    /// <summary>Whether something other than this IDE changed the file's text on disk since it was last loaded or saved.
+    /// A change only to how it is stored there (a BOM a formatter added, a conversion to UTF-8) is taken at once, over
+    /// unsaved edits too, since they were made over the same text: the next save keeps it, and no question is asked.</summary>
     public bool ChangedOnDisk()
     {
+        FileText? file;
         try
         {
-            return File.Exists(Path) && FileText.Load(Path) is { } file && file.Text != Text.Saved.ToString();
+            file = File.Exists(Path) ? FileText.Load(Path) : null;
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
             return false;
         }
+        if (file is null)
+        {
+            return false;
+        }
+        if (file.Text != Text.Saved.ToString())
+        {
+            return true;
+        }
+        StoreAs(file);
+        return false;
     }
 
-    /// <summary>Takes the file's text from disk again when something else changed it there (a checkout, a rollback),
-    /// as one undoable step over only the lines that differ, so what is anchored elsewhere stays put; over unsaved changes only when
-    /// asked (File Cache Conflict's Load File System Changes). Whether it changed anything.</summary>
+    /// <summary>Takes the file's text and encoding from disk again when something else changed them there (a checkout, a
+    /// rollback), as one undoable step over only the lines that differ, so what is anchored elsewhere stays put; over unsaved
+    /// changes only when asked (File Cache Conflict's Load File System Changes). Whether it changed the text.</summary>
     public bool Reload(bool overUnsaved = false)
     {
         FileText? file;
@@ -187,6 +206,7 @@ public sealed class OpenDocument : Observable
         {
             return false;
         }
+        StoreAs(file);
         if (Text.Snapshot.ToString() == file.Text)
         {
             return false;
@@ -199,10 +219,29 @@ public sealed class OpenDocument : Observable
 
     public void Save()
     {
-        FileText.Save(Path, Text.Snapshot.ToString(), Encoding, HasBom);
+        (FileText written, string? converted) = FileText.Save(Path, Text.Snapshot.ToString(), Encoding, HasBom);
+        StoreAs(written);
         Text.MarkSaved();
         Raise(nameof(IsModified));
         Saved?.Invoke(this, EventArgs.Empty);
+        if (converted is not null)
+        {
+            Converted?.Invoke(this, converted);
+        }
+    }
+
+    /// <summary>Takes how the file is stored now, unless that is what it has already in all but name (ASCII reads as
+    /// UTF-8 but is the same bytes in Latin-1), so the next save writes it the same way.</summary>
+    private void StoreAs(FileText file)
+    {
+        if (file.IsStoredAs(Encoding, HasBom))
+        {
+            return;
+        }
+        Encoding = file.Encoding;
+        HasBom = file.HasBom;
+        EncodingName = file.EncodingName;
+        Raise(nameof(EncodingName));
     }
 }
 
