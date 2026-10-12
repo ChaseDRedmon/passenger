@@ -22,6 +22,10 @@ public sealed record AppSettings
     public bool ShowLineNumbers { get; init; } = true;
     public double TerminalFontSize { get; init; } = 13;
 
+    /// <summary>Whether Run runs under dotnet watch, so a save applies its edits to the running program (Hot Reload),
+    /// and an edit that cannot be applied restarts it.</summary>
+    public bool HotReload { get; init; }
+
     /// <summary>The person's shortcuts over the keymap's, by action, in keymap notation ("meta shift K"); an empty list
     /// unbinds the action.</summary>
     public Dictionary<string, string[]> Shortcuts { get; init; } = [];

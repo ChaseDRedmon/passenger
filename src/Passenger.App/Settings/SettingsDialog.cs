@@ -15,9 +15,10 @@ public sealed class SettingsDialog : Window
     public const string Appearance = "Appearance";
     public const string EditorPage = "Editor";
     public const string TerminalPage = "Terminal";
+    public const string RunPage = "Run";
     public const string KeymapPage = "Keymap";
 
-    private static readonly string[] Order = [Appearance, EditorPage, TerminalPage, KeymapPage];
+    private static readonly string[] Order = [Appearance, EditorPage, RunPage, TerminalPage, KeymapPage];
 
     private readonly Action<AppSettings> apply;
     private readonly List<Option> options = [];
@@ -159,6 +160,8 @@ public sealed class SettingsDialog : Window
         Add(EditorPage, "Line spacing", Number(Working.EditorLineSpacing, 0.8, 3, 0.1, v => Change(s => s with { EditorLineSpacing = v })), "font line height");
         Add(EditorPage, "Enable ligatures", Check(Working.Ligatures, v => Change(s => s with { Ligatures = v })), "font arrows");
         Add(EditorPage, "Show line numbers", Check(Working.ShowLineNumbers, v => Change(s => s with { ShowLineNumbers = v })), "gutter appearance");
+
+        Add(RunPage, "Hot Reload on save", Check(Working.HotReload, v => Change(s => s with { HotReload = v })), "dotnet watch apply changes edit continue running");
 
         Add(TerminalPage, "Font size", Number(Working.TerminalFontSize, 6, 48, 1, v => Change(s => s with { TerminalFontSize = v })), "font size shell");
         (string shell, _) = Passenger.Terminal.TerminalSession.DefaultShell();

@@ -691,6 +691,15 @@ public partial class MainWindow : Window
         Bottom.Run.SetRunning(true);
         StopButton.IsVisible = true;
         ShowToolWindow("run");
+        if (settings.HotReload)
+        {
+            // dotnet watch applies each save to the running program, as Rider's Hot Reload does, and restarts it
+            // for an edit that cannot be applied rather than asking.
+            StatusText.Text = $"Running {chosen.Name} with Hot Reload: a save applies its changes";
+            runner.Start(Lsp.Dotnet.Host(), ["watch", "--non-interactive", .. chosen.RunArguments(arguments)], chosen.Project.Folder,
+                new Dictionary<string, string> { ["DOTNET_WATCH_SUPPRESS_EMOJIS"] = "1", ["DOTNET_WATCH_RESTART_ON_RUDE_EDIT"] = "true" });
+            return;
+        }
         StatusText.Text = $"Running {chosen.Name}";
         runner.Start(Lsp.Dotnet.Host(), chosen.RunArguments(arguments), chosen.Project.Folder);
     }

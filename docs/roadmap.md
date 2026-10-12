@@ -178,4 +178,6 @@ a signed and notarized macOS `.app`, a Windows installer, and updates.
 **Built so far:** decompiled sources. Go to Declaration on a library's symbol opens what Roslyn's language server makes
 of it (decompiled with ILSpy, or the real source through Source Link or an embedded PDB) at the declaration, read-only
 under Rider's bar saying where it came from. Code Cleanup (Ctrl+E, C or F; Cmd on the Mac) removes the unnecessary usings
-and sorts the rest with the language server's own fixes, then reformats the file.
+and sorts the rest with the language server's own fixes, then reformats the file. Hot Reload (Settings, Run) runs a
+configuration under `dotnet watch`, so each save applies its edits to the running program, and an edit that cannot be
+applied restarts it. Still to come: Edit and Continue while debugging, refactoring dialogs, packaging.

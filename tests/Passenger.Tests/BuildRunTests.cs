@@ -3,6 +3,7 @@ using Avalonia.Headless.XUnit;
 using Passenger.App;
 using Passenger.App.Explorer;
 using Passenger.App.Run;
+using Passenger.Text;
 
 namespace Passenger.Tests;
 
@@ -64,6 +65,40 @@ public sealed class BuildRunTests : IDisposable
         Assert.Equal(1, problem.Position.Line);
         window.Close();
     }
+
+    [AvaloniaFact]
+    public void With_hot_reload_a_saved_edit_changes_what_the_running_program_does()
+    {
+        Write("src/Hello/Program.cs", "while (true)\n{\n    Console.WriteLine(Talk.Say());\n    Thread.Sleep(200);\n}\n\nstatic class Talk\n{\n    public static string Say() => \"before the edit\";\n}\n");
+        MainWindow window = Open();
+        window.ApplySettings(window.Settings with { HotReload = true });
+        try
+        {
+            window.OpenFile(Path.Combine(folder, "src", "Hello", "Program.cs"));
+            Ui.Settle();
+            window.Perform(AppActions.RunProgram);
+            // dotnet watch watches once it has loaded the project, which is after the program has started.
+            Ui.WaitFor(() => Output(window).Contains("before the edit", StringComparison.Ordinal) && Output(window).Contains("Waiting for changes", StringComparison.Ordinal),
+                "the program to run under dotnet watch", TimeSpan.FromMinutes(2));
+
+            // The method's new body is the one the running loop calls next, with no restart.
+            Passenger.App.Workspace.OpenDocument program = window.EditorArea.Active!;
+            int at = program.Text.Snapshot.ToString().IndexOf("before the edit", StringComparison.Ordinal);
+            window.EditorArea.CodeEditor.ApplyEdits([new TextEdit(at, "before the edit".Length, "after the edit")]);
+            window.Perform(AppActions.Save);
+            Ui.WaitFor(() => Output(window).Contains("after the edit", StringComparison.Ordinal), "the edit to reach the program", TimeSpan.FromMinutes(1));
+            Assert.True(window.Runner.IsRunning);
+        }
+        finally
+        {
+            window.Perform(AppActions.Stop);
+            Ui.WaitFor(() => !window.Runner.IsRunning, "the program to stop");
+            window.ApplySettings(new Passenger.App.Settings.AppSettings());
+            window.Close();
+        }
+    }
+
+    private static string Output(MainWindow window) => window.BottomPanel.Run.Document.Snapshot.ToString();
 
     [AvaloniaFact]
     public void Running_the_project_shows_its_output_in_the_run_window()
