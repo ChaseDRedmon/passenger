@@ -88,6 +88,8 @@ public static class TestFolders
 {
     public static void Delete(string path)
     {
+        // A settings folder's log lines still queued would make its logs folder again once it was gone.
+        Passenger.App.IdeErrors.Flush();
         DateTime until = DateTime.UtcNow.AddSeconds(30);
         while (Directory.Exists(path))
         {
@@ -215,6 +217,30 @@ public static class Ui
             Settle();
         }
         return text.Result;
+    }
+
+    /// <summary>The IDE's log as a person opening it would find it: what was queued for it written first, and read sharing
+    /// the file with the log's own thread, which may be writing to it (Windows refuses a reader that does not share).</summary>
+    public static string IdeLog()
+    {
+        Passenger.App.IdeErrors.Flush();
+        return Shared(Passenger.App.IdeErrors.LogPath);
+    }
+
+    /// <summary>A file's text read alongside a writer that has it open, or nothing when there is no such file (yet, or
+    /// any longer: a log is moved aside as it rotates).</summary>
+    public static string Shared(string path)
+    {
+        try
+        {
+            using FileStream file = new(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using StreamReader reader = new(file);
+            return reader.ReadToEnd();
+        }
+        catch (Exception missing) when (missing is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return string.Empty;
+        }
     }
 
     /// <summary>A pixel of the window as the compositor last drew it, at a point in its coordinates: what a person sees,

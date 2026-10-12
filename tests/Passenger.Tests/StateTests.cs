@@ -46,7 +46,7 @@ public sealed class StateTests : IDisposable
         Assert.True(File.Exists(file + ".bad"), "The file that did not read was not set aside: the defaults went over it");
         Assert.Equal(cut, File.ReadAllText(file + ".bad"));
         Assert.False(File.Exists(file), "The defaults were written in place of the file that did not read");
-        string log = File.ReadAllText(IdeErrors.LogPath);
+        string log = Ui.IdeLog();
         Assert.Contains("settings.json did not read", log, StringComparison.Ordinal);
         Assert.Contains("set aside as settings.json.bad", log, StringComparison.Ordinal);
 

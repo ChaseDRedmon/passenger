@@ -356,7 +356,7 @@ public sealed class DebuggerTests : IDisposable
         {
             MainWindow window = Open();
             Ui.Run(window, AppActions.Debug);
-            Ui.WaitFor(() => File.Exists(IdeErrors.LogPath) && File.ReadAllText(IdeErrors.LogPath).Contains("Passenger's debugger (process", StringComparison.Ordinal),
+            Ui.WaitFor(() => Ui.IdeLog().Contains("Passenger's debugger (process", StringComparison.Ordinal),
                 "the debugger's end in the IDE's log");
 
             Assert.True(window.IsVisible, "The IDE went down with its debugger");
@@ -366,7 +366,7 @@ public sealed class DebuggerTests : IDisposable
             string console = window.BottomPanel.Debug.Console.Document.Snapshot.ToString();
             Assert.Contains("Unhandled exception. System.UnauthorizedAccessException", console, StringComparison.Ordinal);
             Assert.Contains("at Program.<Main>", console, StringComparison.Ordinal);
-            string log = File.ReadAllText(IdeErrors.LogPath);
+            string log = Ui.IdeLog();
             Assert.Contains("UnauthorizedAccessException", log, StringComparison.Ordinal);
             Assert.Contains("at Program.<Main>", log, StringComparison.Ordinal);
             window.Close();

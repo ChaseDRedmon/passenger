@@ -29,7 +29,7 @@ public sealed class FailOnIdeErrorsAttribute : BeforeAfterTestAttribute
         }
         IdeErrors.Clear();
         throw new InvalidOperationException($"The IDE caught {errors.Count} error{(errors.Count == 1 ? "" : "s")} during the test:\n\n"
-            + string.Join("\n\n", errors.Select(e => $"{e.Kind}: {e.Message}\n{FirstFrames(e.Details)}")));
+            + string.Join("\n\n", errors.Select(e => $"{e.Kind}: {e.Message}{(e.Count > 1 ? $" (occurred {e.Count} times)" : "")}\n{FirstFrames(e.Details)}")));
     }
 
     private static bool IsWindowTest(MethodInfo method) => method.GetCustomAttribute<AvaloniaFactAttribute>() is not null;

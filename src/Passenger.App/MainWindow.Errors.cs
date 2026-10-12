@@ -20,11 +20,12 @@ public partial class MainWindow
         StatusText.Text = $"IDE error: {error.Message}";
     }
 
+    /// <summary>The different errors listed, a repeat counting once; more past the list's limit, which only the log has.</summary>
     private void ShowErrorCount()
     {
         int count = IdeErrors.Errors.Count;
         ErrorsButton.IsVisible = count > 0;
-        ErrorsCount.Text = count.ToString();
+        ErrorsCount.Text = IdeErrors.Unlisted > 0 ? $"{count}+" : count.ToString();
     }
 
     private void OnErrorsClicked(object? sender, RoutedEventArgs e) => ShowErrors();
@@ -32,7 +33,7 @@ public partial class MainWindow
     /// <summary>The errors caught since the last Clear All, the latest chosen.</summary>
     public ErrorsPopup ShowErrors()
     {
-        ErrorsPopup popup = new(IdeErrors.Errors);
+        ErrorsPopup popup = new(IdeErrors.Errors, IdeErrors.Unlisted);
         popup.Done += (_, _) =>
         {
             ClosePopup();
