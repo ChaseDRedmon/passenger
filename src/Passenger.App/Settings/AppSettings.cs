@@ -22,6 +22,10 @@ public sealed record AppSettings
     public bool ShowLineNumbers { get; init; } = true;
     public double TerminalFontSize { get; init; } = 13;
 
+    /// <summary>The person's shortcuts over the keymap's, by action, in keymap notation ("meta shift K"); an empty list
+    /// unbinds the action.</summary>
+    public Dictionary<string, string[]> Shortcuts { get; init; } = [];
+
     /// <summary>The terminal's shell, or null for the user's own login shell.</summary>
     public string? TerminalShell { get; init; }
 

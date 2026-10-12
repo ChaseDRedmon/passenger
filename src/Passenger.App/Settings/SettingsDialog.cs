@@ -26,6 +26,9 @@ public sealed class SettingsDialog : Window
     private readonly TextBlock heading;
     private readonly StackPanel body;
     private readonly TextBlock nothing;
+    private readonly Dictionary<string, TextBlock> shortcutTexts = [];
+    private TextBlock? keymapNote;
+    private string? capturing;
 
     public SettingsDialog(AppSettings current, Keymap keymap, Action<AppSettings> apply)
     {
@@ -87,6 +90,7 @@ public sealed class SettingsDialog : Window
         Content = root;
         Filter();
         Opened += (_, _) => Dispatcher.UIThread.Post(() => search.Focus(), DispatcherPriority.Loaded);
+        AddHandler(KeyDownEvent, OnCaptureKey, Avalonia.Interactivity.RoutingStrategies.Tunnel);
     }
 
     /// <summary>The settings as the options now stand.</summary>
@@ -162,11 +166,89 @@ public sealed class SettingsDialog : Window
         path.TextChanged += (_, _) => Change(s => s with { TerminalShell = string.IsNullOrWhiteSpace(path.Text) ? null : path.Text.Trim() });
         Add(TerminalPage, "Shell path", path, "shell zsh bash powershell program");
 
+        keymapNote = new TextBlock { TextWrapping = TextWrapping.Wrap, IsVisible = false };
+        keymapNote.Bind(TextBlock.ForegroundProperty, keymapNote.GetResourceObservable("Passenger.TextMuted"));
+        Add(KeymapPage, $"{keymap.Name} keymap", keymapNote, "keymap shortcut binding keys");
         foreach (ActionInfo action in ActionCatalog.All(keymap).OrderBy(a => a.Title, StringComparer.Ordinal))
         {
-            TextBlock keys = new() { Text = action.Shortcut ?? "No shortcut", VerticalAlignment = VerticalAlignment.Center };
+            TextBlock keys = new() { VerticalAlignment = VerticalAlignment.Center, Width = 200, TextTrimming = TextTrimming.CharacterEllipsis };
             keys.Bind(TextBlock.ForegroundProperty, keys.GetResourceObservable("Passenger.TextMuted"));
-            Add(KeymapPage, action.Title, keys, $"{action.Group} {action.Shortcut} keymap shortcut");
+            shortcutTexts[action.Id] = keys;
+            Button add = new() { Content = "Add...", Padding = new Thickness(8, 2) };
+            add.Click += (_, _) => Capture(action.Id);
+            Button remove = new() { Content = "Remove", Padding = new Thickness(8, 2) };
+            remove.Click += (_, _) => Rebind(action.Id);
+            Button reset = new() { Content = "Reset", Padding = new Thickness(8, 2) };
+            reset.Click += (_, _) => ResetShortcuts(action.Id);
+            StackPanel editor = new() { Orientation = Orientation.Horizontal, Spacing = 6, Children = { keys, add, remove, reset } };
+            Add(KeymapPage, action.Title, editor, $"{action.Group} {action.Shortcut} keymap shortcut");
+        }
+        ShowShortcuts();
+    }
+
+    /// <summary>Gives an action exactly these shortcuts (keymap notation, "meta shift K"); none unbinds it. A shortcut
+    /// another action had is taken from it, and the page says so.</summary>
+    public void Rebind(string action, params string[] shortcuts)
+    {
+        Keymap before = AppActions.Keymap(Working.Shortcuts);
+        List<string> taken = [];
+        foreach (string text in shortcuts)
+        {
+            if (before.ActionFor(Shortcut.Parse(text)) is { } other && other != action)
+            {
+                taken.Add($"{Shortcut.Parse(text).Display()} was {ActionCatalog.Title(other)}'s");
+                // The other action keeps its remaining shortcuts as its own.
+                Working = Working with { Shortcuts = new(Working.Shortcuts) { [other] = [.. before.ShortcutsFor(other).Where(s => s != Shortcut.Parse(text)).Select(s => s.Notation())] } };
+            }
+        }
+        Working = Working with { Shortcuts = new(Working.Shortcuts) { [action] = shortcuts } };
+        ShowShortcuts();
+        keymapNote!.Text = taken.Count > 0 ? string.Join("; ", taken) + "." : string.Empty;
+        keymapNote.IsVisible = taken.Count > 0;
+    }
+
+    /// <summary>Puts an action's shortcuts back as the keymap has them.</summary>
+    public void ResetShortcuts(string action)
+    {
+        Dictionary<string, string[]> shortcuts = new(Working.Shortcuts);
+        shortcuts.Remove(action);
+        Working = Working with { Shortcuts = shortcuts };
+        ShowShortcuts();
+    }
+
+    /// <summary>The next keys pressed become one more shortcut of an action, as Rider's Add Keyboard Shortcut does.</summary>
+    public void Capture(string action)
+    {
+        capturing = action;
+        shortcutTexts[action].Text = "Press the keys...";
+    }
+
+    private void ShowShortcuts()
+    {
+        Keymap current = AppActions.Keymap(Working.Shortcuts);
+        foreach ((string action, TextBlock text) in shortcutTexts)
+        {
+            IReadOnlyList<Shortcut> keys = current.ShortcutsFor(action);
+            text.Text = keys.Count == 0 ? "No shortcut" : string.Join(", ", keys.Select(k => k.Display()));
+        }
+    }
+
+    /// <summary>Seen before the focused control: the keys being captured are a shortcut, not typing.</summary>
+    private void OnCaptureKey(object? sender, Avalonia.Input.KeyEventArgs e)
+    {
+        if (capturing is { } action && e.Key is not (Avalonia.Input.Key.LeftShift or Avalonia.Input.Key.RightShift or Avalonia.Input.Key.LeftCtrl
+            or Avalonia.Input.Key.RightCtrl or Avalonia.Input.Key.LeftAlt or Avalonia.Input.Key.RightAlt or Avalonia.Input.Key.LWin or Avalonia.Input.Key.RWin))
+        {
+            capturing = null;
+            e.Handled = true;
+            if (e.Key == Avalonia.Input.Key.Escape && e.KeyModifiers == Avalonia.Input.KeyModifiers.None)
+            {
+                ShowShortcuts();
+                return;
+            }
+            Shortcut pressed = new(Keystroke.From(e));
+            string[] keep = [.. AppActions.Keymap(Working.Shortcuts).ShortcutsFor(action).Select(s => s.Notation())];
+            Rebind(action, [.. keep, pressed.Notation()]);
         }
     }
 

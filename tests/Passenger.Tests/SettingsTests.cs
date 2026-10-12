@@ -1,3 +1,4 @@
+using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Passenger.App;
 using Passenger.App.Settings;
@@ -63,6 +64,44 @@ public sealed class SettingsTests : IDisposable
         Assert.Equal(17, again.Settings.EditorFontSize);
         Assert.Equal(17, again.EditorArea.CodeEditor.FontSize);
         again.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_shortcut_set_in_the_keymap_runs_its_action_and_one_taken_from_another_action_leaves_it()
+    {
+        File.WriteAllText(Path.Combine(folder, "One.cs"), "class One { }\n");
+        MainWindow window = Open();
+        window.OpenFile(Path.Combine(folder, "One.cs"));
+        Ui.Settle();
+        string mine = OperatingSystem.IsMacOS() ? "meta alt shift J" : "control alt shift J";
+        try
+        {
+            SettingsDialog dialog = window.ShowSettings();
+            Ui.Settle();
+            dialog.Rebind(AppActions.SplitRight, mine);
+            // Save All's shortcut given to Split Down: Save All has none left.
+            string saveAll = Ui.Shortcut(AppActions.SaveAll);
+            dialog.Rebind(AppActions.SplitDown, saveAll);
+            Assert.Empty(AppActions.Keymap(dialog.Working.Shortcuts).ShortcutsFor(AppActions.SaveAll));
+
+            // Add... takes the next keys pressed as one more shortcut.
+            dialog.Capture(AppActions.MoveToOppositeGroup);
+            dialog.KeyPress(Avalonia.Input.Key.F8, Avalonia.Input.RawInputModifiers.Shift, Avalonia.Input.PhysicalKey.None, null);
+            Ui.Settle();
+            Assert.Equal(["shift F8"], dialog.Working.Shortcuts[AppActions.MoveToOppositeGroup]);
+            dialog.Ok();
+            Ui.Settle();
+
+            Ui.Press(window, mine);
+            Assert.Equal(2, window.EditorArea.Groups.Count);
+            Assert.Equal(AppActions.SplitDown, AppActions.Keymap().ActionFor(Passenger.Editor.Shortcut.Parse(saveAll)));
+        }
+        finally
+        {
+            // The keymap in force is the process's; the next test starts on the platform's own.
+            window.ApplySettings(new AppSettings());
+            window.Close();
+        }
     }
 
     private MainWindow Open()

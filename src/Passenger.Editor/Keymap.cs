@@ -75,6 +75,36 @@ public readonly record struct Keystroke(Key Key, KeyModifiers Modifiers)
         return string.Join('+', parts);
     }
 
+    /// <summary>The keymap notation <see cref="Parse"/> reads ("meta shift K"), as a user's keymap is kept.</summary>
+    public string Notation()
+    {
+        List<string> parts = [];
+        if (Modifiers.HasFlag(KeyModifiers.Meta)) { parts.Add("meta"); }
+        if (Modifiers.HasFlag(KeyModifiers.Control)) { parts.Add("control"); }
+        if (Modifiers.HasFlag(KeyModifiers.Alt)) { parts.Add("alt"); }
+        if (Modifiers.HasFlag(KeyModifiers.Shift)) { parts.Add("shift"); }
+        parts.Add(Key switch
+        {
+            Key.OemQuestion => "SLASH",
+            Key.OemPeriod => "PERIOD",
+            Key.OemComma => "COMMA",
+            Key.OemSemicolon => "SEMICOLON",
+            Key.OemOpenBrackets => "OPEN_BRACKET",
+            Key.OemCloseBrackets => "CLOSE_BRACKET",
+            Key.OemPipe => "BACK_SLASH",
+            Key.OemQuotes => "QUOTE",
+            Key.OemPlus => "EQUALS",
+            Key.OemMinus => "MINUS",
+            Key.Back => "BACK_SPACE",
+            Key.Return => "ENTER",
+            Key.PageUp => "PAGE_UP",
+            Key.PageDown => "PAGE_DOWN",
+            >= Key.D0 and <= Key.D9 => ((char)('0' + (Key - Key.D0))).ToString(),
+            _ => Key.ToString().ToUpperInvariant(),
+        });
+        return string.Join(' ', parts);
+    }
+
     private static Key ParseKey(string name) => name.ToUpperInvariant() switch
     {
         "SLASH" or "DIVIDE" => Key.OemQuestion,
@@ -125,6 +155,8 @@ public sealed record Shortcut(Keystroke First, Keystroke? Second = null)
     }
 
     public string Display() => Second is { } second ? $"{First.Display()}, {second.Display()}" : First.Display();
+
+    public string Notation() => Second is { } second ? $"{First.Notation()} , {second.Notation()}" : First.Notation();
 }
 
 /// <summary>Which shortcuts run which action. An action is a name from <see cref="EditorActions"/>
@@ -153,6 +185,34 @@ public sealed class Keymap
                 byAction[action] = list = [];
             }
             list.Add(shortcut);
+        }
+        return this;
+    }
+
+    /// <summary>Gives an action exactly these shortcuts, as a person's keymap does: its own go, and a shortcut another
+    /// action had is taken from it (Rider's "remove other assignments").</summary>
+    public Keymap Set(string action, IEnumerable<Shortcut> shortcuts)
+    {
+        if (byAction.TryGetValue(action, out List<Shortcut>? own))
+        {
+            foreach (Shortcut shortcut in own)
+            {
+                byShortcut.Remove(shortcut);
+            }
+            own.Clear();
+        }
+        else
+        {
+            byAction[action] = own = [];
+        }
+        foreach (Shortcut shortcut in shortcuts.Distinct())
+        {
+            if (byShortcut.TryGetValue(shortcut, out string? taken) && taken != action && byAction.TryGetValue(taken, out List<Shortcut>? theirs))
+            {
+                theirs.Remove(shortcut);
+            }
+            byShortcut[shortcut] = action;
+            own.Add(shortcut);
         }
         return this;
     }

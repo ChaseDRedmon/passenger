@@ -105,7 +105,36 @@ public static class AppActions
 
     public static bool IsApp(string action) => action.StartsWith("app.", StringComparison.Ordinal);
 
-    public static Keymap Keymap()
+    /// <summary>The person's own shortcuts over the Visual Studio keymap's, by action (an empty list unbinds it), as
+    /// Settings keeps them.</summary>
+    public static IReadOnlyDictionary<string, string[]> UserShortcuts { get; set; } = new Dictionary<string, string[]>();
+
+    /// <summary>The keymap in force: the platform's Visual Studio keymap with the person's shortcuts over it.</summary>
+    public static Keymap Keymap() => Keymap(UserShortcuts);
+
+    /// <summary>The keymap with these shortcuts over the platform's; one that does not read is passed over.</summary>
+    public static Keymap Keymap(IReadOnlyDictionary<string, string[]> overrides)
+    {
+        Keymap keymap = Base();
+        foreach ((string action, string[] shortcuts) in overrides)
+        {
+            List<Shortcut> parsed = [];
+            foreach (string text in shortcuts)
+            {
+                try
+                {
+                    parsed.Add(Shortcut.Parse(text));
+                }
+                catch (FormatException)
+                {
+                }
+            }
+            keymap.Set(action, parsed);
+        }
+        return keymap;
+    }
+
+    private static Keymap Base()
     {
         Keymap keymap = DefaultKeymaps.ForPlatform();
         if (OperatingSystem.IsMacOS())

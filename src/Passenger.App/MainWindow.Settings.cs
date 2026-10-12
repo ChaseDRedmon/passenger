@@ -39,6 +39,9 @@ public partial class MainWindow
                 _ => ThemeVariant.Default,
             };
         }
+        AppActions.UserShortcuts = next.Shortcuts;
+        keys.Keymap = AppActions.Keymap();
+        keys.Reset();
         foreach (Editors.EditorGroup group in Editors.Groups)
         {
             ApplyTo(group.Editor, next);

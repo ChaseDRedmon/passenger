@@ -154,10 +154,10 @@ The terminal is built: Rider's Terminal window (Ctrl+Alt+1, Cmd+Ctrl+1 on the Ma
 folder, an emulator of Passenger's own that runs full-screen programs (vim, less, htop), selection and the clipboard,
 the scrollback, and the mouse for programs that ask for it. Find Action (Ctrl+Shift+A, Cmd+Shift+A) runs any action
 by name, the ones without a shortcut too. Settings (Ctrl+Alt+S, Cmd+, on the Mac) has Rider's search over its pages
-(Appearance, Editor, Terminal, and the Keymap, read-only so far), applies a change at once and keeps it beside the
-layout. The NuGet window (Alt+7, Cmd+7) lists the solution's packages, searches nuget.org, and installs, updates and
+(Appearance, Editor, Terminal, and the Keymap, where Add takes the next keys pressed, Remove unbinds and Reset goes
+back to the Visual Studio keymap's), applies a change at once and keeps it beside the layout. The NuGet window (Alt+7, Cmd+7) lists the solution's packages, searches nuget.org, and installs, updates and
 removes a package per project through `dotnet add` and `dotnet remove package`, central package management included.
-Still to come: rebinding keys, more feeds than nuget.org from the window.
+Still to come: more feeds than nuget.org from the window, chords captured in the keymap.
 
 ## M8: depth and shipping
 
