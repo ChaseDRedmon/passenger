@@ -1,0 +1,42 @@
+<!doctype html>
+<!-- The site's share card (site/images/social.png, 1200x630), drawn by Chrome from the README's screenshot:
+     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --hide-scrollbars \
+       --window-size=1200,630 --force-device-scale-factor=2 --screenshot=card.png tools/social-card.html
+     then halved to 1200x630 (sips -z 630 1200 card.png --out site/images/social.png). -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+    html, body { margin: 0; width: 1200px; height: 630px; overflow: hidden; }
+    body {
+        background: radial-gradient(1200px 700px at 0% 0%, #23324F 0%, #1E1F22 55%);
+        color: #DFE1E5;
+        font-family: -apple-system, "SF Pro Display", "Segoe UI", system-ui, sans-serif;
+        position: relative;
+    }
+    .text { position: absolute; left: 72px; top: 76px; width: 620px; }
+    .brand { display: flex; align-items: center; gap: 16px; font-size: 34px; font-weight: 650; margin-bottom: 64px; }
+    .brand img { width: 56px; height: 56px; }
+    h1 { margin: 0 0 26px; font-size: 50px; line-height: 1.06; letter-spacing: -0.025em; font-weight: 760; }
+    h1 span { display: block; background: linear-gradient(100deg, #4F86F7, #14B8A6); -webkit-background-clip: text; color: transparent; }
+    p { margin: 0; font-size: 24px; line-height: 1.45; color: #9A9EA6; }
+    .url { position: absolute; left: 72px; bottom: 56px; font-size: 22px; color: #868A91; display: flex; align-items: center; gap: 10px; }
+    .url::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: #FFB547; }
+    .shot {
+        position: absolute; left: 730px; top: 92px; width: 900px;
+        border: 1px solid #393B40; border-radius: 14px; overflow: hidden;
+        box-shadow: 0 30px 80px rgb(0 0 0 / 0.55);
+    }
+    .shot img { display: block; width: 100%; }
+</style>
+</head>
+<body>
+    <div class="text">
+        <div class="brand"><img src="../src/Passenger.App/Assets/passenger.svg" alt="">Passenger</div>
+        <h1><span>An IDE for C# and .NET,</span>written in C#.</h1>
+        <p>Its own editor over Roslyn, debugger and profiler. Tests, Git, NuGet, a terminal, and an MCP server for agents.</p>
+    </div>
+    <div class="url">passenger-ide.net · open source, MIT</div>
+    <div class="shot"><img src="../site/images/editor.webp" alt=""></div>
+</body>
+</html>
