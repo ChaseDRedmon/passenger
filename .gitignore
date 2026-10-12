@@ -491,3 +491,4 @@ $RECYCLE.BIN/
 # Passenger
 artifacts/
 .DS_Store
+.claude/
