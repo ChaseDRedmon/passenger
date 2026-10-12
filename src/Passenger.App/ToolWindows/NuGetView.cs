@@ -34,6 +34,7 @@ public sealed class NuGetView : DockPanel
     private readonly TextBlock status;
     private readonly DispatcherTimer typing;
     private CancellationTokenSource? asking;
+    private CancellationTokenSource? showing;
     private IReadOnlyList<PackageRow> rows = [];
     private IReadOnlyList<string> versions = [];
     private bool busy;
@@ -255,24 +256,33 @@ public sealed class NuGetView : DockPanel
 
     private async Task ShowAsync()
     {
+        // Only the newest choice is shown: an earlier one's versions arriving after it would show its details again.
+        showing?.Cancel();
+        CancellationTokenSource cancel = showing = new();
         details.Children.Clear();
         versions = [];
         if (Selected is not { } row)
         {
             return;
         }
+        IReadOnlyList<string> found;
         try
         {
-            versions = await Feed.VersionsAsync(row.Id, prerelease.IsChecked == true, CancellationToken.None);
+            found = await Feed.VersionsAsync(row.Id, prerelease.IsChecked == true, cancel.Token);
         }
-        catch (Exception failed) when (failed is HttpRequestException or TaskCanceledException or InvalidOperationException or System.Text.Json.JsonException)
-        {
-            versions = row.Version.Length > 0 ? [row.Version] : [];
-        }
-        if (Selected != row)
+        catch (OperationCanceledException) when (cancel.IsCancellationRequested)
         {
             return;
         }
+        catch (Exception failed) when (failed is HttpRequestException or TaskCanceledException or InvalidOperationException or System.Text.Json.JsonException)
+        {
+            found = row.Version.Length > 0 ? [row.Version] : [];
+        }
+        if (cancel.IsCancellationRequested)
+        {
+            return;
+        }
+        versions = found;
         ChosenVersion = versions.FirstOrDefault() ?? row.Version;
         ComboBox picker = new() { ItemsSource = versions, SelectedItem = ChosenVersion, MinWidth = 140 };
         picker.SelectionChanged += (_, _) =>
@@ -325,9 +335,9 @@ public sealed class NuGetView : DockPanel
             }
             else
             {
-                if (ChosenVersion is { } chosen && at is not null && chosen != at)
+                if (ChosenVersion is { } chosen && at is not null && VersionOrder.Instance.Compare(chosen, at) is int order && order != 0)
                 {
-                    line.Children.Add(Action(VersionOrder.Instance.Compare(chosen, at) > 0 ? "Update" : "Downgrade", () => InstallAsync(project)));
+                    line.Children.Add(Action(order > 0 ? "Update" : "Downgrade", () => InstallAsync(project)));
                 }
                 line.Children.Add(Action("Remove", () => RemoveAsync(project)));
             }

@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -18,16 +19,16 @@ public interface IPackageFeed
     /// <summary>The packages a query finds, the most used first.</summary>
     Task<IReadOnlyList<PackageSummary>> SearchAsync(string query, bool prerelease, CancellationToken cancel);
 
-    /// <summary>A package's versions, newest first.</summary>
+    /// <summary>A package's versions that can be installed, newest first: none its owner unlisted.</summary>
     Task<IReadOnlyList<string>> VersionsAsync(string id, bool prerelease, CancellationToken cancel);
 }
 
 /// <summary>nuget.org through its v3 protocol, as the NuGet client finds it: the service index names the search and
-/// the flat container, which lists a package's versions.</summary>
+/// the registrations, which say of each version whether it is listed (the flat container lists unlisted ones too).</summary>
 public sealed class NuGetOrgFeed(HttpClient http) : IPackageFeed
 {
     private const string Index = "https://api.nuget.org/v3/index.json";
-    private (string Search, string Container)? services;
+    private (string Search, string Registrations)? services;
 
     public string Name => "nuget.org";
 
@@ -41,12 +42,37 @@ public sealed class NuGetOrgFeed(HttpClient http) : IPackageFeed
 
     public async Task<IReadOnlyList<string>> VersionsAsync(string id, bool prerelease, CancellationToken cancel)
     {
-        (_, string container) = await ServicesAsync(cancel);
-        VersionsResponse? listed = await http.GetFromJsonAsync<VersionsResponse>($"{container}{id.ToLowerInvariant()}/index.json", Json, cancel);
-        return [.. (listed?.Versions ?? []).Where(v => prerelease || !v.Contains('-', StringComparison.Ordinal)).Reverse()];
+        (_, string registrations) = await ServicesAsync(cancel);
+        if (await GetAsync<Registration>($"{registrations}{id.ToLowerInvariant()}/index.json", cancel) is not { } registration)
+        {
+            return [];
+        }
+        // A package with many versions has its pages by reference, each fetched on its own.
+        RegistrationPage[] pages = await Task.WhenAll((registration.Items ?? []).Select(async page =>
+            page.Items is null ? await GetAsync<RegistrationPage>(page.Id, cancel) ?? page : page));
+        return [.. pages.SelectMany(p => p.Items ?? []).Select(leaf => leaf.CatalogEntry)
+            .Where(entry => entry.Listed != false && (prerelease || !VersionOrder.IsPrerelease(entry.Version)))
+            .Select(entry => entry.Version)
+            .OrderByDescending(v => v, VersionOrder.Instance)];
     }
 
-    private async Task<(string Search, string Container)> ServicesAsync(CancellationToken cancel)
+    /// <summary>A JSON answer, or null where there is none (a package nuget.org does not have).</summary>
+    private async Task<T?> GetAsync<T>(string url, CancellationToken cancel) where T : class
+    {
+        using HttpResponseMessage response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancel);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+        response.EnsureSuccessStatusCode();
+        Stream body = await response.Content.ReadAsStreamAsync(cancel);
+        // The SemVer 2 registrations are gzipped whatever was asked for; a decompressing handler takes the header away.
+        bool gzipped = response.Content.Headers.ContentEncoding.Contains("gzip", StringComparer.OrdinalIgnoreCase);
+        await using Stream json = gzipped ? new GZipStream(body, CompressionMode.Decompress) : body;
+        return await JsonSerializer.DeserializeAsync<T>(json, Json, cancel);
+    }
+
+    private async Task<(string Search, string Registrations)> ServicesAsync(CancellationToken cancel)
     {
         if (services is { } known)
         {
@@ -55,8 +81,9 @@ public sealed class NuGetOrgFeed(HttpClient http) : IPackageFeed
         ServiceIndex? index = await http.GetFromJsonAsync<ServiceIndex>(Index, Json, cancel);
         string? Find(string type) => index?.Resources?.FirstOrDefault(r => r.Type == type)?.Id;
         string search = Find("SearchQueryService/3.5.0") ?? Find("SearchQueryService") ?? throw new InvalidOperationException("nuget.org names no search service");
-        string container = Find("PackageBaseAddress/3.0.0") ?? throw new InvalidOperationException("nuget.org names no package base address");
-        services = (search, container.EndsWith('/') ? container : container + "/");
+        // 3.6.0 is the hive that has packages with SemVer 2 versions, which the earlier ones leave out.
+        string registrations = Find("RegistrationsBaseUrl/3.6.0") ?? throw new InvalidOperationException("nuget.org names no SemVer 2 registrations");
+        services = (search, registrations.EndsWith('/') ? registrations : registrations + "/");
         return services.Value;
     }
 
@@ -70,7 +97,14 @@ public sealed class NuGetOrgFeed(HttpClient http) : IPackageFeed
 
     private sealed record SearchHit(string Id, string Version, string? Description, IReadOnlyList<string>? Authors, long TotalDownloads);
 
-    private sealed record VersionsResponse(IReadOnlyList<string>? Versions);
+    private sealed record Registration(IReadOnlyList<RegistrationPage>? Items);
+
+    private sealed record RegistrationPage([property: JsonPropertyName("@id")] string Id, IReadOnlyList<RegistrationLeaf>? Items);
+
+    private sealed record RegistrationLeaf(CatalogEntry CatalogEntry);
+
+    /// <summary>A version as its registration has it; one with no listed flag is listed.</summary>
+    private sealed record CatalogEntry(string Version, bool? Listed);
 }
 
 /// <summary>A folder of .nupkg files, the kind a nuget.config can name as a source: each package's id, version,
@@ -112,7 +146,7 @@ public sealed class FolderFeed(string folder) : IPackageFeed
             {
                 // A file that is not a package is passed over.
             }
-            if (package is not null && (prerelease || !package.Version.Contains('-', StringComparison.Ordinal)))
+            if (package is not null && (prerelease || !VersionOrder.IsPrerelease(package.Version)))
             {
                 yield return package;
             }
@@ -120,33 +154,72 @@ public sealed class FolderFeed(string folder) : IPackageFeed
     }
 }
 
-/// <summary>NuGet's order of versions: by their numbers, a prerelease before its release.</summary>
+/// <summary>NuGet's order of versions, SemVer 2's precedence: by their numbers (1.0 is 1.0.0.0), a prerelease before
+/// its release, and prerelease labels dot by dot, numbers by value and below words, words as NuGet compares them,
+/// ignoring case. Build metadata after a + takes no part.</summary>
 public sealed class VersionOrder : IComparer<string>
 {
     public static readonly VersionOrder Instance = new();
 
+    public static bool IsPrerelease(string version) => Release(version).Contains('-', StringComparison.Ordinal);
+
     public int Compare(string? x, string? y)
     {
-        (Version a, string? aTag) = Parse(x ?? string.Empty);
-        (Version b, string? bTag) = Parse(y ?? string.Empty);
-        int numbers = a.CompareTo(b);
-        if (numbers != 0)
+        (long[] a, string[]? aLabel) = Parse(x ?? string.Empty);
+        (long[] b, string[]? bLabel) = Parse(y ?? string.Empty);
+        for (int i = 0; i < a.Length; i++)
         {
-            return numbers;
+            if (a[i] != b[i])
+            {
+                return a[i].CompareTo(b[i]);
+            }
         }
-        return (aTag, bTag) switch
+        if (aLabel is null || bLabel is null)
         {
-            (null, null) => 0,
-            (null, _) => 1,
-            (_, null) => -1,
-            _ => string.CompareOrdinal(aTag, bTag),
-        };
+            // A release is above its prereleases.
+            return (aLabel is null).CompareTo(bLabel is null);
+        }
+        for (int i = 0; i < Math.Min(aLabel.Length, bLabel.Length); i++)
+        {
+            int order = CompareIdentifiers(aLabel[i], bLabel[i]);
+            if (order != 0)
+            {
+                return order;
+            }
+        }
+        return aLabel.Length.CompareTo(bLabel.Length);
     }
 
-    private static (Version, string?) Parse(string text)
+    private static int CompareIdentifiers(string a, string b)
     {
-        string[] parts = text.Split('+')[0].Split('-', 2);
-        string numbers = parts[0].Contains('.', StringComparison.Ordinal) ? parts[0] : parts[0] + ".0";
-        return (Version.TryParse(numbers, out Version? number) ? number : new Version(0, 0), parts.Length > 1 ? parts[1] : null);
+        bool aNumber = a.Length > 0 && a.All(char.IsAsciiDigit);
+        bool bNumber = b.Length > 0 && b.All(char.IsAsciiDigit);
+        if (aNumber && bNumber)
+        {
+            // Digits of any length, compared by value: the longer number without leading zeros is the larger.
+            string aDigits = a.TrimStart('0');
+            string bDigits = b.TrimStart('0');
+            return aDigits.Length != bDigits.Length ? aDigits.Length.CompareTo(bDigits.Length) : string.CompareOrdinal(aDigits, bDigits);
+        }
+        if (aNumber != bNumber)
+        {
+            return aNumber ? -1 : 1;
+        }
+        return StringComparer.OrdinalIgnoreCase.Compare(a, b);
+    }
+
+    private static string Release(string version) => version.Split('+', 2)[0];
+
+    /// <summary>A version's four numbers, those it leaves out 0, and its prerelease label's identifiers, null for a release.</summary>
+    private static (long[] Numbers, string[]? Label) Parse(string version)
+    {
+        string[] parts = Release(version.Trim()).Split('-', 2);
+        long[] numbers = new long[4];
+        string[] given = parts[0].Split('.');
+        for (int i = 0; i < Math.Min(given.Length, numbers.Length); i++)
+        {
+            numbers[i] = long.TryParse(given[i], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out long number) ? number : 0;
+        }
+        return (numbers, parts.Length > 1 ? parts[1].Split('.') : null);
     }
 }

@@ -1,8 +1,12 @@
 using System.IO.Compression;
+using System.Net;
+using System.Net.Http.Headers;
+using System.Text;
 using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
 using Avalonia.Interactivity;
 using Avalonia.LogicalTree;
+using Avalonia.VisualTree;
 using Passenger.App;
 using Passenger.App.Packages;
 using Passenger.App.ToolWindows;
@@ -12,7 +16,9 @@ namespace Passenger.Tests;
 
 /// <summary>The NuGet window over a folder feed, offline: a search finds a package and its versions, Install puts it in
 /// a project at the version chosen, Update moves it, Remove takes it out, each through the .NET command line and each
-/// read back from the project file. Central package management's versions are read from Directory.Packages.props.</summary>
+/// read back from the project file. Versions are offered in SemVer 2's order and without those nuget.org has unlisted
+/// (its answers recorded), and a package's details are shown once however fast the choices change. Central package
+/// management's versions are read from Directory.Packages.props.</summary>
 public sealed class PackagesTests : IDisposable
 {
     private readonly string folder = Directory.CreateTempSubdirectory("passenger-nuget-").FullName;
@@ -48,13 +54,8 @@ public sealed class PackagesTests : IDisposable
     [AvaloniaFact]
     public void A_package_found_in_the_feed_is_installed_updated_and_removed_in_a_project()
     {
-        MainWindow window = new() { Width = 1200, Height = 800 };
-        window.Show();
-        window.OpenFolder(Path.Combine(folder, "Lib"));
-        Ui.Settle();
+        MainWindow window = Open(new FolderFeed(feed));
         NuGetView nuget = window.NuGet;
-        nuget.Feed = new FolderFeed(feed);
-        window.Perform(AppActions.ShowNuGet);
         nuget.Query = "sample";
         Task searched = nuget.RefreshAsync();
         Ui.WaitFor(() => searched.IsCompleted && nuget.Versions.Count == 2, "the package and its versions");
@@ -81,14 +82,9 @@ public sealed class PackagesTests : IDisposable
     [AvaloniaFact]
     public void A_project_below_a_folder_with_no_solution_is_in_the_nuget_window_and_takes_a_package()
     {
-        MainWindow window = new() { Width = 1200, Height = 800 };
-        window.Show();
         // The folder above Lib: its project is a folder down, and no solution names it.
-        window.OpenFolder(folder);
-        Ui.Settle();
+        MainWindow window = Open(new FolderFeed(feed), folder);
         NuGetView nuget = window.NuGet;
-        nuget.Feed = new FolderFeed(feed);
-        window.Perform(AppActions.ShowNuGet);
         nuget.Query = "sample";
         Task searched = nuget.RefreshAsync();
         Ui.WaitFor(() => searched.IsCompleted && nuget.Versions.Count == 2, "the package and its versions");
@@ -107,6 +103,72 @@ public sealed class PackagesTests : IDisposable
         .SelectMany(line => line.Children.OfType<Button>())
         .FirstOrDefault(button => (string?)button.Content == "Install");
 
+    [AvaloniaFact]
+    public void Prereleases_are_offered_as_semver_orders_them_so_beta_10_is_an_update_from_beta_2()
+    {
+        // SemVer 2's own example of precedence, with beta.10 where it has beta.11.
+        foreach (string version in new[] { "1.0.0-alpha", "1.0.0-alpha.1", "1.0.0-alpha.beta", "1.0.0-beta", "1.0.0-beta.2", "1.0.0-beta.10", "1.0.0-rc.1" })
+        {
+            Package("Passenger.Sample", version);
+        }
+        File.WriteAllText(project, "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <ItemGroup>\n    <PackageReference Include=\"Passenger.Sample\" Version=\"1.0.0-beta.2\" />\n  </ItemGroup>\n</Project>\n");
+        MainWindow window = Open(new FolderFeed(feed));
+        NuGetView nuget = window.NuGet;
+        Prerelease(nuget).IsChecked = true;
+        Ui.WaitFor(() => nuget.Versions.Count == 9, "the installed package's versions, prereleases too");
+        Assert.Equal(["1.1.0", "1.0.0", "1.0.0-rc.1", "1.0.0-beta.10", "1.0.0-beta.2", "1.0.0-beta", "1.0.0-alpha.beta", "1.0.0-alpha.1", "1.0.0-alpha"], nuget.Versions);
+
+        ComboBox picker = Assert.Single(Descendants<ComboBox>(nuget));
+        picker.SelectedItem = "1.0.0-beta.10";
+        Ui.Settle();
+        Assert.True(Labels(nuget).Contains("Update"), $"Moving from beta.2 to beta.10 was offered as [{string.Join(", ", Labels(nuget))}]");
+        picker.SelectedItem = "1.0.0-beta";
+        Ui.Settle();
+        Assert.True(Labels(nuget).Contains("Downgrade"), $"Moving from beta.2 to beta was offered as [{string.Join(", ", Labels(nuget))}]");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Choosing_a_package_another_and_the_first_again_before_their_versions_arrive_shows_its_details_once()
+    {
+        HeldFeed held = new(new FolderFeed(feed));
+        MainWindow window = Open(held);
+        NuGetView nuget = window.NuGet;
+        nuget.Query = "passenger";
+        Ui.WaitFor(() => nuget.Rows.Count == 2 && nuget.Selected is not null, "both packages listed, the first chosen");
+
+        // The first row is chosen as the list fills; the other and then the first again are chosen before any answer.
+        PackageRow first = nuget.Selected!;
+        ListBox list = Descendants<ListBox>(nuget).Single();
+        list.SelectedItem = nuget.Rows.Single(r => r.Id != first.Id);
+        list.SelectedItem = first;
+        held.Release();
+        Ui.WaitFor(() => held.Answered == 3, "the versions of all three choices");
+        Ui.Settle();
+
+        List<ComboBox> pickers = [.. Descendants<ComboBox>(nuget)];
+        Assert.True(pickers.Count == 1, $"The details of {first.Id} were shown {pickers.Count} times");
+        Assert.Equal(first.Id == "Passenger.Sample" ? ["1.1.0", "1.0.0"] : ["2.0.0"], pickers[0].Items.OfType<string>());
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Versions_unlisted_on_nuget_org_are_not_offered()
+    {
+        MainWindow window = Open(new NuGetOrgFeed(new HttpClient(new RecordedNuGetOrg())));
+        NuGetView nuget = window.NuGet;
+        nuget.Query = "moq";
+        Ui.WaitFor(() => nuget.Versions.Count > 0, "Moq's versions");
+        Assert.Equal(["4.21.0", "4.20.72", "4.20.70", "4.20.69", "4.18.4", "4.7.0", "4.5.30"], nuget.Versions);
+        Assert.Equal("4.21.0", nuget.ChosenVersion);
+
+        // A listed prerelease joins them; the unlisted 4.20.0-rc does not.
+        Prerelease(nuget).IsChecked = true;
+        Ui.WaitFor(() => nuget.Versions.Contains("4.6.62-alpha"), "Moq's listed prerelease");
+        Assert.Equal(["4.21.0", "4.20.72", "4.20.70", "4.20.69", "4.18.4", "4.7.0", "4.6.62-alpha", "4.5.30"], nuget.Versions);
+        window.Close();
+    }
+
     [Fact]
     public void A_centrally_managed_version_is_read_from_directory_packages_props()
     {
@@ -119,6 +181,25 @@ public sealed class PackagesTests : IDisposable
         File.WriteAllText(project, "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <ItemGroup>\n    <PackageReference Include=\"Passenger.Sample\" />\n  </ItemGroup>\n</Project>\n");
         Assert.Equal(("Passenger.Sample", "1.1.0"), Assert.Single(ProjectModel.Load(project).Packages));
     }
+
+    /// <summary>A window on a folder (the Lib project's unless given) with the NuGet window open on a feed.</summary>
+    private MainWindow Open(IPackageFeed packages, string? opened = null)
+    {
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(opened ?? Path.Combine(folder, "Lib"));
+        Ui.Settle();
+        window.NuGet.Feed = packages;
+        window.Perform(AppActions.ShowNuGet);
+        return window;
+    }
+
+    private static IEnumerable<T> Descendants<T>(NuGetView nuget) => nuget.GetVisualDescendants().OfType<T>();
+
+    private static CheckBox Prerelease(NuGetView nuget) => Descendants<CheckBox>(nuget).Single(c => c.Content as string == "Prerelease");
+
+    /// <summary>The words on the window's buttons, the projects' Install, Update, Downgrade and Remove among them.</summary>
+    private static List<string> Labels(NuGetView nuget) => [.. Descendants<Button>(nuget).Select(b => b.Content).OfType<string>()];
 
     private static void Run(NuGetView nuget, Task<bool> change)
     {
@@ -148,5 +229,144 @@ public sealed class PackagesTests : IDisposable
                 """);
         }
         zip.CreateEntry("lib/netstandard2.0/_._");
+    }
+
+    /// <summary>A feed slow to say a package's versions: every question is held until released, then answered however
+    /// long ago it was asked or given up.</summary>
+    private sealed class HeldFeed(IPackageFeed inner) : IPackageFeed
+    {
+        private readonly TaskCompletionSource released = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int answered;
+
+        public string Name => inner.Name;
+
+        public int Answered => Volatile.Read(ref answered);
+
+        public void Release() => released.TrySetResult();
+
+        public Task<IReadOnlyList<PackageSummary>> SearchAsync(string query, bool prerelease, CancellationToken cancel) => inner.SearchAsync(query, prerelease, cancel);
+
+        public async Task<IReadOnlyList<string>> VersionsAsync(string id, bool prerelease, CancellationToken cancel)
+        {
+            await released.Task;
+            IReadOnlyList<string> versions = await inner.VersionsAsync(id, prerelease, CancellationToken.None);
+            Interlocked.Increment(ref answered);
+            return versions;
+        }
+    }
+
+    /// <summary>nuget.org's answers about Moq as recorded on October 12, 2026, trimmed to a few versions, among them
+    /// those Moq's owner unlisted: 4.20.0-rc, 4.20.0 to 4.20.2, 4.20.71 and 4.6.0. The registrations come gzipped, as
+    /// nuget.org sends them, and the first page by reference, as nuget.org gives a package of more versions.</summary>
+    private sealed class RecordedNuGetOrg : HttpMessageHandler
+    {
+        private const string Registrations = "https://api.nuget.org/v3/registration5-gz-semver2/";
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(request.RequestUri!.GetLeftPart(UriPartial.Path) switch
+            {
+                "https://api.nuget.org/v3/index.json" => Answer(ServiceIndex, gzipped: false),
+                "https://azuresearch-usnc.nuget.org/query" => Answer(Search, gzipped: false),
+                Registrations + "moq/index.json" => Answer(Registration, gzipped: true),
+                Registrations + "moq/page/4.5.30/4.7.0.json" => Answer(FirstPage, gzipped: true),
+                _ => new HttpResponseMessage(HttpStatusCode.NotFound),
+            });
+
+        private static HttpResponseMessage Answer(string json, bool gzipped)
+        {
+            byte[] body = Encoding.UTF8.GetBytes(json);
+            if (gzipped)
+            {
+                using MemoryStream packed = new();
+                using (GZipStream zip = new(packed, CompressionLevel.Fastest))
+                {
+                    zip.Write(body);
+                }
+                body = packed.ToArray();
+            }
+            ByteArrayContent content = new(body);
+            content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+            if (gzipped)
+            {
+                content.Headers.ContentEncoding.Add("gzip");
+            }
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
+        }
+
+        private const string ServiceIndex = """
+            {
+              "version": "3.0.0",
+              "resources": [
+                { "@id": "https://azuresearch-usnc.nuget.org/query", "@type": "SearchQueryService" },
+                { "@id": "https://api.nuget.org/v3/registration5-semver1/", "@type": "RegistrationsBaseUrl" },
+                { "@id": "https://api.nuget.org/v3-flatcontainer/", "@type": "PackageBaseAddress/3.0.0" },
+                { "@id": "https://azuresearch-usnc.nuget.org/query", "@type": "SearchQueryService/3.5.0" },
+                { "@id": "https://api.nuget.org/v3/registration5-gz-semver1/", "@type": "RegistrationsBaseUrl/3.4.0" },
+                { "@id": "https://api.nuget.org/v3/registration5-gz-semver2/", "@type": "RegistrationsBaseUrl/3.6.0" }
+              ]
+            }
+            """;
+
+        private const string Search = """
+            {
+              "totalHits": 456,
+              "data": [
+                { "id": "Moq", "version": "4.21.0", "description": "Moq is the most popular and friendly mocking framework for .NET.", "authors": ["Daniel Cazzulino, kzu"], "totalDownloads": 1249123849 }
+              ]
+            }
+            """;
+
+        private const string Registration = """
+            {
+              "@id": "https://api.nuget.org/v3/registration5-gz-semver2/moq/index.json",
+              "count": 2,
+              "items": [
+                {
+                  "@id": "https://api.nuget.org/v3/registration5-gz-semver2/moq/page/4.5.30/4.7.0.json",
+                  "@type": "catalog:CatalogPage",
+                  "count": 4,
+                  "lower": "4.5.30",
+                  "upper": "4.7.0"
+                },
+                {
+                  "@id": "https://api.nuget.org/v3/registration5-gz-semver2/moq/index.json#page/4.18.4/4.21.0",
+                  "@type": "catalog:CatalogPage",
+                  "count": 10,
+                  "items": [
+                    {"@id": "https://api.nuget.org/v3/registration5-gz-semver2/moq/4.18.4.json", "catalogEntry": {"id": "Moq", "version": "4.18.4", "listed": true, "published": "2022-12-30T11:22:01.4+00:00"}},
+                    {"@id": "https://api.nuget.org/v3/registration5-gz-semver2/moq/4.20.0-rc.json", "catalogEntry": {"id": "Moq", "version": "4.20.0-rc", "listed": false, "published": "1900-01-01T00:00:00+00:00"}},
+                    {"@id": "https://api.nuget.org/v3/registration5-gz-semver2/moq/4.20.0.json", "catalogEntry": {"id": "Moq", "version": "4.20.0", "listed": false, "published": "1900-01-01T00:00:00+00:00"}},
+                    {"@id": "https://api.nuget.org/v3/registration5-gz-semver2/moq/4.20.1.json", "catalogEntry": {"id": "Moq", "version": "4.20.1", "listed": false, "published": "1900-01-01T00:00:00+00:00"}},
+                    {"@id": "https://api.nuget.org/v3/registration5-gz-semver2/moq/4.20.2.json", "catalogEntry": {"id": "Moq", "version": "4.20.2", "listed": false, "published": "1900-01-01T00:00:00+00:00"}},
+                    {"@id": "https://api.nuget.org/v3/registration5-gz-semver2/moq/4.20.69.json", "catalogEntry": {"id": "Moq", "version": "4.20.69", "listed": true, "published": "2023-08-11T19:50:32.77+00:00"}},
+                    {"@id": "https://api.nuget.org/v3/registration5-gz-semver2/moq/4.20.70.json", "catalogEntry": {"id": "Moq", "version": "4.20.70", "listed": true, "published": "2023-11-28T15:31:50.26+00:00"}},
+                    {"@id": "https://api.nuget.org/v3/registration5-gz-semver2/moq/4.20.71.json", "catalogEntry": {"id": "Moq", "version": "4.20.71", "listed": false, "published": "1900-01-01T00:00:00+00:00"}},
+                    {"@id": "https://api.nuget.org/v3/registration5-gz-semver2/moq/4.20.72.json", "catalogEntry": {"id": "Moq", "version": "4.20.72", "listed": true, "published": "2024-09-07T01:37:52.233+00:00"}},
+                    {"@id": "https://api.nuget.org/v3/registration5-gz-semver2/moq/4.21.0.json", "catalogEntry": {"id": "Moq", "version": "4.21.0", "listed": true, "published": "2026-09-24T15:51:05.193+00:00"}}
+                  ],
+                  "lower": "4.18.4",
+                  "parent": "https://api.nuget.org/v3/registration5-gz-semver2/moq/index.json",
+                  "upper": "4.21.0"
+                }
+              ]
+            }
+            """;
+
+        private const string FirstPage = """
+            {
+              "@id": "https://api.nuget.org/v3/registration5-gz-semver2/moq/page/4.5.30/4.7.0.json",
+              "@type": "catalog:CatalogPage",
+              "count": 4,
+              "items": [
+                {"@id": "https://api.nuget.org/v3/registration5-gz-semver2/moq/4.5.30.json", "catalogEntry": {"id": "Moq", "version": "4.5.30", "listed": true, "published": "2017-01-09T04:04:32.56+00:00"}},
+                {"@id": "https://api.nuget.org/v3/registration5-gz-semver2/moq/4.6.0.json", "catalogEntry": {"id": "Moq", "version": "4.6.0", "listed": false, "published": "1900-01-01T00:00:00+00:00"}},
+                {"@id": "https://api.nuget.org/v3/registration5-gz-semver2/moq/4.6.62-alpha.json", "catalogEntry": {"id": "Moq", "version": "4.6.62-alpha", "listed": true, "published": "2017-02-21T20:43:34.95+00:00"}},
+                {"@id": "https://api.nuget.org/v3/registration5-gz-semver2/moq/4.7.0.json", "catalogEntry": {"id": "Moq", "version": "4.7.0", "listed": true, "published": "2017-02-22T03:05:12.363+00:00"}}
+              ],
+              "lower": "4.5.30",
+              "parent": "https://api.nuget.org/v3/registration5-gz-semver2/moq/index.json",
+              "upper": "4.7.0"
+            }
+            """;
     }
 }
