@@ -201,7 +201,40 @@ internal interface ICilLocation
     void Write(CilValue value);
 }
 
-internal sealed class CorDebugLocation(ICorDebugValue value) : ICilLocation
+/// <summary>A location whose storage is a debuggee value (a by-ref argument passes it, a field read goes through it).</summary>
+internal interface IDebuggeeLocation : ICilLocation
+{
+    ICorDebugValue Value { get; }
+}
+
+/// <summary>A local or an argument of the frame, fetched afresh each time: what ICorDebug hands out for a slot is a
+/// snapshot, so a struct written through one copy would read back as it was ("sum = 10m" showing the old sum).</summary>
+internal sealed class FrameSlotLocation(ICorDebugILFrame frame, int index, bool argument, Func<ICorDebugILFrame> refind) : IDebuggeeLocation
+{
+    public ICorDebugValue Value
+    {
+        get
+        {
+            try
+            {
+                return Slot(frame);
+            }
+            catch (System.Runtime.InteropServices.COMException error) when (error.HResult == Cor.CORDBG_E_OBJECT_NEUTERED)
+            {
+                // A function evaluation ran the program and neutered the frame: the same frame, found again.
+                frame = refind();
+                return Slot(frame);
+            }
+        }
+    }
+
+    public CilValue Read() => new CorDebugLocation(Value).Read();
+    public void Write(CilValue value) => new CorDebugLocation(Value).Write(value);
+
+    private ICorDebugValue Slot(ICorDebugILFrame at) => argument ? at.GetArgument(index) : at.GetLocalVariable(index);
+}
+
+internal sealed class CorDebugLocation(ICorDebugValue value) : IDebuggeeLocation
 {
     public ICorDebugValue Value => value;
     public CilValue Read() => CilValue.FromCorValue(GetStorageValue());

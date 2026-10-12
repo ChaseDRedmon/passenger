@@ -24,6 +24,23 @@ public class InterpreterTests(ITestOutputHelper testOutputHelper)
         // A method called on a local struct changes the local.
         Evaluate(host, frame, "counter.Increment()");
         Assert.Equal("1", Evaluate(host, frame, "counter.Count").Value);
+        // An assignment is its new value, even of a struct a constructor made in the program (which neuters the frame).
+        Assert.Equal("10", Evaluate(host, frame, "price = 10m").Value);
+        Assert.Equal("10", Evaluate(host, frame, "price").Value);
+    }
+
+    [Fact]
+    public async Task Set_value_assigns_what_an_expression_names_and_answers_with_it()
+    {
+        (DebugSession host, int frame) = await StopAt("Console.WriteLine(\"interpreter\");");
+        using DebugSession _ = host;
+
+        SetExpressionResponse set = host.Request<SetExpressionResponse>("setExpression", new SetExpressionArguments("pairOfInt.Value", "40 + 2", frame));
+        Assert.Equal("42", set.Value);
+        Assert.Equal("42", Evaluate(host, frame, "pairOfInt.Value").Value);
+        DapException refused = Assert.Throws<DapException>(() => host.Request<SetExpressionResponse>("setExpression", new SetExpressionArguments("myInt", "\"text\"", frame)));
+        Assert.NotEmpty(refused.Reason);
+        Assert.Equal("5", Evaluate(host, frame, "myInt").Value);
     }
 
     [Fact]

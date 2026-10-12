@@ -19,8 +19,9 @@ internal sealed class CilInterpreter(ManagedDebugger debugger, RuntimeAssemblyPr
         MethodBodyBlock body = compiled.PeReader.GetMethodBody(method.RelativeVirtualAddress);
         DecodedMethod decoded = compiled.GetDecodedMethod(compiled.EntryMethod);
         ICorDebugILFrame? frame = context.RootValue is null ? debugger.GetIlFrameForThreadIdAndStackDepth(context.ThreadId, context.StackDepth) : null;
-        ICilLocation[] arguments = CreateArguments(frame, context);
-        ICilLocation[] locals = CreateLocals(compiled, frame, body.LocalSignature, context.RootValue is not null);
+        Func<ICorDebugILFrame> refind = () => debugger.GetIlFrameForThreadIdAndStackDepth(context.ThreadId, context.StackDepth);
+        ICilLocation[] arguments = CreateArguments(frame, context, refind);
+        ICilLocation[] locals = CreateLocals(compiled, frame, body.LocalSignature, context.RootValue is not null, refind);
         EvaluationMetadataResolver resolver = CreateResolver(compiled, context, frame);
         await using DebuggeeDelegateAssemblyLoader delegateAssemblyLoader = new DebuggeeDelegateAssemblyLoader(debugger, compiled, resolver, context, handles, delegateMaterializer);
         Dictionary<string, ICilLocation> syntheticVariables = new Dictionary<string, ICilLocation>(StringComparer.Ordinal);
@@ -49,17 +50,18 @@ internal sealed class CilInterpreter(ManagedDebugger debugger, RuntimeAssemblyPr
             currentFrameModule);
     }
 
-    private static ICilLocation[] CreateArguments(ICorDebugILFrame? frame, CompiledExpressionEvaluationContext context)
+    private static ICilLocation[] CreateArguments(ICorDebugILFrame? frame, CompiledExpressionEvaluationContext context, Func<ICorDebugILFrame> refind)
     {
         if (context.RootValue is not null)
         {
             return [new CorDebugLocation(context.RootValue)];
         }
 
-        return frame!.Arguments.Select(value => (ICilLocation)new CorDebugLocation(value)).ToArray();
+        ICorDebugILFrame ilFrame = frame ?? throw new InvalidOperationException("Arguments need a frame");
+        return [.. Enumerable.Range(0, ilFrame.Arguments.Length).Select(i => (ICilLocation)new FrameSlotLocation(ilFrame, i, argument: true, refind))];
     }
 
-    private static ICilLocation[] CreateLocals(CompiledEvaluationMethod compiled, ICorDebugILFrame? frame, StandaloneSignatureHandle localSignature, bool isTypeContext)
+    private static ICilLocation[] CreateLocals(CompiledEvaluationMethod compiled, ICorDebugILFrame? frame, StandaloneSignatureHandle localSignature, bool isTypeContext, Func<ICorDebugILFrame> refind)
     {
         int localCount = localSignature.IsNil
             ? 0
@@ -70,7 +72,7 @@ internal sealed class CilInterpreter(ManagedDebugger debugger, RuntimeAssemblyPr
         for (int i = 0; i < result.Length; i++)
         {
             result[i] = !isTypeContext && i < frameLocals!.Length
-                ? new CorDebugLocation(frameLocals[i])
+                ? new FrameSlotLocation(frame!, i, argument: false, refind)
                 : new TemporaryLocation(CilValue.Null());
         }
         return result;
@@ -1166,7 +1168,7 @@ internal sealed class CilInterpreter(ManagedDebugger debugger, RuntimeAssemblyPr
     private static ICorDebugObjectValue GetFieldReceiver(CilValue receiver)
     {
         ICorDebugValue? corValue = receiver.CorValue;
-        if (corValue is null && receiver.Location is CorDebugLocation directLocation)
+        if (corValue is null && receiver.Location is IDebuggeeLocation directLocation)
         {
             corValue = directLocation.Value;
         }
@@ -1386,7 +1388,7 @@ internal sealed class CilInterpreter(ManagedDebugger debugger, RuntimeAssemblyPr
         EvaluationHandleScope handles,
         List<(ICilLocation Location, ICorDebugValue Value)> temporaryArguments)
     {
-        if (value.Location is CorDebugLocation location)
+        if (value.Location is IDebuggeeLocation location)
         {
             return location.Value;
         }

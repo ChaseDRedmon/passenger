@@ -41,6 +41,7 @@ public sealed class DebugController
                 _ = session.InputAsync($"{line}\n");
             }
         };
+        view.SetValueRequested += (_, request) => _ = SetValue(request.Node, request.Value);
         view.WatchRemoved += (_, expression) =>
         {
             watches.Remove(expression);
@@ -350,7 +351,7 @@ public sealed class DebugController
                 }
                 else
                 {
-                    rows.Add(new VariableNode(scope.Name, string.Empty, null, scope.VariablesReference, 0, VariableRole.Value));
+                    rows.Add(new VariableNode(scope.Name, string.Empty, null, scope.VariablesReference, 0, VariableRole.Scope));
                 }
             }
         }
@@ -411,6 +412,29 @@ public sealed class DebugController
         {
             return new VariableNode(expression, error.Reason, null, 0, 0, role == VariableRole.Watch ? VariableRole.Watch : VariableRole.Error);
         }
+    }
+
+    /// <summary>Shows the chosen frame's variables and inline values again, as a value changed.</summary>
+    public Task RefreshAsync() => ShowVariables();
+
+    /// <summary>Set Value: what a row's expression names takes the value typed (a C# expression), and the frame's
+    /// variables and inline values show what it now is; a refusal is said in the status bar.</summary>
+    public async Task SetValue(VariableNode node, string value)
+    {
+        node.IsEditing = false;
+        if (Session is not { State: DebugState.Paused } session || frame is not { } current || node.Expression is not { } expression)
+        {
+            return;
+        }
+        try
+        {
+            await session.SetExpressionAsync(expression, value, current.Id);
+        }
+        catch (DapException error)
+        {
+            Message?.Invoke(this, $"Could not set {expression}: {error.Reason}");
+        }
+        await ShowVariables();
     }
 
     private async Task Evaluate(string expression, bool watch)

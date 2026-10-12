@@ -96,6 +96,18 @@ public sealed class DebugAdapter
                 PresentationHint = ToProtocol(value.PresentationHint),
             };
         });
+        connection.Handle<SetExpressionArguments, SetExpressionResponse>("setExpression", async arguments =>
+        {
+            // The expression compiler compiles an assignment as it does any expression, and the interpreter writes it
+            // through to the frame, the object or the array; the value is then read back as it now is.
+            VariableInfo assigned = await Locked(() => debugger.Evaluate($"{arguments.Expression} = {arguments.Value}", arguments.FrameId));
+            if (assigned.PresentationHint?.Attributes == AttributesValue.FailedEvaluation)
+            {
+                throw new InvalidOperationException(assigned.Value.StartsWith("error: ", StringComparison.Ordinal) ? assigned.Value["error: ".Length..] : assigned.Value);
+            }
+            VariableInfo now = await Locked(() => debugger.Evaluate(arguments.Expression, arguments.FrameId));
+            return new SetExpressionResponse { Value = now.Value, Type = now.Type, VariablesReference = now.VariablesReference };
+        });
         connection.Handle<ThreadArguments, ContinueResponse>("continue", async _ =>
         {
             await Locked(() => debugger.HandleContinueRequest());
@@ -162,6 +174,7 @@ public sealed class DebugAdapter
             SupportsEvaluateForHovers = true,
             SupportsStepBack = false,
             SupportsSetVariable = false,
+            SupportsSetExpression = true,
             SupportsRestartFrame = false,
             SupportsTerminateRequest = true,
             SupportsExceptionInfoRequest = true,

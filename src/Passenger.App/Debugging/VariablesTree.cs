@@ -9,6 +9,47 @@ namespace Passenger.App.Debugging;
 public sealed class VariableNode(string name, string value, string? type, int reference, int depth, VariableRole role) : Observable
 {
     private bool isExpanded;
+    private bool isEditing;
+
+    /// <summary>The row this one opened from, if any.</summary>
+    public VariableNode? Parent { get; init; }
+
+    /// <summary>The C# that reaches this value from the frame, for Set Value: a local's name, a member after its
+    /// object's expression, an element's index after its array's. Null for a row no expression reaches (a
+    /// scope, the static members, a result).</summary>
+    public string? Expression
+    {
+        get
+        {
+            if (Role == VariableRole.Watch)
+            {
+                return Name;
+            }
+            if (Role is VariableRole.Scope or VariableRole.Result or VariableRole.Error)
+            {
+                return null;
+            }
+            if (Parent is null || Parent.Role == VariableRole.Scope)
+            {
+                return Name;
+            }
+            // The raw view lists the members of the object above it.
+            string? owner = Parent.Name switch
+            {
+                "Static members" or "Results" => null,
+                "Raw View" => Parent.Parent?.Expression,
+                _ => Parent.Expression,
+            };
+            return owner is null ? null : Name.StartsWith('[') ? $"{owner}{Name}" : $"{owner}.{Name}";
+        }
+    }
+
+    /// <summary>Its value is being typed over, in its row (Set Value, F2).</summary>
+    public bool IsEditing
+    {
+        get => isEditing;
+        set => Set(ref isEditing, value);
+    }
 
     public string Name { get; } = name;
     public string Value { get; } = value;
@@ -37,9 +78,12 @@ public sealed class VariableNode(string name, string value, string? type, int re
         }
     }
 
-    public static VariableNode From(DapVariable variable, int depth) =>
+    public static VariableNode From(DapVariable variable, int depth, VariableNode? parent = null) =>
         new(variable.Name, variable.Value, variable.Type, variable.VariablesReference, depth,
-            variable.PresentationHint?.Attributes?.Contains("failedEvaluation") == true ? VariableRole.Error : VariableRole.Value);
+            variable.PresentationHint?.Attributes?.Contains("failedEvaluation") == true ? VariableRole.Error : VariableRole.Value)
+        {
+            Parent = parent,
+        };
 }
 
 public enum VariableRole
@@ -48,6 +92,9 @@ public enum VariableRole
     Watch,
     Result,
     Error,
+
+    /// <summary>A scope of the frame (its locals), when it has more than one.</summary>
+    Scope,
 }
 
 /// <summary>The Variables view's rows, flattened to what is open so a virtualizing list draws only
@@ -80,7 +127,7 @@ public sealed class VariablesTree
         {
             try
             {
-                node.Children = [.. (await Load!(node.Reference)).Select(v => VariableNode.From(v, node.Depth + 1))];
+                node.Children = [.. (await Load!(node.Reference)).Select(v => VariableNode.From(v, node.Depth + 1, node))];
             }
             catch (DapException error)
             {

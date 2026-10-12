@@ -4,6 +4,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Templates;
 using Avalonia.Input;
+using Avalonia.Threading;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Passenger.App.Debugging;
@@ -91,9 +92,14 @@ public sealed class DebugView : DockPanel
         };
         variables.DoubleTapped += (_, _) =>
         {
-            if (variables.SelectedItem is VariableNode node)
+            // A double-click opens what has members, and sets what has none, as in Rider.
+            if (variables.SelectedItem is VariableNode node && node.HasChildren)
             {
                 _ = tree.Toggle(node);
+            }
+            else
+            {
+                EditSelectedValue();
             }
         };
         variables.KeyDown += OnVariablesKey;
@@ -178,7 +184,24 @@ public sealed class DebugView : DockPanel
     /// <summary>A watch to stop watching.</summary>
     public event EventHandler<string>? WatchRemoved;
 
+    /// <summary>Set Value: a row's new value typed in its place (a C# expression), Enter pressed.</summary>
+    public event EventHandler<(VariableNode Node, string Value)>? SetValueRequested;
+
+    /// <summary>Starts typing over the selected row's value, as F2 does: Rider's Set Value.</summary>
+    public bool EditSelectedValue()
+    {
+        if (variables.SelectedItem is not VariableNode { Expression: not null } node)
+        {
+            return false;
+        }
+        node.IsEditing = true;
+        return true;
+    }
+
     public VariablesTree Tree { get; } = new();
+
+    /// <summary>The Variables view's list, whose rows are <see cref="Tree"/>'s.</summary>
+    public ListBox VariablesList => variables;
 
     /// <summary>The program's output, as Rider's Console tab shows it.</summary>
     public OutputView Console { get; }
@@ -305,6 +328,10 @@ public sealed class DebugView : DockPanel
                 WatchRemoved?.Invoke(this, node.Name);
                 e.Handled = true;
                 break;
+            case Key.F2 when node.Expression is not null:
+                node.IsEditing = true;
+                e.Handled = true;
+                break;
         }
     }
 
@@ -393,6 +420,41 @@ public sealed class DebugView : DockPanel
             value.Bind(TextBlock.ForegroundProperty, value.GetResourceObservable("Passenger.Editor.Error"));
         }
         ToolTip.SetTip(value, node.Value);
+        TextBox editor = new() { Classes = { "search" }, MinHeight = 22, Height = 22, MinWidth = 240, Padding = new Thickness(6, 0), IsVisible = false, VerticalAlignment = VerticalAlignment.Center };
+        editor.AddHandler(KeyDownEvent, (_, e) =>
+        {
+            if (e.Key == Key.Enter)
+            {
+                SetValueRequested?.Invoke(this, (node, editor.Text ?? string.Empty));
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Escape)
+            {
+                node.IsEditing = false;
+                variables.Focus();
+                e.Handled = true;
+            }
+        }, Avalonia.Interactivity.RoutingStrategies.Tunnel);
+        editor.LostFocus += (_, _) => node.IsEditing = false;
+        node.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName != nameof(VariableNode.IsEditing))
+            {
+                return;
+            }
+            editor.IsVisible = node.IsEditing;
+            value.IsVisible = type.IsVisible = !node.IsEditing;
+            if (node.IsEditing)
+            {
+                // It starts from the value as shown, all of it chosen, so typing replaces it and an arrow edits it.
+                editor.Text = node.Value;
+                Dispatcher.UIThread.Post(() =>
+                {
+                    editor.Focus();
+                    editor.SelectAll();
+                }, DispatcherPriority.Loaded);
+            }
+        };
         return new StackPanel
         {
             Orientation = Orientation.Horizontal,
@@ -406,6 +468,7 @@ public sealed class DebugView : DockPanel
                 new TextBlock { Text = " = ", VerticalAlignment = VerticalAlignment.Center },
                 type,
                 value,
+                editor,
             },
         };
     }

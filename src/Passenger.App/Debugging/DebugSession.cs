@@ -215,6 +215,10 @@ public sealed class DebugSession
     public Task<ExceptionInfoResponse> ExceptionInfoAsync(int threadId) =>
         connection.RequestAsync<ExceptionInfoResponse>("exceptionInfo", new ThreadArguments(threadId));
 
+    /// <summary>Assigns a value (a C# expression) to what an expression names, in a frame.</summary>
+    public Task<SetExpressionResponse> SetExpressionAsync(string expression, string value, int frameId) =>
+        connection.RequestAsync<SetExpressionResponse>("setExpression", new SetExpressionArguments(expression, value, frameId));
+
     /// <summary>An expression's value in a frame; context is watch, hover or repl.</summary>
     public Task<EvaluateResponse> EvaluateAsync(string expression, int? frameId, string context) =>
         connection.RequestAsync<EvaluateResponse>("evaluate", new EvaluateArguments(expression, frameId, context));

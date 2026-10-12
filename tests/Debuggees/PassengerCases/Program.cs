@@ -145,6 +145,7 @@ static class Interpreter
 		Pair<int> pairOfInt = new() { Value = 1 };
 		object boxedPair = pairOfInt;
 		Counter counter = new();
+		decimal price = 12.5m;
 		Bumper.Work(new Bumped());
 		Console.WriteLine("interpreter");
 	}

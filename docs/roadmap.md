@@ -78,8 +78,11 @@ breakpoint properties from a right-click in the gutter or Alt+F9 (enabled, suspe
 message), tracepoints (Shift+click, or Suspend off: a message logged with its {values}, the program running on),
 conditional and tracepoint marks in the gutter, and the Breakpoints window (⌥⌘B, Ctrl+Alt+B).
 
-**Still to do:** set value, exception breakpoints in the Breakpoints window, smart step into, a terminal for the
-program's input, and the macOS signing.
+Set Value: F2 or a double-click on a value types over it in its row, a C# expression assigned through the
+protocol's setExpression.
+
+**Still to do:** exception breakpoints in the Breakpoints window, smart step into, a terminal for the program's
+input, and the macOS signing.
 Upstream SharpDbg's open issues that reach Passenger's users are listed in `docs/architecture.md`.
 
 **Done when:** Passenger debugs itself. It does, from the MCP server: Passenger built and launched under Passenger's

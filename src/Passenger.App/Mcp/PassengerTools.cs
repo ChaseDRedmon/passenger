@@ -366,6 +366,18 @@ public sealed class PassengerTools(MainWindow window)
         return new VariableInfo(expression, value.Result, value.Type, value.VariablesReference);
     });
 
+    [McpServerTool(Name = "debug_set_value", Title = "Set a value"), Description(
+        "Assigns a C# expression's value to what another names (a local, a member, an element: \"order.Quantity\", \"list[2]\") in a frame " +
+        "of the stopped thread, as Set Value (F2) in the Variables view does; the program goes on with it. Returns the value as it now is.")]
+    public Task<VariableInfo> DebugSetValue(string expression, [Description("A C# expression: 42, \"text\", null, new List<int>()")] string value, int frame = 0) => OnUi(async () =>
+    {
+        DebugSession session = Paused();
+        DapStackFrame chosen = (await Stack(session))[frame];
+        SetExpressionResponse set = await session.SetExpressionAsync(expression, value, chosen.Id);
+        await window.Debugger.RefreshAsync();
+        return new VariableInfo(expression, set.Value, set.Type, set.VariablesReference);
+    });
+
     [McpServerTool(Name = "debug_variables", Title = "A value's members", ReadOnly = true), Description(
         "The members, elements or locals behind a reference from debug_state, debug_evaluate or an earlier call.")]
     public Task<IReadOnlyList<VariableInfo>> DebugVariables(int reference) => OnUi(async () =>

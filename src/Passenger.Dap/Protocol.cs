@@ -29,6 +29,7 @@ public sealed record DapCapabilities
     public bool? SupportsEvaluateForHovers { get; init; }
     public bool? SupportsStepBack { get; init; }
     public bool? SupportsSetVariable { get; init; }
+    public bool? SupportsSetExpression { get; init; }
     public bool? SupportsRestartFrame { get; init; }
     public bool? SupportsTerminateRequest { get; init; }
     public bool? SupportsExceptionInfoRequest { get; init; }
@@ -170,6 +171,16 @@ public sealed record EvaluateResponse
     public string? Type { get; init; }
     public int VariablesReference { get; init; }
     public DapPresentationHint? PresentationHint { get; init; }
+}
+
+/// <summary>Assign a value to what an expression names in a frame (a local, a member, an element): Set Value.</summary>
+public sealed record SetExpressionArguments(string Expression, string Value, int? FrameId = null);
+
+public sealed record SetExpressionResponse
+{
+    public string Value { get; init; } = string.Empty;
+    public string? Type { get; init; }
+    public int VariablesReference { get; init; }
 }
 
 public sealed record ThreadArguments(int ThreadId);

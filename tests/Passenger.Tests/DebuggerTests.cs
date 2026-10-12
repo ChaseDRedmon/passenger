@@ -219,6 +219,35 @@ public sealed class DebuggerTests : IDisposable
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void A_value_set_in_the_variables_view_is_the_one_the_program_goes_on_with()
+    {
+        MainWindow window = Open();
+        window.EditorArea.CodeEditor.GoTo(new TextPosition(3, 4));
+        Ui.Run(window, AppActions.ToggleBreakpoint);
+        Ui.Run(window, AppActions.Debug);
+        Ui.WaitFor(() => Value(window, "total") == "0", "the first stop");
+
+        // Click the row, F2, type over the value, Enter: Rider's Set Value.
+        ListBox list = window.BottomPanel.Debug.VariablesList;
+        VariableNode total = window.BottomPanel.Debug.Tree.Rows.First(r => r.Name == "total");
+        Control row = list.ContainerFromItem(total)!;
+        Point middle = row.TranslatePoint(new Point(row.Bounds.Width / 2, row.Bounds.Height / 2), window)!.Value;
+        window.MouseDown(middle, MouseButton.Left);
+        window.MouseUp(middle, MouseButton.Left);
+        Ui.Press(window, "F2");
+        Assert.True(total.IsEditing);
+        window.KeyTextInput("100");
+        Ui.Press(window, "Enter");
+        Ui.WaitFor(() => Value(window, "total") == "100", "the value set");
+
+        Ui.Run(window, AppActions.StepOver);
+        Ui.WaitFor(() => Value(window, "total") == "101", "the program to add to the value set, not the old one");
+        Ui.Run(window, AppActions.Stop);
+        Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
+        window.Close();
+    }
+
     /// <summary>The middle of a line's number in the gutter, in the window's coordinates.</summary>
     private static Point Gutter(MainWindow window, CodeEditor editor, int line)
     {
