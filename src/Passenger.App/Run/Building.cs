@@ -113,6 +113,8 @@ public static partial class BuildOutput
         return new Problem(severity, match.Groups["message"].Value.Trim(), match.Groups["code"].Value, path, new TextPosition(lineNumber, column), project);
     }
 
-    [GeneratedRegex(@"^\s*(?<file>[^(]*?)(?:\((?<line>\d+)(?:,(?<column>\d+))?(?:,\d+,\d+)?\))?\s*:\s*(?<severity>error|warning)\s+(?<code>[A-Za-z]+\d+)\s*:\s*(?<message>.*?)(?:\s+\[(?<project>[^\]]+)\])?\s*$")]
+    /// <summary>The location is the parenthesis just before ": error", so the path may hold parentheses of its own
+    /// ("Shop (copy)", "C:\Program Files (x86)").</summary>
+    [GeneratedRegex(@"^\s*(?<file>.*?)(?:\((?<line>\d+)(?:,(?<column>\d+))?(?:[-,]\d+)*\))?\s*:\s*(?<severity>error|warning)\s+(?<code>[A-Za-z]+\d+)\s*:\s*(?<message>.*?)(?:\s+\[(?<project>[^\]]+)\])?\s*$")]
     private static partial Regex Diagnostic();
 }

@@ -85,6 +85,27 @@ public sealed class BuildRunTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void A_build_error_in_a_folder_whose_name_has_parentheses_is_listed_in_problems_at_its_line()
+    {
+        // A project copied as Finder and Explorer name a copy.
+        Write("Shop (copy)/Shop.csproj",
+            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
+        Write("Shop (copy)/Program.cs", "Console.WriteLine(\"Hello\");\nint count = \"three\";\n");
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(Path.Combine(folder, "Shop (copy)"));
+        Ui.Settle();
+        Ui.Press(window, Ui.Shortcut(AppActions.Build));
+        Ui.Settle();
+        Assert.False(window.IsBuilding);
+        Problem? problem = window.BottomPanel.Problems.Problems.SingleOrDefault(p => p.Code == "CS0029");
+        Assert.True(problem is not null, $"The build failed but Problems has nothing for its error, listing [{string.Join(", ", window.BottomPanel.Problems.Problems.Select(p => $"{p.Code} {p.Path}"))}]");
+        Assert.Equal(Passenger.App.Workspace.PathNames.Canonical(Path.Combine(folder, "Shop (copy)", "Program.cs")), problem.Path);
+        Assert.Equal(new TextPosition(1, 12), problem.Position);
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void With_hot_reload_a_saved_edit_changes_what_the_running_program_does()
     {
         Write("src/Hello/Program.cs", "while (true)\n{\n    Console.WriteLine(Talk.Say());\n    Thread.Sleep(200);\n}\n\nstatic class Talk\n{\n    public static string Say() => \"before the edit\";\n}\n");
