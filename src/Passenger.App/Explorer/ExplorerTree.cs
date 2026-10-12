@@ -31,7 +31,22 @@ public sealed class ExplorerTree
     /// <summary>Listed but dimmed, as Rider marks excluded folders: build output and dependencies.</summary>
     private static readonly HashSet<string> Excluded = ["bin", "obj", "artifacts", "node_modules", ".vs", ".idea"];
 
+    private IReadOnlyDictionary<string, Vcs.ChangeKind> changes = new Dictionary<string, Vcs.ChangeKind>();
+
     public ObservableCollection<ExplorerNode> Rows { get; } = [];
+
+    /// <summary>Colours the files version control says changed, as Rider's Project view does.</summary>
+    public void SetChanges(IReadOnlyDictionary<string, Vcs.ChangeKind> changed)
+    {
+        changes = changed;
+        foreach (ExplorerNode row in Rows)
+        {
+            Mark(row);
+        }
+    }
+
+    private void Mark(ExplorerNode node) =>
+        node.Change = node.IsFile && node.Path is { } path && changes.TryGetValue(path, out Vcs.ChangeKind kind) ? kind : null;
 
     public ExplorerNode? Root { get; private set; }
 
@@ -75,6 +90,7 @@ public sealed class ExplorerTree
         int at = Rows.IndexOf(node) + 1;
         foreach (ExplorerNode child in Visible(node))
         {
+            Mark(child);
             Rows.Insert(at++, child);
         }
     }
@@ -241,6 +257,29 @@ public sealed class ExplorerNode : Observable
             }
         }
     }
+
+    /// <summary>How version control says the file changed, or null when it did not.</summary>
+    public Vcs.ChangeKind? Change
+    {
+        get => change;
+        set
+        {
+            if (Set(ref change, value))
+            {
+                Raise(nameof(IsVcsModified));
+                Raise(nameof(IsVcsAdded));
+                Raise(nameof(IsVcsUnversioned));
+                Raise(nameof(IsVcsConflicted));
+            }
+        }
+    }
+
+    private Vcs.ChangeKind? change;
+
+    public bool IsVcsModified => change is Vcs.ChangeKind.Modified or Vcs.ChangeKind.Renamed;
+    public bool IsVcsAdded => change is Vcs.ChangeKind.Added;
+    public bool IsVcsUnversioned => change is Vcs.ChangeKind.Unversioned;
+    public bool IsVcsConflicted => change is Vcs.ChangeKind.Conflicted;
 
     public Thickness Indent => new(Depth * 16, 0, 0, 0);
     public double ChevronAngle => IsExpanded ? 90 : 0;

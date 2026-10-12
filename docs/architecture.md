@@ -206,6 +206,17 @@ constructor that names the dotnet host is used; and its async calls wait for the
 the console, so its blocking calls run on worker threads. Debugging a test attaches the debugger to the test host
 VSTest starts and answers VSTest only once the attach has hold of it, since VSTest runs the tests at that answer.
 
+## Version control
+
+Git is the `git` executable, as Rider drives it: status from `git status --porcelain=v2 -z`, a file as the last commit
+has it from `git show HEAD:path`, and commits, pushes and checkouts as the command line makes them, so hooks, signing,
+credential helpers and the user's config all apply, and nothing in the IDE has to keep up with Git's formats. A commit
+names its files (`git commit --only`), so what is checked in the Commit window is exactly what goes in, whatever else
+is staged. The gutter's change bars are Myers' diff of the last commit's text against the editor's (what `git diff`
+shows), worked out off the window's thread a moment after typing stops. When something else changes files (a checkout,
+a rollback, another program while the IDE was in the background), every open file without unsaved changes takes its
+text from disk as one undoable edit over only what differs.
+
 ## The profiler
 
 - **Sampling** (CPU, allocations, GC, lock contention, exceptions) comes from EventPipe through

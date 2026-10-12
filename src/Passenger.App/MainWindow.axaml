@@ -28,10 +28,10 @@
                             <PathIcon Classes="chevron" Data="{StaticResource Icon.ChevronDown}" />
                         </StackPanel>
                     </Button>
-                    <Button Classes="widget" ToolTip.Tip="Version control">
+                    <Button Name="BranchButton" Classes="widget" ToolTip.Tip="Version control" Click="OnBranchClicked">
                         <StackPanel Orientation="Horizontal" Spacing="6">
                             <PathIcon Data="{StaticResource Icon.Branch}" />
-                            <TextBlock Text="Version control" VerticalAlignment="Center" />
+                            <TextBlock Name="BranchName" Text="Version control" VerticalAlignment="Center" />
                             <PathIcon Classes="chevron" Data="{StaticResource Icon.ChevronDown}" />
                         </StackPanel>
                     </Button>

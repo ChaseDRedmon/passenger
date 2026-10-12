@@ -31,7 +31,9 @@
                                 </PathIcon>
                             </Border>
                             <PathIcon Data="{Binding Icon}" Foreground="{Binding IconBrush}" Margin="0,0,6,0" />
-                            <TextBlock Text="{Binding Name}" VerticalAlignment="Center" />
+                            <TextBlock Text="{Binding Name}" VerticalAlignment="Center"
+                                       Classes.vcsModified="{Binding IsVcsModified}" Classes.vcsAdded="{Binding IsVcsAdded}"
+                                       Classes.vcsUnversioned="{Binding IsVcsUnversioned}" Classes.vcsConflicted="{Binding IsVcsConflicted}" />
                             <TextBlock Text="{Binding Detail}" Classes="muted" FontSize="12" Margin="8,0,0,0" VerticalAlignment="Center" />
                         </StackPanel>
                     </DataTemplate>

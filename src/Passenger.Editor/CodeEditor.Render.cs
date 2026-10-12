@@ -263,6 +263,7 @@ public sealed partial class CodeEditor
         {
             return;
         }
+        DrawChanges(context, first, last, gutter);
         double right = gutter - GutterPadRight;
         Dictionary<int, TestMarkKind> tests = [];
         foreach (TestMark test in TestMarks)
@@ -370,6 +371,36 @@ public sealed partial class CodeEditor
             default:
                 context.DrawEllipse(null, new Pen(palette.LineNumber, 1.5), centre, radius - 0.75, radius - 0.75);
                 break;
+        }
+    }
+
+    /// <summary>The change bars against the code, as Rider draws them: green for lines added, blue for lines changed,
+    /// a grey wedge where lines were deleted.</summary>
+    private void DrawChanges(DrawingContext context, int first, int last, double gutter)
+    {
+        double x = gutter - 5;
+        foreach (ChangeMark change in ChangeMarks)
+        {
+            if (change.Line + Math.Max(1, change.Count) <= first || change.Line > last + 1)
+            {
+                continue;
+            }
+            double top = (change.Line * metrics.LineHeight) - scroll.Y;
+            if (change.Kind == ChangeMarkKind.Deleted)
+            {
+                StreamGeometry wedge = new();
+                using (StreamGeometryContext path = wedge.Open())
+                {
+                    path.BeginFigure(new Point(x - 1, top - 4), true);
+                    path.LineTo(new Point(x + 4, top));
+                    path.LineTo(new Point(x - 1, top + 4));
+                    path.EndFigure(true);
+                }
+                context.DrawGeometry(palette.ChangeDeleted, null, wedge);
+                continue;
+            }
+            IBrush brush = change.Kind == ChangeMarkKind.Added ? palette.ChangeAdded : palette.ChangeModified;
+            context.FillRectangle(brush, new Rect(x, top + 1, 3, (change.Count * metrics.LineHeight) - 2), 1);
         }
     }
 
@@ -623,6 +654,9 @@ public sealed partial class CodeEditor
         public IBrush InlineValue { get; private init; } = Brush("#868A91");
         public IBrush Tracepoint { get; private init; } = Brush("#E5A336");
         public IBrush TestPassed { get; private init; } = Brush("#5FAD65");
+        public IBrush ChangeAdded { get; private init; } = Brush("#549159");
+        public IBrush ChangeModified { get; private init; } = Brush("#375FAD");
+        public IBrush ChangeDeleted { get; private init; } = Brush("#868A91");
         public IBrush TestNotRun { get; private init; } = Brush("#5FAD65");
         public IBrush ExceptionBack { get; private init; } = Brush("#4A2629");
 
@@ -656,6 +690,9 @@ public sealed partial class CodeEditor
                 InlineValue = Find(control, "Passenger.Editor.InlineValue") ?? defaults.InlineValue,
                 Tracepoint = Find(control, "Passenger.Editor.Tracepoint") ?? defaults.Tracepoint,
                 TestPassed = Find(control, "Passenger.Test.Passed") ?? defaults.TestPassed,
+                ChangeAdded = Find(control, "Passenger.Vcs.Added") ?? defaults.ChangeAdded,
+                ChangeModified = Find(control, "Passenger.Vcs.Modified") ?? defaults.ChangeModified,
+                ChangeDeleted = Find(control, "Passenger.Vcs.Deleted") ?? defaults.ChangeDeleted,
                 TestNotRun = Find(control, "Passenger.Run") ?? defaults.TestNotRun,
                 ExceptionBack = Find(control, "Passenger.Editor.ExceptionBack") ?? defaults.ExceptionBack,
             };

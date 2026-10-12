@@ -25,6 +25,14 @@
             <SolidColorBrush x:Key="Passenger.Test.Skipped" Color="#868A91" />
             <SolidColorBrush x:Key="Passenger.Test.Running" Color="#5E9CF0" />
             <SolidColorBrush x:Key="Passenger.Test.NotRun" Color="#6F737A" />
+            <SolidColorBrush x:Key="Passenger.Vcs.Added" Color="#549159" />
+            <SolidColorBrush x:Key="Passenger.Vcs.Modified" Color="#375FAD" />
+            <SolidColorBrush x:Key="Passenger.Vcs.Deleted" Color="#868A91" />
+            <SolidColorBrush x:Key="Passenger.Vcs.File.Modified" Color="#6897BB" />
+            <SolidColorBrush x:Key="Passenger.Vcs.File.Added" Color="#629755" />
+            <SolidColorBrush x:Key="Passenger.Vcs.File.Deleted" Color="#6C6C6C" />
+            <SolidColorBrush x:Key="Passenger.Vcs.File.Unversioned" Color="#D1675A" />
+            <SolidColorBrush x:Key="Passenger.Vcs.File.Conflicted" Color="#D5756C" />
             <SolidColorBrush x:Key="Passenger.Badge" Color="#4A6FA8" />
             <SolidColorBrush x:Key="Passenger.Modified" Color="#6F9BF5" />
 
@@ -102,6 +110,14 @@
             <SolidColorBrush x:Key="Passenger.Test.Skipped" Color="#8C8C8C" />
             <SolidColorBrush x:Key="Passenger.Test.Running" Color="#3D7BF5" />
             <SolidColorBrush x:Key="Passenger.Test.NotRun" Color="#A8ADBD" />
+            <SolidColorBrush x:Key="Passenger.Vcs.Added" Color="#4E9A54" />
+            <SolidColorBrush x:Key="Passenger.Vcs.Modified" Color="#3D7BF5" />
+            <SolidColorBrush x:Key="Passenger.Vcs.Deleted" Color="#8C8C8C" />
+            <SolidColorBrush x:Key="Passenger.Vcs.File.Modified" Color="#0032A0" />
+            <SolidColorBrush x:Key="Passenger.Vcs.File.Added" Color="#0A7700" />
+            <SolidColorBrush x:Key="Passenger.Vcs.File.Deleted" Color="#97A3B4" />
+            <SolidColorBrush x:Key="Passenger.Vcs.File.Unversioned" Color="#993300" />
+            <SolidColorBrush x:Key="Passenger.Vcs.File.Conflicted" Color="#D50000" />
             <SolidColorBrush x:Key="Passenger.Badge" Color="#5C84C4" />
             <SolidColorBrush x:Key="Passenger.Modified" Color="#3D7BF5" />
 

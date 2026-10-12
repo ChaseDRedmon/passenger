@@ -77,6 +77,10 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.App/Docking`: the tool windows' frame, in IntelliJ's six places (`DockHost`, `ToolWindow`), moved
   by dragging a stripe button or a header, the layout kept in `DockLayout` (the settings folder, or
   `PASSENGER_SETTINGS`). A new tool window is a view and one `Dock.Add` in `MainWindow.AddToolWindows`.
+- `src/Passenger.App/Vcs`: Git through the `git` executable (`Git`, porcelain v2), Myers' line diff (`LineDiff`) for
+  the gutter's change bars, and `VcsController`, the window's working tree: status, branch, each open file's bars,
+  commit, push, checkout and rollback (after which open files take their text from disk). `MainWindow.Vcs.cs` is the
+  branch widget, the Commit window's place and the `app.vcs.*` actions.
 - `src/Passenger.App/Run` and `ToolWindows`: build and run through the .NET command line
   (`ProcessRunner` streams a process into a document; `BuildOutput` reads MSBuild's error lines),
   and the bottom panel's Build, Run and Problems windows. `Workspace/SolutionModel` reads

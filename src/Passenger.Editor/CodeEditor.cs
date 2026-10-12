@@ -109,6 +109,15 @@ public sealed partial class CodeEditor : Control
         InvalidateVisual();
     }
 
+    /// <summary>The lines changed since the last commit, as bars against the code, from the host.</summary>
+    public IReadOnlyList<ChangeMark> ChangeMarks { get; private set; } = [];
+
+    public void SetChangeMarks(IReadOnlyList<ChangeMark> marks)
+    {
+        ChangeMarks = marks;
+        InvalidateVisual();
+    }
+
     /// <summary>The tests' run icons in the gutter, from the host.</summary>
     public IReadOnlyList<TestMark> TestMarks { get; private set; } = [];
 

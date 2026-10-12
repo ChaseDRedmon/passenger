@@ -57,6 +57,7 @@ public partial class MainWindow : Window
         // editor actions go to the editor when it has the focus.
         AddHandler(KeyDownEvent, OnKeyDownFirst, RoutingStrategies.Tunnel);
         AddToolWindows();
+        AddVcs();
         Explorer.FileOpened += (_, path) => OpenFile(path);
         Structure.Follow(() => Editors.Active is { } shown
             ? (shown.Path, csharp?.For(shown)?.Lsp, Editors.CodeEditor.CaretPosition.Line)
@@ -247,6 +248,7 @@ public partial class MainWindow : Window
         string name = Path.GetFileName(folder);
         Solution = SolutionModel.Find(folder) is { } solutionPath ? SolutionModel.Load(solutionPath) : null;
         Explorer.Load(folder, Solution);
+        _ = vcs.OpenAsync(folder);
         configurations = RunConfiguration.From(Solution, folder);
         configuration = configurations.FirstOrDefault();
         RunConfigName.Text = configuration?.Name ?? "No configurations";
@@ -344,6 +346,11 @@ public partial class MainWindow : Window
             {
                 assist.Run(action);
             }
+            return;
+        }
+        if (action.StartsWith("app.vcs.", StringComparison.Ordinal))
+        {
+            RunVcsAction(action);
             return;
         }
         switch (action)

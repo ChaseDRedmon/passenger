@@ -54,3 +54,15 @@ public enum TestMarkKind
 
 /// <summary>A test's run icon on a line (from zero), right of the line numbers; a click on it asks the host to run it.</summary>
 public readonly record struct TestMark(int Line, TestMarkKind Kind);
+
+/// <summary>How lines differ from the last commit, as the gutter's change bar shows it.</summary>
+public enum ChangeMarkKind
+{
+    Added,
+    Modified,
+    Deleted,
+}
+
+/// <summary>A change bar: lines (from zero) added or modified since the last commit, or the place lines were deleted
+/// (a count of zero, drawn as a mark between lines).</summary>
+public readonly record struct ChangeMark(int Line, int Count, ChangeMarkKind Kind);

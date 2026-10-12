@@ -15,6 +15,7 @@ public sealed class OpenDocument : Observable
     private IReadOnlyList<LineMark> lineMarks = [];
     private IReadOnlyList<LineAnnotation> lineAnnotations = [];
     private IReadOnlyList<TestMark> testMarks = [];
+    private IReadOnlyList<ChangeMark> changeMarks = [];
 
     public OpenDocument(string path, FileText file)
     {
@@ -60,6 +61,13 @@ public sealed class OpenDocument : Observable
         set => Set(ref testMarks, value);
     }
 
+    /// <summary>The change bars: the lines that differ from the last commit.</summary>
+    public IReadOnlyList<ChangeMark> ChangeMarks
+    {
+        get => changeMarks;
+        set => Set(ref changeMarks, value);
+    }
+
     /// <summary>The debugger's text after lines: inline values, the exception it stopped on.</summary>
     public IReadOnlyList<LineAnnotation> LineAnnotations
     {
@@ -83,6 +91,39 @@ public sealed class OpenDocument : Observable
 
     public SelectionSet Selections { get; set; } = SelectionSet.Single(0);
     public Vector Scroll { get; set; }
+
+    /// <summary>Takes the file's text from disk again when something else changed it there (a checkout, a rollback),
+    /// as one undoable edit over only what differs, so carets before it stay put; never over unsaved changes.
+    /// Whether it changed anything.</summary>
+    public bool Reload()
+    {
+        if (IsModified || FileText.Load(Path) is not { } file)
+        {
+            return false;
+        }
+        string now = Text.Snapshot.ToString();
+        string disk = file.Text;
+        if (now == disk)
+        {
+            return false;
+        }
+        int start = 0;
+        while (start < now.Length && start < disk.Length && now[start] == disk[start])
+        {
+            start++;
+        }
+        int end = 0;
+        while (end < now.Length - start && end < disk.Length - start && now[now.Length - 1 - end] == disk[disk.Length - 1 - end])
+        {
+            end++;
+        }
+        SelectionSet before = Selections;
+        Text.Edit([new TextEdit(start, now.Length - start - end, disk[start..(disk.Length - end)])], before, before.Clamp(disk.Length));
+        Text.BreakUndoGroup();
+        Text.MarkSaved();
+        Raise(nameof(IsModified));
+        return true;
+    }
 
     public void Save()
     {

@@ -84,6 +84,15 @@ public static class AppActions
     public const string EditBreakpoint = "app.breakpoints.edit";
     public const string ViewBreakpoints = "app.breakpoints.view";
 
+    // Version control: Rider's Git actions over the open folder's working tree.
+    public const string ShowCommit = "app.vcs.showCommit";
+    public const string Commit = "app.vcs.commit";
+    public const string Push = "app.vcs.push";
+    public const string Branches = "app.vcs.branches";
+    public const string NextChange = "app.vcs.nextChange";
+    public const string PreviousChange = "app.vcs.previousChange";
+    public const string RollbackLines = "app.vcs.rollbackLines";
+
     public static bool IsApp(string action) => action.StartsWith("app.", StringComparison.Ordinal);
 
     public static Keymap Keymap()
@@ -138,6 +147,11 @@ public static class AppActions
                 .Bind(MaximizeToolWindow, "meta shift QUOTE")
                 .Bind(HideAllToolWindows, "meta shift F12")
                 .Bind(HideToolWindow, "shift ESCAPE")
+                .Bind(Commit, "meta alt shift K")
+                .Bind(Push, "meta shift K")
+                .Bind(NextChange, "shift meta alt N")
+                .Bind(PreviousChange, "shift meta alt P")
+                .Bind(RollbackLines, "meta alt Z")
                 .Bind(Back, "meta MINUS")
                 .Bind(Forward, "meta shift MINUS")
                 .Bind(Complete, "control SPACE", "control J")
@@ -199,6 +213,11 @@ public static class AppActions
             .Bind(MaximizeToolWindow, "control shift QUOTE")
             .Bind(HideAllToolWindows, "control shift F12")
             .Bind(HideToolWindow, "shift ESCAPE")
+            .Bind(Commit, "control alt K")
+            .Bind(Push, "control shift K")
+            .Bind(NextChange, "shift control alt N")
+            .Bind(PreviousChange, "shift control alt P")
+            .Bind(RollbackLines, "control alt Z")
             .Bind(Back, "control MINUS")
             .Bind(Forward, "control shift MINUS")
             .Bind(Complete, "control SPACE", "control J")

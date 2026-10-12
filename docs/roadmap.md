@@ -138,6 +138,13 @@ ClrMD.
 Git (changes, commit, diff, log, branches), the terminal, NuGet management, settings with search, keymaps, Search
 Everywhere.
 
+**Built so far:** Git's first half. The toolbar's widget names the branch and opens Rider's branch menu (New Branch,
+Commit, Push, the local branches to check out; Create Git Repository outside one). The Commit tool window lists the
+changes and the unversioned files with a box each, Amend (from the last message), Commit and Commit and Push; Rollback
+asks, then restores and deletes. The editor's gutter has Rider's change bars, Next and Previous Change move between
+them and Rollback Lines puts one back; the Explorer colours changed files. Open files reload from disk after a checkout
+or rollback and when the window comes back to the front. Still to come: the diff viewer, the log, and pull.
+
 ## M8: depth and shipping
 
 Hot reload and Edit and Continue, refactoring dialogs, decompiled sources with Source Link, code cleanup. Packaging:

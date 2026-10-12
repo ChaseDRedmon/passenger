@@ -283,4 +283,18 @@
         <Setter Property="Background" Value="{DynamicResource Passenger.Accent}" />
         <Setter Property="Foreground" Value="{DynamicResource Passenger.AccentText}" />
     </Style>
+
+    <!-- A file's name in the colour of how version control says it changed, as Rider's Project view has it. -->
+    <Style Selector="TextBlock.vcsModified">
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.Vcs.File.Modified}" />
+    </Style>
+    <Style Selector="TextBlock.vcsAdded">
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.Vcs.File.Added}" />
+    </Style>
+    <Style Selector="TextBlock.vcsUnversioned">
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.Vcs.File.Unversioned}" />
+    </Style>
+    <Style Selector="TextBlock.vcsConflicted">
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.Vcs.File.Conflicted}" />
+    </Style>
 </Styles>
