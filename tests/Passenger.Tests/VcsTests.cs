@@ -304,8 +304,8 @@ public sealed class VcsTests : IDisposable
         Ui.Press(window, "ENTER");
         Ui.Press(window, "ENTER");
         Assert.Equal(Original + "\n\n", Text(window));
-        Ui.WaitFor(() => Marks(window).Count > 0, "a bar for the blank lines", TimeSpan.FromSeconds(10));
-        Assert.Equal([new ChangeMark(6, 2, ChangeMarkKind.Added)], Marks(window));
+        // The first Enter's bar can land before the second's: the wait is for the bar over both.
+        Ui.WaitFor(() => Marks(window).SequenceEqual([new ChangeMark(6, 2, ChangeMarkKind.Added)]), "a bar over both blank lines", TimeSpan.FromSeconds(10));
         Task<DiffWindow?> opening = window.ShowDiffAsync(window.EditorArea.Active!.Path);
         Ui.WaitFor(() => opening.IsCompleted, "the diff to open");
         Assert.Equal([new DiffHunk(6, 0, 6, 2)], opening.Result!.View.Hunks);
