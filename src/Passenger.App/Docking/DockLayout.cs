@@ -54,4 +54,10 @@ public sealed record DockLayout
 }
 
 /// <summary>One tool window's place: its anchor, its order among that anchor's buttons, and whether it was open.</summary>
-public sealed record DockedWindow(ToolAnchor Anchor, int Order, bool Shown);
+public sealed record DockedWindow(ToolAnchor Anchor, int Order, bool Shown)
+{
+    public ToolMode Mode { get; init; }
+
+    /// <summary>A floating or windowed one's window, in screen pixels.</summary>
+    public int[]? Bounds { get; init; }
+}

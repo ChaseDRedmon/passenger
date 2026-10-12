@@ -100,6 +100,60 @@ public sealed class DockingTests
         }
     }
 
+    [AvaloniaFact]
+    public void A_floating_tool_window_takes_its_content_to_a_window_of_its_own_and_back()
+    {
+        MainWindow window = Open();
+        DockHost dock = window.DockHost;
+        dock.Show("debug");
+        ToolWindow debug = dock["debug"]!;
+        dock.SetMode(debug, ToolMode.Floating);
+        Ui.Settle();
+        Window floating = Assert.Single(window.OwnedWindows);
+        Assert.Contains(window.BottomPanel.Debug, floating.GetVisualDescendants());
+        Assert.Equal(0, dock.RowDefinitions[2].ActualHeight);
+        Assert.True(debug.IsShown);
+
+        // Its stripe button hides it, closing its window; again, and it floats again.
+        dock.Toggle("debug");
+        Assert.Empty(window.OwnedWindows);
+        dock.Toggle("debug");
+        Assert.Single(window.OwnedWindows);
+
+        // Closed by the system, it is hidden, not lost; docked again, it is in its place.
+        window.OwnedWindows[0].Close();
+        Ui.Settle();
+        Assert.False(debug.IsShown);
+        dock.SetMode(debug, ToolMode.Docked);
+        dock.Show("debug");
+        Ui.Settle();
+        Assert.True(dock.RowDefinitions[2].ActualHeight > 100);
+        Assert.Contains(window.BottomPanel.Debug, dock.GetVisualDescendants());
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Maximize_gives_a_tool_window_the_frame_and_hide_all_clears_it_for_the_editor()
+    {
+        MainWindow window = Open();
+        DockHost dock = window.DockHost;
+        dock.Show("debug");
+        Ui.Settle();
+        double before = dock.RowDefinitions[2].ActualHeight;
+        Ui.Run(window, AppActions.MaximizeToolWindow);
+        Assert.True(dock.RowDefinitions[2].ActualHeight > window.Bounds.Height * 0.75);
+        Ui.Run(window, AppActions.MaximizeToolWindow);
+        Assert.Equal(before, dock.RowDefinitions[2].ActualHeight, 1);
+
+        // Hide All closes every docked window; again, and they are all back.
+        Ui.Run(window, AppActions.HideAllToolWindows);
+        Assert.DoesNotContain(dock.Windows, w => w.IsShown);
+        Ui.Run(window, AppActions.HideAllToolWindows);
+        Assert.True(dock.IsShown("debug"));
+        Assert.True(dock.IsShown("explorer"));
+        window.Close();
+    }
+
     private static MainWindow Open()
     {
         MainWindow window = new() { Width = 1200, Height = 800 };

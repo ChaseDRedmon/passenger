@@ -349,6 +349,12 @@ public partial class MainWindow : Window
             case AppActions.ShowTests:
                 ShowToolWindow("tests");
                 break;
+            case AppActions.MaximizeToolWindow:
+                Dock.ToggleMaximize();
+                break;
+            case AppActions.HideAllToolWindows:
+                Dock.ToggleHideAll();
+                break;
             case AppActions.RunAllTests:
                 RunTests(() => tests.RunAsync(folder!));
                 break;

@@ -10,8 +10,9 @@ area, a status bar), dark and light colour tokens, a Windows build that compiles
 the UI without opening a window.
 
 Since: tool windows dock as IntelliJ's do, at six places round the editor, each moved by dragging its stripe button
-or its header (or with Move to), one shown per place, and the layout kept for the next start. To come: floating and
-windowed tool windows, maximizing one, and split editors.
+or its header (or with Move to), one shown per place, floated over the IDE or in a window of its own (View Mode),
+maximized (⌘⇧', Ctrl+Shift+', or a double-click on its header), all hidden at once (⌘⇧F12, Ctrl+Shift+F12), and the
+layout (floating windows' bounds too) kept for the next start. To come: split editors, and tabs dragged between them.
 
 **Done when:** `just run` opens it on macOS and Windows.
 

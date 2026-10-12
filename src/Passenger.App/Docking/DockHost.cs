@@ -33,8 +33,11 @@ public sealed class DockHost : Grid
     private double leftWidth = 280;
     private double rightWidth = 300;
     private double bottomHeight = 280;
+    private readonly Dictionary<ToolWindow, FloatWindow> floats = [];
     private (ToolWindow Window, Point Start, bool Dragging)? drag;
     private ToolAnchor? dropTarget;
+    private (ToolWindow Window, double Left, double Right, double Bottom)? maximized;
+    private List<ToolWindow>? hiddenAll;
 
     public DockHost()
     {
@@ -108,12 +111,20 @@ public sealed class DockHost : Grid
         {
             return;
         }
-        foreach (ToolWindow other in windows.Where(w => w.Anchor == window.Anchor && w != window))
+        hiddenAll = null;
+        if (window.Mode == ToolMode.Docked)
         {
-            other.IsShown = false;
+            foreach (ToolWindow other in windows.Where(w => w.Anchor == window.Anchor && w != window && w.Mode == ToolMode.Docked))
+            {
+                other.IsShown = false;
+            }
         }
         window.IsShown = true;
         Active = window;
+        if (window.Mode != ToolMode.Docked)
+        {
+            Float(window);
+        }
         Layout();
         LayoutChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -123,11 +134,143 @@ public sealed class DockHost : Grid
         if (this[id] is { IsShown: true } window)
         {
             Remember();
+            if (maximized?.Window == window)
+            {
+                Restore();
+            }
             window.IsShown = false;
+            if (floats.Remove(window, out FloatWindow? open))
+            {
+                window.WindowBounds = open.Placement;
+                open.CloseQuietly();
+            }
             if (Active == window)
             {
                 Active = windows.FirstOrDefault(w => w.IsShown);
             }
+            Layout();
+            LayoutChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    /// <summary>Puts a window in its place, over the IDE in a window of its own, or in an independent window, as
+    /// View Mode does; it stays open if it was.</summary>
+    public void SetMode(ToolWindow window, ToolMode mode)
+    {
+        if (window.Mode == mode)
+        {
+            return;
+        }
+        bool shown = window.IsShown;
+        if (shown)
+        {
+            Hide(window.Id);
+        }
+        window.Mode = mode;
+        if (shown)
+        {
+            Show(window.Id);
+        }
+        else
+        {
+            LayoutChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    /// <summary>Gives a docked window all of the frame it can have, or gives it back its size (Ctrl+Shift+', a
+    /// double-click on its header).</summary>
+    public void ToggleMaximize(ToolWindow? window = null)
+    {
+        if (maximized is not null)
+        {
+            Restore();
+            return;
+        }
+        if ((window ?? Active) is not { IsShown: true, Mode: ToolMode.Docked } target)
+        {
+            return;
+        }
+        Remember();
+        maximized = (target, leftWidth, rightWidth, bottomHeight);
+        double width = Bounds.Width - (2 * StripeWidth) - 80;
+        double height = Bounds.Height - 80;
+        switch (target.Anchor)
+        {
+            case ToolAnchor.BottomLeft or ToolAnchor.BottomRight:
+                bottomHeight = Math.Max(bottomHeight, height);
+                break;
+            case ToolAnchor.LeftTop or ToolAnchor.LeftBottom:
+                leftWidth = Math.Max(leftWidth, width - (IsAreaOpen(right: true) ? rightWidth : 0));
+                break;
+            default:
+                rightWidth = Math.Max(rightWidth, width - (IsAreaOpen(right: false) ? leftWidth : 0));
+                break;
+        }
+        Layout();
+    }
+
+    public bool IsMaximized => maximized is not null;
+
+    /// <summary>Hides every docked window open, or opens them again (Ctrl+Shift+F12), as IntelliJ's Hide All Windows.</summary>
+    public void ToggleHideAll()
+    {
+        if (hiddenAll is { } hidden)
+        {
+            foreach (ToolWindow window in hidden)
+            {
+                Show(window.Id);
+            }
+            hiddenAll = null;
+            return;
+        }
+        List<ToolWindow> open = [.. windows.Where(w => w.IsShown && w.Mode == ToolMode.Docked)];
+        foreach (ToolWindow window in open)
+        {
+            Hide(window.Id);
+        }
+        hiddenAll = open;
+    }
+
+    private void Restore()
+    {
+        if (maximized is { } was)
+        {
+            (leftWidth, rightWidth, bottomHeight) = (was.Left, was.Right, was.Bottom);
+            maximized = null;
+            Layout();
+        }
+    }
+
+    private bool IsAreaOpen(bool right) => windows.Any(w => w.IsShown && w.Mode == ToolMode.Docked
+        && (right ? w.Anchor is ToolAnchor.RightTop or ToolAnchor.RightBottom : w.Anchor is ToolAnchor.LeftTop or ToolAnchor.LeftBottom));
+
+    /// <summary>A floating or windowed window's own window, opened (where it last stood) or brought forward.</summary>
+    private void Float(ToolWindow window)
+    {
+        if (floats.TryGetValue(window, out FloatWindow? open))
+        {
+            open.Activate();
+            return;
+        }
+        FloatWindow created = new(this, window);
+        floats[window] = created;
+        if (window.Mode == ToolMode.Floating && TopLevel.GetTopLevel(this) is Window owner)
+        {
+            created.Show(owner);
+        }
+        else
+        {
+            created.Show();
+        }
+    }
+
+    /// <summary>The person closed a floating window's own window: the tool window is hidden, its bounds kept.</summary>
+    private void FloatClosed(ToolWindow window, FloatWindow closed)
+    {
+        if (floats.Remove(window))
+        {
+            window.WindowBounds = closed.Placement;
+            window.IsShown = false;
             Layout();
             LayoutChanged?.Invoke(this, EventArgs.Empty);
         }
@@ -189,7 +332,11 @@ public sealed class DockHost : Grid
         Remember();
         return new DockLayout
         {
-            Windows = windows.ToDictionary(w => w.Id, w => new DockedWindow(w.Anchor, w.Order, w.IsShown)),
+            Windows = windows.ToDictionary(w => w.Id, w => new DockedWindow(w.Anchor, w.Order, w.IsShown)
+            {
+                Mode = w.Mode,
+                Bounds = (floats.TryGetValue(w, out FloatWindow? open) ? open.Placement : w.WindowBounds) is { } at ? [at.X, at.Y, at.Width, at.Height] : null,
+            }),
             LeftWidth = leftWidth,
             RightWidth = rightWidth,
             BottomHeight = bottomHeight,
@@ -206,10 +353,12 @@ public sealed class DockHost : Grid
                 window.Anchor = placed.Anchor;
                 window.Order = placed.Order;
                 window.IsShown = placed.Shown;
+                window.Mode = placed.Mode;
+                window.WindowBounds = placed.Bounds is [int x, int y, int width, int height] ? new PixelRect(x, y, width, height) : null;
             }
         }
         // Two shown in one place keep the first.
-        foreach (IGrouping<ToolAnchor, ToolWindow> place in windows.Where(w => w.IsShown).GroupBy(w => w.Anchor))
+        foreach (IGrouping<ToolAnchor, ToolWindow> place in windows.Where(w => w.IsShown && w.Mode == ToolMode.Docked).GroupBy(w => w.Anchor))
         {
             foreach (ToolWindow extra in place.OrderBy(w => w.Order).Skip(1))
             {
@@ -222,6 +371,18 @@ public sealed class DockHost : Grid
         bottomHeight = Positive(layout.BottomHeight, bottomHeight);
         Active = windows.FirstOrDefault(w => w.IsShown);
         Layout();
+        // A floating window kept open opens again once the IDE's own window is there to float over.
+        foreach (ToolWindow floating in windows.Where(w => w.IsShown && w.Mode != ToolMode.Docked))
+        {
+            if (TopLevel.GetTopLevel(this) is null)
+            {
+                AttachedToVisualTree += (_, _) => Float(floating);
+            }
+            else
+            {
+                Float(floating);
+            }
+        }
 
         static double Positive(double value, double fallback) => value > 40 ? value : fallback;
     }
@@ -342,7 +503,7 @@ public sealed class DockHost : Grid
     {
         foreach ((ToolAnchor anchor, ToolPane pane) in panes)
         {
-            pane.Show(windows.FirstOrDefault(w => w.Anchor == anchor && w.IsShown));
+            pane.Show(windows.FirstOrDefault(w => w.Anchor == anchor && w.IsShown && w.Mode == ToolMode.Docked));
         }
         bool leftOpen = Split(leftArea, panes[ToolAnchor.LeftTop], panes[ToolAnchor.LeftBottom], rows: true);
         bool rightOpen = Split(rightArea, panes[ToolAnchor.RightTop], panes[ToolAnchor.RightBottom], rows: true);
@@ -457,6 +618,10 @@ public sealed class DockHost : Grid
     private sealed class ToolPane : DockPanel
     {
         private readonly DockHost host;
+
+        /// <summary>The floating window it stands in, if any: its header then moves that window.</summary>
+        public FloatWindow? Floating { get; init; }
+
         private readonly TextBlock title = new() { FontWeight = FontWeight.SemiBold, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0, 0, 0) };
         private readonly ContentControl body = new();
         private readonly ContentControl tools = new() { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0) };
@@ -491,7 +656,20 @@ public sealed class DockHost : Grid
             };
             header.PointerPressed += (_, e) =>
             {
-                if (Window is { } window && !(e.Source is Visual source && source.FindAncestorOfType<Button>(includeSelf: true) is not null))
+                if (Window is not { } window || (e.Source is Visual source && source.FindAncestorOfType<Button>(includeSelf: true) is not null))
+                {
+                    return;
+                }
+                if (e.ClickCount == 2 && Floating is null)
+                {
+                    host.ToggleMaximize(window);
+                    e.Handled = true;
+                }
+                else if (Floating is { } own)
+                {
+                    own.BeginMoveDrag(e);
+                }
+                else
                 {
                     host.BeginDrag(window, e);
                     e.Pointer.Capture(header);
@@ -566,6 +744,21 @@ public sealed class DockHost : Grid
                 };
                 move.Items.Add(item);
             }
+            MenuItem mode = new() { Header = "View Mode" };
+            foreach ((ToolMode each, string name) in new[] { (ToolMode.Docked, "Dock"), (ToolMode.Floating, "Float"), (ToolMode.Windowed, "Window") })
+            {
+                MenuItem item = new() { Header = name, IsEnabled = Window?.Mode != each };
+                item.Click += (_, _) =>
+                {
+                    if (Window is { } window)
+                    {
+                        host.SetMode(window, each);
+                    }
+                };
+                mode.Items.Add(item);
+            }
+            MenuItem maximize = new() { Header = host.IsMaximized ? "Restore Size" : "Maximize", IsEnabled = Floating is null };
+            maximize.Click += (_, _) => host.ToggleMaximize(Window);
             MenuItem hide = new() { Header = "Hide" };
             hide.Click += (_, _) =>
             {
@@ -574,7 +767,10 @@ public sealed class DockHost : Grid
                     host.Hide(window.Id);
                 }
             };
+            menu.Items.Add(mode);
             menu.Items.Add(move);
+            menu.Items.Add(maximize);
+            menu.Items.Add(new Separator());
             menu.Items.Add(hide);
             return menu;
         }
@@ -586,6 +782,60 @@ public sealed class DockHost : Grid
             Button button = new() { Classes = { "tool" }, Content = glyph };
             ToolTip.SetTip(button, tip);
             return button;
+        }
+    }
+
+    /// <summary>A tool window floating over the IDE, or in a window of its own: its header and content, closed when
+    /// the tool window is hidden, and hiding it when the person closes it.</summary>
+    private sealed class FloatWindow : Window
+    {
+        private readonly DockHost host;
+        private readonly ToolWindow window;
+        private bool closingQuietly;
+
+        public FloatWindow(DockHost host, ToolWindow window)
+        {
+            this.host = host;
+            this.window = window;
+            Title = window.Title;
+            ShowInTaskbar = window.Mode == ToolMode.Windowed;
+            ToolPane pane = new(host) { Floating = this };
+            pane.Show(window);
+            Content = pane;
+            this.Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Chrome"));
+            if (window.WindowBounds is { } at)
+            {
+                WindowStartupLocation = WindowStartupLocation.Manual;
+                Position = new PixelPoint(at.X, at.Y);
+                Width = at.Width;
+                Height = at.Height;
+            }
+            else
+            {
+                WindowStartupLocation = WindowStartupLocation.CenterOwner;
+                Width = 520;
+                Height = 420;
+            }
+            Closed += (_, _) =>
+            {
+                if (!closingQuietly)
+                {
+                    host.FloatClosed(window, this);
+                }
+            };
+        }
+
+        /// <summary>Where it stands: its position in screen pixels, its size in its own units.</summary>
+        public PixelRect Placement => new(Position.X, Position.Y, (int)Bounds.Width, (int)Bounds.Height);
+
+        public ToolWindow ToolWindow => window;
+
+        public DockHost Host => host;
+
+        public void CloseQuietly()
+        {
+            closingQuietly = true;
+            Close();
         }
     }
 

@@ -253,7 +253,8 @@ answers about the code, builds and runs, the debugger, and the window itself.
   its stripe button or header is dragged elsewhere, so `Docking/DockHost` does exactly that: stripes down both edges
   with a group of buttons per place, the side and bottom areas round the editor, a header per window with Move to and
   Hide, the place under a drag lit up, and the layout kept in the user's settings folder (only by the window a person
-  uses; a headless IDE starts on the defaults). Floating and windowed modes, and maximizing, come next.
+  uses; a headless IDE starts on the defaults). View Mode floats a window over the IDE's (an owned window) or gives it
+an independent one, its button staying on its stripe; maximizing widens its area until it is asked back.
 
 ## Licences we hold to
 

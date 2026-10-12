@@ -1,3 +1,4 @@
+using Avalonia;
 using Avalonia.Controls;
 
 namespace Passenger.App.Docking;
@@ -12,6 +13,15 @@ public enum ToolAnchor
     RightBottom,
     BottomLeft,
     BottomRight,
+}
+
+/// <summary>How a tool window stands, as IntelliJ's View Mode: in its place, in a window kept over the IDE's, or in a
+/// window of its own the system manages like any other.</summary>
+public enum ToolMode
+{
+    Docked,
+    Floating,
+    Windowed,
 }
 
 /// <summary>A tool window (Explorer, Debug, Unit Tests): its content, its button on a stripe, and where it docks.
@@ -47,6 +57,12 @@ public sealed class ToolWindow(string id, string title, string icon, Control con
         get => anchor;
         internal set => Set(ref anchor, value);
     }
+
+    /// <summary>Docked, floating or windowed; its button stays on its anchor's stripe whatever the mode.</summary>
+    public ToolMode Mode { get; internal set; }
+
+    /// <summary>Where its own window last stood, floating or windowed, in screen pixels.</summary>
+    public PixelRect? WindowBounds { get; internal set; }
 
     /// <summary>Its place among its anchor's buttons, from the top or the left.</summary>
     public int Order { get; internal set; }
