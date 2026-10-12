@@ -464,13 +464,11 @@ public sealed class PassengerTools(MainWindow window)
         "or an editor action on the active editor. ide_actions lists them.")]
     public Task<string> IdeAction(string action) => OnUi(() => Task.FromResult(window.Perform(action) ? $"Ran {action}" : $"{action} did nothing here"));
 
-    [McpServerTool(Name = "ide_actions", Title = "The IDE's actions", ReadOnly = true), Description("Every action ide_action runs, with its shortcut on this platform.")]
+    [McpServerTool(Name = "ide_actions", Title = "The IDE's actions", ReadOnly = true), Description(
+        "Every action ide_action runs (those with no shortcut too), as id: name [group] (shortcut on this platform).")]
     public Task<IReadOnlyList<string>> IdeActions() => OnUi(() =>
-    {
-        Keymap keymap = AppActions.Keymap();
-        return Task.FromResult((IReadOnlyList<string>)[.. keymap.Actions.Order(StringComparer.Ordinal).Select(a =>
-            keymap.ShortcutsFor(a) is { Count: > 0 } keys ? $"{a} ({keys[0].Display()})" : a)]);
-    });
+        Task.FromResult((IReadOnlyList<string>)[.. ActionCatalog.All(AppActions.Keymap()).Select(a =>
+            a.Shortcut is { } keys ? $"{a.Id}: {a.Title} [{a.Group}] ({keys})" : $"{a.Id}: {a.Title} [{a.Group}]")]));
 
     [McpServerTool(Name = "type", Title = "Type into the editor", Destructive = true), Description(
         "Types text into the active editor at its caret, as the keyboard would (typing a closing bracket over one already there, and so on).")]

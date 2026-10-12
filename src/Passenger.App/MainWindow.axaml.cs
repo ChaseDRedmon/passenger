@@ -415,6 +415,9 @@ public partial class MainWindow : Window
             case AppActions.ShowTerminal:
                 ToggleTerminal();
                 break;
+            case AppActions.FindAction:
+                ShowFindAction();
+                break;
             case AppActions.ShowStructure:
                 ShowToolWindow("structure");
                 _ = Structure.Refresh();
@@ -858,6 +861,38 @@ public partial class MainWindow : Window
             if (path is not null)
             {
                 OpenFile(path);
+            }
+        };
+        ShowPopup(popup);
+    }
+
+    /// <summary>The actions run from Find Action, the latest first, which it lists before anything is typed.</summary>
+    private readonly List<string> recentActions = [];
+
+    /// <summary>Find Action: every action by name, run as its shortcut would run it.</summary>
+    public void ShowFindAction()
+    {
+        Navigation.ActionPopup popup = new(keys.Keymap, recentActions);
+        popup.Done += (_, chosen) =>
+        {
+            ClosePopup();
+            if (chosen is null)
+            {
+                return;
+            }
+            recentActions.Remove(chosen.Id);
+            recentActions.Insert(0, chosen.Id);
+            if (recentActions.Count > 10)
+            {
+                recentActions.RemoveAt(recentActions.Count - 1);
+            }
+            if (chosen.Id == AppActions.FindAction)
+            {
+                return;
+            }
+            if (!Perform(chosen.Id))
+            {
+                StatusText.Text = $"{chosen.Title} does nothing here";
             }
         };
         ShowPopup(popup);

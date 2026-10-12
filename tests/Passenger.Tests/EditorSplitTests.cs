@@ -82,6 +82,27 @@ public sealed class EditorSplitTests : IDisposable
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void Find_action_finds_an_action_with_no_shortcut_by_name_and_runs_it()
+    {
+        MainWindow window = Open("One.cs");
+        Ui.Run(window, AppActions.FindAction);
+        Passenger.App.Navigation.ActionPopup popup = Assert.IsType<Passenger.App.Navigation.ActionPopup>(window.Popup);
+        popup.Query = "split right";
+        Ui.Settle();
+        Assert.Equal(AppActions.SplitRight, popup.Rows[0].Id);
+        Ui.Press(window, "ENTER");
+        Assert.False(window.IsPopupOpen);
+        Assert.Equal(2, window.EditorArea.Groups.Count);
+
+        // Run once, it is the first thing offered next time.
+        Ui.Run(window, AppActions.FindAction);
+        Assert.Equal(AppActions.SplitRight, ((Passenger.App.Navigation.ActionPopup)window.Popup!).Rows[0].Id);
+        Ui.Press(window, "ESCAPE");
+        Assert.False(window.IsPopupOpen);
+        window.Close();
+    }
+
     private MainWindow Open(params string[] files)
     {
         MainWindow window = new() { Width = 1200, Height = 800 };
