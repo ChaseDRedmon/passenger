@@ -1,0 +1,49 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:editor="using:Passenger.Editor"
+             xmlns:ws="using:Passenger.App.Workspace"
+             x:Class="Passenger.App.Editors.EditorArea">
+    <Grid RowDefinitions="Auto,*">
+        <!-- The tabs: one per open file, the active one underlined. -->
+        <Border Name="TabBar" Grid.Row="0" Height="36" IsVisible="False"
+                Background="{DynamicResource Passenger.Chrome}"
+                BorderBrush="{DynamicResource Passenger.Divider}" BorderThickness="0,0,0,1">
+            <ScrollViewer HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled">
+                <ItemsControl Name="Tabs">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <StackPanel Orientation="Horizontal" />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="ws:OpenDocument">
+                            <Border Classes="tab" Classes.active="{Binding IsActive}" PointerPressed="OnTabPressed"
+                                    ToolTip.Tip="{Binding Path}">
+                                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                    <PathIcon Data="{Binding Icon}" Foreground="{Binding IconBrush}" />
+                                    <TextBlock Classes="tabName" Text="{Binding Name}" VerticalAlignment="Center" />
+                                    <Panel Width="16" Height="16">
+                                        <Ellipse Classes="modified" Width="7" Height="7" IsVisible="{Binding IsModified}" />
+                                        <Button Classes="tabClose" Click="OnTabCloseClicked" ToolTip.Tip="Close">
+                                            <PathIcon Classes="small" Data="{StaticResource Icon.Close}" />
+                                        </Button>
+                                    </Panel>
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+        </Border>
+
+        <editor:CodeEditor Name="Editor" Grid.Row="1" IsVisible="False" />
+
+        <!-- What the area shows with no file open. -->
+        <StackPanel Name="EmptyState" Grid.Row="1" Spacing="10" HorizontalAlignment="Center" VerticalAlignment="Center">
+            <TextBlock Name="EmptyTitle" Text="Passenger" FontSize="28" FontWeight="SemiBold" HorizontalAlignment="Center"
+                       Foreground="{DynamicResource Passenger.Text}" />
+            <TextBlock Name="EmptyHint" Classes="muted" Text="Open a solution, project or folder to start." HorizontalAlignment="Center" />
+            <Button Name="OpenButton" Classes="primary" Content="Open…" HorizontalAlignment="Center" Margin="0,8,0,0" />
+        </StackPanel>
+    </Grid>
+</UserControl>

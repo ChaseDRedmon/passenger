@@ -1,9 +1,11 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:explorer="using:Passenger.App.Explorer"
+        xmlns:editors="using:Passenger.App.Editors"
         x:Class="Passenger.App.MainWindow"
         Title="Passenger"
         Width="1400" Height="900" MinWidth="800" MinHeight="500"
-        Background="{DynamicResource Passenger.Editor}">
+        Background="{DynamicResource Passenger.Editor.Background}">
     <Grid RowDefinitions="Auto,*,Auto">
 
         <!-- The toolbar. On macOS it is also the title bar, so its empty space drags the window. -->
@@ -60,7 +62,7 @@
             </DockPanel>
         </Border>
 
-        <Grid Grid.Row="1" ColumnDefinitions="40,260,1,*,40">
+        <Grid Grid.Row="1" ColumnDefinitions="40,280,1,*,40">
 
             <!-- The left stripe: tool windows that dock left (top group) and bottom (bottom group). -->
             <Border Grid.Column="0" Background="{DynamicResource Passenger.Chrome}"
@@ -88,27 +90,13 @@
                 </DockPanel>
             </Border>
 
-            <!-- The Explorer tool window. -->
-            <Border Grid.Column="1" Background="{DynamicResource Passenger.Chrome}">
-                <DockPanel>
-                    <TextBlock DockPanel.Dock="Top" Classes="paneTitle" Text="Explorer" Margin="12,10,12,6" />
-                    <TextBlock Name="ExplorerHint" Classes="muted" Text="Nothing open"
-                               HorizontalAlignment="Center" VerticalAlignment="Center" />
-                </DockPanel>
-            </Border>
+            <explorer:ExplorerView Name="Explorer" Grid.Column="1" />
 
             <!-- A 1 px line to see, under a wider invisible splitter to grab. -->
             <Border Grid.Column="2" Background="{DynamicResource Passenger.Divider}" />
             <GridSplitter Grid.Column="2" ResizeDirection="Columns" Classes="hairline" />
 
-
-            <!-- The editor area, empty until a file opens. -->
-            <StackPanel Grid.Column="3" Spacing="10" HorizontalAlignment="Center" VerticalAlignment="Center">
-                <TextBlock Text="Passenger" FontSize="28" FontWeight="SemiBold" HorizontalAlignment="Center"
-                           Foreground="{DynamicResource Passenger.Text}" />
-                <TextBlock Classes="muted" Text="Open a solution, project or folder to start." HorizontalAlignment="Center" />
-                <Button Classes="primary" Content="Open…" HorizontalAlignment="Center" Margin="0,8,0,0" Click="OnOpenClicked" />
-            </StackPanel>
+            <editors:EditorArea Name="Editors" Grid.Column="3" />
 
             <!-- The right stripe. -->
             <Border Grid.Column="4" Background="{DynamicResource Passenger.Chrome}"
@@ -121,12 +109,18 @@
             </Border>
         </Grid>
 
-        <!-- The status bar. -->
+        <!-- The status bar: where the caret is and how the file is stored. -->
         <Border Grid.Row="2" Height="26" Background="{DynamicResource Passenger.Chrome}"
                 BorderBrush="{DynamicResource Passenger.Divider}" BorderThickness="0,1,0,0">
             <DockPanel Margin="12,0">
-                <TextBlock Name="RuntimeText" DockPanel.Dock="Right" Classes="muted" FontSize="12" VerticalAlignment="Center" />
-                <TextBlock Name="StatusText" Classes="muted" FontSize="12" Text="No solution" VerticalAlignment="Center" />
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="18" VerticalAlignment="Center">
+                    <TextBlock Name="CaretText" Classes="status" />
+                    <TextBlock Name="LineEndingText" Classes="status" />
+                    <TextBlock Name="EncodingText" Classes="status" />
+                    <TextBlock Name="IndentText" Classes="status" />
+                    <TextBlock Name="LanguageText" Classes="status" />
+                </StackPanel>
+                <TextBlock Name="StatusText" Classes="status" Text="No solution" VerticalAlignment="Center" />
             </DockPanel>
         </Border>
     </Grid>

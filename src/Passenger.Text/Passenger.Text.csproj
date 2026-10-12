@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Text with no UI: the rope, documents, undo, carets and every editing operation. The editor
+       control draws it; the language server and the Host read the same snapshots. -->
+  <PropertyGroup>
+    <RootNamespace>Passenger.Text</RootNamespace>
+  </PropertyGroup>
+</Project>

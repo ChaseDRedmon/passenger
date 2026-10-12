@@ -20,3 +20,7 @@ screenshot path *args:
 # just publish osx-arm64 | osx-x64 | win-x64 | win-arm64
 publish rid:
     dotnet publish {{app}} -c Release -r {{rid}} --self-contained -p:PublishReadyToRun=true
+
+# Rewrite Theme/Icons.axaml from the list in tools/icons.py (fetches any icon not yet cached).
+icons:
+    python3 -I tools/icons.py

@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The code editor control and the keymap. Draws Passenger.Text's documents; knows nothing of
+       files, languages or the IDE around it. -->
+  <PropertyGroup>
+    <RootNamespace>Passenger.Editor</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" />
+    <ProjectReference Include="../Passenger.Text/Passenger.Text.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AvaloniaResource Include="Fonts/*.ttf" />
+  </ItemGroup>
+</Project>

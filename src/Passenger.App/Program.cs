@@ -10,6 +10,9 @@ internal static class Program
     /// first act, since a static initializer would run only when something first read it.</summary>
     public static long StartedAt { get; private set; }
 
+    /// <summary>What the command line asked to open, for the window the desktop lifetime makes.</summary>
+    public static LaunchOptions Options { get; private set; } = LaunchOptions.Empty;
+
     [STAThread]
     public static int Main(string[] args)
     {
@@ -25,9 +28,10 @@ internal static class Program
             return 2;
         }
 
+        Options = options;
         if (options.Screenshot is { } screenshot)
         {
-            return Screenshot.Run(screenshot, options.Theme);
+            return Screenshot.Run(options, screenshot);
         }
         return BuildAvaloniaApp()
             .AfterSetup(builder => ApplyTheme(builder.Instance!, options.Theme))

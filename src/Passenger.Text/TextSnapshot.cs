@@ -1,0 +1,174 @@
+using System.Text;
+
+namespace Passenger.Text;
+
+/// <summary>One version of a document's text, immutable and safe to read from any thread. Lines end
+/// at '\n'; a '\r' just before it belongs to the break, never to the line, so a caret can never sit
+/// between the two halves of "\r\n".</summary>
+public sealed class TextSnapshot
+{
+    public static readonly TextSnapshot Empty = new(RopeLeaf.Empty);
+
+    private readonly RopeNode root;
+
+    private TextSnapshot(RopeNode root) => this.root = root;
+
+    public static TextSnapshot From(string text) => new(Rope.Build(text));
+
+    public int Length => root.Length;
+
+    public int LineCount => root.Breaks + 1;
+
+    public char this[int offset]
+    {
+        get
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(offset);
+            ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(offset, Length);
+            return Rope.CharAt(root, offset);
+        }
+    }
+
+    public string GetText(int start, int length)
+    {
+        CheckRange(start, length);
+        if (length == 0)
+        {
+            return string.Empty;
+        }
+        return string.Create(length, (root, start), static (span, state) => Rope.CopyTo(state.root, state.start, span));
+    }
+
+    public string GetText(TextRange range) => GetText(range.Start, range.Length);
+
+    public void CopyTo(int start, Span<char> destination)
+    {
+        CheckRange(start, destination.Length);
+        Rope.CopyTo(root, start, destination);
+    }
+
+    /// <summary>The text of a range as the rope holds it, one slice per leaf, with no copy.</summary>
+    public void VisitChunks(int start, int length, Action<ReadOnlyMemory<char>> visit)
+    {
+        CheckRange(start, length);
+        Rope.Visit(root, start, length, visit);
+    }
+
+    public int GetLineStart(int line)
+    {
+        CheckLine(line);
+        return Rope.OffsetAfterBreaks(root, line);
+    }
+
+    public LineSpan GetLine(int line)
+    {
+        int start = GetLineStart(line);
+        if (line == LineCount - 1)
+        {
+            return new LineSpan(line, start, Length - start, 0);
+        }
+        int next = Rope.OffsetAfterBreaks(root, line + 1);
+        int contentEnd = next - 1;
+        if (contentEnd > start && Rope.CharAt(root, contentEnd - 1) == '\r')
+        {
+            contentEnd--;
+        }
+        return new LineSpan(line, start, contentEnd - start, next - contentEnd);
+    }
+
+    public string GetLineText(int line)
+    {
+        LineSpan span = GetLine(line);
+        return GetText(span.Start, span.Length);
+    }
+
+    public int GetLineFromOffset(int offset)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(offset);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(offset, Length);
+        return Rope.BreaksBefore(root, offset);
+    }
+
+    /// <summary>The line and column of an offset. An offset inside a "\r\n" reports the end of
+    /// the line's content.</summary>
+    public TextPosition GetPosition(int offset)
+    {
+        LineSpan line = GetLine(GetLineFromOffset(offset));
+        return new TextPosition(line.Line, Math.Min(offset - line.Start, line.Length));
+    }
+
+    /// <summary>The offset of a line and column, the column clamped to the line's content.</summary>
+    public int GetOffset(TextPosition position)
+    {
+        LineSpan line = GetLine(Math.Clamp(position.Line, 0, LineCount - 1));
+        return line.Start + Math.Clamp(position.Column, 0, line.Length);
+    }
+
+    public TextSnapshot Replace(int start, int length, string text)
+    {
+        CheckRange(start, length);
+        return new TextSnapshot(Rope.Replace(root, start, length, text));
+    }
+
+    /// <summary>The snapshot with every edit applied. The edits do not overlap and their ranges are in
+    /// this snapshot's coordinates, so they are applied from the last to the first.</summary>
+    public TextSnapshot Apply(IReadOnlyList<TextEdit> edits)
+    {
+        RopeNode node = root;
+        for (int i = edits.Count - 1; i >= 0; i--)
+        {
+            TextEdit edit = edits[i];
+            node = Rope.Replace(node, edit.Start, edit.Length, edit.Text);
+        }
+        return new TextSnapshot(node);
+    }
+
+    public override string ToString()
+    {
+        StringBuilder builder = new(Length);
+        Rope.AppendTo(root, builder);
+        return builder.ToString();
+    }
+
+    private void CheckRange(int start, int length)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(start);
+        ArgumentOutOfRangeException.ThrowIfNegative(length);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(start + length, Length);
+    }
+
+    private void CheckLine(int line)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(line);
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(line, LineCount);
+    }
+}
+
+/// <summary>A line: where it starts, its content's length, and how long its break is (0 on the last
+/// line, 1 for "\n", 2 for "\r\n").</summary>
+public readonly record struct LineSpan(int Line, int Start, int Length, int BreakLength)
+{
+    public int End => Start + Length;
+    public int EndIncludingBreak => Start + Length + BreakLength;
+}
+
+/// <summary>A zero-based line and a column in UTF-16 code units.</summary>
+public readonly record struct TextPosition(int Line, int Column) : IComparable<TextPosition>
+{
+    public int CompareTo(TextPosition other) => Line != other.Line ? Line.CompareTo(other.Line) : Column.CompareTo(other.Column);
+}
+
+public readonly record struct TextRange(int Start, int Length)
+{
+    public int End => Start + Length;
+
+    public static TextRange FromBounds(int start, int end) => new(start, end - start);
+
+    public bool Contains(int offset) => offset >= Start && offset < End;
+}
+
+/// <summary>Replace <see cref="Length"/> characters at <see cref="Start"/> with <see cref="Text"/>.</summary>
+public readonly record struct TextEdit(int Start, int Length, string Text)
+{
+    public int End => Start + Length;
+}

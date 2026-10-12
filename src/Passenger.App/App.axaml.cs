@@ -13,7 +13,9 @@ public partial class App : Application
         // The screenshot mode has no lifetime and makes its own window.
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            desktop.MainWindow = new MainWindow();
+            MainWindow window = new();
+            window.Opened += (_, _) => window.Start(Program.Options);
+            desktop.MainWindow = window;
         }
         base.OnFrameworkInitializationCompleted();
     }

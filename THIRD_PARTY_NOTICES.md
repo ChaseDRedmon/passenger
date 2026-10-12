@@ -11,11 +11,17 @@ What Passenger uses that others made, and under what terms.
 | SkiaSharp (with Skia, BSD-3-Clause) | MIT | https://github.com/mono/SkiaSharp |
 | HarfBuzzSharp (with HarfBuzz, Old MIT) | MIT | https://github.com/mono/SkiaSharp |
 
+## JetBrains Mono
+
+`src/Passenger.Editor/Fonts/` holds JetBrains Mono 2.304 (Regular, Bold, Italic, Bold Italic), the
+editor's font, from https://github.com/JetBrains/JetBrainsMono under the SIL Open Font License 1.1,
+whose full text is beside the fonts (`OFL.txt`). The fonts are unmodified.
+
 ## Fluent UI System Icons
 
 `src/Passenger.App/Theme/Icons.axaml` holds path data from Microsoft's Fluent UI System Icons
-(https://github.com/microsoft/fluentui-system-icons): folder, text bullet list tree, branch, play (filled), bug,
-search, window console, warning, alert and settings at 20 px regular, and chevron down at 16 px regular.
+(https://github.com/microsoft/fluentui-system-icons), written by `tools/icons.py`, which lists every
+icon used.
 
 ```
 MIT License

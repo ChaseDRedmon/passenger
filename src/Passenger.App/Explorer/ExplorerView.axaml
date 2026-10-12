@@ -1,0 +1,31 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:explorer="using:Passenger.App.Explorer"
+             x:Class="Passenger.App.Explorer.ExplorerView">
+    <DockPanel Background="{DynamicResource Passenger.Chrome}">
+        <TextBlock DockPanel.Dock="Top" Classes="paneTitle" Text="Explorer" Margin="12,10,12,6" />
+        <Panel>
+            <TextBlock Name="Hint" Classes="muted" Text="Nothing open"
+                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+            <ListBox Name="Rows" Classes="tree" IsVisible="False"
+                     DoubleTapped="OnRowDoubleTapped" KeyDown="OnRowsKeyDown">
+                <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="explorer:FileNode">
+                        <StackPanel Orientation="Horizontal" Margin="{Binding Indent}" Opacity="{Binding Opacity}" Height="24">
+                            <Border Width="18" Height="24" Background="Transparent" PointerPressed="OnChevronPressed">
+                                <PathIcon Classes="chevron" Data="{StaticResource Icon.ChevronRight}" IsVisible="{Binding IsDirectory}"
+                                          RenderTransformOrigin="50%,50%">
+                                    <PathIcon.RenderTransform>
+                                        <RotateTransform Angle="{Binding ChevronAngle}" />
+                                    </PathIcon.RenderTransform>
+                                </PathIcon>
+                            </Border>
+                            <PathIcon Data="{Binding Icon}" Foreground="{Binding IconBrush}" Margin="0,0,6,0" />
+                            <TextBlock Text="{Binding Name}" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </Panel>
+    </DockPanel>
+</UserControl>

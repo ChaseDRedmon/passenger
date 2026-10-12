@@ -14,10 +14,23 @@ Rider is installed at `~/Applications/Rider.app`.
 
 ```sh
 just build                 # Debug build of the solution (Passenger.slnx); warnings are errors
-just run [args]            # run the IDE
-just screenshot X.png      # the main window drawn off-screen to a PNG (--size WxH logical, --scale N)
+just run [PATH] [args]     # run the IDE on a folder or file (--file F, --caret L:C, --theme dark|light)
+just screenshot X.png ...  # the main window drawn off-screen to a PNG, after the steps given
 just publish RID           # self-contained Release build, ReadyToRun (osx-arm64, osx-x64, win-x64, win-arm64)
+just icons                 # rewrite Theme/Icons.axaml from the list in tools/icons.py
 ```
+
+The screenshot is the self-check for anything visible. It opens what the command line names, takes
+its steps in order through the window's real input, waits for background work to land, and captures
+the compositor's own frame:
+
+```sh
+artifacts/bin/Passenger.App/debug/Passenger . --file src/Passenger.App/App.axaml.cs --caret 12:5 \
+    --key enter --type "var x = 1;" --key "shift+meta+left" --click 400,300 \
+    --screenshot out.png --size 1400x880 --scale 2 --crop 320,76,900,500 --theme light
+```
+
+`--key` takes "cmd+shift+L" or Rider's "meta shift L"; `--crop X,Y,W,H` is in logical units.
 
 Builds land under `artifacts/` (`UseArtifactsOutput`), never beside the sources. Package versions live only in
 `Directory.Packages.props`; shared properties only in `Directory.Build.props`.
@@ -25,6 +38,17 @@ Builds land under `artifacts/` (`UseArtifactsOutput`), never beside the sources.
 **Look at UI changes.** After changing anything visible, run `just screenshot` and view the PNG at `--scale 2`
 before calling it done. The capture runs on Avalonia's headless platform with real Skia drawing, so it never opens a
 window or takes the focus; it shows everything but the system's own window chrome.
+
+## Layout
+
+- `src/Passenger.Text`: no UI. The rope (`Rope.cs`, an immutable B-tree, so every version is a
+  thread-safe snapshot), `TextDocument` (undo, change events in LSP order), carets
+  (`SelectionSet`) and every editing command as a pure function to an `EditPlan`.
+- `src/Passenger.Editor`: the `CodeEditor` control (drawing, input, commands, in partial files),
+  the keymap (`Keymap.cs`, chords included; defaults in `EditorActions.cs` follow Rider's Visual
+  Studio keymaps) and the highlighting contract (`IHighlighter`), with JetBrains Mono embedded.
+- `src/Passenger.App`: the shell. One window-wide keymap (`AppActions.cs`) routes IDE actions
+  itself and editor actions to the focused editor. Explorer, editor tabs, files on disk.
 
 ## Rules
 
@@ -37,6 +61,10 @@ window or takes the focus; it shows everything but the system's own window chrom
 - **Colours are tokens.** A control names a brush from `Theme/Tokens.axaml` (`Passenger.*`), never a literal colour,
   and every token exists in both the Dark and Light dictionaries.
 - **A malformed flag or value is fatal**, never a silent default (`LaunchOptions.cs`).
+- **Work off the UI thread that changes what is drawn goes through `BackgroundWork`**, so a
+  screenshot waits for it instead of capturing a half-finished frame.
+- **Shortcuts follow Rider's.** A new action takes the binding Rider's Visual Studio (Windows) or
+  Visual Studio OSX (macOS) keymap gives it; Rider's keymap files are in its jars for reference.
 - Commit messages go through a file (`git commit -F msg.txt`): backticks in a `-m` string are zsh command
   substitution.
 
