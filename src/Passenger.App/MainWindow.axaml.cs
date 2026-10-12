@@ -22,6 +22,9 @@ public partial class MainWindow : Window
     private readonly KeymapDispatcher keys = new(AppActions.Keymap());
     private readonly FileIndex index = new();
     private CSharpService? csharp;
+    private readonly CodeAssist assist;
+    private readonly List<(string Path, int Offset)> history = [];
+    private int historyAt = -1;
     private readonly List<string> recent = [];
     private string? folder;
 
@@ -46,6 +49,9 @@ public partial class MainWindow : Window
         Editors.Opened += (_, document) => csharp?.Attach(document);
         Editors.Closed += (_, document) => csharp?.Detach(document);
         Closing += (_, _) => _ = csharp?.DisposeAsync();
+        assist = new CodeAssist(Editors, Editors.AssistLayer, () => csharp);
+        assist.Navigate += (_, target) => NavigateTo(target.Path, target.Position);
+        assist.Message += (_, message) => StatusText.Text = message;
         UpdateStatus();
     }
 
@@ -137,7 +143,11 @@ public partial class MainWindow : Window
             return;
         }
         CodeEditor editor = Editors.CodeEditor;
-        if (editor.IsFocused && (!shifted || EditorActions.IsMovement(action)) && editor.TryExecute(action, shifted))
+        if (editor.IsFocused && !shifted && assist.TakeKey(action))
+        {
+            e.Handled = true;
+        }
+        else if (editor.IsFocused && (!shifted || EditorActions.IsMovement(action)) && editor.TryExecute(action, shifted))
         {
             e.Handled = true;
         }
@@ -151,8 +161,22 @@ public partial class MainWindow : Window
 
     private void RunAppAction(string action)
     {
+        if (action.StartsWith("app.code.", StringComparison.Ordinal))
+        {
+            if (Editors.Active is not null)
+            {
+                assist.Run(action);
+            }
+            return;
+        }
         switch (action)
         {
+            case AppActions.Back:
+                StepHistory(-1);
+                break;
+            case AppActions.Forward:
+                StepHistory(1);
+                break;
             case AppActions.Open:
                 _ = PickFolder();
                 break;
@@ -199,6 +223,55 @@ public partial class MainWindow : Window
     }
 
     public bool IsPopupOpen => Overlay.IsVisible;
+
+    public CodeAssist Assist => assist;
+
+    /// <summary>Goes to a file and position (go to definition, a usage), remembering where it came
+    /// from for Back.</summary>
+    public void NavigateTo(string path, TextPosition position)
+    {
+        Remember();
+        OpenFile(path);
+        if (Editors.Active is { } active && active.Path == Path.GetFullPath(path))
+        {
+            Editors.CodeEditor.GoTo(position);
+            Remember();
+        }
+    }
+
+    /// <summary>Records the caret's place as the newest in the history, dropping anything forward of it.</summary>
+    private void Remember()
+    {
+        if (Editors.Active is not { } active)
+        {
+            return;
+        }
+        (string Path, int Offset) here = (active.Path, Editors.CodeEditor.Selections.Primary.Caret);
+        if (historyAt >= 0 && history[historyAt] == here)
+        {
+            return;
+        }
+        history.RemoveRange(historyAt + 1, history.Count - historyAt - 1);
+        history.Add(here);
+        historyAt = history.Count - 1;
+    }
+
+    private void StepHistory(int step)
+    {
+        Remember();
+        int target = historyAt + step;
+        if (target < 0 || target >= history.Count)
+        {
+            return;
+        }
+        historyAt = target;
+        (string path, int offset) = history[target];
+        OpenFile(path);
+        if (Editors.Active is { } active && active.Path == path)
+        {
+            Editors.CodeEditor.GoTo(active.Text.Snapshot.GetPosition(Math.Min(offset, active.Text.Snapshot.Length)));
+        }
+    }
 
     private void ShowGoToFile()
     {

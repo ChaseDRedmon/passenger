@@ -143,6 +143,9 @@ public partial class EditorArea : UserControl
 
     public FindBar FindBar => Find;
 
+    /// <summary>The layer over the editor that completion and the code actions' popups sit on.</summary>
+    public Canvas AssistLayer => Assist;
+
     /// <summary>Opens the find bar over the active file, with the replace row if asked.</summary>
     public void ShowFind(bool replace)
     {

@@ -1,0 +1,868 @@
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Media;
+using Passenger.App.Editors;
+using Passenger.Editor;
+using Passenger.Lsp;
+using Passenger.Text;
+
+namespace Passenger.App.CSharp;
+
+/// <summary>What the language server adds to the editor as you work: completion as you type, a card
+/// when the pointer rests (the diagnostics there and the symbol's description), signature help after
+/// an opening bracket or a comma, and the commands Rider binds (quick fixes, rename, go to
+/// definition and implementation, find usages, reformat, next error). Its popups sit on a layer over
+/// the editor, placed at the caret.</summary>
+public sealed class CodeAssist
+{
+    private readonly EditorArea editors;
+    private readonly Canvas layer;
+    private readonly Func<CSharpService?> service;
+    private readonly InfoCard hoverCard = new();
+    private readonly InfoCard signatureCard = new();
+    private readonly CompletionPopup completion = new();
+    private CancellationTokenSource? hovering;
+    private CancellationTokenSource? completing;
+    private Completion? open;
+    private Control? modal;
+
+    public CodeAssist(EditorArea editors, Canvas layer, Func<CSharpService?> service)
+    {
+        this.editors = editors;
+        this.layer = layer;
+        this.service = service;
+        foreach (Control popup in new Control[] { hoverCard, signatureCard, completion })
+        {
+            popup.IsVisible = false;
+            layer.Children.Add(popup);
+        }
+        CodeEditor editor = editors.CodeEditor;
+        editor.Hovered += (_, e) => _ = ShowHover(e.Offset, e.Point);
+        editor.HoverEnded += (_, _) => HideHover();
+        editor.Typed += (_, text) => OnTyped(text);
+        editor.SelectionChanged += (_, _) => OnCaretMoved();
+        editor.NavigateRequested += (_, offset) => _ = GoToDefinition(offset);
+        editors.ActiveChanged += (_, _) => CloseAll();
+        completion.List.DoubleTapped += (_, _) => _ = Commit();
+    }
+
+    /// <summary>A place to go: a file and a line and column (from zero).</summary>
+    public event EventHandler<(string Path, TextPosition Position)>? Navigate;
+
+    /// <summary>Something to say in the status bar ("No usages found").</summary>
+    public event EventHandler<string>? Message;
+
+    public bool IsCompletionOpen => completion.IsVisible;
+
+    private CodeEditor Editor => editors.CodeEditor;
+
+    private CSharpDocument? Current => editors.Active is { } active ? service()?.For(active) : null;
+
+    /// <summary>Keys the open popups take before the editor does: the completion list's Up, Down, Enter,
+    /// Tab and Escape, and Escape for a card.</summary>
+    public bool TakeKey(string action)
+    {
+        if (completion.IsVisible)
+        {
+            switch (action)
+            {
+                case EditorActions.Up:
+                    completion.Move(-1);
+                    return true;
+                case EditorActions.Down:
+                    completion.Move(1);
+                    return true;
+                case EditorActions.PageUp:
+                    completion.Move(-9);
+                    return true;
+                case EditorActions.PageDown:
+                    completion.Move(9);
+                    return true;
+                case EditorActions.NewLine or EditorActions.Indent:
+                    _ = Commit();
+                    return true;
+                case EditorActions.Escape:
+                    CloseCompletion();
+                    return true;
+            }
+        }
+        if (action == EditorActions.Escape && (signatureCard.IsVisible || hoverCard.IsVisible))
+        {
+            signatureCard.IsVisible = false;
+            HideHover();
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>Runs one of the code actions (<see cref="AppActions"/>' code.* names), or returns false
+    /// for one that is not this.</summary>
+    public bool Run(string action)
+    {
+        int caret = Editor.Selections.Primary.Caret;
+        switch (action)
+        {
+            case AppActions.Complete:
+                _ = StartCompletion(null);
+                return true;
+            case AppActions.QuickFix:
+                _ = ShowFixes();
+                return true;
+            case AppActions.Rename:
+                ShowRename();
+                return true;
+            case AppActions.GoToDeclaration:
+                _ = GoToDefinition(caret);
+                return true;
+            case AppActions.GoToImplementation:
+                _ = GoToImplementation(caret);
+                return true;
+            case AppActions.FindUsages:
+                _ = FindUsages(caret);
+                return true;
+            case AppActions.Reformat:
+                _ = Reformat();
+                return true;
+            case AppActions.ParameterInfo:
+                _ = ShowSignature();
+                return true;
+            case AppActions.QuickDocumentation:
+                _ = ShowHover(caret, Editor.PointOf(caret));
+                return true;
+            case AppActions.NextError:
+                StepToMarker(forward: true);
+                return true;
+            case AppActions.PreviousError:
+                StepToMarker(forward: false);
+                return true;
+        }
+        return false;
+    }
+
+    private void OnTyped(string text)
+    {
+        HideHover();
+        char last = text[^1];
+        if (completion.IsVisible)
+        {
+            if (text.All(IsIdentifierChar))
+            {
+                Filter();
+                return;
+            }
+            CloseCompletion();
+        }
+        if (last == '.')
+        {
+            _ = StartCompletion(".");
+        }
+        else if (IsIdentifierChar(last) && !char.IsDigit(last) && WordStart(Editor.Selections.Primary.Caret) == Editor.Selections.Primary.Caret - 1)
+        {
+            _ = StartCompletion(null);
+        }
+        if (last is '(' or ',')
+        {
+            _ = ShowSignature();
+        }
+        else if (last == ')' || last == ';')
+        {
+            signatureCard.IsVisible = false;
+        }
+    }
+
+    private void OnCaretMoved()
+    {
+        if (completion.IsVisible)
+        {
+            Filter();
+        }
+    }
+
+    private async Task StartCompletion(string? trigger)
+    {
+        BackgroundWork.Begin();
+        try
+        {
+            await StartCompletionCore(trigger);
+        }
+        finally
+        {
+            BackgroundWork.End();
+        }
+    }
+
+    private async Task StartCompletionCore(string? trigger)
+    {
+        if (Current?.Lsp is not { } lsp)
+        {
+            return;
+        }
+        completing?.Cancel();
+        CancellationTokenSource cancel = new();
+        completing = cancel;
+        int caret = Editor.Selections.Primary.Caret;
+        try
+        {
+            (CompletionList? list, _) = await lsp.CompletionAsync(caret, trigger, cancel.Token);
+            if (cancel.IsCancellationRequested || list is null || list.Items.Count == 0)
+            {
+                if (!cancel.IsCancellationRequested)
+                {
+                    CloseCompletion();
+                }
+                return;
+            }
+            int start = list.Items.FirstOrDefault(i => i.TextEdit is not null)?.TextEdit is { } edit
+                ? lsp.OffsetOf(edit.Range.Start)
+                : WordStart(caret);
+            open = new Completion(list.Items, Math.Min(start, Editor.Selections.Primary.Caret));
+            Filter();
+        }
+        catch (Exception error) when (IsServerFailure(error))
+        {
+        }
+    }
+
+    /// <summary>The list narrowed to what has been typed since it opened: prefix matches first (an
+    /// exact-case one first of those), then CamelHumps, then anywhere in the name.</summary>
+    private void Filter()
+    {
+        if (open is null)
+        {
+            return;
+        }
+        TextSnapshot text = Editor.Document.Snapshot;
+        int caret = Editor.Selections.Primary.Caret;
+        if (caret < open.Start || Editor.Selections.HasMultiple)
+        {
+            CloseCompletion();
+            return;
+        }
+        string typed = text.GetText(open.Start, caret - open.Start);
+        if (!typed.All(IsIdentifierChar))
+        {
+            CloseCompletion();
+            return;
+        }
+        List<CompletionRow> rows = open.Items
+            .Select(item => (item, score: Score(typed, item.FilterText ?? item.Label)))
+            .Where(x => x.score is not null)
+            .OrderByDescending(x => x.score)
+            .ThenByDescending(x => x.item.Preselect == true)
+            .ThenBy(x => x.item.SortText ?? x.item.Label, StringComparer.Ordinal)
+            .Take(200)
+            .Select(x => Row(x.item))
+            .ToList();
+        if (rows.Count == 0)
+        {
+            CloseCompletion();
+            return;
+        }
+        completion.Show(rows);
+        completion.IsVisible = true;
+        Place(completion, open.Start, above: false);
+    }
+
+    private async Task Commit()
+    {
+        BackgroundWork.Begin();
+        try
+        {
+            await CommitCore();
+        }
+        finally
+        {
+            BackgroundWork.End();
+        }
+    }
+
+    private async Task CommitCore()
+    {
+        if (open is null || completion.Selected is not { } row || Current?.Lsp is not { } lsp)
+        {
+            return;
+        }
+        int start = open.Start;
+        CloseCompletion();
+        CompletionItem item = row.Item;
+        try
+        {
+            if (item.Data is not null && item.AdditionalTextEdits is null)
+            {
+                item = await lsp.ResolveAsync(item) ?? item;
+            }
+        }
+        catch (Exception error) when (IsServerFailure(error))
+        {
+        }
+        int caret = Editor.Selections.Primary.Caret;
+        string insert = item.TextEdit?.NewText ?? item.TextEditText ?? item.InsertText ?? item.Label;
+        List<Passenger.Text.TextEdit> edits = [new Passenger.Text.TextEdit(start, Math.Max(0, caret - start), insert)];
+        if (item.AdditionalTextEdits is { Count: > 0 } extra)
+        {
+            edits.AddRange(WorkspaceEdits.Convert(Editor.Document.Snapshot, extra).Where(e => e.End <= start || e.Start >= caret));
+        }
+        Editor.ApplyEdits(edits);
+    }
+
+    private void CloseCompletion()
+    {
+        completing?.Cancel();
+        open = null;
+        completion.IsVisible = false;
+    }
+
+    private async Task ShowHover(int offset, Point point)
+    {
+        BackgroundWork.Begin();
+        try
+        {
+            await ShowHoverCore(offset, point);
+        }
+        finally
+        {
+            BackgroundWork.End();
+        }
+    }
+
+    private async Task ShowHoverCore(int offset, Point point)
+    {
+        hovering?.Cancel();
+        CancellationTokenSource cancel = new();
+        hovering = cancel;
+        hoverCard.Clear();
+        foreach (Marker marker in Editor.MarkersAt(offset))
+        {
+            hoverCard.AddText(marker.Message, marker.Kind switch
+            {
+                MarkerKind.Error => InfoCard.Brush("Passenger.Editor.Error"),
+                MarkerKind.Warning => InfoCard.Brush("Passenger.Editor.Warning"),
+                _ => null,
+            });
+        }
+        if (Current?.Lsp is { } lsp)
+        {
+            try
+            {
+                Hover? hover = await lsp.HoverAsync(offset, cancel.Token);
+                if (cancel.IsCancellationRequested)
+                {
+                    return;
+                }
+                if (hover is not null && Shapes.Text(hover.Contents) is { Length: > 0 } markdown)
+                {
+                    hoverCard.AddMarkdown(markdown);
+                }
+            }
+            catch (Exception error) when (IsServerFailure(error))
+            {
+            }
+        }
+        if (hoverCard.IsEmpty || completion.IsVisible)
+        {
+            hoverCard.IsVisible = false;
+            return;
+        }
+        hoverCard.IsVisible = true;
+        TextSnapshot text = Editor.Document.Snapshot;
+        int lineStart = text.GetLineStart(text.GetLineFromOffset(Math.Min(offset, text.Length)));
+        Point anchor = Editor.PointOf(lineStart);
+        Place(hoverCard, new Point(point.X, anchor.Y), above: false);
+    }
+
+    private void HideHover()
+    {
+        hovering?.Cancel();
+        hoverCard.IsVisible = false;
+    }
+
+    private async Task ShowSignature()
+    {
+        BackgroundWork.Begin();
+        try
+        {
+            await ShowSignatureCore();
+        }
+        finally
+        {
+            BackgroundWork.End();
+        }
+    }
+
+    private async Task ShowSignatureCore()
+    {
+        if (Current?.Lsp is not { } lsp)
+        {
+            return;
+        }
+        int caret = Editor.Selections.Primary.Caret;
+        try
+        {
+            SignatureHelp? help = await lsp.SignatureHelpAsync(caret);
+            if (help is null || help.Signatures.Count == 0)
+            {
+                signatureCard.IsVisible = false;
+                return;
+            }
+            SignatureInformation signature = help.Signatures[Math.Clamp(help.ActiveSignature ?? 0, 0, help.Signatures.Count - 1)];
+            signatureCard.Clear();
+            signatureCard.AddCode(signature.Label);
+            int active = signature.ActiveParameter ?? help.ActiveParameter ?? -1;
+            if (signature.Parameters is { } parameters && active >= 0 && active < parameters.Count
+                && Shapes.Text(parameters[active].Documentation) is { Length: > 0 } about)
+            {
+                signatureCard.AddText(about);
+            }
+            else if (Shapes.Text(signature.Documentation) is { Length: > 0 } documentation)
+            {
+                signatureCard.AddText(documentation);
+            }
+            signatureCard.IsVisible = true;
+            Place(signatureCard, caret, above: true);
+        }
+        catch (Exception error) when (IsServerFailure(error))
+        {
+        }
+    }
+
+    private async Task ShowFixes()
+    {
+        BackgroundWork.Begin();
+        try
+        {
+            await ShowFixesCore();
+        }
+        finally
+        {
+            BackgroundWork.End();
+        }
+    }
+
+    private async Task ShowFixesCore()
+    {
+        if (Current is not { Lsp: { } lsp } current)
+        {
+            return;
+        }
+        Selection primary = Editor.Selections.Primary;
+        TextPosition caret = Editor.Document.Snapshot.GetPosition(primary.Caret);
+        List<Diagnostic> here = current.Diagnostics
+            .Where(d => d.Range.Start.Line <= caret.Line && caret.Line <= d.Range.End.Line)
+            .ToList();
+        try
+        {
+            IReadOnlyList<CodeAction> actions = await lsp.CodeActionsAsync(primary.Range, here);
+            if (actions.Count == 0)
+            {
+                Message?.Invoke(this, "No fixes or refactorings here");
+                return;
+            }
+            List<Choice> choices = actions
+                .Where(a => a.Disabled is null)
+                .Select(a => new Choice(a.Title, a.Kind ?? string.Empty, a))
+                .ToList();
+            ShowModal(new ChoicePopup("Fixes and refactorings", choices), primary.Caret, async choice =>
+            {
+                if (choice?.Value is not CodeAction chosen)
+                {
+                    return;
+                }
+                if (chosen.Edit is null && chosen.Data is not null)
+                {
+                    chosen = await lsp.ResolveAsync(chosen) ?? chosen;
+                }
+                if (chosen.Edit is { } edit)
+                {
+                    WorkspaceEdits.Apply(editors, edit);
+                }
+            });
+        }
+        catch (Exception error) when (IsServerFailure(error))
+        {
+        }
+    }
+
+    private void ShowRename()
+    {
+        if (Current?.Lsp is not { } lsp)
+        {
+            return;
+        }
+        TextSnapshot text = Editor.Document.Snapshot;
+        int caret = Editor.Selections.Primary.Caret;
+        TextRange word = TextNavigation.WordAt(text, caret);
+        if (word.Length == 0 || !TextNavigation.IsWordChar(text[word.Start]))
+        {
+            return;
+        }
+        RenameBox box = new(text.GetText(word));
+        ShowModal(box, word.Start, async name =>
+        {
+            if (name is null)
+            {
+                return;
+            }
+            try
+            {
+                if (await lsp.RenameAsync(word.Start, name) is { } edit)
+                {
+                    int files = WorkspaceEdits.Apply(editors, edit);
+                    Message?.Invoke(this, files > 1 ? $"Renamed in {files} files" : "Renamed");
+                }
+                else
+                {
+                    Message?.Invoke(this, "This can't be renamed");
+                }
+            }
+            catch (Exception error) when (IsServerFailure(error))
+            {
+                Message?.Invoke(this, "Rename failed");
+            }
+        });
+    }
+
+    private async Task GoToDefinition(int offset)
+    {
+        BackgroundWork.Begin();
+        try
+        {
+            await GoToDefinitionCore(offset);
+        }
+        finally
+        {
+            BackgroundWork.End();
+        }
+    }
+
+    private async Task GoToDefinitionCore(int offset)
+    {
+        if (Current?.Lsp is not { } lsp)
+        {
+            return;
+        }
+        try
+        {
+            Go(await lsp.DefinitionAsync(offset), offset, "Declarations", "Cannot find a declaration to go to");
+        }
+        catch (Exception error) when (IsServerFailure(error))
+        {
+        }
+    }
+
+    private async Task GoToImplementation(int offset)
+    {
+        BackgroundWork.Begin();
+        try
+        {
+            await GoToImplementationCore(offset);
+        }
+        finally
+        {
+            BackgroundWork.End();
+        }
+    }
+
+    private async Task GoToImplementationCore(int offset)
+    {
+        if (Current?.Lsp is not { } lsp)
+        {
+            return;
+        }
+        try
+        {
+            Go(await lsp.ImplementationAsync(offset), offset, "Implementations", "No implementations found");
+        }
+        catch (Exception error) when (IsServerFailure(error))
+        {
+        }
+    }
+
+    private async Task FindUsages(int offset)
+    {
+        BackgroundWork.Begin();
+        try
+        {
+            await FindUsagesCore(offset);
+        }
+        finally
+        {
+            BackgroundWork.End();
+        }
+    }
+
+    private async Task FindUsagesCore(int offset)
+    {
+        if (Current?.Lsp is not { } lsp)
+        {
+            return;
+        }
+        try
+        {
+            IReadOnlyList<LspLocation> usages = await lsp.ReferencesAsync(offset);
+            if (usages.Count == 0)
+            {
+                Message?.Invoke(this, "No usages found");
+                return;
+            }
+            Pick($"{usages.Count} usage{(usages.Count == 1 ? "" : "s")}", usages, offset);
+        }
+        catch (Exception error) when (IsServerFailure(error))
+        {
+        }
+    }
+
+    private void Go(IReadOnlyList<LspLocation> locations, int offset, string title, string none)
+    {
+        if (locations.Count == 0)
+        {
+            Message?.Invoke(this, none);
+        }
+        else if (locations.Count == 1)
+        {
+            Arrive(locations[0]);
+        }
+        else
+        {
+            Pick(title, locations, offset);
+        }
+    }
+
+    private void Pick(string title, IReadOnlyList<LspLocation> locations, int offset)
+    {
+        string root = service()?.Session?.Folder ?? string.Empty;
+        List<Choice> choices = locations.Select(l =>
+        {
+            string path = new Uri(l.Uri).LocalPath;
+            string shown = root.Length > 0 && path.StartsWith(root, StringComparison.Ordinal) ? Path.GetRelativePath(root, path) : Path.GetFileName(path);
+            return new Choice($"{shown}:{l.Range.Start.Line + 1}", LinePreview(path, l.Range.Start.Line), l, DetailIsCode: true);
+        }).ToList();
+        ShowModal(new ChoicePopup(title, choices), offset, choice =>
+        {
+            if (choice?.Value is LspLocation location)
+            {
+                Arrive(location);
+            }
+            return Task.CompletedTask;
+        });
+    }
+
+    private void Arrive(LspLocation location) =>
+        Navigate?.Invoke(this, (new Uri(location.Uri).LocalPath, new TextPosition(location.Range.Start.Line, location.Range.Start.Character)));
+
+    private async Task Reformat()
+    {
+        BackgroundWork.Begin();
+        try
+        {
+            await ReformatCore();
+        }
+        finally
+        {
+            BackgroundWork.End();
+        }
+    }
+
+    private async Task ReformatCore()
+    {
+        if (Current?.Lsp is not { } lsp)
+        {
+            return;
+        }
+        try
+        {
+            IReadOnlyList<LspTextEdit> edits = await lsp.FormatAsync(Editor.Indent);
+            Editor.ApplyEdits(WorkspaceEdits.Convert(Editor.Document.Snapshot, edits));
+            Message?.Invoke(this, edits.Count == 0 ? "Already formatted" : "Reformatted");
+        }
+        catch (Exception error) when (IsServerFailure(error))
+        {
+        }
+    }
+
+    /// <summary>The next (or previous) error or warning after the caret, wrapping.</summary>
+    private void StepToMarker(bool forward)
+    {
+        List<Marker> problems = Editor.Markers.Where(m => m.Kind is MarkerKind.Error or MarkerKind.Warning).ToList();
+        if (problems.Count == 0)
+        {
+            Message?.Invoke(this, "No errors or warnings in this file");
+            return;
+        }
+        int caret = Editor.Selections.Primary.Caret;
+        Marker target = forward
+            ? problems.FirstOrDefault(m => m.Range.Start > caret, problems[0])
+            : problems.LastOrDefault(m => m.Range.Start < caret, problems[^1]);
+        Editor.Selections = SelectionSet.Single(target.Range.Start);
+        _ = ShowHover(target.Range.Start, Editor.PointOf(target.Range.Start));
+    }
+
+    private void ShowModal(Control popup, int offset, Func<Choice?, Task> done)
+    {
+        CloseModal();
+        modal = popup;
+        layer.Children.Add(popup);
+        Place(popup, offset, above: false);
+        if (popup is ChoicePopup choices)
+        {
+            choices.Done += async (_, choice) =>
+            {
+                CloseModal();
+                BackgroundWork.Begin();
+                try
+                {
+                    await done(choice);
+                }
+                finally
+                {
+                    BackgroundWork.End();
+                }
+            };
+        }
+    }
+
+    private void ShowModal(RenameBox box, int offset, Func<string?, Task> done)
+    {
+        CloseModal();
+        modal = box;
+        layer.Children.Add(box);
+        Place(box, offset, above: true);
+        box.Done += async (_, name) =>
+        {
+            CloseModal();
+            BackgroundWork.Begin();
+            try
+            {
+                await done(name);
+            }
+            finally
+            {
+                BackgroundWork.End();
+            }
+        };
+    }
+
+    private void CloseModal()
+    {
+        if (modal is not null)
+        {
+            layer.Children.Remove(modal);
+            modal = null;
+            Editor.Focus();
+        }
+    }
+
+    private void CloseAll()
+    {
+        CloseCompletion();
+        HideHover();
+        signatureCard.IsVisible = false;
+        CloseModal();
+    }
+
+    private void Place(Control popup, int offset, bool above) => Place(popup, Editor.PointOf(offset), above);
+
+    /// <summary>Puts a popup under the line at <paramref name="at"/> (its top), or over it when asked
+    /// or when there is no room below, kept inside the editor.</summary>
+    private void Place(Control popup, Point at, bool above)
+    {
+        popup.Measure(Size.Infinity);
+        Size size = popup.DesiredSize;
+        Size room = layer.Bounds.Size;
+        double lineHeight = Editor.LineHeight;
+        double x = Math.Clamp(at.X - 4, 0, Math.Max(0, room.Width - size.Width - 8));
+        double below = at.Y + lineHeight + 2;
+        double over = at.Y - size.Height - 2;
+        double y = above ? (over >= 0 ? over : below) : (below + size.Height <= room.Height || over < 0 ? below : over);
+        Canvas.SetLeft(popup, x);
+        Canvas.SetTop(popup, y);
+    }
+
+    private int WordStart(int caret)
+    {
+        TextSnapshot text = Editor.Document.Snapshot;
+        int start = caret;
+        while (start > 0 && IsIdentifierChar(text[start - 1]))
+        {
+            start--;
+        }
+        return start;
+    }
+
+    private string LinePreview(string path, int line)
+    {
+        if (editors.Documents.FirstOrDefault(d => d.Path == path) is { } open && line < open.Text.Snapshot.LineCount)
+        {
+            return open.Text.Snapshot.GetLineText(line).Trim();
+        }
+        try
+        {
+            return File.ReadLines(path).Skip(line).FirstOrDefault()?.Trim() ?? string.Empty;
+        }
+        catch (IOException)
+        {
+            return string.Empty;
+        }
+    }
+
+    private static bool IsIdentifierChar(char c) => char.IsLetterOrDigit(c) || c == '_';
+
+    private static int? Score(string typed, string text)
+    {
+        if (typed.Length == 0)
+        {
+            return 0;
+        }
+        if (text.StartsWith(typed, StringComparison.Ordinal))
+        {
+            return 4000 - text.Length;
+        }
+        if (text.StartsWith(typed, StringComparison.OrdinalIgnoreCase))
+        {
+            return 3000 - text.Length;
+        }
+        if (FuzzyMatch.Score(typed, text) is { } fuzzy && fuzzy >= 850)
+        {
+            return 2000 - text.Length;
+        }
+        if (typed.Length >= 2 && text.Contains(typed, StringComparison.OrdinalIgnoreCase))
+        {
+            return 1000 - text.Length;
+        }
+        return null;
+    }
+
+    /// <summary>A row's badge: the letter and colour Rider gives each kind of completion.</summary>
+    private static CompletionRow Row(CompletionItem item)
+    {
+        (string letter, string brush) = item.Kind switch
+        {
+            2 or 3 => ("m", "Passenger.Syntax.Method"),
+            4 => ("c", "Passenger.Syntax.Class"),
+            5 => ("f", "Passenger.Syntax.Field"),
+            6 => ("v", "Passenger.TextMuted"),
+            7 => ("C", "Passenger.Syntax.Class"),
+            8 => ("I", "Passenger.Syntax.Interface"),
+            9 => ("N", "Passenger.Syntax.Keyword"),
+            10 => ("p", "Passenger.Syntax.Property"),
+            13 => ("E", "Passenger.Syntax.Enum"),
+            14 => ("k", "Passenger.Syntax.Keyword"),
+            15 => ("s", "Passenger.TextMuted"),
+            20 => ("e", "Passenger.Syntax.EnumMember"),
+            21 => ("c", "Passenger.Syntax.Constant"),
+            22 => ("S", "Passenger.Syntax.Struct"),
+            23 => ("e", "Passenger.Syntax.Event"),
+            24 => ("o", "Passenger.TextMuted"),
+            25 => ("T", "Passenger.Syntax.TypeParameter"),
+            _ => ("·", "Passenger.TextMuted"),
+        };
+        string detail = item.LabelDetails?.Description ?? item.Detail ?? string.Empty;
+        return new CompletionRow(item, letter, InfoCard.Brush(brush), detail);
+    }
+
+    private static bool IsServerFailure(Exception error) =>
+        error is OperationCanceledException or StreamJsonRpc.RemoteInvocationException or StreamJsonRpc.ConnectionLostException or ObjectDisposedException;
+
+    /// <summary>An open completion list: every item the server gave, and where the word it completes
+    /// began.</summary>
+    private sealed record Completion(IReadOnlyList<CompletionItem> Items, int Start);
+}

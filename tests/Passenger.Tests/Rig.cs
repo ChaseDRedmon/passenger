@@ -76,7 +76,8 @@ public static class Ui
     /// <summary>Runs queued UI work and waits for background work (colouring) to land.</summary>
     public static void Settle()
     {
-        DateTime limit = DateTime.UtcNow.AddSeconds(10);
+        // Long enough for the language server to start and load a small project.
+        DateTime limit = DateTime.UtcNow.AddSeconds(90);
         do
         {
             Dispatcher.UIThread.RunJobs();
@@ -92,10 +93,22 @@ public static class Ui
         throw new TimeoutException("Background work never finished.");
     }
 
-    /// <summary>The first shortcut the platform's keymap gives an IDE action, in keymap notation.</summary>
-    public static string Shortcut(string action)
+    /// <summary>Presses the platform's first shortcut for an IDE action, both keystrokes of a chord.</summary>
+    public static void Run(TopLevel window, string action)
     {
-        Keystroke stroke = Passenger.App.AppActions.Keymap().ShortcutsFor(action)[0].First;
+        Shortcut shortcut = Passenger.App.AppActions.Keymap().ShortcutsFor(action)[0];
+        Press(window, Notation(shortcut.First));
+        if (shortcut.Second is { } second)
+        {
+            Press(window, Notation(second));
+        }
+    }
+
+    /// <summary>The first shortcut the platform's keymap gives an IDE action, in keymap notation.</summary>
+    public static string Shortcut(string action) => Notation(Passenger.App.AppActions.Keymap().ShortcutsFor(action)[0].First);
+
+    private static string Notation(Keystroke stroke)
+    {
         List<string> parts = [];
         if (stroke.Modifiers.HasFlag(KeyModifiers.Meta))
         {

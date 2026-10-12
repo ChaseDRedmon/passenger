@@ -55,6 +55,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   Roslyn language server it runs, downloaded per platform at build and copied beside the app under
   `roslyn/`. `RoslynSession` opens the folder's solution; `LspDocument` keeps one document in step
   and makes requests in the editor's offsets.
+- `src/Passenger.App/CSharp`: the language server in the IDE. `CSharpService` runs Roslyn for the
+  folder; `CSharpDocument` gives an open file its semantic colours and diagnostics; `CodeAssist`
+  is completion, hover, signature help and the code actions (`app.code.*`), its popups on a layer
+  over the editor; `WorkspaceEdits` applies renames and fixes across files.
 - `src/Passenger.App`: the shell. One window-wide keymap (`AppActions.cs`) routes IDE actions
   itself and editor actions to the focused editor. Explorer, editor tabs, files on disk.
 

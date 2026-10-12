@@ -24,12 +24,16 @@ October 11, 2026, on an M2 Max, headless with Skia drawing on the CPU: a keystro
 and a rendered frame took 4.2 ms at the median, 7.0 ms at p90 and 10.4 ms at worst with colour on, and about 2 ms
 without.
 
-## M2: C# intelligence
+## M2: C# intelligence (in progress)
 
-Measure first: `roslyn-language-server` on Orleans (155 projects) and Aspire (407), against Dev Kit 11.0's numbers.
-Then the LSP client: open a solution, document sync, semantic highlighting, diagnostics, completion, signature help,
-hover, go to definition (into decompiled code too), find usages, rename, quick fixes and refactorings, formatting,
-inlay hints.
+Built: Roslyn's server bundled and started per folder, document sync, semantic colours over the parser's, diagnostics
+as squiggles and faded unnecessary code, completion as you type (and Ctrl+Space), hover cards, signature help, quick
+fixes and refactorings (Alt+Enter), rename, go to declaration and implementation, find usages, reformat, next and
+previous error, back and forward. Passenger's own solution loads in about eight seconds.
+
+Still to do: measure `roslyn-language-server` on Orleans (155 projects) and Aspire (407) against Dev Kit 11.0's
+numbers; decompiled sources for library symbols; inlay hints; a usages tool window in place of the popup; commit
+characters and completion item documentation.
 
 **Done when:** a day of writing C# in Passenger needs no other editor.
 
