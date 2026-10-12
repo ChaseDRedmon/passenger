@@ -65,6 +65,29 @@ public sealed class ProfilerTests : IDisposable
         Assert.StartsWith("Main thread", snapshot.Timeline[0].Name, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task A_memory_snapshot_of_a_running_program_counts_its_heap_by_type()
+    {
+        string program = Debuggees.Program("ReadsInputConsoleApp");
+        ProfileTarget target = new(Passenger.Lsp.Dotnet.Host(), [program], Path.GetDirectoryName(program)!, new Dictionary<string, string>());
+        await using ProfilingSession run = await ProfilingSession.StartAsync(target, folder, cancellation: TestContext.Current.CancellationToken);
+        try
+        {
+            // It waits on its input, so it is still there to be looked at.
+            await Task.Delay(500, TestContext.Current.CancellationToken);
+            MemorySnapshot heap = await run.TakeMemorySnapshotAsync(TestContext.Current.CancellationToken);
+            HeapType strings = Assert.Single(heap.Types, t => t.Name == "System.String");
+            Assert.True(strings.Count > 10, $"{strings.Count} strings");
+            Assert.Equal(heap.Bytes, heap.Types.Sum(t => t.Bytes));
+            Assert.True(heap.Objects > 100);
+            Assert.False(run.HasExited);
+        }
+        finally
+        {
+            run.Kill();
+        }
+    }
+
     [AvaloniaFact]
     public void Profile_builds_and_runs_the_configuration_and_its_end_shows_the_snapshot()
     {

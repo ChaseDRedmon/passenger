@@ -130,7 +130,8 @@ public sealed partial class PassengerTools
         string? configuration = null,
         [Description(Arguments)] string? arguments = null,
         [Description("How long to profile before the snapshot; the program's whole run when not given")] int? seconds = null,
-        [Description("How many hot spots to return")] int top = 25) => OnUi(async () =>
+        [Description("How many hot spots to return")] int top = 25,
+        [Description("With seconds: a memory snapshot too, the heap's types by size, taken just before the CPU snapshot")] bool memory = false) => OnUi(async () =>
     {
         Choose(configuration);
         if (await window.ProfileAsync(arguments) is { } problem)
@@ -138,9 +139,14 @@ public sealed partial class PassengerTools
             throw new InvalidOperationException(problem);
         }
         Passenger.Profiler.ProfilingSession running = window.Profiling!;
+        IReadOnlyList<HeapTypeInfo>? heap = null;
         if (seconds is { } limit)
         {
             await Until(() => running.HasExited, TimeSpan.FromSeconds(Math.Clamp(limit, 1, 3600)));
+            if (memory && !running.HasExited && await window.MemorySnapshotAsync() is { } taken)
+            {
+                heap = [.. taken.Types.Take(Math.Clamp(top, 1, 200)).Select(t => new HeapTypeInfo(t.Name, t.Count, t.Bytes))];
+            }
         }
         else
         {
@@ -164,7 +170,8 @@ public sealed partial class PassengerTools
             snapshot.Threads.Count,
             [.. snapshot.HotSpots.Take(Math.Clamp(top, 1, 200)).Select(h => new ProfileFrame(h.Name, h.Total, h.Self))],
             path,
-            snapshot.TracePath);
+            snapshot.TracePath,
+            heap);
     });
 
     // The terminal
@@ -247,4 +254,7 @@ public sealed record VcsCommit(string Hash, string Subject, string Author, strin
 /// <summary>A frame of a profile: a method, the milliseconds with it on the stack, and those in it alone.</summary>
 public sealed record ProfileFrame(string Method, int TotalMs, int SelfMs);
 
-public sealed record ProfileInfo(double DurationMs, int Samples, int Threads, IReadOnlyList<ProfileFrame> HotSpots, IReadOnlyList<ProfileFrame> HotPath, string Trace);
+public sealed record ProfileInfo(double DurationMs, int Samples, int Threads, IReadOnlyList<ProfileFrame> HotSpots, IReadOnlyList<ProfileFrame> HotPath, string Trace, IReadOnlyList<HeapTypeInfo>? Heap = null);
+
+/// <summary>A type on the heap of a memory snapshot: its live objects and their bytes.</summary>
+public sealed record HeapTypeInfo(string Type, int Count, long Bytes);

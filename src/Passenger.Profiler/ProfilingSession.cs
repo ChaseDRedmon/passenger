@@ -67,6 +67,8 @@ public sealed class ProfilingSession : IAsyncDisposable
             WorkingDirectory = target.WorkingDirectory,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            // An input of its own, never the IDE's terminal (a read from that would stop it).
+            RedirectStandardInput = true,
             UseShellExecute = false,
         };
         foreach ((string key, string value) in target.Environment)

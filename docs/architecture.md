@@ -240,7 +240,9 @@ between tool windows, as Rider's overrides the IDE's shortcuts.
   same port. The stream is written to a .nettrace file and read with TraceEvent's TraceLog into a call tree per thread.
   EventPipe stops a thread only at a safe point, so a tight loop's samples land on its calls; the runtime's GC poll at
   the leaf is folded into its caller, where the time belongs.
-- **Memory snapshots** are a dump read by ClrMD.
+- **Memory snapshots** are a dump read by ClrMD: the runtime writes it through its diagnostic port (createdump, so no
+  debugger attaches and no permission to inspect another process is needed), ClrMD 3 reads its heap (4 brings
+  Azure.Identity, for symbol servers a heap's types do not need), and the dump, as large as the heap, is deleted.
 - **Line-level and tracing modes** need ICorProfiler, a native interface. It can still be written in C# and compiled
   with Native AOT (Kevin Gosse's Silhouette does this).
 

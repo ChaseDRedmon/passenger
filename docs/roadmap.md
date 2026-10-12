@@ -143,7 +143,9 @@ dotnet-trace's) opens as a snapshot. Allocations lists the types allocated with 
 allocation ticks), and GC each collection with its generation, reason and pause. Its first find in Passenger itself:
 every tooltip and menu parsed the whole keymap again, 46% of the strings allocated at startup; the keymap is now made
 once. The timeline above the views shows each busy thread's samples and the collections in time; a drag across it
-narrows every view to that stretch. Still to come: memory snapshots with ClrMD.
+narrows every view to that stretch. Get Memory Snapshot, while a run goes, lists the heap's live objects by type with
+their count and size: the runtime writes a dump of the heap through its diagnostic port and ClrMD reads it. Still to
+come: comparing two memory snapshots, and what keeps an object alive.
 
 ## M7: the rest of the daily loop
 
