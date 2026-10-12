@@ -54,6 +54,27 @@ public sealed class DockingTests
     }
 
     [AvaloniaFact]
+    public void A_drop_above_the_first_lower_button_of_a_stripe_with_no_upper_ones_docks_in_its_upper_group()
+    {
+        MainWindow window = Open();
+        DockHost dock = window.DockHost;
+        dock.Move(dock["hierarchy"]!, ToolAnchor.RightBottom);
+        Ui.Settle();
+        Assert.Single(Stripe(window, right: true));
+        Point lowest = Middle(window, Button(window, "hierarchy"));
+
+        Drag(window, Middle(window, Button(window, "debug")), lowest - new Point(0, 4));
+        Assert.Equal(ToolAnchor.RightTop, dock["debug"]!.Anchor);
+
+        // Below the middle of the lower group's first button, a drop joins that group.
+        dock.Move(dock["debug"]!, ToolAnchor.BottomLeft);
+        Ui.Settle();
+        Drag(window, Middle(window, Button(window, "run")), Middle(window, Button(window, "hierarchy")) + new Point(0, 4));
+        Assert.Equal(ToolAnchor.RightBottom, dock["run"]!.Anchor);
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void A_header_dragged_onto_the_bottom_right_docks_the_window_there_beside_the_bottom_left_one()
     {
         MainWindow window = Open();

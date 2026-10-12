@@ -896,8 +896,11 @@ public sealed class DockHost : Grid
             {
                 return bottom;
             }
-            // Past the upper group's buttons is the lower group; a side with no lower buttons splits the stripe.
-            double boundary = groups[lower].Children.Count > 0 ? Placed(groups[upper]).Bottom + 6 : Math.Max(Placed(groups[upper]).Bottom + 6, sidesEnd / 2);
+            // Past the upper group's buttons is the lower group; a side with no lower buttons splits the stripe, and one with
+            // no upper buttons takes a drop above its first lower button's middle into the upper group, as Rider's do.
+            double boundary = groups[lower].Children.Count == 0 ? Math.Max(Placed(groups[upper]).Bottom + 6, sidesEnd / 2)
+                : groups[upper].Children.Count == 0 && groups[lower].Children[0] is Control first ? Placed(first).Center.Y
+                : Placed(groups[upper]).Bottom + 6;
             return at.Y > boundary ? lower : upper;
         }
 
