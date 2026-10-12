@@ -247,22 +247,32 @@ public partial class ManagedDebugger
     {
         _logger?.Invoke($"Attaching to process: {processId}");
 
-        // Initialize the debugger
+        // Not awaited: a process held at its diagnostic port has no runtime to attach to until the client lets it go.
         _ = Task.Run(async () =>
         {
-            _exited.Reset();
-            _corDebug = await ClrDebugExtensions.Automatic(processId, resume: null);
-            _corDebug.Initialize();
-            _corDebug.SetManagedHandler(_callbacks);
+            try
+            {
+                _exited.Reset();
+                _corDebug = await ClrDebugExtensions.Automatic(processId, resume: null, _logger);
+                _corDebug.Initialize();
+                _corDebug.SetManagedHandler(_callbacks);
 
-            // Attach to the process
-            _process = _corDebug.DebugActiveProcess(processId, false);
-            _isAttached = true;
-            ConfigureExceptionCallbacks();
+                _logger?.Invoke($"Taking hold of process {processId}");
+                _process = _corDebug.DebugActiveProcess(processId, false);
+                _isAttached = true;
+                ConfigureExceptionCallbacks();
 
-            _logger?.Invoke($"Attached to process: {processId}");
-            OnAttached?.Invoke(processId);
-            SendAllBreakpointEvents();
+                _logger?.Invoke($"Attached to process: {processId}");
+                OnAttached?.Invoke(processId);
+                SendAllBreakpointEvents();
+            }
+            catch (Exception error)
+            {
+                // Otherwise lost with the task, and the client would wait for a stop that can never come.
+                _logger?.Invoke($"Attaching to process {processId} failed: {error}");
+                OnConsole?.Invoke($"Could not attach to process {processId}: {error.Message}\n");
+                OnTerminated?.Invoke();
+            }
         });
     }
 

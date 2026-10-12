@@ -24,6 +24,11 @@ public sealed class DebugSession : IDisposable
     private readonly Channel<(string Name, JsonElement Body)> events = Channel.CreateUnbounded<(string, JsonElement)>();
     private readonly TaskCompletionSource initialized = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+    /// <summary>The adapter's latest events and standard error, which a wait that fails quotes.</summary>
+    private readonly Queue<string> heard = new();
+    private readonly string engineLog;
+    private readonly bool ownLog;
+
     private DebugSession(ITestOutputHelper output, Process? debuggee, bool terminateDebuggee)
     {
         this.debuggee = debuggee;
@@ -33,12 +38,12 @@ public sealed class DebugSession : IDisposable
         {
             throw new FileNotFoundException("The debug adapter is not beside the tests", path);
         }
-        // PASSENGER_ENGINE_LOG=FILE keeps the engine's own log of a run, for a test that fails inside it.
-        List<string> arguments = [path, "--interpreter=vscode"];
-        if (Environment.GetEnvironmentVariable("PASSENGER_ENGINE_LOG") is { Length: > 0 } log)
-        {
-            arguments.Add($"--engineLogging={log}");
-        }
+        // The engine's own log: PASSENGER_ENGINE_LOG=FILE keeps every session's, else the session keeps one for a failed
+        // wait to quote, which on a machine no one can debug on (CI's) is all there is to go by.
+        string? kept = Environment.GetEnvironmentVariable("PASSENGER_ENGINE_LOG") is { Length: > 0 } named ? named : null;
+        ownLog = kept is null;
+        engineLog = kept ?? Path.Combine(Path.GetTempPath(), $"passenger-engine-{Guid.NewGuid():N}.log");
+        List<string> arguments = [path, "--interpreter=vscode", $"--engineLogging={engineLog}"];
         adapter = Process.Start(new ProcessStartInfo(Dotnet.Host(), arguments)
         {
             RedirectStandardInput = true,
@@ -51,17 +56,24 @@ public sealed class DebugSession : IDisposable
             if (e.Data is not null)
             {
                 Log(output, $"adapter: {e.Data}");
+                Hear($"standard error: {e.Data}");
             }
         };
         adapter.BeginErrorReadLine();
         Connection = new DapConnection(adapter.StandardOutput.BaseStream, adapter.StandardInput.BaseStream, message => Log(output, message));
         Connection.EventReceived += (name, body) =>
         {
+            if (name is not ("module" or "thread"))
+            {
+                Hear(body.ValueKind != JsonValueKind.Object ? name
+                    : name == "output" && body.TryGetProperty("output", out JsonElement text) ? $"output: {text.GetString()?.TrimEnd()}"
+                    : $"{name}: {body.GetRawText()}");
+            }
             if (name == "initialized")
             {
                 initialized.TrySetResult();
             }
-            else if (name is "stopped" or "breakpoint" or "output")
+            else if (name is "stopped" or "breakpoint" or "output" or "terminated")
             {
                 events.Writer.TryWrite((name, body.Clone()));
             }
@@ -271,7 +283,19 @@ public sealed class DebugSession : IDisposable
         limit.CancelAfter(EventLimit);
         while (true)
         {
-            (string Name, JsonElement Body) next = await events.Reader.ReadAsync(limit.Token);
+            (string Name, JsonElement Body) next;
+            try
+            {
+                next = await events.Reader.ReadAsync(limit.Token);
+            }
+            catch (OperationCanceledException) when (!TestContext.Current.CancellationToken.IsCancellationRequested)
+            {
+                throw new TimeoutException($"No {name} event came in {EventLimit.TotalSeconds:0} s. {Heard()}");
+            }
+            if (next.Name == "terminated")
+            {
+                throw new InvalidOperationException($"The session ended while a {name} event was awaited. {Heard()}");
+            }
             if (next.Name != name)
             {
                 continue;
@@ -308,6 +332,51 @@ public sealed class DebugSession : IDisposable
             debuggee.Dispose();
         }
         Connection.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(5));
+        if (ownLog)
+        {
+            try
+            {
+                File.Delete(engineLog);
+            }
+            catch (IOException)
+            {
+                // Left in the temporary folder.
+            }
+        }
+    }
+
+    private void Hear(string said)
+    {
+        lock (heard)
+        {
+            heard.Enqueue(said.Length > 400 ? said[..400] + "…" : said);
+            while (heard.Count > 30)
+            {
+                heard.Dequeue();
+            }
+        }
+    }
+
+    /// <summary>What the adapter said last and how the engine's log ends: the cause of a wait that failed.</summary>
+    private string Heard()
+    {
+        string said;
+        lock (heard)
+        {
+            said = string.Join("\n  ", heard);
+        }
+        IEnumerable<string> logged;
+        try
+        {
+            using FileStream file = new(engineLog, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using StreamReader reader = new(file);
+            logged = reader.ReadToEnd().Split('\n', StringSplitOptions.RemoveEmptyEntries).TakeLast(40);
+        }
+        catch (IOException error)
+        {
+            logged = [$"(not readable: {error.Message})"];
+        }
+        return $"What the adapter said last:\n  {said}\nThe engine's log ends:\n  {string.Join("\n  ", logged)}";
     }
 
     private DebugSession Step(string command, int threadId)

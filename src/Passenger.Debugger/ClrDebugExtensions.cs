@@ -37,7 +37,7 @@ public static class ClrDebugExtensions
     /// pass resumeDiagnosticSuspension true if the process was launched with the DOTNET_DefaultDiagnosticPortSuspend environment variable, and you wish for it to be resumed after RegisterForRuntimeStartup
     /// <summary>ICorDebug for a process's runtime as it starts: registered for, then the held process let go
     /// (<paramref name="resume"/>), or for a runtime already running when there is nothing to let go.</summary>
-    public static async Task<ICorDebug> Automatic(int pid, Func<Task>? resume)
+    public static async Task<ICorDebug> Automatic(int pid, Func<Task>? resume, Action<string>? log = null)
     {
         IntPtr unregisterToken = IntPtr.Zero;
         GCHandle runtimeStartupTcsHandle = default;
@@ -61,15 +61,25 @@ public static class ClrDebugExtensions
                 int registerHr = DbgShim.RegisterForRuntimeStartup(checked((uint)pid), &OnRuntimeStartup, GCHandle.ToIntPtr(runtimeStartupTcsHandle), out unregisterToken);
                 Marshal.ThrowExceptionForHR(registerHr);
             }
+            log?.Invoke($"Registered for the runtime's start in process {pid}");
 
             if (resume is not null)
             {
                 await resume();
             }
 
-            (ICorDebug? CorDebug, int Hr) result = await runtimeStartupTcs.Task.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+            (ICorDebug? CorDebug, int Hr) result;
+            try
+            {
+                result = await runtimeStartupTcs.Task.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+            }
+            catch (TimeoutException)
+            {
+                throw new TimeoutException($"Process {pid}'s runtime never told the debugger it had started (dbgshim's handshake) within 5 s");
+            }
             cordebug = result.CorDebug;
             hr = result.Hr;
+            log?.Invoke($"The runtime in process {pid} answered the handshake: 0x{hr:X8}");
         }
         finally
         {
@@ -87,7 +97,7 @@ public static class ClrDebugExtensions
         //if callbackHR was not S_OK, an error occurred while attempting to register for runtime startup
         if (cordebug is null)
         {
-            throw new InvalidOperationException($"Attempting to register for runtime startup failed: {hr}");
+            throw new InvalidOperationException($"dbgshim could not take hold of process {pid}'s runtime: 0x{hr:X8}");
         }
 
         return cordebug;

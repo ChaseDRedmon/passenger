@@ -154,7 +154,7 @@ public partial class ManagedDebugger
         _exited.Reset();
         try
         {
-            _corDebug = await ClrDebugExtensions.Automatic(processId, resume);
+            _corDebug = await ClrDebugExtensions.Automatic(processId, resume, _logger);
             _corDebug.Initialize();
             _corDebug.SetManagedHandler(_callbacks);
             _process = _corDebug.DebugActiveProcess(processId, false);
