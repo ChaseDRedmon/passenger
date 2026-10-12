@@ -37,6 +37,13 @@ public class BreakpointManager
 
         /// <summary>Current hit count for this breakpoint</summary>
         public int HitCount { get; set; }
+
+        /// <summary>A tracepoint's message, its {expressions} evaluated where it is hit: written to the console in
+        /// place of a stop.</summary>
+        public string? LogMessage { get; set; }
+
+        /// <summary>Whether a hit stops the program; a tracepoint's does not.</summary>
+        public bool Suspend { get; set; } = true;
     }
 
     public record FunctionBreakpointBinding(
@@ -48,7 +55,7 @@ public class BreakpointManager
     /// <summary>
     /// Create a new breakpoint
     /// </summary>
-    public BreakpointInfo CreateBreakpoint(string filePath, int line, int? column = null, string? condition = null, string? hitCondition = null)
+    public BreakpointInfo CreateBreakpoint(string filePath, int line, int? column = null, string? condition = null, string? hitCondition = null, string? logMessage = null, bool? suspend = null)
     {
         lock (_lock)
         {
@@ -72,7 +79,9 @@ public class BreakpointManager
                 Verified = false,
                 Condition = condition,
                 HitCondition = hitCondition,
-                HitCount = 0
+                HitCount = 0,
+                LogMessage = string.IsNullOrEmpty(logMessage) ? null : logMessage,
+                Suspend = suspend ?? string.IsNullOrEmpty(logMessage),
             };
 
             _breakpoints[id] = bp;
@@ -87,7 +96,7 @@ public class BreakpointManager
         }
     }
 
-    public BreakpointInfo CreateFunctionBreakpoint(string functionName, string? condition = null, string? hitCondition = null)
+    public BreakpointInfo CreateFunctionBreakpoint(string functionName, string? condition = null, string? hitCondition = null, string? logMessage = null)
     {
         lock (_lock)
         {
@@ -96,7 +105,9 @@ public class BreakpointManager
                 Id = _nextBreakpointId++,
                 FunctionName = functionName,
                 Condition = string.IsNullOrWhiteSpace(condition) ? null : condition,
-                HitCondition = string.IsNullOrWhiteSpace(hitCondition) ? null : hitCondition
+                HitCondition = string.IsNullOrWhiteSpace(hitCondition) ? null : hitCondition,
+                LogMessage = string.IsNullOrEmpty(logMessage) ? null : logMessage,
+                Suspend = string.IsNullOrEmpty(logMessage),
             };
             _breakpoints[bp.Id] = bp;
             return bp;

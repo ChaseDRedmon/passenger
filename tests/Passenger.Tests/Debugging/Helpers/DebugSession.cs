@@ -61,7 +61,7 @@ public sealed class DebugSession : IDisposable
             {
                 initialized.TrySetResult();
             }
-            else if (name is "stopped" or "breakpoint")
+            else if (name is "stopped" or "breakpoint" or "output")
             {
                 events.Writer.TryWrite((name, body.Clone()));
             }
@@ -265,7 +265,8 @@ public sealed class DebugSession : IDisposable
     {
         string name = typeof(T) == typeof(StoppedEvent) ? "stopped"
             : typeof(T) == typeof(BreakpointEvent) ? "breakpoint"
-            : throw new ArgumentException($"Only stops and breakpoint changes are queued, not {typeof(T).Name}");
+            : typeof(T) == typeof(OutputEvent) ? "output"
+            : throw new ArgumentException($"Only stops, breakpoint changes and output are queued, not {typeof(T).Name}");
         using CancellationTokenSource limit = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
         limit.CancelAfter(EventLimit);
         while (true)

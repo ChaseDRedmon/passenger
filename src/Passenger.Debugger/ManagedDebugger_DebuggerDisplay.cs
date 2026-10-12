@@ -70,7 +70,7 @@ public partial class ManagedDebugger
     }
 
     /// <summary>A display format rendered against a value, and whether any fragment failed.</summary>
-    private async Task<(string Text, bool Failed)> RenderDebuggerDisplayAsync(string format, ICorDebugValue target, ThreadId threadId, FrameStackDepth frameStackDepth, int nesting)
+    private async Task<(string Text, bool Failed)> RenderDebuggerDisplayAsync(string format, ICorDebugValue? target, ThreadId threadId, FrameStackDepth frameStackDepth, int nesting)
     {
         StringBuilder rendered = new();
         bool failed = false;
@@ -99,7 +99,7 @@ public partial class ManagedDebugger
         return (rendered.ToString(), failed);
     }
 
-    private async Task<(string Text, bool Failed)> RenderFragmentAsync(string fragment, ICorDebugValue target, ThreadId threadId, FrameStackDepth frameStackDepth, int nesting)
+    private async Task<(string Text, bool Failed)> RenderFragmentAsync(string fragment, ICorDebugValue? target, ThreadId threadId, FrameStackDepth frameStackDepth, int nesting)
     {
         (string expression, IReadOnlyList<string> specifiers) = SplitSpecifiers(fragment);
         if (expression.Length == 0)

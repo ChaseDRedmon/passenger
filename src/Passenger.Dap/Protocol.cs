@@ -25,6 +25,7 @@ public sealed record DapCapabilities
     public bool? SupportsFunctionBreakpoints { get; init; }
     public bool? SupportsConditionalBreakpoints { get; init; }
     public bool? SupportsHitConditionalBreakpoints { get; init; }
+    public bool? SupportsLogPoints { get; init; }
     public bool? SupportsEvaluateForHovers { get; init; }
     public bool? SupportsStepBack { get; init; }
     public bool? SupportsSetVariable { get; init; }
@@ -72,7 +73,10 @@ public sealed record DapSource
     public int? SourceReference { get; init; }
 }
 
-public sealed record DapSourceBreakpoint(int Line, int? Column = null, string? Condition = null, string? HitCondition = null);
+/// <summary>A line breakpoint as asked for. <c>Suspend</c> is Passenger's own: whether a hit stops the program, so a
+/// breakpoint can log and stop, or neither stop nor log a message of its own ("Breakpoint reached"); without it,
+/// a log message alone means no stop, as the protocol has it.</summary>
+public sealed record DapSourceBreakpoint(int Line, int? Column = null, string? Condition = null, string? HitCondition = null, string? LogMessage = null, bool? Suspend = null);
 
 public sealed record SetBreakpointsArguments(DapSource Source, IReadOnlyList<DapSourceBreakpoint>? Breakpoints);
 
@@ -91,7 +95,7 @@ public sealed record DapBreakpoint
     public int? Offset { get; init; }
 }
 
-public sealed record DapFunctionBreakpoint(string Name, string? Condition = null, string? HitCondition = null);
+public sealed record DapFunctionBreakpoint(string Name, string? Condition = null, string? HitCondition = null, string? LogMessage = null);
 
 public sealed record SetFunctionBreakpointsArguments(IReadOnlyList<DapFunctionBreakpoint>? Breakpoints);
 

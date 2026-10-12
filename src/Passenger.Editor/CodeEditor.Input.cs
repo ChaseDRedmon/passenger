@@ -65,6 +65,16 @@ public sealed partial class CodeEditor
     {
         base.OnPointerPressed(e);
         PointerPoint point = e.GetCurrentPoint(this);
+        if (point.Properties.IsRightButtonPressed && point.Position.X < GutterWidth && GutterClicked is not null && ShowLineNumbers)
+        {
+            int line = (int)((point.Position.Y + scroll.Y) / metrics.LineHeight);
+            if (line < document.Snapshot.LineCount)
+            {
+                GutterClicked(this, new GutterClick(line, e.KeyModifiers, point.Position, Context: true));
+                e.Handled = true;
+            }
+            return;
+        }
         if (!point.Properties.IsLeftButtonPressed)
         {
             return;
@@ -81,7 +91,7 @@ public sealed partial class CodeEditor
             int clicked = (int)((point.Position.Y + scroll.Y) / metrics.LineHeight);
             if (clicked < text.LineCount)
             {
-                GutterClicked(this, clicked);
+                GutterClicked(this, new GutterClick(clicked, mods, point.Position, Context: false));
             }
             drag = default;
             e.Handled = true;

@@ -263,8 +263,15 @@ public sealed class PassengerTools(MainWindow window)
 
     [McpServerTool(Name = "breakpoint_set", Title = "Set a breakpoint"), Description(
         "Sets a line breakpoint, with a condition (a C# bool expression) or a hit condition (\"==3\", \">=2\", \"%2\") if given, or changes " +
-        "those of the one already there. Bound at once while debugging.")]
-    public Task<IReadOnlyList<BreakpointInfo>> SetBreakpoint(string path, int line, string? condition = null, string? hitCondition = null) => OnUi(() =>
+        "those of the one already there. A logMessage (\"count is {count}\") is written to the program's output on each hit; with " +
+        "suspend false the breakpoint is a tracepoint and the program runs on. Bound at once while debugging.")]
+    public Task<IReadOnlyList<BreakpointInfo>> SetBreakpoint(
+        string path,
+        int line,
+        string? condition = null,
+        string? hitCondition = null,
+        [Description("Written on each hit, its {expressions} evaluated there")] string? logMessage = null,
+        [Description("Whether a hit stops the program")] bool suspend = true) => OnUi(() =>
     {
         string full = Resolve(path);
         BreakpointStore store = window.Debugger.Breakpoints;
@@ -273,7 +280,7 @@ public sealed class PassengerTools(MainWindow window)
             store.Toggle(full, line - 1);
             breakpoint = store.In(full).First(b => b.Line == line - 1);
         }
-        store.SetCondition(breakpoint, condition, hitCondition);
+        store.Update(breakpoint, enabled: true, suspend, condition, hitCondition, logMessage);
         return Task.FromResult(Breakpoints(full));
     });
 
@@ -513,7 +520,7 @@ public sealed class PassengerTools(MainWindow window)
 
     private IReadOnlyList<BreakpointInfo> Breakpoints(string? path) =>
         [.. (path is null ? window.Debugger.Breakpoints.All : window.Debugger.Breakpoints.In(path))
-            .Select(b => new BreakpointInfo(Relative(b.Path), b.Line + 1, b.Enabled, b.Status.ToString().ToLowerInvariant(), b.Condition, b.HitCondition, b.Message))];
+            .Select(b => new BreakpointInfo(Relative(b.Path), b.Line + 1, b.Enabled, b.Status.ToString().ToLowerInvariant(), b.Condition, b.HitCondition, b.LogMessage, b.Suspend, b.Message))];
 
     private async Task<(LspDocument Lsp, IReadOnlyList<CodeAction> Actions)> Actions(string path, int line, int column)
     {
@@ -661,7 +668,7 @@ public sealed record BuildResult(bool Succeeded, int Errors, int Warnings, IRead
 
 public sealed record RunResult(bool StillRunning, string? Status, string Output);
 
-public sealed record BreakpointInfo(string Path, int Line, bool Enabled, string Status, string? Condition, string? HitCondition, string? Message);
+public sealed record BreakpointInfo(string Path, int Line, bool Enabled, string Status, string? Condition, string? HitCondition, string? LogMessage, bool Suspend, string? Message);
 
 public sealed record VariableInfo(string Name, string Value, string? Type, int Reference);
 

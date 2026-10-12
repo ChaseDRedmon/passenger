@@ -6,6 +6,8 @@
     <ResourceDictionary.ThemeDictionaries>
         <ResourceDictionary x:Key="Dark">
             <SolidColorBrush x:Key="Passenger.Chrome" Color="#2B2D30" />
+            <SolidColorBrush x:Key="Passenger.Field" Color="#1E1F22" />
+            <SolidColorBrush x:Key="Passenger.FieldBorder" Color="#4E5157" />
             <SolidColorBrush x:Key="Passenger.Divider" Color="#1E1F22" />
             <SolidColorBrush x:Key="Passenger.Text" Color="#DFE1E5" />
             <SolidColorBrush x:Key="Passenger.TextMuted" Color="#868A91" />
@@ -47,6 +49,7 @@
             <SolidColorBrush x:Key="Passenger.Editor.BreakpointLine" Color="#3A2627" />
             <SolidColorBrush x:Key="Passenger.Editor.ExecutionLine" Color="#253553" />
             <SolidColorBrush x:Key="Passenger.Editor.InlineValue" Color="#868A91" />
+            <SolidColorBrush x:Key="Passenger.Editor.Tracepoint" Color="#E5A336" />
             <SolidColorBrush x:Key="Passenger.Editor.ExceptionBack" Color="#4A2629" />
             <SolidColorBrush x:Key="Passenger.Editor.ExecutionPoint" Color="#5E9CF0" />
 
@@ -74,6 +77,8 @@
         </ResourceDictionary>
         <ResourceDictionary x:Key="Light">
             <SolidColorBrush x:Key="Passenger.Chrome" Color="#F7F8FA" />
+            <SolidColorBrush x:Key="Passenger.Field" Color="#FFFFFF" />
+            <SolidColorBrush x:Key="Passenger.FieldBorder" Color="#C9CCD6" />
             <SolidColorBrush x:Key="Passenger.Divider" Color="#EBECF0" />
             <SolidColorBrush x:Key="Passenger.Text" Color="#1E1F22" />
             <SolidColorBrush x:Key="Passenger.TextMuted" Color="#6C707E" />
@@ -115,6 +120,7 @@
             <SolidColorBrush x:Key="Passenger.Editor.BreakpointLine" Color="#FBE7E6" />
             <SolidColorBrush x:Key="Passenger.Editor.ExecutionLine" Color="#D9E6FB" />
             <SolidColorBrush x:Key="Passenger.Editor.InlineValue" Color="#8C8C8C" />
+            <SolidColorBrush x:Key="Passenger.Editor.Tracepoint" Color="#D9A343" />
             <SolidColorBrush x:Key="Passenger.Editor.ExceptionBack" Color="#FBE3E4" />
             <SolidColorBrush x:Key="Passenger.Editor.ExecutionPoint" Color="#3574F0" />
 

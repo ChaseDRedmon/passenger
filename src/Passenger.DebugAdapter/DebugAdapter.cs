@@ -158,6 +158,7 @@ public sealed class DebugAdapter
             SupportsFunctionBreakpoints = true,
             SupportsConditionalBreakpoints = true,
             SupportsHitConditionalBreakpoints = true,
+            SupportsLogPoints = true,
             SupportsEvaluateForHovers = true,
             SupportsStepBack = false,
             SupportsSetVariable = false,
@@ -267,14 +268,16 @@ public sealed class DebugAdapter
             LineIn(b.Line),
             b.Condition,
             b.HitCondition,
-            b.Column is int column ? ColumnIn(column) : null))];
+            b.Column is int column ? ColumnIn(column) : null,
+            b.LogMessage,
+            b.Suspend))];
         List<BreakpointManager.BreakpointInfo> breakpoints = await Locked(() => debugger.SetBreakpoints(path, requests));
         return new SetBreakpointsResponse([.. breakpoints.Select(b => ToProtocol(b, isEvent: false))]);
     }
 
     private async Task<SetBreakpointsResponse> SetFunctionBreakpoints(SetFunctionBreakpointsArguments arguments)
     {
-        FunctionBreakpointRequest[] requests = [.. (arguments.Breakpoints ?? []).Select(b => new FunctionBreakpointRequest(b.Name, b.Condition, b.HitCondition))];
+        FunctionBreakpointRequest[] requests = [.. (arguments.Breakpoints ?? []).Select(b => new FunctionBreakpointRequest(b.Name, b.Condition, b.HitCondition, b.LogMessage))];
         List<BreakpointManager.BreakpointInfo> breakpoints = await Locked(() => debugger.SetFunctionBreakpoints(requests));
         return new SetBreakpointsResponse([.. breakpoints.Select(b => new DapBreakpoint { Id = b.Id, Verified = b.Verified, Message = b.Message })]);
     }

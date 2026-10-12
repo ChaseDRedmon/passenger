@@ -232,7 +232,7 @@ public sealed class DebugSession
     private async Task SendBreakpointsAsync(string path)
     {
         List<LineBreakpoint> enabled = [.. breakpoints.In(path).Where(b => b.Enabled)];
-        List<DapSourceBreakpoint> requests = [.. enabled.Select(b => new DapSourceBreakpoint(b.Line + 1, Condition: b.Condition, HitCondition: b.HitCondition))];
+        List<DapSourceBreakpoint> requests = [.. enabled.Select(b => new DapSourceBreakpoint(b.Line + 1, Condition: b.Condition, HitCondition: b.HitCondition, LogMessage: b.LogMessage, Suspend: b.Suspend))];
         if (runToCursor is { } target && target.Path == path && enabled.All(b => b.Line != target.Line))
         {
             requests.Add(new DapSourceBreakpoint(target.Line + 1));
@@ -265,7 +265,7 @@ public sealed class DebugSession
 
     /// <summary>What a file's breakpoints ask of the debugger, to tell a change worth sending.</summary>
     private string Signature(string path) =>
-        string.Join(';', breakpoints.In(path).Where(b => b.Enabled).Select(b => $"{b.Line}|{b.Condition}|{b.HitCondition}"));
+        string.Join(';', breakpoints.In(path).Where(b => b.Enabled).Select(b => $"{b.Line}|{b.Condition}|{b.HitCondition}|{b.LogMessage}|{b.Suspend}"));
 
     private void OnEvent(string name, JsonElementCopy body)
     {

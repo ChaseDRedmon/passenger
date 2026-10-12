@@ -1,5 +1,10 @@
 using System.Diagnostics;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
+using Avalonia.Input;
+using Avalonia.VisualTree;
 using Passenger.App;
 using Passenger.App.Debugging;
 using Passenger.Dap;
@@ -135,6 +140,90 @@ public sealed class DebuggerTests : IDisposable
         Ui.Run(window, AppActions.Stop);
         Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
         window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_condition_typed_into_a_breakpoints_popup_decides_where_it_stops()
+    {
+        MainWindow window = Open();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        editor.GoTo(new TextPosition(3, 4));
+        // Alt+F9 on a line with no breakpoint sets one and opens its properties, its condition ready to type.
+        Ui.Run(window, AppActions.EditBreakpoint);
+        Assert.IsType<BreakpointPopup>(window.Popup);
+        Ui.Settle();
+        window.KeyTextInput("i == 2");
+        Ui.Press(window, "Enter");
+        Assert.Null(window.Popup);
+        LineBreakpoint breakpoint = Assert.Single(window.Debugger.Breakpoints.In(program));
+        Assert.Equal("i == 2", breakpoint.Condition);
+        Assert.Contains(new LineMark(3, LineMarkKind.Breakpoint, Conditional: true), editor.LineMarks);
+
+        Ui.Run(window, AppActions.Debug);
+        Ui.WaitFor(() => window.Debugger.Session?.State == DebugState.Paused && Value(window, "i") is not null, "the stop the condition allows");
+        Assert.Equal("2", Value(window, "i"));
+        Ui.Run(window, AppActions.Stop);
+        Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_tracepoint_set_with_shift_click_logs_its_message_and_the_program_runs_on()
+    {
+        MainWindow window = Open();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Point gutter = Gutter(window, editor, 3);
+        window.MouseDown(gutter, MouseButton.Left, RawInputModifiers.Shift);
+        window.MouseUp(gutter, MouseButton.Left, RawInputModifiers.Shift);
+        Ui.Settle();
+        Assert.Contains(new LineMark(3, LineMarkKind.Breakpoint, Tracepoint: true), editor.LineMarks);
+
+        // A right-click on it opens its properties; the log message is two fields on from the condition.
+        window.MouseDown(gutter, MouseButton.Right);
+        window.MouseUp(gutter, MouseButton.Right);
+        Ui.Settle();
+        Assert.IsType<BreakpointPopup>(window.Popup);
+        Ui.Press(window, "Tab");
+        Ui.Press(window, "Tab");
+        window.KeyTextInput("i is {i}, total {total}");
+        Ui.Press(window, "Enter");
+        Assert.Equal("i is {i}, total {total}", Assert.Single(window.Debugger.Breakpoints.In(program)).LogMessage);
+
+        Ui.Run(window, AppActions.Debug);
+        Ui.WaitFor(() => window.Debugger.Session?.State == DebugState.Ended, "the program to run to its end without stopping");
+        string console = window.BottomPanel.Debug.Console.Document.Snapshot.ToString();
+        Assert.Contains("i is 1, total 0\ni is 2, total 1\ni is 3, total 3\n", console, StringComparison.Ordinal);
+        Assert.Contains("total 6", console, StringComparison.Ordinal);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void The_breakpoints_window_lists_every_breakpoint_and_turns_one_off()
+    {
+        MainWindow window = Open();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        editor.GoTo(new TextPosition(3, 4));
+        Ui.Run(window, AppActions.ToggleBreakpoint);
+        editor.GoTo(new TextPosition(5, 0));
+        Ui.Run(window, AppActions.ToggleBreakpoint);
+
+        Ui.Run(window, AppActions.ViewBreakpoints);
+        BreakpointsWindow breakpoints = Assert.IsType<BreakpointsWindow>(window.Popup);
+        Assert.Equal(["Program.cs:4", "Program.cs:6"], breakpoints.Listed.Select(b => b.Location));
+        CheckBox first = breakpoints.GetVisualDescendants().OfType<CheckBox>().First(c => c.Content is null);
+        first.IsChecked = false;
+        Assert.False(window.Debugger.Breakpoints.In(program)[0].Enabled);
+        Assert.Contains(new LineMark(3, LineMarkKind.BreakpointDisabled), editor.LineMarks);
+        Ui.Press(window, "Escape");
+        Assert.Null(window.Popup);
+        window.Close();
+    }
+
+    /// <summary>The middle of a line's number in the gutter, in the window's coordinates.</summary>
+    private static Point Gutter(MainWindow window, CodeEditor editor, int line)
+    {
+        Point bottom = editor.GutterPoint(line);
+        return editor.TranslatePoint(new Point(bottom.X / 2, bottom.Y - 8), window)!.Value;
     }
 
     /// <summary>A top-level row of the Variables view, by name.</summary>

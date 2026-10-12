@@ -11,7 +11,18 @@ public sealed class LineBreakpoint(string path, int line)
     public bool Enabled { get; internal set; } = true;
     public string? Condition { get; internal set; }
     public string? HitCondition { get; internal set; }
+
+    /// <summary>Whether a hit stops the program. One that does not is a tracepoint: it logs its message, or
+    /// Rider's "Breakpoint reached", and lets the program go on.</summary>
+    public bool Suspend { get; internal set; } = true;
+
+    /// <summary>A message written to the Debug window's console on each hit, its {expressions} evaluated there.</summary>
+    public string? LogMessage { get; internal set; }
+
     public BreakpointStatus Status { get; internal set; }
+
+    /// <summary>Its file and line as the Breakpoints window and the popup name it: "Program.cs:7".</summary>
+    public string Location => $"{System.IO.Path.GetFileName(Path)}:{Line + 1}";
 
     /// <summary>The debugger's word on a breakpoint that will not be hit ("no symbols loaded").</summary>
     public string? Message { get; internal set; }
@@ -71,11 +82,34 @@ public sealed class BreakpointStore
         }
     }
 
-    public void SetCondition(LineBreakpoint breakpoint, string? condition, string? hitCondition)
+    public void SetCondition(LineBreakpoint breakpoint, string? condition, string? hitCondition) =>
+        Update(breakpoint, breakpoint.Enabled, breakpoint.Suspend, condition, hitCondition, breakpoint.LogMessage);
+
+    /// <summary>Changes what a breakpoint does, as its popup or the Breakpoints window does; blank text is none.</summary>
+    public void Update(LineBreakpoint breakpoint, bool enabled, bool suspend, string? condition, string? hitCondition, string? logMessage)
     {
-        breakpoint.Condition = string.IsNullOrWhiteSpace(condition) ? null : condition;
-        breakpoint.HitCondition = string.IsNullOrWhiteSpace(hitCondition) ? null : hitCondition;
+        breakpoint.Enabled = enabled;
+        breakpoint.Suspend = suspend;
+        breakpoint.Condition = string.IsNullOrWhiteSpace(condition) ? null : condition.Trim();
+        breakpoint.HitCondition = string.IsNullOrWhiteSpace(hitCondition) ? null : hitCondition.Trim();
+        breakpoint.LogMessage = string.IsNullOrWhiteSpace(logMessage) ? null : logMessage;
         Changed?.Invoke(this, breakpoint.Path);
+    }
+
+    /// <summary>Sets a breakpoint that does not stop, as Shift+click in the gutter does in Rider; or removes the
+    /// one on that line.</summary>
+    public void ToggleTracepoint(string path, int line)
+    {
+        if (In(path).Any(b => b.Line == line))
+        {
+            Toggle(path, line);
+            return;
+        }
+        LineBreakpoint tracepoint = new(path, line) { Suspend = false };
+        List<LineBreakpoint> list = For(path);
+        list.Add(tracepoint);
+        list.Sort((a, b) => a.Line.CompareTo(b.Line));
+        Changed?.Invoke(this, path);
     }
 
     public void Remove(LineBreakpoint breakpoint)

@@ -73,8 +73,13 @@ Shift+F11, Run to Cursor, Resume, Pause and Stop by Rider's keys; the Debug wind
 threads, frames, variables with members opened on demand, watches and an evaluated expression); the value of what
 the pointer rests on while paused.
 
-**Still to do:** the breakpoints window and conditions from the gutter, tracepoints, set value, exception stops shown
-with their exception, inline values at line ends, a terminal for the program's input, and the macOS signing.
+Then: inline values after each line of the stopped method, an exception stop named at the line that threw it,
+breakpoint properties from a right-click in the gutter or Alt+F9 (enabled, suspend, condition, hit count, log
+message), tracepoints (Shift+click, or Suspend off: a message logged with its {values}, the program running on),
+conditional and tracepoint marks in the gutter, and the Breakpoints window (⌥⌘B, Ctrl+Alt+B).
+
+**Still to do:** set value, exception breakpoints in the Breakpoints window, smart step into, a terminal for the
+program's input, and the macOS signing.
 Upstream SharpDbg's open issues that reach Passenger's users are listed in `docs/architecture.md`.
 
 **Done when:** Passenger debugs itself. It does, from the MCP server: Passenger built and launched under Passenger's

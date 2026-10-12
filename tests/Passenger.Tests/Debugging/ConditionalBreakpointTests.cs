@@ -29,6 +29,31 @@ public class ConditionalBreakpointTests(ITestOutputHelper testOutputHelper)
     }
 
     [Fact]
+    public async Task A_tracepoint_writes_its_message_with_the_values_in_it_and_never_stops()
+    {
+        bool startSuspended = true;
+        using DebugSession host = DebugSession.ForAttach(testOutputHelper, startSuspended, out Process debuggee);
+        await host
+            .WithInitializeRequest()
+            .WithAttachRequest(debuggee.Id)
+            .WaitForInitializedEvent();
+        host
+            .WithBreakpointsRequest(Debuggees.Source("DebuggableConsoleApp", "MyClass.cs"),
+            [
+                new DapSourceBreakpoint(15, LogMessage: "myInt is {myInt}, and the list has {_intList.Count} \\{literally\\}"),
+                new DapSourceBreakpoint(22),
+            ])
+            .WithConfigurationDoneRequest()
+            .WithOptionalResumeRuntime(debuggee.Id, startSuspended);
+
+        OutputEvent logged = await host.WaitForEvent<OutputEvent>(o => o.Output.StartsWith("myInt is", StringComparison.Ordinal));
+        Assert.Equal("myInt is 4, and the list has 4 {literally}\n", logged.Output);
+        Assert.Equal("console", logged.Category);
+        // The program went on past the tracepoint, to the breakpoint after it.
+        Assert.Equal(22, (await host.WaitForStoppedEvent()).ReadStopInfo().line);
+    }
+
+    [Fact]
     public async Task ConditionalBreakpoint_WithTrueCondition_Stops()
     {
         bool startSuspended = true;

@@ -324,6 +324,23 @@ public partial class ManagedDebugger
             }
         }
 
+        if (managedBreakpoint.LogMessage is { } logMessage)
+        {
+            (string text, _) = await RenderDebuggerDisplayAsync(logMessage, null, new ThreadId(corThread.Id), new FrameStackDepth(0), 0);
+            OnConsole?.Invoke($"{text}\n");
+        }
+        else if (!managedBreakpoint.Suspend)
+        {
+            // Rider's message for a breakpoint that neither stops nor says anything of its own.
+            OnConsole?.Invoke($"Breakpoint reached at {Path.GetFileName(managedBreakpoint.FilePath)}:{managedBreakpoint.ResolvedBreakpointFromPdb?.StartLine ?? managedBreakpoint.Line}\n");
+        }
+        if (!managedBreakpoint.Suspend)
+        {
+            // A tracepoint lets the program go on, as Visual Studio's and Rider's do.
+            ContinueWithVariableClear();
+            return;
+        }
+
         if (managedBreakpoint.IsFunctionBreakpoint)
         {
             SourceInfo? sourceInfo = GetSourceInfoAtFrame(corThread.ActiveFrame, _justMyCode is false);

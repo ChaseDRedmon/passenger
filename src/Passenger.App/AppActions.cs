@@ -58,6 +58,10 @@ public static class AppActions
     public const string ShowExecutionPoint = "app.debug.showExecutionPoint";
     public const string Evaluate = "app.debug.evaluate";
 
+    // The breakpoints' windows, the window's to show.
+    public const string EditBreakpoint = "app.breakpoints.edit";
+    public const string ViewBreakpoints = "app.breakpoints.view";
+
     public static bool IsApp(string action) => action.StartsWith("app.", StringComparison.Ordinal);
 
     public static Keymap Keymap()
@@ -98,6 +102,8 @@ public static class AppActions
                 .Bind(RunToCursor, "meta F10")
                 .Bind(ShowExecutionPoint, "alt MULTIPLY")
                 .Bind(Evaluate, "shift F9")
+                .Bind(EditBreakpoint, "alt F9")
+                .Bind(ViewBreakpoints, "meta alt B")
                 .Bind(HideToolWindow, "shift ESCAPE")
                 .Bind(Back, "meta MINUS")
                 .Bind(Forward, "meta shift MINUS")
@@ -146,6 +152,8 @@ public static class AppActions
             .Bind(RunToCursor, "control F10")
             .Bind(ShowExecutionPoint, "alt MULTIPLY")
             .Bind(Evaluate, "shift F9")
+            .Bind(EditBreakpoint, "alt F9")
+            .Bind(ViewBreakpoints, "control alt B")
             .Bind(HideToolWindow, "shift ESCAPE")
             .Bind(Back, "control MINUS")
             .Bind(Forward, "control shift MINUS")

@@ -14,8 +14,8 @@ using ZLinq;
 
 namespace Passenger.Debugger;
 
-public record BreakpointRequest(int Line, string? Condition = null, string? HitCondition = null, int? Column = null);
-public record FunctionBreakpointRequest(string Name, string? Condition = null, string? HitCondition = null);
+public record BreakpointRequest(int Line, string? Condition = null, string? HitCondition = null, int? Column = null, string? LogMessage = null, bool? Suspend = null);
+public record FunctionBreakpointRequest(string Name, string? Condition = null, string? HitCondition = null, string? LogMessage = null);
 public record ExceptionBreakpointRequest(ExceptionBreakpointFilter Filter, string? Condition = null);
 public enum ExceptionBreakpointFilter { All, UserUnhandled }
 
@@ -449,7 +449,7 @@ public partial class ManagedDebugger
         List<BreakpointManager.BreakpointInfo> result = new List<BreakpointManager.BreakpointInfo>();
         foreach (BreakpointRequest request in breakpoints)
         {
-            BreakpointManager.BreakpointInfo bp = _breakpointManager.CreateBreakpoint(filePath, request.Line, request.Column, request.Condition, request.HitCondition);
+            BreakpointManager.BreakpointInfo bp = _breakpointManager.CreateBreakpoint(filePath, request.Line, request.Column, request.Condition, request.HitCondition, request.LogMessage, request.Suspend);
             if (request.Condition is not null && SyntaxFactory.ParseExpression(request.Condition).DescendantNodesAndSelf().Any(static node => node is AnonymousFunctionExpressionSyntax))
             {
                 bp.Message = "Lambda expressions are not supported in breakpoint conditions.";
@@ -489,7 +489,7 @@ public partial class ManagedDebugger
         List<BreakpointManager.BreakpointInfo> result = new List<BreakpointManager.BreakpointInfo>();
         foreach (FunctionBreakpointRequest request in breakpoints)
         {
-            BreakpointManager.BreakpointInfo bp = _breakpointManager.CreateFunctionBreakpoint(request.Name, request.Condition, request.HitCondition);
+            BreakpointManager.BreakpointInfo bp = _breakpointManager.CreateFunctionBreakpoint(request.Name, request.Condition, request.HitCondition, request.LogMessage);
             try
             {
                 _ = FunctionBreakpointPattern.Parse(request.Name);

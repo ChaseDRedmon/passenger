@@ -271,10 +271,10 @@ public sealed partial class CodeEditor
             {
                 DrawExecutionArrow(context, right, top);
             }
-            if (marks.Breakpoints.TryGetValue(line, out LineMarkKind kind))
+            if (marks.Breakpoints.TryGetValue(line, out LineMark mark))
             {
                 // Over the number, as Rider draws breakpoints by default: the number gives way.
-                DrawBreakpoint(context, kind, right - metrics.CharWidth, top + metrics.LineHeight / 2);
+                DrawBreakpoint(context, mark, right - metrics.CharWidth, top + metrics.LineHeight / 2);
                 continue;
             }
             bool current = caretLines.Contains(line);
@@ -290,7 +290,7 @@ public sealed partial class CodeEditor
     /// that is off or cannot bind.</summary>
     private IBrush? LineTint(VisibleMarks marks, int line) =>
         marks.Executing.Contains(line) ? palette.ExecutionLine
-        : marks.Breakpoints.TryGetValue(line, out LineMarkKind kind) && kind is LineMarkKind.Breakpoint or LineMarkKind.BreakpointBound ? palette.BreakpointLine
+        : marks.Breakpoints.TryGetValue(line, out LineMark mark) && !mark.Tracepoint && mark.Kind is LineMarkKind.Breakpoint or LineMarkKind.BreakpointBound ? palette.BreakpointLine
         : null;
 
     /// <summary>The marks on the lines a frame draws, looked up once per frame.</summary>
@@ -310,29 +310,38 @@ public sealed partial class CodeEditor
                 }
                 else
                 {
-                    Breakpoints[mark.Line] = mark.Kind;
+                    Breakpoints[mark.Line] = mark;
                 }
             }
         }
 
         public HashSet<int> Executing { get; } = [];
 
-        public Dictionary<int, LineMarkKind> Breakpoints { get; } = [];
+        public Dictionary<int, LineMark> Breakpoints { get; } = [];
     }
 
     /// <summary>A breakpoint's dot, centred at a point: filled when set, with a tick once bound, a
-    /// ring when it cannot bind or is off.</summary>
-    private void DrawBreakpoint(DrawingContext context, LineMarkKind kind, double x, double y)
+    /// ring when it cannot bind or is off; a question mark on it for a condition, amber for a tracepoint.</summary>
+    private void DrawBreakpoint(DrawingContext context, LineMark mark, double x, double y)
     {
         double radius = Math.Min(metrics.LineHeight - 6, 14) / 2;
         Point centre = new(x, y);
-        switch (kind)
+        IBrush fill = mark.Tracepoint ? palette.Tracepoint : palette.Breakpoint;
+        if (mark.Conditional && mark.Kind is LineMarkKind.Breakpoint or LineMarkKind.BreakpointBound)
+        {
+            context.DrawEllipse(fill, null, centre, radius, radius);
+            TextLine question = lines.Get(new LineKey("?", -5), () => Format("?", [], questionRun ??= new GenericTextRunProperties(
+                new Typeface(FontFamily, FontStyle.Normal, FontWeight.Bold), FontSize * 0.75, foregroundBrush: palette.Background)));
+            question.Draw(context, new Point(x - question.WidthIncludingTrailingWhitespace / 2, y - question.Height / 2));
+            return;
+        }
+        switch (mark.Kind)
         {
             case LineMarkKind.Breakpoint:
-                context.DrawEllipse(palette.Breakpoint, null, centre, radius, radius);
+                context.DrawEllipse(fill, null, centre, radius, radius);
                 break;
             case LineMarkKind.BreakpointBound:
-                context.DrawEllipse(palette.Breakpoint, null, centre, radius, radius);
+                context.DrawEllipse(fill, null, centre, radius, radius);
                 StreamGeometry tick = new();
                 using (StreamGeometryContext path = tick.Open())
                 {
@@ -344,7 +353,7 @@ public sealed partial class CodeEditor
                 context.DrawGeometry(null, new Pen(palette.Background, 1.6, lineCap: PenLineCap.Round, lineJoin: PenLineJoin.Round), tick);
                 break;
             case LineMarkKind.BreakpointInvalid:
-                context.DrawEllipse(null, new Pen(palette.Breakpoint, 1.5), centre, radius - 0.75, radius - 0.75);
+                context.DrawEllipse(null, new Pen(fill, 1.5), centre, radius - 0.75, radius - 0.75);
                 break;
             default:
                 context.DrawEllipse(null, new Pen(palette.LineNumber, 1.5), centre, radius - 0.75, radius - 0.75);
@@ -565,6 +574,7 @@ public sealed partial class CodeEditor
         public IBrush ExecutionLine { get; private init; } = Brush("#253553");
         public IBrush ExecutionPoint { get; private init; } = Brush("#5E9CF0");
         public IBrush InlineValue { get; private init; } = Brush("#868A91");
+        public IBrush Tracepoint { get; private init; } = Brush("#E5A336");
         public IBrush ExceptionBack { get; private init; } = Brush("#4A2629");
 
         public IBrush Syntax(TokenKind kind) => syntax.TryGetValue(kind, out IBrush? brush) ? brush : Text;
@@ -595,6 +605,7 @@ public sealed partial class CodeEditor
                 ExecutionLine = Find(control, "Passenger.Editor.ExecutionLine") ?? defaults.ExecutionLine,
                 ExecutionPoint = Find(control, "Passenger.Editor.ExecutionPoint") ?? defaults.ExecutionPoint,
                 InlineValue = Find(control, "Passenger.Editor.InlineValue") ?? defaults.InlineValue,
+                Tracepoint = Find(control, "Passenger.Editor.Tracepoint") ?? defaults.Tracepoint,
                 ExceptionBack = Find(control, "Passenger.Editor.ExceptionBack") ?? defaults.ExceptionBack,
             };
             foreach (TokenKind kind in Enum.GetValues<TokenKind>())

@@ -2,7 +2,9 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Layout;
 using Avalonia.Platform.Storage;
+using Avalonia.Threading;
 using Passenger.App.CSharp;
 using Passenger.App.Debugging;
 using Passenger.App.Editors;
@@ -67,11 +69,27 @@ public partial class MainWindow : Window
             csharp?.Detach(document);
             debug?.Detach(document);
         };
-        Editors.CodeEditor.GutterClicked += (_, line) =>
+        Editors.CodeEditor.GutterClicked += (_, click) =>
         {
-            if (Editors.Active is { } active)
+            if (Editors.Active is not { } active || debug is null)
             {
-                debug?.Breakpoints.Toggle(active.Path, line);
+                return;
+            }
+            if (click.Context)
+            {
+                // A right-click on a breakpoint opens its properties, as in Rider.
+                if (debug.Breakpoints.In(active.Path).FirstOrDefault(b => b.Line == click.Line) is { } breakpoint)
+                {
+                    ShowBreakpointPopup(breakpoint);
+                }
+            }
+            else if (click.Modifiers.HasFlag(KeyModifiers.Shift))
+            {
+                debug.Breakpoints.ToggleTracepoint(active.Path, click.Line);
+            }
+            else
+            {
+                debug.Breakpoints.Toggle(active.Path, click.Line);
             }
         };
         Closing += (_, _) => _ = csharp?.DisposeAsync();
@@ -199,6 +217,13 @@ public partial class MainWindow : Window
 
     private void OnKeyDownFirst(object? sender, KeyEventArgs e)
     {
+        if (e.Key == Key.Escape && e.KeyModifiers == KeyModifiers.None && Overlay.IsVisible)
+        {
+            // Escape closes what is over the window before anything under it hears it.
+            DismissPopup();
+            e.Handled = true;
+            return;
+        }
         string? action = keys.Press(e, out bool consumed, out bool shifted);
         if (action is null)
         {
@@ -274,6 +299,19 @@ public partial class MainWindow : Window
             case { } debugging when debugging.StartsWith("app.debug.", StringComparison.Ordinal):
                 debug.Run(debugging);
                 break;
+            case AppActions.EditBreakpoint when Editors.Active is { } file:
+                int caretLine = Editors.CodeEditor.CaretPosition.Line;
+                if (debug.Breakpoints.In(file.Path).FirstOrDefault(b => b.Line == caretLine) is not { } editing)
+                {
+                    // Alt+F9 on a line with none sets one to edit, as Rider's Edit Breakpoint does.
+                    debug.Breakpoints.Toggle(file.Path, caretLine);
+                    editing = debug.Breakpoints.In(file.Path).First(b => b.Line == caretLine);
+                }
+                ShowBreakpointPopup(editing);
+                break;
+            case AppActions.ViewBreakpoints:
+                ShowBreakpoints(null);
+                break;
             case AppActions.ShowBuild:
                 ShowBottom("Build");
                 break;
@@ -338,6 +376,9 @@ public partial class MainWindow : Window
     }
 
     public bool IsPopupOpen => Overlay.IsVisible;
+
+    /// <summary>What the open popup is (Go to File, a breakpoint's properties, the Breakpoints window), or null.</summary>
+    public Control? Popup => Overlay.IsVisible ? OverlayHost.Content as Control : null;
 
     public CodeAssist Assist => assist;
 
@@ -709,8 +750,22 @@ public partial class MainWindow : Window
         ShowPopup(popup);
     }
 
-    private void ShowPopup(Control popup)
+    /// <summary>A popup over the window: centred under the toolbar, as Go to File's is, or beside a point of the
+    /// window (a breakpoint's), kept inside it.</summary>
+    private void ShowPopup(Control popup, Point? at = null)
     {
+        if (at is { } point)
+        {
+            popup.Measure(Size.Infinity);
+            double width = popup.Width is double w && !double.IsNaN(w) ? w : popup.DesiredSize.Width;
+            OverlayHost.HorizontalAlignment = HorizontalAlignment.Left;
+            OverlayHost.Margin = new Thickness(Math.Clamp(point.X, 8, Math.Max(8, Bounds.Width - width - 8)), Math.Clamp(point.Y, 8, Math.Max(8, Bounds.Height - popup.DesiredSize.Height - 8)), 0, 0);
+        }
+        else
+        {
+            OverlayHost.HorizontalAlignment = HorizontalAlignment.Center;
+            OverlayHost.Margin = new Thickness(0, 84, 0, 0);
+        }
         OverlayHost.Content = popup;
         Overlay.IsVisible = true;
     }
@@ -729,8 +784,59 @@ public partial class MainWindow : Window
     {
         if (e.Source == Overlay)
         {
-            ClosePopup();
+            DismissPopup();
         }
+    }
+
+    /// <summary>Closes the popup as a click outside it or Escape does: a breakpoint's popup or window keeps what
+    /// was typed in it, as Rider's do.</summary>
+    private void DismissPopup()
+    {
+        switch (OverlayHost.Content)
+        {
+            case Debugging.BreakpointPopup breakpoint:
+                breakpoint.Close(debug.Breakpoints, more: false);
+                break;
+            case Debugging.BreakpointsWindow breakpoints:
+                breakpoints.Close();
+                break;
+            default:
+                ClosePopup();
+                break;
+        }
+    }
+
+    /// <summary>A breakpoint's properties beside its line in the gutter, its condition ready to type.</summary>
+    public void ShowBreakpointPopup(Debugging.LineBreakpoint breakpoint)
+    {
+        CodeEditor editor = Editors.CodeEditor;
+        Point at = editor.TranslatePoint(editor.GutterPoint(breakpoint.Line), this) ?? new Point(100, 100);
+        Debugging.BreakpointPopup popup = new(breakpoint, debug.Breakpoints, AppActions.Keymap().ShortcutsFor(AppActions.ViewBreakpoints) is { Count: > 0 } keys ? keys[0].Display() : null);
+        popup.Closed += (_, more) =>
+        {
+            ClosePopup();
+            if (more)
+            {
+                ShowBreakpoints(breakpoint);
+            }
+        };
+        ShowPopup(popup, at);
+        Dispatcher.UIThread.Post(popup.Properties.FocusCondition, DispatcherPriority.Loaded);
+    }
+
+    /// <summary>The Breakpoints window, a breakpoint chosen in it.</summary>
+    public void ShowBreakpoints(Debugging.LineBreakpoint? chosen)
+    {
+        Debugging.BreakpointsWindow window = new(debug.Breakpoints, chosen);
+        window.Closed += (_, show) =>
+        {
+            ClosePopup();
+            if (show is not null)
+            {
+                NavigateTo(show.Path, new TextPosition(show.Line, 0));
+            }
+        };
+        ShowPopup(window);
     }
 
     private async Task PickFolder()

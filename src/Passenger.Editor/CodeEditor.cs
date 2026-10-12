@@ -46,6 +46,7 @@ public sealed partial class CodeEditor : Control
     private Metrics metrics;
     private Palette palette;
     private (TextRunProperties Value, TextRunProperties Exception) annotationRuns;
+    private TextRunProperties? questionRun;
 
     public CodeEditor()
     {
@@ -119,7 +120,11 @@ public sealed partial class CodeEditor : Control
 
     /// <summary>A click on a line's number (from zero): the host's breakpoint toggle. With a handler,
     /// a click there no longer selects the line, as in Rider with breakpoints over line numbers.</summary>
-    public event EventHandler<int>? GutterClicked;
+    public event EventHandler<GutterClick>? GutterClicked;
+
+    /// <summary>Where a line's number is drawn, in the editor's coordinates: what a popup about its breakpoint
+    /// is placed beside.</summary>
+    public Point GutterPoint(int line) => new(GutterWidth, (line + 1) * metrics.LineHeight - scroll.Y);
 
     /// <summary>The markers at an offset, for a tooltip.</summary>
     public IEnumerable<Marker> MarkersAt(int offset) =>
@@ -478,6 +483,7 @@ public sealed partial class CodeEditor : Control
     private void RefreshStyle()
     {
         palette = Palette.From(this);
+        questionRun = null;
         runProperties.Clear();
         numberRuns = (
             RunWith(palette.LineNumberCurrent),

@@ -462,7 +462,7 @@ public sealed class DebugController
             { Status: BreakpointStatus.Bound } when debugging => LineMarkKind.BreakpointBound,
             { Status: BreakpointStatus.Invalid } when debugging => LineMarkKind.BreakpointInvalid,
             _ => LineMarkKind.Breakpoint,
-        }))];
+        }, Conditional: b.Condition is not null || b.HitCondition is not null, Tracepoint: !b.Suspend))];
         if (executionPoint is { } point && point.Path == document.Path)
         {
             marks.Add(new LineMark(point.Line, LineMarkKind.ExecutionPoint));
