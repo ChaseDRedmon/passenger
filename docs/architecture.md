@@ -162,7 +162,11 @@ Passenger:
   and `Type` its type column, inherited from base types, and a value inside a display shown by its own; inner
   exceptions reported, the whole chain (#50); `RootHidden` lifting an object's members (#55); a type proxy whose
   constructor throws leaving the value's own members (#56).
-- Still open: the IL interpreter's list (#30).
+- Fixed in the IL interpreter (#30): checked conversions from unsigned values; a constrained call on a struct changing
+  the struct where it lives, not a boxed copy; an enum widened through its value, signed as its type is; unboxing that
+  tells Pair<int> from Pair<string>, for unbox as for unbox.any; struct arrays allocated by the struct's own module, not
+  a token another module's primitive shares; native integers the debuggee's width; `not` keeping an int an int.
+  Left for Edit and Continue, which needs it: Roslyn's method context hard-codes method version 1.
 - Planned anyway: Edit and Continue (#10, M8's hot reload), synthetic variables (#26), remote debugging (#14).
 
 Still ahead, in the engine or beside it: smart step into, set value, data breakpoints, tracepoints, hot reload and

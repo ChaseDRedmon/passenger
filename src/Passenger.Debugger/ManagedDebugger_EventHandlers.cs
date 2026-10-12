@@ -120,6 +120,7 @@ public partial class ManagedDebugger
 
         if (moduleName is "System.Private.CoreLib.dll")
         {
+            Passenger.Debugger.ExpressionEvaluator.Cil.CilValue.PointerSize = metadataReader.PointerSize;
             // we need to map value classes to primitive types to allow evaluation to invoke methods on them
             MapRuntimePrimitiveTypesToCorDebugClass(corModule);
             // We can now initialize the expression interpreter, and assume that modules will be loaded before any stop event is allowed to be returned

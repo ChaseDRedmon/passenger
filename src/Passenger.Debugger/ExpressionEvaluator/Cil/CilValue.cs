@@ -5,6 +5,10 @@ namespace Passenger.Debugger.ExpressionEvaluator.Cil;
 // 🤖
 internal sealed class CilValue
 {
+    /// <summary>The debuggee's pointer size, for native integers: its runtime's, set when CoreLib loads,
+    /// not the debugger's own (a 32-bit program under a 64-bit debugger).</summary>
+    public static int PointerSize { get; set; } = IntPtr.Size;
+
     private CilValue(object? value, ICorDebugValue? corValue, ICilLocation? location = null, ICilLocation? sourceLocation = null)
     {
         Value = value;
@@ -142,8 +146,9 @@ internal sealed class CilValue
             CorElementType.U8 => BitConverter.ToUInt64(data),
             CorElementType.R4 => BitConverter.ToSingle(data),
             CorElementType.R8 => BitConverter.ToDouble(data),
-            CorElementType.I => IntPtr.Size == 8 ? BitConverter.ToInt64(data) : BitConverter.ToInt32(data),
-            CorElementType.U => IntPtr.Size == 8 ? BitConverter.ToUInt64(data) : BitConverter.ToUInt32(data),
+            // As wide as the debuggee's native integers are, which its value's own size says.
+            CorElementType.I => data.Length == 8 ? BitConverter.ToInt64(data) : BitConverter.ToInt32(data),
+            CorElementType.U => data.Length == 8 ? BitConverter.ToUInt64(data) : BitConverter.ToUInt32(data),
             _ => null
         };
     }
@@ -157,15 +162,36 @@ internal sealed class CilValue
         }
 
         byte[] data = generic.GetValueAsBytes();
+        // An enum reads as its underlying type: an sbyte enum's -1 is not 255, nor a ushort enum's 65535 -1.
+        bool unsigned = UnderlyingType(CorValue) is CorElementType.U1 or CorElementType.U2 or CorElementType.U4 or CorElementType.U8 or CorElementType.CHAR or CorElementType.BOOLEAN;
         value = data.Length switch
         {
-            1 => data[0],
-            2 => BitConverter.ToInt16(data),
-            4 => BitConverter.ToInt32(data),
+            1 => unsigned ? data[0] : unchecked((sbyte)data[0]),
+            2 => unsigned ? BitConverter.ToUInt16(data) : BitConverter.ToInt16(data),
+            4 => unsigned ? BitConverter.ToUInt32(data) : BitConverter.ToInt32(data),
             8 => BitConverter.ToInt64(data),
             _ => 0
         };
         return data.Length is 1 or 2 or 4 or 8;
+    }
+
+    /// <summary>An enum's underlying element type, from its value__ field's signature; null for a struct
+    /// that is not an enum.</summary>
+    private static CorElementType? UnderlyingType(ICorDebugValue value)
+    {
+        try
+        {
+            ICorDebugClass corClass = value.ExactType.Class;
+            IMetaDataImport metadata = corClass.Module.GetMetaDataInterface<IMetaDataImport>();
+            mdFieldDef field = metadata.FindField(corClass.Token, "value__", 0, 0);
+            nint signature = metadata.GetFieldProps(field).ppvSigBlob;
+            // A field signature is FIELD (0x06), then the field's type.
+            return (CorElementType)System.Runtime.InteropServices.Marshal.ReadByte(signature, 1);
+        }
+        catch (Exception error) when (error is System.Runtime.InteropServices.COMException or InvalidOperationException)
+        {
+            return null;
+        }
     }
 }
 

@@ -22,6 +22,9 @@ public partial class ModuleMetadataReader : IDisposable
     internal Guid Mvid => _mvid ??= _peMetadataReader.GetGuid(_peMetadataReader.GetModuleDefinition().Mvid);
     public bool HasSymbols => _pdbMetadataReader is not null;
 
+    /// <summary>The pointer size the module is built for: CoreLib's is its runtime's.</summary>
+    internal int PointerSize => _peReader.PEHeaders.PEHeader?.Magic == PEMagic.PE32Plus ? 8 : 4;
+
     /// <summary>The methods a module's own code says are not the user's: marked [DebuggerNonUserCode],
     /// [DebuggerStepThrough] or [DebuggerHidden], or declared in a type (or a type nested in one) marked
     /// with either of the first two. Just My Code leaves them out, as Visual Studio and Rider do.</summary>

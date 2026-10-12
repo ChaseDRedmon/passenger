@@ -228,7 +228,13 @@ internal sealed class CilInterpreter(ManagedDebugger debugger, RuntimeAssemblyPr
                     continue;
                 }
                 if (op == OpCodes.Neg) { stack.Push(Negate(stack.Pop())); continue; }
-                if (op == OpCodes.Not) { stack.Push(CilValue.FromPrimitive(~stack.Pop().AsInt64())); continue; }
+                if (op == OpCodes.Not)
+                {
+                    // An int32 stays one: only a 64-bit operand gives a 64-bit result.
+                    CilValue operand = stack.Pop();
+                    stack.Push(operand.Value is long or ulong ? CilValue.FromPrimitive(~operand.AsInt64()) : CilValue.FromPrimitive(~operand.AsInt32()));
+                    continue;
+                }
 
                 if (IsBinary(op))
                 {
@@ -402,7 +408,7 @@ internal sealed class CilInterpreter(ManagedDebugger debugger, RuntimeAssemblyPr
                     }
 
                     ResolvedCilType targetType = resolver.ResolveTypeToken((int)instruction.Operand!);
-                    if (!IsUnboxCompatible(boxed.Object, targetType))
+                    if (!IsUnboxCompatible(boxed.Object, targetType, resolver))
                     {
                         throw new InvalidCastException($"InvalidCastException: Cannot unbox the debuggee value to '{targetType.RuntimeType?.ToString() ?? "the requested type"}'");
                     }
@@ -430,6 +436,12 @@ internal sealed class CilInterpreter(ManagedDebugger debugger, RuntimeAssemblyPr
                         throw new InvalidCastException("The CIL value is not boxed");
                     }
 
+                    // The address of a box's value, which must be the type asked for, as unbox.any's is.
+                    ResolvedCilType unboxTarget = resolver.ResolveTypeToken((int)instruction.Operand!);
+                    if (!IsUnboxCompatible(boxed.Object, unboxTarget, resolver))
+                    {
+                        throw new InvalidCastException($"InvalidCastException: Cannot unbox the debuggee value to '{unboxTarget.RuntimeType?.ToString() ?? "the requested type"}'");
+                    }
                     stack.Push(CilValue.FromLocation(new CorDebugLocation(boxed.Object)));
                     continue;
                 }
@@ -692,6 +704,7 @@ internal sealed class CilInterpreter(ManagedDebugger debugger, RuntimeAssemblyPr
 
                     ICorDebugValue[] callArguments = new ICorDebugValue[method.Signature.ParameterTypes.Length + (method.IsStatic ? 0 : 1)];
                     List<(ICilLocation Location, ICorDebugValue Value)> temporaryByRefArguments = new List<(ICilLocation Location, ICorDebugValue Value)>();
+                    (ICilLocation Home, ICorDebugValue Box)? constrainedCopyBack = null;
                     for (int argument = 0; argument < argumentValues.Length; argument++)
                     {
                         callArguments[argument + (method.IsStatic ? 0 : 1)] = method.Signature.ParameterTypes[argument].EndsWith('&')
@@ -714,6 +727,13 @@ internal sealed class CilInterpreter(ManagedDebugger debugger, RuntimeAssemblyPr
                         callArguments[0] = receiver.Value is EvaluationDelegate or EvaluationClosure
                             ? await MaterializeForCallAsync(receiver, compiled, resolver, delegateAssemblyLoader, context, handles)
                             : await MaterializeReceiverAsync(receiver, context, callConstrainedType, resolver, handles);
+                        // A constrained call on a struct runs on a boxed copy; what it changes goes back where
+                        // the struct lives, as the call on the struct's own address would have (upstream #30).
+                        if (callConstrainedType is not null && receiverValue!.Location is { } receiverHome
+                            && callArguments[0] != receiver.CorValue && callArguments[0].UnwrapDebugValue() is ICorDebugGenericValue)
+                        {
+                            constrainedCopyBack = (receiverHome, callArguments[0]);
+                        }
                     }
 
                     int declaringTypeArity = resolver.GetRuntimeTypeGenericArity(method.DeclaringType);
@@ -744,6 +764,10 @@ internal sealed class CilInterpreter(ManagedDebugger debugger, RuntimeAssemblyPr
                     {
                         WriteBackTemporaryByRefArguments(temporaryByRefArguments, handles);
                         SynchronizeEvaluationClosures(evaluationClosures.Select(CilValue.FromVirtual), handles);
+                        if (constrainedCopyBack is { } copy)
+                        {
+                            copy.Home.Write(CilValue.FromDebuggeeValue(copy.Box.UnwrapDebugValue()));
+                        }
                     }
                     if (method.Signature.ReturnType != PrimitiveTypeCode.Void.ToString())
                     {
@@ -868,6 +892,12 @@ internal sealed class CilInterpreter(ManagedDebugger debugger, RuntimeAssemblyPr
         {
             ICorDebugGenericValue primitiveResult = (ICorDebugGenericValue)eval.CreateValue(primitiveElementType, null);
             byte[] sourceBytes = sourceGeneric.GetValueAsBytes();
+            if (sourceBytes.Length != primitiveResult.Size && value.TryGetInt64(out long integer))
+            {
+                // An enum narrower or wider than the result goes through its value, signed as its type is:
+                // an sbyte enum's -1 widened byte by byte would be 255 (upstream #30).
+                sourceBytes = CilValueEncoding.GetBytesForSize(integer, primitiveResult.Size);
+            }
             unsafe
             {
                 fixed (byte* pointer = sourceBytes)
@@ -1053,8 +1083,10 @@ internal sealed class CilInterpreter(ManagedDebugger debugger, RuntimeAssemblyPr
             return true;
         }
 
-        mdTypeDef token = elementType.Class.Token;
-        return primitiveTypes.CorElementToValueClassMap.Values.Any(valueClass => valueClass.Token == token);
+        // A token names a type only within its module: a struct of the user's can share a primitive's token.
+        ICorDebugClass elementClass = elementType.Class;
+        return primitiveTypes.CorElementToValueClassMap.Values.Any(valueClass => valueClass.Token == elementClass.Token
+            && valueClass.Module.BaseAddress == elementClass.Module.BaseAddress);
     }
 
     /// <summary>
@@ -1062,7 +1094,7 @@ internal sealed class CilInterpreter(ManagedDebugger debugger, RuntimeAssemblyPr
     /// exact primitive match or an exact runtime type match. Enum/underlying-type and interface-compatible boxes
     /// are intentionally not accepted (unbox.any is only emitted for value-type targets).
     /// </summary>
-    private static bool IsUnboxCompatible(ICorDebugValue boxedObject, ResolvedCilType targetType)
+    private static bool IsUnboxCompatible(ICorDebugValue boxedObject, ResolvedCilType targetType, EvaluationMetadataResolver resolver)
     {
         ICorDebugValue unwrapped = boxedObject.UnwrapDebugValue();
         if (targetType.Primitive is { } primitive)
@@ -1078,8 +1110,12 @@ internal sealed class CilInterpreter(ManagedDebugger debugger, RuntimeAssemblyPr
                 return false;
             }
 
+            // The same definition, and, for a generic one, the same arguments: a Pair<int> is no Pair<string>.
             return exactType.Class.Token == runtimeType.Class.Token
-                && exactType.Class.Module.BaseAddress == runtimeType.Class.Module.BaseAddress;
+                && exactType.Class.Module.BaseAddress == runtimeType.Class.Module.BaseAddress
+                && (runtimeType.TypeArguments.IsDefaultOrEmpty
+                    || exactType.TypeParameters.Select(ManagedDebugger.GetCorDebugTypeFriendlyName)
+                        .SequenceEqual(runtimeType.TypeArguments.Select(a => ManagedDebugger.GetCorDebugTypeFriendlyName(resolver.GetCorDebugType(a)))));
         }
         return false;
     }
@@ -1872,8 +1908,9 @@ internal sealed class CilInterpreter(ManagedDebugger debugger, RuntimeAssemblyPr
             var v when v == OpCodes.Conv_R4.Value => CilValue.FromPrimitive(isFloat ? (float)value.AsFloat() : (float)signed),
             var v when v == OpCodes.Conv_R8.Value => CilValue.FromPrimitive(isFloat ? value.AsFloat() : (double)signed),
             var v when v == OpCodes.Conv_R_Un.Value => CilValue.FromPrimitive((double)unsigned),
-            var v when v == OpCodes.Conv_I.Value => CilValue.FromPrimitive(IntPtr.Size == 8 ? signed : (int)signed),
-            var v when v == OpCodes.Conv_U.Value => CilValue.FromPrimitive(IntPtr.Size == 8 ? unsigned : (uint)unsigned),
+            // The debuggee's pointers, which need not be the debugger's own.
+            var v when v == OpCodes.Conv_I.Value => CilValue.FromPrimitive(CilValue.PointerSize == 8 ? signed : (int)signed),
+            var v when v == OpCodes.Conv_U.Value => CilValue.FromPrimitive(CilValue.PointerSize == 8 ? unsigned : (uint)unsigned),
             var v when v == OpCodes.Conv_Ovf_I1.Value => CilValue.FromPrimitive((int)checked((sbyte)(isFloat ? value.AsFloat() : signed))),
             var v when v == OpCodes.Conv_Ovf_U1.Value => CilValue.FromPrimitive((int)checked((byte)(isFloat ? value.AsFloat() : signed))),
             var v when v == OpCodes.Conv_Ovf_I2.Value => CilValue.FromPrimitive((int)checked((short)(isFloat ? value.AsFloat() : signed))),
@@ -1882,6 +1919,19 @@ internal sealed class CilInterpreter(ManagedDebugger debugger, RuntimeAssemblyPr
             var v when v == OpCodes.Conv_Ovf_U4.Value => CilValue.FromPrimitive(checked((uint)(isFloat ? value.AsFloat() : signed))),
             var v when v == OpCodes.Conv_Ovf_I8.Value => CilValue.FromPrimitive(isFloat ? checked((long)value.AsFloat()) : signed),
             var v when v == OpCodes.Conv_Ovf_U8.Value => CilValue.FromPrimitive(isFloat ? checked((ulong)value.AsFloat()) : unsigned),
+            // The checked conversions of an unsigned source: its bits read as unsigned.
+            var v when v == OpCodes.Conv_Ovf_I1_Un.Value => CilValue.FromPrimitive((int)checked((sbyte)unsigned)),
+            var v when v == OpCodes.Conv_Ovf_U1_Un.Value => CilValue.FromPrimitive((int)checked((byte)unsigned)),
+            var v when v == OpCodes.Conv_Ovf_I2_Un.Value => CilValue.FromPrimitive((int)checked((short)unsigned)),
+            var v when v == OpCodes.Conv_Ovf_U2_Un.Value => CilValue.FromPrimitive((int)checked((ushort)unsigned)),
+            var v when v == OpCodes.Conv_Ovf_I4_Un.Value => CilValue.FromPrimitive(checked((int)unsigned)),
+            var v when v == OpCodes.Conv_Ovf_U4_Un.Value => CilValue.FromPrimitive(checked((uint)unsigned)),
+            var v when v == OpCodes.Conv_Ovf_I8_Un.Value => CilValue.FromPrimitive(checked((long)unsigned)),
+            var v when v == OpCodes.Conv_Ovf_U8_Un.Value => CilValue.FromPrimitive(unsigned),
+            var v when v == OpCodes.Conv_Ovf_I_Un.Value => CilValue.FromPrimitive(CilValue.PointerSize == 8 ? checked((long)unsigned) : checked((int)unsigned)),
+            var v when v == OpCodes.Conv_Ovf_U_Un.Value => CilValue.FromPrimitive(CilValue.PointerSize == 8 ? unsigned : checked((uint)unsigned)),
+            var v when v == OpCodes.Conv_Ovf_I.Value => CilValue.FromPrimitive(CilValue.PointerSize == 8 ? signed : checked((int)signed)),
+            var v when v == OpCodes.Conv_Ovf_U.Value => CilValue.FromPrimitive(CilValue.PointerSize == 8 ? checked((ulong)signed) : checked((uint)signed)),
             _ => throw new NotSupportedException($"Conversion opcode '{op.Name}' is not supported yet")
         };
     }

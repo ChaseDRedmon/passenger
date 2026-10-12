@@ -8,6 +8,7 @@ Console.WriteLine("end");
 Captures.Outer(41);
 Nested.Throw();
 Displays.Show();
+Interpreter.Run();
 
 // The cases Passenger's own debugger tests add to upstream's. Tests find their lines by the code on them.
 // Code of the user's own that says it is not theirs: Just My Code passes over it, and a catch in it
@@ -123,4 +124,36 @@ sealed class AngryProxy
 {
 	public AngryProxy(Angry target) => throw new InvalidOperationException("no");
 	public int Doubled => 2;
+}
+
+// What the debugger's IL interpreter must get right (upstream #30).
+static class Interpreter
+{
+	public static void Run()
+	{
+		int myInt = 5;
+		uint myUInt = 7;
+		SignedEnum minusOne = SignedEnum.MinusOne;
+		WideEnum wide = WideEnum.Max;
+		Pair<int> pairOfInt = new() { Value = 1 };
+		object boxedPair = pairOfInt;
+		Counter counter = new();
+		Bumper.Work(new Bumped());
+		Console.WriteLine("interpreter");
+	}
+}
+
+enum SignedEnum : sbyte { MinusOne = -1 }
+enum WideEnum : ushort { Max = 65535 }
+struct Pair<T> { public T Value; }
+struct Counter { public int Count; public void Increment() => Count++; }
+interface IBump { void Bump(); }
+struct Bumped : IBump { public int N; public void Bump() => N++; }
+
+static class Bumper
+{
+	public static void Work<T>(T item) where T : IBump
+	{
+		Console.WriteLine("bumper");
+	}
 }
