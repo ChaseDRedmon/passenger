@@ -615,6 +615,9 @@ public partial class MainWindow : Window
             case AppActions.HideToolWindow:
                 HideToolWindow();
                 break;
+            case AppActions.FocusEditor:
+                FocusEditor();
+                break;
             case AppActions.Back:
                 StepHistory(-1);
                 break;
@@ -974,6 +977,12 @@ public partial class MainWindow : Window
     private void HideToolWindow()
     {
         Dock.HideActive();
+        FocusEditor();
+    }
+
+    /// <summary>Rider's Focus Editor: the file shown has the keys again, the tool windows left as they are.</summary>
+    private void FocusEditor()
+    {
         if (Editors.Active is not null)
         {
             Editors.CodeEditor.Focus();

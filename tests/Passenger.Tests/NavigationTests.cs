@@ -86,6 +86,25 @@ public sealed class NavigationTests : IDisposable
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void Focus_editor_gives_the_keys_back_to_the_file_shown()
+    {
+        Write("One.cs", "class One { }");
+        MainWindow window = Open();
+        window.OpenFile("One.cs");
+        Ui.Settle();
+        Ui.Run(window, AppActions.FocusExplorer);
+        Assert.False(window.EditorArea.CodeEditor.IsFocused);
+
+        // As ide_action runs it, or a shortcut the person gives it.
+        Assert.True(window.Perform(AppActions.FocusEditor));
+        Ui.Settle();
+        Assert.True(window.EditorArea.CodeEditor.IsFocused, "Focus Editor left the keys in the Explorer");
+        window.KeyTextInput("sealed ");
+        Assert.Equal("sealed class One { }", window.EditorArea.CodeEditor.Document.Snapshot.ToString());
+        window.Close();
+    }
+
     private void Write(string relative, string text)
     {
         string path = Path.Combine(folder, relative);
