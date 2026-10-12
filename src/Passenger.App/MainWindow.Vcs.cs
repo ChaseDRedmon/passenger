@@ -1,5 +1,7 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
+using Avalonia.VisualTree;
 using Passenger.App.Vcs;
 using Passenger.App.Workspace;
 using Passenger.Editor;
@@ -16,6 +18,9 @@ public partial class MainWindow
 
     /// <summary>The open folder's version control.</summary>
     public VcsController Vcs => vcs;
+
+    /// <summary>The window in front: the last diff or dialog opened over this one and still open, else this.</summary>
+    public Window Frontmost => OwnedWindows.LastOrDefault(w => w.IsVisible) ?? this;
 
     /// <summary>The Commit tool window.</summary>
     public ToolWindows.CommitView CommitView => commitView!;
@@ -35,6 +40,7 @@ public partial class MainWindow
         commitView = new ToolWindows.CommitView(vcs);
         Dock.Add(new Docking.ToolWindow("commit", "Commit", "Icon.Commit", commitView, Docking.ToolAnchor.LeftTop) { Action = AppActions.ShowCommit });
         commitView.OpenRequested += (_, path) => OpenFile(path);
+        commitView.DiffRequested += (_, path) => _ = ShowDiffAsync(path);
         commitView.RollbackRequested += async (_, changes) => await RollbackAsync(changes);
         vcs.BeforeCommit = Editors.SaveAll;
         vcs.Message += (_, message) => StatusText.Text = message;
@@ -114,6 +120,76 @@ public partial class MainWindow
         ShowPopup(popup);
     }
 
+    /// <summary>Show Diff: the last commit's text beside the file's, in a window over this one. The right side is the
+    /// open file's own text when it is open, so an edit or a change put back there is the file's.</summary>
+    public async Task<DiffWindow?> ShowDiffAsync(string path)
+    {
+        if (vcs.Repository is null)
+        {
+            StatusText.Text = "The folder is not in a Git repository";
+            return null;
+        }
+        string head = await vcs.HeadTextAsync(path) ?? string.Empty;
+        OpenDocument? open = Editors.Documents.FirstOrDefault(d => d.Path == path);
+        TextDocument mine = open?.Text ?? new TextDocument(File.Exists(path) ? FileText.Load(path)?.Text ?? string.Empty : string.Empty);
+        DiffView view = new(Path.GetFileName(path), head, mine, editable: open is not null, rightColours: open?.Highlighter);
+        IHighlighter? left = null;
+        if (Workspace.Language.ForPath(path).Name == "C#")
+        {
+            left = new Languages.CSharp.CSharpHighlighter(view.Left.Document);
+            view.Left.Highlighter = left;
+        }
+        DiffWindow window = new($"{Path.GetFileName(path)}: HEAD and your version", view);
+        window.Closed += (_, _) => (left as IDisposable)?.Dispose();
+        window.Show(this);
+        return window;
+    }
+
+    /// <summary>The change bar a gutter click on a line falls on, or null.</summary>
+    private static ChangeMark? ChangeAt(OpenDocument document, int line) =>
+        document.ChangeMarks.Cast<ChangeMark?>().FirstOrDefault(m => m!.Value.Count == 0
+            ? line == m.Value.Line || line == m.Value.Line - 1
+            : line >= m.Value.Line && line < m.Value.Line + m.Value.Count);
+
+    /// <summary>A click on a change bar: Rider's popup of what the lines were, with the change's actions.</summary>
+    private async Task ShowChangePopupAsync(CodeEditor editor, OpenDocument document, ChangeMark change)
+    {
+        string? head = await vcs.HeadTextAsync(document.Path);
+        if (head is null || Editors.Active != document)
+        {
+            return;
+        }
+        DiffHunk? hunk = LineDiff.Hunks(head, document.Text.Snapshot.ToString()).Cast<DiffHunk?>().FirstOrDefault(h => h!.Value.NewStart == change.Line);
+        string? before = hunk is { OldCount: > 0 } found
+            ? string.Join("\n", head.Replace("\r\n", "\n", StringComparison.Ordinal).TrimEnd('\n').Split('\n').Skip(found.OldStart).Take(found.OldCount))
+            : null;
+        void Then(Action run)
+        {
+            ClosePopup();
+            run();
+        }
+        void Move(int step)
+        {
+            GoToChange(step);
+            if (Editors.Active is { } now && ChangeAt(now, Editors.CodeEditor.CaretPosition.Line) is { } next)
+            {
+                _ = ShowChangePopupAsync(Editors.CodeEditor, now, next);
+            }
+        }
+        ChangePopup popup = new(
+            before,
+            previous: () => Then(() => Move(-1)),
+            next: () => Then(() => Move(1)),
+            rollback: () => Then(() =>
+            {
+                editor.GoTo(new TextPosition(Math.Min(change.Line, document.Text.Snapshot.LineCount - 1), 0));
+                _ = RollbackLinesAsync();
+            }),
+            diff: () => Then(() => _ = ShowDiffAsync(document.Path)));
+        Avalonia.Point below = editor.GutterPoint(change.Line + Math.Max(1, change.Count) - 1);
+        ShowPopup(popup, editor.TranslatePoint(new Avalonia.Point(4, below.Y + 2), this));
+    }
+
     /// <summary>The window's version control actions, from the keymap or the branch menu.</summary>
     private void RunVcsAction(string action)
     {
@@ -140,6 +216,9 @@ public partial class MainWindow
                 break;
             case AppActions.RollbackLines:
                 _ = RollbackLinesAsync();
+                break;
+            case AppActions.ShowDiff when Editors.Active is { } shown:
+                _ = ShowDiffAsync(shown.Path);
                 break;
         }
     }

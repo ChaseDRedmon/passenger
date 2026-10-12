@@ -56,6 +56,10 @@ public sealed partial class CodeEditor
                 {
                     context.FillRectangle(palette.CurrentLine, new Rect(gutter, y, size.Width - gutter, lineHeight));
                 }
+                if (ChangeBackgrounds && ChangeTint(line) is { } change)
+                {
+                    context.FillRectangle(change, new Rect(gutter, y, size.Width - gutter, lineHeight));
+                }
                 if (LineTint(marks, line) is { } tint)
                 {
                     context.FillRectangle(tint, new Rect(gutter, y, size.Width - gutter, lineHeight));
@@ -85,6 +89,10 @@ public sealed partial class CodeEditor
                 }
             }
             DrawPreedit(context, text, left);
+            if (ChangeBackgrounds)
+            {
+                DrawChangeRules(context, first, last, gutter, size.Width);
+            }
         }
 
         DrawGutter(context, text, first, last, caretLines, marks, gutter, size.Height);
@@ -263,7 +271,10 @@ public sealed partial class CodeEditor
         {
             return;
         }
-        DrawChanges(context, first, last, gutter);
+        if (!ChangeBackgrounds)
+        {
+            DrawChanges(context, first, last, gutter);
+        }
         double right = gutter - GutterPadRight;
         Dictionary<int, TestMarkKind> tests = [];
         foreach (TestMark test in TestMarks)
@@ -371,6 +382,42 @@ public sealed partial class CodeEditor
             default:
                 context.DrawEllipse(null, new Pen(palette.LineNumber, 1.5), centre, radius - 0.75, radius - 0.75);
                 break;
+        }
+    }
+
+    /// <summary>A diff side's tint for a line inside a change, or null.</summary>
+    private IBrush? ChangeTint(int line)
+    {
+        foreach (ChangeMark change in ChangeMarks)
+        {
+            if (line >= change.Line && line < change.Line + change.Count)
+            {
+                return change.Kind switch
+                {
+                    ChangeMarkKind.Added => palette.DiffAdded,
+                    ChangeMarkKind.Deleted => palette.DiffDeleted,
+                    _ => palette.DiffModified,
+                };
+            }
+        }
+        return null;
+    }
+
+    /// <summary>A diff side's rule where the other side has lines this one has none of.</summary>
+    private void DrawChangeRules(DrawingContext context, int first, int last, double gutter, double width)
+    {
+        foreach (ChangeMark change in ChangeMarks)
+        {
+            if (change.Count == 0 && change.Line >= first && change.Line <= last + 1)
+            {
+                IBrush brush = change.Kind switch
+                {
+                    ChangeMarkKind.Added => palette.ChangeAdded,
+                    ChangeMarkKind.Deleted => palette.ChangeDeleted,
+                    _ => palette.ChangeModified,
+                };
+                context.FillRectangle(brush, new Rect(gutter, (change.Line * metrics.LineHeight) - scroll.Y - 1, width - gutter, 2));
+            }
         }
     }
 
@@ -654,6 +701,9 @@ public sealed partial class CodeEditor
         public IBrush InlineValue { get; private init; } = Brush("#868A91");
         public IBrush Tracepoint { get; private init; } = Brush("#E5A336");
         public IBrush TestPassed { get; private init; } = Brush("#5FAD65");
+        public IBrush DiffAdded { get; private init; } = Brush("#2B4234");
+        public IBrush DiffModified { get; private init; } = Brush("#2C3A55");
+        public IBrush DiffDeleted { get; private init; } = Brush("#3B3D42");
         public IBrush ChangeAdded { get; private init; } = Brush("#549159");
         public IBrush ChangeModified { get; private init; } = Brush("#375FAD");
         public IBrush ChangeDeleted { get; private init; } = Brush("#868A91");
@@ -690,6 +740,9 @@ public sealed partial class CodeEditor
                 InlineValue = Find(control, "Passenger.Editor.InlineValue") ?? defaults.InlineValue,
                 Tracepoint = Find(control, "Passenger.Editor.Tracepoint") ?? defaults.Tracepoint,
                 TestPassed = Find(control, "Passenger.Test.Passed") ?? defaults.TestPassed,
+                DiffAdded = Find(control, "Passenger.Diff.Added") ?? defaults.DiffAdded,
+                DiffModified = Find(control, "Passenger.Diff.Modified") ?? defaults.DiffModified,
+                DiffDeleted = Find(control, "Passenger.Diff.Deleted") ?? defaults.DiffDeleted,
                 ChangeAdded = Find(control, "Passenger.Vcs.Added") ?? defaults.ChangeAdded,
                 ChangeModified = Find(control, "Passenger.Vcs.Modified") ?? defaults.ChangeModified,
                 ChangeDeleted = Find(control, "Passenger.Vcs.Deleted") ?? defaults.ChangeDeleted,

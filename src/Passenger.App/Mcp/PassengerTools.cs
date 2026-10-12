@@ -454,9 +454,10 @@ public sealed class PassengerTools(MainWindow window)
     // The IDE itself
 
     [McpServerTool(Name = "screenshot", Title = "What the window shows", ReadOnly = true), Description(
-        "A PNG of the IDE's window as drawn now, or of a part of it (logical units, the window's own coordinates).")]
+        "A PNG of the IDE's frontmost window as drawn now (a diff or a dialog when one is open over the main window), " +
+        "or of a part of it (logical units, the window's own coordinates).")]
     public Task<ImageContentBlock> Screenshot(int? x = null, int? y = null, int? width = null, int? height = null) => OnUi(() =>
-        Task.FromResult(ImageContentBlock.FromBytes(WindowPicture.Png(window, x is null ? null : new Avalonia.Rect(x.Value, y ?? 0, width ?? 400, height ?? 300)), "image/png")));
+        Task.FromResult(ImageContentBlock.FromBytes(WindowPicture.Png(window.Frontmost, x is null ? null : new Avalonia.Rect(x.Value, y ?? 0, width ?? 400, height ?? 300)), "image/png")));
 
     [McpServerTool(Name = "ide_action", Title = "Run an IDE action"), Description(
         "Runs one of the IDE's actions by its id, as its shortcut would: app.* (app.build, app.debug.stepOver, app.code.rename and the rest) " +

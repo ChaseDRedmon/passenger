@@ -41,7 +41,8 @@ public static class Screenshot
             Settle();
         }
 
-        WriteableBitmap frame = window.CaptureRenderedFrame()
+        // A diff or a dialog the steps opened is what the person would be looking at.
+        WriteableBitmap frame = window.Frontmost.CaptureRenderedFrame()
             ?? throw new InvalidOperationException("The headless window rendered no frame.");
         using (frame)
         {

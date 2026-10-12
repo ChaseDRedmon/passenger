@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Avalonia;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Passenger.App;
@@ -142,6 +143,70 @@ public sealed class VcsTests : IDisposable
         Assert.Contains("deleted", asked, StringComparison.Ordinal);
         Assert.False(File.Exists(added));
         Assert.Equal(Original, Text(window));
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Show_diff_puts_the_last_commit_beside_the_open_file_and_its_arrow_puts_a_change_back()
+    {
+        MainWindow window = Open();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Ui.WaitFor(() => window.Vcs.Repository is not null, "the working tree");
+        editor.ApplyEdits([new TextEdit(editor.Document.Snapshot.GetLineStart(4), 0, "    int total;\n")]);
+        editor.GoTo(new TextPosition(2, 4));
+        window.KeyTextInput("long ");
+        window.Perform(AppActions.Save);
+        _ = window.Vcs.RefreshAsync();
+        Ui.WaitFor(() => window.Vcs.Changes.Count == 1, "Shop.cs changed");
+
+        // From the Commit window, as a double-click on the file does.
+        Task<DiffWindow?> opening = window.ShowDiffAsync(window.Vcs.Changes[0].Path);
+        Ui.WaitFor(() => opening.IsCompleted, "the diff to open");
+        DiffWindow diff = opening.Result!;
+        Assert.Same(diff, window.Frontmost);
+        DiffView view = diff.View;
+        Assert.Equal(Original, view.Left.Document.Snapshot.ToString());
+        Assert.Same(window.EditorArea.Active!.Text, view.Right.Document);
+        Assert.Equal([new DiffHunk(2, 1, 2, 1), new DiffHunk(4, 0, 4, 1)], view.Hunks);
+        // Below the added line, the left side stands one line higher.
+        Assert.Equal(5, view.MapLine(6, toLeft: true));
+
+        // The arrow on the added line takes it out of the open file; the file is then unsaved.
+        view.Revert(view.Hunks[1]);
+        Ui.Settle();
+        Assert.DoesNotContain("int total;", Text(window), StringComparison.Ordinal);
+        Assert.Equal([new DiffHunk(2, 1, 2, 1)], view.Hunks);
+        Assert.True(window.EditorArea.Active!.IsModified);
+        diff.Close();
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_click_on_a_change_bar_shows_what_the_lines_were_and_rolls_them_back()
+    {
+        MainWindow window = Open();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Ui.WaitFor(() => window.Vcs.Repository is not null, "the working tree");
+        editor.GoTo(new TextPosition(4, 4));
+        window.KeyTextInput("public ");
+        Ui.WaitFor(() => Marks(window).Count == 1, "a change bar on line 5");
+
+        Avalonia.Point bar = editor.GutterPoint(4);
+        Avalonia.Point at = editor.TranslatePoint(new Avalonia.Point(bar.X - 4, bar.Y - (editor.LineHeight / 2)), window)!.Value;
+        window.MouseDown(at, Avalonia.Input.MouseButton.Left);
+        window.MouseUp(at, Avalonia.Input.MouseButton.Left);
+        Ui.WaitFor(() => window.Popup is ChangePopup, "the change's popup");
+        ChangePopup popup = (ChangePopup)window.Popup!;
+        Assert.Equal("    void Add() { count++; }", popup.Before);
+        // The bar's click is the change's, not a breakpoint's.
+        Assert.Empty(window.Debugger.Breakpoints.In(window.EditorArea.Active!.Path));
+
+        Avalonia.Controls.Button rollback = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(popup)
+            .OfType<Avalonia.Controls.Button>()
+            .First(b => Avalonia.Controls.ToolTip.GetTip(b) as string == "Rollback");
+        rollback.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+        Ui.WaitFor(() => Text(window) == Original, "the line to be as committed");
+        Assert.False(window.IsPopupOpen);
         window.Close();
     }
 

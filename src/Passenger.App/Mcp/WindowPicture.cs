@@ -9,7 +9,7 @@ namespace Passenger.App.Mcp;
 /// bitmap on the desktop, where there is no such frame to take.</summary>
 internal static class WindowPicture
 {
-    public static byte[] Png(MainWindow window, Rect? crop)
+    public static byte[] Png(Avalonia.Controls.Window window, Rect? crop)
     {
         using MemoryStream png = new();
         double scale = window.RenderScaling;

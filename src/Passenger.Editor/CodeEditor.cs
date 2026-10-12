@@ -75,6 +75,9 @@ public sealed partial class CodeEditor : Control
         annotationRuns = (ItalicRunWith(palette.InlineValue), ItalicRunWith(palette.Error));
     }
 
+    /// <summary>Raised when the view scrolls, so a diff's other side can follow.</summary>
+    public event EventHandler? ScrollChanged;
+
     /// <summary>Raised when any caret or selection changes, by an edit or a move.</summary>
     public event EventHandler? SelectionChanged;
 
@@ -117,6 +120,13 @@ public sealed partial class CodeEditor : Control
         ChangeMarks = marks;
         InvalidateVisual();
     }
+
+    /// <summary>Whether the change marks tint whole lines, as a diff's two sides show them, rather than draw bars in
+    /// the gutter; a mark with no lines is then a rule between two.</summary>
+    public bool ChangeBackgrounds { get; set; }
+
+    /// <summary>Whether a point (in this control) is on the change bars' strip at the gutter's edge.</summary>
+    public bool IsInChangeColumn(Point at) => ShowLineNumbers && at.X >= GutterWidth - 8 && at.X < GutterWidth;
 
     /// <summary>The tests' run icons in the gutter, from the host.</summary>
     public IReadOnlyList<TestMark> TestMarks { get; private set; } = [];
@@ -338,6 +348,7 @@ public sealed partial class CodeEditor : Control
         scroll = clamped;
         UpdateScrollBars();
         InvalidateVisual();
+        ScrollChanged?.Invoke(this, EventArgs.Empty);
     }
 
     protected override Size MeasureOverride(Size availableSize)

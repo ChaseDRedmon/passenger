@@ -61,15 +61,31 @@ public sealed class CommitView : DockPanel
                 _ => new TextBlock(),
             }, supportsRecycling: false),
         };
+        // Double-click shows the diff and F4 the file, as in Rider's Commit window.
         list.DoubleTapped += (_, _) =>
         {
-            if (list.SelectedItem is CommitRow row && row.Change.Kind is not ChangeKind.Deleted)
+            if (list.SelectedItem is CommitRow row)
             {
-                OpenRequested?.Invoke(this, row.Change.Path);
+                DiffRequested?.Invoke(this, row.Change.Path);
             }
         };
         list.KeyDown += (_, e) =>
         {
+            if (list.SelectedItem is CommitRow shown)
+            {
+                if (e.Key == Key.F4 && shown.Change.Kind is not ChangeKind.Deleted)
+                {
+                    OpenRequested?.Invoke(this, shown.Change.Path);
+                    e.Handled = true;
+                    return;
+                }
+                if ((e.Key == Key.D && e.KeyModifiers == (OperatingSystem.IsMacOS() ? KeyModifiers.Meta : KeyModifiers.Control)) || e.Key == Key.Enter)
+                {
+                    DiffRequested?.Invoke(this, shown.Change.Path);
+                    e.Handled = true;
+                    return;
+                }
+            }
             if (e.Key == Key.Space && e.KeyModifiers == KeyModifiers.None)
             {
                 // Space flips the chosen rows' boxes, as in Rider's tree.
@@ -161,6 +177,13 @@ public sealed class CommitView : DockPanel
             {
                 Tool("Icon.Rerun", "Refresh", () => _ = vcs.RefreshAsync()),
                 Tool("Icon.Rollback", "Rollback", () => RollbackRequested?.Invoke(this, ChosenOrSelected())),
+                Tool("Icon.Diff", $"Show Diff ({(OperatingSystem.IsMacOS() ? "⌘D" : "Ctrl+D")})", () =>
+                {
+                    if (list.SelectedItem is CommitRow row)
+                    {
+                        DiffRequested?.Invoke(this, row.Change.Path);
+                    }
+                }),
             },
         };
         Border top = new() { [DockProperty] = Dock.Top, Height = 32, BorderThickness = new Thickness(0, 0, 0, 1), Child = tools };
@@ -175,6 +198,9 @@ public sealed class CommitView : DockPanel
 
     /// <summary>A file to open in the editor.</summary>
     public event EventHandler<string>? OpenRequested;
+
+    /// <summary>A file's diff against the last commit, to show.</summary>
+    public event EventHandler<string>? DiffRequested;
 
     /// <summary>Rollback pressed: the files to put back, once the person has said so.</summary>
     public event EventHandler<IReadOnlyList<FileChange>>? RollbackRequested;

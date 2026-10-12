@@ -215,7 +215,8 @@ names its files (`git commit --only`), so what is checked in the Commit window i
 is staged. The gutter's change bars are Myers' diff of the last commit's text against the editor's (what `git diff`
 shows), worked out off the window's thread a moment after typing stops. When something else changes files (a checkout,
 a rollback, another program while the IDE was in the background), every open file without unsaved changes takes its
-text from disk as one undoable edit over only what differs.
+text from disk as one undoable edit over only what differs. The diff viewer's right side is the open file's own
+document, so an edit there, or a change its band's arrow puts back, is an edit to the file.
 
 ## The profiler
 
@@ -238,6 +239,8 @@ answers about the code, builds and runs, the debugger, and the window itself.
 - **The debugger's tools wait.** `debug_start`, `debug_continue`, `debug_step` and `debug_run_to` return when the
   program stops or ends, with the location, the stack and the top frame's locals (and an exception's type and
   message), so a stop costs an agent one call.
+- **`screenshot` sees what the person would**: the frontmost window, so a diff or a dialog open over the IDE is what
+  it captures.
 - **Three ways in.** `--mcp [FOLDER]` is a headless IDE on standard input and output (Avalonia's headless platform
   with Skia drawing, so `screenshot` captures real frames), for an agent to start as its own. A window listens on a
   Unix domain socket under the user's local application data, in a folder only they can open (Windows has AF_UNIX

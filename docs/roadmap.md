@@ -141,9 +141,12 @@ Everywhere.
 **Built so far:** Git's first half. The toolbar's widget names the branch and opens Rider's branch menu (New Branch,
 Commit, Push, the local branches to check out; Create Git Repository outside one). The Commit tool window lists the
 changes and the unversioned files with a box each, Amend (from the last message), Commit and Commit and Push; Rollback
-asks, then restores and deletes. The editor's gutter has Rider's change bars, Next and Previous Change move between
-them and Rollback Lines puts one back; the Explorer colours changed files. Open files reload from disk after a checkout
-or rollback and when the window comes back to the front. Still to come: the diff viewer, the log, and pull.
+asks, then restores and deletes; a double-click or Ctrl+D shows a file's diff. The diff is Rider's side by side, HEAD
+beside the open file's own text, with bands between and an arrow on each that puts that change back. The editor's
+gutter has Rider's change bars; a click on one shows what the lines were, with Rollback and Show Diff; Next and
+Previous Change move between them and Rollback Lines puts one back; the Explorer colours changed files. Open files
+reload from disk after a checkout or rollback and when the window comes back to the front. Still to come: the log,
+pull and fetch, and word-level highlights in the diff.
 
 ## M8: depth and shipping
 

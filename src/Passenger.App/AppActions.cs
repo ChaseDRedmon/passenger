@@ -92,6 +92,7 @@ public static class AppActions
     public const string NextChange = "app.vcs.nextChange";
     public const string PreviousChange = "app.vcs.previousChange";
     public const string RollbackLines = "app.vcs.rollbackLines";
+    public const string ShowDiff = "app.vcs.showDiff";
 
     public static bool IsApp(string action) => action.StartsWith("app.", StringComparison.Ordinal);
 

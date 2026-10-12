@@ -98,6 +98,11 @@ public partial class MainWindow : Window
                 ShowTestMenu(editor, active, click.Line);
                 return;
             }
+            if (!click.Context && editor.IsInChangeColumn(click.Position) && ChangeAt(active, click.Line) is { } change)
+            {
+                _ = ShowChangePopupAsync(editor, active, change);
+                return;
+            }
             if (click.Context)
             {
                 // A right-click on a breakpoint opens its properties, as in Rider.
