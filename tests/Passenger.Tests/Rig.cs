@@ -180,16 +180,19 @@ public static class Ui
     }
 
     /// <summary>The end of the newest language server's log, which says where a project load that never ended stopped. The
-    /// server writes it line by line, so unlike the IDE's own log there is no queue to flush first.</summary>
+    /// server writes it line by line, so unlike the IDE's own log there is no queue to flush first. Newest by when it was
+    /// begun: a Windows directory listing dates a file still open by its last close, so a server still running looks older
+    /// than the one shut down for it.</summary>
     private static string ServerLogTail()
     {
         DirectoryInfo logs = new(Passenger.App.CSharp.CSharpService.LogFolder);
-        if (!logs.Exists || logs.EnumerateFiles("server-*.log").OrderByDescending(f => f.LastWriteTimeUtc).FirstOrDefault() is not { } newest)
+        if (!logs.Exists || logs.EnumerateFiles("server-*.log").OrderByDescending(f => f.CreationTimeUtc).FirstOrDefault() is not { } newest)
         {
             return string.Empty;
         }
         string[] lines = Shared(newest.FullName).Split('\n', StringSplitOptions.RemoveEmptyEntries);
-        return $"\nThe newest language server's log ({newest.Name}) ends:\n{string.Join('\n', lines.TakeLast(25))}";
+        string begun = newest.CreationTime.ToString("HH:mm:ss.fff", System.Globalization.CultureInfo.InvariantCulture);
+        return $"\nThe newest language server's log ({newest.Name}, begun {begun}) {(lines.Length == 0 ? "is empty" : "ends:")}\n{string.Join('\n', lines.TakeLast(25))}";
     }
 
     /// <summary>Waits for something to become true, running the dispatcher's loop (and so its timers)
