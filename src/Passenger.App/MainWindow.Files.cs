@@ -3,13 +3,15 @@ using Avalonia.Input.Platform;
 using Passenger.App.Explorer;
 using Passenger.App.Run;
 using Passenger.App.Workspace;
+using Passenger.Editor;
 using Passenger.Text;
 
 namespace Passenger.App;
 
 /// <summary>The Explorer's file operations, as Rider's: New File, New Folder and New Class where a row holds things,
-/// Rename and Delete (to the Trash) for what is on disk, Copy Path and Reveal. The open tabs follow a rename and close
-/// with a delete, and the Explorer, the file index and Git are read again after.</summary>
+/// Rename and Delete (to the Trash) for what is on disk, though a project's Delete takes it out of the solution, Copy
+/// Path and Reveal. The open tabs follow a rename and close with a delete, and the Explorer, the file index and Git are
+/// read again after.</summary>
 public partial class MainWindow
 {
     private void AddFileOperations() => Explorer.ActionRequested += (_, asked) => _ = ExplorerActionAsync(asked.Action, asked.Node);
@@ -38,8 +40,11 @@ public partial class MainWindow
             case ExplorerAction.Rename when path is not null:
                 AskName("Rename", Path.GetFileName(path), name => Rename(path, name));
                 break;
+            case ExplorerAction.Delete when path is not null && node.Kind == NodeKind.Project:
+                await RemoveProjectAsync(path);
+                break;
             case ExplorerAction.Delete when path is not null:
-                await DeleteAsync(node.Kind == NodeKind.Project ? Path.GetDirectoryName(path)! : path);
+                await DeleteAsync(path);
                 break;
             case ExplorerAction.CopyPath when path is not null && Clipboard is { } clipboard:
                 await clipboard.SetTextAsync(path);
@@ -153,7 +158,7 @@ public partial class MainWindow
         List<(OpenDocument Document, string To)> moving = [.. Editors.Documents
             .Where(d => d.Path == path || (isFolder && d.Path.StartsWith(path + Path.DirectorySeparatorChar, StringComparison.Ordinal)))
             .Select(d => (d, target + d.Path[path.Length..]))];
-        bool activeMoves = moving.Any(m => m.Document == Editors.Active);
+        OpenDocument? active = Editors.Active;
         foreach ((OpenDocument document, _) in moving)
         {
             if (!Editors.Close(document))
@@ -177,28 +182,96 @@ public partial class MainWindow
             return error.Message;
         }
         FilesChanged();
-        foreach ((_, string to) in moving.OrderBy(m => activeMoves && m.Document == Editors.Active))
+        // The file that was in front is opened last, so it is in front again.
+        foreach ((_, string to) in moving.OrderBy(m => m.Document == active))
         {
             OpenFile(to);
+        }
+        if (active is not null && moving.All(m => m.Document != active))
+        {
+            OpenFile(active.Path);
         }
         Explorer.Reveal(PathNames.Canonical(target));
         return null;
     }
 
-    /// <summary>Deletes a file or folder to the Trash, once asked; its open files close without saving.</summary>
-    public async Task<bool> DeleteAsync(string path)
+    /// <summary>Rider's Delete on a project: it leaves the solution and its files stay. Moving its folder to the Trash is a
+    /// second question, never asked of the open folder, a folder above it, or one holding the solution or another of its
+    /// projects.</summary>
+    public async Task<bool> RemoveProjectAsync(string project)
     {
-        string what = Path.GetFileName(path);
-        bool isFolder = Directory.Exists(path);
-        if (!await Confirm("Delete", isFolder ? $"Move the folder {what} and everything in it to the Trash?" : $"Move {what} to the Trash?", "Delete"))
+        string name = Path.GetFileNameWithoutExtension(project);
+        if (Solution is not { } solution || folder is null)
+        {
+            StatusText.Text = $"{name} is in no solution to remove it from";
+            return false;
+        }
+        if (!await Confirm("Remove Project", $"Remove {name} from the solution? Its folder and files stay on disk.", "Remove"))
         {
             return false;
         }
-        foreach (OpenDocument document in Editors.Documents
-            .Where(d => d.Path == path || (isFolder && d.Path.StartsWith(path + Path.DirectorySeparatorChar, StringComparison.Ordinal))).ToList())
+        string? problem;
+        using (BackgroundWork.Scope())
         {
-            document.Text.MarkSaved();
-            Editors.Close(document);
+            problem = await DotnetAsync(folder, ["sln", solution.Path, "remove", project]);
+        }
+        if (problem is not null)
+        {
+            StatusText.Text = $"{name} could not be removed: {problem}";
+            return false;
+        }
+        ReloadSolution();
+        StatusText.Text = $"Removed {name} from {solution.Name}";
+        string own = PathNames.Canonical(Path.GetDirectoryName(project)!);
+        bool apart = !Within(folder, own) && !Within(solution.Path, own) && !Projects.Any(p => Within(p.Path, own));
+        if (apart && await Confirm("Delete Project Files", $"Also move the folder {Path.GetFileName(own)} and everything in it to the Trash?", "Move to Trash"))
+        {
+            await DeleteAsync(own, asked: true);
+        }
+        return true;
+
+        // Case is ignored, as macOS and Windows ignore it: erring that way only keeps files.
+        static bool Within(string path, string folder) =>
+            string.Equals(path, folder, StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith(folder.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Runs the .NET command line to its end, off the UI thread: null when it succeeded, else what it said.</summary>
+    private static Task<string?> DotnetAsync(string folder, IReadOnlyList<string> arguments) => Task.Run<string?>(async () =>
+    {
+        try
+        {
+            ProcessStartInfo start = new(Lsp.Dotnet.Host(), arguments)
+            {
+                WorkingDirectory = folder,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            start.Environment["DOTNET_CLI_UI_LANGUAGE"] = "en";
+            start.Environment["DOTNET_NOLOGO"] = "1";
+            using Process process = Process.Start(start) ?? throw new InvalidOperationException("dotnet did not start");
+            Task<string> output = process.StandardOutput.ReadToEndAsync();
+            Task<string> error = process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+            return process.ExitCode == 0 ? null : $"{await error}{await output}".Trim();
+        }
+        catch (Exception failed) when (failed is System.ComponentModel.Win32Exception or FileNotFoundException or InvalidOperationException)
+        {
+            return failed.Message;
+        }
+    });
+
+    /// <summary>Deletes a file or folder to the Trash, once asked (unless it was already); its open files close without
+    /// saving once it is gone, and keep their edits when it could not go.</summary>
+    public async Task<bool> DeleteAsync(string path, bool asked = false)
+    {
+        string what = Path.GetFileName(path);
+        bool isFolder = Directory.Exists(path);
+        if (!asked && !await Confirm("Delete", isFolder ? $"Move the folder {what} and everything in it to the Trash?" : $"Move {what} to the Trash?", "Delete"))
+        {
+            return false;
         }
         try
         {
@@ -208,6 +281,12 @@ public partial class MainWindow
         {
             StatusText.Text = $"{what} could not be deleted: {error.Message}";
             return false;
+        }
+        foreach (OpenDocument document in Editors.Documents
+            .Where(d => d.Path == path || (isFolder && d.Path.StartsWith(path + Path.DirectorySeparatorChar, StringComparison.Ordinal))).ToList())
+        {
+            document.Text.MarkSaved();
+            Editors.Close(document);
         }
         FilesChanged();
         StatusText.Text = $"Moved {what} to the Trash";

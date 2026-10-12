@@ -128,7 +128,8 @@ public partial class ExplorerView : UserControl
         if (onDisk)
         {
             menu.Items.Add(Item("Rename...", ExplorerAction.Rename, "F2"));
-            menu.Items.Add(Item("Delete...", ExplorerAction.Delete, OperatingSystem.IsMacOS() ? "⌫" : "Delete"));
+            // A project's Delete only takes it out of the solution, as Rider's Remove Projects does.
+            menu.Items.Add(Item(node.Kind == NodeKind.Project ? "Remove..." : "Delete...", ExplorerAction.Delete, OperatingSystem.IsMacOS() ? "⌫" : "Delete"));
             menu.Items.Add(new Separator());
         }
         menu.Items.Add(Item("Copy Path", ExplorerAction.CopyPath));
