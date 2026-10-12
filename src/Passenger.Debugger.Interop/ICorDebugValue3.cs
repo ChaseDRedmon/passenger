@@ -1,13 +1,13 @@
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Extends the "ICorDebugValue" and "ICorDebugValue2" interfaces to provide support for arrays that are larger than 2 GB.</para>
 /// </summary>
 /// <remarks>
-/// <para>The <see cref="M:ICorDebugSharp.ICorDebugValue3.TryGetSize64(System.UInt64@)">ICorDebugValue::GetSize</see> method returns an object size that ranges from 0 to 2,147,483,647 bytes. In .NET Framework 4.5 and later versions, the size of arrays can exceed 2 GB. The <c>ICorDebugValue3</c> interface enables you to determine the size of these arrays.</para>
+/// <para>The <see cref="M:Passenger.Debugger.Interop.ICorDebugValue3.TryGetSize64(System.UInt64@)">ICorDebugValue::GetSize</see> method returns an object size that ranges from 0 to 2,147,483,647 bytes. In .NET Framework 4.5 and later versions, the size of arrays can exceed 2 GB. The <c>ICorDebugValue3</c> interface enables you to determine the size of these arrays.</para>
 /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugvalue3-interface">Microsoft Learn</see>.</para>
 /// </remarks>
 [GeneratedComInterface]
@@ -15,17 +15,17 @@ namespace ICorDebugSharp;
 [Guid("565005FC-0F8A-4F3E-9EDB-83102B156595")]
 public partial interface ICorDebugValue3
 {
-	/// <summary>
-	/// <para>Gets the size, in bytes, of this <see cref="T:ICorDebugSharp.ICorDebugValue3">ICorDebugValue3</see> object.</para>
-	/// </summary>
-	/// <param name="pSize">
-	/// <para>A pointer to the size, in bytes, of this object.</para>
-	/// </param>
-	/// <remarks>
-	/// <para>If this value's type is a reference type, this method returns the size of the pointer rather than the size of the object.</para>
-	/// <para>The <c>ICorDebugValue3::GetSize</c> method differs from the <see cref="M:ICorDebugSharp.ICorDebugValue.TryGetSize(System.UInt32@)">ICorDebugValue::GetSize</see> method in the type of its output parameter. In <see cref="M:ICorDebugSharp.ICorDebugValue.TryGetSize(System.UInt32@)">ICorDebugValue::GetSize</see>, the output parameter is a <c>ULONG32</c>; in <c>ICorDebugValue3::GetSize</c>, it is a <c>ULONG64</c>. This enables the <see cref="T:ICorDebugSharp.ICorDebugValue3">ICorDebugValue3</see> interface to report the size of arrays that exceed 2GB.</para>
-	/// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugvalue3-getsize64-method">Microsoft Learn</see>.</para>
-	/// </remarks>
-	[PreserveSig]
-	int TryGetSize64(out ulong pSize);
+    /// <summary>
+    /// <para>Gets the size, in bytes, of this <see cref="T:Passenger.Debugger.Interop.ICorDebugValue3">ICorDebugValue3</see> object.</para>
+    /// </summary>
+    /// <param name="pSize">
+    /// <para>A pointer to the size, in bytes, of this object.</para>
+    /// </param>
+    /// <remarks>
+    /// <para>If this value's type is a reference type, this method returns the size of the pointer rather than the size of the object.</para>
+    /// <para>The <c>ICorDebugValue3::GetSize</c> method differs from the <see cref="M:Passenger.Debugger.Interop.ICorDebugValue.TryGetSize(System.UInt32@)">ICorDebugValue::GetSize</see> method in the type of its output parameter. In <see cref="M:Passenger.Debugger.Interop.ICorDebugValue.TryGetSize(System.UInt32@)">ICorDebugValue::GetSize</see>, the output parameter is a <c>ULONG32</c>; in <c>ICorDebugValue3::GetSize</c>, it is a <c>ULONG64</c>. This enables the <see cref="T:Passenger.Debugger.Interop.ICorDebugValue3">ICorDebugValue3</see> interface to report the size of arrays that exceed 2GB.</para>
+    /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugvalue3-getsize64-method">Microsoft Learn</see>.</para>
+    /// </remarks>
+    [PreserveSig]
+    int TryGetSize64(out ulong pSize);
 }

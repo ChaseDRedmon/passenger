@@ -1,17 +1,17 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 public sealed class EvalExceptionCorDebugManagedCallbackEventArgs : CorDebugManagedCallbackEventArgs
 {
-	public ICorDebugAppDomain AppDomain { get; }
+    public ICorDebugAppDomain AppDomain { get; }
 
-	public ICorDebugThread Thread { get; }
+    public ICorDebugThread Thread { get; }
 
-	public ICorDebugEval Eval { get; }
+    public ICorDebugEval Eval { get; }
 
-	public EvalExceptionCorDebugManagedCallbackEventArgs(ICorDebugAppDomain pAppDomain, ICorDebugThread pThread, ICorDebugEval pEval)
-	{
-		AppDomain = pAppDomain;
-		Thread = pThread;
-		Eval = pEval;
-	}
+    public EvalExceptionCorDebugManagedCallbackEventArgs(ICorDebugAppDomain pAppDomain, ICorDebugThread pThread, ICorDebugEval pEval)
+    {
+        AppDomain = pAppDomain;
+        Thread = pThread;
+        Eval = pEval;
+    }
 }

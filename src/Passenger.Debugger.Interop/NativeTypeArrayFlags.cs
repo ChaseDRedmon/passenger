@@ -1,7 +1,7 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 public enum NativeTypeArrayFlags
 {
-	ntaSizeParamIndexSpecified = 1,
-	ntaReserved = 65534
+    ntaSizeParamIndexSpecified = 1,
+    ntaReserved = 65534
 }

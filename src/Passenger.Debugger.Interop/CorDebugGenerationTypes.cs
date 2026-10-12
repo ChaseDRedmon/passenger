@@ -1,4 +1,4 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Specifies the generation of a region of memory on the managed heap.</para>
@@ -8,22 +8,22 @@ namespace ICorDebugSharp;
 /// </remarks>
 public enum CorDebugGenerationTypes
 {
-	/// <summary>
-	/// <para>Generation 0.</para>
-	/// </summary>
-	CorDebug_Gen0 = 0,
-	/// <summary>
-	/// <para>Generation 1.</para>
-	/// </summary>
-	CorDebug_Gen1 = 1,
-	/// <summary>
-	/// <para>Generation 2.</para>
-	/// </summary>
-	CorDebug_Gen2 = 2,
-	/// <summary>
-	/// <para>The large object heap.</para>
-	/// </summary>
-	CorDebug_LOH = 3,
-	CorDebug_POH = 4,
-	CorDebug_NonGC = int.MaxValue
+    /// <summary>
+    /// <para>Generation 0.</para>
+    /// </summary>
+    CorDebug_Gen0 = 0,
+    /// <summary>
+    /// <para>Generation 1.</para>
+    /// </summary>
+    CorDebug_Gen1 = 1,
+    /// <summary>
+    /// <para>Generation 2.</para>
+    /// </summary>
+    CorDebug_Gen2 = 2,
+    /// <summary>
+    /// <para>The large object heap.</para>
+    /// </summary>
+    CorDebug_LOH = 3,
+    CorDebug_POH = 4,
+    CorDebug_NonGC = int.MaxValue
 }

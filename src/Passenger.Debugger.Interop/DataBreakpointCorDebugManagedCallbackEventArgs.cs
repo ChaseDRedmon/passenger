@@ -1,20 +1,20 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 public sealed class DataBreakpointCorDebugManagedCallbackEventArgs : CorDebugManagedCallbackEventArgs
 {
-	public ICorDebugProcess Process { get; }
+    public ICorDebugProcess Process { get; }
 
-	public ICorDebugThread Thread { get; }
+    public ICorDebugThread Thread { get; }
 
-	public byte Context { get; }
+    public byte Context { get; }
 
-	public uint ContextSize { get; }
+    public uint ContextSize { get; }
 
-	public DataBreakpointCorDebugManagedCallbackEventArgs(ICorDebugProcess pProcess, ICorDebugThread pThread, byte pContext, uint contextSize)
-	{
-		Process = pProcess;
-		Thread = pThread;
-		Context = pContext;
-		ContextSize = contextSize;
-	}
+    public DataBreakpointCorDebugManagedCallbackEventArgs(ICorDebugProcess pProcess, ICorDebugThread pThread, byte pContext, uint contextSize)
+    {
+        Process = pProcess;
+        Thread = pThread;
+        Context = pContext;
+        ContextSize = contextSize;
+    }
 }

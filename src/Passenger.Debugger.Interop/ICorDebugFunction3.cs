@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Logically extends the ICorDebugFunction interface to provide access to code from a ReJIT request.</para>
@@ -14,17 +14,17 @@ namespace ICorDebugSharp;
 [Guid("09B70F28-E465-482D-99E0-81A165EB0532")]
 public partial interface ICorDebugFunction3
 {
-	/// <summary>
-	/// <para>Gets an interface pointer to an <see cref="T:ICorDebugSharp.ICorDebugILCode">ICorDebugILCode</see> that contains the IL from an active ReJIT request.</para>
-	/// </summary>
-	/// <param name="ppReJitedILCode">
-	/// <para>A pointer to the IL from an active ReJIT request.</para>
-	/// </param>
-	/// <remarks>
-	/// <para>If the method represented by this <c>ICorDebugFunction3</c> object has an active ReJIT request, <c>ppReJitedILCode</c> returns a pointer to its IL. If there is no active request, which is a common case, then <c>ppReJitedILCode</c> is <b>null</b>.</para>
-	/// <para>A ReJIT request becomes active just after execution returns from the <see href="https://learn.microsoft.com/dotnet/framework/unmanaged-api/profiling/icorprofilercallback4-getrejitparameters-method">ICorProfilerCallback4::GetReJITParameters</see> method call. It may not yet be JIT-compiled, and threads may still be executing in the original version of the code. A ReJIT request becomes inactive during the profiler's call to the <see href="https://learn.microsoft.com/dotnet/framework/unmanaged-api/profiling/icorprofilerinfo4-requestrevert-method">ICorProfilerInfo4::RequestRevert</see> method. Even after the IL is reverted, a thread can still be executing in the JIT-recompiled (ReJIT) code.</para>
-	/// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugfunction3-getactiverejitrequestilcode-method">Microsoft Learn</see>.</para>
-	/// </remarks>
-	[PreserveSig]
-	int TryGetActiveReJitRequestILCode(out ICorDebugILCode ppReJitedILCode);
+    /// <summary>
+    /// <para>Gets an interface pointer to an <see cref="T:Passenger.Debugger.Interop.ICorDebugILCode">ICorDebugILCode</see> that contains the IL from an active ReJIT request.</para>
+    /// </summary>
+    /// <param name="ppReJitedILCode">
+    /// <para>A pointer to the IL from an active ReJIT request.</para>
+    /// </param>
+    /// <remarks>
+    /// <para>If the method represented by this <c>ICorDebugFunction3</c> object has an active ReJIT request, <c>ppReJitedILCode</c> returns a pointer to its IL. If there is no active request, which is a common case, then <c>ppReJitedILCode</c> is <b>null</b>.</para>
+    /// <para>A ReJIT request becomes active just after execution returns from the <see href="https://learn.microsoft.com/dotnet/framework/unmanaged-api/profiling/icorprofilercallback4-getrejitparameters-method">ICorProfilerCallback4::GetReJITParameters</see> method call. It may not yet be JIT-compiled, and threads may still be executing in the original version of the code. A ReJIT request becomes inactive during the profiler's call to the <see href="https://learn.microsoft.com/dotnet/framework/unmanaged-api/profiling/icorprofilerinfo4-requestrevert-method">ICorProfilerInfo4::RequestRevert</see> method. Even after the IL is reverted, a thread can still be executing in the JIT-recompiled (ReJIT) code.</para>
+    /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugfunction3-getactiverejitrequestilcode-method">Microsoft Learn</see>.</para>
+    /// </remarks>
+    [PreserveSig]
+    int TryGetActiveReJitRequestILCode(out ICorDebugILCode ppReJitedILCode);
 }

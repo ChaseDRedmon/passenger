@@ -18,7 +18,16 @@
 
   <ItemGroup>
     <Using Include="Xunit" />
-    <!-- Imported from SharpDbg as they are; the next commit ports them. -->
-    <Compile Remove="Debugging/**" />
+  </ItemGroup>
+
+  <!-- The debugger's tests: the programs they debug, built first and never linked, and the diagnostics
+       client that lets a program started suspended go on. -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Diagnostics.NETCore.Client" />
+    <ProjectReference Include="../../src/Passenger.Dap/Passenger.Dap.csproj" />
+    <ProjectReference Include="../Debuggees/AsyncEntryConsoleApp/AsyncEntryConsoleApp.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../Debuggees/AsyncTopLevelStatementsConsoleApp/AsyncTopLevelStatementsConsoleApp.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../Debuggees/DebuggableConsoleApp/DebuggableConsoleApp.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../Debuggees/TopLevelStatementsConsoleApp/TopLevelStatementsConsoleApp.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 </Project>

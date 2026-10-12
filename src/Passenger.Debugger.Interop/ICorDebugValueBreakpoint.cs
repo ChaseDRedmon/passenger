@@ -3,7 +3,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Extends the ICorDebugBreakpoint interface to provide access to specific values.</para>
@@ -17,16 +17,16 @@ namespace ICorDebugSharp;
 [Guid("CC7BCAEB-8A68-11D2-983C-0000F808342D")]
 public partial interface ICorDebugValueBreakpoint : ICorDebugBreakpoint
 {
-	/// <summary>
-	/// <para>Gets an interface pointer to an "ICorDebugValue" object that represents the value of the object on which the breakpoint is set.</para>
-	/// </summary>
-	/// <param name="ppValue">
-	/// <para>A pointer to the address of an <c>ICorDebugValue</c> object.</para>
-	/// </param>
-	/// <remarks>
-	/// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugvaluebreakpoint-getvalue-method">Microsoft Learn</see>.</para>
-	/// </remarks>
-	[PreserveSig]
-	int TryGetValue(out ICorDebugValue ppValue);
+    /// <summary>
+    /// <para>Gets an interface pointer to an "ICorDebugValue" object that represents the value of the object on which the breakpoint is set.</para>
+    /// </summary>
+    /// <param name="ppValue">
+    /// <para>A pointer to the address of an <c>ICorDebugValue</c> object.</para>
+    /// </param>
+    /// <remarks>
+    /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugvaluebreakpoint-getvalue-method">Microsoft Learn</see>.</para>
+    /// </remarks>
+    [PreserveSig]
+    int TryGetValue(out ICorDebugValue ppValue);
 
 }

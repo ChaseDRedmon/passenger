@@ -1,6 +1,6 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 public enum ReplacesGeneralNumericDefines
 {
-	IMAGE_DIRECTORY_ENTRY_COMHEADER = 14
+    IMAGE_DIRECTORY_ENTRY_COMHEADER = 14
 }

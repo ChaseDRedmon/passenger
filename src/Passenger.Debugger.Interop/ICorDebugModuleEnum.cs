@@ -3,7 +3,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Implements ICorDebugEnum methods, and enumerates ICorDebugModule arrays.</para>
@@ -17,22 +17,22 @@ namespace ICorDebugSharp;
 [Guid("CC7BCB09-8A68-11D2-983C-0000F808342D")]
 public partial interface ICorDebugModuleEnum : ICorDebugEnum
 {
-	/// <summary>
-	/// <para>Gets the number of "ICorDebugModule" instances specified by <c>celt</c> from the enumeration, starting at the current position.</para>
-	/// </summary>
-	/// <param name="celt">
-	/// <para>The number of <c>ICorDebugModule</c> instances to be retrieved.</para>
-	/// </param>
-	/// <param name="modules">
-	/// <para>An array of pointers, each of which points to an <c>ICorDebugModule</c> object.</para>
-	/// </param>
-	/// <param name="pceltFetched">
-	/// <para>Pointer to the number of <c>ICorDebugModule</c> instances actually returned. This value may be null if <c>celt</c> is one.</para>
-	/// </param>
-	/// <remarks>
-	/// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugmoduleenum-next-method">Microsoft Learn</see>.</para>
-	/// </remarks>
-	[PreserveSig]
-	int TryNext(uint celt, [Out][MarshalUsing(CountElementName = "celt")] ICorDebugModule[] modules, out uint pceltFetched);
+    /// <summary>
+    /// <para>Gets the number of "ICorDebugModule" instances specified by <c>celt</c> from the enumeration, starting at the current position.</para>
+    /// </summary>
+    /// <param name="celt">
+    /// <para>The number of <c>ICorDebugModule</c> instances to be retrieved.</para>
+    /// </param>
+    /// <param name="modules">
+    /// <para>An array of pointers, each of which points to an <c>ICorDebugModule</c> object.</para>
+    /// </param>
+    /// <param name="pceltFetched">
+    /// <para>Pointer to the number of <c>ICorDebugModule</c> instances actually returned. This value may be null if <c>celt</c> is one.</para>
+    /// </param>
+    /// <remarks>
+    /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugmoduleenum-next-method">Microsoft Learn</see>.</para>
+    /// </remarks>
+    [PreserveSig]
+    int TryNext(uint celt, [Out][MarshalUsing(CountElementName = "celt")] ICorDebugModule[] modules, out uint pceltFetched);
 
 }

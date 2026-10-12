@@ -1,20 +1,20 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 public sealed class StepCompleteCorDebugManagedCallbackEventArgs : CorDebugManagedCallbackEventArgs
 {
-	public ICorDebugAppDomain AppDomain { get; }
+    public ICorDebugAppDomain AppDomain { get; }
 
-	public ICorDebugThread Thread { get; }
+    public ICorDebugThread Thread { get; }
 
-	public ICorDebugStepper Stepper { get; }
+    public ICorDebugStepper Stepper { get; }
 
-	public CorDebugStepReason Reason { get; }
+    public CorDebugStepReason Reason { get; }
 
-	public StepCompleteCorDebugManagedCallbackEventArgs(ICorDebugAppDomain pAppDomain, ICorDebugThread pThread, ICorDebugStepper pStepper, CorDebugStepReason reason)
-	{
-		AppDomain = pAppDomain;
-		Thread = pThread;
-		Stepper = pStepper;
-		Reason = reason;
-	}
+    public StepCompleteCorDebugManagedCallbackEventArgs(ICorDebugAppDomain pAppDomain, ICorDebugThread pThread, ICorDebugStepper pStepper, CorDebugStepReason reason)
+    {
+        AppDomain = pAppDomain;
+        Thread = pThread;
+        Stepper = pStepper;
+        Reason = reason;
+    }
 }

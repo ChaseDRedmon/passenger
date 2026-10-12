@@ -1,14 +1,14 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 public sealed class UnloadClassCorDebugManagedCallbackEventArgs : CorDebugManagedCallbackEventArgs
 {
-	public ICorDebugAppDomain AppDomain { get; }
+    public ICorDebugAppDomain AppDomain { get; }
 
-	public ICorDebugClass C { get; }
+    public ICorDebugClass C { get; }
 
-	public UnloadClassCorDebugManagedCallbackEventArgs(ICorDebugAppDomain pAppDomain, ICorDebugClass c)
-	{
-		AppDomain = pAppDomain;
-		C = c;
-	}
+    public UnloadClassCorDebugManagedCallbackEventArgs(ICorDebugAppDomain pAppDomain, ICorDebugClass c)
+    {
+        AppDomain = pAppDomain;
+        C = c;
+    }
 }

@@ -1,210 +1,193 @@
-using AwesomeAssertions;
-using SharpDbg.Cli.Tests.Helpers;
-using SharpDbg.Infrastructure.Debugger;
+using System.Diagnostics;
+using Passenger.Dap;
+using Passenger.Tests.Debugging.Helpers;
 
-namespace SharpDbg.Cli.Tests;
+namespace Passenger.Tests.Debugging;
 
+[Collection(DebugSession.Collection)]
 public class ConditionalBreakpointTests(ITestOutputHelper testOutputHelper)
 {
-	[Fact]
-	public async Task ConditionalBreakpoint_WithLambda_IsRejected()
-	{
-		var startSuspended = true;
-		var (debugProtocolHost, initializedEventTcs, _, adapter, p2) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended);
-		using var _ = adapter;
-		using var __ = new ProcessKiller(p2);
-		using var ___ = debugProtocolHost;
+    [Fact]
+    public async Task ConditionalBreakpoint_WithLambda_IsRejected()
+    {
+        bool startSuspended = true;
+        using DebugSession debugProtocolHost = DebugSession.ForAttach(testOutputHelper, startSuspended, out Process p2);
 
-		await debugProtocolHost
-			.WithInitializeRequest()
-			.WithAttachRequest(p2.Id)
-			.WaitForInitializedEvent(initializedEventTcs);
+        await debugProtocolHost
+            .WithInitializeRequest()
+            .WithAttachRequest(p2.Id)
+            .WaitForInitializedEvent();
 
-		debugProtocolHost.WithBreakpointsRequest(
-			Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "MyClass.cs"),
-			[new SharpDbgBreakpointRequest(15, "_intList.Any(value => value == 4)")],
-			out var response);
+        debugProtocolHost.WithBreakpointsRequest(
+            Debuggees.Source("DebuggableConsoleApp", "MyClass.cs"),
+            [new DapSourceBreakpoint(15, Condition: "_intList.Any(value => value == 4)")],
+            out SetBreakpointsResponse? response);
 
-		var breakpoint = response.Breakpoints.Should().ContainSingle().Subject;
-		breakpoint.Verified.Should().BeFalse();
-		breakpoint.Message.Should().Be("Lambda expressions are not supported in breakpoint conditions.");
-	}
+        DapBreakpoint breakpoint = Assert.Single(response.Breakpoints);
+        Assert.False(breakpoint.Verified);
+        Assert.Equal("Lambda expressions are not supported in breakpoint conditions.", breakpoint.Message);
+    }
 
-	[Fact]
-	public async Task ConditionalBreakpoint_WithTrueCondition_Stops()
-	{
-		var startSuspended = true;
+    [Fact]
+    public async Task ConditionalBreakpoint_WithTrueCondition_Stops()
+    {
+        bool startSuspended = true;
 
-		var (debugProtocolHost, initializedEventTcs, debugEventTcs, adapter, p2) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended);
-		using var _ = adapter;
-		using var __ = new ProcessKiller(p2);
-		using var ___ = debugProtocolHost;
+        using DebugSession debugProtocolHost = DebugSession.ForAttach(testOutputHelper, startSuspended, out Process p2);
 
-		await debugProtocolHost
-			.WithInitializeRequest()
-			.WithAttachRequest(p2.Id)
-			.WaitForInitializedEvent(initializedEventTcs);
+        await debugProtocolHost
+            .WithInitializeRequest()
+            .WithAttachRequest(p2.Id)
+            .WaitForInitializedEvent();
 
-		debugProtocolHost
-			.WithBreakpointsRequest(Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "MyClass.cs"), [new SharpDbgBreakpointRequest(15, "myInt == 4")])
-			.WithConfigurationDoneRequest()
-			.WithOptionalResumeRuntime(p2.Id, startSuspended);
+        debugProtocolHost
+            .WithBreakpointsRequest(Debuggees.Source("DebuggableConsoleApp", "MyClass.cs"), [new DapSourceBreakpoint(15, Condition: "myInt == 4")])
+            .WithConfigurationDoneRequest()
+            .WithOptionalResumeRuntime(p2.Id, startSuspended);
 
-		var stoppedEvent = await debugProtocolHost.WaitForStoppedEvent(debugEventTcs);
-		var stopInfo = stoppedEvent.ReadStopInfo();
-		stopInfo.filePath.Should().EndWith("MyClass.cs");
-		stopInfo.line.Should().Be(15);
-	}
+        StoppedEvent stoppedEvent = await debugProtocolHost.WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo = stoppedEvent.ReadStopInfo();
+        Assert.EndsWith("MyClass.cs", stopInfo.filePath);
+        Assert.Equal(15, stopInfo.line);
+    }
 
-	[Fact]
-	public async Task ConditionalBreakpoint_WithFalseCondition_DoesNotStop()
-	{
-		var startSuspended = true;
+    [Fact]
+    public async Task ConditionalBreakpoint_WithFalseCondition_DoesNotStop()
+    {
+        bool startSuspended = true;
 
-		var (debugProtocolHost, initializedEventTcs, debugEventTcs, adapter, p2) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended);
-		using var _ = adapter;
-		using var __ = new ProcessKiller(p2);
-		using var ___ = debugProtocolHost;
+        using DebugSession debugProtocolHost = DebugSession.ForAttach(testOutputHelper, startSuspended, out Process p2);
 
-		await debugProtocolHost
-			.WithInitializeRequest()
-			.WithAttachRequest(p2.Id)
-			.WaitForInitializedEvent(initializedEventTcs);
+        await debugProtocolHost
+            .WithInitializeRequest()
+            .WithAttachRequest(p2.Id)
+            .WaitForInitializedEvent();
 
-		debugProtocolHost
-			.WithBreakpointsRequest(Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "MyClass.cs"),
-				[
-					new SharpDbgBreakpointRequest(15, "myInt == 999"),
-					new SharpDbgBreakpointRequest(22)
-				])
-			.WithConfigurationDoneRequest()
-			.WithOptionalResumeRuntime(p2.Id, startSuspended);
+        debugProtocolHost
+            .WithBreakpointsRequest(Debuggees.Source("DebuggableConsoleApp", "MyClass.cs"),
+                [
+                    new DapSourceBreakpoint(15, Condition: "myInt == 999"),
+                    new DapSourceBreakpoint(22)
+                ])
+            .WithConfigurationDoneRequest()
+            .WithOptionalResumeRuntime(p2.Id, startSuspended);
 
-		// Should skip the conditional breakpoint on line 15 (false condition) and hit the unconditional one on line 22
-		var stoppedEvent = await debugProtocolHost.WaitForStoppedEvent(debugEventTcs);
-		var stopInfo = stoppedEvent.ReadStopInfo();
-		stopInfo.filePath.Should().EndWith("MyClass.cs");
-		stopInfo.line.Should().Be(22);
-	}
+        // Should skip the conditional breakpoint on line 15 (false condition) and hit the unconditional one on line 22
+        StoppedEvent stoppedEvent = await debugProtocolHost.WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo = stoppedEvent.ReadStopInfo();
+        Assert.EndsWith("MyClass.cs", stopInfo.filePath);
+        Assert.Equal(22, stopInfo.line);
+    }
 
-	[Fact]
-	public async Task HitCondition_EqualsN_StopsOnNthHit()
-	{
-		var startSuspended = true;
-		var hitConditionFilePath = Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "HitConditionClass.cs");
+    [Fact]
+    public async Task HitCondition_EqualsN_StopsOnNthHit()
+    {
+        bool startSuspended = true;
+        string hitConditionFilePath = Debuggees.Source("DebuggableConsoleApp", "HitConditionClass.cs");
 
-		var (debugProtocolHost, initializedEventTcs, debugEventTcs, adapter, p2) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended);
-		using var _ = adapter;
-		using var __ = new ProcessKiller(p2);
-		using var ___ = debugProtocolHost;
+        using DebugSession debugProtocolHost = DebugSession.ForAttach(testOutputHelper, startSuspended, out Process p2);
 
-		await debugProtocolHost
-			.WithInitializeRequest()
-			.WithAttachRequest(p2.Id)
-			.WaitForInitializedEvent(initializedEventTcs);
+        await debugProtocolHost
+            .WithInitializeRequest()
+            .WithAttachRequest(p2.Id)
+            .WaitForInitializedEvent();
 
-		debugProtocolHost
-			.WithBreakpointsRequest(hitConditionFilePath, [new SharpDbgBreakpointRequest(10, HitCondition: "==2")])
-			.WithConfigurationDoneRequest()
-			.WithOptionalResumeRuntime(p2.Id, startSuspended);
+        debugProtocolHost
+            .WithBreakpointsRequest(hitConditionFilePath, [new DapSourceBreakpoint(10, HitCondition: "==2")])
+            .WithConfigurationDoneRequest()
+            .WithOptionalResumeRuntime(p2.Id, startSuspended);
 
-		// Should stop on 2nd hit, not 1st
-		var stoppedEvent = await debugProtocolHost.WaitForStoppedEvent(debugEventTcs);
-		var stopInfo = stoppedEvent.ReadStopInfo();
-		stopInfo.filePath.Should().EndWith("HitConditionClass.cs");
-		stopInfo.line.Should().Be(10);
+        // Should stop on 2nd hit, not 1st
+        StoppedEvent stoppedEvent = await debugProtocolHost.WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo = stoppedEvent.ReadStopInfo();
+        Assert.EndsWith("HitConditionClass.cs", stopInfo.filePath);
+        Assert.Equal(10, stopInfo.line);
 
-		debugProtocolHost.WithStackTraceRequest(stoppedEvent.ThreadId!.Value, out var stackTraceResponse);
-		var stackFrameId = stackTraceResponse.StackFrames!.First().Id;
-		debugProtocolHost.WithEvaluateRequest(stackFrameId, "_count", out var evaluateResponse);
-		evaluateResponse.Result.Should().Be("2");
-	}
+        debugProtocolHost.WithStackTraceRequest(stoppedEvent.ThreadId!.Value, out StackTraceResponse? stackTraceResponse);
+        int stackFrameId = stackTraceResponse.StackFrames!.First().Id;
+        debugProtocolHost.WithEvaluateRequest(stackFrameId, "_count", out EvaluateResponse? evaluateResponse);
+        Assert.Equal("2", evaluateResponse.Result);
+    }
 
-	[Fact]
-	public async Task HitCondition_GreaterThanOrEqual_StopsAfterThreshold()
-	{
-		var startSuspended = true;
-		var hitConditionFilePath = Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "HitConditionClass.cs");
+    [Fact]
+    public async Task HitCondition_GreaterThanOrEqual_StopsAfterThreshold()
+    {
+        bool startSuspended = true;
+        string hitConditionFilePath = Debuggees.Source("DebuggableConsoleApp", "HitConditionClass.cs");
 
-		var (debugProtocolHost, initializedEventTcs, debugEventTcs, adapter, p2) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended);
-		using var _ = adapter;
-		using var __ = new ProcessKiller(p2);
-		using var ___ = debugProtocolHost;
+        using DebugSession debugProtocolHost = DebugSession.ForAttach(testOutputHelper, startSuspended, out Process p2);
 
-		await debugProtocolHost
-			.WithInitializeRequest()
-			.WithAttachRequest(p2.Id)
-			.WaitForInitializedEvent(initializedEventTcs);
+        await debugProtocolHost
+            .WithInitializeRequest()
+            .WithAttachRequest(p2.Id)
+            .WaitForInitializedEvent();
 
-		debugProtocolHost
-			.WithBreakpointsRequest(hitConditionFilePath, [new SharpDbgBreakpointRequest(10, HitCondition: ">=2")])
-			.WithConfigurationDoneRequest()
-			.WithOptionalResumeRuntime(p2.Id, startSuspended);
+        debugProtocolHost
+            .WithBreakpointsRequest(hitConditionFilePath, [new DapSourceBreakpoint(10, HitCondition: ">=2")])
+            .WithConfigurationDoneRequest()
+            .WithOptionalResumeRuntime(p2.Id, startSuspended);
 
-		// First stop should be on 2nd iteration (hit count >= 2)
-		var stoppedEvent = await debugProtocolHost.WaitForStoppedEvent(debugEventTcs);
-		var stopInfo = stoppedEvent.ReadStopInfo();
-		stopInfo.filePath.Should().EndWith("HitConditionClass.cs");
-		stopInfo.line.Should().Be(10);
+        // First stop should be on 2nd iteration (hit count >= 2)
+        StoppedEvent stoppedEvent = await debugProtocolHost.WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo = stoppedEvent.ReadStopInfo();
+        Assert.EndsWith("HitConditionClass.cs", stopInfo.filePath);
+        Assert.Equal(10, stopInfo.line);
 
-		debugProtocolHost.WithStackTraceRequest(stoppedEvent.ThreadId!.Value, out var stackTraceResponse);
-		var stackFrameId = stackTraceResponse.StackFrames!.First().Id;
-		debugProtocolHost.WithEvaluateRequest(stackFrameId, "_count", out var evaluateResponse);
-		evaluateResponse.Result.Should().Be("2");
+        debugProtocolHost.WithStackTraceRequest(stoppedEvent.ThreadId!.Value, out StackTraceResponse? stackTraceResponse);
+        int stackFrameId = stackTraceResponse.StackFrames!.First().Id;
+        debugProtocolHost.WithEvaluateRequest(stackFrameId, "_count", out EvaluateResponse? evaluateResponse);
+        Assert.Equal("2", evaluateResponse.Result);
 
-		// Continue - should stop again on 3rd iteration
-		var stoppedEvent2 = await debugProtocolHost.WithContinueRequest().WaitForStoppedEvent(debugEventTcs);
-		var stopInfo2 = stoppedEvent2.ReadStopInfo();
-		stopInfo2.filePath.Should().EndWith("HitConditionClass.cs");
-		stopInfo2.line.Should().Be(10);
+        // Continue - should stop again on 3rd iteration
+        StoppedEvent stoppedEvent2 = await debugProtocolHost.WithContinueRequest().WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo2 = stoppedEvent2.ReadStopInfo();
+        Assert.EndsWith("HitConditionClass.cs", stopInfo2.filePath);
+        Assert.Equal(10, stopInfo2.line);
 
-		debugProtocolHost.WithStackTraceRequest(stoppedEvent2.ThreadId!.Value, out var stackTraceResponse2);
-		var stackFrameId2 = stackTraceResponse2.StackFrames!.First().Id;
-		debugProtocolHost.WithEvaluateRequest(stackFrameId2, "_count", out var evaluateResponse2);
-		evaluateResponse2.Result.Should().Be("3");
-	}
+        debugProtocolHost.WithStackTraceRequest(stoppedEvent2.ThreadId!.Value, out StackTraceResponse? stackTraceResponse2);
+        int stackFrameId2 = stackTraceResponse2.StackFrames!.First().Id;
+        debugProtocolHost.WithEvaluateRequest(stackFrameId2, "_count", out EvaluateResponse? evaluateResponse2);
+        Assert.Equal("3", evaluateResponse2.Result);
+    }
 
-	[Fact]
-	public async Task HitCondition_Modulo_StopsEveryNthHit()
-	{
-		var startSuspended = true;
-		var hitConditionFilePath = Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "HitConditionClass.cs");
+    [Fact]
+    public async Task HitCondition_Modulo_StopsEveryNthHit()
+    {
+        bool startSuspended = true;
+        string hitConditionFilePath = Debuggees.Source("DebuggableConsoleApp", "HitConditionClass.cs");
 
-		var (debugProtocolHost, initializedEventTcs, debugEventTcs, adapter, p2) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended);
-		using var _ = adapter;
-		using var __ = new ProcessKiller(p2);
-		using var ___ = debugProtocolHost;
+        using DebugSession debugProtocolHost = DebugSession.ForAttach(testOutputHelper, startSuspended, out Process p2);
 
-		await debugProtocolHost
-			.WithInitializeRequest()
-			.WithAttachRequest(p2.Id)
-			.WaitForInitializedEvent(initializedEventTcs);
+        await debugProtocolHost
+            .WithInitializeRequest()
+            .WithAttachRequest(p2.Id)
+            .WaitForInitializedEvent();
 
-		debugProtocolHost
-			.WithBreakpointsRequest(hitConditionFilePath, [new SharpDbgBreakpointRequest(10, HitCondition: "%2")])
-			.WithConfigurationDoneRequest()
-			.WithOptionalResumeRuntime(p2.Id, startSuspended);
+        debugProtocolHost
+            .WithBreakpointsRequest(hitConditionFilePath, [new DapSourceBreakpoint(10, HitCondition: "%2")])
+            .WithConfigurationDoneRequest()
+            .WithOptionalResumeRuntime(p2.Id, startSuspended);
 
-		// First stop should be on 2nd iteration (2 % 2 == 0)
-		var stoppedEvent = await debugProtocolHost.WaitForStoppedEvent(debugEventTcs);
-		var stopInfo = stoppedEvent.ReadStopInfo();
-		stopInfo.filePath.Should().EndWith("HitConditionClass.cs");
-		stopInfo.line.Should().Be(10);
+        // First stop should be on 2nd iteration (2 % 2 == 0)
+        StoppedEvent stoppedEvent = await debugProtocolHost.WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo = stoppedEvent.ReadStopInfo();
+        Assert.EndsWith("HitConditionClass.cs", stopInfo.filePath);
+        Assert.Equal(10, stopInfo.line);
 
-		debugProtocolHost.WithStackTraceRequest(stoppedEvent.ThreadId!.Value, out var stackTraceResponse);
-		var stackFrameId = stackTraceResponse.StackFrames!.First().Id;
-		debugProtocolHost.WithEvaluateRequest(stackFrameId, "_count", out var evaluateResponse);
-		evaluateResponse.Result.Should().Be("2");
+        debugProtocolHost.WithStackTraceRequest(stoppedEvent.ThreadId!.Value, out StackTraceResponse? stackTraceResponse);
+        int stackFrameId = stackTraceResponse.StackFrames!.First().Id;
+        debugProtocolHost.WithEvaluateRequest(stackFrameId, "_count", out EvaluateResponse? evaluateResponse);
+        Assert.Equal("2", evaluateResponse.Result);
 
-		// Continue - should skip 3rd, stop on 4th (4 % 2 == 0)
-		var stoppedEvent2 = await debugProtocolHost.WithContinueRequest().WaitForStoppedEvent(debugEventTcs);
-		var stopInfo2 = stoppedEvent2.ReadStopInfo();
-		stopInfo2.filePath.Should().EndWith("HitConditionClass.cs");
-		stopInfo2.line.Should().Be(10);
+        // Continue - should skip 3rd, stop on 4th (4 % 2 == 0)
+        StoppedEvent stoppedEvent2 = await debugProtocolHost.WithContinueRequest().WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo2 = stoppedEvent2.ReadStopInfo();
+        Assert.EndsWith("HitConditionClass.cs", stopInfo2.filePath);
+        Assert.Equal(10, stopInfo2.line);
 
-		debugProtocolHost.WithStackTraceRequest(stoppedEvent2.ThreadId!.Value, out var stackTraceResponse2);
-		var stackFrameId2 = stackTraceResponse2.StackFrames!.First().Id;
-		debugProtocolHost.WithEvaluateRequest(stackFrameId2, "_count", out var evaluateResponse2);
-		evaluateResponse2.Result.Should().Be("4");
-	}
+        debugProtocolHost.WithStackTraceRequest(stoppedEvent2.ThreadId!.Value, out StackTraceResponse? stackTraceResponse2);
+        int stackFrameId2 = stackTraceResponse2.StackFrames!.First().Id;
+        debugProtocolHost.WithEvaluateRequest(stackFrameId2, "_count", out EvaluateResponse? evaluateResponse2);
+        Assert.Equal("4", evaluateResponse2.Result);
+    }
 }

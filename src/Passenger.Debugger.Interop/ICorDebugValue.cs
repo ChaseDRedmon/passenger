@@ -1,14 +1,14 @@
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Represents a value in the process being debugged. The value can be a read or a write value.</para>
 /// </summary>
 /// <remarks>
 /// <para>In general, ownership of a value object is passed when it is returned. The recipient is responsible for removing a reference from the object when it is finished with the object.</para>
-/// <para>Depending on where the value was retrieved from, the value may not remain valid after the process is resumed. So, in general, the value shouldn't be held across a call of the <see cref="M:ICorDebugSharp.ICorDebugController.TryContinue(System.Boolean)">ICorDebugController::Continue</see> method.</para>
+/// <para>Depending on where the value was retrieved from, the value may not remain valid after the process is resumed. So, in general, the value shouldn't be held across a call of the <see cref="M:Passenger.Debugger.Interop.ICorDebugController.TryContinue(System.Boolean)">ICorDebugController::Continue</see> method.</para>
 /// <para><b>Note:</b> This interface does not support being called remotely, either cross-machine or cross-process.</para>
 /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugvalue-interface">Microsoft Learn</see>.</para>
 /// </remarks>
@@ -17,53 +17,53 @@ namespace ICorDebugSharp;
 [Guid("CC7BCAF7-8A68-11D2-983C-0000F808342D")]
 public partial interface ICorDebugValue
 {
-	/// <summary>
-	/// <para>Gets the primitive type of this "ICorDebugValue" object.</para>
-	/// </summary>
-	/// <param name="pType">
-	/// <para>A pointer to a value of the "CorElementType" enumeration that indicates the value's type.</para>
-	/// </param>
-	/// <remarks>
-	/// <para>If the object is a complex runtime type, that type may be examined through the appropriate subclasses of the <c>ICorDebugValue</c> interface. For example, "ICorDebugObjectValue", which inherits from <c>ICorDebugValue</c>, represents a complex type.</para>
-	/// <para>The <c>GetType</c> and <see cref="M:ICorDebugSharp.ICorDebugObjectValue.TryGetClass(ICorDebugSharp.ICorDebugClass@)">ICorDebugObjectValue::GetClass</see> methods each return information about the type of a value. They are both superseded by the generics-aware <see cref="M:ICorDebugSharp.ICorDebugValue2.TryGetExactType(ICorDebugSharp.ICorDebugType@)">ICorDebugValue2::GetExactType</see> method.</para>
-	/// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugvalue-gettype-method">Microsoft Learn</see>.</para>
-	/// </remarks>
-	[PreserveSig]
-	int TryGetType(out CorElementType pType);
+    /// <summary>
+    /// <para>Gets the primitive type of this "ICorDebugValue" object.</para>
+    /// </summary>
+    /// <param name="pType">
+    /// <para>A pointer to a value of the "CorElementType" enumeration that indicates the value's type.</para>
+    /// </param>
+    /// <remarks>
+    /// <para>If the object is a complex runtime type, that type may be examined through the appropriate subclasses of the <c>ICorDebugValue</c> interface. For example, "ICorDebugObjectValue", which inherits from <c>ICorDebugValue</c>, represents a complex type.</para>
+    /// <para>The <c>GetType</c> and <see cref="M:Passenger.Debugger.Interop.ICorDebugObjectValue.TryGetClass(Passenger.Debugger.Interop.ICorDebugClass@)">ICorDebugObjectValue::GetClass</see> methods each return information about the type of a value. They are both superseded by the generics-aware <see cref="M:Passenger.Debugger.Interop.ICorDebugValue2.TryGetExactType(Passenger.Debugger.Interop.ICorDebugType@)">ICorDebugValue2::GetExactType</see> method.</para>
+    /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugvalue-gettype-method">Microsoft Learn</see>.</para>
+    /// </remarks>
+    [PreserveSig]
+    int TryGetType(out CorElementType pType);
 
-	/// <summary>
-	/// <para>Gets the size, in bytes, of this "ICorDebugValue" object.</para>
-	/// </summary>
-	/// <param name="pSize">
-	/// <para>The size, in bytes, of this value object.</para>
-	/// </param>
-	/// <remarks>
-	/// <para>If the value's type is a reference type, this method returns the size of the pointer rather than the size of the object.</para>
-	/// <para>The <c>ICorDebugValue::GetSize</c> method returns <c>COR_E_OVERFLOW</c> for objects that are larger than 4 GB on 64-bit platforms. Use the <see cref="M:ICorDebugSharp.ICorDebugValue3.TryGetSize64(System.UInt64@)">ICorDebugValue3::GetSize64</see> method instead for objects that are larger than 4 GB.</para>
-	/// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugvalue-getsize-method">Microsoft Learn</see>.</para>
-	/// </remarks>
-	[PreserveSig]
-	int TryGetSize(out uint pSize);
+    /// <summary>
+    /// <para>Gets the size, in bytes, of this "ICorDebugValue" object.</para>
+    /// </summary>
+    /// <param name="pSize">
+    /// <para>The size, in bytes, of this value object.</para>
+    /// </param>
+    /// <remarks>
+    /// <para>If the value's type is a reference type, this method returns the size of the pointer rather than the size of the object.</para>
+    /// <para>The <c>ICorDebugValue::GetSize</c> method returns <c>COR_E_OVERFLOW</c> for objects that are larger than 4 GB on 64-bit platforms. Use the <see cref="M:Passenger.Debugger.Interop.ICorDebugValue3.TryGetSize64(System.UInt64@)">ICorDebugValue3::GetSize64</see> method instead for objects that are larger than 4 GB.</para>
+    /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugvalue-getsize-method">Microsoft Learn</see>.</para>
+    /// </remarks>
+    [PreserveSig]
+    int TryGetSize(out uint pSize);
 
-	/// <summary>
-	/// <para>Gets the address of this "ICorDebugValue" object, which is in the process of being debugged.</para>
-	/// </summary>
-	/// <param name="pAddress">
-	/// <para>Pointer to a <c>CORDB_ADDRESS</c> object that specifies the address of this value object.</para>
-	/// </param>
-	/// <remarks>
-	/// <para>If the value is unavailable, 0 (zero) is returned. This could happen if the value is at least partly in registers or stored in a garbage collector handle (<c>GCHandle</c>).</para>
-	/// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugvalue-getaddress-method">Microsoft Learn</see>.</para>
-	/// </remarks>
-	[PreserveSig]
-	int TryGetAddress(out CORDB_ADDRESS pAddress);
+    /// <summary>
+    /// <para>Gets the address of this "ICorDebugValue" object, which is in the process of being debugged.</para>
+    /// </summary>
+    /// <param name="pAddress">
+    /// <para>Pointer to a <c>CORDB_ADDRESS</c> object that specifies the address of this value object.</para>
+    /// </param>
+    /// <remarks>
+    /// <para>If the value is unavailable, 0 (zero) is returned. This could happen if the value is at least partly in registers or stored in a garbage collector handle (<c>GCHandle</c>).</para>
+    /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugvalue-getaddress-method">Microsoft Learn</see>.</para>
+    /// </remarks>
+    [PreserveSig]
+    int TryGetAddress(out CORDB_ADDRESS pAddress);
 
-	/// <summary>
-	/// <para>The <c>CreateBreakpoint</c> method is currently not implemented.</para>
-	/// </summary>
-	/// <remarks>
-	/// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugvalue-createbreakpoint-method">Microsoft Learn</see>.</para>
-	/// </remarks>
-	[PreserveSig]
-	int TryCreateBreakpoint(out ICorDebugValueBreakpoint ppBreakpoint);
+    /// <summary>
+    /// <para>The <c>CreateBreakpoint</c> method is currently not implemented.</para>
+    /// </summary>
+    /// <remarks>
+    /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugvalue-createbreakpoint-method">Microsoft Learn</see>.</para>
+    /// </remarks>
+    [PreserveSig]
+    int TryCreateBreakpoint(out ICorDebugValueBreakpoint ppBreakpoint);
 }

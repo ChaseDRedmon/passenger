@@ -1,4 +1,4 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Indicates the outcome of an individual step.</para>
@@ -8,32 +8,32 @@ namespace ICorDebugSharp;
 /// </remarks>
 public enum CorDebugStepReason
 {
-	/// <summary>
-	/// <para>Stepping completed normally, within the same function.</para>
-	/// </summary>
-	STEP_NORMAL,
-	/// <summary>
-	/// <para>Stepping continued normally, after the function returned.</para>
-	/// </summary>
-	STEP_RETURN,
-	/// <summary>
-	/// <para>Stepping continued normally, at the beginning of a newly called function.</para>
-	/// </summary>
-	STEP_CALL,
-	/// <summary>
-	/// <para>An exception was generated and control was passed to an exception filter.</para>
-	/// </summary>
-	STEP_EXCEPTION_FILTER,
-	/// <summary>
-	/// <para>An exception was generated and control was passed to an exception handler.</para>
-	/// </summary>
-	STEP_EXCEPTION_HANDLER,
-	/// <summary>
-	/// <para>Control was passed to an interceptor.</para>
-	/// </summary>
-	STEP_INTERCEPT,
-	/// <summary>
-	/// <para>The thread exited before the step was completed.</para>
-	/// </summary>
-	STEP_EXIT
+    /// <summary>
+    /// <para>Stepping completed normally, within the same function.</para>
+    /// </summary>
+    STEP_NORMAL,
+    /// <summary>
+    /// <para>Stepping continued normally, after the function returned.</para>
+    /// </summary>
+    STEP_RETURN,
+    /// <summary>
+    /// <para>Stepping continued normally, at the beginning of a newly called function.</para>
+    /// </summary>
+    STEP_CALL,
+    /// <summary>
+    /// <para>An exception was generated and control was passed to an exception filter.</para>
+    /// </summary>
+    STEP_EXCEPTION_FILTER,
+    /// <summary>
+    /// <para>An exception was generated and control was passed to an exception handler.</para>
+    /// </summary>
+    STEP_EXCEPTION_HANDLER,
+    /// <summary>
+    /// <para>Control was passed to an interceptor.</para>
+    /// </summary>
+    STEP_INTERCEPT,
+    /// <summary>
+    /// <para>The thread exited before the step was completed.</para>
+    /// </summary>
+    STEP_EXIT
 }

@@ -1,17 +1,17 @@
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
-namespace ICorDebugSharp.Extensions;
+namespace Passenger.Debugger.Interop.Extensions;
 
 public static class CorDebugFunction4Extensions
 {
-	extension(ICorDebugFunction4 instance)
-	{
-		/// <inheritdoc cref="M:ICorDebugSharp.ICorDebugFunction4.TryCreateNativeBreakpoint(ICorDebugSharp.ICorDebugFunctionBreakpoint@)" />
-		public ICorDebugFunctionBreakpoint CreateNativeBreakpoint()
-		{
-			Marshal.ThrowExceptionForHR(instance.TryCreateNativeBreakpoint(out ICorDebugFunctionBreakpoint ppBreakpoint));
-			return ppBreakpoint;
-		}
-	}
+    extension(ICorDebugFunction4 instance)
+    {
+        /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugFunction4.TryCreateNativeBreakpoint(Passenger.Debugger.Interop.ICorDebugFunctionBreakpoint@)" />
+        public ICorDebugFunctionBreakpoint CreateNativeBreakpoint()
+        {
+            Marshal.ThrowExceptionForHR(instance.TryCreateNativeBreakpoint(out ICorDebugFunctionBreakpoint ppBreakpoint));
+            return ppBreakpoint;
+        }
+    }
 }

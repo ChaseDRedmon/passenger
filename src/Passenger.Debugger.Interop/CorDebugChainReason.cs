@@ -1,64 +1,64 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Indicates the reason or reasons for the initiation of a call chain.</para>
 /// </summary>
 /// <remarks>
-/// <para>Use the <see cref="M:ICorDebugSharp.ICorDebugChain.TryGetReason(ICorDebugSharp.CorDebugChainReason@)">ICorDebugChain::GetReason</see> method to ascertain the reasons for the initiation of a call chain.</para>
+/// <para>Use the <see cref="M:Passenger.Debugger.Interop.ICorDebugChain.TryGetReason(Passenger.Debugger.Interop.CorDebugChainReason@)">ICorDebugChain::GetReason</see> method to ascertain the reasons for the initiation of a call chain.</para>
 /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/cordebugchainreason-enumeration">Microsoft Learn</see>.</para>
 /// </remarks>
 public enum CorDebugChainReason
 {
-	/// <summary>
-	/// <para>No call chain has been initiated.</para>
-	/// </summary>
-	CHAIN_NONE = 0,
-	/// <summary>
-	/// <para>The chain was initiated by a constructor.</para>
-	/// </summary>
-	CHAIN_CLASS_INIT = 1,
-	/// <summary>
-	/// <para>The chain was initiated by an exception filter.</para>
-	/// </summary>
-	CHAIN_EXCEPTION_FILTER = 2,
-	/// <summary>
-	/// <para>The chain was initiated by code that enforces security.</para>
-	/// </summary>
-	CHAIN_SECURITY = 4,
-	/// <summary>
-	/// <para>The chain was initiated by a context policy.</para>
-	/// </summary>
-	CHAIN_CONTEXT_POLICY = 8,
-	/// <summary>
-	/// <para>Not used.</para>
-	/// </summary>
-	CHAIN_INTERCEPTION = 0x10,
-	/// <summary>
-	/// <para>Not used.</para>
-	/// </summary>
-	CHAIN_PROCESS_START = 0x20,
-	/// <summary>
-	/// <para>The chain was initiated by the start of a thread execution.</para>
-	/// </summary>
-	CHAIN_THREAD_START = 0x40,
-	/// <summary>
-	/// <para>The chain was initiated by entry into managed code.</para>
-	/// </summary>
-	CHAIN_ENTER_MANAGED = 0x80,
-	/// <summary>
-	/// <para>The chain was initiated by entry into unmanaged code.</para>
-	/// </summary>
-	CHAIN_ENTER_UNMANAGED = 0x100,
-	/// <summary>
-	/// <para>Not used.</para>
-	/// </summary>
-	CHAIN_DEBUGGER_EVAL = 0x200,
-	/// <summary>
-	/// <para>Not used.</para>
-	/// </summary>
-	CHAIN_CONTEXT_SWITCH = 0x400,
-	/// <summary>
-	/// <para>The chain was initiated by a function evaluation.</para>
-	/// </summary>
-	CHAIN_FUNC_EVAL = 0x800
+    /// <summary>
+    /// <para>No call chain has been initiated.</para>
+    /// </summary>
+    CHAIN_NONE = 0,
+    /// <summary>
+    /// <para>The chain was initiated by a constructor.</para>
+    /// </summary>
+    CHAIN_CLASS_INIT = 1,
+    /// <summary>
+    /// <para>The chain was initiated by an exception filter.</para>
+    /// </summary>
+    CHAIN_EXCEPTION_FILTER = 2,
+    /// <summary>
+    /// <para>The chain was initiated by code that enforces security.</para>
+    /// </summary>
+    CHAIN_SECURITY = 4,
+    /// <summary>
+    /// <para>The chain was initiated by a context policy.</para>
+    /// </summary>
+    CHAIN_CONTEXT_POLICY = 8,
+    /// <summary>
+    /// <para>Not used.</para>
+    /// </summary>
+    CHAIN_INTERCEPTION = 0x10,
+    /// <summary>
+    /// <para>Not used.</para>
+    /// </summary>
+    CHAIN_PROCESS_START = 0x20,
+    /// <summary>
+    /// <para>The chain was initiated by the start of a thread execution.</para>
+    /// </summary>
+    CHAIN_THREAD_START = 0x40,
+    /// <summary>
+    /// <para>The chain was initiated by entry into managed code.</para>
+    /// </summary>
+    CHAIN_ENTER_MANAGED = 0x80,
+    /// <summary>
+    /// <para>The chain was initiated by entry into unmanaged code.</para>
+    /// </summary>
+    CHAIN_ENTER_UNMANAGED = 0x100,
+    /// <summary>
+    /// <para>Not used.</para>
+    /// </summary>
+    CHAIN_DEBUGGER_EVAL = 0x200,
+    /// <summary>
+    /// <para>Not used.</para>
+    /// </summary>
+    CHAIN_CONTEXT_SWITCH = 0x400,
+    /// <summary>
+    /// <para>The chain was initiated by a function evaluation.</para>
+    /// </summary>
+    CHAIN_FUNC_EVAL = 0x800
 }

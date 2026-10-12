@@ -3,7 +3,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>A subclass of ICorDebugReferenceValue that represents a reference value to which the debugger has created a handle for garbage collection.</para>
@@ -18,25 +18,25 @@ namespace ICorDebugSharp;
 [Guid("029596E8-276B-46A1-9821-732E96BBB00B")]
 public partial interface ICorDebugHandleValue : ICorDebugReferenceValue
 {
-	/// <summary>
-	/// <para>Gets a value that indicates the kind of handle referenced by this ICorDebugHandleValue object.</para>
-	/// </summary>
-	/// <param name="pType">
-	/// <para>A pointer to a value of the CorDebugHandleType enumeration that indicates the type of this handle.</para>
-	/// </param>
-	/// <remarks>
-	/// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebughandlevalue-gethandletype-method">Microsoft Learn</see>.</para>
-	/// </remarks>
-	[PreserveSig]
-	int TryGetHandleType(out CorDebugHandleType pType);
+    /// <summary>
+    /// <para>Gets a value that indicates the kind of handle referenced by this ICorDebugHandleValue object.</para>
+    /// </summary>
+    /// <param name="pType">
+    /// <para>A pointer to a value of the CorDebugHandleType enumeration that indicates the type of this handle.</para>
+    /// </param>
+    /// <remarks>
+    /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebughandlevalue-gethandletype-method">Microsoft Learn</see>.</para>
+    /// </remarks>
+    [PreserveSig]
+    int TryGetHandleType(out CorDebugHandleType pType);
 
-	/// <summary>
-	/// <para>Releases the handle referenced by this ICorDebugHandleValue object without explicitly releasing the interface pointer.</para>
-	/// </summary>
-	/// <remarks>
-	/// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebughandlevalue-dispose-method">Microsoft Learn</see>.</para>
-	/// </remarks>
-	[PreserveSig]
-	int TryDispose();
+    /// <summary>
+    /// <para>Releases the handle referenced by this ICorDebugHandleValue object without explicitly releasing the interface pointer.</para>
+    /// </summary>
+    /// <remarks>
+    /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebughandlevalue-dispose-method">Microsoft Learn</see>.</para>
+    /// </remarks>
+    [PreserveSig]
+    int TryDispose();
 
 }

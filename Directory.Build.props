@@ -9,5 +9,7 @@
     <AnalysisLevel>latest</AnalysisLevel>
     <!-- Every build lands under artifacts/, never beside the sources. -->
     <UseArtifactsOutput>true</UseArtifactsOutput>
+    <!-- Passenger is in English; Roslyn's translated messages would only add folders. -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
 </Project>

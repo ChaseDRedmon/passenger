@@ -1,15 +1,15 @@
-namespace SharpDbg.Infrastructure.Debugger.PresentationHintModels;
+namespace Passenger.Debugger.PresentationHintModels;
 
 public enum PresentationHintKind
 {
-	Property,
-	Method,
-	Class,
-	Data,
-	Event,
-	BaseClass,
-	InnerClass,
-	Interface,
-	MostDerivedClass,
-	Virtual,
+    Property,
+    Method,
+    Class,
+    Data,
+    Event,
+    BaseClass,
+    InnerClass,
+    Interface,
+    MostDerivedClass,
+    Virtual,
 }

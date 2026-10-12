@@ -1,27 +1,27 @@
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
-namespace ICorDebugSharp.Extensions;
+namespace Passenger.Debugger.Interop.Extensions;
 
 public static class CorDebugHeapValueExtensions
 {
-	extension(ICorDebugHeapValue instance)
-	{
-		/// <inheritdoc cref="M:ICorDebugSharp.ICorDebugHeapValue.TryCreateRelocBreakpoint(ICorDebugSharp.ICorDebugValueBreakpoint@)" />
-		public ICorDebugValueBreakpoint CreateRelocBreakpoint()
-		{
-			Marshal.ThrowExceptionForHR(instance.TryCreateRelocBreakpoint(out ICorDebugValueBreakpoint ppBreakpoint));
-			return ppBreakpoint;
-		}
+    extension(ICorDebugHeapValue instance)
+    {
+        /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugHeapValue.TryCreateRelocBreakpoint(Passenger.Debugger.Interop.ICorDebugValueBreakpoint@)" />
+        public ICorDebugValueBreakpoint CreateRelocBreakpoint()
+        {
+            Marshal.ThrowExceptionForHR(instance.TryCreateRelocBreakpoint(out ICorDebugValueBreakpoint ppBreakpoint));
+            return ppBreakpoint;
+        }
 
-		/// <inheritdoc cref="M:ICorDebugSharp.ICorDebugHeapValue.TryIsValid(System.Boolean@)" />
-		public bool IsValid
-		{
-			get
-			{
-				Marshal.ThrowExceptionForHR(instance.TryIsValid(out var pbValid));
-				return pbValid;
-			}
-		}
-	}
+        /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugHeapValue.TryIsValid(System.Boolean@)" />
+        public bool IsValid
+        {
+            get
+            {
+                Marshal.ThrowExceptionForHR(instance.TryIsValid(out var pbValid));
+                return pbValid;
+            }
+        }
+    }
 }

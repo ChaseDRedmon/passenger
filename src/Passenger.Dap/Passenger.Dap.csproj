@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The Debug Adapter Protocol: the messages and the connection, for both ends (the IDE and the adapter). -->
+  <PropertyGroup>
+    <RootNamespace>Passenger.Dap</RootNamespace>
+  </PropertyGroup>
+</Project>

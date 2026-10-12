@@ -1,402 +1,383 @@
-using AwesomeAssertions;
-using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol.Messages;
-using SharpDbg.Cli.Tests.Helpers;
+using System.Diagnostics;
+using Passenger.Dap;
+using Passenger.Tests.Debugging.Helpers;
 
-namespace SharpDbg.Cli.Tests;
+namespace Passenger.Tests.Debugging;
 
+[Collection(DebugSession.Collection)]
 public class ExceptionTests(ITestOutputHelper testOutputHelper)
 {
-	[Fact]
-	public async Task SharpDbgCli_Exception_VariablesHasExceptionScope()
-	{
-		var startSuspended = true;
-		var (debugProtocolHost, initializedEventTcs, debugEventTcs, adapter, p2) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended);
-		using var _ = adapter;
-		using var __ = new ProcessKiller(p2);
-		using var ___ = debugProtocolHost;
+    [Fact]
+    public async Task SharpDbgCli_Exception_VariablesHasExceptionScope()
+    {
+        bool startSuspended = true;
+        using DebugSession debugProtocolHost = DebugSession.ForAttach(testOutputHelper, startSuspended, out Process p2);
 
-		await debugProtocolHost
-			.WithInitializeRequest()
-			.WithAttachRequest(p2.Id)
-			.WaitForInitializedEvent(initializedEventTcs);
-		debugProtocolHost.SendRequestSync(new SetExceptionBreakpointsRequest { Filters = [], FilterOptions = [new("all"), new("user-unhandled")] });
-		var breakpointedFilePath = Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "Exceptions.cs");
-		debugProtocolHost
-			.WithBreakpointsRequest([24], Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "Program.cs"))
-			.WithConfigurationDoneRequest()
-			.WithOptionalResumeRuntime(p2.Id, startSuspended);
+        await debugProtocolHost
+            .WithInitializeRequest()
+            .WithAttachRequest(p2.Id)
+            .WaitForInitializedEvent();
+        debugProtocolHost.Request("setExceptionBreakpoints", new SetExceptionBreakpointsArguments([], [new("all"), new("user-unhandled")]));
+        string breakpointedFilePath = Debuggees.Source("DebuggableConsoleApp", "Exceptions.cs");
+        debugProtocolHost
+            .WithBreakpointsRequest([24], Debuggees.Source("DebuggableConsoleApp", "Program.cs"))
+            .WithConfigurationDoneRequest()
+            .WithOptionalResumeRuntime(p2.Id, startSuspended);
 
-		var stoppedEvent = await debugProtocolHost.WaitForStoppedEvent(debugEventTcs);
-		var stopInfo = stoppedEvent.ReadStopInfo();
-		stopInfo.filePath.Should().EndWith("Program.cs");
-		stopInfo.line.Should().Be(24);
+        StoppedEvent stoppedEvent = await debugProtocolHost.WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo = stoppedEvent.ReadStopInfo();
+        Assert.EndsWith("Program.cs", stopInfo.filePath);
+        Assert.Equal(24, stopInfo.line);
 
-		// set 'ExceptionToThrow' to .Normal - we do not want other tests to stop at the 'exception' stop event, only this one
-		debugProtocolHost.WithStackTraceRequest(stoppedEvent.ThreadId!.Value, out var stackTraceResponse);
-		debugProtocolHost.WithEvaluateRequest(stackTraceResponse.StackFrames.First().Id, "exceptionToThrow = ExceptionToThrow.Normal", out var evaluateResponse);
-		evaluateResponse.Result.Should().Be("Normal");
+        // set 'ExceptionToThrow' to .Normal - we do not want other tests to stop at the 'exception' stop event, only this one
+        debugProtocolHost.WithStackTraceRequest(stoppedEvent.ThreadId!.Value, out StackTraceResponse? stackTraceResponse);
+        debugProtocolHost.WithEvaluateRequest(stackTraceResponse.StackFrames.First().Id, "exceptionToThrow = ExceptionToThrow.Normal", out EvaluateResponse? evaluateResponse);
+        Assert.Equal("Normal", evaluateResponse.Result);
 
-		debugProtocolHost.WithContinueRequest();
+        debugProtocolHost.WithContinueRequest();
 
-		var stoppedEvent2 = await debugProtocolHost.WaitForStoppedEvent(debugEventTcs);
-		var stopInfo2 = stoppedEvent2.ReadStopInfo();
-		stopInfo2.filePath.Should().EndWith("Exceptions.cs");
-		stopInfo2.line.Should().Be(14); // Where the exception is thrown
+        StoppedEvent stoppedEvent2 = await debugProtocolHost.WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo2 = stoppedEvent2.ReadStopInfo();
+        Assert.EndsWith("Exceptions.cs", stopInfo2.filePath);
+        Assert.Equal(14, stopInfo2.line); // Where the exception is thrown
 
-		debugProtocolHost
-			.WithStackTraceRequest(stoppedEvent2.ThreadId!.Value, out var stackTraceResponse2)
-			.WithScopesRequest(stackTraceResponse2.StackFrames!.First().Id, out var scopesResponse2);
+        debugProtocolHost
+            .WithStackTraceRequest(stoppedEvent2.ThreadId!.Value, out StackTraceResponse? stackTraceResponse2)
+            .WithScopesRequest(stackTraceResponse2.StackFrames!.First().Id, out ScopesResponse? scopesResponse2);
 
-		scopesResponse2.Scopes.Should().HaveCount(1);
-		var scope = scopesResponse2.Scopes.Single();
+        Assert.Single(scopesResponse2.Scopes);
+        DapScope scope = scopesResponse2.Scopes.Single();
 
-		List<Variable> expectedVariables =
-		[
-			new() { Name = "$exception",  EvaluateName = "$exception",  Value = $"System.InvalidOperationException: Test exception{Environment.NewLine}   at DebuggableConsoleApp.Exceptions.Test(ExceptionToThrow exceptionToThrow) in {breakpointedFilePath}:line 14", Type = "System.InvalidOperationException", VariablesReference = 2 },
-			new() { Name = "exceptionToThrow", EvaluateName = "exceptionToThrow", Value = "Normal",  Type = "DebuggableConsoleApp.ExceptionToThrow", VariablesReference = 3 },
-		];
-		debugProtocolHost.WithVariablesRequest(scope.VariablesReference, out var variables);
+        List<DapVariable> expectedVariables =
+        [
+            new() { Name = "$exception",  EvaluateName = "$exception",  Value = $"System.InvalidOperationException: Test exception{Environment.NewLine}   at DebuggableConsoleApp.Exceptions.Test(ExceptionToThrow exceptionToThrow) in {breakpointedFilePath}:line 14", Type = "System.InvalidOperationException", VariablesReference = 2 },
+            new() { Name = "exceptionToThrow", EvaluateName = "exceptionToThrow", Value = "Normal",  Type = "DebuggableConsoleApp.ExceptionToThrow", VariablesReference = 3 },
+        ];
+        debugProtocolHost.WithVariablesRequest(scope.VariablesReference, out List<DapVariable>? variables);
 
-		variables.Should().HaveCount(expectedVariables.Count);
-		variables.ShouldBeEquivalentToDebuggerVariables(expectedVariables);
+        Assert.Equal(expectedVariables.Count, variables.Count);
+        variables.ShouldBeEquivalentToDebuggerVariables(expectedVariables);
 
-		debugProtocolHost.WithEvaluateRequest(stackTraceResponse.StackFrames.First().Id, "$exception", out var evaluateResponse2);
-		evaluateResponse2.Result.Should().Be(expectedVariables[0].Value);
+        debugProtocolHost.WithEvaluateRequest(stackTraceResponse.StackFrames.First().Id, "$exception", out EvaluateResponse? evaluateResponse2);
+        Assert.Equal(expectedVariables[0].Value, evaluateResponse2.Result);
 
-		var expectedExceptionInfoResponse = new ExceptionInfoResponse
-		{
-			ExceptionId = "CLR/System.InvalidOperationException",
-			Description = "Exception thrown: 'System.InvalidOperationException' in DebuggableConsoleApp.dll: 'Test exception'",
-			BreakMode = ExceptionBreakMode.Always,
-			Code = 0,
-			Details = new ExceptionDetails
-			{
-				Message = "Test exception",
-				TypeName = "InvalidOperationException",
-				FullTypeName = "System.InvalidOperationException",
-				EvaluateName = "$exception",
-				StackTrace = $"   at DebuggableConsoleApp.Exceptions.Test(ExceptionToThrow exceptionToThrow) in {breakpointedFilePath}:line 14",
-				InnerException = [],
-				FormattedDescription = "**System.InvalidOperationException:** 'Test exception'",
-				HResult = -2146233079,
-				Source = "DebuggableConsoleApp"
-			}
-		};
+        var expectedExceptionInfoResponse = new ExceptionInfoResponse
+        {
+            ExceptionId = "CLR/System.InvalidOperationException",
+            Description = "Exception thrown: 'System.InvalidOperationException' in DebuggableConsoleApp.dll: 'Test exception'",
+            BreakMode = "always",
+            Code = 0,
+            Details = new DapExceptionDetails
+            {
+                Message = "Test exception",
+                TypeName = "InvalidOperationException",
+                FullTypeName = "System.InvalidOperationException",
+                EvaluateName = "$exception",
+                StackTrace = $"   at DebuggableConsoleApp.Exceptions.Test(ExceptionToThrow exceptionToThrow) in {breakpointedFilePath}:line 14",
+                InnerException = [],
+                FormattedDescription = "**System.InvalidOperationException:** 'Test exception'",
+                HResult = -2146233079,
+                Source = "DebuggableConsoleApp"
+            }
+        };
 
-		var exceptionInfoResponse = debugProtocolHost.SendRequestSync(new ExceptionInfoRequest(stoppedEvent2.ThreadId.Value));
-		exceptionInfoResponse.Should().BeEquivalentTo(expectedExceptionInfoResponse);
-	}
+        ExceptionInfoResponse exceptionInfoResponse = debugProtocolHost.Request<ExceptionInfoResponse>("exceptionInfo", new ThreadArguments(stoppedEvent2.ThreadId.Value));
+        Assert.Equivalent(expectedExceptionInfoResponse, exceptionInfoResponse, strict: true);
+    }
 
-	[Fact]
-	public async Task ExceptionInExternalCode_JustMyCodeEnabled_HasNoSourceInfo()
-	{
-		var startSuspended = true;
-		var (debugProtocolHost, initializedEventTcs, debugEventTcs, adapter, p2) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended);
-		using var _ = adapter;
-		using var __ = new ProcessKiller(p2);
-		using var ___ = debugProtocolHost;
+    [Fact]
+    public async Task ExceptionInExternalCode_JustMyCodeEnabled_HasNoSourceInfo()
+    {
+        bool startSuspended = true;
+        using DebugSession debugProtocolHost = DebugSession.ForAttach(testOutputHelper, startSuspended, out Process p2);
 
-		await debugProtocolHost
-			.WithInitializeRequest()
-			.WithAttachRequest(p2.Id, true)
-			.WaitForInitializedEvent(initializedEventTcs);
-		debugProtocolHost.SendRequestSync(new SetExceptionBreakpointsRequest { Filters = [], FilterOptions = [new("all"), new("user-unhandled")] });
-		var breakpointedFilePath = Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "Exceptions.cs");
-		debugProtocolHost
-			.WithBreakpointsRequest([24], Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "Program.cs"))
-			.WithConfigurationDoneRequest()
-			.WithOptionalResumeRuntime(p2.Id, startSuspended);
+        await debugProtocolHost
+            .WithInitializeRequest()
+            .WithAttachRequest(p2.Id, true)
+            .WaitForInitializedEvent();
+        debugProtocolHost.Request("setExceptionBreakpoints", new SetExceptionBreakpointsArguments([], [new("all"), new("user-unhandled")]));
+        string breakpointedFilePath = Debuggees.Source("DebuggableConsoleApp", "Exceptions.cs");
+        debugProtocolHost
+            .WithBreakpointsRequest([24], Debuggees.Source("DebuggableConsoleApp", "Program.cs"))
+            .WithConfigurationDoneRequest()
+            .WithOptionalResumeRuntime(p2.Id, startSuspended);
 
-		var stoppedEvent = await debugProtocolHost.WaitForStoppedEvent(debugEventTcs);
-		var stopInfo = stoppedEvent.ReadStopInfo();
-		stopInfo.filePath.Should().EndWith("Program.cs");
-		stopInfo.line.Should().Be(24);
+        StoppedEvent stoppedEvent = await debugProtocolHost.WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo = stoppedEvent.ReadStopInfo();
+        Assert.EndsWith("Program.cs", stopInfo.filePath);
+        Assert.Equal(24, stopInfo.line);
 
-		// set 'ExceptionToThrow' to .ExternalCode - we do not want other tests to stop at the 'exception' stop event, only this one
-		debugProtocolHost.WithStackTraceRequest(stoppedEvent.ThreadId!.Value, out var stackTraceResponse);
-		debugProtocolHost.WithEvaluateRequest(stackTraceResponse.StackFrames.First().Id, "exceptionToThrow = ExceptionToThrow.ExternalCode", out var evaluateResponse);
-		evaluateResponse.Result.Should().Be("ExternalCode");
+        // set 'ExceptionToThrow' to .ExternalCode - we do not want other tests to stop at the 'exception' stop event, only this one
+        debugProtocolHost.WithStackTraceRequest(stoppedEvent.ThreadId!.Value, out StackTraceResponse? stackTraceResponse);
+        debugProtocolHost.WithEvaluateRequest(stackTraceResponse.StackFrames.First().Id, "exceptionToThrow = ExceptionToThrow.ExternalCode", out EvaluateResponse? evaluateResponse);
+        Assert.Equal("ExternalCode", evaluateResponse.Result);
 
-		debugProtocolHost.WithContinueRequest();
+        debugProtocolHost.WithContinueRequest();
 
-		var stoppedEvent2 = await debugProtocolHost.WaitForStoppedEvent(debugEventTcs);
-		stoppedEvent2.AdditionalProperties.Should().BeEmpty();
+        StoppedEvent stoppedEvent2 = await debugProtocolHost.WaitForStoppedEvent();
+        Assert.Null(stoppedEvent2.Source);
 
-		debugProtocolHost
-			.WithStackTraceRequest(stoppedEvent2.ThreadId!.Value, out var stackTraceResponse2, null)
-			.WithScopesRequest(stackTraceResponse2.StackFrames!.First().Id, out var scopesResponse2);
+        debugProtocolHost
+            .WithStackTraceRequest(stoppedEvent2.ThreadId!.Value, out StackTraceResponse? stackTraceResponse2, null)
+            .WithScopesRequest(stackTraceResponse2.StackFrames!.First().Id, out ScopesResponse? scopesResponse2);
 
-		List<StackFrame> expectedStackFrames =
-		[
-			new() { Id = 1, Column = 0, EndColumn =  null, Line =  0, EndLine =  null, Name = "System.Private.CoreLib.dll!System.Number.ThrowFormatException<char>(System.ReadOnlySpan<char> value)", Source = null, PresentationHint = StackFrame.PresentationHintValue.Subtle },
-			new() { Id = 2, Column = 0, EndColumn =  null, Line =  0, EndLine =  null, Name = "System.Private.CoreLib.dll!System.Int32.Parse(string s)",                 Source = null, PresentationHint = StackFrame.PresentationHintValue.Subtle },
-			new() { Id = 3, Column = 5, EndColumn = 32,    Line = 18, EndLine = 18,    Name = "DebuggableConsoleApp.dll!DebuggableConsoleApp.Exceptions.Test(DebuggableConsoleApp.ExceptionToThrow exceptionToThrow)", Source = new Source { Name = "Exceptions.cs", SourceReference = 0, Path = breakpointedFilePath } },
-			new() { Id = 4, Column = 4, EndColumn = 38,    Line = 34, EndLine = 34,    Name = "DebuggableConsoleApp.dll!DebuggableConsoleApp.Program.Main(string[] args)",    Source = new Source { Name = "Program.cs",    SourceReference = 0, Path = Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "Program.cs") } },
-		];
+        List<DapStackFrame> expectedStackFrames =
+        [
+            new() { Id = 1, Column = 0, EndColumn =  null, Line =  0, EndLine =  null, Name = "System.Private.CoreLib.dll!System.Number.ThrowFormatException<char>(System.ReadOnlySpan<char> value)", Source = null, PresentationHint = "subtle" },
+            new() { Id = 2, Column = 0, EndColumn =  null, Line =  0, EndLine =  null, Name = "System.Private.CoreLib.dll!System.Int32.Parse(string s)",                 Source = null, PresentationHint = "subtle" },
+            new() { Id = 3, Column = 5, EndColumn = 32,    Line = 18, EndLine = 18,    Name = "DebuggableConsoleApp.dll!DebuggableConsoleApp.Exceptions.Test(DebuggableConsoleApp.ExceptionToThrow exceptionToThrow)", Source = new DapSource { Name = "Exceptions.cs", SourceReference = 0, Path = breakpointedFilePath } },
+            new() { Id = 4, Column = 4, EndColumn = 38,    Line = 34, EndLine = 34,    Name = "DebuggableConsoleApp.dll!DebuggableConsoleApp.Program.Main(string[] args)",    Source = new DapSource { Name = "Program.cs",    SourceReference = 0, Path = Debuggees.Source("DebuggableConsoleApp", "Program.cs") } },
+        ];
 
-		stackTraceResponse2.StackFrames.Should().BeEquivalentTo(expectedStackFrames, options => options.Excluding(s => s.InstructionPointerReference).Excluding(s => s.Source.VsSourceLinkInfo).Excluding(s => s.Source.Checksums));
-		scopesResponse2.Scopes.Should().HaveCount(1);
-		var scope = scopesResponse2.Scopes.Single();
+        Assert.Equal(expectedStackFrames, stackTraceResponse2.StackFrames.WithoutResolution());
+        Assert.Single(scopesResponse2.Scopes);
+        DapScope scope = scopesResponse2.Scopes.Single();
 
-		var expectedStackTrace = $"   at System.Number.ThrowFormatException[TChar](ReadOnlySpan`1 value){Environment.NewLine}   at System.Int32.Parse(String s){Environment.NewLine}   at DebuggableConsoleApp.Exceptions.Test(ExceptionToThrow exceptionToThrow) in {breakpointedFilePath}:line 18";
-		List<Variable> expectedVariables =
-		[
-			new() { Name = "$exception",  EvaluateName = "$exception",  Value = $"System.FormatException: The input string 'x' was not in a correct format.{Environment.NewLine}{expectedStackTrace}", Type = "System.FormatException", VariablesReference = 2 }
-		];
-		debugProtocolHost.WithVariablesRequest(scope.VariablesReference, out var variables);
+        string expectedStackTrace = $"   at System.Number.ThrowFormatException[TChar](ReadOnlySpan`1 value){Environment.NewLine}   at System.Int32.Parse(String s){Environment.NewLine}   at DebuggableConsoleApp.Exceptions.Test(ExceptionToThrow exceptionToThrow) in {breakpointedFilePath}:line 18";
+        List<DapVariable> expectedVariables =
+        [
+            new() { Name = "$exception",  EvaluateName = "$exception",  Value = $"System.FormatException: The input string 'x' was not in a correct format.{Environment.NewLine}{expectedStackTrace}", Type = "System.FormatException", VariablesReference = 2 }
+        ];
+        debugProtocolHost.WithVariablesRequest(scope.VariablesReference, out List<DapVariable>? variables);
 
-		variables.Should().HaveCount(expectedVariables.Count);
-		variables.ShouldBeEquivalentToDebuggerVariables(expectedVariables);
+        Assert.Equal(expectedVariables.Count, variables.Count);
+        variables.ShouldBeEquivalentToDebuggerVariables(expectedVariables);
 
-		debugProtocolHost.WithEvaluateRequest(stackTraceResponse.StackFrames.First().Id, "$exception", out var evaluateResponse2);
-		evaluateResponse2.Result.Should().Be(expectedVariables[0].Value);
+        debugProtocolHost.WithEvaluateRequest(stackTraceResponse.StackFrames.First().Id, "$exception", out EvaluateResponse? evaluateResponse2);
+        Assert.Equal(expectedVariables[0].Value, evaluateResponse2.Result);
 
-		var expectedExceptionInfoResponse = new ExceptionInfoResponse
-		{
-			ExceptionId = "CLR/System.FormatException",
-			Description = "Exception thrown: 'System.FormatException' in System.Private.CoreLib.dll: 'The input string 'x' was not in a correct format.'",
-			BreakMode = ExceptionBreakMode.Always,
-			Code = 0,
-			Details = new ExceptionDetails
-			{
-				Message = "The input string 'x' was not in a correct format.",
-				TypeName = "FormatException",
-				FullTypeName = "System.FormatException",
-				EvaluateName = "$exception",
-				StackTrace = expectedStackTrace,
-				InnerException = [],
-				FormattedDescription = "**System.FormatException:** 'The input string 'x' was not in a correct format.'",
-				HResult = -2146233033,
-				Source = "System.Private.CoreLib"
-			}
-		};
+        var expectedExceptionInfoResponse = new ExceptionInfoResponse
+        {
+            ExceptionId = "CLR/System.FormatException",
+            Description = "Exception thrown: 'System.FormatException' in System.Private.CoreLib.dll: 'The input string 'x' was not in a correct format.'",
+            BreakMode = "always",
+            Code = 0,
+            Details = new DapExceptionDetails
+            {
+                Message = "The input string 'x' was not in a correct format.",
+                TypeName = "FormatException",
+                FullTypeName = "System.FormatException",
+                EvaluateName = "$exception",
+                StackTrace = expectedStackTrace,
+                InnerException = [],
+                FormattedDescription = "**System.FormatException:** 'The input string 'x' was not in a correct format.'",
+                HResult = -2146233033,
+                Source = "System.Private.CoreLib"
+            }
+        };
 
-		var exceptionInfoResponse = debugProtocolHost.SendRequestSync(new ExceptionInfoRequest(stoppedEvent2.ThreadId.Value));
-		exceptionInfoResponse.Should().BeEquivalentTo(expectedExceptionInfoResponse);
+        ExceptionInfoResponse exceptionInfoResponse = debugProtocolHost.Request<ExceptionInfoResponse>("exceptionInfo", new ThreadArguments(stoppedEvent2.ThreadId.Value));
+        Assert.Equivalent(expectedExceptionInfoResponse, exceptionInfoResponse, strict: true);
 
-		// Now we should land on the catch block
-		var stoppedEvent3 = await debugProtocolHost.WithStepOverRequest(stoppedEvent2.ThreadId!.Value).WaitForStoppedEvent(debugEventTcs);
-		var stopInfo3 = stoppedEvent3.ReadStopInfo();
-		stopInfo3.Should().Be((breakpointedFilePath, 32, 3));
-	}
+        // Now we should land on the catch block
+        StoppedEvent stoppedEvent3 = await debugProtocolHost.WithStepOverRequest(stoppedEvent2.ThreadId!.Value).WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo3 = stoppedEvent3.ReadStopInfo();
+        Assert.Equal((breakpointedFilePath, 32, 3), stopInfo3);
+    }
 
-	[Fact]
-	public Task ExceptionFilters_BreakOnAllExceptions()
-	{
-		return AssertBreaksOnException(
-			new SetExceptionBreakpointsRequest { Filters = ["all"], FilterOptions = [] },
-			exceptionToThrow: "Normal",
-			justMyCode: true,
-			expectedExceptionType: "System.InvalidOperationException",
-			expectedBreakMode: ExceptionBreakMode.Always);
-	}
+    [Fact]
+    public Task ExceptionFilters_BreakOnAllExceptions()
+    {
+        return AssertBreaksOnException(
+            new SetExceptionBreakpointsArguments(["all"], []),
+            exceptionToThrow: "Normal",
+            justMyCode: true,
+            expectedExceptionType: "System.InvalidOperationException",
+            expectedBreakMode: "always");
+    }
 
-	[Fact]
-	public Task ExceptionFilters_AllExceptionsWithJmcEnabled_DoesNotBreakWhenHandledInExternalCode()
-	{
-		return AssertContinuesWithoutExceptionStop(
-			new SetExceptionBreakpointsRequest { Filters = ["all"], FilterOptions = [] },
-			exceptionToThrow: "HandledWithinExternalCode",
-			justMyCode: true);
-	}
+    [Fact]
+    public Task ExceptionFilters_AllExceptionsWithJmcEnabled_DoesNotBreakWhenHandledInExternalCode()
+    {
+        return AssertContinuesWithoutExceptionStop(
+            new SetExceptionBreakpointsArguments(["all"], []),
+            exceptionToThrow: "HandledWithinExternalCode",
+            justMyCode: true);
+    }
 
-	[Fact]
-	public Task ExceptionFilters_AllExceptionsWithJmcDisabled_BreaksWhenHandledInExternalCode()
-	{
-		return AssertBreaksOnException(
-			new SetExceptionBreakpointsRequest { Filters = ["all"], FilterOptions = [] },
-			exceptionToThrow: "HandledWithinExternalCode",
-			justMyCode: false,
-			expectedExceptionType: "System.ArgumentException",
-			expectedBreakMode: ExceptionBreakMode.Always);
-	}
+    [Fact]
+    public Task ExceptionFilters_AllExceptionsWithJmcDisabled_BreaksWhenHandledInExternalCode()
+    {
+        return AssertBreaksOnException(
+            new SetExceptionBreakpointsArguments(["all"], []),
+            exceptionToThrow: "HandledWithinExternalCode",
+            justMyCode: false,
+            expectedExceptionType: "System.ArgumentException",
+            expectedBreakMode: "always");
+    }
 
-	[Fact]
-	public Task ExceptionFilters_AllExceptionsWithJmcEnabled_BreaksWhenReturnedToUserCode()
-	{
-		return AssertBreaksOnException(
-			new SetExceptionBreakpointsRequest { Filters = ["all"], FilterOptions = [] },
-			exceptionToThrow: "ExternalCode",
-			justMyCode: true,
-			expectedExceptionType: "System.FormatException",
-			expectedBreakMode: ExceptionBreakMode.Always);
-	}
+    [Fact]
+    public Task ExceptionFilters_AllExceptionsWithJmcEnabled_BreaksWhenReturnedToUserCode()
+    {
+        return AssertBreaksOnException(
+            new SetExceptionBreakpointsArguments(["all"], []),
+            exceptionToThrow: "ExternalCode",
+            justMyCode: true,
+            expectedExceptionType: "System.FormatException",
+            expectedBreakMode: "always");
+    }
 
-	[Fact]
-	public Task ExceptionFilters_BreakOnUserUnhandledExceptions()
-	{
-		return AssertBreaksOnException(
-			new SetExceptionBreakpointsRequest { Filters = ["user-unhandled"], FilterOptions = [] },
-			exceptionToThrow: "UserUnhandled",
-			justMyCode: true,
-			expectedExceptionType: "System.InvalidOperationException",
-			expectedBreakMode: ExceptionBreakMode.UserUnhandled);
-	}
+    [Fact]
+    public Task ExceptionFilters_BreakOnUserUnhandledExceptions()
+    {
+        return AssertBreaksOnException(
+            new SetExceptionBreakpointsArguments(["user-unhandled"], []),
+            exceptionToThrow: "UserUnhandled",
+            justMyCode: true,
+            expectedExceptionType: "System.InvalidOperationException",
+            expectedBreakMode: "userUnhandled");
+    }
 
-	[Fact]
-	public Task ExceptionFilters_UserUnhandledDoesNotBreakOnExceptionHandledInUserCode()
-	{
-		return AssertContinuesWithoutExceptionStop(
-			new SetExceptionBreakpointsRequest { Filters = ["user-unhandled"], FilterOptions = [] },
-			exceptionToThrow: "Normal",
-			justMyCode: true);
-	}
+    [Fact]
+    public Task ExceptionFilters_UserUnhandledDoesNotBreakOnExceptionHandledInUserCode()
+    {
+        return AssertContinuesWithoutExceptionStop(
+            new SetExceptionBreakpointsArguments(["user-unhandled"], []),
+            exceptionToThrow: "Normal",
+            justMyCode: true);
+    }
 
-	[Theory]
-	[InlineData("System.InvalidOperationException", true)]
-	[InlineData("System.FormatException", false)]
-	public Task ExceptionFilters_UserUnhandledConditionFiltersExceptionTypes(string condition, bool expectExceptionStop)
-	{
-		var request = new SetExceptionBreakpointsRequest
-		{
-			Filters = [],
-			FilterOptions = [new ExceptionFilterOptions("user-unhandled") { Condition = condition }]
-		};
+    [Theory]
+    [InlineData("System.InvalidOperationException", true)]
+    [InlineData("System.FormatException", false)]
+    public Task ExceptionFilters_UserUnhandledConditionFiltersExceptionTypes(string condition, bool expectExceptionStop)
+    {
+        var request = new SetExceptionBreakpointsArguments([], [new DapExceptionFilterOptions("user-unhandled", condition)]);
 
-		return expectExceptionStop
-			? AssertBreaksOnException(request, exceptionToThrow: "UserUnhandled", justMyCode: true, expectedExceptionType: "System.InvalidOperationException", expectedBreakMode: ExceptionBreakMode.UserUnhandled)
-			: AssertContinuesWithoutExceptionStop(request, exceptionToThrow: "UserUnhandled", justMyCode: true);
-	}
+        return expectExceptionStop
+            ? AssertBreaksOnException(request, exceptionToThrow: "UserUnhandled", justMyCode: true, expectedExceptionType: "System.InvalidOperationException", expectedBreakMode: "userUnhandled")
+            : AssertContinuesWithoutExceptionStop(request, exceptionToThrow: "UserUnhandled", justMyCode: true);
+    }
 
-	[Fact]
-	public Task ExceptionFilters_NoFiltersDoesNotBreakOnHandledException()
-	{
-		return AssertContinuesWithoutExceptionStop(
-			new SetExceptionBreakpointsRequest { Filters = [], FilterOptions = [] },
-			exceptionToThrow: "Normal",
-			justMyCode: true);
-	}
+    [Fact]
+    public Task ExceptionFilters_NoFiltersDoesNotBreakOnHandledException()
+    {
+        return AssertContinuesWithoutExceptionStop(
+            new SetExceptionBreakpointsArguments([], []),
+            exceptionToThrow: "Normal",
+            justMyCode: true);
+    }
 
-	[Theory]
-	[InlineData("System.InvalidOperationException", true)]
-	[InlineData("System.FormatException", false)]
-	public Task ExceptionFilters_AllExceptionsIncludeConditionFiltersExceptionTypes(string condition, bool expectExceptionStop)
-	{
-		return AssertAllExceptionsCondition(condition, expectExceptionStop);
-	}
+    [Theory]
+    [InlineData("System.InvalidOperationException", true)]
+    [InlineData("System.FormatException", false)]
+    public Task ExceptionFilters_AllExceptionsIncludeConditionFiltersExceptionTypes(string condition, bool expectExceptionStop)
+    {
+        return AssertAllExceptionsCondition(condition, expectExceptionStop);
+    }
 
-	[Theory]
-	[InlineData("!System.FormatException", true)]
-	[InlineData("!System.InvalidOperationException", false)]
-	public Task ExceptionFilters_AllExceptionsExcludeConditionFiltersExceptionTypes(string condition, bool expectExceptionStop)
-	{
-		return AssertAllExceptionsCondition(condition, expectExceptionStop);
-	}
+    [Theory]
+    [InlineData("!System.FormatException", true)]
+    [InlineData("!System.InvalidOperationException", false)]
+    public Task ExceptionFilters_AllExceptionsExcludeConditionFiltersExceptionTypes(string condition, bool expectExceptionStop)
+    {
+        return AssertAllExceptionsCondition(condition, expectExceptionStop);
+    }
 
-	[Theory]
-	[InlineData("System.FormatException,System.InvalidOperationException", true)]
-	[InlineData("!System.FormatException,System.ArgumentException", true)]
-	[InlineData("System.FormatException, System.InvalidOperationException", true)]
-	public Task ExceptionFilters_AllExceptionsConditionSupportsMultipleTypes(string condition, bool expectExceptionStop)
-	{
-		return AssertAllExceptionsCondition(condition, expectExceptionStop);
-	}
+    [Theory]
+    [InlineData("System.FormatException,System.InvalidOperationException", true)]
+    [InlineData("!System.FormatException,System.ArgumentException", true)]
+    [InlineData("System.FormatException, System.InvalidOperationException", true)]
+    public Task ExceptionFilters_AllExceptionsConditionSupportsMultipleTypes(string condition, bool expectExceptionStop)
+    {
+        return AssertAllExceptionsCondition(condition, expectExceptionStop);
+    }
 
-	private Task AssertAllExceptionsCondition(string condition, bool expectExceptionStop)
-	{
-		var request = new SetExceptionBreakpointsRequest
-		{
-			Filters = [],
-			FilterOptions = [new ExceptionFilterOptions("all") { Condition = condition }]
-		};
+    private Task AssertAllExceptionsCondition(string condition, bool expectExceptionStop)
+    {
+        var request = new SetExceptionBreakpointsArguments([], [new DapExceptionFilterOptions("all", condition)]);
 
-		return expectExceptionStop
-			? AssertBreaksOnException(request, exceptionToThrow: "Normal", justMyCode: true, expectedExceptionType: "System.InvalidOperationException", expectedBreakMode: ExceptionBreakMode.Always)
-			: AssertContinuesWithoutExceptionStop(request, exceptionToThrow: "Normal", justMyCode: true);
-	}
+        return expectExceptionStop
+            ? AssertBreaksOnException(request, exceptionToThrow: "Normal", justMyCode: true, expectedExceptionType: "System.InvalidOperationException", expectedBreakMode: "always")
+            : AssertContinuesWithoutExceptionStop(request, exceptionToThrow: "Normal", justMyCode: true);
+    }
 
-	private async Task AssertBreaksOnException(
-		SetExceptionBreakpointsRequest exceptionBreakpointsRequest,
-		string exceptionToThrow,
-		bool justMyCode,
-		string expectedExceptionType,
-		ExceptionBreakMode expectedBreakMode)
-	{
-		const bool startSuspended = true;
-		var (debugProtocolHost, initializedEventTcs, debugEventTcs, adapter, process) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended);
-		using var _ = adapter;
-		using var __ = new ProcessKiller(process);
-		using var ___ = debugProtocolHost;
+    private async Task AssertBreaksOnException(
+        SetExceptionBreakpointsArguments exceptionBreakpointsRequest,
+        string exceptionToThrow,
+        bool justMyCode,
+        string expectedExceptionType,
+        string expectedBreakMode)
+    {
+        const bool startSuspended = true;
+        using DebugSession debugProtocolHost = DebugSession.ForAttach(testOutputHelper, startSuspended, out Process process);
 
-		await debugProtocolHost
-			.WithInitializeRequest()
-			.WithAttachRequest(process.Id, justMyCode)
-			.WaitForInitializedEvent(initializedEventTcs);
-		debugProtocolHost.SendRequestSync(exceptionBreakpointsRequest);
+        await debugProtocolHost
+            .WithInitializeRequest()
+            .WithAttachRequest(process.Id, justMyCode)
+            .WaitForInitializedEvent();
+        debugProtocolHost.Request("setExceptionBreakpoints", exceptionBreakpointsRequest);
 
-		const int setupBreakpointLine = 24;
-		const int completionMarkerLine = 35;
-		var programPath = Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "Program.cs");
-		debugProtocolHost
-			.WithBreakpointsRequest([setupBreakpointLine], programPath)
-			.WithConfigurationDoneRequest()
-			.WithOptionalResumeRuntime(process.Id, startSuspended);
+        const int setupBreakpointLine = 24;
+        const int completionMarkerLine = 35;
+        string programPath = Debuggees.Source("DebuggableConsoleApp", "Program.cs");
+        debugProtocolHost
+            .WithBreakpointsRequest([setupBreakpointLine], programPath)
+            .WithConfigurationDoneRequest()
+            .WithOptionalResumeRuntime(process.Id, startSuspended);
 
-		var setupStop = await debugProtocolHost.WaitForStoppedEvent(debugEventTcs);
-		setupStop.Reason.Should().Be(StoppedEvent.ReasonValue.Breakpoint);
-		var setupStopInfo = setupStop.ReadStopInfo();
-		setupStopInfo.filePath.Should().Be(programPath);
-		setupStopInfo.line.Should().Be(setupBreakpointLine);
+        StoppedEvent setupStop = await debugProtocolHost.WaitForStoppedEvent();
+        Assert.Equal("breakpoint", setupStop.Reason);
+        (string filePath, int line, int column) setupStopInfo = setupStop.ReadStopInfo();
+        Assert.Equal(programPath, setupStopInfo.filePath);
+        Assert.Equal(setupBreakpointLine, setupStopInfo.line);
 
-		debugProtocolHost.WithStackTraceRequest(setupStop.ThreadId!.Value, out var stackTraceResponse);
-		debugProtocolHost.WithEvaluateRequest(stackTraceResponse.StackFrames.First().Id, $"exceptionToThrow = ExceptionToThrow.{exceptionToThrow}", out var evaluateResponse);
-		evaluateResponse.Result.Should().Be(exceptionToThrow);
+        debugProtocolHost.WithStackTraceRequest(setupStop.ThreadId!.Value, out StackTraceResponse? stackTraceResponse);
+        debugProtocolHost.WithEvaluateRequest(stackTraceResponse.StackFrames.First().Id, $"exceptionToThrow = ExceptionToThrow.{exceptionToThrow}", out EvaluateResponse? evaluateResponse);
+        Assert.Equal(exceptionToThrow, evaluateResponse.Result);
 
-		debugProtocolHost
-			.WithBreakpointsRequest([completionMarkerLine], programPath)
-			.WithContinueRequest();
+        debugProtocolHost
+            .WithBreakpointsRequest([completionMarkerLine], programPath)
+            .WithContinueRequest();
 
-		var exceptionStop = await debugProtocolHost.WaitForStoppedEvent(debugEventTcs);
-		exceptionStop.Reason.Should().Be(StoppedEvent.ReasonValue.Exception);
+        StoppedEvent exceptionStop = await debugProtocolHost.WaitForStoppedEvent();
+        Assert.Equal("exception", exceptionStop.Reason);
 
-		var exceptionInfo = debugProtocolHost.SendRequestSync(new ExceptionInfoRequest(exceptionStop.ThreadId!.Value));
-		exceptionInfo.Details!.FullTypeName.Should().Be(expectedExceptionType);
-		exceptionInfo.BreakMode.Should().Be(expectedBreakMode);
-	}
+        ExceptionInfoResponse exceptionInfo = debugProtocolHost.Request<ExceptionInfoResponse>("exceptionInfo", new ThreadArguments(exceptionStop.ThreadId!.Value));
+        Assert.Equal(expectedExceptionType, exceptionInfo.Details!.FullTypeName);
+        Assert.Equal(expectedBreakMode, exceptionInfo.BreakMode);
+    }
 
-	private async Task AssertContinuesWithoutExceptionStop(
-		SetExceptionBreakpointsRequest exceptionBreakpointsRequest,
-		string exceptionToThrow,
-		bool justMyCode)
-	{
-		const bool startSuspended = true;
-		var (debugProtocolHost, initializedEventTcs, debugEventTcs, adapter, process) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended);
-		using var _ = adapter;
-		using var __ = new ProcessKiller(process);
-		using var ___ = debugProtocolHost;
+    private async Task AssertContinuesWithoutExceptionStop(
+        SetExceptionBreakpointsArguments exceptionBreakpointsRequest,
+        string exceptionToThrow,
+        bool justMyCode)
+    {
+        const bool startSuspended = true;
+        using DebugSession debugProtocolHost = DebugSession.ForAttach(testOutputHelper, startSuspended, out Process process);
 
-		await debugProtocolHost
-			.WithInitializeRequest()
-			.WithAttachRequest(process.Id, justMyCode)
-			.WaitForInitializedEvent(initializedEventTcs);
-		debugProtocolHost.SendRequestSync(exceptionBreakpointsRequest);
+        await debugProtocolHost
+            .WithInitializeRequest()
+            .WithAttachRequest(process.Id, justMyCode)
+            .WaitForInitializedEvent();
+        debugProtocolHost.Request("setExceptionBreakpoints", exceptionBreakpointsRequest);
 
-		const int setupBreakpointLine = 24;
-		const int completionMarkerLine = 35;
-		var programPath = Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "Program.cs");
-		debugProtocolHost
-			.WithBreakpointsRequest([setupBreakpointLine], programPath)
-			.WithConfigurationDoneRequest()
-			.WithOptionalResumeRuntime(process.Id, startSuspended);
+        const int setupBreakpointLine = 24;
+        const int completionMarkerLine = 35;
+        string programPath = Debuggees.Source("DebuggableConsoleApp", "Program.cs");
+        debugProtocolHost
+            .WithBreakpointsRequest([setupBreakpointLine], programPath)
+            .WithConfigurationDoneRequest()
+            .WithOptionalResumeRuntime(process.Id, startSuspended);
 
-		var setupStop = await debugProtocolHost.WaitForStoppedEvent(debugEventTcs);
-		setupStop.Reason.Should().Be(StoppedEvent.ReasonValue.Breakpoint);
-		var setupStopInfo = setupStop.ReadStopInfo();
-		setupStopInfo.filePath.Should().Be(programPath);
-		setupStopInfo.line.Should().Be(setupBreakpointLine);
+        StoppedEvent setupStop = await debugProtocolHost.WaitForStoppedEvent();
+        Assert.Equal("breakpoint", setupStop.Reason);
+        (string filePath, int line, int column) setupStopInfo = setupStop.ReadStopInfo();
+        Assert.Equal(programPath, setupStopInfo.filePath);
+        Assert.Equal(setupBreakpointLine, setupStopInfo.line);
 
-		debugProtocolHost.WithStackTraceRequest(setupStop.ThreadId!.Value, out var stackTraceResponse);
-		debugProtocolHost.WithEvaluateRequest(stackTraceResponse.StackFrames.First().Id, $"exceptionToThrow = ExceptionToThrow.{exceptionToThrow}", out var evaluateResponse);
-		evaluateResponse.Result.Should().Be(exceptionToThrow);
+        debugProtocolHost.WithStackTraceRequest(setupStop.ThreadId!.Value, out StackTraceResponse? stackTraceResponse);
+        debugProtocolHost.WithEvaluateRequest(stackTraceResponse.StackFrames.First().Id, $"exceptionToThrow = ExceptionToThrow.{exceptionToThrow}", out EvaluateResponse? evaluateResponse);
+        Assert.Equal(exceptionToThrow, evaluateResponse.Result);
 
-		debugProtocolHost
-			.WithBreakpointsRequest([completionMarkerLine], programPath)
-			.WithContinueRequest();
+        debugProtocolHost
+            .WithBreakpointsRequest([completionMarkerLine], programPath)
+            .WithContinueRequest();
 
-		var completionStop = await debugProtocolHost.WaitForStoppedEvent(debugEventTcs);
-		var completionStackFrame = debugProtocolHost.GetTopStackFrame(completionStop.ThreadId!.Value);
-		completionStackFrame.Source.Path.Should().Be(programPath);
-		completionStackFrame.Line.Should().Be(completionMarkerLine);
-		completionStop.Reason.Should().Be(StoppedEvent.ReasonValue.Breakpoint);
-	}
+        StoppedEvent completionStop = await debugProtocolHost.WaitForStoppedEvent();
+        DapStackFrame completionStackFrame = debugProtocolHost.GetTopStackFrame(completionStop.ThreadId!.Value);
+        Assert.Equal(programPath, completionStackFrame.Source?.Path);
+        Assert.Equal(completionMarkerLine, completionStackFrame.Line);
+        Assert.Equal("breakpoint", completionStop.Reason);
+    }
 }

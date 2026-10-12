@@ -1,4 +1,4 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Provides information about the layout of an array object in memory.</para>
@@ -10,43 +10,43 @@ namespace ICorDebugSharp;
 /// </remarks>
 public struct COR_ARRAY_LAYOUT
 {
-	/// <summary>
-	/// <para>The identifier of the type of objects that the array contains.</para>
-	/// </summary>
-	public COR_TYPEID componentID;
+    /// <summary>
+    /// <para>The identifier of the type of objects that the array contains.</para>
+    /// </summary>
+    public COR_TYPEID componentID;
 
-	/// <summary>
-	/// <para>A CorElementType enumeration value that indicates whether the component is a garbage collection reference, a value class, or a primitive.</para>
-	/// </summary>
-	public CorElementType componentType;
+    /// <summary>
+    /// <para>A CorElementType enumeration value that indicates whether the component is a garbage collection reference, a value class, or a primitive.</para>
+    /// </summary>
+    public CorElementType componentType;
 
-	/// <summary>
-	/// <para>The offset to the first element in the array.</para>
-	/// </summary>
-	public uint firstElementOffset;
+    /// <summary>
+    /// <para>The offset to the first element in the array.</para>
+    /// </summary>
+    public uint firstElementOffset;
 
-	/// <summary>
-	/// <para>The size of each element.</para>
-	/// </summary>
-	public uint elementSize;
+    /// <summary>
+    /// <para>The size of each element.</para>
+    /// </summary>
+    public uint elementSize;
 
-	/// <summary>
-	/// <para>The offset to the number of elements in the array.</para>
-	/// </summary>
-	public uint countOffset;
+    /// <summary>
+    /// <para>The offset to the number of elements in the array.</para>
+    /// </summary>
+    public uint countOffset;
 
-	/// <summary>
-	/// <para>The size of the rank, in bytes.</para>
-	/// </summary>
-	public uint rankSize;
+    /// <summary>
+    /// <para>The size of the rank, in bytes.</para>
+    /// </summary>
+    public uint rankSize;
 
-	/// <summary>
-	/// <para>The number of ranks in the array.</para>
-	/// </summary>
-	public uint numRanks;
+    /// <summary>
+    /// <para>The number of ranks in the array.</para>
+    /// </summary>
+    public uint numRanks;
 
-	/// <summary>
-	/// <para>The offset at which the ranks start.</para>
-	/// </summary>
-	public uint rankOffset;
+    /// <summary>
+    /// <para>The offset at which the ranks start.</para>
+    /// </summary>
+    public uint rankOffset;
 }

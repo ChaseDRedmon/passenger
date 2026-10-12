@@ -13,6 +13,12 @@ What Passenger uses that others made, and under what terms.
 | Microsoft.CodeAnalysis.CSharp (Roslyn) | MIT | https://github.com/dotnet/roslyn |
 | roslyn-language-server (Roslyn's language server, copied beside the app under `roslyn/`) | MIT | https://github.com/dotnet/roslyn |
 | StreamJsonRpc | MIT | https://github.com/microsoft/vs-streamjsonrpc |
+| Microsoft.Diagnostics.DbgShim, Microsoft.Diagnostics.NETCore.Client (the debugger's runtime interface) | MIT | https://github.com/dotnet/diagnostics |
+| ICSharpCode.Decompiler (ILSpy's decompiler, for frames without source) | MIT | https://github.com/icsharpcode/ILSpy |
+| MP.Microsoft.CodeAnalysis.CSharp.ExpressionEvaluator.ExpressionCompiler (Roslyn's expression compiler, packed from Roslyn's source by MattParkerDev) | MIT | https://github.com/MattParkerDev/roslyn (branch custom-ee-5.9.0) |
+| NeoSmart.AsyncLock | MIT | https://github.com/neosmart/AsyncLock |
+| ZLinq | MIT | https://github.com/Cysharp/ZLinq |
+| Krafs.Publicizer (build time only) | MIT | https://github.com/krafs/Publicizer |
 
 ## SharpDbg and ICorDebugSharp
 

@@ -65,12 +65,17 @@ window or takes the focus; it shows everything but the system's own window chrom
   solutions and projects for the Explorer's Solution view.
 - `src/Passenger.App`: the shell. One window-wide keymap (`AppActions.cs`) routes IDE actions
   itself and editor actions to the focused editor. Explorer, editor tabs, files on disk.
+- The debugger, Passenger's own, started from SharpDbg and ICorDebugSharp (`docs/architecture.md`, The debugger):
+  `src/Passenger.Debugger.Interop` (ICorDebug, IMetaDataImport and dbgshim for the COM source generator),
+  `src/Passenger.Debugger` (the engine), `src/Passenger.Dap` (the Debug Adapter Protocol, both ends) and
+  `src/Passenger.DebugAdapter` (the engine behind the protocol, its own process, carried under `debugger/`).
 
 ## Rules
 
 - **Never use Microsoft's debugger (vsdbg) or anything from C# Dev Kit**, including Dev Kit's pieces that ship inside
   VS Code's C# extension (`.debugger`, `.roslynDevKit`, `.testDiscovery`). Their licences limit them to Microsoft's
   own editors. Nothing is copied out of an installed extension's folder; `roslyn-language-server` comes from NuGet.
+  Nor Microsoft's `VSCodeDebugProtocol` package, whose terms are not open source: `Passenger.Dap` is the protocol.
 - **No Avalonia Accelerate components** (TreeDataGrid and the rest need a paid licence).
 - **Every dependency, icon or asset** has an open-source licence and an entry in `THIRD_PARTY_NOTICES.md`, added in the
   same change that brings it in.
@@ -95,6 +100,10 @@ own; a test says what a person would see or get ("an edit saved keeps the file's
 "typing never loses a word's colour"), and its failure message names the consequence. The long
 random editing session checks every key against a plain string model, which is what keeps the rope,
 the line index and undo honest; keep it passing rather than narrowing it.
+
+The debugger's tests (`tests/Passenger.Tests/Debugging`) run the adapter from the tests' own `debugger/` folder, as
+the IDE does, and launch or attach to the programs in `tests/Debuggees`, whose lines and columns (tabs included) they
+stop at: moving a line there means moving the tests that name it. They run one at a time (`DebugSession.Collection`).
 
 ## Code style
 

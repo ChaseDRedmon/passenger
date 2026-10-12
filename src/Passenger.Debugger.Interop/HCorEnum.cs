@@ -1,8 +1,8 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 public struct HCorEnum
 {
-	private nint hEnum;
+    private nint hEnum;
 
-	public readonly bool IsNull => hEnum == 0;
+    public readonly bool IsNull => hEnum == 0;
 }

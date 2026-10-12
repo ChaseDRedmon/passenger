@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Represents an in-memory buffer.</para>
@@ -15,29 +15,29 @@ namespace ICorDebugSharp;
 [Guid("677888B3-D160-4B8C-A73B-D79E6AAA1D13")]
 public partial interface ICorDebugMemoryBuffer
 {
-	/// <summary>
-	/// <para>Gets the starting address of the memory buffer.</para>
-	/// </summary>
-	/// <param name="address">
-	/// <para>A pointer to the starting address of the memory buffer.</para>
-	/// </param>
-	/// <remarks>
-	/// <para><b>Note:</b> This method is available with .NET Native only.</para>
-	/// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugmemorybuffer-getstartaddress-method">Microsoft Learn</see>.</para>
-	/// </remarks>
-	[PreserveSig]
-	int TryGetStartAddress(out nint address);
+    /// <summary>
+    /// <para>Gets the starting address of the memory buffer.</para>
+    /// </summary>
+    /// <param name="address">
+    /// <para>A pointer to the starting address of the memory buffer.</para>
+    /// </param>
+    /// <remarks>
+    /// <para><b>Note:</b> This method is available with .NET Native only.</para>
+    /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugmemorybuffer-getstartaddress-method">Microsoft Learn</see>.</para>
+    /// </remarks>
+    [PreserveSig]
+    int TryGetStartAddress(out nint address);
 
-	/// <summary>
-	/// <para>Gets the size of the memory buffer in bytes.</para>
-	/// </summary>
-	/// <param name="pcbBufferLength">
-	/// <para>A pointer to the size of the memory buffer.</para>
-	/// </param>
-	/// <remarks>
-	/// <para><b>Note:</b> This method is available with .NET Native only.</para>
-	/// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugmemorybuffer-getsize-method">Microsoft Learn</see>.</para>
-	/// </remarks>
-	[PreserveSig]
-	int TryGetSize(out uint pcbBufferLength);
+    /// <summary>
+    /// <para>Gets the size of the memory buffer in bytes.</para>
+    /// </summary>
+    /// <param name="pcbBufferLength">
+    /// <para>A pointer to the size of the memory buffer.</para>
+    /// </param>
+    /// <remarks>
+    /// <para><b>Note:</b> This method is available with .NET Native only.</para>
+    /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugmemorybuffer-getsize-method">Microsoft Learn</see>.</para>
+    /// </remarks>
+    [PreserveSig]
+    int TryGetSize(out uint pcbBufferLength);
 }

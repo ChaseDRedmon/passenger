@@ -1,64 +1,62 @@
-using AwesomeAssertions;
-using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol.Messages;
-using SharpDbg.Cli.Tests.Helpers;
+using System.Diagnostics;
+using Passenger.Dap;
+using Passenger.Tests.Debugging.Helpers;
 
-namespace SharpDbg.Cli.Tests;
+namespace Passenger.Tests.Debugging;
 
+[Collection(DebugSession.Collection)]
 public class AsyncEvalTests(ITestOutputHelper testOutputHelper)
 {
-	[Fact]
-	public async Task AsyncMethod_EvaluationRequest_Returns()
-	{
-		var startSuspended = true;
+    [Fact]
+    public async Task AsyncMethod_EvaluationRequest_Returns()
+    {
+        bool startSuspended = true;
 
-		var (debugProtocolHost, initializedEventTcs, debugEventTcs, adapter, p2) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended);
-		using var _ = adapter;
-		using var __ = new ProcessKiller(p2);
-		using var ___ = debugProtocolHost;
+        using DebugSession debugProtocolHost = DebugSession.ForAttach(testOutputHelper, startSuspended, out Process p2);
 
-		await debugProtocolHost
-			.WithInitializeRequest()
-			.WithAttachRequest(p2.Id)
-			.WaitForInitializedEvent(initializedEventTcs);
+        await debugProtocolHost
+            .WithInitializeRequest()
+            .WithAttachRequest(p2.Id)
+            .WaitForInitializedEvent();
 
-		var breakpointFilePath = Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "AsyncMethodEvalClass.cs");
-		debugProtocolHost
-			.WithBreakpointsRequest([10, 12], breakpointFilePath)
-			.WithConfigurationDoneRequest()
-			.WithOptionalResumeRuntime(p2.Id, startSuspended);
+        string breakpointFilePath = Debuggees.Source("DebuggableConsoleApp", "AsyncMethodEvalClass.cs");
+        debugProtocolHost
+            .WithBreakpointsRequest([10, 12], breakpointFilePath)
+            .WithConfigurationDoneRequest()
+            .WithOptionalResumeRuntime(p2.Id, startSuspended);
 
-		var stoppedEvent = await debugProtocolHost.WaitForStoppedEvent(debugEventTcs);
-		stoppedEvent.ReadStopInfo().Should().Be((breakpointFilePath, 10, 3));
-		debugProtocolHost
-			.WithStackTraceRequest(stoppedEvent.ThreadId!.Value, out var stackTraceResponse)
-			.WithScopesRequest(stackTraceResponse.StackFrames!.First().Id, out var scopesResponse);
+        StoppedEvent stoppedEvent = await debugProtocolHost.WaitForStoppedEvent();
+        Assert.Equal((breakpointFilePath, 10, 3), stoppedEvent.ReadStopInfo());
+        debugProtocolHost
+            .WithStackTraceRequest(stoppedEvent.ThreadId!.Value, out StackTraceResponse? stackTraceResponse)
+            .WithScopesRequest(stackTraceResponse.StackFrames!.First().Id, out ScopesResponse? scopesResponse);
 
-		scopesResponse.Scopes.Should().HaveCount(1);
-		var scope = scopesResponse.Scopes.Single();
+        Assert.Single(scopesResponse.Scopes);
+        DapScope scope = scopesResponse.Scopes.Single();
 
-		debugProtocolHost.WithVariablesRequest(scope.VariablesReference, out var variables);
+        debugProtocolHost.WithVariablesRequest(scope.VariablesReference, out List<DapVariable>? variables);
 
-		variables.Should().HaveCount(2);
+        Assert.Equal(2, variables.Count);
 
-		TestVariablesEval(stackTraceResponse.StackFrames!.First().Id);
+        TestVariablesEval(stackTraceResponse.StackFrames!.First().Id);
 
-		// Continue, so we hit the breakpoint after the async suspension point
-		debugProtocolHost.WithContinueRequest();
+        // Continue, so we hit the breakpoint after the async suspension point
+        debugProtocolHost.WithContinueRequest();
 
-		var stoppedEvent2 = await debugProtocolHost.WaitForStoppedEvent(debugEventTcs);
-		stoppedEvent2.ReadStopInfo().Should().Be((breakpointFilePath, 12, 3));
-		debugProtocolHost.WithStackTraceRequest(stoppedEvent2.ThreadId!.Value, out var stackTraceResponse2);
+        StoppedEvent stoppedEvent2 = await debugProtocolHost.WaitForStoppedEvent();
+        Assert.Equal((breakpointFilePath, 12, 3), stoppedEvent2.ReadStopInfo());
+        debugProtocolHost.WithStackTraceRequest(stoppedEvent2.ThreadId!.Value, out StackTraceResponse? stackTraceResponse2);
 
-		TestVariablesEval(stackTraceResponse2.StackFrames!.First().Id);
-		return;
+        TestVariablesEval(stackTraceResponse2.StackFrames!.First().Id);
+        return;
 
-		void TestVariablesEval(int stackFrameId)
-		{
-			debugProtocolHost.WithEvaluateRequest(stackFrameId, "localInt", out var evaluateResponse);
-			evaluateResponse.Result.Should().Be("4");
+        void TestVariablesEval(int stackFrameId)
+        {
+            debugProtocolHost.WithEvaluateRequest(stackFrameId, "localInt", out EvaluateResponse? evaluateResponse);
+            Assert.Equal("4", evaluateResponse.Result);
 
-			debugProtocolHost.WithEvaluateRequest(stackFrameId, "IntField", out var evaluateResponse2);
-			evaluateResponse2.Result.Should().Be("10");
-		}
-	}
+            debugProtocolHost.WithEvaluateRequest(stackFrameId, "IntField", out EvaluateResponse? evaluateResponse2);
+            Assert.Equal("10", evaluateResponse2.Result);
+        }
+    }
 }

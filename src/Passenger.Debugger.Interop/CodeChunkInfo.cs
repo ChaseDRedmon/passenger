@@ -1,4 +1,4 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Represents a single chunk of code in memory.</para>
@@ -9,13 +9,13 @@ namespace ICorDebugSharp;
 /// </remarks>
 public struct CodeChunkInfo
 {
-	/// <summary>
-	/// <para>A <c>CORDB_ADDRESS</c> value that specifies the starting address of the chunk.</para>
-	/// </summary>
-	public CORDB_ADDRESS startAddr;
+    /// <summary>
+    /// <para>A <c>CORDB_ADDRESS</c> value that specifies the starting address of the chunk.</para>
+    /// </summary>
+    public CORDB_ADDRESS startAddr;
 
-	/// <summary>
-	/// <para>The size, in bytes, of the chunk.</para>
-	/// </summary>
-	public uint length;
+    /// <summary>
+    /// <para>The size, in bytes, of the chunk.</para>
+    /// </summary>
+    public uint length;
 }

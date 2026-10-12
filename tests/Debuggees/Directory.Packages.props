@@ -1,0 +1,3 @@
+<Project>
+  <!-- The debuggees reference no packages; this keeps the repo's central versions from reaching them. -->
+</Project>

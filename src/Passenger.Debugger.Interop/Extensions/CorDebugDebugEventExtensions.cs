@@ -1,30 +1,30 @@
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
-namespace ICorDebugSharp.Extensions;
+namespace Passenger.Debugger.Interop.Extensions;
 
 public static class CorDebugDebugEventExtensions
 {
-	extension(ICorDebugDebugEvent instance)
-	{
-		/// <inheritdoc cref="M:ICorDebugSharp.ICorDebugDebugEvent.TryGetEventKind(ICorDebugSharp.CorDebugDebugEventKind@)" />
-		public CorDebugDebugEventKind EventKind
-		{
-			get
-			{
-				Marshal.ThrowExceptionForHR(instance.TryGetEventKind(out var pDebugEventKind));
-				return pDebugEventKind;
-			}
-		}
+    extension(ICorDebugDebugEvent instance)
+    {
+        /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugDebugEvent.TryGetEventKind(Passenger.Debugger.Interop.CorDebugDebugEventKind@)" />
+        public CorDebugDebugEventKind EventKind
+        {
+            get
+            {
+                Marshal.ThrowExceptionForHR(instance.TryGetEventKind(out var pDebugEventKind));
+                return pDebugEventKind;
+            }
+        }
 
-		/// <inheritdoc cref="M:ICorDebugSharp.ICorDebugDebugEvent.TryGetThread(ICorDebugSharp.ICorDebugThread@)" />
-		public ICorDebugThread Thread
-		{
-			get
-			{
-				Marshal.ThrowExceptionForHR(instance.TryGetThread(out ICorDebugThread ppThread));
-				return ppThread;
-			}
-		}
-	}
+        /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugDebugEvent.TryGetThread(Passenger.Debugger.Interop.ICorDebugThread@)" />
+        public ICorDebugThread Thread
+        {
+            get
+            {
+                Marshal.ThrowExceptionForHR(instance.TryGetThread(out ICorDebugThread ppThread));
+                return ppThread;
+            }
+        }
+    }
 }

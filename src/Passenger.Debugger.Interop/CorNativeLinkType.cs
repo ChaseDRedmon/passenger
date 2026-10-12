@@ -1,10 +1,10 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 public enum CorNativeLinkType
 {
-	nltNone = 1,
-	nltAnsi = 2,
-	nltUnicode = 3,
-	nltAuto = 4,
-	nltMaxValue = 7
+    nltNone = 1,
+    nltAnsi = 2,
+    nltUnicode = 3,
+    nltAuto = 4,
+    nltMaxValue = 7
 }

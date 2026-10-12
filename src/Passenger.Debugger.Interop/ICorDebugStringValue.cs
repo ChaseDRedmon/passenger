@@ -3,7 +3,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>A subclass of ICorDebugHeapValue that applies to string values.</para>
@@ -17,34 +17,34 @@ namespace ICorDebugSharp;
 [Guid("CC7BCAFD-8A68-11D2-983C-0000F808342D")]
 public partial interface ICorDebugStringValue : ICorDebugHeapValue
 {
-	/// <summary>
-	/// <para>Gets the number of characters in the string referenced by this ICorDebugStringValue.</para>
-	/// </summary>
-	/// <param name="pcchString">
-	/// <para>A pointer to a value that specifies the length of the string referenced by this <c>ICorDebugStringValue</c> object.</para>
-	/// </param>
-	/// <remarks>
-	/// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugstringvalue-getlength-method">Microsoft Learn</see>.</para>
-	/// </remarks>
-	[PreserveSig]
-	int TryGetLength(out uint pcchString);
+    /// <summary>
+    /// <para>Gets the number of characters in the string referenced by this ICorDebugStringValue.</para>
+    /// </summary>
+    /// <param name="pcchString">
+    /// <para>A pointer to a value that specifies the length of the string referenced by this <c>ICorDebugStringValue</c> object.</para>
+    /// </param>
+    /// <remarks>
+    /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugstringvalue-getlength-method">Microsoft Learn</see>.</para>
+    /// </remarks>
+    [PreserveSig]
+    int TryGetLength(out uint pcchString);
 
-	/// <summary>
-	/// <para>Gets the string referenced by this ICorDebugStringValue.</para>
-	/// </summary>
-	/// <param name="cchString">
-	/// <para>The size of the <c>szString</c> array.</para>
-	/// </param>
-	/// <param name="pcchString">
-	/// <para>A pointer to the number of characters returned in the <c>szString</c> array.</para>
-	/// </param>
-	/// <param name="szString">
-	/// <para>An array that stores the retrieved string.</para>
-	/// </param>
-	/// <remarks>
-	/// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugstringvalue-getstring-method">Microsoft Learn</see>.</para>
-	/// </remarks>
-	[PreserveSig]
-	int TryGetString(uint cchString, out uint pcchString, [Out][MarshalUsing(CountElementName = "cchString")] char[]? szString);
+    /// <summary>
+    /// <para>Gets the string referenced by this ICorDebugStringValue.</para>
+    /// </summary>
+    /// <param name="cchString">
+    /// <para>The size of the <c>szString</c> array.</para>
+    /// </param>
+    /// <param name="pcchString">
+    /// <para>A pointer to the number of characters returned in the <c>szString</c> array.</para>
+    /// </param>
+    /// <param name="szString">
+    /// <para>An array that stores the retrieved string.</para>
+    /// </param>
+    /// <remarks>
+    /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugstringvalue-getstring-method">Microsoft Learn</see>.</para>
+    /// </remarks>
+    [PreserveSig]
+    int TryGetString(uint cchString, out uint pcchString, [Out][MarshalUsing(CountElementName = "cchString")] char[]? szString);
 
 }

@@ -1,111 +1,103 @@
-using AwesomeAssertions;
-using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol.Messages;
-using SharpDbg.Cli.Tests.Helpers;
+using Passenger.Dap;
+using Passenger.Tests.Debugging.Helpers;
 
-namespace SharpDbg.Cli.Tests;
+namespace Passenger.Tests.Debugging;
 
+[Collection(DebugSession.Collection)]
 public class LaunchTests(ITestOutputHelper testOutputHelper)
 {
-	[Fact]
-	public async Task StopAtEntry_StopsInMainWithEntryReason()
-	{
-		var (host, initializedEventTcs, debugEventTcs, adapter) = TestHelper.GetLaunchDebugProtocolHostInProc(testOutputHelper);
-		using var _ = adapter;
-		using var __ = host;
-		var program = Path.JoinFromGitRoot("artifacts", "bin", "DebuggableConsoleApp", "debug", "DebuggableConsoleApp.dll");
+    [Fact]
+    public async Task StopAtEntry_StopsInMainWithEntryReason()
+    {
+        using DebugSession host = DebugSession.ForLaunch(testOutputHelper);
+        string program = Debuggees.Program("DebuggableConsoleApp");
 
-		await host
-			.WithInitializeRequest()
-			.WithLaunchRequest(program, stopAtEntry: true, justMyCode: true)
-			.WaitForInitializedEvent(initializedEventTcs);
-		host.WithConfigurationDoneRequest();
+        await host
+            .WithInitializeRequest()
+            .WithLaunchRequest(program, stopAtEntry: true, justMyCode: true)
+            .WaitForInitializedEvent();
+        host.WithConfigurationDoneRequest();
 
-		var stoppedEvent = await host.WaitForStoppedEvent(debugEventTcs);
-		stoppedEvent.Reason.Should().Be(StoppedEvent.ReasonValue.Entry);
-		stoppedEvent.ThreadId.Should().NotBeNull();
-		var topFrame = host.GetTopStackFrame(stoppedEvent.ThreadId!.Value);
-		topFrame.Name.Should().Contain("Main");
-		topFrame.Source?.Path.Should().EndWith("Program.cs");
-	}
+        StoppedEvent stoppedEvent = await host.WaitForStoppedEvent();
+        Assert.Equal("entry", stoppedEvent.Reason);
+        Assert.NotNull(stoppedEvent.ThreadId);
+        DapStackFrame topFrame = host.GetTopStackFrame(stoppedEvent.ThreadId!.Value);
+        Assert.Contains("Main", topFrame.Name);
+        Assert.EndsWith("Program.cs", topFrame.Source?.Path);
+    }
 
-	[Fact]
-	public async Task StopAtEntry_TopLevelStatementsEntrypointStopsInMainWithEntryReason()
-	{
-		var (host, initializedEventTcs, debugEventTcs, adapter) = TestHelper.GetLaunchDebugProtocolHostInProc(testOutputHelper);
-		using var _ = adapter;
-		using var __ = host;
-		var program = Path.JoinFromGitRoot("artifacts", "bin", "TopLevelStatementsConsoleApp", "debug", "TopLevelStatementsConsoleApp.dll");
+    [Fact]
+    public async Task StopAtEntry_TopLevelStatementsEntrypointStopsInMainWithEntryReason()
+    {
+        using DebugSession host = DebugSession.ForLaunch(testOutputHelper);
+        string program = Debuggees.Program("TopLevelStatementsConsoleApp");
 
-		await host
-			.WithInitializeRequest()
-			.WithLaunchRequest(program, stopAtEntry: true, justMyCode: true)
-			.WaitForInitializedEvent(initializedEventTcs);
-		host.WithConfigurationDoneRequest();
+        await host
+            .WithInitializeRequest()
+            .WithLaunchRequest(program, stopAtEntry: true, justMyCode: true)
+            .WaitForInitializedEvent();
+        host.WithConfigurationDoneRequest();
 
-		var stoppedEvent = await host.WaitForStoppedEvent(debugEventTcs);
-		stoppedEvent.Reason.Should().Be(StoppedEvent.ReasonValue.Entry);
-		stoppedEvent.ThreadId.Should().NotBeNull();
-		var topFrame = host.GetTopStackFrame(stoppedEvent.ThreadId!.Value);
-		topFrame.Name.Should().Contain("Main");
-		topFrame.Source?.Path.Should().EndWith("Program.cs");
-		topFrame.Line.Should().Be(2);
-		host
-			.WithScopesRequest(topFrame.Id, out var scopesResponse)
-			.WithVariablesRequest(scopesResponse.Scopes.Single().VariablesReference, out var variables);
-		variables.Should().Contain(variable => variable.Name == "test");
-	}
+        StoppedEvent stoppedEvent = await host.WaitForStoppedEvent();
+        Assert.Equal("entry", stoppedEvent.Reason);
+        Assert.NotNull(stoppedEvent.ThreadId);
+        DapStackFrame topFrame = host.GetTopStackFrame(stoppedEvent.ThreadId!.Value);
+        Assert.Contains("Main", topFrame.Name);
+        Assert.EndsWith("Program.cs", topFrame.Source?.Path);
+        Assert.Equal(2, topFrame.Line);
+        host
+            .WithScopesRequest(topFrame.Id, out ScopesResponse? scopesResponse)
+            .WithVariablesRequest(scopesResponse.Scopes.Single().VariablesReference, out List<DapVariable>? variables);
+        Assert.Contains(variables, variable => variable.Name == "test");
+    }
 
-	[Fact]
-	public async Task StopAtEntry_AsyncEntrypointStopsInMainWithEntryReason()
-	{
-		var (host, initializedEventTcs, debugEventTcs, adapter) = TestHelper.GetLaunchDebugProtocolHostInProc(testOutputHelper);
-		using var _ = adapter;
-		using var __ = host;
-		var program = Path.JoinFromGitRoot("artifacts", "bin", "AsyncEntryConsoleApp", "debug", "AsyncEntryConsoleApp.dll");
+    [Fact]
+    public async Task StopAtEntry_AsyncEntrypointStopsInMainWithEntryReason()
+    {
+        using DebugSession host = DebugSession.ForLaunch(testOutputHelper);
+        string program = Debuggees.Program("AsyncEntryConsoleApp");
 
-		await host
-			.WithInitializeRequest()
-			.WithLaunchRequest(program, stopAtEntry: true, justMyCode: true)
-			.WaitForInitializedEvent(initializedEventTcs);
-		host.WithConfigurationDoneRequest();
+        await host
+            .WithInitializeRequest()
+            .WithLaunchRequest(program, stopAtEntry: true, justMyCode: true)
+            .WaitForInitializedEvent();
+        host.WithConfigurationDoneRequest();
 
-		var stoppedEvent = await host.WaitForStoppedEvent(debugEventTcs);
-		stoppedEvent.Reason.Should().Be(StoppedEvent.ReasonValue.Entry);
-		stoppedEvent.ThreadId.Should().NotBeNull();
-		var topFrame = host.GetTopStackFrame(stoppedEvent.ThreadId!.Value);
-		topFrame.Name.Should().Contain("Main");
-		topFrame.Source?.Path.Should().EndWith("Program.cs");
-		topFrame.Line.Should().Be(5);
-		host
-			.WithScopesRequest(topFrame.Id, out var scopesResponse)
-			.WithVariablesRequest(scopesResponse.Scopes.Single().VariablesReference, out var variables);
-		variables.Should().Contain(variable => variable.Name == "test");
-	}
+        StoppedEvent stoppedEvent = await host.WaitForStoppedEvent();
+        Assert.Equal("entry", stoppedEvent.Reason);
+        Assert.NotNull(stoppedEvent.ThreadId);
+        DapStackFrame topFrame = host.GetTopStackFrame(stoppedEvent.ThreadId!.Value);
+        Assert.Contains("Main", topFrame.Name);
+        Assert.EndsWith("Program.cs", topFrame.Source?.Path);
+        Assert.Equal(5, topFrame.Line);
+        host
+            .WithScopesRequest(topFrame.Id, out ScopesResponse? scopesResponse)
+            .WithVariablesRequest(scopesResponse.Scopes.Single().VariablesReference, out List<DapVariable>? variables);
+        Assert.Contains(variables, variable => variable.Name == "test");
+    }
 
-	[Fact]
-	public async Task StopAtEntry_AsyncTopLevelStatementsEntrypointStopsInMainWithEntryReason()
-	{
-		var (host, initializedEventTcs, debugEventTcs, adapter) = TestHelper.GetLaunchDebugProtocolHostInProc(testOutputHelper);
-		using var _ = adapter;
-		using var __ = host;
-		var program = Path.JoinFromGitRoot("artifacts", "bin", "AsyncTopLevelStatementsConsoleApp", "debug", "AsyncTopLevelStatementsConsoleApp.dll");
+    [Fact]
+    public async Task StopAtEntry_AsyncTopLevelStatementsEntrypointStopsInMainWithEntryReason()
+    {
+        using DebugSession host = DebugSession.ForLaunch(testOutputHelper);
+        string program = Debuggees.Program("AsyncTopLevelStatementsConsoleApp");
 
-		await host
-			.WithInitializeRequest()
-			.WithLaunchRequest(program, stopAtEntry: true, justMyCode: true)
-			.WaitForInitializedEvent(initializedEventTcs);
-		host.WithConfigurationDoneRequest();
+        await host
+            .WithInitializeRequest()
+            .WithLaunchRequest(program, stopAtEntry: true, justMyCode: true)
+            .WaitForInitializedEvent();
+        host.WithConfigurationDoneRequest();
 
-		var stoppedEvent = await host.WaitForStoppedEvent(debugEventTcs);
-		stoppedEvent.Reason.Should().Be(StoppedEvent.ReasonValue.Entry);
-		stoppedEvent.ThreadId.Should().NotBeNull();
-		var topFrame = host.GetTopStackFrame(stoppedEvent.ThreadId!.Value);
-		topFrame.Name.Should().Contain("Main");
-		topFrame.Source?.Path.Should().EndWith("Program.cs");
-		topFrame.Line.Should().Be(2);
-		host
-			.WithScopesRequest(topFrame.Id, out var scopesResponse)
-			.WithVariablesRequest(scopesResponse.Scopes.Single().VariablesReference, out var variables);
-		variables.Should().Contain(variable => variable.Name == "test");
-	}
+        StoppedEvent stoppedEvent = await host.WaitForStoppedEvent();
+        Assert.Equal("entry", stoppedEvent.Reason);
+        Assert.NotNull(stoppedEvent.ThreadId);
+        DapStackFrame topFrame = host.GetTopStackFrame(stoppedEvent.ThreadId!.Value);
+        Assert.Contains("Main", topFrame.Name);
+        Assert.EndsWith("Program.cs", topFrame.Source?.Path);
+        Assert.Equal(2, topFrame.Line);
+        host
+            .WithScopesRequest(topFrame.Id, out ScopesResponse? scopesResponse)
+            .WithVariablesRequest(scopesResponse.Scopes.Single().VariablesReference, out List<DapVariable>? variables);
+        Assert.Contains(variables, variable => variable.Name == "test");
+    }
 }

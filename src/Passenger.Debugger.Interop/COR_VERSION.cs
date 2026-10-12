@@ -1,4 +1,4 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Stores the standard four-part version number of the common language runtime.</para>
@@ -9,23 +9,23 @@ namespace ICorDebugSharp;
 /// </remarks>
 public struct COR_VERSION
 {
-	/// <summary>
-	/// <para>The major version number.</para>
-	/// </summary>
-	public uint dwMajor;
+    /// <summary>
+    /// <para>The major version number.</para>
+    /// </summary>
+    public uint dwMajor;
 
-	/// <summary>
-	/// <para>The minor version number.</para>
-	/// </summary>
-	public uint dwMinor;
+    /// <summary>
+    /// <para>The minor version number.</para>
+    /// </summary>
+    public uint dwMinor;
 
-	/// <summary>
-	/// <para>The build number.</para>
-	/// </summary>
-	public uint dwBuild;
+    /// <summary>
+    /// <para>The build number.</para>
+    /// </summary>
+    public uint dwBuild;
 
-	/// <summary>
-	/// <para>The sub-build number.</para>
-	/// </summary>
-	public uint dwSubBuild;
+    /// <summary>
+    /// <para>The sub-build number.</para>
+    /// </summary>
+    public uint dwSubBuild;
 }

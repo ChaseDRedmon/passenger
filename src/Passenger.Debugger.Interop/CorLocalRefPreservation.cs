@@ -1,4 +1,4 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Contains flag values for the treatment of local references.</para>
@@ -8,16 +8,16 @@ namespace ICorDebugSharp;
 /// </remarks>
 public enum CorLocalRefPreservation
 {
-	/// <summary>
-	/// <para>Preserve no local references.</para>
-	/// </summary>
-	MDPreserveLocalRefsNone,
-	/// <summary>
-	/// <para>Preserve local type references.</para>
-	/// </summary>
-	MDPreserveLocalTypeRef,
-	/// <summary>
-	/// <para>Preserve local member references.</para>
-	/// </summary>
-	MDPreserveLocalMemberRef
+    /// <summary>
+    /// <para>Preserve no local references.</para>
+    /// </summary>
+    MDPreserveLocalRefsNone,
+    /// <summary>
+    /// <para>Preserve local type references.</para>
+    /// </summary>
+    MDPreserveLocalTypeRef,
+    /// <summary>
+    /// <para>Preserve local member references.</para>
+    /// </summary>
+    MDPreserveLocalMemberRef
 }

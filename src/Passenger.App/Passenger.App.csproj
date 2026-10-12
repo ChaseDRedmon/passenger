@@ -24,5 +24,24 @@
     <ProjectReference Include="../Passenger.Languages/Passenger.Languages.csproj" />
     <ProjectReference Include="../Passenger.Lsp/Passenger.Lsp.csproj" />
     <ProjectReference Include="../Passenger.Text/Passenger.Text.csproj" />
+    <ProjectReference Include="../Passenger.Dap/Passenger.Dap.csproj" />
+    <!-- Built first and carried, never linked: the adapter runs in its own process. -->
+    <ProjectReference Include="../Passenger.DebugAdapter/Passenger.DebugAdapter.csproj" ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>
+
+  <!-- The debug adapter's output becomes this project's output items under debugger/, so every project that
+       references this one (the tests) gets it beside its own binaries, as the roslyn/ server comes. -->
+  <Target Name="IncludeDebugAdapter" BeforeTargets="AssignTargetPaths">
+    <MSBuild Projects="../Passenger.DebugAdapter/Passenger.DebugAdapter.csproj" Targets="GetTargetPath" BuildInParallel="$(BuildInParallel)">
+      <Output TaskParameter="TargetOutputs" ItemName="DebugAdapterAssembly" />
+    </MSBuild>
+    <PropertyGroup>
+      <DebugAdapterFolder>@(DebugAdapterAssembly->'%(RootDir)%(Directory)')</DebugAdapterFolder>
+    </PropertyGroup>
+    <ItemGroup>
+      <DebugAdapterFile Include="$(DebugAdapterFolder)**/*" />
+      <None Include="@(DebugAdapterFile)" Link="debugger/%(DebugAdapterFile.RecursiveDir)%(DebugAdapterFile.Filename)%(DebugAdapterFile.Extension)"
+            CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    </ItemGroup>
+  </Target>
 </Project>

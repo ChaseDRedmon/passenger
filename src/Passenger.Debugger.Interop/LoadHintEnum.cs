@@ -1,9 +1,9 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 public enum LoadHintEnum
 {
-	LoadDefault,
-	LoadAlways,
-	LoadSometimes,
-	LoadNever
+    LoadDefault,
+    LoadAlways,
+    LoadSometimes,
+    LoadNever
 }

@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The debug adapter: the debugger's engine behind the Debug Adapter Protocol, in a process of its own (a
+       debugger's native side failing takes this process down, not the IDE). The app carries it under debugger/. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Passenger.DebugAdapter</RootNamespace>
+    <!-- Run by the machine's dotnet, whichever runtime is newest there. -->
+    <RollForward>Major</RollForward>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Passenger.Dap/Passenger.Dap.csproj" />
+    <ProjectReference Include="../Passenger.Debugger/Passenger.Debugger.csproj" />
+  </ItemGroup>
+</Project>

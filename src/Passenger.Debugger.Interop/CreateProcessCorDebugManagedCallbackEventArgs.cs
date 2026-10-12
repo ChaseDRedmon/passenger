@@ -1,11 +1,11 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 public sealed class CreateProcessCorDebugManagedCallbackEventArgs : CorDebugManagedCallbackEventArgs
 {
-	public ICorDebugProcess Process { get; }
+    public ICorDebugProcess Process { get; }
 
-	public CreateProcessCorDebugManagedCallbackEventArgs(ICorDebugProcess pProcess)
-	{
-		Process = pProcess;
-	}
+    public CreateProcessCorDebugManagedCallbackEventArgs(ICorDebugProcess pProcess)
+    {
+        Process = pProcess;
+    }
 }

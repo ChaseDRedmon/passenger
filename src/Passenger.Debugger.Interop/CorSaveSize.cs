@@ -1,4 +1,4 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Contains values indicating the level of precision required when querying for the size of a save operation.</para>
@@ -8,16 +8,16 @@ namespace ICorDebugSharp;
 /// </remarks>
 public enum CorSaveSize
 {
-	/// <summary>
-	/// <para>Specifies that the return value should be exact.</para>
-	/// </summary>
-	cssAccurate,
-	/// <summary>
-	/// <para>Specifies that the return value should be estimated.</para>
-	/// </summary>
-	cssQuick,
-	/// <summary>
-	/// <para>Specifies that discardable types should be removed.</para>
-	/// </summary>
-	cssDiscardTransientCAs
+    /// <summary>
+    /// <para>Specifies that the return value should be exact.</para>
+    /// </summary>
+    cssAccurate,
+    /// <summary>
+    /// <para>Specifies that the return value should be estimated.</para>
+    /// </summary>
+    cssQuick,
+    /// <summary>
+    /// <para>Specifies that discardable types should be removed.</para>
+    /// </summary>
+    cssDiscardTransientCAs
 }

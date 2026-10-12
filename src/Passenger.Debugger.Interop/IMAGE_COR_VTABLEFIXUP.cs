@@ -1,10 +1,10 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 public struct IMAGE_COR_VTABLEFIXUP
 {
-	public uint RVA;
+    public uint RVA;
 
-	public ushort Count;
+    public ushort Count;
 
-	public ushort Type;
+    public ushort Type;
 }

@@ -1,12 +1,12 @@
 using System.Runtime.InteropServices.Marshalling;
 
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Contains information about an object that is to be garbage-collected.</para>
 /// </summary>
 /// <remarks>
-/// <para>The <c>type</c> field is a <see cref="T:ICorDebugSharp.CorGCReferenceType">CorGCReferenceType</see> enumeration value that indicates where the reference came from. A particular <c>COR_GC_REFERENCE</c> value can reflect any of the following kinds of managed objects:</para>
+/// <para>The <c>type</c> field is a <see cref="T:Passenger.Debugger.Interop.CorGCReferenceType">CorGCReferenceType</see> enumeration value that indicates where the reference came from. A particular <c>COR_GC_REFERENCE</c> value can reflect any of the following kinds of managed objects:</para>
 /// <list type="bullet">
 /// <item><description><para>Objects from all managed stacks (<c>CorGCReferenceType.CorReferenceStack</c>). This includes live references in managed code, as well as objects created by the common language runtime.</para>
 /// </description></item>
@@ -29,23 +29,23 @@ namespace ICorDebugSharp;
 [NativeMarshalling(typeof(CorGcReferenceMarshaller))]
 public struct COR_GC_REFERENCE
 {
-	/// <summary>
-	/// <para>A pointer to the application domain to which the handle or object belongs. Its value may be <c>null</c>.</para>
-	/// </summary>
-	public ICorDebugAppDomain? Domain;
+    /// <summary>
+    /// <para>A pointer to the application domain to which the handle or object belongs. Its value may be <c>null</c>.</para>
+    /// </summary>
+    public ICorDebugAppDomain? Domain;
 
-	/// <summary>
-	/// <para>Either an ICorDebugValue or an ICorDebugReferenceValue interface that corresponds to the object to be garbage-collected.</para>
-	/// </summary>
-	public ICorDebugValue Location;
+    /// <summary>
+    /// <para>Either an ICorDebugValue or an ICorDebugReferenceValue interface that corresponds to the object to be garbage-collected.</para>
+    /// </summary>
+    public ICorDebugValue Location;
 
-	/// <summary>
-	/// <para>A <see cref="T:ICorDebugSharp.CorGCReferenceType">CorGCReferenceType</see> enumeration value that indicates where the root came from. For more information, see the Remarks section.</para>
-	/// </summary>
-	public CorGCReferenceType Type;
+    /// <summary>
+    /// <para>A <see cref="T:Passenger.Debugger.Interop.CorGCReferenceType">CorGCReferenceType</see> enumeration value that indicates where the root came from. For more information, see the Remarks section.</para>
+    /// </summary>
+    public CorGCReferenceType Type;
 
-	/// <summary>
-	/// <para>Additional data about the object to be garbage-collected. This information depends on the source of the object, as indicated by the <c>type</c> field. For more information, see the Remarks section.</para>
-	/// </summary>
-	public ulong ExtraData;
+    /// <summary>
+    /// <para>Additional data about the object to be garbage-collected. This information depends on the source of the object, as indicated by the <c>type</c> field. For more information, see the Remarks section.</para>
+    /// </summary>
+    public ulong ExtraData;
 }

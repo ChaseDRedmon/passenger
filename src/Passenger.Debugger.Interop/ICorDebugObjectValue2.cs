@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Extends the "ICorDebugObjectValue" interface to support inheritance and overrides.</para>
@@ -15,13 +15,13 @@ namespace ICorDebugSharp;
 [Guid("49E4A320-4A9B-4ECA-B105-229FB7D5009F")]
 public partial interface ICorDebugObjectValue2
 {
-	/// <summary>
-	/// <para>This method is not yet implemented.</para>
-	/// </summary>
-	/// <remarks>
-	/// <para>Gets interface pointers to the "ICorDebugFunction" and "ICorDebugType" instances that represent the most derived method and type for the specified member reference.</para>
-	/// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugobjectvalue2-getvirtualmethodandtype-method">Microsoft Learn</see>.</para>
-	/// </remarks>
-	[PreserveSig]
-	int TryGetVirtualMethodAndType(mdMemberRef memberRef, out ICorDebugFunction ppFunction, out ICorDebugType ppType);
+    /// <summary>
+    /// <para>This method is not yet implemented.</para>
+    /// </summary>
+    /// <remarks>
+    /// <para>Gets interface pointers to the "ICorDebugFunction" and "ICorDebugType" instances that represent the most derived method and type for the specified member reference.</para>
+    /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugobjectvalue2-getvirtualmethodandtype-method">Microsoft Learn</see>.</para>
+    /// </remarks>
+    [PreserveSig]
+    int TryGetVirtualMethodAndType(mdMemberRef memberRef, out ICorDebugFunction ppFunction, out ICorDebugType ppType);
 }

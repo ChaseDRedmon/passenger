@@ -1,16 +1,22 @@
-namespace SharpDbg.Infrastructure.Debugger;
+namespace Passenger.Debugger;
 
 public partial class ManagedDebugger
 {
-	private readonly HashSet<Guid> _transientEvaluationModules = new();
+    private readonly HashSet<Guid> _transientEvaluationModules = new();
 
-	internal void RegisterTransientEvaluationModule(Guid moduleVersionId)
-	{
-		lock (_transientEvaluationModules) _transientEvaluationModules.Add(moduleVersionId);
-	}
+    internal void RegisterTransientEvaluationModule(Guid moduleVersionId)
+    {
+        lock (_transientEvaluationModules)
+        {
+            _transientEvaluationModules.Add(moduleVersionId);
+        }
+    }
 
-	private bool TryConsumeTransientEvaluationModule(Guid moduleVersionId)
-	{
-		lock (_transientEvaluationModules) return _transientEvaluationModules.Remove(moduleVersionId);
-	}
+    private bool TryConsumeTransientEvaluationModule(Guid moduleVersionId)
+    {
+        lock (_transientEvaluationModules)
+        {
+            return _transientEvaluationModules.Remove(moduleVersionId);
+        }
+    }
 }

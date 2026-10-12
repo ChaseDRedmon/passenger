@@ -1,7 +1,7 @@
-namespace SharpDbg.Infrastructure.Debugger.PresentationHintModels;
+namespace Passenger.Debugger.PresentationHintModels;
 
 public record struct VariablePresentationHint
 {
-	public PresentationHintKind? Kind { get; set; }
-	public AttributesValue? Attributes { get; set; }
+    public PresentationHintKind? Kind { get; set; }
+    public AttributesValue? Attributes { get; set; }
 }

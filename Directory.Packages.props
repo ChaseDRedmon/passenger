@@ -14,6 +14,17 @@
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
     <PackageVersion Include="StreamJsonRpc" Version="2.25.29" />
   </ItemGroup>
+  <!-- The debugger's engine. The expression compiler is Roslyn's, packed from its own source (Roslyn does not
+       publish it) at the Microsoft.CodeAnalysis version above, which it must match. -->
+  <ItemGroup>
+    <PackageVersion Include="ICSharpCode.Decompiler" Version="11.0.0.9375" />
+    <PackageVersion Include="Krafs.Publicizer" Version="2.3.0" />
+    <PackageVersion Include="Microsoft.Diagnostics.DbgShim" Version="9.0.661903" />
+    <PackageVersion Include="Microsoft.Diagnostics.NETCore.Client" Version="0.2.661903" />
+    <PackageVersion Include="MP.Microsoft.CodeAnalysis.CSharp.ExpressionEvaluator.ExpressionCompiler" Version="5.9.0" />
+    <PackageVersion Include="NeoSmart.AsyncLock" Version="3.2.1" />
+    <PackageVersion Include="ZLinq" Version="1.5.6" />
+  </ItemGroup>
   <!-- Tests. xunit v3 stays on 3.2, the line Avalonia.Headless.XUnit is built against. -->
   <ItemGroup>
     <PackageVersion Include="Avalonia.Headless.XUnit" Version="12.1.4" />

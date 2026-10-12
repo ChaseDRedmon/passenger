@@ -1,0 +1,3 @@
+# The tests stop at these files' columns, which their tabs are part of.
+[*.cs]
+indent_style = tab

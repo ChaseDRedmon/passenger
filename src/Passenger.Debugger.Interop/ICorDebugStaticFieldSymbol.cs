@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Represents the debug symbol information for a static field.</para>
@@ -16,48 +16,48 @@ namespace ICorDebugSharp;
 [Guid("CBF9DA63-F68D-4BBB-A21C-15A45EAADF5B")]
 public partial interface ICorDebugStaticFieldSymbol
 {
-	/// <summary>
-	/// <para>Gets the name of the static field.</para>
-	/// </summary>
-	/// <param name="cchName">
-	/// <para>The number of characters in the <c>szName</c> buffer.</para>
-	/// </param>
-	/// <param name="pcchName">
-	/// <para>A pointer to the number of characters actually written to the <c>szName</c> buffer.</para>
-	/// </param>
-	/// <param name="szName">
-	/// <para>A character array that stores the returned name.</para>
-	/// </param>
-	/// <remarks>
-	/// <para><b>Note:</b> This method is available with .NET Native only.</para>
-	/// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugstaticfieldsymbol-getname-method">Microsoft Learn</see>.</para>
-	/// </remarks>
-	[PreserveSig]
-	int TryGetName(uint cchName, out uint pcchName, [Out][MarshalUsing(CountElementName = "cchName")] char[]? szName);
+    /// <summary>
+    /// <para>Gets the name of the static field.</para>
+    /// </summary>
+    /// <param name="cchName">
+    /// <para>The number of characters in the <c>szName</c> buffer.</para>
+    /// </param>
+    /// <param name="pcchName">
+    /// <para>A pointer to the number of characters actually written to the <c>szName</c> buffer.</para>
+    /// </param>
+    /// <param name="szName">
+    /// <para>A character array that stores the returned name.</para>
+    /// </param>
+    /// <remarks>
+    /// <para><b>Note:</b> This method is available with .NET Native only.</para>
+    /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugstaticfieldsymbol-getname-method">Microsoft Learn</see>.</para>
+    /// </remarks>
+    [PreserveSig]
+    int TryGetName(uint cchName, out uint pcchName, [Out][MarshalUsing(CountElementName = "cchName")] char[]? szName);
 
-	/// <summary>
-	/// <para>Gets the size in bytes of the static field.</para>
-	/// </summary>
-	/// <param name="pcbSize">
-	/// <para>A pointer to length of the field.</para>
-	/// </param>
-	/// <remarks>
-	/// <para><b>Note:</b> This method is available with .NET Native only.</para>
-	/// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugstaticfieldsymbol-getsize-method">Microsoft Learn</see>.</para>
-	/// </remarks>
-	[PreserveSig]
-	int TryGetSize(out uint pcbSize);
+    /// <summary>
+    /// <para>Gets the size in bytes of the static field.</para>
+    /// </summary>
+    /// <param name="pcbSize">
+    /// <para>A pointer to length of the field.</para>
+    /// </param>
+    /// <remarks>
+    /// <para><b>Note:</b> This method is available with .NET Native only.</para>
+    /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugstaticfieldsymbol-getsize-method">Microsoft Learn</see>.</para>
+    /// </remarks>
+    [PreserveSig]
+    int TryGetSize(out uint pcbSize);
 
-	/// <summary>
-	/// <para>Gets the address of a static field.</para>
-	/// </summary>
-	/// <param name="pRVA">
-	/// <para>A pointer to the relative virtual address (RVA) of the static field.</para>
-	/// </param>
-	/// <remarks>
-	/// <para><b>Note:</b> This method is available with .NET Native only.</para>
-	/// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugstaticfieldsymbol-getaddress-method">Microsoft Learn</see>.</para>
-	/// </remarks>
-	[PreserveSig]
-	int TryGetAddress(out CORDB_ADDRESS pRVA);
+    /// <summary>
+    /// <para>Gets the address of a static field.</para>
+    /// </summary>
+    /// <param name="pRVA">
+    /// <para>A pointer to the relative virtual address (RVA) of the static field.</para>
+    /// </param>
+    /// <remarks>
+    /// <para><b>Note:</b> This method is available with .NET Native only.</para>
+    /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugstaticfieldsymbol-getaddress-method">Microsoft Learn</see>.</para>
+    /// </remarks>
+    [PreserveSig]
+    int TryGetAddress(out CORDB_ADDRESS pRVA);
 }

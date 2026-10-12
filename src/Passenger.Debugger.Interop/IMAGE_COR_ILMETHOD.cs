@@ -1,13 +1,13 @@
 using System.Runtime.InteropServices;
 
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 [StructLayout(LayoutKind.Explicit)]
 public struct IMAGE_COR_ILMETHOD
 {
-	[FieldOffset(0)]
-	public IMAGE_COR_ILMETHOD_TINY Tiny;
+    [FieldOffset(0)]
+    public IMAGE_COR_ILMETHOD_TINY Tiny;
 
-	[FieldOffset(0)]
-	public IMAGE_COR_ILMETHOD_FAT Fat;
+    [FieldOffset(0)]
+    public IMAGE_COR_ILMETHOD_FAT Fat;
 }

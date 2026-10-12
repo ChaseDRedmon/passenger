@@ -1,30 +1,30 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Provides information about an object on the managed heap.</para>
 /// </summary>
 /// <remarks>
-/// <para><c>COR_HEAPOBJECT</c> instances can be retrieved by enumerating an <see cref="T:ICorDebugSharp.ICorDebugHeapEnum">ICorDebugHeapEnum</see> interface object that is populated by calling the <see cref="M:ICorDebugSharp.ICorDebugProcess5.TryEnumerateHeap(ICorDebugSharp.ICorDebugHeapEnum@)">ICorDebugProcess5::EnumerateHeap</see> method.</para>
+/// <para><c>COR_HEAPOBJECT</c> instances can be retrieved by enumerating an <see cref="T:Passenger.Debugger.Interop.ICorDebugHeapEnum">ICorDebugHeapEnum</see> interface object that is populated by calling the <see cref="M:Passenger.Debugger.Interop.ICorDebugProcess5.TryEnumerateHeap(Passenger.Debugger.Interop.ICorDebugHeapEnum@)">ICorDebugProcess5::EnumerateHeap</see> method.</para>
 /// <para>A <c>COR_HEAPOBJECT</c> instance provides information either about a live object on the managed heap, or about an object that is not rooted by any object but has not yet been collected by the garbage collector.</para>
-/// <para>For better performance, the <c>COR_HEAPOBJECT.address</c> field is a <c>CORDB_ADDRESS</c> value rather than the ICorDebugValue interface value used in much of the debugging API. To obtain an ICorDebugValue object for a given object address, you can pass the <c>CORDB_ADDRESS</c> value to the <see cref="M:ICorDebugSharp.ICorDebugProcess5.TryGetObject(ICorDebugSharp.CORDB_ADDRESS,ICorDebugSharp.ICorDebugObjectValue@)">ICorDebugProcess5::GetObject</see> method.</para>
-/// <para>For better performance, the <c>COR_HEAPOBJECT.type</c> field is a <c>COR_TYPEID</c> value rather than the ICorDebugType interface value used in much of the debugging API. To obtain an ICorDebugType object for a given type ID, you can pass the <c>COR_TYPEID</c> value to the <see cref="M:ICorDebugSharp.ICorDebugProcess5.TryGetTypeForTypeID(ICorDebugSharp.COR_TYPEID,ICorDebugSharp.ICorDebugType@)">ICorDebugProcess5::GetTypeForTypeID</see> method.</para>
-/// <para>The <c>COR_HEAPOBJECT</c> structure includes a reference-counted COM interface. If you retrieve a <c>COR_HEAPOBJECT</c> instance from the enumerator by calling the <see cref="M:ICorDebugSharp.ICorDebugHeapEnum.TryNext(System.UInt32,ICorDebugSharp.COR_HEAPOBJECT[],System.UInt32@)">ICorDebugHeapEnum::Next</see> method, you must subsequently release the reference.</para>
+/// <para>For better performance, the <c>COR_HEAPOBJECT.address</c> field is a <c>CORDB_ADDRESS</c> value rather than the ICorDebugValue interface value used in much of the debugging API. To obtain an ICorDebugValue object for a given object address, you can pass the <c>CORDB_ADDRESS</c> value to the <see cref="M:Passenger.Debugger.Interop.ICorDebugProcess5.TryGetObject(Passenger.Debugger.Interop.CORDB_ADDRESS,Passenger.Debugger.Interop.ICorDebugObjectValue@)">ICorDebugProcess5::GetObject</see> method.</para>
+/// <para>For better performance, the <c>COR_HEAPOBJECT.type</c> field is a <c>COR_TYPEID</c> value rather than the ICorDebugType interface value used in much of the debugging API. To obtain an ICorDebugType object for a given type ID, you can pass the <c>COR_TYPEID</c> value to the <see cref="M:Passenger.Debugger.Interop.ICorDebugProcess5.TryGetTypeForTypeID(Passenger.Debugger.Interop.COR_TYPEID,Passenger.Debugger.Interop.ICorDebugType@)">ICorDebugProcess5::GetTypeForTypeID</see> method.</para>
+/// <para>The <c>COR_HEAPOBJECT</c> structure includes a reference-counted COM interface. If you retrieve a <c>COR_HEAPOBJECT</c> instance from the enumerator by calling the <see cref="M:Passenger.Debugger.Interop.ICorDebugHeapEnum.TryNext(System.UInt32,Passenger.Debugger.Interop.COR_HEAPOBJECT[],System.UInt32@)">ICorDebugHeapEnum::Next</see> method, you must subsequently release the reference.</para>
 /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/cor-heapobject-structure">Microsoft Learn</see>.</para>
 /// </remarks>
 public struct COR_HEAPOBJECT
 {
-	/// <summary>
-	/// <para>The address of the object in memory.</para>
-	/// </summary>
-	public CORDB_ADDRESS address;
+    /// <summary>
+    /// <para>The address of the object in memory.</para>
+    /// </summary>
+    public CORDB_ADDRESS address;
 
-	/// <summary>
-	/// <para>The total size of the object, in bytes.</para>
-	/// </summary>
-	public ulong size;
+    /// <summary>
+    /// <para>The total size of the object, in bytes.</para>
+    /// </summary>
+    public ulong size;
 
-	/// <summary>
-	/// <para>A <see cref="T:ICorDebugSharp.COR_TYPEID">COR_TYPEID</see> token that represents the type of the object.</para>
-	/// </summary>
-	public COR_TYPEID type;
+    /// <summary>
+    /// <para>A <see cref="T:Passenger.Debugger.Interop.COR_TYPEID">COR_TYPEID</see> token that represents the type of the object.</para>
+    /// </summary>
+    public COR_TYPEID type;
 }

@@ -1,4 +1,4 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Contains values that describe the type of file defined in a call to <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/metadata/interfaces/imetadataassemblyemit-definefile-method">IMetaDataAssemblyEmit::DefineFile</see>.</para>
@@ -8,12 +8,12 @@ namespace ICorDebugSharp;
 /// </remarks>
 public enum CorFileFlags
 {
-	/// <summary>
-	/// <para>Indicates that the file is not a resource file.</para>
-	/// </summary>
-	ffContainsMetaData,
-	/// <summary>
-	/// <para>Indicates that the file, possibly a resource file, does not contain metadata.</para>
-	/// </summary>
-	ffContainsNoMetaData
+    /// <summary>
+    /// <para>Indicates that the file is not a resource file.</para>
+    /// </summary>
+    ffContainsMetaData,
+    /// <summary>
+    /// <para>Indicates that the file, possibly a resource file, does not contain metadata.</para>
+    /// </summary>
+    ffContainsNoMetaData
 }

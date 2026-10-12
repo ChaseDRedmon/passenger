@@ -1,6 +1,6 @@
 using System;
 
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 public abstract class CorDebugManagedCallbackEventArgs : EventArgs
 {

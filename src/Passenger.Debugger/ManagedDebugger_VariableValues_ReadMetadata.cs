@@ -1,75 +1,81 @@
 using System.Reflection.Metadata;
 using System.Runtime.InteropServices;
-using ICorDebugSharp;
+using Passenger.Debugger.Interop;
 
-namespace SharpDbg.Infrastructure.Debugger;
+namespace Passenger.Debugger;
 
 public partial class ManagedDebugger
 {
-	private static int GetDebuggerBrowsableCustomAttributeResultInt(nint debuggerBrowsableCustomAttributePointer, uint debuggerBrowsableCustomAttributeSize)
-	{
-		var byteArray = new byte[debuggerBrowsableCustomAttributeSize];
-		Marshal.Copy(debuggerBrowsableCustomAttributePointer, byteArray, 0, byteArray.Length);
-		// 2 bytes prolog
-		// 4 bytes data
-		// 2 bytes alignment
-		var byteSpan = byteArray.AsSpan()[2..^2];
-		var dataAsInt = BitConverter.ToInt32(byteSpan);
-		return dataAsInt;
-	}
+    private static int GetDebuggerBrowsableCustomAttributeResultInt(nint debuggerBrowsableCustomAttributePointer, uint debuggerBrowsableCustomAttributeSize)
+    {
+        byte[] byteArray = new byte[debuggerBrowsableCustomAttributeSize];
+        Marshal.Copy(debuggerBrowsableCustomAttributePointer, byteArray, 0, byteArray.Length);
+        // 2 bytes prolog
+        // 4 bytes data
+        // 2 bytes alignment
+        Span<byte> byteSpan = byteArray.AsSpan()[2..^2];
+        int dataAsInt = BitConverter.ToInt32(byteSpan);
+        return dataAsInt;
+    }
 
-	private static string GetCustomAttributeResultString(nint customAttributePointer, uint customAttributeSize)
-	{
-		var dataAsString = GetCustomAttributeCtorStringArg(customAttributePointer, checked((int)customAttributeSize)); // e.g. "Count = {Count}" or "{DebuggerDisplay,nq}"
-		return dataAsString ?? string.Empty;
-	}
+    private static string GetCustomAttributeResultString(nint customAttributePointer, uint customAttributeSize)
+    {
+        string? dataAsString = GetCustomAttributeCtorStringArg(customAttributePointer, checked((int)customAttributeSize)); // e.g. "Count = {Count}" or "{DebuggerDisplay,nq}"
+        return dataAsString ?? string.Empty;
+    }
 
-	private static unsafe string? GetCustomAttributeCtorStringArg(IntPtr ppData, int pcbData)
-	{
-		var reader = new BlobReader((byte*)ppData, pcbData);
+    private static unsafe string? GetCustomAttributeCtorStringArg(IntPtr ppData, int pcbData)
+    {
+        BlobReader reader = new BlobReader((byte*)ppData, pcbData);
 
-		// 1. Prolog (must be 0x0001)
-		ushort prolog = reader.ReadUInt16();
-		if (prolog != 0x0001) throw new InvalidOperationException("Invalid custom attribute prolog");
+        // 1. Prolog (must be 0x0001)
+        ushort prolog = reader.ReadUInt16();
+        if (prolog != 0x0001)
+        {
+            throw new InvalidOperationException("Invalid custom attribute prolog");
+        }
 
-		// 2. Read constructor fixed arguments
-		// DebuggerDisplay has one string ctor arg
-		var stringCtorArg = reader.ReadSerializedString();
-		return stringCtorArg;
-	}
-	private static (string, string?) GetCustomAttributeCtorStringArgAndNamedArg(nint customAttributePointer, uint customAttributeSize, string namedArgumentName) => GetCustomAttributeCtorStringArgAndNamedArg(customAttributePointer, checked((int)customAttributeSize), namedArgumentName)!;
+        // 2. Read constructor fixed arguments
+        // DebuggerDisplay has one string ctor arg
+        string? stringCtorArg = reader.ReadSerializedString();
+        return stringCtorArg;
+    }
+    private static (string, string?) GetCustomAttributeCtorStringArgAndNamedArg(nint customAttributePointer, uint customAttributeSize, string namedArgumentName) => GetCustomAttributeCtorStringArgAndNamedArg(customAttributePointer, checked((int)customAttributeSize), namedArgumentName)!;
 
-	private static unsafe (string?, string?) GetCustomAttributeCtorStringArgAndNamedArg(IntPtr ppData, int pcbData, string namedArgumentName)
-	{
-		var reader = new BlobReader((byte*)ppData, pcbData);
+    private static unsafe (string?, string?) GetCustomAttributeCtorStringArgAndNamedArg(IntPtr ppData, int pcbData, string namedArgumentName)
+    {
+        BlobReader reader = new BlobReader((byte*)ppData, pcbData);
 
-		// 1. Prolog (must be 0x0001)
-		ushort prolog = reader.ReadUInt16();
-		if (prolog != 0x0001) throw new InvalidOperationException("Invalid custom attribute prolog");
+        // 1. Prolog (must be 0x0001)
+        ushort prolog = reader.ReadUInt16();
+        if (prolog != 0x0001)
+        {
+            throw new InvalidOperationException("Invalid custom attribute prolog");
+        }
 
-		// 2. Read constructor fixed arguments
-		// DebuggerDisplay has one string ctor arg
-		var stringCtorArg = reader.ReadSerializedString();
+        // 2. Read constructor fixed arguments
+        // DebuggerDisplay has one string ctor arg
+        string? stringCtorArg = reader.ReadSerializedString();
 
-		// 3. Number of named arguments
-		ushort namedCount = reader.ReadUInt16();
+        // 3. Number of named arguments
+        ushort namedCount = reader.ReadUInt16();
 
-		// 4. Parse named arguments
-		for (var i = 0; i < namedCount; i++)
-		{
-			byte fieldOrProp = reader.ReadByte(); // 0x53 or 0x54
-			var type = reader.ReadSignatureTypeCode();
-			string name = reader.ReadSerializedString()!;
+        // 4. Parse named arguments
+        for (int i = 0; i < namedCount; i++)
+        {
+            byte fieldOrProp = reader.ReadByte(); // 0x53 or 0x54
+            SignatureTypeCode type = reader.ReadSignatureTypeCode();
+            string name = reader.ReadSerializedString()!;
 
-			// We assume the named argument is a string, update or make new method if needed
-			var value = reader.ReadSerializedString();
+            // We assume the named argument is a string, update or make new method if needed
+            string? value = reader.ReadSerializedString();
 
-			if (name == namedArgumentName)
-			{
-				return (stringCtorArg, value);
-			}
-		}
+            if (name == namedArgumentName)
+            {
+                return (stringCtorArg, value);
+            }
+        }
 
-		return (stringCtorArg, null);
-	}
+        return (stringCtorArg, null);
+    }
 }

@@ -1,4 +1,4 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>The type of index information passed to the library provider is either the identity of the requested module or of the runtime (CoreCLR) module.</para>
@@ -9,16 +9,16 @@ namespace ICorDebugSharp;
 /// </remarks>
 public enum LIBRARY_PROVIDER_INDEX_TYPE
 {
-	/// <summary>
-	/// <para>Invalid index type.</para>
-	/// </summary>
-	UnknownIndex,
-	/// <summary>
-	/// <para>The index information of the requested module.</para>
-	/// </summary>
-	Identity,
-	/// <summary>
-	/// <para>The runtime module's index information.</para>
-	/// </summary>
-	Runtime
+    /// <summary>
+    /// <para>Invalid index type.</para>
+    /// </summary>
+    UnknownIndex,
+    /// <summary>
+    /// <para>The index information of the requested module.</para>
+    /// </summary>
+    Identity,
+    /// <summary>
+    /// <para>The runtime module's index information.</para>
+    /// </summary>
+    Runtime
 }

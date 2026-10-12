@@ -1,10 +1,10 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Represents an exception handling (EH) clause for a given piece of intermediate language (IL) code.</para>
 /// </summary>
 /// <remarks>
-/// <para>An array of <c>CoreDebugEHClause</c> values is returned by the <see cref="M:ICorDebugSharp.ICorDebugILCode.TryGetEHClauses(System.UInt32,System.UInt32@,ICorDebugSharp.CorDebugEHClause[])">GetEHClauses</see> method.</para>
+/// <para>An array of <c>CoreDebugEHClause</c> values is returned by the <see cref="M:Passenger.Debugger.Interop.ICorDebugILCode.TryGetEHClauses(System.UInt32,System.UInt32@,Passenger.Debugger.Interop.CorDebugEHClause[])">GetEHClauses</see> method.</para>
 /// <para>The EH clause information is defined by the CLI specification. For more information, see <see href="https://www.ecma-international.org/publications-and-standards/standards/ecma-335/">Standard ECMA-355: Common Language Infrastructure (CLI), 6th Edition</see>.</para>
 /// <para>The <c>flags</c> field can contain the following flags. Note that they are not defined in CorDebug.idl or CorDebug.h.</para>
 /// <list type="table">
@@ -18,38 +18,38 @@ namespace ICorDebugSharp;
 /// </remarks>
 public struct CorDebugEHClause
 {
-	/// <summary>
-	/// <para>A bit field that describes the exception information in the EH clause. For more information, see the Remarks section.</para>
-	/// </summary>
-	public uint Flags;
+    /// <summary>
+    /// <para>A bit field that describes the exception information in the EH clause. For more information, see the Remarks section.</para>
+    /// </summary>
+    public uint Flags;
 
-	/// <summary>
-	/// <para>The offset, in bytes, of the <c>try</c> block from the start of the method body.</para>
-	/// </summary>
-	public uint TryOffset;
+    /// <summary>
+    /// <para>The offset, in bytes, of the <c>try</c> block from the start of the method body.</para>
+    /// </summary>
+    public uint TryOffset;
 
-	/// <summary>
-	/// <para>The length, in bytes, of the <c>try</c> block.</para>
-	/// </summary>
-	public uint TryLength;
+    /// <summary>
+    /// <para>The length, in bytes, of the <c>try</c> block.</para>
+    /// </summary>
+    public uint TryLength;
 
-	/// <summary>
-	/// <para>The location of the handler for this <c>try</c> block.</para>
-	/// </summary>
-	public uint HandlerOffset;
+    /// <summary>
+    /// <para>The location of the handler for this <c>try</c> block.</para>
+    /// </summary>
+    public uint HandlerOffset;
 
-	/// <summary>
-	/// <para>The size of the handler code in bytes.</para>
-	/// </summary>
-	public uint HandlerLength;
+    /// <summary>
+    /// <para>The size of the handler code in bytes.</para>
+    /// </summary>
+    public uint HandlerLength;
 
-	/// <summary>
-	/// <para>The metadata token for a type-based exception handler.</para>
-	/// </summary>
-	public uint ClassToken;
+    /// <summary>
+    /// <para>The metadata token for a type-based exception handler.</para>
+    /// </summary>
+    public uint ClassToken;
 
-	/// <summary>
-	/// <para>The offset, in bytes, from the start of the method body for a filter-based exception handler.</para>
-	/// </summary>
-	public uint FilterOffset;
+    /// <summary>
+    /// <para>The offset, in bytes, from the start of the method body for a filter-based exception handler.</para>
+    /// </summary>
+    public uint FilterOffset;
 }

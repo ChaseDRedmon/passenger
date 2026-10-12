@@ -3,7 +3,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Implements ICorDebugEnum methods, and enumerates arrays of objects by their relative virtual addresses (RVAs).</para>
@@ -17,22 +17,22 @@ namespace ICorDebugSharp;
 [Guid("CC7BCB02-8A68-11D2-983C-0000F808342D")]
 public partial interface ICorDebugObjectEnum : ICorDebugEnum
 {
-	/// <summary>
-	/// <para>Gets the relative virtual addresses (RVAs) of the specified number of objects from the enumeration, starting at the current position.</para>
-	/// </summary>
-	/// <param name="celt">
-	/// <para>The number of objects to be retrieved.</para>
-	/// </param>
-	/// <param name="objects">
-	/// <para>An array of pointers, each of which points to a CORDB_ADDRESS object.</para>
-	/// </param>
-	/// <param name="pceltFetched">
-	/// <para>Pointer to the number of objects actually returned. This value may be null if <c>celt</c> is one.</para>
-	/// </param>
-	/// <remarks>
-	/// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugobjectenum-next-method">Microsoft Learn</see>.</para>
-	/// </remarks>
-	[PreserveSig]
-	int TryNext(uint celt, [Out][MarshalUsing(CountElementName = "celt")] CORDB_ADDRESS[] objects, out uint pceltFetched);
+    /// <summary>
+    /// <para>Gets the relative virtual addresses (RVAs) of the specified number of objects from the enumeration, starting at the current position.</para>
+    /// </summary>
+    /// <param name="celt">
+    /// <para>The number of objects to be retrieved.</para>
+    /// </param>
+    /// <param name="objects">
+    /// <para>An array of pointers, each of which points to a CORDB_ADDRESS object.</para>
+    /// </param>
+    /// <param name="pceltFetched">
+    /// <para>Pointer to the number of objects actually returned. This value may be null if <c>celt</c> is one.</para>
+    /// </param>
+    /// <remarks>
+    /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugobjectenum-next-method">Microsoft Learn</see>.</para>
+    /// </remarks>
+    [PreserveSig]
+    int TryNext(uint celt, [Out][MarshalUsing(CountElementName = "celt")] CORDB_ADDRESS[] objects, out uint pceltFetched);
 
 }

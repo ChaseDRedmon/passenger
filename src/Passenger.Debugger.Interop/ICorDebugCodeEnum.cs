@@ -3,7 +3,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Implements "ICorDebugEnum" methods, and enumerates "ICorDebugCode" arrays.</para>
@@ -17,22 +17,22 @@ namespace ICorDebugSharp;
 [Guid("55E96461-9645-45E4-A2FF-0367877ABCDE")]
 public partial interface ICorDebugCodeEnum : ICorDebugEnum
 {
-	/// <summary>
-	/// <para>Gets the specified number of "ICorDebugCode" instances from the enumeration, starting at the current position.</para>
-	/// </summary>
-	/// <param name="celt">
-	/// <para>The number of <c>ICorDebugCode</c> instances to be retrieved.</para>
-	/// </param>
-	/// <param name="values">
-	/// <para>An array of pointers, each of which points to an <c>ICorDebugCode</c> object.</para>
-	/// </param>
-	/// <param name="pceltFetched">
-	/// <para>A pointer to the number of <c>ICorDebugCode</c> instances actually returned. This value may be null if <c>celt</c> is one.</para>
-	/// </param>
-	/// <remarks>
-	/// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugcodeenum-next-method">Microsoft Learn</see>.</para>
-	/// </remarks>
-	[PreserveSig]
-	int TryNext(uint celt, [Out][MarshalUsing(CountElementName = "celt")] ICorDebugCode[] values, out uint pceltFetched);
+    /// <summary>
+    /// <para>Gets the specified number of "ICorDebugCode" instances from the enumeration, starting at the current position.</para>
+    /// </summary>
+    /// <param name="celt">
+    /// <para>The number of <c>ICorDebugCode</c> instances to be retrieved.</para>
+    /// </param>
+    /// <param name="values">
+    /// <para>An array of pointers, each of which points to an <c>ICorDebugCode</c> object.</para>
+    /// </param>
+    /// <param name="pceltFetched">
+    /// <para>A pointer to the number of <c>ICorDebugCode</c> instances actually returned. This value may be null if <c>celt</c> is one.</para>
+    /// </param>
+    /// <remarks>
+    /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugcodeenum-next-method">Microsoft Learn</see>.</para>
+    /// </remarks>
+    [PreserveSig]
+    int TryNext(uint celt, [Out][MarshalUsing(CountElementName = "celt")] ICorDebugCode[] values, out uint pceltFetched);
 
 }

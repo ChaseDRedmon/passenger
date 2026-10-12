@@ -3,15 +3,15 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Provides an enumerator for objects that will be garbage-collected.</para>
 /// </summary>
 /// <remarks>
 /// <para>The <c>ICorDebugGCReferenceEnum</c> interface implements the "ICorDebugEnum" interface.</para>
-/// <para>An <c>ICorDebugGCReferenceEnum</c> instance is populated with <see cref="T:ICorDebugSharp.COR_GC_REFERENCE">COR_GC_REFERENCE</see> instances by calling the <see cref="M:ICorDebugSharp.ICorDebugProcess5.TryEnumerateGCReferences(System.Boolean,ICorDebugSharp.ICorDebugGCReferenceEnum@)">ICorDebugProcess5::EnumerateGCReferences</see> method. <see cref="T:ICorDebugSharp.COR_GC_REFERENCE">COR_GC_REFERENCE</see> objects can be enumerated by calling the <see cref="M:ICorDebugSharp.ICorDebugGCReferenceEnum.TryNext(System.UInt32,ICorDebugSharp.COR_GC_REFERENCE[],System.UInt32@)">ICorDebugGCReference::Next</see> method.</para>
-/// <para>The <see cref="T:ICorDebugSharp.COR_GC_REFERENCE">COR_GC_REFERENCE</see> objects in the collection populated by this method represent three kinds of objects:</para>
+/// <para>An <c>ICorDebugGCReferenceEnum</c> instance is populated with <see cref="T:Passenger.Debugger.Interop.COR_GC_REFERENCE">COR_GC_REFERENCE</see> instances by calling the <see cref="M:Passenger.Debugger.Interop.ICorDebugProcess5.TryEnumerateGCReferences(System.Boolean,Passenger.Debugger.Interop.ICorDebugGCReferenceEnum@)">ICorDebugProcess5::EnumerateGCReferences</see> method. <see cref="T:Passenger.Debugger.Interop.COR_GC_REFERENCE">COR_GC_REFERENCE</see> objects can be enumerated by calling the <see cref="M:Passenger.Debugger.Interop.ICorDebugGCReferenceEnum.TryNext(System.UInt32,Passenger.Debugger.Interop.COR_GC_REFERENCE[],System.UInt32@)">ICorDebugGCReference::Next</see> method.</para>
+/// <para>The <see cref="T:Passenger.Debugger.Interop.COR_GC_REFERENCE">COR_GC_REFERENCE</see> objects in the collection populated by this method represent three kinds of objects:</para>
 /// <list type="bullet">
 /// <item><description><para>Objects from all managed stacks. This includes live references in managed code as well as objects created by the common language runtime.</para>
 /// </description></item>
@@ -27,22 +27,22 @@ namespace ICorDebugSharp;
 [Guid("7F3C24D3-7E1D-4245-AC3A-F72F8859C80C")]
 public partial interface ICorDebugGCReferenceEnum : ICorDebugEnum
 {
-	/// <summary>
-	/// <para>Gets the specified number of <see cref="T:ICorDebugSharp.COR_GC_REFERENCE">COR_GC_REFERENCE</see> instances that contain information about objects that will be garbage-collected.</para>
-	/// </summary>
-	/// <param name="celt">
-	/// <para>The number of roots to be retrieved.</para>
-	/// </param>
-	/// <param name="roots">
-	/// <para>An array of pointers, each of which points to a <see cref="T:ICorDebugSharp.COR_GC_REFERENCE">COR_GC_REFERENCE</see> object that represents the root of an object to be garbage-collected.</para>
-	/// </param>
-	/// <param name="pceltFetched">
-	/// <para>A pointer to the number of <see cref="T:ICorDebugSharp.COR_GC_REFERENCE">COR_GC_REFERENCE</see> objects actually returned in <c>roots</c>. This value may be <c>null</c> if <c>celt</c> is 1.</para>
-	/// </param>
-	/// <remarks>
-	/// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebuggcreferenceenum-next-method">Microsoft Learn</see>.</para>
-	/// </remarks>
-	[PreserveSig]
-	int TryNext(uint celt, [Out][MarshalUsing(CountElementName = "celt")] COR_GC_REFERENCE[] roots, out uint pceltFetched);
+    /// <summary>
+    /// <para>Gets the specified number of <see cref="T:Passenger.Debugger.Interop.COR_GC_REFERENCE">COR_GC_REFERENCE</see> instances that contain information about objects that will be garbage-collected.</para>
+    /// </summary>
+    /// <param name="celt">
+    /// <para>The number of roots to be retrieved.</para>
+    /// </param>
+    /// <param name="roots">
+    /// <para>An array of pointers, each of which points to a <see cref="T:Passenger.Debugger.Interop.COR_GC_REFERENCE">COR_GC_REFERENCE</see> object that represents the root of an object to be garbage-collected.</para>
+    /// </param>
+    /// <param name="pceltFetched">
+    /// <para>A pointer to the number of <see cref="T:Passenger.Debugger.Interop.COR_GC_REFERENCE">COR_GC_REFERENCE</see> objects actually returned in <c>roots</c>. This value may be <c>null</c> if <c>celt</c> is 1.</para>
+    /// </param>
+    /// <remarks>
+    /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebuggcreferenceenum-next-method">Microsoft Learn</see>.</para>
+    /// </remarks>
+    [PreserveSig]
+    int TryNext(uint celt, [Out][MarshalUsing(CountElementName = "celt")] COR_GC_REFERENCE[] roots, out uint pceltFetched);
 
 }

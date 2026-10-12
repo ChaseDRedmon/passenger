@@ -1,4 +1,4 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Indicates the event that is being signaled by the callback during the unwind phase.</para>
@@ -8,12 +8,12 @@ namespace ICorDebugSharp;
 /// </remarks>
 public enum CorDebugExceptionUnwindCallbackType
 {
-	/// <summary>
-	/// <para>The beginning of the unwind process.</para>
-	/// </summary>
-	DEBUG_EXCEPTION_UNWIND_BEGIN = 1,
-	/// <summary>
-	/// <para>The exception was intercepted.</para>
-	/// </summary>
-	DEBUG_EXCEPTION_INTERCEPTED
+    /// <summary>
+    /// <para>The beginning of the unwind process.</para>
+    /// </summary>
+    DEBUG_EXCEPTION_UNWIND_BEGIN = 1,
+    /// <summary>
+    /// <para>The exception was intercepted.</para>
+    /// </summary>
+    DEBUG_EXCEPTION_INTERCEPTED
 }

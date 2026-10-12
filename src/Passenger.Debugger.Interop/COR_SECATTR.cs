@@ -1,10 +1,10 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 public struct COR_SECATTR
 {
-	public uint tkCtor;
+    public uint tkCtor;
 
-	public unsafe void* pCustomAttribute;
+    public unsafe void* pCustomAttribute;
 
-	public uint cbCustomAttribute;
+    public uint cbCustomAttribute;
 }

@@ -1,14 +1,14 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 public struct CLR_DEBUGGING_VERSION
 {
-	public ushort wStructVersion;
+    public ushort wStructVersion;
 
-	public ushort wMajor;
+    public ushort wMajor;
 
-	public ushort wMinor;
+    public ushort wMinor;
 
-	public ushort wBuild;
+    public ushort wBuild;
 
-	public ushort wRevision;
+    public ushort wRevision;
 }

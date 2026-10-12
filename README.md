@@ -2,8 +2,11 @@
 
 An IDE for C# and modern .NET, inspired by JetBrains Rider, written in C# with Avalonia. Windows and macOS first.
 
-It's at the very start: the window and its layout exist, and nothing in them works yet. `docs/roadmap.md` says
-what comes next, and `docs/architecture.md` says how it's built and why.
+It's early. What works: an editor of its own (a rope, multiple carets, Rider's keymaps), Roslyn's colours,
+diagnostics, completion, hovers, fixes, rename and navigation through the Roslyn language server, a Solution view,
+and building and running from the IDE. Its debugger, Passenger's own and started from SharpDbg, debugs over the Debug
+Adapter Protocol and is next to be wired into the window. `docs/roadmap.md` says what comes next, and
+`docs/architecture.md` says how it's built and why.
 
 ## Building
 

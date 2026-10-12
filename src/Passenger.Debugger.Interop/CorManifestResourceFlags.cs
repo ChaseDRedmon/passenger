@@ -1,4 +1,4 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Indicates the visibility of resources encoded in an assembly manifest.</para>
@@ -8,16 +8,16 @@ namespace ICorDebugSharp;
 /// </remarks>
 public enum CorManifestResourceFlags
 {
-	/// <summary>
-	/// <para>Reserved.</para>
-	/// </summary>
-	mrVisibilityMask = 7,
-	/// <summary>
-	/// <para>The resources are public.</para>
-	/// </summary>
-	mrPublic = 1,
-	/// <summary>
-	/// <para>The resources are private.</para>
-	/// </summary>
-	mrPrivate = 2
+    /// <summary>
+    /// <para>Reserved.</para>
+    /// </summary>
+    mrVisibilityMask = 7,
+    /// <summary>
+    /// <para>The resources are public.</para>
+    /// </summary>
+    mrPublic = 1,
+    /// <summary>
+    /// <para>The resources are private.</para>
+    /// </summary>
+    mrPrivate = 2
 }

@@ -3,7 +3,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Provides access to specific modules. This interface is a subclass of the ICorDebugBreakpoint interface.</para>
@@ -17,16 +17,16 @@ namespace ICorDebugSharp;
 [Guid("CC7BCAEA-8A68-11D2-983C-0000F808342D")]
 public partial interface ICorDebugModuleBreakpoint : ICorDebugBreakpoint
 {
-	/// <summary>
-	/// <para>Gets an interface pointer to an "ICorDebugModule" that references the module in which this breakpoint is set.</para>
-	/// </summary>
-	/// <param name="ppModule">
-	/// <para>A pointer to the address of an <c>ICorDebugModule</c> interface that references the module in which the breakpoint is set.</para>
-	/// </param>
-	/// <remarks>
-	/// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugmodulebreakpoint-getmodule-method">Microsoft Learn</see>.</para>
-	/// </remarks>
-	[PreserveSig]
-	int TryGetModule(out ICorDebugModule ppModule);
+    /// <summary>
+    /// <para>Gets an interface pointer to an "ICorDebugModule" that references the module in which this breakpoint is set.</para>
+    /// </summary>
+    /// <param name="ppModule">
+    /// <para>A pointer to the address of an <c>ICorDebugModule</c> interface that references the module in which the breakpoint is set.</para>
+    /// </param>
+    /// <remarks>
+    /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugmodulebreakpoint-getmodule-method">Microsoft Learn</see>.</para>
+    /// </remarks>
+    [PreserveSig]
+    int TryGetModule(out ICorDebugModule ppModule);
 
 }

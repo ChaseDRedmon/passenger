@@ -1,170 +1,161 @@
-using AwesomeAssertions;
-using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol.Messages;
-using Newtonsoft.Json.Linq;
-using SharpDbg.Application.Protocol;
-using SharpDbg.Cli.Tests.Helpers;
+using System.Diagnostics;
+using Passenger.Dap;
+using Passenger.Tests.Debugging.Helpers;
 
-namespace SharpDbg.Cli.Tests;
+namespace Passenger.Tests.Debugging;
 
+[Collection(DebugSession.Collection)]
 public class StackTraceTests(ITestOutputHelper testOutputHelper)
 {
-	[Fact]
-	public async Task StackTraceRequest_ReturnsFrames()
-	{
-		var startSuspended = true;
-		var (debugProtocolHost, initializedEventTcs, debugEventTcs, adapter, p2) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended);
-		using var _ = adapter;
-		using var __ = new ProcessKiller(p2);
-		using var ___ = debugProtocolHost;
+    [Fact]
+    public async Task StackTraceRequest_ReturnsFrames()
+    {
+        bool startSuspended = true;
+        using DebugSession debugProtocolHost = DebugSession.ForAttach(testOutputHelper, startSuspended, out Process p2);
 
 
-		await debugProtocolHost
-			.WithInitializeRequest()
-			.WithAttachRequest(p2.Id, justMyCode: true)
-			.WaitForInitializedEvent(initializedEventTcs);
-		debugProtocolHost.SendRequestSync(new SetExceptionBreakpointsRequest { Filters = [], FilterOptions = [new("all"), new("user-unhandled")] });
-		var breakpointedFilePath = Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "ClassWithBclCall.cs");
-		debugProtocolHost
-			.WithBreakpointsRequest([12], breakpointedFilePath)
-			.WithConfigurationDoneRequest()
-			.WithOptionalResumeRuntime(p2.Id, startSuspended);
+        await debugProtocolHost
+            .WithInitializeRequest()
+            .WithAttachRequest(p2.Id, justMyCode: true)
+            .WaitForInitializedEvent();
+        debugProtocolHost.Request("setExceptionBreakpoints", new SetExceptionBreakpointsArguments([], [new("all"), new("user-unhandled")]));
+        string breakpointedFilePath = Debuggees.Source("DebuggableConsoleApp", "ClassWithBclCall.cs");
+        debugProtocolHost
+            .WithBreakpointsRequest([12], breakpointedFilePath)
+            .WithConfigurationDoneRequest()
+            .WithOptionalResumeRuntime(p2.Id, startSuspended);
 
-		var stoppedEvent = await debugProtocolHost.WaitForStoppedEvent(debugEventTcs);
-		var stopInfo = stoppedEvent.ReadStopInfo();
-		stopInfo.filePath.Should().EndWith("ClassWithBclCall.cs");
-		stopInfo.line.Should().Be(12);
+        StoppedEvent stoppedEvent = await debugProtocolHost.WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo = stoppedEvent.ReadStopInfo();
+        Assert.EndsWith("ClassWithBclCall.cs", stopInfo.filePath);
+        Assert.Equal(12, stopInfo.line);
 
-		// TODO: Handle formatting generic methods (and fully qualifying them), e.g. System.Linq.dll!System.Linq.Enumerable.RangeSelectIterator<int, int>.Fill() instead of System.Linq.dll!RangeSelectIterator`2.Fill()
-		List<StackFrame> expectedStackFrames =
-		[
-			new() { Id = 1, Column = 3, EndColumn =   16, Line = 12, EndLine =   12, Name = "DebuggableConsoleApp.dll!DebuggableConsoleApp.ClassWithBclCall.Selector(int x)",   Source = new Source { Name = "ClassWithBclCall.cs", SourceReference = 0, Path = breakpointedFilePath } },
-			new() { Id = 2, Column = 0, EndColumn = null, Line =  0, EndLine = null, Name = "System.Linq.dll!System.Linq.Enumerable.RangeSelectIterator<int, int>.Fill(System.Span<int> results, int start, System.Func<int, int> func)",    Source = null, PresentationHint = StackFrame.PresentationHintValue.Subtle },
-			new() { Id = 3, Column = 0, EndColumn = null, Line =  0, EndLine = null, Name = "System.Linq.dll!System.Linq.Enumerable.RangeSelectIterator<int, int>.ToArray()",   Source = null, PresentationHint = StackFrame.PresentationHintValue.Subtle },
-			new() { Id = 4, Column = 3, EndColumn =   65, Line =  7, EndLine =    7, Name = "DebuggableConsoleApp.dll!DebuggableConsoleApp.ClassWithBclCall.Test(int myParam)", Source = new Source { Name = "ClassWithBclCall.cs", SourceReference = 0, Path = breakpointedFilePath } },
-			new() { Id = 5, Column = 4, EndColumn =   29, Line = 31, EndLine =   31, Name = "DebuggableConsoleApp.dll!DebuggableConsoleApp.Program.Main(string[] args)",        Source = new Source { Name = "Program.cs",          SourceReference = 0, Path = Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "Program.cs") } },
+        // TODO: Handle formatting generic methods (and fully qualifying them), e.g. System.Linq.dll!System.Linq.Enumerable.RangeSelectIterator<int, int>.Fill() instead of System.Linq.dll!RangeSelectIterator`2.Fill()
+        List<DapStackFrame> expectedStackFrames =
+        [
+            new() { Id = 1, Column = 3, EndColumn =   16, Line = 12, EndLine =   12, Name = "DebuggableConsoleApp.dll!DebuggableConsoleApp.ClassWithBclCall.Selector(int x)",   Source = new DapSource { Name = "ClassWithBclCall.cs", SourceReference = 0, Path = breakpointedFilePath } },
+            new() { Id = 2, Column = 0, EndColumn = null, Line =  0, EndLine = null, Name = "System.Linq.dll!System.Linq.Enumerable.RangeSelectIterator<int, int>.Fill(System.Span<int> results, int start, System.Func<int, int> func)",    Source = null, PresentationHint = "subtle" },
+            new() { Id = 3, Column = 0, EndColumn = null, Line =  0, EndLine = null, Name = "System.Linq.dll!System.Linq.Enumerable.RangeSelectIterator<int, int>.ToArray()",   Source = null, PresentationHint = "subtle" },
+            new() { Id = 4, Column = 3, EndColumn =   65, Line =  7, EndLine =    7, Name = "DebuggableConsoleApp.dll!DebuggableConsoleApp.ClassWithBclCall.Test(int myParam)", Source = new DapSource { Name = "ClassWithBclCall.cs", SourceReference = 0, Path = breakpointedFilePath } },
+            new() { Id = 5, Column = 4, EndColumn =   29, Line = 31, EndLine =   31, Name = "DebuggableConsoleApp.dll!DebuggableConsoleApp.Program.Main(string[] args)",        Source = new DapSource { Name = "Program.cs",          SourceReference = 0, Path = Debuggees.Source("DebuggableConsoleApp", "Program.cs") } },
 			// TODO: Return internal frames (thread.ActiveInternalFrames)
-			//new() { Id = 1005, Column = 0, EndColumn = null,  Line =  0, EndLine = null, Name = "[Native to Managed Transition]", Source = null, PresentationHint = StackFrame.PresentationHintValue.Subtle }
+			//new() { Id = 1005, Column = 0, EndColumn = null,  Line =  0, EndLine = null, Name = "[Native to Managed Transition]", Source = null, PresentationHint = "subtle" }
 		];
 
-		debugProtocolHost.WithStackTraceRequest(stoppedEvent.ThreadId!.Value, out var stackTraceResponse, null);
-		stackTraceResponse.StackFrames.Count.Should().Be(expectedStackFrames.Count);
-		stackTraceResponse.StackFrames.Should().BeEquivalentTo(expectedStackFrames, options => options.WithStrictOrdering().Excluding(s => s.Source.Checksums).Excluding(s => s.Source.VsSourceLinkInfo).Excluding(s => s.InstructionPointerReference).Excluding(s => s.AdditionalProperties));
-		stackTraceResponse.StackFrames.Select(f => f.IsResolved).Should().Equal(true, false, false, true, true);
-		// Since JMC is enabled, we never decompile, as well as to resolve a frame, we need to send a ResolveStackFrameRequest, so all frames should have null decompiledSourceInfo
-		stackTraceResponse.StackFrames.Should().AllSatisfy(frame => frame.DecompiledSourceInfo.Should().BeNull());
+        debugProtocolHost.WithStackTraceRequest(stoppedEvent.ThreadId!.Value, out StackTraceResponse? stackTraceResponse, null);
+        Assert.Equal(expectedStackFrames.Count, stackTraceResponse.StackFrames.Count);
+        Assert.Equal(expectedStackFrames, stackTraceResponse.StackFrames.WithoutResolution());
+        Assert.Equal([true, false, false, true, true], stackTraceResponse.StackFrames.Select(f => f.IsResolved));
+        // Since JMC is enabled, we never decompile, as well as to resolve a frame, we need to send a ResolveStackFrameRequest, so all frames should have null decompiledSourceInfo
+        Assert.All(stackTraceResponse.StackFrames, frame => Assert.Null(frame.DecompiledSourceInfo));
 
-		var breakpointedFilePath2 = Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "MyClassContainingAnotherClass.cs");
-		var stoppedEvent2 = await debugProtocolHost
-			.WithBreakpointsRequest([], breakpointedFilePath)
-			.WithBreakpointsRequest([19], breakpointedFilePath2)
-			.WithContinueRequest()
-			.WaitForStoppedEvent(debugEventTcs);
+        string breakpointedFilePath2 = Debuggees.Source("DebuggableConsoleApp", "MyClassContainingAnotherClass.cs");
+        StoppedEvent stoppedEvent2 = await debugProtocolHost
+            .WithBreakpointsRequest([], breakpointedFilePath)
+            .WithBreakpointsRequest([19], breakpointedFilePath2)
+            .WithContinueRequest()
+            .WaitForStoppedEvent();
 
-		var stopInfo2 = stoppedEvent2.ReadStopInfo();
-		stopInfo2.filePath.Should().EndWith("MyClassContainingAnotherClass.cs");
-		stopInfo2.line.Should().Be(19);
+        (string filePath, int line, int column) stopInfo2 = stoppedEvent2.ReadStopInfo();
+        Assert.EndsWith("MyClassContainingAnotherClass.cs", stopInfo2.filePath);
+        Assert.Equal(19, stopInfo2.line);
 
-		List<StackFrame> expectedStackFrames2 =
-		[
-			new() { Id = 1, Column = 4, EndColumn =   5, Line = 19, EndLine = 19, Name = "DebuggableConsoleApp.dll!DebuggableConsoleApp.MyGenericClassContainingAnotherGenericClass<int, string>.MyNestedGenericClass<double, bool>.Test()", Source = new Source { Name = "MyClassContainingAnotherClass.cs", SourceReference = 0, Path = breakpointedFilePath2 } },
-			new() { Id = 2, Column = 4, EndColumn = 103, Line = 35, EndLine = 35, Name = "DebuggableConsoleApp.dll!DebuggableConsoleApp.Program.Main(string[] args)", Source = new Source { Name = "Program.cs", SourceReference = 0, Path = Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "Program.cs") } },
-		];
+        List<DapStackFrame> expectedStackFrames2 =
+        [
+            new() { Id = 1, Column = 4, EndColumn =   5, Line = 19, EndLine = 19, Name = "DebuggableConsoleApp.dll!DebuggableConsoleApp.MyGenericClassContainingAnotherGenericClass<int, string>.MyNestedGenericClass<double, bool>.Test()", Source = new DapSource { Name = "MyClassContainingAnotherClass.cs", SourceReference = 0, Path = breakpointedFilePath2 } },
+            new() { Id = 2, Column = 4, EndColumn = 103, Line = 35, EndLine = 35, Name = "DebuggableConsoleApp.dll!DebuggableConsoleApp.Program.Main(string[] args)", Source = new DapSource { Name = "Program.cs", SourceReference = 0, Path = Debuggees.Source("DebuggableConsoleApp", "Program.cs") } },
+        ];
 
-		debugProtocolHost.WithStackTraceRequest(stoppedEvent2.ThreadId!.Value, out var stackTraceResponse2, null);
-		stackTraceResponse2.StackFrames.Count.Should().Be(expectedStackFrames2.Count);
-		stackTraceResponse2.StackFrames.Should().BeEquivalentTo(expectedStackFrames2, options => options.WithStrictOrdering().Excluding(s => s.Source.Checksums).Excluding(s => s.Source.VsSourceLinkInfo).Excluding(s => s.InstructionPointerReference).Excluding(s => s.AdditionalProperties));
+        debugProtocolHost.WithStackTraceRequest(stoppedEvent2.ThreadId!.Value, out StackTraceResponse? stackTraceResponse2, null);
+        Assert.Equal(expectedStackFrames2.Count, stackTraceResponse2.StackFrames.Count);
+        Assert.Equal(expectedStackFrames2, stackTraceResponse2.StackFrames.WithoutResolution());
 
-		var breakpointedFilePath3 = Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "Namespace1", "AnotherClass.cs");
-		var stoppedEvent3 = await debugProtocolHost
-			.WithBreakpointsRequest([], breakpointedFilePath2)
-			.WithBreakpointsRequest([20], breakpointedFilePath3)
-			.WithContinueRequest()
-			.WaitForStoppedEvent(debugEventTcs);
+        string breakpointedFilePath3 = Debuggees.Source("DebuggableConsoleApp", "Namespace1", "AnotherClass.cs");
+        StoppedEvent stoppedEvent3 = await debugProtocolHost
+            .WithBreakpointsRequest([], breakpointedFilePath2)
+            .WithBreakpointsRequest([20], breakpointedFilePath3)
+            .WithContinueRequest()
+            .WaitForStoppedEvent();
 
-		var stopInfo3 = stoppedEvent3.ReadStopInfo();
-		stopInfo3.filePath.Should().EndWith("AnotherClass.cs");
-		stopInfo3.line.Should().Be(20);
+        (string filePath, int line, int column) stopInfo3 = stoppedEvent3.ReadStopInfo();
+        Assert.EndsWith("AnotherClass.cs", stopInfo3.filePath);
+        Assert.Equal(20, stopInfo3.line);
 
-		debugProtocolHost.WithStackTraceRequest(stoppedEvent3.ThreadId!.Value, out var stackTraceResponse3, null);
-		var userFrameNames = stackTraceResponse3.StackFrames
-			.Select(frame => frame.Name)
-			.Where(name => name.StartsWith("DebuggableConsoleApp.dll!"))
-			.ToList();
-		userFrameNames.Should().Contain("DebuggableConsoleApp.dll!DebuggableConsoleApp.Namespace1.AnotherClass.AnotherMethodAsync()");
-		userFrameNames.Should().Contain("DebuggableConsoleApp.dll!DebuggableConsoleApp.MyAsyncClass.MyMethodAsync(int myParam)");
-		userFrameNames.Should().NotContain(name => name.Contains("MoveNext"));
+        debugProtocolHost.WithStackTraceRequest(stoppedEvent3.ThreadId!.Value, out StackTraceResponse? stackTraceResponse3, null);
+        var userFrameNames = stackTraceResponse3.StackFrames
+            .Select(frame => frame.Name)
+            .Where(name => name.StartsWith("DebuggableConsoleApp.dll!"))
+            .ToList();
+        Assert.Contains("DebuggableConsoleApp.dll!DebuggableConsoleApp.Namespace1.AnotherClass.AnotherMethodAsync()", userFrameNames);
+        Assert.Contains("DebuggableConsoleApp.dll!DebuggableConsoleApp.MyAsyncClass.MyMethodAsync(int myParam)", userFrameNames);
+        Assert.DoesNotContain(userFrameNames, name => name.Contains("MoveNext"));
 
-	}
+    }
 
-	[Fact]
-	public async Task StackTraceRequest_AppendsSyntheticAsyncCallerFrames()
-	{
-		var startSuspended = true;
-		var (debugProtocolHost, initializedEventTcs, debugEventTcs, adapter, process) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended);
-		using var _ = adapter;
-		using var __ = new ProcessKiller(process);
-		using var ___ = debugProtocolHost;
+    [Fact]
+    public async Task StackTraceRequest_AppendsSyntheticAsyncCallerFrames()
+    {
+        bool startSuspended = true;
+        using DebugSession debugProtocolHost = DebugSession.ForAttach(testOutputHelper, startSuspended, out Process process);
 
-		await debugProtocolHost
-			.WithInitializeRequest()
-			.WithAttachRequest(process.Id, justMyCode: true)
-			.WaitForInitializedEvent(initializedEventTcs);
-		var filePath = Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "AsyncStackTraceClass.cs");
-		debugProtocolHost
-			.WithBreakpointsRequest([20], filePath)
-			.WithConfigurationDoneRequest()
-			.WithOptionalResumeRuntime(process.Id, startSuspended);
+        await debugProtocolHost
+            .WithInitializeRequest()
+            .WithAttachRequest(process.Id, justMyCode: true)
+            .WaitForInitializedEvent();
+        string filePath = Debuggees.Source("DebuggableConsoleApp", "AsyncStackTraceClass.cs");
+        debugProtocolHost
+            .WithBreakpointsRequest([20], filePath)
+            .WithConfigurationDoneRequest()
+            .WithOptionalResumeRuntime(process.Id, startSuspended);
 
-		var stoppedEvent = await debugProtocolHost.WaitForStoppedEvent(debugEventTcs);
-		debugProtocolHost.WithStackTraceRequest(stoppedEvent.ThreadId!.Value, out var stackTraceResponse, null);
+        StoppedEvent stoppedEvent = await debugProtocolHost.WaitForStoppedEvent();
+        debugProtocolHost.WithStackTraceRequest(stoppedEvent.ThreadId!.Value, out StackTraceResponse? stackTraceResponse, null);
 
-		stackTraceResponse.StackFrames.TakeLast(2).Select(frame => frame.Name).Should().Equal(
-			"DebuggableConsoleApp.dll!DebuggableConsoleApp.AsyncStackTraceClass.MiddleAsync()",
-			"DebuggableConsoleApp.dll!DebuggableConsoleApp.AsyncStackTraceClass.TestAsync()");
-		stackTraceResponse.StackFrames.TakeLast(2).Select(frame => frame.Line).Should().Equal(13, 7);
+        Assert.Equal(
+            ["DebuggableConsoleApp.dll!DebuggableConsoleApp.AsyncStackTraceClass.MiddleAsync()",
+            "DebuggableConsoleApp.dll!DebuggableConsoleApp.AsyncStackTraceClass.TestAsync()"],
+            stackTraceResponse.StackFrames.TakeLast(2).Select(frame => frame.Name));
+        Assert.Equal([13, 7], stackTraceResponse.StackFrames.TakeLast(2).Select(frame => frame.Line));
 
-		var syntheticMiddleFrame = stackTraceResponse.StackFrames[^2];
-		debugProtocolHost.WithScopesRequest(syntheticMiddleFrame.Id, out var scopesResponse);
-		debugProtocolHost.WithVariablesRequest(scopesResponse.Scopes.Single().VariablesReference, out var variables);
-		variables.Should().Contain(variable => variable.Name == "middleValue" && variable.Value == "17");
-	}
+        DapStackFrame syntheticMiddleFrame = stackTraceResponse.StackFrames[^2];
+        debugProtocolHost.WithScopesRequest(syntheticMiddleFrame.Id, out ScopesResponse? scopesResponse);
+        debugProtocolHost.WithVariablesRequest(scopesResponse.Scopes.Single().VariablesReference, out List<DapVariable>? variables);
+        Assert.Contains(variables, variable => variable.Name == "middleValue" && variable.Value == "17");
+    }
 
-	[Fact]
-	public async Task ResolveStackFrameRequest_DecompilesUnresolvedFrame()
-	{
-		var startSuspended = true;
-		var (debugProtocolHost, initializedEventTcs, debugEventTcs, adapter, process) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended);
-		using var _ = adapter;
-		using var __ = new ProcessKiller(process);
-		using var ___ = debugProtocolHost;
+    [Fact]
+    public async Task ResolveStackFrameRequest_DecompilesUnresolvedFrame()
+    {
+        bool startSuspended = true;
+        using DebugSession debugProtocolHost = DebugSession.ForAttach(testOutputHelper, startSuspended, out Process process);
 
-		await debugProtocolHost
-			.WithInitializeRequest()
-			.WithAttachRequest(process.Id, justMyCode: false)
-			.WaitForInitializedEvent(initializedEventTcs);
-		var breakpointedFilePath = Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "ClassWithBclCall.cs");
-		debugProtocolHost
-			.WithBreakpointsRequest([12], breakpointedFilePath)
-			.WithConfigurationDoneRequest()
-			.WithOptionalResumeRuntime(process.Id, startSuspended);
+        await debugProtocolHost
+            .WithInitializeRequest()
+            .WithAttachRequest(process.Id, justMyCode: false)
+            .WaitForInitializedEvent();
+        string breakpointedFilePath = Debuggees.Source("DebuggableConsoleApp", "ClassWithBclCall.cs");
+        debugProtocolHost
+            .WithBreakpointsRequest([12], breakpointedFilePath)
+            .WithConfigurationDoneRequest()
+            .WithOptionalResumeRuntime(process.Id, startSuspended);
 
-		var stoppedEvent = await debugProtocolHost.WaitForStoppedEvent(debugEventTcs);
-		debugProtocolHost.WithStackTraceRequest(stoppedEvent.ThreadId!.Value, out var stackTraceResponse, null);
-		var unresolvedFrame = stackTraceResponse.StackFrames.First(frame => frame.Name.StartsWith("System.Linq.dll!"));
-		unresolvedFrame.IsResolved.Should().BeFalse();
-		unresolvedFrame.DecompiledSourceInfo.Should().BeNull();
+        StoppedEvent stoppedEvent = await debugProtocolHost.WaitForStoppedEvent();
+        debugProtocolHost.WithStackTraceRequest(stoppedEvent.ThreadId!.Value, out StackTraceResponse? stackTraceResponse, null);
+        DapStackFrame unresolvedFrame = stackTraceResponse.StackFrames.First(frame => frame.Name.StartsWith("System.Linq.dll!"));
+        Assert.False(unresolvedFrame.IsResolved);
+        Assert.Null(unresolvedFrame.DecompiledSourceInfo);
 
-		var response = debugProtocolHost.SendRequestSync(new ResolveStackFrameRequest(unresolvedFrame.Id));
+        ResolveStackFrameResponse response = debugProtocolHost.Request<ResolveStackFrameResponse>("resolveStackFrame", new ResolveStackFrameArguments(unresolvedFrame.Id));
 
-		response.StackFrame.Id.Should().Be(unresolvedFrame.Id);
-		response.StackFrame.IsResolved.Should().BeTrue();
-		response.StackFrame.PresentationHint.Should().Be(StackFrame.PresentationHintValue.Subtle);
-		response.StackFrame.Source.Path.Should().EndWith(".cs");
-		response.StackFrame.Line.Should().BeGreaterThan(0);
-		var decompiledSourceInfo = response.StackFrame.DecompiledSourceInfo;
-		decompiledSourceInfo.Should().NotBeNull();
-		decompiledSourceInfo.TypeFullName.Should().Be("System.Linq.Enumerable+RangeSelectIterator`2");
-		decompiledSourceInfo.Assembly.AssemblyPath.Should().EndWith("System.Linq.dll");
-		decompiledSourceInfo.CallingUserCodeAssemblyPath.Should().EndWith("DebuggableConsoleApp.dll");
-	}
+        Assert.Equal(unresolvedFrame.Id, response.StackFrame.Id);
+        Assert.True(response.StackFrame.IsResolved);
+        Assert.Equal("subtle", response.StackFrame.PresentationHint);
+        Assert.EndsWith(".cs", response.StackFrame.Source?.Path);
+        Assert.True(response.StackFrame.Line > 0);
+        DapDecompiledSource? decompiledSourceInfo = response.StackFrame.DecompiledSourceInfo;
+        Assert.NotNull(decompiledSourceInfo);
+        Assert.Equal("System.Linq.Enumerable+RangeSelectIterator`2", decompiledSourceInfo.TypeFullName);
+        Assert.EndsWith("System.Linq.dll", decompiledSourceInfo.Assembly.AssemblyPath);
+        Assert.EndsWith("DebuggableConsoleApp.dll", decompiledSourceInfo.CallingUserCodeAssemblyPath);
+    }
 }

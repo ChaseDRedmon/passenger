@@ -1,4 +1,4 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Indicates whether a particular range of native instructions, represented by an instance of the COR_DEBUG_IL_TO_NATIVE_MAP structure, corresponds to a special code region.</para>
@@ -8,16 +8,16 @@ namespace ICorDebugSharp;
 /// </remarks>
 public enum CorDebugIlToNativeMappingTypes
 {
-	/// <summary>
-	/// <para>The range of native instructions does not correspond to any special code region.</para>
-	/// </summary>
-	NO_MAPPING = -1,
-	/// <summary>
-	/// <para>The range of native instructions corresponds to the prolog.</para>
-	/// </summary>
-	PROLOG = -2,
-	/// <summary>
-	/// <para>The range of native instructions corresponds to the epilog.</para>
-	/// </summary>
-	EPILOG = -3
+    /// <summary>
+    /// <para>The range of native instructions does not correspond to any special code region.</para>
+    /// </summary>
+    NO_MAPPING = -1,
+    /// <summary>
+    /// <para>The range of native instructions corresponds to the prolog.</para>
+    /// </summary>
+    PROLOG = -2,
+    /// <summary>
+    /// <para>The range of native instructions corresponds to the epilog.</para>
+    /// </summary>
+    EPILOG = -3
 }

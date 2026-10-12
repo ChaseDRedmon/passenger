@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 [GeneratedComInterface]
 [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]

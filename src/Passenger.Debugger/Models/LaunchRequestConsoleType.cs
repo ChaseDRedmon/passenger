@@ -1,8 +1,8 @@
-namespace SharpDbg.Infrastructure.Debugger.Models;
+namespace Passenger.Debugger.Models;
 
 public enum LaunchRequestConsoleType
 {
-	IntegratedTerminal,
-	ExternalTerminal,
-	InternalConsole
+    IntegratedTerminal,
+    ExternalTerminal,
+    InternalConsole
 }

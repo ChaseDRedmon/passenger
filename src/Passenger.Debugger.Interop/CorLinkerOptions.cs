@@ -1,4 +1,4 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Specifies flags to select options for the metadata linker.</para>
@@ -8,12 +8,12 @@ namespace ICorDebugSharp;
 /// </remarks>
 public enum CorLinkerOptions
 {
-	/// <summary>
-	/// <para>The private types and global functions are not preserved.</para>
-	/// </summary>
-	MDAssembly,
-	/// <summary>
-	/// <para>The private types and global functions are preserved.</para>
-	/// </summary>
-	MDNetModule
+    /// <summary>
+    /// <para>The private types and global functions are not preserved.</para>
+    /// </summary>
+    MDAssembly,
+    /// <summary>
+    /// <para>The private types and global functions are preserved.</para>
+    /// </summary>
+    MDNetModule
 }

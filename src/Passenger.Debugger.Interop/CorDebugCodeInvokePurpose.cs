@@ -1,29 +1,29 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Describes why an exported function calls managed code.</para>
 /// </summary>
 /// <remarks>
-/// <para>This enumeration is used by the <see cref="M:ICorDebugSharp.ICorDebugProcess6.TryGetExportStepInfo(System.String,ICorDebugSharp.CorDebugCodeInvokeKind@,ICorDebugSharp.CorDebugCodeInvokePurpose@)">ICorDebugProcess6::GetExportStepInfo</see> method to provide information about stepping through managed code.</para>
+/// <para>This enumeration is used by the <see cref="M:Passenger.Debugger.Interop.ICorDebugProcess6.TryGetExportStepInfo(System.String,Passenger.Debugger.Interop.CorDebugCodeInvokeKind@,Passenger.Debugger.Interop.CorDebugCodeInvokePurpose@)">ICorDebugProcess6::GetExportStepInfo</see> method to provide information about stepping through managed code.</para>
 /// <para><b>Note:</b> This enumeration is intended for use in .NET Native debugging scenarios only.</para>
 /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/cordebugcodeinvokepurpose-enumeration">Microsoft Learn</see>.</para>
 /// </remarks>
 public enum CorDebugCodeInvokePurpose
 {
-	/// <summary>
-	/// <para>None or unknown.</para>
-	/// </summary>
-	CODE_INVOKE_PURPOSE_NONE,
-	/// <summary>
-	/// <para>The managed code will run any managed entry point, such as a reverse p-invoke. Any more detailed purpose is unknown by the runtime.</para>
-	/// </summary>
-	CODE_INVOKE_PURPOSE_NATIVE_TO_MANAGED_TRANSITION,
-	/// <summary>
-	/// <para>The managed code will run a static constructor.</para>
-	/// </summary>
-	CODE_INVOKE_PURPOSE_CLASS_INIT,
-	/// <summary>
-	/// <para>The managed code will run the implementation for some interface method that was called.</para>
-	/// </summary>
-	CODE_INVOKE_PURPOSE_INTERFACE_DISPATCH
+    /// <summary>
+    /// <para>None or unknown.</para>
+    /// </summary>
+    CODE_INVOKE_PURPOSE_NONE,
+    /// <summary>
+    /// <para>The managed code will run any managed entry point, such as a reverse p-invoke. Any more detailed purpose is unknown by the runtime.</para>
+    /// </summary>
+    CODE_INVOKE_PURPOSE_NATIVE_TO_MANAGED_TRANSITION,
+    /// <summary>
+    /// <para>The managed code will run a static constructor.</para>
+    /// </summary>
+    CODE_INVOKE_PURPOSE_CLASS_INIT,
+    /// <summary>
+    /// <para>The managed code will run the implementation for some interface method that was called.</para>
+    /// </summary>
+    CODE_INVOKE_PURPOSE_INTERFACE_DISPATCH
 }

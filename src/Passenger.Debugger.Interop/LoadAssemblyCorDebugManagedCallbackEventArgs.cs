@@ -1,14 +1,14 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 public sealed class LoadAssemblyCorDebugManagedCallbackEventArgs : CorDebugManagedCallbackEventArgs
 {
-	public ICorDebugAppDomain AppDomain { get; }
+    public ICorDebugAppDomain AppDomain { get; }
 
-	public ICorDebugAssembly Assembly { get; }
+    public ICorDebugAssembly Assembly { get; }
 
-	public LoadAssemblyCorDebugManagedCallbackEventArgs(ICorDebugAppDomain pAppDomain, ICorDebugAssembly pAssembly)
-	{
-		AppDomain = pAppDomain;
-		Assembly = pAssembly;
-	}
+    public LoadAssemblyCorDebugManagedCallbackEventArgs(ICorDebugAppDomain pAppDomain, ICorDebugAssembly pAssembly)
+    {
+        AppDomain = pAppDomain;
+        Assembly = pAssembly;
+    }
 }

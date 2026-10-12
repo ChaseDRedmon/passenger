@@ -3,13 +3,13 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Provides an enumerator that defines the mapping between a set of GUIDs and their corresponding types, which are represented by ICorDebugType instances. This interface inherits the methods from the ICorDebugEnum interface.</para>
 /// </summary>
 /// <remarks>
-/// <para>An <c>ICorDebugGuidToTypeEnum</c> interface object can be retrieved by calling the <see cref="M:ICorDebugSharp.ICorDebugAppDomain3.TryGetCachedWinRTTypes(ICorDebugSharp.ICorDebugGuidToTypeEnum@)">ICorDebugAppDomain3::GetCachedWinRTTypes</see> method. A debugger can call this interface's <see cref="M:ICorDebugSharp.ICorDebugGuidToTypeEnum.TryNext(System.UInt32,ICorDebugSharp.CorDebugGuidToTypeMapping[],System.UInt32@)">Next</see> method to retrieve <see cref="T:ICorDebugSharp.CorDebugGuidToTypeMapping">CorDebugGuidToTypeMapping</see> objects that represent mappings of managed representations of Windows Runtime types loaded in the application domain used for the call to the <see cref="M:ICorDebugSharp.ICorDebugAppDomain3.TryGetCachedWinRTTypes(ICorDebugSharp.ICorDebugGuidToTypeEnum@)">ICorDebugAppDomain3::GetCachedWinRTTypes</see> method.</para>
+/// <para>An <c>ICorDebugGuidToTypeEnum</c> interface object can be retrieved by calling the <see cref="M:Passenger.Debugger.Interop.ICorDebugAppDomain3.TryGetCachedWinRTTypes(Passenger.Debugger.Interop.ICorDebugGuidToTypeEnum@)">ICorDebugAppDomain3::GetCachedWinRTTypes</see> method. A debugger can call this interface's <see cref="M:Passenger.Debugger.Interop.ICorDebugGuidToTypeEnum.TryNext(System.UInt32,Passenger.Debugger.Interop.CorDebugGuidToTypeMapping[],System.UInt32@)">Next</see> method to retrieve <see cref="T:Passenger.Debugger.Interop.CorDebugGuidToTypeMapping">CorDebugGuidToTypeMapping</see> objects that represent mappings of managed representations of Windows Runtime types loaded in the application domain used for the call to the <see cref="M:Passenger.Debugger.Interop.ICorDebugAppDomain3.TryGetCachedWinRTTypes(Passenger.Debugger.Interop.ICorDebugGuidToTypeEnum@)">ICorDebugAppDomain3::GetCachedWinRTTypes</see> method.</para>
 /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugguidtotypeenum-interface">Microsoft Learn</see>.</para>
 /// </remarks>
 [GeneratedComInterface]
@@ -17,22 +17,22 @@ namespace ICorDebugSharp;
 [Guid("6164D242-1015-4BD6-8CBE-D0DBD4B8275A")]
 public partial interface ICorDebugGuidToTypeEnum : ICorDebugEnum
 {
-	/// <summary>
-	/// <para>Gets the specified number of <see cref="T:ICorDebugSharp.CorDebugGuidToTypeMapping">CorDebugGuidToTypeMapping</see> instances that map GUIDs to type information.</para>
-	/// </summary>
-	/// <param name="celt">
-	/// <para>The number of GUID-to-type mapping objects to be retrieved.</para>
-	/// </param>
-	/// <param name="values">
-	/// <para>An array of pointers, each of which points to a <see cref="T:ICorDebugSharp.CorDebugGuidToTypeMapping">CorDebugGuidToTypeMapping</see> object that maps a Windows Runtime GUID to its corresponding ICorDebugType object.</para>
-	/// </param>
-	/// <param name="pceltFetched">
-	/// <para>A pointer to the number of <see cref="T:ICorDebugSharp.CorDebugGuidToTypeMapping">CorDebugGuidToTypeMapping</see> objects actually returned in <c>values</c>.</para>
-	/// </param>
-	/// <remarks>
-	/// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugguidtotypeenum-next-method">Microsoft Learn</see>.</para>
-	/// </remarks>
-	[PreserveSig]
-	int TryNext(uint celt, [Out][MarshalUsing(CountElementName = "celt")] CorDebugGuidToTypeMapping[] values, out uint pceltFetched);
+    /// <summary>
+    /// <para>Gets the specified number of <see cref="T:Passenger.Debugger.Interop.CorDebugGuidToTypeMapping">CorDebugGuidToTypeMapping</see> instances that map GUIDs to type information.</para>
+    /// </summary>
+    /// <param name="celt">
+    /// <para>The number of GUID-to-type mapping objects to be retrieved.</para>
+    /// </param>
+    /// <param name="values">
+    /// <para>An array of pointers, each of which points to a <see cref="T:Passenger.Debugger.Interop.CorDebugGuidToTypeMapping">CorDebugGuidToTypeMapping</see> object that maps a Windows Runtime GUID to its corresponding ICorDebugType object.</para>
+    /// </param>
+    /// <param name="pceltFetched">
+    /// <para>A pointer to the number of <see cref="T:Passenger.Debugger.Interop.CorDebugGuidToTypeMapping">CorDebugGuidToTypeMapping</see> objects actually returned in <c>values</c>.</para>
+    /// </param>
+    /// <remarks>
+    /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugguidtotypeenum-next-method">Microsoft Learn</see>.</para>
+    /// </remarks>
+    [PreserveSig]
+    int TryNext(uint celt, [Out][MarshalUsing(CountElementName = "celt")] CorDebugGuidToTypeMapping[] values, out uint pceltFetched);
 
 }

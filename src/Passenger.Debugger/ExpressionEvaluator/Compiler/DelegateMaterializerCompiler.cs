@@ -2,20 +2,21 @@ using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.Emit;
 
-namespace SharpDbg.Infrastructure.Debugger.ExpressionEvaluator.Compiler;
+namespace Passenger.Debugger.ExpressionEvaluator.Compiler;
 
 internal sealed record DelegateMaterializerAssembly(string AssemblyName, Guid ModuleVersionId, string TypeName, string MethodName, byte[] Assembly);
 
 // 🤖
 internal static class DelegateMaterializerCompiler
 {
-	public static DelegateMaterializerAssembly Compile(IEnumerable<MetadataReference> references)
-	{
-		var id = Guid.NewGuid().ToString("N");
-		var assemblyName = $"SharpDbg.DelegateMaterializer.{id}";
-		var typeName = $"SharpDbgDelegateMaterializer_{id}";
-		var source = $$"""
+    public static DelegateMaterializerAssembly Compile(IEnumerable<MetadataReference> references)
+    {
+        string id = Guid.NewGuid().ToString("N");
+        string assemblyName = $"Passenger.DelegateMaterializer.{id}";
+        string typeName = $"PassengerDelegateMaterializer_{id}";
+        string source = $$"""
 			public static class {{typeName}}
 			{
 				private sealed class DelegateAssemblyLoadContext : System.Runtime.Loader.AssemblyLoadContext
@@ -23,7 +24,7 @@ internal static class DelegateMaterializerCompiler
 					private readonly System.Runtime.Loader.AssemblyLoadContext? _context;
 
 					public DelegateAssemblyLoadContext(System.Reflection.Assembly contextAssembly)
-						: base("SharpDbg.Evaluation." + System.Guid.NewGuid().ToString("N"), isCollectible: true)
+						: base("Passenger.Evaluation." + System.Guid.NewGuid().ToString("N"), isCollectible: true)
 					{
 						_context = System.Runtime.Loader.AssemblyLoadContext.GetLoadContext(contextAssembly);
 					}
@@ -141,22 +142,22 @@ internal static class DelegateMaterializerCompiler
 				}
 			}
 			""";
-		var compilation = CSharpCompilation.Create(
-			assemblyName,
-			[SyntaxFactory.ParseSyntaxTree(source)],
-			references,
-			new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, optimizationLevel: OptimizationLevel.Release));
-		using var stream = new MemoryStream();
-		var emit = compilation.Emit(stream);
-		if (!emit.Success)
-		{
-			var errors = string.Join("; ", emit.Diagnostics.Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error).Select(diagnostic => diagnostic.GetMessage()));
-			throw new InvalidOperationException($"Delegate materializer compilation failed: {errors}");
-		}
-		var assembly = stream.ToArray();
-		using var peReader = new PEReader(new MemoryStream(assembly, writable: false));
-		var reader = peReader.GetMetadataReader();
-		var moduleVersionId = reader.GetGuid(reader.GetModuleDefinition().Mvid);
-		return new DelegateMaterializerAssembly(assemblyName, moduleVersionId, typeName, "Create", assembly);
-	}
+        CSharpCompilation compilation = CSharpCompilation.Create(
+            assemblyName,
+            [SyntaxFactory.ParseSyntaxTree(source)],
+            references,
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, optimizationLevel: OptimizationLevel.Release));
+        using MemoryStream stream = new MemoryStream();
+        EmitResult emit = compilation.Emit(stream);
+        if (!emit.Success)
+        {
+            string errors = string.Join("; ", emit.Diagnostics.Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error).Select(diagnostic => diagnostic.GetMessage()));
+            throw new InvalidOperationException($"Delegate materializer compilation failed: {errors}");
+        }
+        byte[] assembly = stream.ToArray();
+        using PEReader peReader = new PEReader(new MemoryStream(assembly, writable: false));
+        MetadataReader reader = peReader.GetMetadataReader();
+        Guid moduleVersionId = reader.GetGuid(reader.GetModuleDefinition().Mvid);
+        return new DelegateMaterializerAssembly(assemblyName, moduleVersionId, typeName, "Create", assembly);
+    }
 }

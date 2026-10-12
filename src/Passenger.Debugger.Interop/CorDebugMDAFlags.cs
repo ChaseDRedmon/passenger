@@ -1,4 +1,4 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Specifies the status of the thread on which the managed debugging assistant (MDA) is fired.</para>
@@ -9,8 +9,8 @@ namespace ICorDebugSharp;
 /// </remarks>
 public enum CorDebugMDAFlags
 {
-	/// <summary>
-	/// <para>The thread on which the MDA was fired has slipped since the MDA was fired.</para>
-	/// </summary>
-	MDA_FLAG_SLIP = 2
+    /// <summary>
+    /// <para>The thread on which the MDA was fired has slipped since the MDA was fired.</para>
+    /// </summary>
+    MDA_FLAG_SLIP = 2
 }

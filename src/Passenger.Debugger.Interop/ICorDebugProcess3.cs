@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Controls custom debugger notifications.</para>
@@ -16,20 +16,20 @@ namespace ICorDebugSharp;
 [Guid("2EE06488-C0D4-42B1-B26D-F3795EF606FB")]
 public partial interface ICorDebugProcess3
 {
-	/// <summary>
-	/// <para>Enables and disables custom debugger notifications of the specified type.</para>
-	/// </summary>
-	/// <param name="pClass">
-	/// <para>The type that specifies custom debugger notifications.</para>
-	/// </param>
-	/// <param name="fEnable">
-	/// <para><c>true</c> to enable custom debugger notifications; <c>false</c> to disable notifications. The default value is <c>false</c>.</para>
-	/// </param>
-	/// <remarks>
-	/// <para>When <c>fEnable</c> is set to <c>true</c>, calls to the  method trigger an <see cref="M:ICorDebugSharp.ICorDebugManagedCallback3.TryCustomNotification(ICorDebugSharp.ICorDebugThread,ICorDebugSharp.ICorDebugAppDomain)">ICorDebugManagedCallback3::CustomNotification</see> callback. Notifications are disabled by default; therefore, the debugger must specify any notification types it knows about and wants to handle. Because the <see cref="T:ICorDebugSharp.ICorDebug">ICorDebugClass</see> class is scoped by application domain, the debugger must call <c>SetEnableCustomNotification</c> for every application domain in the process if it wants to receive the notification across the entire process.</para>
-	/// <para>Starting with the .NET Framework 4, the only supported notification is a cross-thread dependency notification.</para>
-	/// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugprocess3-setenablecustomnotification-method">Microsoft Learn</see>.</para>
-	/// </remarks>
-	[PreserveSig]
-	int TrySetEnableCustomNotification(ICorDebugClass pClass, [MarshalAs(UnmanagedType.Bool)] bool fEnable);
+    /// <summary>
+    /// <para>Enables and disables custom debugger notifications of the specified type.</para>
+    /// </summary>
+    /// <param name="pClass">
+    /// <para>The type that specifies custom debugger notifications.</para>
+    /// </param>
+    /// <param name="fEnable">
+    /// <para><c>true</c> to enable custom debugger notifications; <c>false</c> to disable notifications. The default value is <c>false</c>.</para>
+    /// </param>
+    /// <remarks>
+    /// <para>When <c>fEnable</c> is set to <c>true</c>, calls to the  method trigger an <see cref="M:Passenger.Debugger.Interop.ICorDebugManagedCallback3.TryCustomNotification(Passenger.Debugger.Interop.ICorDebugThread,Passenger.Debugger.Interop.ICorDebugAppDomain)">ICorDebugManagedCallback3::CustomNotification</see> callback. Notifications are disabled by default; therefore, the debugger must specify any notification types it knows about and wants to handle. Because the <see cref="T:Passenger.Debugger.Interop.ICorDebug">ICorDebugClass</see> class is scoped by application domain, the debugger must call <c>SetEnableCustomNotification</c> for every application domain in the process if it wants to receive the notification across the entire process.</para>
+    /// <para>Starting with the .NET Framework 4, the only supported notification is a cross-thread dependency notification.</para>
+    /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugprocess3-setenablecustomnotification-method">Microsoft Learn</see>.</para>
+    /// </remarks>
+    [PreserveSig]
+    int TrySetEnableCustomNotification(ICorDebugClass pClass, [MarshalAs(UnmanagedType.Bool)] bool fEnable);
 }

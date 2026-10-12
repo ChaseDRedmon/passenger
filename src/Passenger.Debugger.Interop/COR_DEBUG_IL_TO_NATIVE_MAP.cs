@@ -1,4 +1,4 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Contains the offsets that are used to map common intermediate language (CIL) code to native code.</para>
@@ -8,18 +8,18 @@ namespace ICorDebugSharp;
 /// </remarks>
 public struct COR_DEBUG_IL_TO_NATIVE_MAP
 {
-	/// <summary>
-	/// <para>The offset of the CIL code.</para>
-	/// </summary>
-	public uint ilOffset;
+    /// <summary>
+    /// <para>The offset of the CIL code.</para>
+    /// </summary>
+    public uint ilOffset;
 
-	/// <summary>
-	/// <para>The offset of the start of the native code.</para>
-	/// </summary>
-	public uint nativeStartOffset;
+    /// <summary>
+    /// <para>The offset of the start of the native code.</para>
+    /// </summary>
+    public uint nativeStartOffset;
 
-	/// <summary>
-	/// <para>The offset of the end of the native code.</para>
-	/// </summary>
-	public uint nativeEndOffset;
+    /// <summary>
+    /// <para>The offset of the end of the native code.</para>
+    /// </summary>
+    public uint nativeEndOffset;
 }

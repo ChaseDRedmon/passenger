@@ -1,6 +1,10 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Passenger.App/Passenger.App.csproj" />
+    <Project Path="src/Passenger.Dap/Passenger.Dap.csproj" />
+    <Project Path="src/Passenger.DebugAdapter/Passenger.DebugAdapter.csproj" />
+    <Project Path="src/Passenger.Debugger/Passenger.Debugger.csproj" />
+    <Project Path="src/Passenger.Debugger.Interop/Passenger.Debugger.Interop.csproj" />
     <Project Path="src/Passenger.Editor/Passenger.Editor.csproj" />
     <Project Path="src/Passenger.Languages/Passenger.Languages.csproj" />
     <Project Path="src/Passenger.Lsp/Passenger.Lsp.csproj" />
@@ -8,5 +12,11 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Passenger.Tests/Passenger.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tests/Debuggees/">
+    <Project Path="tests/Debuggees/AsyncEntryConsoleApp/AsyncEntryConsoleApp.csproj" />
+    <Project Path="tests/Debuggees/AsyncTopLevelStatementsConsoleApp/AsyncTopLevelStatementsConsoleApp.csproj" />
+    <Project Path="tests/Debuggees/DebuggableConsoleApp/DebuggableConsoleApp.csproj" />
+    <Project Path="tests/Debuggees/TopLevelStatementsConsoleApp/TopLevelStatementsConsoleApp.csproj" />
   </Folder>
 </Solution>

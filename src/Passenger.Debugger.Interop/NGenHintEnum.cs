@@ -1,9 +1,9 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 public enum NGenHintEnum
 {
-	NGenDefault,
-	NGenEager,
-	NGenLazy,
-	NGenNever
+    NGenDefault,
+    NGenEager,
+    NGenLazy,
+    NGenNever
 }

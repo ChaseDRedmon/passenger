@@ -3,7 +3,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>A subclass of "ICorDebugValue" that applies to all values. This interface provides Get and Set methods for the value.</para>
@@ -20,29 +20,29 @@ namespace ICorDebugSharp;
 [Guid("CC7BCAF8-8A68-11D2-983C-0000F808342D")]
 public partial interface ICorDebugGenericValue : ICorDebugValue
 {
-	/// <summary>
-	/// <para>Copies the value of this generic into the specified buffer.</para>
-	/// </summary>
-	/// <param name="pTo">
-	/// <para>A pointer to the value that is represented by this ICorDebugGenericValue object. The value may be a simple type or a reference type (that is, a pointer).</para>
-	/// </param>
-	/// <remarks>
-	/// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebuggenericvalue-getvalue-method">Microsoft Learn</see>.</para>
-	/// </remarks>
-	[PreserveSig]
-	int TryGetValue(nint pTo);
+    /// <summary>
+    /// <para>Copies the value of this generic into the specified buffer.</para>
+    /// </summary>
+    /// <param name="pTo">
+    /// <para>A pointer to the value that is represented by this ICorDebugGenericValue object. The value may be a simple type or a reference type (that is, a pointer).</para>
+    /// </param>
+    /// <remarks>
+    /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebuggenericvalue-getvalue-method">Microsoft Learn</see>.</para>
+    /// </remarks>
+    [PreserveSig]
+    int TryGetValue(nint pTo);
 
-	/// <summary>
-	/// <para>Copies a new value from the specified buffer.</para>
-	/// </summary>
-	/// <param name="pFrom">
-	/// <para>A pointer to the buffer from which to copy the value.</para>
-	/// </param>
-	/// <remarks>
-	/// <para>For reference types, the value is the reference, not the content.</para>
-	/// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebuggenericvalue-setvalue-method">Microsoft Learn</see>.</para>
-	/// </remarks>
-	[PreserveSig]
-	int TrySetValue(nint pFrom);
+    /// <summary>
+    /// <para>Copies a new value from the specified buffer.</para>
+    /// </summary>
+    /// <param name="pFrom">
+    /// <para>A pointer to the buffer from which to copy the value.</para>
+    /// </param>
+    /// <remarks>
+    /// <para>For reference types, the value is the reference, not the content.</para>
+    /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebuggenericvalue-setvalue-method">Microsoft Learn</see>.</para>
+    /// </remarks>
+    [PreserveSig]
+    int TrySetValue(nint pFrom);
 
 }

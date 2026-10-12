@@ -1,34 +1,23 @@
-using AwesomeAssertions;
-using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol;
-using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol.Messages;
-using SharpDbg.Cli.Tests.Helpers;
-using SharpDbg.InMemory;
+using Passenger.Dap;
+using Passenger.Tests.Debugging.Helpers;
 
-namespace SharpDbg.Cli.Tests;
+namespace Passenger.Tests.Debugging;
 
+[Collection(DebugSession.Collection)]
 public class ProtocolTests(ITestOutputHelper testOutputHelper)
 {
-	[Fact]
-	public void UnsupportedRequests_ReturnErrorsWithoutStoppingDispatcher()
-	{
-		var (input, output, adapter) = SharpDbgInMemory.NewDebugAdapterStreams();
-		using var _ = adapter;
-		using var host = DebugAdapterProcessHelper.GetDebugProtocolHost(input, output, testOutputHelper);
-		host.Run();
+    [Fact]
+    public void UnsupportedRequests_ReturnErrorsWithoutStoppingDispatcher()
+    {
+        using DebugSession host = DebugSession.ForLaunch(testOutputHelper);
 
-		var unimplementedError = Assert.Throws<ProtocolException>(() =>
-			host.SendRequestSync(new SetVariableRequest(0, "value", "1")));
-		unimplementedError.Message.Should().Be("Request 'setVariable' is not supported.");
+        DapException unimplementedError = Assert.Throws<DapException>(() => host.Request("setVariable", new { variablesReference = 0, name = "value", value = "1" }));
+        Assert.Equal("Request 'setVariable' is not supported.", unimplementedError.Reason);
 
-		var unknownError = Assert.Throws<ProtocolException>(() =>
-			host.SendRequestSync(new UnknownRequest()));
-		unknownError.Message.Should().Be("Request 'unknownRequest' is not supported.");
+        DapException unknownError = Assert.Throws<DapException>(() => host.Request("unknownRequest"));
+        Assert.Equal("Request 'unknownRequest' is not supported.", unknownError.Reason);
 
-		var initializeResponse = host.SendRequestSync(DebugAdapterProcessHelper.GetInitializeRequest());
-		initializeResponse.Should().NotBeNull();
-	}
-
-	private sealed class UnknownRequest() : DebugRequestWithResponse<UnknownArguments, UnknownResponse>("unknownRequest");
-	private sealed class UnknownArguments;
-	private sealed class UnknownResponse : ResponseBody;
+        DapCapabilities capabilities = host.Request<DapCapabilities>("initialize", DebugSession.InitializeArguments);
+        Assert.True(capabilities.SupportsConfigurationDoneRequest);
+    }
 }

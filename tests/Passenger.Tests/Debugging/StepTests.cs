@@ -1,184 +1,174 @@
-using AwesomeAssertions;
-using SharpDbg.Cli.Tests.Helpers;
+using System.Diagnostics;
+using Passenger.Dap;
+using Passenger.Tests.Debugging.Helpers;
 
-namespace SharpDbg.Cli.Tests;
+namespace Passenger.Tests.Debugging;
 
+[Collection(DebugSession.Collection)]
 public class StepTests(ITestOutputHelper testOutputHelper)
 {
-	[Fact]
-	public async Task SharpDbgCli_StepRequests_Returns_StoppedEventsAtCorrectLocation()
-	{
-		var startSuspended = true;
+    [Fact]
+    public async Task SharpDbgCli_StepRequests_Returns_StoppedEventsAtCorrectLocation()
+    {
+        bool startSuspended = true;
 
-		var (debugProtocolHost, initializedEventTcs, debugEventTcs, adapter, p2) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended);
-		using var _ = adapter;
-		using var __ = new ProcessKiller(p2);
-		using var ___ = debugProtocolHost;
+        using DebugSession debugProtocolHost = DebugSession.ForAttach(testOutputHelper, startSuspended, out Process p2);
 
-		await debugProtocolHost
-			.WithInitializeRequest()
-			.WithAttachRequest(p2.Id)
-			.WaitForInitializedEvent(initializedEventTcs);
-		debugProtocolHost
-			.WithBreakpointsRequest(20)
-			.WithConfigurationDoneRequest()
-			.WithOptionalResumeRuntime(p2.Id, startSuspended);
+        await debugProtocolHost
+            .WithInitializeRequest()
+            .WithAttachRequest(p2.Id)
+            .WaitForInitializedEvent();
+        debugProtocolHost
+            .WithBreakpointsRequest(20)
+            .WithConfigurationDoneRequest()
+            .WithOptionalResumeRuntime(p2.Id, startSuspended);
 
-		var stoppedEvent = await debugProtocolHost.WaitForStoppedEvent(debugEventTcs);
-		var stopInfo = stoppedEvent.ReadStopInfo();
-		stopInfo.filePath.Should().EndWith("MyClass.cs");
-		stopInfo.line.Should().Be(20);
+        StoppedEvent stoppedEvent = await debugProtocolHost.WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo = stoppedEvent.ReadStopInfo();
+        Assert.EndsWith("MyClass.cs", stopInfo.filePath);
+        Assert.Equal(20, stopInfo.line);
 
-		var stoppedEvent2 = await debugProtocolHost
-			.WithStepInRequest(stoppedEvent.ThreadId!.Value)
-			.WaitForStoppedEvent(debugEventTcs);
-		var stopInfo2 = stoppedEvent2.ReadStopInfo();
-		stopInfo2.filePath.Should().EndWith("AnotherClass.cs");
-		stopInfo2.line.Should().Be(7);
+        StoppedEvent stoppedEvent2 = await debugProtocolHost
+            .WithStepInRequest(stoppedEvent.ThreadId!.Value)
+            .WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo2 = stoppedEvent2.ReadStopInfo();
+        Assert.EndsWith("AnotherClass.cs", stopInfo2.filePath);
+        Assert.Equal(7, stopInfo2.line);
 
-		var stoppedEvent3 = await debugProtocolHost
-			.WithStepOutRequest(stoppedEvent.ThreadId!.Value)
-			.WaitForStoppedEvent(debugEventTcs);
-		var stopInfo3 = stoppedEvent3.ReadStopInfo();
-		// Stepping out should land us back on the same line as the method we just stepped out of
-		stopInfo3.filePath.Should().EndWith("MyClass.cs");
-		stopInfo3.line.Should().Be(20);
+        StoppedEvent stoppedEvent3 = await debugProtocolHost
+            .WithStepOutRequest(stoppedEvent.ThreadId!.Value)
+            .WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo3 = stoppedEvent3.ReadStopInfo();
+        // Stepping out should land us back on the same line as the method we just stepped out of
+        Assert.EndsWith("MyClass.cs", stopInfo3.filePath);
+        Assert.Equal(20, stopInfo3.line);
 
-		// Continue so we loop and are back at the breakpoint
-		var stoppedEvent4 = await debugProtocolHost.WithContinueRequest().WaitForStoppedEvent(debugEventTcs);
-		var stopInfo4 = stoppedEvent4.ReadStopInfo();
-		stopInfo4.filePath.Should().EndWith("MyClass.cs");
-		stopInfo4.line.Should().Be(20);
+        // Continue so we loop and are back at the breakpoint
+        StoppedEvent stoppedEvent4 = await debugProtocolHost.WithContinueRequest().WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo4 = stoppedEvent4.ReadStopInfo();
+        Assert.EndsWith("MyClass.cs", stopInfo4.filePath);
+        Assert.Equal(20, stopInfo4.line);
 
-		// Now, put a breakpoint inside AnotherMethod, and step over. We should still be in AnotherClass.cs
-		debugProtocolHost.WithBreakpointsRequest(8, Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "Namespace1", "AnotherClass.cs"));
+        // Now, put a breakpoint inside AnotherMethod, and step over. We should still be in AnotherClass.cs
+        debugProtocolHost.WithBreakpointsRequest(8, Debuggees.Source("DebuggableConsoleApp", "Namespace1", "AnotherClass.cs"));
 
-		var stoppedEvent5 = await debugProtocolHost.WithStepOverRequest(stoppedEvent.ThreadId!.Value).WaitForStoppedEvent(debugEventTcs);
-		var stopInfo5 = stoppedEvent5.ReadStopInfo();
-		stopInfo5.filePath.Should().EndWith("AnotherClass.cs");
-		stopInfo5.line.Should().Be(8);
+        StoppedEvent stoppedEvent5 = await debugProtocolHost.WithStepOverRequest(stoppedEvent.ThreadId!.Value).WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo5 = stoppedEvent5.ReadStopInfo();
+        Assert.EndsWith("AnotherClass.cs", stopInfo5.filePath);
+        Assert.Equal(8, stopInfo5.line);
 
-		var stoppedEvent6 = await debugProtocolHost.WithStepOverRequest(stoppedEvent.ThreadId!.Value).WaitForStoppedEvent(debugEventTcs);
-		var stopInfo6 = stoppedEvent6.ReadStopInfo();
-		stopInfo6.filePath.Should().EndWith("AnotherClass.cs");
-		stopInfo6.line.Should().Be(9);
+        StoppedEvent stoppedEvent6 = await debugProtocolHost.WithStepOverRequest(stoppedEvent.ThreadId!.Value).WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo6 = stoppedEvent6.ReadStopInfo();
+        Assert.EndsWith("AnotherClass.cs", stopInfo6.filePath);
+        Assert.Equal(9, stopInfo6.line);
 
-		var stoppedEvent7 = await debugProtocolHost.WithContinueRequest().WaitForStoppedEvent(debugEventTcs);
-		var stopInfo7 = stoppedEvent7.ReadStopInfo();
-		stopInfo7.filePath.Should().EndWith("MyClass.cs");
-		stopInfo7.line.Should().Be(20);
+        StoppedEvent stoppedEvent7 = await debugProtocolHost.WithContinueRequest().WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo7 = stoppedEvent7.ReadStopInfo();
+        Assert.EndsWith("MyClass.cs", stopInfo7.filePath);
+        Assert.Equal(20, stopInfo7.line);
 
-		// breakpoint on a line that would F11 into unmapped code
-		debugProtocolHost.WithBreakpointsRequest(13, Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "Namespace1", "AnotherClass.cs"));
-		var stoppedEvent8 = await debugProtocolHost.WithContinueRequest().WaitForStoppedEvent(debugEventTcs);
-		var stopInfo8 = stoppedEvent8.ReadStopInfo();
-		stopInfo8.filePath.Should().EndWith("AnotherClass.cs");
-		stopInfo8.line.Should().Be(13);
+        // breakpoint on a line that would F11 into unmapped code
+        debugProtocolHost.WithBreakpointsRequest(13, Debuggees.Source("DebuggableConsoleApp", "Namespace1", "AnotherClass.cs"));
+        StoppedEvent stoppedEvent8 = await debugProtocolHost.WithContinueRequest().WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo8 = stoppedEvent8.ReadStopInfo();
+        Assert.EndsWith("AnotherClass.cs", stopInfo8.filePath);
+        Assert.Equal(13, stopInfo8.line);
 
-		// ensure that we do not receive stop info with no source. StepIn with JMC false, landing in non-user code, continues and stops at the next user code
-		var stoppedEvent9 = await debugProtocolHost.WithStepInRequest(stoppedEvent.ThreadId!.Value).WaitForStoppedEvent(debugEventTcs);
-		var stopInfo9 = stoppedEvent9.ReadStopInfo();
-		stopInfo9.filePath.Should().EndWith("AnotherClass.cs");
-		stopInfo9.line.Should().Be(14);
+        // ensure that we do not receive stop info with no source. StepIn with JMC false, landing in non-user code, continues and stops at the next user code
+        StoppedEvent stoppedEvent9 = await debugProtocolHost.WithStepInRequest(stoppedEvent.ThreadId!.Value).WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo9 = stoppedEvent9.ReadStopInfo();
+        Assert.EndsWith("AnotherClass.cs", stopInfo9.filePath);
+        Assert.Equal(14, stopInfo9.line);
 
-		List<int> threadIds = [stoppedEvent.ThreadId!.Value, stoppedEvent2.ThreadId!.Value, stoppedEvent3.ThreadId!.Value, stoppedEvent4.ThreadId!.Value, stoppedEvent5.ThreadId!.Value, stoppedEvent6.ThreadId!.Value, stoppedEvent7.ThreadId!.Value, stoppedEvent8.ThreadId!.Value, stoppedEvent9.ThreadId!.Value];
-		threadIds.Distinct().Should().HaveCount(1);
-	}
+        List<int> threadIds = [stoppedEvent.ThreadId!.Value, stoppedEvent2.ThreadId!.Value, stoppedEvent3.ThreadId!.Value, stoppedEvent4.ThreadId!.Value, stoppedEvent5.ThreadId!.Value, stoppedEvent6.ThreadId!.Value, stoppedEvent7.ThreadId!.Value, stoppedEvent8.ThreadId!.Value, stoppedEvent9.ThreadId!.Value];
+        Assert.Single(threadIds.Distinct());
+    }
 
-	[Fact]
-	public async Task SharpDbgCli_StepRequests_StepIntoModuleWithoutSymbols_Decompiles()
-	{
-		var startSuspended = true;
+    [Fact]
+    public async Task SharpDbgCli_StepRequests_StepIntoModuleWithoutSymbols_Decompiles()
+    {
+        bool startSuspended = true;
 
-		var (debugProtocolHost, initializedEventTcs, debugEventTcs, adapter, p2) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended);
-		using var _ = adapter;
-		using var __ = new ProcessKiller(p2);
-		using var ___ = debugProtocolHost;
+        using DebugSession debugProtocolHost = DebugSession.ForAttach(testOutputHelper, startSuspended, out Process p2);
 
-		await debugProtocolHost
-			.WithInitializeRequest()
-			.WithAttachRequest(p2.Id, false)
-			.WaitForInitializedEvent(initializedEventTcs);
-		debugProtocolHost
-			.WithBreakpointsRequest(15)
-			.WithConfigurationDoneRequest()
-			.WithOptionalResumeRuntime(p2.Id, startSuspended);
+        await debugProtocolHost
+            .WithInitializeRequest()
+            .WithAttachRequest(p2.Id, false)
+            .WaitForInitializedEvent();
+        debugProtocolHost
+            .WithBreakpointsRequest(15)
+            .WithConfigurationDoneRequest()
+            .WithOptionalResumeRuntime(p2.Id, startSuspended);
 
-		var stoppedEvent = await debugProtocolHost.WaitForStoppedEvent(debugEventTcs);
-		var stopInfo = stoppedEvent.ReadStopInfo();
-		stopInfo.filePath.Should().EndWith("MyClass.cs");
-		stopInfo.line.Should().Be(15);
+        StoppedEvent stoppedEvent = await debugProtocolHost.WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo = stoppedEvent.ReadStopInfo();
+        Assert.EndsWith("MyClass.cs", stopInfo.filePath);
+        Assert.Equal(15, stopInfo.line);
 
-		var stoppedEvent2 = await debugProtocolHost.WithStepInRequest(stoppedEvent.ThreadId!.Value).WaitForStoppedEvent(debugEventTcs);
-		var stopInfo2 = stoppedEvent2.ReadStopInfo();
-		stopInfo2.filePath.Should().EndWith("Console.cs");
-		// Bumping ICSharpCode.Decompiler changed the decompiled output, so the line number changed. If this is failing, clear temp/SharpIdeSymbolCache and try again.
-		stopInfo2.line.Should().Be(1219);
-	}
+        StoppedEvent stoppedEvent2 = await debugProtocolHost.WithStepInRequest(stoppedEvent.ThreadId!.Value).WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo2 = stoppedEvent2.ReadStopInfo();
+        Assert.EndsWith("Console.cs", stopInfo2.filePath);
+        // Bumping ICSharpCode.Decompiler changed the decompiled output, so the line number changed. If this is failing, clear temp/SharpIdeSymbolCache and try again.
+        Assert.Equal(1219, stopInfo2.line);
+    }
 
-	[Fact]
-	public async Task SharpDbgCli_Continue_StopsAtBreakpointOnMultilineSwitchExpression()
-	{
-		var startSuspended = true;
+    [Fact]
+    public async Task SharpDbgCli_Continue_StopsAtBreakpointOnMultilineSwitchExpression()
+    {
+        bool startSuspended = true;
 
-		var (debugProtocolHost, initializedEventTcs, debugEventTcs, adapter, p2) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended);
-		using var _ = adapter;
-		using var __ = new ProcessKiller(p2);
-		using var ___ = debugProtocolHost;
+        using DebugSession debugProtocolHost = DebugSession.ForAttach(testOutputHelper, startSuspended, out Process p2);
 
-		await debugProtocolHost
-			.WithInitializeRequest()
-			.WithAttachRequest(p2.Id, false)
-			.WaitForInitializedEvent(initializedEventTcs);
-		debugProtocolHost
-			.WithBreakpointsRequest([7, 9], Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "MultilineSwitchInMethodCall.cs"))
-			.WithConfigurationDoneRequest()
-			.WithOptionalResumeRuntime(p2.Id, startSuspended);
+        await debugProtocolHost
+            .WithInitializeRequest()
+            .WithAttachRequest(p2.Id, false)
+            .WaitForInitializedEvent();
+        debugProtocolHost
+            .WithBreakpointsRequest([7, 9], Debuggees.Source("DebuggableConsoleApp", "MultilineSwitchInMethodCall.cs"))
+            .WithConfigurationDoneRequest()
+            .WithOptionalResumeRuntime(p2.Id, startSuspended);
 
-		var stoppedEvent = await debugProtocolHost.WaitForStoppedEvent(debugEventTcs);
-		var stopInfo = stoppedEvent.ReadStopInfo();
-		stopInfo.filePath.Should().EndWith("MultilineSwitchInMethodCall.cs");
-		stopInfo.line.Should().Be(7);
+        StoppedEvent stoppedEvent = await debugProtocolHost.WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo = stoppedEvent.ReadStopInfo();
+        Assert.EndsWith("MultilineSwitchInMethodCall.cs", stopInfo.filePath);
+        Assert.Equal(7, stopInfo.line);
 
-		var stoppedEvent2 = await debugProtocolHost.WithContinueRequest().WaitForStoppedEvent(debugEventTcs);
-		var stopInfo2 = stoppedEvent2.ReadStopInfo();
-		stopInfo2.filePath.Should().EndWith("MultilineSwitchInMethodCall.cs");
-		stopInfo2.line.Should().Be(9);
-	}
+        StoppedEvent stoppedEvent2 = await debugProtocolHost.WithContinueRequest().WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo2 = stoppedEvent2.ReadStopInfo();
+        Assert.EndsWith("MultilineSwitchInMethodCall.cs", stopInfo2.filePath);
+        Assert.Equal(9, stopInfo2.line);
+    }
 
-	[Fact]
-	// Testing behaviour that suppresses a breakpoint if a Step lands at the same location
-	public async Task SharpDbgCli_StepOverToBreakpointedLine_StepOver_StopsAtNextLine()
-	{
-		var startSuspended = true;
+    [Fact]
+    // Testing behaviour that suppresses a breakpoint if a Step lands at the same location
+    public async Task SharpDbgCli_StepOverToBreakpointedLine_StepOver_StopsAtNextLine()
+    {
+        bool startSuspended = true;
 
-		var (debugProtocolHost, initializedEventTcs, debugEventTcs, adapter, p2) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended);
-		using var _ = adapter;
-		using var __ = new ProcessKiller(p2);
-		using var ___ = debugProtocolHost;
+        using DebugSession debugProtocolHost = DebugSession.ForAttach(testOutputHelper, startSuspended, out Process p2);
 
-		await debugProtocolHost
-			.WithInitializeRequest()
-			.WithAttachRequest(p2.Id, false)
-			.WaitForInitializedEvent(initializedEventTcs);
-		debugProtocolHost
-			.WithBreakpointsRequest([25, 26], Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "Program.cs"))
-			.WithConfigurationDoneRequest()
-			.WithOptionalResumeRuntime(p2.Id, startSuspended);
+        await debugProtocolHost
+            .WithInitializeRequest()
+            .WithAttachRequest(p2.Id, false)
+            .WaitForInitializedEvent();
+        debugProtocolHost
+            .WithBreakpointsRequest([25, 26], Debuggees.Source("DebuggableConsoleApp", "Program.cs"))
+            .WithConfigurationDoneRequest()
+            .WithOptionalResumeRuntime(p2.Id, startSuspended);
 
-		var stoppedEvent = await debugProtocolHost.WaitForStoppedEvent(debugEventTcs);
-		var stopInfo = stoppedEvent.ReadStopInfo();
-		stopInfo.filePath.Should().EndWith("Program.cs");
-		stopInfo.line.Should().Be(25);
+        StoppedEvent stoppedEvent = await debugProtocolHost.WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo = stoppedEvent.ReadStopInfo();
+        Assert.EndsWith("Program.cs", stopInfo.filePath);
+        Assert.Equal(25, stopInfo.line);
 
-		var stoppedEvent2 = await debugProtocolHost.WithStepOverRequest(stoppedEvent.ThreadId!.Value).WaitForStoppedEvent(debugEventTcs);
-		var stopInfo2 = stoppedEvent2.ReadStopInfo();
-		stopInfo2.filePath.Should().EndWith("Program.cs");
-		stopInfo2.line.Should().Be(26);
+        StoppedEvent stoppedEvent2 = await debugProtocolHost.WithStepOverRequest(stoppedEvent.ThreadId!.Value).WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo2 = stoppedEvent2.ReadStopInfo();
+        Assert.EndsWith("Program.cs", stopInfo2.filePath);
+        Assert.Equal(26, stopInfo2.line);
 
-		var stoppedEvent3 = await debugProtocolHost.WithStepOverRequest(stoppedEvent.ThreadId!.Value).WaitForStoppedEvent(debugEventTcs);
-		var stopInfo3 = stoppedEvent3.ReadStopInfo();
-		stopInfo3.filePath.Should().EndWith("Program.cs");
-		stopInfo3.line.Should().Be(27);
-	}
+        StoppedEvent stoppedEvent3 = await debugProtocolHost.WithStepOverRequest(stoppedEvent.ThreadId!.Value).WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo3 = stoppedEvent3.ReadStopInfo();
+        Assert.EndsWith("Program.cs", stopInfo3.filePath);
+        Assert.Equal(27, stopInfo3.line);
+    }
 }

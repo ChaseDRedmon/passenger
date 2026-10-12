@@ -1,61 +1,59 @@
-using AwesomeAssertions;
-using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol.Messages;
-using SharpDbg.Cli.Tests.Helpers;
+using System.Diagnostics;
+using Passenger.Dap;
+using Passenger.Tests.Debugging.Helpers;
 
-namespace SharpDbg.Cli.Tests;
+namespace Passenger.Tests.Debugging;
 
+[Collection(DebugSession.Collection)]
 public class LambdaVariablesTests(ITestOutputHelper testOutputHelper)
 {
-	[Fact]
-	public async Task SharpDbgCli_InLambda_VariablesRequest_Returns_InScopeVariables()
-	{
-		var startSuspended = true;
-		var (debugProtocolHost, initializedEventTcs, debugEventTcs, adapter, p2) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended);
-		using var _ = adapter;
-		using var __ = new ProcessKiller(p2);
-		using var ___ = debugProtocolHost;
+    [Fact]
+    public async Task SharpDbgCli_InLambda_VariablesRequest_Returns_InScopeVariables()
+    {
+        bool startSuspended = true;
+        using DebugSession debugProtocolHost = DebugSession.ForAttach(testOutputHelper, startSuspended, out Process p2);
 
-		await debugProtocolHost
-			.WithInitializeRequest()
-			.WithAttachRequest(p2.Id)
-			.WaitForInitializedEvent(initializedEventTcs);
-		debugProtocolHost
-			.WithBreakpointsRequest([28], Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "Lambdas", "MyLambdaClass.cs"))
-			.WithConfigurationDoneRequest()
-			.WithOptionalResumeRuntime(p2.Id, startSuspended);
+        await debugProtocolHost
+            .WithInitializeRequest()
+            .WithAttachRequest(p2.Id)
+            .WaitForInitializedEvent();
+        debugProtocolHost
+            .WithBreakpointsRequest([28], Debuggees.Source("DebuggableConsoleApp", "Lambdas", "MyLambdaClass.cs"))
+            .WithConfigurationDoneRequest()
+            .WithOptionalResumeRuntime(p2.Id, startSuspended);
 
-		// stop inside the lambda
-		var stoppedEvent = await debugProtocolHost.WaitForStoppedEvent(debugEventTcs);
-		var stopInfo = stoppedEvent.ReadStopInfo();
-		stopInfo.filePath.Should().EndWith("MyLambdaClass.cs");
-		stopInfo.line.Should().Be(28);
+        // stop inside the lambda
+        StoppedEvent stoppedEvent = await debugProtocolHost.WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo = stoppedEvent.ReadStopInfo();
+        Assert.EndsWith("MyLambdaClass.cs", stopInfo.filePath);
+        Assert.Equal(28, stopInfo.line);
 
-		debugProtocolHost
-			.WithStackTraceRequest(stoppedEvent.ThreadId!.Value, out var stackTraceResponse)
-			.WithScopesRequest(stackTraceResponse.StackFrames!.First().Id, out var scopesResponse);
+        debugProtocolHost
+            .WithStackTraceRequest(stoppedEvent.ThreadId!.Value, out StackTraceResponse? stackTraceResponse)
+            .WithScopesRequest(stackTraceResponse.StackFrames!.First().Id, out ScopesResponse? scopesResponse);
 
-		scopesResponse.Scopes.Should().HaveCount(1);
-		var scope = scopesResponse.Scopes.Single();
+        Assert.Single(scopesResponse.Scopes);
+        DapScope scope = scopesResponse.Scopes.Single();
 
-		List<Variable> expectedVariables =
-		[
-			new() {Name = "this", Value = "{DebuggableConsoleApp.Lambdas.MyLambdaClass}", Type = "DebuggableConsoleApp.Lambdas.MyLambdaClass", EvaluateName = "this", VariablesReference = 2 },
-			new() {Name = "capturedString",  EvaluateName = "capturedString",  Value = "\"captured\"", Type = "string" },
-			new() {Name = "innerLocalFromOuterLocalInt1",  EvaluateName = "innerLocalFromOuterLocalInt1",  Value = "4",  Type = "int" },
-			new() {Name = "innerLocalFromOuterLocalInt2",  EvaluateName = "innerLocalFromOuterLocalInt2",  Value = "15",  Type = "int" },
-			new() {Name = "innerLocalFromRootLocalInt",  EvaluateName = "innerLocalFromRootLocalInt",  Value = "10",  Type = "int" },
-			new() {Name = "innerLocalFromRootLocalString", EvaluateName = "innerLocalFromRootLocalString", Value = "\"captured\"",  Type = "string" },
-			new() {Name = "local",  EvaluateName = "local",  Value = "10",  Type = "int" },
-			new() {Name = "outerLocalFromCapturedField",  EvaluateName = "outerLocalFromCapturedField",  Value = "4",  Type = "int" },
-			new() {Name = "outerLocalFromLocal",  EvaluateName = "outerLocalFromLocal",  Value = "15",  Type = "int" },
-			new() {Name = "result",  EvaluateName = "result",  Value = "25",  Type = "int" },
-			new() {Name = "y", EvaluateName = "y", Value = "5",  Type = "int" },
+        List<DapVariable> expectedVariables =
+        [
+            new() {Name = "this", Value = "{DebuggableConsoleApp.Lambdas.MyLambdaClass}", Type = "DebuggableConsoleApp.Lambdas.MyLambdaClass", EvaluateName = "this", VariablesReference = 2 },
+            new() {Name = "capturedString",  EvaluateName = "capturedString",  Value = "\"captured\"", Type = "string" },
+            new() {Name = "innerLocalFromOuterLocalInt1",  EvaluateName = "innerLocalFromOuterLocalInt1",  Value = "4",  Type = "int" },
+            new() {Name = "innerLocalFromOuterLocalInt2",  EvaluateName = "innerLocalFromOuterLocalInt2",  Value = "15",  Type = "int" },
+            new() {Name = "innerLocalFromRootLocalInt",  EvaluateName = "innerLocalFromRootLocalInt",  Value = "10",  Type = "int" },
+            new() {Name = "innerLocalFromRootLocalString", EvaluateName = "innerLocalFromRootLocalString", Value = "\"captured\"",  Type = "string" },
+            new() {Name = "local",  EvaluateName = "local",  Value = "10",  Type = "int" },
+            new() {Name = "outerLocalFromCapturedField",  EvaluateName = "outerLocalFromCapturedField",  Value = "4",  Type = "int" },
+            new() {Name = "outerLocalFromLocal",  EvaluateName = "outerLocalFromLocal",  Value = "15",  Type = "int" },
+            new() {Name = "result",  EvaluateName = "result",  Value = "25",  Type = "int" },
+            new() {Name = "y", EvaluateName = "y", Value = "5",  Type = "int" },
 
-		];
+        ];
 
-		debugProtocolHost.WithVariablesRequest(scope.VariablesReference, out var variables);
+        debugProtocolHost.WithVariablesRequest(scope.VariablesReference, out List<DapVariable>? variables);
 
-		variables.Should().HaveCount(11);
-		variables.ShouldBeEquivalentToDebuggerVariables(expectedVariables);
-	}
+        Assert.Equal(11, variables.Count);
+        variables.ShouldBeEquivalentToDebuggerVariables(expectedVariables);
+    }
 }

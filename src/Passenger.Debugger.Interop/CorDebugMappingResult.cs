@@ -1,36 +1,36 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Provides the details of how the value of the instruction pointer (IP) was obtained.</para>
 /// </summary>
 /// <remarks>
-/// <para>You can use the <see cref="M:ICorDebugSharp.ICorDebugILFrame.TryGetIP(System.UInt32@,ICorDebugSharp.CorDebugMappingResult@)">ICorDebugILFrame::GetIP</see> method to obtain the value of the instruction pointer.</para>
+/// <para>You can use the <see cref="M:Passenger.Debugger.Interop.ICorDebugILFrame.TryGetIP(System.UInt32@,Passenger.Debugger.Interop.CorDebugMappingResult@)">ICorDebugILFrame::GetIP</see> method to obtain the value of the instruction pointer.</para>
 /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/cordebugmappingresult-enumeration">Microsoft Learn</see>.</para>
 /// </remarks>
 public enum CorDebugMappingResult
 {
-	/// <summary>
-	/// <para>The native code is in the prolog, so the value of the IP is 0.</para>
-	/// </summary>
-	MAPPING_PROLOG = 1,
-	/// <summary>
-	/// <para>The native code is in an epilog, so the value of the IP is the address of the last instruction of the method.</para>
-	/// </summary>
-	MAPPING_EPILOG = 2,
-	/// <summary>
-	/// <para>No mapping information is available for the method, so the value of the IP is 0.</para>
-	/// </summary>
-	MAPPING_NO_INFO = 4,
-	/// <summary>
-	/// <para>Although there is mapping information for the method, the current address cannot be mapped to common intermediate language (CIL) code. The value of the IP is 0.</para>
-	/// </summary>
-	MAPPING_UNMAPPED_ADDRESS = 8,
-	/// <summary>
-	/// <para>Either the method maps exactly to CIL code or the frame has been interpreted, so the value of the IP is accurate.</para>
-	/// </summary>
-	MAPPING_EXACT = 0x10,
-	/// <summary>
-	/// <para>The method was successfully mapped, but the value of the IP may be approximate.</para>
-	/// </summary>
-	MAPPING_APPROXIMATE = 0x20
+    /// <summary>
+    /// <para>The native code is in the prolog, so the value of the IP is 0.</para>
+    /// </summary>
+    MAPPING_PROLOG = 1,
+    /// <summary>
+    /// <para>The native code is in an epilog, so the value of the IP is the address of the last instruction of the method.</para>
+    /// </summary>
+    MAPPING_EPILOG = 2,
+    /// <summary>
+    /// <para>No mapping information is available for the method, so the value of the IP is 0.</para>
+    /// </summary>
+    MAPPING_NO_INFO = 4,
+    /// <summary>
+    /// <para>Although there is mapping information for the method, the current address cannot be mapped to common intermediate language (CIL) code. The value of the IP is 0.</para>
+    /// </summary>
+    MAPPING_UNMAPPED_ADDRESS = 8,
+    /// <summary>
+    /// <para>Either the method maps exactly to CIL code or the frame has been interpreted, so the value of the IP is accurate.</para>
+    /// </summary>
+    MAPPING_EXACT = 0x10,
+    /// <summary>
+    /// <para>The method was successfully mapped, but the value of the IP may be approximate.</para>
+    /// </summary>
+    MAPPING_APPROXIMATE = 0x20
 }

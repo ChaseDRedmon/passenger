@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>An extension of ICorDebugHeapValue that provides support for common language runtime (CLR) handles.</para>
@@ -15,20 +15,20 @@ namespace ICorDebugSharp;
 [Guid("E3AC4D6C-9CB7-43E6-96CC-B21540E5083C")]
 public partial interface ICorDebugHeapValue2
 {
-	/// <summary>
-	/// <para>Creates a handle of the specified type for the heap value represented by this ICorDebugHeapValue2 object.</para>
-	/// </summary>
-	/// <param name="type">
-	/// <para>A value of the CorDebugHandleType enumeration that specifies the type of handle to be created.</para>
-	/// </param>
-	/// <param name="ppHandle">
-	/// <para>A pointer to the address of an ICorDebugHandleValue object that represents the new handle for this heap value.</para>
-	/// </param>
-	/// <remarks>
-	/// <para>The handle will be created in the application domain that is associated with the heap value, and will become invalid if the application domain gets unloaded.</para>
-	/// <para>Multiple calls to this function for the same heap value will create multiple handles. Because handles affect the performance of the garbage collector, the debugger should limit itself to a relatively small number of handles (about 256) that are active at a time.</para>
-	/// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugheapvalue2-createhandle-method">Microsoft Learn</see>.</para>
-	/// </remarks>
-	[PreserveSig]
-	int TryCreateHandle(CorDebugHandleType type, out ICorDebugHandleValue ppHandle);
+    /// <summary>
+    /// <para>Creates a handle of the specified type for the heap value represented by this ICorDebugHeapValue2 object.</para>
+    /// </summary>
+    /// <param name="type">
+    /// <para>A value of the CorDebugHandleType enumeration that specifies the type of handle to be created.</para>
+    /// </param>
+    /// <param name="ppHandle">
+    /// <para>A pointer to the address of an ICorDebugHandleValue object that represents the new handle for this heap value.</para>
+    /// </param>
+    /// <remarks>
+    /// <para>The handle will be created in the application domain that is associated with the heap value, and will become invalid if the application domain gets unloaded.</para>
+    /// <para>Multiple calls to this function for the same heap value will create multiple handles. Because handles affect the performance of the garbage collector, the debugger should limit itself to a relatively small number of handles (about 256) that are active at a time.</para>
+    /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugheapvalue2-createhandle-method">Microsoft Learn</see>.</para>
+    /// </remarks>
+    [PreserveSig]
+    int TryCreateHandle(CorDebugHandleType type, out ICorDebugHandleValue ppHandle);
 }

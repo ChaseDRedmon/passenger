@@ -1,7 +1,7 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 public enum CorExtendedLayoutKind
 {
-	CStruct,
-	CUnion
+    CStruct,
+    CUnion
 }

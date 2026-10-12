@@ -1,4 +1,4 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Indicates the handle type.</para>
@@ -8,13 +8,13 @@ namespace ICorDebugSharp;
 /// </remarks>
 public enum CorDebugHandleType
 {
-	/// <summary>
-	/// <para>The handle is strong, which prevents an object from being reclaimed by garbage collection.</para>
-	/// </summary>
-	HANDLE_STRONG = 1,
-	/// <summary>
-	/// <para>The handle is weak, which does not prevent an object from being reclaimed by garbage collection.<br /><br /> The handle becomes invalid when the object is collected.</para>
-	/// </summary>
-	HANDLE_WEAK_TRACK_RESURRECTION,
-	HANDLE_PINNED
+    /// <summary>
+    /// <para>The handle is strong, which prevents an object from being reclaimed by garbage collection.</para>
+    /// </summary>
+    HANDLE_STRONG = 1,
+    /// <summary>
+    /// <para>The handle is weak, which does not prevent an object from being reclaimed by garbage collection.<br /><br /> The handle becomes invalid when the object is collected.</para>
+    /// </summary>
+    HANDLE_WEAK_TRACK_RESURRECTION,
+    HANDLE_PINNED
 }

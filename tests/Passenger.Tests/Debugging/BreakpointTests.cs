@@ -1,231 +1,219 @@
-using AwesomeAssertions;
-using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol;
-using Microsoft.VisualStudio.Shared.VSCodeDebugProtocol.Messages;
-using SharpDbg.Cli.Tests.Helpers;
-using SharpDbg.Infrastructure.Debugger;
+using System.Diagnostics;
+using Passenger.Dap;
+using Passenger.Tests.Debugging.Helpers;
 
-namespace SharpDbg.Cli.Tests;
+namespace Passenger.Tests.Debugging;
 
+[Collection(DebugSession.Collection)]
 public class BreakpointTests(ITestOutputHelper testOutputHelper)
 {
-	[Fact]
-	public async Task SharpDbgCli_SetBreakpoint_RaisesBreakpointEvent()
-	{
-		var startSuspended = true;
-		var (debugProtocolHost, initializedEventTcs, debugEventTcs, adapter, p2) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended);
-		using var _ = adapter;
-		using var __ = new ProcessKiller(p2);
-		using var ___ = debugProtocolHost;
+    [Fact]
+    public async Task SharpDbgCli_SetBreakpoint_RaisesBreakpointEvent()
+    {
+        bool startSuspended = true;
+        using DebugSession debugProtocolHost = DebugSession.ForAttach(testOutputHelper, startSuspended, out Process p2);
 
-		await debugProtocolHost
-			.WithInitializeRequest()
-			.WithAttachRequest(p2.Id)
-			.WaitForInitializedEvent(initializedEventTcs);
-		var breakpointedFilePath = Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "MyClass.cs");
-		debugProtocolHost
-			.WithBreakpointsRequest([11], breakpointedFilePath)
-			.WithConfigurationDoneRequest()
-			.WithOptionalResumeRuntime(p2.Id, startSuspended);
+        await debugProtocolHost
+            .WithInitializeRequest()
+            .WithAttachRequest(p2.Id)
+            .WaitForInitializedEvent();
+        string breakpointedFilePath = Debuggees.Source("DebuggableConsoleApp", "MyClass.cs");
+        debugProtocolHost
+            .WithBreakpointsRequest([11], breakpointedFilePath)
+            .WithConfigurationDoneRequest()
+            .WithOptionalResumeRuntime(p2.Id, startSuspended);
 
-		var expectedBreakpointEvent1 = new BreakpointEvent
-		{
-			Reason = BreakpointEvent.ReasonValue.Changed,
-			Breakpoint = new Breakpoint
-			{
-				Id = 1,
-				Message = "Breakpoint has not been processed by the debugger.",
-				Verified = false,
-				Line = 11
-			}
-		};
-		var breakpointEvent = await debugProtocolHost.WaitForEvent<BreakpointEvent>(debugEventTcs);
-		breakpointEvent.Should().BeEquivalentTo(expectedBreakpointEvent1);
+        var expectedBreakpointEvent1 = new BreakpointEvent
+        {
+            Reason = "changed",
+            Breakpoint = new DapBreakpoint
+            {
+                Id = 1,
+                Message = "Breakpoint has not been processed by the debugger.",
+                Verified = false,
+                Line = 11
+            }
+        };
+        BreakpointEvent breakpointEvent = await debugProtocolHost.WaitForEvent<BreakpointEvent>();
+        Assert.Equivalent(expectedBreakpointEvent1, breakpointEvent, strict: true);
 
-		var expectedBreakpointEvent2 = new BreakpointEvent
-		{
-			Reason = BreakpointEvent.ReasonValue.Changed,
-			Breakpoint = new Breakpoint
-			{
-				Id = 1,
-				Verified = true,
-				Line = 11,
-				Column = 3,
-				EndLine = 11,
-				EndColumn = 17,
-				Offset = 0,
-				Source = new Source { Path = breakpointedFilePath, Name = "MyClass.cs", SourceReference = 0 }
-			}
-		};
+        var expectedBreakpointEvent2 = new BreakpointEvent
+        {
+            Reason = "changed",
+            Breakpoint = new DapBreakpoint
+            {
+                Id = 1,
+                Verified = true,
+                Line = 11,
+                Column = 3,
+                EndLine = 11,
+                EndColumn = 17,
+                Offset = 0,
+                Source = new DapSource { Path = breakpointedFilePath, Name = "MyClass.cs", SourceReference = 0 }
+            }
+        };
 
-		var breakpointEvent2 = await debugProtocolHost.WaitForEvent<BreakpointEvent>(debugEventTcs);
-		breakpointEvent2.Should().BeEquivalentTo(expectedBreakpointEvent2, options => options.Excluding(s => s.Breakpoint.Source.Checksums).Excluding(s => s.Breakpoint.Source.VsSourceLinkInfo));
+        BreakpointEvent breakpointEvent2 = await debugProtocolHost.WaitForEvent<BreakpointEvent>();
+        Assert.Equivalent(expectedBreakpointEvent2, breakpointEvent2, strict: true);
 
-		var stoppedEvent = await debugProtocolHost.WaitForStoppedEvent(debugEventTcs);
-		var stopInfo = stoppedEvent.ReadStopInfo();
-		stopInfo.filePath.Should().EndWith("MyClass.cs");
-		stopInfo.line.Should().Be(11);
-	}
+        StoppedEvent stoppedEvent = await debugProtocolHost.WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo = stoppedEvent.ReadStopInfo();
+        Assert.EndsWith("MyClass.cs", stopInfo.filePath);
+        Assert.Equal(11, stopInfo.line);
+    }
 
-	[Fact]
-	public async Task SharpDbgCli_SetBreakpoint_WithColumn_StopsAtMatchingStatementColumn()
-	{
-		var startSuspended = true;
-		var (debugProtocolHost, initializedEventTcs, debugEventTcs, adapter, p2) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended);
-		using var _ = adapter;
-		using var __ = new ProcessKiller(p2);
-		using var ___ = debugProtocolHost;
+    [Fact]
+    public async Task SharpDbgCli_SetBreakpoint_WithColumn_StopsAtMatchingStatementColumn()
+    {
+        bool startSuspended = true;
+        using DebugSession debugProtocolHost = DebugSession.ForAttach(testOutputHelper, startSuspended, out Process p2);
 
-		await debugProtocolHost
-			.WithInitializeRequest()
-			.WithAttachRequest(p2.Id)
-			.WaitForInitializedEvent(initializedEventTcs);
+        await debugProtocolHost
+            .WithInitializeRequest()
+            .WithAttachRequest(p2.Id)
+            .WaitForInitializedEvent();
 
-		var breakpointedFilePath = Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "ColumnBreakpointClass.cs");
-		var line = GetLineNumber(breakpointedFilePath, "column-breakpoint-line");
-		var column = GetColumnNumber(breakpointedFilePath, line, "var third");
-		var endColumn = column + "var third = second + 1;".Length;
+        string breakpointedFilePath = Debuggees.Source("DebuggableConsoleApp", "ColumnBreakpointClass.cs");
+        int line = GetLineNumber(breakpointedFilePath, "column-breakpoint-line");
+        int column = GetColumnNumber(breakpointedFilePath, line, "var third");
+        int endColumn = column + "var third = second + 1;".Length;
 
-		debugProtocolHost
-			.WithBreakpointsRequest(breakpointedFilePath, [new SharpDbgBreakpointRequest(line, Column: column)])
-			.WithConfigurationDoneRequest()
-			.WithOptionalResumeRuntime(p2.Id, startSuspended);
+        debugProtocolHost
+            .WithBreakpointsRequest(breakpointedFilePath, [new DapSourceBreakpoint(line, Column: column)])
+            .WithConfigurationDoneRequest()
+            .WithOptionalResumeRuntime(p2.Id, startSuspended);
 
-		var breakpointEvent = await debugProtocolHost.WaitForEvent<BreakpointEvent>(debugEventTcs, s => s.Breakpoint.Verified);
-		breakpointEvent.Breakpoint.Line.Should().Be(line);
-		breakpointEvent.Breakpoint.Column.Should().Be(column);
-		breakpointEvent.Breakpoint.EndColumn.Should().Be(endColumn);
+        BreakpointEvent breakpointEvent = await debugProtocolHost.WaitForEvent<BreakpointEvent>(s => s.Breakpoint.Verified);
+        Assert.Equal(line, breakpointEvent.Breakpoint.Line);
+        Assert.Equal(column, breakpointEvent.Breakpoint.Column);
+        Assert.Equal(endColumn, breakpointEvent.Breakpoint.EndColumn);
 
-		var stoppedEvent = await debugProtocolHost.WaitForStoppedEvent(debugEventTcs);
-		debugProtocolHost.WithStackTraceRequest(stoppedEvent.ThreadId!.Value, out var stackTraceResponse);
-		var topFrame = stackTraceResponse.StackFrames.Single();
+        StoppedEvent stoppedEvent = await debugProtocolHost.WaitForStoppedEvent();
+        debugProtocolHost.WithStackTraceRequest(stoppedEvent.ThreadId!.Value, out StackTraceResponse? stackTraceResponse);
+        DapStackFrame topFrame = stackTraceResponse.StackFrames.Single();
 
-		topFrame.Source.Path.Should().EndWith("ColumnBreakpointClass.cs");
-		topFrame.Line.Should().Be(line);
-		topFrame.Column.Should().Be(column);
-		topFrame.EndColumn.Should().Be(endColumn);
-	}
+        Assert.EndsWith("ColumnBreakpointClass.cs", topFrame.Source?.Path);
+        Assert.Equal(line, topFrame.Line);
+        Assert.Equal(column, topFrame.Column);
+        Assert.Equal(endColumn, topFrame.EndColumn);
+    }
 
-	[Fact]
-	public async Task SharpDbgCli_SetBreakpoint_WithoutColumnOnMultiStatementLine_StopsAtFirstStatementColumn()
-	{
-		var startSuspended = true;
-		var (debugProtocolHost, initializedEventTcs, debugEventTcs, adapter, p2) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended);
-		using var _ = adapter;
-		using var __ = new ProcessKiller(p2);
-		using var ___ = debugProtocolHost;
+    [Fact]
+    public async Task SharpDbgCli_SetBreakpoint_WithoutColumnOnMultiStatementLine_StopsAtFirstStatementColumn()
+    {
+        bool startSuspended = true;
+        using DebugSession debugProtocolHost = DebugSession.ForAttach(testOutputHelper, startSuspended, out Process p2);
 
-		await debugProtocolHost
-			.WithInitializeRequest()
-			.WithAttachRequest(p2.Id)
-			.WaitForInitializedEvent(initializedEventTcs);
+        await debugProtocolHost
+            .WithInitializeRequest()
+            .WithAttachRequest(p2.Id)
+            .WaitForInitializedEvent();
 
-		var breakpointedFilePath = Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "ColumnBreakpointClass.cs");
-		var line = GetLineNumber(breakpointedFilePath, "column-breakpoint-line");
-		var expectedColumn = GetColumnNumber(breakpointedFilePath, line, "var first");
+        string breakpointedFilePath = Debuggees.Source("DebuggableConsoleApp", "ColumnBreakpointClass.cs");
+        int line = GetLineNumber(breakpointedFilePath, "column-breakpoint-line");
+        int expectedColumn = GetColumnNumber(breakpointedFilePath, line, "var first");
 
-		debugProtocolHost
-			.WithBreakpointsRequest(breakpointedFilePath, [new SharpDbgBreakpointRequest(line)])
-			.WithConfigurationDoneRequest()
-			.WithOptionalResumeRuntime(p2.Id, startSuspended);
+        debugProtocolHost
+            .WithBreakpointsRequest(breakpointedFilePath, [new DapSourceBreakpoint(line)])
+            .WithConfigurationDoneRequest()
+            .WithOptionalResumeRuntime(p2.Id, startSuspended);
 
-		var stoppedEvent = await debugProtocolHost.WaitForStoppedEvent(debugEventTcs);
-		debugProtocolHost.WithStackTraceRequest(stoppedEvent.ThreadId!.Value, out var stackTraceResponse);
-		var topFrame = stackTraceResponse.StackFrames.Single();
+        StoppedEvent stoppedEvent = await debugProtocolHost.WaitForStoppedEvent();
+        debugProtocolHost.WithStackTraceRequest(stoppedEvent.ThreadId!.Value, out StackTraceResponse? stackTraceResponse);
+        DapStackFrame topFrame = stackTraceResponse.StackFrames.Single();
 
-		topFrame.Source.Path.Should().EndWith("ColumnBreakpointClass.cs");
-		topFrame.Line.Should().Be(line);
-		topFrame.Column.Should().Be(expectedColumn);
-	}
+        Assert.EndsWith("ColumnBreakpointClass.cs", topFrame.Source?.Path);
+        Assert.Equal(line, topFrame.Line);
+        Assert.Equal(expectedColumn, topFrame.Column);
+    }
 
-	[Fact]
-	public async Task SharpDbgCli_SetBreakpoint_WithColumnOnMultilineStatement_StopsAtStatementStartColumn()
-	{
-		var startSuspended = true;
-		var (debugProtocolHost, initializedEventTcs, debugEventTcs, adapter, p2) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended);
-		using var _ = adapter;
-		using var __ = new ProcessKiller(p2);
-		using var ___ = debugProtocolHost;
+    [Fact]
+    public async Task SharpDbgCli_SetBreakpoint_WithColumnOnMultilineStatement_StopsAtStatementStartColumn()
+    {
+        bool startSuspended = true;
+        using DebugSession debugProtocolHost = DebugSession.ForAttach(testOutputHelper, startSuspended, out Process p2);
 
-		await debugProtocolHost
-			.WithInitializeRequest()
-			.WithAttachRequest(p2.Id)
-			.WaitForInitializedEvent(initializedEventTcs);
+        await debugProtocolHost
+            .WithInitializeRequest()
+            .WithAttachRequest(p2.Id)
+            .WaitForInitializedEvent();
 
-		var breakpointedFilePath = Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "ColumnBreakpointClass.cs");
-		var statementStartLine = GetLineNumber(breakpointedFilePath, "var multi =");
-		var requestedLine = statementStartLine + 1;
-		var requestedColumn = GetColumnNumber(breakpointedFilePath, requestedLine, "1 + 25");
-		var expectedColumn = GetColumnNumber(breakpointedFilePath, statementStartLine, "var multi");
+        string breakpointedFilePath = Debuggees.Source("DebuggableConsoleApp", "ColumnBreakpointClass.cs");
+        int statementStartLine = GetLineNumber(breakpointedFilePath, "var multi =");
+        int requestedLine = statementStartLine + 1;
+        int requestedColumn = GetColumnNumber(breakpointedFilePath, requestedLine, "1 + 25");
+        int expectedColumn = GetColumnNumber(breakpointedFilePath, statementStartLine, "var multi");
 
-		debugProtocolHost
-			.WithBreakpointsRequest(breakpointedFilePath, [new SharpDbgBreakpointRequest(requestedLine, Column: requestedColumn)])
-			.WithConfigurationDoneRequest()
-			.WithOptionalResumeRuntime(p2.Id, startSuspended);
+        debugProtocolHost
+            .WithBreakpointsRequest(breakpointedFilePath, [new DapSourceBreakpoint(requestedLine, Column: requestedColumn)])
+            .WithConfigurationDoneRequest()
+            .WithOptionalResumeRuntime(p2.Id, startSuspended);
 
-		var breakpointEvent = await debugProtocolHost.WaitForEvent<BreakpointEvent>(debugEventTcs, s => s.Breakpoint.Verified);
-		breakpointEvent.Breakpoint.Line.Should().Be(statementStartLine);
-		breakpointEvent.Breakpoint.Column.Should().Be(expectedColumn);
+        BreakpointEvent breakpointEvent = await debugProtocolHost.WaitForEvent<BreakpointEvent>(s => s.Breakpoint.Verified);
+        Assert.Equal(statementStartLine, breakpointEvent.Breakpoint.Line);
+        Assert.Equal(expectedColumn, breakpointEvent.Breakpoint.Column);
 
-		var stoppedEvent = await debugProtocolHost.WaitForStoppedEvent(debugEventTcs);
-		debugProtocolHost.WithStackTraceRequest(stoppedEvent.ThreadId!.Value, out var stackTraceResponse);
-		var topFrame = stackTraceResponse.StackFrames.Single();
+        StoppedEvent stoppedEvent = await debugProtocolHost.WaitForStoppedEvent();
+        debugProtocolHost.WithStackTraceRequest(stoppedEvent.ThreadId!.Value, out StackTraceResponse? stackTraceResponse);
+        DapStackFrame topFrame = stackTraceResponse.StackFrames.Single();
 
-		topFrame.Source.Path.Should().EndWith("ColumnBreakpointClass.cs");
-		topFrame.Line.Should().Be(statementStartLine);
-		topFrame.Column.Should().Be(expectedColumn);
-	}
+        Assert.EndsWith("ColumnBreakpointClass.cs", topFrame.Source?.Path);
+        Assert.Equal(statementStartLine, topFrame.Line);
+        Assert.Equal(expectedColumn, topFrame.Column);
+    }
 
-	[Fact]
-	public async Task SharpDbgCli_SetBreakpoint_AfterSymbolsLoaded_ResponseIncludesResolvedColumns()
-	{
-		var startSuspended = true;
-		var (debugProtocolHost, initializedEventTcs, debugEventTcs, adapter, p2) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended);
-		using var _ = adapter;
-		using var __ = new ProcessKiller(p2);
-		using var ___ = debugProtocolHost;
+    [Fact]
+    public async Task SharpDbgCli_SetBreakpoint_AfterSymbolsLoaded_ResponseIncludesResolvedColumns()
+    {
+        bool startSuspended = true;
+        using DebugSession debugProtocolHost = DebugSession.ForAttach(testOutputHelper, startSuspended, out Process p2);
 
-		await debugProtocolHost
-			.WithInitializeRequest()
-			.WithAttachRequest(p2.Id)
-			.WaitForInitializedEvent(initializedEventTcs);
+        await debugProtocolHost
+            .WithInitializeRequest()
+            .WithAttachRequest(p2.Id)
+            .WaitForInitializedEvent();
 
-		var breakpointedFilePath = Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "ColumnBreakpointClass.cs");
-		var line = GetLineNumber(breakpointedFilePath, "column-breakpoint-line");
+        string breakpointedFilePath = Debuggees.Source("DebuggableConsoleApp", "ColumnBreakpointClass.cs");
+        int line = GetLineNumber(breakpointedFilePath, "column-breakpoint-line");
 
-		debugProtocolHost
-			.WithBreakpointsRequest(breakpointedFilePath, [new SharpDbgBreakpointRequest(line)])
-			.WithConfigurationDoneRequest()
-			.WithOptionalResumeRuntime(p2.Id, startSuspended);
+        debugProtocolHost
+            .WithBreakpointsRequest(breakpointedFilePath, [new DapSourceBreakpoint(line)])
+            .WithConfigurationDoneRequest()
+            .WithOptionalResumeRuntime(p2.Id, startSuspended);
 
-		await debugProtocolHost.WaitForStoppedEvent(debugEventTcs);
+        await debugProtocolHost.WaitForStoppedEvent();
 
-		var column = GetColumnNumber(breakpointedFilePath, line, "var second");
-		var endColumn = column + "var second = first + 1;".Length;
+        int column = GetColumnNumber(breakpointedFilePath, line, "var second");
+        int endColumn = column + "var second = first + 1;".Length;
 
-		debugProtocolHost.WithBreakpointsRequest(breakpointedFilePath, [new SharpDbgBreakpointRequest(line, Column: column)], out var response);
+        debugProtocolHost.WithBreakpointsRequest(breakpointedFilePath, [new DapSourceBreakpoint(line, Column: column)], out SetBreakpointsResponse? response);
 
-		var breakpoint = response.Breakpoints.Single();
+        DapBreakpoint breakpoint = response.Breakpoints.Single();
 
-		breakpoint.Verified.Should().BeTrue();
-		breakpoint.Line.Should().Be(line);
-		breakpoint.Column.Should().Be(column);
-		breakpoint.EndLine.Should().Be(line);
-		breakpoint.EndColumn.Should().Be(endColumn);
-	}
+        Assert.True(breakpoint.Verified);
+        Assert.Equal(line, breakpoint.Line);
+        Assert.Equal(column, breakpoint.Column);
+        Assert.Equal(line, breakpoint.EndLine);
+        Assert.Equal(endColumn, breakpoint.EndColumn);
+    }
 
-	private static int GetLineNumber(string filePath, string marker)
-	{
-		return File.ReadLines(filePath)
-			.Select((line, index) => (line, index))
-			.Single(item => item.line.Contains(marker))
-			.index + 1;
-	}
+    private static int GetLineNumber(string filePath, string marker)
+    {
+        return File.ReadLines(filePath)
+            .Select((line, index) => (line, index))
+            .Single(item => item.line.Contains(marker))
+            .index + 1;
+    }
 
-	private static int GetColumnNumber(string filePath, int lineNumber, string marker)
-	{
-		var line = File.ReadLines(filePath).ElementAt(lineNumber - 1);
-		var index = line.IndexOf(marker, StringComparison.Ordinal);
-		if (index < 0) throw new InvalidOperationException($"Marker '{marker}' not found on line {lineNumber} in {filePath}");
-		return index + 1;
-	}
+    private static int GetColumnNumber(string filePath, int lineNumber, string marker)
+    {
+        string line = File.ReadLines(filePath).ElementAt(lineNumber - 1);
+        int index = line.IndexOf(marker, StringComparison.Ordinal);
+        if (index < 0)
+        {
+            throw new InvalidOperationException($"Marker '{marker}' not found on line {lineNumber} in {filePath}");
+        }
+
+        return index + 1;
+    }
 }

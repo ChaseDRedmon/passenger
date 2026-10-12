@@ -1,4 +1,4 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Specifies changes in the relative offset of a function.</para>
@@ -45,18 +45,18 @@ namespace ICorDebugSharp;
 /// </remarks>
 public struct COR_IL_MAP
 {
-	/// <summary>
-	/// <para>The old common intermediate language (CIL) offset relative to the beginning of the function.</para>
-	/// </summary>
-	public uint oldOffset;
+    /// <summary>
+    /// <para>The old common intermediate language (CIL) offset relative to the beginning of the function.</para>
+    /// </summary>
+    public uint oldOffset;
 
-	/// <summary>
-	/// <para>The new CIL offset relative to the beginning of the function.</para>
-	/// </summary>
-	public uint newOffset;
+    /// <summary>
+    /// <para>The new CIL offset relative to the beginning of the function.</para>
+    /// </summary>
+    public uint newOffset;
 
-	/// <summary>
-	/// <para><c>true</c> if the mapping is known to be accurate; otherwise, <c>false</c>.</para>
-	/// </summary>
-	public int fAccurate;
+    /// <summary>
+    /// <para><c>true</c> if the mapping is known to be accurate; otherwise, <c>false</c>.</para>
+    /// </summary>
+    public int fAccurate;
 }

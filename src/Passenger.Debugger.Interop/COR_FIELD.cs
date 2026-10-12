@@ -1,4 +1,4 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Provides information about a field in an object.</para>
@@ -8,23 +8,23 @@ namespace ICorDebugSharp;
 /// </remarks>
 public struct COR_FIELD
 {
-	/// <summary>
-	/// <para>An <c>mdFieldDef</c> token that can be used to get field information.</para>
-	/// </summary>
-	public mdFieldDef token;
+    /// <summary>
+    /// <para>An <c>mdFieldDef</c> token that can be used to get field information.</para>
+    /// </summary>
+    public mdFieldDef token;
 
-	/// <summary>
-	/// <para>The offset, in bytes, to the field data in the object.</para>
-	/// </summary>
-	public uint offset;
+    /// <summary>
+    /// <para>The offset, in bytes, to the field data in the object.</para>
+    /// </summary>
+    public uint offset;
 
-	/// <summary>
-	/// <para>A <see cref="T:ICorDebugSharp.COR_TYPEID">COR_TYPEID</see> value that identifies the type of this field.</para>
-	/// </summary>
-	public COR_TYPEID id;
+    /// <summary>
+    /// <para>A <see cref="T:Passenger.Debugger.Interop.COR_TYPEID">COR_TYPEID</see> value that identifies the type of this field.</para>
+    /// </summary>
+    public COR_TYPEID id;
 
-	/// <summary>
-	/// <para>A CorElementType enumeration value that indicates the type of the field.</para>
-	/// </summary>
-	public CorElementType fieldType;
+    /// <summary>
+    /// <para>A CorElementType enumeration value that indicates the type of the field.</para>
+    /// </summary>
+    public CorElementType fieldType;
 }

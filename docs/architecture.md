@@ -114,17 +114,35 @@ AvaloniaEdit (MIT, a port of AvalonEdit) is a reference, not a dependency.
 ## The debugger
 
 Microsoft's debugger (vsdbg) is licensed only for Visual Studio, VS Code and Xamarin Studio, which is why JetBrains
-and Samsung each wrote their own, and why we write ours:
+and Samsung each wrote their own.
 
-- **The engine** is ICorDebug through `dbgshim` (MIT, from dotnet/diagnostics), with the ClrDebug bindings for C#.
-  Rider ships `dbgshim` for every OS and CPU beside its own `JetBrains.Debugger.Worker`.
-- **Watches and hovers** use Roslyn's expression compiler (`Microsoft.CodeAnalysis.ExpressionEvaluator.ExpressionCompiler`,
-  which Rider also ships) to compile an expression into IL against the current frame; ICorDebug's function
-  evaluation runs it.
-- **Hot reload and Edit and Continue** use Roslyn's EnC, applied through ICorDebug or the runtime's metadata updates.
-- **Reference:** Samsung's netcoredbg (MIT, speaks DAP). It's not a dependency, since its macOS arm64 build is only
-  community supported.
-- **macOS** needs the debugger signed with Apple's debugger entitlement.
+**Decided October 11, 2026: Passenger's own, started from SharpDbg.** SharpDbg (MIT, github.com/MattParkerDev/sharpdbg)
+is a debugger written in C#: ICorDebug for processes, breakpoints, stepping and values; Roslyn's expression compiler
+for watches and conditions, with a CIL interpreter beside it; DebuggerDisplay and DebuggerTypeProxy; async stacks and
+stepping; decompiled frames through ILSpy. Rather than ship someone else's package, Passenger copied it in (commit
+9b4d778 is the copy as it was) and owns it from there:
+
+- `Passenger.Debugger.Interop`: ICorDebug, IMetaDataImport and dbgshim declared for .NET's COM and P/Invoke source
+  generators. It began as ICorDebugSharp 0.1.8, whose source is not published, recovered from its assembly; its
+  public API matched the package's member for member.
+- `Passenger.Debugger`: the engine (SharpDbg.Infrastructure). Its dependencies are MIT: `dbgshim` and
+  `Microsoft.Diagnostics.NETCore.Client` (dotnet/diagnostics), ILSpy's decompiler, Roslyn and its expression compiler
+  (packed from Roslyn's source by SharpDbg's author, since Roslyn publishes no package of it), AsyncLock, ZLinq.
+- `Passenger.Dap`: the Debug Adapter Protocol, Passenger's own messages and connection, used by both ends. SharpDbg
+  spoke it through Microsoft's `VSCodeDebugProtocol` package, which is not open source (its terms make a distributor
+  indemnify Microsoft and bind its users to protective terms), so it is gone.
+- `Passenger.DebugAdapter`: the engine behind the protocol, in its own process, as Rider runs its debugger worker: a
+  debugger's native side failing ends that process, not the IDE. It takes netcoredbg's flags, so another client can
+  run it, and the app carries it under `debugger/`.
+
+Its tests came with it: 57 scenarios that launch or attach to the programs in `tests/Debuggees` and drive the adapter
+over the protocol (breakpoints of every kind, stepping through async code and lambdas, stacks, variables, evaluation,
+exceptions). They run one at a time, as upstream's did.
+
+Still ahead, in the engine or beside it: smart step into, set value, data breakpoints, tracepoints, hot reload and
+Edit and Continue (Roslyn's EnC, applied through ICorDebug or the runtime's metadata updates), and on macOS the signing
+with Apple's debugger entitlement that attaching to a process we did not start needs. Samsung's netcoredbg (MIT, DAP)
+stays the reference for what a mature engine does.
 
 ## The profiler
 

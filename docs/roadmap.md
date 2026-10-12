@@ -52,11 +52,19 @@ it starts here once the editor features settle.
 
 **Done when:** a multi-project solution builds and runs from the toolbar.
 
-## M4: the debugger
+## M4: the debugger (in progress)
 
 `Passenger.Debugger` over ICorDebug: launch and attach, breakpoints (line, conditional, hit count, tracepoints),
 stepping, call stack and threads, locals and watches through Roslyn's expression compiler, exception breakpoints, hover
 data tips. On macOS, the signing that attaching needs.
+
+**Built:** the engine, Passenger's own from SharpDbg (`docs/architecture.md`, The debugger), behind Passenger's own
+Debug Adapter Protocol in its own process: launch and attach, line, column, function, conditional and hit-count
+breakpoints, exception breakpoints with conditions, stepping (async and lambdas included), stacks with async callers,
+variables, evaluation, decompiled frames. Its 57 scenario tests pass on macOS arm64.
+
+**Still to do:** the IDE's side (breakpoints in the gutter, Debug, the execution line, stepping keys, the Debug window
+with frames, threads, variables and watches, data tips on hover), tracepoints, set value, and the macOS signing.
 
 **Done when:** Passenger debugs itself.
 

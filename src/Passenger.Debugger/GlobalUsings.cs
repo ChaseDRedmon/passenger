@@ -1,1 +1,1 @@
-﻿global using ICorDebugSharp.Extensions;
+global using Passenger.Debugger.Interop.Extensions;

@@ -1,4 +1,4 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Indicates the operation that was performed on a debugging/tracing switch.</para>
@@ -8,16 +8,16 @@ namespace ICorDebugSharp;
 /// </remarks>
 public enum LogSwitchCallReason
 {
-	/// <summary>
-	/// <para>A debugging/tracing switch was created.</para>
-	/// </summary>
-	SWITCH_CREATE,
-	/// <summary>
-	/// <para>A debugging/tracing switch was modified.</para>
-	/// </summary>
-	SWITCH_MODIFY,
-	/// <summary>
-	/// <para>A debugging/tracing switch was deleted.</para>
-	/// </summary>
-	SWITCH_DELETE
+    /// <summary>
+    /// <para>A debugging/tracing switch was created.</para>
+    /// </summary>
+    SWITCH_CREATE,
+    /// <summary>
+    /// <para>A debugging/tracing switch was modified.</para>
+    /// </summary>
+    SWITCH_MODIFY,
+    /// <summary>
+    /// <para>A debugging/tracing switch was deleted.</para>
+    /// </summary>
+    SWITCH_DELETE
 }

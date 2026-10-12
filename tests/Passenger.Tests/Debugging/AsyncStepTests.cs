@@ -1,87 +1,86 @@
-using AwesomeAssertions;
-using SharpDbg.Cli.Tests.Helpers;
+using System.Diagnostics;
+using Passenger.Dap;
+using Passenger.Tests.Debugging.Helpers;
 
-namespace SharpDbg.Cli.Tests;
+namespace Passenger.Tests.Debugging;
 
+[Collection(DebugSession.Collection)]
 public class AsyncStepTests(ITestOutputHelper testOutputHelper)
 {
-	[Fact]
-	public async Task SharpDbgCli_StepRequests_InAsyncMethod_Returns_StoppedEventsAtCorrectLocation()
-	{
-		var startSuspended = true;
-		var (debugProtocolHost, initializedEventTcs, debugEventTcs, adapter, p2) = TestHelper.GetRunningDebugProtocolHost(testOutputHelper, startSuspended);
-		using var _ = adapter;
-		using var __ = new ProcessKiller(p2);
-		using var ___ = debugProtocolHost;
+    [Fact]
+    public async Task SharpDbgCli_StepRequests_InAsyncMethod_Returns_StoppedEventsAtCorrectLocation()
+    {
+        bool startSuspended = true;
+        using DebugSession debugProtocolHost = DebugSession.ForAttach(testOutputHelper, startSuspended, out Process p2);
 
-		await debugProtocolHost
-			.WithInitializeRequest()
-			.WithAttachRequest(p2.Id)
-			.WaitForInitializedEvent(initializedEventTcs);
-		debugProtocolHost
-			.WithBreakpointsRequest(9, Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "MyAsyncClass.cs"))
-			.WithConfigurationDoneRequest()
-			.WithOptionalResumeRuntime(p2.Id, startSuspended);
+        await debugProtocolHost
+            .WithInitializeRequest()
+            .WithAttachRequest(p2.Id)
+            .WaitForInitializedEvent();
+        debugProtocolHost
+            .WithBreakpointsRequest(9, Debuggees.Source("DebuggableConsoleApp", "MyAsyncClass.cs"))
+            .WithConfigurationDoneRequest()
+            .WithOptionalResumeRuntime(p2.Id, startSuspended);
 
-		var stoppedEvent = await debugProtocolHost.WaitForStoppedEvent(debugEventTcs);
-		var stopInfo = stoppedEvent.ReadStopInfo();
-		stopInfo.filePath.Should().EndWith("MyAsyncClass.cs");
-		stopInfo.line.Should().Be(9);
+        StoppedEvent stoppedEvent = await debugProtocolHost.WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo = stoppedEvent.ReadStopInfo();
+        Assert.EndsWith("MyAsyncClass.cs", stopInfo.filePath);
+        Assert.Equal(9, stopInfo.line);
 
-		debugProtocolHost.WithClearBreakpointsRequest(Path.JoinFromGitRoot("tests", "DebuggableConsoleApp", "MyAsyncClass.cs"));
+        debugProtocolHost.WithClearBreakpointsRequest(Debuggees.Source("DebuggableConsoleApp", "MyAsyncClass.cs"));
 
-		// step over sync
-		var stoppedEvent2 = await debugProtocolHost.WithStepOverRequest(stoppedEvent.ThreadId!.Value).WaitForStoppedEvent(debugEventTcs);
-		var stopInfo2 = stoppedEvent2.ReadStopInfo();
-		stopInfo2.filePath.Should().EndWith("MyAsyncClass.cs");
-		stopInfo2.line.Should().Be(10);
+        // step over sync
+        StoppedEvent stoppedEvent2 = await debugProtocolHost.WithStepOverRequest(stoppedEvent.ThreadId!.Value).WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo2 = stoppedEvent2.ReadStopInfo();
+        Assert.EndsWith("MyAsyncClass.cs", stopInfo2.filePath);
+        Assert.Equal(10, stopInfo2.line);
 
-		// step over sync, arrives at await line
-		var stoppedEvent3 = await debugProtocolHost.WithStepOverRequest(stoppedEvent2.ThreadId!.Value).WaitForStoppedEvent(debugEventTcs);
-		var stopInfo3 = stoppedEvent3.ReadStopInfo();
-		stopInfo3.filePath.Should().EndWith("MyAsyncClass.cs");
-		stopInfo3.line.Should().Be(11);
+        // step over sync, arrives at await line
+        StoppedEvent stoppedEvent3 = await debugProtocolHost.WithStepOverRequest(stoppedEvent2.ThreadId!.Value).WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo3 = stoppedEvent3.ReadStopInfo();
+        Assert.EndsWith("MyAsyncClass.cs", stopInfo3.filePath);
+        Assert.Equal(11, stopInfo3.line);
 
-		// step over await
-		var stoppedEvent4 = await debugProtocolHost.WithStepOverRequest(stoppedEvent3.ThreadId!.Value).WaitForStoppedEvent(debugEventTcs);
-		var stopInfo4 = stoppedEvent4.ReadStopInfo();
-		stopInfo4.filePath.Should().EndWith("MyAsyncClass.cs");
-		stopInfo4.line.Should().Be(12);
+        // step over await
+        StoppedEvent stoppedEvent4 = await debugProtocolHost.WithStepOverRequest(stoppedEvent3.ThreadId!.Value).WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo4 = stoppedEvent4.ReadStopInfo();
+        Assert.EndsWith("MyAsyncClass.cs", stopInfo4.filePath);
+        Assert.Equal(12, stopInfo4.line);
 
-		// step over another await, note we must use stoppedEvent4's ThreadId, as the thread may have changed after the await
-		var stoppedEvent5 = await debugProtocolHost.WithStepOverRequest(stoppedEvent4.ThreadId!.Value).WaitForStoppedEvent(debugEventTcs);
-		var stopInfo5 = stoppedEvent5.ReadStopInfo();
-		stopInfo5.filePath.Should().EndWith("MyAsyncClass.cs");
-		stopInfo5.line.Should().Be(13);
+        // step over another await, note we must use stoppedEvent4's ThreadId, as the thread may have changed after the await
+        StoppedEvent stoppedEvent5 = await debugProtocolHost.WithStepOverRequest(stoppedEvent4.ThreadId!.Value).WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo5 = stoppedEvent5.ReadStopInfo();
+        Assert.EndsWith("MyAsyncClass.cs", stopInfo5.filePath);
+        Assert.Equal(13, stopInfo5.line);
 
-		// step into an await method
-		var stoppedEvent6 = await debugProtocolHost.WithStepInRequest(stoppedEvent5.ThreadId!.Value).WaitForStoppedEvent(debugEventTcs);
-		var stopInfo6 = stoppedEvent6.ReadStopInfo();
-		stopInfo6.filePath.Should().EndWith("AnotherClass.cs");
-		stopInfo6.line.Should().Be(18);
+        // step into an await method
+        StoppedEvent stoppedEvent6 = await debugProtocolHost.WithStepInRequest(stoppedEvent5.ThreadId!.Value).WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo6 = stoppedEvent6.ReadStopInfo();
+        Assert.EndsWith("AnotherClass.cs", stopInfo6.filePath);
+        Assert.Equal(18, stopInfo6.line);
 
-		// step over
-		var stoppedEvent7 = await debugProtocolHost.WithStepInRequest(stoppedEvent6.ThreadId!.Value).WaitForStoppedEvent(debugEventTcs);
-		var stopInfo7 = stoppedEvent7.ReadStopInfo();
-		stopInfo7.filePath.Should().EndWith("AnotherClass.cs");
-		stopInfo7.line.Should().Be(19);
+        // step over
+        StoppedEvent stoppedEvent7 = await debugProtocolHost.WithStepInRequest(stoppedEvent6.ThreadId!.Value).WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo7 = stoppedEvent7.ReadStopInfo();
+        Assert.EndsWith("AnotherClass.cs", stopInfo7.filePath);
+        Assert.Equal(19, stopInfo7.line);
 
-		// step out of an async await method
-		var stoppedEvent8 = await debugProtocolHost.WithStepOutRequest(stoppedEvent7.ThreadId!.Value).WaitForStoppedEvent(debugEventTcs);
-		var stopInfo8 = stoppedEvent8.ReadStopInfo();
-		stopInfo8.filePath.Should().EndWith("MyAsyncClass.cs");
-		stopInfo8.line.Should().Be(14);
+        // step out of an async await method
+        StoppedEvent stoppedEvent8 = await debugProtocolHost.WithStepOutRequest(stoppedEvent7.ThreadId!.Value).WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo8 = stoppedEvent8.ReadStopInfo();
+        Assert.EndsWith("MyAsyncClass.cs", stopInfo8.filePath);
+        Assert.Equal(14, stopInfo8.line);
 
-		// step into async void method
-		var stoppedEvent10 = await debugProtocolHost.WithStepInRequest(stoppedEvent8.ThreadId!.Value).WaitForStoppedEvent(debugEventTcs);
-		var stopInfo10 = stoppedEvent10.ReadStopInfo();
-		stopInfo10.filePath.Should().EndWith("AnotherClass.cs");
-		stopInfo10.line.Should().Be(25);
+        // step into async void method
+        StoppedEvent stoppedEvent10 = await debugProtocolHost.WithStepInRequest(stoppedEvent8.ThreadId!.Value).WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo10 = stoppedEvent10.ReadStopInfo();
+        Assert.EndsWith("AnotherClass.cs", stopInfo10.filePath);
+        Assert.Equal(25, stopInfo10.line);
 
-		// step out of async void method
-		var stoppedEvent11 = await debugProtocolHost.WithStepOutRequest(stoppedEvent10.ThreadId!.Value).WaitForStoppedEvent(debugEventTcs);
-		var stopInfo11 = stoppedEvent11.ReadStopInfo();
-		stopInfo11.filePath.Should().EndWith("MyAsyncClass.cs");
-		stopInfo11.line.Should().Be(14);
-	}
+        // step out of async void method
+        StoppedEvent stoppedEvent11 = await debugProtocolHost.WithStepOutRequest(stoppedEvent10.ThreadId!.Value).WaitForStoppedEvent();
+        (string filePath, int line, int column) stopInfo11 = stoppedEvent11.ReadStopInfo();
+        Assert.EndsWith("MyAsyncClass.cs", stopInfo11.filePath);
+        Assert.Equal(14, stopInfo11.line);
+    }
 }

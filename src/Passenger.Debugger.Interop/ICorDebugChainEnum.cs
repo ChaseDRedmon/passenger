@@ -3,7 +3,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Implements ICorDebugEnum methods, and enumerates ICorDebugChain arrays.</para>
@@ -17,22 +17,22 @@ namespace ICorDebugSharp;
 [Guid("CC7BCB08-8A68-11D2-983C-0000F808342D")]
 public partial interface ICorDebugChainEnum : ICorDebugEnum
 {
-	/// <summary>
-	/// <para>Gets the specified number of ICorDebugChain instances from the enumeration, starting at the current position.</para>
-	/// </summary>
-	/// <param name="celt">
-	/// <para>The number of <c>ICorDebugChain</c> instances to be retrieved.</para>
-	/// </param>
-	/// <param name="chains">
-	/// <para>An array of pointers, each of which points to an <c>ICorDebugChain</c> object that represents a chain.</para>
-	/// </param>
-	/// <param name="pceltFetched">
-	/// <para>A pointer to the number of <c>ICorDebugChain</c> instances actually returned. This value may be null if <c>celt</c> is one.</para>
-	/// </param>
-	/// <remarks>
-	/// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugchainenum-next-method">Microsoft Learn</see>.</para>
-	/// </remarks>
-	[PreserveSig]
-	int TryNext(uint celt, [Out][MarshalUsing(CountElementName = "celt")] ICorDebugChain[] chains, out uint pceltFetched);
+    /// <summary>
+    /// <para>Gets the specified number of ICorDebugChain instances from the enumeration, starting at the current position.</para>
+    /// </summary>
+    /// <param name="celt">
+    /// <para>The number of <c>ICorDebugChain</c> instances to be retrieved.</para>
+    /// </param>
+    /// <param name="chains">
+    /// <para>An array of pointers, each of which points to an <c>ICorDebugChain</c> object that represents a chain.</para>
+    /// </param>
+    /// <param name="pceltFetched">
+    /// <para>A pointer to the number of <c>ICorDebugChain</c> instances actually returned. This value may be null if <c>celt</c> is one.</para>
+    /// </param>
+    /// <remarks>
+    /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugchainenum-next-method">Microsoft Learn</see>.</para>
+    /// </remarks>
+    [PreserveSig]
+    int TryNext(uint celt, [Out][MarshalUsing(CountElementName = "celt")] ICorDebugChain[] chains, out uint pceltFetched);
 
 }

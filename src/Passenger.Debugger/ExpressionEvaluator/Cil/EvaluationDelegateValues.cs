@@ -1,16 +1,16 @@
 using System.Reflection.Metadata;
-using ICorDebugSharp;
+using Passenger.Debugger.Interop;
 
-namespace SharpDbg.Infrastructure.Debugger.ExpressionEvaluator.Cil;
+namespace Passenger.Debugger.ExpressionEvaluator.Cil;
 
 // 🤖
 internal sealed class EvaluationClosure(TypeDefinitionHandle type, MethodDefinitionHandle constructor)
 {
-	public TypeDefinitionHandle Type { get; } = type;
-	public MethodDefinitionHandle Constructor { get; } = constructor;
-	public Dictionary<FieldDefinitionHandle, ICilLocation> Fields { get; } = new();
-	public Dictionary<FieldDefinitionHandle, ICilLocation> FieldBindings { get; } = new();
-	public ICorDebugValue? MaterializedValue { get; set; }
+    public TypeDefinitionHandle Type { get; } = type;
+    public MethodDefinitionHandle Constructor { get; } = constructor;
+    public Dictionary<FieldDefinitionHandle, ICilLocation> Fields { get; } = new();
+    public Dictionary<FieldDefinitionHandle, ICilLocation> FieldBindings { get; } = new();
+    public ICorDebugValue? MaterializedValue { get; set; }
 }
 
 internal sealed record EvaluationFunctionPointer(int MethodToken, ResolvedRuntimeMethod? RuntimeMethod = null);

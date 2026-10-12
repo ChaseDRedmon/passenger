@@ -1,151 +1,196 @@
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 
-namespace SharpDbg.Infrastructure.Debugger;
+namespace Passenger.Debugger;
 
 // 🤖
 public partial class ModuleMetadataReader
 {
-	private sealed record MethodCandidate(
-	int Token,
-	SequencePoint FirstSp,      // smallest End where EndLine >= line (next-line snapping)
-	SequencePoint LastSp,       // largest End where EndLine >= line
-	SequencePoint? CoveringSp,  // latest Start where the requested source position is covered
-	string DocPath)
-	{
-		public bool CoversLine => CoveringSp.HasValue;
-	}
+    private sealed record MethodCandidate(
+    int Token,
+    SequencePoint FirstSp,      // smallest End where EndLine >= line (next-line snapping)
+    SequencePoint LastSp,       // largest End where EndLine >= line
+    SequencePoint? CoveringSp,  // latest Start where the requested source position is covered
+    string DocPath)
+    {
+        public bool CoversLine => CoveringSp.HasValue;
+    }
 
-	public ResolvedBreakpoint? ResolveBreakpoint(string sourceFilePath, int line, int? column = null)
-	{
-		var reader = _pdbMetadataReader;
-		if (reader is null) return null;
-		var normalizedPath = NormalizePath(sourceFilePath);
+    public ResolvedBreakpoint? ResolveBreakpoint(string sourceFilePath, int line, int? column = null)
+    {
+        MetadataReader? reader = _pdbMetadataReader;
+        if (reader is null)
+        {
+            return null;
+        }
 
-		var documentHandle = reader.Documents.FirstOrDefault(h => PathsMatch(normalizedPath, reader.GetString(reader.GetDocument(h).Name)));
+        string normalizedPath = NormalizePath(sourceFilePath);
 
-		if (documentHandle.IsNil) return null;
+        DocumentHandle documentHandle = reader.Documents.FirstOrDefault(h => PathsMatch(normalizedPath, reader.GetString(reader.GetDocument(h).Name)));
 
-		var candidates = reader.MethodDebugInformation
-			.Select(h => CollectCandidate(h, documentHandle, line, column))
-			.OfType<MethodCandidate>()
-			.ToList();
+        if (documentHandle.IsNil)
+        {
+            return null;
+        }
 
-		var covering = candidates.Where(c => c.CoversLine).ToList();
+        List<MethodCandidate> candidates = reader.MethodDebugInformation
+            .Select(h => CollectCandidate(h, documentHandle, line, column))
+            .OfType<MethodCandidate>()
+            .ToList();
 
-		if (covering.Count == 0)
-			return candidates
-				.OrderBy(c => c.FirstSp.Start())
-				.Select(c => NewResolvedBreakpoint(c.Token, c.FirstSp, c.DocPath))
-				.FirstOrDefault();
+        List<MethodCandidate> covering = candidates.Where(c => c.CoversLine).ToList();
 
-		if (covering.Count == 1) return NewResolvedBreakpoint(covering[0].Token, covering[0].CoveringSp!.Value, covering[0].DocPath);
+        if (covering.Count == 0)
+        {
+            return candidates
+                .OrderBy(c => c.FirstSp.Start())
+                .Select(c => NewResolvedBreakpoint(c.Token, c.FirstSp, c.DocPath))
+                .FirstOrDefault();
+        }
 
-		// Keep only the candidates whose covering SP starts latest — i.e. whose SP most
-		// specifically matches the target line from above or at.  This naturally picks the
-		// innermost lambda when the enclosing method only covers the line via a large
-		// spanning SP (e.g. a delegate-assignment SP that spans the whole lambda body),
-		// without needing explicit case analysis.
-		var maxCoverStart = covering.Max(c => c.CoveringSp!.Value.Start());
-		var primary = covering.Where(c => c.CoveringSp!.Value.Start() == maxCoverStart).ToList();
+        if (covering.Count == 1)
+        {
+            return NewResolvedBreakpoint(covering[0].Token, covering[0].CoveringSp!.Value, covering[0].DocPath);
+        }
 
-		if (primary.Count == 1) return NewResolvedBreakpoint(primary[0].Token, primary[0].CoveringSp!.Value, primary[0].DocPath);
+        // Keep only the candidates whose covering SP starts latest — i.e. whose SP most
+        // specifically matches the target line from above or at.  This naturally picks the
+        // innermost lambda when the enclosing method only covers the line via a large
+        // spanning SP (e.g. a delegate-assignment SP that spans the whole lambda body),
+        // without needing explicit case analysis.
+        LineCol maxCoverStart = covering.Max(c => c.CoveringSp!.Value.Start());
+        List<MethodCandidate> primary = covering.Where(c => c.CoveringSp!.Value.Start() == maxCoverStart).ToList();
 
-		// https://github.com/Samsung/netcoredbg/blob/8b8b22200fecdb1aec5f47af63215462d8c79a4b/src/managed/SymbolReader.cs#L801-L817
+        if (primary.Count == 1)
+        {
+            return NewResolvedBreakpoint(primary[0].Token, primary[0].CoveringSp!.Value, primary[0].DocPath);
+        }
 
-		// Only reach here when multiple methods have a covering SP starting at the exact
-		// same source position — the same-line lambda case (e.g. items.Select(i => i * 2)).
-		// Apply netcoredbg's two-case containment check for that narrow scenario.
-		var sorted = primary.OrderBy(c => c.FirstSp.Start()).ToList();
-		var outer = sorted[^2];
-		var nested = sorted[^1];
+        // https://github.com/Samsung/netcoredbg/blob/8b8b22200fecdb1aec5f47af63215462d8c79a4b/src/managed/SymbolReader.cs#L801-L817
 
-		// Case 1: lambda range fully inside outer's first SP → BP is on the call-site line
-		if (nested.FirstSp.Start() > outer.FirstSp.Start() &&
-			nested.LastSp.End() < outer.FirstSp.End())
-			return NewResolvedBreakpoint(outer.Token, outer.CoveringSp!.Value, outer.DocPath);
+        // Only reach here when multiple methods have a covering SP starting at the exact
+        // same source position — the same-line lambda case (e.g. items.Select(i => i * 2)).
+        // Apply netcoredbg's two-case containment check for that narrow scenario.
+        List<MethodCandidate> sorted = primary.OrderBy(c => c.FirstSp.Start()).ToList();
+        MethodCandidate outer = sorted[^2];
+        MethodCandidate nested = sorted[^1];
 
-		// Case 2: outer's first SP ends after nested's -> BP is closer to the lambda body
-		if (outer.FirstSp.End() > nested.FirstSp.End())
-			return NewResolvedBreakpoint(nested.Token, nested.CoveringSp!.Value, nested.DocPath);
+        // Case 1: lambda range fully inside outer's first SP → BP is on the call-site line
+        if (nested.FirstSp.Start() > outer.FirstSp.Start() &&
+            nested.LastSp.End() < outer.FirstSp.End())
+        {
+            return NewResolvedBreakpoint(outer.Token, outer.CoveringSp!.Value, outer.DocPath);
+        }
 
-		return NewResolvedBreakpoint(outer.Token, outer.CoveringSp!.Value, outer.DocPath);
-	}
+        // Case 2: outer's first SP ends after nested's -> BP is closer to the lambda body
+        if (outer.FirstSp.End() > nested.FirstSp.End())
+        {
+            return NewResolvedBreakpoint(nested.Token, nested.CoveringSp!.Value, nested.DocPath);
+        }
 
-	private MethodCandidate? CollectCandidate(MethodDebugInformationHandle handle, DocumentHandle docHandle, int line, int? column)
-	{
-		var reader = _pdbMetadataReader ?? throw new InvalidOperationException("No symbols are loaded.");
-		var info = reader.GetMethodDebugInformation(handle);
-		if (info.SequencePointsBlob.IsNil) return null;
+        return NewResolvedBreakpoint(outer.Token, outer.CoveringSp!.Value, outer.DocPath);
+    }
 
-		SequencePoint? firstSP = null;
-		SequencePoint? lastSP = null;
-		SequencePoint? coveringSP = null;
-		string? docPath = null;
+    private MethodCandidate? CollectCandidate(MethodDebugInformationHandle handle, DocumentHandle docHandle, int line, int? column)
+    {
+        MetadataReader reader = _pdbMetadataReader ?? throw new InvalidOperationException("No symbols are loaded.");
+        MethodDebugInformation info = reader.GetMethodDebugInformation(handle);
+        if (info.SequencePointsBlob.IsNil)
+        {
+            return null;
+        }
 
-		foreach (var sp in info.GetSequencePoints())
-		{
-			if (sp.IsHidden) continue;
-			var spDoc = sp.Document.IsNil ? info.Document : sp.Document;
-			if (spDoc != docHandle || sp.IsBeforeRequestedPosition(line, column)) continue;
+        SequencePoint? firstSP = null;
+        SequencePoint? lastSP = null;
+        SequencePoint? coveringSP = null;
+        string? docPath = null;
 
-			docPath ??= reader.GetString(reader.GetDocument(spDoc).Name);
+        foreach (SequencePoint sp in info.GetSequencePoints())
+        {
+            if (sp.IsHidden)
+            {
+                continue;
+            }
 
-			if (firstSP is null || sp.End() < firstSP.Value.End()) firstSP = sp;
-			if (lastSP is null || sp.End() > lastSP.Value.End()) lastSP = sp;
+            DocumentHandle spDoc = sp.Document.IsNil ? info.Document : sp.Document;
+            if (spDoc != docHandle || sp.IsBeforeRequestedPosition(line, column))
+            {
+                continue;
+            }
 
-			if (sp.CoversRequestedPosition(line, column) && sp.ShouldReplaceCoveringSequencePoint(coveringSP, column))
-				coveringSP = sp;
-		}
+            docPath ??= reader.GetString(reader.GetDocument(spDoc).Name);
 
-		if (firstSP is null) return null;
-		return new MethodCandidate(MetadataTokens.GetToken(handle.ToDefinitionHandle()), firstSP.Value, lastSP!.Value, coveringSP, docPath!);
-	}
-	private static ResolvedBreakpoint NewResolvedBreakpoint(int token, SequencePoint sp, string docPath) =>
-		new(token, sp.Offset, sp.StartLine, sp.EndLine, sp.StartColumn, sp.EndColumn, docPath);
+            if (firstSP is null || sp.End() < firstSP.Value.End())
+            {
+                firstSP = sp;
+            }
+
+            if (lastSP is null || sp.End() > lastSP.Value.End())
+            {
+                lastSP = sp;
+            }
+
+            if (sp.CoversRequestedPosition(line, column) && sp.ShouldReplaceCoveringSequencePoint(coveringSP, column))
+            {
+                coveringSP = sp;
+            }
+        }
+
+        if (firstSP is null)
+        {
+            return null;
+        }
+
+        return new MethodCandidate(MetadataTokens.GetToken(handle.ToDefinitionHandle()), firstSP.Value, lastSP!.Value, coveringSP, docPath!);
+    }
+    private static ResolvedBreakpoint NewResolvedBreakpoint(int token, SequencePoint sp, string docPath) =>
+        new(token, sp.Offset, sp.StartLine, sp.EndLine, sp.StartColumn, sp.EndColumn, docPath);
 }
 
 internal readonly record struct LineCol(int Line, int Column) : IComparable<LineCol>
 {
-	public int CompareTo(LineCol other)
-	{
-		var c = Line.CompareTo(other.Line);
-		return c != 0 ? c : Column.CompareTo(other.Column);
-	}
-	public static bool operator <(LineCol a, LineCol b) => a.CompareTo(b) < 0;
-	public static bool operator >(LineCol a, LineCol b) => a.CompareTo(b) > 0;
-	public static bool operator <=(LineCol a, LineCol b) => a.CompareTo(b) <= 0;
-	public static bool operator >=(LineCol a, LineCol b) => a.CompareTo(b) >= 0;
+    public int CompareTo(LineCol other)
+    {
+        int c = Line.CompareTo(other.Line);
+        return c != 0 ? c : Column.CompareTo(other.Column);
+    }
+    public static bool operator <(LineCol a, LineCol b) => a.CompareTo(b) < 0;
+    public static bool operator >(LineCol a, LineCol b) => a.CompareTo(b) > 0;
+    public static bool operator <=(LineCol a, LineCol b) => a.CompareTo(b) <= 0;
+    public static bool operator >=(LineCol a, LineCol b) => a.CompareTo(b) >= 0;
 }
 
 file static class LineColExtensions
 {
-	public static LineCol Start(this SequencePoint sp) => new(sp.StartLine, sp.StartColumn);
-	public static LineCol End(this SequencePoint sp) => new(sp.EndLine, sp.EndColumn);
+    public static LineCol Start(this SequencePoint sp) => new(sp.StartLine, sp.StartColumn);
+    public static LineCol End(this SequencePoint sp) => new(sp.EndLine, sp.EndColumn);
 }
 file static class SequencePointExtensions
 {
-	public static bool IsBeforeRequestedPosition(this SequencePoint sp, int requestedLine, int? requestedColumn)
-	{
-		return requestedColumn is null
-			? sp.EndLine < requestedLine
-			: sp.End() < new LineCol(requestedLine, requestedColumn.Value);
-	}
+    public static bool IsBeforeRequestedPosition(this SequencePoint sp, int requestedLine, int? requestedColumn)
+    {
+        return requestedColumn is null
+            ? sp.EndLine < requestedLine
+            : sp.End() < new LineCol(requestedLine, requestedColumn.Value);
+    }
 
-	public static bool CoversRequestedPosition(this SequencePoint sp, int requestedLine, int? requestedColumn)
-	{
-		return requestedColumn is null
-			? sp.StartLine <= requestedLine
-			: new LineCol(requestedLine, requestedColumn.Value) is var requestedPosition && sp.Start() <= requestedPosition && requestedPosition <= sp.End();
-	}
+    public static bool CoversRequestedPosition(this SequencePoint sp, int requestedLine, int? requestedColumn)
+    {
+        return requestedColumn is null
+            ? sp.StartLine <= requestedLine
+            : new LineCol(requestedLine, requestedColumn.Value) is var requestedPosition && sp.Start() <= requestedPosition && requestedPosition <= sp.End();
+    }
 
-	public static bool ShouldReplaceCoveringSequencePoint(this SequencePoint sp, SequencePoint? coveringSp, int? requestedColumn)
-	{
-		if (coveringSp is null) return true;
+    public static bool ShouldReplaceCoveringSequencePoint(this SequencePoint sp, SequencePoint? coveringSp, int? requestedColumn)
+    {
+        if (coveringSp is null)
+        {
+            return true;
+        }
 
-		return requestedColumn is null
-			? sp.StartLine > coveringSp.Value.StartLine ||
-			  (sp.StartLine == coveringSp.Value.StartLine && sp.StartColumn < coveringSp.Value.StartColumn)
-			: sp.Start() > coveringSp.Value.Start();
-	}
+        return requestedColumn is null
+            ? sp.StartLine > coveringSp.Value.StartLine ||
+              (sp.StartLine == coveringSp.Value.StartLine && sp.StartColumn < coveringSp.Value.StartColumn)
+            : sp.Start() > coveringSp.Value.Start();
+    }
 }

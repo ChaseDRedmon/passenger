@@ -1,4 +1,4 @@
-namespace ICorDebugSharp;
+namespace Passenger.Debugger.Interop;
 
 /// <summary>
 /// <para>Indicates whether the garbage collector is running on a workstation or a server.</para>
@@ -8,12 +8,12 @@ namespace ICorDebugSharp;
 /// </remarks>
 public enum CorDebugGCType
 {
-	/// <summary>
-	/// <para>The garbage collector is running on a workstation.</para>
-	/// </summary>
-	CorDebugWorkstationGC,
-	/// <summary>
-	/// <para>The garbage collector is running on a server.</para>
-	/// </summary>
-	CorDebugServerGC
+    /// <summary>
+    /// <para>The garbage collector is running on a workstation.</para>
+    /// </summary>
+    CorDebugWorkstationGC,
+    /// <summary>
+    /// <para>The garbage collector is running on a server.</para>
+    /// </summary>
+    CorDebugServerGC
 }
