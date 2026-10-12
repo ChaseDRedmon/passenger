@@ -127,6 +127,46 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
     }
 
     [AvaloniaFact]
+    public void Find_usages_groups_them_by_what_they_do_project_and_file_previews_the_chosen_one_and_keeps_each_search()
+    {
+        MainWindow window = project.Open("Loop.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "int tot");
+        Ui.Run(window, AppActions.FindUsages);
+        FindView find = window.Find;
+        Ui.WaitFor(() => find.Rows.Count > 0, "the usages in the Find window");
+        Assert.True(window.DockHost.IsShown("find"));
+        Assert.Equal(["Declaration", "Write access", "Read access"], find.Rows.Where(r => r.Depth == 0).Select(r => r.Label));
+        Assert.All(find.Rows.Where(r => r.Depth == 1), r => Assert.Equal("Sample", r.Label));
+        Assert.All(find.Rows.Where(r => r.Depth == 2), r => Assert.Equal("Loop.cs", r.Label));
+        Assert.Equal(["int total = 0;", "total += i * 2;", "return total;"], find.Rows.Where(r => r.Usage is not null).Select(r => r.Label));
+
+        // The first usage is chosen, its line shown beside the tree with the name marked.
+        Assert.Equal("int total = 0;", find.Selected?.Label);
+        Assert.Contains("for (int i = 0", find.Preview.Document.Snapshot.ToString(), StringComparison.Ordinal);
+        TextRange marked = Assert.Single(find.Preview.Highlights);
+        Assert.Equal("total", find.Preview.Document.Snapshot.GetText(marked.Start, marked.Length));
+
+        // Another search has a tab of its own beside the first.
+        window.OpenFile(project.PathOf("Program.cs"));
+        PlaceAfter(window.EditorArea.CodeEditor, "Helper.Twi");
+        Ui.Run(window, AppActions.FindUsages);
+        Ui.WaitFor(() => find.Shown == "Usages of Twice", "the second search");
+        Assert.Equal(["Usages of total", "Usages of Twice"], find.Searches);
+        Assert.Equal(["Declaration", "Invocation"], find.Rows.Where(r => r.Depth == 0).Select(r => r.Label));
+        find.ShowSearch("Usages of total");
+        Assert.Equal(3, find.Rows.Count(r => r.Usage is not null));
+
+        // Enter goes to the usage chosen.
+        find.Selected = find.Rows.Last(r => r.Usage is not null);
+        find.FocusRows();
+        Ui.Press(window, "ENTER");
+        Assert.Equal("Loop.cs", window.EditorArea.Active?.Name);
+        Assert.Equal(new TextPosition(9, 15), window.EditorArea.CodeEditor.CaretPosition);
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Go_to_declaration_opens_the_other_file_at_the_method()
     {
         MainWindow window = project.Open("Program.cs");

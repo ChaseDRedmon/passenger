@@ -50,6 +50,7 @@ public static class AppActions
     public const string ShowBuild = "app.showBuild";
     public const string ShowRun = "app.showRun";
     public const string ShowProblems = "app.showProblems";
+    public const string ShowFind = "app.showFind";
     public const string ShowDebug = "app.showDebug";
     public const string HideToolWindow = "app.hideToolWindow";
     public const string Back = "app.back";
@@ -217,6 +218,7 @@ public static class AppActions
                 .Bind(Rerun, "alt shift F5")
                 .Bind(ShowBuild, "meta 0")
                 .Bind(ShowRun, "meta 4")
+                .Bind(ShowFind, "meta 3")
                 .Bind(ShowDebug, "meta 5")
                 .Bind(ShowProblems, "meta 6")
                 .Bind(ToggleBreakpoint, "F9")
@@ -307,6 +309,7 @@ public static class AppActions
             .Bind(Rerun, "control shift F5")
             .Bind(ShowBuild, "alt 0")
             .Bind(ShowRun, "alt 4")
+            .Bind(ShowFind, "alt 3")
             .Bind(ShowDebug, "alt 5")
             .Bind(ShowProblems, "alt 6")
             .Bind(ToggleBreakpoint, "F9")

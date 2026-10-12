@@ -82,6 +82,9 @@ public sealed class CodeAssist
     /// <summary>A place to go: a file and a line and column (from zero).</summary>
     public event EventHandler<(string Path, TextPosition Position)>? Navigate;
 
+    /// <summary>Find Usages' answer, for the Find window: what was searched for and where it is used.</summary>
+    public event EventHandler<(string Title, IReadOnlyList<LspLocation> Usages)>? UsagesFound;
+
     /// <summary>Something to say in the status bar ("No usages found").</summary>
     public event EventHandler<string>? Message;
 
@@ -947,7 +950,14 @@ public sealed class CodeAssist
                 Message?.Invoke(this, "No usages found");
                 return;
             }
-            Pick($"{usages.Count} usage{(usages.Count == 1 ? "" : "s")}", usages, offset);
+            int start = WordStart(offset);
+            int end = offset;
+            while (end < Editor.Document.Snapshot.Length && IsIdentifierChar(Editor.Document.Snapshot[end]))
+            {
+                end++;
+            }
+            string name = Editor.Document.Snapshot.GetText(start, end - start);
+            UsagesFound?.Invoke(this, ($"Usages of {(name.Length > 0 ? name : "symbol")}", usages));
         }
         catch (Exception error) when (IsServerFailure(error))
         {

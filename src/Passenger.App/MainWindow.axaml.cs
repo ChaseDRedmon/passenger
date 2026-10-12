@@ -244,6 +244,7 @@ public partial class MainWindow : Window
         debug.StateChanged += (_, _) => OnDebugStateChanged();
         assist.DebuggerValue = debug.ValueAt;
         Closing += (_, _) => _ = debug.StopAsync();
+        AddFind();
         UpdateStatus();
     }
 
@@ -577,6 +578,9 @@ public partial class MainWindow : Window
                 break;
             case AppActions.ShowProblems:
                 ShowToolWindow("problems");
+                break;
+            case AppActions.ShowFind:
+                ShowToolWindow("find");
                 break;
             case AppActions.HideToolWindow:
                 HideToolWindow();
