@@ -93,6 +93,9 @@ public static class AppActions
     public const string PreviousChange = "app.vcs.previousChange";
     public const string RollbackLines = "app.vcs.rollbackLines";
     public const string ShowDiff = "app.vcs.showDiff";
+    public const string ShowGit = "app.vcs.showGit";
+    public const string UpdateProject = "app.vcs.update";
+    public const string Fetch = "app.vcs.fetch";
 
     public static bool IsApp(string action) => action.StartsWith("app.", StringComparison.Ordinal);
 
@@ -153,6 +156,8 @@ public static class AppActions
                 .Bind(NextChange, "shift meta alt N")
                 .Bind(PreviousChange, "shift meta alt P")
                 .Bind(RollbackLines, "meta alt Z")
+                .Bind(ShowGit, "meta 9")
+                .Bind(UpdateProject, "meta alt W")
                 .Bind(Back, "meta MINUS")
                 .Bind(Forward, "meta shift MINUS")
                 .Bind(Complete, "control SPACE", "control J")
@@ -219,6 +224,8 @@ public static class AppActions
             .Bind(NextChange, "shift control alt N")
             .Bind(PreviousChange, "shift control alt P")
             .Bind(RollbackLines, "control alt Z")
+            .Bind(ShowGit, "alt 9")
+            .Bind(UpdateProject, "control alt W")
             .Bind(Back, "control MINUS")
             .Bind(Forward, "control shift MINUS")
             .Bind(Complete, "control SPACE", "control J")

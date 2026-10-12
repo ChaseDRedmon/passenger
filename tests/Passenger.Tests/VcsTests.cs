@@ -210,6 +210,88 @@ public sealed class VcsTests : IDisposable
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void The_log_lays_out_a_merge_in_two_lanes_and_shows_what_a_commit_did_to_a_file()
+    {
+        string shop = Path.Combine(folder, "Shop.cs");
+        Git("switch", "-q", "-c", "side");
+        File.WriteAllText(Path.Combine(folder, "Side.cs"), "class Side { }\n");
+        Git("add", "-A");
+        Git("commit", "-q", "-m", "Side");
+        Git("switch", "-q", "main");
+        File.WriteAllText(shop, Original.Replace("count++", "count += 2", StringComparison.Ordinal));
+        Git("commit", "-q", "-am", "Twice");
+        Git("merge", "-q", "--no-ff", "-m", "Merge side", "side");
+
+        MainWindow window = Open();
+        GitLogView log = window.GitLog;
+        window.Perform(AppActions.ShowGit);
+        Ui.WaitFor(() => log.Rows.Count == 4, "the four commits");
+        Assert.Equal(Git("log", "--all", "--topo-order", "--format=%H").Split('\n', StringSplitOptions.RemoveEmptyEntries), log.Rows.Select(r => r.Commit.Hash));
+        GraphRow merge = log.Rows[0];
+        Assert.Equal("Merge side", merge.Commit.Subject);
+        Assert.Contains("main", merge.Commit.Refs);
+        // Below the merge its two parents wait in two lanes, which join again at the first commit.
+        Assert.Equal(2, merge.Below.Count(l => l is not null));
+        GraphRow first = log.Rows[^1];
+        Assert.Equal(2, first.Above.Count(l => l == first.Commit.Hash));
+        Assert.Empty(first.Below);
+
+        // A commit's files, and what it did to one.
+        CommitInfo twice = log.Rows.Select(r => r.Commit).First(c => c.Subject == "Twice");
+        log.Select(twice);
+        // Read again (as after a commit elsewhere), the chosen commit stays chosen.
+        Task reload = log.LoadAsync();
+        Ui.WaitFor(() => reload.IsCompleted, "the log to be read again");
+        Assert.Equal(twice.Hash, log.Selected?.Hash);
+        Ui.WaitFor(() => log.Files.Count == 1, "the commit's file");
+        FileChange changed = Assert.Single(log.Files);
+        Assert.Equal((Passenger.App.Workspace.PathNames.Canonical(shop), ChangeKind.Modified), (changed.Path, changed.Kind));
+        Assert.Contains("Twice", log.Details, StringComparison.Ordinal);
+        Task<DiffWindow?> opening = window.ShowCommitDiffAsync(twice, changed);
+        Ui.WaitFor(() => opening.IsCompleted, "the commit's diff");
+        DiffView diff = opening.Result!.View;
+        Assert.Equal(Original, diff.Left.Document.Snapshot.ToString());
+        Assert.Contains("count += 2", diff.Right.Document.Snapshot.ToString(), StringComparison.Ordinal);
+        Assert.Single(diff.Hunks);
+        Assert.False(diff.IsEditable);
+        opening.Result!.Close();
+
+        // A hash's first characters find its commit.
+        log.FilterText = twice.Hash[..7];
+        Ui.Settle();
+        Assert.Equal(twice.Hash, Assert.Single(log.Rows).Commit.Hash);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Update_project_brings_in_the_upstreams_commit_and_the_open_file_shows_it()
+    {
+        string clone = Directory.CreateTempSubdirectory("passenger-git-clone-").FullName;
+        try
+        {
+            Git("clone", "-q", folder, clone);
+            File.WriteAllText(Path.Combine(folder, "Shop.cs"), Original.Replace("int count", "long count", StringComparison.Ordinal));
+            Git("commit", "-q", "-am", "Long");
+
+            MainWindow window = new() { Width = 1200, Height = 800 };
+            window.Show();
+            window.OpenFolder(clone);
+            window.OpenFile(Path.Combine(clone, "Shop.cs"));
+            Ui.Settle();
+            Ui.WaitFor(() => window.Vcs.Branch == "main", "the clone's branch");
+            window.Perform(AppActions.UpdateProject);
+            Ui.WaitFor(() => Text(window).Contains("long count", StringComparison.Ordinal), "the upstream's change in the open file");
+            Ui.WaitFor(() => window.Status?.StartsWith("Updated", StringComparison.Ordinal) == true, "the update to finish");
+            Assert.False(window.EditorArea.Active!.IsModified);
+            window.Close();
+        }
+        finally
+        {
+            Directory.Delete(clone, recursive: true);
+        }
+    }
+
     private MainWindow Open()
     {
         MainWindow window = new() { Width = 1200, Height = 800 };

@@ -29,6 +29,10 @@ public sealed class VcsController
     /// <summary>Raised when the branch or the changed files have been read again.</summary>
     public event EventHandler? Changed;
 
+    /// <summary>Raised after the whole tree was read again, as after a commit, a checkout or an update, when the
+    /// history may have moved too (a save alone changes only the files).</summary>
+    public event EventHandler? Refreshed;
+
     /// <summary>What happened, for the status bar: a commit made, a push refused and git's reason.</summary>
     public event EventHandler<string>? Message;
 
@@ -70,6 +74,7 @@ public sealed class VcsController
             Branch = null;
             Changes = [];
             Changed?.Invoke(this, EventArgs.Empty);
+            Refreshed?.Invoke(this, EventArgs.Empty);
             return;
         }
         heads.Clear();
@@ -83,6 +88,7 @@ public sealed class VcsController
             Message?.Invoke(this, failed.Message);
         }
         Changed?.Invoke(this, EventArgs.Empty);
+        Refreshed?.Invoke(this, EventArgs.Empty);
         foreach (OpenDocument document in documents.Keys)
         {
             _ = MarkAsync(document);
@@ -174,6 +180,37 @@ public sealed class VcsController
         Message?.Invoke(this, pushed.Succeeded ? $"Pushed {Branch}" : $"Push failed: {pushed.Message}");
         return pushed.Succeeded;
     }
+
+    /// <summary>Rider's Update Project: the upstream's commits brought in, then the open files and Git read again.</summary>
+    public async Task<bool> UpdateAsync()
+    {
+        if (git is not { } repository)
+        {
+            return false;
+        }
+        Message?.Invoke(this, "Updating...");
+        GitResult pulled = await repository.PullAsync();
+        ReloadOpenFiles();
+        await RefreshAsync();
+        Message?.Invoke(this, pulled.Succeeded ? Summary(pulled.Output, "Updated") : $"Update failed: {pulled.Message}");
+        return pulled.Succeeded;
+    }
+
+    public async Task<bool> FetchAsync()
+    {
+        if (git is not { } repository)
+        {
+            return false;
+        }
+        Message?.Invoke(this, "Fetching...");
+        GitResult fetched = await repository.FetchAsync();
+        await RefreshAsync();
+        Message?.Invoke(this, fetched.Succeeded ? "Fetched" : $"Fetch failed: {fetched.Message}");
+        return fetched.Succeeded;
+    }
+
+    private static string Summary(string output, string fallback) =>
+        output.Split('\n', StringSplitOptions.RemoveEmptyEntries).LastOrDefault()?.Trim() is { Length: > 0 } last ? $"{fallback}: {last}" : fallback;
 
     /// <summary>The last commit's message, which Amend starts from.</summary>
     public async Task<string?> LastMessageAsync() => git is { } repository ? await repository.LastMessageAsync() : null;

@@ -15,6 +15,10 @@ public partial class MainWindow
 {
     private readonly VcsController vcs = new();
     private ToolWindows.CommitView? commitView;
+    private ToolWindows.GitLogView? gitLog;
+
+    /// <summary>The Git tool window's log.</summary>
+    public ToolWindows.GitLogView GitLog => gitLog!;
 
     /// <summary>The open folder's version control.</summary>
     public VcsController Vcs => vcs;
@@ -39,6 +43,9 @@ public partial class MainWindow
     {
         commitView = new ToolWindows.CommitView(vcs);
         Dock.Add(new Docking.ToolWindow("commit", "Commit", "Icon.Commit", commitView, Docking.ToolAnchor.LeftTop) { Action = AppActions.ShowCommit });
+        gitLog = new ToolWindows.GitLogView(vcs);
+        Dock.Add(new Docking.ToolWindow("git", "Git", "Icon.Branch", gitLog, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowGit });
+        gitLog.DiffRequested += (_, chosen) => _ = ShowCommitDiffAsync(chosen.Commit, chosen.File);
         commitView.OpenRequested += (_, path) => OpenFile(path);
         commitView.DiffRequested += (_, path) => _ = ShowDiffAsync(path);
         commitView.RollbackRequested += async (_, changes) => await RollbackAsync(changes);
@@ -97,6 +104,8 @@ public partial class MainWindow
             menu.Open(BranchButton);
             return;
         }
+        menu.Items.Add(Item("Update Project...", () => RunAppAction(AppActions.UpdateProject), AppActions.UpdateProject));
+        menu.Items.Add(Item("Fetch", () => RunAppAction(AppActions.Fetch)));
         menu.Items.Add(Item("New Branch...", ShowNewBranch));
         menu.Items.Add(Item("Commit...", () => RunAppAction(AppActions.Commit), AppActions.Commit));
         menu.Items.Add(Item("Push...", () => RunAppAction(AppActions.Push), AppActions.Push));
@@ -141,6 +150,33 @@ public partial class MainWindow
         }
         DiffWindow window = new($"{Path.GetFileName(path)}: HEAD and your version", view);
         window.Closed += (_, _) => (left as IDisposable)?.Dispose();
+        window.Show(this);
+        return window;
+    }
+
+    /// <summary>What a commit did to a file: its first parent's text beside its own, both read-only.</summary>
+    public async Task<DiffWindow?> ShowCommitDiffAsync(CommitInfo commit, FileChange file)
+    {
+        if (vcs.Repository is not { } repository)
+        {
+            return null;
+        }
+        string? parent = commit.Parents.Count > 0 ? commit.Parents[0] : null;
+        string before = parent is null || file.Kind is ChangeKind.Added ? string.Empty : await repository.TextAtAsync(parent, file.From ?? file.Path) ?? string.Empty;
+        string after = file.Kind is ChangeKind.Deleted ? string.Empty : await repository.TextAtAsync(commit.Hash, file.Path) ?? string.Empty;
+        string leftTitle = parent is null ? "Before the first commit" : parent[..Math.Min(8, parent.Length)];
+        DiffView view = new(file.Name, before, new TextDocument(after), editable: false, titles: (leftTitle, commit.Short));
+        List<IDisposable> colours = [];
+        if (Workspace.Language.ForPath(file.Path).Name == "C#")
+        {
+            Languages.CSharp.CSharpHighlighter left = new(view.Left.Document);
+            Languages.CSharp.CSharpHighlighter right = new(view.Right.Document);
+            view.Left.Highlighter = left;
+            view.Right.Highlighter = right;
+            colours.AddRange([left, right]);
+        }
+        DiffWindow window = new($"{file.Name}: {commit.Short} {commit.Subject}", view);
+        window.Closed += (_, _) => colours.ForEach(c => c.Dispose());
         window.Show(this);
         return window;
     }
@@ -216,6 +252,17 @@ public partial class MainWindow
                 break;
             case AppActions.RollbackLines:
                 _ = RollbackLinesAsync();
+                break;
+            case AppActions.ShowGit:
+                ShowToolWindow("git");
+                break;
+            case AppActions.UpdateProject:
+                // Rider saves first, so the merge meets what the editors show.
+                Editors.SaveAll();
+                _ = vcs.UpdateAsync();
+                break;
+            case AppActions.Fetch:
+                _ = vcs.FetchAsync();
                 break;
             case AppActions.ShowDiff when Editors.Active is { } shown:
                 _ = ShowDiffAsync(shown.Path);

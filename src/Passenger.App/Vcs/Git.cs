@@ -20,6 +20,13 @@ public sealed record FileChange(string Path, ChangeKind Kind, string? From = nul
     public string Name => System.IO.Path.GetFileName(Path);
 }
 
+/// <summary>A commit as the log lists it: its hash and parents, who made it and when, the branches and tags at it,
+/// and its subject.</summary>
+public sealed record CommitInfo(string Hash, IReadOnlyList<string> Parents, string Author, string Email, DateTimeOffset Time, IReadOnlyList<string> Refs, string Subject)
+{
+    public string Short => Hash[..Math.Min(8, Hash.Length)];
+}
+
 /// <summary>What `git` says, and whether it said it without failing.</summary>
 public sealed record GitResult(int Code, string Output, string Error)
 {
@@ -114,11 +121,94 @@ public sealed class Git
     }
 
     /// <summary>A file's text as the last commit has it; null when the commit has no such file (it is new).</summary>
-    public async Task<string?> HeadTextAsync(string path)
+    public Task<string?> HeadTextAsync(string path) => TextAtAsync("HEAD", path);
+
+    /// <summary>The history of every branch, newest first with a branch's commits together (as Rider's log has it),
+    /// at most this many.</summary>
+    public async Task<IReadOnlyList<CommitInfo>> LogAsync(int most = 2000)
     {
-        GitResult show = await RunAsync(Root, ["show", $"HEAD:{Relative(path)}"]);
+        GitResult log = await RunAsync(Root, ["log", "--all", "--topo-order", $"--max-count={most}", "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s%x1e"]);
+        if (!log.Succeeded)
+        {
+            // A branch with no commits yet has no history to read.
+            return [];
+        }
+        List<CommitInfo> commits = [];
+        foreach (string record in log.Output.Split('\x1e'))
+        {
+            string[] field = record.Trim('\n').Split('\x1f');
+            if (field.Length < 7)
+            {
+                continue;
+            }
+            commits.Add(new CommitInfo(
+                field[0],
+                field[1].Split(' ', StringSplitOptions.RemoveEmptyEntries),
+                field[2],
+                field[3],
+                DateTimeOffset.FromUnixTimeSeconds(long.Parse(field[4], System.Globalization.CultureInfo.InvariantCulture)),
+                [.. field[5].Split(", ", StringSplitOptions.RemoveEmptyEntries).Select(r => r.StartsWith("HEAD -> ", StringComparison.Ordinal) ? r[8..] : r)],
+                field[6]));
+        }
+        return commits;
+    }
+
+    /// <summary>A commit's whole message.</summary>
+    public async Task<string> MessageAsync(string hash)
+    {
+        GitResult show = await RunAsync(Root, ["show", "-s", "--format=%B", hash]);
+        return show.Succeeded ? show.Output.TrimEnd() : string.Empty;
+    }
+
+    /// <summary>The files a commit changed against its first parent (all of them for the first commit), renames found.</summary>
+    public async Task<IReadOnlyList<FileChange>> CommitFilesAsync(string hash)
+    {
+        GitResult files = await RunAsync(Root, ["diff-tree", "--no-commit-id", "--name-status", "-r", "-z", "-M", "--root", hash]);
+        if (!files.Succeeded)
+        {
+            return [];
+        }
+        List<FileChange> changes = [];
+        string[] parts = files.Output.Split('\0');
+        for (int i = 0; i + 1 < parts.Length; i++)
+        {
+            string status = parts[i];
+            if (status.Length == 0)
+            {
+                continue;
+            }
+            switch (status[0])
+            {
+                case 'R' or 'C' when i + 2 < parts.Length:
+                    changes.Add(new FileChange(Full(parts[i + 2]), ChangeKind.Renamed, Full(parts[i + 1])));
+                    i += 2;
+                    break;
+                case 'A':
+                    changes.Add(new FileChange(Full(parts[++i]), ChangeKind.Added));
+                    break;
+                case 'D':
+                    changes.Add(new FileChange(Full(parts[++i]), ChangeKind.Deleted));
+                    break;
+                default:
+                    changes.Add(new FileChange(Full(parts[++i]), ChangeKind.Modified));
+                    break;
+            }
+        }
+        return changes;
+    }
+
+    /// <summary>A file's text at a revision (a hash, a branch, HEAD), or null when it had no such file.</summary>
+    public async Task<string?> TextAtAsync(string revision, string path)
+    {
+        GitResult show = await RunAsync(Root, ["show", $"{revision}:{Relative(path)}"]);
         return show.Succeeded ? show.Output : null;
     }
+
+    /// <summary>Rider's Update Project: the branch's upstream merged in (or rebased onto, as the person's pull.rebase
+    /// says).</summary>
+    public Task<GitResult> PullAsync() => RunAsync(Root, ["pull", "--no-edit"]);
+
+    public Task<GitResult> FetchAsync() => RunAsync(Root, ["fetch", "--all", "--prune"]);
 
     /// <summary>The last commit's message, or null before the first commit.</summary>
     public async Task<string?> LastMessageAsync()

@@ -144,9 +144,11 @@ changes and the unversioned files with a box each, Amend (from the last message)
 asks, then restores and deletes; a double-click or Ctrl+D shows a file's diff. The diff is Rider's side by side, HEAD
 beside the open file's own text, with bands between and an arrow on each that puts that change back. The editor's
 gutter has Rider's change bars; a click on one shows what the lines were, with Rollback and Show Diff; Next and
-Previous Change move between them and Rollback Lines puts one back; the Explorer colours changed files. Open files
-reload from disk after a checkout or rollback and when the window comes back to the front. Still to come: the log,
-pull and fetch, and word-level highlights in the diff.
+Previous Change move between them and Rollback Lines puts one back; the Explorer colours changed files. The Git
+window's Log lists every branch's history beside its graph, with branches and tags, a filter by text or hash, and the
+chosen commit's files (a double-click shows what it did to one) and message. Update Project pulls and Fetch fetches.
+Open files reload from disk after a checkout, a rollback or an update, and when the window comes back to the front.
+Still to come: word-level highlights in the diff, merge conflicts, stashes, and the log's branch tree.
 
 ## M8: depth and shipping
 

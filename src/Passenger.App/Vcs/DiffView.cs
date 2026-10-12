@@ -27,7 +27,8 @@ public sealed class DiffView : DockPanel
     /// <param name="head">The last commit's text, empty for a file it does not have.</param>
     /// <param name="mine">The file's text now: the open file's document, or a copy when it is not open.</param>
     /// <param name="editable">Whether the right side is the open file, which can be edited and have changes put back.</param>
-    public DiffView(string name, string head, TextDocument mine, bool editable, IHighlighter? leftColours = null, IHighlighter? rightColours = null)
+    /// <param name="titles">What the sides are, above them: the last commit and the file by default.</param>
+    public DiffView(string name, string head, TextDocument mine, bool editable, IHighlighter? leftColours = null, IHighlighter? rightColours = null, (string Left, string Right)? titles = null)
     {
         this.head = head;
         IsEditable = editable;
@@ -38,8 +39,8 @@ public sealed class DiffView : DockPanel
         bands = new Bands(this) { Width = 36 };
 
         Grid sides = new() { ColumnDefinitions = new ColumnDefinitions("*,Auto,*"), RowDefinitions = new RowDefinitions("Auto,*") };
-        sides.Children.Add(Header("HEAD", 0));
-        sides.Children.Add(Header(editable ? "Your version" : "Your version (read-only)", 2));
+        sides.Children.Add(Header(titles?.Left ?? "HEAD", 0));
+        sides.Children.Add(Header(titles?.Right ?? (editable ? "Your version" : "Your version (read-only)"), 2));
         Grid.SetRow(Left, 1);
         Grid.SetRow(bands, 1);
         Grid.SetColumn(bands, 1);
