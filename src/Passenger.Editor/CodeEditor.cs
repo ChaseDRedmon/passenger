@@ -472,6 +472,7 @@ public sealed partial class CodeEditor : Control
         UnfoldAroundCarets(clamped);
         bool changed = !clamped.SameAs(selections) || clamped.PrimaryIndex != selections.PrimaryIndex;
         selections = clamped;
+        CheckSnippet();
         if (reveal)
         {
             Reveal(selections.Primary.Caret);
@@ -533,6 +534,7 @@ public sealed partial class CodeEditor : Control
 
     private void OnDocumentChanged(object? sender, DocumentChangedEventArgs e)
     {
+        FollowSnippet(e.Edits);
         if (!editing)
         {
             selections = TextEditing.MapThrough(selections, e.Edits).Clamp(e.After.Length);

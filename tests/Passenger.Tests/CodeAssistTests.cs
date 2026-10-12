@@ -304,6 +304,44 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void An_abbreviation_and_tab_become_rider_s_live_template_where_it_belongs()
+    {
+        MainWindow window = project.Open("Point.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        // In a type's body, prop is a property, its type selected to be typed over.
+        PlaceAfter(editor, "public int Y { get; }");
+        editor.Focus();
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("prop");
+        Ui.Settle();
+        Ui.Press(window, "TAB");
+        Assert.True(editor.IsInSnippet);
+        Assert.Contains("    public int Name { get; set; }", editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
+        Assert.Equal("int", editor.Document.Snapshot.GetText(editor.Selections.Primary.Start, editor.Selections.Primary.Length));
+        window.KeyTextInput("string");
+        Ui.Press(window, "TAB");
+        window.KeyTextInput("Label");
+        Ui.Press(window, "TAB");
+        Assert.False(editor.IsInSnippet);
+        Assert.Contains("    public string Label { get; set; }\n}", editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
+        window.Close();
+
+        // In a method's body, cw is a Console.WriteLine with the caret in its parentheses.
+        window = project.Open("Loop.cs");
+        editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "int total = 0;");
+        editor.Focus();
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("cw");
+        Ui.Settle();
+        Ui.Press(window, "TAB");
+        string text = editor.Document.Snapshot.ToString();
+        Assert.Contains("        Console.WriteLine();\n", text, StringComparison.Ordinal);
+        Assert.Equal(text.IndexOf("Console.WriteLine(", StringComparison.Ordinal) + "Console.WriteLine(".Length, editor.Selections.Primary.Caret);
+        window.Close();
+    }
+
     private static void PlaceAfter(CodeEditor editor, string text)
     {
         int at = editor.Document.Snapshot.ToString().IndexOf(text, StringComparison.Ordinal);

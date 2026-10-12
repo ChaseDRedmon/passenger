@@ -176,6 +176,44 @@ public sealed class EditingBehaviourTests
         Assert.Equal(Passenger.Editor.TokenKind.Brace1, KindAt(highlighter, rig, source.LastIndexOf('}')));
     }
 
+    [AvaloniaFact]
+    public void A_template_fills_every_place_of_a_variable_at_once_and_tab_goes_on_to_the_next_then_the_end()
+    {
+        EditorRig rig = new("    \n");
+        rig.PlaceCaret(4);
+        Passenger.Editor.Snippet loop = Passenger.Editor.Snippet.Parse(
+            "for (int $INDEX$ = 0; $INDEX$ < $UPPER$; $INDEX$++)\n{\n\t$END$\n}", new Dictionary<string, string> { ["INDEX"] = "i", ["UPPER"] = "length" }, "    ", "    ");
+        rig.Editor.InsertSnippet(new TextRange(4, 0), loop);
+        Assert.True(rig.Editor.IsInSnippet);
+        Assert.Equal(3, rig.Editor.Selections.Count);
+
+        rig.Type("row");
+        Assert.StartsWith("    for (int row = 0; row < length; row++)\n    {\n", rig.Text, StringComparison.Ordinal);
+        rig.Press("TAB");
+        Assert.Equal("length", rig.Text.Substring(rig.Editor.Selections.Primary.Start, rig.Editor.Selections.Primary.Length));
+        rig.Type("rows");
+        // Shift+Tab goes back to the first variable, all its places selected again.
+        rig.Press("shift TAB");
+        Assert.Equal(3, rig.Editor.Selections.Count);
+        rig.Press("TAB");
+        rig.Press("TAB");
+        Assert.False(rig.Editor.IsInSnippet);
+        Assert.Equal("    for (int row = 0; row < rows; row++)\n    {\n        \n    }\n", rig.Text);
+        Assert.Equal(rig.Text.IndexOf("        \n", StringComparison.Ordinal) + 8, rig.Caret);
+    }
+
+    [AvaloniaFact]
+    public void A_caret_that_leaves_the_variable_ends_the_template()
+    {
+        EditorRig rig = new("");
+        rig.Editor.InsertSnippet(new TextRange(0, 0), Passenger.Editor.Snippet.Parse("int $NAME$ = $VALUE$;$END$", new Dictionary<string, string> { ["NAME"] = "x", ["VALUE"] = "0" }, "", "    "));
+        Assert.True(rig.Editor.IsInSnippet);
+        rig.PlaceCaret(0);
+        Assert.False(rig.Editor.IsInSnippet);
+        rig.Press("TAB");
+        Assert.StartsWith("    int x", rig.Text, StringComparison.Ordinal);
+    }
+
     private static Passenger.Editor.TokenKind? KindAt(CSharpHighlighter highlighter, EditorRig rig, int offset) =>
         highlighter.GetSpans(rig.Document.Snapshot, offset, 1)
             .Where(s => s.Start <= offset && offset < s.End)

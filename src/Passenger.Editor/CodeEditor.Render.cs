@@ -106,6 +106,7 @@ public sealed partial class CodeEditor
                     context.FillRectangle(palette.Caret, new Rect(Math.Round(x), y, 2, lineHeight));
                 }
             }
+            DrawSnippet(context, text, left);
             DrawPreedit(context, text, left);
             if (ChangeBackgrounds)
             {

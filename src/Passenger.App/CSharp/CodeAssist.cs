@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Media;
 using Passenger.App.Editors;
 using Passenger.Editor;
+using Passenger.Languages.CSharp;
 using Passenger.Lsp;
 using Passenger.Text;
 
@@ -21,6 +22,7 @@ public sealed class CodeAssist
     private readonly InfoCard hoverCard = new();
     private readonly InfoCard signatureCard = new();
     private readonly CompletionPopup completion = new();
+    private readonly Dictionary<CompletionItem, LiveTemplate> templatesOffered = [];
     private CancellationTokenSource? hovering;
     private CancellationTokenSource? completing;
     private Completion? open;
@@ -119,6 +121,10 @@ public sealed class CodeAssist
                     CloseCompletion();
                     return true;
             }
+        }
+        if (action == EditorActions.Indent && !Editor.IsInSnippet && TryExpandTemplate())
+        {
+            return true;
         }
         if (action == EditorActions.Escape && (signatureCard.IsVisible || hoverCard.IsVisible))
         {
@@ -274,7 +280,14 @@ public sealed class CodeAssist
             int start = list.Items.FirstOrDefault(i => i.TextEdit is not null)?.TextEdit is { } edit
                 ? lsp.OffsetOf(edit.Range.Start)
                 : WordStart(caret);
-            open = new Completion(list.Items, Math.Min(start, Editor.Selections.Primary.Caret));
+            // Rider lists the live templates that may go here with the server's items, ahead of a keyword they share.
+            (TemplateScope scope, _) = TemplateScopes.At(Editor.Document.Snapshot, caret);
+            templatesOffered.Clear();
+            foreach (LiveTemplate template in LiveTemplates.In(scope))
+            {
+                templatesOffered[new CompletionItem { Label = template.Abbreviation, Kind = 15, Detail = template.Description, SortText = "!" + template.Abbreviation }] = template;
+            }
+            open = new Completion([.. list.Items, .. templatesOffered.Keys], Math.Min(start, Editor.Selections.Primary.Caret));
             Filter();
         }
         catch (Exception error) when (IsServerFailure(error))
@@ -344,6 +357,11 @@ public sealed class CodeAssist
         int start = open.Start;
         CloseCompletion();
         CompletionItem item = row.Item;
+        if (templatesOffered.TryGetValue(item, out LiveTemplate? chosen))
+        {
+            Expand(chosen, start, Editor.Selections.Primary.Caret);
+            return;
+        }
         try
         {
             if (item.Data is not null && item.AdditionalTextEdits is null)
@@ -362,6 +380,42 @@ public sealed class CodeAssist
             edits.AddRange(WorkspaceEdits.Convert(Editor.Document.Snapshot, extra).Where(e => e.End <= start || e.Start >= caret));
         }
         Editor.ApplyEdits(edits);
+    }
+
+    /// <summary>Rider's abbreviation and Tab: the word before the caret, when a live template has it as its
+    /// abbreviation and may go here, becomes the template. Whether one did.</summary>
+    private bool TryExpandTemplate()
+    {
+        if (Current is null || Editor.Selections.HasMultiple || !Editor.Selections.Primary.IsEmpty)
+        {
+            return false;
+        }
+        int caret = Editor.Selections.Primary.Caret;
+        int start = WordStart(caret);
+        if (start == caret)
+        {
+            return false;
+        }
+        string word = Editor.Document.Snapshot.GetText(start, caret - start);
+        (TemplateScope scope, _) = TemplateScopes.At(Editor.Document.Snapshot, caret);
+        if (LiveTemplates.In(scope).FirstOrDefault(t => t.Abbreviation == word) is not { } template)
+        {
+            return false;
+        }
+        Expand(template, start, caret);
+        return true;
+    }
+
+    /// <summary>Puts a live template over its abbreviation, indented as the line it is on, and starts filling it in.</summary>
+    private void Expand(LiveTemplate template, int start, int end)
+    {
+        TextSnapshot text = Editor.Document.Snapshot;
+        string line = text.GetText(text.GetLineStart(text.GetLineFromOffset(start)), start - text.GetLineStart(text.GetLineFromOffset(start)));
+        string indent = line[..(line.Length - line.TrimStart().Length)];
+        string unit = Editor.Indent.UseTabs ? "\t" : new string(' ', Editor.Indent.Size);
+        (_, string? typeName) = TemplateScopes.At(text, end);
+        Dictionary<string, string> defaults = template.Defaults.ToDictionary(d => d.Key, d => d.Value == LiveTemplates.TypeName ? typeName ?? "Name" : d.Value);
+        Editor.InsertSnippet(TextRange.FromBounds(start, end), Snippet.Parse(template.Text, defaults, indent, unit));
     }
 
     private void CloseCompletion()

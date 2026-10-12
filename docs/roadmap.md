@@ -183,7 +183,9 @@ Mac) grows every caret's selection through the code around it, from the syntax t
 takes it back. Code folding folds a member's, a type's or a namespace's braces, the usings, #regions and long
 comments, from the file's own parse: Ctrl+M, M toggles the fold at the caret, Ctrl+M, S and E fold and unfold, A and X
 all of them, the gutter's chevrons and a fold's placeholder too, and a caret that goes into folded code opens it. Rainbow braces colour brackets by how deeply they nest, three colours taking
-turns (Settings, Editor). The Explorer's menu
+turns (Settings, Editor). Live templates are Rider's (for, foreach, if, cw, try, prop, ctor, class and the rest): the
+abbreviation then Tab, or picked from completion, where its kind of code goes; each variable's places are filled in
+at once, Tab and Shift+Tab move between them, and the caret ends where the template says. The Explorer's menu
 adds files, folders and classes (in the namespace their folder gives), renames (F2) and deletes to the Trash (Delete),
 its open tabs following, and copies or reveals a path. Settings (Ctrl+Alt+S, Cmd+, on the Mac) has Rider's search over its pages
 (Appearance, Editor, Terminal, and the Keymap, where Add takes the next keys pressed, Remove unbinds and Reset goes
