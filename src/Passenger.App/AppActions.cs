@@ -79,6 +79,8 @@ public static class AppActions
     public const string StepOut = "app.debug.stepOut";
     public const string RunToCursor = "app.debug.runToCursor";
     public const string SetNextStatement = "app.debug.setNextStatement";
+    public const string ExtendSelection = "app.editor.extendSelection";
+    public const string ShrinkSelection = "app.editor.shrinkSelection";
     public const string ShowExecutionPoint = "app.debug.showExecutionPoint";
     public const string Evaluate = "app.debug.evaluate";
 
@@ -216,6 +218,8 @@ public static class AppActions
                 .Bind(StepOut, "shift F11")
                 .Bind(RunToCursor, "meta F10")
                 .Bind(SetNextStatement, "meta shift F10")
+                .Bind(ExtendSelection, "meta alt RIGHT")
+                .Bind(ShrinkSelection, "meta alt LEFT")
                 .Bind(ShowExecutionPoint, "alt MULTIPLY")
                 .Bind(Evaluate, "shift F9")
                 .Bind(EditBreakpoint, "alt F9")
@@ -261,7 +265,7 @@ public static class AppActions
             .Bind(Open, "control O")
             .Bind(Save, "control S")
             .Bind(SaveAll, "control shift S")
-            .Bind(CloseTab, "control F4", "control W")
+            .Bind(CloseTab, "control F4")
             .Bind(NextTab, "alt RIGHT")
             .Bind(PreviousTab, "alt LEFT")
             .Bind(GoToFile, "control shift T")
@@ -302,6 +306,8 @@ public static class AppActions
             .Bind(StepOut, "shift F11")
             .Bind(RunToCursor, "control F10")
             .Bind(SetNextStatement, "control shift F10")
+            .Bind(ExtendSelection, "control W", "shift alt EQUALS", "control alt RIGHT")
+            .Bind(ShrinkSelection, "control shift W", "shift alt MINUS", "control alt LEFT")
             .Bind(ShowExecutionPoint, "alt MULTIPLY")
             .Bind(Evaluate, "shift F9")
             .Bind(EditBreakpoint, "alt F9")

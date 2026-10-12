@@ -271,6 +271,39 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void Extend_selection_grows_through_the_code_around_the_caret_and_shrink_takes_it_back()
+    {
+        MainWindow window = project.Open("Loop.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "            to");
+        string Selected() => editor.Document.Snapshot.GetText(editor.Selections.Primary.Start, editor.Selections.Primary.Length);
+        List<string> grown = [];
+        for (int i = 0; i < 6; i++)
+        {
+            Ui.Run(window, AppActions.ExtendSelection);
+            grown.Add(Selected());
+        }
+        Assert.Equal("total", grown[0]);
+        Assert.Equal("total += i * 2", grown[1]);
+        Assert.Equal("total += i * 2;", grown[2]);
+        Assert.StartsWith("{", grown[3], StringComparison.Ordinal);
+        Assert.StartsWith("for (", grown[4], StringComparison.Ordinal);
+        // The method's statements, without the braces around them.
+        Assert.StartsWith("int total = 0;", grown[5], StringComparison.Ordinal);
+        Assert.EndsWith("return total;", grown[5], StringComparison.Ordinal);
+
+        Ui.Run(window, AppActions.ShrinkSelection);
+        Ui.Run(window, AppActions.ShrinkSelection);
+        Assert.Equal(grown[3], Selected());
+        for (int i = 0; i < 4; i++)
+        {
+            Ui.Run(window, AppActions.ShrinkSelection);
+        }
+        Assert.True(editor.Selections.Primary.IsEmpty);
+        window.Close();
+    }
+
     private static void PlaceAfter(CodeEditor editor, string text)
     {
         int at = editor.Document.Snapshot.ToString().IndexOf(text, StringComparison.Ordinal);

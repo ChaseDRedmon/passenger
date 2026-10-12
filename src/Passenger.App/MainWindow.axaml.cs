@@ -391,6 +391,12 @@ public partial class MainWindow : Window
         }
         switch (action)
         {
+            case AppActions.ExtendSelection:
+                ExtendSelection();
+                break;
+            case AppActions.ShrinkSelection:
+                ShrinkSelection();
+                break;
             case AppActions.Build:
                 BuildSolution();
                 break;

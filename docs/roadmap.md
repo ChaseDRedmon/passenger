@@ -178,7 +178,9 @@ every text file of the folder, open files as the editor has them, matching as th
 chosen match; Replace All edits open files undoably and writes closed ones. Recent Files (Ctrl+,) lists the files
 opened last and reopens one where its caret was left. The status bar's path names the file and the type and member the
 caret is in, as Rider's new UI does, each part a way there. Bookmarks (Ctrl+K, K to toggle, N and P to move between
-them across files, W for the Bookmarks window) mark lines and move with them as they are edited. The Explorer's menu
+them across files, W for the Bookmarks window) mark lines and move with them as they are edited. Extend Selection (Ctrl+W, Cmd+Alt+Right on the
+Mac) grows every caret's selection through the code around it, from the syntax tree in C#, and Shrink Selection
+takes it back. The Explorer's menu
 adds files, folders and classes (in the namespace their folder gives), renames (F2) and deletes to the Trash (Delete),
 its open tabs following, and copies or reveals a path. Settings (Ctrl+Alt+S, Cmd+, on the Mac) has Rider's search over its pages
 (Appearance, Editor, Terminal, and the Keymap, where Add takes the next keys pressed, Remove unbinds and Reset goes
