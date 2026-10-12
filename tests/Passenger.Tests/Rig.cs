@@ -1,0 +1,116 @@
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Headless;
+using Avalonia.Input;
+using Avalonia.Threading;
+using Passenger.Editor;
+using Passenger.Text;
+
+[assembly: Avalonia.Headless.AvaloniaTestApplication(typeof(Passenger.Tests.TestApp))]
+
+namespace Passenger.Tests;
+
+/// <summary>The real app on the headless platform, drawing with Skia so text measures as it does on
+/// a desktop.</summary>
+public static class TestApp
+{
+    public static AppBuilder BuildAvaloniaApp() => AppBuilder.Configure<Passenger.App.App>()
+        .UseSkia()
+        .UseHarfBuzz()
+        .WithInterFont()
+        .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false });
+}
+
+/// <summary>A code editor alone in a window, driven the way a person drives it: keys by Rider's
+/// macOS keymap (so a test reads the same on every platform), typed text, and clicks.</summary>
+public sealed class EditorRig
+{
+    public EditorRig(string text)
+    {
+        Document = new TextDocument(text);
+        Editor = new CodeEditor { Keymap = DefaultKeymaps.VisualStudioMac(), Document = Document };
+        Window = new Window { Width = 900, Height = 700, Content = Editor };
+        Window.Show();
+        Editor.Focus();
+        Ui.Settle();
+    }
+
+    public Window Window { get; }
+    public CodeEditor Editor { get; }
+    public TextDocument Document { get; }
+    public string Text => Document.Snapshot.ToString();
+    public int Caret => Editor.Selections.Primary.Caret;
+
+    /// <summary>"meta shift L", "alt shift PERIOD", "ENTER": Rider's own keymap notation.</summary>
+    public void Press(string keys)
+    {
+        Ui.Press(Window, keys);
+    }
+
+    /// <summary>Types one character at a time, as a keyboard does, so the editor's typing help
+    /// (closing brackets, stepping over them) sees each one.</summary>
+    public void Type(string text)
+    {
+        foreach (char c in text)
+        {
+            Window.KeyTextInput(c.ToString());
+        }
+        Ui.Settle();
+    }
+
+    /// <summary>Puts the caret where a click on that offset would.</summary>
+    public void PlaceCaret(int offset) => Editor.Selections = SelectionSet.Single(offset);
+}
+
+public static class Ui
+{
+    public static void Press(TopLevel window, string keys)
+    {
+        Keystroke stroke = Keystroke.Parse(keys.Replace('+', ' '));
+        RawInputModifiers modifiers = Raw(stroke.Modifiers);
+        window.KeyPress(stroke.Key, modifiers, PhysicalKey.None, null);
+        window.KeyRelease(stroke.Key, modifiers, PhysicalKey.None, null);
+        Settle();
+    }
+
+    /// <summary>Runs queued UI work and waits for background work (colouring) to land.</summary>
+    public static void Settle()
+    {
+        DateTime limit = DateTime.UtcNow.AddSeconds(10);
+        do
+        {
+            Dispatcher.UIThread.RunJobs();
+            AvaloniaHeadlessPlatform.ForceRenderTimerTick(1);
+            Dispatcher.UIThread.RunJobs();
+            if (BackgroundWork.Pending == 0)
+            {
+                return;
+            }
+            Thread.Sleep(2);
+        }
+        while (DateTime.UtcNow < limit);
+        throw new TimeoutException("Background work never finished.");
+    }
+
+    public static RawInputModifiers Raw(KeyModifiers modifiers)
+    {
+        RawInputModifiers raw = RawInputModifiers.None;
+        if (modifiers.HasFlag(KeyModifiers.Shift))
+        {
+            raw |= RawInputModifiers.Shift;
+        }
+        if (modifiers.HasFlag(KeyModifiers.Control))
+        {
+            raw |= RawInputModifiers.Control;
+        }
+        if (modifiers.HasFlag(KeyModifiers.Alt))
+        {
+            raw |= RawInputModifiers.Alt;
+        }
+        if (modifiers.HasFlag(KeyModifiers.Meta))
+        {
+            raw |= RawInputModifiers.Meta;
+        }
+        return raw;
+    }
+}

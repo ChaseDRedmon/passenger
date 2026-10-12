@@ -5,4 +5,7 @@
     <Project Path="src/Passenger.Languages/Passenger.Languages.csproj" />
     <Project Path="src/Passenger.Text/Passenger.Text.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Passenger.Tests/Passenger.Tests.csproj" />
+  </Folder>
 </Solution>

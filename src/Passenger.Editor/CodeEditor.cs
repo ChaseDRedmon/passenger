@@ -212,6 +212,15 @@ public sealed partial class CodeEditor : Control
         SelectionChanged?.Invoke(this, EventArgs.Empty);
     }
 
+    /// <summary>Where an offset's caret would stand, as the top of its line, in this control's
+    /// coordinates: what a popup anchors to, and where a click lands on that offset.</summary>
+    public Point PointOf(int offset)
+    {
+        TextSnapshot text = document.Snapshot;
+        int line = text.GetLineFromOffset(offset);
+        return new Point(TextLeft - scroll.X + XOf(text, offset), line * metrics.LineHeight - scroll.Y);
+    }
+
     public void ScrollTo(Vector offset)
     {
         double maxY = Math.Max(0, (document.Snapshot.LineCount - 1) * metrics.LineHeight);

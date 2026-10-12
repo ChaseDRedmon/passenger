@@ -18,6 +18,7 @@ just run [PATH] [args]     # run the IDE on a folder or file (--file F, --caret 
 just screenshot X.png ...  # the main window drawn off-screen to a PNG, after the steps given
 just publish RID           # self-contained Release build, ReadyToRun (osx-arm64, osx-x64, win-x64, win-arm64)
 just icons                 # rewrite Theme/Icons.axaml from the list in tools/icons.py
+just test [filter]         # every test, or those whose name matches
 ```
 
 The screenshot is the self-check for anything visible. It opens what the command line names, takes
@@ -70,6 +71,16 @@ window or takes the focus; it shows everything but the system's own window chrom
   Visual Studio OSX (macOS) keymap gives it; Rider's keymap files are in its jars for reference.
 - Commit messages go through a file (`git commit -F msg.txt`): backticks in a `-m` string are zsh command
   substitution.
+
+## Tests
+
+Tests drive the IDE whole, headless (`tests/Passenger.Tests`, xunit v3 on Avalonia's headless
+platform with real Skia text): a window or an editor, real key presses by Rider's macOS keymap
+(`EditorRig`), typing, clicks, files on disk. There are no unit tests of one function or type on its
+own; a test says what a person would see or get ("an edit saved keeps the file's line endings",
+"typing never loses a word's colour"), and its failure message names the consequence. The long
+random editing session checks every key against a plain string model, which is what keeps the rope,
+the line index and undo honest; keep it passing rather than narrowing it.
 
 ## Code style
 

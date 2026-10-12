@@ -4,6 +4,13 @@ namespace Passenger.Text;
 /// <see cref="TabWidth"/> columns wide.</summary>
 public readonly record struct IndentOptions(int Size = 4, bool UseTabs = false, int TabWidth = 4)
 {
+    /// <summary>Four spaces. Without this, <c>new()</c> on a record struct would skip the defaults
+    /// above and give a zero-wide indent.</summary>
+    public IndentOptions()
+        : this(4)
+    {
+    }
+
     public string Unit => UseTabs ? "\t" : new string(' ', Size);
 }
 
