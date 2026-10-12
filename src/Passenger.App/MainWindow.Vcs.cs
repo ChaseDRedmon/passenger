@@ -158,7 +158,7 @@ public partial class MainWindow
         return popup;
     }
 
-    /// <summary>Unstash Changes: the stashes to pop, apply or drop.</summary>
+    /// <summary>Unstash Changes: the stashes to pop, apply or drop (once the person agrees).</summary>
     public async Task<UnstashPopup?> ShowUnstashAsync()
     {
         if (vcs.Repository is null)
@@ -166,8 +166,15 @@ public partial class MainWindow
             StatusText.Text = "The folder is not in a Git repository";
             return null;
         }
-        UnstashPopup popup = new(await vcs.StashesAsync(), vcs.UnstashAsync, vcs.DropStashAsync);
-        popup.Done += (_, _) => ClosePopup();
+        UnstashPopup popup = new(await vcs.StashesAsync(), vcs.UnstashAsync, vcs.DropStashAsync, (title, text, yes) => Confirm(title, text, yes));
+        popup.Done += (_, _) =>
+        {
+            // Escape may have closed it while a pop ran, and another popup taken its place since.
+            if (Popup == popup)
+            {
+                ClosePopup();
+            }
+        };
         ShowPopup(popup);
         return popup;
     }

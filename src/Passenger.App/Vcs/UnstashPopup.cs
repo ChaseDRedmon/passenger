@@ -10,17 +10,25 @@ using Avalonia.Threading;
 namespace Passenger.App.Vcs;
 
 /// <summary>Rider's Unstash Changes: the stashes, the newest first, each with when it was made; Pop (Enter) puts the
-/// chosen one's changes back and drops it, Apply keeps it, Drop throws it away. Escape closes.</summary>
+/// chosen one's changes back and drops it, Apply keeps it, Drop (Delete) throws it away once the person agrees. One runs
+/// at a time, the buttons off meanwhile. Escape closes.</summary>
 public sealed class UnstashPopup : UserControl
 {
     private readonly ListBox list;
     private readonly Func<StashInfo, bool, Task<bool>> unstash;
     private readonly Func<StashInfo, Task<bool>> drop;
+    private readonly Func<string, string, string, Task<bool>> confirm;
+    private readonly Button[] actions;
+    private bool running;
 
-    public UnstashPopup(IReadOnlyList<StashInfo> stashes, Func<StashInfo, bool, Task<bool>> unstash, Func<StashInfo, Task<bool>> drop)
+    /// <param name="confirm">Asks before a drop (its title, the question, the button that drops), as the window's
+    /// Confirm does.</param>
+    public UnstashPopup(IReadOnlyList<StashInfo> stashes, Func<StashInfo, bool, Task<bool>> unstash, Func<StashInfo, Task<bool>> drop,
+        Func<string, string, string, Task<bool>> confirm)
     {
         this.unstash = unstash;
         this.drop = drop;
+        this.confirm = confirm;
         Stashes = stashes;
         Width = 520;
         list = new ListBox
@@ -35,6 +43,7 @@ public sealed class UnstashPopup : UserControl
         Button pop = Action("Pop", () => PopAsync(), primary: true);
         Button apply = Action("Apply", () => ApplyAsync());
         Button remove = Action("Drop", () => DropAsync());
+        actions = [pop, apply, remove];
         Content = new Border
         {
             Classes = { "popup" },
@@ -59,7 +68,7 @@ public sealed class UnstashPopup : UserControl
             },
         };
         AddHandler(KeyDownEvent, OnKey, RoutingStrategies.Tunnel);
-        Dispatcher.UIThread.Post(() => list.Focus(), DispatcherPriority.Loaded);
+        Dispatcher.UIThread.Post(FocusRow, DispatcherPriority.Loaded);
     }
 
     /// <summary>The popup is done with: a stash was used or dropped, or it was dismissed.</summary>
@@ -77,14 +86,61 @@ public sealed class UnstashPopup : UserControl
 
     public Task ApplyAsync() => Use(stash => unstash(stash, false));
 
-    public Task DropAsync() => Use(drop);
+    /// <summary>Drop, asked first as Rider asks; a no leaves the popup open on the stash.</summary>
+    public Task DropAsync() => Use(drop, stash => confirm(
+        $"Remove Stash stash@{{{stash.Index}}}?", $"Do you want to remove stash@{{{stash.Index}}}?\n\"{stash.Message}\"", "Remove"));
 
-    private async Task Use(Func<StashInfo, Task<bool>> action)
+    /// <summary>Runs an action on the chosen stash unless one is running: a stash is named by its index as the list was
+    /// read, so a second drop begun before the first ends would drop the stash after it.</summary>
+    private async Task Use(Func<StashInfo, Task<bool>> action, Func<StashInfo, Task<bool>>? ask = null)
     {
-        if (Selected is { } stash)
+        if (running || Selected is not { } stash)
         {
-            await action(stash);
+            return;
+        }
+        Run(true);
+        bool agreed;
+        try
+        {
+            agreed = ask is null || await ask(stash);
+            if (agreed)
+            {
+                await action(stash);
+            }
+        }
+        finally
+        {
+            Run(false);
+        }
+        if (agreed)
+        {
             Done?.Invoke(this, EventArgs.Empty);
+        }
+        else
+        {
+            FocusRow();
+        }
+    }
+
+    /// <summary>Gives the keys to the chosen row, as a click on it does: a ListBox takes no focus of its own, and the
+    /// editor under the popup would take Enter and Delete.</summary>
+    private void FocusRow()
+    {
+        if (list.SelectedIndex < 0)
+        {
+            return;
+        }
+        list.ScrollIntoView(list.SelectedIndex);
+        list.UpdateLayout();
+        list.ContainerFromIndex(list.SelectedIndex)?.Focus();
+    }
+
+    private void Run(bool now)
+    {
+        running = now;
+        foreach (Button action in actions)
+        {
+            action.IsEnabled = !now;
         }
     }
 
@@ -100,7 +156,8 @@ public sealed class UnstashPopup : UserControl
                 _ = PopAsync();
                 e.Handled = true;
                 break;
-            case Key.Delete or Key.Back:
+            case Key.Delete:
+                // Not Backspace, the Mac's delete key, which is pressed in passing too easily to throw a stash away.
                 _ = DropAsync();
                 e.Handled = true;
                 break;

@@ -12,9 +12,9 @@ namespace Passenger.Tests;
 
 /// <summary>Git as Rider shows it, over a real working tree: an edit grows a change bar (blank lines at the end too, and a
 /// large rewrite's off the window's thread), which a rename keeps and a commit clears; Rollback Lines and Rollback put
-/// changes back; a branch made from the toolbar is checked out, and going back reloads the open file; Commit and Stash
-/// run one at a time; a status older than a commit never lands after it, and the last commit's texts are read again
-/// only when HEAD moves.</summary>
+/// changes back; a branch made from the toolbar is checked out, and going back reloads the open file; Commit, Stash and
+/// Unstash run one at a time, a drop asked first and the log leaving the stash out; a status older than a commit never
+/// lands after it, and the last commit's texts are read again only when HEAD moves.</summary>
 public sealed class VcsTests : IDisposable
 {
     private const string Original = "class Shop\n{\n    int count;\n\n    void Add() { count++; }\n}\n";
@@ -479,6 +479,91 @@ public sealed class VcsTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void Backspace_in_unstash_changes_keeps_every_stash_and_delete_asks_before_dropping_the_chosen_one_once()
+    {
+        File.AppendAllText(Path.Combine(folder, "Shop.cs"), "// older\n");
+        Git("stash", "push", "-m", "Older");
+        File.AppendAllText(Path.Combine(folder, "Shop.cs"), "// newer\n");
+        Git("stash", "push", "-m", "Newer");
+        MainWindow window = Open();
+        Ui.WaitFor(() => window.Vcs.Branch == "main", "the branch to be read");
+        List<string> asked = [];
+        bool agree = false;
+        window.Confirm = (title, text, yes) =>
+        {
+            asked.Add($"{title} {text}");
+            return Task.FromResult(agree);
+        };
+        Task<UnstashPopup?> showing = window.ShowUnstashAsync();
+        Ui.WaitFor(() => showing.IsCompleted, "the stashes");
+        UnstashPopup unstash = showing.Result!;
+        Assert.Equal(2, unstash.Stashes.Count);
+        Ui.Settle();
+        Assert.True(window.FocusManager?.GetFocusedElement() is Avalonia.Controls.ListBoxItem { DataContext: StashInfo { Index: 0 } },
+            $"Unstash Changes opened with {window.FocusManager?.GetFocusedElement()?.GetType().Name} taking the keys, not the newest stash's row");
+
+        // Backspace, the key a Mac labels delete, does nothing at all.
+        Ui.Press(window, "BACK_SPACE");
+        Ui.WaitFor(() => !window.Vcs.IsBusy, "whatever Backspace began to end");
+        Assert.True(Stashes().Length == 2, $"Backspace in Unstash Changes dropped a stash, leaving [{string.Join(", ", Stashes())}]");
+        Assert.Empty(asked);
+        Assert.True(window.IsPopupOpen, "Backspace closed Unstash Changes");
+
+        // Delete asks first, naming the chosen stash; a no keeps it, and the popup on it.
+        Ui.Press(window, "DELETE");
+        Ui.WaitFor(() => !window.Vcs.IsBusy, "whatever Delete began to end");
+        Assert.Equal(2, Stashes().Length);
+        string question = Assert.Single(asked);
+        Assert.True(question.Contains("stash@{0}", StringComparison.Ordinal) && question.Contains("Newer", StringComparison.Ordinal), $"Drop asked \"{question}\"");
+        Assert.True(window.IsPopupOpen, "Answering no to the drop closed Unstash Changes");
+
+        // A yes drops it; pressed again while that runs, nothing more is asked or dropped, the buttons off meanwhile.
+        agree = true;
+        Avalonia.Controls.Button[] buttons = [.. Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(unstash).OfType<Avalonia.Controls.Button>()];
+        Assert.Equal("Drop Apply Pop", string.Join(' ', buttons.Select(b => b.Content)));
+        window.KeyPress(Avalonia.Input.Key.Delete, Avalonia.Input.RawInputModifiers.None, Avalonia.Input.PhysicalKey.None, null);
+        Assert.All(buttons, b => Assert.False(b.IsEnabled, $"{b.Content} could be pressed while a drop ran"));
+        window.KeyPress(Avalonia.Input.Key.Delete, Avalonia.Input.RawInputModifiers.None, Avalonia.Input.PhysicalKey.None, null);
+        buttons[0].RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+        Assert.True(window.IsPopupOpen, "A second drop pressed while the first ran closed Unstash Changes before it ended");
+        Ui.WaitFor(() => !window.IsPopupOpen, "the drop to end");
+        Assert.Equal(2, asked.Count);
+        Assert.Equal("On main: Older", Assert.Single(Stashes()));
+        Assert.StartsWith("Dropped", window.Status, StringComparison.Ordinal);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Stashing_a_change_and_a_new_file_leaves_the_git_log_as_it_was()
+    {
+        MainWindow window = Open();
+        Ui.WaitFor(() => window.Vcs.Branch == "main", "the branch to be read");
+        window.Perform(AppActions.ShowGit);
+        GitLogView log = window.GitLog;
+        Ui.WaitFor(() => log.Rows.Count == 1, "the log");
+        string before = Listed(log);
+
+        // A stash with a new file in it is three commits of git's own under refs/stash.
+        window.EditorArea.CodeEditor.GoTo(new TextPosition(2, 4));
+        window.KeyTextInput("long ");
+        File.WriteAllText(Path.Combine(folder, "Notes.txt"), "a new file\n");
+        NamePopup stash = window.ShowStash()!;
+        Ui.Settle();
+        stash.Text = "Half-done count";
+        Task stashing = stash.SubmitAsync();
+        Ui.WaitFor(() => stashing.IsCompleted, "the stash");
+        Assert.Single(Stashes());
+
+        // Read again, as after any commit, the log lists what it did.
+        Task reading = log.LoadAsync();
+        Ui.WaitFor(() => reading.IsCompleted, "the log to be read again");
+        Assert.True(Listed(log) == before, $"After one stash the log lists\n{Listed(log)}\nwhere it listed\n{before}");
+        window.Close();
+
+        static string Listed(GitLogView log) => string.Join('\n', log.Rows.Select(r => $"{r.Commit.Subject} ({string.Join(", ", r.Commit.Refs)})"));
+    }
+
+    [AvaloniaFact]
     public void The_commit_and_log_menus_ignore_a_file_revert_a_commit_and_branch_from_one()
     {
         File.WriteAllText(Path.Combine(folder, "Shop.cs"), Original.Replace("count++", "count += 2", StringComparison.Ordinal));
@@ -864,6 +949,9 @@ public sealed class VcsTests : IDisposable
     private static IReadOnlyList<ChangeMark> Marks(MainWindow window) => window.EditorArea.Active?.ChangeMarks ?? [];
 
     private static string Text(MainWindow window) => window.EditorArea.Active!.Text.Snapshot.ToString();
+
+    /// <summary>What each stash says, the newest first.</summary>
+    private string[] Stashes() => Git("stash", "list", "--format=%s").Split('\n', StringSplitOptions.RemoveEmptyEntries);
 
     private string Git(params string[] arguments)
     {

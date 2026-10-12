@@ -127,11 +127,11 @@ public sealed class Git
             xy.Contains('D') ? ChangeKind.Deleted : xy[0] == 'A' ? ChangeKind.Added : ChangeKind.Modified;
     }
 
-    /// <summary>Every ref and the commit each names: with HEAD's commit, what changes when the history does (a commit, a
-    /// checkout, a fetch), and not when a file is saved.</summary>
+    /// <summary>The branches, remotes and tags the log shows and the commit each names: with HEAD's commit, what changes
+    /// when the history does (a commit, a checkout, a fetch), and not when a file is saved or stashed.</summary>
     public async Task<string> RefsAsync()
     {
-        GitResult refs = await RunAsync(Root, ["for-each-ref", "--format=%(objectname) %(refname)"]);
+        GitResult refs = await RunAsync(Root, ["for-each-ref", "--format=%(objectname) %(refname)", "refs/heads", "refs/remotes", "refs/tags"]);
         return refs.Output;
     }
 
@@ -154,11 +154,13 @@ public sealed class Git
         return [.. lines.Where(l => l.StartsWith('*')).Select(l => l[1..]), .. lines.Where(l => !l.StartsWith('*')).Select(l => l.TrimStart(' '))];
     }
 
-    /// <summary>The history of every branch, newest first with a branch's commits together (as Rider's log has it),
-    /// at most this many.</summary>
+    /// <summary>The history of every branch, remote and tag and of HEAD, newest first with a branch's commits together (as
+    /// Rider's log has it), at most this many. Not --all, which takes in the stash's own commits (and notes').</summary>
     public async Task<IReadOnlyList<CommitInfo>> LogAsync(int most = 2000)
     {
-        GitResult log = await RunAsync(Root, ["log", "--all", "--topo-order", $"--max-count={most}", "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s%x1e"]);
+        // An unborn HEAD (a new repository, an orphan branch) is left out rather than failing the whole log.
+        GitResult log = await RunAsync(Root, ["log", "--branches", "--remotes", "--tags", "--ignore-missing", "HEAD", "--topo-order", $"--max-count={most}",
+            "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s%x1e", "--"]);
         if (!log.Succeeded)
         {
             // A branch with no commits yet has no history to read.
