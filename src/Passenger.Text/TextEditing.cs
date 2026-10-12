@@ -571,6 +571,10 @@ public static class TextEditing
         return TextRange.FromBounds(start, end);
     }
 
+    /// <summary>An offset carried through edits (sorted, in the old text's coordinates); text inserted
+    /// exactly at it goes before it when <paramref name="afterInsertions"/>, after it otherwise.</summary>
+    public static int MapOffset(int offset, IReadOnlyList<TextEdit> edits, bool afterInsertions) => Map(edits, offset, afterInsertions);
+
     /// <summary>Carries carets through edits someone else made (sorted, non-overlapping, in the old
     /// text's coordinates): a caret inside a replaced range lands at its start.</summary>
     public static SelectionSet MapThrough(SelectionSet selections, IReadOnlyList<TextEdit> edits) =>

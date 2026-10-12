@@ -4,6 +4,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using Passenger.App.CSharp;
+using Passenger.App.Debugging;
 using Passenger.App.Editors;
 using Passenger.App.Run;
 using Passenger.App.Workspace;
@@ -27,6 +28,8 @@ public partial class MainWindow : Window
     private readonly List<(string Path, int Offset)> history = [];
     private readonly ProcessRunner builder;
     private readonly ProcessRunner runner;
+    private readonly DebugController debug;
+    private Action<bool>? afterBuild;
     private readonly List<Problem> problems = [];
     private IReadOnlyList<RunConfiguration> configurations = [];
     private RunConfiguration? configuration;
@@ -54,8 +57,23 @@ public partial class MainWindow : Window
         Editors.ActiveChanged += (_, _) => UpdateStatus();
         Editors.CaretMoved += (_, _) => UpdateCaret();
         Editors.AskToSave = AskToSave;
-        Editors.Opened += (_, document) => csharp?.Attach(document);
-        Editors.Closed += (_, document) => csharp?.Detach(document);
+        Editors.Opened += (_, document) =>
+        {
+            csharp?.Attach(document);
+            debug?.Attach(document);
+        };
+        Editors.Closed += (_, document) =>
+        {
+            csharp?.Detach(document);
+            debug?.Detach(document);
+        };
+        Editors.CodeEditor.GutterClicked += (_, line) =>
+        {
+            if (Editors.Active is { } active)
+            {
+                debug?.Breakpoints.Toggle(active.Path, line);
+            }
+        };
         Closing += (_, _) => _ = csharp?.DisposeAsync();
         assist = new CodeAssist(Editors, Editors.AssistLayer, () => csharp);
         assist.Navigate += (_, target) => NavigateTo(target.Path, target.Position);
@@ -88,6 +106,13 @@ public partial class MainWindow : Window
             }
         };
         Bottom.HideRequested += (_, _) => HideBottom();
+        debug = new DebugController(Editors, Bottom.Debug);
+        debug.ActionRequested += (_, action) => RunAppAction(action);
+        debug.Message += (_, message) => StatusText.Text = message;
+        debug.Navigate += (_, target) => ShowStop(target.Path, target.Position);
+        debug.StateChanged += (_, _) => OnDebugStateChanged();
+        assist.DebuggerValue = debug.ValueAt;
+        Closing += (_, _) => _ = debug.StopAsync();
         UpdateStatus();
     }
 
@@ -222,16 +247,32 @@ public partial class MainWindow : Window
                 BuildSolution();
                 break;
             case AppActions.RunProgram:
+                RunSelected();
+                break;
+            case AppActions.Rerun when debug.IsDebugging:
+                DebugSelected();
+                break;
             case AppActions.Rerun:
                 RunSelected();
                 break;
             case AppActions.Debug:
-                StatusText.Text = "The debugger is not built yet; running instead";
-                RunSelected();
+                DebugSelected();
+                break;
+            case AppActions.Resume when !debug.IsDebugging:
+                // F5 starts debugging when nothing is being debugged, as in Visual Studio.
+                DebugSelected();
                 break;
             case AppActions.Stop:
+                _ = debug.StopAsync();
                 runner.Stop();
                 builder.Stop();
+                afterBuild = null;
+                break;
+            case AppActions.ShowDebug:
+                ShowBottom("Debug");
+                break;
+            case { } debugging when debugging.StartsWith("app.debug.", StringComparison.Ordinal):
+                debug.Run(debugging);
                 break;
             case AppActions.ShowBuild:
                 ShowBottom("Build");
@@ -302,14 +343,18 @@ public partial class MainWindow : Window
 
     public ToolWindows.BottomPanel BottomPanel => Bottom;
 
+    public DebugController Debugger => debug;
+
     /// <summary>Builds the solution (or the folder's project) with the .NET command line, its output
-    /// in the Build window and what it finds in Problems.</summary>
-    public void BuildSolution()
+    /// in the Build window and what it finds in Problems; <paramref name="then"/> hears whether it
+    /// succeeded.</summary>
+    public void BuildSolution(Action<bool>? then = null)
     {
         if (folder is null || builder.IsRunning)
         {
             return;
         }
+        afterBuild = then;
         string target = Solution?.Path ?? Directory.EnumerateFiles(folder, "*.csproj").FirstOrDefault() ?? folder;
         Editors.SaveAll();
         problems.Clear();
@@ -338,9 +383,64 @@ public partial class MainWindow : Window
         runner.Start(Lsp.Dotnet.Host(), ["run", "--project", chosen.Project.Path], chosen.Project.Folder);
     }
 
+    /// <summary>Builds, then launches the chosen configuration under the debugger, as Rider's Debug
+    /// does; the Debug window opens on its Console until the program stops somewhere.</summary>
+    public void DebugSelected()
+    {
+        if (configuration is not { } chosen)
+        {
+            StatusText.Text = "Nothing to debug: no executable project";
+            return;
+        }
+        BuildSolution(succeeded =>
+        {
+            if (!succeeded)
+            {
+                return;
+            }
+            BackgroundWork.Begin();
+            _ = Launch();
+
+            async Task Launch()
+            {
+                try
+                {
+                    DebugTarget target = await DebugTarget.ResolveAsync(chosen.Project);
+                    ShowBottom("Debug");
+                    Bottom.Debug.ShowTab(console: true);
+                    await debug.StartAsync(target, chosen.Name);
+                }
+                catch (Exception error) when (error is InvalidOperationException or IOException)
+                {
+                    StatusText.Text = error.Message;
+                }
+                finally
+                {
+                    BackgroundWork.End();
+                }
+            }
+        });
+    }
+
+    /// <summary>Shows where the debugger stopped: the file and line, and the Debug window's frames.</summary>
+    private void ShowStop(string path, TextPosition position)
+    {
+        NavigateTo(path, position);
+        ShowBottom("Debug");
+        Bottom.Debug.ShowTab(console: false);
+    }
+
+    private void OnDebugStateChanged()
+    {
+        StopButton.IsVisible = debug.IsDebugging || runner.IsRunning;
+        UpdateStripes();
+    }
+
     private void OnBuilt(int code)
     {
         BackgroundWork.End();
+        Action<bool>? then = afterBuild;
+        afterBuild = null;
         Bottom.Build.SetRunning(false);
         int errors = problems.Count(p => p.Severity == ProblemSeverity.Error);
         int warnings = problems.Count - errors;
@@ -353,6 +453,7 @@ public partial class MainWindow : Window
         {
             ShowBottom("Problems");
         }
+        then?.Invoke(code == 0);
     }
 
     public void ShowBottom(string window)
@@ -383,6 +484,7 @@ public partial class MainWindow : Window
     private void UpdateStripes()
     {
         RunStripe.IsChecked = IsBottomOpen && Bottom.Current == "Run";
+        DebugStripe.IsChecked = IsBottomOpen && Bottom.Current == "Debug";
         BuildStripe.IsChecked = IsBottomOpen && Bottom.Current == "Build";
         ProblemsStripe.IsChecked = IsBottomOpen && Bottom.Current == "Problems";
     }
@@ -425,7 +527,7 @@ public partial class MainWindow : Window
 
     private void OnDebugClicked(object? sender, RoutedEventArgs e) => RunAppAction(AppActions.Debug);
 
-    private void OnStopClicked(object? sender, RoutedEventArgs e) => runner.Stop();
+    private void OnStopClicked(object? sender, RoutedEventArgs e) => RunAppAction(AppActions.Stop);
 
     /// <summary>The run configurations to choose from, as a menu under the toolbar widget.</summary>
     private void OnRunConfigClicked(object? sender, RoutedEventArgs e)

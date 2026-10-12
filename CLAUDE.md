@@ -31,7 +31,11 @@ artifacts/bin/Passenger.App/debug/Passenger . --file src/Passenger.App/App.axaml
     --screenshot out.png --size 1400x880 --scale 2 --crop 320,76,900,500 --theme light
 ```
 
-`--key` takes "cmd+shift+L" or Rider's "meta shift L"; `--crop X,Y,W,H` is in logical units.
+`--key` takes "cmd+shift+L" or Rider's "meta shift L"; `--crop X,Y,W,H`, `--click X,Y` and `--hover X,Y` (the
+pointer left to rest, for a hover card) are in logical units; `--wait MS` gives a running program time.
+
+Headless, the dispatcher's timers (the editor's hover, a caret's blink) fire only inside a running dispatcher frame,
+never from running its queued jobs: a wait that needs one pumps a frame (`Screenshot.Pump`, `Ui.WaitFor` in tests).
 
 Builds land under `artifacts/` (`UseArtifactsOutput`), never beside the sources. Package versions live only in
 `Directory.Packages.props`; shared properties only in `Directory.Build.props`.

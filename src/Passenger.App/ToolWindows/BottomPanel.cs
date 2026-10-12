@@ -5,9 +5,9 @@ using Avalonia.Controls.Primitives;
 
 namespace Passenger.App.ToolWindows;
 
-/// <summary>The tool windows that dock at the bottom (Build, Run, Problems), one showing at a time,
-/// chosen by the tabs across the top as Rider's are; the stripe buttons and Cmd+0, Cmd+4, Cmd+6 open
-/// them too, and Shift+Escape hides the panel.</summary>
+/// <summary>The tool windows that dock at the bottom (Build, Run, Debug, Problems), one showing at a
+/// time, chosen by the tabs across the top as Rider's are; the stripe buttons and Cmd+0, Cmd+4, Cmd+5,
+/// Cmd+6 open them too, and Shift+Escape hides the panel.</summary>
 public sealed class BottomPanel : DockPanel
 {
     private readonly Dictionary<string, (ToggleButton Tab, Control View)> windows = [];
@@ -18,6 +18,7 @@ public sealed class BottomPanel : DockPanel
         Build = new OutputView();
         Run = new OutputView();
         Problems = new ProblemsView();
+        Debug = new DebugView();
         Button hide = new() { Classes = { "tool" }, Content = new PathIcon() };
         ToolTip.SetTip(hide, "Hide");
         ((PathIcon)hide.Content).Bind(PathIcon.DataProperty, hide.GetResourceObservable("Icon.Close"));
@@ -35,7 +36,7 @@ public sealed class BottomPanel : DockPanel
         Children.Add(header);
         Panel views = new();
         Children.Add(views);
-        foreach ((string name, Control view) in new (string, Control)[] { ("Build", Build), ("Run", Run), ("Problems", Problems) })
+        foreach ((string name, Control view) in new (string, Control)[] { ("Build", Build), ("Run", Run), ("Debug", Debug), ("Problems", Problems) })
         {
             ToggleButton tab = new() { Content = name, Classes = { "panelTab" } };
             tab.Click += (_, _) => Show(name);
@@ -53,6 +54,7 @@ public sealed class BottomPanel : DockPanel
     public OutputView Build { get; }
     public OutputView Run { get; }
     public ProblemsView Problems { get; }
+    public DebugView Debug { get; }
 
     public string Current { get; private set; } = "Build";
 

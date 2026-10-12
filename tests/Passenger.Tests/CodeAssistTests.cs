@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Avalonia;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Passenger.App;
@@ -71,6 +72,19 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
             File.WriteAllText(project.PathOf("Helper.cs"), helper);
             window.Close();
         }
+    }
+
+    [AvaloniaFact]
+    public void Resting_the_pointer_on_a_method_shows_a_card_with_its_signature()
+    {
+        MainWindow window = project.Open("Program.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        int at = editor.Document.Snapshot.ToString().IndexOf("Twice", StringComparison.Ordinal) + 2;
+        Point point = editor.TranslatePoint(editor.PointOf(at) + new Point(1, editor.LineHeight / 2), window)!.Value;
+        window.MouseMove(point, Avalonia.Input.RawInputModifiers.None);
+        Ui.WaitFor(() => window.Assist.HoverText is not null, "the hover card");
+        Assert.Contains("int Helper.Twice(int value)", window.Assist.HoverText, StringComparison.Ordinal);
+        window.Close();
     }
 
     private static void PlaceAfter(CodeEditor editor, string text)

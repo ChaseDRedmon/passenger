@@ -60,6 +60,10 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
                 case "--wait":
                     steps.Add(new ScriptStep.Wait(TimeSpan.FromMilliseconds(Numbers(Value(args, ref i, flag), ',', 1, flag)[0])));
                     break;
+                case "--hover":
+                    double[] at = Numbers(Value(args, ref i, flag), ',', 2, flag);
+                    steps.Add(new ScriptStep.Hover(new Point(at[0], at[1])));
+                    break;
                 case "--click" or "--double-click":
                     double[] xy = Numbers(Value(args, ref i, flag), ',', 2, flag);
                     steps.Add(new ScriptStep.Click(new Point(xy[0], xy[1]), flag == "--click" ? 1 : 2));
@@ -85,7 +89,7 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
         }
         if (shot is null && (steps.Count > 0 || crop is not null))
         {
-            throw new FormatException("--type, --key, --click, --wait and --crop are steps of a --screenshot");
+            throw new FormatException("--type, --key, --click, --hover, --wait and --crop are steps of a --screenshot");
         }
         ScreenshotOptions? screenshot = shot is null ? null : new ScreenshotOptions(shot, size, scale, steps, crop);
         return new LaunchOptions(folder, files, caret, theme, screenshot);
@@ -166,6 +170,9 @@ public abstract record ScriptStep
     public sealed record Key(Keystroke Stroke) : ScriptStep;
 
     public sealed record Click(Point At, int Count) : ScriptStep;
+
+    /// <summary>The pointer moved to a point and left to rest there, long enough for a hover card.</summary>
+    public sealed record Hover(Point At) : ScriptStep;
 
     /// <summary>Time for what the screenshot does not wait on by itself: a program running.</summary>
     public sealed record Wait(TimeSpan For) : ScriptStep;

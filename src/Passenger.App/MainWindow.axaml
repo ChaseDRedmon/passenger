@@ -51,7 +51,7 @@
                     <Button Name="RunButton" Classes="tool" ToolTip.Tip="Run" Click="OnRunClicked">
                         <PathIcon Data="{StaticResource Icon.Run}" Foreground="{DynamicResource Passenger.Run}" />
                     </Button>
-                    <Button Classes="tool" ToolTip.Tip="Debug" Click="OnDebugClicked">
+                    <Button Name="DebugButton" Classes="tool" ToolTip.Tip="Debug" Click="OnDebugClicked">
                         <PathIcon Data="{StaticResource Icon.Debug}" />
                     </Button>
                     <Button Name="StopButton" Classes="tool" ToolTip.Tip="Stop" IsVisible="False" Click="OnStopClicked">
@@ -90,6 +90,9 @@
                     <StackPanel DockPanel.Dock="Bottom" Spacing="4" HorizontalAlignment="Center" VerticalAlignment="Bottom">
                         <ToggleButton Name="RunStripe" Classes="stripe" ToolTip.Tip="Run" Tag="Run" Click="OnBottomStripe">
                             <PathIcon Data="{StaticResource Icon.RunOutline}" />
+                        </ToggleButton>
+                        <ToggleButton Name="DebugStripe" Classes="stripe" ToolTip.Tip="Debug" Tag="Debug" Click="OnBottomStripe">
+                            <PathIcon Data="{StaticResource Icon.Debug}" />
                         </ToggleButton>
                         <ToggleButton Name="BuildStripe" Classes="stripe" ToolTip.Tip="Build" Tag="Build" Click="OnBottomStripe">
                             <PathIcon Data="{StaticResource Icon.Build}" />

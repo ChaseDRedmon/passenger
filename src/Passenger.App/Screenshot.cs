@@ -14,7 +14,7 @@ namespace Passenger.App;
 /// drawing, so nothing appears on screen and nothing takes the focus. The picture is the compositor's
 /// own frame, the path the desktop draws through, not a re-render into a bitmap (which once drew text
 /// differently), so it shows what a person would see minus the system's window chrome.</summary>
-internal static class Screenshot
+public static class Screenshot
 {
     /// <summary>How long to wait for background work (colouring, indexing) before capturing anyway.</summary>
     private static readonly TimeSpan SettleLimit = TimeSpan.FromSeconds(90);
@@ -75,13 +75,12 @@ internal static class Screenshot
                 window.KeyRelease(key.Stroke.Key, modifiers, PhysicalKey.None, null);
                 break;
             case ScriptStep.Wait wait:
-                DateTime until = DateTime.UtcNow + wait.For;
-                while (DateTime.UtcNow < until)
-                {
-                    Dispatcher.UIThread.RunJobs();
-                    AvaloniaHeadlessPlatform.ForceRenderTimerTick(1);
-                    Thread.Sleep(10);
-                }
+                Pump(wait.For);
+                break;
+            case ScriptStep.Hover hover:
+                window.MouseMove(hover.At, RawInputModifiers.None);
+                // Past the editor's hover delay, and the card's answer.
+                Take(window, new ScriptStep.Wait(TimeSpan.FromMilliseconds(1500)));
                 break;
             case ScriptStep.Click click:
                 for (int i = 0; i < click.Count; i++)
@@ -91,6 +90,16 @@ internal static class Screenshot
                 }
                 break;
         }
+    }
+
+    /// <summary>Runs the dispatcher's loop for a while: its timers (the editor's hover, a caret's blink)
+    /// fire only inside a running frame, which running the queued jobs alone never is.</summary>
+    public static void Pump(TimeSpan duration)
+    {
+        DispatcherFrame frame = new();
+        DispatcherTimer.RunOnce(() => frame.Continue = false, duration, DispatcherPriority.Send);
+        Dispatcher.UIThread.PushFrame(frame);
+        AvaloniaHeadlessPlatform.ForceRenderTimerTick(1);
     }
 
     /// <summary>Lets queued UI work, rendering and background work finish, so the picture shows the

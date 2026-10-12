@@ -54,6 +54,13 @@ public sealed class CodeAssist
 
     public bool IsCompletionOpen => completion.IsVisible;
 
+    /// <summary>What the hover card says while it shows, null otherwise.</summary>
+    public string? HoverText => hoverCard.IsVisible ? hoverCard.Text : null;
+
+    /// <summary>While the debugger is paused, the value of what the pointer rests on, which the hover
+    /// card shows instead of the symbol's description, as Rider does.</summary>
+    public Func<int, CancellationToken, Task<string?>>? DebuggerValue { get; set; }
+
     private CodeEditor Editor => editors.CodeEditor;
 
     private CSharpDocument? Current => editors.Active is { } active ? service()?.For(active) : null;
@@ -340,7 +347,16 @@ public sealed class CodeAssist
                 _ => null,
             });
         }
-        if (Current?.Lsp is { } lsp)
+        string? debuggerValue = DebuggerValue is { } value ? await value(offset, cancel.Token) : null;
+        if (cancel.IsCancellationRequested)
+        {
+            return;
+        }
+        if (debuggerValue is not null)
+        {
+            hoverCard.AddCode(debuggerValue);
+        }
+        else if (Current?.Lsp is { } lsp)
         {
             try
             {

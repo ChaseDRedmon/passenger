@@ -120,7 +120,7 @@ and Samsung each wrote their own.
 is a debugger written in C#: ICorDebug for processes, breakpoints, stepping and values; Roslyn's expression compiler
 for watches and conditions, with a CIL interpreter beside it; DebuggerDisplay and DebuggerTypeProxy; async stacks and
 stepping; decompiled frames through ILSpy. Rather than ship someone else's package, Passenger copied it in (commit
-9b4d778 is the copy as it was) and owns it from there:
+713fe40 is the copy as it was) and owns it from there:
 
 - `Passenger.Debugger.Interop`: ICorDebug, IMetaDataImport and dbgshim declared for .NET's COM and P/Invoke source
   generators. It began as ICorDebugSharp 0.1.8, whose source is not published, recovered from its assembly; its
@@ -138,6 +138,23 @@ stepping; decompiled frames through ILSpy. Rather than ship someone else's packa
 Its tests came with it: 57 scenarios that launch or attach to the programs in `tests/Debuggees` and drive the adapter
 over the protocol (breakpoints of every kind, stepping through async code and lambdas, stacks, variables, evaluation,
 exceptions). They run one at a time, as upstream's did.
+
+Upstream's open issues, read October 11, 2026 (upstream has had no commits since the copy), and what they mean for
+Passenger:
+
+- Reaching Passenger's users now: breakpoints bound by file name alone, so a same-named file in another folder or
+  project wins (#57); Step Into entering `[DebuggerStepThrough]`, `[DebuggerNonUserCode]` and `[DebuggerHidden]`
+  methods, and breakpoints in them stopping under Just My Code (#52, #54); the user-unhandled exception filter,
+  Passenger's default, missing an exception caught in `[DebuggerNonUserCode]` code of the user's own assembly (#49); a
+  breakpoint condition that cannot be evaluated passed silently (#54); the main thread named `<No Name>` while another
+  is `Main Thread`, and an empty runtime thread listed (#59); function evaluation with no timeout, so a getter that never
+  returns hangs hovers, watches and Variables (#30). Found in Passenger and not upstream: the debuggee inherits the
+  adapter's standard input, which is the protocol's own pipe.
+- Visible, less often: `[DebuggerDisplay]` rendering (#51: quotes, `\{` escapes, a failed fragment replacing the whole
+  value, `Name` and `Type`, inheritance), values nested in another's display shown by `ToString()` (#53), a lambda's
+  captured parameter listed twice (#58), inner exceptions never reported (#50), `RootHidden` on an object (#55), a
+  throwing type proxy shown as the exception (#56), the rest of the IL interpreter's list (#30).
+- Planned anyway: Edit and Continue (#10, M8's hot reload), synthetic variables (#26), remote debugging (#14).
 
 Still ahead, in the engine or beside it: smart step into, set value, data breakpoints, tracepoints, hot reload and
 Edit and Continue (Roslyn's EnC, applied through ICorDebug or the runtime's metadata updates), and on macOS the signing

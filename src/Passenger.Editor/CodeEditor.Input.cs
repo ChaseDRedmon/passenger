@@ -76,6 +76,17 @@ public sealed partial class CodeEditor
         KeyModifiers mods = e.KeyModifiers;
         KeyModifiers command = OperatingSystem.IsMacOS() ? KeyModifiers.Meta : KeyModifiers.Control;
 
+        if (point.Position.X < GutterWidth && GutterClicked is not null && ShowLineNumbers)
+        {
+            int clicked = (int)((point.Position.Y + scroll.Y) / metrics.LineHeight);
+            if (clicked < text.LineCount)
+            {
+                GutterClicked(this, clicked);
+            }
+            drag = default;
+            e.Handled = true;
+            return;
+        }
         if (point.Position.X < GutterWidth)
         {
             int line = text.GetLineFromOffset(offset);

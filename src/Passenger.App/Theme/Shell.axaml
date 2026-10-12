@@ -75,6 +75,13 @@
     <Style Selector="Button.tool:pressed /template/ ContentPresenter#PART_ContentPresenter">
         <Setter Property="Background" Value="{DynamicResource Passenger.Selected}" />
     </Style>
+    <!-- An action that cannot run now keeps its place, dimmed, as Rider's toolbars do. -->
+    <Style Selector="Button.tool:disabled /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="Button.tool:disabled PathIcon">
+        <Setter Property="Opacity" Value="0.35" />
+    </Style>
 
     <!-- A splitter that draws nothing: a hairline Border beside it is what shows, and the splitter
          overhangs its 1 px column so there is something to grab. -->

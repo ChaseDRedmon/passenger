@@ -46,6 +46,17 @@ ICONS = [
     ("Reference", "Link", "20_regular"),
     ("Error", "Error Circle", "20_regular"),
     ("Info", "Info", "20_regular"),
+    ("Resume", "Play", "20_filled"),
+    ("Pause", "Pause", "20_regular"),
+    ("StepOver", "Arrow Step Over", "20_regular"),
+    ("StepInto", "Arrow Step In", "20_regular"),
+    ("StepOut", "Arrow Step Out", "20_regular"),
+    ("RunToCursor", "Arrow Step In Right", "20_regular"),
+    ("Breakpoints", "Record", "20_regular"),
+    ("MuteBreakpoints", "Circle Off", "20_regular"),
+    ("Evaluate", "Calculator", "20_regular"),
+    ("Add", "Add", "16_regular"),
+    ("Variable", "Braces Variable", "20_regular"),
 ]
 
 

@@ -63,8 +63,16 @@ Debug Adapter Protocol in its own process: launch and attach, line, column, func
 breakpoints, exception breakpoints with conditions, stepping (async and lambdas included), stacks with async callers,
 variables, evaluation, decompiled frames. Its 57 scenario tests pass on macOS arm64.
 
-**Still to do:** the IDE's side (breakpoints in the gutter, Debug, the execution line, stepping keys, the Debug window
-with frames, threads, variables and watches, data tips on hover), tracepoints, set value, and the macOS signing.
+In the IDE: breakpoints set with F9 or a click on the line number (over the number, as Rider's new UI draws them),
+following their code through edits, and drawn bound once the debugger binds them; Alt+F5 (or F5 with nothing running)
+builds and launches the run configuration's assembly under the debugger; the execution line and arrow; F10, F11,
+Shift+F11, Run to Cursor, Resume, Pause and Stop by Rider's keys; the Debug window (Debugger and Console tabs,
+threads, frames, variables with members opened on demand, watches and an evaluated expression); the value of what
+the pointer rests on while paused.
+
+**Still to do:** the breakpoints window and conditions from the gutter, tracepoints, set value, exception stops shown
+with their exception, inline values at line ends, a terminal for the program's input, and the macOS signing.
+Upstream SharpDbg's open issues that reach Passenger's users are listed in `docs/architecture.md`.
 
 **Done when:** Passenger debugs itself.
 

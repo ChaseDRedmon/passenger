@@ -93,6 +93,22 @@ public static class Ui
         throw new TimeoutException("Background work never finished.");
     }
 
+    /// <summary>Waits for something to become true, running the dispatcher's loop (and so its timers)
+    /// meanwhile; fails naming what never happened.</summary>
+    public static void WaitFor(Func<bool> condition, string what, TimeSpan? limit = null)
+    {
+        DateTime until = DateTime.UtcNow + (limit ?? TimeSpan.FromSeconds(90));
+        while (!condition())
+        {
+            if (DateTime.UtcNow > until)
+            {
+                throw new TimeoutException($"Waited {(limit ?? TimeSpan.FromSeconds(90)).TotalSeconds} s for {what}");
+            }
+            Passenger.App.Screenshot.Pump(TimeSpan.FromMilliseconds(20));
+            Settle();
+        }
+    }
+
     /// <summary>Presses the platform's first shortcut for an IDE action, both keystrokes of a chord.</summary>
     public static void Run(TopLevel window, string action)
     {

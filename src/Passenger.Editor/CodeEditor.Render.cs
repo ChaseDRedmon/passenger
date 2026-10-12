@@ -31,6 +31,7 @@ public sealed partial class CodeEditor
         IReadOnlyList<SyntaxSpan> spans = highlighter?.GetSpans(text, rangeStart, rangeEnd - rangeStart) ?? [];
         int spanIndex = 0;
         HashSet<int> caretLines = selections.Items.Select(s => text.GetLineFromOffset(s.Caret)).ToHashSet();
+        VisibleMarks marks = new(LineMarks, first, last);
         bool focused = IsFocused;
 
         using (context.PushClip(new Rect(gutter, 0, Math.Max(0, size.Width - gutter), size.Height)))
@@ -46,6 +47,10 @@ public sealed partial class CodeEditor
                 if (caretLines.Contains(line) && selections.Items.All(s => s.IsEmpty))
                 {
                     context.FillRectangle(palette.CurrentLine, new Rect(gutter, y, size.Width - gutter, lineHeight));
+                }
+                if (LineTint(marks, line) is { } tint)
+                {
+                    context.FillRectangle(tint, new Rect(gutter, y, size.Width - gutter, lineHeight));
                 }
                 DrawSelections(context, span, layout, left, y, size.Width, focused);
                 DrawHighlights(context, span, layout, left, y);
@@ -70,7 +75,7 @@ public sealed partial class CodeEditor
             DrawPreedit(context, text, left);
         }
 
-        DrawGutter(context, text, first, last, caretLines, gutter, size.Height);
+        DrawGutter(context, text, first, last, caretLines, marks, gutter, size.Height);
         lines.EndFrame();
         if (widestLine > measuredWidth)
         {
@@ -219,7 +224,7 @@ public sealed partial class CodeEditor
         context.DrawGeometry(null, new Pen(brush, 1), wave);
     }
 
-    private void DrawGutter(DrawingContext context, TextSnapshot text, int first, int last, HashSet<int> caretLines, double gutter, double height)
+    private void DrawGutter(DrawingContext context, TextSnapshot text, int first, int last, HashSet<int> caretLines, VisibleMarks marks, double gutter, double height)
     {
         context.FillRectangle(palette.Gutter, new Rect(0, 0, gutter, height));
         if (!ShowLineNumbers)
@@ -229,6 +234,17 @@ public sealed partial class CodeEditor
         double right = gutter - GutterPadRight;
         for (int line = first; line <= last; line++)
         {
+            double top = line * metrics.LineHeight - scroll.Y;
+            if (marks.Executing.Contains(line))
+            {
+                DrawExecutionArrow(context, right, top);
+            }
+            if (marks.Breakpoints.TryGetValue(line, out LineMarkKind kind))
+            {
+                // Over the number, as Rider draws breakpoints by default: the number gives way.
+                DrawBreakpoint(context, kind, right - metrics.CharWidth, top + metrics.LineHeight / 2);
+                continue;
+            }
             bool current = caretLines.Contains(line);
             string label = (line + 1).ToString();
             TextLine number = lines.Get(new LineKey(label, current ? -1 : -2), () =>
@@ -236,6 +252,92 @@ public sealed partial class CodeEditor
             double y = line * metrics.LineHeight - scroll.Y + (metrics.LineHeight - number.Height) / 2;
             number.Draw(context, new Point(right - number.WidthIncludingTrailingWhitespace, y));
         }
+    }
+
+    /// <summary>A line's tint: the execution point's over a breakpoint's, and none for a breakpoint
+    /// that is off or cannot bind.</summary>
+    private IBrush? LineTint(VisibleMarks marks, int line) =>
+        marks.Executing.Contains(line) ? palette.ExecutionLine
+        : marks.Breakpoints.TryGetValue(line, out LineMarkKind kind) && kind is LineMarkKind.Breakpoint or LineMarkKind.BreakpointBound ? palette.BreakpointLine
+        : null;
+
+    /// <summary>The marks on the lines a frame draws, looked up once per frame.</summary>
+    private sealed class VisibleMarks
+    {
+        public VisibleMarks(IReadOnlyList<LineMark> marks, int first, int last)
+        {
+            foreach (LineMark mark in marks)
+            {
+                if (mark.Line < first || mark.Line > last)
+                {
+                    continue;
+                }
+                if (mark.Kind == LineMarkKind.ExecutionPoint)
+                {
+                    Executing.Add(mark.Line);
+                }
+                else
+                {
+                    Breakpoints[mark.Line] = mark.Kind;
+                }
+            }
+        }
+
+        public HashSet<int> Executing { get; } = [];
+
+        public Dictionary<int, LineMarkKind> Breakpoints { get; } = [];
+    }
+
+    /// <summary>A breakpoint's dot, centred at a point: filled when set, with a tick once bound, a
+    /// ring when it cannot bind or is off.</summary>
+    private void DrawBreakpoint(DrawingContext context, LineMarkKind kind, double x, double y)
+    {
+        double radius = Math.Min(metrics.LineHeight - 6, 14) / 2;
+        Point centre = new(x, y);
+        switch (kind)
+        {
+            case LineMarkKind.Breakpoint:
+                context.DrawEllipse(palette.Breakpoint, null, centre, radius, radius);
+                break;
+            case LineMarkKind.BreakpointBound:
+                context.DrawEllipse(palette.Breakpoint, null, centre, radius, radius);
+                StreamGeometry tick = new();
+                using (StreamGeometryContext path = tick.Open())
+                {
+                    path.BeginFigure(new Point(x - radius * 0.45, y + radius * 0.02), false);
+                    path.LineTo(new Point(x - radius * 0.1, y + radius * 0.38));
+                    path.LineTo(new Point(x + radius * 0.48, y - radius * 0.35));
+                    path.EndFigure(false);
+                }
+                context.DrawGeometry(null, new Pen(palette.Background, 1.6, lineCap: PenLineCap.Round, lineJoin: PenLineJoin.Round), tick);
+                break;
+            case LineMarkKind.BreakpointInvalid:
+                context.DrawEllipse(null, new Pen(palette.Breakpoint, 1.5), centre, radius - 0.75, radius - 0.75);
+                break;
+            default:
+                context.DrawEllipse(null, new Pen(palette.LineNumber, 1.5), centre, radius - 0.75, radius - 0.75);
+                break;
+        }
+    }
+
+    /// <summary>The execution point's arrow, in the space right of the line numbers.</summary>
+    private void DrawExecutionArrow(DrawingContext context, double right, double top)
+    {
+        double height = Math.Min(metrics.LineHeight - 6, 12);
+        double y = top + (metrics.LineHeight - height) / 2;
+        double x = right + 5;
+        double width = Math.Min(GutterPadRight - 8, 13);
+        StreamGeometry arrow = new();
+        using (StreamGeometryContext path = arrow.Open())
+        {
+            path.BeginFigure(new Point(x, y), true);
+            path.LineTo(new Point(x + width - height / 2, y));
+            path.LineTo(new Point(x + width, y + height / 2));
+            path.LineTo(new Point(x + width - height / 2, y + height));
+            path.LineTo(new Point(x, y + height));
+            path.EndFigure(true);
+        }
+        context.DrawGeometry(palette.ExecutionPoint, null, arrow);
     }
 
     /// <summary>A visible line formatted with its colours, from the cache when its text and spans
@@ -423,6 +525,10 @@ public sealed partial class CodeEditor
         public IBrush Info { get; private init; } = Brush("#8A8F97");
         public IBrush Faded { get; private init; } = new SolidColorBrush(Color.Parse("#1E1F22"), 0.5).ToImmutable();
         public IBrush SearchCurrent { get; private init; } = Brush("#4F9A5F");
+        public IBrush Breakpoint { get; private init; } = Brush("#E55765");
+        public IBrush BreakpointLine { get; private init; } = Brush("#3A2627");
+        public IBrush ExecutionLine { get; private init; } = Brush("#253553");
+        public IBrush ExecutionPoint { get; private init; } = Brush("#5E9CF0");
 
         public IBrush Syntax(TokenKind kind) => syntax.TryGetValue(kind, out IBrush? brush) ? brush : Text;
 
@@ -447,6 +553,10 @@ public sealed partial class CodeEditor
                 Info = Find(control, "Passenger.Editor.Info") ?? defaults.Info,
                 Faded = Fade(Find(control, "Passenger.Editor.Background")) ?? defaults.Faded,
                 SearchCurrent = Find(control, "Passenger.Editor.SearchCurrent") ?? defaults.SearchCurrent,
+                Breakpoint = Find(control, "Passenger.Editor.Breakpoint") ?? defaults.Breakpoint,
+                BreakpointLine = Find(control, "Passenger.Editor.BreakpointLine") ?? defaults.BreakpointLine,
+                ExecutionLine = Find(control, "Passenger.Editor.ExecutionLine") ?? defaults.ExecutionLine,
+                ExecutionPoint = Find(control, "Passenger.Editor.ExecutionPoint") ?? defaults.ExecutionPoint,
             };
             foreach (TokenKind kind in Enum.GetValues<TokenKind>())
             {

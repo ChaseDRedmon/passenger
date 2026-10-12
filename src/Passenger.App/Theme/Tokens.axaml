@@ -43,6 +43,10 @@
             <SolidColorBrush x:Key="Passenger.Editor.Warning" Color="#E5A336" />
             <SolidColorBrush x:Key="Passenger.Editor.Info" Color="#8A8F97" />
             <SolidColorBrush x:Key="Passenger.Editor.SearchCurrent" Color="#4F9A5F" />
+            <SolidColorBrush x:Key="Passenger.Editor.Breakpoint" Color="#E55765" />
+            <SolidColorBrush x:Key="Passenger.Editor.BreakpointLine" Color="#3A2627" />
+            <SolidColorBrush x:Key="Passenger.Editor.ExecutionLine" Color="#253553" />
+            <SolidColorBrush x:Key="Passenger.Editor.ExecutionPoint" Color="#5E9CF0" />
 
             <SolidColorBrush x:Key="Passenger.Syntax.Keyword" Color="#6C95EB" />
             <SolidColorBrush x:Key="Passenger.Syntax.ControlKeyword" Color="#6C95EB" />
@@ -105,6 +109,10 @@
             <SolidColorBrush x:Key="Passenger.Editor.Warning" Color="#C98A1A" />
             <SolidColorBrush x:Key="Passenger.Editor.Info" Color="#8A8F97" />
             <SolidColorBrush x:Key="Passenger.Editor.SearchCurrent" Color="#F2B230" />
+            <SolidColorBrush x:Key="Passenger.Editor.Breakpoint" Color="#E55765" />
+            <SolidColorBrush x:Key="Passenger.Editor.BreakpointLine" Color="#FBE7E6" />
+            <SolidColorBrush x:Key="Passenger.Editor.ExecutionLine" Color="#D9E6FB" />
+            <SolidColorBrush x:Key="Passenger.Editor.ExecutionPoint" Color="#3574F0" />
 
             <SolidColorBrush x:Key="Passenger.Syntax.Keyword" Color="#0F54D6" />
             <SolidColorBrush x:Key="Passenger.Syntax.ControlKeyword" Color="#0F54D6" />

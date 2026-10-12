@@ -156,14 +156,27 @@ public sealed class DebugSession : IDisposable
         return this;
     }
 
-    /// <summary>Lets a program started suspended go on; it waits at startup for a diagnostics client.</summary>
+    /// <summary>Lets a program started suspended go on; it waits at startup for a diagnostics client,
+    /// whose socket a program only just started may not have opened yet, as the engine also allows.</summary>
     public DebugSession WithOptionalResumeRuntime(int processId, bool startSuspended)
     {
-        if (startSuspended)
+        if (!startSuspended)
         {
-            new DiagnosticsClient(processId).ResumeRuntime();
+            return this;
         }
-        return this;
+        DateTime limit = DateTime.UtcNow.AddSeconds(10);
+        while (true)
+        {
+            try
+            {
+                new DiagnosticsClient(processId).ResumeRuntime();
+                return this;
+            }
+            catch (ServerNotAvailableException) when (DateTime.UtcNow < limit)
+            {
+                Thread.Sleep(50);
+            }
+        }
     }
 
     public DapStackFrame GetTopStackFrame(int threadId) =>

@@ -27,6 +27,7 @@ public static class AppActions
     public const string ShowBuild = "app.showBuild";
     public const string ShowRun = "app.showRun";
     public const string ShowProblems = "app.showProblems";
+    public const string ShowDebug = "app.showDebug";
     public const string HideToolWindow = "app.hideToolWindow";
     public const string Back = "app.back";
     public const string Forward = "app.forward";
@@ -44,6 +45,18 @@ public static class AppActions
     public const string NextError = "app.code.nextError";
     public const string PreviousError = "app.code.previousError";
     public const string FocusEditor = "app.focusEditor";
+
+    // The debugger's: run by the Debugger on the active editor and the session.
+    public const string ToggleBreakpoint = "app.debug.toggleBreakpoint";
+    public const string ToggleBreakpointEnabled = "app.debug.toggleBreakpointEnabled";
+    public const string Resume = "app.debug.resume";
+    public const string Pause = "app.debug.pause";
+    public const string StepOver = "app.debug.stepOver";
+    public const string StepInto = "app.debug.stepInto";
+    public const string StepOut = "app.debug.stepOut";
+    public const string RunToCursor = "app.debug.runToCursor";
+    public const string ShowExecutionPoint = "app.debug.showExecutionPoint";
+    public const string Evaluate = "app.debug.evaluate";
 
     public static bool IsApp(string action) => action.StartsWith("app.", StringComparison.Ordinal);
 
@@ -68,12 +81,23 @@ public static class AppActions
                 .Bind(FocusExplorer, "meta 1", "meta alt L")
                 .Bind(Build, "meta shift B")
                 .Bind(RunProgram, "control F5")
-                .Bind(Debug, "alt F5", "F5")
+                .Bind(Debug, "alt F5")
                 .Bind(Stop, "shift F5")
                 .Bind(Rerun, "alt shift F5")
                 .Bind(ShowBuild, "meta 0")
                 .Bind(ShowRun, "meta 4")
+                .Bind(ShowDebug, "meta 5")
                 .Bind(ShowProblems, "meta 6")
+                .Bind(ToggleBreakpoint, "F9")
+                .Bind(ToggleBreakpointEnabled, "meta F9")
+                .Bind(Resume, "F5")
+                .Bind(Pause, "meta PAUSE", "shift meta P")
+                .Bind(StepOver, "F10")
+                .Bind(StepInto, "F11", "meta F11")
+                .Bind(StepOut, "shift F11")
+                .Bind(RunToCursor, "meta F10")
+                .Bind(ShowExecutionPoint, "alt MULTIPLY")
+                .Bind(Evaluate, "shift F9")
                 .Bind(HideToolWindow, "shift ESCAPE")
                 .Bind(Back, "meta MINUS")
                 .Bind(Forward, "meta shift MINUS")
@@ -105,12 +129,23 @@ public static class AppActions
             .Bind(FocusExplorer, "alt 1", "control alt L")
             .Bind(Build, "control shift B")
             .Bind(RunProgram, "control F5")
-            .Bind(Debug, "alt F5", "F5")
+            .Bind(Debug, "alt F5")
             .Bind(Stop, "shift F5")
             .Bind(Rerun, "control shift F5")
             .Bind(ShowBuild, "alt 0")
             .Bind(ShowRun, "alt 4")
+            .Bind(ShowDebug, "alt 5")
             .Bind(ShowProblems, "alt 6")
+            .Bind(ToggleBreakpoint, "F9")
+            .Bind(ToggleBreakpointEnabled, "control F9")
+            .Bind(Resume, "F5")
+            .Bind(Pause, "control PAUSE", "shift control P")
+            .Bind(StepOver, "F10")
+            .Bind(StepInto, "F11")
+            .Bind(StepOut, "shift F11")
+            .Bind(RunToCursor, "control F10")
+            .Bind(ShowExecutionPoint, "alt MULTIPLY")
+            .Bind(Evaluate, "shift F9")
             .Bind(HideToolWindow, "shift ESCAPE")
             .Bind(Back, "control MINUS")
             .Bind(Forward, "control shift MINUS")

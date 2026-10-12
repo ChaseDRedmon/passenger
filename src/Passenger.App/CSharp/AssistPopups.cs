@@ -29,6 +29,9 @@ internal sealed class InfoCard : Border
 
     public bool IsEmpty => parts.Children.Count == 0;
 
+    /// <summary>What the card says, a line a part.</summary>
+    public string Text => string.Join('\n', parts.Children.OfType<TextBlock>().Select(t => t.Text));
+
     public void Clear() => parts.Children.Clear();
 
     public void AddCode(string code) => parts.Children.Add(new TextBlock

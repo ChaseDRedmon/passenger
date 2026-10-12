@@ -97,6 +97,19 @@ public sealed partial class CodeEditor : Control
         InvalidateVisual();
     }
 
+    /// <summary>The marks in the gutter (breakpoints, the execution point), from the host.</summary>
+    public IReadOnlyList<LineMark> LineMarks { get; private set; } = [];
+
+    public void SetLineMarks(IReadOnlyList<LineMark> marks)
+    {
+        LineMarks = marks;
+        InvalidateVisual();
+    }
+
+    /// <summary>A click on a line's number (from zero): the host's breakpoint toggle. With a handler,
+    /// a click there no longer selects the line, as in Rider with breakpoints over line numbers.</summary>
+    public event EventHandler<int>? GutterClicked;
+
     /// <summary>The markers at an offset, for a tooltip.</summary>
     public IEnumerable<Marker> MarkersAt(int offset) =>
         Markers.Where(m => m.Range.Start <= offset && (offset < m.Range.End || (m.Range.Length == 0 && offset == m.Range.Start)));

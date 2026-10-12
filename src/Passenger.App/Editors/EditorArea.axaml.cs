@@ -100,6 +100,7 @@ public partial class EditorArea : UserControl
         Editor.Show(document.Text, document.Selections, document.Scroll);
         Editor.Highlighter = document.Highlighter;
         Editor.SetMarkers(document.Markers);
+        Editor.SetLineMarks(document.LineMarks);
         Find.Attach(Editor);
         ShowEditor(true);
         Editor.Focus();
@@ -185,6 +186,10 @@ public partial class EditorArea : UserControl
         if (e.PropertyName == nameof(OpenDocument.Highlighter))
         {
             Editor.Highlighter = active.Highlighter;
+        }
+        else if (e.PropertyName == nameof(OpenDocument.LineMarks))
+        {
+            Editor.SetLineMarks(active.LineMarks);
         }
         else if (e.PropertyName == nameof(OpenDocument.Markers))
         {

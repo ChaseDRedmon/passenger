@@ -13,6 +13,7 @@ public sealed class OpenDocument : Observable
     private bool isActive;
     private IHighlighter? highlighter;
     private IReadOnlyList<Marker> markers = [];
+    private IReadOnlyList<LineMark> lineMarks = [];
 
     public OpenDocument(string path, FileText file)
     {
@@ -42,6 +43,13 @@ public sealed class OpenDocument : Observable
     {
         get => markers;
         set => Set(ref markers, value);
+    }
+
+    /// <summary>The debugger's marks in the gutter: breakpoints and the execution point.</summary>
+    public IReadOnlyList<LineMark> LineMarks
+    {
+        get => lineMarks;
+        set => Set(ref lineMarks, value);
     }
 
     /// <summary>Lets go of everything the open file holds beyond its text, when its tab closes.</summary>
