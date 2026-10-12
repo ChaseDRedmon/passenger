@@ -36,6 +36,10 @@ public sealed record BlameLine(string Hash, string Author, DateTimeOffset Time, 
     public string Short => Hash[..Math.Min(8, Hash.Length)];
 }
 
+/// <summary>What one status read found, together: the branch checked out (null on a detached head), the commit HEAD
+/// names (null before the first), and the changed and new files.</summary>
+public sealed record GitStatus(string? Branch, string? Head, IReadOnlyList<FileChange> Changes);
+
 /// <summary>A stash: its place in the list (stash@{Index}), what it says, and when it was made.</summary>
 public sealed record StashInfo(int Index, string Message, DateTimeOffset Time);
 
@@ -70,14 +74,17 @@ public sealed class Git
     /// <summary>Makes a folder a working tree, as Rider's Create Git Repository does.</summary>
     public static Task<GitResult> InitAsync(string folder) => RunAsync(folder, ["init"]);
 
-    /// <summary>The changed and unversioned files, ignored ones left out, renames with where they came from.</summary>
-    public async Task<IReadOnlyList<FileChange>> StatusAsync()
+    /// <summary>The branch, HEAD's commit, and the changed and unversioned files (ignored ones left out, renames with
+    /// where they came from), in one git so the three agree.</summary>
+    public async Task<GitStatus> StatusAsync()
     {
-        GitResult status = await RunAsync(Root, ["status", "--porcelain=v2", "-z", "--untracked-files=all"]);
+        GitResult status = await RunAsync(Root, ["status", "--porcelain=v2", "-z", "--branch", "--no-ahead-behind", "--untracked-files=all"]);
         if (!status.Succeeded)
         {
             throw new InvalidOperationException(status.Message);
         }
+        string? branch = null;
+        string? head = null;
         List<FileChange> changes = [];
         string[] entries = status.Output.Split('\0');
         for (int i = 0; i < entries.Length; i++)
@@ -89,6 +96,12 @@ public sealed class Git
             }
             switch (entry[0])
             {
+                case '#' when entry.StartsWith("# branch.oid ", StringComparison.Ordinal):
+                    head = entry[13..] is "(initial)" ? null : entry[13..];
+                    break;
+                case '#' when entry.StartsWith("# branch.head ", StringComparison.Ordinal):
+                    branch = entry[14..] is "(detached)" ? null : entry[14..];
+                    break;
                 case '1':
                     // "1 XY sub mH mI mW hH hI path"
                     string[] ordinary = entry.Split(' ', 9);
@@ -107,22 +120,21 @@ public sealed class Git
                     break;
             }
         }
-        return changes;
+        return new GitStatus(branch, head, changes);
 
         static ChangeKind Kind(string xy) =>
             xy.Contains('D') ? ChangeKind.Deleted : xy[0] == 'A' ? ChangeKind.Added : ChangeKind.Modified;
     }
 
-    /// <summary>The branch checked out, or null on a detached head.</summary>
-    /// <summary>Every ref and the commit each names, with HEAD's: what changes when the history does (a commit, a
+    /// <summary>Every ref and the commit each names: with HEAD's commit, what changes when the history does (a commit, a
     /// checkout, a fetch), and not when a file is saved.</summary>
-    public async Task<string> HeadsAsync()
+    public async Task<string> RefsAsync()
     {
         GitResult refs = await RunAsync(Root, ["for-each-ref", "--format=%(objectname) %(refname)"]);
-        GitResult head = await RunAsync(Root, ["rev-parse", "HEAD"]);
-        return refs.Output + head.Output;
+        return refs.Output;
     }
 
+    /// <summary>The branch checked out, or null on a detached head.</summary>
     public async Task<string?> BranchAsync()
     {
         GitResult branch = await RunAsync(Root, ["branch", "--show-current"]);
@@ -140,9 +152,6 @@ public sealed class Git
         List<string> lines = [.. branches.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries)];
         return [.. lines.Where(l => l.StartsWith('*')).Select(l => l[1..]), .. lines.Where(l => !l.StartsWith('*')).Select(l => l.TrimStart(' '))];
     }
-
-    /// <summary>A file's text as the last commit has it; null when the commit has no such file (it is new).</summary>
-    public Task<string?> HeadTextAsync(string path) => TextAtAsync("HEAD", path);
 
     /// <summary>The history of every branch, newest first with a branch's commits together (as Rider's log has it),
     /// at most this many.</summary>
@@ -277,6 +286,68 @@ public sealed class Git
         return show.Succeeded ? show.Output : null;
     }
 
+    /// <summary>Files' texts at a revision, read by one git however many there are (cat-file's batch), each null where
+    /// the revision has no such file, as <see cref="TextAtAsync"/> would read them one by one.</summary>
+    public async Task<IReadOnlyDictionary<string, string?>> TextsAtAsync(string revision, IReadOnlyList<string> paths)
+    {
+        Dictionary<string, string?> texts = [];
+        List<string> batched = [];
+        foreach (string path in paths.Distinct())
+        {
+            if (!IsInside(path))
+            {
+                // A path outside the tree ends the whole batch ("outside repository").
+                texts[path] = null;
+            }
+            else if (path.Contains('\n') || path.Contains('\r'))
+            {
+                // The batch takes a name per line.
+                texts[path] = await TextAtAsync(revision, path);
+            }
+            else
+            {
+                batched.Add(path);
+            }
+        }
+        if (batched.Count == 0)
+        {
+            return texts;
+        }
+        byte[] output = await OutputAsync(Root, ["cat-file", "--batch"], string.Concat(batched.Select(p => $"{revision}:{Relative(p)}\n")));
+        int at = 0;
+        foreach (string path in batched)
+        {
+            texts[path] = null;
+            int end = Array.IndexOf(output, (byte)'\n', at);
+            if (end < 0)
+            {
+                continue;
+            }
+            // "<object> <type> <size>", the object's bytes and a line break; or "<name> missing".
+            string[] header = Encoding.UTF8.GetString(output, at, end - at).Split(' ');
+            at = end + 1;
+            if (header.Length == 3 && header[0].All(char.IsAsciiHexDigit) && int.TryParse(header[2], System.Globalization.CultureInfo.InvariantCulture, out int size)
+                && size <= output.Length - at)
+            {
+                if (header[1] == "blob")
+                {
+                    // Read as RunAsync reads git's output: UTF-8, a byte order mark taken as the file's.
+                    using StreamReader reader = new(new MemoryStream(output, at, size, writable: false), Encoding.UTF8);
+                    texts[path] = reader.ReadToEnd();
+                }
+                at += size + 1;
+            }
+        }
+        return texts;
+    }
+
+    /// <summary>Whether a path is in the working tree, where git has a last commit's text for it.</summary>
+    public bool IsInside(string path)
+    {
+        string relative = Relative(path);
+        return !System.IO.Path.IsPathRooted(relative) && relative != ".." && !relative.StartsWith("../", StringComparison.Ordinal);
+    }
+
     /// <summary>Rider's Update Project: the branch's upstream merged in (or rebased onto, as the person's pull.rebase
     /// says).</summary>
     public Task<GitResult> PullAsync() => RunAsync(Root, ["pull", "--no-edit"]);
@@ -404,27 +475,10 @@ public sealed class Git
 
     private static async Task<GitResult> RunAsync(string folder, IReadOnlyList<string> arguments, string? input = null)
     {
-        if (Lsp.Programs.Git() is not { } git)
+        if (Start(folder, arguments) is not { } start)
         {
             return new GitResult(127, string.Empty, OperatingSystem.IsMacOS() ? "git is not installed: xcode-select --install installs it" : "git is not installed");
         }
-        ProcessStartInfo start = new(git, arguments)
-        {
-            WorkingDirectory = folder,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            RedirectStandardInput = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            StandardInputEncoding = new UTF8Encoding(false),
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
-        };
-        // Git never stops to ask on a terminal it does not have.
-        start.Environment["GIT_TERMINAL_PROMPT"] = "0";
-        // A status or a diff read in the background never takes the index's lock, so a stash, a commit or a checkout
-        // started at the same moment does not fail on it.
-        start.Environment["GIT_OPTIONAL_LOCKS"] = "0";
         try
         {
             using Process process = Process.Start(start) ?? throw new InvalidOperationException("git did not start");
@@ -443,6 +497,60 @@ public sealed class Git
         {
             return new GitResult(127, string.Empty, $"git is not installed: {missing.Message}");
         }
+    }
+
+    /// <summary>What git writes, as bytes, for output that counts its lengths in them (cat-file's objects); nothing when
+    /// git is not there or fails to start.</summary>
+    private static async Task<byte[]> OutputAsync(string folder, IReadOnlyList<string> arguments, string input)
+    {
+        if (Start(folder, arguments) is not { } start)
+        {
+            return [];
+        }
+        try
+        {
+            using Process process = Process.Start(start) ?? throw new InvalidOperationException("git did not start");
+            using MemoryStream output = new();
+            Task copied = process.StandardOutput.BaseStream.CopyToAsync(output);
+            Task<string> error = process.StandardError.ReadToEndAsync();
+            await process.StandardInput.WriteAsync(input);
+            process.StandardInput.Close();
+            await process.WaitForExitAsync();
+            await copied;
+            await error;
+            return output.ToArray();
+        }
+        catch (Exception failed) when (failed is System.ComponentModel.Win32Exception or IOException)
+        {
+            return [];
+        }
+    }
+
+    /// <summary>How git is started for every call, or null when it is not installed.</summary>
+    private static ProcessStartInfo? Start(string folder, IReadOnlyList<string> arguments)
+    {
+        if (Lsp.Programs.Git() is not { } git)
+        {
+            return null;
+        }
+        ProcessStartInfo start = new(git, arguments)
+        {
+            WorkingDirectory = folder,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            RedirectStandardInput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            StandardInputEncoding = new UTF8Encoding(false),
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
+        };
+        // Git never stops to ask on a terminal it does not have.
+        start.Environment["GIT_TERMINAL_PROMPT"] = "0";
+        // A status or a diff read in the background never takes the index's lock, so a stash, a commit or a checkout
+        // started at the same moment does not fail on it.
+        start.Environment["GIT_OPTIONAL_LOCKS"] = "0";
+        return start;
     }
 }
 

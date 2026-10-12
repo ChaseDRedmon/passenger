@@ -13,7 +13,8 @@ namespace Passenger.Tests;
 /// <summary>Git as Rider shows it, over a real working tree: an edit grows a change bar, which a rename keeps, the Commit
 /// window commits the chosen files and the bars go; Rollback Lines puts a change back; a branch made from the toolbar's
 /// menu is checked out, and switching back takes the open file's text from disk; Rollback restores a file and deletes a
-/// new one, and acts on the file chosen before a refresh; Commit and Stash run one at a time.</summary>
+/// new one, and acts on the file chosen before a refresh; Commit and Stash run one at a time; a status older than a
+/// commit never lands after it, and the last commit's texts are read again only when HEAD moves.</summary>
 public sealed class VcsTests : IDisposable
 {
     private const string Original = "class Shop\n{\n    int count;\n\n    void Add() { count++; }\n}\n";
@@ -659,6 +660,96 @@ public sealed class VcsTests : IDisposable
             $"The commit's files and its details were {filesHeight} and {detailsHeight} tall, and {files.Bounds.Height} and {details.Bounds.Height} once the line between them was dragged 40 px down");
         window.Close();
     }
+
+    [AvaloniaFact]
+    public void A_status_read_begun_before_a_commit_that_ends_after_it_leaves_the_commit_window_empty()
+    {
+        // One git status made slow, as a large tree's is on Windows: the file system monitor hook, which git runs once it
+        // has read the index, sleeps when asked to and then says nothing is known.
+        string slow = Path.Combine(folder, ".git", "slow");
+        string slept = Path.Combine(folder, ".git", "slept");
+        string hook = Path.Combine(folder, ".git", "slow-status.sh");
+        File.WriteAllText(hook, $"#!/bin/sh\nif [ -f '{Unix(slow)}' ]; then\n    rm '{Unix(slow)}'\n    sleep 3\n    touch '{Unix(slept)}'\nfi\nexit 1\n");
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(hook, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+        Git("config", "core.fsmonitor", Unix(hook));
+        MainWindow window = Open();
+        Ui.WaitFor(() => window.Vcs.Branch == "main", "the branch to be read");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        CommitView commit = window.CommitView;
+        window.Perform(AppActions.ShowCommit);
+        editor.GoTo(new TextPosition(2, 4));
+        window.KeyTextInput("long ");
+        window.Perform(AppActions.Save);
+        Ui.WaitFor(() => commit.Chosen.Any(c => c.Name == "Shop.cs"), "Shop.cs listed");
+
+        // Saved again: that save's status is the slow one, and has read the index before the commit is made.
+        editor.GoTo(new TextPosition(0, 0));
+        window.KeyTextInput("sealed ");
+        File.WriteAllText(slow, string.Empty);
+        window.Perform(AppActions.Save);
+        Ui.WaitFor(() => !File.Exists(slow), "the save's status to begin", TimeSpan.FromSeconds(30));
+        commit.Message = "Count with a long";
+        Task<bool> committed = commit.CommitAsync(push: false);
+        Ui.WaitFor(() => committed.IsCompleted, "the commit");
+        Assert.True(committed.Result, window.Status);
+
+        // The slow status ends after the commit's own: what it found before the commit never lands over it.
+        Ui.WaitFor(() => File.Exists(slept), "the slow status to end");
+        Passenger.App.Screenshot.Pump(TimeSpan.FromSeconds(1));
+        Ui.Settle();
+        Assert.True(window.Vcs.Changes.Count == 0,
+            $"The Commit window lists {string.Join(", ", window.Vcs.Changes.Select(c => c.Name))} after the commit: a status read before it landed after the commit's own");
+        Assert.Empty(commit.Rows);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Coming_back_to_the_window_reads_no_last_commit_text_again_and_head_moved_elsewhere_moves_every_files_bars_in_one_read()
+    {
+        // Prices.cs has characters of more than a byte before its change, and New.cs, open between the others, no commit.
+        const string Prices = "// Prix en €, café crème 😀\nclass Prices\n{\n    decimal euro = 1m;\n}\n";
+        File.WriteAllText(Path.Combine(folder, "Prices.cs"), Prices);
+        File.WriteAllText(Path.Combine(folder, "A.cs"), "class A { }\n");
+        File.WriteAllText(Path.Combine(folder, "B.cs"), "class B { }\n");
+        Git("add", "-A");
+        Git("commit", "-q", "-m", "More");
+        File.WriteAllText(Path.Combine(folder, "Prices.cs"), Prices.Replace("1m", "2m", StringComparison.Ordinal));
+        File.WriteAllText(Path.Combine(folder, "Shop.cs"), Original.Replace("int count", "long count", StringComparison.Ordinal));
+        Git("commit", "-q", "-am", "Dearer");
+        File.WriteAllText(Path.Combine(folder, "New.cs"), "class New { }\n");
+        MainWindow window = Open();
+        foreach (string name in new[] { "Prices.cs", "A.cs", "New.cs", "B.cs" })
+        {
+            window.OpenFile(Path.Combine(folder, name));
+        }
+        Ui.Settle();
+        Task opened = window.Vcs.RefreshAsync();
+        Ui.WaitFor(() => opened.IsCompleted && window.Vcs.Branch == "main", "the working tree to be read");
+
+        // Back from another program with five files open: the status is read again, and no file's last-commit text.
+        int reads = window.Vcs.HeadReads;
+        Task back = window.Vcs.RefreshAsync();
+        Ui.WaitFor(() => back.IsCompleted, "the status read again");
+        Assert.True(window.Vcs.HeadReads == reads, $"Coming back to the window read last-commit texts {window.Vcs.HeadReads - reads} times though HEAD had not moved");
+
+        // HEAD moved back a commit in a terminal: every open file's bars are against it, from one read of their texts.
+        Git("reset", "-q", "--soft", "HEAD~1");
+        Ui.WaitFor(() => Bars(window, "Shop.cs").Count > 0 && Bars(window, "Prices.cs").Count > 0, "the bars against the commit HEAD moved to");
+        Assert.Equal([new ChangeMark(2, 1, ChangeMarkKind.Modified)], Bars(window, "Shop.cs"));
+        Assert.Equal([new ChangeMark(3, 1, ChangeMarkKind.Modified)], Bars(window, "Prices.cs"));
+        Assert.All(new[] { "A.cs", "B.cs", "New.cs" }, name => Assert.Empty(Bars(window, name)));
+        Assert.True(window.Vcs.HeadReads == reads + 1, $"HEAD moving read the five open files' texts in {window.Vcs.HeadReads - reads} reads, not one");
+        window.Close();
+    }
+
+    private static IReadOnlyList<ChangeMark> Bars(MainWindow window, string name) =>
+        window.EditorArea.Documents.First(d => d.Name == name).ChangeMarks;
+
+    /// <summary>A path as the hook's shell and git's configuration take it on every system.</summary>
+    private static string Unix(string path) => path.Replace('\\', '/');
 
     private static Avalonia.Controls.ListBox Find(Avalonia.Controls.Control view, object rows) =>
         Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(view).OfType<Avalonia.Controls.ListBox>().First(l => ReferenceEquals(l.ItemsSource, rows));

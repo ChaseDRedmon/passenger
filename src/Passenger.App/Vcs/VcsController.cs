@@ -16,10 +16,23 @@ public sealed class VcsController
     private const string Busy = "Git is still busy with the last change";
 
     private readonly Dictionary<OpenDocument, Tracked> documents = [];
+
+    /// <summary>Files' texts in the commit <see cref="textsOf"/> (null before the first commit), which a read sets once
+    /// it has found HEAD since the folder opened (<see cref="textsRead"/>). They are kept until HEAD names another, so a
+    /// refresh that finds it where it was reads none of them again.</summary>
     private readonly Dictionary<string, Task<string?>> heads = [];
+    private string? textsOf;
+    private bool textsRead;
     private readonly List<(string From, string To)> moves = [];
     private Git? git;
     private int opened;
+
+    /// <summary>Reads go one at a time, so an older read never lands after a newer one (a save's status after the
+    /// commit's); those asked for while one runs are one read when it ends, answered together, reading the history
+    /// too when any of them asked for it.</summary>
+    private bool reading;
+    private TaskCompletionSource? asked;
+    private bool historyAsked;
 
     /// <summary>The working tree the open folder is in, or null when it is in none.</summary>
     public Git? Repository => git;
@@ -32,6 +45,10 @@ public sealed class VcsController
 
     /// <summary>Raised when the branch or the changed files have been read again.</summary>
     public event EventHandler? Changed;
+
+    /// <summary>How many times git has been asked for last-commit texts: once for all the open files together when HEAD
+    /// moves, once for each file looked at since, and never by a refresh that finds HEAD where it was.</summary>
+    public int HeadReads { get; private set; }
 
     /// <summary>Raised after the whole tree was read again, as after a commit, a checkout or an update, when the
     /// history may have moved too (a save alone changes only the files).</summary>
@@ -70,6 +87,8 @@ public sealed class VcsController
         }
         git = found;
         heads.Clear();
+        textsOf = null;
+        textsRead = false;
         moves.Clear();
         await RefreshAsync();
     }
@@ -87,45 +106,150 @@ public sealed class VcsController
         return git is not null;
     }
 
-    /// <summary>Reads the branch and the changed files again, and every open file's change bars.</summary>
-    public async Task RefreshAsync()
+    /// <summary>Reads the branch, the changed files and the history again, and when HEAD has moved every open file's
+    /// last-commit text and change bars; done once a read begun after the call has landed.</summary>
+    public Task RefreshAsync()
     {
         UiThread.Check();
+        historyAsked = true;
+        return ReadAsync();
+    }
+
+    /// <summary>Asks for a read: the next one to start, which starts now unless one is running.</summary>
+    private Task ReadAsync()
+    {
+        TaskCompletionSource next = asked ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!reading)
+        {
+            _ = ReadInTurnAsync();
+        }
+        return next.Task;
+    }
+
+    /// <summary>Runs the reads asked for, one after another, until none is.</summary>
+    private async Task ReadInTurnAsync()
+    {
+        reading = true;
+        try
+        {
+            while (asked is { } answered)
+            {
+                asked = null;
+                bool history = historyAsked;
+                historyAsked = false;
+                try
+                {
+                    await ReadOnceAsync(history);
+                    answered.SetResult();
+                }
+                catch (Exception failed)
+                {
+                    answered.SetException(failed);
+                }
+            }
+        }
+        finally
+        {
+            reading = false;
+        }
+    }
+
+    /// <summary>One read: the status (the branch, HEAD and the files), with the refs when the history is wanted too.</summary>
+    private async Task ReadOnceAsync(bool history)
+    {
         if (git is not { } repository)
         {
             Branch = null;
             Changes = [];
-            Changed?.Invoke(this, EventArgs.Empty);
-            Refreshed?.Invoke(this, EventArgs.Empty);
-            if (knownHistory is not null)
+            if (!textsRead)
             {
-                knownHistory = null;
-                HistoryChanged?.Invoke(this, EventArgs.Empty);
+                ReadTexts(null, null);
+            }
+            Changed?.Invoke(this, EventArgs.Empty);
+            if (history)
+            {
+                Refreshed?.Invoke(this, EventArgs.Empty);
+                if (knownHistory is not null)
+                {
+                    knownHistory = null;
+                    HistoryChanged?.Invoke(this, EventArgs.Empty);
+                }
             }
             return;
         }
-        heads.Clear();
-        string? history = null;
+        GitStatus? status = null;
+        string? refs = null;
+        string? failure = null;
         try
         {
-            Branch = await repository.BranchAsync();
-            Changes = await repository.StatusAsync();
-            history = await repository.HeadsAsync();
+            status = await repository.StatusAsync();
+            refs = history ? await repository.RefsAsync() : null;
         }
         catch (InvalidOperationException failed)
         {
-            Message?.Invoke(this, failed.Message);
+            failure = failed.Message;
+        }
+        if (git != repository)
+        {
+            // Another folder was opened meanwhile: this is the last one's.
+            return;
+        }
+        if (failure is not null)
+        {
+            Message?.Invoke(this, failure);
+        }
+        if (status is not null)
+        {
+            Branch = status.Branch;
+            Changes = status.Changes;
+            if (!textsRead || status.Head != textsOf)
+            {
+                ReadTexts(repository, status.Head);
+            }
         }
         Changed?.Invoke(this, EventArgs.Empty);
-        Refreshed?.Invoke(this, EventArgs.Empty);
-        if (history is not null && history != knownHistory)
+        if (!history)
         {
-            knownHistory = history;
+            return;
+        }
+        Refreshed?.Invoke(this, EventArgs.Empty);
+        string? now = status is not null && refs is not null ? refs + status.Head : null;
+        if (now is not null && now != knownHistory)
+        {
+            knownHistory = now;
             HistoryChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    /// <summary>HEAD names another commit (or the tree is another): every open file's text in it, read by one git, and
+    /// their change bars against it.</summary>
+    private void ReadTexts(Git? repository, string? head)
+    {
+        textsRead = true;
+        textsOf = head;
+        heads.Clear();
+        if (repository is not null && head is not null)
+        {
+            string[] paths = [.. documents.Keys.Select(d => d.Path).Distinct().Where(repository.IsInside)];
+            if (paths.Length > 0)
+            {
+                HeadReads++;
+                Task<IReadOnlyDictionary<string, string?>> texts = repository.TextsAtAsync(head, [.. paths.SelectMany(p => new[] { p, Origin(p) })]);
+                foreach (string path in paths)
+                {
+                    heads[path] = TextOfAsync(texts, path, Origin(path));
+                }
+            }
         }
         foreach (OpenDocument document in documents.Keys)
         {
             _ = MarkAsync(document);
+        }
+
+        static async Task<string?> TextOfAsync(Task<IReadOnlyDictionary<string, string?>> texts, string path, string origin)
+        {
+            IReadOnlyDictionary<string, string?> read = await texts;
+            return read.GetValueOrDefault(path) ?? read.GetValueOrDefault(origin);
         }
     }
 
@@ -149,7 +273,7 @@ public sealed class VcsController
             timer.Stop();
             timer.Start();
         };
-        tracked.OnSaved = (_, _) => _ = RefreshStatusAsync();
+        tracked.OnSaved = (_, _) => _ = ReadAsync();
         document.Text.Changed += tracked.OnChanged;
         document.Saved += tracked.OnSaved;
         documents[document] = tracked;
@@ -379,41 +503,27 @@ public sealed class VcsController
         }, new GitResult(1, string.Empty, Busy));
     }
 
-    private async Task RefreshStatusAsync()
-    {
-        if (git is not { } repository)
-        {
-            return;
-        }
-        try
-        {
-            Changes = await repository.StatusAsync();
-            Changed?.Invoke(this, EventArgs.Empty);
-        }
-        catch (InvalidOperationException failed)
-        {
-            Message?.Invoke(this, failed.Message);
-        }
-    }
-
-    /// <summary>A file's text as the last commit has it, or null when it has none (new, or outside the tree).</summary>
+    /// <summary>A file's text as the last commit has it, or null when it has none (new, or outside the tree). A file
+    /// opened since HEAD last moved is read on its own, in the commit the others were read in.</summary>
     public Task<string?> HeadTextAsync(string path)
     {
         UiThread.Check();
-        if (git is not { } repository || repository.Relative(path).StartsWith("..", StringComparison.Ordinal))
+        if (git is not { } repository || !repository.IsInside(path) || (textsRead && textsOf is null))
         {
             return Task.FromResult<string?>(null);
         }
         if (!heads.TryGetValue(path, out Task<string?>? head))
         {
+            HeadReads++;
+            string revision = textsOf ?? "HEAD";
             string origin = Origin(path);
-            head = origin == path ? repository.HeadTextAsync(path) : HeadOrOriginAsync(repository, path, origin);
+            head = origin == path ? repository.TextAtAsync(revision, path) : TextOrOriginAsync(repository, revision, path, origin);
             heads[path] = head;
         }
         return head;
 
-        static async Task<string?> HeadOrOriginAsync(Git repository, string path, string origin) =>
-            await repository.HeadTextAsync(path) ?? await repository.HeadTextAsync(origin);
+        static async Task<string?> TextOrOriginAsync(Git repository, string revision, string path, string origin) =>
+            await repository.TextAtAsync(revision, path) ?? await repository.TextAtAsync(revision, origin);
     }
 
     /// <summary>A file or folder moved here (a rename, a code fix): until a commit has its files at their new paths,
