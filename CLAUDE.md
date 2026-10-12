@@ -118,7 +118,8 @@ the line index and undo honest; keep it passing rather than narrowing it.
 
 The debugger's tests (`tests/Passenger.Tests/Debugging`) run the adapter from the tests' own `debugger/` folder, as
 the IDE does, and launch or attach to the programs in `tests/Debuggees`, whose lines and columns (tabs included) they
-stop at: moving a line there means moving the tests that name it. They run one at a time (`DebugSession.Collection`).
+stop at: moving a line there means moving the tests that name it. They run one at a time (`DebugSession.Collection`). `PASSENGER_ENGINE_LOG=FILE` keeps the engine's own log, for the
+tests' sessions and the IDE's alike.
 
 The MCP server's tests (`McpTests`) are agents using the SDK's own client: one starts `Passenger --mcp` and debugs a
 project through it, one attaches to a window with `--mcp-attach` and changes what the window shows.

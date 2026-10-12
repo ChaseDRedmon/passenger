@@ -13,6 +13,12 @@ public partial class ManagedDebugger
 {
     private ICorDebug? _corDebug;
     private ICorDebugProcess? _process;
+
+    /// <summary>Set on the runtime's callback thread the moment the debuggee is gone, before the event is
+    /// queued: from then on mscordbi neuters the process on its own thread and shuts its transport down, and
+    /// a call into the process races that and can crash the adapter (a Stop or Detach sent over a transport
+    /// being torn down).</summary>
+    private readonly ManualResetEventSlim _exited = new();
     private readonly CorDebugManagedCallback _callbacks;
     private readonly BreakpointManager _breakpointManager;
     private readonly VariableManager _variableManager;
@@ -53,6 +59,24 @@ public partial class ManagedDebugger
     private CilExpressionEvaluator _expressionEvaluator = null!;
 
     private Process? _debuggeeProcess;
+
+    /// <summary>The program the adapter launched on macOS and Linux, and how it ended once it has.</summary>
+    private SuspendedLaunch? _launch;
+    private Task<int?>? _launchExit;
+    private Task? _launchOutput;
+    private int _exitReported;
+
+    /// <summary>Tells the client the program has ended, once, after the last of its output.</summary>
+    private void ReportExit(int? exitCode)
+    {
+        if (Interlocked.Exchange(ref _exitReported, 1) == 1)
+        {
+            return;
+        }
+        // A program's own child holding its output open must not hold up the news.
+        _launchOutput?.Wait(TimeSpan.FromSeconds(1));
+        OnExited?.Invoke(exitCode);
+    }
 
     public event Action<int, string>? OnStopped;
     // ThreadId, FilePath, Line, Column, Reason, HitBreakpointIds, DecompiledSourceInfo
@@ -97,6 +121,10 @@ public partial class ManagedDebugger
 
     private void QueueEvent(object? sender, CorDebugManagedCallbackEventArgs e)
     {
+        if (e is ExitProcessCorDebugManagedCallbackEventArgs)
+        {
+            _exited.Set();
+        }
         _runtimeEventChannel.Writer.TryWrite(e);
     }
 
@@ -208,7 +236,8 @@ public partial class ManagedDebugger
         // Initialize the debugger
         _ = Task.Run(async () =>
         {
-            _corDebug = await ClrDebugExtensions.Automatic(processId);
+            _exited.Reset();
+            _corDebug = await ClrDebugExtensions.Automatic(processId, resume: null);
             _corDebug.Initialize();
             _corDebug.SetManagedHandler(_callbacks);
 
@@ -226,6 +255,7 @@ public partial class ManagedDebugger
     {
         _logger?.Invoke($"Attaching to remote process on {remoteAttachInfo.Address}:{remoteAttachInfo.Port}");
 
+        _exited.Reset();
         _corDebug = ClrDebugExtensions.Mobile(remoteAttachInfo);
         _corDebug.SetManagedHandler(_callbacks);
         try
@@ -550,6 +580,8 @@ public partial class ManagedDebugger
         {
             return; // A client may call Terminate, then Disconnect, both of which call Dispose. Dispose only needs to be run once.
         }
+        // A process that has exited is the runtime's to tear down: nothing below may call into it.
+        bool exited = _exited.IsSet;
 
         // Dispose modules, which releases PDB files
         foreach (ModuleInfo moduleInfo in _modules.Values)
@@ -559,13 +591,13 @@ public partial class ManagedDebugger
         _modules.Clear();
 
         // Deactivate all breakpoints
-        if (_entryBreakpoint is { } entryBreakpoint)
+        if (_entryBreakpoint is { } entryBreakpoint && !exited)
         {
             entryBreakpoint.CorBreakpoint.TryActivate(false);
-            _entryBreakpoint = null;
         }
+        _entryBreakpoint = null;
         _stopAtEntry = false;
-        foreach (BreakpointManager.BreakpointInfo? bp in _breakpointManager.GetAllBreakpoints().Where(b => (b.CorBreakpoint is not null && b.IsFunctionBreakpoint is false) || b.IsFunctionBreakpoint))
+        foreach (BreakpointManager.BreakpointInfo? bp in _breakpointManager.GetAllBreakpoints().Where(b => !exited && ((b.CorBreakpoint is not null && b.IsFunctionBreakpoint is false) || b.IsFunctionBreakpoint)))
         {
             IEnumerable<ICorDebugFunctionBreakpoint> corBreakpoints = bp.IsFunctionBreakpoint ? bp.FunctionBindings.Select(binding => binding.CorBreakpoint) : [bp.CorBreakpoint!];
             foreach (ICorDebugFunctionBreakpoint? corBreakpoint in corBreakpoints)
@@ -593,7 +625,14 @@ public partial class ManagedDebugger
         _exceptionBreakModes.Clear();
         _initializedStaticTypes.Clear();
         _suppressFinalizeFunction = null;
-        _variableManager.ClearAndTryDisposeHandleValues();
+        if (exited)
+        {
+            _variableManager.Clear();
+        }
+        else
+        {
+            _variableManager.ClearAndTryDisposeHandleValues();
+        }
         _frameReferenceManager.Clear();
 
         // Unsubscribe from callbacks to avoid any further event dispatch
@@ -605,7 +644,14 @@ public partial class ManagedDebugger
         while (_runtimeEventChannel.Reader.TryRead(out _)) { }
 
         // Detach from the process
-        _process?.TryDetach();
+        if (!exited)
+        {
+            _process?.TryDetach();
+        }
+        else if (_corDebug is not null)
+        {
+            ShutDown(_corDebug);
+        }
 
         _isAttached = false;
         _process = null;
@@ -613,6 +659,25 @@ public partial class ManagedDebugger
 
         _debuggeeProcess?.Dispose();
         _debuggeeProcess = null;
+        _launch?.Dispose();
+        _launch = null;
+    }
+
+    /// <summary>ICorDebug's own shutdown, once the process it debugged has exited: refused until the runtime's
+    /// thread has finished neutering the process, then it stops that thread, so the adapter never exits (or
+    /// releases the runtime's objects) under it.</summary>
+    private void ShutDown(ICorDebug corDebug)
+    {
+        DateTime until = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        int result;
+        while ((result = corDebug.TryTerminate()) == Cor.CORDBG_E_ILLEGAL_SHUTDOWN_ORDER && DateTime.UtcNow < until)
+        {
+            Thread.Sleep(20);
+        }
+        if (result != Cor.S_OK)
+        {
+            _logger?.Invoke($"ICorDebug.Terminate: 0x{result:X8}");
+        }
     }
 
     private sealed class ExceptionPropagationState

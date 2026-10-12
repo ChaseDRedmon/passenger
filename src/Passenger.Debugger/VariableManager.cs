@@ -95,6 +95,17 @@ public class VariableManager
         }
     }
 
+    /// <summary>Forgets every reference without releasing its handles, for a process that has exited and
+    /// took its handles with it.</summary>
+    public void Clear()
+    {
+        lock (_lock)
+        {
+            _references.Clear();
+            _nextReference = 1;
+        }
+    }
+
     public void ClearAndTryDisposeHandleValues()
     {
         lock (_lock)

@@ -1,13 +1,27 @@
 using System.Diagnostics;
+using Passenger.App.Run;
 using Passenger.App.Workspace;
 
 namespace Passenger.App.Debugging;
 
-/// <summary>What a run configuration debugs: the assembly its project builds, and the folder it runs
-/// in (its output folder, as Rider's default). MSBuild says where the assembly is, since a project's
-/// own properties (an artifacts layout, an output path) decide it.</summary>
-public sealed record DebugTarget(string Program, string WorkingDirectory)
+/// <summary>What a run configuration debugs: the assembly its project builds, the folder it runs in (a
+/// launch profile's, or else the output folder, as Rider's default), its arguments and environment.
+/// MSBuild says where the assembly is, since a project's own properties (an artifacts layout, an output
+/// path) decide it.</summary>
+public sealed record DebugTarget(string Program, string WorkingDirectory, IReadOnlyList<string> Arguments, IReadOnlyDictionary<string, string> Environment)
 {
+    /// <summary>The target for a configuration, with these arguments in place of its profile's if given.</summary>
+    public static async Task<DebugTarget> ResolveAsync(RunConfiguration configuration, string? arguments = null, CancellationToken cancellation = default)
+    {
+        DebugTarget built = await ResolveAsync(configuration.Project, cancellation);
+        return built with
+        {
+            WorkingDirectory = configuration.Profile?.Folder(configuration.Project) ?? built.WorkingDirectory,
+            Arguments = configuration.Arguments(arguments),
+            Environment = configuration.Profile?.Environment() ?? new Dictionary<string, string>(),
+        };
+    }
+
     public static async Task<DebugTarget> ResolveAsync(ProjectModel project, CancellationToken cancellation = default)
     {
         List<string> args = ["msbuild", project.Path, "-nologo", "-getProperty:TargetPath"];
@@ -37,6 +51,6 @@ public sealed record DebugTarget(string Program, string WorkingDirectory)
         {
             throw new FileNotFoundException($"{project.Name} has not built {Path.GetFileName(path)}", path);
         }
-        return new DebugTarget(path, Path.GetDirectoryName(path)!);
+        return new DebugTarget(path, Path.GetDirectoryName(path)!, [], new Dictionary<string, string>());
     }
 }

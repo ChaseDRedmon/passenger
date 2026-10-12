@@ -83,6 +83,40 @@ public sealed class BuildRunTests : IDisposable
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void Each_launch_profile_is_a_run_configuration_whose_arguments_and_environment_the_program_gets()
+    {
+        Write("src/Hello/Program.cs", "Console.WriteLine($\"{Environment.GetEnvironmentVariable(\"GREETING\")} [{string.Join(\"|\", args)}]\");\n");
+        Write("src/Hello/Properties/launchSettings.json", """
+            {
+              // Comments and trailing commas, as Visual Studio writes them.
+              "profiles": {
+                "Greet": { "commandName": "Project", "commandLineArgs": "--name \"Ada Lovelace\"", "environmentVariables": { "GREETING": "Hi" }, },
+                "Docker": { "commandName": "Docker" }
+              }
+            }
+            """);
+        MainWindow window = Open();
+        // A profile that runs something else (a container here) is not the project's to run.
+        Assert.Equal(["Hello: Greet"], window.Configurations.Select(c => c.Name));
+        Assert.Contains("Hi [--name|Ada Lovelace]", RunToEnd(window), StringComparison.Ordinal);
+
+        // Arguments given for one run replace the profile's, and its environment stays.
+        window.RunSelected("one \"two three\"");
+        Assert.Contains("Hi [one|two three]", RunToEnd(window), StringComparison.Ordinal);
+        window.Close();
+    }
+
+    private static string RunToEnd(MainWindow window)
+    {
+        if (!window.Runner.IsRunning)
+        {
+            Ui.Press(window, Ui.Shortcut(AppActions.RunProgram));
+        }
+        Ui.WaitFor(() => window.BottomPanel.Run.Document.Snapshot.ToString().Contains("Process finished", StringComparison.Ordinal), "the run to end");
+        return window.BottomPanel.Run.Document.Snapshot.ToString();
+    }
+
     private MainWindow Open()
     {
         MainWindow window = new() { Width = 1200, Height = 800 };

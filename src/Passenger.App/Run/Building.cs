@@ -16,18 +16,44 @@ public enum ProblemSeverity
     Warning,
 }
 
-/// <summary>Something that can be run from the toolbar: an executable project, run with
-/// <c>dotnet run</c>, which builds it first.</summary>
-public sealed record RunConfiguration(string Name, ProjectModel Project)
+/// <summary>Something that can be run from the toolbar: an executable project, or one of its launch
+/// profiles (named "Project: profile", as Rider names them), run with <c>dotnet run</c>, which builds it
+/// first.</summary>
+public sealed record RunConfiguration(string Name, ProjectModel Project, LaunchProfile? Profile = null)
 {
     public static IReadOnlyList<RunConfiguration> From(SolutionModel? solution, string folder)
     {
         IEnumerable<ProjectModel> projects = solution?.Projects
             ?? Directory.EnumerateFiles(folder, "*.csproj").Select(ProjectModel.Load);
-        return projects
-            .Where(p => p.Exists && p.IsRunnable)
-            .Select(p => new RunConfiguration(System.IO.Path.GetFileNameWithoutExtension(p.Path), p))
-            .ToList();
+        List<RunConfiguration> configurations = [];
+        foreach (ProjectModel project in projects.Where(p => p.Exists && p.IsRunnable))
+        {
+            string name = System.IO.Path.GetFileNameWithoutExtension(project.Path);
+            IReadOnlyList<LaunchProfile> profiles = LaunchProfile.Read(project);
+            if (profiles.Count == 0)
+            {
+                configurations.Add(new RunConfiguration(name, project));
+            }
+            configurations.AddRange(profiles.Select(p => new RunConfiguration($"{name}: {p.Name}", project, p)));
+        }
+        return configurations;
+    }
+
+    /// <summary>The program's arguments: the ones given, or else the profile's.</summary>
+    public IReadOnlyList<string> Arguments(string? given = null) => CommandLine.Split(given ?? Profile?.CommandLineArgs);
+
+    /// <summary><c>dotnet run</c>'s own arguments for this configuration, with the program's after <c>--</c>
+    /// when they replace the profile's.</summary>
+    public IReadOnlyList<string> RunArguments(string? given = null)
+    {
+        List<string> arguments = ["run", "--project", Project.Path];
+        arguments.AddRange(Profile is null ? ["--no-launch-profile"] : ["--launch-profile", Profile.Name]);
+        if (given is not null)
+        {
+            arguments.Add("--");
+            arguments.AddRange(CommandLine.Split(given));
+        }
+        return arguments;
     }
 }
 

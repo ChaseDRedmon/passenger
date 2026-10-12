@@ -35,7 +35,9 @@ public static class ClrDebugExtensions
     }
 
     /// pass resumeDiagnosticSuspension true if the process was launched with the DOTNET_DefaultDiagnosticPortSuspend environment variable, and you wish for it to be resumed after RegisterForRuntimeStartup
-    public static async Task<ICorDebug> Automatic(int pid, bool resumeDiagnosticSuspension = false)
+    /// <summary>ICorDebug for a process's runtime as it starts: registered for, then the held process let go
+    /// (<paramref name="resume"/>), or for a runtime already running when there is nothing to let go.</summary>
+    public static async Task<ICorDebug> Automatic(int pid, Func<Task>? resume)
     {
         IntPtr unregisterToken = IntPtr.Zero;
         GCHandle runtimeStartupTcsHandle = default;
@@ -60,9 +62,9 @@ public static class ClrDebugExtensions
                 Marshal.ThrowExceptionForHR(registerHr);
             }
 
-            if (resumeDiagnosticSuspension)
+            if (resume is not null)
             {
-                await DiagnosticClientHelper.DiagnosticClientResumeRuntime(pid);
+                await resume();
             }
 
             (ICorDebug? CorDebug, int Hr) result = await runtimeStartupTcs.Task.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);

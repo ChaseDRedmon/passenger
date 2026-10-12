@@ -1,5 +1,10 @@
 using System.Diagnostics;
 
+if (args is ["child"])
+{
+	Console.WriteLine("child ran");
+	return;
+}
 Wrapper.CallWithCatch(() => throw new InvalidOperationException("thrown in user code"));
 Attributed.StepThrough();
 Attributed.NonUser();
@@ -10,6 +15,7 @@ Nested.Throw();
 Displays.Show();
 Interpreter.Run();
 Threads.Run();
+Children.Run();
 
 // The cases Passenger's own debugger tests add to upstream's. Tests find their lines by the code on them.
 // Code of the user's own that says it is not theirs: Just My Code passes over it, and a catch in it
@@ -182,5 +188,21 @@ static class Threads
 	{
 		Started.Signal();
 		Gate.Wait();
+	}
+}
+
+// A program being debugged that starts a .NET program of its own, which must run as it would undebugged.
+static class Children
+{
+	public static void Run()
+	{
+		using Process child = Process.Start(new ProcessStartInfo(Environment.ProcessPath!, [typeof(Children).Assembly.Location, "child"]) { RedirectStandardOutput = true })!;
+		bool ended = child.WaitForExit(15000);
+		string said = ended ? child.StandardOutput.ReadToEnd().Trim() : "nothing, held at its start";
+		if (!ended)
+		{
+			child.Kill();
+		}
+		Console.WriteLine($"child said: {said}");
 	}
 }

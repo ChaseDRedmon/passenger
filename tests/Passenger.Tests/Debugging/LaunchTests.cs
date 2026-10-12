@@ -126,6 +126,18 @@ public class LaunchTests(ITestOutputHelper testOutputHelper)
     }
 
     [Fact]
+    public async Task A_dotnet_program_the_debugged_one_starts_runs_as_it_would_undebugged()
+    {
+        // Nothing that holds the debugged program at its start may reach the programs it starts in turn.
+        using DebugSession host = await DebugSession.LaunchToBreakpoint(testOutputHelper, "PassengerCases",
+            Debuggees.Line("PassengerCases", "Console.WriteLine($\"child said: {said}\");"), []);
+        StoppedEvent stopped = await host.WaitForStoppedEvent();
+        host.WithStackTraceRequest(stopped.ThreadId!.Value, out StackTraceResponse stack)
+            .WithEvaluateRequest(stack.StackFrames[0].Id, "said", out EvaluateResponse said);
+        Assert.Equal("\"child ran\"", said.Result);
+    }
+
+    [Fact]
     public async Task The_thread_running_Main_is_the_one_named_Main_Thread()
     {
         using DebugSession host = DebugSession.ForLaunch(testOutputHelper);

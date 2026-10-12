@@ -53,7 +53,11 @@ void Log(string message)
 }
 
 Log("Starting");
-DapConnection connection = new(Console.OpenStandardInput(), Console.OpenStandardOutput(), Log);
+// On macOS and Linux a launched program is given descriptors 0, 1 and 2 as its own, so the protocol moves off them.
+(Stream input, Stream output) = OperatingSystem.IsWindows()
+    ? (Console.OpenStandardInput(), Console.OpenStandardOutput())
+    : Passenger.Debugger.SuspendedLaunch.DetachProtocol();
+DapConnection connection = new(input, output, Log);
 DebugAdapter adapter = new(connection, Log);
 TaskCompletionSource disconnected = new(TaskCreationOptions.RunContinuationsAsynchronously);
 adapter.ShutdownRequested += () => disconnected.TrySetResult();

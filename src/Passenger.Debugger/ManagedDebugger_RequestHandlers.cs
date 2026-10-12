@@ -37,20 +37,31 @@ public partial class ManagedDebugger
         _pendingLaunchInfo = launchInfo;
     }
 
-    /// <summary>
-    /// Actually perform the launch using DbgShim APIs
-    /// </summary>
-    private async Task PerformLaunch()
+    /// <summary>A program named without a folder, found on the PATH as a shell would find it.</summary>
+    private static string Resolve(string program)
     {
-        if (_pendingLaunchInfo is null)
+        if (program.Contains(Path.DirectorySeparatorChar) || Environment.ProcessPath is not { } self)
         {
-            _logger?.Invoke("No pending launch to perform");
-            return;
+            return program;
         }
+        // The adapter runs under the very dotnet that runs a .dll it launches.
+        if (program == "dotnet" && Path.GetFileNameWithoutExtension(self) == "dotnet")
+        {
+            return self;
+        }
+        foreach (string folder in (Environment.GetEnvironmentVariable("PATH") ?? string.Empty).Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            string candidate = Path.Combine(folder, program);
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+        return program;
+    }
 
-        LaunchInfo launchInfo = _pendingLaunchInfo;
-        _pendingLaunchInfo = null;
-
+    private static Process StartHeldByDiagnosticPort(LaunchInfo launchInfo)
+    {
         ProcessStartInfo processStartInfo = new ProcessStartInfo
         {
             FileName = launchInfo.Program,
@@ -67,47 +78,76 @@ public partial class ManagedDebugger
         {
             processStartInfo.ArgumentList.Add(arg);
         }
-
         foreach ((string? key, string? value) in launchInfo.Env)
         {
             processStartInfo.Environment[key] = value;
         }
         processStartInfo.Environment["DOTNET_DefaultDiagnosticPortSuspend"] = "1";
+        return Process.Start(processStartInfo) ?? throw new InvalidOperationException("Process start failed");
+    }
 
-        Process? process = Process.Start(processStartInfo);
-        if (process is null)
+    /// <summary>
+    /// Actually perform the launch using DbgShim APIs
+    /// </summary>
+    private async Task PerformLaunch()
+    {
+        if (_pendingLaunchInfo is null)
         {
-            throw new InvalidOperationException("Process start failed");
+            _logger?.Invoke("No pending launch to perform");
+            return;
         }
 
-        _debuggeeProcess = process;
+        LaunchInfo launchInfo = _pendingLaunchInfo;
+        _pendingLaunchInfo = null;
 
-        process.OutputDataReceived += (_, e) =>
+        int processId;
+        Func<Task> resume;
+        Action kill;
+        _exitReported = 0;
+        if (OperatingSystem.IsWindows())
         {
-            if (e.Data is not null)
-            {
-                InvokeOnOutputWithTryCatch(e.Data + Environment.NewLine, isError: false);
-            }
-        };
-        process.ErrorDataReceived += (_, e) =>
+            // Still held by the diagnostic port, whose variable the program's own .NET children inherit and are
+            // held by too; Windows is to move to CreateProcessForLaunch as macOS and Linux have.
+            Process process = StartHeldByDiagnosticPort(launchInfo);
+            _debuggeeProcess = process;
+            processId = process.Id;
+            resume = () => DiagnosticClientHelper.DiagnosticClientResumeRuntime(process.Id);
+            kill = () => process.Kill();
+        }
+        else
         {
-            if (e.Data is not null)
+            SuspendedLaunch launch = SuspendedLaunch.Start(Resolve(launchInfo.Program), launchInfo.Arguments, launchInfo.Cwd ?? Environment.CurrentDirectory, launchInfo.Env);
+            _launch = launch;
+            _launchOutput = Task.WhenAll(Forward(launch.Output, isError: false), Forward(launch.Error, isError: true));
+            _launchExit = Task.Run(launch.WaitForExit);
+            // The exit is told as soon as the program has gone, not when the runtime's word of it is handled:
+            // mscordbi can crash tearing the session down first (a race in its transport), taking that word with it.
+            _ = _launchExit.ContinueWith(ended => ReportExit(ended.Result), TaskScheduler.Default);
+            processId = launch.ProcessId;
+            resume = () =>
             {
-                InvokeOnOutputWithTryCatch(e.Data + Environment.NewLine, isError: true);
-            }
-        };
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
-
-        int processId = process.Id;
+                launch.Resume();
+                return Task.CompletedTask;
+            };
+            kill = launch.Kill;
+        }
 
         _logger?.Invoke($"Process created suspended with PID: {processId}");
 
-        _corDebug = await ClrDebugExtensions.Automatic(processId, true);
-        _corDebug.Initialize();
-        _corDebug.SetManagedHandler(_callbacks);
-
-        _process = _corDebug.DebugActiveProcess(processId, false);
+        _exited.Reset();
+        try
+        {
+            _corDebug = await ClrDebugExtensions.Automatic(processId, resume);
+            _corDebug.Initialize();
+            _corDebug.SetManagedHandler(_callbacks);
+            _process = _corDebug.DebugActiveProcess(processId, false);
+        }
+        catch
+        {
+            // A program the debugger could not take hold of (not .NET, or failed first) is not left behind, held.
+            kill();
+            throw;
+        }
         _isAttached = true;
         ConfigureExceptionCallbacks();
 
@@ -115,6 +155,24 @@ public partial class ManagedDebugger
         OnProcessStarted?.Invoke(processId, launchInfo.Program);
         SendAllBreakpointEvents();
         return;
+
+        // A program's output as it comes, a prompt with no line end included.
+        Task Forward(Stream stream, bool isError) => Task.Run(async () =>
+        {
+            try
+            {
+                using StreamReader reader = new(stream, Encoding.UTF8);
+                char[] buffer = new char[4096];
+                int read;
+                while ((read = await reader.ReadAsync(buffer)) > 0)
+                {
+                    InvokeOnOutputWithTryCatch(new string(buffer, 0, read), isError);
+                }
+            }
+            catch (Exception error) when (error is IOException or ObjectDisposedException)
+            {
+            }
+        });
 
         // The DataReceived callbacks run on background threads - a throwing subscriber (e.g. a disposed protocol layer) must not crash the adapter
         void InvokeOnOutputWithTryCatch(string output, bool isError)
@@ -874,7 +932,7 @@ public partial class ManagedDebugger
     public void Terminate()
     {
         _logger?.Invoke("Terminate");
-        if (_process is not null)
+        if (_process is not null && !_exited.IsSet)
         {
             try
             {
@@ -888,6 +946,11 @@ public partial class ManagedDebugger
                     }
                 }
                 _process.Terminate(0);
+                // The process goes on the runtime's thread; letting go of it before it has would race that.
+                if (!_exited.Wait(TimeSpan.FromSeconds(5)))
+                {
+                    _logger?.Invoke("The process had not exited 5 s after Terminate");
+                }
             }
             catch (Exception ex)
             {
@@ -910,7 +973,7 @@ public partial class ManagedDebugger
         }
         else
         {
-            if (_process is not null && _isAttached && _process?.TryIsRunning(out bool isRunning) is Cor.S_OK && isRunning)
+            if (_process is not null && _isAttached && !_exited.IsSet && _process?.TryIsRunning(out bool isRunning) is Cor.S_OK && isRunning)
             {
                 int hResult = _process.TryStop(0);
                 if (hResult is not (Cor.S_OK or Cor.CORDBG_E_PROCESS_TERMINATED))
@@ -1015,6 +1078,23 @@ public partial class ManagedDebugger
     /// <paramref name="close"/>; nothing for a program the debugger attached to.</summary>
     public void WriteInput(string text, bool close)
     {
+        if (_launch is { } launch && !_exited.IsSet)
+        {
+            try
+            {
+                launch.Input.Write(Encoding.UTF8.GetBytes(text));
+                launch.Input.Flush();
+                if (close)
+                {
+                    launch.Input.Close();
+                }
+            }
+            catch (Exception error) when (error is IOException or ObjectDisposedException)
+            {
+                _logger?.Invoke($"The program's input is closed: {error.Message}");
+            }
+            return;
+        }
         if (_debuggeeProcess is not { HasExited: false } process)
         {
             return;

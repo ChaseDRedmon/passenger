@@ -380,9 +380,11 @@ public partial class MainWindow : Window
         return built.Task;
     }
 
-    /// <summary>Builds and launches the chosen configuration under the debugger, as Debug does; null once it
-    /// runs, or what stopped it (a failed build, no configuration, the adapter's refusal).</summary>
-    public async Task<string?> DebugAsync()
+    /// <summary>Builds, then launches the chosen configuration under the debugger, as Rider's Debug does,
+    /// with these arguments in place of its own if given; the Debug window opens on its Console until the
+    /// program stops somewhere. Null once it runs, or what stopped it (a failed build, no configuration,
+    /// the adapter's refusal).</summary>
+    public async Task<string?> DebugAsync(string? arguments = null)
     {
         if (configuration is not { } chosen)
         {
@@ -392,9 +394,10 @@ public partial class MainWindow : Window
         {
             return "The build failed; Problems lists why";
         }
+        BackgroundWork.Begin();
         try
         {
-            DebugTarget target = await DebugTarget.ResolveAsync(chosen.Project);
+            DebugTarget target = await DebugTarget.ResolveAsync(chosen, arguments);
             ShowBottom("Debug");
             Bottom.Debug.ShowTab(console: true);
             await debug.StartAsync(target, chosen.Name);
@@ -403,6 +406,10 @@ public partial class MainWindow : Window
         catch (Exception error) when (error is InvalidOperationException or IOException)
         {
             return error.Message;
+        }
+        finally
+        {
+            BackgroundWork.End();
         }
     }
 
@@ -457,8 +464,9 @@ public partial class MainWindow : Window
         builder.Start(Lsp.Dotnet.Host(), BuildOutput.Arguments(target), folder);
     }
 
-    /// <summary>Runs the chosen configuration with <c>dotnet run</c>, its output in the Run window.</summary>
-    public void RunSelected()
+    /// <summary>Runs the chosen configuration with <c>dotnet run</c>, its output in the Run window, with these
+    /// arguments in place of its own if given.</summary>
+    public void RunSelected(string? arguments = null)
     {
         if (configuration is not { } chosen || runner.IsRunning)
         {
@@ -471,46 +479,21 @@ public partial class MainWindow : Window
         StopButton.IsVisible = true;
         ShowBottom("Run");
         StatusText.Text = $"Running {chosen.Name}";
-        runner.Start(Lsp.Dotnet.Host(), ["run", "--project", chosen.Project.Path], chosen.Project.Folder);
+        runner.Start(Lsp.Dotnet.Host(), chosen.RunArguments(arguments), chosen.Project.Folder);
     }
 
-    /// <summary>Builds, then launches the chosen configuration under the debugger, as Rider's Debug
-    /// does; the Debug window opens on its Console until the program stops somewhere.</summary>
+    /// <summary>Debug, from its key or the toolbar: what stopped it, if anything, goes to the status bar.</summary>
     public void DebugSelected()
     {
-        if (configuration is not { } chosen)
-        {
-            StatusText.Text = "Nothing to debug: no executable project";
-            return;
-        }
-        BuildSolution(succeeded =>
-        {
-            if (!succeeded)
-            {
-                return;
-            }
-            BackgroundWork.Begin();
-            _ = Launch();
+        _ = Debug();
 
-            async Task Launch()
+        async Task Debug()
+        {
+            if (await DebugAsync() is { } problem)
             {
-                try
-                {
-                    DebugTarget target = await DebugTarget.ResolveAsync(chosen.Project);
-                    ShowBottom("Debug");
-                    Bottom.Debug.ShowTab(console: true);
-                    await debug.StartAsync(target, chosen.Name);
-                }
-                catch (Exception error) when (error is InvalidOperationException or IOException)
-                {
-                    StatusText.Text = error.Message;
-                }
-                finally
-                {
-                    BackgroundWork.End();
-                }
+                StatusText.Text = problem;
             }
-        });
+        }
     }
 
     /// <summary>Shows where the debugger stopped: the file and line, and the Debug window's frames.</summary>

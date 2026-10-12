@@ -46,8 +46,11 @@ folders, projects with their frameworks, dependencies, files) beside the File Sy
 its output in the Build window and its errors and warnings in Problems; run configurations for executable projects,
 Run (Ctrl+F5) with its output in the Run window, Stop and Rerun; the bottom tool windows and their stripe buttons.
 
+Launch profiles (`Properties/launchSettings.json`) are run configurations named "Project: profile", as Rider names
+them, with their arguments, environment and working directory for Run and Debug alike.
+
 Still to do: `Passenger.Host` with MSBuild evaluation (conditions, imports, globs) for the tree; build of one project;
-stderr in its own colour; launch profiles; the terminal. M2's measurement says the cached project model is needed;
+stderr in its own colour; editing run configurations; the terminal. M2's measurement says the cached project model is needed;
 it starts here once the editor features settle.
 
 **Done when:** a multi-project solution builds and runs from the toolbar.
@@ -74,7 +77,9 @@ the pointer rests on while paused.
 with their exception, inline values at line ends, a terminal for the program's input, and the macOS signing.
 Upstream SharpDbg's open issues that reach Passenger's users are listed in `docs/architecture.md`.
 
-**Done when:** Passenger debugs itself.
+**Done when:** Passenger debugs itself. It does, from the MCP server: Passenger built and launched under Passenger's
+debugger, stopped in its own `Main` with its parsed options, evaluated and run to its end (October 12, 2026), which
+found the two launch bugs `architecture.md` records. Still to see: the same from the window, on a window of its own.
 
 ## Alongside: agents (built)
 

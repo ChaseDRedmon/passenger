@@ -79,7 +79,7 @@ public sealed class DebugController
         Message?.Invoke(this, $"Debugging {name}");
         try
         {
-            DebugSession session = await DebugSession.LaunchAsync(target.Program, target.WorkingDirectory, [], Breakpoints, line => view.Console.Document.Append($"{line}\n"));
+            DebugSession session = await DebugSession.LaunchAsync(target, Breakpoints, line => view.Console.Document.Append($"{line}\n"));
             Session = session;
             view.Tree.Load = reference => session.VariablesAsync(reference);
             session.Output += (_, output) => view.Console.Document.Append(output.Output);
@@ -249,7 +249,9 @@ public sealed class DebugController
                 view.ShowFrames([], null, [], null);
                 view.Tree.Show([]);
                 view.SetState(DebugState.Ended);
-                Message?.Invoke(this, $"Debugging {name} ended{(session.ExitCode is int code ? $" with exit code {code}" : "")}");
+                Message?.Invoke(this, session.Failure is { } failure
+                    ? $"Debugging {name} ended: {failure}"
+                    : $"Debugging {name} ended{(session.ExitCode is int code ? $" with exit code {code}" : "")}");
                 break;
         }
         StateChanged?.Invoke(this, EventArgs.Empty);

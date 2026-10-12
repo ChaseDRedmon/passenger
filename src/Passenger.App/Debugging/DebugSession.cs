@@ -33,7 +33,13 @@ public sealed class DebugSession
         {
             throw new FileNotFoundException("The debug adapter is not beside the app", path);
         }
-        adapter = Process.Start(new ProcessStartInfo(Lsp.Dotnet.Host(), [path, "--interpreter=vscode"])
+        // PASSENGER_ENGINE_LOG=FILE keeps the engine's own log of every session, for a stop or an end that goes wrong.
+        List<string> arguments = [path, "--interpreter=vscode"];
+        if (Environment.GetEnvironmentVariable("PASSENGER_ENGINE_LOG") is { Length: > 0 } engineLog)
+        {
+            arguments.Add($"--engineLogging={engineLog}");
+        }
+        adapter = Process.Start(new ProcessStartInfo(Lsp.Dotnet.Host(), arguments)
         {
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
@@ -50,7 +56,25 @@ public sealed class DebugSession
         };
         adapter.BeginErrorReadLine();
         adapter.EnableRaisingEvents = true;
-        adapter.Exited += (_, _) => Dispatcher.UIThread.Post(() => End(null));
+        adapter.Exited += (_, _) => Dispatcher.UIThread.Post(() =>
+        {
+            // The adapter goes with exit code 0 once disconnected; anything else while the session lives is a crash.
+            if (State != DebugState.Ended && adapter.ExitCode != 0)
+            {
+                if (ExitCode is null)
+                {
+                    Failure = $"the debugger itself stopped (exit code {adapter.ExitCode})";
+                    log($"Passenger's debugger stopped unexpectedly with exit code {adapter.ExitCode}");
+                }
+                else
+                {
+                    // The runtime's debugging library can crash tearing a session down once the program has gone
+                    // (a race in its transport); the program's end was already told, so nothing was lost.
+                    log($"Passenger's debugger stopped with exit code {adapter.ExitCode} after the program ended");
+                }
+            }
+            End(null);
+        });
         connection = new DapConnection(adapter.StandardOutput.BaseStream, adapter.StandardInput.BaseStream, log);
         connection.EventReceived += (name, body) =>
         {
@@ -75,14 +99,17 @@ public sealed class DebugSession
 
     public int? ExitCode { get; private set; }
 
+    /// <summary>Why the session ended other than by the program ending or being stopped: the adapter crashed.</summary>
+    public string? Failure { get; private set; }
+
     public string Program { get; private set; } = string.Empty;
 
     /// <summary>Starts the adapter and launches a program under it (an apphost or a .dll run under
     /// dotnet), with the breakpoints the store has, stopping on exceptions the user's code leaves
     /// unhandled, as Rider does by default.</summary>
-    public static async Task<DebugSession> LaunchAsync(string program, string? cwd, IReadOnlyList<string> args, BreakpointStore breakpoints, Action<string> log)
+    public static async Task<DebugSession> LaunchAsync(DebugTarget target, BreakpointStore breakpoints, Action<string> log)
     {
-        DebugSession session = new(breakpoints, log) { Program = program };
+        DebugSession session = new(breakpoints, log) { Program = target.Program };
         session.connection.Start();
         try
         {
@@ -98,9 +125,10 @@ public sealed class DebugSession
             });
             await session.connection.RequestAsync("launch", new LaunchArguments
             {
-                Program = program,
-                Args = args,
-                Cwd = cwd,
+                Program = target.Program,
+                Args = target.Arguments,
+                Cwd = target.WorkingDirectory,
+                Env = target.Environment,
                 Console = "internalConsole",
                 JustMyCode = true,
                 StopAtEntry = false,

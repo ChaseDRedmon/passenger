@@ -91,6 +91,27 @@ public sealed class DebuggerTests : IDisposable
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void A_launch_profile_debugs_with_its_arguments_environment_and_the_projects_folder()
+    {
+        Write("Program.cs", "string greeting = Environment.GetEnvironmentVariable(\"GREETING\") ?? \"none\";\nstring here = Environment.CurrentDirectory;\nConsole.WriteLine($\"{greeting} {args.Length} {here}\");\n");
+        Write("Properties/launchSettings.json",
+            "{ \"profiles\": { \"Greet\": { \"commandName\": \"Project\", \"commandLineArgs\": \"first \\\"second word\\\"\", \"environmentVariables\": { \"GREETING\": \"Hi\" } } } }");
+        MainWindow window = Open();
+        Assert.Equal("Sum: Greet", window.Configuration?.Name);
+        window.EditorArea.CodeEditor.GoTo(new TextPosition(2, 0));
+        Ui.Run(window, AppActions.ToggleBreakpoint);
+
+        Ui.Run(window, AppActions.Debug);
+        Ui.WaitFor(() => Value(window, "here") is not null, "the stop with the program's locals");
+        Assert.Equal("\"Hi\"", Value(window, "greeting"));
+        Assert.Equal($"\"{window.Folder}\"", Value(window, "here"));
+        Assert.Equal("string[2]", Value(window, "args"));
+        Ui.Run(window, AppActions.Stop);
+        Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
+        window.Close();
+    }
+
     /// <summary>A top-level row of the Variables view, by name.</summary>
     private static string? Value(MainWindow window, string name) =>
         window.BottomPanel.Debug.Tree.Rows.FirstOrDefault(r => r.Depth == 0 && r.Name == name)?.Value;
@@ -108,6 +129,7 @@ public sealed class DebuggerTests : IDisposable
     private string Write(string relative, string text)
     {
         string path = Path.Combine(Passenger.App.Workspace.PathNames.Canonical(folder), relative);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, text);
         return path;
     }

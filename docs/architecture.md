@@ -170,6 +170,26 @@ Passenger:
   Left for Edit and Continue, which needs it: Roslyn's method context hard-codes method version 1.
 - Planned anyway: Edit and Continue (#10, M8's hot reload), synthetic variables (#26), remote debugging (#14).
 
+Found by Passenger debugging itself (October 12, 2026), and fixed:
+
+- **A program is launched as netcoredbg launches one.** SharpDbg held a launched program at its start with
+  `DOTNET_DefaultDiagnosticPortSuspend=1`, which every .NET program it starts inherits: Passenger's own Roslyn server,
+  a `dotnet build`, any worker was held at its start too, and outlived the program, orphaned and suspended. On macOS
+  and Linux the adapter now starts it with dbgshim's `CreateProcessForLaunch`, suspended before its first instruction
+  with no variable to hold it, registers for its runtime's start, and lets it go (`SuspendedLaunch`). dbgshim gives
+  the program the adapter's descriptors 0, 1 and 2, so the adapter moves the protocol onto descriptors of its own at
+  startup and points 0, 1 and 2 at the program's pipes for the moment of the fork; its environment block is narrow
+  characters, whatever the command line is. A program the debugger cannot take hold of is killed, never left held.
+  Windows still launches through the diagnostic port, until it has the same start of its own.
+- **mscordbi can crash tearing a session down** once the program has exited: `CordbProcess::Neuter` shuts the
+  transport down and sends its session-close message through a channel the transport's worker, finding the pipe
+  closed, has just set to null without the lock (`DbgTransportSession::Shutdown` and `SendMessage`, .NET 11 RC1). It
+  takes the adapter with it, and with it the runtime's word that the program ended. So the adapter tells the exit itself
+  as soon as `waitpid` sees it, after the program's last output, and the IDE takes an adapter that dies after that as a
+  note in the Console rather than a failed session; an adapter that dies before it is reported as the debugger
+  stopping. Nothing that touches the process runs after its exit either (breakpoints, handles, detach), and ICorDebug
+  is shut down in its documented order.
+
 Still ahead, in the engine or beside it: smart step into, set value, data breakpoints, tracepoints, hot reload and
 Edit and Continue (Roslyn's EnC, applied through ICorDebug or the runtime's metadata updates), and on macOS the signing
 with Apple's debugger entitlement that attaching to a process we did not start needs. Samsung's netcoredbg (MIT, DAP)

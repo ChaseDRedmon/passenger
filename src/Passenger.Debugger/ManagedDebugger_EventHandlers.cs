@@ -24,8 +24,11 @@ public partial class ManagedDebugger
     private void HandleProcessExited(object? sender, ExitProcessCorDebugManagedCallbackEventArgs exitProcessCorDebugManagedCallbackEventArgs)
     {
         _logger?.Invoke($"Process exited");
-        int? exitCode = _debuggeeProcess?.HasExited is true ? _debuggeeProcess.ExitCode : null;
-        OnExited?.Invoke(exitCode);
+        // The program's own end follows the runtime's word of it by a moment.
+        int? exitCode = _launchExit is { } ended
+            ? (ended.Wait(TimeSpan.FromSeconds(2)) ? ended.Result : null)
+            : _debuggeeProcess?.HasExited is true ? _debuggeeProcess.ExitCode : null;
+        ReportExit(exitCode);
         OnTerminated?.Invoke();
     }
 

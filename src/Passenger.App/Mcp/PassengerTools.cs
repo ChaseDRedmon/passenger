@@ -21,6 +21,8 @@ public sealed class PassengerTools(MainWindow window)
 {
     private static readonly TimeSpan ServerLimit = TimeSpan.FromSeconds(120);
 
+    private const string Arguments = "The program's command line, in place of the configuration's (a launch profile's commandLineArgs)";
+
     // Workspace and editor
 
     [McpServerTool(Name = "open", Title = "Open a folder, solution or file"), Description(
@@ -238,10 +240,13 @@ public sealed class PassengerTools(MainWindow window)
     [McpServerTool(Name = "run", Title = "Run a configuration"), Description(
         "Runs a run configuration (the chosen one if none is named) as Run does, and waits up to waitSeconds for it to end. " +
         "Returns its output so far and its exit code once it has one.")]
-    public Task<RunResult> Run(string? configuration = null, int waitSeconds = 30) => OnUi(async () =>
+    public Task<RunResult> Run(
+        string? configuration = null,
+        [Description(Arguments)] string? arguments = null,
+        int waitSeconds = 30) => OnUi(async () =>
     {
         Choose(configuration);
-        window.RunSelected();
+        window.RunSelected(arguments);
         await Until(() => !window.Runner.IsRunning, TimeSpan.FromSeconds(waitSeconds));
         return new RunResult(window.Runner.IsRunning, window.Status, Tail(window.BottomPanel.Run.Document, 200));
     });
@@ -289,10 +294,13 @@ public sealed class PassengerTools(MainWindow window)
     [McpServerTool(Name = "debug_start", Title = "Debug a configuration"), Description(
         "Builds and launches a run configuration (the chosen one if none is named) under the debugger, as Debug (Alt+F5) does, then " +
         "waits up to waitSeconds for it to stop at a breakpoint or exception, or end. Returns where it is.")]
-    public Task<DebugSnapshot> DebugStart(string? configuration = null, int waitSeconds = 60) => OnUi(async () =>
+    public Task<DebugSnapshot> DebugStart(
+        string? configuration = null,
+        [Description(Arguments)] string? arguments = null,
+        int waitSeconds = 60) => OnUi(async () =>
     {
         Choose(configuration);
-        if (await window.DebugAsync() is { } problem)
+        if (await window.DebugAsync(arguments) is { } problem)
         {
             throw new InvalidOperationException(problem);
         }
