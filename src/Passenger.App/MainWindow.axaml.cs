@@ -66,6 +66,7 @@ public partial class MainWindow : Window
         AddBookmarks();
         AddHierarchy();
         AddFileOperations();
+        AddAutosave();
         AddErrors();
         Explorer.FileOpened += (_, path) => OpenFile(path);
         Structure.Follow(() => Editors.Active is { } shown
@@ -84,7 +85,7 @@ public partial class MainWindow : Window
         Editors.OpenRequested += (_, _) => _ = PickFolder();
         Editors.ActiveChanged += (_, _) => UpdateStatus();
         Editors.CaretMoved += (_, _) => UpdateCaret();
-        Editors.AskToSave = AskToSave;
+        Editors.SaveFailed += (_, problem) => StatusText.Text = problem;
         Editors.Opened += (_, document) =>
         {
             csharp?.Attach(document);
@@ -280,7 +281,19 @@ public partial class MainWindow : Window
 
     public void OpenFolder(string path)
     {
-        folder = PathNames.Canonical(path);
+        string opening = PathNames.Canonical(path);
+        if (folder is not null && folder != opening)
+        {
+            // Another folder's files are its own: this one's are kept with it and close, saved, as Rider's do.
+            KeepWorkspace();
+            if (!Editors.CloseAll())
+            {
+                return;
+            }
+            recent.Clear();
+        }
+        Autosave();
+        folder = opening;
         string name = Path.GetFileName(folder);
         Solution = SolutionModel.Find(folder) is { } solutionPath ? SolutionModel.Load(solutionPath) : null;
         Explorer.Load(folder, Solution);
@@ -299,6 +312,7 @@ public partial class MainWindow : Window
             csharp.Start(folder);
         }
         Editors.ShowFolderHint(folder);
+        RestoreWorkspace();
         // Rider names the window's project widget after the solution, the folder only without one.
         string shown = Solution?.Name ?? name;
         ProjectName.Text = shown;
@@ -565,7 +579,7 @@ public partial class MainWindow : Window
             case AppActions.CloseTab:
                 if (Editors.Active is { } active)
                 {
-                    _ = Editors.Close(active);
+                    Editors.Close(active);
                 }
                 break;
             case AppActions.NextTab:
@@ -846,7 +860,8 @@ public partial class MainWindow : Window
         Dock.Show("explorer");
     }
 
-    /// <summary>The window a person uses keeps its layout: it opens on the one kept, and keeps each change.</summary>
+    /// <summary>The window a person uses keeps its layout: it opens on the one kept, and keeps each change; and each
+    /// folder's editors and recent files, which come back when the folder opens again.</summary>
     public void KeepLayout()
     {
         if (Docking.DockLayout.Load() is { } kept)
@@ -855,6 +870,41 @@ public partial class MainWindow : Window
         }
         Dock.LayoutChanged += (_, _) => Dock.Capture().Save();
         Closing += (_, _) => Dock.Capture().Save();
+        keepsWorkspace = true;
+        Closing += (_, _) => KeepWorkspace();
+        RestoreWorkspace();
+    }
+
+    private bool keepsWorkspace;
+
+    private void KeepWorkspace()
+    {
+        if (keepsWorkspace && folder is not null)
+        {
+            new WorkspaceState { Editors = Editors.Capture(), RecentFiles = [.. recent] }.Save(folder);
+        }
+    }
+
+    private void RestoreWorkspace()
+    {
+        if (!keepsWorkspace || folder is null || WorkspaceState.Load(folder) is not { } kept)
+        {
+            return;
+        }
+        if (kept.Editors is { } editors)
+        {
+            Editors.Restore(editors);
+        }
+        foreach (string file in kept.RecentFiles.Where(File.Exists).Reverse())
+        {
+            recent.Remove(file);
+            recent.Insert(0, file);
+        }
+        if (Editors.Active is { } shown)
+        {
+            recent.Remove(shown.Path);
+            recent.Insert(0, shown.Path);
+        }
     }
 
     /// <summary>The Structure tool window.</summary>
@@ -1407,12 +1457,6 @@ public partial class MainWindow : Window
         {
             OpenFolder(path);
         }
-    }
-
-    private async Task<SaveChoice> AskToSave(OpenDocument document)
-    {
-        SaveDialog dialog = new(document.Name);
-        return await dialog.ShowDialog<SaveChoice>(this);
     }
 
     private void UpdateStatus()

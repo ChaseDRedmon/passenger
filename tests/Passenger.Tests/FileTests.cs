@@ -54,4 +54,83 @@ public sealed class FileTests : IDisposable
         Assert.Null(window.EditorArea.Active);
         window.Close();
     }
+
+    [AvaloniaFact]
+    public void Closing_a_tab_or_the_window_saves_every_unsaved_edit_without_asking()
+    {
+        File.WriteAllText(Path.Combine(folder, "One.cs"), "class One { }\n");
+        File.WriteAllText(Path.Combine(folder, "Two.cs"), "class Two { }\n");
+        File.WriteAllText(Path.Combine(folder, "Three.cs"), "class Three { }\n");
+        MainWindow window = Open();
+        Edit(window, "One.cs", "public ");
+        Edit(window, "Two.cs", "internal ");
+        Edit(window, "Three.cs", "sealed ");
+
+        window.Perform(AppActions.CloseTab);
+        Ui.Settle();
+        Assert.False(window.IsPopupOpen, "Closing a changed tab asked a question Rider never asks");
+        Assert.Equal("sealed class Three { }\n", File.ReadAllText(Path.Combine(folder, "Three.cs")));
+
+        window.Close();
+        Assert.Equal("public class One { }\n", File.ReadAllText(Path.Combine(folder, "One.cs")));
+        Assert.Equal("internal class Two { }\n", File.ReadAllText(Path.Combine(folder, "Two.cs")));
+    }
+
+    [AvaloniaFact]
+    public void Edits_are_saved_when_the_focus_goes_to_the_terminal_unless_settings_say_not_and_before_another_folder_opens()
+    {
+        string path = Path.Combine(folder, "One.cs");
+        File.WriteAllText(path, "class One { }\n");
+        MainWindow window = Open();
+        Edit(window, "One.cs", "public ");
+        Ui.Run(window, AppActions.ShowTerminal);
+        Ui.WaitFor(() => window.TerminalPanel.View.IsFocused, "the terminal to take the focus");
+        Assert.Equal("public class One { }\n", File.ReadAllText(path));
+
+        window.ApplySettings(window.Settings with { SaveOnDeactivation = false });
+        Ui.Run(window, AppActions.ShowTerminal);
+        Ui.Settle();
+        Edit(window, "One.cs", "sealed ");
+        Ui.Run(window, AppActions.ShowTerminal);
+        Ui.WaitFor(() => window.TerminalPanel.View.IsFocused, "the terminal to take the focus");
+        Assert.True(window.EditorArea.Active!.IsModified, "The terminal's focus saved although Settings turned that off");
+        Assert.Equal("public class One { }\n", File.ReadAllText(path));
+
+        window.OpenFolder(Directory.CreateTempSubdirectory("passenger-other-").FullName);
+        Assert.Equal("sealed public class One { }\n", File.ReadAllText(path));
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void An_edit_left_alone_is_saved_once_the_IDE_has_been_idle_as_long_as_settings_say()
+    {
+        string path = Path.Combine(folder, "One.cs");
+        File.WriteAllText(path, "class One { }\n");
+        MainWindow window = Open();
+        window.ApplySettings(window.Settings with { SaveWhenIdle = true, IdleSeconds = 1 });
+        Edit(window, "One.cs", "static ");
+        Assert.True(window.EditorArea.Active!.IsModified);
+        Ui.WaitFor(() => !window.EditorArea.Active!.IsModified, "the idle save", TimeSpan.FromSeconds(10));
+        Assert.Equal("static class One { }\n", File.ReadAllText(path));
+        window.Close();
+    }
+
+    private MainWindow Open()
+    {
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(folder);
+        Ui.Settle();
+        return window;
+    }
+
+    /// <summary>Types text at the start of a file, leaving it unsaved.</summary>
+    private static void Edit(MainWindow window, string file, string text)
+    {
+        window.OpenFile(file);
+        Ui.Settle();
+        window.EditorArea.CodeEditor.Selections = Text.SelectionSet.Single(0);
+        window.KeyTextInput(text);
+        Ui.Settle();
+    }
 }

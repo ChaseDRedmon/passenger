@@ -10,14 +10,6 @@ using Passenger.Text;
 
 namespace Passenger.App.Editors;
 
-/// <summary>Whether to save a modified file being closed.</summary>
-public enum SaveChoice
-{
-    Save,
-    Discard,
-    Cancel,
-}
-
 /// <summary>The editors, as Rider's: one group of tabs, or several split right and down, one of them active (the one
 /// the person works in, whose editor <see cref="CodeEditor"/> is). A tab dragged onto a group's edge splits it there,
 /// onto its middle or its tab strip moves into it; a group whose last tab closes goes, and its neighbour takes its
@@ -67,8 +59,8 @@ public sealed class EditorArea : UserControl
     public event EventHandler? CaretMoved;
     public event EventHandler? OpenRequested;
 
-    /// <summary>Asked before a modified file closes; null closes without asking.</summary>
-    public Func<OpenDocument, Task<SaveChoice>>? AskToSave { get; set; }
+    /// <summary>A file that could not be written, and why: it stays open with its edits.</summary>
+    public event EventHandler<string>? SaveFailed;
 
     /// <summary>The active group's editor: the one keys and the IDE's actions go to.</summary>
     public CodeEditor CodeEditor => activeGroup.Editor;
@@ -147,19 +139,13 @@ public sealed class EditorArea : UserControl
         ActiveChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    /// <summary>Closes a file everywhere it is open, asking first about unsaved changes.</summary>
-    public async Task<bool> Close(OpenDocument document)
+    /// <summary>Closes a file everywhere it is open, saved first as Rider never asks; false, the file left open, when
+    /// it could not be written.</summary>
+    public bool Close(OpenDocument document)
     {
-        if (document.IsModified && AskToSave is { } ask)
+        if (document.IsModified && !TrySave(document))
         {
-            switch (await ask(document))
-            {
-                case SaveChoice.Cancel:
-                    return false;
-                case SaveChoice.Save:
-                    document.Save();
-                    break;
-            }
+            return false;
         }
         foreach (EditorGroup group in root.Groups.Where(g => g.Has(document)).ToList())
         {
@@ -174,7 +160,7 @@ public sealed class EditorArea : UserControl
     }
 
     /// <summary>Closes a tab of one group: the file stays open if another group has it.</summary>
-    public async Task<bool> CloseTab(EditorGroup group, OpenDocument document)
+    public bool CloseTab(EditorGroup group, OpenDocument document)
     {
         if (root.Groups.Count(g => g.Has(document)) > 1)
         {
@@ -183,25 +169,25 @@ public sealed class EditorArea : UserControl
             ActiveChanged?.Invoke(this, EventArgs.Empty);
             return true;
         }
-        return await Close(document);
+        return Close(document);
     }
 
-    public async Task CloseOthers(EditorGroup group, OpenDocument keep)
+    public void CloseOthers(EditorGroup group, OpenDocument keep)
     {
         foreach (OpenDocument other in group.Tabs.Select(t => t.Document).Where(d => d != keep).ToList())
         {
-            if (!await CloseTab(group, other))
+            if (!CloseTab(group, other))
             {
                 return;
             }
         }
     }
 
-    public async Task CloseAllTabs(EditorGroup group)
+    public void CloseAllTabs(EditorGroup group)
     {
         foreach (OpenDocument each in group.Tabs.Select(t => t.Document).ToList())
         {
-            if (!await CloseTab(group, each))
+            if (!CloseTab(group, each))
             {
                 return;
             }
@@ -287,14 +273,162 @@ public sealed class EditorArea : UserControl
         }
     }
 
-    public void SaveActive() => Active?.Save();
-
-    public void SaveAll()
+    public void SaveActive()
     {
-        foreach (OpenDocument document in documents.Where(d => d.IsModified))
+        if (Active is { } active)
+        {
+            TrySave(active);
+        }
+    }
+
+    /// <summary>Saves every changed file; whether all of them were written.</summary>
+    public bool SaveAll()
+    {
+        bool all = true;
+        foreach (OpenDocument document in documents.Where(d => d.IsModified).ToList())
+        {
+            all &= TrySave(document);
+        }
+        return all;
+    }
+
+    private bool TrySave(OpenDocument document)
+    {
+        try
         {
             document.Save();
+            return true;
         }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            SaveFailed?.Invoke(this, $"{document.Name} could not be saved: {error.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>The splits, each group's tabs with their carets and the one shown, for the folder to open on next time.</summary>
+    public EditorLayout Capture()
+    {
+        activeGroup.Keep();
+        return Capture(root);
+    }
+
+    private EditorLayout Capture(Node node)
+    {
+        if (node is SplitNode split)
+        {
+            return new EditorLayout
+            {
+                Split = split.Orientation == Orientation.Horizontal ? "right" : "down",
+                Ratio = split.Ratio,
+                First = Capture(split.First),
+                Second = Capture(split.Second),
+            };
+        }
+        EditorGroup group = ((Leaf)node).Group;
+        return new EditorLayout
+        {
+            Tabs = [.. group.Tabs.Select(t =>
+            {
+                TextPosition caret = t.Document.Text.Snapshot.GetPosition(Math.Min(group.SelectionsOf(t.Document).Primary.Caret, t.Document.Text.Snapshot.Length));
+                return new KeptTab(t.Document.Path, caret.Line, caret.Column);
+            })],
+            Shown = group.Active is { } shown ? group.Tabs.Select(t => t.Document).ToList().IndexOf(shown) : 0,
+            Current = group == activeGroup,
+        };
+    }
+
+    /// <summary>Opens what a layout kept, into an area with nothing open: its splits, each group's tabs with their
+    /// carets and the one shown. A file gone from disk is left out, and a group left with none goes.</summary>
+    public void Restore(EditorLayout layout)
+    {
+        if (documents.Count > 0 || Restore(layout, out EditorGroup? current) is not { } restored)
+        {
+            return;
+        }
+        activeGroup.IsCurrent = false;
+        root = restored;
+        activeGroup = current ?? root.Groups.First();
+        activeGroup.IsCurrent = true;
+        Rebuild();
+        activeGroup.Editor.Focus();
+        ActiveChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private Node? Restore(EditorLayout kept, out EditorGroup? current)
+    {
+        current = null;
+        if (kept.Split is { } direction && kept.First is { } firstKept && kept.Second is { } secondKept)
+        {
+            Node? first = Restore(firstKept, out EditorGroup? inFirst);
+            Node? second = Restore(secondKept, out EditorGroup? inSecond);
+            current = inFirst ?? inSecond;
+            return first is null ? second : second is null ? first
+                : new SplitNode(direction == "down" ? Orientation.Vertical : Orientation.Horizontal, first, second) { Ratio = Math.Clamp(kept.Ratio, 0.05, 0.95) };
+        }
+        EditorGroup group = NewGroup();
+        OpenDocument? shown = null;
+        TextPosition shownAt = default;
+        foreach ((KeptTab tab, int index) in (kept.Tabs ?? []).Select((t, i) => (t, i)))
+        {
+            if (Load(tab.Path) is not { } document)
+            {
+                continue;
+            }
+            group.Add(document, group.Tabs.Count);
+            TextPosition at = new(Math.Clamp(tab.Line, 0, document.Text.Snapshot.LineCount - 1), Math.Max(0, tab.Column));
+            group.Remember(document, SelectionSet.Single(document.Text.Snapshot.GetOffset(at)));
+            if (index == kept.Shown || shown is null)
+            {
+                (shown, shownAt) = (document, at);
+            }
+        }
+        if (shown is null)
+        {
+            return null;
+        }
+        group.Show(shown);
+        group.Editor.GoTo(shownAt);
+        current = kept.Current ? group : null;
+        return new Leaf(group);
+    }
+
+    /// <summary>A file's document, open already or read from disk now; null when it cannot be read as text.</summary>
+    private OpenDocument? Load(string path)
+    {
+        string full = Path.GetFullPath(path);
+        if (documents.FirstOrDefault(d => d.Path == full) is { } open)
+        {
+            return open;
+        }
+        try
+        {
+            if (FileText.Load(full) is not { } file)
+            {
+                return null;
+            }
+            OpenDocument document = new(full, file);
+            Opened?.Invoke(this, document);
+            documents.Add(document);
+            return document;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Closes every file, each saved first; false when one could not be, and stays open.</summary>
+    public bool CloseAll()
+    {
+        foreach (OpenDocument document in documents.ToList())
+        {
+            if (!Close(document))
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     /// <summary>The next tab of the active group (or previous, for a negative step), wrapping at the ends.</summary>
@@ -488,6 +622,19 @@ public sealed class EditorArea : UserControl
             : new Grid { RowDefinitions = new RowDefinitions("*,1,*") };
         Control first = Build(split.First);
         Control second = Build(split.Second);
+        // Drawn again (a group gone elsewhere), a split keeps the share it was dragged to.
+        double ratio = split.Ratio;
+        split.Built = grid;
+        if (across)
+        {
+            grid.ColumnDefinitions[0].Width = new GridLength(ratio, GridUnitType.Star);
+            grid.ColumnDefinitions[2].Width = new GridLength(1 - ratio, GridUnitType.Star);
+        }
+        else
+        {
+            grid.RowDefinitions[0].Height = new GridLength(ratio, GridUnitType.Star);
+            grid.RowDefinitions[2].Height = new GridLength(1 - ratio, GridUnitType.Star);
+        }
         Border line = new() { IsHitTestVisible = false };
         line.Bind(Border.BackgroundProperty, line.GetResourceObservable("Passenger.Divider"));
         GridSplitter splitter = new() { Classes = { across ? "hairline" : "hairlineRows" }, ResizeDirection = across ? GridResizeDirection.Columns : GridResizeDirection.Rows };
@@ -532,16 +679,38 @@ public sealed class EditorArea : UserControl
         public Orientation Orientation { get; } = orientation;
         public Node First { get; } = first;
         public Node Second { get; } = second;
+
+        /// <summary>The first part's share of the room: as dragged, once its grid is laid out.</summary>
+        public double Ratio
+        {
+            get
+            {
+                if (Built is not { } grid)
+                {
+                    return ratio;
+                }
+                (double a, double b) = Orientation == Orientation.Horizontal
+                    ? (grid.ColumnDefinitions[0].ActualWidth, grid.ColumnDefinitions[2].ActualWidth)
+                    : (grid.RowDefinitions[0].ActualHeight, grid.RowDefinitions[2].ActualHeight);
+                return a + b > 0 ? a / (a + b) : ratio;
+            }
+            init => ratio = value;
+        }
+
+        private readonly double ratio = 0.5;
+
+        /// <summary>The grid this split was last drawn as.</summary>
+        public Grid? Built { get; set; }
         public override IEnumerable<EditorGroup> Groups => First.Groups.Concat(Second.Groups);
 
         public override Node Replace(EditorGroup target, Func<Leaf, Node> with) =>
-            new SplitNode(Orientation, First.Replace(target, with), Second.Replace(target, with));
+            new SplitNode(Orientation, First.Replace(target, with), Second.Replace(target, with)) { Ratio = Ratio };
 
         public override Node? Without(EditorGroup target)
         {
             Node? first = First.Without(target);
             Node? second = Second.Without(target);
-            return first is null ? second : second is null ? first : new SplitNode(Orientation, first, second);
+            return first is null ? second : second is null ? first : new SplitNode(Orientation, first, second) { Ratio = Ratio };
         }
     }
 }

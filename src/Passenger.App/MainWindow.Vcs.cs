@@ -49,7 +49,7 @@ public partial class MainWindow
         commitView.OpenRequested += (_, path) => OpenFile(path);
         commitView.DiffRequested += (_, path) => _ = ShowDiffAsync(path);
         commitView.RollbackRequested += async (_, changes) => await RollbackAsync(changes);
-        vcs.BeforeCommit = Editors.SaveAll;
+        vcs.BeforeCommit = () => Editors.SaveAll();
         vcs.Message += (_, message) => StatusText.Text = message;
         vcs.Changed += (_, _) => OnVcsChanged();
         Editors.Opened += (_, document) => vcs.Attach(document);

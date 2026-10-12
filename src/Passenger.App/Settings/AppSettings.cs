@@ -32,6 +32,16 @@ public sealed record AppSettings
     /// and an edit that cannot be applied restarts it.</summary>
     public bool HotReload { get; init; }
 
+    /// <summary>Rider's autosave on frame deactivation: every changed file saved when the focus goes to another program
+    /// or to the terminal.</summary>
+    public bool SaveOnDeactivation { get; init; } = true;
+
+    /// <summary>Rider's "Save files if the IDE is idle": every changed file saved once no key or click has come for
+    /// <see cref="IdleSeconds"/>.</summary>
+    public bool SaveWhenIdle { get; init; }
+
+    public int IdleSeconds { get; init; } = 15;
+
     /// <summary>The person's shortcuts over the keymap's, by action, in keymap notation ("meta shift K"); an empty list
     /// unbinds the action.</summary>
     public Dictionary<string, string[]> Shortcuts { get; init; } = [];

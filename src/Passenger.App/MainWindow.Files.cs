@@ -141,11 +141,10 @@ public partial class MainWindow
         bool activeMoves = moving.Any(m => m.Document == Editors.Active);
         foreach ((OpenDocument document, _) in moving)
         {
-            if (document.IsModified)
+            if (!Editors.Close(document))
             {
-                document.Save();
+                return $"{document.Name} could not be saved before it moved";
             }
-            _ = Editors.Close(document);
         }
         try
         {
@@ -184,7 +183,7 @@ public partial class MainWindow
             .Where(d => d.Path == path || (isFolder && d.Path.StartsWith(path + Path.DirectorySeparatorChar, StringComparison.Ordinal))).ToList())
         {
             document.Text.MarkSaved();
-            await Editors.Close(document);
+            Editors.Close(document);
         }
         try
         {

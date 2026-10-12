@@ -210,6 +210,13 @@ public sealed class EditorGroup : DockPanel
         return index;
     }
 
+    /// <summary>Where a tab's carets are in this group: the editor's for the one shown, else as it was left.</summary>
+    public SelectionSet SelectionsOf(OpenDocument document) =>
+        active?.Document == document ? Editor.Selections : views.TryGetValue(document, out var view) ? view.Selections : document.Selections;
+
+    /// <summary>Puts a tab's carets where they were kept, for when it is shown.</summary>
+    public void Remember(OpenDocument document, SelectionSet selections) => views[document] = (selections, default);
+
     /// <summary>The carets and scroll of the file shown, kept for when its tab is shown again.</summary>
     public void Keep()
     {
@@ -287,7 +294,7 @@ public sealed class EditorGroup : DockPanel
         ToolTip.SetTip(close, "Close");
         close.Click += (_, e) =>
         {
-            _ = area.CloseTab(this, document);
+            area.CloseTab(this, document);
             e.Handled = true;
         };
         Border border = new()
@@ -325,7 +332,7 @@ public sealed class EditorGroup : DockPanel
             PointerPointProperties pressed = e.GetCurrentPoint(this).Properties;
             if (pressed.IsMiddleButtonPressed)
             {
-                _ = area.CloseTab(this, document);
+                area.CloseTab(this, document);
                 e.Handled = true;
             }
             else if (pressed.IsLeftButtonPressed)
@@ -362,9 +369,9 @@ public sealed class EditorGroup : DockPanel
             item.Click += (_, _) => run();
             return item;
         }
-        menu.Items.Add(Item("Close", () => _ = area.CloseTab(this, document), AppActions.CloseTab));
-        menu.Items.Add(Item("Close Other Tabs", () => _ = area.CloseOthers(this, document)));
-        menu.Items.Add(Item("Close All Tabs", () => _ = area.CloseAllTabs(this)));
+        menu.Items.Add(Item("Close", () => area.CloseTab(this, document), AppActions.CloseTab));
+        menu.Items.Add(Item("Close Other Tabs", () => area.CloseOthers(this, document)));
+        menu.Items.Add(Item("Close All Tabs", () => area.CloseAllTabs(this)));
         menu.Items.Add(new Separator());
         menu.Items.Add(Item("Split Right", () => area.Split(this, document, Orientation.Horizontal, move: false), AppActions.SplitRight));
         menu.Items.Add(Item("Split Down", () => area.Split(this, document, Orientation.Vertical, move: false), AppActions.SplitDown));

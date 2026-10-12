@@ -13,12 +13,13 @@ namespace Passenger.App.Settings;
 public sealed class SettingsDialog : Window
 {
     public const string Appearance = "Appearance";
+    public const string SystemPage = "System Settings";
     public const string EditorPage = "Editor";
     public const string TerminalPage = "Terminal";
     public const string RunPage = "Run";
     public const string KeymapPage = "Keymap";
 
-    private static readonly string[] Order = [Appearance, EditorPage, RunPage, TerminalPage, KeymapPage];
+    private static readonly string[] Order = [Appearance, SystemPage, EditorPage, RunPage, TerminalPage, KeymapPage];
 
     private readonly Action<AppSettings> apply;
     private readonly List<Option> options = [];
@@ -155,6 +156,19 @@ public sealed class SettingsDialog : Window
         ComboBox theme = new() { ItemsSource = new[] { "System", "Dark", "Light" }, SelectedIndex = Working.Theme switch { ThemeChoice.Dark => 1, ThemeChoice.Light => 2, _ => 0 }, Width = 160 };
         theme.SelectionChanged += (_, _) => Change(s => s with { Theme = theme.SelectedIndex switch { 1 => ThemeChoice.Dark, 2 => ThemeChoice.Light, _ => ThemeChoice.System } });
         Add(Appearance, "Theme", theme, "colour color dark light");
+
+        Add(SystemPage, "Save when leaving the IDE", Check(Working.SaveOnDeactivation, v => Change(s => s with { SaveOnDeactivation = v })),
+            "autosave files switching to a different application or the built-in terminal focus frame deactivation");
+        NumericUpDown seconds = Number(Working.IdleSeconds, 1, 3600, 1, v => Change(s => s with { IdleSeconds = (int)v }));
+        seconds.IsEnabled = Working.SaveWhenIdle;
+        CheckBox idle = Check(Working.SaveWhenIdle, v =>
+        {
+            Change(s => s with { SaveWhenIdle = v });
+            seconds.IsEnabled = v;
+        });
+        TextBlock unit = new() { Text = "seconds", VerticalAlignment = VerticalAlignment.Center };
+        Add(SystemPage, "Save when idle for", new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { idle, seconds, unit } },
+            "autosave files idle inactive seconds");
 
         Add(EditorPage, "Font size", Number(Working.EditorFontSize, 6, 48, 1, v => Change(s => s with { EditorFontSize = v })), "font size text");
         Add(EditorPage, "Line spacing", Number(Working.EditorLineSpacing, 0.8, 3, 0.1, v => Change(s => s with { EditorLineSpacing = v })), "font line height");

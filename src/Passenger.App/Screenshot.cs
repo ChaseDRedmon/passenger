@@ -29,7 +29,7 @@ public static class Screenshot
             .AfterSetup(builder => Program.ApplyTheme(builder.Instance!, launch.Theme))
             .SetupWithoutStarting();
 
-        MainWindow window = new() { Width = options.Size.Width, Height = options.Size.Height };
+        MainWindow window = new() { Width = options.Size.Width, Height = options.Size.Height, Autosaves = false };
         window.SetRenderScaling(options.Scale);
         window.Show();
         Settle();

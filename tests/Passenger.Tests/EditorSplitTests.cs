@@ -49,7 +49,7 @@ public sealed class EditorSplitTests : IDisposable
         Assert.Equal(0, right.Editor.CaretPosition.Line);
 
         // Closing it in one split keeps it open in the other, and the split it left goes.
-        _ = area.CloseTab(right, right.Active!);
+        area.CloseTab(right, right.Active!);
         Ui.Settle();
         Assert.Single(area.Groups);
         Assert.Single(area.Documents);
@@ -101,6 +101,60 @@ public sealed class EditorSplitTests : IDisposable
         Ui.Press(window, "ESCAPE");
         Assert.False(window.IsPopupOpen);
         window.Close();
+    }
+
+    [AvaloniaFact]
+    public void The_splits_their_tabs_and_carets_come_back_when_the_folder_opens_again_and_go_when_another_opens()
+    {
+        File.WriteAllText(Path.Combine(folder, "Three.cs"), "class Three\n{\n    int x;\n}\n");
+        string settings = Directory.CreateTempSubdirectory("passenger-settings-").FullName;
+        string? before = Environment.GetEnvironmentVariable("PASSENGER_SETTINGS");
+        Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", settings);
+        try
+        {
+            MainWindow first = new() { Width = 1200, Height = 800 };
+            first.Show();
+            first.KeepLayout();
+            first.OpenFolder(folder);
+            first.OpenFile(Path.Combine(folder, "One.cs"));
+            first.OpenFile(Path.Combine(folder, "Two.cs"));
+            Ui.Settle();
+            first.Perform(AppActions.SplitDown);
+            first.OpenFile(Path.Combine(folder, "Three.cs"));
+            first.EditorArea.CodeEditor.GoTo(new TextPosition(2, 8));
+            Ui.Settle();
+            first.Close();
+
+            MainWindow second = new() { Width = 1200, Height = 800 };
+            second.Show();
+            second.KeepLayout();
+            second.OpenFolder(folder);
+            Ui.Settle();
+            EditorArea area = second.EditorArea;
+            Assert.Equal(2, area.Groups.Count);
+            Assert.Equal(["One.cs", "Two.cs"], area.Groups[0].Tabs.Select(t => t.Document.Name));
+            Assert.Equal("Two.cs", area.Groups[0].Active!.Name);
+            Assert.Equal(["Two.cs", "Three.cs"], area.Groups[1].Tabs.Select(t => t.Document.Name));
+            Assert.Same(area.Groups[1], area.ActiveGroup);
+            Assert.Equal("Three.cs", area.Active!.Name);
+            Assert.Equal(new TextPosition(2, 8), area.CodeEditor.CaretPosition);
+            Assert.True(area.Groups[1].TranslatePoint(default, area)!.Value.Y > area.Groups[0].TranslatePoint(default, area)!.Value.Y,
+                "Split Down came back as a split beside, not below");
+
+            // Another folder has its own editors: this one's close, and come back with it.
+            string other = Directory.CreateTempSubdirectory("passenger-other-").FullName;
+            second.OpenFolder(other);
+            Assert.Empty(area.Documents);
+            second.OpenFolder(folder);
+            Assert.Equal(3, area.Documents.Count);
+            second.Close();
+            Directory.Delete(other, recursive: true);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", before);
+            Directory.Delete(settings, recursive: true);
+        }
     }
 
     private MainWindow Open(params string[] files)

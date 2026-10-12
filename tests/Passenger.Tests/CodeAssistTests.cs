@@ -453,10 +453,11 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
 
         public string PathOf(string name) => Path.Combine(folder, name);
 
-        /// <summary>A window on the project with a file open, once C# is ready.</summary>
+        /// <summary>A window on the project with a file open, once C# is ready. The tests share the project, so a
+        /// window never saves what its test typed.</summary>
         public MainWindow Open(string file)
         {
-            MainWindow window = new() { Width = 1200, Height = 800 };
+            MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false };
             window.Show();
             window.OpenFolder(folder);
             window.OpenFile(file);
