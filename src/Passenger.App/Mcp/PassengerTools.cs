@@ -149,15 +149,17 @@ public sealed partial class PassengerTools(MainWindow window)
     });
 
     [McpServerTool(Name = "code_actions", Title = "Fixes and refactorings", ReadOnly = true), Description(
-        "The fixes and refactorings the language server offers at a position (Alt+Enter), by title.")]
-    public Task<IReadOnlyList<string>> CodeActions(string path, int line, int column) => OnUi(async () =>
-        (IReadOnlyList<string>)[.. (await Actions(path, line, column)).Actions.Select(a => a.Title)]);
+        "The fixes and refactorings the language server offers at a position (Alt+Enter), or over a selection from there to " +
+        "endLine:endColumn (where Extract Method and Introduce Variable are offered), as 'title [kind]'.")]
+    public Task<IReadOnlyList<string>> CodeActions(string path, int line, int column, int? endLine = null, int? endColumn = null) => OnUi(async () =>
+        (IReadOnlyList<string>)[.. (await Actions(path, line, column, endLine, endColumn)).Actions.Select(a => a.Kind is { Length: > 0 } kind ? $"{a.Title} [{kind}]" : a.Title)]);
 
     [McpServerTool(Name = "apply_code_action", Title = "Apply a fix or refactoring", Destructive = true), Description(
-        "Applies the fix or refactoring with this title at a position, as choosing it from Alt+Enter does, and saves the files.")]
-    public Task<string> ApplyCodeAction(string path, int line, int column, string title) => OnUi(async () =>
+        "Applies the fix or refactoring with this title at a position (or over the selection to endLine:endColumn), as choosing it from " +
+        "Alt+Enter does, and saves the files.")]
+    public Task<string> ApplyCodeAction(string path, int line, int column, string title, int? endLine = null, int? endColumn = null) => OnUi(async () =>
     {
-        (LspDocument lsp, IReadOnlyList<CodeAction> actions) = await Actions(path, line, column);
+        (LspDocument lsp, IReadOnlyList<CodeAction> actions) = await Actions(path, line, column, endLine, endColumn);
         CodeAction chosen = actions.FirstOrDefault(a => a.Title == title)
             ?? throw new InvalidOperationException($"No action '{title}' here; there are: {string.Join("; ", actions.Select(a => a.Title))}");
         if (chosen.Edit is null && chosen.Data is not null)
@@ -595,13 +597,14 @@ public sealed partial class PassengerTools(MainWindow window)
         [.. (path is null ? window.Debugger.Breakpoints.All : window.Debugger.Breakpoints.In(path))
             .Select(b => new BreakpointInfo(Relative(b.Path), b.Line + 1, b.Enabled, b.Status.ToString().ToLowerInvariant(), b.Condition, b.HitCondition, b.LogMessage, b.Suspend, b.Message))];
 
-    private async Task<(LspDocument Lsp, IReadOnlyList<CodeAction> Actions)> Actions(string path, int line, int column)
+    private async Task<(LspDocument Lsp, IReadOnlyList<CodeAction> Actions)> Actions(string path, int line, int column, int? endLine = null, int? endColumn = null)
     {
         (OpenDocument document, LspDocument lsp) = await Code(path);
         int offset = Offset(document, line, column);
+        int end = endLine is { } last ? Offset(document, last, endColumn ?? 1) : offset;
         CSharpDocument? csharp = window.CSharpService?.For(document);
         IReadOnlyList<Diagnostic> here = [.. (csharp?.Diagnostics ?? []).Where(d => d.Range.Start.Line <= line - 1 && line - 1 <= d.Range.End.Line)];
-        IReadOnlyList<CodeAction> actions = await lsp.CodeActionsAsync(new TextRange(offset, 0), here);
+        IReadOnlyList<CodeAction> actions = await lsp.CodeActionsAsync(TextRange.FromBounds(Math.Min(offset, end), Math.Max(offset, end)), here);
         return (lsp, [.. actions.Where(a => a.Disabled is null)]);
     }
 

@@ -142,6 +142,18 @@ public sealed class CodeAssist
             case AppActions.QuickFix:
                 _ = ShowFixes();
                 return true;
+            case AppActions.RefactorThis:
+                _ = ShowFixes(a => a.Kind?.StartsWith("refactor", StringComparison.Ordinal) == true, "Refactor This");
+                return true;
+            case AppActions.ExtractMethod:
+                _ = Refactor(a => a.Title == "Extract method", "Extract Method", renameAfter: "NewMethod");
+                return true;
+            case AppActions.IntroduceVariable:
+                _ = Refactor(a => a.Title.StartsWith("Introduce local", StringComparison.Ordinal), "Introduce Variable", renameAfter: null);
+                return true;
+            case AppActions.Inline:
+                _ = Refactor(a => a.Kind == "refactor.inline" || a.Title.StartsWith("Inline", StringComparison.Ordinal), "Inline", renameAfter: null);
+                return true;
             case AppActions.Rename:
                 ShowRename();
                 return true;
@@ -175,6 +187,9 @@ public sealed class CodeAssist
         }
         return false;
     }
+
+    /// <summary>What the open list of choices (fixes, refactorings, definitions) offers, by its words; empty with none open.</summary>
+    public IReadOnlyList<string> Offered => layer.Children.OfType<ChoicePopup>().LastOrDefault()?.Titles ?? [];
 
     private void OnTyped(string text)
     {
@@ -471,12 +486,12 @@ public sealed class CodeAssist
         }
     }
 
-    private async Task ShowFixes()
+    private async Task ShowFixes(Func<CodeAction, bool>? only = null, string title = "Fixes and refactorings")
     {
         BackgroundWork.Begin();
         try
         {
-            await ShowFixesCore();
+            await ShowFixesCore(only, title);
         }
         finally
         {
@@ -484,7 +499,7 @@ public sealed class CodeAssist
         }
     }
 
-    private async Task ShowFixesCore()
+    private async Task ShowFixesCore(Func<CodeAction, bool>? only, string title)
     {
         if (Current is not { Lsp: { } lsp } current)
         {
@@ -497,17 +512,17 @@ public sealed class CodeAssist
             .ToList();
         try
         {
-            IReadOnlyList<CodeAction> actions = await lsp.CodeActionsAsync(primary.Range, here);
+            IReadOnlyList<CodeAction> actions = [.. (await lsp.CodeActionsAsync(primary.Range, here)).Where(a => only?.Invoke(a) ?? true)];
             if (actions.Count == 0)
             {
-                Message?.Invoke(this, "No fixes or refactorings here");
+                Message?.Invoke(this, only is null ? "No fixes or refactorings here" : "No refactorings here");
                 return;
             }
             List<Choice> choices = actions
                 .Where(a => a.Disabled is null)
                 .Select(a => new Choice(a.Title, a.Kind ?? string.Empty, a))
                 .ToList();
-            ShowModal(new ChoicePopup("Fixes and refactorings", choices), primary.Caret, async choice =>
+            ShowModal(new ChoicePopup(title, choices), primary.Caret, async choice =>
             {
                 if (choice?.Value is not CodeAction chosen)
                 {
@@ -525,6 +540,55 @@ public sealed class CodeAssist
         }
         catch (Exception error) when (IsServerFailure(error))
         {
+        }
+    }
+
+    /// <summary>One of Rider's refactorings by its own key, over the selection: the language server's action of that
+    /// kind applied at once, and for Extract Method its new method's name then offered to rename, as Rider asks for it.</summary>
+    private async Task Refactor(Func<CodeAction, bool> pick, string name, string? renameAfter)
+    {
+        if (Current?.Lsp is not { } lsp)
+        {
+            return;
+        }
+        BackgroundWork.Begin();
+        try
+        {
+            Selection primary = Editor.Selections.Primary;
+            CodeAction? action = (await lsp.CodeActionsAsync(primary.Range, [])).Where(a => a.Disabled is null).FirstOrDefault(pick);
+            if (action is null)
+            {
+                Message?.Invoke(this, $"{name} is not available here{(primary.IsEmpty && renameAfter is not null ? ": select the code first" : string.Empty)}");
+                return;
+            }
+            if (action.Edit is null && action.Data is not null)
+            {
+                action = await lsp.ResolveAsync(action) ?? action;
+            }
+            if (action.Edit is not { } edit)
+            {
+                return;
+            }
+            WorkspaceEdits.Apply(editors, edit);
+            Message?.Invoke(this, $"{name} done");
+            if (renameAfter is not null)
+            {
+                // The call that replaced the selection is where the new name is typed.
+                TextSnapshot text = Editor.Document.Snapshot;
+                int call = text.ToString().IndexOf(renameAfter + "(", Math.Max(0, primary.Start - 200), StringComparison.Ordinal);
+                if (call >= 0)
+                {
+                    Editor.Selections = SelectionSet.Single(call);
+                    ShowRename();
+                }
+            }
+        }
+        catch (Exception error) when (IsServerFailure(error))
+        {
+        }
+        finally
+        {
+            BackgroundWork.End();
         }
     }
 

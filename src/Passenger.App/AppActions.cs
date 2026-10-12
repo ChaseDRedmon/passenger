@@ -49,6 +49,10 @@ public static class AppActions
     public const string FindUsages = "app.code.findUsages";
     public const string Reformat = "app.code.reformat";
     public const string CodeCleanup = "app.code.cleanup";
+    public const string RefactorThis = "app.code.refactorThis";
+    public const string ExtractMethod = "app.code.extractMethod";
+    public const string IntroduceVariable = "app.code.introduceVariable";
+    public const string Inline = "app.code.inline";
     public const string ParameterInfo = "app.code.parameterInfo";
     public const string QuickDocumentation = "app.code.quickDocumentation";
     public const string NextError = "app.code.nextError";
@@ -224,6 +228,10 @@ public static class AppActions
                 .Bind(Reformat, "meta alt ENTER", "meta K , F", "meta K , meta F", "meta K , D", "meta K , meta D")
                 .Bind(ParameterInfo, "control P")
                 .Bind(CodeCleanup, "meta E , C", "meta E , meta C", "meta E , F", "meta E , meta F")
+                .Bind(RefactorThis, "meta shift R")
+                .Bind(ExtractMethod, "meta R , M", "meta R , meta M")
+                .Bind(IntroduceVariable, "meta R , V", "meta R , meta V")
+                .Bind(Inline, "meta R , I", "meta R , meta I")
                 .Bind(QuickDocumentation, "meta K , I", "meta K , meta I", "control shift F1")
                 .Bind(NextError, "alt PAGE_DOWN")
                 .Bind(PreviousError, "alt PAGE_UP");
@@ -297,6 +305,10 @@ public static class AppActions
             .Bind(Reformat, "control alt ENTER", "control K , F", "control K , control F", "control K , D", "control K , control D")
             .Bind(ParameterInfo, "shift control SPACE")
             .Bind(CodeCleanup, "control E , C", "control E , control C", "control E , F", "control E , control F")
+            .Bind(RefactorThis, "control shift R")
+            .Bind(ExtractMethod, "control R , M", "control R , control M")
+            .Bind(IntroduceVariable, "control R , V", "control R , control V")
+            .Bind(Inline, "control R , I", "control R , control I")
             .Bind(QuickDocumentation, "control K , I", "control K , control I", "control shift F1")
             .Bind(NextError, "alt PAGE_DOWN")
             .Bind(PreviousError, "alt PAGE_UP");

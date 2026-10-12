@@ -217,8 +217,12 @@ internal sealed class ChoicePopup : Border
 
     private readonly ListBox list;
 
+    /// <summary>What is offered, by its words.</summary>
+    public IReadOnlyList<string> Titles { get; }
+
     public ChoicePopup(string title, IReadOnlyList<Choice> choices)
     {
+        Titles = [.. choices.Select(c => c.Text)];
         Classes.Add("popup");
         MinWidth = 320;
         MaxWidth = 760;

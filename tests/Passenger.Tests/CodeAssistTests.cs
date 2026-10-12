@@ -147,6 +147,46 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
     }
 
     [AvaloniaFact]
+    public void Extract_method_turns_the_selection_into_a_method_and_asks_for_its_name()
+    {
+        MainWindow window = project.Open("Loop.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        string text = editor.Document.Snapshot.ToString();
+        int from = text.IndexOf("for (", StringComparison.Ordinal);
+        int to = text.IndexOf("        }\n        return", StringComparison.Ordinal) + "        }".Length;
+        editor.Selections = SelectionSet.Single(new Selection(from, to));
+        Ui.Run(window, AppActions.ExtractMethod);
+        Ui.WaitFor(() => editor.Document.Snapshot.ToString().Contains("NewMethod(", StringComparison.Ordinal), "the method to be extracted");
+        Ui.Settle();
+
+        // Rider asks for the new method's name at once; it is the rename box at the call.
+        window.KeyTextInput("Accumulate");
+        Ui.Press(window, "ENTER");
+        Ui.WaitFor(() => editor.Document.Snapshot.ToString().Contains("Accumulate(", StringComparison.Ordinal), "the new method to take its name");
+        string after = editor.Document.Snapshot.ToString();
+        Assert.DoesNotContain("NewMethod", after, StringComparison.Ordinal);
+        Assert.Matches(@"static \w+ Accumulate\(", after);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Refactor_this_lists_only_the_refactorings_at_the_selection()
+    {
+        MainWindow window = project.Open("Loop.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        string text = editor.Document.Snapshot.ToString();
+        int from = text.IndexOf("for (", StringComparison.Ordinal);
+        editor.Selections = SelectionSet.Single(new Selection(from, text.IndexOf("        }\n        return", StringComparison.Ordinal) + "        }".Length));
+        Ui.Run(window, AppActions.RefactorThis);
+        Ui.WaitFor(() => window.Assist.Offered.Count > 0, "the refactorings");
+        IReadOnlyList<string> offered = window.Assist.Offered;
+        Assert.Contains("Extract method", offered);
+        Assert.DoesNotContain(offered, t => t.StartsWith("Suppress", StringComparison.Ordinal));
+        Ui.Press(window, "ESCAPE");
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Rename_changes_the_name_in_every_file_that_uses_it()
     {
         string helper = File.ReadAllText(project.PathOf("Helper.cs"));
@@ -201,6 +241,7 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
                 "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
             File.WriteAllText(PathOf("Program.cs"), "class Program\n{\n    static void Main()\n    {\n        int result = Helper.Twice(2);\n    }\n}\n");
             File.WriteAllText(PathOf("Helper.cs"), "static class Helper\n{\n    public static int Twice(int value) => value * 2;\n}\n");
+            File.WriteAllText(PathOf("Loop.cs"), "static class Loop\n{\n    public static int Sum()\n    {\n        int total = 0;\n        for (int i = 0; i < 10; i++)\n        {\n            total += i * 2;\n        }\n        return total;\n    }\n}\n");
             File.WriteAllText(PathOf("Messy.cs"), "using System.Text;\nusing System;\nusing System.Collections.Generic;\n\nstatic class Messy\n{\n    public static int Count()\n    {\n          List<string> names = [];\n        Console.WriteLine(names.Count);\n      return names.Count;\n    }\n}\n");
             using Process restore = Process.Start(new ProcessStartInfo("dotnet", ["restore", folder]) { RedirectStandardOutput = true, RedirectStandardError = true })!;
             restore.WaitForExit();

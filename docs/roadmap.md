@@ -180,4 +180,7 @@ of it (decompiled with ILSpy, or the real source through Source Link or an embed
 under Rider's bar saying where it came from. Code Cleanup (Ctrl+E, C or F; Cmd on the Mac) removes the unnecessary usings
 and sorts the rest with the language server's own fixes, then reformats the file. Hot Reload (Settings, Run) runs a
 configuration under `dotnet watch`, so each save applies its edits to the running program, and an edit that cannot be
-applied restarts it. Still to come: Edit and Continue while debugging, refactoring dialogs, packaging.
+applied restarts it. Refactor This (Ctrl+Shift+R, Cmd+Shift+R) lists the language server's refactorings at the caret or
+selection, and Extract Method, Introduce Variable and Inline have Rider's own chords (Ctrl+R, M / V / I), Extract Method
+then asking for the new method's name. Still to come: Edit and Continue while debugging, Change Signature and the other
+refactorings that need a dialog, packaging.
