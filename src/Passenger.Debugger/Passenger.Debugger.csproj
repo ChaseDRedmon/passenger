@@ -14,6 +14,47 @@
     <Publicize Include="ICSharpCode.Decompiler" IncludeCompilerGeneratedMembers="false" MemberPattern="^ICSharpCode\.Decompiler\.(CSharp\.Transforms\.RemoveEmbeddedAttributes|DebugInfo)\..*" />
   </ItemGroup>
 
+  <!-- The publicizer's own target, unhooked here, writes each assembly straight to its place in obj and takes any file
+       there as finished, so two builds of this project at once (a build and the design-time build a language server
+       starts when a restore rewrites obj) gave the compiler a file still being written: CS0009, then CS0246 for every
+       Roslyn type. Each build runs the task in a folder of its own, started from the finished assemblies, and moves
+       only whole files into place. -->
+  <PropertyGroup>
+    <PublicizeBeforeTargets />
+  </PropertyGroup>
+
+  <Target Name="PublicizeWhole" DependsOnTargets="ResolveAssemblyReferences" BeforeTargets="ResolveReferences">
+    <PropertyGroup>
+      <_Publicized>$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)', '$(IntermediateOutputPath)', 'PublicizedAssemblies'))</_Publicized>
+      <_Publicizing>$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)', '$(IntermediateOutputPath)', 'PublicizedAssemblies.$([System.Guid]::NewGuid())'))</_Publicizing>
+    </PropertyGroup>
+    <ItemGroup>
+      <_PublicizedFinished Include="$(_Publicized)**/*.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_PublicizedFinished)" DestinationFiles="@(_PublicizedFinished->'$(_Publicizing)%(RecursiveDir)%(Filename)%(Extension)')" />
+    <PublicizeAssemblies ReferencePaths="@(ReferencePath)" Publicizes="@(Publicize)" DoNotPublicizes="@(DoNotPublicize)" OutputDirectory="$(_Publicizing)">
+      <Output TaskParameter="ReferencePathsToDelete" ItemName="_PublicizedOriginal" />
+      <Output TaskParameter="ReferencePathsToAdd" ItemName="_PublicizedReference" />
+    </PublicizeAssemblies>
+    <ItemGroup>
+      <_PublicizedNew Include="$(_Publicizing)**/*" />
+      <_PublicizedNew Remove="@(_PublicizedNew)" Condition="Exists('$(_Publicized)%(RecursiveDir)%(Filename)%(Extension)')" />
+    </ItemGroup>
+    <Move SourceFiles="@(_PublicizedNew)" DestinationFiles="@(_PublicizedNew->'$(_Publicized)%(RecursiveDir)%(Filename)%(Extension)')" />
+    <RemoveDir Directories="$(_Publicizing)" />
+    <ItemGroup>
+      <_PublicizedReference>
+        <Placed>$([System.String]::Copy('%(FullPath)').Replace('$(_Publicizing)', '$(_Publicized)'))</Placed>
+      </_PublicizedReference>
+      <ReferencePath Remove="@(_PublicizedOriginal)" />
+      <ReferencePath Include="@(_PublicizedReference->'%(Placed)')" />
+      <!-- What the package's target adds, so the runtime lets this assembly reach the members made public. -->
+      <AssemblyAttribute Include="System.Runtime.CompilerServices.IgnoresAccessChecksToAttribute">
+        <_Parameter1>%(_PublicizedReference.Filename)</_Parameter1>
+      </AssemblyAttribute>
+    </ItemGroup>
+  </Target>
+
   <ItemGroup>
     <PackageReference Include="Krafs.Publicizer" PrivateAssets="all" IncludeAssets="runtime; build; native; contentfiles; analyzers; buildtransitive" />
     <PackageReference Include="ICSharpCode.Decompiler" />
