@@ -2,10 +2,12 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:editors="using:Passenger.App.Editors"
         xmlns:docking="using:Passenger.App.Docking"
+        xmlns:app="using:Passenger.App"
         x:Class="Passenger.App.MainWindow"
         Title="Passenger"
         Icon="/Assets/passenger.png"
-        Width="1400" Height="900" MinWidth="800" MinHeight="500"
+        Width="1400" Height="900"
+        MinWidth="{x:Static app:MainWindow.SmallestWidth}" MinHeight="{x:Static app:MainWindow.SmallestHeight}"
         Background="{DynamicResource Passenger.Editor.Background}">
     <Panel>
     <Grid RowDefinitions="Auto,*,Auto">

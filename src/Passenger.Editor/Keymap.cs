@@ -138,7 +138,8 @@ public readonly record struct Keystroke(Key Key, KeyModifiers Modifiers)
         "CONTEXT_MENU" => Key.Apps,
         { Length: 1 } single when char.IsAsciiLetter(single[0]) => Enum.Parse<Key>(single),
         { Length: 1 } digit when char.IsAsciiDigit(digit[0]) => Key.D0 + (digit[0] - '0'),
-        _ when Enum.TryParse(name, true, out Key parsed) => parsed,
+        // Only a key's name: Enum.TryParse would also take "1000" or "Left,Up" as some other key.
+        _ when char.IsAsciiLetter(name[0]) && name.All(char.IsAsciiLetterOrDigit) && Enum.TryParse(name, true, out Key parsed) => parsed,
         _ => throw new FormatException($"unknown key '{name}'"),
     };
 }

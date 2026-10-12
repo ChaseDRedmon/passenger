@@ -23,6 +23,12 @@ public partial class MainWindow : Window
     /// <summary>How many recently opened files Go to File offers before anything is typed.</summary>
     private const int RecentLimit = 25;
 
+    /// <summary>The window's least width and height (its MinWidth and MinHeight), which a screenshot's <c>--size</c> is
+    /// held to: Avalonia would widen a smaller window to them without a word.</summary>
+    public const double SmallestWidth = 800;
+
+    public const double SmallestHeight = 500;
+
     private readonly KeymapDispatcher keys = new(AppActions.Keymap());
     private readonly FileIndex index = new();
     private CSharpService? csharp;

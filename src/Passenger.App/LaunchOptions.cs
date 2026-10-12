@@ -5,13 +5,23 @@ using Passenger.Text;
 
 namespace Passenger.App;
 
-/// <summary>The command line: <c>passenger [PATH] [--file F]... [--caret L:C] [--theme T]</c>, a
-/// screenshot with the steps to take before it, or the Model Context Protocol server: <c>--mcp</c> (an IDE
-/// with no window, on standard input and output), <c>--mcp-attach [PID] [FOLDER]</c> (a window's, the one over the
-/// folder first), and <c>--no-mcp</c> (a window that never lets agents in). A flag it does not know, or a value it
-/// cannot read, is fatal rather than ignored, so a typo never runs something other than what was asked.</summary>
+/// <summary>The command line: <c>passenger [PATH] [--file F]... [--caret L:C] [--theme T]</c>, a screenshot with the
+/// steps to take before it, or the Model Context Protocol server: <c>--mcp [PATH]</c> (an IDE with no window, on standard
+/// input and output), <c>--mcp-attach [PID] [FOLDER]</c> (a window's, the one over the folder first), and <c>--no-mcp</c>
+/// (a window that never lets agents in). A flag it does not know, a value it cannot read or that is out of range, and a
+/// flag the chosen mode does not take are fatal rather than ignored, so a typo never runs other than what was asked.</summary>
 public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, TextPosition? Caret, ThemeChoice? Theme, ScreenshotOptions? Screenshot)
 {
+    /// <summary>The flags that may be given more than once: each is one more file or one more step.</summary>
+    private static readonly HashSet<string> Repeatable = ["--file", "--type", "--key", "--click", "--double-click", "--drag", "--drag-hold", "--hover", "--wait"];
+
+    /// <summary>What only a screenshot takes: its window, its picture and the steps before it.</summary>
+    private static readonly HashSet<string> ScreenshotOnly = ["--size", "--scale", "--crop", "--type", "--key", "--click", "--double-click", "--drag", "--drag-hold", "--hover", "--wait"];
+
+    /// <summary>A screenshot's longest side in pixels: a frame 16384 pixels square is already a gigabyte, and the headless
+    /// window draws none at 24000.</summary>
+    private const double LargestSide = 16384;
+
     public McpMode Mcp { get; init; }
 
     /// <summary>The process <c>--mcp-attach</c> names, or null for any Passenger's windows.</summary>
@@ -23,23 +33,44 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
 
     public static LaunchOptions Empty { get; } = new(null, [], null, null, null);
 
+    /// <summary>The options the arguments ask for, the files among them full paths that exist; anything malformed,
+    /// out of range or not for the chosen mode is a <see cref="FormatException"/> whose message names it.</summary>
     public static LaunchOptions Parse(IReadOnlyList<string> args)
     {
-        string? folder = null;
-        List<string> files = [];
+        // Every flag and path as given, in order, so the first one the mode does not take is the one named.
+        List<string> given = [];
+        HashSet<string> once = [];
+        string? path = null;
+        List<string> named = [];
         TextPosition? caret = null;
         ThemeChoice? theme = null;
         string? shot = null;
         LogicalSize size = new(1600, 1000);
         double scale = 2;
         Rect? crop = null;
+        string? cropText = null;
         List<ScriptStep> steps = [];
+        List<(string Flag, string Text, Point At)> points = [];
         McpMode mcp = McpMode.None;
         int? attachTo = null;
         bool listen = true;
         for (int i = 0; i < args.Count; i++)
         {
             string flag = args[i];
+            given.Add(flag);
+            if (!flag.StartsWith('-'))
+            {
+                if (path is not null)
+                {
+                    throw new FormatException($"'{flag}' would be a second folder or file after '{path}'; Passenger opens one, and more files with --file");
+                }
+                path = flag;
+                continue;
+            }
+            if (!Repeatable.Contains(flag) && !once.Add(flag))
+            {
+                throw new FormatException($"{flag} is given twice");
+            }
             switch (flag)
             {
                 case "--mcp":
@@ -47,17 +78,19 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
                     break;
                 case "--mcp-attach":
                     mcp = McpMode.Attach;
-                    if (i + 1 < args.Count && int.TryParse(args[i + 1], NumberStyles.None, CultureInfo.InvariantCulture, out int pid))
+                    if (i + 1 < args.Count && args[i + 1].Length > 0 && args[i + 1].All(char.IsAsciiDigit))
                     {
-                        attachTo = pid;
                         i++;
+                        attachTo = int.TryParse(args[i], NumberStyles.None, CultureInfo.InvariantCulture, out int pid) && pid > 0
+                            ? pid
+                            : throw new FormatException($"--mcp-attach takes the process id of a running Passenger, not '{args[i]}'");
                     }
                     break;
                 case "--no-mcp":
                     listen = false;
                     break;
                 case "--file":
-                    files.Add(Value(args, ref i, flag));
+                    named.Add(Value(args, ref i, flag));
                     break;
                 case "--caret":
                     caret = ParseCaret(Value(args, ref i, flag));
@@ -69,14 +102,24 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
                     shot = Value(args, ref i, flag);
                     break;
                 case "--size":
-                    double[] wh = Numbers(Value(args, ref i, flag), 'x', 2, flag);
+                    string sizeText = Value(args, ref i, flag);
+                    double[] wh = Numbers(flag, sizeText, 'x', 2, "WIDTHxHEIGHT");
+                    if (wh[0] < MainWindow.SmallestWidth || wh[1] < MainWindow.SmallestHeight)
+                    {
+                        throw new FormatException(FormattableString.Invariant($"--size is at least the window's smallest, {MainWindow.SmallestWidth}x{MainWindow.SmallestHeight}, not '{sizeText}'"));
+                    }
                     size = new LogicalSize(wh[0], wh[1]);
                     break;
                 case "--scale":
-                    scale = Numbers(Value(args, ref i, flag), ',', 1, flag)[0];
+                    scale = Number(flag, Value(args, ref i, flag), "a number", 0.5, 8);
                     break;
                 case "--crop":
-                    double[] box = Numbers(Value(args, ref i, flag), ',', 4, flag);
+                    cropText = Value(args, ref i, flag);
+                    double[] box = Numbers(flag, cropText, ',', 4, "X,Y,WIDTH,HEIGHT");
+                    if (box[2] == 0 || box[3] == 0)
+                    {
+                        throw new FormatException($"--crop keeps nothing of the window with a width or height of 0: '{cropText}'");
+                    }
                     crop = new Rect(box[0], box[1], box[2], box[3]);
                     break;
                 case "--type":
@@ -86,54 +129,146 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
                     steps.Add(new ScriptStep.Key(ParseKey(Value(args, ref i, flag))));
                     break;
                 case "--wait":
-                    steps.Add(new ScriptStep.Wait(TimeSpan.FromMilliseconds(Numbers(Value(args, ref i, flag), ',', 1, flag)[0])));
+                    steps.Add(new ScriptStep.Wait(TimeSpan.FromMilliseconds(Number(flag, Value(args, ref i, flag), "milliseconds", 1, 600_000))));
                     break;
                 case "--hover":
-                    double[] at = Numbers(Value(args, ref i, flag), ',', 2, flag);
+                    string hoverText = Value(args, ref i, flag);
+                    double[] at = Numbers(flag, hoverText, ',', 2, "X,Y");
+                    points.Add((flag, hoverText, new Point(at[0], at[1])));
                     steps.Add(new ScriptStep.Hover(new Point(at[0], at[1])));
                     break;
                 case "--click" or "--double-click":
-                    double[] xy = Numbers(Value(args, ref i, flag), ',', 2, flag);
+                    string clickText = Value(args, ref i, flag);
+                    double[] xy = Numbers(flag, clickText, ',', 2, "X,Y");
+                    points.Add((flag, clickText, new Point(xy[0], xy[1])));
                     steps.Add(new ScriptStep.Click(new Point(xy[0], xy[1]), flag == "--click" ? 1 : 2));
                     break;
                 case "--drag" or "--drag-hold":
-                    double[] line = Numbers(Value(args, ref i, flag), ',', 4, flag);
+                    string dragText = Value(args, ref i, flag);
+                    double[] line = Numbers(flag, dragText, ',', 4, "X1,Y1,X2,Y2");
+                    points.Add((flag, dragText, new Point(line[0], line[1])));
+                    points.Add((flag, dragText, new Point(line[2], line[3])));
                     steps.Add(new ScriptStep.Drag(new Point(line[0], line[1]), new Point(line[2], line[3]), Release: flag == "--drag"));
-                    break;
-                case { } path when !path.StartsWith('-') && folder is null && files.Count == 0:
-                    if (Directory.Exists(path))
-                    {
-                        folder = Path.GetFullPath(path);
-                    }
-                    else if (File.Exists(path))
-                    {
-                        folder = Path.GetDirectoryName(Path.GetFullPath(path));
-                        files.Add(Path.GetFullPath(path));
-                    }
-                    else
-                    {
-                        throw new FormatException($"'{path}' is neither a folder nor a file");
-                    }
                     break;
                 default:
                     throw new FormatException($"unknown flag '{flag}'");
             }
         }
-        if (shot is null && (steps.Count > 0 || crop is not null))
+
+        CheckMode(given, mcp, shot is not null, listen);
+        (string? folder, List<string> files) = Opened(path, named);
+        if (mcp == McpMode.Attach && files.Count > 0)
         {
-            throw new FormatException("--type, --key, --click, --hover, --wait and --crop are steps of a --screenshot");
+            throw new FormatException($"--mcp-attach finds the window by its folder, and '{path}' is a file");
         }
-        if (mcp != McpMode.None && shot is not null)
+        if (caret is not null && files.Count == 0)
         {
-            throw new FormatException("--mcp and --mcp-attach do not take a --screenshot");
+            throw new FormatException("--caret needs a file to put the caret in, the PATH or a --file");
         }
-        ScreenshotOptions? screenshot = shot is null ? null : new ScreenshotOptions(shot, size, scale, steps, crop);
+        ScreenshotOptions? screenshot = shot is null ? null : Checked(new ScreenshotOptions(shot, size, scale, steps, crop), cropText, points);
         return new LaunchOptions(folder, files, caret, theme, screenshot) { Mcp = mcp, AttachTo = attachTo, ListenForAgents = listen };
+    }
+
+    /// <summary>Refuses the first flag the chosen mode does not take: a window takes all but a screenshot's, a screenshot
+    /// all but <c>--no-mcp</c>, <c>--mcp</c> a path, files, a caret and a theme, and <c>--mcp-attach</c> only a process
+    /// id and a folder.</summary>
+    private static void CheckMode(List<string> given, McpMode mcp, bool screenshot, bool listen)
+    {
+        if (given.Contains("--mcp") && given.Contains("--mcp-attach"))
+        {
+            throw new FormatException("--mcp starts a Passenger of its own and --mcp-attach joins a running one; give one of them");
+        }
+        if (mcp == McpMode.Attach && given.FirstOrDefault(g => g != "--mcp-attach" && g.StartsWith('-')) is { } extra)
+        {
+            throw new FormatException($"--mcp-attach joins a running Passenger's window and takes only its process id and a folder, not {extra}");
+        }
+        if (mcp == McpMode.Stdio && screenshot)
+        {
+            throw new FormatException("--mcp does not take --screenshot; its agent takes one with the screenshot tool");
+        }
+        if (!listen && (mcp == McpMode.Stdio || screenshot))
+        {
+            throw new FormatException($"--no-mcp stops a window listening for agents, and {(screenshot ? "--screenshot" : "--mcp")}'s never does");
+        }
+        if (!screenshot && given.FirstOrDefault(ScreenshotOnly.Contains) is { } step)
+        {
+            throw new FormatException($"{step} is for a --screenshot, and none is asked for");
+        }
+    }
+
+    /// <summary>The folder and files that the path and the <c>--file</c>s name, as full paths, each refused unless it
+    /// exists as what it is named for.</summary>
+    private static (string? Folder, List<string> Files) Opened(string? path, List<string> named)
+    {
+        string? folder = null;
+        List<string> files = [];
+        if (path is not null)
+        {
+            if (Directory.Exists(path))
+            {
+                folder = Path.GetFullPath(path);
+            }
+            else if (File.Exists(path))
+            {
+                string full = Path.GetFullPath(path);
+                folder = Path.GetDirectoryName(full);
+                files.Add(full);
+            }
+            else
+            {
+                throw new FormatException($"'{path}' is neither a folder nor a file");
+            }
+        }
+        foreach (string file in named)
+        {
+            // The window opens a relative path as its folder's, so that is where it is looked for.
+            string full = Path.GetFullPath(file, folder ?? Environment.CurrentDirectory);
+            if (!File.Exists(full))
+            {
+                throw new FormatException(Directory.Exists(full)
+                    ? $"--file '{file}' is a folder; a folder to open is the PATH"
+                    : $"--file '{file}' does not exist ({full})");
+            }
+            files.Add(full);
+        }
+        return (folder, files);
+    }
+
+    /// <summary>The screenshot, refused unless its PNG has a folder to go in, its frame is one the headless window draws,
+    /// and its crop and every point its steps press or move to lie in the window.</summary>
+    private static ScreenshotOptions Checked(ScreenshotOptions shot, string? cropText, List<(string Flag, string Text, Point At)> points)
+    {
+        string full = Path.GetFullPath(shot.Path);
+        if (Directory.Exists(full))
+        {
+            throw new FormatException($"--screenshot takes the PNG file to write, and '{shot.Path}' is a folder");
+        }
+        if (!Directory.Exists(Path.GetDirectoryName(full)))
+        {
+            throw new FormatException($"--screenshot '{shot.Path}' would be written to a folder that does not exist");
+        }
+        (double width, double height) = shot.Size;
+        if (width * shot.Scale > LargestSide || height * shot.Scale > LargestSide)
+        {
+            throw new FormatException(FormattableString.Invariant($"--size {width}x{height} at --scale {shot.Scale} is {width * shot.Scale}x{height * shot.Scale} pixels, more than {LargestSide} a side"));
+        }
+        if (shot.Crop is { } crop && (crop.Right > width || crop.Bottom > height))
+        {
+            throw new FormatException(FormattableString.Invariant($"--crop {cropText} reaches past the {width}x{height} window"));
+        }
+        foreach ((string flag, string text, Point at) in points)
+        {
+            if (at.X >= width || at.Y >= height)
+            {
+                throw new FormatException(FormattableString.Invariant($"{flag} {text} is outside the {width}x{height} window"));
+            }
+        }
+        return shot;
     }
 
     private static string Value(IReadOnlyList<string> args, ref int i, string flag)
     {
-        if (i + 1 >= args.Count)
+        if (i + 1 >= args.Count || args[i + 1].Length == 0)
         {
             throw new FormatException($"{flag} needs a value");
         }
@@ -141,20 +276,34 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
         return args[i];
     }
 
-    private static double[] Numbers(string text, char separator, int count, string flag)
+    /// <summary>One number from the least to the most. "NaN" and "Infinity" parse as numbers, and digits past a double's
+    /// range as infinity, so a number is also checked to be finite.</summary>
+    private static double Number(string flag, string text, string what, double least, double most)
+    {
+        if (!double.TryParse(text, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out double value)
+            || !double.IsFinite(value) || value < least || value > most)
+        {
+            throw new FormatException(FormattableString.Invariant($"{flag} takes {what} from {least} to {most}, not '{text}'"));
+        }
+        return value;
+    }
+
+    /// <summary>Several finite numbers of zero or more split by the separator, as the shape says; whether they fit the
+    /// window is for the caller, once the window's size is known.</summary>
+    private static double[] Numbers(string flag, string text, char separator, int count, string shape)
     {
         string[] parts = text.Split(separator);
         double[] values = new double[parts.Length];
         for (int i = 0; i < parts.Length; i++)
         {
-            if (!double.TryParse(parts[i], NumberStyles.Float, CultureInfo.InvariantCulture, out values[i]) || values[i] < 0)
+            if (!double.TryParse(parts[i], NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out values[i]) || !double.IsFinite(values[i]))
             {
-                throw new FormatException($"{flag} takes {count} non-negative numbers, not '{text}'");
+                throw new FormatException($"{flag} takes {shape}, each a number of 0 or more, not '{text}'");
             }
         }
-        if (values.Length != count || (count <= 2 && values.Any(v => v == 0)))
+        if (values.Length != count)
         {
-            throw new FormatException($"{flag} takes {count} numbers split by '{separator}', not '{text}'");
+            throw new FormatException($"{flag} takes {shape}, not '{text}'");
         }
         return values;
     }
@@ -163,23 +312,28 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
     private static TextPosition ParseCaret(string text)
     {
         string[] parts = text.Split(':');
-        if (parts.Length is < 1 or > 2 || !int.TryParse(parts[0], out int line) || line < 1)
-        {
-            throw new FormatException($"--caret takes LINE or LINE:COLUMN from 1, not '{text}'");
-        }
         int column = 1;
-        if (parts.Length == 2 && (!int.TryParse(parts[1], out column) || column < 1))
+        if (parts.Length > 2 || !Counted(parts[0], out int line) || (parts.Length == 2 && !Counted(parts[1], out column)))
         {
             throw new FormatException($"--caret takes LINE or LINE:COLUMN from 1, not '{text}'");
         }
         return new TextPosition(line - 1, column - 1);
+
+        static bool Counted(string part, out int value) =>
+            int.TryParse(part, NumberStyles.None, CultureInfo.InvariantCulture, out value) && value >= 1;
     }
 
     /// <summary>"cmd+shift+L" or Rider's own "meta shift L".</summary>
     private static Keystroke ParseKey(string text)
     {
-        string spaced = text.Replace('+', ' ');
-        return Keystroke.Parse(spaced);
+        try
+        {
+            return Keystroke.Parse(text.Replace('+', ' '));
+        }
+        catch (FormatException error)
+        {
+            throw new FormatException($"--key takes a keystroke such as cmd+shift+L, not '{text}': {error.Message}");
+        }
     }
 
     private static ThemeChoice ParseTheme(string text) => text switch
