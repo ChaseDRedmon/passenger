@@ -69,6 +69,34 @@ public partial class MainWindow
         }
     }
 
+    /// <summary>Recent Files (Ctrl+,): the files opened last, the latest first, narrowed as a name is typed; a file
+    /// opens where its caret was left, as Rider's does.</summary>
+    public Navigation.SymbolPopup ShowRecentFiles()
+    {
+        string root = folder ?? string.Empty;
+        Navigation.SymbolPopup popup = new("Recent Files", "A file's name", (query, _) =>
+        {
+            IEnumerable<string> listed = recent.Skip(Editors.Active is null ? 0 : 1);
+            if (query.Trim().Length > 0)
+            {
+                listed = listed.Where(p => FuzzyMatch.Score(query.Trim(), Path.GetFileName(p)) is not null);
+            }
+            return Task.FromResult<IReadOnlyList<Navigation.SymbolRow>>([.. listed.Select(p => new Navigation.SymbolRow(
+                Path.GetFileName(p), null, root.Length > 0 && p.StartsWith(root, StringComparison.Ordinal) ? Path.GetDirectoryName(Path.GetRelativePath(root, p)) : Path.GetDirectoryName(p),
+                Navigation.SymbolRow.FileKind, p, new TextPosition(0, 0)))]);
+        });
+        popup.Done += (_, row) =>
+        {
+            ClosePopup();
+            if (row is not null)
+            {
+                OpenFile(row.Path);
+            }
+        };
+        ShowPopup(popup);
+        return popup;
+    }
+
     private Task<IReadOnlyList<SearchMatch>> SearchFiles(SearchQuery query, CancellationToken cancellation)
     {
         Dictionary<string, TextSnapshot> open = Editors.Documents.ToDictionary(d => d.Path, d => d.Text.Snapshot);

@@ -19,6 +19,7 @@ public static class AppActions
     public const string FileStructure = "app.fileStructure";
     public const string FindAction = "app.findAction";
     public const string FindInFiles = "app.findInFiles";
+    public const string RecentFiles = "app.recentFiles";
     public const string ReplaceInFiles = "app.replaceInFiles";
     public const string ShowSettings = "app.settings";
     public const string ShowNuGet = "app.showNuGet";
@@ -109,6 +110,7 @@ public static class AppActions
     public const string RollbackLines = "app.vcs.rollbackLines";
     public const string ShowDiff = "app.vcs.showDiff";
     public const string ShowGit = "app.vcs.showGit";
+    public const string Annotate = "app.vcs.annotate";
     public const string UpdateProject = "app.vcs.update";
     public const string Fetch = "app.vcs.fetch";
 
@@ -174,6 +176,7 @@ public static class AppActions
                 .Bind(GoToEverything, "meta T")
                 .Bind(FindAction, "meta shift A")
                 .Bind(FindInFiles, "meta shift F")
+                .Bind(RecentFiles, "control COMMA")
                 .Bind(ReplaceInFiles, "meta shift H")
                 .Bind(ShowSettings, "meta COMMA")
                 .Bind(ShowNuGet, "meta 7", "meta shift 7")
@@ -253,6 +256,7 @@ public static class AppActions
             .Bind(GoToEverything, "control T")
             .Bind(FindAction, "control shift A")
             .Bind(FindInFiles, "control shift F")
+            .Bind(RecentFiles, "control COMMA")
             .Bind(ReplaceInFiles, "control shift H")
             .Bind(ShowSettings, "control alt S")
             .Bind(ShowNuGet, "alt 7", "alt shift 7")

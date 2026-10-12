@@ -16,6 +16,7 @@ public sealed class OpenDocument : Observable
     private IReadOnlyList<LineAnnotation> lineAnnotations = [];
     private IReadOnlyList<TestMark> testMarks = [];
     private IReadOnlyList<ChangeMark> changeMarks = [];
+    private IReadOnlyList<string?> gutterAnnotations = [];
 
     public OpenDocument(string path, FileText file)
     {
@@ -66,6 +67,13 @@ public sealed class OpenDocument : Observable
     {
         get => changeMarks;
         set => Set(ref changeMarks, value);
+    }
+
+    /// <summary>Text per line at the gutter's left (Git blame's), empty for none.</summary>
+    public IReadOnlyList<string?> GutterAnnotations
+    {
+        get => gutterAnnotations;
+        set => Set(ref gutterAnnotations, value);
     }
 
     /// <summary>The debugger's text after lines: inline values, the exception it stopped on.</summary>

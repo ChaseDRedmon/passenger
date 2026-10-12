@@ -226,6 +226,86 @@ public partial class MainWindow
         ShowPopup(popup, editor.TranslatePoint(new Avalonia.Point(4, below.Y + 2), this));
     }
 
+    private readonly Dictionary<OpenDocument, IReadOnlyList<BlameLine>> blamed = [];
+
+    /// <summary>The blame shown for a file, line by line, or null when it is not annotated.</summary>
+    public IReadOnlyList<BlameLine>? BlameOf(OpenDocument document) => blamed.GetValueOrDefault(document);
+
+    /// <summary>Annotate with Git Blame, or Close Annotations when the file shows them.</summary>
+    public async Task ToggleAnnotationsAsync(OpenDocument document)
+    {
+        if (blamed.Remove(document))
+        {
+            document.GutterAnnotations = [];
+            return;
+        }
+        if (await BlameAsync(document) is null)
+        {
+            StatusText.Text = $"{document.Name} is not tracked by Git";
+            return;
+        }
+        // An edit moves the lines, so the blame is read again once typing pauses.
+        Avalonia.Threading.DispatcherTimer again = new() { Interval = TimeSpan.FromMilliseconds(500) };
+        again.Tick += async (_, _) =>
+        {
+            again.Stop();
+            if (blamed.ContainsKey(document))
+            {
+                await BlameAsync(document);
+            }
+        };
+        document.Text.Changed += (_, _) =>
+        {
+            if (blamed.ContainsKey(document))
+            {
+                again.Stop();
+                again.Start();
+            }
+        };
+    }
+
+    private async Task<IReadOnlyList<BlameLine>?> BlameAsync(OpenDocument document)
+    {
+        if (vcs.Repository is not { } repository || await repository.BlameAsync(document.Path, document.Text.Snapshot.ToString()) is not { } lines)
+        {
+            return null;
+        }
+        blamed[document] = lines;
+        // Each commit's block is named at its first line, as Rider draws it; a change not committed yet says so.
+        List<string?> labels = [];
+        for (int i = 0; i < lines.Count; i++)
+        {
+            BlameLine line = lines[i];
+            bool first = i == 0 || lines[i - 1].Hash != line.Hash;
+            string author = line.Author.Length > 14 ? line.Author[..14] : line.Author;
+            labels.Add(!first ? null : line.IsCommitted ? $"{line.Time.ToLocalTime():yyyy-MM-dd} {author}" : "Not committed yet");
+        }
+        document.GutterAnnotations = labels;
+        return lines;
+    }
+
+    /// <summary>A click on a line's annotation: its commit, chosen in the Git window's log.</summary>
+    private async Task ShowBlamedCommitAsync(OpenDocument document, int line)
+    {
+        if (BlameOf(document) is not { } lines || line >= lines.Count || !lines[line].IsCommitted)
+        {
+            return;
+        }
+        ShowToolWindow("git");
+        await GitLog.SelectHashAsync(lines[line].Hash);
+        StatusText.Text = $"{lines[line].Short} {lines[line].Summary} ({lines[line].Author}, {lines[line].Time.ToLocalTime():f})";
+    }
+
+    /// <summary>Rider's gutter menu where no breakpoint is: annotations on or off.</summary>
+    private void ShowGutterMenu(CodeEditor editor, OpenDocument document)
+    {
+        ContextMenu menu = new();
+        MenuItem annotate = new() { Header = blamed.ContainsKey(document) ? "Close Annotations" : "Annotate with Git Blame", IsEnabled = vcs.Repository is not null };
+        annotate.Click += (_, _) => _ = ToggleAnnotationsAsync(document);
+        menu.Items.Add(annotate);
+        menu.Open(editor);
+    }
+
     /// <summary>The window's version control actions, from the keymap or the branch menu.</summary>
     private void RunVcsAction(string action)
     {
@@ -255,6 +335,9 @@ public partial class MainWindow
                 break;
             case AppActions.ShowGit:
                 ShowToolWindow("git");
+                break;
+            case AppActions.Annotate when Editors.Active is { } annotated:
+                _ = ToggleAnnotationsAsync(annotated);
                 break;
             case AppActions.UpdateProject:
                 // Rider saves first, so the merge meets what the editors show.

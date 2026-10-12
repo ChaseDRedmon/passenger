@@ -86,6 +86,25 @@ public sealed class FindInFilesTests : IDisposable
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void Recent_files_offers_the_files_behind_the_one_in_front_and_opens_one_where_it_was_left()
+    {
+        MainWindow window = Open();
+        window.OpenFile(Path.Combine(folder, "Alpha.cs"));
+        Ui.Settle();
+        window.EditorArea.CodeEditor.GoTo(new TextPosition(2, 4));
+        window.OpenFile(Path.Combine(folder, "Beta.cs"));
+        Ui.Settle();
+        Ui.Run(window, AppActions.RecentFiles);
+        SymbolPopup popup = Assert.IsType<SymbolPopup>(window.Popup);
+        Ui.WaitFor(() => popup.IsSettled, "the recent files");
+        Assert.Equal(["Alpha.cs"], popup.Rows.Select(r => r.Name));
+        Ui.Press(window, "ENTER");
+        Assert.Equal("Alpha.cs", window.EditorArea.Active?.Name);
+        Assert.Equal(new TextPosition(2, 4), window.EditorArea.CodeEditor.CaretPosition);
+        window.Close();
+    }
+
     private static void Search(FindInFilesPopup popup, string text)
     {
         popup.Text = text;

@@ -27,6 +27,15 @@ public sealed record CommitInfo(string Hash, IReadOnlyList<string> Parents, stri
     public string Short => Hash[..Math.Min(8, Hash.Length)];
 }
 
+/// <summary>A line as Git blame has it: the commit that last changed it (all zeros for a change not committed yet),
+/// who made it and when, and its subject.</summary>
+public sealed record BlameLine(string Hash, string Author, DateTimeOffset Time, string Summary)
+{
+    public bool IsCommitted => Hash.Any(c => c != '0');
+
+    public string Short => Hash[..Math.Min(8, Hash.Length)];
+}
+
 /// <summary>What `git` says, and whether it said it without failing.</summary>
 public sealed record GitResult(int Code, string Output, string Error)
 {
@@ -197,6 +206,58 @@ public sealed class Git
         return changes;
     }
 
+    /// <summary>Git blame for a file, line by line, over the text given (the editor's, unsaved changes and all), so a
+    /// line typed since is one not committed yet; null for a file Git does not track.</summary>
+    public async Task<IReadOnlyList<BlameLine>?> BlameAsync(string path, string text)
+    {
+        GitResult blame = await RunAsync(Root, ["blame", "--porcelain", "--contents", "-", "--", Relative(path)], text);
+        if (!blame.Succeeded)
+        {
+            return null;
+        }
+        Dictionary<string, (string Author, DateTimeOffset Time, string Summary)> commits = [];
+        List<BlameLine> lines = [];
+        string? hash = null;
+        (string Author, long Time, string Summary) reading = (string.Empty, 0, string.Empty);
+        foreach (string line in blame.Output.Split('\n'))
+        {
+            if (line.StartsWith('\t'))
+            {
+                // The line itself: the commit's fields are all read by now.
+                if (hash is not null)
+                {
+                    if (!commits.TryGetValue(hash, out (string Author, DateTimeOffset Time, string Summary) commit))
+                    {
+                        commits[hash] = commit = (reading.Author, DateTimeOffset.FromUnixTimeSeconds(reading.Time), reading.Summary);
+                    }
+                    lines.Add(new BlameLine(hash, commit.Author, commit.Time, commit.Summary));
+                }
+                continue;
+            }
+            string[] words = line.Split(' ', 2);
+            if (words[0].Length == 40 && words[0].All(char.IsAsciiHexDigit))
+            {
+                hash = words[0];
+                reading = (string.Empty, 0, string.Empty);
+                continue;
+            }
+            string value = words.Length > 1 ? words[1] : string.Empty;
+            switch (words[0])
+            {
+                case "author":
+                    reading.Author = value;
+                    break;
+                case "author-time" when long.TryParse(value, System.Globalization.CultureInfo.InvariantCulture, out long seconds):
+                    reading.Time = seconds;
+                    break;
+                case "summary":
+                    reading.Summary = value;
+                    break;
+            }
+        }
+        return lines;
+    }
+
     /// <summary>A file's text at a revision (a hash, a branch, HEAD), or null when it had no such file.</summary>
     public async Task<string?> TextAtAsync(string revision, string path)
     {
@@ -281,15 +342,17 @@ public sealed class Git
 
     private string Full(string relative) => System.IO.Path.GetFullPath(System.IO.Path.Combine(Root, relative));
 
-    private static async Task<GitResult> RunAsync(string folder, IReadOnlyList<string> arguments)
+    private static async Task<GitResult> RunAsync(string folder, IReadOnlyList<string> arguments, string? input = null)
     {
         ProcessStartInfo start = new("git", arguments)
         {
             WorkingDirectory = folder,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            RedirectStandardInput = true,
             UseShellExecute = false,
             CreateNoWindow = true,
+            StandardInputEncoding = new UTF8Encoding(false),
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8,
         };
@@ -300,6 +363,12 @@ public sealed class Git
             using Process process = Process.Start(start) ?? throw new InvalidOperationException("git did not start");
             Task<string> output = process.StandardOutput.ReadToEndAsync();
             Task<string> error = process.StandardError.ReadToEndAsync();
+            // Git reads what it is given and nothing else: never the IDE's terminal.
+            if (input is not null)
+            {
+                await process.StandardInput.WriteAsync(input);
+            }
+            process.StandardInput.Close();
             await process.WaitForExitAsync();
             return new GitResult(process.ExitCode, await output, await error);
         }

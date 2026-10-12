@@ -121,6 +121,24 @@ public sealed partial class CodeEditor : Control
         InvalidateVisual();
     }
 
+    /// <summary>Text per line in a column at the gutter's left (Git blame's author and date), null for a line with none;
+    /// empty for no column.</summary>
+    public IReadOnlyList<string?> GutterAnnotations { get; private set; } = [];
+
+    private double annotationWidth;
+
+    public void SetGutterAnnotations(IReadOnlyList<string?> perLine)
+    {
+        GutterAnnotations = perLine;
+        int longest = perLine.Count == 0 ? 0 : perLine.Max(l => l?.Length ?? 0);
+        annotationWidth = longest == 0 ? 0 : (longest * metrics.CharWidth) + 18;
+        InvalidateArrange();
+        InvalidateVisual();
+    }
+
+    /// <summary>Whether a point (in this control) is on the annotation column.</summary>
+    public bool IsInAnnotationColumn(Point at) => annotationWidth > 0 && at.X < annotationWidth;
+
     /// <summary>Whether the change marks tint whole lines, as a diff's two sides show them, rather than draw bars in
     /// the gutter; a mark with no lines is then a rule between two.</summary>
     public bool ChangeBackgrounds { get; set; }
@@ -272,7 +290,7 @@ public sealed partial class CodeEditor : Control
     private Typeface Typeface => new(FontFamily);
 
     private double GutterWidth => ShowLineNumbers
-        ? GutterPadLeft + Math.Max(2, Digits(document.Snapshot.LineCount)) * metrics.CharWidth + GutterPadRight
+        ? annotationWidth + GutterPadLeft + Math.Max(2, Digits(document.Snapshot.LineCount)) * metrics.CharWidth + GutterPadRight
         : 4;
 
     private double TextLeft => GutterWidth + TextPadLeft;

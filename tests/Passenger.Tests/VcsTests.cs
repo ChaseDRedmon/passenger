@@ -292,6 +292,48 @@ public sealed class VcsTests : IDisposable
         }
     }
 
+    [AvaloniaFact]
+    public void Annotations_name_each_lines_commit_mark_a_typed_line_and_a_click_chooses_the_commit()
+    {
+        File.WriteAllText(Path.Combine(folder, "Shop.cs"), Original.Replace("count++", "count += 2", StringComparison.Ordinal));
+        Git("commit", "-q", "-am", "Twice");
+        string twice = Git("rev-parse", "HEAD").Trim();
+        string first = Git("rev-parse", "HEAD~1").Trim();
+        MainWindow window = Open();
+        Ui.WaitFor(() => window.Vcs.Repository is not null, "the working tree");
+        Passenger.App.Workspace.OpenDocument shop = window.EditorArea.Active!;
+        Task annotating = window.ToggleAnnotationsAsync(shop);
+        Ui.WaitFor(() => annotating.IsCompleted, "the blame");
+        IReadOnlyList<BlameLine> blame = window.BlameOf(shop)!;
+        Assert.Equal(first, blame[0].Hash);
+        Assert.Equal(twice, blame[4].Hash);
+        Assert.Equal("Twice", blame[4].Summary);
+        // A block is named at its first line only.
+        Assert.StartsWith(DateTime.Now.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture), shop.GutterAnnotations[0], StringComparison.Ordinal);
+        Assert.Null(shop.GutterAnnotations[1]);
+        Assert.NotNull(shop.GutterAnnotations[4]);
+        Assert.True(window.EditorArea.CodeEditor.IsInAnnotationColumn(new Point(4, 4)));
+
+        // A typed line is not committed yet, once the blame is read again.
+        window.EditorArea.CodeEditor.ApplyEdits([new TextEdit(0, 0, "// new\n")]);
+        Ui.WaitFor(() => window.BlameOf(shop) is { Count: > 0 } now && !now[0].IsCommitted, "the typed line to be blamed");
+        Ui.WaitFor(() => shop.GutterAnnotations[0] == "Not committed yet", "its annotation");
+
+        // A click on a line's annotation chooses its commit in the Git window.
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Point line5 = editor.TranslatePoint(new Point(10, (5 * editor.LineHeight) + (editor.LineHeight / 2) - editor.ScrollOffset.Y), window)!.Value;
+        window.MouseDown(line5, Avalonia.Input.MouseButton.Left);
+        window.MouseUp(line5, Avalonia.Input.MouseButton.Left);
+        Ui.WaitFor(() => window.GitLog.Selected?.Hash == twice, "the commit chosen in the log");
+
+        // Closing them takes the column away.
+        Task closing = window.ToggleAnnotationsAsync(shop);
+        Ui.WaitFor(() => closing.IsCompleted, "the annotations to close");
+        Assert.Empty(shop.GutterAnnotations);
+        Assert.False(editor.IsInAnnotationColumn(new Point(4, 4)));
+        window.Close();
+    }
+
     private MainWindow Open()
     {
         MainWindow window = new() { Width = 1200, Height = 800 };

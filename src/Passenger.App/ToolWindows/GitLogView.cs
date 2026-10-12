@@ -137,6 +137,22 @@ public sealed class GitLogView : DockPanel
         set => filter.Text = value;
     }
 
+    /// <summary>Chooses the commit with this hash, reading the log first if it has not been.</summary>
+    public async Task SelectHashAsync(string hash)
+    {
+        if (!all.Any(r => r.Commit.Hash == hash))
+        {
+            await LoadAsync();
+        }
+        FilterText = string.Empty;
+        Filter();
+        if (rows.FirstOrDefault(r => r.Commit.Hash == hash) is { } row)
+        {
+            list.SelectedIndex = IndexOf(rows, row);
+            list.ScrollIntoView(list.SelectedIndex);
+        }
+    }
+
     /// <summary>Chooses a commit, as a click on its row does.</summary>
     public void Select(CommitInfo commit) => list.SelectedItem = rows.FirstOrDefault(r => r.Commit.Hash == commit.Hash);
 

@@ -102,6 +102,11 @@ public partial class MainWindow : Window
                 ShowTestMenu(editor, active, click.Line);
                 return;
             }
+            if (!click.Context && editor.IsInAnnotationColumn(click.Position))
+            {
+                _ = ShowBlamedCommitAsync(active, click.Line);
+                return;
+            }
             if (!click.Context && editor.IsInChangeColumn(click.Position) && ChangeAt(active, click.Line) is { } change)
             {
                 _ = ShowChangePopupAsync(editor, active, change);
@@ -113,6 +118,10 @@ public partial class MainWindow : Window
                 if (debug.Breakpoints.In(active.Path).FirstOrDefault(b => b.Line == click.Line) is { } breakpoint)
                 {
                     ShowBreakpointPopup(breakpoint);
+                }
+                else
+                {
+                    ShowGutterMenu(editor, active);
                 }
             }
             else if (click.Modifiers.HasFlag(KeyModifiers.Shift))
@@ -426,6 +435,9 @@ public partial class MainWindow : Window
                 break;
             case AppActions.FindAction:
                 ShowFindAction();
+                break;
+            case AppActions.RecentFiles:
+                ShowRecentFiles();
                 break;
             case AppActions.FindInFiles or AppActions.ReplaceInFiles:
                 ShowFindInFiles(replace: action == AppActions.ReplaceInFiles);

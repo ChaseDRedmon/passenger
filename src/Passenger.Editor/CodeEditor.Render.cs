@@ -275,6 +275,10 @@ public sealed partial class CodeEditor
         {
             DrawChanges(context, first, last, gutter);
         }
+        if (annotationWidth > 0)
+        {
+            DrawAnnotations(context, first, last);
+        }
         double right = gutter - GutterPadRight;
         Dictionary<int, TestMarkKind> tests = [];
         foreach (TestMark test in TestMarks)
@@ -382,6 +386,22 @@ public sealed partial class CodeEditor
             default:
                 context.DrawEllipse(null, new Pen(palette.LineNumber, 1.5), centre, radius - 0.75, radius - 0.75);
                 break;
+        }
+    }
+
+    /// <summary>The annotation column (Git blame): each line's text muted at the gutter's left, a rule after it.</summary>
+    private void DrawAnnotations(DrawingContext context, int first, int last)
+    {
+        context.FillRectangle(palette.CurrentLine, new Rect(0, 0, annotationWidth - 6, Bounds.Height));
+        for (int line = first; line <= last && line < GutterAnnotations.Count; line++)
+        {
+            if (GutterAnnotations[line] is not { Length: > 0 } label)
+            {
+                continue;
+            }
+            TextLine text = lines.Get(new LineKey(label, -3), () => Format(label, [], numberRuns.Other));
+            double y = line * metrics.LineHeight - scroll.Y + (metrics.LineHeight - text.Height) / 2;
+            text.Draw(context, new Point(8, y));
         }
     }
 

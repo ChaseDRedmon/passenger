@@ -162,6 +162,8 @@ Previous Change move between them and Rollback Lines puts one back; the Explorer
 window's Log lists every branch's history beside its graph, with branches and tags, a filter by text or hash, and the
 chosen commit's files (a double-click shows what it did to one) and message. Update Project pulls and Fetch fetches.
 Open files reload from disk after a checkout, a rollback or an update, and when the window comes back to the front.
+Annotate with Git Blame (the gutter's right-click menu, or Find Action) names each line's commit at the gutter's
+left, a block at its first line, lines typed since as not committed yet, and a click chooses the commit in the log.
 Still to come: word-level highlights in the diff, merge conflicts, stashes, and the log's branch tree.
 
 The terminal is built: Rider's Terminal window (Ctrl+Alt+1, Cmd+Ctrl+1 on the Mac) with a shell per tab in the open
@@ -169,7 +171,8 @@ folder, an emulator of Passenger's own that runs full-screen programs (vim, less
 the scrollback, and the mouse for programs that ask for it. Find Action (Ctrl+Shift+A, Cmd+Shift+A) runs any action
 by name, the ones without a shortcut too. Find in Files and Replace in Files (Ctrl+Shift+F and H, Cmd on the Mac) search
 every text file of the folder, open files as the editor has them, matching as the Find bar does, with a preview of the
-chosen match; Replace All edits open files undoably and writes closed ones. Settings (Ctrl+Alt+S, Cmd+, on the Mac) has Rider's search over its pages
+chosen match; Replace All edits open files undoably and writes closed ones. Recent Files (Ctrl+,) lists the files
+opened last and reopens one where its caret was left. Settings (Ctrl+Alt+S, Cmd+, on the Mac) has Rider's search over its pages
 (Appearance, Editor, Terminal, and the Keymap, where Add takes the next keys pressed, Remove unbinds and Reset goes
 back to the Visual Studio keymap's), applies a change at once and keeps it beside the layout. The NuGet window (Alt+7, Cmd+7) lists the solution's packages, searches nuget.org, and installs, updates and
 removes a package per project through `dotnet add` and `dotnet remove package`, central package management included.
