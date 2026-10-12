@@ -189,21 +189,24 @@ public sealed partial class PassengerTools
         List<ProfileFrame> path = [];
         if (snapshot.Threads.FirstOrDefault() is { } busiest)
         {
-            path.Add(new ProfileFrame(busiest.Name, busiest.Total, busiest.Self));
+            path.Add(Frame(busiest.Name, busiest.Total, busiest.Self));
             for (Passenger.Profiler.CallNode at = busiest; at.Children.Count > 0 && path.Count < 80;)
             {
                 at = at.Ordered[0];
-                path.Add(new ProfileFrame(at.Name, at.Total, at.Self));
+                path.Add(Frame(at.Name, at.Total, at.Self));
             }
         }
         return new ProfileInfo(
             Math.Round(snapshot.Duration.TotalMilliseconds),
             snapshot.Samples,
             snapshot.Threads.Count,
-            [.. snapshot.HotSpots.Take(Math.Clamp(top, 1, 200)).Select(h => new ProfileFrame(h.Name, h.Total, h.Self))],
+            [.. snapshot.HotSpots.Take(Math.Clamp(top, 1, 200)).Select(h => Frame(h.Name, h.Total, h.Self))],
             path,
             snapshot.TracePath,
             heap);
+
+        ProfileFrame Frame(string method, int total, int self) =>
+            new(method, (int)Math.Round(snapshot.Milliseconds(total)), (int)Math.Round(snapshot.Milliseconds(self)));
     });
 
     // The terminal

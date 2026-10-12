@@ -53,8 +53,8 @@ public sealed record ThreadLine(int Id, string Name, IReadOnlyList<double> Times
 
 /// <summary>What a profiling run found, or a stretch of it: per thread, the call tree of its samples; the hot spots across
 /// them all; the allocations and collections; and when each thread was sampled, for the timeline. A sample is a thread
-/// caught at one stack, once a millisecond, so a count reads as milliseconds. The run's samples are kept, so any
-/// interval of it (<see cref="Within"/>) has the same views.</summary>
+/// caught at one stack, about once a millisecond (<see cref="SampleMs"/> says how often). The run's samples are kept,
+/// so any interval of it (<see cref="Within"/>) has the same views.</summary>
 public sealed class Snapshot
 {
     /// <summary>EventPipe's sampler: every managed thread's stack, each millisecond.</summary>
@@ -83,6 +83,7 @@ public sealed class Snapshot
         Whole = whole ?? this;
         IReadOnlyList<Sample> inside = [.. samples.Where(x => x.AtMs >= startMs && x.AtMs <= endMs)];
         Samples = inside.Count;
+        SampleMs = whole?.SampleMs ?? Period(samples);
         (All, HotSpots, IReadOnlyDictionary<int, CallNode> byId) = Build(inside);
         Threads = All.Ordered;
         Collections = [.. collections.Where(c => c.AtMs >= startMs && c.AtMs <= endMs)];
@@ -121,6 +122,14 @@ public sealed class Snapshot
 
     public int Samples { get; }
 
+    /// <summary>How long a sample stands for: the time between the sampler's passes over the busiest thread, the whole run's.
+    /// The runtime asks for one a millisecond, but a loaded machine, or a program run at background priority (whose
+    /// timers macOS coalesces), gets fewer, so a count is turned into time by this rather than read as milliseconds.</summary>
+    public double SampleMs { get; }
+
+    /// <summary>The time some samples of this run stand for, in milliseconds.</summary>
+    public double Milliseconds(int samples) => samples * SampleMs;
+
     /// <summary>The .nettrace file the run was written to, which other tools (PerfView, speedscope) read too.</summary>
     public string TracePath { get; }
 
@@ -149,6 +158,20 @@ public sealed class Snapshot
             }
         }
         return first <= last ? (first, last) : null;
+    }
+
+    /// <summary>The mean time between the busiest thread's samples, which the sampler takes on every pass it makes; a
+    /// millisecond, as asked for, when there are too few to measure.</summary>
+    private static double Period(IReadOnlyList<Sample> taken)
+    {
+        IGrouping<int, Sample>? busiest = taken.GroupBy(x => x.Thread).MaxBy(g => g.Count());
+        if (busiest is null || busiest.Count() < 2)
+        {
+            return 1;
+        }
+        double first = busiest.Min(x => x.AtMs);
+        double last = busiest.Max(x => x.AtMs);
+        return last > first ? (last - first) / (busiest.Count() - 1) : 1;
     }
 
     /// <summary>The call trees (a root per thread under one for all) and hot spots of some samples.</summary>

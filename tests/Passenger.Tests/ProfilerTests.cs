@@ -35,13 +35,15 @@ public sealed class ProfilerTests : IDisposable
             Assert.Contains("spun True", output);
             Assert.Contains("child said: child ran", output);
         }
-        // In the main thread's tree, Spin is called from the program's entry point, with about 800 ms of samples (one a
-        // millisecond) on its stack. A sample lands where the loop can be stopped, its call to the clock, so most of
-        // them are below Spin rather than in it.
+        // In the main thread's tree, Spin is called from the program's entry point, on its stack for about the 800 ms it
+        // spins: in time, since a loaded machine or a background process (whose timers macOS coalesces) gets a sample
+        // each few milliseconds rather than each one. A sample lands where the loop can be stopped, its call to the
+        // clock, so most of them are below Spin rather than in it.
         CallNode? spin = Find(snapshot.Threads, n => n.Name.Contains("Busy.Spin", StringComparison.Ordinal));
         Assert.NotNull(spin);
         Assert.Contains("Main", spin.Parent!.Name, StringComparison.Ordinal);
-        Assert.InRange(spin.Total, 400, 1200);
+        Assert.True(spin.Total >= 5, $"only {spin.Total} samples of Spin, one each {snapshot.SampleMs:0.0} ms");
+        Assert.InRange(snapshot.Milliseconds(spin.Total), 400, 1200);
         Assert.Contains(spin.Children, c => c.Name.Contains("Stopwatch", StringComparison.Ordinal));
         Assert.True(File.Exists(snapshot.TracePath));
 

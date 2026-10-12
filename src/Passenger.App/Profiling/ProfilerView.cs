@@ -12,7 +12,7 @@ using Passenger.Profiler;
 namespace Passenger.App.Profiling;
 
 /// <summary>A row of the call tree: a node, how deep it sits, and whether its callees are listed under it.</summary>
-public sealed class TreeRow(CallNode node, int depth, ObservableCollection<TreeRow> list, string unit, int whole) : Observable
+public sealed class TreeRow(CallNode node, int depth, ObservableCollection<TreeRow> list, string unit, int whole, double scale = 1) : Observable
 {
     private bool isExpanded;
 
@@ -25,6 +25,9 @@ public sealed class TreeRow(CallNode node, int depth, ObservableCollection<TreeR
     /// <summary>What its weight counts (ms of samples, KB allocated), and the whole a share is of.</summary>
     public string Unit { get; } = unit;
     public int Whole { get; } = whole;
+
+    /// <summary>How much of the unit one count of the weight is: a sample's milliseconds (<see cref="Snapshot.SampleMs"/>).</summary>
+    public double Scale { get; } = scale;
 
     public bool IsExpanded
     {
@@ -312,7 +315,7 @@ public sealed class ProfilerView : DockPanel
         rows.Clear();
         foreach (CallNode thread in snapshot.Threads)
         {
-            rows.Add(new TreeRow(thread, 0, rows, "ms", snapshot.Samples));
+            rows.Add(new TreeRow(thread, 0, rows, "ms", snapshot.Samples, snapshot.SampleMs));
         }
         // The heaviest thread's hot path opened, as dotTrace opens it.
         if (rows.Count > 0)
@@ -331,6 +334,7 @@ public sealed class ProfilerView : DockPanel
             tree.SelectedItem = at;
         }
         spots.ItemsSource = snapshot.HotSpots;
+        flame.SampleMs = snapshot.SampleMs;
         flame.Root = snapshot.All;
         ShowPageLater(current);
         types.ItemsSource = snapshot.Allocations;
@@ -427,7 +431,7 @@ public sealed class ProfilerView : DockPanel
         int at = row.List.IndexOf(row) + 1;
         foreach (CallNode child in row.Node.Ordered)
         {
-            row.List.Insert(at++, new TreeRow(child, row.Depth + 1, row.List, row.Unit, row.Whole));
+            row.List.Insert(at++, new TreeRow(child, row.Depth + 1, row.List, row.Unit, row.Whole, row.Scale));
         }
     }
 
@@ -505,7 +509,7 @@ public sealed class ProfilerView : DockPanel
             e.Handled = true;
         };
         string percent = row.Whole > 0 ? $"{100.0 * row.Node.Total / row.Whole,5:0.0}%" : string.Empty;
-        TextBlock share = Muted($"{percent}  {row.Node.Total,7:N0} {row.Unit}", 170);
+        TextBlock share = Muted($"{percent}  {row.Node.Total * row.Scale,7:N0} {row.Unit}", 170);
         share.FontFamily = CSharp.Fonts.Mono;
         share.FontSize = 12;
         return new StackPanel
@@ -519,10 +523,11 @@ public sealed class ProfilerView : DockPanel
 
     private Control Spot(HotSpot spot)
     {
-        TextBlock own = Muted($"{Share(spot.Self)}  {spot.Self,7:N0} ms", 170);
+        double sampleMs = Snapshot?.SampleMs ?? 1;
+        TextBlock own = Muted($"{Share(spot.Self)}  {spot.Self * sampleMs,7:N0} ms", 170);
         own.FontFamily = CSharp.Fonts.Mono;
         own.FontSize = 12;
-        TextBlock total = Muted($"{spot.Total,7:N0} ms in all", 110);
+        TextBlock total = Muted($"{spot.Total * sampleMs,7:N0} ms in all", 110);
         total.FontSize = 12;
         return new StackPanel { Orientation = Orientation.Horizontal, Height = 22, Margin = new Thickness(6, 0), Children = { own, total, MethodName(spot.Name, false) } };
     }

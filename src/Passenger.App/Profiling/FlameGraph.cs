@@ -37,6 +37,9 @@ public sealed class FlameGraph : Control
         }
     }
 
+    /// <summary>How long a sample stands for, which the tooltip's times are counted in (<see cref="Snapshot.SampleMs"/>).</summary>
+    public double SampleMs { get; set; } = 1;
+
     /// <summary>The bar zoomed into, which spans the width.</summary>
     public CallNode? Zoomed => zoom;
 
@@ -130,7 +133,7 @@ public sealed class FlameGraph : Control
     {
         base.OnPointerMoved(e);
         CallNode? node = At(e.GetPosition(this));
-        ToolTip.SetTip(this, node is null ? null : $"{node.Name}\n{node.Total:N0} ms ({Percent(node)}), {node.Self:N0} ms in itself");
+        ToolTip.SetTip(this, node is null ? null : $"{node.Name}\n{node.Total * SampleMs:N0} ms ({Percent(node)}), {node.Self * SampleMs:N0} ms in itself");
     }
 
     protected override void OnKeyDown(KeyEventArgs e)
