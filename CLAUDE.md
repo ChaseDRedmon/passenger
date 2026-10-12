@@ -51,6 +51,10 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.Languages`: colour before any language server answers. C# is Roslyn's parser
   in-process, incremental and off the UI thread (`CSharpHighlighter`), classified from syntax
   alone (`CSharpClassifier`); the language server's semantic colours will layer over it.
+- `src/Passenger.Lsp`: the Language Server Protocol client (StreamJsonRpc over stdio) and the
+  Roslyn language server it runs, downloaded per platform at build and copied beside the app under
+  `roslyn/`. `RoslynSession` opens the folder's solution; `LspDocument` keeps one document in step
+  and makes requests in the editor's offsets.
 - `src/Passenger.App`: the shell. One window-wide keymap (`AppActions.cs`) routes IDE actions
   itself and editor actions to the focused editor. Explorer, editor tabs, files on disk.
 

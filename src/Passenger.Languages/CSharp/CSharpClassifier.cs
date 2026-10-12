@@ -53,7 +53,8 @@ internal static class CSharpClassifier
             };
             if (kind is { } k)
             {
-                Add(spans, t.Span.Start, t.Span.Length, k);
+                // A doc comment's first /// is its own leading trivia, outside its Span; FullSpan has it.
+                Add(spans, t.FullSpan.Start, t.FullSpan.Length, k);
             }
         }
     }

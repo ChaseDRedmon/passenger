@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The Language Server Protocol client, and the Roslyn language server it runs. -->
+  <PropertyGroup>
+    <RootNamespace>Passenger.Lsp</RootNamespace>
+    <!-- Microsoft's server (MIT, built in the Roslyn repo), one package per platform. Only the
+         platform being built is downloaded; it is copied beside the app under roslyn/. -->
+    <RoslynServerVersion>5.11.0</RoslynServerVersion>
+    <RoslynServerRid Condition="'$(RuntimeIdentifier)' != ''">$(RuntimeIdentifier)</RoslynServerRid>
+    <RoslynServerRid Condition="'$(RoslynServerRid)' == ''">$([System.Runtime.InteropServices.RuntimeInformation]::RuntimeIdentifier)</RoslynServerRid>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="StreamJsonRpc" />
+    <ProjectReference Include="../Passenger.Text/Passenger.Text.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageDownload Include="roslyn-language-server.$(RoslynServerRid)" Version="[$(RoslynServerVersion)]" />
+  </ItemGroup>
+
+  <!-- The server's files become this project's output items, so every project that references this
+       one (the app, the tests) gets them beside its own binaries. -->
+  <Target Name="IncludeRoslynServer" BeforeTargets="AssignTargetPaths">
+    <PropertyGroup>
+      <RoslynServerFolder>$(NuGetPackageRoot)roslyn-language-server.$(RoslynServerRid.ToLowerInvariant())/$(RoslynServerVersion)/tools/net10.0/$(RoslynServerRid)/</RoslynServerFolder>
+    </PropertyGroup>
+    <Error Condition="!Exists('$(RoslynServerFolder)')" Text="The Roslyn language server for $(RoslynServerRid) is not at $(RoslynServerFolder); restore first." />
+    <ItemGroup>
+      <RoslynServerFile Include="$(RoslynServerFolder)**/*" />
+      <None Include="@(RoslynServerFile)" Link="roslyn/%(RoslynServerFile.RecursiveDir)%(RoslynServerFile.Filename)%(RoslynServerFile.Extension)"
+            CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    </ItemGroup>
+  </Target>
+</Project>

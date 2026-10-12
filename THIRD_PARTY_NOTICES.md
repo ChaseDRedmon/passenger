@@ -11,6 +11,8 @@ What Passenger uses that others made, and under what terms.
 | SkiaSharp (with Skia, BSD-3-Clause) | MIT | https://github.com/mono/SkiaSharp |
 | HarfBuzzSharp (with HarfBuzz, Old MIT) | MIT | https://github.com/mono/SkiaSharp |
 | Microsoft.CodeAnalysis.CSharp (Roslyn) | MIT | https://github.com/dotnet/roslyn |
+| roslyn-language-server (Roslyn's language server, copied beside the app under `roslyn/`) | MIT | https://github.com/dotnet/roslyn |
+| StreamJsonRpc | MIT | https://github.com/microsoft/vs-streamjsonrpc |
 
 ## JetBrains Mono
 

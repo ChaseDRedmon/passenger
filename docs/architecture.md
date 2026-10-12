@@ -44,8 +44,9 @@ Four kinds of process, so a stall or crash in one never freezes typing:
 Passenger's protocol is JSON-RPC, with the contract as C# interfaces and records in one shared assembly.
 StreamJsonRpc (MIT, what Visual Studio uses internally) carries it.
 
-The UI's LSP types are generated from the LSP specification's `metaModel.json`, so every request and its fields are
-typed.
+The UI's LSP types are hand-written records for the part of the protocol Passenger speaks (`Passenger.Lsp`), with
+`JsonElement` where the protocol allows several shapes; generating the whole model from `metaModel.json` waits until
+another language server needs more of it.
 
 ## Language intelligence: Roslyn's own server
 
@@ -75,6 +76,8 @@ The costs:
   adapter, and upgrade on purpose.
 - **Refactorings that need options** (change signature, extract interface) need our own dialogs, wired through the
   extension.
+- **Diagnostics are pulled per source.** Roslyn registers ten (`syntax`, `DocumentCompilerSemantic`, the analyzers,
+  hot reload, ...) and one catch-all with no identifier that repeats them; Passenger pulls the named ones.
 - **Project loading is slow without Dev Kit.** Dev Kit feeds Roslyn its projects over a private channel
   (`--brokeredServicePipeName`, its closed `.roslynDevKit` assembly). Without it, the server runs a design-time build
   per project. Dev Kit 11.0 (October 6, 2026) has the active file ready in about half a second on a 407-project
