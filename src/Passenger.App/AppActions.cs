@@ -19,6 +19,7 @@ public static class AppActions
     public const string FileStructure = "app.fileStructure";
     public const string FindAction = "app.findAction";
     public const string ShowSettings = "app.settings";
+    public const string ShowNuGet = "app.showNuGet";
     public const string Find = "app.find";
     public const string Replace = "app.replace";
     public const string FindNext = "app.findNext";
@@ -122,6 +123,7 @@ public static class AppActions
                 .Bind(GoToEverything, "meta T")
                 .Bind(FindAction, "meta shift A")
                 .Bind(ShowSettings, "meta COMMA")
+                .Bind(ShowNuGet, "meta 7", "meta shift 7")
                 .Bind(FileStructure, "alt BACK_SLASH")
                 .Bind(Find, "meta F")
                 .Bind(Replace, "control H")
@@ -193,6 +195,7 @@ public static class AppActions
             .Bind(GoToEverything, "control T")
             .Bind(FindAction, "control shift A")
             .Bind(ShowSettings, "control alt S")
+            .Bind(ShowNuGet, "alt 7", "alt shift 7")
             .Bind(FileStructure, "alt BACK_SLASH")
             .Bind(Find, "control F")
             .Bind(Replace, "control H")

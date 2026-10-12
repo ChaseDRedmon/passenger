@@ -185,9 +185,12 @@ public sealed record ProjectModel(
             List<string> frameworks = (Property("TargetFrameworks") ?? Property("TargetFramework") ?? string.Empty)
                 .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .ToList();
+            // Under central package management the version is the Directory.Packages.props one, not the project's.
+            IReadOnlyDictionary<string, string> central = CentralVersions(System.IO.Path.GetDirectoryName(path)!);
             List<(string, string?)> packages = project.Descendants()
                 .Where(e => e.Name.LocalName == "PackageReference" && e.Attribute("Include") is not null)
-                .Select(e => (e.Attribute("Include")!.Value, e.Attribute("Version")?.Value ?? e.Elements().FirstOrDefault(c => c.Name.LocalName == "Version")?.Value))
+                .Select(e => (e.Attribute("Include")!.Value, e.Attribute("Version")?.Value ?? e.Elements().FirstOrDefault(c => c.Name.LocalName == "Version")?.Value
+                    ?? e.Attribute("VersionOverride")?.Value ?? central.GetValueOrDefault(e.Attribute("Include")!.Value)))
                 .ToList();
             List<string> references = project.Descendants()
                 .Where(e => e.Name.LocalName == "ProjectReference" && e.Attribute("Include") is not null)
@@ -209,6 +212,32 @@ public sealed record ProjectModel(
 
     private static string? Declared(XElement root, string key) =>
         root.Descendants().FirstOrDefault(e => e.Name.LocalName == key)?.Value.Trim() is { Length: > 0 } value ? value : null;
+
+    /// <summary>The versions the nearest Directory.Packages.props above a project sets (central package management), by
+    /// package; none when there is no such file.</summary>
+    public static IReadOnlyDictionary<string, string> CentralVersions(string folder)
+    {
+        for (DirectoryInfo? at = new(folder); at is not null; at = at.Parent)
+        {
+            string props = System.IO.Path.Combine(at.FullName, "Directory.Packages.props");
+            if (!File.Exists(props))
+            {
+                continue;
+            }
+            try
+            {
+                return XDocument.Load(props).Root!.Descendants()
+                    .Where(e => e.Name.LocalName == "PackageVersion" && e.Attribute("Include") is not null && e.Attribute("Version") is not null)
+                    .GroupBy(e => e.Attribute("Include")!.Value, StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(g => g.Key, g => g.First().Attribute("Version")!.Value, StringComparer.OrdinalIgnoreCase);
+            }
+            catch (System.Xml.XmlException)
+            {
+                return new Dictionary<string, string>();
+            }
+        }
+        return new Dictionary<string, string>();
+    }
 
     /// <summary>The Directory.Build.props files above a project, nearest first: where a repository sets
     /// the target framework for all its projects. Read as declared, until MSBuild evaluates projects.</summary>

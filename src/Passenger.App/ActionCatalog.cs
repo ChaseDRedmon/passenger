@@ -63,6 +63,7 @@ public static class ActionCatalog
         [AppActions.RollbackLines] = "Rollback Lines",
         [AppActions.FindAction] = "Find Action...",
         [AppActions.ShowSettings] = "Settings...",
+        [AppActions.ShowNuGet] = "NuGet",
         [EditorActions.ToggleLineComment] = "Comment with Line Comment",
     };
 
