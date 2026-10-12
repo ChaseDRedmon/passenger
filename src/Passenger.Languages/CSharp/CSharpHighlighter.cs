@@ -6,34 +6,34 @@ using Passenger.Text;
 
 namespace Passenger.Languages.CSharp;
 
-/// <summary>Colours a C# document as it is typed. Roslyn's text follows the document change by
-/// change, so each parse is incremental and runs on a worker thread; until it lands, the colours
-/// already known are shifted through the edit (a word being typed keeps its colour), so typing never
-/// flashes plain. Only the newest parse is kept, and a parse is never queued behind another.</summary>
+/// <summary>Colours a C# document as it is typed. Roslyn reads the document's own snapshots, told the
+/// range each edit changed, so each parse is incremental and runs on a worker thread. Nothing is classified ahead:
+/// the editor asks for the lines it draws, and they are classified from the newest tree there and
+/// then (Roslyn's trees are immutable and safe to read from any thread). Edits made since that tree
+/// was parsed are mapped back to find the tree's text and forward again to place its colours, so a
+/// word being typed keeps its colour and typing never flashes plain. A keystroke costs the lines on
+/// screen, whatever the size of the file.</summary>
 public sealed class CSharpHighlighter : IHighlighter, IDisposable
 {
-    /// <summary>After this many edits Roslyn's text is rebuilt from the document, so the chain of
-    /// changes it keeps for incremental parsing never grows without end.</summary>
-    private const int RebaseAfter = 2000;
-
     /// <summary>The symbols a Debug build defines, so <c>#if DEBUG</c> code is coloured as code until
     /// the project system says which configuration is active.</summary>
     private static readonly CSharpParseOptions Options = new(LanguageVersion.Preview, DocumentationMode.Parse, preprocessorSymbols: ["DEBUG", "TRACE", "NET", "NETCOREAPP"]);
 
     private readonly TextDocument document;
     private readonly SynchronizationContext? ui = SynchronizationContext.Current;
-    private SourceText text;
+    private readonly List<(int Version, IReadOnlyList<TextEdit> Edits)> sinceTree = [];
+    private SnapshotText text;
     private SyntaxTree? tree;
-    private SyntaxSpan[] spans = [];
     private int version;
-    private int edits;
     private bool parsing;
     private bool disposed;
+    private (int Version, int Start, int Length, SyntaxSpan[] Spans) cached = (-1, 0, 0, []);
+    private (int Start, int Length) lastAsked;
 
     public CSharpHighlighter(TextDocument document)
     {
         this.document = document;
-        text = SourceText.From(document.Snapshot.ToString());
+        text = new SnapshotText(document.Snapshot);
         document.Changed += OnChanged;
         Parse();
     }
@@ -42,27 +42,36 @@ public sealed class CSharpHighlighter : IHighlighter, IDisposable
 
     public IReadOnlyList<SyntaxSpan> GetSpans(TextSnapshot snapshot, int start, int length)
     {
-        SyntaxSpan[] current = spans;
-        int low = 0;
-        int high = current.Length;
-        while (low < high)
+        if (tree is null)
         {
-            int middle = (low + high) / 2;
-            if (current[middle].End <= start)
-            {
-                low = middle + 1;
-            }
-            else
-            {
-                high = middle;
-            }
+            return [];
         }
-        int end = low;
-        while (end < current.Length && current[end].Start < start + length)
+        if (cached.Version == version && cached.Start == start && cached.Length == length)
         {
-            end++;
+            return cached.Spans;
         }
-        return new ArraySegment<SyntaxSpan>(current, low, end - low);
+        lastAsked = (start, length);
+        // The range in the tree's text: the visible range carried back through the edits since.
+        int from = start;
+        int to = start + length;
+        for (int i = sinceTree.Count - 1; i >= 0; i--)
+        {
+            from = Back(sinceTree[i].Edits, from, toEnd: false);
+            to = Back(sinceTree[i].Edits, to, toEnd: true);
+        }
+        SyntaxNode root = tree.GetRoot();
+        // One character to the left, so a word being typed at its end is found and its colour
+        // carried over the new letters.
+        from = sinceTree.Count > 0 ? from - 1 : from;
+        TextSpan range = TextSpan.FromBounds(Math.Clamp(from, 0, root.FullSpan.End), Math.Clamp(to, 0, root.FullSpan.End));
+        List<SyntaxSpan> spans = CSharpClassifier.Classify(root, range);
+        foreach ((_, IReadOnlyList<TextEdit> batch) in sinceTree)
+        {
+            spans = Forward(spans, batch);
+        }
+        SyntaxSpan[] result = [.. spans];
+        cached = (version, start, length, result);
+        return result;
     }
 
     public void Dispose()
@@ -73,17 +82,9 @@ public sealed class CSharpHighlighter : IHighlighter, IDisposable
 
     private void OnChanged(object? sender, DocumentChangedEventArgs e)
     {
-        if (++edits >= RebaseAfter)
-        {
-            edits = 0;
-            text = SourceText.From(e.After.ToString());
-        }
-        else
-        {
-            text = text.WithChanges(e.Edits.Select(edit => new TextChange(new TextSpan(edit.Start, edit.Length), edit.Text)));
-        }
-        spans = Shift(spans, e.Edits);
+        text = text.With(e.After, e.Edits);
         version++;
+        sinceTree.Add((version, e.Edits));
         Parse();
     }
 
@@ -94,28 +95,33 @@ public sealed class CSharpHighlighter : IHighlighter, IDisposable
             return;
         }
         parsing = true;
-        SourceText parsedText = text;
+        SnapshotText parsedText = text;
         SyntaxTree? previous = tree;
         int parsedVersion = version;
+        (int Start, int Length) warm = lastAsked;
         BackgroundWork.Begin();
         Task.Run(() =>
         {
             SyntaxTree parsed = previous is null ? CSharpSyntaxTree.ParseText(parsedText, Options) : previous.WithChangedText(parsedText);
-            return (parsed, CSharpClassifier.Classify(parsed.GetRoot(), CancellationToken.None));
+            // Classifying the lines on screen here builds the tree's nodes there (Roslyn makes them on
+            // first touch, and a list of thousands of members makes arrays of thousands), so the UI
+            // thread finds them made.
+            SyntaxNode root = parsed.GetRoot();
+            int end = root.FullSpan.End;
+            CSharpClassifier.Classify(root, TextSpan.FromBounds(Math.Min(warm.Start, end), Math.Min(warm.Start + warm.Length, end)));
+            return parsed;
         }).ContinueWith(done => OnUi(() =>
         {
             try
             {
                 parsing = false;
-                if (done.IsCompletedSuccessfully)
+                if (done.IsCompletedSuccessfully && !disposed)
                 {
-                    // Even a stale tree is kept: the next parse grows incrementally from it.
-                    tree = done.Result.parsed;
-                    if (parsedVersion == version)
-                    {
-                        spans = done.Result.Item2;
-                        Changed?.Invoke(this, EventArgs.Empty);
-                    }
+                    tree = done.Result;
+                    parsedText.ForgetHistory();
+                    sinceTree.RemoveAll(batch => batch.Version <= parsedVersion);
+                    cached = (-1, 0, 0, []);
+                    Changed?.Invoke(this, EventArgs.Empty);
                 }
                 if (parsedVersion != version)
                 {
@@ -141,28 +147,50 @@ public sealed class CSharpHighlighter : IHighlighter, IDisposable
         }
     }
 
-    /// <summary>Carries colours through edits (sorted, in the old text's coordinates). A span the
-    /// edit lands inside grows or shrinks with it; one an edit crosses is dropped until the next parse
-    /// brings it back.</summary>
-    private static SyntaxSpan[] Shift(SyntaxSpan[] spans, IReadOnlyList<TextEdit> edits)
+    /// <summary>An offset after <paramref name="batch"/> as it was before it. Inside inserted text it
+    /// lands at the insertion's start, or past the replaced text for the end of a range.</summary>
+    private static int Back(IReadOnlyList<TextEdit> batch, int offset, bool toEnd)
     {
-        List<SyntaxSpan> shifted = new(spans.Length);
+        int shift = 0;
+        foreach (TextEdit edit in batch)
+        {
+            int start = edit.Start + shift;
+            int end = start + edit.Text.Length;
+            if (offset < start)
+            {
+                break;
+            }
+            if (offset <= end)
+            {
+                return toEnd ? edit.End : edit.Start;
+            }
+            shift += edit.Text.Length - edit.Length;
+        }
+        return offset - shift;
+    }
+
+    /// <summary>Carries colours through a batch of edits (sorted, in the old text's coordinates). A
+    /// span an edit lands inside grows or shrinks with it; one an edit crosses is dropped until the
+    /// next parse brings it back.</summary>
+    private static List<SyntaxSpan> Forward(List<SyntaxSpan> spans, IReadOnlyList<TextEdit> batch)
+    {
+        List<SyntaxSpan> shifted = new(spans.Count);
         int e = 0;
         int delta = 0;
         foreach (SyntaxSpan span in spans)
         {
-            while (e < edits.Count && edits[e].End <= span.Start)
+            while (e < batch.Count && batch[e].End <= span.Start)
             {
-                delta += edits[e].Text.Length - edits[e].Length;
+                delta += batch[e].Text.Length - batch[e].Length;
                 e++;
             }
-            if (e >= edits.Count || edits[e].Start > span.End || (edits[e].Start == span.End && edits[e].Length > 0))
+            if (e >= batch.Count || batch[e].Start > span.End || (batch[e].Start == span.End && batch[e].Length > 0))
             {
                 shifted.Add(span with { Start = span.Start + delta });
                 continue;
             }
-            TextEdit edit = edits[e];
-            bool alone = e + 1 >= edits.Count || edits[e + 1].Start > span.End;
+            TextEdit edit = batch[e];
+            bool alone = e + 1 >= batch.Count || batch[e + 1].Start > span.End;
             if (alone && edit.Length == 0 && edit.Start > span.Start)
             {
                 shifted.Add(new SyntaxSpan(span.Start + delta, span.Length + edit.Text.Length, span.Kind));
@@ -179,6 +207,6 @@ public sealed class CSharpHighlighter : IHighlighter, IDisposable
                 e++;
             }
         }
-        return [.. shifted];
+        return shifted;
     }
 }

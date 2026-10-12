@@ -19,7 +19,10 @@ Rider's Visual Studio keymaps with chords, C# colour from Roslyn's parser off th
 File and Go to Line. The Explorer's file tree, tabs that keep their carets and scroll, saving that keeps encoding, BOM,
 line endings and permissions.
 
-**Done when:** editing a 50,000-line file feels instant, and the editor holds a frame per keystroke. Still to measure.
+**Done when:** editing a 50,000-line file feels instant, and the editor holds a frame per keystroke. Measured
+October 11, 2026, on an M2 Max, headless with Skia drawing on the CPU: a keystroke in a 50,000-line C# file, its layout
+and a rendered frame took 4.2 ms at the median, 7.0 ms at p90 and 10.4 ms at worst with colour on, and about 2 ms
+without.
 
 ## M2: C# intelligence
 

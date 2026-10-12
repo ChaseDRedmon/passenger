@@ -155,7 +155,10 @@ public sealed class EditingBehaviourTests
     }
 
     private static Passenger.Editor.TokenKind? KindAt(CSharpHighlighter highlighter, EditorRig rig, int offset) =>
-        highlighter.GetSpans(rig.Document.Snapshot, offset, 1).Cast<Passenger.Editor.SyntaxSpan?>().FirstOrDefault()?.Kind;
+        highlighter.GetSpans(rig.Document.Snapshot, offset, 1)
+            .Where(s => s.Start <= offset && offset < s.End)
+            .Cast<Passenger.Editor.SyntaxSpan?>()
+            .FirstOrDefault()?.Kind;
 
     private static Point Within(EditorRig rig, Point point) =>
         rig.Editor.TranslatePoint(point, rig.Window) ?? throw new InvalidOperationException("The editor is not in the window.");

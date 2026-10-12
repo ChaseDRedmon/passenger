@@ -1,6 +1,7 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Text;
 using Passenger.Editor;
 
 namespace Passenger.Languages.CSharp;
@@ -20,17 +21,22 @@ internal static class CSharpClassifier
         SyntaxKind.FinallyKeyword, SyntaxKind.YieldKeyword, SyntaxKind.AwaitKeyword, SyntaxKind.WhenKeyword,
     ];
 
-    public static SyntaxSpan[] Classify(SyntaxNode root, CancellationToken cancel)
+    /// <summary>The spans of the tokens (and their trivia) that reach into <paramref name="range"/>,
+    /// sorted. A comment or an excluded block that starts before the range is included whole. It
+    /// finds the first token by position and walks token by token, never through a list of siblings,
+    /// so a class with ten thousand members costs what the lines on screen cost.</summary>
+    public static List<SyntaxSpan> Classify(SyntaxNode root, TextSpan range)
     {
         List<SyntaxSpan> spans = [];
-        foreach (SyntaxToken token in root.DescendantTokens())
+        SyntaxToken token = root.FindToken(Math.Min(range.Start, Math.Max(0, root.FullSpan.End - 1)));
+        while (token.RawKind != 0 && token.FullSpan.Start <= range.End)
         {
-            cancel.ThrowIfCancellationRequested();
             AddTrivia(token.LeadingTrivia, spans);
             AddToken(token, spans);
             AddTrivia(token.TrailingTrivia, spans);
+            token = token.GetNextToken(includeZeroWidth: false, includeSkipped: true);
         }
-        return [.. spans];
+        return spans;
     }
 
     private static void AddTrivia(SyntaxTriviaList trivia, List<SyntaxSpan> spans)
