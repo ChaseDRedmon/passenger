@@ -152,7 +152,8 @@ public sealed partial class CodeEditor
         IBrush brush = focused ? palette.Selection : palette.SelectionInactive;
         foreach (Selection s in selections.Items)
         {
-            if (s.IsEmpty || s.End < span.Start || s.Start > span.EndIncludingBreak || (s.End == span.Start && span.Length > 0))
+            // One starting at the next line's start covers none of this line, its break included.
+            if (s.IsEmpty || s.End < span.Start || s.Start >= span.EndIncludingBreak || (s.End == span.Start && span.Length > 0))
             {
                 continue;
             }

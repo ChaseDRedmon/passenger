@@ -220,6 +220,24 @@ public sealed class EditingBehaviourTests
     }
 
     [AvaloniaFact]
+    public void A_selection_from_the_start_of_a_line_leaves_the_line_above_it_unpainted()
+    {
+        EditorRig rig = new("first\nsecond\nthird\nfourth\nfifth\n");
+        rig.PlaceCaret(rig.Text.IndexOf("second", StringComparison.Ordinal));
+        rig.Press("shift DOWN");
+        Assert.Equal("second\n", rig.Text[rig.Editor.Selections.Primary.Start..rig.Editor.Selections.Primary.End]);
+        Ui.Settle();
+
+        // Past the lines' ends, where a selection running on through a line break fills to the edge.
+        Avalonia.Media.Color above = Ui.Pixel(rig.Window, PastTheEnd(rig, 0));
+        Avalonia.Media.Color selected = Ui.Pixel(rig.Window, PastTheEnd(rig, 1));
+        Avalonia.Media.Color plain = Ui.Pixel(rig.Window, PastTheEnd(rig, 4));
+        Assert.True(selected != plain, $"The selected line is {selected} past its end, as a line with no selection is");
+        Assert.True(above == plain,
+            $"The line above the selection is {above} past its end, the selection's {selected}, not the editor's {plain}: the selection reaches back over the line break before it");
+    }
+
+    [AvaloniaFact]
     public void A_template_fills_every_place_of_a_variable_at_once_and_tab_goes_on_to_the_next_then_the_end()
     {
         EditorRig rig = new("    \n");
@@ -265,4 +283,12 @@ public sealed class EditingBehaviourTests
 
     private static Point Within(EditorRig rig, Point point) =>
         rig.Editor.TranslatePoint(point, rig.Window) ?? throw new InvalidOperationException("The editor is not in the window.");
+
+    /// <summary>A point halfway down a line, well right of its text.</summary>
+    private static Point PastTheEnd(EditorRig rig, int line)
+    {
+        Point top = rig.Editor.PointOf(rig.Document.Snapshot.GetLineStart(line));
+        double bottom = rig.Editor.GutterPoint(line).Y;
+        return Within(rig, new Point(top.X + 300, (top.Y + bottom) / 2));
+    }
 }
