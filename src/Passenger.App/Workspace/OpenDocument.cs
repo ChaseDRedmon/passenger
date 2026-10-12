@@ -1,5 +1,7 @@
 using System.Text;
 using Avalonia;
+using Passenger.Editor;
+using Passenger.Languages.CSharp;
 using Passenger.Text;
 
 namespace Passenger.App.Workspace;
@@ -18,8 +20,15 @@ public sealed class OpenDocument : Observable
         HasBom = file.HasBom;
         EncodingName = file.EncodingName;
         Language = Language.ForPath(path);
+        Highlighter = Language.Name == "C#" ? new CSharpHighlighter(Text) : null;
         Text.Changed += (_, _) => Raise(nameof(IsModified));
     }
+
+    /// <summary>Colours from the in-process parser, or null for a language without one yet.</summary>
+    public IHighlighter? Highlighter { get; }
+
+    /// <summary>Lets go of everything the open file holds beyond its text, when its tab closes.</summary>
+    public void Close() => (Highlighter as IDisposable)?.Dispose();
 
     public string Path { get; }
     public string Name => System.IO.Path.GetFileName(Path);

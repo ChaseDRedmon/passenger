@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- What the UI knows of a language before any language server answers: colour from a parser
+       that runs in-process, off the UI thread. -->
+  <PropertyGroup>
+    <RootNamespace>Passenger.Languages</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
+    <ProjectReference Include="../Passenger.Editor/Passenger.Editor.csproj" />
+    <ProjectReference Include="../Passenger.Text/Passenger.Text.csproj" />
+  </ItemGroup>
+</Project>

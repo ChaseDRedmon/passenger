@@ -10,6 +10,7 @@ What Passenger uses that others made, and under what terms.
 | Avalonia.Fonts.Inter (the Inter typeface) | SIL Open Font License 1.1 | https://github.com/rsms/inter |
 | SkiaSharp (with Skia, BSD-3-Clause) | MIT | https://github.com/mono/SkiaSharp |
 | HarfBuzzSharp (with HarfBuzz, Old MIT) | MIT | https://github.com/mono/SkiaSharp |
+| Microsoft.CodeAnalysis.CSharp (Roslyn) | MIT | https://github.com/dotnet/roslyn |
 
 ## JetBrains Mono
 

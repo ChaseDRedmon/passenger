@@ -91,6 +91,7 @@ public partial class EditorArea : UserControl
         Editor.LineCommentPrefix = document.Language.LineComment;
         Editor.Indent = new IndentOptions(document.Language.IndentSize);
         Editor.Show(document.Text, document.Selections, document.Scroll);
+        Editor.Highlighter = document.Highlighter;
         ShowEditor(true);
         Editor.Focus();
         ActiveChanged?.Invoke(this, EventArgs.Empty);
@@ -111,6 +112,7 @@ public partial class EditorArea : UserControl
         }
         int index = documents.IndexOf(document);
         documents.Remove(document);
+        document.Close();
         if (document == active)
         {
             active = null;

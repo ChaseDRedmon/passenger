@@ -19,6 +19,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../Passenger.Editor/Passenger.Editor.csproj" />
+    <ProjectReference Include="../Passenger.Languages/Passenger.Languages.csproj" />
     <ProjectReference Include="../Passenger.Text/Passenger.Text.csproj" />
   </ItemGroup>
 </Project>

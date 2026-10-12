@@ -2,6 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/Passenger.App/Passenger.App.csproj" />
     <Project Path="src/Passenger.Editor/Passenger.Editor.csproj" />
+    <Project Path="src/Passenger.Languages/Passenger.Languages.csproj" />
     <Project Path="src/Passenger.Text/Passenger.Text.csproj" />
   </Folder>
 </Solution>
