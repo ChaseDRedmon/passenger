@@ -106,10 +106,11 @@ public partial class ManagedDebugger
         _exitReported = 0;
         if (OperatingSystem.IsWindows())
         {
-            // Still held by the diagnostic port, whose variable the program's own .NET children inherit and are
-            // held by too; Windows is to move to CreateProcessForLaunch as macOS and Linux have.
+            // Held by the diagnostic port, whose variable is cleared in the program before it goes on, so its own .NET
+            // children run free; Windows is to move to a suspended start as macOS and Linux have.
             Process process = StartHeldByDiagnosticPort(launchInfo);
             _debuggeeProcess = process;
+            _launchOutput = Task.WhenAll(Forward(process.StandardOutput.BaseStream, isError: false), Forward(process.StandardError.BaseStream, isError: true));
             processId = process.Id;
             resume = () => DiagnosticClientHelper.DiagnosticClientResumeRuntime(process.Id);
             kill = () => process.Kill();
