@@ -4,10 +4,10 @@ An IDE for C# and modern .NET, inspired by JetBrains Rider, written in C# with A
 
 ![Passenger's editor: completion open after a dot, parameter name hints before literal arguments, and the change bars of uncommitted lines](docs/images/editor.png)
 
-It's early, but it's a working IDE: an editor of its own (a rope, multiple carets, Rider's Visual Studio keymaps),
-Roslyn's colours, diagnostics, completion, hovers, fixes, refactorings, rename and navigation through the Roslyn
-language server, a Solution view, building, running and unit tests, a debugger and a profiler of its own, Git, NuGet
-and a terminal. An MCP server gives an agent the same IDE. `docs/roadmap.md` says what comes next, and
+It's early, but it's a working IDE: an editor of its own (a rope, multiple carets, code folding, Rider's Visual Studio
+keymaps), Roslyn's colours, diagnostics, completion, hovers, fixes, refactorings, rename and navigation through the
+Roslyn language server, a Solution view, building, running and unit tests, a debugger and a profiler of its own, Git,
+NuGet and a terminal. An MCP server gives an agent the same IDE. `docs/roadmap.md` says what comes next, and
 `docs/architecture.md` says how it's built and why.
 
 The pictures here are of a small sample shop, drawn by Passenger itself on Avalonia's headless platform.
