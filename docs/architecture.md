@@ -142,14 +142,16 @@ exceptions). They run one at a time, as upstream's did.
 Upstream's open issues, read October 11, 2026 (upstream has had no commits since the copy), and what they mean for
 Passenger:
 
-- Reaching Passenger's users now: breakpoints bound by file name alone, so a same-named file in another folder or
-  project wins (#57); Step Into entering `[DebuggerStepThrough]`, `[DebuggerNonUserCode]` and `[DebuggerHidden]`
+- Fixed in Passenger: breakpoints bound by file name alone, so a same-named file in another folder or project won
+  (#57; now the same file, links resolved, or a document off this disk sharing its folder and name); the debuggee
+  inheriting the adapter's standard input, which is the protocol's own pipe (found in Passenger; the program has an
+  input of its own, which the Console's input line writes to through an `input` request of this adapter's).
+- Reaching Passenger's users now: Step Into entering `[DebuggerStepThrough]`, `[DebuggerNonUserCode]` and `[DebuggerHidden]`
   methods, and breakpoints in them stopping under Just My Code (#52, #54); the user-unhandled exception filter,
   Passenger's default, missing an exception caught in `[DebuggerNonUserCode]` code of the user's own assembly (#49); a
   breakpoint condition that cannot be evaluated passed silently (#54); the main thread named `<No Name>` while another
   is `Main Thread`, and an empty runtime thread listed (#59); function evaluation with no timeout, so a getter that never
-  returns hangs hovers, watches and Variables (#30). Found in Passenger and not upstream: the debuggee inherits the
-  adapter's standard input, which is the protocol's own pipe.
+  returns hangs hovers, watches and Variables (#30).
 - Visible, less often: `[DebuggerDisplay]` rendering (#51: quotes, `\{` escapes, a failed fragment replacing the whole
   value, `Name` and `Type`, inheritance), values nested in another's display shown by `ToString()` (#53), a lambda's
   captured parameter listed twice (#58), inner exceptions never reported (#50), `RootHidden` on an object (#55), a

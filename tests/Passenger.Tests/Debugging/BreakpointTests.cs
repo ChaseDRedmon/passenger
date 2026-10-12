@@ -197,6 +197,39 @@ public class BreakpointTests(ITestOutputHelper testOutputHelper)
         Assert.Equal(endColumn, breakpoint.EndColumn);
     }
 
+    [Fact]
+    public async Task Breakpoint_NamingASameNamedFileInAnotherFolder_DoesNotBindToTheRealOne()
+    {
+        bool startSuspended = true;
+        using DebugSession debugProtocolHost = DebugSession.ForAttach(testOutputHelper, startSuspended, out Process p2);
+
+        await debugProtocolHost
+            .WithInitializeRequest()
+            .WithAttachRequest(p2.Id)
+            .WaitForInitializedEvent();
+        // MyClass.cs is in the project's root; SomeFolder holds other files, none of them this one.
+        string wrongFolder = Debuggees.Source("DebuggableConsoleApp", "SomeFolder", "MyClass.cs");
+        SetBreakpointsResponse wrong = debugProtocolHost.Request<SetBreakpointsResponse>("setBreakpoints",
+            new SetBreakpointsArguments(new DapSource { Path = wrongFolder }, [new DapSourceBreakpoint(22)]));
+        string dotted = Debuggees.Source("DebuggableConsoleApp", "Namespace1", "..", "MyClass.cs");
+        debugProtocolHost
+            .WithBreakpointsRequest(dotted, [new DapSourceBreakpoint(22)], out SetBreakpointsResponse right)
+            .WithConfigurationDoneRequest()
+            .WithOptionalResumeRuntime(p2.Id, startSuspended);
+
+        StoppedEvent stoppedEvent = await debugProtocolHost.WaitForStoppedEvent();
+        // The stop names the file as the breakpoint was given; it is the root's MyClass.cs.
+        Assert.Equal(Debuggees.Source("DebuggableConsoleApp", "MyClass.cs"), Path.GetFullPath(stoppedEvent.ReadStopInfo().filePath));
+        Assert.Equal(22, stoppedEvent.ReadStopInfo().line);
+        Assert.Equal([right.Breakpoints.Single().Id!.Value], stoppedEvent.HitBreakpointIds);
+        Assert.False(wrong.Breakpoints.Single().Verified);
+
+        // With the program's symbols loaded, the other folder's name still binds to nothing.
+        SetBreakpointsResponse again = debugProtocolHost.Request<SetBreakpointsResponse>("setBreakpoints",
+            new SetBreakpointsArguments(new DapSource { Path = wrongFolder }, [new DapSourceBreakpoint(22)]));
+        Assert.False(again.Breakpoints.Single().Verified);
+    }
+
     private static int GetLineNumber(string filePath, string marker)
     {
         return File.ReadLines(filePath)

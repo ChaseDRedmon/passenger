@@ -59,7 +59,9 @@ public partial class ManagedDebugger
             CreateNoWindow = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
-            RedirectStandardInput = false,
+            // Its own input, never the adapter's: that is the protocol's pipe, which a program reading
+            // its console would otherwise drain. The client writes to it with WriteInput.
+            RedirectStandardInput = true,
         };
         foreach (string arg in launchInfo.Arguments)
         {
@@ -963,6 +965,22 @@ public partial class ManagedDebugger
                     handle.TryDispose();
                 }
             }
+        }
+    }
+
+    /// <summary>Text for the launched program's standard input, or the end of its input when
+    /// <paramref name="close"/>; nothing for a program the debugger attached to.</summary>
+    public void WriteInput(string text, bool close)
+    {
+        if (_debuggeeProcess is not { HasExited: false } process)
+        {
+            return;
+        }
+        process.StandardInput.Write(text);
+        process.StandardInput.Flush();
+        if (close)
+        {
+            process.StandardInput.Close();
         }
     }
 

@@ -208,6 +208,10 @@ public sealed record RunInTerminalArguments(string Kind, string Title, string? C
 
 public sealed record RunInTerminalResponse(int? ProcessId = null, int? ShellProcessId = null);
 
+/// <summary>This debugger's own request: text for the launched program's standard input, and whether
+/// its input then ends.</summary>
+public sealed record InputArguments(string Text, bool? Close = null);
+
 /// <summary>An empty body: requests with no arguments, responses with nothing to say.</summary>
 public sealed record DapEmpty;
 

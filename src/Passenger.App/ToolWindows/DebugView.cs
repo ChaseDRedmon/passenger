@@ -27,13 +27,23 @@ public sealed class DebugView : DockPanel
     private readonly ToggleButton consoleTab;
     private readonly Dictionary<string, Button> tools = [];
     private readonly TextBlock placeholder;
+    private readonly DockPanel consolePane;
+    private readonly TextBox input;
     private bool showingFrames;
 
     public DebugView()
     {
         VariablesTree tree = Tree;
         Console = new OutputView();
-        Console.IsVisible = false;
+        input = new TextBox
+        {
+            [DockProperty] = Dock.Bottom,
+            Classes = { "search" },
+            Margin = new Thickness(42, 4, 6, 6),
+            PlaceholderText = "Input for the program (Enter sends a line)",
+        };
+        input.AddHandler(KeyDownEvent, OnInputKey, Avalonia.Interactivity.RoutingStrategies.Tunnel);
+        consolePane = new DockPanel { IsVisible = false, Children = { input, Console } };
 
         threads = new ComboBox
         {
@@ -148,7 +158,7 @@ public sealed class DebugView : DockPanel
 
         Children.Add(leftBar);
         Children.Add(topBar);
-        Children.Add(new Panel { Children = { debugger, Console } });
+        Children.Add(new Panel { Children = { debugger, consolePane } });
         SetState(DebugState.Ended);
     }
 
@@ -161,6 +171,9 @@ public sealed class DebugView : DockPanel
 
     /// <summary>An expression to evaluate once (false), or to keep as a watch (true).</summary>
     public event EventHandler<(string Expression, bool Watch)>? EvaluateRequested;
+
+    /// <summary>A line typed for the program's input, without its line break.</summary>
+    public event EventHandler<string>? InputEntered;
 
     /// <summary>A watch to stop watching.</summary>
     public event EventHandler<string>? WatchRemoved;
@@ -176,7 +189,7 @@ public sealed class DebugView : DockPanel
 
     public DapStackFrame? SelectedFrame => frames.SelectedItem as DapStackFrame;
 
-    public bool IsConsoleShown => Console.IsVisible;
+    public bool IsConsoleShown => consolePane.IsVisible;
 
     /// <summary>Shows a thread's frames, one of them chosen, without raising the choice back.</summary>
     public void ShowFrames(IReadOnlyList<DapThread> all, DapThread? thread, IReadOnlyList<DapStackFrame> stack, DapStackFrame? chosen)
@@ -216,6 +229,7 @@ public sealed class DebugView : DockPanel
         tools[AppActions.Pause].IsEnabled = state == DebugState.Running;
         tools[AppActions.Stop].IsEnabled = live;
         evaluate.IsEnabled = paused;
+        input.IsEnabled = live;
         placeholder.IsVisible = state == DebugState.Ended && Frames.Count == 0;
     }
 
@@ -240,7 +254,7 @@ public sealed class DebugView : DockPanel
         debuggerTab.IsChecked = !console;
         consoleTab.IsChecked = console;
         debugger.IsVisible = !console;
-        Console.IsVisible = console;
+        consolePane.IsVisible = console;
     }
 
     private void OnEvaluateKey(object? sender, KeyEventArgs e)
@@ -256,6 +270,17 @@ public sealed class DebugView : DockPanel
         {
             evaluate.Text = string.Empty;
         }
+        e.Handled = true;
+    }
+
+    private void OnInputKey(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter)
+        {
+            return;
+        }
+        InputEntered?.Invoke(this, input.Text ?? string.Empty);
+        input.Text = string.Empty;
         e.Handled = true;
     }
 

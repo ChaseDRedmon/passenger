@@ -29,6 +29,15 @@ public sealed class DebugController
         view.FrameChosen += (_, chosen) => _ = ChooseFrame(chosen, navigate: true);
         view.ThreadChosen += (_, thread) => _ = ChooseThread(thread.Id);
         view.EvaluateRequested += (_, request) => _ = Evaluate(request.Expression, request.Watch);
+        view.InputEntered += (_, line) =>
+        {
+            if (Session is { } session)
+            {
+                // Echoed as a terminal would, since the program's output never repeats what it read.
+                view.Console.Document.Append($"{line}\n");
+                _ = session.InputAsync($"{line}\n");
+            }
+        };
         view.WatchRemoved += (_, expression) =>
         {
             watches.Remove(expression);

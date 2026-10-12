@@ -108,6 +108,12 @@ public sealed class DebugAdapter
         connection.Handle<DisconnectArguments>("disconnect", arguments => Locked(() => debugger.Disconnect(arguments.TerminateDebuggee ?? false)), then: RequestShutdown);
         connection.Handle<TerminateArguments>("terminate", _ => Locked(() => debugger.Terminate()));
         connection.Handle<ThreadArguments, ExceptionInfoResponse>("exceptionInfo", ExceptionInfo);
+        // Not under the engine's lock: a program waiting for input may be running, and the write is all.
+        connection.Handle<InputArguments>("input", arguments =>
+        {
+            debugger.WriteInput(arguments.Text, arguments.Close ?? false);
+            return Task.CompletedTask;
+        });
     }
 
     private void Subscribe()

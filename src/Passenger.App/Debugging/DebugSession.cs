@@ -138,6 +138,9 @@ public sealed class DebugSession
         await ContinueAsync();
     }
 
+    /// <summary>Text for the program's standard input.</summary>
+    public Task InputAsync(string text) => State == DebugState.Ended ? Task.CompletedTask : connection.RequestAsync("input", new InputArguments(text));
+
     public async Task PauseAsync()
     {
         if (State == DebugState.Running)

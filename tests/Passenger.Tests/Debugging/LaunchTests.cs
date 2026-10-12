@@ -100,4 +100,28 @@ public class LaunchTests(ITestOutputHelper testOutputHelper)
             .WithVariablesRequest(scopesResponse.Scopes.Single().VariablesReference, out List<DapVariable>? variables);
         Assert.Contains(variables, variable => variable.Name == "test");
     }
+
+    [Fact]
+    public async Task A_launched_program_reads_its_own_input_never_the_adapters()
+    {
+        using DebugSession host = DebugSession.ForLaunch(testOutputHelper);
+        string source = Debuggees.Source("ReadsInputConsoleApp", "Program.cs");
+
+        await host
+            .WithInitializeRequest()
+            .WithLaunchRequest(Debuggees.Program("ReadsInputConsoleApp"), stopAtEntry: false, justMyCode: true)
+            .WaitForInitializedEvent();
+        host
+            .WithBreakpointsRequest(3, source)
+            .WithConfigurationDoneRequest();
+        // While it waits on its console, every request still reaches the debugger.
+        host.Request("setExceptionBreakpoints", new SetExceptionBreakpointsArguments([]));
+        host.Request("input", new InputArguments("hello\n"));
+
+        StoppedEvent stopped = await host.WaitForStoppedEvent();
+        Assert.Equal(3, stopped.ReadStopInfo().line);
+        host.WithStackTraceRequest(stopped.ThreadId!.Value, out StackTraceResponse stack)
+            .WithEvaluateRequest(stack.StackFrames[0].Id, "line", out EvaluateResponse line);
+        Assert.Equal("\"hello\"", line.Result);
+    }
 }

@@ -339,17 +339,18 @@ public partial class ManagedDebugger
                 return false;
             }
 
-            // Find a module that contains the source file
+            // The module whose symbols name the file best: the very path over a document recorded
+            // under another root, never just a file of the same name (SourcePaths).
             ModuleInfo? targetModule = null;
             ModuleMetadataReader.ResolvedBreakpoint? resolved = null;
 
-            foreach (ModuleInfo moduleInfo in _modules.Values)
+            foreach (ModuleInfo moduleInfo in _modules.Values
+                .Where(m => m.MetadataReader.HasSymbols)
+                .Select(m => (Module: m, Score: m.MetadataReader.DocumentMatch(bp.FilePath)))
+                .Where(m => m.Score > 0)
+                .OrderByDescending(m => m.Score)
+                .Select(m => m.Module))
             {
-                if (moduleInfo.MetadataReader.HasSymbols is false)
-                {
-                    continue;
-                }
-
                 resolved = moduleInfo.MetadataReader.ResolveBreakpoint(bp.FilePath, bp.Line, bp.Column);
                 if (resolved is not null)
                 {

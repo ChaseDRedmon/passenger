@@ -6,6 +6,25 @@ namespace Passenger.Debugger;
 // 🤖
 public partial class ModuleMetadataReader
 {
+    private (DocumentHandle Document, int Score) BestDocument(string sourceFilePath)
+    {
+        MetadataReader? reader = _pdbMetadataReader;
+        (DocumentHandle Document, int Score) best = (default, 0);
+        if (reader is null)
+        {
+            return best;
+        }
+        foreach (DocumentHandle handle in reader.Documents)
+        {
+            int score = SourcePaths.Match(sourceFilePath, reader.GetString(reader.GetDocument(handle).Name));
+            if (score > best.Score)
+            {
+                best = (handle, score);
+            }
+        }
+        return best;
+    }
+
     private sealed record MethodCandidate(
     int Token,
     SequencePoint FirstSp,      // smallest End where EndLine >= line (next-line snapping)
@@ -16,6 +35,10 @@ public partial class ModuleMetadataReader
         public bool CoversLine => CoveringSp.HasValue;
     }
 
+    /// <summary>How well this module's symbols name a source file (<see cref="SourcePaths.Match"/>):
+    /// 0 when no document of its is that file.</summary>
+    public int DocumentMatch(string sourceFilePath) => BestDocument(sourceFilePath).Score;
+
     public ResolvedBreakpoint? ResolveBreakpoint(string sourceFilePath, int line, int? column = null)
     {
         MetadataReader? reader = _pdbMetadataReader;
@@ -24,9 +47,7 @@ public partial class ModuleMetadataReader
             return null;
         }
 
-        string normalizedPath = NormalizePath(sourceFilePath);
-
-        DocumentHandle documentHandle = reader.Documents.FirstOrDefault(h => PathsMatch(normalizedPath, reader.GetString(reader.GetDocument(h).Name)));
+        DocumentHandle documentHandle = BestDocument(sourceFilePath).Document;
 
         if (documentHandle.IsNil)
         {
