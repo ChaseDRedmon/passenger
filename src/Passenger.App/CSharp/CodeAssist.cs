@@ -464,9 +464,9 @@ public sealed class CodeAssist
         }
         start = asked.MapOffset(start);
         int caret = Math.Min(asked.MapOffset(end ?? Editor.Selections.Primary.Caret), Editor.Document.Snapshot.Length);
-        string insert = item.TextEdit?.NewText ?? item.TextEditText ?? item.InsertText ?? item.Label;
+        string insert = WorkspaceEdits.InLineEnding(item.TextEdit?.NewText ?? item.TextEditText ?? item.InsertText ?? item.Label, document.LineEnding);
         List<Passenger.Text.TextEdit> edits = [new Passenger.Text.TextEdit(start, Math.Max(0, caret - start), insert)];
-        if (item.AdditionalTextEdits is { Count: > 0 } extra && asked.Map(WorkspaceEdits.Convert(asked.Snapshot, extra)) is { } placed)
+        if (item.AdditionalTextEdits is { Count: > 0 } extra && asked.Map(WorkspaceEdits.Convert(asked.Snapshot, extra, document.LineEnding)) is { } placed)
         {
             edits.AddRange(placed.Where(e => e.End <= start || e.Start >= caret));
         }
@@ -1173,7 +1173,7 @@ public sealed class CodeAssist
         {
             return false;
         }
-        if (asked.Map(WorkspaceEdits.Convert(asked.Snapshot, answer)) is not { } edits)
+        if (asked.Map(WorkspaceEdits.Convert(asked.Snapshot, answer, document.Text.LineEnding)) is not { } edits)
         {
             Message?.Invoke(this, $"{what} was not applied: the code it changes was edited meanwhile");
             return false;

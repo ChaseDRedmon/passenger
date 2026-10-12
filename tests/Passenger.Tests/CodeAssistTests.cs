@@ -293,6 +293,18 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
     }
 
     [AvaloniaFact]
+    public void A_reformat_breaks_lines_as_the_file_does_whatever_the_system_would()
+    {
+        // Roslyn writes the system's line break, CRLF on Windows and LF elsewhere, into whatever file it formats.
+        MainWindow window = project.Open("Crlf.cs");
+        Ui.Run(window, AppActions.Reformat);
+        Ui.WaitFor(() => window.Status is "Reformatted" or "Already formatted", "the reformat");
+        Assert.Equal("static class Crlf\r\n{\r\n    public static int One()\r\n    {\r\n        return 1;\r\n    }\r\n}\r\n",
+            window.EditorArea.CodeEditor.Document.Snapshot.ToString());
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void A_line_typed_while_a_rename_is_out_still_leaves_the_new_name_on_the_symbol()
     {
         string helper = File.ReadAllText(project.PathOf("Helper.cs"));
@@ -814,6 +826,7 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
             File.WriteAllText(PathOf("Loop.cs"), "static class Loop\n{\n    public static int Sum()\n    {\n        int total = 0;\n        for (int i = 0; i < 10; i++)\n        {\n            total += i * 2;\n        }\n        return total;\n    }\n}\n");
             // Roslyn ends a line at each of these in the comment; the editor's lines end only at '\n'.
             File.WriteAllText(PathOf("Separators.cs"), "static class Separators\n{\n    /* Pasted:\u2028a line separator,\u2029a paragraph separator,\u0085a next line,\ra carriage return. */\n    public static int Value()\n    {\n        int total = 1;\n          return total;\n    }\n}\n");
+            File.WriteAllText(PathOf("Crlf.cs"), "static class Crlf\r\n{\r\n    public static int One()\r\n    {\r\n          return 1;\r\n    }\r\n}\r\n");
             File.WriteAllText(PathOf("Messy.cs"), "using System.Text;\nusing System;\nusing System.Collections.Generic;\n\nstatic class Messy\n{\n    public static int Count()\n    {\n          List<string> names = [];\n        Console.WriteLine(names.Count);\n      return names.Count;\n    }\n}\n");
             using Process restore = Process.Start(new ProcessStartInfo("dotnet", ["restore", folder]) { RedirectStandardOutput = true, RedirectStandardError = true })!;
             restore.WaitForExit();

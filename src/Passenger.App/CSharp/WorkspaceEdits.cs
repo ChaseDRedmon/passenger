@@ -55,7 +55,7 @@ public static class WorkspaceEdits
             else if (FileText.Load(path) is { } file)
             {
                 TextSnapshot snapshot = TextSnapshot.From(file.Text);
-                List<TextEdit> edits = Convert(snapshot, change.Edits);
+                List<TextEdit> edits = Convert(snapshot, change.Edits, TextDocument.DetectLineEnding(file.Text));
                 FileText.Save(path, snapshot.Apply(edits.OrderBy(e => e.Start).ToList()).ToString(), file.Encoding, file.HasBom);
             }
             files++;
@@ -81,19 +81,22 @@ public static class WorkspaceEdits
     /// through what changed when it was asked for the version the request was, null when they no longer fit.</summary>
     private static List<TextEdit>? Placed(OpenDocument open, FileEdits change, ChangeTracker? asked)
     {
+        string eol = open.Text.LineEnding;
         if (change.Version is { } version && version == open.Text.Version)
         {
-            return Convert(open.Text.Snapshot, change.Edits);
+            return Convert(open.Text.Snapshot, change.Edits, eol);
         }
         if (asked is null || (change.Version is { } answered && answered != asked.Version))
         {
-            return change.Version is null ? Convert(open.Text.Snapshot, change.Edits) : null;
+            return change.Version is null ? Convert(open.Text.Snapshot, change.Edits, eol) : null;
         }
-        return asked.Map(Convert(asked.Snapshot, change.Edits)) is { } mapped ? [.. mapped] : null;
+        return asked.Map(Convert(asked.Snapshot, change.Edits, eol)) is { } mapped ? [.. mapped] : null;
     }
 
-    /// <summary>LSP edits as the editor's, in one snapshot's offsets (its lines as the server counts them), sorted.</summary>
-    public static List<TextEdit> Convert(TextSnapshot snapshot, IReadOnlyList<LspTextEdit> edits)
+    /// <summary>LSP edits as the editor's, in one snapshot's offsets (its lines as the server counts them), sorted, their
+    /// line breaks the file's own <paramref name="eol"/>: Roslyn writes the system's (CRLF on Windows) into any file. An edit
+    /// that comes to nothing once its breaks are the file's is left out.</summary>
+    public static List<TextEdit> Convert(TextSnapshot snapshot, IReadOnlyList<LspTextEdit> edits, string eol)
     {
         ServerLines lines = ServerLines.Of(snapshot);
         return edits
@@ -101,11 +104,16 @@ public static class WorkspaceEdits
             {
                 int start = lines.OffsetOf(e.Range.Start);
                 int end = lines.OffsetOf(e.Range.End);
-                return new TextEdit(start, Math.Max(0, end - start), e.NewText);
+                return new TextEdit(start, Math.Max(0, end - start), InLineEnding(e.NewText, eol));
             })
+            .Where(e => e.Length != e.Text.Length || snapshot.GetText(e.Start, e.Length) != e.Text)
             .OrderBy(e => e.Start)
             .ToList();
     }
+
+    /// <summary>Text the server wrote with a file's line ending in place of whichever it used.</summary>
+    public static string InLineEnding(string text, string eol) =>
+        text.Contains('\n', StringComparison.Ordinal) ? text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace("\n", eol, StringComparison.Ordinal) : text;
 
     /// <summary>Why an edit's file operations cannot all be made, found before any is: each is played over what the
     /// ones before it leave. The open files a rename moves are saved now, so one that cannot be stops it here too.</summary>
