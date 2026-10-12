@@ -28,7 +28,22 @@ public partial class ModuleMetadataReader : IDisposable
     /// <summary>The methods a module's own code says are not the user's: marked [DebuggerNonUserCode],
     /// [DebuggerStepThrough] or [DebuggerHidden], or declared in a type (or a type nested in one) marked
     /// with either of the first two. Just My Code leaves them out, as Visual Studio and Rider do.</summary>
-    internal IEnumerable<int> NonUserCodeMethodTokens()
+    internal HashSet<int> NonUserCodeMethodTokens() => _nonUserCode ??= [.. FindNonUserCodeMethodTokens()];
+
+    /// <summary>Whether the module's own code says a method is not the user's.</summary>
+    internal bool IsNonUserCode(int methodToken) => NonUserCodeMethodTokens().Contains(methodToken);
+
+    /// <summary>Whether a method is [DebuggerHidden], which no debugger stops in, Just My Code or not.</summary>
+    internal bool IsHidden(int methodToken)
+    {
+        _hidden ??= [.. _peMetadataReader.MethodDefinitions.Where(m => HasAttribute(_peMetadataReader, _peMetadataReader.GetMethodDefinition(m).GetCustomAttributes(), ["System.Diagnostics.DebuggerHiddenAttribute"])).Select(m => MetadataTokens.GetToken(m))];
+        return _hidden.Contains(methodToken);
+    }
+
+    private HashSet<int>? _nonUserCode;
+    private HashSet<int>? _hidden;
+
+    private IEnumerable<int> FindNonUserCodeMethodTokens()
     {
         MetadataReader reader = _peMetadataReader;
         Dictionary<TypeDefinitionHandle, bool> typeOptsOut = [];

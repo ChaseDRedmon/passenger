@@ -9,6 +9,7 @@ Captures.Outer(41);
 Nested.Throw();
 Displays.Show();
 Interpreter.Run();
+Threads.Run();
 
 // The cases Passenger's own debugger tests add to upstream's. Tests find their lines by the code on them.
 // Code of the user's own that says it is not theirs: Just My Code passes over it, and a catch in it
@@ -155,5 +156,31 @@ static class Bumper
 	public static void Work<T>(T item) where T : IBump
 	{
 		Console.WriteLine("bumper");
+	}
+}
+
+// Upstream's #59: two workers waiting while Main stops.
+static class Threads
+{
+	static readonly ManualResetEventSlim Gate = new(false);
+	static readonly CountdownEvent Started = new(2);
+
+	public static void Run()
+	{
+		Thread named = new(Wait) { Name = "worker-named" };
+		Thread unnamed = new(Wait);
+		named.Start();
+		unnamed.Start();
+		Started.Wait();
+		Console.WriteLine("both workers are waiting");
+		Gate.Set();
+		named.Join();
+		unnamed.Join();
+	}
+
+	static void Wait()
+	{
+		Started.Signal();
+		Gate.Wait();
 	}
 }

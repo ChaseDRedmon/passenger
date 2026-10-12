@@ -371,6 +371,16 @@ public partial class ManagedDebugger
                 return false;
             }
 
+            // Visual Studio's rule: Just My Code never stops in a method its code says is not the user's, and
+            // no debugger stops in a [DebuggerHidden] one (upstream #54).
+            if (targetModule.MetadataReader.IsHidden(resolved.MethodToken)
+                || (_justMyCode && targetModule.IsUserCode && targetModule.MetadataReader.IsNonUserCode(resolved.MethodToken)))
+            {
+                bp.Verified = false;
+                bp.Message = "The breakpoint will not be hit: the method is marked [DebuggerStepThrough], [DebuggerNonUserCode] or [DebuggerHidden], which Just My Code passes over.";
+                return false;
+            }
+
             // Get the function from the method token
             ICorDebugFunction function = targetModule.Module.GetFunctionFromToken(resolved.MethodToken);
             ICorDebugCode ilCode = function.ILCode;

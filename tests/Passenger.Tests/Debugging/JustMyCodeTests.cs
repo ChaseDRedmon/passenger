@@ -63,6 +63,41 @@ public class JustMyCodeTests(ITestOutputHelper testOutputHelper)
         Assert.Equal(("step", Line("Console.WriteLine(\"end\");")), (stop.Reason, stop.ReadStopInfo().line));
     }
 
+    [Fact]
+    public async Task A_breakpoint_in_a_method_marked_not_the_users_is_not_hit_and_says_why()
+    {
+        int marked = Line("[DebuggerStepThrough] public static void StepThrough()");
+        int end = Line("Console.WriteLine(\"end\");");
+        using DebugSession host = DebugSession.ForLaunch(testOutputHelper);
+        await host
+            .WithInitializeRequest()
+            .WithLaunchRequest(Debuggees.Program("PassengerCases"), stopAtEntry: false, justMyCode: true)
+            .WaitForInitializedEvent();
+        host.WithBreakpointsRequest(Source, [new DapSourceBreakpoint(marked), new DapSourceBreakpoint(end)], out SetBreakpointsResponse set)
+            .WithConfigurationDoneRequest();
+
+        // Just My Code passes over it, as Visual Studio's does: the stop is the later breakpoint.
+        StoppedEvent stop = await host.WaitForStoppedEvent();
+        Assert.Equal(end, stop.ReadStopInfo().line);
+        SetBreakpointsResponse again = host.Request<SetBreakpointsResponse>("setBreakpoints",
+            new SetBreakpointsArguments(new DapSource { Path = Source }, [new DapSourceBreakpoint(marked)]));
+        DapBreakpoint unbound = Assert.Single(again.Breakpoints);
+        Assert.False(unbound.Verified);
+        Assert.Contains("Just My Code", unbound.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Every_thread_listed_has_frames_to_show()
+    {
+        using DebugSession host = await Launch(breakpointLine: Line("Console.WriteLine(\"both workers are waiting\");"), exceptionFilters: []);
+        StoppedEvent stop = await host.WaitForStoppedEvent();
+
+        IReadOnlyList<DapThread> threads = host.Request<ThreadsResponse>("threads").Threads;
+        Assert.Equal("Main Thread", Assert.Single(threads, t => t.Id == stop.ThreadId).Name);
+        Assert.Single(threads, t => t.Name == "worker-named");
+        Assert.All(threads, t => Assert.NotEmpty(host.Request<StackTraceResponse>("stackTrace", new StackTraceArguments(t.Id)).StackFrames));
+    }
+
     private Task<DebugSession> Launch(int breakpointLine, IReadOnlyList<string> exceptionFilters) =>
         DebugSession.LaunchToBreakpoint(testOutputHelper, "PassengerCases", breakpointLine, exceptionFilters);
 }

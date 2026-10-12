@@ -155,8 +155,9 @@ Passenger:
   function evaluation with no time limit, so a getter that never returns hung the debugger (#30; now it is aborted after
   five seconds and answers that it was stopped); a lambda's captured parameter listed twice (#58; the closure's copy,
   the live one, takes the stale slot's place).
-- Reaching Passenger's users now: breakpoints in methods marked not the user's still stopping under Just My Code
-  (#54's tail); an empty runtime thread listed (#59).
+- Fixed as well: a breakpoint in a method marked not the user's stopped under Just My Code (#54's tail); now it stays
+  unbound and says why, as Visual Studio does, and one in a [DebuggerHidden] method never binds. Threads with no managed
+  frame are no longer listed (#59's empty runtime thread, reported on Windows; not seen on macOS).
 - Fixed too: `[DebuggerDisplay]` rendered as Visual Studio does (#51, #53): fragment by fragment, strings quoted unless
   `nq` or `raw`, `\{` and `\}` as braces, a failed fragment saying so in its own place, `Name` naming a member's row
   and `Type` its type column, inherited from base types, and a value inside a display shown by its own; inner

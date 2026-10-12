@@ -470,6 +470,12 @@ public partial class ManagedDebugger
         {
             foreach ((int id, ThreadInfo? threadInfo) in _threads)
             {
+                // A thread with no managed frame (one of the runtime's own) is a row that opens to
+                // nothing, which no client can use (upstream #59).
+                if (!HasManagedFrames(threadInfo.Thread))
+                {
+                    continue;
+                }
                 threadInfo.Name ??= threadInfo.Thread.GetThreadNameOrNull();
                 result.Add((id, threadInfo.Name ?? (id == _mainThreadId ? "Main Thread" : "<No Name>")));
             }
@@ -480,6 +486,18 @@ public partial class ManagedDebugger
         }
 
         return result;
+    }
+
+    private static bool HasManagedFrames(ICorDebugThread thread)
+    {
+        try
+        {
+            return EnumerateFramesForThread(thread).Any();
+        }
+        catch (Exception error) when (error is COMException or InvalidOperationException)
+        {
+            return false;
+        }
     }
 
     /// <summary>
