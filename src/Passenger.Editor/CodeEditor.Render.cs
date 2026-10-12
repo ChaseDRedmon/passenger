@@ -309,6 +309,14 @@ public sealed partial class CodeEditor
             {
                 DrawExecutionArrow(context, right, top);
             }
+            else if (line == arrowAt && drag.Mode == DragMode.ExecutionPoint)
+            {
+                // Where the dragged arrow would go on from, drawn faint until it is let go.
+                using (context.PushOpacity(0.5))
+                {
+                    DrawExecutionArrow(context, right, top);
+                }
+            }
             else if (tests.TryGetValue(line, out TestMarkKind test))
             {
                 DrawTestMark(context, test, right, top);

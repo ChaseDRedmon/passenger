@@ -93,6 +93,13 @@ public partial class MainWindow : Window
             csharp?.Detach(document);
             debug?.Detach(document);
         };
+        Editors.ForEachEditor(editor => editor.ExecutionPointDragged += (_, line) =>
+        {
+            if (Editors.Active is { } active && debug?.Session is { State: DebugState.Paused } session)
+            {
+                _ = debug.SetNextStatementAsync(session, active.Path, line);
+            }
+        });
         Editors.ForEachEditor(editor => editor.GutterClicked += (_, click) =>
         {
             if (Editors.Active is not { } active || debug is null)

@@ -78,6 +78,31 @@ public sealed class DebuggerTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void Dragging_the_execution_arrow_past_the_loop_goes_on_from_there_and_skips_it()
+    {
+        MainWindow window = Open();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        editor.GoTo(new TextPosition(3, 4));
+        Ui.Run(window, AppActions.ToggleBreakpoint);
+        Ui.Run(window, AppActions.Debug);
+        Ui.WaitFor(() => Value(window, "i") == "1", "the stop in the loop");
+
+        // From the arrow beside line 4 to line 6, the Console.WriteLine after the loop.
+        Point from = Arrow(window, editor, 3);
+        Point to = Arrow(window, editor, 5);
+        window.MouseDown(from, MouseButton.Left);
+        window.MouseMove(to, RawInputModifiers.LeftMouseButton);
+        window.MouseUp(to, MouseButton.Left);
+        Ui.WaitFor(() => editor.LineMarks.Contains(new LineMark(5, LineMarkKind.ExecutionPoint)), "the arrow to stand at the line after the loop");
+        Assert.Contains(new LineMark(3, LineMarkKind.BreakpointBound), editor.LineMarks);
+
+        Ui.Run(window, AppActions.Resume);
+        Ui.WaitFor(() => window.BottomPanel.Debug.Console.Document.Snapshot.ToString().Contains("total 0", StringComparison.Ordinal), "the loop skipped");
+        Ui.WaitFor(() => !window.Debugger.IsDebugging, "the program's end");
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void A_breakpoint_keeps_to_its_code_as_lines_are_added_and_removed_above_it()
     {
         MainWindow window = Open();
@@ -253,6 +278,13 @@ public sealed class DebuggerTests : IDisposable
     {
         Point bottom = editor.GutterPoint(line);
         return editor.TranslatePoint(new Point(bottom.X / 2, bottom.Y - 8), window)!.Value;
+    }
+
+    /// <summary>Where a line's execution arrow is drawn, right of its number, in the window's coordinates.</summary>
+    private static Point Arrow(MainWindow window, CodeEditor editor, int line)
+    {
+        Point bottom = editor.GutterPoint(line);
+        return editor.TranslatePoint(new Point(bottom.X - 10, bottom.Y - 8), window)!.Value;
     }
 
     /// <summary>A top-level row of the Variables view, by name.</summary>

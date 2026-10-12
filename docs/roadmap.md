@@ -94,7 +94,7 @@ protocol's setExpression.
 
 Set Next Statement (Ctrl+Shift+F10, ⌘⇧F10, and `debug_set_next_statement` over MCP): the paused thread goes on
 from the caret's line of the method it is in, skipping or repeating what lies between, through the protocol's
-gotoTargets and goto and the runtime's SetIP, refused with the runtime's reason where the move is unsafe.
+gotoTargets and goto and the runtime's SetIP, refused with the runtime's reason where the move is unsafe. Dragging the execution arrow in the gutter does the same.
 
 **Still to do:** exception breakpoints in the Breakpoints window, smart step into, a terminal for the program's
 input, and the macOS signing.

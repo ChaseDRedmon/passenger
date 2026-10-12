@@ -181,6 +181,10 @@ public sealed partial class CodeEditor : Control
     /// a click there no longer selects the line, as in Rider with breakpoints over line numbers.</summary>
     public event EventHandler<GutterClick>? GutterClicked;
 
+    /// <summary>The execution arrow was dragged to another line (from zero), Rider's way to Set Next Statement.
+    /// With a handler, a press on the arrow drags it; let go where it was, it is the gutter click it began as.</summary>
+    public event EventHandler<int>? ExecutionPointDragged;
+
     /// <summary>Where a line's number is drawn, in the editor's coordinates: what a popup about its breakpoint
     /// is placed beside.</summary>
     public Point GutterPoint(int line) => new(GutterWidth, (line + 1) * metrics.LineHeight - scroll.Y);

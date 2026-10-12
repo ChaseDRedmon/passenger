@@ -20,6 +20,7 @@ public sealed partial class CodeEditor
     private Point hoverAt;
     private bool hovering;
     private Drag drag;
+    private int arrowAt = -1;
     private EditorInputMethod? inputMethod;
     private string preedit = string.Empty;
 
@@ -86,9 +87,18 @@ public sealed partial class CodeEditor
         KeyModifiers mods = e.KeyModifiers;
         KeyModifiers command = OperatingSystem.IsMacOS() ? KeyModifiers.Meta : KeyModifiers.Control;
 
+        int pressed = (int)((point.Position.Y + scroll.Y) / metrics.LineHeight);
+        if (ExecutionPointDragged is not null && IsInMarkColumn(point.Position) && LineMarks.Any(m => m.Kind == LineMarkKind.ExecutionPoint && m.Line == pressed))
+        {
+            drag = new Drag(DragMode.ExecutionPoint, pressed, point.Position);
+            arrowAt = pressed;
+            e.Pointer.Capture(this);
+            e.Handled = true;
+            return;
+        }
         if (point.Position.X < GutterWidth && GutterClicked is not null && ShowLineNumbers)
         {
-            int clicked = (int)((point.Position.Y + scroll.Y) / metrics.LineHeight);
+            int clicked = pressed;
             if (clicked < text.LineCount)
             {
                 GutterClicked(this, new GutterClick(clicked, mods, point.Position, Context: false));
@@ -152,7 +162,7 @@ public sealed partial class CodeEditor
         base.OnPointerMoved(e);
         Point position = e.GetPosition(this);
         RestartHover(position);
-        Cursor = position.X < GutterWidth ? Cursor.Default : new Cursor(StandardCursorType.Ibeam);
+        Cursor = position.X < GutterWidth || drag.Mode == DragMode.ExecutionPoint ? Cursor.Default : new Cursor(StandardCursorType.Ibeam);
         if (drag.Mode == DragMode.None || !e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
         {
             return;
@@ -182,12 +192,31 @@ public sealed partial class CodeEditor
             case DragMode.Column:
                 SetSelections(ColumnSelection(text, drag.Start, position), reveal: true);
                 break;
+            case DragMode.ExecutionPoint:
+                arrowAt = Math.Clamp((int)((position.Y + scroll.Y) / metrics.LineHeight), 0, text.LineCount - 1);
+                InvalidateVisual();
+                break;
         }
     }
 
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
     {
         base.OnPointerReleased(e);
+        if (drag.Mode == DragMode.ExecutionPoint)
+        {
+            int from = drag.Anchor;
+            int to = arrowAt;
+            arrowAt = -1;
+            InvalidateVisual();
+            if (to != from)
+            {
+                ExecutionPointDragged?.Invoke(this, to);
+            }
+            else
+            {
+                GutterClicked?.Invoke(this, new GutterClick(from, e.KeyModifiers, e.GetPosition(this), Context: false));
+            }
+        }
         drag = default;
         e.Pointer.Capture(null);
     }
@@ -328,6 +357,9 @@ public sealed partial class CodeEditor
         Words,
         Lines,
         Column,
+
+        /// <summary>The execution arrow, carried to the line it will go on from.</summary>
+        ExecutionPoint,
     }
 
     /// <summary>A press being dragged: how it selects, where it began (as an offset, and as a point
