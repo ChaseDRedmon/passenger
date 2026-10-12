@@ -122,6 +122,7 @@ public sealed partial class CodeEditor
             measuredWidth = widestLine;
             Dispatcher.UIThread.Post(UpdateScrollBars);
         }
+        RefreshStripe();
     }
 
     /// <summary>A line's x position of an offset, measured on its own formatted line.</summary>

@@ -87,7 +87,7 @@ public sealed class FindView : DockPanel
         list.DoubleTapped += (_, _) => Go();
         // Seen before the list's own keys, which take Enter and the arrows for its selection.
         list.AddHandler(KeyDownEvent, OnKey, Avalonia.Interactivity.RoutingStrategies.Tunnel);
-        preview = new CodeEditor { IsReadOnly = true, LineCommentPrefix = null, FontSize = 12.5, Document = new TextDocument() };
+        preview = new CodeEditor { IsReadOnly = true, ShowErrorStripe = false, LineCommentPrefix = null, FontSize = 12.5, Document = new TextDocument() };
         Grid body = new() { ColumnDefinitions = new ColumnDefinitions("*,1,*") };
         Border line = new() { IsHitTestVisible = false };
         line.Bind(Border.BackgroundProperty, line.GetResourceObservable("Passenger.Divider"));

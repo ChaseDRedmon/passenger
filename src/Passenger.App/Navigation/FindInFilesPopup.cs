@@ -71,7 +71,7 @@ public sealed class FindInFilesPopup : UserControl
         };
         results.SelectionChanged += (_, _) => ShowPreview();
         results.DoubleTapped += (_, _) => Choose();
-        preview = new CodeEditor { IsReadOnly = true, Height = 180, Focusable = false };
+        preview = new CodeEditor { IsReadOnly = true, ShowErrorStripe = false, Height = 180, Focusable = false };
         Border previewFrame = new() { BorderThickness = new Thickness(0, 1, 0, 0), Child = preview };
         previewFrame.Bind(Border.BorderBrushProperty, previewFrame.GetResourceObservable("Passenger.Divider"));
         Content = new Border

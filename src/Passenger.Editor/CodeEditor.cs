@@ -30,7 +30,7 @@ public sealed partial class CodeEditor : Control
     private const double GutterPadRight = 22;
     private const double TextPadLeft = 6;
 
-    private readonly ScrollBar vertical = new() { Orientation = Orientation.Vertical, AllowAutoHide = true };
+    private readonly ScrollBar vertical = new() { Orientation = Orientation.Vertical, AllowAutoHide = false };
     private readonly ScrollBar horizontal = new() { Orientation = Orientation.Horizontal, AllowAutoHide = true };
     private readonly DispatcherTimer blink;
     private TextDocument document = new();
@@ -54,10 +54,16 @@ public sealed partial class CodeEditor : Control
         Focusable = true;
         ClipToBounds = true;
         Cursor = new Cursor(StandardCursorType.Ibeam);
+        stripe = new ErrorStripe(this);
+        counts = new ProblemCounts(this);
         VisualChildren.Add(vertical);
         VisualChildren.Add(horizontal);
+        VisualChildren.Add(stripe);
+        VisualChildren.Add(counts);
         LogicalChildren.Add(vertical);
         LogicalChildren.Add(horizontal);
+        LogicalChildren.Add(stripe);
+        LogicalChildren.Add(counts);
         vertical.PropertyChanged += OnScrollBarChanged;
         horizontal.PropertyChanged += OnScrollBarChanged;
         blink = new DispatcherTimer(TimeSpan.FromMilliseconds(530), DispatcherPriority.Background, (_, _) =>
@@ -101,6 +107,8 @@ public sealed partial class CodeEditor : Control
     public void SetMarkers(IReadOnlyList<Marker> markers)
     {
         Markers = [.. markers.OrderBy(m => m.Range.Start)];
+        counts.InvalidateMeasure();
+        InvalidateArrange();
         InvalidateVisual();
     }
 
@@ -424,7 +432,9 @@ public sealed partial class CodeEditor : Control
     {
         double barWidth = vertical.DesiredSize.Width;
         double barHeight = horizontal.DesiredSize.Height;
-        vertical.Arrange(new Rect(finalSize.Width - barWidth, 0, barWidth, Math.Max(0, finalSize.Height - barHeight)));
+        Rect bar = new(finalSize.Width - barWidth, 0, barWidth, Math.Max(0, finalSize.Height - barHeight));
+        vertical.Arrange(bar);
+        ArrangeStripe(bar);
         horizontal.Arrange(new Rect(GutterWidth, finalSize.Height - barHeight, Math.Max(0, finalSize.Width - GutterWidth - barWidth), barHeight));
         UpdateScrollBars();
         if (pendingGoTo is { } offset)
@@ -565,7 +575,8 @@ public sealed partial class CodeEditor : Control
         vertical.LargeChange = viewport.Height;
         vertical.SmallChange = metrics.LineHeight;
         vertical.Value = scroll.Y;
-        vertical.IsVisible = RowCount * metrics.LineHeight > viewport.Height;
+        // The error stripe is its track, so it stays when there is nothing to scroll.
+        vertical.IsVisible = showErrorStripe || RowCount * metrics.LineHeight > viewport.Height;
         double maxX = Math.Max(0, widestLine + TextPadLeft + metrics.CharWidth * 4 - viewport.Width);
         horizontal.Maximum = maxX;
         horizontal.ViewportSize = viewport.Width;

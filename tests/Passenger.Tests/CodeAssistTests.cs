@@ -167,6 +167,56 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
     }
 
     [AvaloniaFact]
+    public void The_error_stripe_marks_a_problem_in_its_colour_says_what_it_is_and_a_click_goes_there()
+    {
+        MainWindow window = project.Open("Loop.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Assert.Equal((0, 0), editor.ProblemCount);
+        PlaceAfter(editor, "        return total;");
+        window.KeyTextInput(" int wrong = \"text\";");
+        Ui.WaitFor(() => editor.ProblemCount.Errors == 1, "the error's diagnostic");
+        CodeEditor.StripeMark error = Assert.Single(editor.StripeMarks, m => m.Kind == StripeMarkKind.Error);
+        Assert.Contains("convert", error.Message, StringComparison.Ordinal);
+        Assert.Contains(editor.StripeMarks, m => m.Kind == StripeMarkKind.Caret);
+
+        Point at = editor.TranslatePoint(editor.StripePoint(error), window)!.Value;
+
+        // A click on it takes the caret to the error's line.
+        editor.GoTo(new TextPosition(0, 0));
+        Ui.Settle();
+        window.MouseDown(at, Avalonia.Input.MouseButton.Left);
+        window.MouseUp(at, Avalonia.Input.MouseButton.Left);
+        Ui.Settle();
+        Assert.Equal(editor.Document.Snapshot.GetLineFromOffset(error.Offset), editor.CaretPosition.Line);
+
+        // Drawn in the error colour on the scrollbar's track, over the thumb.
+        Avalonia.Media.Color colour = Pixel(window, at);
+        Assert.True(colour.R > 180 && colour.G < 140 && colour.B < 140, $"The error's mark is {colour}, not the error colour");
+
+        window.Close();
+    }
+
+    /// <summary>A pixel of the window as drawn, at a point in its coordinates.</summary>
+    private static Avalonia.Media.Color Pixel(MainWindow window, Point at)
+    {
+        using Avalonia.Media.Imaging.RenderTargetBitmap picture = new(new PixelSize((int)window.Bounds.Width, (int)window.Bounds.Height));
+        picture.Render(window);
+        byte[] pixel = new byte[4];
+        System.Runtime.InteropServices.GCHandle pinned = System.Runtime.InteropServices.GCHandle.Alloc(pixel, System.Runtime.InteropServices.GCHandleType.Pinned);
+        try
+        {
+            picture.CopyPixels(new PixelRect((int)at.X, (int)at.Y, 1, 1), pinned.AddrOfPinnedObject(), 4, 4);
+        }
+        finally
+        {
+            pinned.Free();
+        }
+        return picture.Format == Avalonia.Platform.PixelFormat.Rgba8888
+            ? Avalonia.Media.Color.FromRgb(pixel[0], pixel[1], pixel[2])
+            : Avalonia.Media.Color.FromRgb(pixel[2], pixel[1], pixel[0]);
+    }
+
+    [AvaloniaFact]
     public void Go_to_declaration_opens_the_other_file_at_the_method()
     {
         MainWindow window = project.Open("Program.cs");

@@ -24,6 +24,7 @@ public sealed class OutputView : DockPanel
             IsReadOnly = true,
             LineCommentPrefix = null,
             ShowLineNumbers = false,
+            ShowErrorStripe = false,
             FontSize = 12.5,
             Highlighter = errors,
         };

@@ -96,6 +96,7 @@ public partial class MainWindow : Window
             csharp?.Detach(document);
             debug?.Detach(document);
         };
+        Editors.ForEachEditor(editor => editor.ProblemsRequested += (_, _) => ShowToolWindow("problems"));
         Editors.ForEachEditor(editor => editor.ExecutionPointDragged += (_, line) =>
         {
             if (Editors.Active is { } active && debug?.Session is { State: DebugState.Paused } session)
