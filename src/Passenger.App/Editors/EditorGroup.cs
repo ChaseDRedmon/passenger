@@ -37,6 +37,8 @@ public sealed class EditorGroup : DockPanel
     private readonly ObservableCollection<EditorTab> tabs = [];
     private readonly Dictionary<OpenDocument, (SelectionSet Selections, Vector Scroll)> views = [];
     private readonly Border tabBar;
+    private readonly Border banner;
+    private readonly TextBlock bannerText;
     private EditorTab? active;
 
     public EditorGroup(EditorArea area)
@@ -59,7 +61,13 @@ public sealed class EditorGroup : DockPanel
         };
         tabBar.Bind(Border.BackgroundProperty, tabBar.GetResourceObservable("Passenger.Chrome"));
         tabBar.Bind(Border.BorderBrushProperty, tabBar.GetResourceObservable("Passenger.Divider"));
+        // Rider's editor notification: what a file is when it is not the project's own.
+        bannerText = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0), FontSize = 12 };
+        banner = new Border { [DockProperty] = Dock.Top, Height = 28, IsVisible = false, BorderThickness = new Thickness(0, 0, 0, 1), Child = bannerText };
+        banner.Bind(Border.BackgroundProperty, banner.GetResourceObservable("Passenger.Banner"));
+        banner.Bind(Border.BorderBrushProperty, banner.GetResourceObservable("Passenger.Divider"));
         Children.Add(tabBar);
+        Children.Add(banner);
         Children.Add(Find);
         Children.Add(Editor);
         // The group the person works in is the area's active one.
@@ -129,6 +137,9 @@ public sealed class EditorGroup : DockPanel
         Editor.SetLineAnnotations(document.LineAnnotations);
         Editor.SetTestMarks(document.TestMarks);
         Editor.SetChangeMarks(document.ChangeMarks);
+        Editor.IsReadOnly = document.IsDecompiled;
+        banner.IsVisible = document.IsDecompiled;
+        bannerText.Text = document.Origin;
         Find.Attach(Editor);
         Editor.IsVisible = true;
         tabBar.IsVisible = true;
@@ -157,6 +168,7 @@ public sealed class EditorGroup : DockPanel
                 Find.Close();
                 Editor.IsVisible = false;
                 tabBar.IsVisible = false;
+                banner.IsVisible = false;
             }
         }
     }

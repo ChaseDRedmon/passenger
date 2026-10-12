@@ -80,6 +80,16 @@ public sealed class OpenDocument : Observable
 
     public string Path { get; }
     public string Name => System.IO.Path.GetFileName(Path);
+
+    /// <summary>Whether the language server made this file from an assembly's metadata (Go to Declaration on a
+    /// library's symbol): Roslyn decompiles it, or takes its source from Source Link or the PDB, into a folder of its
+    /// own, and nothing typed there would reach the library.</summary>
+    public bool IsDecompiled => Path.Contains($"{System.IO.Path.DirectorySeparatorChar}MetadataAsSource{System.IO.Path.DirectorySeparatorChar}", StringComparison.Ordinal);
+
+    /// <summary>What the bar over a decompiled file says it came from.</summary>
+    public string Origin => Path.Contains("SourceLink", StringComparison.OrdinalIgnoreCase) || Path.Contains("Embedded", StringComparison.OrdinalIgnoreCase)
+        ? "Source from the library's Source Link or PDB, read-only"
+        : "Decompiled code: the language server made this from the assembly, so it is read-only";
     public TextDocument Text { get; }
     public Encoding Encoding { get; }
     public bool HasBom { get; }

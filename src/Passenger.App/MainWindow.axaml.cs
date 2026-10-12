@@ -828,7 +828,8 @@ public partial class MainWindow : Window
     {
         Remember();
         OpenFile(path);
-        if (Editors.Active is { } active && active.Path == Path.GetFullPath(path))
+        // Opened files are known by their canonical path: the one given may run through a symlink (macOS's /var).
+        if (Editors.Active is { } active && active.Path == PathNames.Canonical(Path.GetFullPath(path)))
         {
             Editors.CodeEditor.GoTo(position);
             Remember();

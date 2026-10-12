@@ -108,6 +108,29 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
     }
 
     [AvaloniaFact]
+    public void Go_to_declaration_on_a_library_type_opens_its_decompiled_source_read_only()
+    {
+        MainWindow window = project.Open("Program.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "        in");
+        Ui.Press(window, Ui.Shortcut(AppActions.GoToDeclaration));
+        Ui.WaitFor(() => window.EditorArea.Active?.IsDecompiled == true, "the decompiled source to open");
+        Passenger.App.Workspace.OpenDocument decompiled = window.EditorArea.Active!;
+        Assert.Equal("Int32.cs", decompiled.Name);
+        Assert.Contains("struct Int32", decompiled.Text.Snapshot.ToString(), StringComparison.Ordinal);
+        // At the declaration, as for the project's own code.
+        Assert.Contains("struct Int32", decompiled.Text.Snapshot.GetLineText(editor.CaretPosition.Line), StringComparison.Ordinal);
+
+        // Nothing typed there reaches the library, so nothing is typed there.
+        string before = decompiled.Text.Snapshot.ToString();
+        window.KeyTextInput("x");
+        Ui.Settle();
+        Assert.Equal(before, decompiled.Text.Snapshot.ToString());
+        Assert.True(editor.IsReadOnly);
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Rename_changes_the_name_in_every_file_that_uses_it()
     {
         string helper = File.ReadAllText(project.PathOf("Helper.cs"));
