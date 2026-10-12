@@ -85,7 +85,7 @@ public sealed class RoslynTests : IClassFixture<RoslynTests.ProjectSession>
             Assert.Equal(0, restore.ExitCode);
 
             TaskCompletionSource loaded = new(TaskCreationOptions.RunContinuationsAsynchronously);
-            Session = await RoslynSession.StartAsync(folder, Path.Combine(folder, ".logs"));
+            Session = await RoslynSession.StartAsync(folder, null, [Path.Combine(folder, "Sample.csproj")], Path.Combine(folder, ".logs"));
             Session.Loaded += (_, _) => loaded.TrySetResult();
             if (!Session.IsLoaded)
             {

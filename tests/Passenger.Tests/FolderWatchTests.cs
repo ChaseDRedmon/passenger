@@ -2,13 +2,15 @@ using System.Text;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Passenger.App;
+using Passenger.App.Explorer;
 using Passenger.App.Workspace;
 
 namespace Passenger.Tests;
 
 /// <summary>Changes another program makes in the folder, seen at once as Rider's fsnotifier sees them: the Explorer,
-/// Go to File and the open files follow, an open file with unsaved edits asks which version to keep, and a project
-/// added on disk joins the Solution view and the run configurations.</summary>
+/// Go to File and the open files follow, an open file with unsaved edits asks which version to keep, a project added on
+/// disk joins the Solution view and the run configurations, and the solution the folder's files now pick is the one
+/// the Explorer and the language server both open.</summary>
 public sealed class FolderWatchTests : IDisposable
 {
     private readonly string folder = PathNames.Canonical(Directory.CreateTempSubdirectory("passenger-watch-").FullName);
@@ -212,6 +214,66 @@ public sealed class FolderWatchTests : IDisposable
         Ui.WaitFor(() => window.ExplorerView.Tree.Rows.Any(r => r.Name == "Tool"), "the new project in the Solution view");
         window.Close();
     }
+
+    [AvaloniaFact]
+    public void A_folders_sln_and_slnx_listing_different_projects_give_the_explorer_and_the_language_server_the_same_one()
+    {
+        // As dotnet sln migrate leaves a folder, with a project added to the .slnx since.
+        Write("App/App.csproj", Project);
+        Write("App/Program.cs", "System.Console.WriteLine(\"app\");\n");
+        Write("Extra/Extra.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+        Write("Extra/Helper.cs", "public static class Helper\n{\n    public static string Name => \"extra\";\n}\n");
+        Write("Extra/Use.cs", "public static class Use\n{\n    public static int Count()\n    {\n        int count = Helper.Name;\n        return count;\n    }\n}\n");
+        Write("Foo.sln", ClassicSolution);
+        Write("Foo.slnx", "<Solution>\n  <Project Path=\"App/App.csproj\" />\n  <Project Path=\"Extra/Extra.csproj\" />\n</Solution>\n");
+        using (System.Diagnostics.Process restore = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("dotnet", ["restore", Path.Combine(folder, "Foo.slnx")]) { RedirectStandardOutput = true, RedirectStandardError = true })!)
+        {
+            restore.WaitForExit();
+        }
+        string slnx = Path.Combine(folder, "Foo.slnx");
+        string sln = Path.Combine(folder, "Foo.sln");
+        MainWindow window = Open();
+        Assert.Equal(slnx, window.Solution?.Path);
+        Assert.Equal(slnx, window.CSharpService?.Session?.Solution);
+        Assert.Contains(window.ExplorerView.Tree.Rows, r => r.Kind == NodeKind.Project && r.Name == "Extra");
+        // Helper is known only with Extra's project loaded: without it the error would be an unknown name, not a conversion.
+        window.OpenFile("Extra/Use.cs");
+        Ui.WaitFor(() => Codes(window).Contains("CS0029"), "the language server to load Extra, which the Explorer shows");
+
+        // The .slnx deleted, both read the .sln, which has no Extra.
+        File.Delete(slnx);
+        Ui.WaitFor(() => window.Solution?.Path == sln, "the Explorer to show the .sln");
+        Assert.DoesNotContain(window.ExplorerView.Tree.Rows, r => r.Kind == NodeKind.Project && r.Name == "Extra");
+        Ui.WaitFor(() => window.CSharpService?.Session?.Solution == sln, "the language server to open the .sln the Explorer shows");
+        window.Close();
+    }
+
+    private static IEnumerable<string?> Codes(MainWindow window) =>
+        window.CSharpService?.For(window.EditorArea.Active!)?.Diagnostics.Select(d => d.Code?.ToString()) ?? [];
+
+    /// <summary>A Visual Studio solution naming App alone.</summary>
+    private const string ClassicSolution = """
+
+        Microsoft Visual Studio Solution File, Format Version 12.00
+        # Visual Studio Version 17
+        VisualStudioVersion = 17.0.31903.59
+        MinimumVisualStudioVersion = 10.0.40219.1
+        Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "App", "App\App.csproj", "{6F1A3C0E-1B2D-4C5E-9F70-1A2B3C4D5E6F}"
+        EndProject
+        Global
+            GlobalSection(SolutionConfigurationPlatforms) = preSolution
+                Debug|Any CPU = Debug|Any CPU
+                Release|Any CPU = Release|Any CPU
+            EndGlobalSection
+            GlobalSection(ProjectConfigurationPlatforms) = postSolution
+                {6F1A3C0E-1B2D-4C5E-9F70-1A2B3C4D5E6F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+                {6F1A3C0E-1B2D-4C5E-9F70-1A2B3C4D5E6F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+                {6F1A3C0E-1B2D-4C5E-9F70-1A2B3C4D5E6F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+                {6F1A3C0E-1B2D-4C5E-9F70-1A2B3C4D5E6F}.Release|Any CPU.Build.0 = Release|Any CPU
+            EndGlobalSection
+        EndGlobal
+
+        """;
 
     private const string Project = "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n";
 

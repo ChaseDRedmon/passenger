@@ -5,8 +5,8 @@ using Passenger.Lsp;
 
 namespace Passenger.App.CSharp;
 
-/// <summary>C# for the open folder: Roslyn's language server started when the folder has a solution
-/// or a project, its state for the status bar, and a <see cref="CSharpDocument"/> for every C# file
+/// <summary>C# for the open folder: Roslyn's language server started on the workspace's solution or
+/// projects, its state for the status bar, and a <see cref="CSharpDocument"/> for every C# file
 /// open in a tab. Files opened before the server is ready are attached once it is. A server that ends
 /// on its own is started again with the open files, as Rider restarts its backend, a few times at most. A UI-thread
 /// object: what the server says from its own threads crosses through <see cref="UiThread"/>.</summary>
@@ -21,8 +21,7 @@ public sealed class CSharpService : IAsyncDisposable
     private readonly List<DateTime> restarts = [];
     private RoslynSession? session;
     private CancellationTokenSource? starting;
-    private string? folder;
-    private string? solution;
+    private WorkspaceModel? workspace;
     private bool disposed;
 
     /// <summary>The state changed (starting, loading projects, ready, failed); raised on the UI thread.</summary>
@@ -181,36 +180,18 @@ public sealed class CSharpService : IAsyncDisposable
         }
     }
 
-    /// <summary>Whether a folder is worth starting Roslyn for: it has a solution, or a project within
-    /// a few folders of its top.</summary>
-    public static bool Wants(string folder)
-    {
-        if (Directory.EnumerateFiles(folder, "*.sln").Any() || Directory.EnumerateFiles(folder, "*.slnx").Any())
-        {
-            return true;
-        }
-        try
-        {
-            return Directory.EnumerateFiles(folder, "*.csproj", new EnumerationOptions { RecurseSubdirectories = true, MaxRecursionDepth = 3 }).Any();
-        }
-        catch (Exception error) when (error is UnauthorizedAccessException or IOException)
-        {
-            return false;
-        }
-    }
-
-    /// <summary>Starts the server on a folder, with the solution named (else the one Roslyn finds there).</summary>
-    public void Start(string folder, string? solution = null)
+    /// <summary>Starts the server on the workspace's solution, or with none its projects: what the Explorer and the build
+    /// see, so their answers agree.</summary>
+    public void Start(WorkspaceModel workspace)
     {
         UiThread.Check();
-        this.folder = folder;
-        this.solution = solution;
+        this.workspace = workspace;
         starting?.Cancel();
         CancellationTokenSource cancel = new();
         starting = cancel;
         SetState("Starting C#…");
         BackgroundWork.Begin();
-        _ = Run(folder, solution, cancel.Token);
+        _ = Run(workspace, cancel.Token);
     }
 
     /// <summary>Gives an open document its C# features, now or once the server is ready.</summary>
@@ -256,12 +237,19 @@ public sealed class CSharpService : IAsyncDisposable
         }
     }
 
-    private async Task Run(string folder, string? solution, CancellationToken cancel)
+    private async Task Run(WorkspaceModel opening, CancellationToken cancel)
     {
         try
         {
             string logs = Path.Combine(Path.GetTempPath(), "passenger", "logs", $"roslyn-{Environment.ProcessId}");
-            RoslynSession started = await RoslynSession.StartAsync(folder, logs, cancel, solutionWide ? FullSolution : null, solution);
+            RoslynSession started = await RoslynSession.StartAsync(opening.Folder, opening.Solution?.Path, [.. opening.Projects.Select(p => p.Path)], logs,
+                cancel, solutionWide ? FullSolution : null);
+            if (cancel.IsCancellationRequested)
+            {
+                // Disposed, or started again, while this server started: nothing else will end it.
+                await started.DisposeAsync();
+                return;
+            }
             TaskCompletionSource loaded = new(TaskCreationOptions.RunContinuationsAsynchronously);
             started.Loaded += (_, _) => loaded.TrySetResult();
             started.Server.RefreshRequested += (_, _) => UiThread.Post(RefreshAll);
@@ -297,7 +285,7 @@ public sealed class CSharpService : IAsyncDisposable
     /// new server, unless it has ended too often to be worth it.</summary>
     private void OnExited(RoslynSession lost, string why)
     {
-        if (disposed || session != lost || folder is null)
+        if (disposed || session != lost || workspace is null)
         {
             return;
         }
@@ -321,7 +309,7 @@ public sealed class CSharpService : IAsyncDisposable
         }
         restarts.Add(now);
         Stopped?.Invoke(this, "The C# language server ended; starting it again");
-        Start(folder, solution);
+        Start(workspace);
     }
 
     private void RefreshAll()

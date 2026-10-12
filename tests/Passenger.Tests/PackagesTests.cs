@@ -1,5 +1,8 @@
 using System.IO.Compression;
+using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
+using Avalonia.Interactivity;
+using Avalonia.LogicalTree;
 using Passenger.App;
 using Passenger.App.Packages;
 using Passenger.App.ToolWindows;
@@ -74,6 +77,35 @@ public sealed class PackagesTests : IDisposable
         Assert.DoesNotContain("Passenger.Sample", File.ReadAllText(project), StringComparison.Ordinal);
         window.Close();
     }
+
+    [AvaloniaFact]
+    public void A_project_below_a_folder_with_no_solution_is_in_the_nuget_window_and_takes_a_package()
+    {
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        // The folder above Lib: its project is a folder down, and no solution names it.
+        window.OpenFolder(folder);
+        Ui.Settle();
+        NuGetView nuget = window.NuGet;
+        nuget.Feed = new FolderFeed(feed);
+        window.Perform(AppActions.ShowNuGet);
+        nuget.Query = "sample";
+        Task searched = nuget.RefreshAsync();
+        Ui.WaitFor(() => searched.IsCompleted && nuget.Versions.Count == 2, "the package and its versions");
+
+        Button install = InstallButton(nuget, "Lib") ?? throw new Xunit.Sdk.XunitException("The NuGet window lists no Lib project to install the package in");
+        install.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Ui.WaitFor(() => !nuget.IsBusy && Version(window) is not null, "the package installed in Lib", TimeSpan.FromMinutes(2));
+        Assert.Equal("1.1.0", Version(window));
+        Assert.Contains("Passenger.Sample", File.ReadAllText(project), StringComparison.Ordinal);
+        window.Close();
+    }
+
+    /// <summary>The Install button on a project's line among the chosen package's projects.</summary>
+    private static Button? InstallButton(NuGetView nuget, string name) => nuget.GetLogicalDescendants().OfType<StackPanel>()
+        .Where(line => line.Children.FirstOrDefault() is TextBlock { Text: { } text } && text == name)
+        .SelectMany(line => line.Children.OfType<Button>())
+        .FirstOrDefault(button => (string?)button.Content == "Install");
 
     [Fact]
     public void A_centrally_managed_version_is_read_from_directory_packages_props()

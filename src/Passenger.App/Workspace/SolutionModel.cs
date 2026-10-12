@@ -27,22 +27,26 @@ public sealed record SolutionModel(string Path, string Name, IReadOnlyList<Solut
         }
     }
 
-    /// <summary>The solution at a folder's top, the one named for the folder if there are several; none in a folder that
-    /// is gone (deleted under the window) or cannot be read.</summary>
+    /// <summary>The solution at a folder's top: the one named for the folder if there are several, and of a .sln and a
+    /// .slnx alike the .slnx, which <c>dotnet sln migrate</c> writes beside the .sln it leaves; none in a folder that is
+    /// gone (deleted under the window) or cannot be read. The window asks <see cref="WorkspaceModel"/>, never this.</summary>
     public static string? Find(string folder)
     {
         List<string> found;
         try
         {
-            found = [.. Directory.EnumerateFiles(folder, "*.slnx").Concat(Directory.EnumerateFiles(folder, "*.sln"))];
+            found = [.. Directory.EnumerateFiles(folder).Where(f => System.IO.Path.GetExtension(f).ToLowerInvariant() is ".sln" or ".slnx")];
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
             return null;
         }
         string name = System.IO.Path.GetFileName(folder);
-        return found.FirstOrDefault(f => System.IO.Path.GetFileNameWithoutExtension(f).Equals(name, StringComparison.OrdinalIgnoreCase))
-            ?? found.OrderBy(f => f.EndsWith(".slnx", StringComparison.Ordinal) ? 0 : 1).ThenBy(f => f, StringComparer.Ordinal).FirstOrDefault();
+        return found
+            .OrderBy(f => System.IO.Path.GetFileNameWithoutExtension(f).Equals(name, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .ThenBy(f => f.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .ThenBy(f => f, StringComparer.Ordinal)
+            .FirstOrDefault();
     }
 
     private static SolutionModel LoadSlnx(string path)
@@ -184,19 +188,6 @@ public sealed record ProjectModel(
     /// <summary>Whether it builds something that runs: an executable, not a library or a test.</summary>
     public bool IsRunnable => (string.Equals(OutputType, "Exe", StringComparison.OrdinalIgnoreCase)
         || string.Equals(OutputType, "WinExe", StringComparison.OrdinalIgnoreCase)) && !IsTestProject;
-
-    /// <summary>The projects at a folder's top, for a folder without a solution; none in a folder that is gone.</summary>
-    public static IReadOnlyList<ProjectModel> InFolder(string folder)
-    {
-        try
-        {
-            return [.. Directory.EnumerateFiles(folder, "*.csproj").Select(Load)];
-        }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-        {
-            return [];
-        }
-    }
 
     public static ProjectModel Load(string path)
     {

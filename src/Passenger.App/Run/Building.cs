@@ -21,10 +21,10 @@ public enum ProblemSeverity
 /// first.</summary>
 public sealed record RunConfiguration(string Name, ProjectModel Project, LaunchProfile? Profile = null)
 {
-    public static IReadOnlyList<RunConfiguration> From(SolutionModel? solution, string folder)
+    /// <summary>The configurations of the workspace's projects loaded: each executable's launch profiles, or the project
+    /// itself when it has none.</summary>
+    public static IReadOnlyList<RunConfiguration> From(IEnumerable<ProjectModel> projects)
     {
-        IEnumerable<ProjectModel> projects = solution?.Projects
-            ?? ProjectModel.InFolder(folder);
         List<RunConfiguration> configurations = [];
         foreach (ProjectModel project in projects.Where(p => p.Exists && p.IsRunnable))
         {

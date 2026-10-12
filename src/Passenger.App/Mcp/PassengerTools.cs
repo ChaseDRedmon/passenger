@@ -737,8 +737,7 @@ public sealed partial class PassengerTools(MainWindow window)
         return new Workspace(
             window.Folder,
             window.Solution?.Path,
-            // A folder with no solution has the projects its run configurations come from.
-            [.. (window.Solution?.Projects ?? window.Configurations.Select(c => c.Project).Distinct()).Select(p => new ProjectInfo(p.Name, Relative(p.Path), p.OutputType, p.TargetFrameworks))],
+            [.. (window.WorkspaceModel?.Projects ?? []).Select(p => new ProjectInfo(p.Name, Relative(p.Path), p.OutputType, p.TargetFrameworks))],
             [.. window.Configurations.Select(c => c.Name)],
             window.Configuration?.Name,
             window.CSharpService is null ? "none" : window.CSharpService.IsReady ? "ready" : window.CSharpService.State,

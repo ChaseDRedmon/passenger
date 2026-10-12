@@ -244,6 +244,22 @@ public sealed class BuildRunTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void A_folder_with_no_solution_and_its_project_below_the_top_builds_and_runs_that_project()
+    {
+        // As many repositories are: src/Hello/Hello.csproj, and no solution at the top to name it.
+        File.Delete(Path.Combine(folder, "Sample.slnx"));
+        MainWindow window = Open();
+        Assert.Equal(["Hello"], window.Configurations.Select(c => c.Name));
+
+        window.Perform(AppActions.Build);
+        Ui.WaitFor(() => !window.IsBuilding, "the build", TimeSpan.FromMinutes(2));
+        Assert.Equal("Build succeeded", window.Status);
+        Assert.True(File.Exists(Path.Combine(folder, "src", "Hello", "bin", "Debug", "net10.0", "Hello.dll")), "Build did not build the folder's project");
+        Assert.Contains("Hello from the run", RunToEnd(window), StringComparison.Ordinal);
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Each_launch_profile_is_a_run_configuration_whose_arguments_and_environment_the_program_gets()
     {
         Write("src/Hello/Program.cs", "Console.WriteLine($\"{Environment.GetEnvironmentVariable(\"GREETING\")} [{string.Join(\"|\", args)}]\");\n");

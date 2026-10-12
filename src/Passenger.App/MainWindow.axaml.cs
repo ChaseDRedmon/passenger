@@ -282,12 +282,6 @@ public partial class MainWindow : Window
     /// <summary>Every file of the open folder, as Go to File searches them.</summary>
     public FileIndex FileIndex => index;
 
-    /// <summary>The open folder's solution, read from its files, or null for a folder without one.</summary>
-    public SolutionModel? Solution { get; private set; }
-
-    /// <summary>The solution opened by name, which a folder with several keeps over the one its name would pick.</summary>
-    private string? namedSolution;
-
     /// <summary>Opens what the command line named: a folder, files in it, a caret position.</summary>
     public void Start(LaunchOptions options)
     {
@@ -318,10 +312,10 @@ public partial class MainWindow : Window
         string named = PathNames.Canonical(path);
         bool solutionNamed = File.Exists(named) && (named.EndsWith(".sln", StringComparison.OrdinalIgnoreCase) || named.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase));
         string opening = solutionNamed ? Path.GetDirectoryName(named)! : named;
-        string? solution = solutionNamed ? named : (opening == folder ? namedSolution : null) ?? SolutionModel.Find(opening);
-        if (opening == folder && solution == Solution?.Path)
+        WorkspaceModel read = WorkspaceModel.Read(opening, solutionNamed ? named : opening == folder ? namedSolution : null);
+        if (opening == folder && read.Solution?.Path == Solution?.Path)
         {
-            ReloadSolution();
+            Reload(read);
             return;
         }
         if (folder is not null && folder != opening)
@@ -342,8 +336,7 @@ public partial class MainWindow : Window
         folder = opening;
         agentSocket?.Describe(folder);
         namedSolution = solutionNamed ? named : null;
-        string name = Path.GetFileName(folder);
-        Solution = solution is not null ? SolutionModel.Load(solution) : null;
+        workspace = read;
         Explorer.Load(folder, Solution);
         _ = vcs.OpenAsync(folder);
         Explorer.Tree.Unloaded.Clear();
@@ -352,29 +345,10 @@ public partial class MainWindow : Window
         RunConfigName.Text = configuration?.Name ?? "No configurations";
         index.Build(folder);
         Watch(folder);
-        _ = csharp?.DisposeAsync();
-        csharp = null;
-        if (CSharpService.Wants(folder))
-        {
-            csharp = new CSharpService();
-            csharp.StateChanged += (_, _) => LanguageText.Text = LanguageLabel();
-            csharp.Stopped += (_, message) => StatusText.Text = message;
-            WatchProblems(csharp);
-            csharp.Start(folder, Solution?.Path);
-            // Files open since before (the same folder with another solution) are this server's too.
-            foreach (OpenDocument open in Editors.Documents)
-            {
-                csharp.Attach(open);
-            }
-        }
-        ShowSolutionProblems();
+        StartCSharp();
         Editors.ShowFolderHint(folder);
         RestoreWorkspace();
-        // Rider names the window's project widget after the solution, the folder only without one.
-        string shown = Solution?.Name ?? name;
-        ProjectName.Text = shown;
-        ProjectBadgeText.Text = Initials(shown);
-        ProjectBadge.IsVisible = true;
+        ShowWorkspaceName();
         UpdateStatus();
     }
 
@@ -798,7 +772,7 @@ public partial class MainWindow : Window
     /// <summary>The status bar's text, which says what the last action came to.</summary>
     public string? Status => StatusText.Text;
 
-    /// <summary>Builds the solution (or the folder's project) with the .NET command line, its output
+    /// <summary>Builds the solution (or, with none, the folder's projects) with the .NET command line, its output
     /// in the Build window and what it finds in Problems; <paramref name="then"/> hears how it ended.</summary>
     public void BuildSolution(Action<BuildOutcome>? then = null) => Build(BuildKind.Build, null, then);
 
@@ -816,9 +790,7 @@ public partial class MainWindow : Window
         }
         buildKind = kind;
         lastProjects = projects;
-        string solution = Solution?.Path ?? ProjectModel.InFolder(folder).FirstOrDefault()?.Path ?? folder;
-        // With projects unloaded, the solution is the projects still loaded, built one after another.
-        IReadOnlyList<string> whole = Solution is not null && Explorer.Tree.Unloaded.Count > 0 ? [.. Projects.Select(p => p.Path)] : [solution];
+        IReadOnlyList<string> whole = workspace!.BuildTargets(Projects);
         buildQueue.Clear();
         foreach (string target in projects is { Count: > 0 } ? projects : whole)
         {
@@ -1480,15 +1452,6 @@ public partial class MainWindow : Window
 
     /// <summary>The unit test runner, its tree and its runs.</summary>
     public Testing.TestController Tests => tests;
-
-    /// <summary>The projects of the solution, or the folder's with none.</summary>
-    public IReadOnlyList<ProjectModel> Projects => Solution is { } solution
-        ? [.. solution.Projects.Where(p => !Explorer.Tree.Unloaded.Contains(p.Path))]
-        : folder is null ? [] : ProjectModel.InFolder(folder);
-
-    /// <summary>The run configurations of the projects loaded.</summary>
-    private IReadOnlyList<RunConfiguration> Configure() =>
-        folder is null ? [] : [.. RunConfiguration.From(Solution, folder).Where(c => !Explorer.Tree.Unloaded.Contains(c.Project.Path))];
 
     /// <summary>Rider's Unload Project: the project shows dimmed with nothing under it, and leaves the run configurations,
     /// the solution's builds and the test runner until it is reloaded; the folder keeps the choice.</summary>

@@ -3,17 +3,11 @@ using Passenger.Text;
 
 namespace Passenger.Lsp;
 
-/// <summary>Roslyn's language server working on one folder: it opens the folder's solution (or, with
-/// none, its projects) and keeps every open C# document in step. Requests are made per document
+/// <summary>Roslyn's language server working on one folder: it opens the solution it is given (or, with
+/// none, the projects) and keeps every open C# document in step. Requests are made per document
 /// (<see cref="LspDocument"/>), in the editor's own offsets.</summary>
 public sealed class RoslynSession : IAsyncDisposable
 {
-    /// <summary>The most projects opened from a folder with no solution, so a monorepo does not ask
-    /// Roslyn to load hundreds at once.</summary>
-    private const int ProjectLimit = 200;
-
-    private static readonly HashSet<string> Skipped = [".git", "bin", "obj", "artifacts", "node_modules", ".vs", ".idea"];
-
     private readonly Dictionary<string, LspDocument> documents = new(StringComparer.Ordinal);
 
     private RoslynSession(LanguageServer server, string folder, string? solution)
@@ -37,13 +31,13 @@ public sealed class RoslynSession : IAsyncDisposable
     public string? Solution { get; }
     public bool IsLoaded { get; private set; }
 
+    /// <param name="solution">The solution to open; with none, <paramref name="projects"/> are opened. The caller decides
+    /// both (the IDE's workspace model), so the server opens what the Explorer and the build see.</param>
     /// <param name="options">Server options to start with, over Passenger's own (the solution-wide analysis' scope).</param>
-    /// <param name="solution">The solution to open, when the folder has several; else the folder's own is found.</param>
-    public static async Task<RoslynSession> StartAsync(string folder, string logFolder, CancellationToken cancel = default,
-        IReadOnlyDictionary<string, object?>? options = null, string? solution = null)
+    public static async Task<RoslynSession> StartAsync(string folder, string? solution, IReadOnlyList<string> projects, string logFolder,
+        CancellationToken cancel = default, IReadOnlyDictionary<string, object?>? options = null)
     {
         LanguageServer server = await LanguageServer.StartRoslynAsync(folder, logFolder, cancel, options);
-        solution ??= FindSolution(folder);
         RoslynSession session = new(server, folder, solution);
         if (solution is not null)
         {
@@ -51,8 +45,7 @@ public sealed class RoslynSession : IAsyncDisposable
         }
         else
         {
-            List<string> projects = FindProjects(folder);
-            await server.NotifyAsync("project/open", new OpenProjectParams(projects.Select(p => new Uri(p).AbsoluteUri).ToList()));
+            await server.NotifyAsync("project/open", new OpenProjectParams([.. projects.Select(p => new Uri(p).AbsoluteUri)]));
         }
         return session;
     }
@@ -85,44 +78,6 @@ public sealed class RoslynSession : IAsyncDisposable
             document.Dispose();
         }
         await Server.DisposeAsync();
-    }
-
-    /// <summary>A solution at the folder's top, the one named for the folder if there are several.</summary>
-    private static string? FindSolution(string folder)
-    {
-        List<string> found = Directory.EnumerateFiles(folder, "*.sln").Concat(Directory.EnumerateFiles(folder, "*.slnx")).ToList();
-        if (found.Count == 0)
-        {
-            return null;
-        }
-        string name = Path.GetFileName(folder);
-        return found.FirstOrDefault(f => Path.GetFileNameWithoutExtension(f).Equals(name, StringComparison.OrdinalIgnoreCase))
-            ?? found.OrderBy(f => f.EndsWith(".slnx", StringComparison.Ordinal) ? 0 : 1).ThenBy(f => f, StringComparer.Ordinal).First();
-    }
-
-    private static List<string> FindProjects(string folder)
-    {
-        List<string> projects = [];
-        Stack<string> folders = new([folder]);
-        while (folders.Count > 0 && projects.Count < ProjectLimit)
-        {
-            string current = folders.Pop();
-            try
-            {
-                projects.AddRange(Directory.EnumerateFiles(current, "*.csproj"));
-                foreach (string child in Directory.EnumerateDirectories(current))
-                {
-                    if (!Skipped.Contains(Path.GetFileName(child)))
-                    {
-                        folders.Push(child);
-                    }
-                }
-            }
-            catch (Exception error) when (error is UnauthorizedAccessException or IOException)
-            {
-            }
-        }
-        return projects;
     }
 }
 
