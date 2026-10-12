@@ -55,7 +55,7 @@ public partial class MainWindow
         try
         {
             DebugTarget target = await DebugTarget.ResolveAsync(chosen, arguments);
-            ProfileTarget profiled = new(Lsp.Dotnet.Host(), [target.Program, .. target.Arguments], target.WorkingDirectory, target.Environment);
+            ProfileTarget profiled = new(Core.Dotnet.Host(), [target.Program, .. target.Arguments], target.WorkingDirectory, target.Environment);
             ShowToolWindow("profiler");
             Bottom.Run.Document.Clear();
             profiling = await ProfilingSession.StartAsync(profiled, SnapshotFolder, UiThread.Marshal<string>(line => Bottom.Run.Document.Append(line + "\n")));

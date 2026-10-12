@@ -4,6 +4,7 @@ using Microsoft.VisualStudio.TestPlatform.ObjectModel;
 using Microsoft.VisualStudio.TestPlatform.ObjectModel.Client;
 using Microsoft.VisualStudio.TestPlatform.ObjectModel.Client.Interfaces;
 using Microsoft.VisualStudio.TestPlatform.ObjectModel.Logging;
+using Passenger.Core;
 
 namespace Passenger.App.Testing;
 
@@ -21,18 +22,9 @@ public sealed class TestRunner : IDisposable
     /// <summary>A runner for a folder: vstest.console from the SDK `dotnet --version` names there.</summary>
     public static async Task<TestRunner> StartAsync(string folder, CancellationToken cancellation = default)
     {
-        string host = Lsp.Dotnet.Host();
-        ProcessStartInfo version = new(host, ["--version"])
-        {
-            WorkingDirectory = folder,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using Process process = Process.Start(version) ?? throw new InvalidOperationException("dotnet did not start");
-        string sdk = (await process.StandardOutput.ReadToEndAsync(cancellation)).Trim();
-        await process.WaitForExitAsync(cancellation);
+        ProcessStartInfo version = ChildProcesses.DotnetCommand(["--version"], folder);
+        string host = version.FileName;
+        string sdk = (await ChildProcesses.RunAsync(version, cancel: cancellation)).Output.Trim();
         string console = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(host))!, "sdk", sdk, "vstest.console.dll");
         if (!File.Exists(console))
         {

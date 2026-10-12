@@ -2,8 +2,8 @@ using System.Diagnostics;
 using System.Text.Json;
 using System.Threading.Channels;
 using Microsoft.Diagnostics.NETCore.Client;
+using Passenger.Core;
 using Passenger.Dap;
-using Passenger.Lsp;
 
 namespace Passenger.Tests.Debugging.Helpers;
 
@@ -44,13 +44,12 @@ public sealed class DebugSession : IDisposable
         ownLog = kept is null;
         engineLog = kept ?? Path.Combine(Path.GetTempPath(), $"passenger-engine-{Guid.NewGuid():N}.log");
         List<string> arguments = [path, "--interpreter=vscode", $"--engineLogging={engineLog}"];
-        adapter = Process.Start(new ProcessStartInfo(Dotnet.Host(), arguments)
-        {
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        })!;
+        // Started as the IDE starts it, so a test run that is killed leaves no adapter or program behind.
+        ProcessStartInfo start = ChildProcesses.DotnetCommand(arguments);
+        start.RedirectStandardInput = true;
+        start.RedirectStandardOutput = true;
+        start.RedirectStandardError = true;
+        adapter = ChildProcesses.Start(start);
         adapter.ErrorDataReceived += (_, e) =>
         {
             if (e.Data is not null)
@@ -320,14 +319,14 @@ public sealed class DebugSession : IDisposable
         }
         if (!adapter.WaitForExit(TimeSpan.FromSeconds(10)))
         {
-            adapter.Kill(entireProcessTree: true);
+            ChildProcesses.Kill(adapter);
         }
         adapter.Dispose();
         if (debuggee is not null)
         {
             if (!debuggee.HasExited)
             {
-                debuggee.Kill(entireProcessTree: true);
+                ChildProcesses.Kill(debuggee);
             }
             debuggee.Dispose();
         }
@@ -400,7 +399,7 @@ public sealed class DebugSession : IDisposable
     private static Process StartDebuggee(bool startSuspended)
     {
         string path = Debuggees.Apphost("DebuggableConsoleApp");
-        ProcessStartInfo start = new(path) { UseShellExecute = false };
+        ProcessStartInfo start = ChildProcesses.Command(path, []);
         if (startSuspended)
         {
             start.Environment["DOTNET_DefaultDiagnosticPortSuspend"] = "1";
@@ -411,7 +410,7 @@ public sealed class DebugSession : IDisposable
         {
             start.Environment.Remove(variable);
         }
-        return Process.Start(start)!;
+        return ChildProcesses.Start(start);
     }
 
     private static void Log(ITestOutputHelper output, string message)

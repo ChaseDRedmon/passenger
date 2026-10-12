@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Diagnostics.Tracing;
 using Microsoft.Diagnostics.NETCore.Client;
+using Passenger.Core;
 
 namespace Passenger.Profiler;
 
@@ -62,21 +63,17 @@ public sealed class ProfilingSession : IAsyncDisposable
         limit.CancelAfter(TimeSpan.FromSeconds(30));
         Task<DiagnosticsClientConnector> connecting = DiagnosticsClientConnector.FromDiagnosticPort(port, limit.Token);
 
-        ProcessStartInfo start = new(target.Program, target.Arguments)
-        {
-            WorkingDirectory = target.WorkingDirectory,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            // An input of its own, never the IDE's terminal (a read from that would stop it).
-            RedirectStandardInput = true,
-            UseShellExecute = false,
-        };
+        ProcessStartInfo start = ChildProcesses.Command(target.Program, target.Arguments, target.WorkingDirectory);
+        start.RedirectStandardOutput = true;
+        start.RedirectStandardError = true;
+        // An input of its own that stays open, as a console's does, for a program that waits on a read.
+        start.RedirectStandardInput = true;
         foreach ((string key, string value) in target.Environment)
         {
             start.Environment[key] = value;
         }
         start.Environment["DOTNET_DiagnosticPorts"] = $"{port},suspend";
-        Process process = Process.Start(start) ?? throw new InvalidOperationException($"{target.Program} did not start");
+        Process process = ChildProcesses.Start(start);
         process.OutputDataReceived += (_, e) => Line(e.Data);
         process.ErrorDataReceived += (_, e) => Line(e.Data);
         process.BeginOutputReadLine();
@@ -89,7 +86,7 @@ public sealed class ProfilingSession : IAsyncDisposable
         }
         catch (OperationCanceledException)
         {
-            Kill(process);
+            ChildProcesses.Kill(process);
             throw new TimeoutException($"{Path.GetFileName(target.Program)} never reached the profiler: is it a .NET program?");
         }
         DiagnosticsClient client = connector.Instance;
@@ -110,7 +107,7 @@ public sealed class ProfilingSession : IAsyncDisposable
         }
         catch
         {
-            Kill(process);
+            ChildProcesses.Kill(process);
             await connector.DisposeAsync();
             throw;
         }
@@ -177,23 +174,12 @@ public sealed class ProfilingSession : IAsyncDisposable
     public Task ExitedAsync() => process.WaitForExitAsync();
 
     /// <summary>Ends the program.</summary>
-    public void Kill() => Kill(process);
+    public void Kill() => ChildProcesses.Kill(process);
 
     public async ValueTask DisposeAsync()
     {
         session.Dispose();
         await connector.DisposeAsync();
         process.Dispose();
-    }
-
-    private static void Kill(Process process)
-    {
-        try
-        {
-            process.Kill(entireProcessTree: true);
-        }
-        catch (Exception error) when (error is InvalidOperationException or System.ComponentModel.Win32Exception)
-        {
-        }
     }
 }

@@ -1,4 +1,4 @@
-namespace Passenger.Lsp;
+namespace Passenger.Core;
 
 /// <summary>Programs found as a terminal finds them, on the login shell's PATH (<see cref="ShellEnvironment"/>), in one
 /// place: git here, the .NET command line in <see cref="Dotnet"/>.</summary>

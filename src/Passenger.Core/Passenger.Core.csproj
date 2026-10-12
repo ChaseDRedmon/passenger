@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- What every part of Passenger shares and no UI needs: the programs it starts (ChildProcesses, which ends them with
+       the IDE) and where the tools they run are found. No Avalonia, so the boundary is the project's own. -->
+  <PropertyGroup>
+    <RootNamespace>Passenger.Core</RootNamespace>
+    <!-- The C library's kill, through LibraryImport, for a child's process group. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+</Project>

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
 using Avalonia.Threading;
+using Passenger.Core;
 using Passenger.Text;
 
 namespace Passenger.App.Run;
@@ -41,21 +42,24 @@ public sealed partial class ProcessRunner
     /// <summary>Starts the .NET command line; why it could not, or null once it runs.</summary>
     public string? StartDotnet(IReadOnlyList<string> arguments, string folder, IReadOnlyDictionary<string, string>? environment = null)
     {
-        string host;
+        ProcessStartInfo start;
         try
         {
-            host = Lsp.Dotnet.Host();
+            start = ChildProcesses.DotnetCommand(arguments, folder);
         }
         catch (FileNotFoundException missing)
         {
             console.Append($"{missing.Message}\n", error: true);
             return missing.Message;
         }
-        return Start(host, arguments, folder, environment);
+        return Start(start, environment);
     }
 
     /// <summary>Starts a program; why it could not (a working folder gone, a missing program), or null once it runs.</summary>
-    public string? Start(string file, IReadOnlyList<string> arguments, string folder, IReadOnlyDictionary<string, string>? environment = null)
+    public string? Start(string file, IReadOnlyList<string> arguments, string folder, IReadOnlyDictionary<string, string>? environment = null) =>
+        Start(ChildProcesses.Command(file, arguments, folder), environment);
+
+    private string? Start(ProcessStartInfo start, IReadOnlyDictionary<string, string>? environment)
     {
         UiThread.Check();
         if (IsRunning)
@@ -63,35 +67,24 @@ public sealed partial class ProcessRunner
             throw new InvalidOperationException("The process is still running.");
         }
         WasStopped = false;
-        ProcessStartInfo start = new(file)
-        {
-            WorkingDirectory = folder,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            RedirectStandardInput = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
-        };
-        foreach (string argument in arguments)
-        {
-            start.ArgumentList.Add(argument);
-        }
+        start.RedirectStandardOutput = true;
+        start.RedirectStandardError = true;
+        // Kept open for what the person types into the Run window.
+        start.RedirectStandardInput = true;
         foreach ((string key, string value) in environment ?? new Dictionary<string, string>())
         {
             start.Environment[key] = value;
         }
-        Output.Append($"{file} {string.Join(' ', arguments.Select(Quote))}\n");
-        Process started = new() { StartInfo = start, EnableRaisingEvents = true };
+        Output.Append($"{ChildProcesses.Display(start)}\n");
+        Process started;
         try
         {
-            started.Start();
+            started = ChildProcesses.Start(start);
         }
         catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
         {
-            started.Dispose();
-            string problem = Directory.Exists(folder) ? $"Could not start {Path.GetFileName(file)}: {error.Message}" : $"Could not start {Path.GetFileName(file)}: the folder {folder} is gone";
+            string file = Path.GetFileName(start.FileName);
+            string problem = Directory.Exists(start.WorkingDirectory) ? $"Could not start {file}: {error.Message}" : $"Could not start {file}: the folder {start.WorkingDirectory} is gone";
             console.Append($"{problem}\n", error: true);
             return problem;
         }
@@ -124,14 +117,7 @@ public sealed partial class ProcessRunner
         if (running && process is { HasExited: false } alive)
         {
             WasStopped = true;
-            try
-            {
-                alive.Kill(entireProcessTree: true);
-            }
-            catch (InvalidOperationException)
-            {
-                // It ended on its own as Stop was pressed.
-            }
+            ChildProcesses.Kill(alive);
         }
     }
 
@@ -190,8 +176,6 @@ public sealed partial class ProcessRunner
         partialLine.Clear();
         partialLine.Append(lines, end + 1, lines.Length - end - 1);
     }
-
-    private static string Quote(string argument) => argument.Contains(' ') ? $"\"{argument}\"" : argument;
 
     [GeneratedRegex(@"\x1B\[[0-9;?]*[ -/]*[@-~]|\x1B\][^\x07]*\x07")]
     private static partial Regex Ansi();

@@ -132,6 +132,12 @@ public sealed class McpTests : IDisposable
             Assert.Equal(["Two as a number", "First"], log.EnumerateArray().Select(c => c.GetProperty("subject").GetString()));
             Assert.Equal(["New.txt"], (await Call(client, "vcs_status")).GetProperty("changes").EnumerateArray().Select(c => c.GetProperty("path").GetString()));
 
+            // A branch an agent names is a name, never one of git's options: git switch --orphan=x would empty the tree.
+            CallToolResult orphan = await Result(client, "vcs_checkout", new() { ["branch"] = "--orphan=x" });
+            Assert.True(orphan.IsError, "vcs_checkout took the branch --orphan=x for an option, and checked out an empty branch");
+            Assert.True(File.Exists(Path.Combine(repository, "Notes.txt")), "Checking out the branch --orphan=x emptied the working tree");
+            Assert.Equal("main", (await Call(client, "vcs_status")).GetProperty("branch").GetString());
+
             // The IDE's own terminal runs it in the folder, and its answer comes back.
             string answer = (await Call(client, "terminal_run", new() { ["command"] = "echo $((6*7)) && ls" })).GetString()!;
             Assert.Contains("42", answer, StringComparison.Ordinal);
@@ -140,6 +146,114 @@ public sealed class McpTests : IDisposable
         finally
         {
             TestFolders.Delete(repository);
+        }
+    }
+
+    /// <summary>Passenger killed outright (SIGKILL, TerminateProcess), as a crash ends it, while it runs, profiles, debugs
+    /// and builds a program and its language server loads the project. Each program writes its id to a file named for how
+    /// it was started and runs until it is ended; the load (the BuildHost's design-time build) and, once the folder has a
+    /// linger file, the build run a step that would take ten minutes, as a slow tool or a hung test would.</summary>
+    [Fact]
+    public async Task A_Passenger_killed_while_it_loads_runs_profiles_debugs_and_builds_a_project_leaves_none_of_it_running()
+    {
+        Write("Program.cs", $"File.WriteAllText(Path.Combine(@\"{folder}\", args[0] + \".pid\"), Environment.ProcessId.ToString());\nThread.Sleep(Timeout.Infinite);\n");
+        Write("Sum.csproj", """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <OutputType>Exe</OutputType>
+                <TargetFramework>net10.0</TargetFramework>
+                <ImplicitUsings>enable</ImplicitUsings>
+              </PropertyGroup>
+              <Target Name="Linger" BeforeTargets="Build" Condition="'$(DesignTimeBuild)' != 'true' And Exists('linger')">
+                <Exec Condition="'$(OS)' != 'Windows_NT'" Command="echo $$ &gt; build.pid; exec sleep 600" />
+                <Exec Condition="'$(OS)' == 'Windows_NT'" Command="powershell -NoProfile -Command &quot;Set-Content -Path build.pid -Value $PID; Start-Sleep -Seconds 600&quot;" />
+              </Target>
+              <Target Name="Load" BeforeTargets="CoreCompile" Condition="'$(DesignTimeBuild)' == 'true'">
+                <Exec Condition="'$(OS)' != 'Windows_NT'" Command="echo $$ &gt; load.pid; exec sleep 600" />
+                <Exec Condition="'$(OS)' == 'Windows_NT'" Command="powershell -NoProfile -Command &quot;Set-Content -Path load.pid -Value $PID; Start-Sleep -Seconds 600&quot;" />
+              </Target>
+            </Project>
+            """);
+        ProcessStartInfo start = new(Passenger, ["--mcp", folder])
+        {
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        start.Environment["PASSENGER_SETTINGS"] = settings;
+        start.Environment["PASSENGER_ENGINE_LOG"] = EngineLog;
+        // No build nodes or compiler server left for others' builds to use, which the kill would end under them.
+        start.Environment["MSBUILDDISABLENODEREUSE"] = "1";
+        start.Environment["UseSharedCompilation"] = "false";
+        using Process passenger = Process.Start(start)!;
+        passenger.ErrorDataReceived += (_, e) =>
+        {
+            lock (errors)
+            {
+                errors.Add(e.Data ?? string.Empty);
+            }
+        };
+        passenger.BeginErrorReadLine();
+        List<int> started = [];
+        Task<CallToolResult>? building = null;
+        using CancellationTokenSource giveUp = CancellationTokenSource.CreateLinkedTokenSource(Cancel);
+        McpClient? client = null;
+        try
+        {
+            client = await Exchange("Starting passenger --mcp", TimeSpan.FromMinutes(1),
+                cancel => McpClient.CreateAsync(new StreamClientTransport(passenger.StandardInput.BaseStream, passenger.StandardOutput.BaseStream), cancellationToken: cancel));
+            int load = await WrittenId("load.pid", "the language server's load of the project");
+            await Call(client, "run", new() { ["arguments"] = "run", ["waitSeconds"] = 1 });
+            int run = await WrittenId("run.pid", "the program Run started");
+            await Call(client, "profile", new() { ["arguments"] = "profile", ["seconds"] = 1 });
+            int profiled = await WrittenId("profile.pid", "the program profiled");
+            await Call(client, "debug_start", new() { ["arguments"] = "debug", ["waitSeconds"] = 1 });
+            int debugged = await WrittenId("debug.pid", "the program debugged");
+            File.WriteAllText(Path.Combine(folder, "linger"), string.Empty);
+            // The build never ends: the test gives its call up once it has seen the step start.
+            building = Result(client, "build", giveUp: giveUp);
+            int build = await WrittenId("build.pid", "the build's step");
+            // The terminal's shell (PowerShell on Windows), with a program it runs in the background.
+            await Call(client, "terminal_run", new()
+            {
+                ["command"] = OperatingSystem.IsWindows() ? "Set-Content -Path shell.pid -Value $PID" : "echo $$ > shell.pid; sleep 600 &",
+                ["waitSeconds"] = 2,
+            });
+            int shell = await WrittenId("shell.pid", "the terminal's shell");
+
+            started.AddRange(Processes.Descendants(passenger.Id));
+            Assert.Subset(started.ToHashSet(), new HashSet<int> { load, run, profiled, debugged, build, shell });
+            giveUp.Cancel();
+            passenger.Kill();
+            string[] left = [.. started.Where(id => !Processes.Gone(id)).Select(Processes.Describe)];
+            Assert.True(left.Length == 0, $"Passenger, killed, left running {left.Length} of the {started.Count} processes it had started:\n{string.Join('\n', left)}");
+        }
+        finally
+        {
+            // The tests' own child: killed alone, never by the runtime's tree kill (ChildProcesses.Kill says why).
+            if (!passenger.HasExited)
+            {
+                passenger.Kill();
+            }
+            foreach (int id in started)
+            {
+                Processes.Kill(id);
+            }
+            // The build's call, given up, ends with the server; its failure is nobody's to report.
+            giveUp.Cancel();
+            _ = building?.ContinueWith(call => call.Exception, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
+            if (client is not null)
+            {
+                try
+                {
+                    await client.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5), CancellationToken.None);
+                }
+                catch (Exception gone) when (gone is IOException or TimeoutException or ObjectDisposedException or OperationCanceledException or InvalidOperationException)
+                {
+                    // The server is gone, as the test made it.
+                }
+            }
         }
     }
 
@@ -434,7 +548,7 @@ public sealed class McpTests : IDisposable
             string tools = Path.Combine(home, "tools");
             Directory.CreateDirectory(tools);
             string git = Path.Combine(tools, "git");
-            string real = global::Passenger.Lsp.Programs.Git()!;
+            string real = global::Passenger.Core.Programs.Git()!;
             File.WriteAllText(git, $"#!/bin/sh\ntouch \"{Path.Combine(home, "used")}\"\nexec {real} \"$@\"\n");
             File.SetUnixFileMode(git, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             File.WriteAllText(Path.Combine(home, ".zprofile"), $"export PATH=\"{tools}:$PATH\"\n");
@@ -531,6 +645,20 @@ public sealed class McpTests : IDisposable
         lock (errors)
         {
             return [.. errors];
+        }
+    }
+
+    /// <summary>The id a program Passenger started wrote to a file in the folder; a wait that runs out says what Passenger
+    /// said meanwhile.</summary>
+    private async Task<int> WrittenId(string file, string what)
+    {
+        try
+        {
+            return await Processes.WrittenIdAsync(Path.Combine(folder, file), what);
+        }
+        catch (TimeoutException waited)
+        {
+            throw new TimeoutException(waited.Message + Said(), waited);
         }
     }
 

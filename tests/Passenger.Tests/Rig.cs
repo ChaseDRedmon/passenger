@@ -404,7 +404,7 @@ public static class Processes
     {
         DateTime until = DateTime.UtcNow.AddMinutes(2);
         int id;
-        while (!int.TryParse(ReadShared(file).Trim(), out id) || id <= 0)
+        while ((id = ReadId(file)) <= 0)
         {
             if (DateTime.UtcNow > until)
             {
@@ -413,18 +413,110 @@ public static class Processes
             Passenger.App.Screenshot.Pump(TimeSpan.FromMilliseconds(50));
         }
         return id;
+    }
 
-        // The writer may still have it open, which Windows refuses a reader.
-        static string ReadShared(string file)
+    /// <summary>The id a program wrote to a file once it was running, for a test with no window of its own.</summary>
+    public static async Task<int> WrittenIdAsync(string file, string what)
+    {
+        DateTime until = DateTime.UtcNow.AddMinutes(2);
+        int id;
+        while ((id = ReadId(file)) <= 0)
+        {
+            if (DateTime.UtcNow > until)
+            {
+                throw new TimeoutException($"Waited 2 minutes for {what}");
+            }
+            await Task.Delay(100);
+        }
+        return id;
+    }
+
+    /// <summary>Every process a process started, and every one those started, as the system lists them now.</summary>
+    public static IReadOnlyList<int> Descendants(int id)
+    {
+        ILookup<int, int> children = ParentsOfAll().ToLookup(p => p.Parent, p => p.Child);
+        List<int> found = [];
+        Queue<int> next = new([id]);
+        while (next.TryDequeue(out int parent))
+        {
+            foreach (int child in children[parent].Where(c => c != parent && c != id && !found.Contains(c) && StartedAfter(c, parent)))
+            {
+                found.Add(child);
+                next.Enqueue(child);
+            }
+        }
+        return found;
+
+        // Windows keeps a gone parent's id in its children and gives the id to new processes: not their children.
+        static bool StartedAfter(int child, int parent)
         {
             try
             {
-                return File.Exists(file) ? File.ReadAllText(file) : string.Empty;
+                using System.Diagnostics.Process later = System.Diagnostics.Process.GetProcessById(child);
+                using System.Diagnostics.Process earlier = System.Diagnostics.Process.GetProcessById(parent);
+                return later.StartTime >= earlier.StartTime;
             }
-            catch (IOException)
+            catch (Exception gone) when (gone is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
             {
-                return string.Empty;
+                return false;
             }
+        }
+    }
+
+    /// <summary>A process as a failure names it: its id and its command line (its name on Windows).</summary>
+    public static string Describe(int id)
+    {
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                using System.Diagnostics.Process process = System.Diagnostics.Process.GetProcessById(id);
+                return $"{id} {process.ProcessName}";
+            }
+            using System.Diagnostics.Process ps = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("ps", ["-o", "command=", "-p", id.ToString(System.Globalization.CultureInfo.InvariantCulture)]) { RedirectStandardOutput = true })!;
+            string command = ps.StandardOutput.ReadToEnd().Trim();
+            ps.WaitForExit();
+            return $"{id} {command}";
+        }
+        catch (Exception gone) when (gone is ArgumentException or InvalidOperationException)
+        {
+            return $"{id} (gone)";
+        }
+    }
+
+    /// <summary>Each process and its parent: ps's columns on macOS and Linux, Win32_Process's on Windows, which has no ps.</summary>
+    private static IEnumerable<(int Child, int Parent)> ParentsOfAll()
+    {
+        System.Diagnostics.ProcessStartInfo list = OperatingSystem.IsWindows()
+            ? new("powershell", ["-NoProfile", "-Command", "Get-CimInstance Win32_Process | ForEach-Object { \"$($_.ProcessId) $($_.ParentProcessId)\" }"])
+            : new("ps", ["-A", "-o", "pid=,ppid="]);
+        list.RedirectStandardOutput = true;
+        string text;
+        using (System.Diagnostics.Process ps = System.Diagnostics.Process.Start(list)!)
+        {
+            text = ps.StandardOutput.ReadToEnd();
+            ps.WaitForExit();
+        }
+        foreach (string line in text.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            string[] words = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (words.Length == 2 && int.TryParse(words[0], out int child) && int.TryParse(words[1], out int parent))
+            {
+                yield return (child, parent);
+            }
+        }
+    }
+
+    /// <summary>The id in a file, or 0 before there is one. The writer may still have it open, which Windows refuses a reader.</summary>
+    private static int ReadId(string file)
+    {
+        try
+        {
+            return File.Exists(file) && int.TryParse(File.ReadAllText(file).Trim(), out int id) ? id : 0;
+        }
+        catch (IOException)
+        {
+            return 0;
         }
     }
 

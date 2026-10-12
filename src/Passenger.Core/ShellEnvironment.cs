@@ -1,7 +1,6 @@
 using System.Diagnostics;
-using System.Text;
 
-namespace Passenger.Lsp;
+namespace Passenger.Core;
 
 /// <summary>The login shell's environment, read once at startup as IntelliJ's EnvironmentUtil reads it: an app opened from
 /// the Finder gets launchd's bare PATH and no DOTNET_ROOT, so dotnet, git and what they run would not be the ones a
@@ -26,45 +25,28 @@ public static class ShellEnvironment
         {
             return;
         }
-        loading = Task.Run(Read);
+        loading = Task.Run(ReadAsync);
     }
 
     /// <summary>Waits for the shell's environment, if it is being read, before a program is looked for or started.</summary>
     public static void Ready() => loading?.Wait(Limit);
 
-    private static void Read()
+    private static async Task ReadAsync()
     {
         string shell = Environment.GetEnvironmentVariable("SHELL") is { Length: > 0 } named && File.Exists(named) ? named
             : OperatingSystem.IsMacOS() ? "/bin/zsh" : "/bin/sh";
         // Interactive as well as login, as a terminal's shell is, so what a profile's rc file adds to PATH is there too;
         // the marker skips whatever the profile prints.
-        ProcessStartInfo start = new(shell, ["-l", "-i", "-c", $"printf '%s\\0' {Marker}; /usr/bin/env -0"])
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            RedirectStandardInput = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            StandardOutputEncoding = Encoding.UTF8,
-        };
+        ProcessStartInfo start = ChildProcesses.Command(shell, ["-l", "-i", "-c", $"printf '%s\\0' {Marker}; /usr/bin/env -0"]);
         try
         {
-            using Process process = Process.Start(start)!;
-            process.StandardInput.Close();
-            Task<string> output = process.StandardOutput.ReadToEndAsync();
-            _ = process.StandardError.ReadToEndAsync();
-            if (!process.WaitForExit(Limit))
-            {
-                process.Kill(entireProcessTree: true);
-                return;
-            }
-            string text = output.Result;
-            int begins = text.IndexOf(Marker + "\0", StringComparison.Ordinal);
-            if (process.ExitCode != 0 || begins < 0)
+            ChildResult read = await ChildProcesses.RunAsync(start, limit: Limit);
+            int begins = read.Output.IndexOf(Marker + "\0", StringComparison.Ordinal);
+            if (!read.Succeeded || begins < 0)
             {
                 return;
             }
-            foreach (string pair in text[(begins + Marker.Length + 1)..].Split('\0', StringSplitOptions.RemoveEmptyEntries))
+            foreach (string pair in read.Output[(begins + Marker.Length + 1)..].Split('\0', StringSplitOptions.RemoveEmptyEntries))
             {
                 int equals = pair.IndexOf('=', StringComparison.Ordinal);
                 if (equals > 0 && !Own.Contains(pair[..equals]))
@@ -73,9 +55,9 @@ public static class ShellEnvironment
                 }
             }
         }
-        catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
+        catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException or IOException or TimeoutException)
         {
-            // No shell to ask: the environment stays as the IDE was given it.
+            // No shell to ask, or one whose profile never finished: the environment stays as the IDE was given it.
         }
     }
 }

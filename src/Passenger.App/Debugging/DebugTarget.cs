@@ -1,6 +1,6 @@
-using System.Diagnostics;
 using Passenger.App.Run;
 using Passenger.App.Workspace;
+using Passenger.Core;
 
 namespace Passenger.App.Debugging;
 
@@ -30,22 +30,11 @@ public sealed record DebugTarget(string Program, string WorkingDirectory, IReadO
             // A project built for several frameworks runs the first, as dotnet run asks of one.
             args.Add($"-property:TargetFramework={project.TargetFrameworks[0]}");
         }
-        ProcessStartInfo start = new(Lsp.Dotnet.Host(), args)
+        ChildResult msbuild = await ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(args, project.Folder), cancel: cancellation);
+        string path = msbuild.Output.Trim();
+        if (!msbuild.Succeeded || path.Length == 0)
         {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            WorkingDirectory = project.Folder,
-        };
-        using Process process = Process.Start(start) ?? throw new InvalidOperationException("dotnet did not start");
-        Task<string> output = process.StandardOutput.ReadToEndAsync(cancellation);
-        Task<string> errors = process.StandardError.ReadToEndAsync(cancellation);
-        await process.WaitForExitAsync(cancellation);
-        string path = (await output).Trim();
-        if (process.ExitCode != 0 || path.Length == 0)
-        {
-            throw new InvalidOperationException($"MSBuild could not say what {project.Name} builds: {(await errors).Trim()} {path}".Trim());
+            throw new InvalidOperationException($"MSBuild could not say what {project.Name} builds: {msbuild.Error.Trim()} {path}".Trim());
         }
         if (!File.Exists(path))
         {

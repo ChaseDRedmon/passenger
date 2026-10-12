@@ -1,5 +1,5 @@
 using System.Diagnostics;
-using System.Text;
+using Passenger.Core;
 
 namespace Passenger.App.Packages;
 
@@ -22,54 +22,53 @@ public sealed class PackageManager
 
     /// <summary>Adds a package at a version, or moves it to that version when the project has it.</summary>
     public Task<bool> InstallAsync(string project, string id, string version) =>
-        RunAsync(["add", project, "package", id, "--version", version]);
+        Refused(id, version) ? Task.FromResult(false) : RunAsync(["add", project, "package", id, "--version", version]);
 
-    public Task<bool> RemoveAsync(string project, string id) => RunAsync(["remove", project, "package", id]);
+    public Task<bool> RemoveAsync(string project, string id) => Refused(id) ? Task.FromResult(false) : RunAsync(["remove", project, "package", id]);
 
     /// <summary>Ends a change still under way, its whole process tree, as the IDE closes.</summary>
     public void Stop()
     {
         UiThread.Check();
         stopped = true;
-        try
+        if (running is { } change)
         {
-            running?.Kill(entireProcessTree: true);
+            ChildProcesses.Kill(change);
         }
-        catch (InvalidOperationException)
+    }
+
+    /// <summary>Whether an id or a version would be read as an option: the command takes each as a word, never as an
+    /// option, whoever gave it (an agent).</summary>
+    private bool Refused(params string[] words)
+    {
+        if (words.FirstOrDefault(w => w.Length == 0 || w.StartsWith('-')) is not { } option)
         {
-            // It ended on its own as the IDE closed.
+            return false;
         }
+        Line?.Invoke(this, $"'{option}' is not a package id or version");
+        return true;
     }
 
     private async Task<bool> RunAsync(IReadOnlyList<string> arguments)
     {
         UiThread.Check();
-        string dotnet;
-        try
-        {
-            dotnet = Lsp.Dotnet.Host();
-        }
-        catch (FileNotFoundException missing)
-        {
-            Line?.Invoke(this, missing.Message);
-            return false;
-        }
-        ProcessStartInfo start = new(dotnet, arguments)
-        {
-            WorkingDirectory = Path.GetDirectoryName(arguments[1]) ?? Environment.CurrentDirectory,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
-        };
-        start.Environment["DOTNET_CLI_UI_LANGUAGE"] = "en";
-        start.Environment["DOTNET_NOLOGO"] = "1";
-        string command = $"dotnet {string.Join(' ', arguments.Select(a => a.Contains(' ', StringComparison.Ordinal) ? $"\"{a}\"" : a))}";
+        string folder = Path.GetDirectoryName(arguments[1]) ?? Environment.CurrentDirectory;
         for (int attempt = 1; ; attempt++)
         {
-            Line?.Invoke(this, command);
+            // Each run its own start: a child's is its own once it has started.
+            ProcessStartInfo start;
+            try
+            {
+                start = ChildProcesses.DotnetCommand(arguments, folder);
+            }
+            catch (FileNotFoundException missing)
+            {
+                Line?.Invoke(this, missing.Message);
+                return false;
+            }
+            start.RedirectStandardOutput = true;
+            start.RedirectStandardError = true;
+            Line?.Invoke(this, ChildProcesses.Display(start));
             (bool succeeded, bool fileInUse) = await RunOnceAsync(start);
             if (succeeded || !fileInUse || attempt == Attempts || stopped)
             {
@@ -88,7 +87,7 @@ public sealed class PackageManager
         Process process;
         try
         {
-            process = Process.Start(start) ?? throw new InvalidOperationException("dotnet did not start");
+            process = ChildProcesses.Start(start);
         }
         catch (Exception failed) when (failed is System.ComponentModel.Win32Exception or InvalidOperationException)
         {

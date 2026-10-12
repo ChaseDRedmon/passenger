@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Passenger.App/Passenger.App.csproj" />
+    <Project Path="src/Passenger.Core/Passenger.Core.csproj" />
     <Project Path="src/Passenger.Dap/Passenger.Dap.csproj" />
     <Project Path="src/Passenger.DebugAdapter/Passenger.DebugAdapter.csproj" />
     <Project Path="src/Passenger.Debugger/Passenger.Debugger.csproj" />

@@ -11,6 +11,7 @@
 
   <ItemGroup>
     <PackageReference Include="StreamJsonRpc" />
+    <ProjectReference Include="../Passenger.Core/Passenger.Core.csproj" />
     <ProjectReference Include="../Passenger.Text/Passenger.Text.csproj" />
   </ItemGroup>
 

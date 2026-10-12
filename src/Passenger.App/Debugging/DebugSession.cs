@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Passenger.Core;
 using Passenger.Dap;
 
 namespace Passenger.App.Debugging;
@@ -49,14 +50,11 @@ public sealed class DebugSession
         {
             arguments.Add($"--engineLogging={engineLog}");
         }
-        adapter = Process.Start(new ProcessStartInfo(Lsp.Dotnet.Host(), arguments)
-        {
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        }) ?? throw new InvalidOperationException("The debug adapter did not start");
+        ProcessStartInfo start = ChildProcesses.DotnetCommand(arguments);
+        start.RedirectStandardInput = true;
+        start.RedirectStandardOutput = true;
+        start.RedirectStandardError = true;
+        adapter = ChildProcesses.Start(start);
         adapter.ErrorDataReceived += (_, e) =>
         {
             if (e.Data is null)
@@ -233,7 +231,7 @@ public sealed class DebugSession
             if (!adapter.WaitForExit(exit))
             {
                 killed = true;
-                adapter.Kill(entireProcessTree: true);
+                ChildProcesses.Kill(adapter);
             }
         });
     }

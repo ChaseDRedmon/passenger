@@ -1,9 +1,9 @@
-using System.Diagnostics;
 using Avalonia.Input.Platform;
 using Passenger.App.Editors;
 using Passenger.App.Explorer;
 using Passenger.App.Run;
 using Passenger.App.Workspace;
+using Passenger.Core;
 using Passenger.Editor;
 using Passenger.Text;
 
@@ -56,7 +56,7 @@ public partial class MainWindow
                 StatusText.Text = $"Copied {path}";
                 break;
             case ExplorerAction.Reveal when path is not null:
-                Reveal(path);
+                ChildProcesses.Reveal(path);
                 break;
             case ExplorerAction.ManageNuGet:
                 ShowToolWindow("nuget");
@@ -234,21 +234,8 @@ public partial class MainWindow
     {
         try
         {
-            ProcessStartInfo start = new(Lsp.Dotnet.Host(), arguments)
-            {
-                WorkingDirectory = folder,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            start.Environment["DOTNET_CLI_UI_LANGUAGE"] = "en";
-            start.Environment["DOTNET_NOLOGO"] = "1";
-            using Process process = Process.Start(start) ?? throw new InvalidOperationException("dotnet did not start");
-            Task<string> output = process.StandardOutput.ReadToEndAsync();
-            Task<string> error = process.StandardError.ReadToEndAsync();
-            await process.WaitForExitAsync();
-            return process.ExitCode == 0 ? null : $"{await error}{await output}".Trim();
+            ChildResult result = await ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(arguments, folder));
+            return result.Succeeded ? null : $"{result.Error}{result.Output}".Trim();
         }
         catch (Exception failed) when (failed is System.ComponentModel.Win32Exception or FileNotFoundException or InvalidOperationException)
         {
@@ -295,28 +282,6 @@ public partial class MainWindow
             index.Build(folder);
         }
         _ = vcs.RefreshAsync();
-    }
-
-    private static void Reveal(string path)
-    {
-        try
-        {
-            if (OperatingSystem.IsMacOS())
-            {
-                Process.Start("open", ["-R", path])?.Dispose();
-            }
-            else if (OperatingSystem.IsWindows())
-            {
-                Process.Start("explorer.exe", $"/select,\"{path}\"")?.Dispose();
-            }
-            else
-            {
-                Process.Start("xdg-open", [Path.GetDirectoryName(path)!])?.Dispose();
-            }
-        }
-        catch (System.ComponentModel.Win32Exception)
-        {
-        }
     }
 
     private static string? Invalid(string name) =>

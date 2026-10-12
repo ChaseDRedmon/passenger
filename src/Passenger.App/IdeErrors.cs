@@ -102,6 +102,13 @@ public static class IdeErrors
             Flush();
         };
         Logger.Sink = new Sink();
+        Core.ChildProcesses.Ended += (_, end) =>
+        {
+            if (end.Notable)
+            {
+                Write(end.ToString());
+            }
+        };
     }
 
     /// <summary>Logs an error and shows it, from any thread. A repeat counts against the error listed already and is

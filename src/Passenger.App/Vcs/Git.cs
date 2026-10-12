@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using Passenger.Core;
 
 namespace Passenger.App.Vcs;
 
@@ -186,14 +187,14 @@ public sealed class Git
     /// <summary>A commit's whole message.</summary>
     public async Task<string> MessageAsync(string hash)
     {
-        GitResult show = await RunAsync(Root, ["show", "-s", "--format=%B", hash]);
+        GitResult show = await RunAsync(Root, ["show", "-s", "--format=%B", "--end-of-options", hash]);
         return show.Succeeded ? show.Output.TrimEnd() : string.Empty;
     }
 
     /// <summary>The files a commit changed against its first parent (all of them for the first commit), renames found.</summary>
     public async Task<IReadOnlyList<FileChange>> CommitFilesAsync(string hash)
     {
-        GitResult files = await RunAsync(Root, ["diff-tree", "--no-commit-id", "--name-status", "-r", "-z", "-M", "--root", hash]);
+        GitResult files = await RunAsync(Root, ["diff-tree", "--no-commit-id", "--name-status", "-r", "-z", "-M", "--root", "--end-of-options", hash]);
         if (!files.Succeeded)
         {
             return [];
@@ -282,7 +283,7 @@ public sealed class Git
     /// <summary>A file's text at a revision (a hash, a branch, HEAD), or null when it had no such file.</summary>
     public async Task<string?> TextAtAsync(string revision, string path)
     {
-        GitResult show = await RunAsync(Root, ["show", $"{revision}:{Relative(path)}"]);
+        GitResult show = await RunAsync(Root, ["show", "--end-of-options", $"{revision}:{Relative(path)}"]);
         return show.Succeeded ? show.Output : null;
     }
 
@@ -401,7 +402,10 @@ public sealed class Git
             : new GitResult(1, string.Empty, "A detached head has no branch to push");
     }
 
-    public Task<GitResult> CheckoutAsync(string branch) => RunAsync(Root, ["switch", branch]);
+    /// <summary>Checks a branch out. What follows --end-of-options (here and wherever a name or a hash comes from outside) is
+    /// a name, never an option, whoever gave it: an agent's "--orphan=x" is a branch git does not have, not an order to
+    /// empty the working tree.</summary>
+    public Task<GitResult> CheckoutAsync(string branch) => RunAsync(Root, ["switch", "--end-of-options", branch]);
 
     /// <summary>The stashes, the newest first.</summary>
     public async Task<IReadOnlyList<StashInfo>> StashesAsync()
@@ -433,21 +437,23 @@ public sealed class Git
 
     public Task<GitResult> DropStashAsync(int index) => RunAsync(Root, ["stash", "drop", $"stash@{{{index}}}"]);
 
+    /// <summary>A new branch from the head, checked out. -c takes the next word as the name, whatever it is, and git
+    /// refuses a name that starts with a dash.</summary>
     public Task<GitResult> NewBranchAsync(string name) => RunAsync(Root, ["switch", "-c", name]);
 
     /// <summary>A branch made at a commit and checked out.</summary>
-    public Task<GitResult> NewBranchAtAsync(string name, string hash) => RunAsync(Root, ["switch", "-c", name, hash]);
+    public Task<GitResult> NewBranchAtAsync(string name, string hash) => RunAsync(Root, ["switch", "-c", name, "--end-of-options", hash]);
 
     /// <summary>A commit checked out on its own, with no branch (a detached head), as Rider's Checkout Revision does.</summary>
-    public Task<GitResult> CheckoutRevisionAsync(string hash) => RunAsync(Root, ["switch", "--detach", hash]);
+    public Task<GitResult> CheckoutRevisionAsync(string hash) => RunAsync(Root, ["switch", "--detach", "--end-of-options", hash]);
 
-    public Task<GitResult> CherryPickAsync(string hash) => RunAsync(Root, ["cherry-pick", hash]);
+    public Task<GitResult> CherryPickAsync(string hash) => RunAsync(Root, ["cherry-pick", "--end-of-options", hash]);
 
     /// <summary>A commit undone by a new one, with git's own message.</summary>
-    public Task<GitResult> RevertAsync(string hash) => RunAsync(Root, ["revert", "--no-edit", hash]);
+    public Task<GitResult> RevertAsync(string hash) => RunAsync(Root, ["revert", "--no-edit", "--end-of-options", hash]);
 
     /// <summary>The branch moved to a commit: soft keeps the changes staged, mixed keeps them in the files, hard drops them.</summary>
-    public Task<GitResult> ResetAsync(string hash, ResetMode mode) => RunAsync(Root, ["reset", $"--{mode.ToString().ToLowerInvariant()}", hash]);
+    public Task<GitResult> ResetAsync(string hash, ResetMode mode) => RunAsync(Root, ["reset", $"--{mode.ToString().ToLowerInvariant()}", "--end-of-options", hash]);
 
     /// <summary>Puts files back as the last commit has them (Rider's Rollback); new files are deleted.</summary>
     public async Task<GitResult> RollbackAsync(IReadOnlyList<FileChange> changes)
@@ -481,17 +487,8 @@ public sealed class Git
         }
         try
         {
-            using Process process = Process.Start(start) ?? throw new InvalidOperationException("git did not start");
-            Task<string> output = process.StandardOutput.ReadToEndAsync();
-            Task<string> error = process.StandardError.ReadToEndAsync();
-            // Git reads what it is given and nothing else: never the IDE's terminal.
-            if (input is not null)
-            {
-                await process.StandardInput.WriteAsync(input);
-            }
-            process.StandardInput.Close();
-            await process.WaitForExitAsync();
-            return new GitResult(process.ExitCode, await output, await error);
+            ChildResult result = await ChildProcesses.RunAsync(start, input);
+            return new GitResult(result.ExitCode, result.Output, result.Error);
         }
         catch (System.ComponentModel.Win32Exception missing)
         {
@@ -507,9 +504,13 @@ public sealed class Git
         {
             return [];
         }
+        // Its input stays open for the names written to it.
+        start.RedirectStandardInput = true;
+        start.RedirectStandardOutput = true;
+        start.RedirectStandardError = true;
         try
         {
-            using Process process = Process.Start(start) ?? throw new InvalidOperationException("git did not start");
+            using Process process = ChildProcesses.Start(start);
             using MemoryStream output = new();
             Task copied = process.StandardOutput.BaseStream.CopyToAsync(output);
             Task<string> error = process.StandardError.ReadToEndAsync();
@@ -529,23 +530,12 @@ public sealed class Git
     /// <summary>How git is started for every call, or null when it is not installed.</summary>
     private static ProcessStartInfo? Start(string folder, IReadOnlyList<string> arguments)
     {
-        if (Lsp.Programs.Git() is not { } git)
+        if (Programs.Git() is not { } git)
         {
             return null;
         }
-        ProcessStartInfo start = new(git, arguments)
-        {
-            WorkingDirectory = folder,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            RedirectStandardInput = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            StandardInputEncoding = new UTF8Encoding(false),
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
-        };
-        // Git never stops to ask on a terminal it does not have.
+        ProcessStartInfo start = ChildProcesses.Command(git, arguments, folder);
+        // Git never stops to ask on a terminal: it has none (ChildProcesses), and this keeps it from looking for one.
         start.Environment["GIT_TERMINAL_PROMPT"] = "0";
         // A status or a diff read in the background never takes the index's lock, so a stash, a commit or a checkout
         // started at the same moment does not fail on it.

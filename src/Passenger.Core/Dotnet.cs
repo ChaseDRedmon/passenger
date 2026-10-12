@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace Passenger.Lsp;
+namespace Passenger.Core;
 
 /// <summary>Where the .NET command line is, for the language server, builds, runs and packages: found as a terminal finds
 /// it, with the login shell's PATH (<see cref="ShellEnvironment"/>).</summary>

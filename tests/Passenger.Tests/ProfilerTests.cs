@@ -22,7 +22,7 @@ public sealed class ProfilerTests : IDisposable
         string program = Debuggees.Program("PassengerCases");
         // The GC sizes gen0 from the machine's largest cache, which on CI's Windows runner outgrows the 60 MB Busy allocates.
         Dictionary<string, string> youngCollections = new() { ["DOTNET_GCgen0size"] = "0x400000" };
-        ProfileTarget target = new(Passenger.Lsp.Dotnet.Host(), [program, "busy"], Path.GetDirectoryName(program)!, youngCollections);
+        ProfileTarget target = new(Passenger.Core.Dotnet.Host(), [program, "busy"], Path.GetDirectoryName(program)!, youngCollections);
         await using ProfilingSession run = await ProfilingSession.StartAsync(target, folder, line =>
         {
             lock (output)
@@ -73,7 +73,7 @@ public sealed class ProfilerTests : IDisposable
     public async Task A_memory_snapshot_of_a_running_program_counts_its_heap_by_type()
     {
         string program = Debuggees.Program("ReadsInputConsoleApp");
-        ProfileTarget target = new(Passenger.Lsp.Dotnet.Host(), [program], Path.GetDirectoryName(program)!, new Dictionary<string, string>());
+        ProfileTarget target = new(Passenger.Core.Dotnet.Host(), [program], Path.GetDirectoryName(program)!, new Dictionary<string, string>());
         await using ProfilingSession run = await ProfilingSession.StartAsync(target, folder, cancellation: TestContext.Current.CancellationToken);
         Task<MemorySnapshot>? taking = null;
         try

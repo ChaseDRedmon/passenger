@@ -55,6 +55,11 @@ window or takes the focus; it shows everything but the system's own window chrom
 
 ## Layout
 
+- `src/Passenger.Core`: what every part shares and no UI needs. `ChildProcesses` starts every program Passenger runs (an
+  input of its own, UTF-8, none of a git hook's variables, a log line when one fails or takes a while) and ends it with
+  the IDE, a crash or a kill included (`Lifeline`: the runtime's job object on Windows; on macOS and Linux a process
+  group per child, which a watchdog shell kills once Passenger's pipe to it closes). `Dotnet`, `Programs` and
+  `ShellEnvironment` find the tools as the login shell would.
 - `src/Passenger.Text`: no UI. The rope (`Rope.cs`, an immutable B-tree, so every version is a
   thread-safe snapshot), `TextDocument` (undo, change events in LSP order), carets
   (`SelectionSet`) and every editing command as a pure function to an `EditPlan`.
@@ -130,6 +135,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   own editors. Nothing is copied out of an installed extension's folder; `roslyn-language-server` comes from NuGet.
   Nor Microsoft's `VSCodeDebugProtocol` package, whose terms are not open source: `Passenger.Dap` is the protocol.
 - **No Avalonia Accelerate components** (TreeDataGrid and the rest need a paid licence).
+- **Every program Passenger starts goes through `ChildProcesses`** (`Command` or `DotnetCommand`, then `Start` or
+  `RunAsync`; `Kill` ends it with all it started), so none outlives the IDE. Only the terminal's shell (Porta.Pty's,
+  ended by its pseudo-terminal's hangup) and vstest.console (VSTest's, which watches the IDE) start elsewhere.
 - **Every dependency, icon or asset** has an open-source licence and an entry in `THIRD_PARTY_NOTICES.md`, added in the
   same change that brings it in.
 - **Colours are tokens.** A control names a brush from `Theme/Tokens.axaml` (`Passenger.*`), never a literal colour,

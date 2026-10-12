@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using Passenger.Core;
 using StreamJsonRpc;
 
 namespace Passenger.Lsp;
@@ -133,23 +134,15 @@ public sealed class LanguageServer : IAsyncDisposable
             throw new FileNotFoundException("The Roslyn language server is missing from the app's folder.", server);
         }
         Directory.CreateDirectory(logFolder);
-        ProcessStartInfo start = new(Dotnet.Host())
-        {
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        foreach (string arg in new[]
-        {
+        ProcessStartInfo start = ChildProcesses.DotnetCommand(
+        [
             server, "--stdio", "--logLevel", "Information", "--telemetryLevel", "off",
             "--extensionLogDirectory", logFolder, "--clientProcessId", Environment.ProcessId.ToString(),
-        })
-        {
-            start.ArgumentList.Add(arg);
-        }
-        Process process = Process.Start(start) ?? throw new InvalidOperationException("The language server did not start.");
+        ]);
+        start.RedirectStandardInput = true;
+        start.RedirectStandardOutput = true;
+        start.RedirectStandardError = true;
+        Process process = ChildProcesses.Start(start);
         ServerLog log;
         try
         {
@@ -200,13 +193,7 @@ public sealed class LanguageServer : IAsyncDisposable
     /// <summary>Ends a server that never finished starting, at once: there is no shutdown to ask it for.</summary>
     private static void End(Process process)
     {
-        try
-        {
-            process.Kill(entireProcessTree: true);
-        }
-        catch (Exception error) when (error is InvalidOperationException or System.ComponentModel.Win32Exception)
-        {
-        }
+        ChildProcesses.Kill(process);
         process.Dispose();
     }
 
@@ -255,13 +242,8 @@ public sealed class LanguageServer : IAsyncDisposable
     {
         disposing = true;
         killed = true;
-        try
-        {
-            process.Kill(entireProcessTree: true);
-        }
-        catch (Exception error) when (error is InvalidOperationException or System.ComponentModel.Win32Exception)
-        {
-        }
+        // Its tree and its process group, so a BuildHost it was loading with goes too.
+        ChildProcesses.Kill(process);
     }
 
     /// <summary>Checks the server, at most once in <see cref="SlowRequest"/>, while a request has waited that long; runs
@@ -355,10 +337,9 @@ public sealed class LanguageServer : IAsyncDisposable
         {
         }
         rpc.Dispose();
-        if (!process.WaitForExit(2000))
-        {
-            process.Kill(entireProcessTree: true);
-        }
+        // Killed whether it went or not: a server that exits can leave its BuildHost running, in its process group.
+        process.WaitForExit(2000);
+        ChildProcesses.Kill(process);
         process.Dispose();
         log.Dispose();
     }

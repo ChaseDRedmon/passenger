@@ -9,5 +9,6 @@
     <PackageReference Include="Microsoft.Diagnostics.NETCore.Client" />
     <PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" />
     <PackageReference Include="Microsoft.Diagnostics.Runtime" />
+    <ProjectReference Include="../Passenger.Core/Passenger.Core.csproj" />
   </ItemGroup>
 </Project>

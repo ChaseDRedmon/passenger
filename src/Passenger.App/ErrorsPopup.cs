@@ -123,24 +123,6 @@ public sealed class ErrorsPopup : UserControl
     {
         IdeErrors.Flush();
         Directory.CreateDirectory(IdeErrors.LogFolder);
-        string path = File.Exists(IdeErrors.LogPath) ? IdeErrors.LogPath : IdeErrors.LogFolder;
-        try
-        {
-            if (OperatingSystem.IsMacOS())
-            {
-                System.Diagnostics.Process.Start("open", ["-R", path])?.Dispose();
-            }
-            else if (OperatingSystem.IsWindows())
-            {
-                System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{path}\"")?.Dispose();
-            }
-            else
-            {
-                System.Diagnostics.Process.Start("xdg-open", [IdeErrors.LogFolder])?.Dispose();
-            }
-        }
-        catch (System.ComponentModel.Win32Exception)
-        {
-        }
+        Core.ChildProcesses.Reveal(File.Exists(IdeErrors.LogPath) ? IdeErrors.LogPath : IdeErrors.LogFolder);
     }
 }
