@@ -187,7 +187,7 @@ public sealed class TerminalTests
         }
         finally
         {
-            Directory.Delete(folder, recursive: true);
+            TestFolders.Delete(folder);
         }
     }
 
@@ -239,7 +239,7 @@ public sealed class TerminalTests
         }
         finally
         {
-            Directory.Delete(folder, recursive: true);
+            TestFolders.Delete(folder);
         }
     }
 
@@ -275,7 +275,7 @@ public sealed class TerminalTests
         }
         finally
         {
-            Directory.Delete(folder, recursive: true);
+            TestFolders.Delete(folder);
         }
     }
 
@@ -308,7 +308,7 @@ public sealed class TerminalTests
         }
         finally
         {
-            Directory.Delete(folder, recursive: true);
+            TestFolders.Delete(folder);
         }
     }
 

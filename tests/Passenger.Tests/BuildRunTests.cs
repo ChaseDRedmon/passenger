@@ -25,7 +25,7 @@ public sealed class BuildRunTests : IDisposable
         restore.WaitForExit();
     }
 
-    public void Dispose() => Directory.Delete(folder, recursive: true);
+    public void Dispose() => TestFolders.Delete(folder);
 
     [AvaloniaFact]
     public void The_solution_view_shows_the_solution_its_folders_and_its_projects()
@@ -298,7 +298,7 @@ public sealed class BuildRunTests : IDisposable
     public void A_build_that_cannot_start_says_why_and_leaves_nothing_waiting()
     {
         MainWindow window = Open();
-        Directory.Delete(folder, recursive: true);
+        TestFolders.Delete(folder);
         try
         {
             // The window reads the gone folder (and survives it) before Build is pressed, as the folder watcher has it do;

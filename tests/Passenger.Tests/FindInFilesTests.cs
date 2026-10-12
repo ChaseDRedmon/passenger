@@ -22,7 +22,7 @@ public sealed class FindInFilesTests : IDisposable
         File.WriteAllText(Path.Combine(folder, "bin", "Built.cs"), "int count;\n");
     }
 
-    public void Dispose() => Directory.Delete(folder, recursive: true);
+    public void Dispose() => TestFolders.Delete(folder);
 
     [AvaloniaFact]
     public void The_options_narrow_the_matches_and_an_open_files_unsaved_text_is_searched()

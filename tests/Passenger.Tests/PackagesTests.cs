@@ -40,7 +40,7 @@ public sealed class PackagesTests : IDisposable
         File.WriteAllText(project, "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net11.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
     }
 
-    public void Dispose() => Directory.Delete(folder, recursive: true);
+    public void Dispose() => TestFolders.Delete(folder);
 
     [AvaloniaFact]
     public void A_package_found_in_the_feed_is_installed_updated_and_removed_in_a_project()

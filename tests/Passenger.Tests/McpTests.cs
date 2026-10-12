@@ -32,7 +32,7 @@ public sealed class McpTests : IDisposable
         restore.WaitForExit();
     }
 
-    public void Dispose() => Directory.Delete(folder, recursive: true);
+    public void Dispose() => TestFolders.Delete(folder);
 
     [Fact]
     public async Task An_agent_with_a_windowless_Passenger_finds_code_reads_its_warnings_and_debugs_it()
@@ -124,7 +124,7 @@ public sealed class McpTests : IDisposable
         }
         finally
         {
-            Directory.Delete(repository, recursive: true);
+            TestFolders.Delete(repository);
         }
     }
 
@@ -211,7 +211,7 @@ public sealed class McpTests : IDisposable
         }
         finally
         {
-            Directory.Delete(home, recursive: true);
+            TestFolders.Delete(home);
         }
     }
 

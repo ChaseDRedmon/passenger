@@ -20,8 +20,8 @@ public sealed class IdeErrorsTests : IDisposable
     {
         IdeErrors.Clear();
         Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", before);
-        Directory.Delete(folder, recursive: true);
-        Directory.Delete(settings, recursive: true);
+        TestFolders.Delete(folder);
+        TestFolders.Delete(settings);
     }
 
     [AvaloniaFact]

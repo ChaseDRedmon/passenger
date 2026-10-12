@@ -31,8 +31,8 @@ public sealed class ExplorerFilesTests : IDisposable
     public void Dispose()
     {
         Trash.Folder = null;
-        Directory.Delete(folder, recursive: true);
-        Directory.Delete(trash, recursive: true);
+        TestFolders.Delete(folder);
+        TestFolders.Delete(trash);
     }
 
     [AvaloniaFact]

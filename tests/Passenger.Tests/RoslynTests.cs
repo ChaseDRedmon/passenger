@@ -102,7 +102,7 @@ public sealed class RoslynTests : IClassFixture<RoslynTests.ProjectSession>
         public async ValueTask DisposeAsync()
         {
             await Session.DisposeAsync();
-            Directory.Delete(folder, recursive: true);
+            TestFolders.Delete(folder);
         }
     }
 }

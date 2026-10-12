@@ -12,7 +12,7 @@ public sealed class FileTests : IDisposable
 {
     private readonly string folder = Directory.CreateTempSubdirectory("passenger-test-").FullName;
 
-    public void Dispose() => Directory.Delete(folder, recursive: true);
+    public void Dispose() => TestFolders.Delete(folder);
 
     [AvaloniaFact]
     public void An_edit_saved_keeps_the_files_byte_order_mark_and_its_windows_line_endings()

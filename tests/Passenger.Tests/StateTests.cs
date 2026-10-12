@@ -27,8 +27,8 @@ public sealed class StateTests : IDisposable
     public void Dispose()
     {
         Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", before);
-        Directory.Delete(folder, recursive: true);
-        Directory.Delete(settings, recursive: true);
+        TestFolders.Delete(folder);
+        TestFolders.Delete(settings);
     }
 
     [AvaloniaFact]
@@ -199,7 +199,7 @@ public sealed class StateTests : IDisposable
         Assert.Single(second.Debugger.Breakpoints.All);
         Assert.Equal(2, second.Bookmarks.All.Count);
         second.Close();
-        Directory.Delete(other, recursive: true);
+        TestFolders.Delete(other);
     }
 
     [AvaloniaFact]
@@ -223,7 +223,7 @@ public sealed class StateTests : IDisposable
         Assert.Equal(ToolAnchor.LeftBottom, second.DockHost["tests"]!.Anchor);
         Assert.True(second.DockHost.IsShown("tests"));
         second.Close();
-        Directory.Delete(other, recursive: true);
+        TestFolders.Delete(other);
     }
 
     /// <summary>The window a person uses, as the app makes it: one that keeps its layout and folders.</summary>

@@ -17,7 +17,7 @@ public sealed class FoldingTests : IDisposable
 
     private readonly string folder = Directory.CreateTempSubdirectory("passenger-fold-").FullName;
 
-    public void Dispose() => Directory.Delete(folder, recursive: true);
+    public void Dispose() => TestFolders.Delete(folder);
 
     [AvaloniaFact]
     public void A_method_folds_to_its_signature_the_caret_steps_past_it_and_going_into_it_unfolds_it()

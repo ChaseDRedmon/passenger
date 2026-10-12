@@ -33,7 +33,7 @@ public sealed class UnitTestsTests : IDisposable
         restore.WaitForExit();
     }
 
-    public void Dispose() => Directory.Delete(folder, recursive: true);
+    public void Dispose() => TestFolders.Delete(folder);
 
     [AvaloniaFact]
     public void Run_all_marks_each_test_and_run_at_the_caret_runs_that_test_alone()

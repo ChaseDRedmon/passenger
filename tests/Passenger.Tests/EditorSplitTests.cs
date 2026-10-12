@@ -23,7 +23,7 @@ public sealed class EditorSplitTests : IDisposable
         File.WriteAllText(Path.Combine(folder, "Two.cs"), "class Two\n{\n}\n");
     }
 
-    public void Dispose() => Directory.Delete(folder, recursive: true);
+    public void Dispose() => TestFolders.Delete(folder);
 
     [AvaloniaFact]
     public void Split_right_shows_the_file_in_both_splits_over_one_text_each_with_its_own_caret()
@@ -148,12 +148,12 @@ public sealed class EditorSplitTests : IDisposable
             second.OpenFolder(folder);
             Assert.Equal(3, area.Documents.Count);
             second.Close();
-            Directory.Delete(other, recursive: true);
+            TestFolders.Delete(other);
         }
         finally
         {
             Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", before);
-            Directory.Delete(settings, recursive: true);
+            TestFolders.Delete(settings);
         }
     }
 

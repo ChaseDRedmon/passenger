@@ -117,7 +117,7 @@ public sealed class DockingTests
         finally
         {
             Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", before);
-            Directory.Delete(settings, recursive: true);
+            TestFolders.Delete(settings);
         }
     }
 

@@ -32,7 +32,7 @@ public sealed class DebuggerTests : IDisposable
         restore.WaitForExit();
     }
 
-    public void Dispose() => Directory.Delete(folder, recursive: true);
+    public void Dispose() => TestFolders.Delete(folder);
 
     [AvaloniaFact]
     public void A_breakpoint_set_with_F9_stops_the_program_there_with_its_locals()
@@ -374,8 +374,8 @@ public sealed class DebuggerTests : IDisposable
         {
             Environment.SetEnvironmentVariable("PASSENGER_ENGINE_LOG", engineLog);
             Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", settingsBefore);
-            Directory.Delete(folderForLog, recursive: true);
-            Directory.Delete(settings, recursive: true);
+            TestFolders.Delete(folderForLog);
+            TestFolders.Delete(settings);
         }
     }
 

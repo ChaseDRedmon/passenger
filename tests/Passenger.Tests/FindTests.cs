@@ -14,7 +14,7 @@ public sealed class FindTests : IDisposable
 {
     private readonly string folder = Directory.CreateTempSubdirectory("passenger-find-").FullName;
 
-    public void Dispose() => Directory.Delete(folder, recursive: true);
+    public void Dispose() => TestFolders.Delete(folder);
 
     [AvaloniaFact]
     public void Typing_a_query_selects_the_nearest_match_and_enter_and_shift_enter_walk_them()

@@ -81,6 +81,47 @@ public sealed class EditorRig
     public void PlaceCaret(int offset) => Editor.Selections = SelectionSet.Single(offset);
 }
 
+/// <summary>A test's temporary folders, deleted as Windows lets them be: git writes its objects read-only, which Windows
+/// refuses to delete, and a folder a process still runs in (a git status the closed window started, a debugged program
+/// being killed) cannot go until it has ended, so both are waited out for a while. One already gone is no error.</summary>
+public static class TestFolders
+{
+    public static void Delete(string path)
+    {
+        DateTime until = DateTime.UtcNow.AddSeconds(30);
+        while (Directory.Exists(path))
+        {
+            try
+            {
+                Directory.Delete(path, recursive: true);
+            }
+            catch (Exception error) when ((error is IOException or UnauthorizedAccessException) && DateTime.UtcNow < until)
+            {
+                Writable(path);
+                Thread.Sleep(100);
+            }
+        }
+    }
+
+    private static void Writable(string path)
+    {
+        try
+        {
+            foreach (string file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
+            {
+                FileAttributes attributes = File.GetAttributes(file);
+                if (attributes.HasFlag(FileAttributes.ReadOnly))
+                {
+                    File.SetAttributes(file, attributes & ~FileAttributes.ReadOnly);
+                }
+            }
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+        }
+    }
+}
+
 public static class Ui
 {
     public static void Press(TopLevel window, string keys)

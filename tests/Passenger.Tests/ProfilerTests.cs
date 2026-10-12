@@ -13,7 +13,7 @@ public sealed class ProfilerTests : IDisposable
 {
     private readonly string folder = Directory.CreateTempSubdirectory("passenger-profile-").FullName;
 
-    public void Dispose() => Directory.Delete(folder, recursive: true);
+    public void Dispose() => TestFolders.Delete(folder);
 
     [Fact]
     public async Task A_program_profiled_from_its_start_shows_its_busy_method_and_starts_children_freely()

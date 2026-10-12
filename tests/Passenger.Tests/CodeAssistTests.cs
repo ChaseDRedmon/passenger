@@ -773,6 +773,6 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
             return window;
         }
 
-        public void Dispose() => Directory.Delete(folder, recursive: true);
+        public void Dispose() => TestFolders.Delete(folder);
     }
 }

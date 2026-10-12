@@ -30,7 +30,7 @@ public sealed class VcsTests : IDisposable
         Git("commit", "-q", "-m", "First");
     }
 
-    public void Dispose() => Directory.Delete(folder, recursive: true);
+    public void Dispose() => TestFolders.Delete(folder);
 
     [AvaloniaFact]
     public void An_edit_shows_a_change_bar_and_committing_it_from_the_commit_window_clears_it()
@@ -307,7 +307,7 @@ public sealed class VcsTests : IDisposable
         }
         finally
         {
-            Directory.Delete(clone, recursive: true);
+            TestFolders.Delete(clone);
         }
     }
 

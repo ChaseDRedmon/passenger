@@ -14,7 +14,7 @@ public sealed class MenuTests : IDisposable
 {
     private readonly string folder = Directory.CreateTempSubdirectory("passenger-menu-").FullName;
 
-    public void Dispose() => Directory.Delete(folder, recursive: true);
+    public void Dispose() => TestFolders.Delete(folder);
 
     [AvaloniaFact]
     public void The_menus_show_each_actions_shortcut_disable_what_cannot_run_and_run_what_is_chosen()

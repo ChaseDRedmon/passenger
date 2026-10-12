@@ -10,7 +10,7 @@ public sealed class NavigationTests : IDisposable
 {
     private readonly string folder = Directory.CreateTempSubdirectory("passenger-nav-").FullName;
 
-    public void Dispose() => Directory.Delete(folder, recursive: true);
+    public void Dispose() => TestFolders.Delete(folder);
 
     [AvaloniaFact]
     public void Go_to_file_finds_a_file_by_its_camel_humps_and_enter_opens_it()
