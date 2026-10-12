@@ -58,6 +58,7 @@ public partial class MainWindow : Window
         // One keymap for the whole window, seen before any control: IDE actions run from anywhere,
         // editor actions go to the editor when it has the focus.
         AddHandler(KeyDownEvent, OnKeyDownFirst, RoutingStrategies.Tunnel);
+        AddChords();
         AddToolWindows();
         AddVcs();
         AddTerminal();

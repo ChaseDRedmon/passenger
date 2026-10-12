@@ -133,6 +133,26 @@ public static class Ui
         Settle();
     }
 
+    /// <summary>A key that types, pressed as a keyboard presses it: the key, carrying the character the layout gives it
+    /// ("ł" for a Polish AltGr+L, which Windows sends as Ctrl+Alt+L), then that character as text unless the key was taken
+    /// as a shortcut, which keeps the platform from typing it.</summary>
+    public static void Type(TopLevel window, string keys, string text)
+    {
+        Keystroke stroke = Keystroke.Parse(keys.Replace('+', ' '));
+        RawInputModifiers modifiers = Raw(stroke.Modifiers);
+        bool taken = false;
+        EventHandler<KeyEventArgs> watch = (_, e) => taken = e.Handled;
+        window.AddHandler(InputElement.KeyDownEvent, watch, Avalonia.Interactivity.RoutingStrategies.Bubble, handledEventsToo: true);
+        window.KeyPress(stroke.Key, modifiers, PhysicalKey.None, text);
+        window.RemoveHandler(InputElement.KeyDownEvent, watch);
+        if (!taken)
+        {
+            window.KeyTextInput(text);
+        }
+        window.KeyRelease(stroke.Key, modifiers, PhysicalKey.None, text);
+        Settle();
+    }
+
     /// <summary>Runs queued UI work and waits for background work (colouring) to land.</summary>
     public static void Settle()
     {

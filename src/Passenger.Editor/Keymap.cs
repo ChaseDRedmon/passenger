@@ -230,6 +230,12 @@ public sealed class Keymap
     public string? ActionFor(Shortcut shortcut) => byShortcut.GetValueOrDefault(shortcut);
 
     public bool StartsChord(Keystroke first) => byShortcut.Keys.Any(s => s.Second is not null && s.First == first);
+
+    /// <summary>The chords a first keystroke begins, each action's in the order it was bound.</summary>
+    public IEnumerable<(string Action, Keystroke Second)> ChordsFrom(Keystroke first) =>
+        byAction.SelectMany(pair => pair.Value
+            .Where(s => s.First == first && s.Second is not null)
+            .Select(s => (pair.Key, s.Second!.Value)));
 }
 
 /// <summary>Turns key presses into actions, holding the first half of a chord until the second.</summary>
@@ -238,6 +244,9 @@ public sealed class KeymapDispatcher(Keymap keymap)
     private Keystroke? pending;
 
     public Keymap Keymap { get; set; } = keymap;
+
+    /// <summary>A chord's first keystroke was pressed, or the wait for its second ended.</summary>
+    public event EventHandler? PendingChanged;
 
     /// <summary>The action a key press completes, or null. A press that opens a chord returns null
     /// but is still consumed (<paramref name="consumed"/>). A press with Shift that has no binding of
@@ -252,9 +261,15 @@ public sealed class KeymapDispatcher(Keymap keymap)
         {
             return null;
         }
+        if (IsAltGrTyping(e))
+        {
+            // A character typed, never a shortcut, so it ends a chord as any typing does.
+            Reset();
+            return null;
+        }
         if (pending is { } first)
         {
-            pending = null;
+            Reset();
             consumed = true;
             return Keymap.ActionFor(new Shortcut(first, stroke));
         }
@@ -266,6 +281,7 @@ public sealed class KeymapDispatcher(Keymap keymap)
         if (Keymap.StartsChord(stroke))
         {
             pending = stroke;
+            PendingChanged?.Invoke(this, EventArgs.Empty);
             consumed = true;
             return null;
         }
@@ -278,10 +294,28 @@ public sealed class KeymapDispatcher(Keymap keymap)
         return null;
     }
 
-    public void Reset() => pending = null;
+    /// <summary>Forgets a chord's first keystroke, so the next key is a key of its own.</summary>
+    public void Reset()
+    {
+        if (pending is not null)
+        {
+            pending = null;
+            PendingChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
 
     /// <summary>Whether the first keystroke of a chord has been pressed and the dispatcher waits for its second.</summary>
     public bool IsPending => pending is not null;
+
+    /// <summary>The first keystroke of the chord waiting for its second, or null.</summary>
+    public Keystroke? Pending => pending;
+
+    /// <summary>Whether a key press types a character rather than being a shortcut: Windows sends AltGr as Ctrl+Alt, so
+    /// Ctrl+Alt (Shift or not) on a key the layout gives a character to, like AltGr+S's ś on a Polish layout, is typing.
+    /// The Mac's key symbol leaves Control out, so there Ctrl+Option stays a shortcut.</summary>
+    public static bool IsAltGrTyping(KeyEventArgs e) => OperatingSystem.IsWindows()
+        && (e.KeyModifiers & ~KeyModifiers.Shift) == (KeyModifiers.Control | KeyModifiers.Alt)
+        && e.KeySymbol is { Length: > 0 } symbol && !char.IsControl(symbol[0]) && !char.IsWhiteSpace(symbol[0]);
 
     private static bool IsModifierOnly(Key key) => key is Key.LeftShift or Key.RightShift or Key.LeftCtrl or Key.RightCtrl
         or Key.LeftAlt or Key.RightAlt or Key.LWin or Key.RWin;

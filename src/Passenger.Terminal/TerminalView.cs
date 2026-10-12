@@ -605,6 +605,11 @@ public sealed class TerminalView : Control
             // Cmd's keys are the IDE's and the Mac's, never the shell's.
             return;
         }
+        if (IsAltGrTyping(e))
+        {
+            // Its character comes as text input, which handling the key here would keep from coming.
+            return;
+        }
         if (Encode(e.Key, mods, session.Screen.ApplicationCursorKeys) is { } sequence)
         {
             Typed();
@@ -622,6 +627,12 @@ public sealed class TerminalView : Control
         }
         InvalidateVisual();
     }
+
+    /// <summary>Windows sends AltGr as Ctrl+Alt: a key the layout gives a character to with them (AltGr+Q's @ on a German
+    /// layout) is typing, not Ctrl and Alt for the shell. The editor's keymap tells the two apart the same way.</summary>
+    private static bool IsAltGrTyping(KeyEventArgs e) => OperatingSystem.IsWindows()
+        && (e.KeyModifiers & ~KeyModifiers.Shift) == (KeyModifiers.Control | KeyModifiers.Alt)
+        && e.KeySymbol is { Length: > 0 } symbol && !char.IsControl(symbol[0]) && !char.IsWhiteSpace(symbol[0]);
 
     /// <summary>xterm's bytes for a key that is not plain text: Enter, the arrows and the keypad's keys, the
     /// function keys, and Ctrl (or Alt, as a leading ESC) with a letter. Null for keys whose text input carries them.</summary>
