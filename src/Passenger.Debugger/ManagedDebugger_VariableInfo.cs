@@ -350,7 +350,8 @@ public partial class ManagedDebugger
             throw new InvalidOperationException("System.Linq is not loaded");
         }
 
-        ICorDebugValue proxyInstance = await CreateDebuggerProxyInstance(variablesReference.ObjectValue!, variablesReference.ThreadId, linqModule.Module, "System.Linq.SystemCore_EnumerableDebugView", []);
+        ICorDebugValue proxyInstance = await CreateDebuggerProxyInstance(variablesReference.ObjectValue!, variablesReference.ThreadId, linqModule.Module, "System.Linq.SystemCore_EnumerableDebugView", [])
+            ?? throw new InvalidOperationException("Enumerating the value threw");
         try
         {
             ICorDebugObjectValue proxyObject = proxyInstance.UnwrapDebugValueToObject();
@@ -515,12 +516,17 @@ public partial class ManagedDebugger
                         await AddArrayElements(arrayValue, threadId, stackDepth, result, referenceValue: fieldCorDebugValue);
                         return;
                     }
+                    if (unwrappedDebugValue is ICorDebugObjectValue and not ICorDebugStringValue)
+                    {
+                        await AddRootHiddenObject(fieldCorDebugValue, threadId, stackDepth, result);
+                        return;
+                    }
                 }
-                (string? friendlyTypeName, string? value, ICorDebugValue? debuggerProxyInstance, bool resultIsError) = await GetValueForCorDebugValueAsync(fieldCorDebugValue, threadId, stackDepth, true);
+                (string? friendlyTypeName, string? value, ICorDebugValue? debuggerProxyInstance, bool resultIsError, string? displayName) = await GetDisplayedValueAsync(fieldCorDebugValue, threadId, stackDepth, true);
                 VariablePresentationHint? variablePresentationHint = resultIsError ? new VariablePresentationHint { Attributes = AttributesValue.FailedEvaluation } : null;
                 VariableInfo variableInfo = new VariableInfo
                 {
-                    Name = fieldName,
+                    Name = displayName ?? fieldName,
                     Value = value,
                     Type = friendlyTypeName,
                     PresentationHint = variablePresentationHint,
@@ -626,13 +632,20 @@ public partial class ManagedDebugger
                             retainReturnValue = await AddArrayElements(arrayValue, threadId, stackDepth, result, referenceValue: returnValue);
                             return;
                         }
+                        if (unwrappedDebugValue is ICorDebugObjectValue and not ICorDebugStringValue)
+                        {
+                            // Its children are read from it later, as they open.
+                            retainReturnValue = true;
+                            await AddRootHiddenObject(returnValue, threadId, stackDepth, result);
+                            return;
+                        }
                     }
-                    (string? friendlyTypeName, string? value, ICorDebugValue? debuggerProxyInstance, bool resultIsError) = await GetValueForCorDebugValueAsync(returnValue, threadId, stackDepth, true);
+                    (string? friendlyTypeName, string? value, ICorDebugValue? debuggerProxyInstance, bool resultIsError, string? displayName) = await GetDisplayedValueAsync(returnValue, threadId, stackDepth, true);
                     VariablePresentationHint? variablePresentationHint = resultIsError ? new VariablePresentationHint { Attributes = AttributesValue.FailedEvaluation } : null;
                     int variablesReference = GetVariablesReference(returnValue, friendlyTypeName, threadId, stackDepth, debuggerProxyInstance);
                     VariableInfo variableInfo = new VariableInfo
                     {
-                        Name = propertyName,
+                        Name = displayName ?? propertyName,
                         Value = value,
                         Type = friendlyTypeName,
                         PresentationHint = variablePresentationHint,
@@ -649,6 +662,21 @@ public partial class ManagedDebugger
                     }
                 }
             });
+        }
+    }
+
+    /// <summary>A RootHidden member that is an object, not an array: its children in its place, as they
+    /// would show under it, its proxy's if it has one (upstream #55).</summary>
+    private async Task AddRootHiddenObject(ICorDebugValue value, ThreadId threadId, FrameStackDepth stackDepth, List<VariableInfo> result)
+    {
+        (_, _, ICorDebugValue? proxy, _, _) = await GetDisplayedValueAsync(value, threadId, stackDepth, true);
+        if (proxy is not null)
+        {
+            await AddMembers(proxy, proxy.UnwrapDebugValueToObject().ExactType, threadId, stackDepth, result, includeNonPublicMembers: false);
+        }
+        else
+        {
+            await AddMembers(value, value.UnwrapDebugValueToObject().ExactType, threadId, stackDepth, result);
         }
     }
 
@@ -715,12 +743,12 @@ public partial class ManagedDebugger
             string name = $"[{string.Join(", ", indices)}]";
             await WithFailureHandling(result, name, async () =>
             {
-                (string? friendlyTypeName, string? value, ICorDebugValue? debuggerProxyInstance, bool resultIsError) = await GetValueForCorDebugValueAsync(element, threadId, stackDepth, true);
+                (string? friendlyTypeName, string? value, ICorDebugValue? debuggerProxyInstance, bool resultIsError, string? displayName) = await GetDisplayedValueAsync(element, threadId, stackDepth, true);
                 VariablePresentationHint? variablePresentationHint = resultIsError ? new VariablePresentationHint { Attributes = AttributesValue.FailedEvaluation } : new VariablePresentationHint { Kind = PresentationHintKind.Data };
                 int variableReference = GetVariablesReference(element, friendlyTypeName, threadId, stackDepth, debuggerProxyInstance);
                 VariableInfo variableInfo = new VariableInfo
                 {
-                    Name = name,
+                    Name = displayName ?? name,
                     Type = friendlyTypeName,
                     Value = value,
                     PresentationHint = variablePresentationHint,

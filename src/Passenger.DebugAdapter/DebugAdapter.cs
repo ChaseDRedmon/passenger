@@ -317,7 +317,7 @@ public sealed class DebugAdapter
                 _ => "unhandled",
             },
             Code = info.Code,
-            Details = ToProtocol(info.Details, inner: true),
+            Details = ToProtocol(info.Details),
         };
     }
 
@@ -452,15 +452,14 @@ public sealed class DebugAdapter
         return new DapPresentationHint(kind, attributes);
     }
 
-    private static DapExceptionDetails ToProtocol(ExceptionInfo.ExceptionDetails details, bool inner) => new()
+    private static DapExceptionDetails ToProtocol(ExceptionInfo.ExceptionDetails details) => new()
     {
         Message = details.Message,
         TypeName = details.TypeName,
         FullTypeName = details.FullTypeName,
         EvaluateName = details.EvaluateName,
         StackTrace = details.StackTrace,
-        // One level of inner exceptions, as deep as the engine reads.
-        InnerException = inner ? [.. details.InnerException.Select(i => ToProtocol(i, inner: false))] : [],
+        InnerException = [.. details.InnerException.Select(ToProtocol)],
         FormattedDescription = details.FormattedDescription,
         HResult = details.HResult,
         Source = details.Source,

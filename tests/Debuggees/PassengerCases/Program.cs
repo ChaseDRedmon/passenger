@@ -6,8 +6,10 @@ Attributed.NonUser();
 Attributed.Hidden();
 Console.WriteLine("end");
 Captures.Outer(41);
+Nested.Throw();
+Displays.Show();
 
-// The cases Passenger's own debugger tests add to upstream's; each test names its lines.
+// The cases Passenger's own debugger tests add to upstream's. Tests find their lines by the code on them.
 // Code of the user's own that says it is not theirs: Just My Code passes over it, and a catch in it
 // leaves an exception unhandled by the user.
 [DebuggerNonUserCode]
@@ -39,4 +41,86 @@ static class Captures
 		Func<int> f = () => captured + 1;
 		Console.WriteLine(f());
 	}
+}
+
+static class Nested
+{
+	public static void Throw()
+	{
+		try
+		{
+			try { throw new Exception("Message1"); }
+			catch (Exception e1) { throw new InvalidOperationException("Message2", e1); }
+		}
+		catch { }
+	}
+}
+
+// [DebuggerDisplay] as upstream's #51 and #53 spell out what it should show.
+static class Displays
+{
+	public static void Show()
+	{
+		Money money = new() { Amount = 12.5m, Currency = "USD" };
+		QuotedMoney quoted = new() { Amount = 12.5m, Currency = "USD" };
+		Braced braced = new();
+		Missing missing = new();
+		Link tail = new("tail", null);
+		Link head = new("head", tail);
+		Labelled labelled = new();
+		Holder holder = new();
+		Derived derived = new();
+		Box<Money> box = new() { Value = new Money { Amount = 1m, Currency = "EUR" } };
+		Dictionary<string, Point> byName = new() { ["origin"] = new Point(0, 0) };
+		LiftedObject lifted = new();
+		Angry angry = new();
+		Console.WriteLine("displays");
+	}
+}
+
+[DebuggerDisplay("{Amount} {Currency,nq}")]
+sealed class Money { public decimal Amount; public string Currency = ""; }
+
+[DebuggerDisplay("{Amount} {Currency}")]
+sealed class QuotedMoney { public decimal Amount; public string Currency = ""; }
+
+[DebuggerDisplay("\\{{Value}\\}")]
+sealed class Braced { public int Value = 3; }
+
+[DebuggerDisplay("Value={Value} Bad={NoSuchMember}")]
+sealed class Missing { public int Value = 2; }
+
+[DebuggerDisplay("{_name,nq} -> {Next._name,nq}")]
+sealed class Link(string name, Link? next) { string _name = name; public Link? Next = next; }
+
+[DebuggerDisplay("{Value}", Name = "renamed", Type = "RetypedThing")]
+sealed class Labelled { public int Value = 11; }
+
+sealed class Holder { public Labelled Item = new(); }
+
+[DebuggerDisplay("base {Tag,nq}")]
+class Base { public string Tag = "b"; }
+sealed class Derived : Base { public int Extra = 9; }
+
+[DebuggerDisplay("({X}, {Y})")]
+readonly struct Point(int x, int y) { public int X { get; } = x; public int Y { get; } = y; }
+
+[DebuggerDisplay("box of {Value}")]
+sealed class Box<T> { public T? Value; }
+
+sealed class LiftedObject
+{
+	[DebuggerBrowsable(DebuggerBrowsableState.RootHidden)]
+	public Inner Part = new();
+}
+
+sealed class Inner { public int A = 1; public string B = "b"; }
+
+[DebuggerTypeProxy(typeof(AngryProxy))]
+sealed class Angry { public int Real = 1; }
+
+sealed class AngryProxy
+{
+	public AngryProxy(Angry target) => throw new InvalidOperationException("no");
+	public int Doubled => 2;
 }

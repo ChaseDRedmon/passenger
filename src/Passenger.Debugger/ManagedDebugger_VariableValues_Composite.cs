@@ -91,7 +91,7 @@ public partial class ManagedDebugger
 
         async Task<(string Value, bool ResultIsError)> FormatMember(ICorDebugValue member)
         {
-            (string FriendlyTypeName, string Value, string? DebuggerProxyTypeName, bool ResultIsError) result = await FormatCorDebugValueAsync(ResolveCorDebugValue(member), threadId, stackDepth, true);
+            FormattedValue result = await FormatCorDebugValueAsync(ResolveCorDebugValue(member), threadId, stackDepth, true);
             return (result.Value, result.ResultIsError);
         }
     }

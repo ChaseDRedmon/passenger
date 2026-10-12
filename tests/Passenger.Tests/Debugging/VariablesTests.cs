@@ -193,13 +193,15 @@ file static class TestExtensions
         intListVariables.ShouldBeEquivalentToDebuggerVariables(expectedVariables);
     }
 
+    // An entry is named by its key and shows its value, as its [DebuggerDisplay("{Value}", Name = "[{Key}]")]
+    // asks and Visual Studio shows it (upstream kept both in the value, #53).
     public static void AssertDictionaryVariables(this DebugSession debugProtocolHost, int variablesReference)
     {
         List<DapVariable> expectedVariables =
         [
-            new() { Name = "[0]", EvaluateName = "[0]", Value = "[5] = 50", Type = "System.Collections.Generic.DebugViewDictionaryItem<int, int>", VariablesReference = 30, PresentationHint = _arrayElementPresentationHint },
-            new() { Name = "[1]", EvaluateName = "[1]", Value = "[10] = 100", Type = "System.Collections.Generic.DebugViewDictionaryItem<int, int>", VariablesReference = 31, PresentationHint = _arrayElementPresentationHint },
-            new() { Name = "[2]", EvaluateName = "[2]", Value = "[15] = 150", Type = "System.Collections.Generic.DebugViewDictionaryItem<int, int>", VariablesReference = 32, PresentationHint = _arrayElementPresentationHint },
+            new() { Name = "[5]", EvaluateName = "[5]", Value = "50", Type = "System.Collections.Generic.DebugViewDictionaryItem<int, int>", VariablesReference = 30, PresentationHint = _arrayElementPresentationHint },
+            new() { Name = "[10]", EvaluateName = "[10]", Value = "100", Type = "System.Collections.Generic.DebugViewDictionaryItem<int, int>", VariablesReference = 31, PresentationHint = _arrayElementPresentationHint },
+            new() { Name = "[15]", EvaluateName = "[15]", Value = "150", Type = "System.Collections.Generic.DebugViewDictionaryItem<int, int>", VariablesReference = 32, PresentationHint = _arrayElementPresentationHint },
             new() { Name = "Raw View", EvaluateName = "Raw View", Value = "", Type = "", VariablesReference = 33, PresentationHint = new DapPresentationHint("class") },
         ];
         debugProtocolHost.WithVariablesRequest(variablesReference, out List<DapVariable>? dictionaryVariables);

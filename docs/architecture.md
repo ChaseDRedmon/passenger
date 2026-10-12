@@ -157,10 +157,12 @@ Passenger:
   the live one, takes the stale slot's place).
 - Reaching Passenger's users now: breakpoints in methods marked not the user's still stopping under Just My Code
   (#54's tail); an empty runtime thread listed (#59).
-- Visible, less often: `[DebuggerDisplay]` rendering (#51: quotes, `\{` escapes, a failed fragment replacing the whole
-  value, `Name` and `Type`, inheritance), values nested in another's display shown by `ToString()` (#53), inner
-  exceptions never reported (#50), `RootHidden` on an object (#55), a
-  throwing type proxy shown as the exception (#56), the rest of the IL interpreter's list (#30).
+- Fixed too: `[DebuggerDisplay]` rendered as Visual Studio does (#51, #53): fragment by fragment, strings quoted unless
+  `nq` or `raw`, `\{` and `\}` as braces, a failed fragment saying so in its own place, `Name` naming a member's row
+  and `Type` its type column, inherited from base types, and a value inside a display shown by its own; inner
+  exceptions reported, the whole chain (#50); `RootHidden` lifting an object's members (#55); a type proxy whose
+  constructor throws leaving the value's own members (#56).
+- Still open: the IL interpreter's list (#30).
 - Planned anyway: Edit and Continue (#10, M8's hot reload), synthetic variables (#26), remote debugging (#14).
 
 Still ahead, in the engine or beside it: smart step into, set value, data breakpoints, tracepoints, hot reload and

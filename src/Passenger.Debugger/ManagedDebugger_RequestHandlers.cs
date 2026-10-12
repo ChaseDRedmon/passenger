@@ -917,41 +917,66 @@ public partial class ManagedDebugger
         FrameStackDepth frameStackDepth = new FrameStackDepth(0);
         (string? friendlyTypeName, _, _, _) = await GetValueForCorDebugValueAsync(currentException, threadId, frameStackDepth, false);
 
-        string hResult = await GetExceptionPropertyValue("HResult");
-        string source = await GetExceptionPropertyValue("Source");
-        string message = await GetExceptionPropertyValue("Message");
-        string stackTrace = await GetExceptionPropertyValue("StackTrace");
-
-        ReadOnlySpan<char> typeNameSpan = friendlyTypeName.AsSpan();
-        int lastDot = typeNameSpan.LastIndexOf('.');
-        string exceptionTypeNameNoNamespace = lastDot is not -1
-            ? typeNameSpan[(lastDot + 1)..].ToString()
-            : friendlyTypeName;
+        string source = await GetExceptionPropertyValue(currentException, "Source");
+        string message = await GetExceptionPropertyValue(currentException, "Message");
+        ExceptionInfo.ExceptionDetails details = await Details(currentException, friendlyTypeName, "$exception", depth: 0);
+        string innermost = Innermost(details);
 
         ExceptionInfo exceptionInfo = new ExceptionInfo
         {
             ExceptionId = $"CLR/{friendlyTypeName}",
-            Description = $"Exception thrown: '{friendlyTypeName}' in {source}.dll: '{message}'",
+            // With an inner exception, the line netcoredbg and Visual Studio add, naming the innermost.
+            Description = $"Exception thrown: '{friendlyTypeName}' in {source}.dll: '{message}'"
+                + (details.InnerException.Count > 0 ? $"\n Inner exceptions found, see $exception in variables window for more details.\n Innermost exception: {innermost}" : ""),
             BreakMode = _exceptionBreakModes.GetValueOrDefault(threadId, ExceptionBreakMode.Unknown),
             Code = 0,
-            Details = new ExceptionInfo.ExceptionDetails
-            {
-                Message = message,
-                TypeName = exceptionTypeNameNoNamespace,
-                FullTypeName = friendlyTypeName,
-                EvaluateName = "$exception",
-                StackTrace = stackTrace,
-                InnerException = [],
-                FormattedDescription = $"**{friendlyTypeName}:** '{message}'",
-                HResult = int.Parse(hResult),
-                Source = source
-            }
+            Details = details,
         };
         return exceptionInfo;
 
-        async Task<string> GetExceptionPropertyValue(string propertyName)
+        // An exception's details, its inner exceptions' within (upstream #50), as deep as they go,
+        // within reason.
+        async Task<ExceptionInfo.ExceptionDetails> Details(ICorDebugValue exception, string typeName, string evaluateName, int depth)
         {
-            ICorDebugValue propertyValue = await currentException.GetPropertyValue(ProcessRuntimeEventsUntilEvalEvent, EvalStatus, (ICorDebugILFrame)thread.ActiveFrame, propertyName)
+            string detailMessage = await GetExceptionPropertyValue(exception, "Message");
+            List<ExceptionInfo.ExceptionDetails> inner = [];
+            ICorDebugValue? innerValue = depth < 10 ? await exception.GetPropertyValue(ProcessRuntimeEventsUntilEvalEvent, EvalStatus, (ICorDebugILFrame)thread.ActiveFrame, "InnerException") : null;
+            try
+            {
+                if (innerValue is not null && innerValue.UnwrapDebugValue() is not ICorDebugReferenceValue { IsNull: true })
+                {
+                    (string? innerType, _, _, _) = await GetValueForCorDebugValueAsync(innerValue, threadId, frameStackDepth, false);
+                    inner.Add(await Details(innerValue, innerType ?? "System.Exception", $"{evaluateName}.InnerException", depth + 1));
+                }
+            }
+            finally
+            {
+                if (innerValue is ICorDebugHandleValue innerHandle)
+                {
+                    innerHandle.TryDispose();
+                }
+            }
+            int lastDot = typeName.LastIndexOf('.');
+            return new ExceptionInfo.ExceptionDetails
+            {
+                Message = detailMessage,
+                TypeName = lastDot is not -1 ? typeName[(lastDot + 1)..] : typeName,
+                FullTypeName = typeName,
+                EvaluateName = evaluateName,
+                StackTrace = await GetExceptionPropertyValue(exception, "StackTrace"),
+                InnerException = inner,
+                FormattedDescription = $"**{typeName}:** '{detailMessage}'",
+                HResult = int.Parse(await GetExceptionPropertyValue(exception, "HResult")),
+                Source = await GetExceptionPropertyValue(exception, "Source"),
+            };
+        }
+
+        static string Innermost(ExceptionInfo.ExceptionDetails details) =>
+            details.InnerException.Count > 0 ? Innermost(details.InnerException[0]) : details.FullTypeName;
+
+        async Task<string> GetExceptionPropertyValue(ICorDebugValue exception, string propertyName)
+        {
+            ICorDebugValue propertyValue = await exception.GetPropertyValue(ProcessRuntimeEventsUntilEvalEvent, EvalStatus, (ICorDebugILFrame)thread.ActiveFrame, propertyName)
                 ?? throw new InvalidOperationException($"Exception property '{propertyName}' returned no value");
             try
             {

@@ -19,33 +19,46 @@ public enum CorDebugValueFormatKind
     AnonymousType
 }
 
-public readonly record struct CorDebugValueValueResult(string FriendlyTypeName, string Value, CorDebugValueFormatKind FormatKind, string? DebuggerProxyTypeName);
+public readonly record struct CorDebugValueValueResult(string FriendlyTypeName, string Value, CorDebugValueFormatKind FormatKind, string? DebuggerProxyTypeName, DebuggerDisplay? Display = null);
+
+/// <summary>A value as a variables window shows it: its type and value columns, the proxy its children
+/// come from, whether it is an error, and the name its [DebuggerDisplay] gives the row, if any.</summary>
+public readonly record struct FormattedValue(string FriendlyTypeName, string Value, string? DebuggerProxyTypeName, bool ResultIsError, string? DisplayName = null);
 public partial class ManagedDebugger
 {
     public async Task<(string friendlyTypeName, string value, ICorDebugValue? debuggerProxyInstance, bool resultIsError)> GetValueForCorDebugValueAsync(ICorDebugValue corDebugValue, ThreadId threadId, FrameStackDepth frameStackDepth, bool escapeStringValue)
     {
+        (string friendlyTypeName, string value, ICorDebugValue? proxyInstance, bool resultIsError, _) = await GetDisplayedValueAsync(corDebugValue, threadId, frameStackDepth, escapeStringValue);
+        return (friendlyTypeName, value, proxyInstance, resultIsError);
+    }
+
+    /// <summary>A value as its row shows it, with the name its [DebuggerDisplay] gives the row, which a
+    /// member or an element takes in place of its own.</summary>
+    public async Task<(string friendlyTypeName, string value, ICorDebugValue? debuggerProxyInstance, bool resultIsError, string? displayName)> GetDisplayedValueAsync(ICorDebugValue corDebugValue, ThreadId threadId, FrameStackDepth frameStackDepth, bool escapeStringValue)
+    {
         ArgumentNullException.ThrowIfNull(corDebugValue);
         ResolvedCorDebugValue resolvedValue = ResolveCorDebugValue(corDebugValue);
-        (string? friendlyTypeName, string? value, string? debuggerProxyTypeName, bool resultIsError) = await FormatCorDebugValueAsync(resolvedValue, threadId, frameStackDepth, escapeStringValue);
+        FormattedValue formatted = await FormatCorDebugValueAsync(resolvedValue, threadId, frameStackDepth, escapeStringValue);
         ICorDebugValue? proxyInstance = null;
-        if (resolvedValue.Value is { } valueToProxy && debuggerProxyTypeName is not null)
+        if (resolvedValue.Value is { } valueToProxy && formatted.DebuggerProxyTypeName is { } debuggerProxyTypeName)
         {
             ICorDebugModule module = valueToProxy.ExactType.Class.Module;
             proxyInstance = await CreateDebuggerProxyInstance(valueToProxy, threadId, module, debuggerProxyTypeName, valueToProxy.ExactType.TypeParameters);
         }
-        return (friendlyTypeName, value, proxyInstance, resultIsError);
+        return (formatted.FriendlyTypeName, formatted.Value, proxyInstance, formatted.ResultIsError, formatted.DisplayName);
     }
 
-    private async Task<(string FriendlyTypeName, string Value, string? DebuggerProxyTypeName, bool ResultIsError)> FormatCorDebugValueAsync(ResolvedCorDebugValue resolvedValue, ThreadId threadId, FrameStackDepth frameStackDepth, bool escapeStringValue)
+    private async Task<FormattedValue> FormatCorDebugValueAsync(ResolvedCorDebugValue resolvedValue, ThreadId threadId, FrameStackDepth frameStackDepth, bool escapeStringValue, int nesting = 0)
     {
         if (resolvedValue.Value is not { } valueToFormat)
         {
-            return (resolvedValue.FriendlyTypeNameOverride!, "null", null, false);
+            return new FormattedValue(resolvedValue.FriendlyTypeNameOverride!, "null", null, false);
         }
 
-        (string? friendlyTypeName, string? value, CorDebugValueFormatKind formatKind, string? debuggerProxyTypeName) = GetValueForCorDebugValue(valueToFormat, escapeStringValue);
+        (string? friendlyTypeName, string? value, CorDebugValueFormatKind formatKind, string? debuggerProxyTypeName, DebuggerDisplay? display) = GetValueForCorDebugValue(valueToFormat, escapeStringValue);
         friendlyTypeName = resolvedValue.FriendlyTypeNameOverride ?? friendlyTypeName;
         bool resultIsError = false;
+        string? displayName = null;
         if (formatKind is CorDebugValueFormatKind.Tuple or CorDebugValueFormatKind.AnonymousType)
         {
             ICorDebugObjectValue objectValue = valueToFormat.UnwrapDebugValue() as ICorDebugObjectValue
@@ -71,28 +84,28 @@ public partial class ManagedDebugger
                 }
             }
         }
-        else if (formatKind is CorDebugValueFormatKind.DebuggerDisplay)
+        else if (formatKind is CorDebugValueFormatKind.DebuggerDisplay && display is not null)
         {
-            // Since the move to proper roslyn EE, eval is much slower. Consider a more primitive 'evaluator' similar to the old implementation, for DebuggerDisplay evaluation
-            string expressionString = $"$\"{value}\"";
-            ICorDebugThread thread = _process!.GetThread(threadId.Value);
-            CompiledExpressionEvaluationContext evalContext = new CompiledExpressionEvaluationContext(thread, threadId, frameStackDepth, valueToFormat);
-            using EvaluationResult result = await _expressionEvaluator!.Evaluate(expressionString, evalContext);
-            if (result.Error is not null)
+            if (nesting >= DisplayNesting)
             {
-                _logger?.Invoke($"Evaluation error: {result.Error}");
-                value = result.Error;
-                resultIsError = true;
+                value = $"{{{friendlyTypeName}}}";
             }
             else
             {
-                (_, value, _, _) = GetValueForCorDebugValue(result.Value!, false);
+                (value, resultIsError) = await RenderDebuggerDisplayAsync(display.Value, valueToFormat, threadId, frameStackDepth, nesting);
+                if (display.Name is { } nameFormat)
+                {
+                    (displayName, _) = await RenderDebuggerDisplayAsync(nameFormat, valueToFormat, threadId, frameStackDepth, nesting);
+                }
             }
+            friendlyTypeName = display.Type ?? friendlyTypeName;
         }
-        return (friendlyTypeName, value, debuggerProxyTypeName, resultIsError);
+        return new FormattedValue(friendlyTypeName, value, debuggerProxyTypeName, resultIsError, displayName);
     }
 
-    private async Task<ICorDebugValue> CreateDebuggerProxyInstance(ICorDebugValue value, ThreadId threadId, ICorDebugModule module, string proxyTypeName, ICorDebugType[] typeArguments)
+    /// <summary>The [DebuggerTypeProxy] made for a value, or null when its constructor throws, so the value
+    /// opens into its own members rather than the exception's (upstream #56).</summary>
+    private async Task<ICorDebugValue?> CreateDebuggerProxyInstance(ICorDebugValue value, ThreadId threadId, ICorDebugModule module, string proxyTypeName, ICorDebugType[] typeArguments)
     {
         IMetaDataImport metadataImport = module.GetMetaDataInterface<IMetaDataImport>();
         mdTypeDef? proxyTypeDef = metadataImport.FindMaybeNestedTypeDefByNameOrNull(proxyTypeName);
@@ -102,9 +115,15 @@ public partial class ManagedDebugger
         // TODO: pass a specific signature to handle proxy types that have multiple constructors - see ManagedDebugger.FindMethodOnType
         mdMethodDef constructor = metadataImport.FindMethod(proxyClass.Token, ".ctor", 0, 0);
         ICorDebugEval eval = _process!.GetThread(threadId.Value).CreateEval();
-        ICorDebugValue? proxyInstance = await eval.NewParameterizedObjectAsync(ProcessRuntimeEventsUntilEvalEvent, EvalStatus, module.GetFunctionFromToken(constructor), typeArguments.Length, typeArguments, 1, [value]);
-        ArgumentNullException.ThrowIfNull(proxyInstance);
-        return proxyInstance;
+        try
+        {
+            return await eval.NewParameterizedObjectAsync(ProcessRuntimeEventsUntilEvalEvent, EvalStatus, module.GetFunctionFromToken(constructor), typeArguments.Length, typeArguments, 1, [value], throwOnException: true);
+        }
+        catch (EvalException error)
+        {
+            _logger?.Invoke($"The proxy {proxyTypeName} failed: {error.Message}");
+            return null;
+        }
     }
 
     private static CorDebugValueValueResult GetValueForCorDebugValue(ICorDebugValue corDebugValue, bool escapeStringValue)
@@ -176,7 +195,6 @@ public partial class ManagedDebugger
         }
         string typeName = GetCorDebugTypeFriendlyName(corDebugObjectValue.ExactType);
         bool hasDebuggerTypeProxyAttribute = metaDataImport.TryGetCustomAttributeByName(corDebugObjectValue.Class.Token, "System.Diagnostics.DebuggerTypeProxyAttribute", out nint debuggerTypeProxyAttributePointer, out uint debuggerTypeProxyAttributeSize) is Cor.S_OK;
-        bool hasDebuggerDisplayAttribute = metaDataImport.TryGetCustomAttributeByName(corDebugObjectValue.Class.Token, "System.Diagnostics.DebuggerDisplayAttribute", out nint debuggerDisplayAttributePointer, out uint debuggerDisplayAttributeSize) is Cor.S_OK;
 
         string? debugProxyTypeName = hasDebuggerTypeProxyAttribute ? GetCustomAttributeResultString(debuggerTypeProxyAttributePointer, debuggerTypeProxyAttributeSize) : null;
         if (IsTupleType(typeName))
@@ -187,16 +205,9 @@ public partial class ManagedDebugger
         {
             return new(typeName, "", CorDebugValueFormatKind.AnonymousType, debugProxyTypeName);
         }
-        if (hasDebuggerDisplayAttribute)
+        if (FindDebuggerDisplay(corDebugObjectValue.ExactType) is { } display)
         {
-            (string? debuggerDisplayValue, string? debuggerDisplayName) = GetCustomAttributeCtorStringArgAndNamedArg(debuggerDisplayAttributePointer, debuggerDisplayAttributeSize, "Name");
-            // I prefer how Rider handles this - instead of overriding the actual name of the variable, just prefix the value with the name
-            if (debuggerDisplayName is not null)
-            {
-                debuggerDisplayValue = $"{debuggerDisplayName} = {debuggerDisplayValue}";
-            }
-
-            return new(typeName, debuggerDisplayValue, CorDebugValueFormatKind.DebuggerDisplay, debugProxyTypeName);
+            return new(typeName, display.Value, CorDebugValueFormatKind.DebuggerDisplay, debugProxyTypeName, display);
         }
         if (corDebugObjectValue.ExactType.IsExceptionType())
         {

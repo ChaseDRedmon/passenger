@@ -12,15 +12,17 @@ public class JustMyCodeTests(ITestOutputHelper testOutputHelper)
 {
     private static string Source => Debuggees.Source("PassengerCases", "Program.cs");
 
+    private static int Line(string code) => Debuggees.Line("PassengerCases", code);
+
     [Fact]
     public async Task Step_into_passes_over_methods_the_code_marks_as_not_the_users()
     {
-        using DebugSession host = await Launch(breakpointLine: 4, exceptionFilters: []);
+        using DebugSession host = await Launch(breakpointLine: Line("Attributed.StepThrough();"), exceptionFilters: []);
 
         StoppedEvent stop = await host.WaitForStoppedEvent();
-        Assert.Equal(4, stop.ReadStopInfo().line);
+        Assert.Equal(Line("Attributed.StepThrough();"), stop.ReadStopInfo().line);
         int thread = stop.ThreadId!.Value;
-        foreach (int expected in new[] { 5, 6, 7 })
+        foreach (int expected in new[] { Line("Attributed.NonUser();"), Line("Attributed.Hidden();"), Line("Console.WriteLine(\"end\");") })
         {
             stop = await host.WithStepInRequest(thread).WaitForStoppedEvent();
             Assert.Equal((Source, expected), (stop.ReadStopInfo().filePath, stop.ReadStopInfo().line));
@@ -30,24 +32,24 @@ public class JustMyCodeTests(ITestOutputHelper testOutputHelper)
     [Fact]
     public async Task An_exception_caught_in_code_marked_not_the_users_stops_as_user_unhandled()
     {
-        using DebugSession host = await Launch(breakpointLine: 7, exceptionFilters: ["user-unhandled"]);
+        using DebugSession host = await Launch(breakpointLine: Line("Console.WriteLine(\"end\");"), exceptionFilters: ["user-unhandled"]);
 
         StoppedEvent stop = await host.WaitForStoppedEvent();
         Assert.Equal("exception", stop.Reason);
-        Assert.Equal(3, stop.ReadStopInfo().line);
+        Assert.Equal(Line("Wrapper.CallWithCatch("), stop.ReadStopInfo().line);
         ExceptionInfoResponse exception = host.Request<ExceptionInfoResponse>("exceptionInfo", new ThreadArguments(stop.ThreadId!.Value));
         Assert.Equal("userUnhandled", exception.BreakMode);
         Assert.Equal("System.InvalidOperationException", exception.Details?.FullTypeName);
 
         stop = await host.WithContinueRequest().WaitForStoppedEvent();
         Assert.Equal("breakpoint", stop.Reason);
-        Assert.Equal(7, stop.ReadStopInfo().line);
+        Assert.Equal(Line("Console.WriteLine(\"end\");"), stop.ReadStopInfo().line);
     }
 
     [Fact]
     public async Task An_evaluation_that_never_returns_is_stopped_and_the_debugger_goes_on()
     {
-        using DebugSession host = await Launch(breakpointLine: 6, exceptionFilters: []);
+        using DebugSession host = await Launch(breakpointLine: Line("Attributed.Hidden();"), exceptionFilters: []);
 
         StoppedEvent stop = await host.WaitForStoppedEvent();
         int frame = host.GetTopStackFrame(stop.ThreadId!.Value).Id;
@@ -58,7 +60,7 @@ public class JustMyCodeTests(ITestOutputHelper testOutputHelper)
         host.WithEvaluateRequest(frame, "1 + 1", out EvaluateResponse after);
         Assert.Equal("2", after.Result);
         stop = await host.WithStepOverRequest(stop.ThreadId!.Value).WaitForStoppedEvent();
-        Assert.Equal(("step", 7), (stop.Reason, stop.ReadStopInfo().line));
+        Assert.Equal(("step", Line("Console.WriteLine(\"end\");")), (stop.Reason, stop.ReadStopInfo().line));
     }
 
     private Task<DebugSession> Launch(int breakpointLine, IReadOnlyList<string> exceptionFilters) =>

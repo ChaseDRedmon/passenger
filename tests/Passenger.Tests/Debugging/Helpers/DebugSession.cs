@@ -377,5 +377,14 @@ public static class Debuggees
 
     public static string Program(string name) => Path.Combine(Repository.Value, "artifacts", "bin", name, "debug", $"{name}.dll");
 
+    /// <summary>The line (from one) of a debuggee's Program.cs that holds some code, so a test names
+    /// what it stops at rather than a number that moves when a case is added above it.</summary>
+    public static int Line(string name, string code)
+    {
+        string[] lines = File.ReadAllLines(Source(name, "Program.cs"));
+        int index = Array.FindIndex(lines, l => l.Contains(code, StringComparison.Ordinal));
+        return index >= 0 ? index + 1 : throw new InvalidOperationException($"No line of {name}'s Program.cs holds '{code}'");
+    }
+
     public static string Apphost(string name) => Path.ChangeExtension(Program(name), OperatingSystem.IsWindows() ? ".exe" : null);
 }
