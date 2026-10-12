@@ -22,6 +22,12 @@ public sealed class LanguageServer : IAsyncDisposable
     /// <summary>The check: the folding ranges of a document never opened, which Roslyn answers with none.</summary>
     private static readonly FoldingRangeParams Check = new(new TextDocumentIdentifier("file:///passenger-is-the-server-answering.cs"));
 
+    /// <summary>MSBuild's switch giving each worker node it starts its starter's standard output and error, which dotnet test
+    /// sets for the process it tests (an IDE started under it). Roslyn's restore of two projects starts a node when none is
+    /// idle to reuse; the node then waits minutes to be reused, holding the restore's output open, and Roslyn says the
+    /// projects have loaded only once that output has ended. The server is started without it.</summary>
+    private const string NodesShareOutput = "MSBUILDENSURESTDOUTFORTASKPROCESSES";
+
     private readonly Process process;
     private readonly JsonRpc rpc;
     private readonly ClientTarget client;
@@ -139,6 +145,7 @@ public sealed class LanguageServer : IAsyncDisposable
             server, "--stdio", "--logLevel", "Information", "--telemetryLevel", "off",
             "--extensionLogDirectory", logFolder, "--clientProcessId", Environment.ProcessId.ToString(),
         ]);
+        start.Environment.Remove(NodesShareOutput);
         start.RedirectStandardInput = true;
         start.RedirectStandardOutput = true;
         start.RedirectStandardError = true;

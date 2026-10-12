@@ -199,6 +199,35 @@ public sealed class BuildRunTests : IDisposable
         window.Close();
     }
 
+    /// <summary>dotnet test sets MSBuild's MSBUILDENSURESTDOUTFORTASKPROCESSES for the process it tests, as for an IDE started
+    /// under it. A handshake salt of the test's own keeps MSBuild from reusing a node another build left, so Roslyn's restore
+    /// starts one, as on a machine with none idle; it waits two minutes to be reused, not fifteen.</summary>
+    [AvaloniaFact]
+    public void A_solution_of_two_projects_opened_under_dotnet_tests_environment_loads_in_the_language_server()
+    {
+        Write("Sample.slnx", "<Solution>\n  <Folder Name=\"/src/\">\n    <Project Path=\"src/Hello/Hello.csproj\" />\n    <Project Path=\"src/Tools/Tools.csproj\" />\n  </Folder>\n</Solution>\n");
+        Write("src/Tools/Tools.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+        Dictionary<string, string?> before = new[] { "MSBUILDENSURESTDOUTFORTASKPROCESSES", "MSBUILDNODEHANDSHAKESALT", "MSBUILDNODECONNECTIONTIMEOUT" }
+            .ToDictionary(name => name, Environment.GetEnvironmentVariable);
+        try
+        {
+            Environment.SetEnvironmentVariable("MSBUILDENSURESTDOUTFORTASKPROCESSES", "1");
+            Environment.SetEnvironmentVariable("MSBUILDNODEHANDSHAKESALT", Guid.NewGuid().ToString("N"));
+            Environment.SetEnvironmentVariable("MSBUILDNODECONNECTIONTIMEOUT", "120000");
+            // Settling waits for Roslyn to say the projects loaded, which it says once its restore's output has ended.
+            MainWindow window = Open();
+            Assert.True(window.CSharpService?.IsReady, window.CSharpService?.State);
+            window.Close();
+        }
+        finally
+        {
+            foreach ((string name, string? value) in before)
+            {
+                Environment.SetEnvironmentVariable(name, value);
+            }
+        }
+    }
+
     [AvaloniaFact]
     public void An_unloaded_project_is_dimmed_and_leaves_the_run_configurations_until_it_is_reloaded()
     {
