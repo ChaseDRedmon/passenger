@@ -9,6 +9,10 @@ The repo, a .NET 11 Avalonia app with Rider's layout (toolbar, tool-window strip
 area, a status bar), dark and light colour tokens, a Windows build that compiles, and `--screenshot` for looking at
 the UI without opening a window.
 
+Since: tool windows dock as IntelliJ's do, at six places round the editor, each moved by dragging its stripe button
+or its header (or with Move to), one shown per place, and the layout kept for the next start. To come: floating and
+windowed tool windows, maximizing one, and split editors.
+
 **Done when:** `just run` opens it on macOS and Windows.
 
 ## M1: the editor (built)

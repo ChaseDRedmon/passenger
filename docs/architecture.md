@@ -246,8 +246,14 @@ answers about the code, builds and runs, the debugger, and the window itself.
   shell draws its own (Avalonia 12's `WindowDrawnDecorations`).
 - **Icons** are Microsoft's Fluent UI System Icons (MIT), stored as path data in `Theme/Icons.axaml`.
 - **No Avalonia Accelerate components.** TreeDataGrid has needed a paid licence since 11.2. Our trees and grids are
-  our own and virtualized, since a profiler's call tree can run to millions of rows. Docking is ours or Dock (MIT),
-  decided with the tool windows.
+  our own and virtualized, since a profiler's call tree can run to millions of rows.
+- **Docking is ours, in IntelliJ's model** (decided October 12, 2026). Dock (MIT) supports Avalonia 12 but docks as
+  Visual Studio does, by drop indicators into any nested split; Rider docks a tool window at one of six places (each
+  side's upper or lower half, the bottom's left or right half), shows one window per place, and moves a window when
+  its stripe button or header is dragged elsewhere, so `Docking/DockHost` does exactly that: stripes down both edges
+  with a group of buttons per place, the side and bottom areas round the editor, a header per window with Move to and
+  Hide, the place under a drag lit up, and the layout kept in the user's settings folder (only by the window a person
+  uses; a headless IDE starts on the defaults). Floating and windowed modes, and maximizing, come next.
 
 ## Licences we hold to
 

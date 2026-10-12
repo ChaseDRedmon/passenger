@@ -3,7 +3,7 @@
              xmlns:explorer="using:Passenger.App.Explorer"
              x:Class="Passenger.App.Explorer.ExplorerView">
     <DockPanel Background="{DynamicResource Passenger.Chrome}">
-        <DockPanel DockPanel.Dock="Top" Margin="12,6,8,2">
+        <DockPanel Name="OwnHeader" DockPanel.Dock="Top" Margin="12,6,8,2">
             <!-- Rider's view switch: the solution's projects, or the folder as it is on disk. -->
             <Button Name="ViewSwitch" DockPanel.Dock="Right" Classes="widget" IsVisible="False" Click="OnViewSwitchClicked"
                     ToolTip.Tip="Switch between the solution and the files on disk">

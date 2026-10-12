@@ -82,6 +82,17 @@ public static class Screenshot
                 // Past the editor's hover delay, and the card's answer.
                 Take(window, new ScriptStep.Wait(TimeSpan.FromMilliseconds(1500)));
                 break;
+            case ScriptStep.Drag drag:
+                window.MouseDown(drag.From, MouseButton.Left, RawInputModifiers.None);
+                for (int i = 1; i <= 10; i++)
+                {
+                    window.MouseMove(drag.From + ((drag.To - drag.From) * (i / 10.0)), RawInputModifiers.LeftMouseButton);
+                }
+                if (drag.Release)
+                {
+                    window.MouseUp(drag.To, MouseButton.Left, RawInputModifiers.None);
+                }
+                break;
             case ScriptStep.Click click:
                 for (int i = 0; i < click.Count; i++)
                 {

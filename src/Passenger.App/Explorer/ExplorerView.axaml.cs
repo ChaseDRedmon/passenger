@@ -44,6 +44,15 @@ public partial class ExplorerView : UserControl
         }
     }
 
+    /// <summary>Its view switch, for a tool window's header to carry, and its own title row gone: in a tool window
+    /// the header names it, as Rider's Explorer has its view in its title bar.</summary>
+    public Control TakeHeaderTools()
+    {
+        OwnHeader.Children.Remove(ViewSwitch);
+        OwnHeader.IsVisible = false;
+        return ViewSwitch;
+    }
+
     private void OnViewSwitchClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e) => Show(!Tree.IsSolutionView);
 
     /// <summary>Opens the folders down to a file and selects its row.</summary>

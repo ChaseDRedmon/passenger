@@ -8,6 +8,7 @@
             <SolidColorBrush x:Key="Passenger.Chrome" Color="#2B2D30" />
             <SolidColorBrush x:Key="Passenger.Field" Color="#1E1F22" />
             <SolidColorBrush x:Key="Passenger.FieldBorder" Color="#4E5157" />
+            <SolidColorBrush x:Key="Passenger.DropZone" Color="#3D7BF5" Opacity="0.18" />
             <SolidColorBrush x:Key="Passenger.Divider" Color="#1E1F22" />
             <SolidColorBrush x:Key="Passenger.Text" Color="#DFE1E5" />
             <SolidColorBrush x:Key="Passenger.TextMuted" Color="#868A91" />
@@ -84,6 +85,7 @@
             <SolidColorBrush x:Key="Passenger.Chrome" Color="#F7F8FA" />
             <SolidColorBrush x:Key="Passenger.Field" Color="#FFFFFF" />
             <SolidColorBrush x:Key="Passenger.FieldBorder" Color="#C9CCD6" />
+            <SolidColorBrush x:Key="Passenger.DropZone" Color="#3D7BF5" Opacity="0.14" />
             <SolidColorBrush x:Key="Passenger.Divider" Color="#EBECF0" />
             <SolidColorBrush x:Key="Passenger.Text" Color="#1E1F22" />
             <SolidColorBrush x:Key="Passenger.TextMuted" Color="#6C707E" />

@@ -1,8 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:explorer="using:Passenger.App.Explorer"
         xmlns:editors="using:Passenger.App.Editors"
-        xmlns:tools="using:Passenger.App.ToolWindows"
+        xmlns:docking="using:Passenger.App.Docking"
         x:Class="Passenger.App.MainWindow"
         Title="Passenger"
         Width="1400" Height="900" MinWidth="800" MinHeight="500"
@@ -70,69 +69,12 @@
             </DockPanel>
         </Border>
 
-        <Grid Grid.Row="1" ColumnDefinitions="40,*,40">
-
-            <!-- The left stripe: tool windows that dock left (top group) and at the bottom (bottom group). -->
-            <Border Grid.Column="0" Background="{DynamicResource Passenger.Chrome}"
-                    BorderBrush="{DynamicResource Passenger.Divider}" BorderThickness="0,0,1,0">
-                <DockPanel Margin="0,6">
-                    <StackPanel DockPanel.Dock="Top" Spacing="4" HorizontalAlignment="Center">
-                        <ToggleButton Name="ExplorerStripe" Classes="stripe" IsChecked="True" ToolTip.Tip="Explorer" Click="OnExplorerStripe">
-                            <PathIcon Data="{StaticResource Icon.Explorer}" />
-                        </ToggleButton>
-                        <ToggleButton Classes="stripe" ToolTip.Tip="Structure">
-                            <PathIcon Data="{StaticResource Icon.Structure}" />
-                        </ToggleButton>
-                        <ToggleButton Classes="stripe" ToolTip.Tip="Commit">
-                            <PathIcon Data="{StaticResource Icon.Branch}" />
-                        </ToggleButton>
-                    </StackPanel>
-                    <StackPanel DockPanel.Dock="Bottom" Spacing="4" HorizontalAlignment="Center" VerticalAlignment="Bottom">
-                        <ToggleButton Name="RunStripe" Classes="stripe" ToolTip.Tip="Run" Tag="Run" Click="OnBottomStripe">
-                            <PathIcon Data="{StaticResource Icon.RunOutline}" />
-                        </ToggleButton>
-                        <ToggleButton Name="DebugStripe" Classes="stripe" ToolTip.Tip="Debug" Tag="Debug" Click="OnBottomStripe">
-                            <PathIcon Data="{StaticResource Icon.Debug}" />
-                        </ToggleButton>
-                        <ToggleButton Name="BuildStripe" Classes="stripe" ToolTip.Tip="Build" Tag="Build" Click="OnBottomStripe">
-                            <PathIcon Data="{StaticResource Icon.Build}" />
-                        </ToggleButton>
-                        <ToggleButton Name="ProblemsStripe" Classes="stripe" ToolTip.Tip="Problems" Tag="Problems" Click="OnBottomStripe">
-                            <PathIcon Data="{StaticResource Icon.Problems}" />
-                        </ToggleButton>
-                        <ToggleButton Classes="stripe" ToolTip.Tip="Terminal">
-                            <PathIcon Data="{StaticResource Icon.Terminal}" />
-                        </ToggleButton>
-                    </StackPanel>
-                </DockPanel>
-            </Border>
-
-            <!-- The Explorer and the editors over the bottom tool windows. -->
-            <Grid Name="Center" Grid.Column="1" RowDefinitions="*,0,0">
-                <Grid Name="Upper" Grid.Row="0" ColumnDefinitions="280,1,*">
-                    <explorer:ExplorerView Name="Explorer" Grid.Column="0" />
-                    <!-- A 1 px line to see, under a wider invisible splitter to grab. -->
-                    <Border Grid.Column="1" Background="{DynamicResource Passenger.Divider}" />
-                    <GridSplitter Grid.Column="1" ResizeDirection="Columns" Classes="hairline" />
-                    <editors:EditorArea Name="Editors" Grid.Column="2" />
-                </Grid>
-                <Panel Grid.Row="1">
-                    <Border Background="{DynamicResource Passenger.Divider}" />
-                    <GridSplitter ResizeDirection="Rows" Classes="hairlineRows" />
-                </Panel>
-                <tools:BottomPanel Name="Bottom" Grid.Row="2" />
-            </Grid>
-
-            <!-- The right stripe. -->
-            <Border Grid.Column="2" Background="{DynamicResource Passenger.Chrome}"
-                    BorderBrush="{DynamicResource Passenger.Divider}" BorderThickness="1,0,0,0">
-                <StackPanel Margin="0,6" Spacing="4" HorizontalAlignment="Center">
-                    <ToggleButton Classes="stripe" ToolTip.Tip="Notifications">
-                        <PathIcon Data="{StaticResource Icon.Notifications}" />
-                    </ToggleButton>
-                </StackPanel>
-            </Border>
-        </Grid>
+        <!-- Tool windows round the editor, in IntelliJ's places: stripes of their buttons down both edges. -->
+        <docking:DockHost Name="Dock" Grid.Row="1">
+            <docking:DockHost.Center>
+                <editors:EditorArea Name="Editors" />
+            </docking:DockHost.Center>
+        </docking:DockHost>
 
         <!-- The status bar: where the caret is and how the file is stored. -->
         <Border Grid.Row="2" Height="26" Background="{DynamicResource Passenger.Chrome}"

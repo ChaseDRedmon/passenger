@@ -36,8 +36,8 @@ public partial class MainWindow : Window
     private readonly List<Problem> problems = [];
     private IReadOnlyList<RunConfiguration> configurations = [];
     private RunConfiguration? configuration;
-    private double bottomHeight = 260;
-    private double explorerWidth = 280;
+    private readonly Passenger.App.Explorer.ExplorerView Explorer = new();
+    private readonly ToolWindows.ToolViews Bottom = new();
     private int historyAt = -1;
     private readonly List<string> recent = [];
     private string? folder;
@@ -55,6 +55,7 @@ public partial class MainWindow : Window
         // One keymap for the whole window, seen before any control: IDE actions run from anywhere,
         // editor actions go to the editor when it has the focus.
         AddHandler(KeyDownEvent, OnKeyDownFirst, RoutingStrategies.Tunnel);
+        AddToolWindows();
         Explorer.FileOpened += (_, path) => OpenFile(path);
         Editors.OpenRequested += (_, _) => _ = PickFolder();
         Editors.ActiveChanged += (_, _) => UpdateStatus();
@@ -124,7 +125,6 @@ public partial class MainWindow : Window
                 NavigateTo(path, problem.Position);
             }
         };
-        Bottom.HideRequested += (_, _) => HideBottom();
         debug = new DebugController(Editors, Bottom.Debug);
         tests = new Testing.TestController(Bottom.TestTree, BuildAsync, () => Projects, line => Bottom.Build.Document.Append($"{line}\n"));
         tests.Message += (_, message) =>
@@ -135,7 +135,7 @@ public partial class MainWindow : Window
         tests.LaunchUnderDebugger = LaunchTestHost;
         tests.AttachDebugger = async processId =>
         {
-            ShowBottom("Debug");
+            ShowToolWindow("debug");
             await debug.AttachAsync(processId, "Tests");
             if (debug.Session is not { } session)
             {
@@ -328,7 +328,7 @@ public partial class MainWindow : Window
                 afterBuild = null;
                 break;
             case AppActions.ShowDebug:
-                ShowBottom("Debug");
+                ShowToolWindow("debug");
                 break;
             case { } debugging when debugging.StartsWith("app.debug.", StringComparison.Ordinal):
                 debug.Run(debugging);
@@ -347,7 +347,7 @@ public partial class MainWindow : Window
                 ShowBreakpoints(null);
                 break;
             case AppActions.ShowTests:
-                ShowBottom("Tests");
+                ShowToolWindow("tests");
                 break;
             case AppActions.RunAllTests:
                 RunTests(() => tests.RunAsync(folder!));
@@ -365,16 +365,16 @@ public partial class MainWindow : Window
                 tests.Stop();
                 break;
             case AppActions.ShowBuild:
-                ShowBottom("Build");
+                ShowToolWindow("build");
                 break;
             case AppActions.ShowRun:
-                ShowBottom("Run");
+                ShowToolWindow("run");
                 break;
             case AppActions.ShowProblems:
-                ShowBottom("Problems");
+                ShowToolWindow("problems");
                 break;
             case AppActions.HideToolWindow:
-                HideBottom();
+                HideToolWindow();
                 break;
             case AppActions.Back:
                 StepHistory(-1);
@@ -404,6 +404,7 @@ public partial class MainWindow : Window
                 Editors.Cycle(-1);
                 break;
             case AppActions.FocusExplorer:
+                Dock.Show("explorer");
                 Explorer.Focus();
                 break;
             case AppActions.GoToFile:
@@ -443,7 +444,8 @@ public partial class MainWindow : Window
 
     public CodeAssist Assist => assist;
 
-    public ToolWindows.BottomPanel BottomPanel => Bottom;
+    /// <summary>The tool windows' views: Build, Run, Debug, Unit Tests, Problems.</summary>
+    public ToolWindows.ToolViews BottomPanel => Bottom;
 
     public DebugController Debugger => debug;
 
@@ -500,7 +502,7 @@ public partial class MainWindow : Window
         try
         {
             DebugTarget target = await DebugTarget.ResolveAsync(chosen, arguments);
-            ShowBottom("Debug");
+            ShowToolWindow("debug");
             Bottom.Debug.ShowTab(console: true);
             await debug.StartAsync(target, chosen.Name);
             return debug.IsDebugging ? null : StatusText.Text;
@@ -560,7 +562,7 @@ public partial class MainWindow : Window
         problems.Clear();
         Bottom.Build.Document.Clear();
         Bottom.Build.SetRunning(true);
-        ShowBottom("Build");
+        ShowToolWindow("build");
         StatusText.Text = $"Building {Path.GetFileName(target)}…";
         BackgroundWork.Begin();
         builder.Start(Lsp.Dotnet.Host(), BuildOutput.Arguments(target), folder);
@@ -579,7 +581,7 @@ public partial class MainWindow : Window
         Bottom.Run.Document.Clear();
         Bottom.Run.SetRunning(true);
         StopButton.IsVisible = true;
-        ShowBottom("Run");
+        ShowToolWindow("run");
         StatusText.Text = $"Running {chosen.Name}";
         runner.Start(Lsp.Dotnet.Host(), chosen.RunArguments(arguments), chosen.Project.Folder);
     }
@@ -602,14 +604,13 @@ public partial class MainWindow : Window
     private void ShowStop(string path, TextPosition position)
     {
         NavigateTo(path, position);
-        ShowBottom("Debug");
+        ShowToolWindow("debug");
         Bottom.Debug.ShowTab(console: false);
     }
 
     private void OnDebugStateChanged()
     {
         StopButton.IsVisible = debug.IsDebugging || runner.IsRunning;
-        UpdateStripes();
     }
 
     private void OnBuilt(int code)
@@ -621,81 +622,62 @@ public partial class MainWindow : Window
         int errors = problems.Count(p => p.Severity == ProblemSeverity.Error);
         int warnings = problems.Count - errors;
         Bottom.Problems.Show(problems);
-        Bottom.Caption("Problems", problems.Count == 0 ? "Problems" : $"Problems {problems.Count}");
+        if (Dock["problems"] is { } problemsWindow)
+        {
+            problemsWindow.Title = problems.Count == 0 ? "Problems" : $"Problems {problems.Count}";
+        }
         StatusText.Text = code == 0
             ? $"Build succeeded{(warnings > 0 ? $" with {warnings} warning{(warnings == 1 ? "" : "s")}" : "")}"
             : $"Build failed: {errors} error{(errors == 1 ? "" : "s")}, {warnings} warning{(warnings == 1 ? "" : "s")}";
         if (code != 0 && errors > 0)
         {
-            ShowBottom("Problems");
+            ShowToolWindow("problems");
         }
         then?.Invoke(code == 0);
     }
 
-    public void ShowBottom(string window)
-    {
-        Center.RowDefinitions[1].Height = new GridLength(1);
-        Center.RowDefinitions[2].Height = new GridLength(bottomHeight);
-        Bottom.Show(window);
-        UpdateStripes();
-    }
+    /// <summary>Opens a tool window in its place ("debug", "build", "tests"...), as its stripe button does.</summary>
+    public void ShowToolWindow(string id) => Dock.Show(id);
 
-    private void HideBottom()
+    /// <summary>Shift+Escape: the tool window open last closes, and the editor has the keys again.</summary>
+    private void HideToolWindow()
     {
-        if (Center.RowDefinitions[2].Height.Value > 0)
-        {
-            bottomHeight = Center.RowDefinitions[2].ActualHeight;
-        }
-        Center.RowDefinitions[1].Height = new GridLength(0);
-        Center.RowDefinitions[2].Height = new GridLength(0);
-        UpdateStripes();
+        Dock.HideActive();
         if (Editors.Active is not null)
         {
             Editors.CodeEditor.Focus();
         }
     }
 
-    private bool IsBottomOpen => Center.RowDefinitions[2].Height.Value > 0;
-
-    private void UpdateStripes()
+    /// <summary>The tool windows, each in the place IntelliJ gives it at first.</summary>
+    private void AddToolWindows()
     {
-        RunStripe.IsChecked = IsBottomOpen && Bottom.Current == "Run";
-        DebugStripe.IsChecked = IsBottomOpen && Bottom.Current == "Debug";
-        BuildStripe.IsChecked = IsBottomOpen && Bottom.Current == "Build";
-        ProblemsStripe.IsChecked = IsBottomOpen && Bottom.Current == "Problems";
+        Dock.Add(new Docking.ToolWindow("explorer", "Explorer", "Icon.Explorer", Explorer, Docking.ToolAnchor.LeftTop)
+        {
+            Action = AppActions.FocusExplorer,
+            HeaderTools = Explorer.TakeHeaderTools(),
+        });
+        Dock.Add(new Docking.ToolWindow("run", "Run", "Icon.RunOutline", Bottom.Run, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowRun });
+        Dock.Add(new Docking.ToolWindow("debug", "Debug", "Icon.Debug", Bottom.Debug, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowDebug });
+        Dock.Add(new Docking.ToolWindow("tests", "Unit Tests", "Icon.Tests", Bottom.Tests, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowTests });
+        Dock.Add(new Docking.ToolWindow("build", "Build", "Icon.Build", Bottom.Build, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowBuild });
+        Dock.Add(new Docking.ToolWindow("problems", "Problems", "Icon.Problems", Bottom.Problems, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowProblems });
+        Dock.Show("explorer");
     }
 
-    private void OnBottomStripe(object? sender, RoutedEventArgs e)
+    /// <summary>The window a person uses keeps its layout: it opens on the one kept, and keeps each change.</summary>
+    public void KeepLayout()
     {
-        if (sender is not Control { Tag: string window })
+        if (Docking.DockLayout.Load() is { } kept)
         {
-            return;
+            Dock.Apply(kept);
         }
-        if (IsBottomOpen && Bottom.Current == window)
-        {
-            HideBottom();
-        }
-        else
-        {
-            ShowBottom(window);
-        }
+        Dock.LayoutChanged += (_, _) => Dock.Capture().Save();
+        Closing += (_, _) => Dock.Capture().Save();
     }
 
-    private void OnExplorerStripe(object? sender, RoutedEventArgs e)
-    {
-        ColumnDefinition column = Upper.ColumnDefinitions[0];
-        if (column.Width.Value > 0)
-        {
-            explorerWidth = column.ActualWidth;
-            column.Width = new GridLength(0);
-            ExplorerStripe.IsChecked = false;
-        }
-        else
-        {
-            column.Width = new GridLength(explorerWidth);
-            ExplorerStripe.IsChecked = true;
-        }
-    }
+    /// <summary>The tool windows' host, for the layout and the tests.</summary>
+    public Docking.DockHost DockHost => Dock;
 
     private void OnBuildClicked(object? sender, RoutedEventArgs e) => BuildSolution();
 
@@ -1047,7 +1029,7 @@ public partial class MainWindow : Window
         {
             return;
         }
-        ShowBottom("Tests");
+        ShowToolWindow("tests");
         _ = Go();
 
         async Task Go()
@@ -1105,7 +1087,7 @@ public partial class MainWindow : Window
             start.WorkingDirectory ?? folder ?? Environment.CurrentDirectory,
             CommandLine.Split(start.Arguments),
             start.EnvironmentVariables?.Where(v => v.Value is not null).ToDictionary(v => v.Key, v => v.Value!) ?? []);
-        ShowBottom("Debug");
+        ShowToolWindow("debug");
         await debug.StartAsync(target, "Tests");
         if (debug.Session is not { } session)
         {

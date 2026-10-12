@@ -38,7 +38,8 @@ artifacts/bin/Passenger.App/debug/Passenger . --file src/Passenger.App/App.axaml
     --screenshot out.png --size 1400x880 --scale 2 --crop 320,76,900,500 --theme light
 ```
 
-`--key` takes "cmd+shift+L" or Rider's "meta shift L"; `--crop X,Y,W,H`, `--click X,Y` and `--hover X,Y` (the
+`--key` takes "cmd+shift+L" or Rider's "meta shift L"; `--drag X1,Y1,X2,Y2` drags (`--drag-hold` keeps the button down,
+to capture a tool window over its drop place); `--crop X,Y,W,H`, `--click X,Y` and `--hover X,Y` (the
 pointer left to rest, for a hover card) are in logical units; `--wait MS` gives a running program time.
 
 Headless, the dispatcher's timers (the editor's hover, a caret's blink) fire only inside a running dispatcher frame,
@@ -70,6 +71,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   folder; `CSharpDocument` gives an open file its semantic colours and diagnostics; `CodeAssist`
   is completion, hover, signature help and the code actions (`app.code.*`), its popups on a layer
   over the editor; `WorkspaceEdits` applies renames and fixes across files.
+- `src/Passenger.App/Docking`: the tool windows' frame, in IntelliJ's six places (`DockHost`, `ToolWindow`), moved
+  by dragging a stripe button or a header, the layout kept in `DockLayout` (the settings folder, or
+  `PASSENGER_SETTINGS`). A new tool window is a view and one `Dock.Add` in `MainWindow.AddToolWindows`.
 - `src/Passenger.App/Run` and `ToolWindows`: build and run through the .NET command line
   (`ProcessRunner` streams a process into a document; `BuildOutput` reads MSBuild's error lines),
   and the bottom panel's Build, Run and Problems windows. `Workspace/SolutionModel` reads

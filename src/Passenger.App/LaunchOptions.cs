@@ -95,6 +95,10 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
                     double[] xy = Numbers(Value(args, ref i, flag), ',', 2, flag);
                     steps.Add(new ScriptStep.Click(new Point(xy[0], xy[1]), flag == "--click" ? 1 : 2));
                     break;
+                case "--drag" or "--drag-hold":
+                    double[] line = Numbers(Value(args, ref i, flag), ',', 4, flag);
+                    steps.Add(new ScriptStep.Drag(new Point(line[0], line[1]), new Point(line[2], line[3]), Release: flag == "--drag"));
+                    break;
                 case { } path when !path.StartsWith('-') && folder is null && files.Count == 0:
                     if (Directory.Exists(path))
                     {
@@ -201,6 +205,10 @@ public abstract record ScriptStep
     public sealed record Key(Keystroke Stroke) : ScriptStep;
 
     public sealed record Click(Point At, int Count) : ScriptStep;
+
+    /// <summary>The left button pressed at one point and moved to another, let go there unless the capture is to show
+    /// the drag itself (a tool window over its drop place).</summary>
+    public sealed record Drag(Point From, Point To, bool Release) : ScriptStep;
 
     /// <summary>The pointer moved to a point and left to rest there, long enough for a hover card.</summary>
     public sealed record Hover(Point At) : ScriptStep;

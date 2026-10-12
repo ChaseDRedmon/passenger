@@ -57,6 +57,9 @@ ICONS = [
     ("Evaluate", "Calculator", "20_regular"),
     ("Add", "Add", "16_regular"),
     ("Variable", "Braces Variable", "20_regular"),
+    ("More", "More Vertical", "16_regular"),
+    ("Minimize", "Subtract", "16_regular"),
+    ("Tests", "Beaker", "20_regular"),
 ]
 
 

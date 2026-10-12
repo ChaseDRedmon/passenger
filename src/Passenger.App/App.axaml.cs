@@ -14,6 +14,8 @@ public partial class App : Application
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             MainWindow window = new();
+            // The person's own window opens on the layout they left; headless ones keep the defaults.
+            window.KeepLayout();
             window.Opened += (_, _) =>
             {
                 window.Start(Program.Options);
