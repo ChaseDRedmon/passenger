@@ -115,6 +115,7 @@ public sealed partial class CodeEditor : Control
     public void SetMarkers(IReadOnlyList<Marker> markers)
     {
         Markers = [.. markers.OrderBy(m => m.Range.Start)];
+        ProblemCount = CountProblems(Markers);
         counts.InvalidateMeasure();
         InvalidateArrange();
         InvalidateVisual();
@@ -617,6 +618,8 @@ public sealed partial class CodeEditor : Control
             RunWith(palette.LineNumber));
         annotationRuns = (ItalicRunWith(palette.InlineValue), ItalicRunWith(palette.Error));
         lines.Clear();
+        // The stripe and the counts paint with the palette too, so they are drawn again with the next frame.
+        stripeDrawn = default;
         InvalidateArrange();
         InvalidateVisual();
     }

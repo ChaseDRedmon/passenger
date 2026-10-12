@@ -197,6 +197,28 @@ public static class Ui
         return text.Result;
     }
 
+    /// <summary>A pixel of the window as the compositor last drew it, at a point in its coordinates: what a person sees,
+    /// which a fresh render of every control would not show if one of them was never asked to draw again.</summary>
+    public static Avalonia.Media.Color Pixel(TopLevel window, Point at)
+    {
+        using Avalonia.Media.Imaging.WriteableBitmap frame = window.CaptureRenderedFrame()
+            ?? throw new InvalidOperationException("The window has drawn no frame.");
+        byte[] pixel = new byte[4];
+        System.Runtime.InteropServices.GCHandle pinned = System.Runtime.InteropServices.GCHandle.Alloc(pixel, System.Runtime.InteropServices.GCHandleType.Pinned);
+        try
+        {
+            PixelPoint point = PixelPoint.FromPoint(at, window.RenderScaling);
+            frame.CopyPixels(new PixelRect(point.X, point.Y, 1, 1), pinned.AddrOfPinnedObject(), 4, 4);
+        }
+        finally
+        {
+            pinned.Free();
+        }
+        return frame.Format == Avalonia.Platform.PixelFormat.Rgba8888
+            ? Avalonia.Media.Color.FromRgb(pixel[0], pixel[1], pixel[2])
+            : Avalonia.Media.Color.FromRgb(pixel[2], pixel[1], pixel[0]);
+    }
+
     /// <summary>Presses the platform's first shortcut for an IDE action, both keystrokes of a chord.</summary>
     public static void Run(TopLevel window, string action)
     {

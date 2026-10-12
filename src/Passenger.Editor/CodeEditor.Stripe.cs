@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Documents;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Media;
@@ -39,11 +40,14 @@ public sealed partial class CodeEditor
     }
 
     /// <summary>The marks on the stripe now, with where each goes and what it says.</summary>
-    public IReadOnlyList<StripeMark> StripeMarks => showErrorStripe ? MarksOnStripe() : [];
+    public IReadOnlyList<StripeMark> StripeMarks => showErrorStripe ? [.. BuiltMarks().Marks, CaretMark()] : [];
 
-    /// <summary>The counts' errors and warnings, as their widget shows them.</summary>
-    public (int Errors, int Warnings) ProblemCount =>
-        (Markers.Count(m => m.Kind == MarkerKind.Error), Markers.Count(m => m.Kind == MarkerKind.Warning));
+    /// <summary>How many times the stripe's marks have been worked out: once for each change to the text, the markers,
+    /// the search's matches, the folds, the bookmarks or the changed lines, never for a frame or a pointer move.</summary>
+    public int StripeMarksBuilt { get; private set; }
+
+    /// <summary>The counts' errors and warnings, as their widget shows them, counted when the markers are set.</summary>
+    public (int Errors, int Warnings) ProblemCount { get; private set; }
 
     /// <summary>Where a stripe mark is drawn, in this control's coordinates: what a click on it hits.</summary>
     public Point StripePoint(StripeMark mark)
@@ -51,6 +55,18 @@ public sealed partial class CodeEditor
         Rect track = TrackRect();
         (double top, double height) = ErrorStripe.Span(mark, track, RowCount);
         return new Point(track.Center.X, top + (height / 2));
+    }
+
+    private static (int Errors, int Warnings) CountProblems(IReadOnlyList<Marker> markers)
+    {
+        int errors = 0;
+        int warnings = 0;
+        foreach (Marker marker in markers)
+        {
+            errors += marker.Kind == MarkerKind.Error ? 1 : 0;
+            warnings += marker.Kind == MarkerKind.Warning ? 1 : 0;
+        }
+        return (errors, warnings);
     }
 
     /// <summary>Goes to the next error or warning after the caret, wrapping, as the counts' click does.</summary>
@@ -66,9 +82,14 @@ public sealed partial class CodeEditor
         GoTo(document.Snapshot.GetPosition(next.Range.Start));
     }
 
-    private IReadOnlyList<StripeMark> MarksOnStripe()
+    /// <summary>The stripe's marks but the caret's, worked out again only when what they come from is replaced.</summary>
+    private StripeBuild BuiltMarks()
     {
         TextSnapshot text = document.Snapshot;
+        if (stripeBuild is { } built && built.Shows(text, Markers, Highlights, folds, Bookmarks, ChangeMarks))
+        {
+            return built;
+        }
         List<StripeMark> marks = [];
         foreach (ChangeMark change in ChangeMarks)
         {
@@ -94,8 +115,16 @@ public sealed partial class CodeEditor
                 marks.Add(new StripeMark(markKind, RowOf(line.Key), 1, line.First().Range.Start, string.Join('\n', line.Select(m => m.Message).Distinct())));
             }
         }
-        marks.Add(new StripeMark(StripeMarkKind.Caret, RowOf(text.GetLineFromOffset(selections.Primary.Caret)), 1, selections.Primary.Caret, "Caret"));
-        return marks;
+        StripeMarksBuilt++;
+        stripeBuild = new StripeBuild(text, Markers, Highlights, folds, Bookmarks, ChangeMarks, [.. marks], RowCount);
+        return stripeBuild;
+    }
+
+    /// <summary>The caret's mark, apart from the others so that moving the caret costs that one mark, not every mark.</summary>
+    private StripeMark CaretMark()
+    {
+        int caret = selections.Primary.Caret;
+        return new StripeMark(StripeMarkKind.Caret, RowOf(document.Snapshot.GetLineFromOffset(caret)), 1, caret, "Caret");
     }
 
     /// <summary>The scrollbar's track, where the marks go: between its arrows, in this control's coordinates.</summary>
@@ -109,8 +138,8 @@ public sealed partial class CodeEditor
         return bar;
     }
 
-    private (int, int, int, int, int, int, int, int) stripeDrawn;
-    private IReadOnlyList<Marker>? stripeMarkers;
+    private StripeBuild? stripeBuild;
+    private (StripeBuild? Marks, int CaretRow, (int, int) Counts) stripeDrawn;
     private bool stripeRefreshPosted;
 
     /// <summary>The stripe and the counts are drawn apart from the text: when what they show moved, they are asked again
@@ -121,16 +150,13 @@ public sealed partial class CodeEditor
         {
             return;
         }
-        (int errors, int warnings) = ProblemCount;
-        (int, int, int, int, int, int, int, int) now = (Markers.Count, errors, warnings, ChangeMarks.Count, Highlights.Count, Bookmarks.Count,
-            RowCount, RowOf(document.Snapshot.GetLineFromOffset(selections.Primary.Caret)));
-        if (now == stripeDrawn && ReferenceEquals(Markers, stripeMarkers))
+        (StripeBuild Marks, int CaretRow, (int, int) Counts) now = (BuiltMarks(), CaretMark().Row, ProblemCount);
+        if (ReferenceEquals(now.Marks, stripeDrawn.Marks) && now.CaretRow == stripeDrawn.CaretRow)
         {
             return;
         }
-        bool recount = (now.Item2, now.Item3) != (stripeDrawn.Item2, stripeDrawn.Item3);
+        bool recount = now.Counts != stripeDrawn.Counts;
         stripeDrawn = now;
-        stripeMarkers = Markers;
         stripeRefreshPosted = true;
         Dispatcher.UIThread.Post(() =>
         {
@@ -156,33 +182,65 @@ public sealed partial class CodeEditor
     /// <summary>A mark on the stripe: what it is, the rows it covers, the offset a click goes to, and what it says.</summary>
     public readonly record struct StripeMark(StripeMarkKind Kind, int Row, int Rows, int Offset, string Message, ChangeMarkKind Change = ChangeMarkKind.Modified);
 
+    /// <summary>The stripe's marks as worked out from one text and the lists it shows, each kept by reference: a snapshot
+    /// never changes, and the editor's lists are replaced, never changed in place.</summary>
+    private sealed record StripeBuild(TextSnapshot Text, IReadOnlyList<Marker> Markers, IReadOnlyList<TextRange> Highlights,
+        IReadOnlyList<FoldRegion> Folds, IReadOnlyList<int> Bookmarks, IReadOnlyList<ChangeMark> Changes, StripeMark[] Marks, int RowCount)
+    {
+        public bool Shows(TextSnapshot text, IReadOnlyList<Marker> markers, IReadOnlyList<TextRange> highlights,
+            IReadOnlyList<FoldRegion> folds, IReadOnlyList<int> bookmarks, IReadOnlyList<ChangeMark> changes) =>
+            ReferenceEquals(Text, text) && ReferenceEquals(Markers, markers) && ReferenceEquals(Highlights, highlights)
+            && ReferenceEquals(Folds, folds) && ReferenceEquals(Bookmarks, bookmarks) && ReferenceEquals(Changes, changes);
+    }
+
     /// <summary>The marks drawn over the scrollbar's track; hit only where a mark is, so the thumb and the track take every
     /// other press.</summary>
     private sealed class ErrorStripe(CodeEditor editor) : Control, ICustomHitTest
     {
         private const double Reach = 3;
 
+        private (StripeBuild? Marks, Rect Track, (double Top, double Height)[] Spans) placed = (null, default, []);
+
         public bool HitTest(Point point) => At(point) is not null;
 
         public override void Render(DrawingContext context)
         {
             Palette palette = editor.palette;
-            Rect track = editor.TrackRect().Translate(new Vector(-Bounds.X, -Bounds.Y));
-            foreach (StripeMark mark in editor.MarksOnStripe())
+            (StripeBuild built, Rect track, (double Top, double Height)[] spans) = Placed();
+            for (int i = 0; i < spans.Length; i++)
             {
-                (double top, double drawn) = Span(mark, track, editor.RowCount);
-                (IBrush brush, double left, double width) = mark.Kind switch
-                {
-                    StripeMarkKind.Error => (palette.Error, 2.0, track.Width - 4),
-                    StripeMarkKind.Warning => (palette.Warning, 2.0, track.Width - 4),
-                    StripeMarkKind.Info => (palette.Info, 5.0, track.Width - 10),
-                    StripeMarkKind.SearchMatch => (palette.SearchCurrent, 3.0, track.Width - 6),
-                    StripeMarkKind.Bookmark => (palette.Bookmark, track.Width - 4, 3.0),
-                    StripeMarkKind.Change => (mark.Change switch { ChangeMarkKind.Added => palette.ChangeAdded, ChangeMarkKind.Deleted => palette.ChangeDeleted, _ => palette.ChangeModified }, 0.0, 2.0),
-                    _ => (palette.LineNumberCurrent, 1.0, track.Width - 2),
-                };
-                context.FillRectangle(brush, new Rect(track.X + left, top, Math.Max(1, width), drawn));
+                Draw(context, palette, built.Marks[i], spans[i], track);
             }
+            StripeMark caret = editor.CaretMark();
+            Draw(context, palette, caret, Span(caret, track, built.RowCount), track);
+        }
+
+        /// <summary>The marks and where each is on the track, in this control's coordinates: both what is drawn and what a
+        /// pointer hits, worked out again only for new marks or a moved track.</summary>
+        private (StripeBuild Marks, Rect Track, (double Top, double Height)[] Spans) Placed()
+        {
+            StripeBuild built = editor.BuiltMarks();
+            Rect track = editor.TrackRect().Translate(new Vector(-Bounds.X, -Bounds.Y));
+            if (!ReferenceEquals(built, placed.Marks) || track != placed.Track)
+            {
+                placed = (built, track, [.. built.Marks.Select(m => Span(m, track, built.RowCount))]);
+            }
+            return (built, track, placed.Spans);
+        }
+
+        private static void Draw(DrawingContext context, Palette palette, StripeMark mark, (double Top, double Height) span, Rect track)
+        {
+            (IBrush brush, double left, double width) = mark.Kind switch
+            {
+                StripeMarkKind.Error => (palette.Error, 2.0, track.Width - 4),
+                StripeMarkKind.Warning => (palette.Warning, 2.0, track.Width - 4),
+                StripeMarkKind.Info => (palette.Info, 5.0, track.Width - 10),
+                StripeMarkKind.SearchMatch => (palette.SearchCurrent, 3.0, track.Width - 6),
+                StripeMarkKind.Bookmark => (palette.Bookmark, track.Width - 4, 3.0),
+                StripeMarkKind.Change => (mark.Change switch { ChangeMarkKind.Added => palette.ChangeAdded, ChangeMarkKind.Deleted => palette.ChangeDeleted, _ => palette.ChangeModified }, 0.0, 2.0),
+                _ => (palette.LineNumberCurrent, 1.0, track.Width - 2),
+            };
+            context.FillRectangle(brush, new Rect(track.X + left, span.Top, Math.Max(1, width), span.Height));
         }
 
         protected override void OnPointerMoved(PointerEventArgs e)
@@ -225,13 +283,12 @@ public sealed partial class CodeEditor
             {
                 return null;
             }
-            Rect track = editor.TrackRect().Translate(new Vector(-Bounds.X, -Bounds.Y));
-            foreach (StripeMark mark in editor.MarksOnStripe().Where(m => m.Kind != StripeMarkKind.Caret).Reverse())
+            (StripeBuild built, _, (double Top, double Height)[] spans) = Placed();
+            for (int i = spans.Length - 1; i >= 0; i--)
             {
-                (double top, double height) = Span(mark, track, editor.RowCount);
-                if (point.Y >= top - Reach && point.Y <= top + height + Reach)
+                if (point.Y >= spans[i].Top - Reach && point.Y <= spans[i].Top + spans[i].Height + Reach)
                 {
-                    return mark;
+                    return built.Marks[i];
                 }
             }
             return null;
@@ -242,6 +299,12 @@ public sealed partial class CodeEditor
     private sealed class ProblemCounts : Control
     {
         private readonly CodeEditor editor;
+
+        static ProblemCounts()
+        {
+            AffectsMeasure<ProblemCounts>(TextElement.FontFamilyProperty);
+            AffectsRender<ProblemCounts>(TextElement.FontFamilyProperty);
+        }
 
         public ProblemCounts(CodeEditor editor)
         {
@@ -267,11 +330,11 @@ public sealed partial class CodeEditor
             context.FillRectangle(palette.Background, new Rect(Bounds.Size), 4);
             if (errors + warnings == 0)
             {
-                Icon(context, "Icon.Check", palette.TestPassed, new Point(3, 2));
+                Icon(context, palette.PassedIcon, palette.TestPassed, new Point(3, 2));
                 return;
             }
             double x = 4;
-            foreach ((int count, string icon, IBrush brush) in new[] { (errors, "Icon.Error", palette.Error), (warnings, "Icon.Problems", palette.Warning) })
+            foreach ((int count, Geometry? icon, IBrush brush) in new[] { (errors, palette.ErrorIcon, palette.Error), (warnings, palette.WarningIcon, palette.Warning) })
             {
                 if (count == 0)
                 {
@@ -294,23 +357,25 @@ public sealed partial class CodeEditor
             e.Handled = true;
         }
 
-        private void Icon(DrawingContext context, string key, IBrush brush, Point at)
+        /// <summary>An icon 14 pixels square; a theme without it gets a dot in its colour.</summary>
+        private static void Icon(DrawingContext context, Geometry? icon, IBrush brush, Point at)
         {
-            if (!this.TryFindResource(key, ActualThemeVariant, out object? found) || found is not Geometry geometry)
+            if (icon is null)
             {
                 context.DrawEllipse(brush, null, at + new Vector(7, 7), 5, 5);
                 return;
             }
-            Rect bounds = geometry.Bounds;
+            Rect bounds = icon.Bounds;
             double scale = 14 / Math.Max(bounds.Width, bounds.Height);
             using (context.PushTransform(Matrix.CreateTranslation(-bounds.X, -bounds.Y) * Matrix.CreateScale(scale, scale) * Matrix.CreateTranslation(at.X, at.Y)))
             {
-                context.DrawGeometry(brush, null, geometry);
+                context.DrawGeometry(brush, null, icon);
             }
         }
 
-        private static FormattedText Label(string text, IBrush brush) =>
-            new(text, System.Globalization.CultureInfo.CurrentCulture, FlowDirection.LeftToRight, new Typeface("Inter"), 11.5, brush);
+        /// <summary>A count in the window's own font, which the editor's code font is not.</summary>
+        private FormattedText Label(string text, IBrush brush) =>
+            new(text, System.Globalization.CultureInfo.CurrentCulture, FlowDirection.LeftToRight, new Typeface(TextElement.GetFontFamily(this)), 11.5, brush);
     }
 }
 

@@ -753,7 +753,8 @@ public sealed partial class CodeEditor
     }
 
     /// <summary>Every brush the editor paints with, from the theme's <c>Passenger.Editor.*</c> and
-    /// <c>Passenger.Syntax.*</c> resources, or a dark default for one the theme leaves out.</summary>
+    /// <c>Passenger.Syntax.*</c> resources, or a dark default for one the theme leaves out; and the problem counts'
+    /// icons, the theme's <c>Icon.*</c> geometries, or none.</summary>
     private sealed class Palette
     {
         private readonly Dictionary<TokenKind, IBrush> syntax = [];
@@ -794,6 +795,9 @@ public sealed partial class CodeEditor
         public IBrush ExceptionBack { get; private init; } = Brush("#4A2629");
         public IBrush InlayHint { get; private init; } = Brush("#8F9298");
         public IBrush InlayHintBack { get; private init; } = Brush("#2B2D30");
+        public Geometry? ErrorIcon { get; private init; }
+        public Geometry? WarningIcon { get; private init; }
+        public Geometry? PassedIcon { get; private init; }
 
         public IBrush Syntax(TokenKind kind) => syntax.TryGetValue(kind, out IBrush? brush) ? brush : Text;
 
@@ -836,6 +840,9 @@ public sealed partial class CodeEditor
                 ExceptionBack = Find(control, "Passenger.Editor.ExceptionBack") ?? defaults.ExceptionBack,
                 InlayHint = Find(control, "Passenger.Editor.InlayHint") ?? defaults.InlayHint,
                 InlayHintBack = Find(control, "Passenger.Editor.InlayHintBack") ?? defaults.InlayHintBack,
+                ErrorIcon = Icon(control, "Icon.Error"),
+                WarningIcon = Icon(control, "Icon.Problems"),
+                PassedIcon = Icon(control, "Icon.Check"),
             };
             foreach (TokenKind kind in Enum.GetValues<TokenKind>())
             {
@@ -852,6 +859,9 @@ public sealed partial class CodeEditor
 
         private static IBrush? Find(Control control, string key) =>
             control.TryFindResource(key, control.ActualThemeVariant, out object? value) ? value as IBrush : null;
+
+        private static Geometry? Icon(Control control, string key) =>
+            control.TryFindResource(key, control.ActualThemeVariant, out object? value) ? value as Geometry : null;
 
         private static IBrush Brush(string colour) => new SolidColorBrush(Color.Parse(colour)).ToImmutable();
     }

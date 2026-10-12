@@ -190,30 +190,10 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
         Assert.Equal(editor.Document.Snapshot.GetLineFromOffset(error.Offset), editor.CaretPosition.Line);
 
         // Drawn in the error colour on the scrollbar's track, over the thumb.
-        Avalonia.Media.Color colour = Pixel(window, at);
+        Avalonia.Media.Color colour = Ui.Pixel(window, at);
         Assert.True(colour.R > 180 && colour.G < 140 && colour.B < 140, $"The error's mark is {colour}, not the error colour");
 
         window.Close();
-    }
-
-    /// <summary>A pixel of the window as drawn, at a point in its coordinates.</summary>
-    private static Avalonia.Media.Color Pixel(MainWindow window, Point at)
-    {
-        using Avalonia.Media.Imaging.RenderTargetBitmap picture = new(new PixelSize((int)window.Bounds.Width, (int)window.Bounds.Height));
-        picture.Render(window);
-        byte[] pixel = new byte[4];
-        System.Runtime.InteropServices.GCHandle pinned = System.Runtime.InteropServices.GCHandle.Alloc(pixel, System.Runtime.InteropServices.GCHandleType.Pinned);
-        try
-        {
-            picture.CopyPixels(new PixelRect((int)at.X, (int)at.Y, 1, 1), pinned.AddrOfPinnedObject(), 4, 4);
-        }
-        finally
-        {
-            pinned.Free();
-        }
-        return picture.Format == Avalonia.Platform.PixelFormat.Rgba8888
-            ? Avalonia.Media.Color.FromRgb(pixel[0], pixel[1], pixel[2])
-            : Avalonia.Media.Color.FromRgb(pixel[2], pixel[1], pixel[0]);
     }
 
     [AvaloniaFact]
