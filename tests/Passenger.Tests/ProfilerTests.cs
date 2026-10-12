@@ -77,7 +77,12 @@ public sealed class ProfilerTests : IDisposable
         {
             // It waits on its input, so it is still there to be looked at.
             await Task.Delay(500, TestContext.Current.CancellationToken);
-            MemorySnapshot heap = await run.TakeMemorySnapshotAsync(TestContext.Current.CancellationToken);
+            // Bounded, so a createdump that never finishes (CI's macOS runner was left with one) fails this test rather
+            // than holding the whole run until it is stopped as hung.
+            Task<MemorySnapshot> taking = run.TakeMemorySnapshotAsync(TestContext.Current.CancellationToken);
+            Assert.True(await Task.WhenAny(taking, Task.Delay(TimeSpan.FromMinutes(2), TestContext.Current.CancellationToken)) == taking,
+                "the runtime's createdump had not written the program's heap after 2 minutes");
+            MemorySnapshot heap = await taking;
             HeapType strings = Assert.Single(heap.Types, t => t.Name == "System.String");
             Assert.True(strings.Count > 10, $"{strings.Count} strings");
             Assert.Equal(heap.Bytes, heap.Types.Sum(t => t.Bytes));
