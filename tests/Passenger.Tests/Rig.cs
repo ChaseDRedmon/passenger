@@ -468,4 +468,25 @@ public static class Processes
         {
         }
     }
+
+    /// <summary>Stops a process where it stands, answering nothing, as a deadlocked one would: SIGSTOP on macOS and
+    /// Linux, and on Windows every thread suspended (NtSuspendProcess), which a kill ends as surely. Signalled, not by
+    /// running kill: on macOS a child ending while another is stopped sets .NET reaping in a spin that holds Process's lock.</summary>
+    public static void Suspend(int id, string what)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            using System.Diagnostics.Process process = System.Diagnostics.Process.GetProcessById(id);
+            int status = NtSuspendProcess(process.Handle);
+            Assert.True(status == 0, $"{what} could not be suspended (NTSTATUS 0x{status:X8})");
+            return;
+        }
+        Assert.True(Signal(id, OperatingSystem.IsMacOS() ? 17 : 19) == 0, $"{what} could not be stopped (errno {System.Runtime.InteropServices.Marshal.GetLastPInvokeError()})");
+    }
+
+    [System.Runtime.InteropServices.DllImport("ntdll.dll")]
+    private static extern int NtSuspendProcess(IntPtr process);
+
+    [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "kill", SetLastError = true)]
+    private static extern int Signal(int process, int signal);
 }

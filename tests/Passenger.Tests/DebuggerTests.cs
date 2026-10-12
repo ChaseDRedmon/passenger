@@ -410,6 +410,70 @@ public sealed class DebuggerTests : IDisposable
         }
     }
 
+    /// <summary>Run as a window test is, on a dispatcher that goes when its run ends, and looked at after: whatever the
+    /// window left waiting on that dispatcher is never come back to, and a request it waited on that failed later would be
+    /// an error for the finalizer to report into whichever test ran then.</summary>
+    [Fact]
+    public async Task Stop_and_the_windows_close_on_a_program_the_debugger_cannot_end_leave_no_failed_request_once_the_windows_loop_is_gone()
+    {
+        string started = Path.Combine(folder, "program.pid");
+        Write("Program.cs", $"File.WriteAllText(@\"{started}\", Environment.ProcessId.ToString());\nThread.Sleep(Timeout.Infinite);\n");
+        List<DapException> unheard = [];
+        EventHandler<UnobservedTaskExceptionEventArgs> finalized = (_, e) =>
+        {
+            lock (unheard)
+            {
+                unheard.AddRange(e.Exception.InnerExceptions.OfType<DapException>());
+            }
+        };
+        TaskScheduler.UnobservedTaskException += finalized;
+        int debuggee = 0;
+        int adapter = 0;
+        try
+        {
+            Task ended;
+            (debuggee, adapter, ended) = await HeadlessUnitTestSession.GetOrStartForAssembly(typeof(DebuggerTests).Assembly).Dispatch(() =>
+            {
+                // As every window test starts (WindowTestsStartIdle): with no work held by one before it.
+                BackgroundWork.Forget();
+                MainWindow window = Open();
+                Ui.Run(window, AppActions.Debug);
+                int program = Processes.WrittenId(started, "the program to run under the debugger");
+                Ui.WaitFor(() => window.Debugger.Session is { State: DebugState.Running }, "the session to say the program runs");
+                int debugger = window.Debugger.Session!.AdapterProcessId;
+                // A program stopped where it stands is one the debugger cannot end: it answers neither Stop nor the
+                // window's close, which kills both once its limit has passed.
+                Processes.Suspend(program, "The program");
+                window.Perform(AppActions.Stop);
+                window.Close();
+                return (program, debugger, window.Ended ?? throw new InvalidOperationException("The window closed with no end to wait for"));
+            }, TestContext.Current.CancellationToken);
+
+            Assert.True(await Task.WhenAny(ended, Task.Delay(MainWindow.EndLimit + TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken)) == ended,
+                "The window closed without ending what it started within its limit, so the IDE's process would not end");
+            Assert.True(Processes.Gone(adapter), "After the window closed, the debugger went on running");
+            Assert.True(Processes.Gone(debuggee), "After the window closed, the program being debugged went on running");
+            // A task nobody came back for is heard of when the collector finalizes it.
+            for (int i = 0; i < 20; i++)
+            {
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                Thread.Sleep(100);
+            }
+            lock (unheard)
+            {
+                Assert.True(unheard.Count == 0, "A request to the debugger failed once the window's loop was gone, with nothing left to hear it, so the IDE "
+                    + $"would report it as an error into whatever ran next: {string.Join("; ", unheard.Select(e => e.Message))}");
+            }
+        }
+        finally
+        {
+            TaskScheduler.UnobservedTaskException -= finalized;
+            Processes.Kill(debuggee);
+            Processes.Kill(adapter);
+        }
+    }
+
     private MainWindow Open()
     {
         MainWindow window = new() { Width = 1200, Height = 800 };

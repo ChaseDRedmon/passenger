@@ -21,7 +21,7 @@ public sealed class DapConnection : IAsyncDisposable
     private readonly Stream output;
     private readonly Action<string>? log;
     private readonly Lock writeGate = new();
-    private readonly ConcurrentDictionary<int, TaskCompletionSource<JsonElement>> pending = new();
+    private readonly ConcurrentDictionary<int, (string Command, TaskCompletionSource<JsonElement> Answer)> pending = new();
     private readonly Dictionary<string, Func<JsonElement, Task<object?>>> handlers = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Action> afterResponse = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Action<JsonElement>> eventHandlers = new(StringComparer.Ordinal);
@@ -96,7 +96,7 @@ public sealed class DapConnection : IAsyncDisposable
     {
         int seq = Interlocked.Increment(ref sequence);
         TaskCompletionSource<JsonElement> answer = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        pending[seq] = answer;
+        pending[seq] = (command, answer);
         JsonObject message = new()
         {
             ["seq"] = seq,
@@ -111,9 +111,9 @@ public sealed class DapConnection : IAsyncDisposable
         {
             cancellation.Register(() =>
             {
-                if (pending.TryRemove(seq, out TaskCompletionSource<JsonElement>? waiting))
+                if (pending.TryRemove(seq, out (string, TaskCompletionSource<JsonElement> Answer) waiting))
                 {
-                    waiting.TrySetCanceled(cancellation);
+                    waiting.Answer.TrySetCanceled(cancellation);
                 }
             });
         }
@@ -277,17 +277,17 @@ public sealed class DapConnection : IAsyncDisposable
         if (Text(message, "type") == "response")
         {
             int seq = message.GetProperty("request_seq").GetInt32();
-            if (!pending.TryRemove(seq, out TaskCompletionSource<JsonElement>? answer))
+            if (!pending.TryRemove(seq, out (string Command, TaskCompletionSource<JsonElement> Answer) request))
             {
                 return;
             }
             if (message.TryGetProperty("success", out JsonElement success) && success.GetBoolean())
             {
-                answer.TrySetResult(message.TryGetProperty("body", out JsonElement body) ? body.Clone() : default);
+                request.Answer.TrySetResult(message.TryGetProperty("body", out JsonElement body) ? body.Clone() : default);
             }
             else
             {
-                answer.TrySetException(new DapException(Text(message, "command") ?? "?", Text(message, "message") ?? "failed"));
+                request.Answer.TrySetException(new DapException(Text(message, "command") ?? request.Command, Text(message, "message") ?? "failed"));
             }
             return;
         }
@@ -380,9 +380,10 @@ public sealed class DapConnection : IAsyncDisposable
     {
         foreach (int seq in pending.Keys)
         {
-            if (pending.TryRemove(seq, out TaskCompletionSource<JsonElement>? answer))
+            // Named, since a request failed this way may be heard of only from the finalizer, with no stack to say whose it was.
+            if (pending.TryRemove(seq, out (string Command, TaskCompletionSource<JsonElement> Answer) request))
             {
-                answer.TrySetException(new DapException("?", why));
+                request.Answer.TrySetException(new DapException(request.Command, why));
             }
         }
     }

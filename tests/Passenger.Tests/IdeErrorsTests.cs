@@ -193,7 +193,7 @@ public sealed class IdeErrorsTests : IDisposable
         MainWindow window = OpenProgram();
         int first = window.CSharpService!.Session!.Server.ProcessId;
 
-        Suspend(first);
+        Processes.Suspend(first, "The language server");
         bool replaced = false;
         try
         {
@@ -247,21 +247,6 @@ public sealed class IdeErrorsTests : IDisposable
         Ui.WaitFor(() => window.EditorArea.Active!.Markers.Any(m => m.Kind == Editor.MarkerKind.Error), "the new server's diagnostics");
     }
 
-    /// <summary>Stops a process where it stands, answering nothing, as a deadlocked server would: SIGSTOP on macOS and
-    /// Linux, and on Windows every thread suspended (NtSuspendProcess), which a kill ends as surely. Signalled, not by
-    /// running kill: on macOS a child ending while another is stopped sets .NET reaping in a spin that holds Process's lock.</summary>
-    private static void Suspend(int id)
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            using Process process = Process.GetProcessById(id);
-            int status = NtSuspendProcess(process.Handle);
-            Assert.True(status == 0, $"The language server could not be suspended (NTSTATUS 0x{status:X8})");
-            return;
-        }
-        Assert.True(Signal(id, OperatingSystem.IsMacOS() ? 17 : 19) == 0, $"The language server could not be stopped (errno {Marshal.GetLastPInvokeError()})");
-    }
-
     /// <summary>Kills a server the IDE never replaced, so a failed test leaves none stopped behind.</summary>
     private static void End(int id)
     {
@@ -292,9 +277,6 @@ public sealed class IdeErrorsTests : IDisposable
             return false;
         }
     }
-
-    [DllImport("ntdll.dll")]
-    private static extern int NtSuspendProcess(IntPtr process);
 
     [DllImport("libc", EntryPoint = "kill", SetLastError = true)]
     private static extern int Signal(int process, int signal);

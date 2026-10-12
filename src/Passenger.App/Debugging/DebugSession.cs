@@ -30,6 +30,9 @@ public sealed class DebugSession
     private (string Path, int Line)? runToCursor;
     private volatile bool killed;
 
+    /// <summary>The adapter's one disconnect, once asked: nothing more is asked of it, since it may go before answering.</summary>
+    private Task? disconnected;
+
     private DebugSession(BreakpointStore breakpoints, Action<string> log)
     {
         this.breakpoints = breakpoints;
@@ -186,12 +189,12 @@ public sealed class DebugSession
     }
 
     /// <summary>Text for the program's standard input.</summary>
-    public Task InputAsync(string text) => State == DebugState.Ended ? Task.CompletedTask : connection.RequestAsync("input", new InputArguments(text));
+    public Task InputAsync(string text) => State == DebugState.Ended || disconnected is not null ? Task.CompletedTask : connection.RequestAsync("input", new InputArguments(text));
 
     public async Task PauseAsync()
     {
         UiThread.Check();
-        if (State == DebugState.Running)
+        if (State == DebugState.Running && disconnected is null)
         {
             await connection.RequestAsync("pause", new ThreadArguments(0));
         }
@@ -214,24 +217,36 @@ public sealed class DebugSession
     public Task CloseAsync()
     {
         UiThread.Check();
-        return State == DebugState.Ended ? Task.CompletedTask : Task.Run(() => EndProcessesAsync(TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2)));
+        return State == DebugState.Ended ? Task.CompletedTask : EndProcessesAsync(TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
     }
 
-    /// <summary>Asks the adapter to end the program and itself, and kills both when it has not gone in time.</summary>
-    private async Task EndProcessesAsync(TimeSpan answer, TimeSpan exit)
+    /// <summary>Asks the adapter to end the program and itself, and kills both when they have not gone within this ask's
+    /// limits. It is asked once, by Stop, the program's end or the window's close, whichever comes first: a second
+    /// disconnect waits on an adapter the first has let go. The answer is awaited, and the exit waited for, on the thread
+    /// pool, never failing, so a window gone meanwhile (a test's, its dispatcher with it) leaves no failed request behind.</summary>
+    private Task EndProcessesAsync(TimeSpan answer, TimeSpan exit)
+    {
+        Task asked = disconnected ??= Task.Run(DisconnectAsync);
+        return Task.Run(async () =>
+        {
+            await Task.WhenAny(asked, Task.Delay(answer));
+            if (!adapter.WaitForExit(exit))
+            {
+                killed = true;
+                adapter.Kill(entireProcessTree: true);
+            }
+        });
+    }
+
+    private async Task DisconnectAsync()
     {
         try
         {
-            using CancellationTokenSource limit = new(answer);
-            await connection.RequestAsync("disconnect", new DisconnectArguments(TerminateDebuggee: true), limit.Token);
+            await connection.RequestAsync("disconnect", new DisconnectArguments(TerminateDebuggee: true));
         }
-        catch (Exception error) when (error is DapException or OperationCanceledException)
+        catch (DapException)
         {
-        }
-        if (!adapter.WaitForExit(exit))
-        {
-            killed = true;
-            adapter.Kill(entireProcessTree: true);
+            // Never answered when the adapter was killed, or was gone already.
         }
     }
 
@@ -298,7 +313,7 @@ public sealed class DebugSession
     private async Task Resume(string command)
     {
         UiThread.Check();
-        if (State != DebugState.Paused || StoppedThread is not int thread)
+        if (State != DebugState.Paused || disconnected is not null || StoppedThread is not int thread)
         {
             return;
         }
@@ -334,7 +349,7 @@ public sealed class DebugSession
     private void OnBreakpointsChanged(object? sender, string path)
     {
         // A report from the debugger raises Changed too; only the user's own changes go back to it.
-        if (State is DebugState.Running or DebugState.Paused && (!sent.TryGetValue(path, out string? last) || last != Signature(path)))
+        if (State is DebugState.Running or DebugState.Paused && disconnected is null && (!sent.TryGetValue(path, out string? last) || last != Signature(path)))
         {
             _ = SendBreakpointsAsync(path);
         }
@@ -351,7 +366,7 @@ public sealed class DebugSession
             case "initialized":
                 initialized.TrySetResult();
                 break;
-            case "stopped":
+            case "stopped" when disconnected is null:
                 StoppedEvent stopped = body.Read<StoppedEvent>();
                 StoppedThread = stopped.ThreadId;
                 StopReason = stopped.Reason;
