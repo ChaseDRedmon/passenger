@@ -3,16 +3,99 @@ using Avalonia.Input;
 
 namespace Passenger.App.Explorer;
 
+/// <summary>What the Explorer's menu asks of the window for a row.</summary>
+public enum ExplorerAction
+{
+    NewFile,
+    NewFolder,
+    NewClass,
+    Rename,
+    Delete,
+    CopyPath,
+    Reveal,
+}
+
 public partial class ExplorerView : UserControl
 {
     public ExplorerView()
     {
         InitializeComponent();
         Rows.ItemsSource = Tree.Rows;
+        Rows.ContextRequested += (_, e) =>
+        {
+            if (Rows.SelectedItem is ExplorerNode node && Menu(node) is { } menu)
+            {
+                menu.Open(Rows);
+                e.Handled = true;
+            }
+        };
     }
 
     /// <summary>A file chosen with a double-click or Enter.</summary>
     public event EventHandler<string>? FileOpened;
+
+    /// <summary>A row's menu item or key: what to do, and to which row.</summary>
+    public event EventHandler<(ExplorerAction Action, ExplorerNode Node)>? ActionRequested;
+
+    /// <summary>The row chosen, if any.</summary>
+    public ExplorerNode? Selected => Rows.SelectedItem as ExplorerNode;
+
+    /// <summary>Reads the folder again, keeping the folders that were open open and the chosen row chosen.</summary>
+    public void Refresh()
+    {
+        HashSet<string> open = [.. Tree.Rows.Where(r => r.IsExpanded && r.Path is not null).Select(r => r.Path!)];
+        string? chosen = Selected?.Path;
+        Show(Tree.IsSolutionView);
+        // Outermost first, so each opens inside one already open.
+        foreach (string path in open.OrderBy(p => p.Length))
+        {
+            if (Tree.Rows.FirstOrDefault(r => r.Path == path) is { HasChildren: true } row)
+            {
+                Tree.Expand(row);
+            }
+        }
+        if (chosen is not null && Tree.Rows.FirstOrDefault(r => r.Path == chosen) is { } again)
+        {
+            Rows.SelectedItem = again;
+        }
+    }
+
+    /// <summary>Rider's menu for a row: New (a file, a folder, a class) where things can go, Rename and Delete for what
+    /// is on disk, and its path.</summary>
+    private ContextMenu? Menu(ExplorerNode node)
+    {
+        bool onDisk = node.Kind is NodeKind.File or NodeKind.Folder or NodeKind.Project;
+        bool holds = node.Kind is NodeKind.Folder or NodeKind.Project or NodeKind.Solution or NodeKind.File;
+        if (!onDisk && !holds)
+        {
+            return null;
+        }
+        ContextMenu menu = new();
+        MenuItem Item(string header, ExplorerAction action, string? keys = null)
+        {
+            MenuItem item = new() { Header = keys is null ? header : $"{header}    {keys}" };
+            item.Click += (_, _) => ActionRequested?.Invoke(this, (action, node));
+            return item;
+        }
+        if (holds)
+        {
+            MenuItem add = new() { Header = "Add" };
+            add.Items.Add(Item("New File...", ExplorerAction.NewFile));
+            add.Items.Add(Item("New Folder...", ExplorerAction.NewFolder));
+            add.Items.Add(Item("Class...", ExplorerAction.NewClass));
+            menu.Items.Add(add);
+            menu.Items.Add(new Separator());
+        }
+        if (onDisk)
+        {
+            menu.Items.Add(Item("Rename...", ExplorerAction.Rename, "F2"));
+            menu.Items.Add(Item("Delete...", ExplorerAction.Delete, OperatingSystem.IsMacOS() ? "⌫" : "Delete"));
+            menu.Items.Add(new Separator());
+        }
+        menu.Items.Add(Item("Copy Path", ExplorerAction.CopyPath));
+        menu.Items.Add(Item(OperatingSystem.IsMacOS() ? "Reveal in Finder" : "Show in Explorer", ExplorerAction.Reveal));
+        return menu;
+    }
 
     public ExplorerTree Tree { get; } = new();
 
@@ -105,6 +188,14 @@ public partial class ExplorerView : UserControl
         {
             case Key.Enter:
                 Activate(node);
+                e.Handled = true;
+                break;
+            case Key.F2 when node.Kind is NodeKind.File or NodeKind.Folder or NodeKind.Project:
+                ActionRequested?.Invoke(this, (ExplorerAction.Rename, node));
+                e.Handled = true;
+                break;
+            case Key.Delete or Key.Back when node.Kind is NodeKind.File or NodeKind.Folder or NodeKind.Project:
+                ActionRequested?.Invoke(this, (ExplorerAction.Delete, node));
                 e.Handled = true;
                 break;
             case Key.Right when node.HasChildren && !node.IsExpanded:

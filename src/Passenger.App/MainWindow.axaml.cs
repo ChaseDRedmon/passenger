@@ -64,6 +64,7 @@ public partial class MainWindow : Window
         AddProfiler();
         AddBreadcrumbs();
         AddBookmarks();
+        AddFileOperations();
         Explorer.FileOpened += (_, path) => OpenFile(path);
         Structure.Follow(() => Editors.Active is { } shown
             ? (shown.Path, csharp?.For(shown)?.Lsp, Editors.CodeEditor.CaretPosition.Line)
