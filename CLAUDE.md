@@ -82,6 +82,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   commit, push, update, checkout and rollback (after which open files take their text from disk); `DiffView` is the
   side-by-side diff and `CommitGraph` the log's lanes. `MainWindow.Vcs.cs` is the branch widget, the Commit and Git
   windows' places (`ToolWindows/CommitView`, `GitLogView`) and the `app.vcs.*` actions.
+- `src/Passenger.Terminal`: the terminal. `TerminalScreen` is the VT emulator (no UI), `TerminalView` draws it and
+  encodes the keys, `TerminalSession` runs the shell in a pseudo-terminal (Porta.Pty). `MainWindow.Terminal.cs` is its
+  tool window and the keys it takes ahead of the IDE's.
 - `src/Passenger.App/Run` and `ToolWindows`: build and run through the .NET command line
   (`ProcessRunner` streams a process into a document; `BuildOutput` reads MSBuild's error lines),
   and the bottom panel's Build, Run and Problems windows. `Workspace/SolutionModel` reads

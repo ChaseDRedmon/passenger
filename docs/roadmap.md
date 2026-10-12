@@ -150,6 +150,10 @@ chosen commit's files (a double-click shows what it did to one) and message. Upd
 Open files reload from disk after a checkout, a rollback or an update, and when the window comes back to the front.
 Still to come: word-level highlights in the diff, merge conflicts, stashes, and the log's branch tree.
 
+The terminal is built: Rider's Terminal window (Ctrl+Alt+1, Cmd+Ctrl+1 on the Mac) with a shell per tab in the open
+folder, an emulator of Passenger's own that runs full-screen programs (vim, less, htop), selection and the clipboard,
+the scrollback, and the mouse for programs that ask for it.
+
 ## M8: depth and shipping
 
 Hot reload and Edit and Continue, refactoring dialogs, decompiled sources with Source Link, code cleanup. Packaging:

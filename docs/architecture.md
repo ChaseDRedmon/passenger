@@ -218,6 +218,18 @@ a rollback, another program while the IDE was in the background), every open fil
 text from disk as one undoable edit over only what differs. The diff viewer's right side is the open file's own
 document, so an edit there, or a change its band's arrow puts back, is an edit to the file.
 
+## The terminal
+
+Rider's terminal is JediTerm, a terminal emulator of its own drawn by the IDE; Passenger's is the same shape.
+`Passenger.Terminal` is a VT emulator with no UI (`TerminalScreen`: xterm's sequences read after vt100.net's DEC parser,
+the alternate screen, scroll regions, 16, 256 and 24-bit colours, wide characters, a scrollback of 10,000 lines), a
+control that draws it in the editor's font and sends xterm's encodings for the keys (`TerminalView`), and the user's
+login shell in a pseudo-terminal (`TerminalSession`). The pseudo-terminal is Porta.Pty (MIT): ConPTY on Windows, and on
+macOS and Linux a small native shim that does the fork and exec, since forking a .NET process and running managed code
+in the child is unsafe. Output is read off the window's thread and taken onto the screen in batches, one update a
+frame however fast it comes. When the terminal has the focus it takes every key but Cmd's on the Mac and the shortcuts
+between tool windows, as Rider's overrides the IDE's shortcuts.
+
 ## The profiler
 
 - **Sampling** (CPU, allocations, GC, lock contention, exceptions) comes from EventPipe through

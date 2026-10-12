@@ -27,6 +27,7 @@
     <ProjectReference Include="../Passenger.Languages/Passenger.Languages.csproj" />
     <ProjectReference Include="../Passenger.Lsp/Passenger.Lsp.csproj" />
     <ProjectReference Include="../Passenger.Text/Passenger.Text.csproj" />
+    <ProjectReference Include="../Passenger.Terminal/Passenger.Terminal.csproj" />
     <ProjectReference Include="../Passenger.Dap/Passenger.Dap.csproj" />
     <!-- Built first and carried, never linked: the adapter runs in its own process. -->
     <ProjectReference Include="../Passenger.DebugAdapter/Passenger.DebugAdapter.csproj" ReferenceOutputAssembly="false" Private="false" />

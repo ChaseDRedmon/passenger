@@ -216,6 +216,9 @@ public sealed class KeymapDispatcher(Keymap keymap)
 
     public void Reset() => pending = null;
 
+    /// <summary>Whether the first keystroke of a chord has been pressed and the dispatcher waits for its second.</summary>
+    public bool IsPending => pending is not null;
+
     private static bool IsModifierOnly(Key key) => key is Key.LeftShift or Key.RightShift or Key.LeftCtrl or Key.RightCtrl
         or Key.LeftAlt or Key.RightAlt or Key.LWin or Key.RWin;
 }

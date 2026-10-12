@@ -58,6 +58,7 @@ public partial class MainWindow : Window
         AddHandler(KeyDownEvent, OnKeyDownFirst, RoutingStrategies.Tunnel);
         AddToolWindows();
         AddVcs();
+        AddTerminal();
         Explorer.FileOpened += (_, path) => OpenFile(path);
         Structure.Follow(() => Editors.Active is { } shown
             ? (shown.Path, csharp?.For(shown)?.Lsp, Editors.CodeEditor.CaretPosition.Line)
@@ -311,6 +312,10 @@ public partial class MainWindow : Window
             e.Handled = true;
             return;
         }
+        if (TerminalTakes(e))
+        {
+            return;
+        }
         string? action = keys.Press(e, out bool consumed, out bool shifted);
         if (action is null)
         {
@@ -406,6 +411,9 @@ public partial class MainWindow : Window
                 break;
             case AppActions.ShowTests:
                 ShowToolWindow("tests");
+                break;
+            case AppActions.ShowTerminal:
+                ToggleTerminal();
                 break;
             case AppActions.ShowStructure:
                 ShowToolWindow("structure");

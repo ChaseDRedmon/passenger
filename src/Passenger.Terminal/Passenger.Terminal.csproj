@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The terminal: a VT emulator (TerminalScreen, no UI), the control that draws it and takes the keys
+       (TerminalView), and the shell it runs in a pseudo-terminal (TerminalSession, through Porta.Pty). -->
+  <PropertyGroup>
+    <RootNamespace>Passenger.Terminal</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="Porta.Pty" />
+  </ItemGroup>
+</Project>

@@ -39,6 +39,26 @@
             <SolidColorBrush x:Key="Passenger.Graph.5" Color="#3FB3B3" />
             <SolidColorBrush x:Key="Passenger.Vcs.Ref" Color="#3A3D45" />
             <SolidColorBrush x:Key="Passenger.Vcs.RefText" Color="#C9CCD6" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Foreground" Color="#CED0D6" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Background" Color="#1E1F22" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Cursor" Color="#CED0D6" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Selection" Color="#214283" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Ansi0" Color="#3F4148" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Ansi1" Color="#F0524F" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Ansi2" Color="#5C962C" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Ansi3" Color="#A68A0D" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Ansi4" Color="#3993D4" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Ansi5" Color="#A771BF" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Ansi6" Color="#00A3A3" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Ansi7" Color="#9DA0A8" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Ansi8" Color="#5F636B" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Ansi9" Color="#FF4050" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Ansi10" Color="#4FC414" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Ansi11" Color="#E5BF00" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Ansi12" Color="#1FB0FF" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Ansi13" Color="#ED7EED" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Ansi14" Color="#00E5E5" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Ansi15" Color="#FFFFFF" />
             <SolidColorBrush x:Key="Passenger.Vcs.File.Modified" Color="#6897BB" />
             <SolidColorBrush x:Key="Passenger.Vcs.File.Added" Color="#629755" />
             <SolidColorBrush x:Key="Passenger.Vcs.File.Deleted" Color="#6C6C6C" />
@@ -135,6 +155,26 @@
             <SolidColorBrush x:Key="Passenger.Graph.5" Color="#1F8C8C" />
             <SolidColorBrush x:Key="Passenger.Vcs.Ref" Color="#EBECF0" />
             <SolidColorBrush x:Key="Passenger.Vcs.RefText" Color="#4C5059" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Foreground" Color="#1E1F22" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Background" Color="#FFFFFF" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Cursor" Color="#000000" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Selection" Color="#A6D2FF" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Ansi0" Color="#000000" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Ansi1" Color="#C42B1C" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Ansi2" Color="#26812A" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Ansi3" Color="#8D7A00" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Ansi4" Color="#2062D4" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Ansi5" Color="#9136A8" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Ansi6" Color="#00848A" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Ansi7" Color="#7A7E85" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Ansi8" Color="#5C5F66" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Ansi9" Color="#E5373D" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Ansi10" Color="#3BA33F" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Ansi11" Color="#B39600" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Ansi12" Color="#3D7BF5" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Ansi13" Color="#B154C9" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Ansi14" Color="#00A2A8" />
+            <SolidColorBrush x:Key="Passenger.Terminal.Ansi15" Color="#A8ADBD" />
             <SolidColorBrush x:Key="Passenger.Vcs.File.Modified" Color="#0032A0" />
             <SolidColorBrush x:Key="Passenger.Vcs.File.Added" Color="#0A7700" />
             <SolidColorBrush x:Key="Passenger.Vcs.File.Deleted" Color="#97A3B4" />

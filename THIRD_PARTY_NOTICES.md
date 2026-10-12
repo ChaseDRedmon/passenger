@@ -19,6 +19,8 @@ What Passenger uses that others made, and under what terms.
 | Microsoft.Diagnostics.DbgShim, Microsoft.Diagnostics.NETCore.Client (the debugger's runtime interface) | MIT | https://github.com/dotnet/diagnostics |
 | ICSharpCode.Decompiler (ILSpy's decompiler, for frames without source) | MIT | https://github.com/icsharpcode/ILSpy |
 | MP.Microsoft.CodeAnalysis.CSharp.ExpressionEvaluator.ExpressionCompiler (Roslyn's expression compiler, packed from Roslyn's source by MattParkerDev) | MIT | https://github.com/MattParkerDev/roslyn (branch custom-ee-5.9.0) |
+| Porta.Pty (the terminal's pseudo-terminal, with its native forkpty shim, libporta_pty) | MIT | https://github.com/tomlm/Porta.Pty |
+| Microsoft.Windows.Console.ConPTY (Porta.Pty's console host on Windows: conpty.dll and OpenConsole.exe) | MIT | https://github.com/microsoft/terminal |
 | NeoSmart.AsyncLock | MIT | https://github.com/neosmart/AsyncLock |
 | ZLinq | MIT | https://github.com/Cysharp/ZLinq |
 | Krafs.Publicizer (build time only) | MIT | https://github.com/krafs/Publicizer |

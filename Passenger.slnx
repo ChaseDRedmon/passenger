@@ -8,6 +8,7 @@
     <Project Path="src/Passenger.Editor/Passenger.Editor.csproj" />
     <Project Path="src/Passenger.Languages/Passenger.Languages.csproj" />
     <Project Path="src/Passenger.Lsp/Passenger.Lsp.csproj" />
+    <Project Path="src/Passenger.Terminal/Passenger.Terminal.csproj" />
     <Project Path="src/Passenger.Text/Passenger.Text.csproj" />
   </Folder>
   <Folder Name="/tests/">

@@ -76,6 +76,9 @@ public static class AppActions
     public const string SplitDown = "app.editor.splitDown";
     public const string MoveToOppositeGroup = "app.editor.moveToOppositeGroup";
 
+    // The terminal: Rider's, a shell per tab in the open folder.
+    public const string ShowTerminal = "app.showTerminal";
+
     // The tool windows' frame.
     public const string MaximizeToolWindow = "app.window.maximize";
     public const string HideAllToolWindows = "app.window.hideAll";
@@ -157,6 +160,7 @@ public static class AppActions
                 .Bind(PreviousChange, "shift meta alt P")
                 .Bind(RollbackLines, "meta alt Z")
                 .Bind(ShowGit, "meta 9")
+                .Bind(ShowTerminal, "meta control 1")
                 .Bind(UpdateProject, "meta alt W")
                 .Bind(Back, "meta MINUS")
                 .Bind(Forward, "meta shift MINUS")
@@ -225,6 +229,7 @@ public static class AppActions
             .Bind(PreviousChange, "shift control alt P")
             .Bind(RollbackLines, "control alt Z")
             .Bind(ShowGit, "alt 9")
+            .Bind(ShowTerminal, "control alt 1")
             .Bind(UpdateProject, "control alt W")
             .Bind(Back, "control MINUS")
             .Bind(Forward, "control shift MINUS")
