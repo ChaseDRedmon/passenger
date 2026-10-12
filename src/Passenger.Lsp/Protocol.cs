@@ -176,6 +176,8 @@ public sealed record WorkspaceSymbolParams(string Query);
 
 public sealed record DocumentSymbolParams(TextDocumentIdentifier TextDocument);
 
+public sealed record FoldingRangeParams(TextDocumentIdentifier TextDocument);
+
 /// <summary>A symbol found by name across the workspace. Kind is the protocol's SymbolKind number.</summary>
 public sealed record SymbolInformation(string Name, int Kind, LspLocation Location, string? ContainerName = null);
 

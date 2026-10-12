@@ -96,7 +96,7 @@ public sealed class LspDocument : IDisposable
         Uri = uri;
         Text = text;
         Identifier = new TextDocumentIdentifier(uri);
-        _ = session.Server.NotifyAsync("textDocument/didOpen",
+        session.Server.Notify("textDocument/didOpen",
             new DidOpenTextDocumentParams(new TextDocumentItem(uri, "csharp", text.Version, text.Snapshot.ToString())));
         text.Changed += OnChanged;
     }
@@ -106,7 +106,7 @@ public sealed class LspDocument : IDisposable
     public TextDocumentIdentifier Identifier { get; }
     private LanguageServer Server => session.Server;
 
-    public void Saved() => _ = Server.NotifyAsync("textDocument/didSave", new DidSaveTextDocumentParams(Identifier));
+    public void Saved() => Server.Notify("textDocument/didSave", new DidSaveTextDocumentParams(Identifier));
 
     public void Dispose()
     {
@@ -119,7 +119,7 @@ public sealed class LspDocument : IDisposable
         session.Forget(this);
         if (!Server.HasExited)
         {
-            _ = Server.NotifyAsync("textDocument/didClose", new DidCloseTextDocumentParams(Identifier));
+            Server.Notify("textDocument/didClose", new DidCloseTextDocumentParams(Identifier));
         }
     }
 
@@ -250,6 +250,6 @@ public sealed class LspDocument : IDisposable
             changes.Add(new TextDocumentContentChangeEvent(before.RangeOf(range), text));
             last = first - 1;
         }
-        _ = Server.NotifyAsync("textDocument/didChange", new DidChangeTextDocumentParams(new VersionedTextDocumentIdentifier(Uri, e.Version), changes));
+        Server.Notify("textDocument/didChange", new DidChangeTextDocumentParams(new VersionedTextDocumentIdentifier(Uri, e.Version), changes));
     }
 }

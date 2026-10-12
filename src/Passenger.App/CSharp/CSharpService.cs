@@ -8,11 +8,11 @@ namespace Passenger.App.CSharp;
 /// <summary>C# for the open folder: Roslyn's language server started on the workspace's solution or
 /// projects, its state for the status bar, and a <see cref="CSharpDocument"/> for every C# file
 /// open in a tab. Files opened before the server is ready are attached once it is. A server that ends
-/// on its own is started again with the open files, as Rider restarts its backend, a few times at most. A UI-thread
-/// object: what the server says from its own threads crosses through <see cref="UiThread"/>.</summary>
+/// on its own, or stops answering, is started again with the open files, as Rider restarts its backend, a few times at
+/// most. A UI-thread object: what the server says from its own threads crosses through <see cref="UiThread"/>.</summary>
 public sealed class CSharpService : IAsyncDisposable
 {
-    /// <summary>How many times a server that keeps ending is started again within <see cref="RestartWindow"/>.</summary>
+    /// <summary>How many times a server that keeps ending or hanging is started again within <see cref="RestartWindow"/>.</summary>
     private const int RestartLimit = 3;
 
     private static readonly TimeSpan RestartWindow = TimeSpan.FromMinutes(5);
@@ -31,7 +31,7 @@ public sealed class CSharpService : IAsyncDisposable
     public bool IsReady => session is { IsLoaded: true };
     public RoslynSession? Session => session;
 
-    /// <summary>The server ended on its own, with what was done about it; raised on the UI thread.</summary>
+    /// <summary>The server ended on its own or stopped answering, with what was done about it; raised on the UI thread.</summary>
     public event EventHandler<string>? Stopped;
 
     /// <summary>The solution's problems changed (solution-wide analysis, or an open file's); raised on the UI thread.</summary>
@@ -255,6 +255,7 @@ public sealed class CSharpService : IAsyncDisposable
             started.Loaded += (_, _) => loaded.TrySetResult();
             started.Server.RefreshRequested += (_, _) => UiThread.Post(RefreshAll);
             started.Server.Exited += (_, why) => UiThread.Post(() => OnExited(started, why));
+            started.Server.NotResponding += (_, why) => UiThread.Post(() => OnNotResponding(started, why));
             session = started;
             SetState(started.Solution is { } opened ? $"Loading {Path.GetFileName(opened)}…" : "Loading projects…");
             foreach (CSharpDocument features in documents.Values)
@@ -282,19 +283,38 @@ public sealed class CSharpService : IAsyncDisposable
         }
     }
 
-    /// <summary>The server ended on its own: the open files go back to the parser's colours and are opened again in a
-    /// new server, unless it has ended too often to be worth it.</summary>
+    /// <summary>The server ended on its own: it crashed, or something else ended it.</summary>
     private void OnExited(RoslynSession lost, string why)
     {
         if (disposed || session != lost || workspace is null)
         {
             return;
         }
+        IdeErrors.Write($"The C# language server (process {lost.Server.ProcessId}) ended: {why}");
+        Replace(lost, workspace, "The C# language server ended");
+    }
+
+    /// <summary>The server stopped answering: it is ended at once, so every request waiting on it fails rather than
+    /// waiting for ever, and replaced as one that ended is, the status bar saying so as Rider's does.</summary>
+    private void OnNotResponding(RoslynSession hung, string why)
+    {
+        if (disposed || session != hung || workspace is null)
+        {
+            return;
+        }
+        IdeErrors.Write($"The C# language server (process {hung.Server.ProcessId}) is not responding: {why}");
+        hung.Server.Kill();
+        Replace(hung, workspace, "C# server not responding");
+    }
+
+    /// <summary>A server gone: the open files go back to the parser's colours and are opened again in a new server,
+    /// unless servers have gone too often to be worth it.</summary>
+    private void Replace(RoslynSession lost, WorkspaceModel restarting, string what)
+    {
         session = null;
         analysing?.Cancel();
         solutionReports.Clear();
         _ = lost.DisposeAsync();
-        IdeErrors.Write($"The C# language server (process {lost.Server.ProcessId}) ended: {why}");
         foreach (OpenDocument open in documents.Keys.ToList())
         {
             Detach(open);
@@ -305,12 +325,12 @@ public sealed class CSharpService : IAsyncDisposable
         if (restarts.Count >= RestartLimit)
         {
             SetState("C# stopped");
-            Stopped?.Invoke(this, $"The C# language server ended {RestartLimit + 1} times in {RestartWindow.TotalMinutes:0} minutes and was left stopped; the IDE's log says why");
+            Stopped?.Invoke(this, $"{what} {RestartLimit + 1} times in {RestartWindow.TotalMinutes:0} minutes, so it was left stopped; the IDE's log says why");
             return;
         }
         restarts.Add(now);
-        Stopped?.Invoke(this, "The C# language server ended; starting it again");
-        Start(workspace);
+        Stopped?.Invoke(this, $"{what}; starting it again");
+        Start(restarting);
     }
 
     private void RefreshAll()

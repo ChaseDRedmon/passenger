@@ -10,10 +10,28 @@ namespace Passenger.Lsp;
 /// thread. Its standard error and its own logs go to <see cref="LogFolder"/>.</summary>
 public sealed class LanguageServer : IAsyncDisposable
 {
+    /// <summary>How long a request waits before the server is checked: one this old may be slow work (usages across a
+    /// large solution) or a server that will never answer.</summary>
+    private static readonly TimeSpan SlowRequest = TimeSpan.FromSeconds(5);
+
+    /// <summary>How long the check may go unanswered before the server is called not responding. Roslyn answers it in
+    /// milliseconds, through the queue every request goes through, even while it loads projects or runs a long request.</summary>
+    private static readonly TimeSpan ResponseLimit = TimeSpan.FromSeconds(10);
+
+    /// <summary>The check: the folding ranges of a document never opened, which Roslyn answers with none.</summary>
+    private static readonly FoldingRangeParams Check = new(new TextDocumentIdentifier("file:///passenger-is-the-server-answering.cs"));
+
     private readonly Process process;
     private readonly JsonRpc rpc;
     private readonly ClientTarget client;
     private readonly ErrorLog errors;
+    private readonly Dictionary<long, (string Method, long Since)> waiting = [];
+    private readonly Timer watch;
+    private long requests;
+    private long checkedAt;
+    private int checking;
+    private volatile bool hung;
+    private volatile bool killed;
     private volatile bool disposing;
 
     private readonly Dictionary<string, object?> options;
@@ -34,11 +52,17 @@ public sealed class LanguageServer : IAsyncDisposable
                 Exited?.Invoke(this, e.Description);
             }
         };
+        watch = new Timer(_ => Watch(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
     }
 
     /// <summary>The connection to the server ended without being asked to (it crashed or was killed), with why;
     /// raised on any thread.</summary>
     public event EventHandler<string>? Exited;
+
+    /// <summary>The server stopped answering: a request waited <see cref="SlowRequest"/>, and a question it answers at
+    /// once then went unanswered for <see cref="ResponseLimit"/> (it is deadlocked, suspended or thrashing). Raised once,
+    /// with what waited, on any thread; the server is left running for the caller to <see cref="Kill"/>.</summary>
+    public event EventHandler<string>? NotResponding;
 
     /// <summary>The server's process, for the IDE's log and for a test to end it; kept once the process is gone.</summary>
     public int ProcessId { get; }
@@ -80,7 +104,8 @@ public sealed class LanguageServer : IAsyncDisposable
     /// <summary>Every document's diagnostics from one source, as the solution-wide analysis has them; a document unchanged
     /// since the result id given for it comes back as unchanged, with no items.</summary>
     public async Task<IReadOnlyList<WorkspaceDocumentDiagnosticReport>> WorkspaceDiagnosticsAsync(string? source, IReadOnlyList<PreviousResultId> previous, CancellationToken cancel = default) =>
-        (await RequestAsync<WorkspaceDiagnosticReport>("workspace/diagnostic", new WorkspaceDiagnosticParams(source, previous), cancel))?.Items ?? [];
+        // Roslyn holds this pull open until something changes, so how long it waits says nothing of the server.
+        (await rpc.InvokeWithParameterObjectAsync<WorkspaceDiagnosticReport?>("workspace/diagnostic", new WorkspaceDiagnosticParams(source, previous), cancel))?.Items ?? [];
 
     /// <summary>An option's value: one changed while running, else Passenger's own, else null for the server's default.</summary>
     private object? Option(string name)
@@ -95,7 +120,8 @@ public sealed class LanguageServer : IAsyncDisposable
         return Settings.TryGetValue(name, out object? value) ? value : null;
     }
 
-    public bool HasExited => process.HasExited;
+    /// <summary>The process has ended, or been ended by <see cref="Kill"/>.</summary>
+    public bool HasExited => killed || process.HasExited;
 
     /// <summary>Starts the Roslyn language server Passenger ships (under <c>roslyn/</c> beside the
     /// app), initializes it for a folder, and returns once it has said what it can do.</summary>
@@ -162,6 +188,7 @@ public sealed class LanguageServer : IAsyncDisposable
         {
             // A start given up (another folder opened) or failed leaves no server behind, nor its log held open.
             server2.disposing = true;
+            server2.watch.Dispose();
             rpc.Dispose();
             End(process);
             errors.Dispose();
@@ -183,12 +210,120 @@ public sealed class LanguageServer : IAsyncDisposable
         process.Dispose();
     }
 
+    /// <summary>A request someone waits for the answer to: one still waiting after <see cref="SlowRequest"/> has the
+    /// server checked, and raises <see cref="NotResponding"/> if that goes unanswered too.</summary>
     public async Task<T?> RequestAsync<T>(string method, object parameters, CancellationToken cancel = default)
     {
-        return await rpc.InvokeWithParameterObjectAsync<T?>(method, parameters, cancel);
+        long id = Interlocked.Increment(ref requests);
+        lock (waiting)
+        {
+            waiting[id] = (method, Stopwatch.GetTimestamp());
+        }
+        try
+        {
+            return await rpc.InvokeWithParameterObjectAsync<T?>(method, parameters, cancel);
+        }
+        finally
+        {
+            lock (waiting)
+            {
+                waiting.Remove(id);
+            }
+        }
     }
 
     public Task NotifyAsync(string method, object parameters) => rpc.NotifyWithParameterObjectAsync(method, parameters);
+
+    /// <summary>Sends a notification nothing waits on (a document's change, its closing). One the server can no longer
+    /// take, having ended or been ended, is dropped: a server started again is sent the open documents afresh.</summary>
+    public void Notify(string method, object parameters) => _ = NotifyOrDropAsync(method, parameters);
+
+    private async Task NotifyOrDropAsync(string method, object parameters)
+    {
+        try
+        {
+            await rpc.NotifyWithParameterObjectAsync(method, parameters);
+        }
+        catch (Exception error) when (error is ConnectionLostException or ObjectDisposedException or IOException)
+        {
+        }
+    }
+
+    /// <summary>Ends a server that stopped answering, at once, since it would answer no shutdown either: every request
+    /// waiting on it fails, and <see cref="Exited"/> is not raised, its caller having let it go.</summary>
+    public void Kill()
+    {
+        disposing = true;
+        killed = true;
+        try
+        {
+            process.Kill(entireProcessTree: true);
+        }
+        catch (Exception error) when (error is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+        }
+    }
+
+    /// <summary>Checks the server, at most once in <see cref="SlowRequest"/>, while a request has waited that long; runs
+    /// on the timer's thread each second.</summary>
+    private void Watch()
+    {
+        if (disposing || hung || Stopwatch.GetElapsedTime(Interlocked.Read(ref checkedAt)) < SlowRequest)
+        {
+            return;
+        }
+        string? slowest = null;
+        TimeSpan waited = SlowRequest;
+        lock (waiting)
+        {
+            foreach ((string method, long since) in waiting.Values)
+            {
+                TimeSpan age = Stopwatch.GetElapsedTime(since);
+                if (age >= waited)
+                {
+                    (slowest, waited) = (method, age);
+                }
+            }
+        }
+        if (slowest is not null && Interlocked.CompareExchange(ref checking, 1, 0) == 0)
+        {
+            Interlocked.Exchange(ref checkedAt, Stopwatch.GetTimestamp());
+            _ = CheckAsync(slowest, waited);
+        }
+    }
+
+    private async Task CheckAsync(string slowest, TimeSpan waited)
+    {
+        try
+        {
+            // Run apart, so a write held up by a server that reads nothing never holds the limit's clock.
+            await Task.Run(AnswerAsync).WaitAsync(ResponseLimit);
+        }
+        catch (TimeoutException)
+        {
+            if (!disposing)
+            {
+                hung = true;
+                NotResponding?.Invoke(this, $"{slowest} waited {waited.TotalSeconds:0} s, then a check went unanswered for {ResponseLimit.TotalSeconds:0} s");
+            }
+        }
+        finally
+        {
+            Interlocked.Exchange(ref checking, 0);
+        }
+    }
+
+    private async Task AnswerAsync()
+    {
+        try
+        {
+            await rpc.InvokeWithParameterObjectAsync<JsonElement>("textDocument/foldingRange", Check);
+        }
+        catch (Exception error) when (error is RemoteRpcException or ObjectDisposedException or IOException or OperationCanceledException)
+        {
+            // An error is an answer too, and a connection gone is Exited's to report.
+        }
+    }
 
     /// <summary>A call hierarchy item's callers, each with where the calls are.</summary>
     public async Task<IReadOnlyList<IncomingCall>> IncomingCallsAsync(HierarchyItem item, CancellationToken cancel = default) =>
@@ -206,9 +341,10 @@ public sealed class LanguageServer : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         disposing = true;
+        watch.Dispose();
         try
         {
-            if (!process.HasExited)
+            if (!HasExited)
             {
                 using CancellationTokenSource limit = new(TimeSpan.FromSeconds(3));
                 await rpc.InvokeWithCancellationAsync<object?>("shutdown", [], limit.Token);

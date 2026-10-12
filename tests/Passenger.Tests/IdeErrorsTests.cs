@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Threading;
@@ -7,7 +8,7 @@ using Passenger.App;
 namespace Passenger.Tests;
 
 /// <summary>An error inside the IDE is caught, written to the log and shown, never the end of it; a language server
-/// that ends on its own is started again with the open files, as Rider restarts its backend.</summary>
+/// that ends on its own, or stops answering, is started again with the open files, as Rider restarts its backend.</summary>
 public sealed class IdeErrorsTests : IDisposable
 {
     private readonly string folder = Directory.CreateTempSubdirectory("passenger-errors-").FullName;
@@ -93,6 +94,52 @@ public sealed class IdeErrorsTests : IDisposable
     [AvaloniaFact]
     public void A_language_server_that_ends_is_started_again_and_the_open_file_is_in_the_new_one()
     {
+        MainWindow window = OpenProgram();
+        int first = window.CSharpService!.Session!.Server.ProcessId;
+
+        Process.GetProcessById(first).Kill();
+        Ui.WaitFor(() => window.CSharpService.Session is { IsLoaded: true } session && session.Server.ProcessId != first, "a new language server");
+        Assert.Contains($"process {first}) ended", File.ReadAllText(IdeErrors.LogPath));
+
+        TypeAnErrorAndSeeItReported(window);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_language_server_that_stops_answering_is_reported_not_responding_and_started_again()
+    {
+        MainWindow window = OpenProgram();
+        int first = window.CSharpService!.Session!.Server.ProcessId;
+
+        Suspend(first);
+        bool replaced = false;
+        try
+        {
+            // Find Usages waits on a server that will never answer, as on one deadlocked: without the watch, for ever.
+            string text = window.EditorArea.CodeEditor.Document.Snapshot.ToString();
+            window.EditorArea.CodeEditor.Selections = Text.SelectionSet.Single(text.IndexOf("Main", StringComparison.Ordinal) + 1);
+            Ui.Run(window, AppActions.FindUsages);
+            Ui.WaitFor(() => window.CSharpService.Session is { IsLoaded: true } session && session.Server.ProcessId != first, "a new language server");
+            replaced = true;
+        }
+        finally
+        {
+            if (!replaced)
+            {
+                End(first);
+            }
+        }
+        Assert.Equal("C# server not responding; starting it again", window.Status);
+        Assert.Contains($"process {first}) is not responding: textDocument/references waited", File.ReadAllText(IdeErrors.LogPath));
+        Ui.WaitFor(() => !Running(first), "the server that stopped answering to be ended, not left behind");
+
+        TypeAnErrorAndSeeItReported(window);
+        window.Close();
+    }
+
+    /// <summary>A restored console project with its Program.cs open, the language server ready on it.</summary>
+    private MainWindow OpenProgram()
+    {
         File.WriteAllText(Path.Combine(folder, "Sample.csproj"),
             "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
         File.WriteAllText(Path.Combine(folder, "Program.cs"), "class Program\n{\n    static void Main()\n    {\n    }\n}\n");
@@ -106,17 +153,67 @@ public sealed class IdeErrorsTests : IDisposable
         window.OpenFile("Program.cs");
         Ui.Settle();
         Assert.True(window.CSharpService?.IsReady, window.CSharpService?.State);
-        int first = window.CSharpService!.Session!.Server.ProcessId;
+        return window;
+    }
 
-        Process.GetProcessById(first).Kill();
-        Ui.WaitFor(() => window.CSharpService.Session is { IsLoaded: true } session && session.Server.ProcessId != first, "a new language server");
-        Assert.Contains($"process {first}) ended", File.ReadAllText(IdeErrors.LogPath));
-
-        // The file open before is open in the new server: an error typed into it is reported.
+    /// <summary>The file open before is open in the new server: an error typed into it is reported.</summary>
+    private static void TypeAnErrorAndSeeItReported(MainWindow window)
+    {
         string text = window.EditorArea.CodeEditor.Document.Snapshot.ToString();
         window.EditorArea.CodeEditor.Selections = Text.SelectionSet.Single(text.IndexOf("    }", StringComparison.Ordinal));
         window.KeyTextInput("int number = \"text\";");
         Ui.WaitFor(() => window.EditorArea.Active!.Markers.Any(m => m.Kind == Editor.MarkerKind.Error), "the new server's diagnostics");
-        window.Close();
     }
+
+    /// <summary>Stops a process where it stands, answering nothing, as a deadlocked server would: SIGSTOP on macOS and
+    /// Linux, and on Windows every thread suspended (NtSuspendProcess), which a kill ends as surely. Signalled, not by
+    /// running kill: on macOS a child ending while another is stopped sets .NET reaping in a spin that holds Process's lock.</summary>
+    private static void Suspend(int id)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            using Process process = Process.GetProcessById(id);
+            int status = NtSuspendProcess(process.Handle);
+            Assert.True(status == 0, $"The language server could not be suspended (NTSTATUS 0x{status:X8})");
+            return;
+        }
+        Assert.True(Signal(id, OperatingSystem.IsMacOS() ? 17 : 19) == 0, $"The language server could not be stopped (errno {Marshal.GetLastPInvokeError()})");
+    }
+
+    /// <summary>Kills a server the IDE never replaced, so a failed test leaves none stopped behind.</summary>
+    private static void End(int id)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            Signal(id, 9);
+            return;
+        }
+        try
+        {
+            using Process process = Process.GetProcessById(id);
+            process.Kill();
+        }
+        catch (Exception error) when (error is ArgumentException or InvalidOperationException)
+        {
+        }
+    }
+
+    private static bool Running(int id)
+    {
+        try
+        {
+            using Process process = Process.GetProcessById(id);
+            return !process.HasExited;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    [DllImport("ntdll.dll")]
+    private static extern int NtSuspendProcess(IntPtr process);
+
+    [DllImport("libc", EntryPoint = "kill", SetLastError = true)]
+    private static extern int Signal(int process, int signal);
 }
