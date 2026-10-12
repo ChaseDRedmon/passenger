@@ -213,32 +213,36 @@ public sealed partial class PassengerTools
 
     [McpServerTool(Name = "terminal_run", Title = "Run in the terminal", Destructive = true), Description(
         "Types a command into the IDE's Terminal window (opening it, and its shell, if need be) and presses Enter, as the person would, then waits " +
-        "until the output has been quiet for a moment (or waitSeconds) and returns what the command printed. The person sees it run.")]
+        "until the shell shows its prompt again, or the output has been quiet for two seconds (or waitSeconds), and returns what the command " +
+        "printed. The person sees it run.")]
     public Task<string> TerminalRun(string command, int waitSeconds = 15, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         TerminalSession shell = await Terminal(cancel);
-        int before = shell.Screen.Scrollback.Count + shell.Screen.CursorRow;
-        int version = shell.Screen.Version;
+        TerminalScreen screen = shell.Screen;
+        int before = screen.Scrollback.Count + screen.CursorRow;
+        string prompt = Prompt(screen);
+        int version = screen.Version;
         shell.Write(command + "\r");
-        // Quiet: no new output for half a second, after some came.
         DateTime until = DateTime.UtcNow.AddSeconds(Math.Clamp(waitSeconds, 1, 600));
         DateTime last = DateTime.UtcNow;
         bool answered = false;
         while (DateTime.UtcNow < until)
         {
             await Task.Delay(100, cancel);
-            if (shell.Screen.Version != version)
+            if (screen.Version != version)
             {
-                version = shell.Screen.Version;
+                version = screen.Version;
                 last = DateTime.UtcNow;
                 answered = true;
+                continue;
             }
-            else if (answered && DateTime.UtcNow - last > TimeSpan.FromMilliseconds(500))
+            // Its prompt back below it ends a command; one that leaves another prompt (a cd) or none (a server) ends once quiet.
+            bool prompted = prompt.Length > 0 && screen.Scrollback.Count + screen.CursorRow > before && Prompt(screen) == prompt;
+            if (answered && DateTime.UtcNow - last > (prompted ? TimeSpan.FromMilliseconds(200) : TimeSpan.FromSeconds(2)))
             {
                 break;
             }
         }
-        TerminalScreen screen = shell.Screen;
         int end = screen.Scrollback.Count + screen.CursorRow;
         IEnumerable<string> lines = Enumerable.Range(Math.Max(0, before), Math.Max(0, end - before + 1)).Select(i => screen.LineAt(i).Text());
         return string.Join('\n', lines).TrimEnd();
@@ -265,11 +269,25 @@ public sealed partial class PassengerTools
         }
         window.ShowToolWindow("terminal");
         TerminalSession shell = window.TerminalPanel.Active is { IsRunning: true } started ? started : await window.TerminalPanel.NewSessionAsync();
-        // The shell's first prompt, before anything is typed at it.
-        await Until(() => shell.Screen.Version > 0, TimeSpan.FromSeconds(10), cancel);
-        await Task.Delay(300, cancel);
+        // Its first prompt before anything is typed: output alone is not it, since ConPTY clears the screen before the shell starts.
+        DateTime limit = DateTime.UtcNow.AddSeconds(20);
+        DateTime changed = DateTime.UtcNow;
+        int version = -1;
+        while (DateTime.UtcNow < limit && (Prompt(shell.Screen).Length == 0 || DateTime.UtcNow - changed < TimeSpan.FromMilliseconds(300)))
+        {
+            if (shell.Screen.Version != version)
+            {
+                version = shell.Screen.Version;
+                changed = DateTime.UtcNow;
+            }
+            await Task.Delay(50, cancel);
+        }
         return shell;
     }
+
+    /// <summary>The text before the cursor on its line, which at a shell waiting for a command is its prompt.</summary>
+    private static string Prompt(TerminalScreen screen) =>
+        screen.IsAlternate ? string.Empty : screen.Lines[screen.CursorRow].Text(0, screen.CursorColumn);
 
     private ProjectModel Project(string project)
     {
