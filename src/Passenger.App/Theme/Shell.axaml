@@ -211,6 +211,36 @@
         <Setter Property="BoxShadow" Value="0 10 30 0 #70000000" />
     </Style>
 
+    <Style Selector="GridSplitter.hairlineRows">
+        <Setter Property="MinHeight" Value="0" />
+        <Setter Property="Height" Value="7" />
+        <Setter Property="Margin" Value="0,-3" />
+        <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="GridSplitter.hairlineRows:pointerover">
+        <Setter Property="Background" Value="Transparent" />
+    </Style>
+
+    <!-- A bottom tool window's tab: plain text, the open one on a raised band. -->
+    <Style Selector="ToggleButton.panelTab">
+        <Setter Property="Height" Value="24" />
+        <Setter Property="Padding" Value="10,0" />
+        <Setter Property="CornerRadius" Value="5" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.TextMuted}" />
+    </Style>
+    <Style Selector="ToggleButton.panelTab:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource Passenger.Hover}" />
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.Text}" />
+    </Style>
+    <Style Selector="ToggleButton.panelTab:checked /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource Passenger.Selected}" />
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.Text}" />
+    </Style>
+
     <!-- The one emphasised action on a page. -->
     <Style Selector="Button.primary">
         <Setter Property="Padding" Value="16,7" />

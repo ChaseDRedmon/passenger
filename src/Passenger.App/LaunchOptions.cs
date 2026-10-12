@@ -57,6 +57,9 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
                 case "--key":
                     steps.Add(new ScriptStep.Key(ParseKey(Value(args, ref i, flag))));
                     break;
+                case "--wait":
+                    steps.Add(new ScriptStep.Wait(TimeSpan.FromMilliseconds(Numbers(Value(args, ref i, flag), ',', 1, flag)[0])));
+                    break;
                 case "--click" or "--double-click":
                     double[] xy = Numbers(Value(args, ref i, flag), ',', 2, flag);
                     steps.Add(new ScriptStep.Click(new Point(xy[0], xy[1]), flag == "--click" ? 1 : 2));
@@ -82,7 +85,7 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
         }
         if (shot is null && (steps.Count > 0 || crop is not null))
         {
-            throw new FormatException("--type, --key, --click and --crop are steps of a --screenshot");
+            throw new FormatException("--type, --key, --click, --wait and --crop are steps of a --screenshot");
         }
         ScreenshotOptions? screenshot = shot is null ? null : new ScreenshotOptions(shot, size, scale, steps, crop);
         return new LaunchOptions(folder, files, caret, theme, screenshot);
@@ -163,6 +166,9 @@ public abstract record ScriptStep
     public sealed record Key(Keystroke Stroke) : ScriptStep;
 
     public sealed record Click(Point At, int Count) : ScriptStep;
+
+    /// <summary>Time for what the screenshot does not wait on by itself: a program running.</summary>
+    public sealed record Wait(TimeSpan For) : ScriptStep;
 }
 
 /// <summary>A theme forced from the command line over the app's own (<c>App.axaml</c>).</summary>

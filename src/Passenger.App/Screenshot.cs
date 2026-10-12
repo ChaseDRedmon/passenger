@@ -74,6 +74,15 @@ internal static class Screenshot
                 window.KeyPress(key.Stroke.Key, modifiers, PhysicalKey.None, null);
                 window.KeyRelease(key.Stroke.Key, modifiers, PhysicalKey.None, null);
                 break;
+            case ScriptStep.Wait wait:
+                DateTime until = DateTime.UtcNow + wait.For;
+                while (DateTime.UtcNow < until)
+                {
+                    Dispatcher.UIThread.RunJobs();
+                    AvaloniaHeadlessPlatform.ForceRenderTimerTick(1);
+                    Thread.Sleep(10);
+                }
+                break;
             case ScriptStep.Click click:
                 for (int i = 0; i < click.Count; i++)
                 {

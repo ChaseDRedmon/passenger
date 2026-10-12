@@ -1,0 +1,60 @@
+using System.Text.RegularExpressions;
+using Passenger.App.Workspace;
+using Passenger.Text;
+
+namespace Passenger.App.Run;
+
+/// <summary>A problem a build or the language server reported: where it is and what it says.</summary>
+public sealed record Problem(ProblemSeverity Severity, string Message, string? Code, string? Path, TextPosition Position, string? Project)
+{
+    public string Where => Path is null ? Project ?? string.Empty : $"{System.IO.Path.GetFileName(Path)}:{Position.Line + 1}:{Position.Column + 1}";
+}
+
+public enum ProblemSeverity
+{
+    Error,
+    Warning,
+}
+
+/// <summary>Something that can be run from the toolbar: an executable project, run with
+/// <c>dotnet run</c>, which builds it first.</summary>
+public sealed record RunConfiguration(string Name, ProjectModel Project)
+{
+    public static IReadOnlyList<RunConfiguration> From(SolutionModel? solution, string folder)
+    {
+        IEnumerable<ProjectModel> projects = solution?.Projects
+            ?? Directory.EnumerateFiles(folder, "*.csproj").Select(ProjectModel.Load);
+        return projects
+            .Where(p => p.Exists && p.IsRunnable)
+            .Select(p => new RunConfiguration(System.IO.Path.GetFileNameWithoutExtension(p.Path), p))
+            .ToList();
+    }
+}
+
+/// <summary>Reads MSBuild's error and warning lines ("File.cs(12,5): error CS0103: ... [Project.csproj]")
+/// out of a build's output.</summary>
+public static partial class BuildOutput
+{
+    /// <summary>The arguments a build runs with: no terminal logger animation, no repeated summary,
+    /// lines not wrapped, so every problem is one line read once.</summary>
+    public static IReadOnlyList<string> Arguments(string target) =>
+        ["build", target, "-nologo", "-tl:off", "-clp:NoSummary;ForceNoAlign"];
+
+    public static Problem? Parse(string line)
+    {
+        Match match = Diagnostic().Match(line);
+        if (!match.Success)
+        {
+            return null;
+        }
+        ProblemSeverity severity = match.Groups["severity"].Value == "error" ? ProblemSeverity.Error : ProblemSeverity.Warning;
+        string? path = match.Groups["file"].Value.Trim() is { Length: > 0 } file && !file.StartsWith("MSBUILD", StringComparison.Ordinal) ? file : null;
+        int lineNumber = int.TryParse(match.Groups["line"].Value, out int l) ? l - 1 : 0;
+        int column = int.TryParse(match.Groups["column"].Value, out int c) ? c - 1 : 0;
+        string? project = match.Groups["project"].Success ? System.IO.Path.GetFileNameWithoutExtension(match.Groups["project"].Value) : null;
+        return new Problem(severity, match.Groups["message"].Value.Trim(), match.Groups["code"].Value, path, new TextPosition(lineNumber, column), project);
+    }
+
+    [GeneratedRegex(@"^\s*(?<file>[^(]*?)(?:\((?<line>\d+)(?:,(?<column>\d+))?(?:,\d+,\d+)?\))?\s*:\s*(?<severity>error|warning)\s+(?<code>[A-Za-z]+\d+)\s*:\s*(?<message>.*?)(?:\s+\[(?<project>[^\]]+)\])?\s*$")]
+    private static partial Regex Diagnostic();
+}

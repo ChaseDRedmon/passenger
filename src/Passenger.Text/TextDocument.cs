@@ -115,6 +115,33 @@ public sealed class TextDocument
         BreakUndoGroup();
     }
 
+    /// <summary>Adds text at the end with no undo step, as a console's output arrives: nobody undoes
+    /// what a program printed, and keeping it would hold every line twice.</summary>
+    public void Append(string text)
+    {
+        if (text.Length == 0)
+        {
+            return;
+        }
+        TextSnapshot before = Snapshot;
+        TextEdit edit = new(before.Length, 0, text);
+        Raise(before, before.Replace(before.Length, 0, text), [edit], ChangeReason.Edit);
+        saved = Snapshot;
+    }
+
+    /// <summary>Empties the document with no undo step (a console cleared), forgetting its history.</summary>
+    public void Clear()
+    {
+        TextSnapshot before = Snapshot;
+        undo.Clear();
+        redo.Clear();
+        if (before.Length > 0)
+        {
+            Raise(before, TextSnapshot.Empty, [new TextEdit(0, before.Length, string.Empty)], ChangeReason.Edit);
+        }
+        saved = Snapshot;
+    }
+
     /// <summary>Stops the next edit joining the current undo step: a caret move, a click, a focus
     /// change.</summary>
     public void BreakUndoGroup() => mergeBroken = true;

@@ -9,11 +9,24 @@ namespace Passenger.App.Explorer;
 /// at a glance, as Rider's file-type icons do.</summary>
 public static class FileIcons
 {
-    public static Geometry For(FileNode node) => Find<Geometry>(node.IsDirectory
-        ? node.IsExpanded ? "Icon.FolderOpen" : "Icon.Explorer"
-        : Kind(node.Name) is "CSharp" or "Code" ? "Icon.Code" : "Icon.Document");
+    public static Geometry For(ExplorerNode node) => Find<Geometry>(node.Kind switch
+    {
+        NodeKind.Folder or NodeKind.SolutionFolder => node.IsExpanded ? "Icon.FolderOpen" : "Icon.Explorer",
+        NodeKind.Solution => "Icon.Solution",
+        NodeKind.Project or NodeKind.ProjectReference => "Icon.Project",
+        NodeKind.Dependencies or NodeKind.Package => "Icon.Package",
+        NodeKind.Framework => "Icon.Reference",
+        _ => Kind(node.Name) is "CSharp" or "Code" ? "Icon.Code" : "Icon.Document",
+    });
 
-    public static IBrush BrushFor(FileNode node) => Find<IBrush>(node.IsDirectory ? "Passenger.File.Folder" : $"Passenger.File.{Kind(node.Name)}");
+    public static IBrush BrushFor(ExplorerNode node) => Find<IBrush>(node.Kind switch
+    {
+        NodeKind.Folder or NodeKind.SolutionFolder => "Passenger.File.Folder",
+        NodeKind.Solution => "Passenger.File.Project",
+        NodeKind.Project => "Passenger.File.CSharp",
+        NodeKind.Dependencies or NodeKind.Package or NodeKind.Framework or NodeKind.ProjectReference => "Passenger.File.Plain",
+        _ => $"Passenger.File.{Kind(node.Name)}",
+    });
 
     public static Geometry ForFile(string path) => Find<Geometry>(Kind(Path.GetFileName(path)) is "CSharp" or "Code" ? "Icon.Code" : "Icon.Document");
 

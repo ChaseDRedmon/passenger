@@ -2,6 +2,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:explorer="using:Passenger.App.Explorer"
         xmlns:editors="using:Passenger.App.Editors"
+        xmlns:tools="using:Passenger.App.ToolWindows"
         x:Class="Passenger.App.MainWindow"
         Title="Passenger"
         Width="1400" Height="900" MinWidth="800" MinHeight="500"
@@ -38,17 +39,23 @@
                 </StackPanel>
 
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
-                    <Button Classes="widget" ToolTip.Tip="Run configuration">
+                    <Button Name="BuildButton" Classes="tool" ToolTip.Tip="Build solution" Click="OnBuildClicked">
+                        <PathIcon Data="{StaticResource Icon.Build}" />
+                    </Button>
+                    <Button Name="RunConfigButton" Classes="widget" ToolTip.Tip="Run configuration" Click="OnRunConfigClicked">
                         <StackPanel Orientation="Horizontal" Spacing="6">
-                            <TextBlock Text="Current file" VerticalAlignment="Center" />
+                            <TextBlock Name="RunConfigName" Text="No configurations" VerticalAlignment="Center" />
                             <PathIcon Classes="chevron" Data="{StaticResource Icon.ChevronDown}" />
                         </StackPanel>
                     </Button>
-                    <Button Classes="tool" ToolTip.Tip="Run">
+                    <Button Name="RunButton" Classes="tool" ToolTip.Tip="Run" Click="OnRunClicked">
                         <PathIcon Data="{StaticResource Icon.Run}" Foreground="{DynamicResource Passenger.Run}" />
                     </Button>
-                    <Button Classes="tool" ToolTip.Tip="Debug">
+                    <Button Classes="tool" ToolTip.Tip="Debug" Click="OnDebugClicked">
                         <PathIcon Data="{StaticResource Icon.Debug}" />
+                    </Button>
+                    <Button Name="StopButton" Classes="tool" ToolTip.Tip="Stop" IsVisible="False" Click="OnStopClicked">
+                        <PathIcon Data="{StaticResource Icon.Stop}" Foreground="{DynamicResource Passenger.Editor.Error}" />
                     </Button>
                     <Border Width="1" Height="18" Margin="6,0" Background="{DynamicResource Passenger.Hover}" />
                     <Button Classes="tool" ToolTip.Tip="Search everywhere">
@@ -63,14 +70,14 @@
             </DockPanel>
         </Border>
 
-        <Grid Grid.Row="1" ColumnDefinitions="40,280,1,*,40">
+        <Grid Grid.Row="1" ColumnDefinitions="40,*,40">
 
-            <!-- The left stripe: tool windows that dock left (top group) and bottom (bottom group). -->
+            <!-- The left stripe: tool windows that dock left (top group) and at the bottom (bottom group). -->
             <Border Grid.Column="0" Background="{DynamicResource Passenger.Chrome}"
                     BorderBrush="{DynamicResource Passenger.Divider}" BorderThickness="0,0,1,0">
                 <DockPanel Margin="0,6">
                     <StackPanel DockPanel.Dock="Top" Spacing="4" HorizontalAlignment="Center">
-                        <ToggleButton Classes="stripe" IsChecked="True" ToolTip.Tip="Explorer">
+                        <ToggleButton Name="ExplorerStripe" Classes="stripe" IsChecked="True" ToolTip.Tip="Explorer" Click="OnExplorerStripe">
                             <PathIcon Data="{StaticResource Icon.Explorer}" />
                         </ToggleButton>
                         <ToggleButton Classes="stripe" ToolTip.Tip="Structure">
@@ -81,26 +88,40 @@
                         </ToggleButton>
                     </StackPanel>
                     <StackPanel DockPanel.Dock="Bottom" Spacing="4" HorizontalAlignment="Center" VerticalAlignment="Bottom">
+                        <ToggleButton Name="RunStripe" Classes="stripe" ToolTip.Tip="Run" Tag="Run" Click="OnBottomStripe">
+                            <PathIcon Data="{StaticResource Icon.RunOutline}" />
+                        </ToggleButton>
+                        <ToggleButton Name="BuildStripe" Classes="stripe" ToolTip.Tip="Build" Tag="Build" Click="OnBottomStripe">
+                            <PathIcon Data="{StaticResource Icon.Build}" />
+                        </ToggleButton>
+                        <ToggleButton Name="ProblemsStripe" Classes="stripe" ToolTip.Tip="Problems" Tag="Problems" Click="OnBottomStripe">
+                            <PathIcon Data="{StaticResource Icon.Problems}" />
+                        </ToggleButton>
                         <ToggleButton Classes="stripe" ToolTip.Tip="Terminal">
                             <PathIcon Data="{StaticResource Icon.Terminal}" />
-                        </ToggleButton>
-                        <ToggleButton Classes="stripe" ToolTip.Tip="Problems">
-                            <PathIcon Data="{StaticResource Icon.Problems}" />
                         </ToggleButton>
                     </StackPanel>
                 </DockPanel>
             </Border>
 
-            <explorer:ExplorerView Name="Explorer" Grid.Column="1" />
-
-            <!-- A 1 px line to see, under a wider invisible splitter to grab. -->
-            <Border Grid.Column="2" Background="{DynamicResource Passenger.Divider}" />
-            <GridSplitter Grid.Column="2" ResizeDirection="Columns" Classes="hairline" />
-
-            <editors:EditorArea Name="Editors" Grid.Column="3" />
+            <!-- The Explorer and the editors over the bottom tool windows. -->
+            <Grid Name="Center" Grid.Column="1" RowDefinitions="*,0,0">
+                <Grid Name="Upper" Grid.Row="0" ColumnDefinitions="280,1,*">
+                    <explorer:ExplorerView Name="Explorer" Grid.Column="0" />
+                    <!-- A 1 px line to see, under a wider invisible splitter to grab. -->
+                    <Border Grid.Column="1" Background="{DynamicResource Passenger.Divider}" />
+                    <GridSplitter Grid.Column="1" ResizeDirection="Columns" Classes="hairline" />
+                    <editors:EditorArea Name="Editors" Grid.Column="2" />
+                </Grid>
+                <Panel Grid.Row="1">
+                    <Border Background="{DynamicResource Passenger.Divider}" />
+                    <GridSplitter ResizeDirection="Rows" Classes="hairlineRows" />
+                </Panel>
+                <tools:BottomPanel Name="Bottom" Grid.Row="2" />
+            </Grid>
 
             <!-- The right stripe. -->
-            <Border Grid.Column="4" Background="{DynamicResource Passenger.Chrome}"
+            <Border Grid.Column="2" Background="{DynamicResource Passenger.Chrome}"
                     BorderBrush="{DynamicResource Passenger.Divider}" BorderThickness="1,0,0,0">
                 <StackPanel Margin="0,6" Spacing="4" HorizontalAlignment="Center">
                     <ToggleButton Classes="stripe" ToolTip.Tip="Notifications">

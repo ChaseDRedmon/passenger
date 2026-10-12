@@ -81,9 +81,20 @@ The costs:
 - **Project loading is slow without Dev Kit.** Dev Kit feeds Roslyn its projects over a private channel
   (`--brokeredServicePipeName`, its closed `.roslynDevKit` assembly). Without it, the server runs a design-time build
   per project. Dev Kit 11.0 (October 6, 2026) has the active file ready in about half a second on a 407-project
-  solution (Aspire), and the whole solution in 3 s. That's the bar. We measure the standalone server on Orleans and
-  Aspire before building on it. Fixing it is our own project model, cached after the first load and loading the
-  active file's project first.
+  solution (Aspire), and the whole solution in 3 s. That's the bar. Measured October 11, 2026 on an M2 Max (server
+  5.11.0 started cold, packages restored, the time to a hover answer on a file opened at once, and to Roslyn's
+  `projectInitializationComplete`):
+
+  | Solution | Projects | Active file ready | Whole solution ready | Dev Kit 11.0 | Dev Kit 3.3 |
+  |---|---|---|---|---|---|
+  | Orleans | 156 | 11.2 s | 24.2 s | 0.53 s / 2.3 s | 50.3 s |
+  | Aspire | 442 | 2.4 s | 41.4 s | 0.47 s / 3.0 s | 84.1 s |
+
+  About twice as fast as the Dev Kit of a month ago, ten to fourteen times slower than today's on the whole
+  solution, and on Orleans an open file waits eleven seconds for answers. Closing that gap is our own project model,
+  cached after the first load, loading the active file's project first, and fed to Roslyn instead of its design-time
+  builds; it needs Roslyn hosted by us or an extension point to feed projects in, so it waits until the editor
+  features are settled.
 - **MSBuild runs twice.** The Host evaluates projects for the explorer (every item, folder and package), and the
   server builds them for compilation. That's accepted to start; it goes away if we ever host Roslyn ourselves.
 

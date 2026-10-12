@@ -5,6 +5,7 @@ using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using Passenger.App.CSharp;
 using Passenger.App.Editors;
+using Passenger.App.Run;
 using Passenger.App.Workspace;
 using Passenger.Editor;
 using Passenger.Text;
@@ -24,6 +25,13 @@ public partial class MainWindow : Window
     private CSharpService? csharp;
     private readonly CodeAssist assist;
     private readonly List<(string Path, int Offset)> history = [];
+    private readonly ProcessRunner builder;
+    private readonly ProcessRunner runner;
+    private readonly List<Problem> problems = [];
+    private IReadOnlyList<RunConfiguration> configurations = [];
+    private RunConfiguration? configuration;
+    private double bottomHeight = 260;
+    private double explorerWidth = 280;
     private int historyAt = -1;
     private readonly List<string> recent = [];
     private string? folder;
@@ -52,6 +60,34 @@ public partial class MainWindow : Window
         assist = new CodeAssist(Editors, Editors.AssistLayer, () => csharp);
         assist.Navigate += (_, target) => NavigateTo(target.Path, target.Position);
         assist.Message += (_, message) => StatusText.Text = message;
+        builder = new ProcessRunner(Bottom.Build.Document);
+        builder.Line += (_, line) =>
+        {
+            if (BuildOutput.Parse(line) is { } problem && !problems.Contains(problem))
+            {
+                problems.Add(problem);
+            }
+        };
+        builder.Exited += (_, code) => OnBuilt(code);
+        runner = new ProcessRunner(Bottom.Run.Document);
+        runner.Exited += (_, code) =>
+        {
+            Bottom.Run.SetRunning(false);
+            StopButton.IsVisible = false;
+            StatusText.Text = $"{configuration?.Name} exited with code {code}";
+        };
+        Bottom.Build.RerunClicked += (_, _) => BuildSolution();
+        Bottom.Build.StopClicked += (_, _) => builder.Stop();
+        Bottom.Run.RerunClicked += (_, _) => RunSelected();
+        Bottom.Run.StopClicked += (_, _) => runner.Stop();
+        Bottom.Problems.Chosen += (_, problem) =>
+        {
+            if (problem.Path is { } path)
+            {
+                NavigateTo(path, problem.Position);
+            }
+        };
+        Bottom.HideRequested += (_, _) => HideBottom();
         UpdateStatus();
     }
 
@@ -59,6 +95,11 @@ public partial class MainWindow : Window
     public CSharpService? CSharpService => csharp;
 
     public EditorArea EditorArea => Editors;
+
+    public Explorer.ExplorerView ExplorerView => Explorer;
+
+    /// <summary>The open folder's solution, read from its files, or null for a folder without one.</summary>
+    public SolutionModel? Solution { get; private set; }
 
     /// <summary>Opens what the command line named: a folder, files in it, a caret position.</summary>
     public void Start(LaunchOptions options)
@@ -79,9 +120,13 @@ public partial class MainWindow : Window
 
     public void OpenFolder(string path)
     {
-        folder = Path.GetFullPath(path);
+        folder = PathNames.Canonical(path);
         string name = Path.GetFileName(folder);
-        Explorer.Load(folder);
+        Solution = SolutionModel.Find(folder) is { } solutionPath ? SolutionModel.Load(solutionPath) : null;
+        Explorer.Load(folder, Solution);
+        configurations = RunConfiguration.From(Solution, folder);
+        configuration = configurations.FirstOrDefault();
+        RunConfigName.Text = configuration?.Name ?? "No configurations";
         index.Build(folder);
         _ = csharp?.DisposeAsync();
         csharp = null;
@@ -92,15 +137,17 @@ public partial class MainWindow : Window
             csharp.Start(folder);
         }
         Editors.ShowFolderHint(folder);
-        ProjectName.Text = name;
-        ProjectBadgeText.Text = Initials(name);
+        // Rider names the window's project widget after the solution, the folder only without one.
+        string shown = Solution?.Name ?? name;
+        ProjectName.Text = shown;
+        ProjectBadgeText.Text = Initials(shown);
         ProjectBadge.IsVisible = true;
         UpdateStatus();
     }
 
     public void OpenFile(string path)
     {
-        string full = Path.IsPathRooted(path) || folder is null ? Path.GetFullPath(path) : Path.GetFullPath(Path.Combine(folder, path));
+        string full = PathNames.Canonical(Path.IsPathRooted(path) || folder is null ? path : Path.Combine(folder, path));
         if (Editors.Open(full) is { } problem)
         {
             StatusText.Text = problem;
@@ -171,6 +218,33 @@ public partial class MainWindow : Window
         }
         switch (action)
         {
+            case AppActions.Build:
+                BuildSolution();
+                break;
+            case AppActions.RunProgram:
+            case AppActions.Rerun:
+                RunSelected();
+                break;
+            case AppActions.Debug:
+                StatusText.Text = "The debugger is not built yet; running instead";
+                RunSelected();
+                break;
+            case AppActions.Stop:
+                runner.Stop();
+                builder.Stop();
+                break;
+            case AppActions.ShowBuild:
+                ShowBottom("Build");
+                break;
+            case AppActions.ShowRun:
+                ShowBottom("Run");
+                break;
+            case AppActions.ShowProblems:
+                ShowBottom("Problems");
+                break;
+            case AppActions.HideToolWindow:
+                HideBottom();
+                break;
             case AppActions.Back:
                 StepHistory(-1);
                 break;
@@ -225,6 +299,155 @@ public partial class MainWindow : Window
     public bool IsPopupOpen => Overlay.IsVisible;
 
     public CodeAssist Assist => assist;
+
+    public ToolWindows.BottomPanel BottomPanel => Bottom;
+
+    /// <summary>Builds the solution (or the folder's project) with the .NET command line, its output
+    /// in the Build window and what it finds in Problems.</summary>
+    public void BuildSolution()
+    {
+        if (folder is null || builder.IsRunning)
+        {
+            return;
+        }
+        string target = Solution?.Path ?? Directory.EnumerateFiles(folder, "*.csproj").FirstOrDefault() ?? folder;
+        Editors.SaveAll();
+        problems.Clear();
+        Bottom.Build.Document.Clear();
+        Bottom.Build.SetRunning(true);
+        ShowBottom("Build");
+        StatusText.Text = $"Building {Path.GetFileName(target)}…";
+        BackgroundWork.Begin();
+        builder.Start(Lsp.Dotnet.Host(), BuildOutput.Arguments(target), folder);
+    }
+
+    /// <summary>Runs the chosen configuration with <c>dotnet run</c>, its output in the Run window.</summary>
+    public void RunSelected()
+    {
+        if (configuration is not { } chosen || runner.IsRunning)
+        {
+            StatusText.Text = configuration is null ? "Nothing to run: no executable project" : "Already running";
+            return;
+        }
+        Editors.SaveAll();
+        Bottom.Run.Document.Clear();
+        Bottom.Run.SetRunning(true);
+        StopButton.IsVisible = true;
+        ShowBottom("Run");
+        StatusText.Text = $"Running {chosen.Name}";
+        runner.Start(Lsp.Dotnet.Host(), ["run", "--project", chosen.Project.Path], chosen.Project.Folder);
+    }
+
+    private void OnBuilt(int code)
+    {
+        BackgroundWork.End();
+        Bottom.Build.SetRunning(false);
+        int errors = problems.Count(p => p.Severity == ProblemSeverity.Error);
+        int warnings = problems.Count - errors;
+        Bottom.Problems.Show(problems);
+        Bottom.Caption("Problems", problems.Count == 0 ? "Problems" : $"Problems {problems.Count}");
+        StatusText.Text = code == 0
+            ? $"Build succeeded{(warnings > 0 ? $" with {warnings} warning{(warnings == 1 ? "" : "s")}" : "")}"
+            : $"Build failed: {errors} error{(errors == 1 ? "" : "s")}, {warnings} warning{(warnings == 1 ? "" : "s")}";
+        if (code != 0 && errors > 0)
+        {
+            ShowBottom("Problems");
+        }
+    }
+
+    public void ShowBottom(string window)
+    {
+        Center.RowDefinitions[1].Height = new GridLength(1);
+        Center.RowDefinitions[2].Height = new GridLength(bottomHeight);
+        Bottom.Show(window);
+        UpdateStripes();
+    }
+
+    private void HideBottom()
+    {
+        if (Center.RowDefinitions[2].Height.Value > 0)
+        {
+            bottomHeight = Center.RowDefinitions[2].ActualHeight;
+        }
+        Center.RowDefinitions[1].Height = new GridLength(0);
+        Center.RowDefinitions[2].Height = new GridLength(0);
+        UpdateStripes();
+        if (Editors.Active is not null)
+        {
+            Editors.CodeEditor.Focus();
+        }
+    }
+
+    private bool IsBottomOpen => Center.RowDefinitions[2].Height.Value > 0;
+
+    private void UpdateStripes()
+    {
+        RunStripe.IsChecked = IsBottomOpen && Bottom.Current == "Run";
+        BuildStripe.IsChecked = IsBottomOpen && Bottom.Current == "Build";
+        ProblemsStripe.IsChecked = IsBottomOpen && Bottom.Current == "Problems";
+    }
+
+    private void OnBottomStripe(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Control { Tag: string window })
+        {
+            return;
+        }
+        if (IsBottomOpen && Bottom.Current == window)
+        {
+            HideBottom();
+        }
+        else
+        {
+            ShowBottom(window);
+        }
+    }
+
+    private void OnExplorerStripe(object? sender, RoutedEventArgs e)
+    {
+        ColumnDefinition column = Upper.ColumnDefinitions[0];
+        if (column.Width.Value > 0)
+        {
+            explorerWidth = column.ActualWidth;
+            column.Width = new GridLength(0);
+            ExplorerStripe.IsChecked = false;
+        }
+        else
+        {
+            column.Width = new GridLength(explorerWidth);
+            ExplorerStripe.IsChecked = true;
+        }
+    }
+
+    private void OnBuildClicked(object? sender, RoutedEventArgs e) => BuildSolution();
+
+    private void OnRunClicked(object? sender, RoutedEventArgs e) => RunSelected();
+
+    private void OnDebugClicked(object? sender, RoutedEventArgs e) => RunAppAction(AppActions.Debug);
+
+    private void OnStopClicked(object? sender, RoutedEventArgs e) => runner.Stop();
+
+    /// <summary>The run configurations to choose from, as a menu under the toolbar widget.</summary>
+    private void OnRunConfigClicked(object? sender, RoutedEventArgs e)
+    {
+        ContextMenu menu = new();
+        foreach (RunConfiguration each in configurations)
+        {
+            MenuItem item = new() { Header = each.Name };
+            RunConfiguration chosen = each;
+            item.Click += (_, _) =>
+            {
+                configuration = chosen;
+                RunConfigName.Text = chosen.Name;
+            };
+            menu.Items.Add(item);
+        }
+        if (menu.Items.Count == 0)
+        {
+            menu.Items.Add(new MenuItem { Header = "No executable projects", IsEnabled = false });
+        }
+        menu.Open(RunConfigButton);
+    }
 
     /// <summary>Goes to a file and position (go to definition, a usage), remembering where it came
     /// from for Back.</summary>

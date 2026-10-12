@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Runtime.InteropServices;
 using System.Text.Json;
 using StreamJsonRpc;
 
@@ -54,7 +53,7 @@ public sealed class LanguageServer : IAsyncDisposable
             throw new FileNotFoundException("The Roslyn language server is missing from the app's folder.", server);
         }
         Directory.CreateDirectory(logFolder);
-        ProcessStartInfo start = new(DotnetHost())
+        ProcessStartInfo start = new(Dotnet.Host())
         {
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
@@ -129,32 +128,6 @@ public sealed class LanguageServer : IAsyncDisposable
             process.Kill(entireProcessTree: true);
         }
         process.Dispose();
-    }
-
-    /// <summary>The <c>dotnet</c> that runs this app (framework-dependent, its runtime three folders
-    /// under the host), else one on DOTNET_ROOT or the PATH.</summary>
-    private static string DotnetHost()
-    {
-        string name = OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet";
-        string runtime = RuntimeEnvironment.GetRuntimeDirectory();
-        string? fromRuntime = Path.GetFullPath(Path.Combine(runtime, "..", "..", "..", name));
-        if (File.Exists(fromRuntime))
-        {
-            return fromRuntime;
-        }
-        if (Environment.GetEnvironmentVariable("DOTNET_ROOT") is { Length: > 0 } root && File.Exists(Path.Combine(root, name)))
-        {
-            return Path.Combine(root, name);
-        }
-        foreach (string folder in (Environment.GetEnvironmentVariable("PATH") ?? string.Empty).Split(Path.PathSeparator))
-        {
-            string candidate = Path.Combine(folder, name);
-            if (File.Exists(candidate))
-            {
-                return candidate;
-            }
-        }
-        throw new FileNotFoundException("No dotnet host found to run the language server; install the .NET 10 runtime.");
     }
 
     /// <summary>What the client answers when the server asks: every setting left to its default, every

@@ -222,6 +222,10 @@ public sealed partial class CodeEditor
     private void DrawGutter(DrawingContext context, TextSnapshot text, int first, int last, HashSet<int> caretLines, double gutter, double height)
     {
         context.FillRectangle(palette.Gutter, new Rect(0, 0, gutter, height));
+        if (!ShowLineNumbers)
+        {
+            return;
+        }
         double right = gutter - GutterPadRight;
         for (int line = first; line <= last; line++)
         {

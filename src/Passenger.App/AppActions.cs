@@ -19,6 +19,15 @@ public static class AppActions
     public const string FindNext = "app.findNext";
     public const string FindPrevious = "app.findPrevious";
     public const string FocusExplorer = "app.focusExplorer";
+    public const string Build = "app.build";
+    public const string RunProgram = "app.run";
+    public const string Debug = "app.debug";
+    public const string Stop = "app.stop";
+    public const string Rerun = "app.rerun";
+    public const string ShowBuild = "app.showBuild";
+    public const string ShowRun = "app.showRun";
+    public const string ShowProblems = "app.showProblems";
+    public const string HideToolWindow = "app.hideToolWindow";
     public const string Back = "app.back";
     public const string Forward = "app.forward";
 
@@ -57,6 +66,15 @@ public static class AppActions
                 .Bind(FindNext, "F3", "meta alt PAGE_DOWN")
                 .Bind(FindPrevious, "shift F3", "meta alt PAGE_UP")
                 .Bind(FocusExplorer, "meta 1", "meta alt L")
+                .Bind(Build, "meta shift B")
+                .Bind(RunProgram, "control F5")
+                .Bind(Debug, "alt F5", "F5")
+                .Bind(Stop, "shift F5")
+                .Bind(Rerun, "alt shift F5")
+                .Bind(ShowBuild, "meta 0")
+                .Bind(ShowRun, "meta 4")
+                .Bind(ShowProblems, "meta 6")
+                .Bind(HideToolWindow, "shift ESCAPE")
                 .Bind(Back, "meta MINUS")
                 .Bind(Forward, "meta shift MINUS")
                 .Bind(Complete, "control SPACE", "control J")
@@ -85,6 +103,15 @@ public static class AppActions
             .Bind(FindNext, "F3", "control alt PAGE_DOWN")
             .Bind(FindPrevious, "shift F3", "control alt PAGE_UP")
             .Bind(FocusExplorer, "alt 1", "control alt L")
+            .Bind(Build, "control shift B")
+            .Bind(RunProgram, "control F5")
+            .Bind(Debug, "alt F5", "F5")
+            .Bind(Stop, "shift F5")
+            .Bind(Rerun, "control shift F5")
+            .Bind(ShowBuild, "alt 0")
+            .Bind(ShowRun, "alt 4")
+            .Bind(ShowProblems, "alt 6")
+            .Bind(HideToolWindow, "shift ESCAPE")
             .Bind(Back, "control MINUS")
             .Bind(Forward, "control shift MINUS")
             .Bind(Complete, "control SPACE", "control J")

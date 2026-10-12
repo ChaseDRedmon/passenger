@@ -14,14 +14,37 @@ public partial class ExplorerView : UserControl
     /// <summary>A file chosen with a double-click or Enter.</summary>
     public event EventHandler<string>? FileOpened;
 
-    public FileTree Tree { get; } = new();
+    public ExplorerTree Tree { get; } = new();
 
-    public void Load(string folder)
+    private string? folder;
+    private Workspace.SolutionModel? solution;
+
+    /// <summary>Shows a folder: its solution's view if it has one, its files otherwise.</summary>
+    public void Load(string path, Workspace.SolutionModel? model)
     {
-        Tree.Load(folder);
+        folder = path;
+        solution = model;
+        ViewSwitch.IsVisible = model is not null;
+        Show(solutionView: model is not null);
         Hint.IsVisible = false;
         Rows.IsVisible = true;
     }
+
+    private void Show(bool solutionView)
+    {
+        if (solutionView && solution is not null)
+        {
+            Tree.LoadSolution(solution);
+            ViewName.Text = "Solution";
+        }
+        else if (folder is not null)
+        {
+            Tree.LoadFileSystem(folder);
+            ViewName.Text = "Files";
+        }
+    }
+
+    private void OnViewSwitchClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e) => Show(!Tree.IsSolutionView);
 
     /// <summary>Opens the folders down to a file and selects its row.</summary>
     public void Reveal(string path)
@@ -33,21 +56,21 @@ public partial class ExplorerView : UserControl
         }
     }
 
-    private void Activate(FileNode node)
+    private void Activate(ExplorerNode node)
     {
-        if (node.IsDirectory)
+        if (node.IsFile && node.Path is { } path)
+        {
+            FileOpened?.Invoke(this, path);
+        }
+        else if (node.HasChildren)
         {
             Tree.Toggle(node);
-        }
-        else
-        {
-            FileOpened?.Invoke(this, node.Path);
         }
     }
 
     private void OnRowDoubleTapped(object? sender, TappedEventArgs e)
     {
-        if (Rows.SelectedItem is FileNode node)
+        if (Rows.SelectedItem is ExplorerNode node)
         {
             Activate(node);
             e.Handled = true;
@@ -56,7 +79,7 @@ public partial class ExplorerView : UserControl
 
     private void OnChevronPressed(object? sender, PointerPressedEventArgs e)
     {
-        if (sender is Control { DataContext: FileNode { IsDirectory: true } node })
+        if (sender is Control { DataContext: ExplorerNode { HasChildren: true } node })
         {
             Tree.Toggle(node);
             e.Handled = true;
@@ -65,7 +88,7 @@ public partial class ExplorerView : UserControl
 
     private void OnRowsKeyDown(object? sender, KeyEventArgs e)
     {
-        if (Rows.SelectedItem is not FileNode node)
+        if (Rows.SelectedItem is not ExplorerNode node)
         {
             return;
         }
@@ -75,11 +98,11 @@ public partial class ExplorerView : UserControl
                 Activate(node);
                 e.Handled = true;
                 break;
-            case Key.Right when node.IsDirectory && !node.IsExpanded:
+            case Key.Right when node.HasChildren && !node.IsExpanded:
                 Tree.Expand(node);
                 e.Handled = true;
                 break;
-            case Key.Left when node.IsDirectory && node.IsExpanded:
+            case Key.Left when node.HasChildren && node.IsExpanded:
                 Tree.Collapse(node);
                 e.Handled = true;
                 break;

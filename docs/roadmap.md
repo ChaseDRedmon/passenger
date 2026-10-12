@@ -31,17 +31,24 @@ as squiggles and faded unnecessary code, completion as you type (and Ctrl+Space)
 fixes and refactorings (Alt+Enter), rename, go to declaration and implementation, find usages, reformat, next and
 previous error, back and forward. Passenger's own solution loads in about eight seconds.
 
-Still to do: measure `roslyn-language-server` on Orleans (155 projects) and Aspire (407) against Dev Kit 11.0's
-numbers; decompiled sources for library symbols; inlay hints; a usages tool window in place of the popup; commit
+Measured: the standalone server loads Orleans in 24 s and Aspire in 41 s (Dev Kit 11.0: 2.3 s and 3.0 s), the open
+file answering after 11 s and 2.4 s; `architecture.md` has the table and what closing the gap takes.
+
+Still to do: decompiled sources for library symbols; inlay hints; a usages tool window in place of the popup; commit
 characters and completion item documentation.
 
 **Done when:** a day of writing C# in Passenger needs no other editor.
 
-## M3: solution explorer, build and run
+## M3: solution explorer, build and run (in progress)
 
-`Passenger.Host`: MSBuild evaluation into a solution tree (projects, folders, files, dependencies), run
-configurations, build output and the Problems window, run with output in a console tool window. Our cached project
-model starts here if M2's measurement says we need it.
+Built: the Solution view (the .slnx or .sln and each SDK-style project's own declarations, read without MSBuild:
+folders, projects with their frameworks, dependencies, files) beside the File System view; Build (Cmd+Shift+B) with
+its output in the Build window and its errors and warnings in Problems; run configurations for executable projects,
+Run (Ctrl+F5) with its output in the Run window, Stop and Rerun; the bottom tool windows and their stripe buttons.
+
+Still to do: `Passenger.Host` with MSBuild evaluation (conditions, imports, globs) for the tree; build of one project;
+stderr in its own colour; launch profiles; the terminal. M2's measurement says the cached project model is needed;
+it starts here once the editor features settle.
 
 **Done when:** a multi-project solution builds and runs from the toolbar.
 

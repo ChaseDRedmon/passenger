@@ -35,6 +35,17 @@ ICONS = [
     ("ArrowDown", "Arrow Down", "16_regular"),
     ("MatchCase", "Text Case Title", "16_regular"),
     ("WholeWord", "Text Whole Word", "20_regular"),
+    ("Build", "Wrench", "20_regular"),
+    ("RunOutline", "Play", "20_regular"),
+    ("Stop", "Stop", "20_filled"),
+    ("Rerun", "Arrow Clockwise", "20_regular"),
+    ("Clear", "Delete", "20_regular"),
+    ("Solution", "Grid", "20_regular"),
+    ("Project", "Box", "20_regular"),
+    ("Package", "Box Multiple", "20_regular"),
+    ("Reference", "Link", "20_regular"),
+    ("Error", "Error Circle", "20_regular"),
+    ("Info", "Info", "20_regular"),
 ]
 
 

@@ -59,6 +59,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   folder; `CSharpDocument` gives an open file its semantic colours and diagnostics; `CodeAssist`
   is completion, hover, signature help and the code actions (`app.code.*`), its popups on a layer
   over the editor; `WorkspaceEdits` applies renames and fixes across files.
+- `src/Passenger.App/Run` and `ToolWindows`: build and run through the .NET command line
+  (`ProcessRunner` streams a process into a document; `BuildOutput` reads MSBuild's error lines),
+  and the bottom panel's Build, Run and Problems windows. `Workspace/SolutionModel` reads
+  solutions and projects for the Explorer's Solution view.
 - `src/Passenger.App`: the shell. One window-wide keymap (`AppActions.cs`) routes IDE actions
   itself and editor actions to the focused editor. Explorer, editor tabs, files on disk.
 
@@ -75,6 +79,8 @@ window or takes the focus; it shows everything but the system's own window chrom
 - **A malformed flag or value is fatal**, never a silent default (`LaunchOptions.cs`).
 - **Work off the UI thread that changes what is drawn goes through `BackgroundWork`**, so a
   screenshot waits for it instead of capturing a half-finished frame.
+- **Paths are canonical** (`PathNames.Canonical`, symlinks resolved), because MSBuild and Roslyn
+  report resolved paths; a path compared with another must come from the same function.
 - **Shortcuts follow Rider's.** A new action takes the binding Rider's Visual Studio (Windows) or
   Visual Studio OSX (macOS) keymap gives it; Rider's keymap files are in its jars for reference.
 - Commit messages go through a file (`git commit -F msg.txt`): backticks in a `-m` string are zsh command

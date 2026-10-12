@@ -4,6 +4,8 @@
     <AssemblyName>Passenger</AssemblyName>
     <RootNamespace>Passenger.App</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- PathNames calls libc's realpath through a generated P/Invoke. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>

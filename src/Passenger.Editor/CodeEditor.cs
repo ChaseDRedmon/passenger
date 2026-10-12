@@ -140,6 +140,16 @@ public sealed partial class CodeEditor : Control
 
     public bool IsReadOnly { get; set; }
 
+    /// <summary>Whether the gutter shows line numbers; a console's output goes without.</summary>
+    public bool ShowLineNumbers { get; set; } = true;
+
+    /// <summary>Scrolls so the last line sits at the bottom of the view, as output follows its end.</summary>
+    public void ScrollToEnd()
+    {
+        double bottom = document.Snapshot.LineCount * metrics.LineHeight - Viewport.Height + horizontal.DesiredSize.Height;
+        ScrollTo(new Vector(0, Math.Max(0, bottom)));
+    }
+
     /// <summary>When set, the editor resolves its own key presses; an IDE leaves it null and sends
     /// actions in through <see cref="TryExecute"/> from one window-wide keymap.</summary>
     public Keymap? Keymap
@@ -200,7 +210,9 @@ public sealed partial class CodeEditor : Control
 
     private Typeface Typeface => new(FontFamily);
 
-    private double GutterWidth => GutterPadLeft + Math.Max(2, Digits(document.Snapshot.LineCount)) * metrics.CharWidth + GutterPadRight;
+    private double GutterWidth => ShowLineNumbers
+        ? GutterPadLeft + Math.Max(2, Digits(document.Snapshot.LineCount)) * metrics.CharWidth + GutterPadRight
+        : 4;
 
     private double TextLeft => GutterWidth + TextPadLeft;
 
