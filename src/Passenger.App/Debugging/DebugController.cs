@@ -93,7 +93,7 @@ public sealed class DebugController
             DebugSession session = await open(line => view.Console.Document.Append($"{line}\n"));
             Session = session;
             view.Tree.Load = reference => session.VariablesAsync(reference);
-            session.Output += (_, output) => view.Console.Document.Append(output.Output);
+            session.Output += (_, output) => view.Console.Append(output.Output, error: output.Category == "stderr");
             session.StateChanged += (_, _) => _ = OnStateChanged(session, name);
             await OnStateChanged(session, name);
         }

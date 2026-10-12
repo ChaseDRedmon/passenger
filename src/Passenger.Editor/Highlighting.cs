@@ -36,6 +36,9 @@ public enum TokenKind
     Label,
     Excluded,
 
+    /// <summary>What a program wrote to standard error, in a console.</summary>
+    ErrorOutput,
+
     /// <summary>A bracket at a nesting depth, the three colours taking turns: Rider's rainbow braces.</summary>
     Brace1,
     Brace2,

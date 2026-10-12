@@ -123,6 +123,7 @@
             <SolidColorBrush x:Key="Passenger.Syntax.Constant" Color="#66C3CC" />
             <SolidColorBrush x:Key="Passenger.Syntax.EnumMember" Color="#66C3CC" />
             <SolidColorBrush x:Key="Passenger.Syntax.Excluded" Color="#6F737A" />
+            <SolidColorBrush x:Key="Passenger.Syntax.ErrorOutput" Color="#FF6B68" />
             <SolidColorBrush x:Key="Passenger.Syntax.Brace1" Color="#E8BA36" />
             <SolidColorBrush x:Key="Passenger.Syntax.Brace2" Color="#D670D6" />
             <SolidColorBrush x:Key="Passenger.Syntax.Brace3" Color="#3D9EF5" />
@@ -246,6 +247,7 @@
             <SolidColorBrush x:Key="Passenger.Syntax.Constant" Color="#1C7F8C" />
             <SolidColorBrush x:Key="Passenger.Syntax.EnumMember" Color="#1C7F8C" />
             <SolidColorBrush x:Key="Passenger.Syntax.Excluded" Color="#9EA2AA" />
+            <SolidColorBrush x:Key="Passenger.Syntax.ErrorOutput" Color="#D1242F" />
             <SolidColorBrush x:Key="Passenger.Syntax.Brace1" Color="#A87700" />
             <SolidColorBrush x:Key="Passenger.Syntax.Brace2" Color="#A3279F" />
             <SolidColorBrush x:Key="Passenger.Syntax.Brace3" Color="#0B6BCB" />

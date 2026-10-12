@@ -148,7 +148,7 @@ public partial class MainWindow : Window
         assist = new CodeAssist(Editors, Editors.AssistLayer, () => csharp);
         assist.Navigate += (_, target) => NavigateTo(target.Path, target.Position);
         assist.Message += (_, message) => StatusText.Text = message;
-        builder = new ProcessRunner(Bottom.Build.Document);
+        builder = new ProcessRunner(Bottom.Build);
         builder.Line += (_, line) =>
         {
             if (BuildOutput.Parse(line) is { } problem && !problems.Contains(problem))
@@ -157,7 +157,7 @@ public partial class MainWindow : Window
             }
         };
         builder.Exited += (_, code) => OnBuilt(code);
-        runner = new ProcessRunner(Bottom.Run.Document);
+        runner = new ProcessRunner(Bottom.Run);
         runner.Exited += (_, code) =>
         {
             Bottom.Run.SetRunning(false);

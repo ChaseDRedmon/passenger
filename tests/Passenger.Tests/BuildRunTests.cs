@@ -101,6 +101,26 @@ public sealed class BuildRunTests : IDisposable
     private static string Output(MainWindow window) => window.BottomPanel.Run.Document.Snapshot.ToString();
 
     [AvaloniaFact]
+    public void What_the_program_writes_to_standard_error_is_drawn_in_the_error_colour_and_its_output_is_not()
+    {
+        Write("src/Hello/Program.cs", "Console.WriteLine(\"to the output\");\nConsole.Out.Flush();\nThread.Sleep(300);\nConsole.Error.WriteLine(\"to the error\");\n");
+        MainWindow window = Open();
+        window.Perform(AppActions.RunProgram);
+        Ui.WaitFor(() => Output(window).Contains("Process finished", StringComparison.Ordinal), "the program to finish", TimeSpan.FromMinutes(2));
+        TextSnapshot text = window.BottomPanel.Run.Document.Snapshot;
+        Passenger.Editor.IHighlighter colours = window.BottomPanel.Run.Editor.Highlighter!;
+        string Coloured() => string.Concat(colours.GetSpans(text, 0, text.Length)
+            .Where(s => s.Kind == Passenger.Editor.TokenKind.ErrorOutput).Select(s => text.GetText(s.Start, s.Length)));
+        Assert.Equal("to the error\n", Coloured());
+
+        // Clear takes the colours with the text.
+        window.BottomPanel.Run.Document.Clear();
+        text = window.BottomPanel.Run.Document.Snapshot;
+        Assert.Empty(colours.GetSpans(text, 0, text.Length));
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Running_the_project_shows_its_output_in_the_run_window()
     {
         MainWindow window = Open();

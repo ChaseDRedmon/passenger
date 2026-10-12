@@ -6,18 +6,19 @@ using Passenger.Text;
 
 namespace Passenger.App.Run;
 
-/// <summary>A child process whose output and errors stream into a document as they arrive: read off
-/// the UI thread, appended on it in batches, terminal colour codes taken out. Stopping kills the
-/// whole process tree, as a run's Stop button does.</summary>
+/// <summary>A child process whose output and errors stream into a console as they arrive: read off
+/// the UI thread, appended on it in batches, terminal colour codes taken out, standard error in the
+/// error colour. Stopping kills the whole process tree, as a run's Stop button does.</summary>
 public sealed partial class ProcessRunner
 {
     private readonly object gate = new();
-    private readonly StringBuilder pending = new();
+    private readonly List<(StringBuilder Text, bool Error)> pending = [];
     private readonly StringBuilder partialLine = new();
+    private readonly ToolWindows.OutputView console;
     private Process? process;
     private bool flushQueued;
 
-    public ProcessRunner(TextDocument output) => Output = output;
+    public ProcessRunner(ToolWindows.OutputView console) => this.console = console;
 
     /// <summary>A whole line of output, for whoever reads it (the build's error list); UI thread.</summary>
     public event EventHandler<string>? Line;
@@ -25,7 +26,7 @@ public sealed partial class ProcessRunner
     /// <summary>The process ended, with its exit code; UI thread.</summary>
     public event EventHandler<int>? Exited;
 
-    public TextDocument Output { get; }
+    public TextDocument Output => console.Document;
 
     public bool IsRunning => process is { HasExited: false };
 
@@ -58,7 +59,7 @@ public sealed partial class ProcessRunner
         Process started = new() { StartInfo = start, EnableRaisingEvents = true };
         started.Start();
         process = started;
-        Task outputs = Task.WhenAll(Pump(started.StandardOutput), Pump(started.StandardError));
+        Task outputs = Task.WhenAll(Pump(started.StandardOutput, error: false), Pump(started.StandardError, error: true));
         _ = outputs.ContinueWith(_ =>
         {
             started.WaitForExit();
@@ -85,7 +86,7 @@ public sealed partial class ProcessRunner
         }
     }
 
-    private async Task Pump(StreamReader reader)
+    private async Task Pump(StreamReader reader, bool error)
     {
         char[] buffer = new char[8192];
         int read;
@@ -93,7 +94,11 @@ public sealed partial class ProcessRunner
         {
             lock (gate)
             {
-                pending.Append(buffer, 0, read);
+                if (pending.Count == 0 || pending[^1].Error != error)
+                {
+                    pending.Add((new StringBuilder(), error));
+                }
+                pending[^1].Text.Append(buffer, 0, read);
                 if (flushQueued)
                 {
                     continue;
@@ -106,19 +111,22 @@ public sealed partial class ProcessRunner
 
     private void Flush()
     {
-        string text;
+        List<(string Text, bool Error)> chunks;
         lock (gate)
         {
-            text = pending.ToString();
+            chunks = [.. pending.Select(p => (Ansi().Replace(p.Text.Replace("\r\n", "\n").ToString(), string.Empty), p.Error))];
             pending.Clear();
             flushQueued = false;
         }
+        foreach ((string chunk, bool error) in chunks)
+        {
+            console.Append(chunk, error);
+        }
+        string text = string.Concat(chunks.Select(c => c.Text));
         if (text.Length == 0)
         {
             return;
         }
-        text = Ansi().Replace(text.Replace("\r\n", "\n"), string.Empty);
-        Output.Append(text);
         partialLine.Append(text);
         string lines = partialLine.ToString();
         int end = lines.LastIndexOf('\n');
