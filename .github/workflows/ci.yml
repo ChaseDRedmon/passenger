@@ -55,6 +55,21 @@ jobs:
         if: runner.os == 'macOS'
         run: sudo mkdir -p /etc/dotnet && echo "$DOTNET_ROOT" | sudo tee /etc/dotnet/install_location
 
+      # The runtime's createdump (a memory snapshot) reads its program as a debugger does, which macOS lets a third party's
+      # tool do once a member of _developer answers the system.privilege.taskport password prompt, remembered for ten
+      # hours. A developer's Mac asks once a session; the runner has no one to answer, so the prompt waits for ever. The
+      # runner joins _developer and the right asks its members nothing, as developer mode does for Apple's own tools; the
+      # state before is printed for a hang that remains.
+      - name: Let debugging tools read the runner's processes
+        if: runner.os == 'macOS'
+        run: |
+          DevToolsSecurity -status
+          id -Gn
+          security authorizationdb read system.privilege.taskport | plutil -p -
+          sudo dseditgroup -o edit -a "$USER" -t user _developer
+          sudo dscacheutil -flushcache
+          sudo security authorizationdb write system.privilege.taskport is-developer
+
       - name: Restore cached NuGet packages
         id: nuget
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
