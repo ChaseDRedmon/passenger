@@ -172,7 +172,20 @@ public static class Ui
             Thread.Sleep(2);
         }
         while (DateTime.UtcNow < limit);
-        throw new TimeoutException("Background work never finished.");
+        throw new TimeoutException($"Background work never finished.{ServerLogTail()}");
+    }
+
+    /// <summary>The end of the newest language server's log, which says where a project load that never ended stopped. The
+    /// server writes it line by line, so unlike the IDE's own log there is no queue to flush first.</summary>
+    private static string ServerLogTail()
+    {
+        DirectoryInfo logs = new(Passenger.App.CSharp.CSharpService.LogFolder);
+        if (!logs.Exists || logs.EnumerateFiles("server-*.log").OrderByDescending(f => f.LastWriteTimeUtc).FirstOrDefault() is not { } newest)
+        {
+            return string.Empty;
+        }
+        string[] lines = Shared(newest.FullName).Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        return $"\nThe newest language server's log ({newest.Name}) ends:\n{string.Join('\n', lines.TakeLast(25))}";
     }
 
     /// <summary>Waits for something to become true, running the dispatcher's loop (and so its timers)

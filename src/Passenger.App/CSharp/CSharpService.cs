@@ -27,6 +27,9 @@ public sealed class CSharpService : IAsyncDisposable
     /// <summary>The state changed (starting, loading projects, ready, failed); raised on the UI thread.</summary>
     public event EventHandler? StateChanged;
 
+    /// <summary>Where this IDE's language servers keep their logs, a file to each server.</summary>
+    public static string LogFolder { get; } = Path.Combine(Path.GetTempPath(), "passenger", "logs", $"roslyn-{Environment.ProcessId}");
+
     public string State { get; private set; } = string.Empty;
     public bool IsReady => session is { IsLoaded: true };
     public RoslynSession? Session => session;
@@ -242,8 +245,7 @@ public sealed class CSharpService : IAsyncDisposable
     {
         try
         {
-            string logs = Path.Combine(Path.GetTempPath(), "passenger", "logs", $"roslyn-{Environment.ProcessId}");
-            RoslynSession started = await RoslynSession.StartAsync(opening.Folder, opening.Solution?.Path, [.. opening.Projects.Select(p => p.Path)], logs,
+            RoslynSession started = await RoslynSession.StartAsync(opening.Folder, opening.Solution?.Path, [.. opening.Projects.Select(p => p.Path)], LogFolder,
                 cancel, solutionWide ? FullSolution : null);
             if (cancel.IsCancellationRequested)
             {

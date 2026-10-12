@@ -24,7 +24,7 @@ public sealed class LanguageServer : IAsyncDisposable
     private readonly Process process;
     private readonly JsonRpc rpc;
     private readonly ClientTarget client;
-    private readonly ErrorLog errors;
+    private readonly ServerLog log;
     private readonly Dictionary<long, (string Method, long Since)> waiting = [];
     private readonly Timer watch;
     private long requests;
@@ -36,13 +36,13 @@ public sealed class LanguageServer : IAsyncDisposable
 
     private readonly Dictionary<string, object?> options;
 
-    private LanguageServer(Process process, JsonRpc rpc, ClientTarget client, ErrorLog errors, string logFolder, IReadOnlyDictionary<string, object?>? options)
+    private LanguageServer(Process process, JsonRpc rpc, ClientTarget client, ServerLog log, string logFolder, IReadOnlyDictionary<string, object?>? options)
     {
         this.options = new Dictionary<string, object?>(options ?? new Dictionary<string, object?>(), StringComparer.Ordinal);
         this.process = process;
         this.rpc = rpc;
         this.client = client;
-        this.errors = errors;
+        this.log = log;
         LogFolder = logFolder;
         ProcessId = process.Id;
         rpc.Disconnected += (_, e) =>
@@ -150,17 +150,17 @@ public sealed class LanguageServer : IAsyncDisposable
             start.ArgumentList.Add(arg);
         }
         Process process = Process.Start(start) ?? throw new InvalidOperationException("The language server did not start.");
-        ErrorLog errors;
+        ServerLog log;
         try
         {
-            errors = new ErrorLog(Path.Combine(logFolder, $"stderr-{process.Id}.log"));
+            log = new ServerLog(Path.Combine(logFolder, $"server-{process.Id}.log"));
         }
         catch
         {
             End(process);
             throw;
         }
-        process.ErrorDataReceived += (_, e) => errors.Write(e.Data);
+        process.ErrorDataReceived += (_, e) => log.Write(e.Data);
         process.BeginErrorReadLine();
 
         SystemTextJsonFormatter formatter = new() { JsonSerializerOptions = Json.Options };
@@ -168,7 +168,7 @@ public sealed class LanguageServer : IAsyncDisposable
         ClientTarget client = new();
         JsonRpc rpc = new(handler);
         rpc.AddLocalRpcTarget(client, new JsonRpcTargetOptions { UseSingleObjectParameterDeserialization = true });
-        LanguageServer server2 = new(process, rpc, client, errors, logFolder, options);
+        LanguageServer server2 = new(process, rpc, client, log, logFolder, options);
         client.Owner = server2;
         rpc.StartListening();
 
@@ -191,7 +191,7 @@ public sealed class LanguageServer : IAsyncDisposable
             server2.watch.Dispose();
             rpc.Dispose();
             End(process);
-            errors.Dispose();
+            log.Dispose();
             throw;
         }
         return server2;
@@ -360,7 +360,7 @@ public sealed class LanguageServer : IAsyncDisposable
             process.Kill(entireProcessTree: true);
         }
         process.Dispose();
-        errors.Dispose();
+        log.Dispose();
     }
 
     /// <summary>The server's options Passenger sets: parameter name hints where Rider shows them (before a literal, a
@@ -378,10 +378,11 @@ public sealed class LanguageServer : IAsyncDisposable
         ["csharp_enable_inlay_hints_for_types"] = false,
     };
 
-    /// <summary>The server's standard error, a file to each server: Windows lets no second writer open a file one has
-    /// open, and a server started again while the last one's log is still held would otherwise fail to start. Shared
-    /// for reading and deleting, and closed at the stream's end or the server's, so the folder it is in can go.</summary>
-    private sealed class ErrorLog(string path) : IDisposable
+    /// <summary>The server's log: its standard error and the messages it logs (a project load that never ends says where
+    /// it stopped), a file to each server, since Windows lets no second writer open a file one has open and a server
+    /// started again while the last one's log is still held would otherwise fail to start. Shared for reading and
+    /// deleting, and closed at the stream's end or the server's, so the folder it is in can go.</summary>
+    private sealed class ServerLog(string path) : IDisposable
     {
         private readonly StreamWriter writer = new(new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete)) { AutoFlush = true };
         private bool closed;
@@ -450,10 +451,14 @@ public sealed class LanguageServer : IAsyncDisposable
         }
 
         [JsonRpcMethod("window/logMessage")]
-        public void LogMessage(LogMessageParams message) => Owner?.Logged?.Invoke(Owner, message);
+        public void LogMessage(LogMessageParams message)
+        {
+            Owner?.log.Write($"{DateTime.Now:HH:mm:ss.fff} {message.Message}");
+            Owner?.Logged?.Invoke(Owner, message);
+        }
 
         [JsonRpcMethod("window/showMessage")]
-        public void ShowMessage(LogMessageParams message) => Owner?.Logged?.Invoke(Owner, message);
+        public void ShowMessage(LogMessageParams message) => LogMessage(message);
 
         /// <summary>Roslyn asks for each option as <c>csharp|group.name</c> or <c>group.name</c>; the ones named in
         /// <see cref="Settings"/> are answered, the rest left to the server's defaults.</summary>
