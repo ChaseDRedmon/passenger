@@ -110,9 +110,11 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.App`: the shell. One window-wide keymap (`AppActions.cs`) routes IDE actions
   itself and editor actions to the focused editor. Explorer, editor tabs, files on disk.
 - `src/Passenger.App/Mcp`: Passenger as an MCP server (the official C# SDK). `PassengerTools` is every tool, each
-  run on the UI thread as the window's own commands are; `McpHost` hosts them three ways: `--mcp [FOLDER]` (a
-  headless IDE on standard input and output), the window's socket, and `--mcp-attach [PID]` (standard input and
-  output joined to that socket).
+  run on the UI thread as the window's own commands are and ended by its `CancellationToken`; `McpHost` hosts them
+  three ways: `--mcp [FOLDER]` (a headless IDE on standard input and output), a window's own socket under the state
+  folder (`AgentSocket`, open only while the person's Enable MCP Server setting is on), and `--mcp-attach [PID]`
+  (standard input and output joined to the window over the agent's folder). On a person's window a tool neither
+  `ReadOnly` nor `Destructive = false` asks them the first time an agent uses it (`ConnectedTool`).
 - The debugger, Passenger's own, started from SharpDbg and ICorDebugSharp (MIT; `THIRD_PARTY_NOTICES.md` says what came from where):
   `src/Passenger.Debugger.Interop` (ICorDebug, IMetaDataImport and dbgshim for the COM source generator),
   `src/Passenger.Debugger` (the engine), `src/Passenger.Dap` (the Debug Adapter Protocol, both ends) and
@@ -165,7 +167,8 @@ stop at: moving a line there means moving the tests that name it. They run one a
 tests' sessions and the IDE's alike.
 
 The MCP server's tests (`McpTests`) are agents using the SDK's own client: one starts `Passenger --mcp` and debugs a
-project through it, one attaches to a window with `--mcp-attach` and changes what the window shows.
+project through it, others attach to a window with `--mcp-attach` (its sockets under the tests' own
+`PASSENGER_SETTINGS`) and change what the window shows, once it lets them in and the person answers its questions.
 
 ## Code style
 

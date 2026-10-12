@@ -55,6 +55,11 @@ public sealed record AppSettings : IStateDocument<AppSettings>
     /// <summary>The terminal's shell, or null for the user's own login shell.</summary>
     public string? TerminalShell { get; init; }
 
+    /// <summary>Rider's Enable MCP Server: agents reach the window through its socket (<c>passenger --mcp-attach</c>).
+    /// Off until the person turns it on, since any program running as them could then act with the IDE's
+    /// permissions.</summary>
+    public bool McpServer { get; init; }
+
     public static IReadOnlyList<Action<JsonObject>> Upgrades { get; } = [StateStore.Unversioned];
 
     /// <summary>A hand-edited or later build's value this build cannot use is brought into range, or back to its default;

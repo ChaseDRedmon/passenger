@@ -15,20 +15,14 @@ public partial class App : Application
         // The screenshot mode has no lifetime and makes its own window.
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            MainWindow window = new();
-            // The person's own window opens on the layout they left; headless ones keep the defaults.
+            MainWindow window = new() { AgentsAllowed = Program.Options.ListenForAgents };
+            // The person's own window opens on the layout and settings they left (agents let in or not); headless ones
+            // keep the defaults.
             window.KeepLayout();
             window.KeepSettings();
             // A theme named on the command line is the run's, over the one kept.
             Program.ApplyTheme(this, Program.Options.Theme);
-            window.Opened += (_, _) =>
-            {
-                window.Start(Program.Options);
-                if (Program.Options.ListenForAgents)
-                {
-                    Mcp.McpHost.Listen(window);
-                }
-            };
+            window.Opened += (_, _) => window.Start(Program.Options);
             desktop.MainWindow = window;
             if (OperatingSystem.IsMacOS())
             {

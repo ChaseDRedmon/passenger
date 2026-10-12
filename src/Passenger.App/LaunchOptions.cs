@@ -7,17 +7,18 @@ namespace Passenger.App;
 
 /// <summary>The command line: <c>passenger [PATH] [--file F]... [--caret L:C] [--theme T]</c>, a
 /// screenshot with the steps to take before it, or the Model Context Protocol server: <c>--mcp</c> (an IDE
-/// with no window, on standard input and output), <c>--mcp-attach [PID]</c> (a running IDE's), and
-/// <c>--no-mcp</c> (a window that does not listen for agents). A flag it does not know, or a value it
+/// with no window, on standard input and output), <c>--mcp-attach [PID] [FOLDER]</c> (a window's, the one over the
+/// folder first), and <c>--no-mcp</c> (a window that never lets agents in). A flag it does not know, or a value it
 /// cannot read, is fatal rather than ignored, so a typo never runs something other than what was asked.</summary>
 public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, TextPosition? Caret, ThemeChoice? Theme, ScreenshotOptions? Screenshot)
 {
     public McpMode Mcp { get; init; }
 
-    /// <summary>The IDE <c>--mcp-attach</c> names, or null for the newest that answers.</summary>
+    /// <summary>The process <c>--mcp-attach</c> names, or null for any Passenger's windows.</summary>
     public int? AttachTo { get; init; }
 
-    /// <summary>Whether the window listens for agents on its socket (<c>--no-mcp</c> says not).</summary>
+    /// <summary>Whether the window may listen for agents on its socket once its Enable MCP Server setting is on
+    /// (<c>--no-mcp</c> says never).</summary>
     public bool ListenForAgents { get; init; } = true;
 
     public static LaunchOptions Empty { get; } = new(null, [], null, null, null);

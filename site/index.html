@@ -180,8 +180,9 @@
                 <p>Passenger is a Model Context Protocol server. A coding agent can ask Roslyn about your code and use its fixes and
                     renames, build and run, run tests, debug (breakpoints, stepping, evaluation, the stopped program's
                     variables), use Git and NuGet, type into the terminal, and see the window in screenshots.</p>
-                <p>Attach it to the window you have open, and its breakpoints and stops show there as you watch. A window listens
-                    on a socket only you can reach.</p>
+                <p>Attach it to the window you have open, and its breakpoints and stops show there as you watch. A window lets
+                    agents in only once you turn on its MCP server, on a socket only you can reach, and asks you before an
+                    agent first changes anything.</p>
             </div>
             <div>
 <pre><span class="comment"># a Passenger of the agent's own, with no window</span>

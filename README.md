@@ -69,8 +69,11 @@ claude mcp add passenger -- /path/to/Passenger --mcp /path/to/solution
 claude mcp add passenger -- /path/to/Passenger --mcp-attach
 ```
 
-A Passenger window listens for agents on a socket only its user can reach, unless started with `--no-mcp`. In this
-repository, `.mcp.json` runs `just mcp`, which starts the last build over this folder.
+A window lets agents in only once you turn on Settings | MCP Server | Enable MCP Server (never when started with
+`--no-mcp`): it then listens on a socket of its own that only you can reach, and `--mcp-attach` joins the window whose
+folder holds the agent's working directory. An agent asks before its first use of each tool that changes something
+(an edit, a build or run, a commit, a terminal command). In this repository, `.mcp.json` runs `just mcp`, which starts
+the last build over this folder.
 
 ## Licence
 

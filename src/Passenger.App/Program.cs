@@ -33,7 +33,7 @@ internal static class Program
         switch (options.Mcp)
         {
             case McpMode.Attach:
-                return Mcp.McpHost.Attach(options.AttachTo);
+                return Mcp.McpHost.Attach(options.AttachTo, options.Folder);
             case McpMode.Stdio:
                 return Mcp.McpHost.RunStdio(options);
         }

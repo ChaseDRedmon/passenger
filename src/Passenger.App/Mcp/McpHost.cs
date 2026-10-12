@@ -5,21 +5,24 @@ using Avalonia.Headless;
 using Avalonia.Threading;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using Passenger.App.State;
+using Passenger.App.Workspace;
 
 namespace Passenger.App.Mcp;
 
-/// <summary>Passenger as a Model Context Protocol server, three ways. <c>passenger --mcp [FOLDER]</c> is an
-/// IDE with no window, its tools on standard input and output, for an agent to start as its own. The
-/// window the user works in listens on a socket only its user can reach (<see cref="Listen"/>), and
-/// <c>passenger --mcp-attach [PID]</c> joins an agent's standard input and output to it, so the agent
-/// drives the IDE the user is looking at. Each connection is a server of its own over the same tools.</summary>
+/// <summary>Passenger as a Model Context Protocol server, three ways. <c>passenger --mcp [FOLDER]</c> is an IDE with no
+/// window, its tools on standard input and output, for an agent to start as its own. A window the person has turned
+/// Enable MCP Server on for listens on a socket of its own (<see cref="AgentSocket"/>), and <c>passenger --mcp-attach
+/// [PID]</c> joins an agent's standard input and output to the one over the folder it works in, so the agent drives the
+/// IDE the person is looking at. Each connection is a server of its own over the same tools.</summary>
 public static class McpHost
 {
     /// <summary>The IDE has no window, only the headless platform's (whose frames a screenshot takes).</summary>
     public static bool IsHeadless { get; private set; }
 
-    /// <summary>Where running IDEs listen: one socket each, named for its process.</summary>
-    public static string SocketFolder { get; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Passenger", "mcp");
+    /// <summary>Where windows listen, one socket each: in the IDE's state folder (PASSENGER_SETTINGS moves it), which
+    /// only its user can reach.</summary>
+    public static string SocketFolder => Path.Combine(StateStore.DefaultRoot, "mcp");
 
     private const string Instructions =
         "Passenger is a C# IDE. These tools act on its open workspace as its user would: open a folder or solution, ask the C# " +
@@ -28,14 +31,15 @@ public static class McpHost
         "ide_action). Lines and columns count from 1; relative paths are the open folder's. Debugging tools wait for the program " +
         "to stop and say where it is, with the top frame's locals.";
 
-    public static McpServerOptions Options(MainWindow window)
+    /// <summary>The tools as one connection reaches them (<see cref="ConnectedTool"/>).</summary>
+    public static McpServerOptions Options(MainWindow window, AgentConnection connection)
     {
         PassengerTools tools = new(window);
         McpServerPrimitiveCollection<McpServerTool> collection = [];
         foreach (MethodInfo method in typeof(PassengerTools).GetMethods(BindingFlags.Public | BindingFlags.Instance)
             .Where(m => m.GetCustomAttribute<McpServerToolAttribute>() is not null))
         {
-            collection.Add(McpServerTool.Create(method, tools));
+            collection.Add(new ConnectedTool(McpServerTool.Create(method, tools), window, connection));
         }
         return new McpServerOptions
         {
@@ -74,7 +78,8 @@ public static class McpHost
         window.Start(launch);
 
         using CancellationTokenSource done = new();
-        McpServer server = McpServer.Create(new StreamServerTransport(input, output, "passenger"), Options(window));
+        // The agent's own IDE: nobody else is at it to ask.
+        McpServer server = McpServer.Create(new StreamServerTransport(input, output, "passenger"), Options(window, new AgentConnection(done.Token, attached: false)));
         _ = Task.Run(async () =>
         {
             try
@@ -93,79 +98,17 @@ public static class McpHost
         return 0;
     }
 
-    /// <summary>Listens for agents on this IDE's socket, each connection a server of its own, until
-    /// the window closes.</summary>
-    public static void Listen(MainWindow window)
-    {
-        Directory.CreateDirectory(SocketFolder);
-        if (!OperatingSystem.IsWindows())
-        {
-            // The folder is the user's alone: nobody else reaches the IDE through it.
-            File.SetUnixFileMode(SocketFolder, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-        }
-        RemoveStale();
-        string path = Path.Combine(SocketFolder, $"{Environment.ProcessId}.sock");
-        File.Delete(path);
-        Socket listener = new(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
-        listener.Bind(new UnixDomainSocketEndPoint(path));
-        listener.Listen(4);
-        CancellationTokenSource closed = new();
-        window.Closed += (_, _) =>
-        {
-            closed.Cancel();
-            listener.Dispose();
-            File.Delete(path);
-        };
-        _ = Task.Run(async () =>
-        {
-            while (!closed.IsCancellationRequested)
-            {
-                Socket client;
-                try
-                {
-                    client = await listener.AcceptAsync(closed.Token);
-                }
-                catch (Exception error) when (error is OperationCanceledException or SocketException or ObjectDisposedException)
-                {
-                    return;
-                }
-                _ = Serve(window, client, closed.Token);
-            }
-        });
-    }
-
-    private static async Task Serve(MainWindow window, Socket client, CancellationToken closed)
-    {
-        await using NetworkStream stream = new(client, ownsSocket: true);
-        McpServerOptions options = await UiThread.InvokeAsync(() =>
-        {
-            window.Agents++;
-            return Options(window);
-        });
-        await using McpServer server = McpServer.Create(new StreamServerTransport(stream, stream, "passenger"), options);
-        try
-        {
-            await server.RunAsync(closed);
-        }
-        catch (Exception error) when (error is OperationCanceledException or IOException or SocketException)
-        {
-        }
-        finally
-        {
-            UiThread.Post(() => window.Agents--);
-        }
-    }
-
-    /// <summary><c>--mcp-attach [PID]</c>: joins standard input and output to a running IDE's socket, the
-    /// one named or the newest that answers, until either side closes.</summary>
-    public static int Attach(int? processId)
+    /// <summary><c>--mcp-attach [PID]</c>: joins standard input and output to a window's socket until either side
+    /// closes: the window whose folder holds <paramref name="folder"/> (else the agent's working directory), the
+    /// innermost first, then the newest; only that process's windows when one is named.</summary>
+    public static int Attach(int? processId, string? folder)
     {
         RemoveStale();
-        IEnumerable<string> candidates = processId is int pid
-            ? [Path.Combine(SocketFolder, $"{pid}.sock")]
-            : Directory.Exists(SocketFolder)
-                ? Directory.EnumerateFiles(SocketFolder, "*.sock").OrderByDescending(File.GetLastWriteTimeUtc)
-                : [];
+        string here = PathNames.Canonical(folder ?? Environment.CurrentDirectory);
+        IEnumerable<string> candidates = (Directory.Exists(SocketFolder) ? Directory.EnumerateFiles(SocketFolder, "*.sock") : [])
+            .Where(path => processId is not int pid || ProcessOf(path) == pid)
+            .OrderByDescending(path => Holding(WindowFolder(path), here))
+            .ThenByDescending(File.GetLastWriteTimeUtc);
         foreach (string path in candidates)
         {
             Socket socket = new(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
@@ -191,23 +134,32 @@ public static class McpHost
             return 0;
         }
         Console.Error.WriteLine(processId is int wanted
-            ? $"passenger: no Passenger with process {wanted} is listening"
-            : "passenger: no running Passenger is listening; start one, or use --mcp FOLDER for one with no window");
+            ? $"passenger: no window of Passenger {wanted} lets agents in; turn on Settings | MCP Server | Enable MCP Server in it"
+            : "passenger: no Passenger window lets agents in; turn on Settings | MCP Server | Enable MCP Server in one, or use --mcp FOLDER for a Passenger of the agent's own");
         return 1;
     }
 
-    /// <summary>Takes away the sockets of IDEs that are no longer running.</summary>
-    private static void RemoveStale()
+    /// <summary>The file beside a window's socket that names the folder open in it.</summary>
+    internal static string FolderFile(string socket) => Path.ChangeExtension(socket, ".folder");
+
+    /// <summary>Takes away the sockets (and their folder files) of IDEs that are no longer running.</summary>
+    internal static void RemoveStale()
     {
         if (!Directory.Exists(SocketFolder))
         {
             return;
         }
-        foreach (string path in Directory.EnumerateFiles(SocketFolder, "*.sock"))
+        foreach (string path in Directory.EnumerateFiles(SocketFolder))
         {
-            if (int.TryParse(Path.GetFileNameWithoutExtension(path), out int pid) && !Running(pid))
+            if (ProcessOf(path) is int pid && !Running(pid))
             {
-                File.Delete(path);
+                try
+                {
+                    File.Delete(path);
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                {
+                }
             }
         }
 
@@ -223,5 +175,35 @@ public static class McpHost
                 return false;
             }
         }
+    }
+
+    /// <summary>The process a socket is named for: <c>PID-WINDOW.sock</c>, or <c>PID.sock</c> from before windows had
+    /// their own.</summary>
+    private static int? ProcessOf(string path) =>
+        int.TryParse(Path.GetFileNameWithoutExtension(path).Split('-')[0], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int pid)
+            ? pid
+            : null;
+
+    private static string? WindowFolder(string socket)
+    {
+        try
+        {
+            return File.ReadAllText(FolderFile(socket)) is { Length: > 0 } folder ? folder : null;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>How closely a window's folder holds a place: its length when it does, so the innermost wins, else -1.</summary>
+    private static int Holding(string? folder, string here)
+    {
+        if (folder is null)
+        {
+            return -1;
+        }
+        string inside = folder.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        return here.Equals(folder, StringComparison.OrdinalIgnoreCase) || here.StartsWith(inside, StringComparison.OrdinalIgnoreCase) ? folder.Length : -1;
     }
 }

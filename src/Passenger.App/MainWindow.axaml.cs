@@ -71,6 +71,7 @@ public partial class MainWindow : Window
         AddAutosave();
         AddConflicts();
         AddErrors();
+        AddAgents();
         Explorer.FileOpened += (_, path) => OpenFile(path);
         Structure.Follow(() => Editors.Active is { } shown
             ? (shown.Path, csharp?.For(shown)?.Lsp, Editors.CodeEditor.CaretPosition.Line)
@@ -339,6 +340,7 @@ public partial class MainWindow : Window
         }
         Autosave();
         folder = opening;
+        agentSocket?.Describe(folder);
         namedSolution = solutionNamed ? named : null;
         string name = Path.GetFileName(folder);
         Solution = solution is not null ? SolutionModel.Load(solution) : null;
@@ -795,21 +797,6 @@ public partial class MainWindow : Window
 
     /// <summary>The status bar's text, which says what the last action came to.</summary>
     public string? Status => StatusText.Text;
-
-    /// <summary>Agents attached to this window's MCP socket, shown in the status bar so the person knows
-    /// another hand is on the IDE.</summary>
-    public int Agents
-    {
-        get => agents;
-        set
-        {
-            agents = value;
-            AgentText.IsVisible = value > 0;
-            AgentText.Text = value == 1 ? "Agent connected" : $"{value} agents connected";
-        }
-    }
-
-    private int agents;
 
     /// <summary>Builds the solution (or the folder's project) with the .NET command line, its output
     /// in the Build window and what it finds in Problems; <paramref name="then"/> hears how it ended.</summary>

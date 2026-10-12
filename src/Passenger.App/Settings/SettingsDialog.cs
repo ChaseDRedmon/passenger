@@ -18,8 +18,9 @@ public sealed class SettingsDialog : Window
     public const string TerminalPage = "Terminal";
     public const string RunPage = "Run";
     public const string KeymapPage = "Keymap";
+    public const string McpPage = "MCP Server";
 
-    private static readonly string[] Order = [Appearance, SystemPage, EditorPage, RunPage, TerminalPage, KeymapPage];
+    private static readonly string[] Order = [Appearance, SystemPage, EditorPage, RunPage, TerminalPage, McpPage, KeymapPage];
 
     private readonly Action<AppSettings> apply;
     private readonly List<Option> options = [];
@@ -187,6 +188,12 @@ public sealed class SettingsDialog : Window
         path.TextChanged += (_, _) => Change(s => s with { TerminalShell = string.IsNullOrWhiteSpace(path.Text) ? null : path.Text.Trim() });
         Add(TerminalPage, "Shell path", path, "shell zsh bash powershell program");
 
+        // What turning it on allows is said under it, as Rider's consent to its MCP server says.
+        Add(McpPage, "Enable MCP Server", Check(Working.McpServer, v => Change(s => s with { McpServer = v })),
+            "mcp model context protocol agents ai claude codex attach socket",
+            "Agents started with passenger --mcp-attach can use this window: read and change files, build, run and debug, use Git, "
+            + "NuGet and the terminal. Each agent asks before its first use of a tool that changes something.");
+
         keymapNote = new TextBlock { TextWrapping = TextWrapping.Wrap, IsVisible = false };
         keymapNote.Bind(TextBlock.ForegroundProperty, keymapNote.GetResourceObservable("Passenger.TextMuted"));
         Add(KeymapPage, $"{keymap.Name} keymap", keymapNote, "keymap shortcut binding keys");
@@ -273,10 +280,18 @@ public sealed class SettingsDialog : Window
         }
     }
 
-    private void Add(string page, string label, Control editor, string keywords)
+    /// <summary>An option's row: its label, what edits it, and a note under the editor when it needs saying what it
+    /// does.</summary>
+    private void Add(string page, string label, Control editor, string keywords, string? note = null)
     {
         TextBlock name = new() { Text = label, Width = 220, VerticalAlignment = VerticalAlignment.Center };
-        StackPanel row = new() { Orientation = Orientation.Horizontal, Children = { name, editor } };
+        Control row = new StackPanel { Orientation = Orientation.Horizontal, Children = { name, editor } };
+        if (note is not null)
+        {
+            TextBlock said = new() { Text = note, TextWrapping = TextWrapping.Wrap, MaxWidth = 360, Margin = new Thickness(name.Width, 0, 0, 0), HorizontalAlignment = HorizontalAlignment.Left };
+            said.Bind(TextBlock.ForegroundProperty, said.GetResourceObservable("Passenger.TextMuted"));
+            row = new StackPanel { Spacing = 4, Children = { row, said } };
+        }
         options.Add(new Option(page, label, row, $"{page} {label} {keywords}"));
     }
 

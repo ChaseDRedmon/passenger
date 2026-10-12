@@ -64,6 +64,7 @@ public partial class MainWindow
             terminal.Shell = null;
         }
         ApplyAnalysis();
+        ListenForAgents(next.McpServer);
         if (keepsSettings)
         {
             state!.Settings.Set(next);

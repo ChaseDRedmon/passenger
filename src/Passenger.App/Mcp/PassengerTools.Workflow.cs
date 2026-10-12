@@ -16,7 +16,7 @@ public sealed partial class PassengerTools
 
     [McpServerTool(Name = "vcs_status", Title = "Changed files", ReadOnly = true), Description(
         "The branch and the files changed since the last commit (modified, added, deleted, renamed, unversioned, conflicted), as the Commit window lists them.")]
-    public Task<VcsStatus> VcsStatus() => OnUi(async () =>
+    public Task<VcsStatus> VcsStatus(CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         VcsController vcs = window.Vcs;
         await vcs.RefreshAsync();
@@ -29,7 +29,7 @@ public sealed partial class PassengerTools
 
     [McpServerTool(Name = "vcs_diff", Title = "A file's changes", ReadOnly = true), Description(
         "What changed in a file since the last commit, as a unified diff: the editor's text when the file is open (unsaved changes included), else the file on disk.")]
-    public Task<string> VcsDiff(string path) => OnUi(async () =>
+    public Task<string> VcsDiff(string path, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         string full = Resolve(path);
         string head = await window.Vcs.HeadTextAsync(full) ?? string.Empty;
@@ -42,7 +42,7 @@ public sealed partial class PassengerTools
     [McpServerTool(Name = "vcs_commit", Title = "Commit", Destructive = true), Description(
         "Commits files with a message, as the Commit window does (every file saved first): the paths given, else every changed file that is not unversioned. " +
         "amend changes the last commit; push pushes after. Returns the new commit.")]
-    public Task<string> VcsCommit(string message, IReadOnlyList<string>? paths = null, bool amend = false, bool push = false) => OnUi(async () =>
+    public Task<string> VcsCommit(string message, IReadOnlyList<string>? paths = null, bool amend = false, bool push = false, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         VcsController vcs = window.Vcs;
         await vcs.RefreshAsync();
@@ -59,7 +59,7 @@ public sealed partial class PassengerTools
 
     [McpServerTool(Name = "vcs_log", Title = "The history", ReadOnly = true), Description(
         "The newest commits of every branch, as the Git window's Log lists them, with their branches and tags.")]
-    public Task<IReadOnlyList<VcsCommit>> VcsLog(int count = 20) => OnUi(async () =>
+    public Task<IReadOnlyList<VcsCommit>> VcsLog(int count = 20, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         Git repository = window.Vcs.Repository ?? throw new InvalidOperationException("The folder is not in a Git repository");
         return (IReadOnlyList<VcsCommit>)[.. (await repository.LogAsync(Math.Clamp(count, 1, 500))).Select(c =>
@@ -68,7 +68,7 @@ public sealed partial class PassengerTools
 
     [McpServerTool(Name = "vcs_checkout", Title = "Check out a branch", Destructive = true), Description(
         "Checks out a branch (with create, a new one from the head), as the branch menu does; open files take what is on disk after.")]
-    public Task<string> VcsCheckout(string branch, bool create = false) => OnUi(async () =>
+    public Task<string> VcsCheckout(string branch, bool create = false, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         VcsController vcs = window.Vcs;
         if (create)
@@ -89,7 +89,7 @@ public sealed partial class PassengerTools
         "Rider's Stash Changes and Unstash Changes. action: list (the stashes, the newest first, by index), push (every "
         + "uncommitted change, new files too, put away under message, open files saved first), pop or apply (stash index's "
         + "changes back in the files; pop drops it after), drop (throw stash index away).")]
-    public Task<IReadOnlyList<StashSummary>> VcsStash(string action = "list", string message = "", int index = 0) => OnUi<IReadOnlyList<StashSummary>>(async () =>
+    public Task<IReadOnlyList<StashSummary>> VcsStash(string action = "list", string message = "", int index = 0, CancellationToken cancel = default) => OnUi<IReadOnlyList<StashSummary>>(cancel, async () =>
     {
         VcsController vcs = window.Vcs;
         if (action != "list")
@@ -120,16 +120,16 @@ public sealed partial class PassengerTools
 
     [McpServerTool(Name = "nuget_search", Title = "Search NuGet", ReadOnly = true), Description(
         "Packages on the NuGet window's feed (nuget.org) a query finds, with their newest versions and downloads.")]
-    public Task<IReadOnlyList<PackageSummary>> NuGetSearch(string query, bool prerelease = false) => OnUi(async () =>
-        await window.NuGet.Feed.SearchAsync(query, prerelease, CancellationToken.None));
+    public Task<IReadOnlyList<PackageSummary>> NuGetSearch(string query, bool prerelease = false, CancellationToken cancel = default) => OnUi(cancel, async () =>
+        await window.NuGet.Feed.SearchAsync(query, prerelease, cancel));
 
     [McpServerTool(Name = "nuget_install", Title = "Install a package", Destructive = true), Description(
         "Adds a package to a project (its name or .csproj path) at a version (the newest when none is given), or moves it to that version, " +
         "through dotnet add package as the NuGet window does.")]
-    public Task<string> NuGetInstall(string project, string id, string? version = null) => OnUi(async () =>
+    public Task<string> NuGetInstall(string project, string id, string? version = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         ProjectModel chosen = Project(project);
-        string at = version ?? (await window.NuGet.Feed.VersionsAsync(id, prerelease: false, CancellationToken.None)).FirstOrDefault()
+        string at = version ?? (await window.NuGet.Feed.VersionsAsync(id, prerelease: false, cancel)).FirstOrDefault()
             ?? throw new ArgumentException($"{window.NuGet.Feed.Name} has no package {id}");
         PackageManager manager = new();
         List<string> said = [];
@@ -140,7 +140,7 @@ public sealed partial class PassengerTools
     });
 
     [McpServerTool(Name = "nuget_remove", Title = "Remove a package", Destructive = true), Description("Takes a package out of a project, through dotnet remove package.")]
-    public Task<string> NuGetRemove(string project, string id) => OnUi(async () =>
+    public Task<string> NuGetRemove(string project, string id, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         ProjectModel chosen = Project(project);
         PackageManager manager = new();
@@ -163,10 +163,10 @@ public sealed partial class PassengerTools
         [Description(Arguments)] string? arguments = null,
         [Description("How long to profile before the snapshot; the program's whole run when not given")] int? seconds = null,
         [Description("How many hot spots to return")] int top = 25,
-        [Description("With seconds: a memory snapshot too, the heap's types by size, taken just before the CPU snapshot")] bool memory = false) => OnUi(async () =>
+        [Description("With seconds: a memory snapshot too, the heap's types by size, taken just before the CPU snapshot")] bool memory = false, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         Choose(configuration);
-        if (await window.ProfileAsync(arguments) is { } problem)
+        if (await window.ProfileAsync(arguments).WaitAsync(cancel) is { } problem)
         {
             throw new InvalidOperationException(problem);
         }
@@ -174,7 +174,7 @@ public sealed partial class PassengerTools
         IReadOnlyList<HeapTypeInfo>? heap = null;
         if (seconds is { } limit)
         {
-            await Until(() => running.HasExited, TimeSpan.FromSeconds(Math.Clamp(limit, 1, 3600)));
+            await Until(() => running.HasExited, TimeSpan.FromSeconds(Math.Clamp(limit, 1, 3600)), cancel);
             if (memory && !running.HasExited && await window.MemorySnapshotAsync() is { } taken)
             {
                 heap = [.. taken.Types.Take(Math.Clamp(top, 1, 200)).Select(t => new HeapTypeInfo(t.Name, t.Count, t.Bytes))];
@@ -182,7 +182,7 @@ public sealed partial class PassengerTools
         }
         else
         {
-            await Until(() => running.HasExited, TimeSpan.FromMinutes(10));
+            await Until(() => running.HasExited, TimeSpan.FromMinutes(10), cancel);
         }
         Passenger.Profiler.Snapshot snapshot = await window.SnapshotAsync() ?? window.ProfilerView.Snapshot
             ?? throw new InvalidOperationException(window.Status ?? "The run left no snapshot");
@@ -211,9 +211,9 @@ public sealed partial class PassengerTools
     [McpServerTool(Name = "terminal_run", Title = "Run in the terminal", Destructive = true), Description(
         "Types a command into the IDE's Terminal window (opening it, and its shell, if need be) and presses Enter, as the person would, then waits " +
         "until the output has been quiet for a moment (or waitSeconds) and returns what the command printed. The person sees it run.")]
-    public Task<string> TerminalRun(string command, int waitSeconds = 15) => OnUi(async () =>
+    public Task<string> TerminalRun(string command, int waitSeconds = 15, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
-        TerminalSession shell = await Terminal();
+        TerminalSession shell = await Terminal(cancel);
         int before = shell.Screen.Scrollback.Count + shell.Screen.CursorRow;
         int version = shell.Screen.Version;
         shell.Write(command + "\r");
@@ -223,7 +223,7 @@ public sealed partial class PassengerTools
         bool answered = false;
         while (DateTime.UtcNow < until)
         {
-            await Task.Delay(100);
+            await Task.Delay(100, cancel);
             if (shell.Screen.Version != version)
             {
                 version = shell.Screen.Version;
@@ -243,7 +243,7 @@ public sealed partial class PassengerTools
 
     [McpServerTool(Name = "terminal_screen", Title = "What the terminal shows", ReadOnly = true), Description(
         "The IDE terminal's screen as it stands (a full-screen program's included), with the last lines of the scrollback above it.")]
-    public Task<string> TerminalScreen(int scrollback = 20) => OnUi(() =>
+    public Task<string> TerminalScreen(int scrollback = 20, CancellationToken cancel = default) => OnUi(cancel, () =>
     {
         if (window.TerminalPanel.Active is not { } shell)
         {
@@ -254,7 +254,7 @@ public sealed partial class PassengerTools
         return Task.FromResult(string.Join('\n', above.Concat(screen.Lines.Select(l => l.Text()))).TrimEnd());
     });
 
-    private async Task<TerminalSession> Terminal()
+    private async Task<TerminalSession> Terminal(CancellationToken cancel)
     {
         if (window.TerminalPanel.Active is { IsRunning: true } running)
         {
@@ -263,8 +263,8 @@ public sealed partial class PassengerTools
         window.ShowToolWindow("terminal");
         TerminalSession shell = window.TerminalPanel.Active is { IsRunning: true } started ? started : await window.TerminalPanel.NewSessionAsync();
         // The shell's first prompt, before anything is typed at it.
-        await Until(() => shell.Screen.Version > 0, TimeSpan.FromSeconds(10));
-        await Task.Delay(300);
+        await Until(() => shell.Screen.Version > 0, TimeSpan.FromSeconds(10), cancel);
+        await Task.Delay(300, cancel);
         return shell;
     }
 
