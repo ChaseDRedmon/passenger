@@ -70,6 +70,23 @@ public sealed class IdeErrorsTests : IDisposable
         window.ShowErrors();
         Ui.Settle();
         Assert.IsType<ErrorsPopup>(window.Popup);
+        // Thrown on purpose: the check that fails a test over a caught error is not to see these.
+        IdeErrors.Clear();
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_window_test_in_which_the_ide_caught_an_error_fails_naming_it()
+    {
+        MainWindow window = new() { Width = 800, Height = 600 };
+        window.Show();
+        Dispatcher.UIThread.Post(() => throw new ArgumentException("A posted job went wrong in a test"));
+        Ui.Settle();
+        FailOnIdeErrorsAttribute check = new();
+        System.Reflection.MethodInfo self = typeof(IdeErrorsTests).GetMethod(nameof(A_window_test_in_which_the_ide_caught_an_error_fails_naming_it))!;
+        InvalidOperationException failed = Assert.Throws<InvalidOperationException>(() => check.After(self, null!));
+        Assert.Contains("ArgumentException: A posted job went wrong in a test", failed.Message, StringComparison.Ordinal);
+        Assert.Empty(IdeErrors.Errors);
         window.Close();
     }
 
