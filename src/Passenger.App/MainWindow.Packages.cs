@@ -18,8 +18,8 @@ public partial class MainWindow
         nuget.Changed += (_, _) => ReloadSolution();
     }
 
-    /// <summary>Reads the solution's files again (after a package or project change), keeping the run configuration
-    /// chosen when it is still there.</summary>
+    /// <summary>Reads the solution's files again (after a package or project change, here or on disk), keeping the run
+    /// configuration chosen when it is still there and the Explorer's rows open.</summary>
     public void ReloadSolution()
     {
         if (folder is null)
@@ -27,7 +27,7 @@ public partial class MainWindow
             return;
         }
         Solution = SolutionModel.Find(folder) is { } solutionPath ? SolutionModel.Load(solutionPath) : null;
-        Explorer.Load(folder, Solution);
+        Explorer.Reload(Solution);
         string? chosen = configuration?.Name;
         configurations = RunConfiguration.From(Solution, folder);
         configuration = configurations.FirstOrDefault(c => c.Name == chosen) ?? configurations.FirstOrDefault();

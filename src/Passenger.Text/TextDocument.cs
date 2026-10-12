@@ -59,6 +59,9 @@ public sealed class TextDocument
     public string LineEnding { get; set; }
 
     public bool IsModified => !ReferenceEquals(Snapshot, saved);
+
+    /// <summary>The text as last loaded or saved: what the file on disk holds, unless something else changed it.</summary>
+    public TextSnapshot Saved => saved;
     public bool CanUndo => undo.Count > 0;
     public bool CanRedo => redo.Count > 0;
 

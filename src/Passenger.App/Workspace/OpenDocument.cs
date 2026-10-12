@@ -154,12 +154,34 @@ public sealed class OpenDocument : Observable
     public SelectionSet Selections { get; set; } = SelectionSet.Single(0);
     public Vector Scroll { get; set; }
 
-    /// <summary>Takes the file's text from disk again when something else changed it there (a checkout, a rollback),
-    /// as one undoable edit over only what differs, so carets before it stay put; never over unsaved changes.
-    /// Whether it changed anything.</summary>
-    public bool Reload()
+    /// <summary>Whether something other than this IDE changed the file on disk since it was last loaded or saved.</summary>
+    public bool ChangedOnDisk()
     {
-        if (IsModified || FileText.Load(Path) is not { } file)
+        try
+        {
+            return File.Exists(Path) && FileText.Load(Path) is { } file && file.Text != Text.Saved.ToString();
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Takes the file's text from disk again when something else changed it there (a checkout, a rollback),
+    /// as one undoable edit over only what differs, so carets before it stay put; over unsaved changes only when
+    /// asked (File Cache Conflict's Load File System Changes). Whether it changed anything.</summary>
+    public bool Reload(bool overUnsaved = false)
+    {
+        FileText? file;
+        try
+        {
+            file = (IsModified && !overUnsaved) || !File.Exists(Path) ? null : FileText.Load(Path);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+        if (file is null)
         {
             return false;
         }

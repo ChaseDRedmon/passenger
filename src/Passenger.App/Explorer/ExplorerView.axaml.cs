@@ -113,6 +113,14 @@ public partial class ExplorerView : UserControl
         Rows.IsVisible = true;
     }
 
+    /// <summary>The folder's solution read again (a project added or changed on disk), the rows open kept.</summary>
+    public void Reload(Workspace.SolutionModel? model)
+    {
+        solution = model;
+        ViewSwitch.IsVisible = model is not null;
+        Refresh();
+    }
+
     private void Show(bool solutionView)
     {
         if (solutionView && solution is not null)

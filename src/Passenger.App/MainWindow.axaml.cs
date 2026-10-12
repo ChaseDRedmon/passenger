@@ -147,6 +147,7 @@ public partial class MainWindow : Window
             }
         });
         Closing += (_, _) => _ = csharp?.DisposeAsync();
+        Closing += (_, _) => watcher?.Dispose();
         assist = new CodeAssist(Editors, Editors.AssistLayer, () => csharp);
         assist.Navigate += (_, target) => NavigateTo(target.Path, target.Position);
         assist.Message += (_, message) => StatusText.Text = message;
@@ -253,6 +254,9 @@ public partial class MainWindow : Window
 
     public Explorer.ExplorerView ExplorerView => Explorer;
 
+    /// <summary>Every file of the open folder, as Go to File searches them.</summary>
+    public FileIndex FileIndex => index;
+
     /// <summary>The open folder's solution, read from its files, or null for a folder without one.</summary>
     public SolutionModel? Solution { get; private set; }
 
@@ -302,6 +306,7 @@ public partial class MainWindow : Window
         configuration = configurations.FirstOrDefault();
         RunConfigName.Text = configuration?.Name ?? "No configurations";
         index.Build(folder);
+        Watch(folder);
         _ = csharp?.DisposeAsync();
         csharp = null;
         if (CSharpService.Wants(folder))
