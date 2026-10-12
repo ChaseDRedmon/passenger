@@ -302,11 +302,22 @@ public partial class ManagedDebugger
             return;
         }
 
-        if (managedBreakpoint.Condition is not null && await EvaluateBreakpointCondition(corThread, managedBreakpoint.Condition) is false)
+        if (managedBreakpoint.Condition is { } condition)
         {
-            _logger?.Invoke($"Conditional breakpoint condition not met: {managedBreakpoint.Condition}");
-            ContinueWithVariableClear();
-            return;
+            (bool holds, string? error) = await EvaluateBreakpointCondition(corThread, condition);
+            if (error is not null)
+            {
+                string message = $"The condition '{condition}' could not be evaluated, so the breakpoint stopped: {error}";
+                managedBreakpoint.Message = message;
+                OnBreakpointChanged?.Invoke(managedBreakpoint);
+                OnConsole?.Invoke($"{message}\n");
+            }
+            else if (!holds)
+            {
+                _logger?.Invoke($"Conditional breakpoint condition not met: {condition}");
+                ContinueWithVariableClear();
+                return;
+            }
         }
 
         if (managedBreakpoint.IsFunctionBreakpoint)

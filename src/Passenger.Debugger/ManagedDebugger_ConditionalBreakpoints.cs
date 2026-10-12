@@ -8,7 +8,10 @@ namespace Passenger.Debugger;
 
 public partial class ManagedDebugger
 {
-    private async Task<bool> EvaluateBreakpointCondition(ICorDebugThread corThread, string condition)
+    /// <summary>Whether a breakpoint's condition holds, or why it could not be told: a condition that
+    /// does not evaluate (an unknown name, a throw) or is not a bool. Such a breakpoint stops, with the
+    /// reason, as Visual Studio's and netcoredbg's do, rather than going missing unseen (upstream #54).</summary>
+    private async Task<(bool Holds, string? Error)> EvaluateBreakpointCondition(ICorDebugThread corThread, string condition)
     {
         try
         {
@@ -21,15 +24,18 @@ public partial class ManagedDebugger
             if (result.Error is not null)
             {
                 _logger?.Invoke($"Condition evaluation error for '{condition}': {result.Error}");
-                return false; // Don't stop on error - condition couldn't be evaluated, so skip the breakpoint
+                return (true, result.Error);
             }
-
-            return IsTruthyValue(result.Value);
+            if (result.Value?.UnwrapDebugValue() is not ICorDebugGenericValue { Type: CorElementType.BOOLEAN })
+            {
+                return (true, "it is not a bool");
+            }
+            return (IsTruthyValue(result.Value), null);
         }
         catch (Exception ex)
         {
             _logger?.Invoke($"Exception evaluating condition '{condition}': {ex.Message}");
-            return false; // Don't stop on exception - condition couldn't be evaluated, so skip the breakpoint
+            return (true, ex.Message);
         }
     }
 

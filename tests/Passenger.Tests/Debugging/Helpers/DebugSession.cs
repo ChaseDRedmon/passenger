@@ -33,7 +33,13 @@ public sealed class DebugSession : IDisposable
         {
             throw new FileNotFoundException("The debug adapter is not beside the tests", path);
         }
-        adapter = Process.Start(new ProcessStartInfo(Dotnet.Host(), [path, "--interpreter=vscode"])
+        // PASSENGER_ENGINE_LOG=FILE keeps the engine's own log of a run, for a test that fails inside it.
+        List<string> arguments = [path, "--interpreter=vscode"];
+        if (Environment.GetEnvironmentVariable("PASSENGER_ENGINE_LOG") is { Length: > 0 } log)
+        {
+            arguments.Add($"--engineLogging={log}");
+        }
+        adapter = Process.Start(new ProcessStartInfo(Dotnet.Host(), arguments)
         {
             RedirectStandardInput = true,
             RedirectStandardOutput = true,

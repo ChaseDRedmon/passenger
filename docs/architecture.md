@@ -150,11 +150,12 @@ Passenger:
   filter missing an exception caught in such code of the user's own assembly (#49), since Just My Code was decided by
   module only (now the runtime is told each such method is not the user's when its module loads, and asked about the
   handler's method); the thread running `Main` named `<No Name>` while a runtime thread was `Main Thread` (#59; now the
-  runtime's first created thread, as netcoredbg names it).
+  runtime's first created thread, as netcoredbg names it); a breakpoint condition that cannot be evaluated (an unknown
+  name, a throw, not a bool) passed silently (#54; now it stops, and says why on the breakpoint and in the Console);
+  function evaluation with no time limit, so a getter that never returns hung the debugger (#30; now it is aborted after
+  five seconds and answers that it was stopped).
 - Reaching Passenger's users now: breakpoints in methods marked not the user's still stopping under Just My Code
-  (#54's tail); a breakpoint condition that cannot be evaluated passed silently (#54); an empty runtime thread listed
-  (#59); function evaluation with no timeout, so a getter that never returns hangs hovers, watches and Variables
-  (#30).
+  (#54's tail); an empty runtime thread listed (#59).
 - Visible, less often: `[DebuggerDisplay]` rendering (#51: quotes, `\{` escapes, a failed fragment replacing the whole
   value, `Name` and `Type`, inheritance), values nested in another's display shown by `ToString()` (#53), a lambda's
   captured parameter listed twice (#58), inner exceptions never reported (#50), `RootHidden` on an object (#55), a

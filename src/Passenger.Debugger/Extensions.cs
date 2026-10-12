@@ -213,6 +213,10 @@ public static class Extensions
             e => e.Eval.Result))!;
     }
 
+    /// <summary>How long code the debugger runs in the program (a getter, a watch's call) may take before
+    /// it is stopped, so one that never returns cannot hang the debugger (upstream #30).</summary>
+    public static TimeSpan EvaluationTimeout { get; set; } = TimeSpan.FromSeconds(5);
+
     private static async Task<ICorDebugValue?> RunEvalAsync(ICorDebugEval eval, Func<Task<CorDebugManagedCallbackEventArgs>> processEventsUntilEvalEventFunc, EvalStatus evalStatus, bool throwOnException, Action startEval, Func<EvalCompleteCorDebugManagedCallbackEventArgs, ICorDebugValue?> onComplete)
     {
         ICorDebugValue? returnValue = null;
@@ -223,7 +227,23 @@ public static class Extensions
         try
         {
             eval.Thread.Process.Continue(false);
-            CorDebugManagedCallbackEventArgs evalEvent = await processEventsUntilEvalEventFunc();
+            Task<CorDebugManagedCallbackEventArgs> waiting = processEventsUntilEvalEventFunc();
+            if (await Task.WhenAny(waiting, Task.Delay(EvaluationTimeout)) != waiting)
+            {
+                // Abort, then a rude abort if that does not take; either way the runtime still ends the
+                // evaluation with its callback, which is waited for so no other request reads it.
+                eval.TryAbort();
+                if (await Task.WhenAny(waiting, Task.Delay(TimeSpan.FromSeconds(2))) != waiting && eval is ICorDebugEval2 rude)
+                {
+                    rude.TryRudeAbort();
+                }
+                if (await Task.WhenAny(waiting, Task.Delay(TimeSpan.FromSeconds(5))) == waiting && eval.TryGetResult(out ICorDebugValue? partial) is Cor.S_OK && partial is ICorDebugHandleValue handle)
+                {
+                    handle.TryDispose();
+                }
+                throw new ManagedDebugger.EvalException($"The evaluation took longer than {EvaluationTimeout.TotalSeconds:0} s and was stopped");
+            }
+            CorDebugManagedCallbackEventArgs evalEvent = await waiting;
             if (evalEvent is EvalCompleteCorDebugManagedCallbackEventArgs completeEvent)
             {
                 if (completeEvent.Eval != eval)

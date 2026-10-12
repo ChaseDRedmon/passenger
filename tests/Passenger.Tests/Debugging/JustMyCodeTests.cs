@@ -44,6 +44,23 @@ public class JustMyCodeTests(ITestOutputHelper testOutputHelper)
         Assert.Equal(7, stop.ReadStopInfo().line);
     }
 
+    [Fact]
+    public async Task An_evaluation_that_never_returns_is_stopped_and_the_debugger_goes_on()
+    {
+        using DebugSession host = await Launch(breakpointLine: 6, exceptionFilters: []);
+
+        StoppedEvent stop = await host.WaitForStoppedEvent();
+        int frame = host.GetTopStackFrame(stop.ThreadId!.Value).Id;
+        // A failed evaluation is a value saying so, as the engine answers any error.
+        host.WithEvaluateRequest(frame, "Slow.Forever", out EvaluateResponse timedOut);
+        Assert.Contains("was stopped", timedOut.Result, StringComparison.Ordinal);
+
+        host.WithEvaluateRequest(frame, "1 + 1", out EvaluateResponse after);
+        Assert.Equal("2", after.Result);
+        stop = await host.WithStepOverRequest(stop.ThreadId!.Value).WaitForStoppedEvent();
+        Assert.Equal(("step", 7), (stop.Reason, stop.ReadStopInfo().line));
+    }
+
     private async Task<DebugSession> Launch(int breakpointLine, IReadOnlyList<string> exceptionFilters)
     {
         DebugSession host = DebugSession.ForLaunch(testOutputHelper);

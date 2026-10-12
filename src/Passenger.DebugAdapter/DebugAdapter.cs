@@ -144,6 +144,7 @@ public sealed class DebugAdapter
         debugger.OnModuleUnloaded += (id, name, path) => connection.SendEvent("module", new ModuleEvent("removed", new DapModule(id, name, path)));
         debugger.OnProcessStarted += (processId, name) => connection.SendEvent("process", new ProcessEvent(name, processId, IsLocalProcess: true, StartMethod: "launch"));
         debugger.OnOutput += (output, isStdError) => connection.SendEvent("output", new OutputEvent(output, isStdError ? "stderr" : "stdout"));
+        debugger.OnConsole += message => connection.SendEvent("output", new OutputEvent(message, "console"));
         debugger.SendRunInTerminalRequest += RunInTerminal;
     }
 

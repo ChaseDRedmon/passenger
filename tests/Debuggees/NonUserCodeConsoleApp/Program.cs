@@ -23,3 +23,9 @@ static class Attributed
 	[DebuggerNonUserCode] public static void NonUser() => Console.WriteLine("2");
 	[DebuggerHidden] public static void Hidden() => Console.WriteLine("3");
 }
+
+static class Slow
+{
+	// A getter that never returns: the debugger must stop evaluating it, and go on.
+	public static int Forever { get { while (true) { } } }
+}

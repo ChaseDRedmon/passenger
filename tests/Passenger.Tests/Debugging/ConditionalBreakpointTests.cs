@@ -51,6 +51,38 @@ public class ConditionalBreakpointTests(ITestOutputHelper testOutputHelper)
         Assert.Equal(15, stopInfo.line);
     }
 
+    [Theory]
+    [InlineData("noSuchName")]
+    [InlineData("myInt")]
+    public async Task ConditionalBreakpoint_WhoseConditionCannotBeTold_StopsAndSaysWhy(string condition)
+    {
+        bool startSuspended = true;
+
+        using DebugSession debugProtocolHost = DebugSession.ForAttach(testOutputHelper, startSuspended, out Process p2);
+
+        await debugProtocolHost
+            .WithInitializeRequest()
+            .WithAttachRequest(p2.Id)
+            .WaitForInitializedEvent();
+
+        debugProtocolHost
+            .WithBreakpointsRequest(Debuggees.Source("DebuggableConsoleApp", "MyClass.cs"),
+                [
+                    new DapSourceBreakpoint(15, Condition: condition),
+                    new DapSourceBreakpoint(22)
+                ], out SetBreakpointsResponse response)
+            .WithConfigurationDoneRequest()
+            .WithOptionalResumeRuntime(p2.Id, startSuspended);
+
+        // An unknown name, or a condition that is not a bool, stops rather than going missing unseen.
+        int id = response.Breakpoints[0].Id!.Value;
+        BreakpointEvent said = await debugProtocolHost.WaitForEvent<BreakpointEvent>(e => e.Breakpoint.Id == id && e.Breakpoint.Message is not null && e.Breakpoint.Verified);
+        Assert.Contains(condition, said.Breakpoint.Message, StringComparison.Ordinal);
+        StoppedEvent stoppedEvent = await debugProtocolHost.WaitForStoppedEvent();
+        Assert.Equal(15, stoppedEvent.ReadStopInfo().line);
+        Assert.Equal([id], stoppedEvent.HitBreakpointIds);
+    }
+
     [Fact]
     public async Task ConditionalBreakpoint_WithFalseCondition_DoesNotStop()
     {

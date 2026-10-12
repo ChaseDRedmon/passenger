@@ -65,6 +65,8 @@ public partial class ManagedDebugger
     public event Action<string, string, string>? OnModuleUnloaded;
     // Output text, isError (true for stderr, false for stdout)
     public event Action<string, bool>? OnOutput;
+    /// <summary>What the debugger itself has to tell the user, beside the program's output.</summary>
+    public event Action<string>? OnConsole;
     public event Action<int, string>? OnProcessStarted;
     public event Action<BreakpointManager.BreakpointInfo>? OnBreakpointChanged;
     public event Func<LaunchInfo, int> SendRunInTerminalRequest = null!;
