@@ -8,6 +8,12 @@ namespace Passenger.App.Packages;
 /// management it writes the version into Directory.Packages.props. What the command says goes to the log.</summary>
 public sealed class PackageManager
 {
+    /// <summary>How many times a command is run that found its project file in another program's hands.</summary>
+    private const int Attempts = 3;
+
+    /// <summary>What .NET says of a file Windows would not open because another program had it open.</summary>
+    private const string InUse = "being used by another process";
+
     /// <summary>A line the command printed, for the NuGet window's log; raised on the UI thread.</summary>
     public event EventHandler<string>? Line;
 
@@ -42,7 +48,25 @@ public sealed class PackageManager
         };
         start.Environment["DOTNET_CLI_UI_LANGUAGE"] = "en";
         start.Environment["DOTNET_NOLOGO"] = "1";
-        Line?.Invoke(this, $"dotnet {string.Join(' ', arguments.Select(a => a.Contains(' ', StringComparison.Ordinal) ? $"\"{a}\"" : a))}");
+        string command = $"dotnet {string.Join(' ', arguments.Select(a => a.Contains(' ', StringComparison.Ordinal) ? $"\"{a}\"" : a))}";
+        for (int attempt = 1; ; attempt++)
+        {
+            Line?.Invoke(this, command);
+            (bool succeeded, bool fileInUse) = await RunOnceAsync(start);
+            if (succeeded || !fileInUse || attempt == Attempts)
+            {
+                return succeeded;
+            }
+            await Task.Delay(TimeSpan.FromMilliseconds(500));
+        }
+    }
+
+    /// <summary>Runs the command once, what it says to the log: whether it succeeded, and whether it failed only because
+    /// a file it writes was open in another program at that moment (the language server reading the project the last
+    /// change made, a virus scanner), which Windows refuses where macOS never does, and which leaves the project as it
+    /// was, so the command can be run again.</summary>
+    private async Task<(bool Succeeded, bool FileInUse)> RunOnceAsync(ProcessStartInfo start)
+    {
         Process process;
         try
         {
@@ -51,19 +75,24 @@ public sealed class PackageManager
         catch (Exception failed) when (failed is System.ComponentModel.Win32Exception or InvalidOperationException)
         {
             Line?.Invoke(this, $"Could not start dotnet: {failed.Message}");
-            return false;
+            return (false, false);
         }
         using Process running = process;
+        bool fileInUse = false;
         Task output = Pump(process.StandardOutput);
         Task error = Pump(process.StandardError);
         await process.WaitForExitAsync();
         await Task.WhenAll(output, error);
-        return process.ExitCode == 0;
+        return (process.ExitCode == 0, fileInUse);
 
         async Task Pump(StreamReader reader)
         {
             while (await reader.ReadLineAsync() is { } line)
             {
+                if (line.Contains(InUse, StringComparison.Ordinal))
+                {
+                    fileInUse = true;
+                }
                 string text = line;
                 UiThread.Post(() => Line?.Invoke(this, text));
             }

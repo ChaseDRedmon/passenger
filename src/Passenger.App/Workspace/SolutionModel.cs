@@ -48,7 +48,7 @@ public sealed record SolutionModel(string Path, string Name, IReadOnlyList<Solut
     private static SolutionModel LoadSlnx(string path)
     {
         string root = System.IO.Path.GetDirectoryName(path)!;
-        XElement solution = XDocument.Load(path).Root!;
+        XElement solution = SharedRead.Xml(path).Root!;
         List<SolutionEntry> entries = [];
         foreach (XElement element in solution.Elements())
         {
@@ -104,7 +104,7 @@ public sealed record SolutionModel(string Path, string Name, IReadOnlyList<Solut
         Dictionary<string, string> parents = new(StringComparer.OrdinalIgnoreCase);
         List<string> order = [];
         bool inNesting = false;
-        foreach (string line in File.ReadLines(path))
+        foreach (string line in SharedRead.Lines(path))
         {
             if (project.Match(line) is { Success: true } m)
             {
@@ -210,7 +210,7 @@ public sealed record ProjectModel(
         {
             try
             {
-                return Read(path, name, XDocument.Load(path).Root!);
+                return Read(path, name, SharedRead.Xml(path).Root!);
             }
             catch (Exception error) when (error is System.Xml.XmlException or IOException && attempt < 3)
             {
@@ -299,7 +299,7 @@ public sealed record ProjectModel(
             }
             try
             {
-                return XDocument.Load(props).Root!.Descendants()
+                return SharedRead.Xml(props).Root!.Descendants()
                     .Where(e => e.Name.LocalName == "PackageVersion" && e.Attribute("Include") is not null && e.Attribute("Version") is not null)
                     .GroupBy(e => e.Attribute("Include")!.Value, StringComparer.OrdinalIgnoreCase)
                     .ToDictionary(g => g.Key, g => g.First().Attribute("Version")!.Value, StringComparer.OrdinalIgnoreCase);
@@ -328,7 +328,7 @@ public sealed record ProjectModel(
             XElement root;
             try
             {
-                root = XDocument.Load(props).Root!;
+                root = SharedRead.Xml(props).Root!;
             }
             catch (Exception error) when (error is System.Xml.XmlException or IOException)
             {
@@ -344,4 +344,27 @@ public sealed record ProjectModel(
         }
         return found;
     }
+}
+
+/// <summary>A solution's or project's file read without ever standing in the way of a program writing it: Windows refuses
+/// to let a file be written while a reader holds it without sharing writes, and the folder watcher reads a project the
+/// moment it changes, just as dotnet add package or a checkout goes on to write it again.</summary>
+internal static class SharedRead
+{
+    public static XDocument Xml(string path)
+    {
+        using FileStream stream = Open(path);
+        return XDocument.Load(stream);
+    }
+
+    public static IEnumerable<string> Lines(string path)
+    {
+        using StreamReader reader = new(Open(path));
+        while (reader.ReadLine() is { } line)
+        {
+            yield return line;
+        }
+    }
+
+    private static FileStream Open(string path) => new(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
 }
