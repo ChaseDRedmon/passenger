@@ -79,6 +79,13 @@ public sealed class EditorGroup : DockPanel
         Children.Add(Editor);
         // The group the person works in is the area's active one.
         Editor.GotFocus += (_, _) => area.SetActiveGroup(this);
+        Editor.SelectionChanged += (_, _) =>
+        {
+            if (active is not null && Editor.Document == active.Document.Text)
+            {
+                active.Document.Selections = Editor.Selections;
+            }
+        };
         AddHandler(PointerPressedEvent, (_, _) => area.SetActiveGroup(this), RoutingStrategies.Tunnel, handledEventsToo: true);
     }
 
@@ -115,6 +122,17 @@ public sealed class EditorGroup : DockPanel
         }
         int at = index ?? (active is null ? tabs.Count : tabs.IndexOf(active) + 1);
         tabs.Insert(Math.Clamp(at, 0, tabs.Count), new EditorTab(document));
+        document.Text.Changed += OnTabTextChanged;
+    }
+
+    /// <summary>A hidden tab's kept carets follow what changes its text meanwhile (a reload, a rename), as the shown one's do.</summary>
+    private void OnTabTextChanged(object? sender, DocumentChangedEventArgs e)
+    {
+        if (tabs.FirstOrDefault(t => t.Document.Text == sender) is { } tab && tab != active
+            && views.TryGetValue(tab.Document, out (SelectionSet Selections, Vector Scroll) view))
+        {
+            views[tab.Document] = (TextEditing.MapThrough(view.Selections, e.Edits).Clamp(e.After.Length), view.Scroll);
+        }
     }
 
     /// <summary>Shows a file's tab, keeping the carets and scroll of the one it replaces.</summary>
@@ -166,6 +184,7 @@ public sealed class EditorGroup : DockPanel
         int index = tabs.IndexOf(tab);
         views.Remove(document);
         tabs.Remove(tab);
+        document.Text.Changed -= OnTabTextChanged;
         if (tab == active)
         {
             document.PropertyChanged -= OnDocumentChanged;

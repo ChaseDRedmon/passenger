@@ -43,19 +43,20 @@ public partial class MainWindow
         return popup;
     }
 
-    /// <summary>Replaces a query's matches in these files: an open one as one undoable edit, a closed one written in
-    /// its own encoding.</summary>
+    /// <summary>Replaces a query's matches in these files: an open one as one undoable step changing only its matches,
+    /// so its carets, folds and breakpoints stay put; a closed one written in its own encoding.</summary>
     public void ReplaceInFiles(SearchQuery query, string replacement, IReadOnlyList<string> paths)
     {
         foreach (string path in paths)
         {
             if (Editors.Documents.FirstOrDefault(d => d.Path == path) is { } open)
             {
-                string before = open.Text.Snapshot.ToString();
-                string after = FileSearch.ReplaceAll(before, query, replacement);
-                if (after != before)
+                IReadOnlyList<TextEdit> edits = FileSearch.Replacements(open.Text.Snapshot, query, replacement);
+                if (edits.Count > 0)
                 {
-                    open.Text.SetText(after, open.Selections);
+                    open.Text.BreakUndoGroup();
+                    open.Text.Edit(edits, open.Selections, TextEditing.MapThrough(open.Selections, edits));
+                    open.Text.BreakUndoGroup();
                 }
             }
             else if (FileText.Load(path) is { } file)

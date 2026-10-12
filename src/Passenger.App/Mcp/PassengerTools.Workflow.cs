@@ -4,6 +4,7 @@ using Passenger.App.Packages;
 using Passenger.App.Vcs;
 using Passenger.App.Workspace;
 using Passenger.Terminal;
+using Passenger.Text;
 
 namespace Passenger.App.Mcp;
 

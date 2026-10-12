@@ -1,23 +1,51 @@
-using Passenger.Editor;
-
-namespace Passenger.App.Vcs;
+namespace Passenger.Text;
 
 /// <summary>A stretch where two texts' lines differ: lines from <see cref="OldStart"/> of the first replaced by
 /// lines from <see cref="NewStart"/> of the second (either count may be zero), lines from zero.</summary>
 public readonly record struct DiffHunk(int OldStart, int OldCount, int NewStart, int NewCount);
 
-/// <summary>Lines compared as Myers' diff does (the shortest edit), which is what Git shows: the hunks between
-/// two texts, and the gutter's change bars for the second.</summary>
+/// <summary>Lines compared as Myers' diff does (the shortest edit), which is what Git shows: the hunks between two
+/// texts (the gutter's change bars, the diff viewer), and the edits that turn one into the other (a reload from disk).</summary>
 public static class LineDiff
 {
     /// <summary>The most work the comparison does before it calls the rest one changed stretch, so a file edited
     /// all over (or a huge one) costs a bounded time.</summary>
     private const int MostEdits = 4000;
 
-    public static IReadOnlyList<DiffHunk> Hunks(string before, string after)
+    public static IReadOnlyList<DiffHunk> Hunks(string before, string after) => Hunks(Lines(before), Lines(after));
+
+    /// <summary>The edits that turn one text into the other: one per changed stretch of lines, only as wide as the
+    /// characters that differ in it, so what lies outside them (carets, breakpoints, folds) keeps its place.</summary>
+    public static IReadOnlyList<TextEdit> Edits(string before, string after)
     {
-        string[] a = Lines(before);
-        string[] b = Lines(after);
+        string[] a = WholeLines(before);
+        string[] b = WholeLines(after);
+        int[] from = Starts(a);
+        int[] to = Starts(b);
+        List<TextEdit> edits = [];
+        foreach (DiffHunk hunk in Hunks(a, b))
+        {
+            int oldStart = from[hunk.OldStart];
+            int oldEnd = from[hunk.OldStart + hunk.OldCount];
+            int newStart = to[hunk.NewStart];
+            int newEnd = to[hunk.NewStart + hunk.NewCount];
+            while (oldStart < oldEnd && newStart < newEnd && before[oldStart] == after[newStart])
+            {
+                oldStart++;
+                newStart++;
+            }
+            while (oldEnd > oldStart && newEnd > newStart && before[oldEnd - 1] == after[newEnd - 1])
+            {
+                oldEnd--;
+                newEnd--;
+            }
+            edits.Add(new TextEdit(oldStart, oldEnd - oldStart, after[newStart..newEnd]));
+        }
+        return edits;
+    }
+
+    private static IReadOnlyList<DiffHunk> Hunks(string[] a, string[] b)
+    {
         // The ends that agree are no work: only the middle is compared.
         int prefix = 0;
         while (prefix < a.Length && prefix < b.Length && a[prefix] == b[prefix])
@@ -59,12 +87,6 @@ public static class LineDiff
         }
         return hunks;
     }
-
-    /// <summary>Rider's change bars for the second text: lines added, lines modified, and a mark where lines went.</summary>
-    public static IReadOnlyList<ChangeMark> Marks(string before, string after) =>
-        [.. Hunks(before, after).Select(h => h.OldCount == 0 ? new ChangeMark(h.NewStart, h.NewCount, ChangeMarkKind.Added)
-            : h.NewCount == 0 ? new ChangeMark(h.NewStart, 0, ChangeMarkKind.Deleted)
-            : new ChangeMark(h.NewStart, h.NewCount, ChangeMarkKind.Modified))];
 
     /// <summary>The difference as `git diff` prints it: a header, then each hunk with three lines of context around it,
     /// hunks whose context touches merged into one.</summary>
@@ -121,6 +143,32 @@ public static class LineDiff
     }
 
     private static string[] Lines(string text) => text.Length == 0 ? [] : text.Replace("\r\n", "\n", StringComparison.Ordinal).TrimEnd('\n').Split('\n');
+
+    /// <summary>The lines each with its own ending, so that together they are the text exactly.</summary>
+    private static string[] WholeLines(string text)
+    {
+        List<string> lines = [];
+        int start = 0;
+        while (start < text.Length)
+        {
+            int feed = text.IndexOf('\n', start);
+            int end = feed < 0 ? text.Length : feed + 1;
+            lines.Add(text[start..end]);
+            start = end;
+        }
+        return [.. lines];
+    }
+
+    /// <summary>Where each line starts, and the text's end after the last.</summary>
+    private static int[] Starts(string[] lines)
+    {
+        int[] starts = new int[lines.Length + 1];
+        for (int i = 0; i < lines.Length; i++)
+        {
+            starts[i + 1] = starts[i] + lines[i].Length;
+        }
+        return starts;
+    }
 
     /// <summary>The matching lines of the shortest edit (each a pair of indices), or null past the work limit.</summary>
     private static List<(int X, int Y)>? Myers(ReadOnlySpan<string> a, ReadOnlySpan<string> b)

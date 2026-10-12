@@ -124,6 +124,32 @@ public sealed class FolderWatchTests : IDisposable
         Assert.False(window.IsVisible, "The window would not close");
     }
 
+    [AvaloniaFact]
+    public void Lines_changed_on_disk_leave_breakpoints_bookmarks_and_the_caret_with_their_own_lines()
+    {
+        string path = Path.Combine(folder, "Long.cs");
+        File.WriteAllText(path, string.Concat(Enumerable.Range(1, 60).Select(i => $"// line {i}\n")));
+        MainWindow window = Open();
+        window.OpenFile(path);
+        Ui.Settle();
+        string open = window.EditorArea.Active!.Path;
+        window.Debugger.Breakpoints.Toggle(open, 19);
+        window.Debugger.Breakpoints.Toggle(open, 39);
+        window.Bookmarks.Toggle(open, 19);
+        window.Bookmarks.Toggle(open, 39);
+        Passenger.Editor.CodeEditor editor = window.EditorArea.CodeEditor;
+        editor.GoTo(new Passenger.Text.TextPosition(29, 4));
+
+        // A checkout changes line 5 (adding one after it) and line 50, around everything the person placed.
+        File.WriteAllText(path, string.Concat(Enumerable.Range(1, 60).Select(i =>
+            i == 5 ? "// line 5, changed\n// and one more\n" : i == 50 ? "// line 50, changed\n" : $"// line {i}\n")));
+        Ui.WaitFor(() => Text(window).Contains("line 50, changed", StringComparison.Ordinal), "the disk's text");
+        Assert.Equal([20, 40], window.Debugger.Breakpoints.In(open).Select(b => b.Line));
+        Assert.Equal([20, 40], window.Bookmarks.LinesIn(open));
+        Assert.Equal(new Passenger.Text.TextPosition(30, 4), editor.CaretPosition);
+        window.Close();
+    }
+
     private static void Type(MainWindow window, string text)
     {
         window.EditorArea.CodeEditor.Selections = Passenger.Text.SelectionSet.Single(0);

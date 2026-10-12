@@ -62,7 +62,6 @@ public static class WorkspaceEdits
         SelectionSet carets = open.Selections;
         open.Text.BreakUndoGroup();
         open.Text.Edit(edits, carets, TextEditing.MapThrough(carets, edits));
-        open.Selections = TextEditing.MapThrough(carets, edits);
     }
 
     /// <summary>An open file's edits in its text as it is now: as answered when its text has not changed since, carried

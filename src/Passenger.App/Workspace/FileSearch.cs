@@ -83,21 +83,24 @@ public static class FileSearch
     /// Find bar's Replace fills them.</summary>
     public static string ReplaceAll(string text, SearchQuery query, string replacement)
     {
-        TextSnapshot snapshot = TextSnapshot.From(text);
-        IReadOnlyList<TextRange> matches = TextSearch.FindAll(snapshot, query, int.MaxValue).Matches;
-        if (matches.Count == 0)
+        IReadOnlyList<TextEdit> edits = Replacements(TextSnapshot.From(text), query, replacement);
+        if (edits.Count == 0)
         {
             return text;
         }
         StringBuilder replaced = new(text.Length);
         int at = 0;
-        foreach (TextRange match in matches)
+        foreach (TextEdit edit in edits)
         {
-            replaced.Append(text, at, match.Start - at);
-            replaced.Append(TextSearch.Replacement(snapshot, query, match, replacement));
-            at = match.End;
+            replaced.Append(text, at, edit.Start - at);
+            replaced.Append(edit.Text);
+            at = edit.End;
         }
         replaced.Append(text, at, text.Length - at);
         return replaced.ToString();
     }
+
+    /// <summary>Every match's replacement as an edit, so an open file changes only where its matches are.</summary>
+    public static IReadOnlyList<TextEdit> Replacements(TextSnapshot text, SearchQuery query, string replacement) =>
+        [.. TextSearch.FindAll(text, query, int.MaxValue).Matches.Select(m => new TextEdit(m.Start, m.Length, TextSearch.Replacement(text, query, m, replacement)))];
 }

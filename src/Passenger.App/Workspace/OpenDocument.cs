@@ -41,6 +41,7 @@ public sealed class OpenDocument : Observable
         }
         Text.Changed += (_, change) =>
         {
+            Selections = TextEditing.MapThrough(Selections, change.Edits).Clamp(change.After.Length);
             if (foldRegions.Count > 0)
             {
                 FoldRegions = [.. foldRegions.Select(r => r with
@@ -151,6 +152,7 @@ public sealed class OpenDocument : Observable
     public Avalonia.Media.Geometry Icon => Explorer.FileIcons.ForFile(Path);
     public Avalonia.Media.IBrush IconBrush => Explorer.FileIcons.BrushForFile(Path);
 
+    /// <summary>The carets: the editor's while the file is shown there, as left otherwise, moved by every change to the text.</summary>
     public SelectionSet Selections { get; set; } = SelectionSet.Single(0);
     public Vector Scroll { get; set; }
 
@@ -168,7 +170,7 @@ public sealed class OpenDocument : Observable
     }
 
     /// <summary>Takes the file's text from disk again when something else changed it there (a checkout, a rollback),
-    /// as one undoable edit over only what differs, so carets before it stay put; over unsaved changes only when
+    /// as one undoable step over only the lines that differ, so what is anchored elsewhere stays put; over unsaved changes only when
     /// asked (File Cache Conflict's Load File System Changes). Whether it changed anything.</summary>
     public bool Reload(bool overUnsaved = false)
     {
@@ -185,25 +187,11 @@ public sealed class OpenDocument : Observable
         {
             return false;
         }
-        string now = Text.Snapshot.ToString();
-        string disk = file.Text;
-        if (now == disk)
+        if (Text.Snapshot.ToString() == file.Text)
         {
             return false;
         }
-        int start = 0;
-        while (start < now.Length && start < disk.Length && now[start] == disk[start])
-        {
-            start++;
-        }
-        int end = 0;
-        while (end < now.Length - start && end < disk.Length - start && now[now.Length - 1 - end] == disk[disk.Length - 1 - end])
-        {
-            end++;
-        }
-        SelectionSet before = Selections;
-        Text.Edit([new TextEdit(start, now.Length - start - end, disk[start..(disk.Length - end)])], before, before.Clamp(disk.Length));
-        Text.BreakUndoGroup();
+        Text.SetText(file.Text, Selections);
         Text.MarkSaved();
         Raise(nameof(IsModified));
         return true;

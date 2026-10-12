@@ -2,6 +2,7 @@ using Avalonia.Headless.XUnit;
 using Passenger.App;
 using Passenger.App.Navigation;
 using Passenger.App.Workspace;
+using Passenger.Editor;
 using Passenger.Text;
 
 namespace Passenger.Tests;
@@ -83,6 +84,53 @@ public sealed class FindInFilesTests : IDisposable
         Assert.Equal("Alpha.cs", window.EditorArea.Active?.Name);
         Selection chosen = window.EditorArea.CodeEditor.Selections.Primary;
         Assert.Equal("int total", window.EditorArea.CodeEditor.Document.Snapshot.GetText(chosen.Start, chosen.Length));
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Replace_all_over_an_open_file_keeps_its_caret_folds_and_breakpoints()
+    {
+        const string Source = "class Gamma\n{\n    int Count()\n    {\n        int count = 0;\n        return count;\n    }\n\n"
+            + "    void Other()\n    {\n        Log(count);\n    }\n\n    void Last() { }\n}\n";
+        string path = Path.Combine(folder, "Gamma.cs");
+        File.WriteAllText(path, Source);
+        MainWindow window = Open();
+        window.OpenFile(path);
+        Ui.Settle();
+        Passenger.Editor.CodeEditor editor = window.EditorArea.CodeEditor;
+        OpenDocument gamma = window.EditorArea.Active!;
+        Ui.WaitFor(() => editor.FoldRegions.Count == 3, "the file's regions");
+        // Other folded (Ctrl+M, S in its body), breakpoints in it and on Last, the caret on Last.
+        editor.GoTo(new TextPosition(10, 8));
+        editor.Focus();
+        Ui.Press(window, "control M");
+        Ui.Press(window, "control S");
+        window.Debugger.Breakpoints.Toggle(gamma.Path, 10);
+        window.Debugger.Breakpoints.Toggle(gamma.Path, 13);
+        editor.GoTo(new TextPosition(13, 9));
+
+        FindInFilesPopup popup = window.ShowFindInFiles(replace: true)!;
+        popup.MatchCase = true;
+        popup.Words = true;
+        Search(popup, "count");
+        window.Confirm = (_, _, _) => Task.FromResult(true);
+        popup.Replacement = "amount";
+        popup.RequestReplace();
+        Ui.WaitFor(() => gamma.Text.Snapshot.ToString().Contains("Log(amount);", StringComparison.Ordinal), "the open file's matches replaced");
+        Ui.Press(window, "ESCAPE");
+        Ui.Settle();
+
+        string text = gamma.Text.Snapshot.ToString();
+        Assert.Equal(new TextPosition(13, 9), editor.CaretPosition);
+        Assert.Equal([10, 13], window.Debugger.Breakpoints.In(gamma.Path).Select(b => b.Line));
+        FoldRegion folded = Assert.Single(editor.FoldRegions, r => r.Folded);
+        Assert.Equal(text.IndexOf("void Other()", StringComparison.Ordinal) + "void Other()".Length, folded.Start);
+
+        // Undo puts the text back and leaves the caret where the person had it.
+        editor.Focus();
+        editor.TryExecute(Passenger.Editor.EditorActions.Undo);
+        Assert.Equal(Source, gamma.Text.Snapshot.ToString());
+        Assert.Equal(new TextPosition(13, 9), editor.CaretPosition);
         window.Close();
     }
 

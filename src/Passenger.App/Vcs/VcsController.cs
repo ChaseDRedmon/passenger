@@ -1,6 +1,7 @@
 using Avalonia.Threading;
 using Passenger.App.Workspace;
 using Passenger.Editor;
+using Passenger.Text;
 
 namespace Passenger.App.Vcs;
 
@@ -370,12 +371,18 @@ public sealed class VcsController
         int generation = ++tracked.Generation;
         string? before = await HeadTextAsync(document.Path);
         string after = document.Text.Snapshot.ToString();
-        IReadOnlyList<ChangeMark> marks = before is null ? [] : await Task.Run(() => LineDiff.Marks(before, after));
+        IReadOnlyList<ChangeMark> marks = before is null ? [] : await Task.Run(() => Marks(before, after));
         if (generation == tracked.Generation && documents.ContainsKey(document))
         {
             document.ChangeMarks = marks;
         }
     }
+
+    /// <summary>Rider's change bars for the second text: lines added, lines modified, and a mark where lines went.</summary>
+    private static IReadOnlyList<ChangeMark> Marks(string before, string after) =>
+        [.. LineDiff.Hunks(before, after).Select(h => h.OldCount == 0 ? new ChangeMark(h.NewStart, h.NewCount, ChangeMarkKind.Added)
+            : h.NewCount == 0 ? new ChangeMark(h.NewStart, 0, ChangeMarkKind.Deleted)
+            : new ChangeMark(h.NewStart, h.NewCount, ChangeMarkKind.Modified))];
 
     private static string FirstLine(string message) => message.Trim().Split('\n')[0].Trim();
 

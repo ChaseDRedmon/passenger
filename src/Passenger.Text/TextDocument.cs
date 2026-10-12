@@ -110,11 +110,13 @@ public sealed class TextDocument
         Raise(before, after, sorted, ChangeReason.Edit);
     }
 
-    /// <summary>Replaces the whole text (a reload from disk) as one undoable step.</summary>
+    /// <summary>Changes the whole text to another (a reload from disk, a replace across files) as one undoable step of
+    /// one edit per changed stretch of lines, so carets, breakpoints and folds outside them stay where they were.</summary>
     public void SetText(string text, SelectionSet selectionsBefore)
     {
-        TextEdit all = new(0, Snapshot.Length, text);
-        Edit([all], selectionsBefore, selectionsBefore.Clamp(text.Length));
+        IReadOnlyList<TextEdit> edits = LineDiff.Edits(Snapshot.ToString(), text);
+        BreakUndoGroup();
+        Edit(edits, selectionsBefore, TextEditing.MapThrough(selectionsBefore, edits).Clamp(text.Length));
         BreakUndoGroup();
     }
 
