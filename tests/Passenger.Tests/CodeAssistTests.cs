@@ -342,6 +342,52 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void A_postfix_template_after_an_expression_and_a_dot_wraps_it_where_it_fits()
+    {
+        MainWindow window = project.Open("Loop.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "int total = 0;");
+        editor.Focus();
+        string Text() => editor.Document.Snapshot.ToString();
+        string Selected() => editor.Document.Snapshot.GetText(editor.Selections.Primary.Start, editor.Selections.Primary.Length);
+
+        // .foreach wraps the whole call chain, its variable to be named first.
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("Enumerable.Range(0, 3).foreach");
+        Ui.Settle();
+        Ui.Press(window, "TAB");
+        Assert.Contains("        foreach (var item in Enumerable.Range(0, 3))\n        {\n", Text(), StringComparison.Ordinal);
+        Assert.Equal("item", Selected());
+        Ui.Press(window, "ESCAPE");
+
+        // .var names what it holds, the name selected to be typed over.
+        PlaceAfter(editor, "int total = 0;");
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("total.var");
+        Ui.Settle();
+        Ui.Press(window, "TAB");
+        Assert.Contains("        var value = total;", Text(), StringComparison.Ordinal);
+        window.KeyTextInput("copy");
+        Ui.Press(window, "TAB");
+        Assert.Contains("        var copy = total;", Text(), StringComparison.Ordinal);
+
+        // In the middle of an expression only an expression's template fits: .par wraps the name before it, .if is not offered.
+        PlaceAfter(editor, "var copy = total;");
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("int doubled = 2 * total.par");
+        Ui.Settle();
+        Ui.Press(window, "TAB");
+        Assert.Contains("        int doubled = 2 * (total)\n", Text(), StringComparison.Ordinal);
+        Ui.Press(window, "ESCAPE");
+        window.KeyTextInput(" + total.if");
+        Ui.Settle();
+        Ui.Press(window, "ESCAPE");
+        Ui.Press(window, "TAB");
+        Assert.DoesNotContain("if (", Text(), StringComparison.Ordinal);
+        window.Close();
+    }
+
     private static void PlaceAfter(CodeEditor editor, string text)
     {
         int at = editor.Document.Snapshot.ToString().IndexOf(text, StringComparison.Ordinal);

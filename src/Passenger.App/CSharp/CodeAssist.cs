@@ -23,6 +23,7 @@ public sealed class CodeAssist
     private readonly InfoCard signatureCard = new();
     private readonly CompletionPopup completion = new();
     private readonly Dictionary<CompletionItem, LiveTemplate> templatesOffered = [];
+    private readonly Dictionary<CompletionItem, (PostfixTemplate Template, PostfixTarget Target)> postfixOffered = [];
     private CancellationTokenSource? hovering;
     private CancellationTokenSource? completing;
     private Completion? open;
@@ -287,7 +288,13 @@ public sealed class CodeAssist
             {
                 templatesOffered[new CompletionItem { Label = template.Abbreviation, Kind = 15, Detail = template.Description, SortText = "!" + template.Abbreviation }] = template;
             }
-            open = new Completion([.. list.Items, .. templatesOffered.Keys], Math.Min(start, Editor.Selections.Primary.Caret));
+            // After an expression and a dot, the postfix templates that may wrap it, after its members.
+            postfixOffered.Clear();
+            foreach ((PostfixTemplate postfix, PostfixTarget target) in Postfixes(Math.Min(start, caret), caret))
+            {
+                postfixOffered[new CompletionItem { Label = postfix.Name, Kind = 15, Detail = postfix.Example, SortText = "~" + postfix.Name }] = (postfix, target);
+            }
+            open = new Completion([.. list.Items, .. templatesOffered.Keys, .. postfixOffered.Keys], Math.Min(start, Editor.Selections.Primary.Caret));
             Filter();
         }
         catch (Exception error) when (IsServerFailure(error))
@@ -362,6 +369,11 @@ public sealed class CodeAssist
             Expand(chosen, start, Editor.Selections.Primary.Caret);
             return;
         }
+        if (postfixOffered.TryGetValue(item, out (PostfixTemplate Template, PostfixTarget Target) postfix))
+        {
+            ExpandPostfix(postfix.Template, postfix.Target, Editor.Selections.Primary.Caret);
+            return;
+        }
         try
         {
             if (item.Data is not null && item.AdditionalTextEdits is null)
@@ -397,6 +409,11 @@ public sealed class CodeAssist
             return false;
         }
         string word = Editor.Document.Snapshot.GetText(start, caret - start);
+        if (Postfixes(start, caret).FirstOrDefault(p => p.Template.Name == word) is { Template: { } postfix } found)
+        {
+            ExpandPostfix(postfix, found.Target, caret);
+            return true;
+        }
         (TemplateScope scope, _) = TemplateScopes.At(Editor.Document.Snapshot, caret);
         if (LiveTemplates.In(scope).FirstOrDefault(t => t.Abbreviation == word) is not { } template)
         {
@@ -404,6 +421,32 @@ public sealed class CodeAssist
         }
         Expand(template, start, caret);
         return true;
+    }
+
+    /// <summary>The postfix templates that may wrap the expression before a dot ending just before a word, and what
+    /// each would wrap; none when no dot or no expression is there.</summary>
+    private IEnumerable<(PostfixTemplate Template, PostfixTarget Target)> Postfixes(int word, int caret)
+    {
+        TextSnapshot text = Editor.Document.Snapshot;
+        if (word < 1 || text[word - 1] != '.' || PostfixTemplates.Before(text, word - 1, caret) is not { } target)
+        {
+            return [];
+        }
+        return PostfixTemplates.All.Where(t => !t.Statement || target.WholeStatement).Select(t => (t, target));
+    }
+
+    /// <summary>A postfix template in place of its expression, the dot and the name typed after it.</summary>
+    private void ExpandPostfix(PostfixTemplate template, PostfixTarget target, int caret)
+    {
+        int start = template.Statement ? target.Start : target.ChainStart;
+        string expression = (template.Statement ? target.Text : target.ChainText).Replace("$", "$$", StringComparison.Ordinal);
+        TextSnapshot text = Editor.Document.Snapshot;
+        int lineStart = text.GetLineStart(text.GetLineFromOffset(start));
+        string before = text.GetText(lineStart, start - lineStart);
+        string indent = before[..(before.Length - before.TrimStart().Length)];
+        string unit = Editor.Indent.UseTabs ? "\t" : new string(' ', Editor.Indent.Size);
+        Dictionary<string, string> defaults = template.Defaults.ToDictionary(d => d.Key, d => d.Value == "$name" ? target.Name : d.Value);
+        Editor.InsertSnippet(TextRange.FromBounds(start, caret), Snippet.Parse(template.Text.Replace("$EXPR$", expression, StringComparison.Ordinal), defaults, indent, unit));
     }
 
     /// <summary>Puts a live template over its abbreviation, indented as the line it is on, and starts filling it in.</summary>

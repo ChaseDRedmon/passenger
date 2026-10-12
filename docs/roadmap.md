@@ -185,7 +185,9 @@ comments, from the file's own parse: Ctrl+M, M toggles the fold at the caret, Ct
 all of them, the gutter's chevrons and a fold's placeholder too, and a caret that goes into folded code opens it. Rainbow braces colour brackets by how deeply they nest, three colours taking
 turns (Settings, Editor). Live templates are Rider's (for, foreach, if, cw, try, prop, ctor, class and the rest): the
 abbreviation then Tab, or picked from completion, where its kind of code goes; each variable's places are filled in
-at once, Tab and Shift+Tab move between them, and the caret ends where the template says. The Explorer's menu
+at once, Tab and Shift+Tab move between them, and the caret ends where the template says. Postfix templates wrap the expression before a dot: .if, .null, .notnull, .var (naming
+what it holds), .foreach, .for, .forr, .while, .return, .throw, .using, .lock and .switch where the expression is
+its whole statement, and .not, .par, .await and .arg anywhere. The Explorer's menu
 adds files, folders and classes (in the namespace their folder gives), renames (F2) and deletes to the Trash (Delete),
 its open tabs following, and copies or reveals a path. Settings (Ctrl+Alt+S, Cmd+, on the Mac) has Rider's search over its pages
 (Appearance, Editor, Terminal, and the Keymap, where Add takes the next keys pressed, Remove unbinds and Reset goes
