@@ -3,7 +3,8 @@
 Passenger is an IDE for C# and modern .NET, inspired by JetBrains Rider and written in C# end to end. It targets
 Windows and macOS first. Linux should mostly come along with Avalonia, but nobody tests it yet.
 
-This file records what was decided and why. `roadmap.md` holds the order the work lands in.
+This file records what was decided and why. The work still to do is the issues of the GitHub MVP milestone
+(https://github.com/Zaneris/passenger/milestone/1).
 
 ## Scope at the start
 
@@ -168,7 +169,8 @@ Passenger:
   tells Pair<int> from Pair<string>, for unbox as for unbox.any; struct arrays allocated by the struct's own module, not
   a token another module's primitive shares; native integers the debuggee's width; `not` keeping an int an int.
   Left for Edit and Continue, which needs it: Roslyn's method context hard-codes method version 1.
-- Planned anyway: Edit and Continue (#10, M8's hot reload), synthetic variables (#26), remote debugging (#14).
+- Planned anyway: Edit and Continue (#10, in Passenger's Hot Reload issue, Zaneris/passenger#33), synthetic variables
+  (#26, Zaneris/passenger#20), remote debugging (#14, Zaneris/passenger#21).
 
 Found by Passenger debugging itself (October 12, 2026), and fixed:
 
@@ -190,9 +192,9 @@ Found by Passenger debugging itself (October 12, 2026), and fixed:
   stopping. Nothing that touches the process runs after its exit either (breakpoints, handles, detach), and ICorDebug
   is shut down in its documented order.
 
-Still ahead, in the engine or beside it: smart step into, set value, data breakpoints, tracepoints, hot reload and
-Edit and Continue (Roslyn's EnC, applied through ICorDebug or the runtime's metadata updates), and on macOS the signing
-with Apple's debugger entitlement that attaching to a process we did not start needs. Samsung's netcoredbg (MIT, DAP)
+Still ahead, in the engine or beside it: smart step into (Zaneris/passenger#15), data breakpoints (#19), hot reload and
+Edit and Continue (Roslyn's EnC, applied through ICorDebug or the runtime's metadata updates, #33), and on macOS the
+signing with Apple's debugger entitlement that attaching to a process we did not start needs (#17). Samsung's netcoredbg (MIT, DAP)
 stays the reference for what a mature engine does.
 
 ## Tests

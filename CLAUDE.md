@@ -6,8 +6,9 @@ Guidance for Claude Code working in this repository.
 
 **Passenger** is a Rider-inspired IDE for C# and modern .NET (CoreCLR only: no .NET Framework, Mono or Unity),
 written in C# on .NET 11 with an Avalonia 12 UI, for Windows and macOS first. `docs/architecture.md` holds every
-decision and why; `docs/roadmap.md` holds the milestones in order. Read both before starting anything larger than a
-fix, so the work lands in its milestone. When a reference for how something should behave is needed, JetBrains
+decision and why; the work still to do is the issues of the GitHub MVP milestone
+(https://github.com/Zaneris/passenger/milestone/1), each saying what Rider does and when it is done. Read the
+architecture and the issue before starting anything larger than a fix, and close or tick the issue when it lands. When a reference for how something should behave is needed, JetBrains
 Rider is installed at `~/Applications/Rider.app`.
 
 ## Commands
