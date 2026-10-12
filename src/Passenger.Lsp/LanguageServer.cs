@@ -13,16 +13,18 @@ public sealed class LanguageServer : IAsyncDisposable
     private readonly Process process;
     private readonly JsonRpc rpc;
     private readonly ClientTarget client;
+    private readonly ErrorLog errors;
     private volatile bool disposing;
 
     private readonly Dictionary<string, object?> options;
 
-    private LanguageServer(Process process, JsonRpc rpc, ClientTarget client, string logFolder, IReadOnlyDictionary<string, object?>? options)
+    private LanguageServer(Process process, JsonRpc rpc, ClientTarget client, ErrorLog errors, string logFolder, IReadOnlyDictionary<string, object?>? options)
     {
         this.options = new Dictionary<string, object?>(options ?? new Dictionary<string, object?>(), StringComparer.Ordinal);
         this.process = process;
         this.rpc = rpc;
         this.client = client;
+        this.errors = errors;
         LogFolder = logFolder;
         ProcessId = process.Id;
         rpc.Disconnected += (_, e) =>
@@ -122,14 +124,17 @@ public sealed class LanguageServer : IAsyncDisposable
             start.ArgumentList.Add(arg);
         }
         Process process = Process.Start(start) ?? throw new InvalidOperationException("The language server did not start.");
-        StreamWriter errors = new(Path.Combine(logFolder, "stderr.log"), append: true) { AutoFlush = true };
-        process.ErrorDataReceived += (_, e) =>
+        ErrorLog errors;
+        try
         {
-            if (e.Data is not null)
-            {
-                errors.WriteLine(e.Data);
-            }
-        };
+            errors = new ErrorLog(Path.Combine(logFolder, $"stderr-{process.Id}.log"));
+        }
+        catch
+        {
+            End(process);
+            throw;
+        }
+        process.ErrorDataReceived += (_, e) => errors.Write(e.Data);
         process.BeginErrorReadLine();
 
         SystemTextJsonFormatter formatter = new() { JsonSerializerOptions = Json.Options };
@@ -137,20 +142,45 @@ public sealed class LanguageServer : IAsyncDisposable
         ClientTarget client = new();
         JsonRpc rpc = new(handler);
         rpc.AddLocalRpcTarget(client, new JsonRpcTargetOptions { UseSingleObjectParameterDeserialization = true });
-        LanguageServer server2 = new(process, rpc, client, logFolder, options);
+        LanguageServer server2 = new(process, rpc, client, errors, logFolder, options);
         client.Owner = server2;
         rpc.StartListening();
 
-        string root = new Uri(Path.GetFullPath(folder)).AbsoluteUri;
-        InitializeParams initialize = new(Environment.ProcessId, root, [new WorkspaceFolder(root, Path.GetFileName(folder))], ClientCapabilities.Value);
-        JsonElement result = await rpc.InvokeWithParameterObjectAsync<JsonElement>("initialize", initialize, cancel);
-        server2.Capabilities = result.GetProperty("capabilities");
-        if (server2.Capabilities.TryGetProperty("semanticTokensProvider", out JsonElement tokens) && tokens.TryGetProperty("legend", out JsonElement legend))
+        try
         {
-            server2.Legend = legend.Deserialize<SemanticTokensLegend>(Json.Options);
+            string root = new Uri(Path.GetFullPath(folder)).AbsoluteUri;
+            InitializeParams initialize = new(Environment.ProcessId, root, [new WorkspaceFolder(root, Path.GetFileName(folder))], ClientCapabilities.Value);
+            JsonElement result = await rpc.InvokeWithParameterObjectAsync<JsonElement>("initialize", initialize, cancel);
+            server2.Capabilities = result.GetProperty("capabilities");
+            if (server2.Capabilities.TryGetProperty("semanticTokensProvider", out JsonElement tokens) && tokens.TryGetProperty("legend", out JsonElement legend))
+            {
+                server2.Legend = legend.Deserialize<SemanticTokensLegend>(Json.Options);
+            }
+            await rpc.NotifyWithParameterObjectAsync("initialized", new { });
         }
-        await rpc.NotifyWithParameterObjectAsync("initialized", new { });
+        catch
+        {
+            // A start given up (another folder opened) or failed leaves no server behind, nor its log held open.
+            server2.disposing = true;
+            rpc.Dispose();
+            End(process);
+            errors.Dispose();
+            throw;
+        }
         return server2;
+    }
+
+    /// <summary>Ends a server that never finished starting, at once: there is no shutdown to ask it for.</summary>
+    private static void End(Process process)
+    {
+        try
+        {
+            process.Kill(entireProcessTree: true);
+        }
+        catch (Exception error) when (error is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+        }
+        process.Dispose();
     }
 
     public async Task<T?> RequestAsync<T>(string method, object parameters, CancellationToken cancel = default)
@@ -194,6 +224,7 @@ public sealed class LanguageServer : IAsyncDisposable
             process.Kill(entireProcessTree: true);
         }
         process.Dispose();
+        errors.Dispose();
     }
 
     /// <summary>The server's options Passenger sets: parameter name hints where Rider shows them (before a literal, a
@@ -210,6 +241,43 @@ public sealed class LanguageServer : IAsyncDisposable
         ["dotnet_suppress_inlay_hints_for_parameters_that_match_argument_name"] = true,
         ["csharp_enable_inlay_hints_for_types"] = false,
     };
+
+    /// <summary>The server's standard error, a file to each server: Windows lets no second writer open a file one has
+    /// open, and a server started again while the last one's log is still held would otherwise fail to start. Shared
+    /// for reading and deleting, and closed at the stream's end or the server's, so the folder it is in can go.</summary>
+    private sealed class ErrorLog(string path) : IDisposable
+    {
+        private readonly StreamWriter writer = new(new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete)) { AutoFlush = true };
+        private bool closed;
+
+        /// <summary>A line the server wrote, or null for the end of its stream, which closes the file.</summary>
+        public void Write(string? line)
+        {
+            lock (writer)
+            {
+                if (closed)
+                {
+                    return;
+                }
+                if (line is null)
+                {
+                    closed = true;
+                    writer.Dispose();
+                    return;
+                }
+                try
+                {
+                    writer.WriteLine(line);
+                }
+                catch (IOException)
+                {
+                    // A log that cannot be written (a full disk) is never the end of the IDE: this runs on the reader's thread.
+                }
+            }
+        }
+
+        public void Dispose() => Write(null);
+    }
 
     /// <summary>What the client answers when the server asks: the options in <see cref="Settings"/>, the rest left to
     /// their defaults, every registration and progress token accepted.</summary>
