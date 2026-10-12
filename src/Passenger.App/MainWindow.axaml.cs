@@ -27,7 +27,7 @@ public partial class MainWindow : Window
     private readonly FileIndex index = new();
     private CSharpService? csharp;
     private readonly CodeAssist assist;
-    private readonly List<(string Path, int Offset)> history = [];
+    private readonly Navigation.NavigationHistory history = new();
     private readonly ProcessRunner builder;
     private readonly ProcessRunner runner;
     private readonly DebugController debug;
@@ -40,7 +40,6 @@ public partial class MainWindow : Window
     private readonly Passenger.App.Explorer.ExplorerView Explorer = new();
     private readonly ToolWindows.ToolViews Bottom = new();
     private readonly ToolWindows.StructureView Structure = new();
-    private int historyAt = -1;
     private readonly List<string> recent = [];
     private string? folder;
 
@@ -87,6 +86,7 @@ public partial class MainWindow : Window
                 Structure.Invalidate();
             }
         };
+        Editors.Opened += (_, document) => document.Text.Changed += (_, change) => history.Follow(document.Path, change);
         Editors.OpenRequested += (_, _) => _ = PickFolder();
         Editors.ActiveChanged += (_, _) => UpdateStatus();
         Editors.CaretMoved += (_, _) => UpdateCaret();
@@ -328,10 +328,11 @@ public partial class MainWindow : Window
                 return;
             }
             recent.Clear();
-            // Breakpoints and bookmarks are a folder's own, as Rider keeps them with the project.
+            // Breakpoints, bookmarks and the places Back goes to are a folder's own, as Rider keeps them with the project.
             folderState = null;
             debug.Breakpoints.Clear();
             bookmarks.Clear();
+            history.Clear();
         }
         Autosave();
         folder = opening;
@@ -1135,48 +1136,47 @@ public partial class MainWindow : Window
     /// from for Back.</summary>
     public void NavigateTo(string path, TextPosition position)
     {
-        Remember();
+        Navigation.HistoryPlace? from = Here();
         OpenFile(path);
         // Opened files are known by their canonical path: the one given may run through a symlink (macOS's /var).
         if (Editors.Active is { } active && active.Path == PathNames.Canonical(Path.GetFullPath(path)))
         {
             Editors.CodeEditor.GoTo(position);
-            Remember();
+            // Only a move to another line or file is a place to come back to, as in IntelliJ.
+            if (from is not null && Here() is { } to && (to.Path != from.Path || to.Line != from.Line))
+            {
+                history.Left(from);
+            }
         }
     }
 
-    /// <summary>Records the caret's place as the newest in the history, dropping anything forward of it.</summary>
-    private void Remember()
+    /// <summary>The caret's place in the file shown, as the navigation history keeps it.</summary>
+    private Navigation.HistoryPlace? Here()
     {
         if (Editors.Active is not { } active)
         {
-            return;
+            return null;
         }
-        (string Path, int Offset) here = (active.Path, Editors.CodeEditor.Selections.Primary.Caret);
-        if (historyAt >= 0 && history[historyAt] == here)
-        {
-            return;
-        }
-        history.RemoveRange(historyAt + 1, history.Count - historyAt - 1);
-        history.Add(here);
-        historyAt = history.Count - 1;
+        int caret = Editors.CodeEditor.Selections.Primary.Caret;
+        return new Navigation.HistoryPlace(active.Path, caret, active.Text.Snapshot.GetLineFromOffset(caret));
     }
 
+    /// <summary>Back (a step of -1) or Forward (1): the caret goes to the place the history gives.</summary>
     private void StepHistory(int step)
     {
-        Remember();
-        int target = historyAt + step;
-        if (target < 0 || target >= history.Count)
+        Navigation.HistoryPlace? here = Here();
+        Navigation.HistoryPlace? target = step < 0 ? history.Back(here, Reachable) : history.Forward(here, Reachable);
+        if (target is null)
         {
             return;
         }
-        historyAt = target;
-        (string path, int offset) = history[target];
-        OpenFile(path);
-        if (Editors.Active is { } active && active.Path == path)
+        OpenFile(target.Path);
+        if (Editors.Active is { } active && active.Path == target.Path)
         {
-            Editors.CodeEditor.GoTo(active.Text.Snapshot.GetPosition(Math.Min(offset, active.Text.Snapshot.Length)));
+            Editors.CodeEditor.GoTo(active.Text.Snapshot.GetPosition(Math.Min(target.Offset, active.Text.Snapshot.Length)));
         }
+
+        bool Reachable(string path) => Editors.Documents.Any(d => d.Path == path) || File.Exists(path);
     }
 
     private void ShowGoToFile()

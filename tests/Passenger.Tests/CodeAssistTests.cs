@@ -352,6 +352,49 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
     }
 
     [AvaloniaFact]
+    public void Forward_after_back_still_goes_to_the_definition_when_the_caret_moved_in_between()
+    {
+        MainWindow window = project.Open("Program.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "Helper.Tw");
+        Ui.Press(window, Ui.Shortcut(AppActions.GoToDeclaration));
+        Ui.Settle();
+        Assert.Equal("Helper.cs", window.EditorArea.Active?.Name);
+        TextPosition definition = editor.CaretPosition;
+
+        Ui.Press(window, Ui.Shortcut(AppActions.Back));
+        Assert.Equal("Program.cs", window.EditorArea.Active?.Name);
+        Ui.Press(window, "RIGHT");
+        Ui.Press(window, "DOWN");
+        Ui.Press(window, Ui.Shortcut(AppActions.Forward));
+
+        Assert.True(window.EditorArea.Active?.Name == "Helper.cs", "a caret moved after Back lost Forward's way to the definition");
+        Assert.Equal(definition, editor.CaretPosition);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Back_lands_on_the_call_it_left_after_a_line_is_added_above_it()
+    {
+        MainWindow window = project.Open("Area.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "=> O");
+        TextPosition call = editor.CaretPosition;
+        Ui.Press(window, Ui.Shortcut(AppActions.GoToDeclaration));
+        Ui.Settle();
+        Assert.True(editor.CaretPosition.Line < call.Line, "go to declaration never reached Of, above its call");
+
+        Ui.Press(window, "END");
+        Ui.Press(window, "ENTER");
+        Ui.Press(window, Ui.Shortcut(AppActions.Back));
+
+        Assert.Equal("    public static int Room() => Of(3, 4);", editor.Document.Snapshot.GetLineText(call.Line + 1));
+        Assert.True(new TextPosition(call.Line + 1, call.Column) == editor.CaretPosition,
+            $"Back landed at {editor.CaretPosition}, not on the call it left, which a line added above moved to {new TextPosition(call.Line + 1, call.Column)}");
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Go_to_declaration_on_a_library_type_opens_its_decompiled_source_read_only()
     {
         MainWindow window = project.Open("Program.cs");

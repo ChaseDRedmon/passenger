@@ -174,6 +174,7 @@ public partial class MainWindow
     {
         bookmarks.Move(move.From, move.To);
         debug.Breakpoints.Move(move.From, move.To);
+        history.Move(move.From, move.To);
         vcs.Moved(move.From, move.To);
         for (int i = 0; i < recent.Count; i++)
         {
