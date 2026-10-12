@@ -25,6 +25,7 @@ public sealed class FolderWatcher : IDisposable
     private readonly FileSystemWatcher watcher;
     private readonly object gate = new();
     private readonly HashSet<string> paths = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, DateTime> ownWrites = new(StringComparer.Ordinal);
     private bool structure;
     private bool projects;
     private bool git;
@@ -51,6 +52,16 @@ public sealed class FolderWatcher : IDisposable
         // Too many changes at once to list: everything is read again.
         watcher.Error += (_, _) => Note(folder, created: true);
         watcher.EnableRaisingEvents = true;
+        FileText.Writing += OnWriting;
+    }
+
+    /// <summary>A file Passenger is saving: its events in the next moments are its content changing, not a new file.</summary>
+    private void OnWriting(string path)
+    {
+        lock (gate)
+        {
+            ownWrites[PathNames.Canonical(path)] = DateTime.UtcNow;
+        }
     }
 
     /// <summary>Raised on the UI thread with what changed since the last time.</summary>
@@ -58,6 +69,7 @@ public sealed class FolderWatcher : IDisposable
 
     public void Dispose()
     {
+        FileText.Writing -= OnWriting;
         lock (gate)
         {
             disposed = true;
@@ -67,6 +79,10 @@ public sealed class FolderWatcher : IDisposable
 
     private void Note(string path, bool created)
     {
+        if (path.EndsWith(FileText.SaveSuffix, StringComparison.Ordinal))
+        {
+            return;
+        }
         string relative = Path.GetRelativePath(folder, path);
         string[] parts = relative.Split(Path.DirectorySeparatorChar);
         bool inGit = parts[0] == ".git";
@@ -90,8 +106,11 @@ public sealed class FolderWatcher : IDisposable
             }
             else
             {
-                paths.Add(PathNames.Canonical(path));
-                structure |= created;
+                string canonical = PathNames.Canonical(path);
+                paths.Add(canonical);
+                // A save moves its temporary file over the file: a change, not a file come or gone.
+                bool saved = ownWrites.TryGetValue(canonical, out DateTime at) && DateTime.UtcNow - at < TimeSpan.FromSeconds(5);
+                structure |= created && !saved;
                 projects |= ProjectExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase)
                     || Path.GetFileName(path).Equals("launchSettings.json", StringComparison.OrdinalIgnoreCase);
             }

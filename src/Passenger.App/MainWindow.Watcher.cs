@@ -38,7 +38,7 @@ public partial class MainWindow
         }
         else if (changes.Structure)
         {
-            Explorer.Refresh();
+            Explorer.RefreshFolders(changes.Paths.Select(Path.GetDirectoryName).OfType<string>());
         }
         if (changes.Structure)
         {

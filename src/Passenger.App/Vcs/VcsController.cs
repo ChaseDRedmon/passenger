@@ -33,6 +33,12 @@ public sealed class VcsController
     /// history may have moved too (a save alone changes only the files).</summary>
     public event EventHandler? Refreshed;
 
+    /// <summary>The history moved (a commit, a checkout, a fetch, a reset), so the log is read again; raised after Refreshed
+    /// when it did, never for a save.</summary>
+    public event EventHandler? HistoryChanged;
+
+    private string? knownHistory;
+
     /// <summary>What happened, for the status bar: a commit made, a push refused and git's reason.</summary>
     public event EventHandler<string>? Message;
 
@@ -75,13 +81,20 @@ public sealed class VcsController
             Changes = [];
             Changed?.Invoke(this, EventArgs.Empty);
             Refreshed?.Invoke(this, EventArgs.Empty);
+            if (knownHistory is not null)
+            {
+                knownHistory = null;
+                HistoryChanged?.Invoke(this, EventArgs.Empty);
+            }
             return;
         }
         heads.Clear();
+        string? history = null;
         try
         {
             Branch = await repository.BranchAsync();
             Changes = await repository.StatusAsync();
+            history = await repository.HeadsAsync();
         }
         catch (InvalidOperationException failed)
         {
@@ -89,6 +102,11 @@ public sealed class VcsController
         }
         Changed?.Invoke(this, EventArgs.Empty);
         Refreshed?.Invoke(this, EventArgs.Empty);
+        if (history is not null && history != knownHistory)
+        {
+            knownHistory = history;
+            HistoryChanged?.Invoke(this, EventArgs.Empty);
+        }
         foreach (OpenDocument document in documents.Keys)
         {
             _ = MarkAsync(document);

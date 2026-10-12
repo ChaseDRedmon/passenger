@@ -24,20 +24,28 @@ public sealed class FileIndex
     /// <summary>Every file indexed, by its path from the root.</summary>
     public IReadOnlyList<string> Files => files;
 
+    /// <summary>Walks the folder again off the UI thread. The files found before stay searchable until the walk is done,
+    /// and only the newest walk's list lands; another folder's list goes at once.</summary>
     public void Build(string root)
     {
+        if (Root != root)
+        {
+            files = [];
+        }
         Root = root;
-        files = [];
+        int walk = ++walks;
         BackgroundWork.Begin();
         Task.Run(() => Walk(root)).ContinueWith(walked => Dispatcher.UIThread.Post(() =>
         {
-            if (walked.IsCompletedSuccessfully && Root == root)
+            if (walked.IsCompletedSuccessfully && walk == walks)
             {
                 files = walked.Result;
             }
             BackgroundWork.End();
         }), TaskScheduler.Default);
     }
+
+    private int walks;
 
     /// <summary>The best matches for a query, best first, as relative paths.</summary>
     public IReadOnlyList<string> Search(string query, int limit = 60)

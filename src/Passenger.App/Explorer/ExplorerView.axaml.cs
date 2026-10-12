@@ -152,6 +152,9 @@ public partial class ExplorerView : UserControl
         Rows.IsVisible = true;
     }
 
+    /// <summary>Reads again only the folders that changed on disk, the rows open and chosen kept.</summary>
+    public void RefreshFolders(IEnumerable<string> folders) => Tree.RefreshFolders(folders);
+
     /// <summary>The folder's solution read again (a project added or changed on disk), the rows open kept.</summary>
     public void Reload(Workspace.SolutionModel? model)
     {

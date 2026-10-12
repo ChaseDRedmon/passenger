@@ -29,6 +29,9 @@ public sealed class GitLogView : DockPanel
     private IReadOnlyList<GraphRow> all = [];
     private bool stale = true;
     private int loads;
+
+    /// <summary>How many times the log has been read, which a save never adds to.</summary>
+    public int Loads => loads;
     private int showing;
 
     public GitLogView(VcsController vcs)
@@ -114,7 +117,7 @@ public sealed class GitLogView : DockPanel
         Children.Add(top);
         Children.Add(split);
 
-        vcs.Refreshed += (_, _) =>
+        vcs.HistoryChanged += (_, _) =>
         {
             // Read again now when shown, else when it next is: a hidden window is out of the visual tree.
             stale = true;

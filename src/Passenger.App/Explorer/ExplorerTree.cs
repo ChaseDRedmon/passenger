@@ -109,6 +109,65 @@ public sealed class ExplorerTree
         node.IsExpanded = false;
     }
 
+    /// <summary>Reads again only the folders (and projects) that hold these, keeping the rows still there as they were (open,
+    /// chosen), and puts the rows that came or went in their places.</summary>
+    public void RefreshFolders(IEnumerable<string> folders)
+    {
+        if (Root is null)
+        {
+            return;
+        }
+        HashSet<string> changed = new(folders, StringComparer.Ordinal);
+        bool any = false;
+        foreach (ExplorerNode node in Loaded(Root).ToList())
+        {
+            string? holds = node.Kind switch
+            {
+                NodeKind.Folder => node.Path,
+                NodeKind.Project when node.Path is { } project => Path.GetDirectoryName(project),
+                _ => null,
+            };
+            if (holds is not null && changed.Contains(holds))
+            {
+                any |= node.Reload();
+            }
+        }
+        if (!any)
+        {
+            return;
+        }
+        List<ExplorerNode> wanted = [Root, .. Visible(Root)];
+        HashSet<ExplorerNode> keep = [.. wanted];
+        for (int at = Rows.Count - 1; at >= 0; at--)
+        {
+            if (!keep.Contains(Rows[at]))
+            {
+                Rows.RemoveAt(at);
+            }
+        }
+        for (int at = 0; at < wanted.Count; at++)
+        {
+            if (at >= Rows.Count || Rows[at] != wanted[at])
+            {
+                Mark(wanted[at]);
+                Rows.Insert(at, wanted[at]);
+            }
+        }
+    }
+
+    /// <summary>The node and every one under it whose children have been read.</summary>
+    private static IEnumerable<ExplorerNode> Loaded(ExplorerNode node)
+    {
+        yield return node;
+        foreach (ExplorerNode child in node.LoadedChildren ?? [])
+        {
+            foreach (ExplorerNode below in Loaded(child))
+            {
+                yield return below;
+            }
+        }
+    }
+
     /// <summary>Opens every node down to <paramref name="path"/> and returns its row, so a file can be
     /// shown where it lives: in its folder, or in the solution, in its project.</summary>
     public ExplorerNode? Reveal(string path)
@@ -248,6 +307,24 @@ public sealed class ExplorerNode : Observable
     public bool IsDirectory => Kind == NodeKind.Folder;
     public bool IsFile => Kind == NodeKind.File;
     public List<ExplorerNode>? Children => load is null ? null : children ??= load(this);
+
+    /// <summary>The children once read, without reading them.</summary>
+    internal List<ExplorerNode>? LoadedChildren => children;
+
+    /// <summary>Reads the children again, keeping each one still there (with what is open under it); whether any came
+    /// or went.</summary>
+    internal bool Reload()
+    {
+        if (load is null || children is null)
+        {
+            return false;
+        }
+        Dictionary<string, ExplorerNode> before = children.ToDictionary(c => $"{c.Kind}/{c.Path ?? c.Name}");
+        List<ExplorerNode> fresh = [.. load(this).Select(c => before.TryGetValue($"{c.Kind}/{c.Path ?? c.Name}", out ExplorerNode? kept) ? kept : c)];
+        bool same = fresh.Count == children.Count && fresh.SequenceEqual(children);
+        children = fresh;
+        return !same;
+    }
 
     public bool IsExpanded
     {

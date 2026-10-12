@@ -54,8 +54,16 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom)
     /// half-written file where the old one was. A symlink is written through to its target, and the
     /// file keeps its permissions (a script stays executable). A file deleted since it was opened (a
     /// git clean, another program) is written anew, its folder too.</summary>
+    /// <summary>A file about to be written by a save, so a folder watcher takes it for the change it is rather than a
+    /// new file (a save writes a temporary file beside it and moves it over).</summary>
+    public static event Action<string>? Writing;
+
+    /// <summary>The temporary file a save writes first, which nothing but the save should see.</summary>
+    public const string SaveSuffix = ".passenger-save";
+
     public static void Save(string path, string text, Encoding encoding, bool bom)
     {
+        Writing?.Invoke(path);
         bool there = File.Exists(path) || new FileInfo(path).LinkTarget is not null;
         string target = there ? File.ResolveLinkTarget(path, returnFinalTarget: true)?.FullName ?? path : path;
         if (!there)
@@ -64,17 +72,26 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom)
         }
         byte[] preamble = bom ? encoding.GetPreamble() : [];
         byte[] body = encoding.GetBytes(text);
-        string temporary = target + ".passenger-save";
-        using (FileStream stream = new(temporary, FileMode.Create, FileAccess.Write, FileShare.None))
+        string temporary = target + SaveSuffix;
+        try
         {
-            stream.Write(preamble);
-            stream.Write(body);
-            stream.Flush(flushToDisk: true);
+            using (FileStream stream = new(temporary, FileMode.Create, FileAccess.Write, FileShare.None))
+            {
+                stream.Write(preamble);
+                stream.Write(body);
+                stream.Flush(flushToDisk: true);
+            }
+            if (!OperatingSystem.IsWindows() && File.Exists(target))
+            {
+                File.SetUnixFileMode(temporary, File.GetUnixFileMode(target));
+            }
+            File.Move(temporary, target, overwrite: true);
         }
-        if (!OperatingSystem.IsWindows() && File.Exists(target))
+        catch
         {
-            File.SetUnixFileMode(temporary, File.GetUnixFileMode(target));
+            // A failed save leaves the old file as it was, and nothing beside it.
+            File.Delete(temporary);
+            throw;
         }
-        File.Move(temporary, target, overwrite: true);
     }
 }

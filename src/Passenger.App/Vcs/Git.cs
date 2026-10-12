@@ -114,6 +114,15 @@ public sealed class Git
     }
 
     /// <summary>The branch checked out, or null on a detached head.</summary>
+    /// <summary>Every ref and the commit each names, with HEAD's: what changes when the history does (a commit, a
+    /// checkout, a fetch), and not when a file is saved.</summary>
+    public async Task<string> HeadsAsync()
+    {
+        GitResult refs = await RunAsync(Root, ["for-each-ref", "--format=%(objectname) %(refname)"]);
+        GitResult head = await RunAsync(Root, ["rev-parse", "HEAD"]);
+        return refs.Output + head.Output;
+    }
+
     public async Task<string?> BranchAsync()
     {
         GitResult branch = await RunAsync(Root, ["branch", "--show-current"]);

@@ -411,6 +411,38 @@ public sealed class VcsTests : IDisposable
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void A_save_leaves_the_explorers_chosen_rows_the_git_log_and_go_to_file_as_they_were()
+    {
+        Directory.CreateDirectory(Path.Combine(folder, "Models"));
+        File.WriteAllText(Path.Combine(folder, "Models", "Order.cs"), "class Order { }\n");
+        File.WriteAllText(Path.Combine(folder, "Models", "Line.cs"), "class Line { }\n");
+        Git("add", "-A");
+        Git("commit", "-q", "-m", "Models");
+        MainWindow window = Open();
+        window.Perform(AppActions.ShowGit);
+        Ui.WaitFor(() => window.GitLog.Rows.Count == 2, "the log");
+        Ui.WaitFor(() => window.FileIndex.Files.Count == 3, "the files for Go to File");
+        Passenger.App.Explorer.ExplorerTree tree = window.ExplorerView.Tree;
+        tree.Expand(tree.Rows.First(r => r.Name == "Models"));
+        Passenger.App.Explorer.ExplorerNode[] chosen = [.. tree.Rows.Where(r => r.Name is "Order.cs" or "Line.cs")];
+        window.ExplorerView.Choose(chosen);
+        int loads = window.GitLog.Loads;
+
+        window.EditorArea.CodeEditor.Selections = SelectionSet.Single(0);
+        window.KeyTextInput("sealed ");
+        window.Perform(AppActions.Save);
+        Ui.WaitFor(() => window.Vcs.Changes.Any(c => c.Name == "Shop.cs"), "the save to be seen");
+        Passenger.App.Screenshot.Pump(TimeSpan.FromMilliseconds(400));
+        Ui.Settle();
+
+        Assert.Equal(chosen, window.ExplorerView.SelectedNodes);
+        Assert.Equal(loads, window.GitLog.Loads);
+        Assert.Equal(3, window.FileIndex.Files.Count);
+        Assert.Empty(Directory.EnumerateFiles(folder, "*" + Passenger.App.Workspace.FileText.SaveSuffix, SearchOption.AllDirectories));
+        window.Close();
+    }
+
     private static Avalonia.Controls.ListBox Find(Avalonia.Controls.Control view, object rows) =>
         Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(view).OfType<Avalonia.Controls.ListBox>().First(l => ReferenceEquals(l.ItemsSource, rows));
 
