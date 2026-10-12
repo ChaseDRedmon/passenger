@@ -29,7 +29,9 @@ without.
 Built: Roslyn's server bundled and started per folder, document sync, semantic colours over the parser's, diagnostics
 as squiggles and faded unnecessary code, completion as you type (and Ctrl+Space), hover cards, signature help, quick
 fixes and refactorings (Alt+Enter), rename, go to declaration and implementation, find usages, reformat, next and
-previous error, back and forward. Passenger's own solution loads in about eight seconds.
+previous error, back and forward, Go to Symbol (⌘⇧⌥T, Ctrl+Shift+Alt+T), Go to Everything (⌘T, Ctrl+T: types, then
+files, then members) and File Structure (Alt+\, opening on the caret's member). Passenger's own solution loads in about
+eight seconds.
 
 Measured: the standalone server loads Orleans in 24 s and Aspire in 41 s (Dev Kit 11.0: 2.3 s and 3.0 s), the open
 file answering after 11 s and 2.4 s; `architecture.md` has the table and what closing the gap takes.

@@ -3,6 +3,7 @@ using Avalonia;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Passenger.App;
+using Passenger.App.Navigation;
 using Passenger.Editor;
 using Passenger.Text;
 
@@ -15,6 +16,44 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
     private readonly Project project;
 
     public CodeAssistTests(Project project) => this.project = project;
+
+    [AvaloniaFact]
+    public void Go_to_symbol_finds_a_member_in_another_file_by_name_and_goes_to_it()
+    {
+        MainWindow window = project.Open("Program.cs");
+        Ui.Run(window, AppActions.GoToSymbol);
+        SymbolPopup popup = Assert.IsType<SymbolPopup>(window.Popup);
+        window.KeyTextInput("Twic");
+        Ui.WaitFor(() => popup.Rows.Any(r => r.Name.StartsWith("Twice", StringComparison.Ordinal)), "the server's symbols for what was typed");
+        SymbolRow twice = popup.Rows.First(r => r.Name.StartsWith("Twice", StringComparison.Ordinal));
+        Assert.Equal("Helper", twice.Detail);
+        Assert.Equal("Helper.cs:3", twice.Where);
+
+        Ui.Press(window, "Enter");
+        Assert.Null(window.Popup);
+        Assert.Equal(Passenger.App.Workspace.PathNames.Canonical(project.PathOf("Helper.cs")), window.EditorArea.Active?.Path);
+        Assert.Equal(2, window.EditorArea.CodeEditor.CaretPosition.Line);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void File_structure_lists_the_files_members_opens_on_the_carets_and_filters_keeping_their_type()
+    {
+        MainWindow window = project.Open("Program.cs");
+        window.EditorArea.CodeEditor.GoTo(new TextPosition(4, 8));
+        Ui.Run(window, AppActions.FileStructure);
+        SymbolPopup popup = Assert.IsType<SymbolPopup>(window.Popup);
+        Ui.WaitFor(() => popup.IsSettled && popup.Rows.Count > 0, "the file's outline");
+        Assert.Equal([("Program", 0), ("Main()", 1)], popup.Rows.Select(r => (r.Name, r.Depth)));
+        Assert.Equal(": void", popup.Rows[1].Detail);
+        Assert.Equal("Main()", popup.Selected?.Name);
+
+        window.KeyTextInput("Ma");
+        Ui.WaitFor(() => popup.IsSettled && popup.Rows.Count == 2, "the filtered outline");
+        Ui.Press(window, "Enter");
+        Assert.Equal(2, window.EditorArea.CodeEditor.CaretPosition.Line);
+        window.Close();
+    }
 
     [AvaloniaFact]
     public void Typing_after_a_dot_opens_completion_filtered_as_you_type_and_enter_commits_it()

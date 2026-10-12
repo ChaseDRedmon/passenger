@@ -360,6 +360,15 @@ public partial class MainWindow : Window
             case AppActions.GoToLine:
                 ShowGoToLine();
                 break;
+            case AppActions.GoToSymbol:
+                ShowSymbols("Go to Symbol", "A type or member, by name or CamelHumps", SearchSymbols);
+                break;
+            case AppActions.GoToEverything:
+                ShowSymbols("Go to Everything", "A type, member or file", SearchEverything);
+                break;
+            case AppActions.FileStructure:
+                ShowFileStructure();
+                break;
             case AppActions.Find:
                 Editors.ShowFind(replace: false);
                 break;
@@ -729,6 +738,171 @@ public partial class MainWindow : Window
             }
         };
         ShowPopup(popup);
+    }
+
+    private void ShowSymbols(string title, string placeholder, Func<string, CancellationToken, Task<IReadOnlyList<Navigation.SymbolRow>>> search)
+    {
+        if (folder is null)
+        {
+            return;
+        }
+        Navigation.SymbolPopup popup = new(title, placeholder, search, SelectedWord());
+        popup.Done += (_, row) =>
+        {
+            ClosePopup();
+            if (row is not null)
+            {
+                NavigateTo(row.Path, row.Position);
+            }
+        };
+        ShowPopup(popup);
+    }
+
+    /// <summary>What a symbol search starts from: the editor's selection, if it is one word, as Rider seeds it.</summary>
+    private string? SelectedWord()
+    {
+        if (Editors.Active is null)
+        {
+            return null;
+        }
+        Selection primary = Editors.CodeEditor.Selections.Primary;
+        string selected = primary.IsEmpty ? string.Empty : Editors.CodeEditor.Document.Snapshot.GetText(primary.Start, primary.Length);
+        return selected.Length is > 0 and < 80 && selected.All(c => char.IsLetterOrDigit(c) || c == '_') ? selected : null;
+    }
+
+    private async Task<IReadOnlyList<Navigation.SymbolRow>> SearchSymbols(string query, CancellationToken cancel)
+    {
+        if (query.Trim().Length == 0)
+        {
+            return [];
+        }
+        if (csharp?.Session is not { IsLoaded: true } session)
+        {
+            throw new InvalidOperationException("The C# language server is still loading the solution");
+        }
+        IReadOnlyList<Lsp.SymbolInformation> found = await session.SymbolsAsync(query.Trim(), cancel);
+        return [.. found.Take(200).Select(SymbolRowOf)];
+    }
+
+    /// <summary>Go to Everything: types first, then files, then members, as Rider orders them; the recent files
+    /// before anything is typed.</summary>
+    private async Task<IReadOnlyList<Navigation.SymbolRow>> SearchEverything(string query, CancellationToken cancel)
+    {
+        string root = index.Root ?? folder ?? string.Empty;
+        if (query.Trim().Length == 0)
+        {
+            return [.. recent.Skip(Editors.Active is null ? 0 : 1).Select(path => FileRow(Path.GetRelativePath(root, path)))];
+        }
+        IReadOnlyList<Navigation.SymbolRow> symbols = csharp?.Session is { IsLoaded: true } ? await SearchSymbols(query, cancel) : [];
+        IEnumerable<Navigation.SymbolRow> files = index.Search(query).Take(20).Select(FileRow);
+        static bool IsType(int kind) => kind is 5 or 10 or 11 or 23;
+        return [.. symbols.Where(r => IsType(r.Kind)), .. files, .. symbols.Where(r => !IsType(r.Kind))];
+
+        Navigation.SymbolRow FileRow(string relative) =>
+            new(Path.GetFileName(relative), null, Path.GetDirectoryName(relative), Navigation.SymbolRow.FileKind, Path.Combine(root, relative), new TextPosition(0, 0));
+    }
+
+    private Navigation.SymbolRow SymbolRowOf(Lsp.SymbolInformation symbol)
+    {
+        string path = PathNames.Canonical(new Uri(symbol.Location.Uri).LocalPath);
+        string where = folder is { } root && path.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal) ? Path.GetRelativePath(root, path) : Path.GetFileName(path);
+        Lsp.LspPosition start = symbol.Location.Range.Start;
+        return new Navigation.SymbolRow(symbol.Name, Container(symbol.ContainerName), $"{where}:{start.Line + 1}", symbol.Kind, path, new TextPosition(start.Line, start.Character));
+    }
+
+    /// <summary>Roslyn's container ("in Greeter (project Greetings (net10.0))") as Rider names it: the type, or the
+    /// project for a type.</summary>
+    private static string? Container(string? container)
+    {
+        if (string.IsNullOrEmpty(container))
+        {
+            return null;
+        }
+        System.Text.RegularExpressions.Match match = System.Text.RegularExpressions.Regex.Match(container, @"^(in )?(?<owner>.*?)\s*\(?project (?<project>[^()]+?)\s*(\([^)]*\))?\)?$");
+        if (!match.Success)
+        {
+            return container;
+        }
+        string owner = match.Groups["owner"].Value.Trim();
+        return owner.Length > 0 ? owner : match.Groups["project"].Value.Trim();
+    }
+
+    /// <summary>Rider's File Structure: the active file's types and members, indented, filtered as typed with the
+    /// containers of what matches kept.</summary>
+    private void ShowFileStructure()
+    {
+        if (Editors.Active is not { } active || csharp?.For(active)?.Lsp is not { } lsp)
+        {
+            StatusText.Text = "File Structure needs a C# file the language server has open";
+            return;
+        }
+        IReadOnlyList<Navigation.SymbolRow>? outline = null;
+        int caretLine = Editors.CodeEditor.CaretPosition.Line;
+        Navigation.SymbolPopup popup = new($"File Structure: {active.Name}", "Filter by name, CamelHumps too", async (query, cancel) =>
+        {
+            outline ??= Flatten(await lsp.OutlineAsync(cancel), 0, active.Path);
+            return FilterOutline(outline, query.Trim());
+        })
+        {
+            // The innermost member the caret is in, as Rider's popup opens on it.
+            Initial = rows => rows.Select((row, i) => (row, i)).LastOrDefault(p => p.row.Spans(caretLine), (null!, 0)).Item2,
+        };
+        popup.Done += (_, row) =>
+        {
+            ClosePopup();
+            if (row is not null)
+            {
+                NavigateTo(row.Path, row.Position);
+            }
+        };
+        ShowPopup(popup);
+
+        static IReadOnlyList<Navigation.SymbolRow> Flatten(IReadOnlyList<Lsp.DocumentSymbol> symbols, int depth, string path) =>
+            [.. symbols.SelectMany(symbol => (IEnumerable<Navigation.SymbolRow>)[Row(symbol, depth, path), .. Flatten(symbol.Children ?? [], depth + 1, path)])];
+
+        // Roslyn names a member with its type ("Main() : void"); Rider shows the type after the name, muted.
+        static Navigation.SymbolRow Row(Lsp.DocumentSymbol symbol, int depth, string path)
+        {
+            string name = symbol.Name;
+            string? type = string.IsNullOrEmpty(symbol.Detail) || symbol.Detail == symbol.Name ? null : symbol.Detail;
+            int typed = name.LastIndexOf(" : ", StringComparison.Ordinal);
+            if (typed > 0)
+            {
+                type = name[(typed + 3)..];
+                name = name[..typed];
+            }
+            return new Navigation.SymbolRow(name, type is null ? null : $": {type}", null, symbol.Kind, path,
+                new TextPosition(symbol.SelectionRange.Start.Line, symbol.SelectionRange.Start.Character), depth, symbol.Range.End.Line);
+        }
+    }
+
+    private static IReadOnlyList<Navigation.SymbolRow> FilterOutline(IReadOnlyList<Navigation.SymbolRow> outline, string query)
+    {
+        if (query.Length == 0)
+        {
+            return outline;
+        }
+        List<Navigation.SymbolRow> shown = [];
+        List<Navigation.SymbolRow> path = [];
+        foreach (Navigation.SymbolRow row in outline)
+        {
+            while (path.Count > 0 && path[^1].Depth >= row.Depth)
+            {
+                path.RemoveAt(path.Count - 1);
+            }
+            bool matches = row.Name.Contains(query, StringComparison.OrdinalIgnoreCase) || FuzzyMatch.Score(query, row.Name) is not null;
+            if (matches)
+            {
+                // The containers of a match stay, so it reads in its place.
+                foreach (Navigation.SymbolRow container in path.Where(c => !shown.Contains(c)))
+                {
+                    shown.Add(container);
+                }
+                shown.Add(row);
+            }
+            path.Add(row);
+        }
+        return shown;
     }
 
     private void ShowGoToLine()

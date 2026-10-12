@@ -14,6 +14,9 @@ public static class AppActions
     public const string PreviousTab = "app.previousTab";
     public const string GoToFile = "app.goToFile";
     public const string GoToLine = "app.goToLine";
+    public const string GoToSymbol = "app.goToSymbol";
+    public const string GoToEverything = "app.goToEverything";
+    public const string FileStructure = "app.fileStructure";
     public const string Find = "app.find";
     public const string Replace = "app.replace";
     public const string FindNext = "app.findNext";
@@ -78,6 +81,9 @@ public static class AppActions
                 .Bind(PreviousTab, "meta shift OPEN_BRACKET", "control LEFT")
                 .Bind(GoToFile, "meta shift T")
                 .Bind(GoToLine, "meta G")
+                .Bind(GoToSymbol, "meta shift alt T")
+                .Bind(GoToEverything, "meta T")
+                .Bind(FileStructure, "alt BACK_SLASH")
                 .Bind(Find, "meta F")
                 .Bind(Replace, "control H")
                 .Bind(FindNext, "F3", "meta alt PAGE_DOWN")
@@ -128,6 +134,9 @@ public static class AppActions
             .Bind(PreviousTab, "alt LEFT")
             .Bind(GoToFile, "control shift T")
             .Bind(GoToLine, "control G")
+            .Bind(GoToSymbol, "control shift alt T")
+            .Bind(GoToEverything, "control T")
+            .Bind(FileStructure, "alt BACK_SLASH")
             .Bind(Find, "control F")
             .Bind(Replace, "control H")
             .Bind(FindNext, "F3", "control alt PAGE_DOWN")
