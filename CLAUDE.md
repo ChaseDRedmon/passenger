@@ -82,6 +82,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   commit, push, update, checkout and rollback (after which open files take their text from disk); `DiffView` is the
   side-by-side diff and `CommitGraph` the log's lanes. `MainWindow.Vcs.cs` is the branch widget, the Commit and Git
   windows' places (`ToolWindows/CommitView`, `GitLogView`) and the `app.vcs.*` actions.
+- `src/Passenger.App/Settings`: `AppSettings` (kept as JSON beside the layout, only by the person's window) and Rider's
+  searchable `SettingsDialog`; `MainWindow.Settings.cs` applies them live. A new setting is a property, an option row
+  in the dialog and a line in `ApplySettings`.
 - `src/Passenger.Terminal`: the terminal. `TerminalScreen` is the VT emulator (no UI), `TerminalView` draws it and
   encodes the keys, `TerminalSession` runs the shell in a pseudo-terminal (Porta.Pty). `MainWindow.Terminal.cs` is its
   tool window and the keys it takes ahead of the IDE's.

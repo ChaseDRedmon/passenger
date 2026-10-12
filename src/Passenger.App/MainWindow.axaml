@@ -60,7 +60,7 @@
                     <Button Classes="tool" ToolTip.Tip="Search everywhere">
                         <PathIcon Data="{StaticResource Icon.Search}" />
                     </Button>
-                    <Button Classes="tool" ToolTip.Tip="Settings">
+                    <Button Classes="tool" ToolTip.Tip="Settings" Click="OnSettingsClicked">
                         <PathIcon Data="{StaticResource Icon.Settings}" />
                     </Button>
                 </StackPanel>

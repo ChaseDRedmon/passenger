@@ -153,7 +153,9 @@ Still to come: word-level highlights in the diff, merge conflicts, stashes, and 
 The terminal is built: Rider's Terminal window (Ctrl+Alt+1, Cmd+Ctrl+1 on the Mac) with a shell per tab in the open
 folder, an emulator of Passenger's own that runs full-screen programs (vim, less, htop), selection and the clipboard,
 the scrollback, and the mouse for programs that ask for it. Find Action (Ctrl+Shift+A, Cmd+Shift+A) runs any action
-by name, the ones without a shortcut too.
+by name, the ones without a shortcut too. Settings (Ctrl+Alt+S, Cmd+, on the Mac) has Rider's search over its pages
+(Appearance, Editor, Terminal, and the Keymap, read-only so far), applies a change at once and keeps it beside the
+layout. Still to come: rebinding keys, NuGet.
 
 ## M8: depth and shipping
 

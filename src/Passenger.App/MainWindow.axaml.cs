@@ -59,6 +59,7 @@ public partial class MainWindow : Window
         AddToolWindows();
         AddVcs();
         AddTerminal();
+        AddSettings();
         Explorer.FileOpened += (_, path) => OpenFile(path);
         Structure.Follow(() => Editors.Active is { } shown
             ? (shown.Path, csharp?.For(shown)?.Lsp, Editors.CodeEditor.CaretPosition.Line)
@@ -417,6 +418,9 @@ public partial class MainWindow : Window
                 break;
             case AppActions.FindAction:
                 ShowFindAction();
+                break;
+            case AppActions.ShowSettings:
+                ShowSettings();
                 break;
             case AppActions.ShowStructure:
                 ShowToolWindow("structure");
