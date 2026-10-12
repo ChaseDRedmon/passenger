@@ -20,8 +20,8 @@ public static class IdeErrors
     /// <summary>An error was reported; raised on the UI thread.</summary>
     public static event EventHandler<IdeError>? Raised;
 
-    /// <summary>The folder Help, Show Log opens: the settings folder's <c>logs</c>.</summary>
-    public static string LogFolder => Path.Combine(Path.GetDirectoryName(Docking.DockLayout.Path)!, "logs");
+    /// <summary>The folder Help, Show Log opens: the state store's <c>logs</c>.</summary>
+    public static string LogFolder => Path.Combine(State.StateStore.DefaultRoot, "logs");
 
     public static string LogPath => Path.Combine(LogFolder, "passenger.log");
 

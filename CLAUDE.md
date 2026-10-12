@@ -76,8 +76,16 @@ window or takes the focus; it shows everything but the system's own window chrom
   `CodeEditor` and `Active` are the active group's, so code that acts on "the editor" keeps working, and wiring for every
   editor's events goes through `ForEachEditor`, since a split makes a new one.
 - `src/Passenger.App/Docking`: the tool windows' frame, in IntelliJ's six places (`DockHost`, `ToolWindow`), moved
-  by dragging a stripe button or a header, the layout kept in `DockLayout` (the settings folder, or
-  `PASSENGER_SETTINGS`). A new tool window is a view and one `Dock.Add` in `MainWindow.AddToolWindows`.
+  by dragging a stripe button or a header, the layout kept in the state store as a `DockLayout`, with the folder open
+  and as the one a folder without its own opens on. A new tool window is a view and one `Dock.Add` in
+  `MainWindow.AddToolWindows`.
+- `src/Passenger.App/State`: the IDE's own state, in one `StateStore` under `PASSENGER_SETTINGS` or the user's local
+  application data, kept only by the person's window: the app's documents at its top (`settings.json`, `layout.json`)
+  and each folder's under `workspaces/<name>-<hash>/` (editors and recent files, layout, breakpoints, bookmarks). A
+  `StateDocument` is a record that is an `IStateDocument`: its `Upgrades` from each older version and its `Clamped` value;
+  it is written debounced off the UI thread through a temporary file, merged over the file so values it does not know
+  stay, and a file that does not read is set aside as `.bad` and logged. New state is a document there, never a file of
+  its own.
 - `src/Passenger.App/Vcs`: Git through the `git` executable (`Git`, porcelain v2), Myers' line diff (`LineDiff`) for
   the gutter's change bars, and `VcsController`, the window's working tree: status, branch, each open file's bars,
   commit, push, update, checkout and rollback (after which open files take their text from disk); `DiffView` is the
@@ -86,9 +94,9 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.App/Packages`: NuGet. `IPackageFeed` is nuget.org's v3 search and flat container (`NuGetOrgFeed`) or a
   folder of .nupkg files (`FolderFeed`, what the tests use offline); `PackageManager` changes projects through
   `dotnet add`/`remove package`. `ToolWindows/NuGetView` is the window.
-- `src/Passenger.App/Settings`: `AppSettings` (kept as JSON beside the layout, only by the person's window) and Rider's
-  searchable `SettingsDialog`; `MainWindow.Settings.cs` applies them live. A new setting is a property, an option row
-  in the dialog and a line in `ApplySettings`.
+- `src/Passenger.App/Settings`: `AppSettings` (the store's `settings.json`) and Rider's searchable `SettingsDialog`;
+  `MainWindow.Settings.cs` applies them live. A new setting is a property, an option row in the dialog, a line in
+  `ApplySettings`, and its range in `Clamped` when it has one.
 - `src/Passenger.Profiler`: the profiler with no UI. `ProfilingSession` starts a program held at a diagnostic port of
   its own and streams EventPipe to a .nettrace; `Snapshot` reads it (TraceEvent) into call trees and hot spots.
   `App/Profiling` is the window (`ProfilerView`, `FlameGraph`), `MainWindow.Profiler.cs` the Profile action.

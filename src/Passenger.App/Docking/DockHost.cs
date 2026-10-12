@@ -34,6 +34,9 @@ public sealed class DockHost : Grid
     private double rightWidth = 300;
     private double bottomHeight = 280;
     private readonly Dictionary<ToolWindow, FloatWindow> floats = [];
+
+    /// <summary>The places a layout applied gave windows this build does not have (a later build's), kept for the next.</summary>
+    private Dictionary<string, DockedWindow> others = [];
     private (ToolWindow Window, Point Start, bool Dragging)? drag;
     private ToolAnchor? dropTarget;
     private (ToolWindow Window, double Left, double Right, double Bottom)? maximized;
@@ -330,22 +333,31 @@ public sealed class DockHost : Grid
     public DockLayout Capture()
     {
         Remember();
-        return new DockLayout
+        Dictionary<string, DockedWindow> placed = windows.ToDictionary(w => w.Id, w => new DockedWindow(w.Anchor, w.Order, w.IsShown)
         {
-            Windows = windows.ToDictionary(w => w.Id, w => new DockedWindow(w.Anchor, w.Order, w.IsShown)
-            {
-                Mode = w.Mode,
-                Bounds = (floats.TryGetValue(w, out FloatWindow? open) ? open.Placement : w.WindowBounds) is { } at ? [at.X, at.Y, at.Width, at.Height] : null,
-            }),
-            LeftWidth = leftWidth,
-            RightWidth = rightWidth,
-            BottomHeight = bottomHeight,
-        };
+            Mode = w.Mode,
+            Bounds = (floats.TryGetValue(w, out FloatWindow? open) ? open.Placement : w.WindowBounds) is { } at ? [at.X, at.Y, at.Width, at.Height] : null,
+        });
+        foreach ((string id, DockedWindow other) in others)
+        {
+            placed.TryAdd(id, other);
+        }
+        return new DockLayout { Windows = placed, LeftWidth = leftWidth, RightWidth = rightWidth, BottomHeight = bottomHeight };
     }
 
-    /// <summary>A kept layout over the windows there are; one it does not name stays where it was added.</summary>
+    /// <summary>A kept layout over the windows there are; one it does not name stays where it was added. Applied over
+    /// another (a folder's over the window's), the windows floating now are docked back first.</summary>
     public void Apply(DockLayout layout)
     {
+        foreach ((ToolWindow window, FloatWindow open) in floats.ToList())
+        {
+            window.WindowBounds = open.Placement;
+            open.CloseQuietly();
+        }
+        floats.Clear();
+        maximized = null;
+        hiddenAll = null;
+        others = layout.Windows.Where(w => this[w.Key] is null).ToDictionary();
         foreach (ToolWindow window in windows)
         {
             if (layout.Windows.GetValueOrDefault(window.Id) is { } placed)
@@ -376,7 +388,13 @@ public sealed class DockHost : Grid
         {
             if (TopLevel.GetTopLevel(this) is null)
             {
-                AttachedToVisualTree += (_, _) => Float(floating);
+                AttachedToVisualTree += (_, _) =>
+                {
+                    if (floating.IsShown && floating.Mode != ToolMode.Docked)
+                    {
+                        Float(floating);
+                    }
+                };
             }
             else
             {

@@ -10,19 +10,20 @@ namespace Passenger.App;
 public partial class MainWindow
 {
     private AppSettings settings = new();
-    private string? settingsPath;
+    private bool keepsSettings;
 
     /// <summary>The settings in force.</summary>
     public AppSettings Settings => settings;
 
     private void AddSettings() => Editors.ForEachEditor(editor => ApplyTo(editor, settings));
 
-    /// <summary>The window a person uses opens on the settings they left and keeps each change (a file can be named
-    /// for a test); headless ones keep the defaults.</summary>
-    public void KeepSettings(string? path = null)
+    /// <summary>The window a person uses opens on the settings they left (the store's, under PASSENGER_SETTINGS for a
+    /// test) and keeps each change; headless ones keep the defaults.</summary>
+    public void KeepSettings()
     {
-        settingsPath = path ?? AppSettings.DefaultPath;
-        ApplySettings(AppSettings.Load(settingsPath), theme: true);
+        AppSettings kept = Store().Settings.Value;
+        keepsSettings = true;
+        ApplySettings(kept, theme: true);
     }
 
     /// <summary>Puts settings in force, and keeps them when this window keeps its settings. The theme changes only when
@@ -63,9 +64,9 @@ public partial class MainWindow
             terminal.Shell = null;
         }
         ApplyAnalysis();
-        if (settingsPath is not null)
+        if (keepsSettings)
         {
-            next.Save(settingsPath);
+            state!.Settings.Set(next);
         }
     }
 

@@ -1,17 +1,14 @@
-using System.Security.Cryptography;
-using System.Text;
-using System.Text.Json;
+using System.Text.Json.Nodes;
 using Passenger.App.Editors;
+using Passenger.App.State;
 
 namespace Passenger.App.Workspace;
 
-/// <summary>What a folder's window had open, kept per folder in the settings folder as Rider keeps its workspace.xml:
-/// the editors' splits, tabs and carets, and the recent files, so opening the folder again brings them back. Only the
-/// window a person uses keeps it, as with the layout.</summary>
-public sealed record WorkspaceState
+/// <summary>What a folder's window had open, kept in the folder's place in the store as Rider keeps its workspace.xml:
+/// the editors' splits, tabs and carets, the recent files and the projects unloaded, so opening the folder again
+/// brings them back. Only the window a person uses keeps it, as with the layout.</summary>
+public sealed record WorkspaceState : IStateDocument<WorkspaceState>
 {
-    private static readonly JsonSerializerOptions Options = new() { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
-
     public EditorLayout? Editors { get; init; }
 
     /// <summary>The files opened lately, the latest first, for Recent Files and Go to File.</summary>
@@ -20,37 +17,21 @@ public sealed record WorkspaceState
     /// <summary>The projects unloaded in the Solution view, by path.</summary>
     public List<string> UnloadedProjects { get; init; } = [];
 
-    /// <summary>The folder's file: its name and a hash of its path, under the settings folder's <c>workspaces</c>.</summary>
-    public static string PathFor(string folder)
-    {
-        string hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(folder)))[..12];
-        return Path.Combine(Path.GetDirectoryName(Docking.DockLayout.Path)!, "workspaces", $"{Path.GetFileName(folder)}-{hash}.json");
-    }
+    public static IReadOnlyList<Action<JsonObject>> Upgrades { get; } = [StateStore.Unversioned];
 
-    /// <summary>The folder's kept state, or null when there is none or it does not read.</summary>
-    public static WorkspaceState? Load(string folder)
+    /// <summary>A tab or a path without its file is left out; the editors bring the rest (a caret, a split's share)
+    /// into range as they open them.</summary>
+    public WorkspaceState Clamped() => this with
     {
-        string path = PathFor(folder);
-        try
-        {
-            return File.Exists(path) ? JsonSerializer.Deserialize<WorkspaceState>(File.ReadAllText(path), Options) : null;
-        }
-        catch (Exception error) when (error is JsonException or IOException or UnauthorizedAccessException)
-        {
-            return null;
-        }
-    }
+        Editors = Editors is { } editors ? Clamp(editors) : null,
+        RecentFiles = [.. (RecentFiles ?? []).Where(f => !string.IsNullOrEmpty(f))],
+        UnloadedProjects = [.. (UnloadedProjects ?? []).Where(p => !string.IsNullOrEmpty(p))],
+    };
 
-    public void Save(string folder)
+    private static EditorLayout Clamp(EditorLayout layout) => layout with
     {
-        string path = PathFor(folder);
-        try
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.WriteAllText(path, JsonSerializer.Serialize(this, Options));
-        }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-        {
-        }
-    }
+        First = layout.First is { } first ? Clamp(first) : null,
+        Second = layout.Second is { } second ? Clamp(second) : null,
+        Tabs = layout.Tabs is { } tabs ? [.. tabs.Where(t => t is { Path.Length: > 0 })] : null,
+    };
 }

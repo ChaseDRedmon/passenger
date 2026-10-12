@@ -10,9 +10,18 @@ namespace Passenger.Tests;
 /// window that keeps its settings opens on them again.</summary>
 public sealed class SettingsTests : IDisposable
 {
-    private readonly string folder = Directory.CreateTempSubdirectory("passenger-settings-").FullName;
+    private readonly string folder = Directory.CreateTempSubdirectory("passenger-folder-").FullName;
+    private readonly string settings = Directory.CreateTempSubdirectory("passenger-settings-").FullName;
+    private readonly string? before = Environment.GetEnvironmentVariable("PASSENGER_SETTINGS");
 
-    public void Dispose() => Directory.Delete(folder, recursive: true);
+    public SettingsTests() => Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", settings);
+
+    public void Dispose()
+    {
+        Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", before);
+        Directory.Delete(folder, recursive: true);
+        Directory.Delete(settings, recursive: true);
+    }
 
     [AvaloniaFact]
     public void A_search_keeps_the_pages_and_options_it_matches()
@@ -39,10 +48,9 @@ public sealed class SettingsTests : IDisposable
     [AvaloniaFact]
     public void A_change_reaches_every_editor_and_the_next_window_opens_on_it()
     {
-        string kept = Path.Combine(folder, "settings.json");
         File.WriteAllText(Path.Combine(folder, "One.cs"), "class One { }\n");
         MainWindow window = Open();
-        window.KeepSettings(kept);
+        window.KeepSettings();
         window.OpenFile(Path.Combine(folder, "One.cs"));
         Ui.Settle();
 
@@ -60,7 +68,7 @@ public sealed class SettingsTests : IDisposable
         window.Close();
 
         MainWindow again = Open();
-        again.KeepSettings(kept);
+        again.KeepSettings();
         Assert.Equal(17, again.Settings.EditorFontSize);
         Assert.Equal(17, again.EditorArea.CodeEditor.FontSize);
         again.Close();

@@ -1,3 +1,5 @@
+using System.Text.Json.Nodes;
+using Passenger.App.State;
 using Passenger.Text;
 
 namespace Passenger.App.Navigation;
@@ -12,6 +14,23 @@ public sealed class Bookmark(string path, int line)
     public string Name => System.IO.Path.GetFileName(Path);
 }
 
+/// <summary>A folder's bookmarks as the store keeps them, as Rider keeps them with the project.</summary>
+public sealed record BookmarksState : IStateDocument<BookmarksState>
+{
+    public List<KeptBookmark> Bookmarks { get; init; } = [];
+
+    public static IReadOnlyList<Action<JsonObject>> Upgrades { get; } = [StateStore.Unversioned];
+
+    /// <summary>One without a file is left out, and a line before the first is the first.</summary>
+    public BookmarksState Clamped() => this with
+    {
+        Bookmarks = [.. (Bookmarks ?? []).Where(b => b is { Path.Length: > 0 }).Select(b => b with { Line = Math.Max(0, b.Line) })],
+    };
+}
+
+/// <summary>A bookmark as kept: its file and its line from zero.</summary>
+public sealed record KeptBookmark(string Path, int Line);
+
 /// <summary>Rider's bookmarks: lines marked to come back to, Toggle Bookmark on the caret's line, Next and Previous
 /// across every file in the order they were set. A bookmark in an open file moves with its line, as a breakpoint does.</summary>
 public sealed class BookmarkStore
@@ -25,6 +44,33 @@ public sealed class BookmarkStore
     public IReadOnlyList<Bookmark> All => all;
 
     public IReadOnlyList<int> LinesIn(string path) => [.. all.Where(b => b.Path == path).Select(b => b.Line)];
+
+    /// <summary>Every bookmark as the folder keeps it, in the order they were set.</summary>
+    public BookmarksState Capture() => new() { Bookmarks = [.. all.Select(b => new KeptBookmark(b.Path, b.Line))] };
+
+    /// <summary>Sets the bookmarks a folder kept after those there are; a line with one already keeps it.</summary>
+    public void Restore(BookmarksState kept)
+    {
+        foreach (KeptBookmark bookmark in kept.Bookmarks.Where(k => !all.Any(b => b.Path == k.Path && b.Line == k.Line)))
+        {
+            all.Add(new Bookmark(bookmark.Path, bookmark.Line));
+        }
+        foreach (string path in kept.Bookmarks.Select(b => b.Path).Distinct())
+        {
+            Changed?.Invoke(this, path);
+        }
+    }
+
+    /// <summary>Takes every bookmark away, as another folder opens: each folder's are its own.</summary>
+    public void Clear()
+    {
+        List<string> paths = [.. all.Select(b => b.Path).Distinct()];
+        all.Clear();
+        foreach (string path in paths)
+        {
+            Changed?.Invoke(this, path);
+        }
+    }
 
     /// <summary>Sets a bookmark on a line, or takes away the one there.</summary>
     public void Toggle(string path, int line)

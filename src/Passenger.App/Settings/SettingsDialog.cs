@@ -159,7 +159,7 @@ public sealed class SettingsDialog : Window
 
         Add(SystemPage, "Save when leaving the IDE", Check(Working.SaveOnDeactivation, v => Change(s => s with { SaveOnDeactivation = v })),
             "autosave files switching to a different application or the built-in terminal focus frame deactivation");
-        NumericUpDown seconds = Number(Working.IdleSeconds, 1, 3600, 1, v => Change(s => s with { IdleSeconds = (int)v }));
+        NumericUpDown seconds = Number(Working.IdleSeconds, AppSettings.MinIdleSeconds, AppSettings.MaxIdleSeconds, 1, v => Change(s => s with { IdleSeconds = (int)v }));
         seconds.IsEnabled = Working.SaveWhenIdle;
         CheckBox idle = Check(Working.SaveWhenIdle, v =>
         {
@@ -170,8 +170,8 @@ public sealed class SettingsDialog : Window
         Add(SystemPage, "Save when idle for", new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { idle, seconds, unit } },
             "autosave files idle inactive seconds");
 
-        Add(EditorPage, "Font size", Number(Working.EditorFontSize, 6, 48, 1, v => Change(s => s with { EditorFontSize = v })), "font size text");
-        Add(EditorPage, "Line spacing", Number(Working.EditorLineSpacing, 0.8, 3, 0.1, v => Change(s => s with { EditorLineSpacing = v })), "font line height");
+        Add(EditorPage, "Font size", Number(Working.EditorFontSize, AppSettings.MinFontSize, AppSettings.MaxFontSize, 1, v => Change(s => s with { EditorFontSize = v })), "font size text");
+        Add(EditorPage, "Line spacing", Number(Working.EditorLineSpacing, AppSettings.MinLineSpacing, AppSettings.MaxLineSpacing, 0.1, v => Change(s => s with { EditorLineSpacing = v })), "font line height");
         Add(EditorPage, "Enable ligatures", Check(Working.Ligatures, v => Change(s => s with { Ligatures = v })), "font arrows");
         Add(EditorPage, "Show line numbers", Check(Working.ShowLineNumbers, v => Change(s => s with { ShowLineNumbers = v })), "gutter appearance");
         Add(EditorPage, "Rainbow braces", Check(Working.RainbowBraces, v => Change(s => s with { RainbowBraces = v })), "brackets parentheses colour color nesting");
@@ -181,7 +181,7 @@ public sealed class SettingsDialog : Window
 
         Add(RunPage, "Hot Reload on save", Check(Working.HotReload, v => Change(s => s with { HotReload = v })), "dotnet watch apply changes edit continue running");
 
-        Add(TerminalPage, "Font size", Number(Working.TerminalFontSize, 6, 48, 1, v => Change(s => s with { TerminalFontSize = v })), "font size shell");
+        Add(TerminalPage, "Font size", Number(Working.TerminalFontSize, AppSettings.MinFontSize, AppSettings.MaxFontSize, 1, v => Change(s => s with { TerminalFontSize = v })), "font size shell");
         (string shell, _) = Passenger.Terminal.TerminalSession.DefaultShell();
         TextBox path = new() { Classes = { "search" }, Text = Working.TerminalShell ?? string.Empty, PlaceholderText = shell, Width = 320 };
         path.TextChanged += (_, _) => Change(s => s with { TerminalShell = string.IsNullOrWhiteSpace(path.Text) ? null : path.Text.Trim() });

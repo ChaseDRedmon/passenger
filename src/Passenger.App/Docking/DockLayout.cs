@@ -1,56 +1,35 @@
-using System.Text.Json;
-using System.Text.Json.Serialization;
+using System.Text.Json.Nodes;
+using Passenger.App.State;
 
 namespace Passenger.App.Docking;
 
 /// <summary>Where each tool window was and whether it was open, and the areas' sizes, as the window last stood: kept
-/// in the user's settings folder so the next start opens on it. Only the window a person uses keeps it; a headless
-/// IDE (a screenshot, an agent's, a test's) starts on the defaults and keeps nothing.</summary>
-public sealed record DockLayout
+/// in the store with the folder open, and as the one a folder without its own opens on. Only the window a person uses
+/// keeps it; a headless IDE (a screenshot, an agent's, a test's) starts on the defaults and keeps nothing.</summary>
+public sealed record DockLayout : IStateDocument<DockLayout>
 {
-    private static readonly JsonSerializerOptions Options = new()
-    {
-        WriteIndented = true,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        Converters = { new JsonStringEnumConverter() },
-    };
+    /// <summary>The widest an area is kept, past any screen: a size beyond it is the default's.</summary>
+    private const double LargestArea = 10000;
 
     public Dictionary<string, DockedWindow> Windows { get; init; } = [];
     public double LeftWidth { get; init; }
     public double RightWidth { get; init; }
     public double BottomHeight { get; init; }
 
-    /// <summary>The file it is kept in: PASSENGER_SETTINGS names the folder, else the user's local application data.</summary>
-    public static string Path => System.IO.Path.Combine(
-        Environment.GetEnvironmentVariable("PASSENGER_SETTINGS") is { Length: > 0 } folder
-            ? folder
-            : System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Passenger"),
-        "layout.json");
+    public static IReadOnlyList<Action<JsonObject>> Upgrades { get; } = [StateStore.Unversioned];
 
-    /// <summary>The kept layout, or none when there is none or it does not read (the defaults then stand).</summary>
-    public static DockLayout? Load()
+    /// <summary>A window placed where this build has no place (a later build's) stays where it was added, and a size or
+    /// a window's bounds out of reach are the defaults'.</summary>
+    public DockLayout Clamped() => this with
     {
-        try
-        {
-            return File.Exists(Path) ? JsonSerializer.Deserialize<DockLayout>(File.ReadAllText(Path), Options) : null;
-        }
-        catch (Exception error) when (error is JsonException or IOException or UnauthorizedAccessException)
-        {
-            return null;
-        }
-    }
+        Windows = (Windows ?? []).Where(w => w.Value is { } placed && Enum.IsDefined(placed.Anchor) && Enum.IsDefined(placed.Mode))
+            .ToDictionary(w => w.Key, w => w.Value with { Order = Math.Max(0, w.Value.Order), Bounds = w.Value.Bounds is [_, _, > 0, > 0] ? w.Value.Bounds : null }),
+        LeftWidth = Size(LeftWidth),
+        RightWidth = Size(RightWidth),
+        BottomHeight = Size(BottomHeight),
+    };
 
-    public void Save()
-    {
-        try
-        {
-            Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Path)!);
-            File.WriteAllText(Path, JsonSerializer.Serialize(this, Options));
-        }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-        {
-        }
-    }
+    private static double Size(double value) => value is >= 0 and <= LargestArea ? value : 0;
 }
 
 /// <summary>One tool window's place: its anchor, its order among that anchor's buttons, and whether it was open.</summary>

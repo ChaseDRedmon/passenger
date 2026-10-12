@@ -1,19 +1,21 @@
-using System.Text.Json;
-using System.Text.Json.Serialization;
+using System.Text.Json.Nodes;
+using Passenger.App.State;
 
 namespace Passenger.App.Settings;
 
-/// <summary>What a person has set in Settings: the theme, the editor's and the terminal's font, the shell. Kept as JSON
-/// beside the layout (only by the window a person uses: a headless IDE starts on the defaults and keeps nothing); a
-/// value the file lacks takes its default, and a file that does not read leaves the defaults standing.</summary>
-public sealed record AppSettings
+/// <summary>What a person has set in Settings: the theme, the editor's and the terminal's font, the shell. Kept in the
+/// store's <c>settings.json</c> (only by the window a person uses: a headless IDE starts on the defaults and keeps
+/// nothing); a value the file lacks takes its default, and one out of range is brought into it.</summary>
+public sealed record AppSettings : IStateDocument<AppSettings>
 {
-    private static readonly JsonSerializerOptions Options = new()
-    {
-        WriteIndented = true,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        Converters = { new JsonStringEnumConverter() },
-    };
+    /// <summary>The smallest font Settings offers; a size read from the file is brought between it and the largest.</summary>
+    public const double MinFontSize = 6;
+
+    public const double MaxFontSize = 48;
+    public const double MinLineSpacing = 0.8;
+    public const double MaxLineSpacing = 3;
+    public const int MinIdleSeconds = 1;
+    public const int MaxIdleSeconds = 3600;
 
     public ThemeChoice Theme { get; init; } = ThemeChoice.System;
     public double EditorFontSize { get; init; } = 13;
@@ -53,30 +55,22 @@ public sealed record AppSettings
     /// <summary>The terminal's shell, or null for the user's own login shell.</summary>
     public string? TerminalShell { get; init; }
 
-    /// <summary>The file they are kept in: PASSENGER_SETTINGS names the folder, else the user's local application data.</summary>
-    public static string DefaultPath => Path.Combine(Path.GetDirectoryName(Docking.DockLayout.Path)!, "settings.json");
+    public static IReadOnlyList<Action<JsonObject>> Upgrades { get; } = [StateStore.Unversioned];
 
-    public static AppSettings Load(string path)
+    /// <summary>A hand-edited or later build's value this build cannot use is brought into range, or back to its default;
+    /// a shortcut that does not parse is the keymap's to pass over.</summary>
+    public AppSettings Clamped()
     {
-        try
+        AppSettings defaults = new();
+        return this with
         {
-            return File.Exists(path) ? JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(path), Options) ?? new() : new();
-        }
-        catch (Exception error) when (error is JsonException or IOException or UnauthorizedAccessException)
-        {
-            return new();
-        }
-    }
-
-    public void Save(string path)
-    {
-        try
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.WriteAllText(path, JsonSerializer.Serialize(this, Options));
-        }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-        {
-        }
+            Theme = Enum.IsDefined(Theme) ? Theme : defaults.Theme,
+            EditorFontSize = Math.Clamp(EditorFontSize, MinFontSize, MaxFontSize),
+            EditorLineSpacing = Math.Clamp(EditorLineSpacing, MinLineSpacing, MaxLineSpacing),
+            TerminalFontSize = Math.Clamp(TerminalFontSize, MinFontSize, MaxFontSize),
+            IdleSeconds = Math.Clamp(IdleSeconds, MinIdleSeconds, MaxIdleSeconds),
+            Shortcuts = (Shortcuts ?? []).Where(s => s.Value is not null).ToDictionary(s => s.Key, s => s.Value.Where(k => k is not null).ToArray()),
+            TerminalShell = string.IsNullOrWhiteSpace(TerminalShell) ? null : TerminalShell,
+        };
     }
 }

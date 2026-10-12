@@ -332,6 +332,10 @@ public partial class MainWindow : Window
                 return;
             }
             recent.Clear();
+            // Breakpoints and bookmarks are a folder's own, as Rider keeps them with the project.
+            folderState = null;
+            debug.Breakpoints.Clear();
+            bookmarks.Clear();
         }
         Autosave();
         folder = opening;
@@ -1035,36 +1039,75 @@ public partial class MainWindow : Window
     }
 
     /// <summary>The window a person uses keeps its layout: it opens on the one kept, and keeps each change; and each
-    /// folder's editors and recent files, which come back when the folder opens again.</summary>
+    /// folder's editors, recent files, layout, breakpoints and bookmarks, which come back when the folder opens again.</summary>
     public void KeepLayout()
     {
-        if (Docking.DockLayout.Load() is { } kept)
+        State.StateStore store = Store();
+        if (store.Layout.IsKept)
         {
-            Dock.Apply(kept);
+            Dock.Apply(store.Layout.Value);
         }
-        Dock.LayoutChanged += (_, _) => Dock.Capture().Save();
-        Closing += (_, _) => Dock.Capture().Save();
+        Dock.LayoutChanged += (_, _) => KeepDock();
+        debug.Breakpoints.Changed += (_, _) => folderState?.Breakpoints.Set(debug.Breakpoints.Capture());
+        bookmarks.Changed += (_, _) => folderState?.Bookmarks.Set(bookmarks.Capture());
         keepsWorkspace = true;
-        Closing += (_, _) => KeepWorkspace();
         RestoreWorkspace();
     }
 
+    /// <summary>The store of the window a person uses, made the first time it keeps something; null in a headless one.</summary>
+    private State.StateStore? state;
+
+    /// <summary>The open folder's documents in the store, while this window keeps them.</summary>
+    private State.ProjectState? folderState;
+
     private bool keepsWorkspace;
 
-    private void KeepWorkspace()
+    private State.StateStore Store()
     {
-        if (keepsWorkspace && folder is not null)
+        if (state is null)
         {
-            new WorkspaceState { Editors = Editors.Capture(), RecentFiles = [.. recent], UnloadedProjects = [.. Explorer.Tree.Unloaded] }.Save(folder);
+            state = new State.StateStore(State.StateStore.DefaultRoot);
+            // The last changes are written as the window closes, since the process will not wait for their timers.
+            Closing += (_, _) =>
+            {
+                if (keepsWorkspace)
+                {
+                    KeepDock();
+                    KeepWorkspace();
+                }
+                state.Flush();
+            };
         }
+        return state;
     }
+
+    /// <summary>The layout as it stands, kept with the folder open and as the one a folder without its own opens on.</summary>
+    private void KeepDock()
+    {
+        Docking.DockLayout now = Dock.Capture();
+        state!.Layout.Set(now);
+        folderState?.Layout.Set(now);
+    }
+
+    private void KeepWorkspace() =>
+        folderState?.Workspace.Set(new WorkspaceState { Editors = Editors.Capture(), RecentFiles = [.. recent], UnloadedProjects = [.. Explorer.Tree.Unloaded] });
 
     private void RestoreWorkspace()
     {
-        if (!keepsWorkspace || folder is null || WorkspaceState.Load(folder) is not { } kept)
+        if (!keepsWorkspace || folder is null)
         {
             return;
         }
+        State.ProjectState opening = state!.Project(folder);
+        if (opening.Layout.IsKept)
+        {
+            Dock.Apply(opening.Layout.Value);
+        }
+        // Before the folder's documents are this window's, so what restoring them changes is not written back.
+        debug.Breakpoints.Restore(opening.Breakpoints.Value);
+        bookmarks.Restore(opening.Bookmarks.Value);
+        folderState = opening;
+        WorkspaceState kept = opening.Workspace.Value;
         if (kept.UnloadedProjects.Count > 0)
         {
             foreach (string project in kept.UnloadedProjects)

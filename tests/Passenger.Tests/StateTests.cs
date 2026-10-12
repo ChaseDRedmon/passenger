@@ -1,0 +1,252 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json.Nodes;
+using Avalonia.Headless.XUnit;
+using Passenger.App;
+using Passenger.App.Debugging;
+using Passenger.App.Docking;
+using Passenger.App.Settings;
+using Passenger.App.Workspace;
+using Passenger.Editor;
+using Passenger.Text;
+
+namespace Passenger.Tests;
+
+/// <summary>The IDE's own state, in one store under PASSENGER_SETTINGS: a file that does not read is set aside and
+/// logged, never written over; a later build's values and a hand edit out of range stay in the file while the window
+/// uses what it can; two windows' changes are both kept; what a person kept before the store is there on the first
+/// run; and a folder's layout, breakpoints and bookmarks come back with it.</summary>
+public sealed class StateTests : IDisposable
+{
+    private readonly string folder = Directory.CreateTempSubdirectory("passenger-folder-").FullName;
+    private readonly string settings = Directory.CreateTempSubdirectory("passenger-settings-").FullName;
+    private readonly string? before = Environment.GetEnvironmentVariable("PASSENGER_SETTINGS");
+
+    public StateTests() => Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", settings);
+
+    public void Dispose()
+    {
+        Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", before);
+        Directory.Delete(folder, recursive: true);
+        Directory.Delete(settings, recursive: true);
+    }
+
+    [AvaloniaFact]
+    public void A_settings_file_a_crash_cut_short_is_set_aside_and_logged_and_never_written_over()
+    {
+        using IDisposable theme = TestsTheme();
+        string file = Path.Combine(settings, "settings.json");
+        string cut = "{\n  \"version\": 1,\n  \"theme\": \"Light\",\n  \"editorFontSize\": 17,\n  \"shortcuts\": {\n    \"app.editor.spl";
+        File.WriteAllText(file, cut);
+
+        MainWindow window = Keeping();
+        window.KeepSettings();
+        Ui.Settle();
+        Assert.Equal(13, window.Settings.EditorFontSize);
+        Assert.True(File.Exists(file + ".bad"), "The file that did not read was not set aside: the defaults went over it");
+        Assert.Equal(cut, File.ReadAllText(file + ".bad"));
+        Assert.False(File.Exists(file), "The defaults were written in place of the file that did not read");
+        string log = File.ReadAllText(IdeErrors.LogPath);
+        Assert.Contains("settings.json did not read", log, StringComparison.Ordinal);
+        Assert.Contains("set aside as settings.json.bad", log, StringComparison.Ordinal);
+
+        // A change after it goes to a new file, whole, and the one set aside stays as it was.
+        window.ApplySettings(window.Settings with { EditorFontSize = 15 });
+        window.Close();
+        JsonObject written = Read(file);
+        Assert.Equal(1, (int)written["version"]!);
+        Assert.Equal(15, (double)written["editorFontSize"]!);
+        Assert.Equal(cut, File.ReadAllText(file + ".bad"));
+        Assert.Empty(Directory.GetFiles(settings, "*.tmp"));
+    }
+
+    [AvaloniaFact]
+    public void A_later_builds_values_and_a_hand_edit_out_of_range_stay_in_the_file_while_the_window_uses_what_it_can()
+    {
+        using IDisposable theme = TestsTheme();
+        string file = Path.Combine(settings, "settings.json");
+        File.WriteAllText(file, """
+            {
+              "version": 7,
+              "theme": "Sepia",
+              "editorFontSize": 1e30,
+              "terminalFontSize": 0,
+              "minimap": { "side": "right" }
+            }
+            """);
+
+        MainWindow window = Keeping();
+        window.KeepSettings();
+        Assert.Equal(ThemeChoice.System, window.Settings.Theme);
+        Assert.Equal(AppSettings.MaxFontSize, window.EditorArea.CodeEditor.FontSize);
+        Assert.Equal(AppSettings.MinFontSize, window.TerminalPanel.View.FontSize);
+        // Settings opens on them, where a size past what its box holds threw.
+        SettingsDialog dialog = window.ShowSettings();
+        Ui.Settle();
+        dialog.Change(s => s with { EditorLineSpacing = 1.5 });
+        dialog.Ok();
+        Ui.Settle();
+        window.Close();
+
+        // Only the change is written: the later build's version, theme and option, and the hand edit, are as they were.
+        JsonObject written = Read(file);
+        Assert.Equal(7, (int)written["version"]!);
+        Assert.Equal("Sepia", (string)written["theme"]!);
+        Assert.Equal("right", (string)written["minimap"]!["side"]!);
+        Assert.Equal(1e30, (double)written["editorFontSize"]!);
+        Assert.Equal(1.5, (double)written["editorLineSpacing"]!);
+    }
+
+    [AvaloniaFact]
+    public void Two_windows_changing_different_settings_keep_both_changes()
+    {
+        using IDisposable theme = TestsTheme();
+        MainWindow first = Keeping();
+        first.KeepSettings();
+        MainWindow second = Keeping();
+        second.KeepSettings();
+        first.ApplySettings(first.Settings with { EditorFontSize = 16 });
+        first.Close();
+        second.ApplySettings(second.Settings with { TerminalFontSize = 18 });
+        second.Close();
+
+        MainWindow third = Keeping();
+        third.KeepSettings();
+        Assert.Equal((16, 18), (third.Settings.EditorFontSize, third.Settings.TerminalFontSize));
+        third.Close();
+    }
+
+    [AvaloniaFact]
+    public void What_a_person_kept_before_the_store_is_there_on_the_first_run()
+    {
+        using IDisposable theme = TestsTheme();
+        // As the build before the store left them: no versions, and a folder's workspace in one file of its own.
+        string kept = "{\n  \"theme\": \"Light\",\n  \"editorFontSize\": 16\n}";
+        File.WriteAllText(Path.Combine(settings, "settings.json"), kept);
+        File.WriteAllText(Path.Combine(settings, "layout.json"),
+            "{\n  \"windows\": {\n    \"tests\": { \"anchor\": \"RightBottom\", \"order\": 0, \"shown\": true }\n  },\n  \"leftWidth\": 0,\n  \"rightWidth\": 0,\n  \"bottomHeight\": 0\n}");
+        File.WriteAllText(Path.Combine(folder, "One.cs"), "class One\n{\n    int x;\n}\n");
+        File.WriteAllText(Path.Combine(folder, "Two.cs"), "class Two\n{\n}\n");
+        string canonical = PathNames.Canonical(folder);
+        string one = Path.Combine(canonical, "One.cs");
+        string hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)))[..12];
+        string former = Path.Combine(settings, "workspaces", $"{Path.GetFileName(canonical)}-{hash}.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(former)!);
+        File.WriteAllText(former, new JsonObject
+        {
+            ["editors"] = new JsonObject { ["tabs"] = new JsonArray(new JsonObject { ["path"] = one, ["line"] = 2, ["column"] = 4 }), ["current"] = true },
+            ["recentFiles"] = new JsonArray(one),
+            ["unloadedProjects"] = new JsonArray(),
+        }.ToJsonString());
+
+        MainWindow window = Keeping();
+        window.KeepSettings();
+        window.OpenFolder(folder);
+        Ui.Settle();
+        Assert.Equal((ThemeChoice.Light, 16), (window.Settings.Theme, window.Settings.EditorFontSize));
+        Assert.Equal(ToolAnchor.RightBottom, window.DockHost["tests"]!.Anchor);
+        Assert.True(window.DockHost.IsShown("tests"));
+        Assert.Equal("One.cs", window.EditorArea.Active?.Name);
+        Assert.Equal(new TextPosition(2, 4), window.EditorArea.CodeEditor.CaretPosition);
+        window.OpenFile(Path.Combine(folder, "Two.cs"));
+        window.Close();
+
+        // Read alone, the settings are not written again; the workspace changed goes to the folder's own place.
+        Assert.Equal(kept, File.ReadAllText(Path.Combine(settings, "settings.json")));
+        JsonObject workspace = Read(Path.Combine(settings, "workspaces", $"{Path.GetFileName(canonical)}-{hash}", "workspace.json"));
+        Assert.Equal(1, (int)workspace["version"]!);
+        Assert.Equal(["Two.cs", "One.cs"], workspace["recentFiles"]!.AsArray().Select(f => Path.GetFileName((string)f!)));
+        Assert.True(File.Exists(former), "The workspace file an older build reads was taken away");
+    }
+
+    [AvaloniaFact]
+    public void Breakpoints_and_bookmarks_come_back_when_the_folder_opens_again_and_go_when_another_opens()
+    {
+        File.WriteAllText(Path.Combine(folder, "One.cs"), "class One\n{\n    void M()\n    {\n        int x = 1;\n    }\n}\n");
+        File.WriteAllText(Path.Combine(folder, "Two.cs"), "class Two\n{\n}\n");
+        MainWindow first = Keeping(folder);
+        first.OpenFile(Path.Combine(folder, "One.cs"));
+        Ui.Settle();
+        first.EditorArea.CodeEditor.GoTo(new TextPosition(4, 8));
+        Ui.Run(first, AppActions.ToggleBreakpoint);
+        LineBreakpoint set = Assert.Single(first.Debugger.Breakpoints.All);
+        first.Debugger.Breakpoints.Update(set, enabled: false, suspend: false, condition: "x > 0", hitCondition: null, logMessage: "x is {x}");
+        first.EditorArea.CodeEditor.GoTo(new TextPosition(2, 4));
+        Ui.Run(first, AppActions.ToggleBookmark);
+        first.OpenFile(Path.Combine(folder, "Two.cs"));
+        Ui.Settle();
+        first.EditorArea.CodeEditor.GoTo(new TextPosition(1, 0));
+        Ui.Run(first, AppActions.ToggleBookmark);
+        first.Close();
+
+        MainWindow second = Keeping(folder);
+        LineBreakpoint kept = Assert.Single(second.Debugger.Breakpoints.All);
+        Assert.Equal(("One.cs", 4, false, false, "x > 0", "x is {x}"),
+            (Path.GetFileName(kept.Path), kept.Line, kept.Enabled, kept.Suspend, kept.Condition, kept.LogMessage));
+        Assert.Equal([("One.cs", 2), ("Two.cs", 1)], second.Bookmarks.All.Select(b => (b.Name, b.Line)));
+        // The file shows them in its gutter.
+        second.OpenFile(Path.Combine(folder, "One.cs"));
+        Ui.Settle();
+        Assert.Equal([2], second.EditorArea.Active!.Bookmarks);
+        Assert.Contains(new LineMark(4, LineMarkKind.BreakpointDisabled, Conditional: true, Tracepoint: true), second.EditorArea.CodeEditor.LineMarks);
+
+        // Another folder has its own: none of these, and they come back with this one.
+        string other = Directory.CreateTempSubdirectory("passenger-other-").FullName;
+        second.OpenFolder(other);
+        Assert.Empty(second.Debugger.Breakpoints.All);
+        Assert.Empty(second.Bookmarks.All);
+        second.OpenFolder(folder);
+        Assert.Single(second.Debugger.Breakpoints.All);
+        Assert.Equal(2, second.Bookmarks.All.Count);
+        second.Close();
+        Directory.Delete(other, recursive: true);
+    }
+
+    [AvaloniaFact]
+    public void Each_folder_opens_on_its_own_layout_and_one_without_on_the_one_there_was()
+    {
+        string other = Directory.CreateTempSubdirectory("passenger-other-").FullName;
+        MainWindow first = Keeping(folder);
+        first.DockHost.Move(first.DockHost["tests"]!, ToolAnchor.RightBottom);
+        first.DockHost.Show("tests");
+        first.OpenFolder(other);
+        Assert.Equal(ToolAnchor.RightBottom, first.DockHost["tests"]!.Anchor);
+        first.DockHost.Move(first.DockHost["tests"]!, ToolAnchor.LeftBottom);
+        first.OpenFolder(folder);
+        Assert.Equal(ToolAnchor.RightBottom, first.DockHost["tests"]!.Anchor);
+        first.Close();
+
+        // The next start opens on the layout it closed on, and the other folder on its own.
+        MainWindow second = Keeping();
+        Assert.Equal(ToolAnchor.RightBottom, second.DockHost["tests"]!.Anchor);
+        second.OpenFolder(other);
+        Assert.Equal(ToolAnchor.LeftBottom, second.DockHost["tests"]!.Anchor);
+        Assert.True(second.DockHost.IsShown("tests"));
+        second.Close();
+        Directory.Delete(other, recursive: true);
+    }
+
+    /// <summary>The window a person uses, as the app makes it: one that keeps its layout and folders.</summary>
+    private static MainWindow Keeping(string? open = null)
+    {
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.KeepLayout();
+        if (open is not null)
+        {
+            window.OpenFolder(open);
+        }
+        Ui.Settle();
+        return window;
+    }
+
+    private static JsonObject Read(string file) => (JsonObject)JsonNode.Parse(File.ReadAllText(file))!;
+
+    /// <summary>Puts the tests' theme back once a window that keeps its settings has put the person's in force.</summary>
+    private static IDisposable TestsTheme() => new ThemeBack(Avalonia.Application.Current!.RequestedThemeVariant);
+
+    private sealed class ThemeBack(Avalonia.Styling.ThemeVariant? theme) : IDisposable
+    {
+        public void Dispose() => Avalonia.Application.Current!.RequestedThemeVariant = theme;
+    }
+}

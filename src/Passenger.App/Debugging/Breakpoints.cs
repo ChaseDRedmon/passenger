@@ -1,3 +1,5 @@
+using System.Text.Json.Nodes;
+using Passenger.App.State;
 using Passenger.Text;
 
 namespace Passenger.App.Debugging;
@@ -36,6 +38,30 @@ public enum BreakpointStatus
     Invalid,
 }
 
+/// <summary>A folder's breakpoints as the store keeps them, as Rider keeps them with the project.</summary>
+public sealed record BreakpointsState : IStateDocument<BreakpointsState>
+{
+    public List<KeptBreakpoint> Breakpoints { get; init; } = [];
+
+    public static IReadOnlyList<Action<JsonObject>> Upgrades { get; } = [StateStore.Unversioned];
+
+    /// <summary>One without a file is left out, and a line before the first is the first.</summary>
+    public BreakpointsState Clamped() => this with
+    {
+        Breakpoints = [.. (Breakpoints ?? []).Where(b => b is { Path.Length: > 0 }).Select(b => b with { Line = Math.Max(0, b.Line) })],
+    };
+}
+
+/// <summary>A breakpoint as kept: its file, its line from zero and what it does, but nothing a debugger said of it.</summary>
+public sealed record KeptBreakpoint(string Path, int Line)
+{
+    public bool Enabled { get; init; } = true;
+    public bool Suspend { get; init; } = true;
+    public string? Condition { get; init; }
+    public string? HitCondition { get; init; }
+    public string? LogMessage { get; init; }
+}
+
 /// <summary>Every line breakpoint, by file. A breakpoint in an open file moves with the text around
 /// it, as Rider's do, so an edit above it leaves it on its line; one whose line is deleted lands where
 /// the deletion did, and two on one line become one.</summary>
@@ -51,6 +77,51 @@ public sealed class BreakpointStore
     public IEnumerable<LineBreakpoint> All => byPath.Values.SelectMany(b => b);
 
     public IReadOnlyList<LineBreakpoint> In(string path) => byPath.TryGetValue(path, out List<LineBreakpoint>? found) ? found : [];
+
+    /// <summary>Every breakpoint as the folder keeps it.</summary>
+    public BreakpointsState Capture() => new()
+    {
+        Breakpoints = [.. All.Select(b => new KeptBreakpoint(b.Path, b.Line)
+        {
+            Enabled = b.Enabled,
+            Suspend = b.Suspend,
+            Condition = b.Condition,
+            HitCondition = b.HitCondition,
+            LogMessage = b.LogMessage,
+        })],
+    };
+
+    /// <summary>Sets the breakpoints a folder kept, beside those there are; a line with one already keeps it.</summary>
+    public void Restore(BreakpointsState kept)
+    {
+        foreach (IGrouping<string, KeptBreakpoint> file in kept.Breakpoints.GroupBy(b => b.Path))
+        {
+            List<LineBreakpoint> list = For(file.Key);
+            foreach (KeptBreakpoint breakpoint in file.Where(b => list.All(there => there.Line != b.Line)))
+            {
+                list.Add(new LineBreakpoint(breakpoint.Path, breakpoint.Line)
+                {
+                    Enabled = breakpoint.Enabled,
+                    Suspend = breakpoint.Suspend,
+                    Condition = breakpoint.Condition,
+                    HitCondition = breakpoint.HitCondition,
+                    LogMessage = breakpoint.LogMessage,
+                });
+            }
+            list.Sort((a, b) => a.Line.CompareTo(b.Line));
+            Changed?.Invoke(this, file.Key);
+        }
+    }
+
+    /// <summary>Takes every breakpoint away, as another folder opens: each folder's are its own.</summary>
+    public void Clear()
+    {
+        foreach (string path in Files.ToList())
+        {
+            byPath[path].Clear();
+            Changed?.Invoke(this, path);
+        }
+    }
 
     /// <summary>Sets a breakpoint on a line, or removes the one there.</summary>
     public void Toggle(string path, int line)
