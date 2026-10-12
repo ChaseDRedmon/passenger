@@ -417,6 +417,8 @@ public sealed class VcsTests : IDisposable
         Ui.ChooseFromMenu(commits, "Revert Commit");
         Ui.WaitFor(() => Git("log", "-1", "--format=%s").Trim() == "Revert \"Twice\"", "the revert's commit");
         Ui.WaitFor(() => Text(window).Contains("count++", StringComparison.Ordinal), "the open file to follow the revert");
+        // Git reads what the revert did (slower on Windows) before it takes another change; one asked for meanwhile is refused.
+        Ui.WaitFor(() => !window.Vcs.IsBusy, "Git to finish the revert");
 
         // Copy Revision Number and New Branch from the first commit.
         Ui.WaitFor(() => log.Rows.Any(r => r.Commit.Subject == "First"), "the first commit in the log");
@@ -428,7 +430,9 @@ public sealed class VcsTests : IDisposable
         NamePopup popup = Assert.IsType<NamePopup>(window.Popup);
         popup.Text = "from-first";
         Task named = popup.SubmitAsync();
-        Ui.WaitFor(() => named.IsCompleted && window.Vcs.Branch == "from-first", "the new branch checked out");
+        Ui.WaitFor(() => named.IsCompleted, "the new branch");
+        Assert.True(popup.Problem is null, $"The new branch was refused: {popup.Problem}");
+        Ui.WaitFor(() => window.Vcs.Branch == "from-first", "the new branch checked out");
         Assert.Equal(first.Hash, Git("rev-parse", "HEAD").Trim());
         window.Close();
     }
