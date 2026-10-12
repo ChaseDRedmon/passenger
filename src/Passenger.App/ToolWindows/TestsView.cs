@@ -75,11 +75,10 @@ public sealed class TestsView : DockPanel
         model.Rows.CollectionChanged += (_, _) => placeholder.IsVisible = model.Rows.Count == 0;
 
         Grid split = new() { ColumnDefinitions = new ColumnDefinitions("2*,1,3*") };
-        GridSplitter splitter = new() { Classes = { "hairline" }, ResizeDirection = GridResizeDirection.Columns };
-        Grid.SetColumn(splitter, 1);
+        HairlineDivider divider = new(GridResizeDirection.Columns) { [Grid.ColumnProperty] = 1 };
         Grid.SetColumn(details, 2);
         split.Children.Add(new Panel { Children = { tree, placeholder } });
-        split.Children.Add(splitter);
+        split.Children.Add(divider);
         split.Children.Add(details);
 
         Border topBar = new() { [DockProperty] = Dock.Top, Height = 32, BorderThickness = new Thickness(0, 0, 0, 1), Child = status };

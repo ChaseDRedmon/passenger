@@ -101,11 +101,10 @@ public sealed class NuGetView : DockPanel
         right.Children.Add(log);
         right.Children.Add(new ScrollViewer { Content = details });
         Grid split = new() { ColumnDefinitions = new ColumnDefinitions("2*,1,3*") };
-        GridSplitter splitter = new() { Classes = { "hairline" }, ResizeDirection = GridResizeDirection.Columns };
-        Grid.SetColumn(splitter, 1);
+        HairlineDivider divider = new(GridResizeDirection.Columns) { [Grid.ColumnProperty] = 1 };
         Grid.SetColumn(right, 2);
         split.Children.Add(list);
-        split.Children.Add(splitter);
+        split.Children.Add(divider);
         split.Children.Add(right);
         Children.Add(top);
         Children.Add(split);

@@ -328,6 +328,29 @@ public sealed class DockingTests
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void The_unit_tests_debug_and_git_windows_draw_a_line_between_their_panes()
+    {
+        MainWindow window = Open();
+        DockHost dock = window.DockHost;
+        Avalonia.Media.Color line = Application.Current!.TryFindResource("Passenger.Divider", window.ActualThemeVariant, out object? brush) && brush is Avalonia.Media.ISolidColorBrush solid
+            ? solid.Color
+            : throw new InvalidOperationException("The theme has no divider colour");
+        foreach (string id in new[] { "tests", "debug", "git" })
+        {
+            dock.Show(id);
+            Ui.Settle();
+            GridSplitter[] splitters = [.. dock[id]!.Content.GetVisualDescendants().OfType<GridSplitter>().Where(s => s.IsEffectivelyVisible)];
+            Assert.NotEmpty(splitters);
+            foreach (GridSplitter splitter in splitters)
+            {
+                Avalonia.Media.Color shown = Ui.Pixel(window, Middle(window, splitter));
+                Assert.True(shown == line, $"The {id} window is {shown} on the divider between its panes, not the divider colour {line}");
+            }
+        }
+        window.Close();
+    }
+
     private static GridSplitter Divider(DockHost dock, Func<Control, bool> place) =>
         dock.Children.First(place).GetVisualDescendants().OfType<GridSplitter>().Single();
 

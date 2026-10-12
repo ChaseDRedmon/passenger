@@ -101,18 +101,16 @@ public sealed class GitLogView : DockPanel
         top.Bind(Border.BorderBrushProperty, top.GetResourceObservable("Passenger.Divider"));
 
         Grid right = new() { RowDefinitions = new RowDefinitions("*,1,*") };
-        GridSplitter between = new() { Classes = { "hairlineRows" }, ResizeDirection = GridResizeDirection.Rows };
-        Grid.SetRow(between, 1);
+        HairlineDivider between = new(GridResizeDirection.Rows) { [Grid.RowProperty] = 1 };
         Grid.SetRow(details, 2);
         right.Children.Add(fileList);
         right.Children.Add(between);
         right.Children.Add(details);
         Grid split = new() { ColumnDefinitions = new ColumnDefinitions("3*,1,2*") };
-        GridSplitter splitter = new() { Classes = { "hairline" }, ResizeDirection = GridResizeDirection.Columns };
-        Grid.SetColumn(splitter, 1);
+        HairlineDivider divider = new(GridResizeDirection.Columns) { [Grid.ColumnProperty] = 1 };
         Grid.SetColumn(right, 2);
         split.Children.Add(new Panel { Children = { list, placeholder } });
-        split.Children.Add(splitter);
+        split.Children.Add(divider);
         split.Children.Add(right);
         Children.Add(top);
         Children.Add(split);

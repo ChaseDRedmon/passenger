@@ -118,8 +118,7 @@ public sealed class ProfilerView : DockPanel
             }
         };
         allocations = new Grid { ColumnDefinitions = new ColumnDefinitions("2*,1,3*") };
-        GridSplitter between = new() { Classes = { "hairline" }, ResizeDirection = GridResizeDirection.Columns };
-        Grid.SetColumn(between, 1);
+        HairlineDivider between = new(GridResizeDirection.Columns) { [Grid.ColumnProperty] = 1 };
         Grid.SetColumn(backTraces, 2);
         allocations.Children.Add(types);
         allocations.Children.Add(between);

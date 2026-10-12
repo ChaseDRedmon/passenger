@@ -111,11 +111,10 @@ public sealed class DebugView : DockPanel
 
         Grid split = new() { ColumnDefinitions = new ColumnDefinitions("320,1,*") };
         Grid.SetColumn(framesPane, 0);
-        GridSplitter splitter = new() { Classes = { "hairline" }, ResizeDirection = GridResizeDirection.Columns };
-        Grid.SetColumn(splitter, 1);
+        HairlineDivider divider = new(GridResizeDirection.Columns) { [Grid.ColumnProperty] = 1 };
         Grid.SetColumn(variablesPane, 2);
         split.Children.Add(framesPane);
-        split.Children.Add(splitter);
+        split.Children.Add(divider);
         split.Children.Add(variablesPane);
         placeholder = new TextBlock
         {
