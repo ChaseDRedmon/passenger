@@ -189,10 +189,21 @@ public partial class MainWindow
             StatusText.Text = "The folder is not in a Git repository";
             return null;
         }
-        string head = await vcs.HeadTextAsync(path) ?? string.Empty;
         OpenDocument? open = Editors.Documents.FirstOrDefault(d => d.Path == path);
         TextDocument mine = open?.Text ?? new TextDocument(File.Exists(path) ? FileText.Load(path)?.Text ?? string.Empty : string.Empty);
-        DiffView view = new(Path.GetFileName(path), head, mine, editable: open is not null, rightColours: open?.Highlighter);
+        FileDiff diff;
+        using (BackgroundWork.Scope())
+        {
+            // An open file's differences are its change bars' own when they are of its text now.
+            if (open is null || await vcs.DiffAsync(open) is not { } kept)
+            {
+                string head = await vcs.HeadTextAsync(path) ?? string.Empty;
+                TextSnapshot text = mine.Snapshot;
+                kept = await Task.Run(() => FileDiff.Compare(head, text));
+            }
+            diff = kept;
+        }
+        DiffView view = new(Path.GetFileName(path), diff, mine, editable: open is not null, rightColours: open?.Highlighter);
         IHighlighter? left = null;
         if (Workspace.Language.ForPath(path).Name == "C#")
         {
@@ -216,7 +227,14 @@ public partial class MainWindow
         string before = parent is null || file.Kind is ChangeKind.Added ? string.Empty : await repository.TextAtAsync(parent, file.From ?? file.Path) ?? string.Empty;
         string after = file.Kind is ChangeKind.Deleted ? string.Empty : await repository.TextAtAsync(commit.Hash, file.Path) ?? string.Empty;
         string leftTitle = parent is null ? "Before the first commit" : parent[..Math.Min(8, parent.Length)];
-        DiffView view = new(file.Name, before, new TextDocument(after), editable: false, titles: (leftTitle, commit.Short));
+        TextDocument mine = new(after);
+        TextSnapshot text = mine.Snapshot;
+        FileDiff diff;
+        using (BackgroundWork.Scope())
+        {
+            diff = await Task.Run(() => FileDiff.Compare(before, text));
+        }
+        DiffView view = new(file.Name, diff, mine, editable: false, titles: (leftTitle, commit.Short));
         List<IDisposable> colours = [];
         if (Workspace.Language.ForPath(file.Path).Name == "C#")
         {
@@ -241,15 +259,17 @@ public partial class MainWindow
     /// <summary>A click on a change bar: Rider's popup of what the lines were, with the change's actions.</summary>
     private async Task ShowChangePopupAsync(CodeEditor editor, OpenDocument document, ChangeMark change)
     {
-        string? head = await vcs.HeadTextAsync(document.Path);
-        if (head is null || Editors.Active != document)
+        FileDiff? diff;
+        using (BackgroundWork.Scope())
+        {
+            diff = await vcs.DiffAsync(document);
+        }
+        if (diff is null || Editors.Active != document)
         {
             return;
         }
-        DiffHunk? hunk = LineDiff.Hunks(head, document.Text.Snapshot.ToString()).Cast<DiffHunk?>().FirstOrDefault(h => h!.Value.NewStart == change.Line);
-        string? before = hunk is { OldCount: > 0 } found
-            ? string.Join("\n", head.Replace("\r\n", "\n", StringComparison.Ordinal).TrimEnd('\n').Split('\n').Skip(found.OldStart).Take(found.OldCount))
-            : null;
+        DiffHunk? hunk = diff.Hunks.Cast<DiffHunk?>().FirstOrDefault(h => h!.Value.NewStart == change.Line);
+        string? before = hunk is { OldCount: > 0 } found ? diff.Before(found) : null;
         void Then(Action run)
         {
             ClosePopup();
@@ -448,54 +468,31 @@ public partial class MainWindow
     /// <summary>Rollback Lines: the change under the caret goes back to what the last commit has there.</summary>
     private async Task RollbackLinesAsync()
     {
-        if (Editors.Active is not { } document || await vcs.HeadTextAsync(document.Path) is not { } head)
+        if (Editors.Active is not { } document)
         {
             StatusText.Text = "No change here to roll back";
             return;
+        }
+        FileDiff? diff;
+        using (BackgroundWork.Scope())
+        {
+            // A comparison of a text edited while it ran says nothing of where the change is now: the newer is compared.
+            do
+            {
+                diff = await vcs.DiffAsync(document);
+            }
+            while (diff is not null && !ReferenceEquals(diff.Text, document.Text.Snapshot) && Editors.Active == document);
         }
         if (Editors.Active != document)
         {
             return;
         }
-        TextSnapshot text = document.Text.Snapshot;
-        int line = Editors.CodeEditor.CaretPosition.Line;
-        DiffHunk? found = LineDiff.Hunks(head, text.ToString())
-            .Cast<DiffHunk?>()
-            .FirstOrDefault(h => h!.Value.NewCount == 0 ? line == h.Value.NewStart || line == h.Value.NewStart - 1 : line >= h.Value.NewStart && line < h.Value.NewStart + h.Value.NewCount);
-        if (found is not { } hunk)
+        if (diff?.HunkAt(Editors.CodeEditor.CaretPosition.Line) is not { } hunk)
         {
             StatusText.Text = "No change here to roll back";
             return;
         }
-        Editors.CodeEditor.ApplyEdits([RestoreEdit(text, head, hunk)]);
-    }
-
-    /// <summary>The edit that puts a hunk's lines back as the last commit has them, keeping the file's line ending
-    /// and whether it ends with one.</summary>
-    internal static TextEdit RestoreEdit(TextSnapshot text, string head, DiffHunk hunk)
-    {
-        string eol = TextDocument.DetectLineEnding(text.ToString());
-        string[] headLines = head.Replace("\r\n", "\n", StringComparison.Ordinal).TrimEnd('\n').Split('\n');
-        string old = string.Join(eol, headLines.Skip(hunk.OldStart).Take(hunk.OldCount));
-        int end = hunk.NewStart + hunk.NewCount;
-        if (end < text.LineCount)
-        {
-            // A line follows the hunk, so every line of it ends with a break.
-            int from = text.GetLineStart(hunk.NewStart);
-            return new TextEdit(from, text.GetLineStart(end) - from, hunk.OldCount > 0 ? old + eol : string.Empty);
-        }
-        if (hunk.NewCount == 0)
-        {
-            return new TextEdit(text.Length, 0, eol + old);
-        }
-        if (hunk.OldCount == 0 && hunk.NewStart > 0)
-        {
-            // The last lines were added: they go with the break before them.
-            LineSpan before = text.GetLine(hunk.NewStart - 1);
-            return new TextEdit(before.Start + before.Length, text.Length - before.Start - before.Length, string.Empty);
-        }
-        int start = text.GetLineStart(hunk.NewStart);
-        return new TextEdit(start, text.Length - start, old);
+        Editors.CodeEditor.ApplyEdits([diff.Restore(hunk)]);
     }
 
     /// <summary>Rider's Add to .gitignore: the file's path from the repository's top, a line of its .gitignore.</summary>

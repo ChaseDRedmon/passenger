@@ -50,6 +50,14 @@ public sealed class VcsController
     /// moves, once for each file looked at since, and never by a refresh that finds HEAD where it was.</summary>
     public int HeadReads { get; private set; }
 
+    /// <summary>How many times an open file's text has been compared with its last commit's: once after each pause in
+    /// typing and each new last-commit text, never again for a popup, a rollback or a diff of the text its bars are of.</summary>
+    public int Comparisons { get; private set; }
+
+    /// <summary>The most memory one comparison has taken, in bytes allocated on its thread: a few times the file's text,
+    /// however much of it differs.</summary>
+    public long LargestComparison { get; private set; }
+
     /// <summary>Raised after the whole tree was read again, as after a commit, a checkout or an update, when the
     /// history may have moved too (a save alone changes only the files).</summary>
     public event EventHandler? Refreshed;
@@ -553,20 +561,54 @@ public sealed class VcsController
             return;
         }
         int generation = ++tracked.Generation;
-        string? before = await HeadTextAsync(document.Path);
-        string after = document.Text.Snapshot.ToString();
-        IReadOnlyList<ChangeMark> marks = before is null ? [] : await Task.Run(() => Marks(before, after));
-        if (generation == tracked.Generation && documents.ContainsKey(document))
+        using (BackgroundWork.Scope())
         {
-            document.ChangeMarks = marks;
+            FileDiff? diff = await DiffAsync(document);
+            if (generation == tracked.Generation && documents.ContainsKey(document))
+            {
+                document.ChangeMarks = diff?.Marks ?? [];
+            }
         }
     }
 
-    /// <summary>Rider's change bars for the second text: lines added, lines modified, and a mark where lines went.</summary>
-    private static IReadOnlyList<ChangeMark> Marks(string before, string after) =>
-        [.. LineDiff.Hunks(before, after).Select(h => h.OldCount == 0 ? new ChangeMark(h.NewStart, h.NewCount, ChangeMarkKind.Added)
-            : h.NewCount == 0 ? new ChangeMark(h.NewStart, 0, ChangeMarkKind.Deleted)
-            : new ChangeMark(h.NewStart, h.NewCount, ChangeMarkKind.Modified))];
+    /// <summary>An open file's text as it is now compared with the last commit's, or null when that has no such file.
+    /// The comparison its change bars came from, or are coming from, when they are of this text, so what acts on a bar
+    /// costs nothing more; else a new one, off the window's thread.</summary>
+    public async Task<FileDiff?> DiffAsync(OpenDocument document)
+    {
+        UiThread.Check();
+        if (await HeadTextAsync(document.Path) is not { } head)
+        {
+            return null;
+        }
+        TextSnapshot text = document.Text.Snapshot;
+        documents.TryGetValue(document, out Tracked? tracked);
+        if (tracked?.Last is { } last && ReferenceEquals(last.Text, text) && ReferenceEquals(last.Head, head))
+        {
+            return await last.Diff;
+        }
+        // The last commit's lines are split once while its text stays the same.
+        FileDiff? earlier = tracked?.Last is { Diff.IsCompletedSuccessfully: true } done && ReferenceEquals(done.Head, head) ? done.Diff.Result : null;
+        Task<FileDiff> diff = CompareAsync(head, earlier, text);
+        if (tracked is not null)
+        {
+            tracked.Last = new Compared(head, text, diff);
+        }
+        return await diff;
+    }
+
+    private async Task<FileDiff> CompareAsync(string head, FileDiff? earlier, TextSnapshot text)
+    {
+        Comparisons++;
+        (FileDiff diff, long bytes) = await Task.Run(() =>
+        {
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            FileDiff compared = earlier?.Compare(text) ?? FileDiff.Compare(head, text);
+            return (compared, GC.GetAllocatedBytesForCurrentThread() - before);
+        });
+        LargestComparison = Math.Max(LargestComparison, bytes);
+        return diff;
+    }
 
     private static string FirstLine(string message) => message.Trim().Split('\n')[0].Trim();
 
@@ -576,7 +618,11 @@ public sealed class VcsController
     {
         public DispatcherTimer Timer { get; } = timer;
         public int Generation { get; set; }
+        public Compared? Last { get; set; }
         public EventHandler<Passenger.Text.DocumentChangedEventArgs>? OnChanged { get; set; }
         public EventHandler? OnSaved { get; set; }
     }
+
+    /// <summary>The newest comparison of a file, running or done, and the texts it is between.</summary>
+    private sealed record Compared(string Head, TextSnapshot Text, Task<FileDiff> Diff);
 }

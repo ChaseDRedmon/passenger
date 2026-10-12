@@ -10,11 +10,11 @@ using Passenger.Text;
 
 namespace Passenger.Tests;
 
-/// <summary>Git as Rider shows it, over a real working tree: an edit grows a change bar, which a rename keeps, the Commit
-/// window commits the chosen files and the bars go; Rollback Lines puts a change back; a branch made from the toolbar's
-/// menu is checked out, and switching back takes the open file's text from disk; Rollback restores a file and deletes a
-/// new one, and acts on the file chosen before a refresh; Commit and Stash run one at a time; a status older than a
-/// commit never lands after it, and the last commit's texts are read again only when HEAD moves.</summary>
+/// <summary>Git as Rider shows it, over a real working tree: an edit grows a change bar (blank lines at the end too, and a
+/// large rewrite's off the window's thread), which a rename keeps and a commit clears; Rollback Lines and Rollback put
+/// changes back; a branch made from the toolbar is checked out, and going back reloads the open file; Commit and Stash
+/// run one at a time; a status older than a commit never lands after it, and the last commit's texts are read again
+/// only when HEAD moves.</summary>
 public sealed class VcsTests : IDisposable
 {
     private const string Original = "class Shop\n{\n    int count;\n\n    void Add() { count++; }\n}\n";
@@ -229,6 +229,93 @@ public sealed class VcsTests : IDisposable
         rollback.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
         Ui.WaitFor(() => Text(window) == Original, "the line to be as committed");
         Assert.False(window.IsPopupOpen);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Typing_in_a_20000_line_file_rewritten_since_the_last_commit_moves_its_bars_and_a_bar_opens_its_change_at_once()
+    {
+        // A generated file of 20,000 lines, every twelfth line of it generated anew since the last commit: 1,667 changes.
+        string generated = Path.Combine(folder, "Generated.txt");
+        string[] lines = [.. Enumerable.Range(0, 20000).Select(i => $"    int value{i} = {i};")];
+        File.WriteAllText(generated, string.Join("\n", lines) + "\n");
+        Git("add", "-A");
+        Git("commit", "-q", "-m", "Generated");
+        File.WriteAllText(generated, string.Join("\n", lines.Select((l, i) => i % 12 == 5 ? l.Replace(";", " + 1;", StringComparison.Ordinal) : l)) + "\n");
+        MainWindow window = Open();
+        window.OpenFile(generated);
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        VcsController vcs = window.Vcs;
+        Ui.WaitFor(() => Marks(window).Count == 1667, "a bar for each line generated anew");
+
+        // Typed in, the file is compared again with the last commit off the window's thread, in the memory a few copies of
+        // its 1 MB of text take: keeping every step of the comparison took over 100 MB.
+        editor.GoTo(new TextPosition(0, 4));
+        window.KeyTextInput("const ");
+        Ui.WaitFor(() => Marks(window).Count == 1668, "a bar for the first line typed in");
+        editor.GoTo(new TextPosition(8, 4));
+        window.KeyTextInput("const ");
+        Ui.WaitFor(() => Marks(window).Count == 1669, "a bar for the second line typed in");
+        Assert.Equal([new ChangeMark(0, 1, ChangeMarkKind.Modified), new ChangeMark(5, 1, ChangeMarkKind.Modified), new ChangeMark(8, 1, ChangeMarkKind.Modified)], Marks(window).Take(3));
+        Assert.True(vcs.LargestComparison < 16_000_000, $"Comparing the file with the last commit took {vcs.LargestComparison / 1e6:F0} MB");
+
+        // A click on a bar, not on the scrollbar's marks at its height, opens what the line was there and then, from the
+        // comparison its bars came from: the window's thread compares nothing again.
+        int comparisons = vcs.Comparisons;
+        Ui.Settle();
+        Avalonia.Point at = editor.TranslatePoint(editor.GutterColumnPoint(GutterColumn.Changes, 8), window)!.Value;
+        long allocated = GC.GetAllocatedBytesForCurrentThread();
+        window.MouseDown(at, Avalonia.Input.MouseButton.Left);
+        window.MouseUp(at, Avalonia.Input.MouseButton.Left);
+        long clicked = GC.GetAllocatedBytesForCurrentThread() - allocated;
+        ChangePopup popup = Assert.IsType<ChangePopup>(window.Popup);
+        Assert.Equal("    int value8 = 8;", popup.Before);
+        Assert.True(clicked < 4_000_000, $"Opening the bar's popup took {clicked / 1e6:F0} MB on the window's thread");
+        Assert.True(vcs.Comparisons == comparisons, $"Opening the bar's popup compared the file {vcs.Comparisons - comparisons} times again");
+
+        // Show Diff opens on those same differences.
+        Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(popup).OfType<Avalonia.Controls.Button>()
+            .First(b => Avalonia.Controls.ToolTip.GetTip(b) as string == "Show Diff")
+            .RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+        Ui.WaitFor(() => window.Frontmost is DiffWindow, "the diff window");
+        DiffWindow diff = (DiffWindow)window.Frontmost;
+        Assert.Equal(1669, diff.View.Hunks.Count);
+        Assert.True(vcs.Comparisons == comparisons, $"Show Diff compared the file {vcs.Comparisons - comparisons} times again");
+        diff.Close();
+
+        // Rollback Lines puts the first line back at once, from the same comparison; the bars follow.
+        editor.GoTo(new TextPosition(0, 0));
+        window.Perform(AppActions.RollbackLines);
+        Assert.StartsWith("    int value0 = 0;\n    int value1 = 1;\n", Text(window), StringComparison.Ordinal);
+        Assert.True(vcs.Comparisons == comparisons, $"Rollback Lines compared the file {vcs.Comparisons - comparisons} times again");
+        Ui.WaitFor(() => Marks(window).Count == 1668, "the rolled back line's bar to go");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Blank_lines_added_at_the_end_of_a_file_show_an_added_bar_and_a_difference_and_roll_back()
+    {
+        MainWindow window = Open();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Ui.WaitFor(() => window.Vcs.Repository is not null, "the working tree");
+
+        // Two blank lines after the last, which git diff lists as added.
+        editor.GoTo(new TextPosition(6, 0));
+        Ui.Press(window, "ENTER");
+        Ui.Press(window, "ENTER");
+        Assert.Equal(Original + "\n\n", Text(window));
+        Ui.WaitFor(() => Marks(window).Count > 0, "a bar for the blank lines", TimeSpan.FromSeconds(10));
+        Assert.Equal([new ChangeMark(6, 2, ChangeMarkKind.Added)], Marks(window));
+        Task<DiffWindow?> opening = window.ShowDiffAsync(window.EditorArea.Active!.Path);
+        Ui.WaitFor(() => opening.IsCompleted, "the diff to open");
+        Assert.Equal([new DiffHunk(6, 0, 6, 2)], opening.Result!.View.Hunks);
+        opening.Result.Close();
+
+        // Rolled back from the second of them, the file is as committed.
+        editor.GoTo(new TextPosition(7, 0));
+        window.Perform(AppActions.RollbackLines);
+        Ui.WaitFor(() => Text(window) == Original, "the blank lines to go");
+        Ui.WaitFor(() => Marks(window).Count == 0, "the bar to go");
         window.Close();
     }
 

@@ -276,10 +276,12 @@ public sealed partial class CodeEditor
             return (top, height);
         }
 
-        /// <summary>The mark under a point, the one drawn over the others first; the caret's is not one to take.</summary>
+        /// <summary>The mark under a point, the one drawn over the others first; the caret's is not one to take. A custom
+        /// hit test is asked beyond the control's bounds, so a point beside the stripe (the gutter's change bar at a
+        /// mark's height) is none of its.</summary>
         private StripeMark? At(Point point)
         {
-            if (!IsVisible)
+            if (!IsVisible || point.X < 0 || point.X >= Bounds.Width)
             {
                 return null;
             }

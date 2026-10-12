@@ -18,22 +18,24 @@ public sealed class DiffView : DockPanel
     /// <summary>How long editing pauses before the differences are worked out again.</summary>
     private static readonly TimeSpan RediffDelay = TimeSpan.FromMilliseconds(120);
 
-    private readonly string head;
     private readonly Bands bands;
     private readonly TextBlock count;
     private readonly DispatcherTimer rediff;
+    private FileDiff shown;
+    private int comparing;
     private bool following;
 
-    /// <param name="head">The last commit's text, empty for a file it does not have.</param>
+    /// <param name="diff">The last commit's text (empty for a file it does not have) compared with the file's, as a
+    /// change bar's comparison or one made off the window's thread.</param>
     /// <param name="mine">The file's text now: the open file's document, or a copy when it is not open.</param>
     /// <param name="editable">Whether the right side is the open file, which can be edited and have changes put back.</param>
     /// <param name="titles">What the sides are, above them: the last commit and the file by default.</param>
-    public DiffView(string name, string head, TextDocument mine, bool editable, IHighlighter? leftColours = null, IHighlighter? rightColours = null, (string Left, string Right)? titles = null)
+    public DiffView(string name, FileDiff diff, TextDocument mine, bool editable, IHighlighter? leftColours = null, IHighlighter? rightColours = null, (string Left, string Right)? titles = null)
     {
-        this.head = head;
+        shown = diff;
         IsEditable = editable;
         Left = new CodeEditor { IsReadOnly = true, ChangeBackgrounds = true, Highlighter = leftColours };
-        Left.Show(new TextDocument(head), SelectionSet.Single(0), default);
+        Left.Show(new TextDocument(diff.Head), SelectionSet.Single(0), default);
         Right = new CodeEditor { IsReadOnly = !editable, ChangeBackgrounds = true, Highlighter = rightColours };
         Right.Show(mine, SelectionSet.Single(0), default);
         bands = new Bands(this) { Width = 36 };
@@ -78,7 +80,7 @@ public sealed class DiffView : DockPanel
         rediff.Tick += (_, _) =>
         {
             rediff.Stop();
-            Compare();
+            _ = CompareAsync();
         };
         mine.Changed += OnMineChanged;
         DetachedFromVisualTree += (_, _) =>
@@ -94,7 +96,8 @@ public sealed class DiffView : DockPanel
                 e.Handled = true;
             }
         }, Avalonia.Interactivity.RoutingStrategies.Tunnel);
-        Compare();
+        Show(diff);
+        _ = CompareAsync();
     }
 
     /// <summary>The last commit's side.</summary>
@@ -106,18 +109,18 @@ public sealed class DiffView : DockPanel
     public bool IsEditable { get; }
 
     /// <summary>The differences as they stand.</summary>
-    public IReadOnlyList<DiffHunk> Hunks { get; private set; } = [];
+    public IReadOnlyList<DiffHunk> Hunks => shown.Hunks;
 
-    /// <summary>Puts one difference back as the last commit has it (the band's arrow).</summary>
+    /// <summary>Puts one difference back as the last commit has it (the band's arrow), unless the file was edited since
+    /// the differences were found, which may have moved it.</summary>
     public void Revert(DiffHunk hunk)
     {
-        if (!IsEditable)
+        if (!IsEditable || !ReferenceEquals(Right.Document.Snapshot, shown.Text))
         {
             return;
         }
-        TextEdit edit = MainWindow.RestoreEdit(Right.Document.Snapshot, head, hunk);
-        Right.ApplyEdits([edit]);
-        Compare();
+        Right.ApplyEdits([shown.Restore(hunk)]);
+        _ = CompareAsync();
     }
 
     /// <summary>The next or previous difference from the right side's caret, shown on both sides.</summary>
@@ -140,15 +143,34 @@ public sealed class DiffView : DockPanel
         rediff.Start();
     }
 
-    private void Compare()
+    /// <summary>Compares the file's text as it is now, off the window's thread, unless the differences shown are of it;
+    /// a newer text's answer wins.</summary>
+    private async Task CompareAsync()
     {
-        Hunks = LineDiff.Hunks(head, Right.Document.Snapshot.ToString());
+        TextSnapshot text = Right.Document.Snapshot;
+        int generation = ++comparing;
+        if (ReferenceEquals(text, shown.Text))
+        {
+            return;
+        }
+        FileDiff from = shown;
+        using (BackgroundWork.Scope())
+        {
+            FileDiff diff = await Task.Run(() => from.Compare(text));
+            if (generation == comparing)
+            {
+                Show(diff);
+            }
+        }
+    }
+
+    private void Show(FileDiff diff)
+    {
+        shown = diff;
         Left.SetChangeMarks([.. Hunks.Select(h => h.OldCount == 0 ? new ChangeMark(h.OldStart, 0, ChangeMarkKind.Added)
             : h.NewCount == 0 ? new ChangeMark(h.OldStart, h.OldCount, ChangeMarkKind.Deleted)
             : new ChangeMark(h.OldStart, h.OldCount, ChangeMarkKind.Modified))]);
-        Right.SetChangeMarks([.. Hunks.Select(h => h.OldCount == 0 ? new ChangeMark(h.NewStart, h.NewCount, ChangeMarkKind.Added)
-            : h.NewCount == 0 ? new ChangeMark(h.NewStart, 0, ChangeMarkKind.Deleted)
-            : new ChangeMark(h.NewStart, h.NewCount, ChangeMarkKind.Modified))]);
+        Right.SetChangeMarks(diff.Marks);
         count.Text = Hunks.Count switch
         {
             0 => "No differences",
