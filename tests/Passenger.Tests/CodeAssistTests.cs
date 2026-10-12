@@ -131,6 +131,22 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
     }
 
     [AvaloniaFact]
+    public void Code_cleanup_removes_unused_usings_sorts_the_rest_and_reformats()
+    {
+        MainWindow window = project.Open("Messy.cs");
+        Passenger.App.Workspace.OpenDocument messy = window.EditorArea.Active!;
+        Ui.WaitFor(() => window.CSharpService!.For(messy)!.Diagnostics.Any(d => d.Code?.ToString() == "IDE0005"), "the unused using to be found");
+        Ui.Run(window, AppActions.CodeCleanup);
+        Ui.WaitFor(() => window.Status?.StartsWith("Code cleanup", StringComparison.Ordinal) == true, "the cleanup to finish");
+        string text = messy.Text.Snapshot.ToString();
+        Assert.StartsWith("using System;\nusing System.Collections.Generic;\n", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("System.Text", text, StringComparison.Ordinal);
+        Assert.Contains("\n        List<string> names = [];\n", text, StringComparison.Ordinal);
+        Assert.Contains("\n        return names.Count;\n", text, StringComparison.Ordinal);
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Rename_changes_the_name_in_every_file_that_uses_it()
     {
         string helper = File.ReadAllText(project.PathOf("Helper.cs"));
@@ -185,6 +201,7 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
                 "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
             File.WriteAllText(PathOf("Program.cs"), "class Program\n{\n    static void Main()\n    {\n        int result = Helper.Twice(2);\n    }\n}\n");
             File.WriteAllText(PathOf("Helper.cs"), "static class Helper\n{\n    public static int Twice(int value) => value * 2;\n}\n");
+            File.WriteAllText(PathOf("Messy.cs"), "using System.Text;\nusing System;\nusing System.Collections.Generic;\n\nstatic class Messy\n{\n    public static int Count()\n    {\n          List<string> names = [];\n        Console.WriteLine(names.Count);\n      return names.Count;\n    }\n}\n");
             using Process restore = Process.Start(new ProcessStartInfo("dotnet", ["restore", folder]) { RedirectStandardOutput = true, RedirectStandardError = true })!;
             restore.WaitForExit();
         }

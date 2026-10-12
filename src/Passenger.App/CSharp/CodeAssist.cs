@@ -157,6 +157,9 @@ public sealed class CodeAssist
             case AppActions.Reformat:
                 _ = Reformat();
                 return true;
+            case AppActions.CodeCleanup:
+                _ = Cleanup();
+                return true;
             case AppActions.ParameterInfo:
                 _ = ShowSignature();
                 return true;
@@ -720,6 +723,85 @@ public sealed class CodeAssist
         catch (Exception error) when (IsServerFailure(error))
         {
         }
+    }
+
+    private async Task Cleanup()
+    {
+        BackgroundWork.Begin();
+        try
+        {
+            await CleanupCore();
+        }
+        finally
+        {
+            BackgroundWork.End();
+        }
+    }
+
+    /// <summary>Rider's Code Cleanup on the file, through the language server's own fixes: the unnecessary usings
+    /// removed (IDE0005's fix), the usings sorted, then the file reformatted.</summary>
+    private async Task CleanupCore()
+    {
+        if (Current is not { Lsp: { } lsp } current)
+        {
+            return;
+        }
+        List<string> done = [];
+        try
+        {
+            List<Diagnostic> unused = [.. current.Diagnostics.Where(d => d.Code is { ValueKind: System.Text.Json.JsonValueKind.String } code && code.GetString() == "IDE0005")];
+            if (unused.Count > 0 && await ApplyNamed(lsp, LineRange(unused[0].Range.Start.Line), unused, "Remove unnecessary usings"))
+            {
+                done.Add("removed unused usings");
+            }
+            TextSnapshot text = Editor.Document.Snapshot;
+            int usingLine = Enumerable.Range(0, text.LineCount).FirstOrDefault(l => text.GetLineText(l).TrimStart().StartsWith("using ", StringComparison.Ordinal) && text.GetLineText(l).TrimEnd().EndsWith(';'), -1);
+            if (usingLine >= 0)
+            {
+                string before = text.ToString();
+                if (await ApplyNamed(lsp, LineRange(usingLine), [], "Sort Usings") && Editor.Document.Snapshot.ToString() != before)
+                {
+                    done.Add("sorted the usings");
+                }
+            }
+            string unformatted = Editor.Document.Snapshot.ToString();
+            IReadOnlyList<LspTextEdit> edits = await lsp.FormatAsync(Editor.Indent);
+            Editor.ApplyEdits(WorkspaceEdits.Convert(Editor.Document.Snapshot, edits));
+            if (Editor.Document.Snapshot.ToString() != unformatted)
+            {
+                done.Add("reformatted");
+            }
+            Message?.Invoke(this, done.Count == 0 ? "Already clean" : $"Code cleanup {string.Join(", ", done)}");
+        }
+        catch (Exception error) when (IsServerFailure(error))
+        {
+        }
+
+        TextRange LineRange(int line)
+        {
+            LineSpan span = Editor.Document.Snapshot.GetLine(line);
+            return new TextRange(span.Start, span.Length);
+        }
+    }
+
+    /// <summary>Runs the server's action of that title at a range, if it offers one; whether it did.</summary>
+    private async Task<bool> ApplyNamed(LspDocument lsp, TextRange range, IReadOnlyList<Diagnostic> diagnostics, string title)
+    {
+        IReadOnlyList<CodeAction> actions = await lsp.CodeActionsAsync(range, diagnostics);
+        if (actions.FirstOrDefault(a => a.Title == title && a.Disabled is null) is not { } action)
+        {
+            return false;
+        }
+        if (action.Edit is null && action.Data is not null)
+        {
+            action = await lsp.ResolveAsync(action) ?? action;
+        }
+        if (action.Edit is not { } edit)
+        {
+            return false;
+        }
+        WorkspaceEdits.Apply(editors, edit);
+        return true;
     }
 
     /// <summary>The next (or previous) error or warning after the caret, wrapping.</summary>

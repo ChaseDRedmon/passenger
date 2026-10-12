@@ -32,6 +32,7 @@ public static class ActionCatalog
         [AppActions.QuickFix] = "Show Context Actions",
         [AppActions.Rename] = "Rename...",
         [AppActions.Reformat] = "Reformat Code",
+        [AppActions.CodeCleanup] = "Code Cleanup",
         [AppActions.QuickDocumentation] = "Quick Documentation",
         [AppActions.NextError] = "Next Highlighted Error",
         [AppActions.PreviousError] = "Previous Highlighted Error",

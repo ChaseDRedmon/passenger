@@ -48,6 +48,7 @@ public static class AppActions
     public const string GoToImplementation = "app.code.goToImplementation";
     public const string FindUsages = "app.code.findUsages";
     public const string Reformat = "app.code.reformat";
+    public const string CodeCleanup = "app.code.cleanup";
     public const string ParameterInfo = "app.code.parameterInfo";
     public const string QuickDocumentation = "app.code.quickDocumentation";
     public const string NextError = "app.code.nextError";
@@ -222,6 +223,7 @@ public static class AppActions
                 .Bind(FindUsages, "shift F12")
                 .Bind(Reformat, "meta alt ENTER", "meta K , F", "meta K , meta F", "meta K , D", "meta K , meta D")
                 .Bind(ParameterInfo, "control P")
+                .Bind(CodeCleanup, "meta E , C", "meta E , meta C", "meta E , F", "meta E , meta F")
                 .Bind(QuickDocumentation, "meta K , I", "meta K , meta I", "control shift F1")
                 .Bind(NextError, "alt PAGE_DOWN")
                 .Bind(PreviousError, "alt PAGE_UP");
@@ -294,6 +296,7 @@ public static class AppActions
             .Bind(FindUsages, "shift F12")
             .Bind(Reformat, "control alt ENTER", "control K , F", "control K , control F", "control K , D", "control K , control D")
             .Bind(ParameterInfo, "shift control SPACE")
+            .Bind(CodeCleanup, "control E , C", "control E , control C", "control E , F", "control E , control F")
             .Bind(QuickDocumentation, "control K , I", "control K , control I", "control shift F1")
             .Bind(NextError, "alt PAGE_DOWN")
             .Bind(PreviousError, "alt PAGE_UP");

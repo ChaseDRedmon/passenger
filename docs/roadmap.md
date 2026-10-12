@@ -174,3 +174,8 @@ Still to come: more feeds than nuget.org from the window, chords captured in the
 
 Hot reload and Edit and Continue, refactoring dialogs, decompiled sources with Source Link, code cleanup. Packaging:
 a signed and notarized macOS `.app`, a Windows installer, and updates.
+
+**Built so far:** decompiled sources. Go to Declaration on a library's symbol opens what Roslyn's language server makes
+of it (decompiled with ILSpy, or the real source through Source Link or an embedded PDB) at the declaration, read-only
+under Rider's bar saying where it came from. Code Cleanup (Ctrl+E, C or F; Cmd on the Mac) removes the unnecessary usings
+and sorts the rest with the language server's own fixes, then reformats the file.
