@@ -201,9 +201,9 @@ configuration under `dotnet watch`, so each save applies its edits to the runnin
 applied restarts it. Refactor This (Ctrl+Shift+R, Cmd+Shift+R) lists the language server's refactorings at the caret or
 selection, and Extract Method, Introduce Variable and Inline have Rider's own chords (Ctrl+R, M / V / I), Extract Method
 then asking for the new method's name. Generate (Alt+Insert or Ctrl+N, Cmd+N on the Mac) lists what the server can write
-for the type: constructors, Equals and GetHashCode, interface members, overrides. Parameter name hints show an argument's parameter before it where Rider shows them (a literal, a null, a
-constructor's or an indexer's argument, never where the argument already says the name), from the language server's
-inlay hints, the caret stepping past one as a single place; Settings, Editor turns them off. Still to come: Edit and Continue while debugging, Change Signature and the other
+for the type: constructors, Equals and GetHashCode, interface members, overrides. Parameter name hints show an argument's parameter before it where Rider shows them (a literal, a null or an
+indexer's argument, never where the argument already says the name or the name says nothing, as Console.WriteLine's
+value), from the language server's inlay hints, the caret stepping past one as a single place; Settings, Editor turns them off. Still to come: Edit and Continue while debugging, Change Signature and the other
 refactorings that need a dialog, a Windows installer, and updates. `just package-mac` makes
 Passenger.app from the ReadyToRun publish, with the debugger and Roslyn's server inside, signed under the hardened
 runtime with the debugger's entitlements when PASSENGER_SIGN_IDENTITY names a Developer ID (ad hoc otherwise), and

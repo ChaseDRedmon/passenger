@@ -251,7 +251,7 @@ public sealed class GitLogView : DockPanel
         subject.Children.Add(new TextBlock { Text = row.Commit.Subject, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis });
         TextBlock author = Muted(row.Commit.Author);
         TextBlock date = Muted(When(row.Commit.Time));
-        Grid line = new() { ColumnDefinitions = new ColumnDefinitions("Auto,*,150,140"), Height = RowHeight };
+        Grid line = new() { ColumnDefinitions = new ColumnDefinitions("Auto,*,150,180"), Height = RowHeight };
         Grid.SetColumn(subject, 1);
         Grid.SetColumn(author, 2);
         Grid.SetColumn(date, 3);

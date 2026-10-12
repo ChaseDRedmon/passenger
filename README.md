@@ -2,11 +2,45 @@
 
 An IDE for C# and modern .NET, inspired by JetBrains Rider, written in C# with Avalonia. Windows and macOS first.
 
-It's early. What works: an editor of its own (a rope, multiple carets, Rider's keymaps), Roslyn's colours,
-diagnostics, completion, hovers, fixes, rename and navigation through the Roslyn language server, a Solution view,
-building and running from the IDE, and debugging with Passenger's own debugger (started from SharpDbg): breakpoints,
-stepping, the call stack, variables and evaluation. An MCP server gives an agent the same IDE. `docs/roadmap.md` says
-what comes next, and `docs/architecture.md` says how it's built and why.
+![Passenger's editor: completion open after a dot, parameter name hints before literal arguments, and the change bars of uncommitted lines](docs/images/editor.png)
+
+It's early, but it's a working IDE: an editor of its own (a rope, multiple carets, Rider's Visual Studio keymaps),
+Roslyn's colours, diagnostics, completion, hovers, fixes, refactorings, rename and navigation through the Roslyn
+language server, a Solution view, building, running and unit tests, a debugger and a profiler of its own, Git, NuGet
+and a terminal. An MCP server gives an agent the same IDE. `docs/roadmap.md` says what comes next, and
+`docs/architecture.md` says how it's built and why.
+
+The pictures here are of a small sample shop, drawn by Passenger itself on Avalonia's headless platform.
+
+### Debugging
+
+Passenger's own debugger (started from SharpDbg, over ICorDebug): breakpoints with conditions, hit counts and log
+messages, stepping, Run to Cursor and Set Next Statement, the call stack and threads, variables you can open and set,
+watches and evaluation, and the values each line used drawn after it, as Rider does.
+
+![Stopped at a breakpoint: the line's values after its code, and the Debug window's frames and variables](docs/images/debugger.png)
+
+### Profiling
+
+A sampling profiler like dotTrace's, over the runtime's EventPipe: a configuration profiled from its first
+instruction, then its call tree, hot spots, flame graph, allocations and garbage collections, narrowed to any stretch
+of the timeline. A memory snapshot counts a running program's heap by type.
+
+![A profile of the sample's forecast: the timeline above the call tree, its hot path opened](docs/images/profiler.png)
+
+### Git
+
+The Commit window with its changes and unversioned files, the log with its branch graph and each commit's files,
+diffs, blame annotations, change bars in the gutter that roll back a hunk, branches, push, pull and fetch.
+
+![The Commit window beside the editor, and the Git log with a commit's details](docs/images/git.png)
+
+### Search
+
+Search Everywhere, Go to File, Go to Symbol and Find Action, Find and Replace in Files with a preview, Recent Files,
+bookmarks, and Extend Selection through the syntax tree.
+
+![Find in Files: every match with its file and line, the chosen one previewed below](docs/images/find-in-files.png)
 
 ## Building
 

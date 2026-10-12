@@ -130,14 +130,14 @@ public sealed class LanguageServer : IAsyncDisposable
         process.Dispose();
     }
 
-    /// <summary>The server's options Passenger sets: parameter name hints where Rider shows them (before a literal,
-    /// a null, an indexer's or a constructor's argument), and never where the argument already says the name.</summary>
+    /// <summary>The server's options Passenger sets: parameter name hints where Rider shows them (before a literal, a
+    /// null or an indexer's argument), and never where the argument already says the name.</summary>
     private static readonly Dictionary<string, object?> Settings = new(StringComparer.Ordinal)
     {
         ["dotnet_enable_inlay_hints_for_parameters"] = true,
         ["dotnet_enable_inlay_hints_for_literal_parameters"] = true,
         ["dotnet_enable_inlay_hints_for_indexer_parameters"] = true,
-        ["dotnet_enable_inlay_hints_for_object_creation_parameters"] = true,
+        ["dotnet_enable_inlay_hints_for_object_creation_parameters"] = false,
         ["dotnet_enable_inlay_hints_for_other_parameters"] = false,
         ["dotnet_suppress_inlay_hints_for_parameters_that_differ_only_by_suffix"] = true,
         ["dotnet_suppress_inlay_hints_for_parameters_that_match_method_intent"] = true,

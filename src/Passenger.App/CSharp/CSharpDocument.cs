@@ -15,6 +15,10 @@ public sealed class CSharpDocument : IDisposable
     /// <summary>How long typing must pause before diagnostics are asked for again.</summary>
     private static readonly TimeSpan Settle = TimeSpan.FromMilliseconds(600);
 
+    /// <summary>Parameter names that say nothing an argument does not (Console.WriteLine's value, a list's item),
+    /// whose hints Rider leaves off too.</summary>
+    private static readonly HashSet<string> Generic = new(StringComparer.Ordinal) { "value:", "obj:", "item:", "o:", "arg:" };
+
     private readonly CSharpService service;
     private readonly OpenDocument document;
     private SemanticHighlighter? semantic;
@@ -112,7 +116,7 @@ public sealed class CSharpDocument : IDisposable
             (IReadOnlyList<LspInlayHint> hints, int hinted) = await lsp.InlayHintsAsync(cancel);
             if (!cancel.IsCancellationRequested && hinted == document.Text.Version)
             {
-                document.InlayHints = [.. hints.Where(h => h.Kind is null or 2).Select(h => new InlayHint(lsp.OffsetOf(h.Position), h.Label.TrimEnd(), h.PaddingLeft, h.PaddingRight))];
+                document.InlayHints = [.. hints.Where(h => (h.Kind is null or 2) && !Generic.Contains(h.Label.TrimEnd())).Select(h => new InlayHint(lsp.OffsetOf(h.Position), h.Label.TrimEnd(), h.PaddingLeft, h.PaddingRight))];
             }
         }
         catch (Exception error) when (error is OperationCanceledException or StreamJsonRpc.RemoteInvocationException or StreamJsonRpc.ConnectionLostException or ObjectDisposedException)

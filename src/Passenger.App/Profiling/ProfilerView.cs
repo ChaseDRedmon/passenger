@@ -302,7 +302,7 @@ public sealed class ProfilerView : DockPanel
         Snapshot = snapshot;
         Snapshot whole = snapshot.Whole;
         status.Text = ReferenceEquals(whole, snapshot)
-            ? $"{snapshotName}: {snapshot.Duration.TotalSeconds:0.0} s, {snapshot.Threads.Count} threads, {snapshot.Samples:N0} samples"
+            ? $"{snapshotName}: {snapshot.Duration.TotalSeconds:0.0} s, {snapshot.Threads.Count} thread{(snapshot.Threads.Count == 1 ? "" : "s")}, {snapshot.Samples:N0} samples"
             : $"{snapshotName}: {snapshot.StartMs - whole.StartMs:N0} to {snapshot.EndMs - whole.StartMs:N0} ms of {whole.Duration.TotalMilliseconds:N0}, {snapshot.Samples:N0} samples";
         placeholder.IsVisible = false;
         foreach (ToggleButton page in pages)

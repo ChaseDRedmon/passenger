@@ -254,11 +254,11 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
     [AvaloniaFact]
     public void A_literal_argument_shows_its_parameters_name_before_it_and_the_text_after_makes_room()
     {
-        MainWindow window = project.Open("Program.cs");
+        MainWindow window = project.Open("Area.cs");
         CodeEditor editor = window.EditorArea.CodeEditor;
-        int argument = editor.Document.Snapshot.ToString().IndexOf("Twice(2)", StringComparison.Ordinal) + "Twice(".Length;
-        Ui.WaitFor(() => editor.InlayHints.Any(h => h.Label == "value:"), "the parameter name hint");
-        Assert.Equal(argument, Assert.Single(editor.InlayHints).Offset);
+        int argument = editor.Document.Snapshot.ToString().IndexOf("Of(3, 4)", StringComparison.Ordinal) + "Of(".Length;
+        Ui.WaitFor(() => editor.InlayHints.Count == 2, "the parameter name hints");
+        Assert.Equal([("width:", argument), ("height:", argument + "3, ".Length)], editor.InlayHints.Select(h => (h.Label, h.Offset)));
 
         // The argument stands a hint's room past the parenthesis; the caret at it stands after the hint.
         double Step(int offset) => editor.PointOf(offset + 1).X - editor.PointOf(offset).X;
@@ -322,6 +322,7 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
                 "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
             File.WriteAllText(PathOf("Program.cs"), "class Program\n{\n    static void Main()\n    {\n        int result = Helper.Twice(2);\n    }\n}\n");
             File.WriteAllText(PathOf("Helper.cs"), "static class Helper\n{\n    public static int Twice(int value) => value * 2;\n}\n");
+            File.WriteAllText(PathOf("Area.cs"), "static class Area\n{\n    public static int Of(int width, int height) => width * height;\n    public static int Room() => Of(3, 4);\n}\n");
             File.WriteAllText(PathOf("Point.cs"), "class Point\n{\n    public int X { get; }\n    public int Y { get; }\n}\n");
             File.WriteAllText(PathOf("Loop.cs"), "static class Loop\n{\n    public static int Sum()\n    {\n        int total = 0;\n        for (int i = 0; i < 10; i++)\n        {\n            total += i * 2;\n        }\n        return total;\n    }\n}\n");
             File.WriteAllText(PathOf("Messy.cs"), "using System.Text;\nusing System;\nusing System.Collections.Generic;\n\nstatic class Messy\n{\n    public static int Count()\n    {\n          List<string> names = [];\n        Console.WriteLine(names.Count);\n      return names.Count;\n    }\n}\n");
