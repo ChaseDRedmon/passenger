@@ -12,7 +12,8 @@ namespace Passenger.Tests;
 /// <summary>Passenger as an agent's IDE, over the Model Context Protocol with the SDK's own client: an
 /// agent that starts Passenger with no window (<c>--mcp</c>) and works a project through it, and one
 /// that joins the window a person is using (<c>--mcp-attach</c>) and changes what they see, once the
-/// person lets agents in, asking them before it first changes anything.</summary>
+/// person lets agents in, asking them before it first changes anything. Every exchange with Passenger has a time limit,
+/// and one that runs out or fails ends the test naming it and quoting what Passenger said meanwhile.</summary>
 [Collection(Debugging.Helpers.DebugSession.Collection)]
 public sealed class McpTests : IDisposable
 {
@@ -49,7 +50,7 @@ public sealed class McpTests : IDisposable
     public async Task An_agent_with_a_windowless_Passenger_finds_code_reads_its_warnings_and_debugs_it()
     {
         await using McpClient client = await Start(["--mcp", folder]);
-        IList<McpClientTool> tools = await client.ListToolsAsync(cancellationToken: Cancel);
+        IList<McpClientTool> tools = await Exchange("Listing the tools", TimeSpan.FromMinutes(1), cancel => client.ListToolsAsync(cancellationToken: cancel).AsTask());
         Assert.Contains(tools, t => t.Name == "debug_start");
 
         JsonElement symbol = Assert.Single((await Call(client, "find_symbol", new() { ["query"] = "Twice" })).EnumerateArray());
@@ -80,7 +81,7 @@ public sealed class McpTests : IDisposable
         Assert.StartsWith("System.InvalidOperationException: the end", stop.GetProperty("exception").GetString(), StringComparison.Ordinal);
         Assert.Contains("total 12", (await Call(client, "debug_output")).GetString(), StringComparison.Ordinal);
 
-        CallToolResult picture = await client.CallToolAsync("screenshot", cancellationToken: Cancel);
+        CallToolResult picture = await Result(client, "screenshot");
         ImageContentBlock image = Assert.IsType<ImageContentBlock>(Assert.Single(picture.Content));
         Assert.Equal("image/png", image.MimeType);
         Assert.Equal([0x89, (byte)'P', (byte)'N', (byte)'G'], image.DecodedData.Slice(0, 4).ToArray());
@@ -89,7 +90,7 @@ public sealed class McpTests : IDisposable
         Assert.Equal("not debugging", (await Call(client, "debug_state")).GetProperty("state").GetString());
 
         // What a tool refuses reaches the agent in words that say what to do instead.
-        CallToolResult refused = await client.CallToolAsync("debug_continue", cancellationToken: Cancel);
+        CallToolResult refused = await Result(client, "debug_continue");
         Assert.True(refused.IsError);
         Assert.Contains("debug_start starts it", Assert.IsType<TextContentBlock>(Assert.Single(refused.Content)).Text, StringComparison.Ordinal);
     }
@@ -159,14 +160,14 @@ public sealed class McpTests : IDisposable
             return (await Call(client, "workspace")).GetProperty("folder").GetString();
         });
         int shown = 0;
-        Ui.WaitFor(() =>
+        WaitFor(() =>
         {
             shown = Math.Max(shown, window.Agents);
             return agent.IsCompleted;
-        }, "the agent's calls");
+        }, "the agent's calls", AgentLimit);
         // The status bar says an agent is on the window while it is, and stops saying so once it goes.
         Assert.Equal(1, shown);
-        Ui.WaitFor(() => window.Agents == 0, "the window to see the agent go");
+        WaitFor(() => window.Agents == 0, "the window to see the agent go");
         Assert.Equal(window.Folder, agent.GetAwaiter().GetResult());
         Assert.Equal(3, Assert.Single(window.Debugger.Breakpoints.In(program)).Line);
         Assert.Contains(new LineMark(3, LineMarkKind.Breakpoint), window.EditorArea.CodeEditor.LineMarks);
@@ -196,13 +197,13 @@ public sealed class McpTests : IDisposable
                 await using McpClient client = await Start(["--mcp-attach", ProcessId]);
                 return null;
             }
-            catch (Exception error) when (error is not OperationCanceledException)
+            catch (Exception error) when (error is not (OperationCanceledException or TimeoutException))
             {
                 return error;
             }
         }), "the agent trying to attach");
         Assert.True(refused is not null, "An agent reached a window whose MCP server is off");
-        Ui.WaitFor(() => Errors().Any(l => l.Contains("Enable MCP Server", StringComparison.Ordinal)), "the refused agent told to turn on Enable MCP Server");
+        WaitFor(() => Errors().Any(l => l.Contains("Enable MCP Server", StringComparison.Ordinal)), "the refused agent told to turn on Enable MCP Server");
 
         // The person turns it on in Settings, under MCP Server, and the agent is in.
         SettingsDialog dialog = window.ShowSettings();
@@ -218,20 +219,20 @@ public sealed class McpTests : IDisposable
         Assert.Equal(socket, window.AgentSocket);
         McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
         Assert.Equal(window.Folder, Await(Task.Run(async () => (await Call(client, "workspace")).GetProperty("folder").GetString()), "the agent's workspace call"));
-        Ui.WaitFor(() => window.AgentStatus == "Agent connected", "the status bar to say an agent is connected");
+        WaitFor(() => window.AgentStatus == "Agent connected", "the status bar to say an agent is connected");
 
         // Turned off again, the agent's connection ends and the socket goes.
         window.ApplySettings(window.Settings with { McpServer = false });
-        Ui.WaitFor(() => window.AgentStatus is null, "the status bar to say no agent is on the window");
+        WaitFor(() => window.AgentStatus is null, "the status bar to say no agent is on the window");
         Assert.False(File.Exists(socket), "The window still listens for agents with its MCP server off");
         Assert.True(Await(Task.Run(async () =>
         {
             try
             {
-                await client.CallToolAsync("workspace", cancellationToken: Cancel);
+                await Result(client, "workspace");
                 return false;
             }
-            catch (Exception error) when (error is not OperationCanceledException)
+            catch (Exception error) when (error is not (OperationCanceledException or TimeoutException))
             {
                 return true;
             }
@@ -255,7 +256,7 @@ public sealed class McpTests : IDisposable
         try
         {
             // The first run waits for the person, who sees what it asks for and denies it.
-            Task<CallToolResult> denied = Task.Run(() => client.CallToolAsync("run", run, cancellationToken: Cancel).AsTask());
+            Task<CallToolResult> denied = Task.Run(() => Result(client, "run", run));
             ConfirmDialog asked = Question(window, "the question for the agent's run");
             string[] said = Texts(asked);
             Assert.Contains("Allow run?", said);
@@ -269,35 +270,36 @@ public sealed class McpTests : IDisposable
 
             // Asked again, and allowed: it runs, and the status bar says what the agent is doing.
             using CancellationTokenSource giveUp = CancellationTokenSource.CreateLinkedTokenSource(Cancel);
-            Task<CallToolResult> allowed = Task.Run(() => client.CallToolAsync("run", run, cancellationToken: giveUp.Token).AsTask());
+            Task<CallToolResult> allowed = Task.Run(() => Result(client, "run", run, giveUp));
             Press(Question(window, "the question asked again"), "Allow");
-            Ui.WaitFor(() => window.Runner.IsRunning && window.AgentStatus == "Agent: Run a configuration", "the agent's run in the status bar");
+            WaitFor(() => window.Runner.IsRunning && window.AgentStatus == "Agent: Run a configuration", "the agent's run in the status bar");
 
             // The agent gives up on the call: the window stops waiting for it, and the program, the person's now, runs on.
             giveUp.Cancel();
-            Ui.WaitFor(() => allowed.IsCompleted, "the call given up");
-            Ui.WaitFor(() => window.AgentStatus == "Agent connected", "the window to stop waiting on the run the agent gave up on");
+            WaitFor(() => allowed.IsCompleted, "the call given up");
+            WaitFor(() => window.AgentStatus == "Agent connected", "the window to stop waiting on the run the agent gave up on");
             Assert.True(window.Runner.IsRunning, "Giving up on the call stopped the program");
             window.Runner.Stop();
-            Ui.WaitFor(() => !window.Runner.IsRunning, "the program stopped");
+            WaitFor(() => !window.Runner.IsRunning, "the program stopped");
 
             // Allowed once, run is not asked again; and an agent that goes takes its waits with it.
-            Task<CallToolResult> again = Task.Run(() => client.CallToolAsync("run", run, cancellationToken: Cancel).AsTask());
-            Ui.WaitFor(() => window.Runner.IsRunning || window.OwnedWindows.OfType<ConfirmDialog>().Any(), "the run allowed before");
+            Task<CallToolResult> again = Task.Run(() => Result(client, "run", run));
+            WaitFor(() => window.Runner.IsRunning || window.OwnedWindows.OfType<ConfirmDialog>().Any(), "the run allowed before");
             Assert.Empty(window.OwnedWindows.OfType<ConfirmDialog>());
-            Ui.WaitFor(() => window.AgentStatus == "Agent: Run a configuration", "the second run in the status bar");
+            WaitFor(() => window.AgentStatus == "Agent: Run a configuration", "the second run in the status bar");
             Await(Task.Run(async () =>
             {
                 await client.DisposeAsync();
                 return true;
             }), "the agent going");
-            Ui.WaitFor(() => window.AgentStatus is null, "the window to stop waiting on the run of the agent that went");
-            Ui.WaitFor(() => again.IsCompleted, "the call of the agent that went");
+            WaitFor(() => window.AgentStatus is null, "the window to stop waiting on the run of the agent that went");
+            WaitFor(() => again.IsCompleted, "the call of the agent that went");
+            Assert.True(again.Exception is not null || again.IsCanceled, "A call was answered after its agent went");
         }
         finally
         {
             window.Runner.Stop();
-            Ui.WaitFor(() => !window.Runner.IsRunning, "the program stopped");
+            WaitFor(() => !window.Runner.IsRunning, "the program stopped");
             window.Close();
         }
     }
@@ -369,21 +371,15 @@ public sealed class McpTests : IDisposable
             }
 
             // launchd's environment: the bare PATH, no terminal, no .NET or zsh settings of the person's.
-            await using McpClient client = await McpClient.CreateAsync(new StdioClientTransport(new StdioClientTransportOptions
+            await using McpClient client = await Start(["--mcp", folder], environment: new()
             {
-                Name = "passenger",
-                Command = Passenger,
-                Arguments = ["--mcp", folder],
-                EnvironmentVariables = new Dictionary<string, string?>
-                {
-                    ["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin",
-                    ["HOME"] = home,
-                    ["SHELL"] = File.Exists("/bin/zsh") ? "/bin/zsh" : "/bin/sh",
-                    ["TERM"] = null,
-                    ["ZDOTDIR"] = null,
-                    ["DOTNET_ROOT"] = null,
-                },
-            }), cancellationToken: Cancel);
+                ["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin",
+                ["HOME"] = home,
+                ["SHELL"] = File.Exists("/bin/zsh") ? "/bin/zsh" : "/bin/sh",
+                ["TERM"] = null,
+                ["ZDOTDIR"] = null,
+                ["DOTNET_ROOT"] = null,
+            });
             await Call(client, "vcs_status");
             Assert.True(File.Exists(Path.Combine(home, "used")), "Passenger ran a git other than the one its login shell's PATH finds");
         }
@@ -393,26 +389,43 @@ public sealed class McpTests : IDisposable
         }
     }
 
+    /// <summary>Longer than any one exchange may take, for a wait on an agent's calls, whose own limits fail first and
+    /// name the call.</summary>
+    private static readonly TimeSpan AgentLimit = TimeSpan.FromMinutes(6);
+
     private static CancellationToken Cancel => TestContext.Current.CancellationToken;
 
     private static string ProcessId => Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
-    /// <summary>Passenger started as an agent's MCP server, with the tests' state folder, where windows' sockets are.</summary>
-    private Task<McpClient> Start(IList<string> arguments, string? workingDirectory = null) => McpClient.CreateAsync(new StdioClientTransport(new StdioClientTransportOptions
+    /// <summary>The debugger engine's log of what Passenger debugs, which a failed call quotes.</summary>
+    private string EngineLog => Path.Combine(settings, "engine.log");
+
+    /// <summary>Passenger started as an agent's MCP server, with the tests' state folder (where windows' sockets are, and
+    /// its log), the engine's log and any other change to the environment, its standard error kept.</summary>
+    private Task<McpClient> Start(IList<string> arguments, string? workingDirectory = null, Dictionary<string, string?>? environment = null)
     {
-        Name = "passenger",
-        Command = Passenger,
-        Arguments = arguments,
-        WorkingDirectory = workingDirectory,
-        EnvironmentVariables = new Dictionary<string, string?> { ["PASSENGER_SETTINGS"] = settings },
-        StandardErrorLines = line =>
+        Dictionary<string, string?> variables = new() { ["PASSENGER_SETTINGS"] = settings, ["PASSENGER_ENGINE_LOG"] = EngineLog };
+        foreach ((string name, string? value) in environment ?? new())
         {
-            lock (errors)
+            variables[name] = value;
+        }
+        StdioClientTransport transport = new(new StdioClientTransportOptions
+        {
+            Name = "passenger",
+            Command = Passenger,
+            Arguments = arguments,
+            WorkingDirectory = workingDirectory,
+            EnvironmentVariables = variables,
+            StandardErrorLines = line =>
             {
-                errors.Add(line);
-            }
-        },
-    }), cancellationToken: Cancel);
+                lock (errors)
+                {
+                    errors.Add(line);
+                }
+            },
+        });
+        return Exchange($"Starting passenger {string.Join(' ', arguments)}", TimeSpan.FromMinutes(1), cancel => McpClient.CreateAsync(transport, cancellationToken: cancel));
+    }
 
     /// <summary>The window's state, its socket for agents included, in the tests' own folder rather than the person's.</summary>
     private void UseSettings()
@@ -448,16 +461,29 @@ public sealed class McpTests : IDisposable
     }
 
     /// <summary>A task's result once done, the window's loop running meanwhile, since the agent's calls are answered on it.</summary>
-    private static T Await<T>(Task<T> task, string what)
+    private T Await<T>(Task<T> task, string what)
     {
-        Ui.WaitFor(() => task.IsCompleted, what);
+        WaitFor(() => task.IsCompleted, what, AgentLimit);
         return task.GetAwaiter().GetResult();
     }
 
-    /// <summary>The window's question to the person, once it is asked.</summary>
-    private static ConfirmDialog Question(MainWindow window, string what)
+    /// <summary><see cref="Ui.WaitFor"/>, failing with what Passenger said meanwhile.</summary>
+    private void WaitFor(Func<bool> condition, string what, TimeSpan? limit = null)
     {
-        Ui.WaitFor(() => window.OwnedWindows.OfType<ConfirmDialog>().Any(), what);
+        try
+        {
+            Ui.WaitFor(condition, what, limit);
+        }
+        catch (TimeoutException waited)
+        {
+            throw new TimeoutException(waited.Message + Said(), waited);
+        }
+    }
+
+    /// <summary>The window's question to the person, once it is asked.</summary>
+    private ConfirmDialog Question(MainWindow window, string what)
+    {
+        WaitFor(() => window.OwnedWindows.OfType<ConfirmDialog>().Any(), what);
         return window.OwnedWindows.OfType<ConfirmDialog>().Single();
     }
 
@@ -472,20 +498,79 @@ public sealed class McpTests : IDisposable
     }
 
     /// <summary>A tool's answer, read as the JSON it is; a tool's error fails the test with its words and
-    /// what Passenger wrote to standard error.</summary>
+    /// what Passenger said meanwhile.</summary>
     private async Task<JsonElement> Call(McpClient client, string tool, Dictionary<string, object?>? arguments = null)
     {
-        CallToolResult result = await client.CallToolAsync(tool, arguments, cancellationToken: Cancel);
+        CallToolResult result = await Result(client, tool, arguments);
         string text = string.Concat(result.Content.OfType<TextContentBlock>().Select(t => t.Text));
         if (result.IsError == true)
         {
-            lock (errors)
-            {
-                Assert.Fail($"{tool} failed: {text}\n{string.Join('\n', errors.TakeLast(40))}");
-            }
+            Assert.Fail($"{tool} failed: {text}{Said()}");
         }
         // A tool that answers in words (stop's "Stopped") is a JSON string of them.
         return text.StartsWith('[') || text.StartsWith('{') ? JsonDocument.Parse(text).RootElement.Clone() : JsonSerializer.SerializeToElement(text);
+    }
+
+    /// <summary>A tool's whole result, an error's included, within the time the tool may take, or until the test gives up
+    /// on it.</summary>
+    private Task<CallToolResult> Result(McpClient client, string tool, Dictionary<string, object?>? arguments = null, CancellationTokenSource? giveUp = null) =>
+        Exchange($"The {tool} call", Limit(tool), cancel => client.CallToolAsync(tool, arguments, cancellationToken: cancel).AsTask(), giveUp);
+
+    /// <summary>How long a tool may take before the test calls it hung: minutes for one that builds first; for one that asks
+    /// the language server, longer than the 120 s Passenger waits for it to load the folder, so its own words come back;
+    /// a minute for any other.</summary>
+    private static TimeSpan Limit(string tool) => tool switch
+    {
+        "build" or "debug_start" or "run" or "tests_run" or "profile" or "nuget_install" or "nuget_remove" => TimeSpan.FromMinutes(5),
+        "diagnostics" or "symbol_info" or "definition" or "usages" or "hierarchy" or "implementations" or "rename" or "code_actions"
+            or "apply_code_action" or "format" or "find_symbol" or "outline" => TimeSpan.FromMinutes(3),
+        _ => TimeSpan.FromMinutes(1),
+    };
+
+    /// <summary>One exchange with Passenger, given up after a limit: one that runs out of time or fails ends the test naming
+    /// it, with what Passenger said meanwhile, so a hang fails saying why rather than stopping the run in silence.</summary>
+    private async Task<T> Exchange<T>(string what, TimeSpan limit, Func<CancellationToken, Task<T>> exchange, CancellationTokenSource? giveUp = null)
+    {
+        CancellationToken given = giveUp?.Token ?? default;
+        using CancellationTokenSource timer = CancellationTokenSource.CreateLinkedTokenSource(Cancel, given);
+        timer.CancelAfter(limit);
+        try
+        {
+            return await exchange(timer.Token);
+        }
+        catch (Exception error) when (!Cancel.IsCancellationRequested && !given.IsCancellationRequested
+            && (error is TimeoutException || (error is OperationCanceledException && timer.IsCancellationRequested)))
+        {
+            throw new TimeoutException($"{what} had no answer in {limit.TotalSeconds:0} s.{Said()}", error);
+        }
+        catch (Exception error) when (!Cancel.IsCancellationRequested && !given.IsCancellationRequested)
+        {
+            throw new InvalidOperationException($"{what} failed: {error.Message}{Said()}", error);
+        }
+    }
+
+    /// <summary>What Passenger said before something went wrong: its standard error, and the end of its log and of the
+    /// debugger engine's, which on a machine nobody can watch (CI's) are all there is to go by.</summary>
+    private string Said()
+    {
+        string[] written = Errors();
+        return $"\nPassenger's standard error:{(written.Length == 0 ? " nothing" : "\n  " + string.Join("\n  ", written.TakeLast(40)))}"
+            + Tail("Passenger's log", Path.Combine(settings, "logs", "passenger.log"), 20)
+            + Tail("The debugger engine's log", EngineLog, 30);
+
+        static string Tail(string name, string path, int lines)
+        {
+            try
+            {
+                // Shared, since its writer may still have it open, which Windows otherwise refuses a reader.
+                using StreamReader reader = new(new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete));
+                return $"\n{name} ends:\n  {string.Join("\n  ", reader.ReadToEnd().TrimEnd().Split('\n').TakeLast(lines))}";
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                return string.Empty;
+            }
+        }
     }
 
     private static string? Local(JsonElement stop, string name) =>
