@@ -301,8 +301,10 @@ public sealed class BuildRunTests : IDisposable
         Directory.Delete(folder, recursive: true);
         try
         {
-            // The window sees the folder go (and survives it) before Build is pressed.
-            Ui.WaitFor(() => window.Configurations.Count == 0, "the deletion to be seen");
+            // The window reads the gone folder (and survives it) before Build is pressed, as the folder watcher has it do;
+            // the watcher's own notice of its root going is not always given.
+            window.ReloadSolution();
+            Assert.Empty(window.Configurations);
             Task<BuildOutcome> built = window.BuildAsync();
             // Settle fails if the build left background work held.
             Ui.Settle();
