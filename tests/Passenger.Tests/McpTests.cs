@@ -165,6 +165,56 @@ public sealed class McpTests : IDisposable
         Assert.False(File.Exists(socket));
     }
 
+    [Fact]
+    public async Task Started_as_the_Finder_starts_it_Passenger_runs_the_git_the_login_shell_finds()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            // A Windows program gets the person's whole environment, PATH included.
+            return;
+        }
+        // A login profile that puts its own git first, as Homebrew's shellenv does; the git notes that it ran.
+        string home = Directory.CreateTempSubdirectory("passenger-home-").FullName;
+        try
+        {
+            string tools = Path.Combine(home, "tools");
+            Directory.CreateDirectory(tools);
+            string git = Path.Combine(tools, "git");
+            string real = global::Passenger.Lsp.Programs.Git()!;
+            File.WriteAllText(git, $"#!/bin/sh\ntouch \"{Path.Combine(home, "used")}\"\nexec {real} \"$@\"\n");
+            File.SetUnixFileMode(git, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            File.WriteAllText(Path.Combine(home, ".zprofile"), $"export PATH=\"{tools}:$PATH\"\n");
+            File.WriteAllText(Path.Combine(home, ".profile"), $"export PATH=\"{tools}:$PATH\"\n");
+            using (Process init = Process.Start(new ProcessStartInfo("git", ["init", "-q", folder]) { RedirectStandardOutput = true })!)
+            {
+                init.WaitForExit();
+            }
+
+            // launchd's environment: the bare PATH, no terminal, no .NET or zsh settings of the person's.
+            await using McpClient client = await McpClient.CreateAsync(new StdioClientTransport(new StdioClientTransportOptions
+            {
+                Name = "passenger",
+                Command = Passenger,
+                Arguments = ["--mcp", folder],
+                EnvironmentVariables = new Dictionary<string, string?>
+                {
+                    ["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin",
+                    ["HOME"] = home,
+                    ["SHELL"] = File.Exists("/bin/zsh") ? "/bin/zsh" : "/bin/sh",
+                    ["TERM"] = null,
+                    ["ZDOTDIR"] = null,
+                    ["DOTNET_ROOT"] = null,
+                },
+            }), cancellationToken: Cancel);
+            await Call(client, "vcs_status");
+            Assert.True(File.Exists(Path.Combine(home, "used")), "Passenger ran a git other than the one its login shell's PATH finds");
+        }
+        finally
+        {
+            Directory.Delete(home, recursive: true);
+        }
+    }
+
     private static CancellationToken Cancel => TestContext.Current.CancellationToken;
 
     private Task<McpClient> Start(IList<string> arguments) => McpClient.CreateAsync(new StdioClientTransport(new StdioClientTransportOptions

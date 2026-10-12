@@ -29,6 +29,7 @@ internal static class Program
         }
 
         Options = options;
+        Lsp.ShellEnvironment.Load();
         switch (options.Mcp)
         {
             case McpMode.Attach:

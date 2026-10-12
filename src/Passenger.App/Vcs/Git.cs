@@ -404,7 +404,11 @@ public sealed class Git
 
     private static async Task<GitResult> RunAsync(string folder, IReadOnlyList<string> arguments, string? input = null)
     {
-        ProcessStartInfo start = new("git", arguments)
+        if (Lsp.Programs.Git() is not { } git)
+        {
+            return new GitResult(127, string.Empty, OperatingSystem.IsMacOS() ? "git is not installed: xcode-select --install installs it" : "git is not installed");
+        }
+        ProcessStartInfo start = new(git, arguments)
         {
             WorkingDirectory = folder,
             RedirectStandardOutput = true,

@@ -19,7 +19,17 @@ public sealed class PackageManager
 
     private async Task<bool> RunAsync(IReadOnlyList<string> arguments)
     {
-        ProcessStartInfo start = new("dotnet", arguments)
+        string dotnet;
+        try
+        {
+            dotnet = Lsp.Dotnet.Host();
+        }
+        catch (FileNotFoundException missing)
+        {
+            Line?.Invoke(this, missing.Message);
+            return false;
+        }
+        ProcessStartInfo start = new(dotnet, arguments)
         {
             WorkingDirectory = Path.GetDirectoryName(arguments[1]) ?? Environment.CurrentDirectory,
             RedirectStandardOutput = true,
@@ -32,7 +42,17 @@ public sealed class PackageManager
         start.Environment["DOTNET_CLI_UI_LANGUAGE"] = "en";
         start.Environment["DOTNET_NOLOGO"] = "1";
         Line?.Invoke(this, $"dotnet {string.Join(' ', arguments.Select(a => a.Contains(' ', StringComparison.Ordinal) ? $"\"{a}\"" : a))}");
-        using Process process = Process.Start(start) ?? throw new InvalidOperationException("dotnet did not start");
+        Process process;
+        try
+        {
+            process = Process.Start(start) ?? throw new InvalidOperationException("dotnet did not start");
+        }
+        catch (Exception failed) when (failed is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            Line?.Invoke(this, $"Could not start dotnet: {failed.Message}");
+            return false;
+        }
+        using Process running = process;
         Task output = Pump(process.StandardOutput);
         Task error = Pump(process.StandardError);
         await process.WaitForExitAsync();
