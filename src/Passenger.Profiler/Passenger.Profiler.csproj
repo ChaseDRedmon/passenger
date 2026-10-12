@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The profiler, with no UI: a program started held at a diagnostic port of its own, EventPipe's samples
+       streamed to a .nettrace file, and TraceEvent's reading of it made into a call tree and hot spots. -->
+  <PropertyGroup>
+    <RootNamespace>Passenger.Profiler</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Diagnostics.NETCore.Client" />
+    <PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" />
+  </ItemGroup>
+</Project>

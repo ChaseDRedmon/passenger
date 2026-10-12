@@ -119,6 +119,54 @@ public sealed partial class PassengerTools
         return done ? $"{id} is out of {chosen.Name}" : throw new InvalidOperationException(string.Join('\n', said.TakeLast(15)));
     });
 
+    // The profiler
+
+    [McpServerTool(Name = "profile", Title = "Profile a configuration", Destructive = true), Description(
+        "Builds and runs a run configuration (the chosen one if none is named) under the sampling profiler from its first instruction, as " +
+        "Profile does, until it ends by itself or, with seconds, for that long (then the snapshot is taken and the program goes on). " +
+        "Returns the run's length, the hot spots by their own time, and the hot path of the busiest thread; the Performance Profiler window " +
+        "shows the whole snapshot.")]
+    public Task<ProfileInfo> Profile(
+        string? configuration = null,
+        [Description(Arguments)] string? arguments = null,
+        [Description("How long to profile before the snapshot; the program's whole run when not given")] int? seconds = null,
+        [Description("How many hot spots to return")] int top = 25) => OnUi(async () =>
+    {
+        Choose(configuration);
+        if (await window.ProfileAsync(arguments) is { } problem)
+        {
+            throw new InvalidOperationException(problem);
+        }
+        Passenger.Profiler.ProfilingSession running = window.Profiling!;
+        if (seconds is { } limit)
+        {
+            await Until(() => running.HasExited, TimeSpan.FromSeconds(Math.Clamp(limit, 1, 3600)));
+        }
+        else
+        {
+            await Until(() => running.HasExited, TimeSpan.FromMinutes(10));
+        }
+        Passenger.Profiler.Snapshot snapshot = await window.SnapshotAsync() ?? window.ProfilerView.Snapshot
+            ?? throw new InvalidOperationException(window.Status ?? "The run left no snapshot");
+        List<ProfileFrame> path = [];
+        if (snapshot.Threads.FirstOrDefault() is { } busiest)
+        {
+            path.Add(new ProfileFrame(busiest.Name, busiest.Total, busiest.Self));
+            for (Passenger.Profiler.CallNode at = busiest; at.Children.Count > 0 && path.Count < 80;)
+            {
+                at = at.Ordered[0];
+                path.Add(new ProfileFrame(at.Name, at.Total, at.Self));
+            }
+        }
+        return new ProfileInfo(
+            Math.Round(snapshot.Duration.TotalMilliseconds),
+            snapshot.Samples,
+            snapshot.Threads.Count,
+            [.. snapshot.HotSpots.Take(Math.Clamp(top, 1, 200)).Select(h => new ProfileFrame(h.Name, h.Total, h.Self))],
+            path,
+            snapshot.TracePath);
+    });
+
     // The terminal
 
     [McpServerTool(Name = "terminal_run", Title = "Run in the terminal", Destructive = true), Description(
@@ -195,3 +243,8 @@ public sealed record VcsStatus(string? Branch, IReadOnlyList<VcsChange> Changes)
 public sealed record VcsChange(string Path, string Kind, string? From);
 
 public sealed record VcsCommit(string Hash, string Subject, string Author, string Date, IReadOnlyList<string> Refs);
+
+/// <summary>A frame of a profile: a method, the milliseconds with it on the stack, and those in it alone.</summary>
+public sealed record ProfileFrame(string Method, int TotalMs, int SelfMs);
+
+public sealed record ProfileInfo(double DurationMs, int Samples, int Threads, IReadOnlyList<ProfileFrame> HotSpots, IReadOnlyList<ProfileFrame> HotPath, string Trace);

@@ -61,6 +61,7 @@ public partial class MainWindow : Window
         AddTerminal();
         AddSettings();
         AddPackages();
+        AddProfiler();
         Explorer.FileOpened += (_, path) => OpenFile(path);
         Structure.Follow(() => Editors.Active is { } shown
             ? (shown.Path, csharp?.For(shown)?.Lsp, Editors.CodeEditor.CaretPosition.Line)
@@ -242,6 +243,12 @@ public partial class MainWindow : Window
         }
         foreach (string file in options.Files)
         {
+            if (file.EndsWith(".nettrace", StringComparison.OrdinalIgnoreCase))
+            {
+                // A profiler's trace opens as a snapshot, as a dotTrace snapshot opens in Rider.
+                _ = OpenSnapshotAsync(Path.GetFullPath(file));
+                continue;
+            }
             OpenFile(file);
         }
         if (options.Caret is { } caret && Editors.Active is not null)
@@ -425,6 +432,12 @@ public partial class MainWindow : Window
                 break;
             case AppActions.ShowNuGet:
                 ShowToolWindow("nuget");
+                break;
+            case AppActions.ShowProfiler:
+                ShowToolWindow("profiler");
+                break;
+            case AppActions.Profile:
+                _ = ProfileReportingAsync();
                 break;
             case AppActions.ShowStructure:
                 ShowToolWindow("structure");

@@ -5,6 +5,12 @@ if (args is ["child"])
 	Console.WriteLine("child ran");
 	return;
 }
+if (args is ["busy"])
+{
+	Busy.Spin(TimeSpan.FromMilliseconds(800));
+	Children.Run();
+	return;
+}
 Wrapper.CallWithCatch(() => throw new InvalidOperationException("thrown in user code"));
 Attributed.StepThrough();
 Attributed.NonUser();
@@ -205,5 +211,24 @@ static class Children
 			child.Kill();
 		}
 		Console.WriteLine($"child said: {said}");
+	}
+}
+
+// The profiler's case: a method that keeps the thread busy, so its samples stand out.
+static class Busy
+{
+	public static double Spin(TimeSpan time)
+	{
+		Stopwatch clock = Stopwatch.StartNew();
+		double total = 0;
+		while (clock.Elapsed < time)
+		{
+			for (int i = 1; i < 10000; i++)
+			{
+				total += Math.Sqrt(i);
+			}
+		}
+		Console.WriteLine($"spun {total > 0}");
+		return total;
 	}
 }

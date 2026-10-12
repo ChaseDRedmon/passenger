@@ -1,0 +1,113 @@
+using System.Diagnostics;
+using Avalonia.Headless.XUnit;
+using Passenger.App;
+using Passenger.Profiler;
+using Passenger.Tests.Debugging.Helpers;
+
+namespace Passenger.Tests;
+
+/// <summary>The profiler as dotTrace's sampling: a program started under it is caught from its first instruction to
+/// its end, its busy method leads the hot spots and sits under its caller in the call tree, and a .NET program it
+/// starts runs free rather than held at the profiler's port.</summary>
+public sealed class ProfilerTests : IDisposable
+{
+    private readonly string folder = Directory.CreateTempSubdirectory("passenger-profile-").FullName;
+
+    public void Dispose() => Directory.Delete(folder, recursive: true);
+
+    [Fact]
+    public async Task A_program_profiled_from_its_start_shows_its_busy_method_and_starts_children_freely()
+    {
+        List<string> output = [];
+        string program = Debuggees.Program("PassengerCases");
+        ProfileTarget target = new(Passenger.Lsp.Dotnet.Host(), [program, "busy"], Path.GetDirectoryName(program)!, new Dictionary<string, string>());
+        await using ProfilingSession run = await ProfilingSession.StartAsync(target, folder, line =>
+        {
+            lock (output)
+            {
+                output.Add(line);
+            }
+        }, TestContext.Current.CancellationToken);
+        Snapshot snapshot = await run.WaitForExitAsync(TestContext.Current.CancellationToken).WaitAsync(TimeSpan.FromMinutes(2), TestContext.Current.CancellationToken);
+
+        lock (output)
+        {
+            Assert.Contains("spun True", output);
+            Assert.Contains("child said: child ran", output);
+        }
+        // In the main thread's tree, Spin is called from the program's entry point, with about 800 ms of samples (one a
+        // millisecond) on its stack. A sample lands where the loop can be stopped, its call to the clock, so most of
+        // them are below Spin rather than in it.
+        CallNode? spin = Find(snapshot.Threads, n => n.Name.Contains("Busy.Spin", StringComparison.Ordinal));
+        Assert.NotNull(spin);
+        Assert.Contains("Main", spin.Parent!.Name, StringComparison.Ordinal);
+        Assert.InRange(spin.Total, 400, 1200);
+        Assert.Contains(spin.Children, c => c.Name.Contains("Stopwatch", StringComparison.Ordinal));
+        Assert.True(File.Exists(snapshot.TracePath));
+    }
+
+    [AvaloniaFact]
+    public void Profile_builds_and_runs_the_configuration_and_its_end_shows_the_snapshot()
+    {
+        string project = Path.Combine(folder, "Spinner");
+        Directory.CreateDirectory(project);
+        File.WriteAllText(Path.Combine(project, "Spinner.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
+        File.WriteAllText(Path.Combine(project, "Program.cs"), """
+            using System.Diagnostics;
+            Console.WriteLine($"spun {Work.Spin(TimeSpan.FromMilliseconds(600)) > 0}");
+            static class Work
+            {
+                public static double Spin(TimeSpan time)
+                {
+                    Stopwatch clock = Stopwatch.StartNew();
+                    double total = 0;
+                    while (clock.Elapsed < time)
+                    {
+                        for (int i = 1; i < 10000; i++) { total += Math.Sqrt(i); }
+                    }
+                    return total;
+                }
+            }
+            """);
+        using (Process restore = Process.Start(new ProcessStartInfo("dotnet", ["restore", project]) { RedirectStandardOutput = true, RedirectStandardError = true })!)
+        {
+            restore.WaitForExit();
+        }
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(project);
+        Ui.Settle();
+        Task<string?> started = window.ProfileAsync();
+        Ui.WaitFor(() => started.IsCompleted, "the build and the start", TimeSpan.FromMinutes(3));
+        Assert.Null(started.Result);
+        Assert.True(window.DockHost.IsShown("profiler"));
+        Ui.WaitFor(() => window.ProfilerView.Snapshot is not null, "the program's end to show its snapshot", TimeSpan.FromMinutes(2));
+
+        Passenger.App.Profiling.ProfilerView view = window.ProfilerView;
+        Snapshot snapshot = view.Snapshot!;
+        Assert.StartsWith("Main thread", snapshot.Threads[0].Name, StringComparison.Ordinal);
+        Assert.Equal(snapshot.Samples, view.Flame.Root!.Total);
+        // The hot path is open down the main thread: Spin is listed without a click.
+        Assert.Contains(view.Rows, r => r.Node.Name.StartsWith("Work.Spin", StringComparison.Ordinal));
+        Assert.StartsWith("Spinner-", Path.GetFileName(snapshot.TracePath), StringComparison.Ordinal);
+        Assert.Contains("spun True", window.BottomPanel.Run.Document.Snapshot.ToString(), StringComparison.Ordinal);
+        window.Close();
+    }
+
+    private static CallNode? Find(IEnumerable<CallNode> nodes, Func<CallNode, bool> match)
+    {
+        foreach (CallNode node in nodes)
+        {
+            if (match(node))
+            {
+                return node;
+            }
+            if (Find(node.Children, match) is { } found)
+            {
+                return found;
+            }
+        }
+        return null;
+    }
+}

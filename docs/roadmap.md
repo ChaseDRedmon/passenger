@@ -133,6 +133,14 @@ ClrMD.
 
 **Done when:** Passenger profiles its own startup.
 
+**Built so far (October 12, 2026), and done:** Passenger profiled its own startup through its own MCP server (the
+`profile` tool over Passenger.App with `--screenshot`, 0.8 s and 478 samples, `MainWindow..ctor` 42% of them).
+Profile (the toolbar's gauge) builds the chosen configuration and starts it held at a diagnostic port of its own, so
+the run begins at its first instruction; the Performance Profiler window follows it, Get Snapshot ends the run and the
+program's own end does too. The snapshot is a call tree by thread with the hot path opened, hot spots by their own
+time and a flame graph that zooms; a double-click goes to a method's source, and a .nettrace file (Passenger's or
+dotnet-trace's) opens as a snapshot. Still to come: the timeline, allocations and GC, memory snapshots with ClrMD.
+
 ## M7: the rest of the daily loop
 
 Git (changes, commit, diff, log, branches), the terminal, NuGet management, settings with search, keymaps, Search

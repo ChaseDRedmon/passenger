@@ -64,6 +64,8 @@ public static class ActionCatalog
         [AppActions.FindAction] = "Find Action...",
         [AppActions.ShowSettings] = "Settings...",
         [AppActions.ShowNuGet] = "NuGet",
+        [AppActions.Profile] = "Profile",
+        [AppActions.ShowProfiler] = "Performance Profiler",
         [EditorActions.ToggleLineComment] = "Comment with Line Comment",
     };
 
@@ -126,7 +128,7 @@ public static class ActionCatalog
         _ when id.StartsWith("app.editor.", StringComparison.Ordinal) => "Editor Tabs",
         _ when id.StartsWith("app.window.", StringComparison.Ordinal) || id.StartsWith("app.show", StringComparison.Ordinal) || id is AppActions.FocusExplorer or AppActions.HideToolWindow => "Tool Windows",
         _ when id.StartsWith("app.goTo", StringComparison.Ordinal) || id is AppActions.FileStructure or AppActions.Back or AppActions.Forward => "Navigate",
-        _ when id is AppActions.Build or AppActions.RunProgram or AppActions.Debug or AppActions.Stop or AppActions.Rerun => "Run",
+        _ when id is AppActions.Build or AppActions.RunProgram or AppActions.Debug or AppActions.Stop or AppActions.Rerun or AppActions.Profile => "Run",
         _ => "IDE",
     };
 }

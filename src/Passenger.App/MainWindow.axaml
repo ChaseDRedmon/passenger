@@ -53,6 +53,9 @@
                     <Button Name="DebugButton" Classes="tool" ToolTip.Tip="Debug" Click="OnDebugClicked">
                         <PathIcon Data="{StaticResource Icon.Debug}" />
                     </Button>
+                    <Button Name="ProfileButton" Classes="tool" ToolTip.Tip="Profile" Click="OnProfileClicked">
+                        <PathIcon Data="{StaticResource Icon.Profile}" />
+                    </Button>
                     <Button Name="StopButton" Classes="tool" ToolTip.Tip="Stop" IsVisible="False" Click="OnStopClicked">
                         <PathIcon Data="{StaticResource Icon.Stop}" Foreground="{DynamicResource Passenger.Editor.Error}" />
                     </Button>

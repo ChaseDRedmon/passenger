@@ -20,6 +20,8 @@ public static class AppActions
     public const string FindAction = "app.findAction";
     public const string ShowSettings = "app.settings";
     public const string ShowNuGet = "app.showNuGet";
+    public const string Profile = "app.profile";
+    public const string ShowProfiler = "app.showProfiler";
     public const string Find = "app.find";
     public const string Replace = "app.replace";
     public const string FindNext = "app.findNext";

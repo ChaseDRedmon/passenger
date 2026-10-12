@@ -64,6 +64,7 @@ ICONS = [
     ("Rollback", "Arrow Undo", "20_regular"),
     ("Push", "Arrow Upload", "20_regular"),
     ("Diff", "Split Vertical", "20_regular"),
+    ("Profile", "Top Speed", "20_regular"),
 ]
 
 

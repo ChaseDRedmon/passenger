@@ -233,7 +233,13 @@ between tool windows, as Rider's overrides the IDE's shortcuts.
 ## The profiler
 
 - **Sampling** (CPU, allocations, GC, lock contention, exceptions) comes from EventPipe through
-  `Microsoft.Diagnostics.NETCore.Client` and TraceEvent. No native code, cross-platform.
+  `Microsoft.Diagnostics.NETCore.Client` and TraceEvent. No native code, cross-platform. `Passenger.Profiler` starts the
+  program with `DOTNET_DiagnosticPorts` naming a socket it listens on, with `suspend` (dotnet-trace's
+  `--diagnostic-port`), so a run begins at the first instruction; once the runtime connects, the variable is cleared in
+  the program before it is resumed, so a .NET program it starts (Passenger's own Roslyn servers) is not held at the
+  same port. The stream is written to a .nettrace file and read with TraceEvent's TraceLog into a call tree per thread.
+  EventPipe stops a thread only at a safe point, so a tight loop's samples land on its calls; the runtime's GC poll at
+  the leaf is folded into its caller, where the time belongs.
 - **Memory snapshots** are a dump read by ClrMD.
 - **Line-level and tracing modes** need ICorProfiler, a native interface. It can still be written in C# and compiled
   with Native AOT (Kevin Gosse's Silhouette does this).

@@ -88,6 +88,9 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.App/Settings`: `AppSettings` (kept as JSON beside the layout, only by the person's window) and Rider's
   searchable `SettingsDialog`; `MainWindow.Settings.cs` applies them live. A new setting is a property, an option row
   in the dialog and a line in `ApplySettings`.
+- `src/Passenger.Profiler`: the profiler with no UI. `ProfilingSession` starts a program held at a diagnostic port of
+  its own and streams EventPipe to a .nettrace; `Snapshot` reads it (TraceEvent) into call trees and hot spots.
+  `App/Profiling` is the window (`ProfilerView`, `FlameGraph`), `MainWindow.Profiler.cs` the Profile action.
 - `src/Passenger.Terminal`: the terminal. `TerminalScreen` is the VT emulator (no UI), `TerminalView` draws it and
   encodes the keys, `TerminalSession` runs the shell in a pseudo-terminal (Porta.Pty). `MainWindow.Terminal.cs` is its
   tool window and the keys it takes ahead of the IDE's.
