@@ -6,10 +6,10 @@ the decisions behind these.
 ## M0: the shell (built; not yet run on Windows)
 
 The repo, a .NET 11 Avalonia app with Rider's layout (toolbar, tool-window stripes, an Explorer pane, the editor
-area, a status bar), dark and light colour tokens, a Native AOT build for macOS, a Windows build that compiles, and
-`--screenshot` for looking at the UI without opening a window.
+area, a status bar), dark and light colour tokens, a Windows build that compiles, and `--screenshot` for looking at
+the UI without opening a window.
 
-**Done when:** `just run` opens it on macOS and Windows, and `just publish-mac` produces a Native AOT binary.
+**Done when:** `just run` opens it on macOS and Windows.
 
 ## M1: the editor
 

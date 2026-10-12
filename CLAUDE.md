@@ -16,8 +16,7 @@ Rider is installed at `~/Applications/Rider.app`.
 just build                 # Debug build of the solution (Passenger.slnx); warnings are errors
 just run [args]            # run the IDE
 just screenshot X.png      # the main window drawn off-screen to a PNG (--size WxH logical, --scale N)
-just publish-mac           # Native AOT for macOS; picks /Applications/Xcode*.app if only the CLT is selected
-just publish-win           # Native AOT for Windows (on Windows; AOT does not cross operating systems)
+just publish RID           # self-contained Release build, ReadyToRun (osx-arm64, osx-x64, win-x64, win-arm64)
 ```
 
 Builds land under `artifacts/` (`UseArtifactsOutput`), never beside the sources. Package versions live only in
@@ -29,9 +28,6 @@ window or takes the focus; it shows everything but the system's own window chrom
 
 ## Rules
 
-- **The UI process is Native AOT.** No reflection-based serialization or binding: XAML uses compiled bindings, JSON
-  uses System.Text.Json source generation, and an AOT or trim analyzer warning is an error, never suppressed to get
-  past it. Code that needs the JIT belongs in the Host or the debugger worker.
 - **Never use Microsoft's debugger (vsdbg) or anything from C# Dev Kit**, including Dev Kit's pieces that ship inside
   VS Code's C# extension (`.debugger`, `.roslynDevKit`, `.testDiscovery`). Their licences limit them to Microsoft's
   own editors. Nothing is copied out of an installed extension's folder; `roslyn-language-server` comes from NuGet.

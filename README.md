@@ -14,11 +14,9 @@ You need the .NET 11 SDK (the release candidate works until it ships in November
 just build                 # Debug build; warnings are errors
 just run                   # run it
 just screenshot shell.png  # draw the main window to a PNG off-screen (--size 1600x1000 --scale 2)
-just publish-mac           # Native AOT build for macOS (needs Xcode, not just the Command Line Tools)
-just publish-win           # Native AOT build for Windows, run on Windows
+just publish osx-arm64     # a self-contained Release build (osx-x64, win-x64, win-arm64 too)
 ```
 
 ## Licence
 
-None has been chosen yet, so for now all rights are reserved. Third-party code and assets keep their own licences,
-listed in `THIRD_PARTY_NOTICES.md`.
+MIT (`LICENSE`). Third-party code and assets keep their own licences, listed in `THIRD_PARTY_NOTICES.md`.

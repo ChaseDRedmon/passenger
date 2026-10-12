@@ -36,18 +36,16 @@ Four kinds of process, so a stall or crash in one never freezes typing:
 
 | Process | Runs | Talks to the UI over |
 |---|---|---|
-| **Passenger** (the UI) | Avalonia shell, the editor, every window; holds the text of open documents. Native AOT. | (is the UI) |
+| **Passenger** (the UI) | Avalonia shell, the editor, every window; holds the text of open documents. | (is the UI) |
 | **roslyn-language-server** | Roslyn: completion, diagnostics, fixes, refactorings, navigation, formatting; loads projects for compilation. Runs our `Passenger.Roslyn` extension assembly in-process. | LSP over stdio |
 | **Passenger.Host** | MSBuild evaluation for the explorer, build, run, NuGet, test orchestration. JIT, since MSBuild needs it. | Passenger's protocol |
 | **Passenger.Debugger** | One per debug session: our engine over ICorDebug. | Passenger's protocol |
 
 Passenger's protocol is JSON-RPC, with the contract as C# interfaces and records in one shared assembly.
-StreamJsonRpc (MIT, what Visual Studio uses internally) is the first choice, provided it works in a Native AOT
-process; if not, we write a small JSON-RPC over System.Text.Json source generation. This is decided when the Host
-arrives.
+StreamJsonRpc (MIT, what Visual Studio uses internally) carries it.
 
-The UI's LSP types are generated from the LSP specification's `metaModel.json` with System.Text.Json source
-generation, which works under AOT.
+The UI's LSP types are generated from the LSP specification's `metaModel.json`, so every request and its fields are
+typed.
 
 ## Language intelligence: Roslyn's own server
 
@@ -126,9 +124,9 @@ and Samsung each wrote their own, and why we write ours:
 
 - **Avalonia 12** with the Fluent theme as a base, restyled by `Theme/Shell.axaml`. Every colour is a token in
   `Theme/Tokens.axaml`, with one dictionary per theme.
-- **Native AOT** for startup: about 150 ms from launch to a rendered frame on an M2 Max, against 450 ms with the JIT.
-  So XAML uses compiled bindings (the default in Avalonia 12), JSON uses source generation, and nothing in the UI
-  process leans on reflection. The AOT analyzers run on every build and their warnings are errors.
+- **JIT, with ReadyToRun at publish.** Native AOT was tried for startup (150 ms to a first frame against 450 ms) and
+  dropped: its restrictions on reflection and its Xcode dependency on macOS cost more than the 300 ms bought.
+  ReadyToRun precompiles the published build with none of those restrictions, and gets it to about 290 ms.
 - **Window chrome:** on macOS the toolbar is the title bar, as in Rider. Windows keeps the system title bar until the
   shell draws its own (Avalonia 12's `WindowDrawnDecorations`).
 - **Icons** are Microsoft's Fluent UI System Icons (MIT), stored as path data in `Theme/Icons.axaml`.

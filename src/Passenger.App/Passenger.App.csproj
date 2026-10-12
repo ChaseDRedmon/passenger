@@ -4,10 +4,6 @@
     <AssemblyName>Passenger</AssemblyName>
     <RootNamespace>Passenger.App</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <!-- The UI process ships Native AOT so it opens with no JIT on the startup path. Setting it here
-         runs the AOT and trim analyzers on every build, so code that cannot compile ahead of time
-         fails the build rather than the publish. -->
-    <PublishAot>true</PublishAot>
   </PropertyGroup>
 
   <ItemGroup>
