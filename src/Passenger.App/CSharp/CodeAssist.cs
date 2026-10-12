@@ -101,6 +101,9 @@ public sealed class CodeAssist
     /// <summary>What the hover card says while it shows, null otherwise.</summary>
     public string? HoverText => hoverCard.IsVisible ? hoverCard.Text : null;
 
+    /// <summary>The name in the rename box while it is open, null otherwise.</summary>
+    public string? Renaming => modal is RenameBox box ? box.Text : null;
+
     /// <summary>While the debugger is paused, the value of what the pointer rests on, which the hover
     /// card shows instead of the symbol's description, as Rider does.</summary>
     public Func<int, CancellationToken, Task<string?>>? DebuggerValue { get; set; }
@@ -172,13 +175,13 @@ public sealed class CodeAssist
                 _ = ShowFixes(a => a.Kind?.StartsWith("refactor", StringComparison.Ordinal) == true, "Refactor This");
                 return true;
             case AppActions.ExtractMethod:
-                _ = Refactor(a => a.Title == "Extract method", "Extract Method", renameAfter: "NewMethod");
+                _ = Refactor(a => a.Title == "Extract method", "Extract Method", renameMethod: true);
                 return true;
             case AppActions.IntroduceVariable:
-                _ = Refactor(a => a.Title.StartsWith("Introduce local", StringComparison.Ordinal), "Introduce Variable", renameAfter: null);
+                _ = Refactor(a => a.Title.StartsWith("Introduce local", StringComparison.Ordinal), "Introduce Variable", renameMethod: false);
                 return true;
             case AppActions.Inline:
-                _ = Refactor(a => a.Kind == "refactor.inline" || a.Title.StartsWith("Inline", StringComparison.Ordinal), "Inline", renameAfter: null);
+                _ = Refactor(a => a.Kind == "refactor.inline" || a.Title.StartsWith("Inline", StringComparison.Ordinal), "Inline", renameMethod: false);
                 return true;
             case AppActions.Rename:
                 ShowRename();
@@ -801,7 +804,7 @@ public sealed class CodeAssist
 
     /// <summary>One of Rider's refactorings by its own key, over the selection: the language server's action of that
     /// kind applied at once, and for Extract Method its new method's name then offered to rename, as Rider asks for it.</summary>
-    private async Task Refactor(Func<CodeAction, bool> pick, string name, string? renameAfter)
+    private async Task Refactor(Func<CodeAction, bool> pick, string name, bool renameMethod)
     {
         if (Current?.Lsp is not { } lsp)
         {
@@ -812,10 +815,11 @@ public sealed class CodeAssist
         {
             Selection primary = Editor.Selections.Primary;
             using Asked asked = WorkspaceEdits.Track(editors);
+            using ExtractedMethod? made = renameMethod ? new ExtractedMethod(Editor.Document, primary) : null;
             CodeAction? action = (await lsp.CodeActionsAsync(primary.Range, [])).Where(a => a.Disabled is null).FirstOrDefault(pick);
             if (action is null)
             {
-                Message?.Invoke(this, $"{name} is not available here{(primary.IsEmpty && renameAfter is not null ? ": select the code first" : string.Empty)}");
+                Message?.Invoke(this, $"{name} is not available here{(primary.IsEmpty && renameMethod ? ": select the code first" : string.Empty)}");
                 return;
             }
             if (action.Edit is null && action.Data is not null)
@@ -831,16 +835,11 @@ public sealed class CodeAssist
                 return;
             }
             Message?.Invoke(this, $"{name} done");
-            if (renameAfter is not null)
+            // The call that replaced the selection is where the new name is typed, in the file still shown.
+            if (made is not null && made.Document == Editor.Document && made.Call() is { } call)
             {
-                // The call that replaced the selection is where the new name is typed.
-                TextSnapshot text = Editor.Document.Snapshot;
-                int call = text.ToString().IndexOf(renameAfter + "(", Math.Max(0, primary.Start - 200), StringComparison.Ordinal);
-                if (call >= 0)
-                {
-                    Editor.Selections = SelectionSet.Single(call);
-                    ShowRename();
-                }
+                Editor.Selections = SelectionSet.Single(call);
+                ShowRename();
             }
         }
         catch (Exception error) when (IsServerFailure(error))

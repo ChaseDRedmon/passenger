@@ -340,6 +340,9 @@ internal sealed class RenameBox : Border
     /// <summary>The new name, or null when cancelled.</summary>
     public event EventHandler<string?>? Done;
 
+    /// <summary>The name as the box has it now.</summary>
+    public string Text => name.Text ?? string.Empty;
+
     private void OnKeyDown(object? sender, KeyEventArgs e)
     {
         if (e.Key == Key.Enter)

@@ -457,6 +457,44 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
     }
 
     [AvaloniaFact]
+    public void Extracting_twice_offers_to_rename_each_method_just_made_not_the_one_before()
+    {
+        MainWindow window = project.Open("Loop.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        string text = editor.Document.Snapshot.ToString();
+        int from = text.IndexOf("for (", StringComparison.Ordinal);
+        int to = text.IndexOf("        }\n        return", StringComparison.Ordinal) + "        }".Length;
+        editor.Selections = SelectionSet.Single(new Selection(from, to));
+        int version = editor.Document.Version;
+        Ui.Run(window, AppActions.ExtractMethod);
+        Ui.WaitFor(() => editor.Document.Version != version, "the loop to be extracted");
+        Ui.Settle();
+        string first = window.Assist.Renaming ?? throw new Xunit.Sdk.XunitException("No rename was offered for the method the loop became");
+        string extracted = editor.Document.Snapshot.ToString();
+        Assert.True(extracted.Contains($"total = {first}(total);", StringComparison.Ordinal), $"The rename offered {first}, not the method the loop became:\n{extracted}");
+        // The suggested name is kept, so the method extracted next needs another.
+        Ui.Press(window, "ESCAPE");
+
+        int product = extracted.IndexOf("i * 2", StringComparison.Ordinal);
+        editor.Selections = SelectionSet.Single(new Selection(product, product + "i * 2".Length));
+        version = editor.Document.Version;
+        Ui.Run(window, AppActions.ExtractMethod);
+        Ui.WaitFor(() => editor.Document.Version != version, "the product to be extracted");
+        Ui.Settle();
+        string second = window.Assist.Renaming ?? throw new Xunit.Sdk.XunitException("No rename was offered for the method the product became");
+        Assert.True(editor.Document.Snapshot.ToString().Contains($"total += {second}(i);", StringComparison.Ordinal),
+            $"The rename offered {second}, not the method just made:\n{editor.Document.Snapshot}");
+        window.KeyTextInput("Double");
+        Ui.Press(window, "ENTER");
+        Ui.WaitFor(() => editor.Document.Snapshot.ToString().Contains("Double(", StringComparison.Ordinal), "the second method to take its name");
+        string after = editor.Document.Snapshot.ToString();
+        Assert.Contains("total += Double(i);", after, StringComparison.Ordinal);
+        Assert.Contains($"total = {first}(total);", after, StringComparison.Ordinal);
+        Assert.Matches(@"static \w+ Double\(int i\)", after);
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Generate_lists_what_the_server_can_write_for_the_type_and_nothing_else()
     {
         MainWindow window = project.Open("Point.cs");
