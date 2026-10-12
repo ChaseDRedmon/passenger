@@ -85,6 +85,12 @@
                 BorderBrush="{DynamicResource Passenger.Divider}" BorderThickness="0,1,0,0">
             <DockPanel Margin="12,0">
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="18" VerticalAlignment="Center">
+                    <Button Name="AnalysisButton" Classes="statusItem" Click="OnAnalysisClicked">
+                        <StackPanel Orientation="Horizontal" Spacing="4">
+                            <PathIcon Name="AnalysisIcon" Width="14" Height="14" />
+                            <TextBlock Name="AnalysisText" Classes="status" />
+                        </StackPanel>
+                    </Button>
                     <Button Name="ErrorsButton" Classes="statusItem" IsVisible="False" Click="OnErrorsClicked"
                             ToolTip.Tip="IDE Internal Errors: Passenger caught these and kept running">
                         <StackPanel Orientation="Horizontal" Spacing="4">

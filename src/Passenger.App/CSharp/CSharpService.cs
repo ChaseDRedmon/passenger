@@ -33,6 +33,151 @@ public sealed class CSharpService : IAsyncDisposable
     /// <summary>The server ended on its own, with what was done about it; raised on the UI thread.</summary>
     public event EventHandler<string>? Stopped;
 
+    /// <summary>The solution's problems changed (solution-wide analysis, or an open file's); raised on the UI thread.</summary>
+    public event EventHandler? SolutionProblemsChanged;
+
+    /// <summary>The scope Roslyn's analyzers and compiler run over with solution-wide analysis on: every document.</summary>
+    private static readonly IReadOnlyDictionary<string, object?> FullSolution = new Dictionary<string, object?>
+    {
+        ["dotnet_analyzer_diagnostics_scope"] = "fullSolution",
+        ["dotnet_compiler_diagnostics_scope"] = "fullSolution",
+    };
+
+    private readonly Dictionary<(string? Source, string Uri), (string? ResultId, IReadOnlyList<Diagnostic> Items)> solutionReports = [];
+    private CancellationTokenSource? analysing;
+    private bool solutionWide;
+
+    /// <summary>Rider's solution-wide analysis: every file's errors and warnings across the solution, kept current as code
+    /// changes, without a build. Roslyn is asked to analyse every document, and its workspace diagnostics are pulled
+    /// again after each change; an open file's are its own pull's, as they are typed.</summary>
+    public bool SolutionWide
+    {
+        get => solutionWide;
+        set
+        {
+            if (solutionWide == value)
+            {
+                return;
+            }
+            solutionWide = value;
+            solutionReports.Clear();
+            analysing?.Cancel();
+            if (session is { } running)
+            {
+                foreach (string option in FullSolution.Keys)
+                {
+                    _ = running.Server.SetOptionAsync(option, value ? FullSolution[option] : null);
+                }
+            }
+            StartAnalysis();
+            SolutionProblemsChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    /// <summary>Every error and warning the solution-wide analysis has found, by file; null with it off.</summary>
+    public IReadOnlyList<(string Path, Diagnostic Diagnostic)>? SolutionProblems
+    {
+        get
+        {
+            if (!solutionWide)
+            {
+                return null;
+            }
+            Dictionary<string, IReadOnlyList<Diagnostic>> byPath = [];
+            foreach (((string? _, string uri), (string? _, IReadOnlyList<Diagnostic> items)) in solutionReports)
+            {
+                string path = PathNames.Canonical(new Uri(uri).LocalPath);
+                byPath[path] = byPath.TryGetValue(path, out IReadOnlyList<Diagnostic>? before) ? [.. before, .. items] : items;
+            }
+            // An open file's problems are its own pull's, which the workspace's leave out and which follow typing.
+            foreach ((OpenDocument open, CSharpDocument features) in documents)
+            {
+                byPath[open.Path] = features.Diagnostics;
+            }
+            return [.. byPath.SelectMany(p => p.Value
+                .Where(d => d.Severity is 1 or 2)
+                .DistinctBy(d => (d.Range, d.Message))
+                .Select(d => (p.Key, d)))];
+        }
+    }
+
+    /// <summary>An open file's own diagnostics arrived: the solution's problems include them.</summary>
+    internal void FileProblemsChanged()
+    {
+        if (solutionWide)
+        {
+            SolutionProblemsChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    /// <summary>Pulls the workspace's diagnostics from every source the server has for them, each in a loop of its own:
+    /// Roslyn holds a pull open until something changed since the results it is given, so each answer is the next
+    /// change. Only the first round is background work a screenshot waits for.</summary>
+    private void StartAnalysis()
+    {
+        analysing?.Cancel();
+        if (!solutionWide || session is not { IsLoaded: true } running)
+        {
+            return;
+        }
+        CancellationTokenSource cancel = new();
+        analysing = cancel;
+        foreach (string? source in running.Server.WorkspaceDiagnosticSources)
+        {
+            _ = AnalyseAsync(running, source, cancel.Token);
+        }
+    }
+
+    private async Task AnalyseAsync(RoslynSession running, string? source, CancellationToken cancel)
+    {
+        bool first = true;
+        BackgroundWork.Begin();
+        try
+        {
+            while (!cancel.IsCancellationRequested)
+            {
+                List<PreviousResultId> previous = [.. solutionReports
+                    .Where(r => r.Key.Source == source && r.Value.ResultId is not null)
+                    .Select(r => new PreviousResultId(r.Key.Uri, r.Value.ResultId!))];
+                DateTime asked = DateTime.UtcNow;
+                IReadOnlyList<WorkspaceDocumentDiagnosticReport> reports = await running.Server.WorkspaceDiagnosticsAsync(source, previous, cancel);
+                if (cancel.IsCancellationRequested)
+                {
+                    return;
+                }
+                List<WorkspaceDocumentDiagnosticReport> changed = [.. reports.Where(r => r.Kind != "unchanged")];
+                foreach (WorkspaceDocumentDiagnosticReport report in changed)
+                {
+                    solutionReports[(source, report.Uri)] = (report.ResultId, report.Items ?? []);
+                }
+                if (changed.Count > 0 || first)
+                {
+                    SolutionProblemsChanged?.Invoke(this, EventArgs.Empty);
+                }
+                if (first)
+                {
+                    first = false;
+                    BackgroundWork.End();
+                }
+                // A source with nothing to hold a pull open on answers at once: it is asked again only now and then.
+                if (changed.Count == 0 && DateTime.UtcNow - asked < TimeSpan.FromSeconds(1))
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(2), cancel);
+                }
+            }
+        }
+        catch (Exception error) when (error is OperationCanceledException or StreamJsonRpc.RemoteInvocationException or StreamJsonRpc.ConnectionLostException or ObjectDisposedException)
+        {
+        }
+        finally
+        {
+            if (first)
+            {
+                BackgroundWork.End();
+            }
+        }
+    }
+
     /// <summary>Whether a folder is worth starting Roslyn for: it has a solution, or a project within
     /// a few folders of its top.</summary>
     public static bool Wants(string folder)
@@ -90,6 +235,7 @@ public sealed class CSharpService : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         disposed = true;
+        analysing?.Cancel();
         starting?.Cancel();
         foreach (CSharpDocument features in documents.Values)
         {
@@ -107,7 +253,7 @@ public sealed class CSharpService : IAsyncDisposable
         try
         {
             string logs = Path.Combine(Path.GetTempPath(), "passenger", "logs", $"roslyn-{Environment.ProcessId}");
-            RoslynSession started = await RoslynSession.StartAsync(folder, logs, cancel);
+            RoslynSession started = await RoslynSession.StartAsync(folder, logs, cancel, solutionWide ? FullSolution : null);
             TaskCompletionSource loaded = new(TaskCreationOptions.RunContinuationsAsynchronously);
             started.Loaded += (_, _) => loaded.TrySetResult();
             started.Server.RefreshRequested += (_, _) => Dispatcher.UIThread.Post(RefreshAll);
@@ -124,6 +270,7 @@ public sealed class CSharpService : IAsyncDisposable
             }
             SetState("C# ready");
             RefreshAll();
+            StartAnalysis();
         }
         catch (OperationCanceledException)
         {
@@ -147,6 +294,8 @@ public sealed class CSharpService : IAsyncDisposable
             return;
         }
         session = null;
+        analysing?.Cancel();
+        solutionReports.Clear();
         _ = lost.DisposeAsync();
         IdeErrors.Write($"The C# language server (process {lost.Server.ProcessId}) ended: {why}");
         foreach (OpenDocument open in documents.Keys.ToList())

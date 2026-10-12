@@ -51,6 +51,7 @@ public static class AppActions
     public const string ShowRun = "app.showRun";
     public const string ShowProblems = "app.showProblems";
     public const string ShowFind = "app.showFind";
+    public const string ToggleSolutionAnalysis = "app.toggleSolutionAnalysis";
     public const string ShowDebug = "app.showDebug";
     public const string HideToolWindow = "app.hideToolWindow";
     public const string Back = "app.back";

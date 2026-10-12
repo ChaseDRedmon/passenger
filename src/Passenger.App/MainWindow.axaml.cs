@@ -246,6 +246,7 @@ public partial class MainWindow : Window
         assist.DebuggerValue = debug.ValueAt;
         Closing += (_, _) => _ = debug.StopAsync();
         AddFind();
+        AddProblems();
         UpdateStatus();
     }
 
@@ -316,8 +317,10 @@ public partial class MainWindow : Window
             csharp = new CSharpService();
             csharp.StateChanged += (_, _) => LanguageText.Text = LanguageLabel();
             csharp.Stopped += (_, message) => StatusText.Text = message;
+            WatchProblems(csharp);
             csharp.Start(folder);
         }
+        ShowSolutionProblems();
         Editors.ShowFolderHint(folder);
         RestoreWorkspace();
         // Rider names the window's project widget after the solution, the folder only without one.
@@ -582,6 +585,9 @@ public partial class MainWindow : Window
                 break;
             case AppActions.ShowFind:
                 ShowToolWindow("find");
+                break;
+            case AppActions.ToggleSolutionAnalysis:
+                ToggleSolutionAnalysis();
                 break;
             case AppActions.HideToolWindow:
                 HideToolWindow();

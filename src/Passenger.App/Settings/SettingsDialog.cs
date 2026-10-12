@@ -175,6 +175,8 @@ public sealed class SettingsDialog : Window
         Add(EditorPage, "Enable ligatures", Check(Working.Ligatures, v => Change(s => s with { Ligatures = v })), "font arrows");
         Add(EditorPage, "Show line numbers", Check(Working.ShowLineNumbers, v => Change(s => s with { ShowLineNumbers = v })), "gutter appearance");
         Add(EditorPage, "Rainbow braces", Check(Working.RainbowBraces, v => Change(s => s with { RainbowBraces = v })), "brackets parentheses colour color nesting");
+        Add(EditorPage, "Solution-wide analysis", Check(Working.SolutionWideAnalysis, v => Change(s => s with { SolutionWideAnalysis = v })),
+            "errors problems whole solution analysis inspections without build");
         Add(EditorPage, "Show parameter name hints", Check(Working.ParameterHints, v => Change(s => s with { ParameterHints = v })), "inlay hints parameter names arguments");
 
         Add(RunPage, "Hot Reload on save", Check(Working.HotReload, v => Change(s => s with { HotReload = v })), "dotnet watch apply changes edit continue running");

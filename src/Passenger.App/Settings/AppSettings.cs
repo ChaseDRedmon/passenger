@@ -32,6 +32,10 @@ public sealed record AppSettings
     /// and an edit that cannot be applied restarts it.</summary>
     public bool HotReload { get; init; }
 
+    /// <summary>Rider's solution-wide analysis: every file's errors in Problems as code changes, without a build. Off by
+    /// default, as in Rider, since it analyses the whole solution; the status bar turns it on and off.</summary>
+    public bool SolutionWideAnalysis { get; init; }
+
     /// <summary>Rider's autosave on frame deactivation: every changed file saved when the focus goes to another program
     /// or to the terminal.</summary>
     public bool SaveOnDeactivation { get; init; } = true;

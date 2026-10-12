@@ -22,15 +22,18 @@ public partial class MainWindow
     public void KeepSettings(string? path = null)
     {
         settingsPath = path ?? AppSettings.DefaultPath;
-        ApplySettings(AppSettings.Load(settingsPath));
+        ApplySettings(AppSettings.Load(settingsPath), theme: true);
     }
 
-    /// <summary>Puts settings in force, and keeps them when this window keeps its settings.</summary>
-    public void ApplySettings(AppSettings next)
+    /// <summary>Puts settings in force, and keeps them when this window keeps its settings. The theme changes only when
+    /// its setting does (or the person's settings are first read), so one named on the command line stands.</summary>
+    public void ApplySettings(AppSettings next) => ApplySettings(next, theme: false);
+
+    private void ApplySettings(AppSettings next, bool theme)
     {
         AppSettings before = settings;
         settings = next;
-        if (Avalonia.Application.Current is { } app)
+        if (Avalonia.Application.Current is { } app && (theme || next.Theme != before.Theme))
         {
             app.RequestedThemeVariant = next.Theme switch
             {
@@ -55,6 +58,7 @@ public partial class MainWindow
         {
             terminal.Shell = null;
         }
+        ApplyAnalysis();
         if (settingsPath is not null)
         {
             next.Save(settingsPath);

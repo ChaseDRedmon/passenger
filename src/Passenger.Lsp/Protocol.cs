@@ -224,6 +224,27 @@ public sealed class Diagnostic
 
 public sealed record DocumentDiagnosticParams(TextDocumentIdentifier TextDocument, string? Identifier = null, string? PreviousResultId = null);
 
+/// <summary>A workspace diagnostics request for one source, with the result each document last had, so documents that
+/// have not changed come back as unchanged.</summary>
+public sealed record WorkspaceDiagnosticParams(string? Identifier, IReadOnlyList<PreviousResultId> PreviousResultIds);
+
+public sealed record PreviousResultId(string Uri, string Value);
+
+public sealed class WorkspaceDiagnosticReport
+{
+    public List<WorkspaceDocumentDiagnosticReport> Items { get; init; } = [];
+}
+
+/// <summary>One document's diagnostics in a workspace report: all of them ("full"), or "unchanged" since its result id.</summary>
+public sealed class WorkspaceDocumentDiagnosticReport
+{
+    public string Kind { get; init; } = "full";
+    public string? ResultId { get; init; }
+    public List<Diagnostic>? Items { get; init; }
+    public string Uri { get; init; } = string.Empty;
+    public int? Version { get; init; }
+}
+
 public sealed class DocumentDiagnosticReport
 {
     public string Kind { get; init; } = "full";

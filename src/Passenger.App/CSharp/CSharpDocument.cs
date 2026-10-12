@@ -120,6 +120,7 @@ public sealed class CSharpDocument : IDisposable
             }
             Diagnostics = found;
             document.Markers = found.Select(Marker).OfType<Marker>().ToList();
+            service.FileProblemsChanged();
             (IReadOnlyList<LspInlayHint> hints, int hinted) = await lsp.InlayHintsAsync(cancel);
             if (!cancel.IsCancellationRequested && hinted == document.Text.Version)
             {

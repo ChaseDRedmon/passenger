@@ -65,6 +65,7 @@ public static class ActionCatalog
         [AppActions.ShowDebug] = "Debug Tool Window",
         [AppActions.ShowProblems] = "Problems",
         [AppActions.ShowFind] = "Find Tool Window",
+        [AppActions.ToggleSolutionAnalysis] = "Toggle Solution-Wide Analysis",
         [AppActions.ShowTerminal] = "Terminal",
         [AppActions.ShowGit] = "Git",
         [AppActions.Annotate] = "Annotate with Git Blame",

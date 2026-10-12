@@ -37,9 +37,10 @@ public sealed class RoslynSession : IAsyncDisposable
     public string? Solution { get; }
     public bool IsLoaded { get; private set; }
 
-    public static async Task<RoslynSession> StartAsync(string folder, string logFolder, CancellationToken cancel = default)
+    /// <param name="options">Server options to start with, over Passenger's own (the solution-wide analysis' scope).</param>
+    public static async Task<RoslynSession> StartAsync(string folder, string logFolder, CancellationToken cancel = default, IReadOnlyDictionary<string, object?>? options = null)
     {
-        LanguageServer server = await LanguageServer.StartRoslynAsync(folder, logFolder, cancel);
+        LanguageServer server = await LanguageServer.StartRoslynAsync(folder, logFolder, cancel, options);
         string? solution = FindSolution(folder);
         RoslynSession session = new(server, folder, solution);
         if (solution is not null)

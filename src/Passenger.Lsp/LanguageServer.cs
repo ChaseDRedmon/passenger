@@ -15,8 +15,11 @@ public sealed class LanguageServer : IAsyncDisposable
     private readonly ClientTarget client;
     private volatile bool disposing;
 
-    private LanguageServer(Process process, JsonRpc rpc, ClientTarget client, string logFolder)
+    private readonly Dictionary<string, object?> options;
+
+    private LanguageServer(Process process, JsonRpc rpc, ClientTarget client, string logFolder, IReadOnlyDictionary<string, object?>? options)
     {
+        this.options = new Dictionary<string, object?>(options ?? new Dictionary<string, object?>(), StringComparer.Ordinal);
         this.process = process;
         this.rpc = rpc;
         this.client = client;
@@ -57,11 +60,43 @@ public sealed class LanguageServer : IAsyncDisposable
     /// analyzers), each pulled on its own.</summary>
     public IReadOnlyList<string?> DiagnosticSources => client.DiagnosticSources;
 
+    /// <summary>The sources that answer for the whole workspace (<c>workspace/diagnostic</c>), as well as for one document.</summary>
+    public IReadOnlyList<string?> WorkspaceDiagnosticSources => client.WorkspaceDiagnosticSources;
+
+    /// <summary>Changes one of the server's options while it runs (a setting turned on): it hears the configuration
+    /// changed and asks for it again.</summary>
+    public Task SetOptionAsync(string name, object? value)
+    {
+        lock (options)
+        {
+            options[name] = value;
+        }
+        return NotifyAsync("workspace/didChangeConfiguration", new { settings = new { } });
+    }
+
+    /// <summary>Every document's diagnostics from one source, as the solution-wide analysis has them; a document unchanged
+    /// since the result id given for it comes back as unchanged, with no items.</summary>
+    public async Task<IReadOnlyList<WorkspaceDocumentDiagnosticReport>> WorkspaceDiagnosticsAsync(string? source, IReadOnlyList<PreviousResultId> previous, CancellationToken cancel = default) =>
+        (await RequestAsync<WorkspaceDiagnosticReport>("workspace/diagnostic", new WorkspaceDiagnosticParams(source, previous), cancel))?.Items ?? [];
+
+    /// <summary>An option's value: one changed while running, else Passenger's own, else null for the server's default.</summary>
+    private object? Option(string name)
+    {
+        lock (options)
+        {
+            if (options.TryGetValue(name, out object? set))
+            {
+                return set;
+            }
+        }
+        return Settings.TryGetValue(name, out object? value) ? value : null;
+    }
+
     public bool HasExited => process.HasExited;
 
     /// <summary>Starts the Roslyn language server Passenger ships (under <c>roslyn/</c> beside the
     /// app), initializes it for a folder, and returns once it has said what it can do.</summary>
-    public static async Task<LanguageServer> StartRoslynAsync(string folder, string logFolder, CancellationToken cancel)
+    public static async Task<LanguageServer> StartRoslynAsync(string folder, string logFolder, CancellationToken cancel, IReadOnlyDictionary<string, object?>? options = null)
     {
         string server = Path.Combine(AppContext.BaseDirectory, "roslyn", "Microsoft.CodeAnalysis.LanguageServer.dll");
         if (!File.Exists(server))
@@ -101,7 +136,7 @@ public sealed class LanguageServer : IAsyncDisposable
         ClientTarget client = new();
         JsonRpc rpc = new(handler);
         rpc.AddLocalRpcTarget(client, new JsonRpcTargetOptions { UseSingleObjectParameterDeserialization = true });
-        LanguageServer server2 = new(process, rpc, client, logFolder);
+        LanguageServer server2 = new(process, rpc, client, logFolder, options);
         client.Owner = server2;
         rpc.StartListening();
 
@@ -180,6 +215,18 @@ public sealed class LanguageServer : IAsyncDisposable
     private sealed class ClientTarget
     {
         private readonly List<string?> diagnosticSources = [];
+        private readonly List<string?> workspaceSources = [];
+
+        public IReadOnlyList<string?> WorkspaceDiagnosticSources
+        {
+            get
+            {
+                lock (diagnosticSources)
+                {
+                    return [.. workspaceSources];
+                }
+            }
+        }
 
         public LanguageServer? Owner { get; set; }
 
@@ -207,7 +254,7 @@ public sealed class LanguageServer : IAsyncDisposable
         /// <see cref="Settings"/> are answered, the rest left to the server's defaults.</summary>
         [JsonRpcMethod("workspace/configuration")]
         public object?[] Configuration(ConfigurationParams request) =>
-            [.. request.Items.Select(item => item.Section is { } section && Settings.TryGetValue(section[(section.LastIndexOfAny(['.', '|']) + 1)..], out object? value) ? value : null)];
+            [.. request.Items.Select(item => item.Section is { } section ? Owner?.Option(section[(section.LastIndexOfAny(['.', '|']) + 1)..]) : null)];
 
         [JsonRpcMethod("client/registerCapability")]
         public object? RegisterCapability(RegistrationParams request)
@@ -216,11 +263,17 @@ public sealed class LanguageServer : IAsyncDisposable
             {
                 string? identifier = registration.RegisterOptions is { ValueKind: JsonValueKind.Object } options
                     && options.TryGetProperty("identifier", out JsonElement id) ? id.GetString() : null;
+                bool workspace = registration.RegisterOptions is { ValueKind: JsonValueKind.Object } registered
+                    && registered.TryGetProperty("workspaceDiagnostics", out JsonElement flag) && flag.ValueKind == JsonValueKind.True;
                 lock (diagnosticSources)
                 {
                     if (!diagnosticSources.Contains(identifier))
                     {
                         diagnosticSources.Add(identifier);
+                    }
+                    if (workspace && !workspaceSources.Contains(identifier))
+                    {
+                        workspaceSources.Add(identifier);
                     }
                 }
             }
