@@ -10,7 +10,6 @@ namespace Passenger.App.Workspace;
 /// switching tabs returns to the same carets and scroll.</summary>
 public sealed class OpenDocument : Observable
 {
-    private bool isActive;
     private IHighlighter? highlighter;
     private IReadOnlyList<Marker> markers = [];
     private IReadOnlyList<LineMark> lineMarks = [];
@@ -73,12 +72,6 @@ public sealed class OpenDocument : Observable
     public bool IsModified => Text.IsModified;
     public Avalonia.Media.Geometry Icon => Explorer.FileIcons.ForFile(Path);
     public Avalonia.Media.IBrush IconBrush => Explorer.FileIcons.BrushForFile(Path);
-
-    public bool IsActive
-    {
-        get => isActive;
-        set => Set(ref isActive, value);
-    }
 
     public SelectionSet Selections { get; set; } = SelectionSet.Single(0);
     public Vector Scroll { get; set; }

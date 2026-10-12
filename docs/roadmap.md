@@ -12,7 +12,11 @@ the UI without opening a window.
 Since: tool windows dock as IntelliJ's do, at six places round the editor, each moved by dragging its stripe button
 or its header (or with Move to), one shown per place, floated over the IDE or in a window of its own (View Mode),
 maximized (⌘⇧', Ctrl+Shift+', or a double-click on its header), all hidden at once (⌘⇧F12, Ctrl+Shift+F12), and the
-layout (floating windows' bounds too) kept for the next start. To come: split editors, and tabs dragged between them.
+layout (floating windows' bounds too) kept for the next start. Editors split as Rider's: Split Right and Split Down
+(a file twice over one text, each split with its own caret), a tab dragged onto a split's edge splitting it there and
+onto another split's middle or strip moving into it (the place lighting up), Move to Opposite Group, Close Other and
+Close All Tabs from the tab's menu, and a split whose last tab goes giving its room back. To come: an editor in a
+window of its own, and the editor splits kept with the layout.
 
 **Done when:** `just run` opens it on macOS and Windows.
 

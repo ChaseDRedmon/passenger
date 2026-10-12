@@ -70,6 +70,11 @@ public static class AppActions
     public const string StopTests = "app.tests.stop";
     public const string ShowTests = "app.showTests";
 
+    // Editor splits: Rider's, from the tab's menu (no keys in its Visual Studio keymaps).
+    public const string SplitRight = "app.editor.splitRight";
+    public const string SplitDown = "app.editor.splitDown";
+    public const string MoveToOppositeGroup = "app.editor.moveToOppositeGroup";
+
     // The tool windows' frame.
     public const string MaximizeToolWindow = "app.window.maximize";
     public const string HideAllToolWindows = "app.window.hideAll";

@@ -71,7 +71,7 @@ public partial class MainWindow : Window
             csharp?.Detach(document);
             debug?.Detach(document);
         };
-        Editors.CodeEditor.GutterClicked += (_, click) =>
+        Editors.ForEachEditor(editor => editor.GutterClicked += (_, click) =>
         {
             if (Editors.Active is not { } active || debug is null)
             {
@@ -93,7 +93,7 @@ public partial class MainWindow : Window
             {
                 debug.Breakpoints.Toggle(active.Path, click.Line);
             }
-        };
+        });
         Closing += (_, _) => _ = csharp?.DisposeAsync();
         assist = new CodeAssist(Editors, Editors.AssistLayer, () => csharp);
         assist.Navigate += (_, target) => NavigateTo(target.Path, target.Position);
@@ -348,6 +348,15 @@ public partial class MainWindow : Window
                 break;
             case AppActions.ShowTests:
                 ShowToolWindow("tests");
+                break;
+            case AppActions.SplitRight when Editors.Active is { } splitting:
+                Editors.Split(Editors.ActiveGroup, splitting, Avalonia.Layout.Orientation.Horizontal, move: false);
+                break;
+            case AppActions.SplitDown when Editors.Active is { } splitting:
+                Editors.Split(Editors.ActiveGroup, splitting, Avalonia.Layout.Orientation.Vertical, move: false);
+                break;
+            case AppActions.MoveToOppositeGroup when Editors.Active is { } moving:
+                Editors.MoveToOpposite(Editors.ActiveGroup, moving);
                 break;
             case AppActions.MaximizeToolWindow:
                 Dock.ToggleMaximize();

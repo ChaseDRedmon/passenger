@@ -36,12 +36,39 @@ public sealed class CodeAssist
             popup.IsVisible = false;
             layer.Children.Add(popup);
         }
-        CodeEditor editor = editors.CodeEditor;
-        editor.Hovered += (_, e) => _ = ShowHover(e.Offset, e.Point);
-        editor.HoverEnded += (_, _) => HideHover();
-        editor.Typed += (_, text) => OnTyped(text);
-        editor.SelectionChanged += (_, _) => OnCaretMoved();
-        editor.NavigateRequested += (_, offset) => _ = GoToDefinition(offset);
+        // Every editor a split makes is wired the same; what it asks is answered for the active one, which it is.
+        editors.ForEachEditor(editor =>
+        {
+            editor.Hovered += (_, e) =>
+            {
+                if (editor == Editor)
+                {
+                    _ = ShowHover(e.Offset, e.Point);
+                }
+            };
+            editor.HoverEnded += (_, _) => HideHover();
+            editor.Typed += (_, text) =>
+            {
+                if (editor == Editor)
+                {
+                    OnTyped(text);
+                }
+            };
+            editor.SelectionChanged += (_, _) =>
+            {
+                if (editor == Editor)
+                {
+                    OnCaretMoved();
+                }
+            };
+            editor.NavigateRequested += (_, offset) =>
+            {
+                if (editor == Editor)
+                {
+                    _ = GoToDefinition(offset);
+                }
+            };
+        });
         editors.ActiveChanged += (_, _) => CloseAll();
         completion.List.DoubleTapped += (_, _) => _ = Commit();
     }
@@ -781,6 +808,8 @@ public sealed class CodeAssist
     /// or when there is no room below, kept inside the editor.</summary>
     private void Place(Control popup, Point at, bool above)
     {
+        // The point is the editor's; the layer spans every split, so it is translated into the layer's.
+        at = Editor.TranslatePoint(at, layer) ?? at;
         popup.Measure(Size.Infinity);
         Size size = popup.DesiredSize;
         Size room = layer.Bounds.Size;

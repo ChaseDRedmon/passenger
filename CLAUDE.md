@@ -71,6 +71,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   folder; `CSharpDocument` gives an open file its semantic colours and diagnostics; `CodeAssist`
   is completion, hover, signature help and the code actions (`app.code.*`), its popups on a layer
   over the editor; `WorkspaceEdits` applies renames and fixes across files.
+- `src/Passenger.App/Editors`: `EditorArea` is a tree of splits, each an `EditorGroup` (tabs, find bar, editor); its
+  `CodeEditor` and `Active` are the active group's, so code that acts on "the editor" keeps working, and wiring for every
+  editor's events goes through `ForEachEditor`, since a split makes a new one.
 - `src/Passenger.App/Docking`: the tool windows' frame, in IntelliJ's six places (`DockHost`, `ToolWindow`), moved
   by dragging a stripe button or a header, the layout kept in `DockLayout` (the settings folder, or
   `PASSENGER_SETTINGS`). A new tool window is a view and one `Dock.Add` in `MainWindow.AddToolWindows`.

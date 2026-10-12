@@ -148,6 +148,10 @@
     <Style Selector="Border.tab.active TextBlock.tabName">
         <Setter Property="Foreground" Value="{DynamicResource Passenger.Text}" />
     </Style>
+    <!-- A split the person is not working in marks its file quieter, so the strong mark is where the keys go. -->
+    <Style Selector="Border.tab.active.elsewhere">
+        <Setter Property="BorderBrush" Value="{DynamicResource Passenger.TextMuted}" />
+    </Style>
     <Style Selector="Ellipse.modified">
         <Setter Property="Fill" Value="{DynamicResource Passenger.Modified}" />
         <Setter Property="HorizontalAlignment" Value="Center" />
