@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace Passenger.Text;
@@ -9,7 +10,9 @@ public readonly record struct SearchQuery(string Text, bool MatchCase = false, b
 }
 
 /// <summary>Finding every match of a query in a snapshot, and the replacement each one takes. A regex
-/// that does not parse, or one that runs too long, finds nothing and says why instead of throwing.</summary>
+/// that does not parse, or one that runs too long, finds nothing and says why instead of throwing. The text is
+/// searched with each "\r\n" read as "\n", as the editor's lines are, so `$` finds a CRLF line's end and `\s`
+/// never takes half of its break.</summary>
 public static class TextSearch
 {
     /// <summary>The most matches a search reports, so a one-letter query in a huge file stays quick;
@@ -24,7 +27,7 @@ public static class TextSearch
         {
             return SearchResult.None;
         }
-        string text = snapshot.ToString();
+        (string text, List<int> returns) = AsLines(snapshot.ToString());
         Regex? pattern;
         try
         {
@@ -47,7 +50,7 @@ public static class TextSearch
                 {
                     return new SearchResult(matches, true, null);
                 }
-                matches.Add(new TextRange(match.Index, match.Length));
+                matches.Add(TextRange.FromBounds(Original(match.Index, returns), Original(match.Index + match.Length, returns)));
             }
         }
         catch (RegexMatchTimeoutException)
@@ -66,8 +69,40 @@ public static class TextSearch
             return replacement;
         }
         Regex pattern = Build(query);
-        Match found = pattern.Match(snapshot.GetText(match));
-        return found.Success ? found.Result(replacement) : replacement;
+        Match found = pattern.Match(AsLines(snapshot.GetText(match)).Text);
+        string replaced = found.Success ? found.Result(replacement) : replacement;
+        // A break a group carried over is the file's own, as the text it replaces had.
+        bool crlf = snapshot.LineCount > 1 && snapshot.GetLine(0).BreakLength == 2;
+        return crlf && replaced.Contains('\n', StringComparison.Ordinal) ? AsLines(replaced).Text.Replace("\n", "\r\n", StringComparison.Ordinal) : replaced;
+    }
+
+    /// <summary>The text with each "\r\n" read as "\n", and where each '\r' left out was, in offsets of the text read.</summary>
+    private static (string Text, List<int> Returns) AsLines(string text)
+    {
+        List<int> returns = [];
+        if (!text.Contains("\r\n", StringComparison.Ordinal))
+        {
+            return (text, returns);
+        }
+        StringBuilder read = new(text.Length);
+        for (int i = 0; i < text.Length; i++)
+        {
+            if (text[i] == '\r' && i + 1 < text.Length && text[i + 1] == '\n')
+            {
+                returns.Add(read.Length);
+                continue;
+            }
+            read.Append(text[i]);
+        }
+        return (read.ToString(), returns);
+    }
+
+    /// <summary>An offset of the text read as lines in the text itself: past every '\r' left out before it, so a match
+    /// that ends at a line's end ends before its whole break and one that takes the break takes both halves.</summary>
+    private static int Original(int offset, List<int> returns)
+    {
+        int index = returns.BinarySearch(offset);
+        return offset + (index >= 0 ? index : ~index);
     }
 
     private static Regex Build(SearchQuery query)

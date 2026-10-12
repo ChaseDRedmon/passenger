@@ -56,6 +56,30 @@ public sealed class FindTests : IDisposable
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void A_regex_sees_a_crlf_files_line_ends_and_stripping_trailing_space_keeps_its_breaks()
+    {
+        (MainWindow window, CodeEditor editor) = Open("int foo  \r\nfoo bar\t\r\nbar foo\r\nend");
+        Ui.Press(window, Ui.Shortcut(AppActions.Replace));
+        FindBar bar = window.EditorArea.FindBar;
+        bar.FindControl<Avalonia.Controls.Primitives.ToggleButton>("UseRegex")!.IsChecked = true;
+        window.KeyTextInput("foo$");
+        Ui.Settle();
+        Assert.Equal("1/1", bar.CountText);
+        Selection found = editor.Selections.Primary;
+        Assert.Equal((2, "foo"), (editor.CaretPosition.Line, editor.Document.Snapshot.GetText(found.Start, found.Length)));
+
+        // Rider's everyday trailing-whitespace strip takes the spaces and tabs, never half of a line break.
+        bar.FindControl<TextBox>("Query")!.Text = @"\s+$";
+        bar.FindControl<TextBox>("ReplaceWith")!.Text = string.Empty;
+        Ui.Settle();
+        bar.FindControl<Button>("ReplaceAllButton")!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Ui.Settle();
+        window.Perform(AppActions.Save);
+        Assert.Equal("int foo\r\nfoo bar\r\nbar foo\r\nend", File.ReadAllText(Path.Combine(folder, "Notes.txt")));
+        window.Close();
+    }
+
     private (MainWindow Window, CodeEditor Editor) Open(string text)
     {
         File.WriteAllText(Path.Combine(folder, "Notes.txt"), text);
