@@ -18,7 +18,8 @@ just run [PATH] [args]     # run the IDE on a folder or file (--file F, --caret 
 just screenshot X.png ...  # the main window drawn off-screen to a PNG, after the steps given
 just publish RID           # self-contained Release build, ReadyToRun (osx-arm64, osx-x64, win-x64, win-arm64)
 just package-mac [RID]     # Passenger.app zipped in artifacts/package (PASSENGER_SIGN_IDENTITY, PASSENGER_NOTARY_PROFILE)
-just icons                 # rewrite Theme/Icons.axaml from the list in tools/icons.py
+just icons                 # rewrite Theme/Icons.axaml from the list in tools/icons.py (icons from a fixed commit)
+just notices               # fail naming any package the solution or Roslyn's server carries that the notices miss
 just test [filter]         # every test, or those whose name matches
 just mcp [FOLDER]          # Passenger as an MCP server over a folder (this one by default), from a clone of the last build
 ```
@@ -47,7 +48,11 @@ Headless, the dispatcher's timers (the editor's hover, a caret's blink) fire onl
 never from running its queued jobs: a wait that needs one pumps a frame (`Screenshot.Pump`, `Ui.WaitFor` in tests).
 
 Builds land under `artifacts/` (`UseArtifactsOutput`), never beside the sources. Package versions live only in
-`Directory.Packages.props`; shared properties only in `Directory.Build.props`. `Directory.Build.targets` gives every
+`Directory.Packages.props` (Roslyn's server's too, as `RoslynServerVersion`); shared properties only in
+`Directory.Build.props`. Packages come from nuget.org alone, as nuget.org signed them (`nuget.config`), at what each
+project's `packages.lock.json` pins: a restore that adds or changes a package rewrites the lock file, committed with
+the change, and CI restores in locked mode. Every `just` recipe and CI set `AVALONIA_TELEMETRY_OPTOUT=1`, which
+Avalonia's build task reads only from the environment. `Directory.Build.targets` gives every
 `ProjectReference` its full path, because the .NET 11 SDK opens a solution reached through a symbolic link (anywhere
 under macOS's `/tmp`) by the link while MSBuild resolves references from the real folder, which built each referenced
 project twice at once.
@@ -159,7 +164,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   `RunAsync`; `Kill` ends it with all it started), so none outlives the IDE. Only the terminal's shell (Porta.Pty's,
   ended by its pseudo-terminal's hangup) and vstest.console (VSTest's, which watches the IDE) start elsewhere.
 - **Every dependency, icon or asset** has an open-source licence and an entry in `THIRD_PARTY_NOTICES.md`, added in the
-  same change that brings it in.
+  same change that brings it in: a package by its NuGet id in backticks, with its licence and copyright as the package
+  states them (`just notices`, and CI, fail on one missing), copied source by its file with the project it came from.
 - **Colours are tokens.** A control names a brush from `Theme/Tokens.axaml` (`Passenger.*`), never a literal colour,
   and every token exists in both the Dark and Light dictionaries.
 - **A malformed flag or value is fatal**, never a silent default (`LaunchOptions.cs`).
