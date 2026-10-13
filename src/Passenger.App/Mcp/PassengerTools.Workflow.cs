@@ -16,7 +16,10 @@ public sealed partial class PassengerTools
     // Version control
 
     [McpServerTool(Name = "vcs_status", Title = "Changed files", ReadOnly = true), Description(
-        "The branch and the files changed since the last commit (modified, added, deleted, renamed, unversioned, conflicted), as the Commit window lists them.")]
+        "The branch and the files changed since the last commit (modified, added, deleted, renamed, unversioned, conflicted), as the Commit window lists them. " +
+        "While a merge, a rebase, an unstash or a cherry-pick has stopped for conflicts, conflicts says what is under way, the branch yours and theirs are " +
+        "(during a rebase yours is the branch being rebased) and, for each file in conflict, whether each side modified or deleted it, as the Conflicts dialog lists them; " +
+        "vcs_resolve resolves them.")]
     public Task<VcsStatus> VcsStatus(CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         VcsController vcs = window.Vcs;
@@ -26,7 +29,38 @@ public sealed partial class PassengerTools
         {
             throw new InvalidOperationException("The folder is not in a Git repository");
         }
-        return new VcsStatus(vcs.Branch, [.. vcs.Changes.Select(c => new VcsChange(Relative(c.Path), c.Kind.ToString().ToLowerInvariant(), c.From is { } from ? Relative(from) : null))]);
+        ConflictSides sides = vcs.Sides;
+        VcsConflicts? conflicts = vcs.Conflicts.Count == 0 ? null : new VcsConflicts(sides.Description, sides.Yours, sides.Theirs,
+            [.. vcs.Conflicts.Select(c => new VcsConflict(Relative(c.Path), sides.YoursHas(c) ? "modified" : "deleted", sides.TheirsHas(c) ? "modified" : "deleted"))]);
+        return new VcsStatus(vcs.Branch, [.. vcs.Changes.Select(c => new VcsChange(Relative(c.Path), c.Kind.ToString().ToLowerInvariant(), c.From is { } from ? Relative(from) : null))], conflicts);
+    });
+
+    [McpServerTool(Name = "vcs_resolve", Title = "Resolve a conflict", Destructive = true), Description(
+        "Resolves a file in conflict (vcs_status lists them) as the Conflicts dialog does: take yours or theirs, that side's version whole " +
+        "(Accept Yours, Accept Theirs; during a rebase yours is the branch being rebased; a side that deleted the file deletes it), or give text, " +
+        "the merged file to write, as the merge window's Apply Changes writes its result. The file is then marked resolved. Once none is left, " +
+        "vcs_commit finishes a merge, a cherry-pick or a revert, and the Continue Rebase action (ide_action) a rebase.")]
+    public Task<string> VcsResolve(string path, [Description("yours or theirs; or leave it out and give text")] string? take = null,
+        [Description("The file's merged text, in place of take")] string? text = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
+    {
+        VcsController vcs = window.Vcs;
+        await vcs.Opened;
+        await vcs.RefreshAsync();
+        string full = Resolve(path);
+        GitConflict conflict = vcs.Conflicts.FirstOrDefault(c => c.Path == full)
+            ?? throw new ArgumentException(vcs.Conflicts.Count == 0 ? "No file is in conflict" : $"{Relative(full)} is not in conflict; {string.Join(", ", vcs.Conflicts.Select(c => Relative(c.Path)))} are");
+        VcsOutcome done = (take, text) switch
+        {
+            ("yours" or "theirs", null) => await vcs.AcceptAsync([conflict], yours: take == "yours"),
+            (null, { } merged) => await vcs.ResolveAsync(full, merged),
+            _ => throw new ArgumentException("Give take (yours or theirs) or text, the merged file, not both"),
+        };
+        if (done.Problem is { } failed)
+        {
+            throw new InvalidOperationException(failed);
+        }
+        int left = vcs.Conflicts.Count;
+        return left == 0 ? $"{Relative(full)} resolved; no conflicts are left" : $"{Relative(full)} resolved; {left} {(left == 1 ? "file is" : "files are")} still in conflict";
     });
 
     [McpServerTool(Name = "vcs_diff", Title = "A file's changes", ReadOnly = true), Description(
@@ -338,7 +372,13 @@ public sealed partial class PassengerTools
     }
 }
 
-public sealed record VcsStatus(string? Branch, IReadOnlyList<VcsChange> Changes);
+public sealed record VcsStatus(string? Branch, IReadOnlyList<VcsChange> Changes, VcsConflicts? Conflicts = null);
+
+/// <summary>What stopped for conflicts, the branches yours and theirs are, and the files in conflict.</summary>
+public sealed record VcsConflicts(string Operation, string? Yours, string? Theirs, IReadOnlyList<VcsConflict> Files);
+
+/// <summary>A file in conflict, and whether yours and theirs modified or deleted it.</summary>
+public sealed record VcsConflict(string Path, string Yours, string Theirs);
 
 public sealed record VcsChange(string Path, string Kind, string? From);
 

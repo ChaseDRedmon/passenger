@@ -49,6 +49,22 @@ public sealed class VcsController
     /// <summary>The changed and new files, as the last status read them.</summary>
     public IReadOnlyList<FileChange> Changes { get; private set; } = [];
 
+    /// <summary>The files in conflict, as the last status read them (each also among <see cref="Changes"/>).</summary>
+    public IReadOnlyList<GitConflict> Conflicts { get; private set; } = [];
+
+    /// <summary>What the tree is in the middle of (a merge, a rebase), as the last status found it.</summary>
+    public MergeState Merge { get; private set; } = MergeState.Idle;
+
+    /// <summary>The conflicts' two sides in the words Rider gives them, for what the tree is in the middle of.</summary>
+    public ConflictSides Sides => Merge.Sides(unstashed);
+
+    /// <summary>The stash an unstash with conflicts applied, which names the sides until they are resolved.</summary>
+    private string? unstashed;
+
+    /// <summary>Raised when an operation (an update, an unstash, a cherry-pick, a rebase continued) stopped for conflicts,
+    /// as Rider then shows its Conflicts dialog.</summary>
+    public event EventHandler? ConflictsFound;
+
     /// <summary>Raised when the branch or the changed files have been read again.</summary>
     public event EventHandler? Changed;
 
@@ -84,6 +100,12 @@ public sealed class VcsController
 
     /// <summary>Raised when <see cref="IsBusy"/> changes, for the buttons that start one.</summary>
     public event EventHandler? BusyChanged;
+
+    /// <summary>Done once nothing runs: what follows from an operation's end (the rebase offered to go on once the last
+    /// conflict is resolved) waits for it, rather than being refused as busy.</summary>
+    public Task Idle => IsBusy ? (idle ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).Task : Task.CompletedTask;
+
+    private TaskCompletionSource? idle;
 
     /// <summary>Saves every open file, run before anything git does to the files (a commit, a checkout, a stash, a
     /// rollback, an update), as Rider saves first: what is committed is what the editor shows, and nothing unsaved is
@@ -203,6 +225,9 @@ public sealed class VcsController
         {
             Branch = null;
             Changes = [];
+            Conflicts = [];
+            Merge = MergeState.Idle;
+            unstashed = null;
             if (!textsRead)
             {
                 ReadTexts(null, null);
@@ -220,11 +245,13 @@ public sealed class VcsController
             return;
         }
         GitStatus? status = null;
+        MergeState? merge = null;
         string? refs = null;
         string? failure = null;
         try
         {
             status = await repository.StatusAsync();
+            merge = await repository.MergeStateAsync(status.Branch, status.Head);
             refs = history ? await repository.RefsAsync() : null;
         }
         catch (InvalidOperationException failed)
@@ -244,6 +271,12 @@ public sealed class VcsController
         {
             Branch = status.Branch;
             Changes = status.Changes;
+            Conflicts = status.Conflicts;
+            Merge = merge ?? MergeState.Idle;
+            if (Conflicts.Count == 0)
+            {
+                unstashed = null;
+            }
             if (!textsRead || status.Head != textsOf)
             {
                 ReadTexts(repository, status.Head);
@@ -429,7 +462,13 @@ public sealed class VcsController
         {
             return new CommitResult(Report(false, NotInGit), null, null);
         }
-        if (chosen.Count == 0 && !amend)
+        if (Conflicts.Count > 0)
+        {
+            return new CommitResult(Report(false, "Resolve conflicts in order to commit"), null, null);
+        }
+        // A merge's commit finishes it even when it changed no file (every conflict resolved as HEAD had it).
+        bool merging = Merge.CommitsWhole && !amend;
+        if (chosen.Count == 0 && !amend && !merging)
         {
             return new CommitResult(Report(false, "No files are chosen to commit"), null, null);
         }
@@ -440,8 +479,9 @@ public sealed class VcsController
         return await OneAtATimeAsync(async () =>
         {
             SaveFirst?.Invoke();
-            string[] paths = [.. chosen.SelectMany(c => c.From is { } from ? new[] { c.Path, from } : [c.Path])];
-            GitResult commit = await repository.CommitAsync(paths, message, amend);
+            string[] paths = [.. Paths(chosen)];
+            string[] excluded = merging ? [.. Paths(Changes.Where(c => c.Kind is not ChangeKind.Unversioned && !chosen.Contains(c)))] : [];
+            GitResult commit = await repository.CommitAsync(paths, message, amend, merging, excluded);
             if (!commit.Succeeded)
             {
                 VcsOutcome failed = Report(false, commit.Message);
@@ -450,11 +490,18 @@ public sealed class VcsController
             }
             CommitInfo? made = await repository.HeadAsync();
             int count = chosen.Count;
-            string committed = count == 1 ? "1 file committed" : $"{count} files committed";
+            string committed = count switch
+            {
+                0 => "Committed",
+                1 => "1 file committed",
+                _ => $"{count} files committed",
+            };
             VcsOutcome done = Report(true, $"{committed}: {FirstLine(message)}");
             await RefreshAsync();
             return new CommitResult(done, made, push ? await PushAsync() : null);
         }, refused => new CommitResult(refused, null, null));
+
+        static IEnumerable<string> Paths(IEnumerable<FileChange> changes) => changes.SelectMany(c => c.From is { } from ? new[] { c.Path, from } : [c.Path]);
     }
 
     public async Task<VcsOutcome> PushAsync()
@@ -477,12 +524,33 @@ public sealed class VcsController
         {
             return Report(false, NotInGit);
         }
+        if (Conflicts.Count > 0)
+        {
+            return Report(false, "Unmerged files detected. These conflicts must be resolved before update.");
+        }
         SaveFirst?.Invoke();
         Message?.Invoke(this, "Updating...");
         GitResult pulled = await repository.PullAsync();
         ReloadOpenFiles();
         await RefreshAsync();
+        if (Conflicted(Merge.Operation is MergeOperation.Rebase ? "Rebase stopped due to conflicts" : "Merged with conflicts") is { } stopped)
+        {
+            return stopped;
+        }
         return Report(pulled.Succeeded, pulled.Succeeded ? Summary(pulled.Output, "Updated") : $"Update failed: {pulled.Message}");
+    }
+
+    /// <summary>After an operation that can stop for conflicts: when it did, what it came to, told to the status bar
+    /// with the files, and the Conflicts dialog asked for; null when it left none.</summary>
+    private VcsOutcome? Conflicted(string what)
+    {
+        if (Conflicts.Count == 0)
+        {
+            return null;
+        }
+        VcsOutcome stopped = Report(false, $"{what}: {string.Join(", ", Conflicts.Select(c => git?.Relative(c.Path) ?? c.Name))}");
+        ConflictsFound?.Invoke(this, EventArgs.Empty);
+        return stopped;
     }
 
     public async Task<VcsOutcome> FetchAsync()
@@ -522,10 +590,10 @@ public sealed class VcsController
         SwitchAsync(repository => repository.NewBranchAtAsync(name, hash), $"Created and checked out {name} at {Short(hash)}");
 
     public Task<VcsOutcome> CherryPickAsync(string hash) =>
-        SwitchAsync(repository => repository.CherryPickAsync(hash), $"Cherry-picked {Short(hash)}");
+        SwitchAsync(repository => repository.CherryPickAsync(hash), $"Cherry-picked {Short(hash)}", "Cherry-pick was performed with conflicts");
 
     public Task<VcsOutcome> RevertAsync(string hash) =>
-        SwitchAsync(repository => repository.RevertAsync(hash), $"Reverted {Short(hash)}");
+        SwitchAsync(repository => repository.RevertAsync(hash), $"Reverted {Short(hash)}", "Revert was performed with conflicts");
 
     public Task<VcsOutcome> ResetAsync(string hash, ResetMode mode) =>
         SwitchAsync(repository => repository.ResetAsync(hash, mode), $"Reset {Branch ?? "HEAD"} to {Short(hash)} ({mode.ToString().ToLowerInvariant()})");
@@ -545,8 +613,15 @@ public sealed class VcsController
 
     /// <summary>Rider's Unstash Changes: a stash's changes back in the files, the stash dropped after with
     /// <paramref name="pop"/>.</summary>
-    public Task<VcsOutcome> UnstashAsync(StashInfo stash, bool pop) =>
-        SwitchAsync(repository => repository.UnstashAsync(stash.Index, pop), pop ? $"Unstashed {stash.Message}" : $"Applied {stash.Message}");
+    public Task<VcsOutcome> UnstashAsync(StashInfo stash, bool pop)
+    {
+        // Git keeps no record of an unstash that stopped for conflicts: the stash names their sides until they are resolved.
+        if (Conflicts.Count == 0)
+        {
+            unstashed = $"stash@{{{stash.Index}}}";
+        }
+        return SwitchAsync(repository => repository.UnstashAsync(stash.Index, pop), pop ? $"Unstashed {stash.Message}" : $"Applied {stash.Message}", "Unstashed with conflicts");
+    }
 
     public Task<VcsOutcome> DropStashAsync(StashInfo stash) =>
         SwitchAsync(repository => repository.DropStashAsync(stash.Index), $"Dropped {stash.Message}");
@@ -593,6 +668,8 @@ public sealed class VcsController
         {
             IsBusy = false;
             BusyChanged?.Invoke(this, EventArgs.Empty);
+            idle?.TrySetResult();
+            idle = null;
         }
     }
 
@@ -607,7 +684,9 @@ public sealed class VcsController
         }
     }
 
-    private async Task<VcsOutcome> SwitchAsync(Func<Git, Task<GitResult>> change, string done)
+    /// <summary>Runs a change to the working tree and its files; one that can stop for conflicts (an unstash, a
+    /// cherry-pick) says so in <paramref name="conflicted"/>'s words when it did.</summary>
+    private async Task<VcsOutcome> SwitchAsync(Func<Git, Task<GitResult>> change, string done, string? conflicted = null)
     {
         if (git is not { } repository)
         {
@@ -616,14 +695,121 @@ public sealed class VcsController
         return await OneAtATimeAsync(async () =>
         {
             SaveFirst?.Invoke();
+            bool already = Conflicts.Count > 0;
             GitResult switched = await change(repository);
             if (switched.Succeeded)
             {
                 ReloadOpenFiles();
             }
             await RefreshAsync();
+            // Stopped for conflicts, the files hold them now: they are shown as they are on disk.
+            if (!switched.Succeeded && !already && Conflicts.Count > 0)
+            {
+                ReloadOpenFiles();
+            }
+            if (conflicted is not null && !already && Conflicted(conflicted) is { } stopped)
+            {
+                return stopped;
+            }
             return Report(switched.Succeeded, switched.Succeeded ? done : switched.Message);
         }, refused => refused);
+    }
+
+    /// <summary>Accept Yours or Accept Theirs: conflicted files take that side whole (or go, where it deleted them) and
+    /// are marked resolved; the open ones show it.</summary>
+    public async Task<VcsOutcome> AcceptAsync(IReadOnlyList<GitConflict> conflicts, bool yours)
+    {
+        if (git is not { } repository)
+        {
+            return Report(false, NotInGit);
+        }
+        if (conflicts.Count == 0)
+        {
+            return Report(false, "No files are chosen to resolve");
+        }
+        // Rebasing, yours is the branch being rebased: git's theirs.
+        bool theirs = yours == Sides.Swapped;
+        return await OneAtATimeAsync(async () =>
+        {
+            SaveFirst?.Invoke();
+            GitResult accepted = await repository.AcceptAsync(conflicts, theirs);
+            ReloadOpenFiles();
+            await RefreshAsync();
+            string names = string.Join(", ", conflicts.Select(c => c.Name));
+            return Report(accepted.Succeeded, accepted.Succeeded ? $"{(yours ? "Accept Yours" : "Accept Theirs")}: {names}" : accepted.Message);
+        }, refused => refused);
+    }
+
+    /// <summary>A conflicted file's three versions as the merge window lays them out: the one both sides came from, and
+    /// yours on the left and theirs on the right (empty where a side deleted it), with the words for each.</summary>
+    public async Task<MergeTexts?> MergeTextsAsync(string path)
+    {
+        UiThread.Check();
+        if (git is not { } repository)
+        {
+            return null;
+        }
+        ConflictSides sides = Sides;
+        (string? common, string? ours, string? theirs) = await repository.StagesAsync(path);
+        return new MergeTexts(path, common ?? string.Empty, (sides.Swapped ? theirs : ours) ?? string.Empty, (sides.Swapped ? ours : theirs) ?? string.Empty, sides);
+    }
+
+    /// <summary>The merge window's Apply: the result written to the file, in the encoding it had, and the file marked
+    /// resolved; the open files show it.</summary>
+    public async Task<VcsOutcome> ResolveAsync(string path, string text)
+    {
+        if (git is not { } repository)
+        {
+            return Report(false, NotInGit);
+        }
+        return await OneAtATimeAsync(async () =>
+        {
+            SaveFirst?.Invoke();
+            try
+            {
+                FileText? before = File.Exists(path) ? FileText.Load(path) : null;
+                FileText.Save(path, text, before?.Encoding ?? new System.Text.UTF8Encoding(false), before?.HasBom ?? false);
+            }
+            catch (Exception refused) when (refused is IOException or UnauthorizedAccessException)
+            {
+                return Report(false, refused.Message);
+            }
+            GitResult marked = await repository.MarkResolvedAsync(path);
+            ReloadOpenFiles();
+            await RefreshAsync();
+            return Report(marked.Succeeded, marked.Succeeded ? $"{Path.GetFileName(path)} resolved" : marked.Message);
+        }, refused => refused);
+    }
+
+    /// <summary>Rider's Abort Merge and Abort Rebase (and a cherry-pick's or a revert's): the tree back as it was before
+    /// the operation began.</summary>
+    public Task<VcsOutcome> AbortAsync()
+    {
+        MergeOperation operation = Merge.Operation;
+        if (operation is MergeOperation.None)
+        {
+            return Task.FromResult(Report(false, "Nothing is under way to abort"));
+        }
+        string name = operation switch
+        {
+            MergeOperation.CherryPick => "cherry-pick",
+            _ => operation.ToString().ToLowerInvariant(),
+        };
+        return SwitchAsync(repository => repository.AbortAsync(operation), $"Abort {name} succeeded");
+    }
+
+    /// <summary>Rider's Continue Rebase, once every conflict is resolved.</summary>
+    public Task<VcsOutcome> ContinueRebaseAsync()
+    {
+        if (Merge.Operation is not MergeOperation.Rebase)
+        {
+            return Task.FromResult(Report(false, "No rebase in progress"));
+        }
+        if (Conflicts.Count > 0)
+        {
+            return Task.FromResult(Report(false, "Resolve conflicts in order to continue rebase"));
+        }
+        return SwitchAsync(repository => repository.ContinueRebaseAsync(), "Rebase successful", "Rebase stopped due to conflicts");
     }
 
     /// <summary>A file's text as the last commit has it, or null when it has none (new, or outside the tree). A file
@@ -750,6 +936,10 @@ public sealed class VcsController
     /// <summary>The newest comparison of a file, running or done, and the texts it is between.</summary>
     private sealed record Compared(string Head, TextSnapshot Text, Task<FileDiff> Diff);
 }
+
+/// <summary>A conflicted file's versions as the merge window shows them: the one both sides came from, yours (left) and
+/// theirs (right), and the words for its sides.</summary>
+public sealed record MergeTexts(string Path, string Base, string Left, string Right, ConflictSides Sides);
 
 /// <summary>What an operation on the working tree came to: whether it worked, and what the person is told of it (git's own
 /// words when it did not), the words the status bar is told as it lands.</summary>

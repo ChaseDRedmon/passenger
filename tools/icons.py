@@ -81,6 +81,10 @@ ICONS = [
     ("TestNotRun", "Circle", "16_regular"),
     ("TestRunning", "Circle", "16_filled"),
     ("Pin", "Pin", "16_regular"),
+    # The merge window's Apply All Non-Conflicting Changes (turned on its side, the two arrows meeting in the result) and
+    # Resolve Simple Conflicts, Rider's magic wand.
+    ("ApplyNonConflicts", "Arrow Minimize Vertical", "20_regular"),
+    ("Wand", "Wand", "20_regular"),
 ]
 
 

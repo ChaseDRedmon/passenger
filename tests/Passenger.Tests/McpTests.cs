@@ -161,6 +161,50 @@ public sealed class McpTests : IDisposable
         }
     }
 
+    /// <summary>A merge stopped for a conflict: the agent finds it in vcs_status as the Conflicts dialog lists it (what is
+    /// under way, each side's branch, what each did to the file), resolves it with theirs, and its commit finishes the merge.</summary>
+    [Fact]
+    public async Task An_agent_sees_a_merges_conflict_in_vcs_status_resolves_it_with_theirs_and_commits_the_merge()
+    {
+        string repository = TestFolders.Create("mcp-conflicts-");
+        try
+        {
+            string notes = Path.Combine(repository, "Notes.txt");
+            File.WriteAllText(notes, "one\ntwo\nthree\n");
+            TestGit.Init(repository);
+            TestGit.Run(repository, "switch", "-q", "-c", "feature");
+            File.WriteAllText(notes, "one\n2\nthree\n");
+            TestGit.Run(repository, "commit", "-q", "-am", "Two as a number");
+            TestGit.Run(repository, "switch", "-q", "main");
+            File.WriteAllText(notes, "one\nII\nthree\n");
+            TestGit.Run(repository, "commit", "-q", "-am", "Two in Roman");
+            ChildResult merging = await ChildProcesses.RunAsync(ChildProcesses.Command("git", ["merge", "feature"], repository), limit: TimeSpan.FromMinutes(1), cancel: Cancel);
+            Assert.False(merging.Succeeded, $"The merge was to stop for its conflict: {merging.Output}");
+
+            await using McpClient client = await Start(["--mcp", repository]);
+            JsonElement conflicts = (await Call(client, "vcs_status")).GetProperty("conflicts");
+            Assert.Equal("Merging branch feature into branch main", conflicts.GetProperty("operation").GetString());
+            Assert.Equal(("main", "feature"), (conflicts.GetProperty("yours").GetString(), conflicts.GetProperty("theirs").GetString()));
+            JsonElement file = Assert.Single(conflicts.GetProperty("files").EnumerateArray());
+            Assert.Equal(("Notes.txt", "modified", "modified"), (file.GetProperty("path").GetString(), file.GetProperty("yours").GetString(), file.GetProperty("theirs").GetString()));
+            CallToolResult early = await Result(client, "vcs_commit", new() { ["message"] = "Half a merge" });
+            Assert.True(early.IsError == true, "A commit was made with a file still in conflict");
+
+            Assert.Equal("Notes.txt resolved; no conflicts are left", (await Call(client, "vcs_resolve", new() { ["path"] = "Notes.txt", ["take"] = "theirs" })).GetString());
+            Assert.Equal("one\n2\nthree\n", File.ReadAllText(notes));
+            JsonElement status = await Call(client, "vcs_status");
+            Assert.True(!status.TryGetProperty("conflicts", out JsonElement left) || left.ValueKind == JsonValueKind.Null, $"vcs_status still lists conflicts: {left}");
+
+            await Call(client, "vcs_commit", new() { ["message"] = "Merge feature" });
+            Assert.Equal(3, TestGit.Run(repository, "rev-list", "--parents", "-n", "1", "HEAD").Split(' ', StringSplitOptions.RemoveEmptyEntries).Length);
+            Assert.Equal("one\n2\nthree\n", TestGit.Run(repository, "show", "HEAD:Notes.txt"));
+        }
+        finally
+        {
+            TestFolders.Delete(repository);
+        }
+    }
+
     /// <summary>Commit and Push to a remote that refuses every push: the agent hears the refusal, in git's words, as the
     /// tool's error, and the commit stays made, as the Commit window's Commit and Push leaves it.</summary>
     [Fact]

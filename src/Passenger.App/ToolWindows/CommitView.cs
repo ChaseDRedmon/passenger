@@ -49,8 +49,10 @@ public sealed class CommitGroup(string name, IReadOnlyList<CommitRow> rows) : Ob
 }
 
 /// <summary>Rider's Commit window: the changed files under Changes and the new ones under Unversioned Files, each
-/// with a box for whether it goes in (changes are in and new files out until chosen, as Rider has them); Amend and the
-/// message below; Commit and Commit and Push. Double-click opens a file; Rollback puts the chosen ones back.</summary>
+/// with a box for whether it goes in (changes are in and new files out until chosen, as Rider has them), and files in
+/// conflict above them under Merge Conflicts, with its Resolve link and no box; Amend and the message below (a merge's
+/// own message while one is under way); Commit and Commit and Push. Double-click opens a file's diff, or a conflicted
+/// file's merge; Rollback puts the chosen ones back.</summary>
 public sealed class CommitView : DockPanel
 {
     private readonly VcsController vcs;
@@ -63,6 +65,9 @@ public sealed class CommitView : DockPanel
     private readonly Button commitAndPush;
     private readonly TextBlock placeholder;
     private string? beforeAmend;
+
+    /// <summary>The merge's message the box was given, taken away again if the merge ends some other way.</summary>
+    private string? prefilled;
 
     public CommitView(VcsController vcs)
     {
@@ -79,7 +84,14 @@ public sealed class CommitView : DockPanel
                 _ => new TextBlock(),
             }, supportsRecycling: false),
         };
-        ListMenus.Attach(list, () => list.SelectedItem is not CommitRow chosen ? [] :
+        ListMenus.Attach(list, () => list.SelectedItem is not CommitRow chosen ? [] : chosen.Change.Kind is ChangeKind.Conflicted ?
+        [
+            ListMenus.Item("Merge...", "Enter", () => MergeRequested?.Invoke(this, chosen.Change.Path)),
+            ListMenus.Item("Resolve Conflicts...", null, () => ResolveRequested?.Invoke(this, EventArgs.Empty)),
+            ListMenus.Item("Jump to Source", "F4", () => OpenRequested?.Invoke(this, chosen.Change.Path)),
+            new Separator(),
+            ListMenus.Item("Copy Path", null, () => _ = ListMenus.CopyAsync(this, chosen.Change.Path)),
+        ] :
         [
             ListMenus.Item("Show Diff", "Enter", () => DiffRequested?.Invoke(this, chosen.Change.Path)),
             ListMenus.Item("Jump to Source", "F4", () => OpenRequested?.Invoke(this, chosen.Change.Path), chosen.Change.Kind is not ChangeKind.Deleted),
@@ -95,7 +107,7 @@ public sealed class CommitView : DockPanel
         {
             if (list.SelectedItem is CommitRow row)
             {
-                DiffRequested?.Invoke(this, row.Change.Path);
+                Open(row.Change);
             }
         };
         list.KeyDown += (_, e) =>
@@ -110,7 +122,7 @@ public sealed class CommitView : DockPanel
                 }
                 if ((e.Key == Key.D && e.KeyModifiers == (OperatingSystem.IsMacOS() ? KeyModifiers.Meta : KeyModifiers.Control)) || e.Key == Key.Enter)
                 {
-                    DiffRequested?.Invoke(this, shown.Change.Path);
+                    Open(shown.Change);
                     e.Handled = true;
                     return;
                 }
@@ -118,7 +130,7 @@ public sealed class CommitView : DockPanel
             if (e.Key == Key.Space && e.KeyModifiers == KeyModifiers.None)
             {
                 // Space flips the chosen rows' boxes, as in Rider's tree.
-                CommitRow[] selected = [.. list.SelectedItems?.OfType<CommitRow>() ?? []];
+                CommitRow[] selected = [.. list.SelectedItems?.OfType<CommitRow>().Where(r => r.Change.Kind is not ChangeKind.Conflicted) ?? []];
                 bool to = !selected.All(r => r.IsChosen);
                 foreach (CommitRow row in selected)
                 {
@@ -226,6 +238,28 @@ public sealed class CommitView : DockPanel
         Fill();
     }
 
+    /// <summary>The Merge Conflicts group's Resolve link: the Conflicts dialog.</summary>
+    public event EventHandler? ResolveRequested;
+
+    /// <summary>Asks the person to agree (a title, the question, the button that agrees), as the window's Confirm does.</summary>
+    public Func<string, string, string, Task<bool>>? Confirm { get; set; }
+
+    /// <summary>A conflicted file to merge, double-clicked.</summary>
+    public event EventHandler<string>? MergeRequested;
+
+    /// <summary>What a double-click or Enter opens: a conflicted file's merge, any other file's diff.</summary>
+    private void Open(FileChange change)
+    {
+        if (change.Kind is ChangeKind.Conflicted)
+        {
+            MergeRequested?.Invoke(this, change.Path);
+        }
+        else
+        {
+            DiffRequested?.Invoke(this, change.Path);
+        }
+    }
+
     /// <summary>A file to open in the editor.</summary>
     public event EventHandler<string>? OpenRequested;
 
@@ -273,6 +307,14 @@ public sealed class CommitView : DockPanel
     /// commit was made, whatever came of the push.</summary>
     public async Task<bool> CommitAsync(bool push)
     {
+        // A merge's commit takes in every change but those left out, which stay changes, once the person agrees, as Rider asks.
+        bool excluding = vcs.Merge.CommitsWhole && !Amend && vcs.Conflicts.Count == 0
+            && rows.OfType<CommitRow>().Any(r => !r.IsChosen && r.Change.Kind is not (ChangeKind.Unversioned or ChangeKind.Conflicted));
+        if (excluding && Confirm is { } ask
+            && !await ask("Changes Excluded from Merge Commit", "Are you sure you want to exclude these changed files from merge commit?", "Commit"))
+        {
+            return false;
+        }
         if (!(await vcs.CommitAsync(Chosen, Message, Amend, push)).Commit.Succeeded)
         {
             return false;
@@ -298,12 +340,17 @@ public sealed class CommitView : DockPanel
         Dictionary<FileChange, CommitRow> kept = [];
         foreach (CommitRow row in rows.OfType<CommitRow>())
         {
-            chosen[row.Change.Path] = row.IsChosen;
+            // A conflicted file has no box: resolved, it is chosen as any change is.
+            if (row.Change.Kind is not ChangeKind.Conflicted)
+            {
+                chosen[row.Change.Path] = row.IsChosen;
+            }
             kept.TryAdd(row.Change, row);
         }
         IReadOnlyList<FileChange> changes = vcs.Changes;
         List<object> wanted = [];
-        Group("Changes", [.. changes.Where(c => c.Kind is not ChangeKind.Unversioned).OrderBy(c => c.Path, StringComparer.Ordinal).Select(c => Row(c, true))]);
+        Group(MergeConflicts, [.. changes.Where(c => c.Kind is ChangeKind.Conflicted).OrderBy(c => c.Path, StringComparer.Ordinal).Select(c => Row(c, false))]);
+        Group("Changes", [.. changes.Where(c => c.Kind is not (ChangeKind.Unversioned or ChangeKind.Conflicted)).OrderBy(c => c.Path, StringComparer.Ordinal).Select(c => Row(c, true))]);
         Group("Unversioned Files", [.. changes.Where(c => c.Kind is ChangeKind.Unversioned).OrderBy(c => c.Path, StringComparer.Ordinal).Select(c => Row(c, false))]);
 
         // What went is taken out and what came put in at its place; rows kept are in the same order in both lists.
@@ -331,6 +378,21 @@ public sealed class CommitView : DockPanel
         }
         placeholder.Text = vcs.Repository is null ? "The folder is not in a Git repository" : "No changes";
         placeholder.IsVisible = rows.Count == 0;
+        // A merge under way gives the commit that finishes it the message git wrote for it, as Rider does, until it ends.
+        string? merging = vcs.Merge.CommitsWhole ? vcs.Merge.Message : null;
+        if (merging is not null && Message.Trim().Length == 0 && merging != prefilled)
+        {
+            Message = merging;
+            prefilled = merging;
+        }
+        else if (merging is null && prefilled is not null)
+        {
+            if (Message == prefilled)
+            {
+                Message = string.Empty;
+            }
+            prefilled = null;
+        }
         UpdateButtons();
 
         CommitRow Row(FileChange change, bool byDefault)
@@ -339,7 +401,8 @@ public sealed class CommitView : DockPanel
             {
                 return same;
             }
-            CommitRow row = new(change, chosen.TryGetValue(change.Path, out bool was) ? was : byDefault);
+            // A file in conflict never goes into a commit as it is.
+            CommitRow row = new(change, change.Kind is not ChangeKind.Conflicted && (chosen.TryGetValue(change.Path, out bool was) ? was : byDefault));
             row.PropertyChanged += (_, _) =>
             {
                 foreach (CommitGroup group in rows.OfType<CommitGroup>())
@@ -365,13 +428,19 @@ public sealed class CommitView : DockPanel
     private void UpdateButtons()
     {
         // Off while a commit (or a stash, a rollback) runs, so a second press cannot start another on git's index lock.
-        bool ready = !vcs.IsBusy && vcs.Repository is not null && Message.Trim().Length > 0 && (Amend || rows.OfType<CommitRow>().Any(r => r.IsChosen));
+        bool ready = !vcs.IsBusy && vcs.Repository is not null && Message.Trim().Length > 0 && (Amend || vcs.Merge.CommitsWhole || rows.OfType<CommitRow>().Any(r => r.IsChosen));
         commit.IsEnabled = ready;
         commitAndPush.IsEnabled = ready;
     }
 
-    private static Control GroupRow(CommitGroup group)
+    private const string MergeConflicts = "Merge Conflicts";
+
+    private Control GroupRow(CommitGroup group)
     {
+        if (group.Name == MergeConflicts)
+        {
+            return ConflictsRow(group);
+        }
         CheckBox box = new() { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 2, 0) };
         bool setting = false;
         Follow(box, group, () =>
@@ -408,8 +477,33 @@ public sealed class CommitView : DockPanel
         };
     }
 
+    /// <summary>Rider's Merge Conflicts node: its name, its count, and the Resolve link that opens the Conflicts dialog.</summary>
+    private Control ConflictsRow(CommitGroup group)
+    {
+        TextBlock name = new() { Text = group.Name, FontWeight = FontWeight.SemiBold, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(26, 0, 0, 0) };
+        name.Bind(TextBlock.ForegroundProperty, name.GetResourceObservable("Passenger.Vcs.File.Conflicted"));
+        TextBlock count = new()
+        {
+            Text = group.Rows.Count == 1 ? "1 file" : $"{group.Rows.Count} files",
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(8, 0, 0, 0),
+            FontSize = 12,
+        };
+        count.Bind(TextBlock.ForegroundProperty, count.GetResourceObservable("Passenger.TextMuted"));
+        Button resolve = new() { Classes = { "link" }, Content = "Resolve", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0) };
+        resolve.Click += (_, _) => ResolveRequested?.Invoke(this, EventArgs.Empty);
+        return new StackPanel { Orientation = Orientation.Horizontal, Height = 24, Children = { name, count, resolve } };
+    }
+
     private Control FileRow(CommitRow row)
     {
+        if (row.Change.Kind is ChangeKind.Conflicted)
+        {
+            // Nothing to choose: a conflicted file is resolved first.
+            StackPanel conflicted = FileLine(row.Change, vcs.Repository);
+            conflicted.Margin = new Thickness(44, 0, 0, 0);
+            return conflicted;
+        }
         CheckBox box = new() { IsChecked = row.IsChosen, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(22, 0, 2, 0) };
         box.IsCheckedChanged += (_, _) => row.IsChosen = box.IsChecked == true;
         Follow(box, row, () => box.IsChecked = row.IsChosen);

@@ -98,7 +98,7 @@ public sealed partial class CodeEditor
         {
             int line = Math.Min(change.Line, text.LineCount - 1);
             int last = Math.Min(line + Math.Max(1, change.Count) - 1, text.LineCount - 1);
-            string what = change.Kind switch { ChangeMarkKind.Added => "Added lines", ChangeMarkKind.Deleted => "Deleted lines", _ => "Modified lines" };
+            string what = change.Kind switch { ChangeMarkKind.Added => "Added lines", ChangeMarkKind.Deleted => "Deleted lines", ChangeMarkKind.Conflict => "Conflict", _ => "Modified lines" };
             marks.Add(new StripeMark(StripeMarkKind.Change, RowOf(line), Math.Max(1, RowOf(last) + rows.RowsOf(last) - RowOf(line)),
                 text.GetLineStart(line), what, change.Kind));
         }
@@ -251,7 +251,7 @@ public sealed partial class CodeEditor
                 StripeMarkKind.Usage => (palette.UsageReadMark, 3.0, track.Width - 6),
                 StripeMarkKind.WriteUsage => (palette.UsageWriteMark, 3.0, track.Width - 6),
                 StripeMarkKind.Bookmark => (palette.Bookmark, track.Width - 4, 3.0),
-                StripeMarkKind.Change => (mark.Change switch { ChangeMarkKind.Added => palette.ChangeAdded, ChangeMarkKind.Deleted => palette.ChangeDeleted, _ => palette.ChangeModified }, 0.0, 2.0),
+                StripeMarkKind.Change => (mark.Change switch { ChangeMarkKind.Added => palette.ChangeAdded, ChangeMarkKind.Deleted => palette.ChangeDeleted, ChangeMarkKind.Conflict => palette.ChangeConflict, _ => palette.ChangeModified }, 0.0, 2.0),
                 _ => (palette.LineNumberCurrent, 1.0, track.Width - 2),
             };
             context.FillRectangle(brush, new Rect(track.X + left, span.Top, Math.Max(1, width), span.Height));

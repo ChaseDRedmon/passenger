@@ -62,8 +62,15 @@ public sealed record BlameLine(string Hash, string Author, DateTimeOffset Time, 
 }
 
 /// <summary>What one status read found, together: the branch checked out (null on a detached head), the commit HEAD
-/// names (null before the first), and the changed and new files.</summary>
-public sealed record GitStatus(string? Branch, string? Head, IReadOnlyList<FileChange> Changes);
+/// names (null before the first), the changed and new files, and those of them in conflict.</summary>
+public sealed record GitStatus(string? Branch, string? Head, IReadOnlyList<FileChange> Changes, IReadOnlyList<GitConflict> Conflicts);
+
+/// <summary>A file in conflict and which of git's three versions of it there are: the one both sides came from (stage
+/// 1), ours (stage 2, HEAD's side) and theirs (stage 3, the side brought in); a side without one deleted the file.</summary>
+public sealed record GitConflict(string Path, bool HasBase, bool HasOurs, bool HasTheirs)
+{
+    public string Name => System.IO.Path.GetFileName(Path);
+}
 
 /// <summary>A stash: its place in the list (stash@{Index}), what it says, and when it was made.</summary>
 public sealed record StashInfo(int Index, string Message, DateTimeOffset Time);
@@ -82,17 +89,26 @@ public sealed record GitResult(int Code, string Output, string Error)
 /// as UTF-8, never through a shell.</summary>
 public sealed class Git
 {
-    private Git(string root) => Root = root;
+    private Git(string root, string gitDir)
+    {
+        Root = root;
+        GitDir = gitDir;
+    }
 
     /// <summary>The working tree's top folder.</summary>
     public string Root { get; }
 
+    /// <summary>Git's own folder for the tree (.git, or a linked worktree's under it), where it keeps a merge's or a
+    /// rebase's state.</summary>
+    public string GitDir { get; }
+
     /// <summary>The working tree a folder is in, or null when it is in none (or git is not there).</summary>
     public static async Task<Git?> OpenAsync(string folder)
     {
-        GitResult top = await RunAsync(folder, ["rev-parse", "--show-toplevel"]);
-        return top.Succeeded && top.Output.Trim() is { Length: > 0 } root
-            ? new Git(PathNames.Canonical(root))
+        GitResult top = await RunAsync(folder, ["rev-parse", "--show-toplevel", "--absolute-git-dir"]);
+        string[] lines = top.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return top.Succeeded && lines.Length == 2
+            ? new Git(PathNames.Canonical(lines[0]), PathNames.Canonical(lines[1]))
             : null;
     }
 
@@ -187,6 +203,7 @@ public sealed class Git
         string? branch = null;
         string? head = null;
         List<FileChange> changes = [];
+        List<GitConflict> conflicts = [];
         string[] entries = status.Output.Split('\0');
         for (int i = 0; i < entries.Length; i++)
         {
@@ -214,7 +231,11 @@ public sealed class Git
                     changes.Add(new FileChange(Full(renamed[9]), ChangeKind.Renamed, Full(entries[++i])));
                     break;
                 case 'u':
-                    changes.Add(new FileChange(Full(entry.Split(' ', 11)[10]), ChangeKind.Conflicted));
+                    // "u XY sub m1 m2 m3 mW h1 h2 h3 path": a stage git has no version at has the mode 000000.
+                    string[] unmerged = entry.Split(' ', 11);
+                    string path = Full(unmerged[10]);
+                    changes.Add(new FileChange(path, ChangeKind.Conflicted));
+                    conflicts.Add(new GitConflict(path, Staged(unmerged[3]), Staged(unmerged[4]), Staged(unmerged[5])));
                     break;
                 // A save under way as git read the folder: the saved file's change, which the read after the save lists.
                 case '?' when Workspace.FileText.IsSaving(entry):
@@ -224,11 +245,136 @@ public sealed class Git
                     break;
             }
         }
-        return new GitStatus(branch, head, changes);
+        return new GitStatus(branch, head, changes, conflicts);
 
         static ChangeKind Kind(string xy) =>
             xy.Contains('D') ? ChangeKind.Deleted : xy[0] == 'A' ? ChangeKind.Added : ChangeKind.Modified;
+
+        static bool Staged(string mode) => mode.Any(c => c != '0');
     }
+
+    /// <summary>What the tree is in the middle of (a merge, a rebase, a cherry-pick or a revert stopped for its
+    /// conflicts), read from git's own files, and the names its two sides go by. <paramref name="branch"/> and
+    /// <paramref name="head"/> are the status's, ours outside a rebase.</summary>
+    public async Task<MergeState> MergeStateAsync(string? branch, string? head)
+    {
+        string? message = Read("MERGE_MSG");
+        string ours = branch ?? Short(head) ?? "HEAD";
+        if (Read("MERGE_HEAD") is { } merging)
+        {
+            return new MergeState(MergeOperation.Merge, ours, await NameAsync(merging), null, Message(message));
+        }
+        foreach (string folder in (string[])["rebase-merge", "rebase-apply"])
+        {
+            if (Read(System.IO.Path.Combine(folder, "head-name")) is not { } rebased)
+            {
+                continue;
+            }
+            string theirs = rebased.StartsWith("refs/heads/", StringComparison.Ordinal) ? rebased[11..] : "detached HEAD";
+            string? onto = Read(System.IO.Path.Combine(folder, "onto"));
+            string? applying = Read("REBASE_HEAD") ?? Read(System.IO.Path.Combine(folder, "stopped-sha"));
+            return new MergeState(MergeOperation.Rebase, onto is null ? ours : await NameAsync(onto), theirs, Short(applying), null);
+        }
+        if (Read("CHERRY_PICK_HEAD") is { } picked)
+        {
+            return new MergeState(MergeOperation.CherryPick, ours, null, Short(picked), Message(message));
+        }
+        if (Read("REVERT_HEAD") is { } reverted)
+        {
+            return new MergeState(MergeOperation.Revert, ours, null, Short(reverted), Message(message));
+        }
+        return new MergeState(MergeOperation.None, ours, null, null, null);
+
+        // The commit message git wrote for the merge, less its comment lines (the conflicts it lists), as a commit
+        // given the message in a file would keep them.
+        static string? Message(string? written) => written is null ? null
+            : string.Join('\n', written.Split('\n').Where(l => !l.StartsWith('#'))).Trim() is { Length: > 0 } kept ? kept : null;
+    }
+
+    /// <summary>A file of git's own folder, trimmed, or null when there is none.</summary>
+    private string? Read(string name)
+    {
+        string path = System.IO.Path.Combine(GitDir, name);
+        try
+        {
+            return File.Exists(path) ? File.ReadAllText(path).Trim() : null;
+        }
+        catch (IOException)
+        {
+            // Being written as git finishes: the next read sees it.
+            return null;
+        }
+    }
+
+    /// <summary>A commit by the branch at it (a local one first, then a remote's), else its first eight characters; the
+    /// last one named is kept, since every status read while a merge is under way asks for it again.</summary>
+    private async Task<string> NameAsync(string hash)
+    {
+        if (named is { } last && last.Hash == hash)
+        {
+            return last.Name;
+        }
+        GitResult at = await RunAsync(Root, ["for-each-ref", $"--points-at={hash}", "--format=%(refname)", "refs/heads", "refs/remotes"]);
+        string[] refs = at.Succeeded ? at.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries) : [];
+        string name = refs.FirstOrDefault(r => r.StartsWith("refs/heads/", StringComparison.Ordinal))?[11..]
+            ?? refs.FirstOrDefault(r => r.StartsWith("refs/remotes/", StringComparison.Ordinal) && !r.EndsWith("/HEAD", StringComparison.Ordinal))?[13..]
+            ?? Short(hash)!;
+        named = (hash, name);
+        return name;
+    }
+
+    private (string Hash, string Name)? named;
+
+    private static string? Short(string? hash) => hash is null ? null : hash[..Math.Min(8, hash.Length)];
+
+    /// <summary>A conflicted file's three versions as git keeps them while it is in conflict: the one both sides came
+    /// from, ours and theirs, each null where that side has none.</summary>
+    public async Task<(string? Base, string? Ours, string? Theirs)> StagesAsync(string path)
+    {
+        Task<string?> common = TextAtAsync(":1", path);
+        Task<string?> ours = TextAtAsync(":2", path);
+        Task<string?> theirs = TextAtAsync(":3", path);
+        return (await common, await ours, await theirs);
+    }
+
+    /// <summary>Accept Yours or Accept Theirs over conflicted files: each takes that side's version (ours, or theirs with
+    /// <paramref name="theirs"/>, in git's own terms), or is deleted where that side deleted it, and is marked resolved.</summary>
+    public async Task<GitResult> AcceptAsync(IReadOnlyList<GitConflict> conflicts, bool theirs)
+    {
+        string[] kept = [.. conflicts.Where(c => theirs ? c.HasTheirs : c.HasOurs).Select(c => Literal(Relative(c.Path)))];
+        string[] deleted = [.. conflicts.Where(c => !(theirs ? c.HasTheirs : c.HasOurs)).Select(c => Literal(Relative(c.Path)))];
+        if (kept.Length > 0)
+        {
+            GitResult taken = await RunAsync(Root, ["checkout", theirs ? "--theirs" : "--ours", "--", .. kept]);
+            if (!taken.Succeeded)
+            {
+                return taken;
+            }
+            GitResult added = await RunAsync(Root, ["add", "--", .. kept]);
+            if (!added.Succeeded)
+            {
+                return added;
+            }
+        }
+        return deleted.Length > 0 ? await RunAsync(Root, ["rm", "-q", "-f", "--", .. deleted]) : new GitResult(0, string.Empty, string.Empty);
+    }
+
+    /// <summary>Marks a conflicted file resolved with what is on disk now (the merge's result written there).</summary>
+    public Task<GitResult> MarkResolvedAsync(string path) => RunAsync(Root, ["add", "--", Literal(Relative(path))]);
+
+    /// <summary>Rider's Abort Merge, Abort Rebase and the like: the tree back as it was before the operation began.</summary>
+    public Task<GitResult> AbortAsync(MergeOperation operation) => RunAsync(Root, [operation switch
+    {
+        MergeOperation.Merge => "merge",
+        MergeOperation.Rebase => "rebase",
+        MergeOperation.CherryPick => "cherry-pick",
+        MergeOperation.Revert => "revert",
+        _ => throw new ArgumentException("Nothing is under way to abort", nameof(operation)),
+    }, "--abort"]);
+
+    /// <summary>Rider's Continue Rebase: the resolved commit made with the message it had, and the rest replayed.</summary>
+    public Task<GitResult> ContinueRebaseAsync() =>
+        RunAsync(Root, ["rebase", "--continue"], environment: new Dictionary<string, string> { ["GIT_EDITOR"] = "true" });
 
     /// <summary>The branches, remotes and tags the log shows and the commit each names: with HEAD's commit, what changes
     /// when the history does (a commit, a checkout, a fetch), and not when a file is saved or stashed.</summary>
@@ -630,8 +776,10 @@ public sealed class Git
     }
 
     /// <summary>Commits these files' changes (new ones added first) with a message, as Rider's Commit does; amending
-    /// the last commit when asked.</summary>
-    public async Task<GitResult> CommitAsync(IReadOnlyList<string> paths, string message, bool amend = false)
+    /// the last commit when asked. Finishing a merge (or a cherry-pick or a revert stopped for conflicts), which git
+    /// commits only whole, the files <paramref name="excluded"/> are taken out of it and kept as changes, as Rider's merge
+    /// commit leaves the files it excludes.</summary>
+    public async Task<GitResult> CommitAsync(IReadOnlyList<string> paths, string message, bool amend = false, bool merging = false, IReadOnlyList<string>? excluded = null)
     {
         string[] relative = [.. paths.Select(Relative).Distinct()];
         // No paths is an amend of the message alone: "add -A --" with none would add the whole tree.
@@ -643,11 +791,20 @@ public sealed class Git
                 return add;
             }
         }
+        string[] left = merging ? [.. (excluded ?? []).Select(Relative).Distinct().Except(relative)] : [];
+        if (left.Length > 0)
+        {
+            GitResult unstaged = await RunAsync(Root, ["reset", "-q", "--", .. left.Select(Literal)]);
+            if (!unstaged.Succeeded)
+            {
+                return unstaged;
+            }
+        }
         string file = System.IO.Path.GetTempFileName();
         await File.WriteAllTextAsync(file, message);
         try
         {
-            string[] only = relative.Length > 0 ? ["--only", "--", .. relative.Select(Literal)] : [];
+            string[] only = relative.Length > 0 && !merging ? ["--only", "--", .. relative.Select(Literal)] : [];
             return await RunAsync(Root, ["commit", "-F", file, .. amend ? new[] { "--amend" } : [], .. only]);
         }
         finally
@@ -797,13 +954,17 @@ public sealed class Git
 
     private string Full(string relative) => System.IO.Path.GetFullPath(System.IO.Path.Combine(Root, relative));
 
-    private static async Task<GitResult> RunAsync(string folder, IReadOnlyList<string> arguments, string? input = null)
+    private static async Task<GitResult> RunAsync(string folder, IReadOnlyList<string> arguments, string? input = null, IReadOnlyDictionary<string, string>? environment = null)
     {
         // What git answers is what the window shows next (the branch, the bars, the log, a blame): a screenshot waits for it.
         using IDisposable held = BackgroundWork.Scope();
         if (Start(folder, arguments) is not { } start)
         {
             return NotInstalled;
+        }
+        foreach ((string name, string value) in environment ?? new Dictionary<string, string>())
+        {
+            start.Environment[name] = value;
         }
         try
         {

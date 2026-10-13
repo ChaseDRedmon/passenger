@@ -220,6 +220,13 @@ public static class AppActions
     public const string Unstash = "app.vcs.unstash";
     public const string CloneRepository = "app.vcs.clone";
 
+    // Rider's Git.ResolveConflicts, Git.Rebase.Continue, Git.Rebase.Abort and Git.Merge.Abort: no keys in its Visual
+    // Studio keymaps or their parents.
+    public const string ResolveConflicts = "app.vcs.resolveConflicts";
+    public const string ContinueRebase = "app.vcs.continueRebase";
+    public const string AbortRebase = "app.vcs.abortRebase";
+    public const string AbortMerge = "app.vcs.abortMerge";
+
     // Rider's Vcs.ShowTabbedFileHistory, Vcs.ShowHistoryForBlock, Git.CompareWithBranch and Compare.Selected: no keys in
     // its Visual Studio keymaps or their parents.
     public const string ShowHistory = "app.vcs.showHistory";

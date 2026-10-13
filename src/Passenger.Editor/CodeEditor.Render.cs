@@ -686,6 +686,7 @@ public sealed partial class CodeEditor
             {
                 ChangeMarkKind.Added => palette.DiffAdded,
                 ChangeMarkKind.Deleted => palette.DiffDeleted,
+                ChangeMarkKind.Conflict => palette.DiffConflict,
                 _ => palette.DiffModified,
             };
             for (int line = Math.Max(first, change.Line); line <= Math.Min(last, change.Line + change.Count - 1); line++)
@@ -707,6 +708,7 @@ public sealed partial class CodeEditor
                 {
                     ChangeMarkKind.Added => palette.ChangeAdded,
                     ChangeMarkKind.Deleted => palette.ChangeDeleted,
+                    ChangeMarkKind.Conflict => palette.ChangeConflict,
                     _ => palette.ChangeModified,
                 };
                 context.FillRectangle(brush, new Rect(gutter, TopOf(change.Line) - scroll.Y - 1, width - gutter, 2));
@@ -739,7 +741,12 @@ public sealed partial class CodeEditor
                 context.DrawGeometry(palette.ChangeDeleted, null, wedge);
                 continue;
             }
-            IBrush brush = change.Kind == ChangeMarkKind.Added ? palette.ChangeAdded : palette.ChangeModified;
+            IBrush brush = change.Kind switch
+            {
+                ChangeMarkKind.Added => palette.ChangeAdded,
+                ChangeMarkKind.Conflict => palette.ChangeConflict,
+                _ => palette.ChangeModified,
+            };
             double bottom = BottomOf(Math.Min(change.Line + change.Count - 1, document.Snapshot.LineCount - 1)) - scroll.Y;
             context.FillRectangle(brush, new Rect(x, top + 1, 3, Math.Max(1, bottom - top - 2)), 1);
         }
@@ -860,9 +867,11 @@ public sealed partial class CodeEditor
         public IBrush DiffAdded { get; private init; } = Brush("#2B4234");
         public IBrush DiffModified { get; private init; } = Brush("#2C3A55");
         public IBrush DiffDeleted { get; private init; } = Brush("#3B3D42");
+        public IBrush DiffConflict { get; private init; } = Brush("#482D2E");
         public IBrush ChangeAdded { get; private init; } = Brush("#549159");
         public IBrush ChangeModified { get; private init; } = Brush("#375FAD");
         public IBrush ChangeDeleted { get; private init; } = Brush("#868A91");
+        public IBrush ChangeConflict { get; private init; } = Brush("#C75450");
         public IBrush TestNotRun { get; private init; } = Brush("#5FAD65");
         public IBrush ExceptionBack { get; private init; } = Brush("#4A2629");
         public IBrush InlayHint { get; private init; } = Brush("#8F9298");
@@ -912,9 +921,11 @@ public sealed partial class CodeEditor
                 DiffAdded = Find(control, "Passenger.Diff.Added") ?? defaults.DiffAdded,
                 DiffModified = Find(control, "Passenger.Diff.Modified") ?? defaults.DiffModified,
                 DiffDeleted = Find(control, "Passenger.Diff.Deleted") ?? defaults.DiffDeleted,
+                DiffConflict = Find(control, "Passenger.Diff.Conflict") ?? defaults.DiffConflict,
                 ChangeAdded = Find(control, "Passenger.Vcs.Added") ?? defaults.ChangeAdded,
                 ChangeModified = Find(control, "Passenger.Vcs.Modified") ?? defaults.ChangeModified,
                 ChangeDeleted = Find(control, "Passenger.Vcs.Deleted") ?? defaults.ChangeDeleted,
+                ChangeConflict = Find(control, "Passenger.Vcs.Conflict") ?? defaults.ChangeConflict,
                 TestNotRun = Find(control, "Passenger.Run") ?? defaults.TestNotRun,
                 ExceptionBack = Find(control, "Passenger.Editor.ExceptionBack") ?? defaults.ExceptionBack,
                 InlayHint = Find(control, "Passenger.Editor.InlayHint") ?? defaults.InlayHint,

@@ -26,9 +26,20 @@ public partial class MainWindow
     /// <summary>The open folder's version control.</summary>
     public VcsController Vcs => vcs;
 
-    /// <summary>The window in front: the last diff or dialog opened over this one and still open, else the editor window
-    /// the person works in, else this.</summary>
-    public Window Frontmost => OwnedWindows.LastOrDefault(w => w.IsVisible) ?? Editors.InFront?.Window ?? this;
+    /// <summary>The window in front: the last diff or dialog opened over this one and still open (or over that, as the
+    /// merge window opens over the Conflicts dialog), else the editor window the person works in, else this.</summary>
+    public Window Frontmost
+    {
+        get
+        {
+            Window? front = OwnedWindows.LastOrDefault(w => w.IsVisible);
+            while (front?.OwnedWindows.LastOrDefault(w => w.IsVisible) is { } over)
+            {
+                front = over;
+            }
+            return front ?? Editors.InFront?.Window ?? this;
+        }
+    }
 
     /// <summary>The Commit tool window.</summary>
     public ToolWindows.CommitView CommitView => commitView!;
@@ -65,6 +76,7 @@ public partial class MainWindow
         });
         AddVcsActions();
         AddHistoryActions();
+        AddMergeConflicts();
         gitView.DiffRequested += (_, chosen) => _ = ShowCommitDiffAsync(chosen.Commit, chosen.File);
         gitView.CompareRequested += (_, chosen) => _ = CompareWithAsync(chosen.Local, chosen.Commit.Hash, chosen.Commit.Short, chosen.File.Path);
         commitView.OpenRequested += (_, path) => OpenFile(path);

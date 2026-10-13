@@ -1,0 +1,326 @@
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Headless;
+using Avalonia.Headless.XUnit;
+using Avalonia.Input;
+using Passenger.App;
+using Passenger.App.ToolWindows;
+using Passenger.App.Vcs;
+using Passenger.Core;
+
+namespace Passenger.Tests;
+
+/// <summary>Merge conflicts as Rider resolves them, over real working trees: a merge's conflicted files listed under the
+/// Commit window's Merge Conflicts and in the Conflicts dialog, one taken whole from a side and the other merged in the
+/// three-way window (its non-conflicting changes in one go, the conflict by its arrow, a simple one by the magic wand, all
+/// undoable) and written, git marking each resolved and the commit finishing the merge; a rebase's sides named by their
+/// branches as Update Project stops on them, and the rebase going on once they are resolved; an unstash's conflict.</summary>
+public sealed class ConflictsTests : IDisposable
+{
+    private const string Shop = "class Shop\n{\n    int count;\n\n    void Add() { count++; }\n}\n";
+
+    private const string Prices = "class Prices\n{\n    int Base() => 10;\n\n    int Tax() => 2;\n\n    int Discount() => 0;\n\n    int Shipping() => 5;\n\n    int Total() => Base() + Tax() - Discount() + Shipping();\n}\n";
+
+    private readonly string folder = TestFolders.Create("conflicts-");
+
+    public ConflictsTests() => TestFolders.Prepare(() =>
+    {
+        File.WriteAllText(Path.Combine(folder, "Shop.cs"), Shop);
+        File.WriteAllText(Path.Combine(folder, "Prices.cs"), Prices);
+        TestGit.Init(folder);
+    }, folder);
+
+    public void Dispose() => TestFolders.Delete(folder);
+
+    [AvaloniaFact]
+    public void A_merges_conflicts_are_listed_and_resolved_whole_or_in_the_merge_window_and_the_commit_finishes_the_merge()
+    {
+        // Both branches change Base and count; main changes Discount too, the feature Shipping.
+        Git("switch", "-q", "-c", "feature");
+        Write("Shop.cs", Shop.Replace("int count", "short count", StringComparison.Ordinal));
+        Write("Prices.cs", Prices.Replace("Base() => 10", "Base() => 12", StringComparison.Ordinal).Replace("Shipping() => 5", "Shipping() => 7", StringComparison.Ordinal));
+        Git("commit", "-q", "-am", "Feature prices");
+        Git("switch", "-q", "main");
+        Write("Shop.cs", Shop.Replace("int count", "long count", StringComparison.Ordinal));
+        Write("Prices.cs", Prices.Replace("Base() => 10", "Base() => 11", StringComparison.Ordinal).Replace("Discount() => 0", "Discount() => 1", StringComparison.Ordinal));
+        Git("commit", "-q", "-am", "Main prices");
+        Conflicting("merge", "feature");
+
+        MainWindow window = Open();
+        // The Commit window lists them under Merge Conflicts, with nothing to choose.
+        CommitView commit = window.CommitView;
+        Ui.Landed(() => commit.Rows.OfType<CommitGroup>().Any(g => g.Name == "Merge Conflicts"), "the Merge Conflicts group");
+        CommitGroup conflicts = commit.Rows.OfType<CommitGroup>().Single(g => g.Name == "Merge Conflicts");
+        Assert.Equal(["Prices.cs", "Shop.cs"], conflicts.Rows.Select(r => r.Change.Name));
+        Assert.DoesNotContain(commit.Chosen, c => c.Kind == ChangeKind.Conflicted);
+        // Its message is the one git wrote for the merge, and no commit is made while files are in conflict.
+        Assert.Equal("Merge branch 'feature'", commit.Message);
+        Assert.Equal("Resolve conflicts in order to commit", CommitRefused(window));
+
+        Assert.True(window.Perform(AppActions.ResolveConflicts), window.Status);
+        Ui.Settle();
+        ConflictsDialog dialog = Assert.IsType<ConflictsDialog>(window.Frontmost);
+        Assert.Equal("Merging branch feature into branch main", dialog.Description);
+        Assert.Equal(["Name", "Yours (main)", "Theirs (feature)"], dialog.Columns);
+        Assert.Equal(["Prices.cs Modified Modified", "Shop.cs Modified Modified"], dialog.Rows.Select(r => $"{r.Conflict.Name} {r.Yours} {r.Theirs}"));
+
+        // Accept Theirs takes the feature's Shop.cs whole, and git has it resolved.
+        dialog.Chosen = [dialog.Rows.Single(r => r.Conflict.Name == "Shop.cs")];
+        Press(dialog, "Accept Theirs");
+        Ui.Landed(() => dialog.Rows.Count == 1, "Shop.cs gone from the dialog's list");
+        Assert.Equal(Shop.Replace("int count", "short count", StringComparison.Ordinal), Read("Shop.cs"));
+        Assert.Equal(["Prices.cs"], Unmerged());
+
+        // Merge... opens the three-way window over the dialog: yours, the result (as both began) and theirs.
+        dialog.Chosen = [dialog.Rows.Single()];
+        Press(dialog, "Merge...");
+        Ui.Landed(() => window.Frontmost is MergeWindow, "the merge window");
+        MergeWindow merge = (MergeWindow)window.Frontmost;
+        MergeView view = merge.View;
+        Assert.Equal("Merge Revisions for Prices.cs", merge.Title);
+        Assert.Equal(("Your version, branch main", "Changes from branch feature"), (view.Texts.Sides.LeftTitle, view.Texts.Sides.RightTitle));
+        Assert.Equal(Prices, view.ResultText);
+        Assert.Equal([true, false, false], view.Changes.Select(c => c.IsConflict));
+        Assert.Equal((2, 1), (view.UnresolvedChanges, view.UnresolvedConflicts));
+
+        // Apply All Non-Conflicting Changes takes main's Discount and the feature's Shipping in one go.
+        Press(merge, "Apply All Non-Conflicting Changes");
+        Assert.Contains("Discount() => 1;", view.ResultText, StringComparison.Ordinal);
+        Assert.Contains("Shipping() => 7;", view.ResultText, StringComparison.Ordinal);
+        Assert.Equal((0, 1), (view.UnresolvedChanges, view.UnresolvedConflicts));
+
+        // The conflict's arrow on the left takes main's Base; its right side waits for its own arrow or X.
+        Click(merge, view, view.IconAt(0, MergeSide.Left, ignore: false));
+        string merged = Prices.Replace("Base() => 10", "Base() => 11", StringComparison.Ordinal).Replace("Discount() => 0", "Discount() => 1", StringComparison.Ordinal)
+            .Replace("Shipping() => 5", "Shipping() => 7", StringComparison.Ordinal);
+        Assert.Equal(merged, view.ResultText);
+        Assert.Equal((0, 1), (view.UnresolvedChanges, view.UnresolvedConflicts));
+        Assert.Null(view.IconAt(0, MergeSide.Left, ignore: false));
+        Click(merge, view, view.IconAt(0, MergeSide.Right, ignore: true));
+        Assert.Equal(merged, view.ResultText);
+        Assert.Equal((0, 0), (view.UnresolvedChanges, view.UnresolvedConflicts));
+        Assert.Null(view.IconAt(0, MergeSide.Right, ignore: false));
+
+        // Apply Changes writes it, git marks it resolved, and with nothing left in conflict the dialog goes too.
+        Press(merge, "Apply Changes");
+        Ui.Landed(() => !merge.IsVisible && !dialog.IsVisible && window.ConflictsWindow is null, "the merge window and the dialog closed");
+        Assert.True(merge.Resolved);
+        Assert.Equal(merged, Read("Prices.cs"));
+        Assert.Empty(Unmerged());
+        Assert.DoesNotContain(window.Vcs.Changes, c => c.Kind == ChangeKind.Conflicted);
+
+        // The commit, under the message git wrote for the merge, finishes it: a commit of both branches.
+        Assert.Equal("Merge branch 'feature'", commit.Message);
+        Task<bool> committed = commit.CommitAsync(push: false);
+        Ui.Landed(() => committed.IsCompleted, "the merge committed");
+        Assert.True(committed.Result, window.Status);
+        Assert.Equal(3, Git("rev-list", "--parents", "-n", "1", "HEAD").Split(' ', StringSplitOptions.RemoveEmptyEntries).Length);
+        Assert.False(File.Exists(Path.Combine(folder, ".git", "MERGE_HEAD")), "The merge was still under way after its commit");
+        Assert.Equal("Merge branch 'feature'", Git("log", "-1", "--format=%s").Trim());
+        string left = Git("status", "--porcelain").Trim();
+        Assert.True(left.Length == 0, $"The merge's commit left changes behind: {left}\n{Git("diff")}");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Resolve_simple_conflicts_merges_a_lines_different_words_undo_takes_it_back_and_the_keys_take_a_side()
+    {
+        // One line, changed by each side in a different word.
+        Git("switch", "-q", "-c", "feature");
+        Write("Shop.cs", Shop.Replace("int count", "int total", StringComparison.Ordinal));
+        Git("commit", "-q", "-am", "Total");
+        Git("switch", "-q", "main");
+        Write("Shop.cs", Shop.Replace("int count", "long count", StringComparison.Ordinal));
+        Git("commit", "-q", "-am", "Long");
+        Conflicting("merge", "feature");
+
+        MainWindow window = Open();
+        ConflictsDialog dialog = window.ShowConflicts()!;
+        Ui.Settle();
+        dialog.Chosen = [dialog.Rows.Single()];
+        Press(dialog, "Merge...");
+        Ui.Landed(() => window.Frontmost is MergeWindow, "the merge window");
+        MergeWindow merge = (MergeWindow)window.Frontmost;
+        MergeView view = merge.View;
+        Assert.Equal(1, view.UnresolvedConflicts);
+
+        // The magic wand takes main's word and the feature's.
+        Press(merge, "Resolve Simple Conflicts");
+        Assert.Equal(Shop.Replace("int count", "long total", StringComparison.Ordinal), view.ResultText);
+        Assert.Equal(0, view.UnresolvedConflicts);
+
+        // Undo in the result puts it back as both began, the conflict open again.
+        view.Result.Focus();
+        Ui.Press(merge, OperatingSystem.IsMacOS() ? "meta Z" : "control Z");
+        Assert.Equal(Shop, view.ResultText);
+        Assert.Equal(1, view.UnresolvedConflicts);
+
+        // F7 goes to it, and Accept Right Side (Rider's key) takes the feature's line there; Accept Left Side then adds
+        // main's after it, which resolves it.
+        Ui.Press(merge, "F7");
+        Assert.Equal(2, view.Result.CaretPosition.Line);
+        Ui.Press(merge, OperatingSystem.IsMacOS() ? "control meta LEFT" : "control alt A");
+        Assert.Equal(Shop.Replace("int count", "int total", StringComparison.Ordinal), view.ResultText);
+        Assert.Equal(1, view.UnresolvedConflicts);
+        Ui.Press(merge, OperatingSystem.IsMacOS() ? "control meta RIGHT" : "control alt R");
+        Assert.Equal(Shop.Replace("    int count;\n", "    int total;\n    long count;\n", StringComparison.Ordinal), view.ResultText);
+        Assert.Equal(0, view.UnresolvedConflicts);
+
+        // Cancel, asked first since the merge was begun, leaves the file in conflict.
+        List<string> asked = [];
+        window.Confirm = (title, text, yes) =>
+        {
+            asked.Add(title);
+            return Task.FromResult(true);
+        };
+        Press(merge, "Cancel");
+        Ui.Landed(() => !merge.IsVisible, "the merge window closed");
+        Assert.Equal(["Cancel File Merge"], asked);
+        Assert.False(merge.Resolved);
+        Assert.Equal(["Shop.cs"], Unmerged());
+        Assert.True(dialog.IsVisible, "Cancelling the merge closed the Conflicts dialog");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Update_project_stopped_by_a_rebases_conflict_names_each_side_by_its_branch_and_the_rebase_goes_on_once_it_is_resolved()
+    {
+        string clone = TestFolders.Create("conflicts-clone-");
+        Git("clone", "-q", "-c", "core.autocrlf=false", folder, clone);
+        TestGit.Run(clone, "config", "user.email", "tests@passenger.invalid");
+        TestGit.Run(clone, "config", "user.name", "Passenger Tests");
+        TestGit.Run(clone, "config", "pull.rebase", "true");
+        File.WriteAllText(Path.Combine(clone, "Shop.cs"), Shop.Replace("int count", "short count", StringComparison.Ordinal));
+        TestGit.Run(clone, "commit", "-q", "-am", "Short");
+        Write("Shop.cs", Shop.Replace("int count", "long count", StringComparison.Ordinal));
+        Git("commit", "-q", "-am", "Long");
+
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(clone);
+        window.OpenFile(Path.Combine(clone, "Shop.cs"));
+        Ui.Settle();
+        bool asked = false;
+        window.Confirm = (title, text, yes) =>
+        {
+            asked = text == "All conflicts have been resolved. Do you want to continue rebase?" && yes == "Continue Rebase";
+            return Task.FromResult(true);
+        };
+
+        // Update Project rebases the local commit onto the upstream's and stops: the Conflicts dialog opens on it.
+        window.Perform(AppActions.UpdateProject);
+        Ui.Landed(() => window.ConflictsWindow is not null, "the Conflicts dialog");
+        Assert.StartsWith("Rebase stopped due to conflicts", window.Status, StringComparison.Ordinal);
+        ConflictsDialog dialog = window.ConflictsWindow!;
+        Assert.Equal("Rebasing branch main onto branch origin/main", dialog.Description);
+        Assert.Equal(["Name", "Yours (main)", "Theirs (origin/main)"], dialog.Columns);
+        Assert.Contains("<<<<<<<", window.EditorArea.Active!.Text.Snapshot.ToString(), StringComparison.Ordinal);
+
+        // Yours is the commit being rebased, git's "theirs", on the left.
+        dialog.Chosen = [dialog.Rows.Single()];
+        Press(dialog, "Merge...");
+        Ui.Landed(() => window.Frontmost is MergeWindow, "the merge window");
+        MergeWindow merge = (MergeWindow)window.Frontmost;
+        Assert.Matches("^Rebasing [0-9a-f]{8} from main$", merge.View.Texts.Sides.LeftTitle);
+        Assert.Equal("Already rebased commits and commits from origin/main", merge.View.Texts.Sides.RightTitle);
+        Assert.Contains("short count", merge.View.Left.Document.Snapshot.ToString(), StringComparison.Ordinal);
+        Assert.Contains("long count", merge.View.Right.Document.Snapshot.ToString(), StringComparison.Ordinal);
+
+        // Accept Left keeps the local change; resolved, the rebase is offered to go on, and it does.
+        Press(merge, "Accept Left");
+        Ui.Landed(() => window.ConflictsWindow is null && asked, "the question to continue the rebase");
+        Ui.Landed(() => window.Status == "Rebase successful", "the rebase's end");
+        Assert.Equal(["Short", "Long", "First"], TestGit.Run(clone, "log", "--format=%s").Split('\n', StringSplitOptions.RemoveEmptyEntries));
+        Assert.Equal(Shop.Replace("int count", "short count", StringComparison.Ordinal), File.ReadAllText(Path.Combine(clone, "Shop.cs")));
+        Assert.Equal(MergeOperation.None, window.Vcs.Merge.Operation);
+        Ui.Landed(() => window.EditorArea.Active!.Text.Snapshot.ToString() == Shop.Replace("int count", "short count", StringComparison.Ordinal), "the open file as rebased");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void An_unstash_that_conflicts_opens_the_conflicts_dialog_on_the_stash_and_accept_theirs_takes_the_stashed_change()
+    {
+        Write("Shop.cs", Shop.Replace("int count", "short count", StringComparison.Ordinal));
+        Git("stash", "push", "-m", "Short count");
+        Write("Shop.cs", Shop.Replace("int count", "long count", StringComparison.Ordinal));
+        Git("commit", "-q", "-am", "Long");
+
+        MainWindow window = Open();
+        Task<UnstashPopup?> showing = window.ShowUnstashAsync();
+        Ui.Landed(() => showing.IsCompleted, "the stashes");
+        Task popping = showing.Result!.PopAsync();
+        Ui.Landed(() => popping.IsCompleted && window.ConflictsWindow is not null, "the Conflicts dialog");
+        Assert.Equal("Unstashed with conflicts: Shop.cs", window.Status);
+        ConflictsDialog dialog = window.ConflictsWindow!;
+        Assert.Equal("Conflicts during unstashing stash@{0}", dialog.Description);
+        Assert.Equal(["Name", "Yours (main)", "Theirs"], dialog.Columns);
+        // The open file shows what git left in it.
+        Assert.Contains(">>>>>>>", window.EditorArea.Active!.Text.Snapshot.ToString(), StringComparison.Ordinal);
+
+        dialog.Chosen = [dialog.Rows.Single()];
+        Press(dialog, "Accept Theirs");
+        Ui.Landed(() => window.ConflictsWindow is null, "the dialog closed with nothing left in conflict");
+        string stashed = Shop.Replace("int count", "short count", StringComparison.Ordinal);
+        Assert.Equal(stashed, Read("Shop.cs"));
+        Assert.Equal(stashed, window.EditorArea.Active!.Text.Snapshot.ToString());
+        Assert.Empty(Unmerged());
+        // Git keeps a stash whose pop stopped for conflicts.
+        Assert.Single(Git("stash", "list").Split('\n', StringSplitOptions.RemoveEmptyEntries));
+        window.Close();
+    }
+
+    private MainWindow Open()
+    {
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(folder);
+        window.OpenFile(Path.Combine(folder, "Shop.cs"));
+        Ui.Settle();
+        return window;
+    }
+
+    /// <summary>What the Commit window's Commit answered when pressed: why it would not commit.</summary>
+    private static string CommitRefused(MainWindow window)
+    {
+        Task<bool> committing = window.CommitView.CommitAsync(push: false);
+        Ui.Landed(() => committing.IsCompleted, "the commit's answer");
+        Assert.False(committing.Result, "A commit was made with files still in conflict");
+        return window.Status ?? string.Empty;
+    }
+
+    /// <summary>Clicks a merge window where its view draws something (a change's arrow or X), as the person clicks it.</summary>
+    private static void Click(MergeWindow merge, MergeView view, Point? at)
+    {
+        Assert.True(at is not null, "The merge window draws no arrow or X there");
+        Point point = view.TranslatePoint(at.Value, merge)!.Value;
+        merge.MouseDown(point, MouseButton.Left);
+        merge.MouseUp(point, MouseButton.Left);
+        Ui.Settle();
+    }
+
+    /// <summary>Presses a button of a window by its words or its tooltip, as the person clicks it.</summary>
+    private static void Press(Window window, string button)
+    {
+        Button? found = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(window).OfType<Button>()
+            .FirstOrDefault(b => (b.Content as string) == button || ToolTip.GetTip(b) as string == button);
+        Assert.True(found is { IsEffectivelyEnabled: true }, $"{window.Title} has no {button} to press{(found is null ? string.Empty : " that is on")}");
+        found!.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Ui.Settle();
+    }
+
+    /// <summary>The files git still has in conflict, by name.</summary>
+    private string[] Unmerged() => [.. Git("diff", "--name-only", "--diff-filter=U").Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(Path.GetFileName)!];
+
+    /// <summary>A git command that is to stop for conflicts, as a merge or a pull does.</summary>
+    private void Conflicting(params string[] arguments)
+    {
+        ChildResult result = Task.Run(() => ChildProcesses.RunAsync(ChildProcesses.Command("git", arguments, folder), limit: TimeSpan.FromMinutes(1))).GetAwaiter().GetResult();
+        Assert.True(!result.Succeeded && Unmerged().Length > 0, $"git {string.Join(' ', arguments)} was to stop for conflicts: {result.Error}{result.Output}");
+    }
+
+    private void Write(string name, string text) => File.WriteAllText(Path.Combine(folder, name), text);
+
+    private string Read(string name) => File.ReadAllText(Path.Combine(folder, name));
+
+    private string Git(params string[] arguments) => TestGit.Run(folder, arguments);
+}
