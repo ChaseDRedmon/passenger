@@ -313,7 +313,7 @@ public partial class ManagedDebugger
                 case BreakCorDebugManagedCallbackEventArgs a: HandleBreak(sender, a); break;
                 case ExceptionCorDebugManagedCallbackEventArgs a: HandleException(sender, a); break;
                 case Exception2CorDebugManagedCallbackEventArgs a: HandleException2(sender, a); break;
-                case DeferredExceptionStop a: StopAtException(a.Thread, a.BreakMode); break;
+                case DeferredExceptionStop a: StopAtException(a.Thread, a.BreakMode, a.Handler); break;
                 case EvalCompleteCorDebugManagedCallbackEventArgs or EvalExceptionCorDebugManagedCallbackEventArgs when IsAbandonedEvaluationsEnd(e): LetGoAbandonedEvaluation(e); break;
                 case EvalCompleteCorDebugManagedCallbackEventArgs or EvalExceptionCorDebugManagedCallbackEventArgs: break; // don't continue on these, as they are being used for expression evaluation
                 default:
@@ -456,10 +456,11 @@ public partial class ManagedDebugger
     private readonly Queue<CorDebugManagedCallbackEventArgs> _deferredEvents = new();
 
     /// <summary>An exception on another thread that stops the program, found while an evaluation ran.</summary>
-    private sealed class DeferredExceptionStop(ICorDebugThread thread, ExceptionBreakMode breakMode) : CorDebugManagedCallbackEventArgs
+    private sealed class DeferredExceptionStop(ICorDebugThread thread, ExceptionBreakMode breakMode, StackRange? handler) : CorDebugManagedCallbackEventArgs
     {
         public ICorDebugThread Thread { get; } = thread;
         public ExceptionBreakMode BreakMode { get; } = breakMode;
+        public StackRange? Handler { get; } = handler;
     }
 
     private void ConfigureExceptionCallbacks()
@@ -483,6 +484,52 @@ public partial class ManagedDebugger
 
     /// <summary>A step asked of a thread whose evaluation was given up and runs on, begun once that evaluation returns.</summary>
     private (int ThreadId, AsyncStepper.StepType Type)? _stepAfterEvaluation;
+
+    /// <summary>A thread stopped at an exception its user's code left unhandled, and the stack range of the frame of the
+    /// handler outside that code which caught it, until the program runs on: a step from the stop steps out of it.</summary>
+    private (int ThreadId, StackRange Handler)? _unhandledByUser;
+
+    /// <summary>The thread the step in progress steps, and the stack range of the frame it steps from.</summary>
+    private (int ThreadId, StackRange Frame)? _stepping;
+
+    /// <summary>Where a frame lies on its thread's stack: its identity while it lives, as the stack's memory does not move.</summary>
+    private readonly record struct StackRange(CORDB_ADDRESS Start, CORDB_ADDRESS End);
+
+    private static StackRange? RangeOf(ICorDebugFrame frame) =>
+        frame.TryGetStackRange(out CORDB_ADDRESS start, out CORDB_ADDRESS end) is Cor.S_OK ? new StackRange(start, end) : null;
+
+    /// <summary>Steps out of the frame of a handler outside the user's code, Just My Code: the step ends where the user's
+    /// code goes on, as Visual Studio's does from an exception that code left unhandled, rather than in the handler.</summary>
+    private void StepOutOfHandler(ICorDebugThread thread, ICorDebugFrame handler)
+    {
+        ICorDebugStepper stepper = handler.CreateStepper();
+        stepper.SetUnmappedStopMask(CorDebugUnmappedStop.STOP_NONE);
+        stepper.SetJMC(true);
+        stepper.StepOut();
+        _stepper = stepper;
+        _stepping = RangeOf(handler) is { } range ? (thread.Id, range) : null;
+    }
+
+    /// <summary>A step under way whose frame an exception will unwind, to a handler outside the user's code: the runtime's
+    /// Just My Code stepper stops neither in that handler nor after it, so the step would run on to whatever stops next. It
+    /// steps out of the handler instead, to where the user's code goes on. A handler in a call the step steps over, above
+    /// the step's frame on the stack, leaves the step as it is.</summary>
+    private void StepPastHandler(ICorDebugThread thread, ICorDebugFrame handler)
+    {
+        if (_stepper is null || _stepping is not (int steppingThread, StackRange stepped) || steppingThread != thread.Id || RangeOf(handler) is not { } caught)
+        {
+            return;
+        }
+        List<StackRange?> frames = [.. EnumerateFramesForThread(thread).Select(RangeOf)];
+        int stepping = frames.IndexOf(stepped);
+        if (stepping < 0 || frames.IndexOf(caught) <= stepping)
+        {
+            return;
+        }
+        _logger?.Invoke($"The step's frame is unwound to a handler outside the user's code: stepping out of the handler");
+        _stepper.Deactivate();
+        StepOutOfHandler(thread, handler);
+    }
 
     /// <summary>
     /// Setup a stepper without continuing execution
@@ -539,6 +586,7 @@ public partial class ManagedDebugger
         }
 
         _stepper = stepper;
+        _stepping = RangeOf(frame) is { } range ? (thread.Id, range) : null;
         return stepper;
     }
 
@@ -853,7 +901,9 @@ public partial class ManagedDebugger
         _asyncStepper?.Dispose();
         _asyncStepper = null;
         _stepper = null!;
+        _stepping = null;
         _stepAfterEvaluation = null;
+        _unhandledByUser = null;
         EvalStatus.Abandoned.Clear();
         EvalStatus.ImplicitOff = null;
         _threads.Clear();

@@ -554,6 +554,7 @@ public partial class ManagedDebugger
         string exceptionType = GetCurrentExceptionType(corThread);
         bool shouldStop = false;
         ExceptionBreakMode breakMode = ExceptionBreakMode.Unknown;
+        StackRange? handler = null;
 
         switch (exceptionEventArgs.DwEventType)
         {
@@ -593,6 +594,14 @@ public partial class ManagedDebugger
                     shouldStop = _justMyCode && handlerIsUserCode is false && _exceptionStates.TryGetValue(threadId, out ExceptionPropagationState? state) && state.HasReachedUserCode && MatchesExceptionBreakpoint(ExceptionBreakpointFilter.UserUnhandled, exceptionType);
                     _exceptionStates.Remove(threadId);
                     breakMode = ExceptionBreakMode.UserUnhandled;
+                    if (shouldStop)
+                    {
+                        handler = RangeOf(exceptionEventArgs.Frame);
+                    }
+                    else if (_justMyCode && !handlerIsUserCode && !EvalStatus.IsRunning)
+                    {
+                        StepPastHandler(corThread, exceptionEventArgs.Frame);
+                    }
                     break;
                 }
             case CorDebugExceptionCallbackType.DEBUG_EXCEPTION_UNHANDLED:
@@ -608,7 +617,7 @@ public partial class ManagedDebugger
             if (shouldStop)
             {
                 _logger?.Invoke($"Put off: a stop at an exception on thread {corThread.Id}, during an evaluation on thread {EvalStatus.ThreadId}");
-                _deferredEvents.Enqueue(new DeferredExceptionStop(corThread, breakMode));
+                _deferredEvents.Enqueue(new DeferredExceptionStop(corThread, breakMode, handler));
             }
             _process!.Continue(false);
             return;
@@ -618,13 +627,14 @@ public partial class ManagedDebugger
             ContinueWithVariableClear();
             return;
         }
-        StopAtException(corThread, breakMode);
+        StopAtException(corThread, breakMode, handler);
     }
 
-    private void StopAtException(ICorDebugThread corThread, ExceptionBreakMode breakMode)
+    private void StopAtException(ICorDebugThread corThread, ExceptionBreakMode breakMode, StackRange? handler = null)
     {
         EndStepForStop();
         _exceptionBreakModes[new ThreadId(corThread.Id)] = breakMode;
+        _unhandledByUser = breakMode is ExceptionBreakMode.UserUnhandled && handler is { } range ? (corThread.Id, range) : null;
         OnStopped?.Invoke(corThread.Id, "exception");
     }
 

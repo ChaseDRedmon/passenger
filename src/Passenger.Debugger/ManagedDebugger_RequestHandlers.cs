@@ -247,6 +247,7 @@ public partial class ManagedDebugger
         ArgumentNullException.ThrowIfNull(_process);
         _pauseRequested = false;
         EvalStatus.ImplicitOff = null;
+        _unhandledByUser = null;
         _variableManager.ClearAndDisposeHandleValues();
         _frameReferenceManager.Clear();
         // Another thread's event put off while this stop's evaluations ran comes next, rather than lost to the continue.
@@ -269,6 +270,7 @@ public partial class ManagedDebugger
         ArgumentNullException.ThrowIfNull(_process);
         _pauseRequested = false;
         EvalStatus.ImplicitOff = null;
+        _unhandledByUser = null;
         _variableManager.ClearAndDisposeHandleValues();
         _frameReferenceManager.Clear();
         // As at the person's continue: a condition tested or a step begun lets nothing put off pass unseen.
@@ -360,6 +362,7 @@ public partial class ManagedDebugger
         }
         stepper.StepOut();
         _stepper = stepper;
+        _stepping = null;
         ContinueWithVariableClear();
         return true;
     }
@@ -395,6 +398,15 @@ public partial class ManagedDebugger
             // The thread runs an evaluation given up, above the stop: a stepper made now would be the evaluation's, and the
             // runtime ends it with the evaluation. The step is taken from the stop once the evaluation has returned.
             _stepAfterEvaluation = (threadId, type);
+            ContinueWithVariableClear();
+            return;
+        }
+        if (_unhandledByUser is (int stopped, StackRange caught) && stopped == threadId
+            && EnumerateFramesForThread(thread).FirstOrDefault(frame => RangeOf(frame) == caught) is { } handler)
+        {
+            // Stopped at an exception the user's code left unhandled: the step goes where that code goes on, past the
+            // handler that caught it. A step from the throw would end in a frame the exception unwinds, and never stop.
+            StepOutOfHandler(thread, handler);
             ContinueWithVariableClear();
             return;
         }

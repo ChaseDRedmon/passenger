@@ -47,6 +47,65 @@ public class JustMyCodeTests(ITestOutputHelper testOutputHelper)
     }
 
     [Fact]
+    public async Task A_step_from_an_exception_the_user_left_unhandled_stops_where_the_users_code_goes_on()
+    {
+        using DebugSession host = await Launch(breakpointLine: Line("Console.WriteLine(\"end\");"), exceptionFilters: ["user-unhandled"]);
+        StoppedEvent stop = await host.WaitForStoppedEvent();
+        Assert.Equal(("exception", Line("Wrapper.CallWithCatch(")), (stop.Reason, stop.ReadStopInfo().line));
+
+        // Past the handler outside the user's code that caught it, back in the code that called it, as from a step out.
+        stop = await host.WithStepOverRequest(stop.ThreadId!.Value).WaitForStoppedEvent();
+        Assert.True(stop.Reason == "step", $"The step from the exception ran on to the {stop.Reason} at line {stop.Line}");
+        Assert.Equal(Line("Wrapper.CallWithCatch("), stop.ReadStopInfo().line);
+        stop = await host.WithStepOverRequest(stop.ThreadId!.Value).WaitForStoppedEvent();
+        Assert.Equal(("step", Line("Attributed.StepThrough();")), (stop.Reason, stop.ReadStopInfo().line));
+    }
+
+    [Fact]
+    public async Task A_step_from_where_an_exception_is_thrown_goes_past_a_handler_outside_the_users_code()
+    {
+        using DebugSession host = await Launch(breakpointLine: Line("Console.WriteLine(\"end\");"), exceptionFilters: ["all"]);
+        StoppedEvent stop = await host.WaitForStoppedEvent();
+        Assert.Equal(("exception", Line("Wrapper.CallWithCatch(")), (stop.Reason, stop.ReadStopInfo().line));
+
+        stop = await host.WithStepOverRequest(stop.ThreadId!.Value).WaitForStoppedEvent();
+        Assert.True(stop.Reason == "step", $"The step from the throw ran on to the {stop.Reason} at line {stop.Line}");
+        Assert.Equal(Line("Wrapper.CallWithCatch("), stop.ReadStopInfo().line);
+    }
+
+    [Fact]
+    public async Task A_step_from_where_an_exception_is_thrown_stops_in_the_users_own_catch()
+    {
+        string thrown = "try { throw new Exception(\"Message1\"); }";
+        using DebugSession host = await Launch(breakpointLine: Line(thrown), exceptionFilters: []);
+        StoppedEvent stop = await host.WaitForStoppedEvent();
+        host.Request("setExceptionBreakpoints", new SetExceptionBreakpointsArguments(["all"]));
+        stop = await host.WithContinueRequest().WaitForStoppedEvent();
+        Assert.Equal(("exception", Line(thrown)), (stop.Reason, stop.ReadStopInfo().line));
+
+        stop = await host.WithStepOverRequest(stop.ThreadId!.Value).WaitForStoppedEvent();
+        Assert.Equal(("step", Line("catch (Exception e1)")), (stop.Reason, stop.ReadStopInfo().line));
+    }
+
+    [Fact]
+    public async Task A_step_over_a_call_that_throws_and_catches_within_it_ends_at_the_next_line()
+    {
+        // At the call, not in the lambda on the same line that throws.
+        int call = Line("Wrapper.CallWithCatch(");
+        using DebugSession host = DebugSession.ForLaunch(testOutputHelper);
+        await host
+            .WithInitializeRequest()
+            .WithLaunchRequest(Debuggees.Program("PassengerCases"), stopAtEntry: false, justMyCode: true)
+            .WaitForInitializedEvent();
+        host.WithBreakpointsRequest(Source, [new DapSourceBreakpoint(call, Column: 1)]).WithConfigurationDoneRequest();
+        StoppedEvent stop = await host.WaitForStoppedEvent();
+        Assert.Equal(1, stop.ReadStopInfo().column);
+
+        stop = await host.WithStepOverRequest(stop.ThreadId!.Value).WaitForStoppedEvent();
+        Assert.Equal(("step", Line("Attributed.StepThrough();")), (stop.Reason, stop.ReadStopInfo().line));
+    }
+
+    [Fact]
     public async Task An_evaluation_that_never_returns_is_stopped_and_the_debugger_goes_on()
     {
         using DebugSession host = await Launch(breakpointLine: Line("Attributed.Hidden();"), exceptionFilters: []);
