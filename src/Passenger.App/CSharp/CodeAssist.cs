@@ -470,13 +470,13 @@ public sealed class CodeAssist
         }
         start = asked.MapOffset(start);
         int caret = Math.Min(asked.MapOffset(typed), Editor.Document.Snapshot.Length);
-        string insert = WorkspaceEdits.InLineEnding(item.TextEdit?.NewText ?? item.TextEditText ?? item.InsertText ?? item.Label, document.LineEnding);
+        string insert = item.TextEdit?.NewText ?? item.TextEditText ?? item.InsertText ?? item.Label;
         List<Passenger.Text.TextEdit> edits = [new Passenger.Text.TextEdit(start, Math.Max(0, caret - start), insert)];
-        if (item.AdditionalTextEdits is { Count: > 0 } extra && asked.Map(WorkspaceEdits.Convert(asked.Snapshot, extra, document.LineEnding)) is { } placed)
+        if (item.AdditionalTextEdits is { Count: > 0 } extra && WorkspaceEdits.Carried(asked, extra) is { } placed)
         {
             edits.AddRange(placed.Where(e => e.End <= start || e.Start >= caret));
         }
-        Editor.ApplyEdits(edits);
+        Editor.ApplyEdits(LineEndings.Fit(document.Snapshot, edits, document.LineEnding));
         if (item.Command is { } command)
         {
             Message?.Invoke(this, NotRun(item.Label, command));
@@ -492,18 +492,22 @@ public sealed class CodeAssist
         int from = lines.OffsetOf(complex.Edit.Range.Start);
         int to = lines.OffsetOf(complex.Edit.Range.End);
         string written = complex.Edit.NewText;
-        string text = WorkspaceEdits.InLineEnding(written, asked.Document.LineEnding);
+        string eol = asked.Document.LineEnding;
         // Roslyn's edit covers the name as it stood when resolved; one that meets the name takes all of what was typed.
         (int first, int last) = from <= typed && to >= start ? (Math.Min(from, start), Math.Max(to, typed)) : (from, to);
-        if (asked.Map([new Passenger.Text.TextEdit(first, last - first, text)]) is not [Passenger.Text.TextEdit placed])
+        if (LineEndings.Fit(asked.Snapshot, [new Passenger.Text.TextEdit(first, last - first, written)], eol) is not [Passenger.Text.TextEdit made])
+        {
+            return;
+        }
+        if (asked.Map([made]) is not [Passenger.Text.TextEdit placed])
         {
             Message?.Invoke(this, "The completion was not inserted: the code it changes was edited meanwhile");
             return;
         }
-        // The server's caret is an offset in the text its edit leaves, which starts as this edit's does.
+        // The server's caret is an offset in the text its edit leaves, which starts as this edit's does, or after a '\r' it took in.
         int into = complex.Caret is { } caret && caret - from >= 0 && caret - from <= written.Length
-            ? WorkspaceEdits.InLineEnding(written[..(caret - from)], asked.Document.LineEnding).Length
-            : text.Length;
+            ? Math.Min(LineEndings.In(asked.Snapshot.GetText(made.Start, first - made.Start) + written[..(caret - from)], eol).Length, made.Text.Length)
+            : made.Text.Length;
         Editor.ApplyEdits([placed], SelectionSet.Single(placed.Start + into));
     }
 
@@ -1234,7 +1238,7 @@ public sealed class CodeAssist
         {
             return false;
         }
-        if (asked.Map(WorkspaceEdits.Convert(asked.Snapshot, answer, document.Text.LineEnding)) is not { } edits)
+        if (WorkspaceEdits.Carried(asked, answer) is not { } edits)
         {
             Message?.Invoke(this, $"{what} was not applied: the code it changes was edited meanwhile");
             return false;

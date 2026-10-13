@@ -90,30 +90,27 @@ public static class WorkspaceEdits
         {
             return change.Version is null ? Convert(open.Text.Snapshot, change.Edits, eol) : null;
         }
-        return asked.Map(Convert(asked.Snapshot, change.Edits, eol)) is { } mapped ? [.. mapped] : null;
+        return Carried(asked, change.Edits) is { } mapped ? [.. mapped] : null;
     }
 
+    /// <summary>A server's edits answered for the text <paramref name="asked"/> began with, in its document's line breaks,
+    /// carried onto the text as it is now; null when the code they change was edited meanwhile.</summary>
+    public static IReadOnlyList<TextEdit>? Carried(ChangeTracker asked, IReadOnlyList<LspTextEdit> edits) =>
+        asked.Map(Convert(asked.Snapshot, edits, asked.Document.LineEnding));
+
     /// <summary>LSP edits as the editor's, in one snapshot's offsets (its lines as the server counts them), sorted, their
-    /// line breaks the file's own <paramref name="eol"/>: Roslyn writes the system's (CRLF on Windows) into any file. An edit
-    /// that comes to nothing once its breaks are the file's is left out.</summary>
+    /// line breaks the file's own <paramref name="eol"/> (<see cref="LineEndings.Fit"/>): Roslyn writes the system's, CRLF
+    /// on Windows, into any file. An edit that comes to nothing once its breaks are the file's is left out.</summary>
     public static List<TextEdit> Convert(TextSnapshot snapshot, IReadOnlyList<LspTextEdit> edits, string eol)
     {
         ServerLines lines = ServerLines.Of(snapshot);
-        return edits
-            .Select(e =>
-            {
-                int start = lines.OffsetOf(e.Range.Start);
-                int end = lines.OffsetOf(e.Range.End);
-                return new TextEdit(start, Math.Max(0, end - start), InLineEnding(e.NewText, eol));
-            })
-            .Where(e => e.Length != e.Text.Length || snapshot.GetText(e.Start, e.Length) != e.Text)
-            .OrderBy(e => e.Start)
-            .ToList();
+        return LineEndings.Fit(snapshot, edits.Select(e =>
+        {
+            int start = lines.OffsetOf(e.Range.Start);
+            int end = lines.OffsetOf(e.Range.End);
+            return new TextEdit(start, Math.Max(0, end - start), e.NewText);
+        }), eol);
     }
-
-    /// <summary>Text the server wrote with a file's line ending in place of whichever it used.</summary>
-    public static string InLineEnding(string text, string eol) =>
-        text.Contains('\n', StringComparison.Ordinal) ? text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace("\n", eol, StringComparison.Ordinal) : text;
 
     /// <summary>Why an edit's file operations cannot all be made, found before any is: each is played over what the
     /// ones before it leave. The open files a rename moves are saved now, so one that cannot be stops it here too.</summary>

@@ -467,7 +467,7 @@ public static class TextEditing
     /// per caret is dealt out one line each; anything else goes in at every caret.</summary>
     public static EditPlan Paste(TextSnapshot text, SelectionSet selections, string clipboard, bool wholeLines, string eol)
     {
-        string normalized = clipboard.Replace("\r\n", "\n").Replace("\n", eol);
+        string normalized = LineEndings.In(clipboard, eol);
         if (wholeLines && selections.Items.All(s => s.IsEmpty))
         {
             List<TextEdit> edits = selections.Items

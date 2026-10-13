@@ -232,7 +232,7 @@ public sealed partial class PassengerTools(MainWindow window)
         CodeEditor editor = window.EditorArea.CodeEditor;
         using Passenger.Text.ChangeTracker asked = new(document.Text);
         IReadOnlyList<LspTextEdit> edits = await lsp.FormatAsync(editor.Indent);
-        if (asked.Map(WorkspaceEdits.Convert(asked.Snapshot, edits, document.Text.LineEnding)) is not { } placed)
+        if (WorkspaceEdits.Carried(asked, edits) is not { } placed)
         {
             return "Not reformatted: the file was edited while the language server worked on it";
         }

@@ -587,6 +587,80 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
     }
 
     [AvaloniaFact]
+    public void What_a_completion_or_a_fix_writes_takes_the_files_line_breaks_whichever_the_server_writes()
+    {
+        string lfFile = File.ReadAllText(project.PathOf("Breaks/LfFile.cs"));
+        try
+        {
+            // A CRLF file the server writes LF into, as on macOS: an override, then a method made in an LF file not open.
+            MainWindow window = project.Open("Breaks/CrlfFile.cs");
+            CodeEditor editor = window.EditorArea.CodeEditor;
+            OverrideToString(window, editor);
+            AssertBreaks(editor.Document.Snapshot.ToString(), "\r\n", "    }\r\n\r\n    static void Make()", "the override in the CRLF file");
+            OpenDocument crlf = window.EditorArea.Active!;
+            PlaceAfter(editor, "int made = 0;");
+            window.KeyTextInput(" int twice = LfFile.Twice(made);");
+            Ui.WaitFor(() => window.CSharpService!.For(crlf)!.Diagnostics.Any(d => d.Code?.ToString() == "CS0117"), "Twice's error");
+            PlaceAfter(editor, "LfFile.Tw");
+            Ui.Run(window, AppActions.QuickFix);
+            Ui.WaitFor(() => window.Assist.Offered.Contains("Generate method 'Twice'"), "the offer to generate Twice");
+            Choose(window, "Generate method 'Twice'");
+            Ui.WaitFor(() => File.ReadAllText(project.PathOf("Breaks/LfFile.cs")).Contains("Twice", StringComparison.Ordinal), "Twice to be made in LfFile.cs");
+            AssertBreaks(File.ReadAllText(project.PathOf("Breaks/LfFile.cs")), "\n", "Twice(int made)\n    {\n", "the method made in the LF file on disk");
+            window.Close();
+
+            // An LF file the server writes CRLF into, as on Windows: an override, then a type a fix nests in it.
+            File.WriteAllText(project.PathOf("Breaks/LfFile.cs"), lfFile);
+            window = project.Open("Breaks/LfFile.cs");
+            editor = window.EditorArea.CodeEditor;
+            OverrideToString(window, editor);
+            AssertBreaks(editor.Document.Snapshot.ToString(), "\n", "    }\n\n    static void Make()", "the override in the LF file");
+            OpenDocument lf = window.EditorArea.Active!;
+            PlaceAfter(editor, "int made = 0;");
+            window.KeyTextInput(" Foo gadget = null;");
+            Ui.WaitFor(() => window.CSharpService!.For(lf)!.Diagnostics.Any(d => d.Code?.ToString() == "CS0246"), "Foo's error");
+            PlaceAfter(editor, "Fo");
+            Ui.Run(window, AppActions.QuickFix);
+            Ui.WaitFor(() => window.Assist.Offered.Contains("Generate nested class 'Foo'"), "the offer to nest Foo");
+            Choose(window, "Generate nested class 'Foo'");
+            Ui.WaitFor(() => editor.Document.Snapshot.ToString().Contains("class Foo", StringComparison.Ordinal), "Foo to be generated");
+            AssertBreaks(editor.Document.Snapshot.ToString(), "\n", "    }\n\n    private class Foo\n    {\n    }\n}\n", "the nested type in the LF file");
+            window.Close();
+        }
+        finally
+        {
+            File.WriteAllText(project.PathOf("Breaks/LfFile.cs"), lfFile);
+        }
+
+        static void OverrideToString(MainWindow window, CodeEditor editor)
+        {
+            PlaceAfter(editor, "public int X { get; }");
+            editor.Focus();
+            Ui.Press(window, "ENTER");
+            window.KeyTextInput("override ");
+            window.KeyTextInput("T");
+            Ui.Settle();
+            window.KeyTextInput("oS");
+            Ui.WaitFor(() => window.Assist.CompletionLabels.FirstOrDefault() == "ToString()", "ToString offered to override");
+            Ui.Press(window, "ENTER");
+            Ui.Settle();
+            string text = editor.Document.Snapshot.ToString();
+            Assert.True(text.IndexOf("return base.ToString();", StringComparison.Ordinal) + "return base.ToString();".Length == editor.Selections.Primary.Caret,
+                $"The caret is at {editor.CaretPosition}, not after the call to the base method in the new body");
+        }
+
+        // The text with its line breaks shown, and whether each is the file's own.
+        static void AssertBreaks(string text, string eol, string written, string what)
+        {
+            string shown = text.Replace("\r", "\\r", StringComparison.Ordinal).Replace("\n", "\\n\n", StringComparison.Ordinal);
+            string name = eol == "\n" ? "LF" : "CRLF";
+            Assert.True(text.Contains(written, StringComparison.Ordinal), $"{what} is not written with the file's {name} line breaks:\n{shown}");
+            bool mixed = eol == "\n" ? text.Contains('\r', StringComparison.Ordinal) : text.Replace("\r\n", "", StringComparison.Ordinal).AsSpan().IndexOfAny('\r', '\n') >= 0;
+            Assert.False(mixed, $"After {what} the {name} file has another line break among its own:\n{shown}");
+        }
+    }
+
+    [AvaloniaFact]
     public void Choosing_await_in_a_method_not_yet_async_makes_the_method_async_as_well()
     {
         MainWindow window = project.Open("Loop.cs");
@@ -1032,6 +1106,11 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
             // Roslyn ends a line at each of these in the comment; the editor's lines end only at '\n'.
             File.WriteAllText(PathOf("Separators.cs"), "static class Separators\n{\n    /* Pasted:\u2028a line separator,\u2029a paragraph separator,\u0085a next line,\ra carriage return. */\n    public static int Value()\n    {\n        int total = 1;\n          return total;\n    }\n}\n");
             File.WriteAllText(PathOf("Crlf.cs"), "static class Crlf\r\n{\r\n    public static int One()\r\n    {\r\n          return 1;\r\n    }\r\n}\r\n");
+            // Each file under Breaks the server writes with the other line break than its own, on any system.
+            Directory.CreateDirectory(PathOf("Breaks"));
+            File.WriteAllText(PathOf("Breaks/.editorconfig"), "root = true\n\n[LfFile.cs]\nend_of_line = crlf\n\n[CrlfFile.cs]\nend_of_line = lf\n");
+            File.WriteAllText(PathOf("Breaks/LfFile.cs"), "class LfFile\n{\n    public int X { get; }\n\n    static void Make()\n    {\n        int made = 0;\n    }\n}\n");
+            File.WriteAllText(PathOf("Breaks/CrlfFile.cs"), "class CrlfFile\r\n{\r\n    public int X { get; }\r\n\r\n    static void Make()\r\n    {\r\n        int made = 0;\r\n    }\r\n}\r\n");
             File.WriteAllText(PathOf("Messy.cs"), "using System.Text;\nusing System;\nusing System.Collections.Generic;\n\nstatic class Messy\n{\n    public static int Count()\n    {\n          List<string> names = [];\n        Console.WriteLine(names.Count);\n      return names.Count;\n    }\n}\n");
             using Process restore = Process.Start(new ProcessStartInfo("dotnet", ["restore", folder]) { RedirectStandardOutput = true, RedirectStandardError = true })!;
             restore.WaitForExit();
