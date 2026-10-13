@@ -91,9 +91,13 @@ public sealed class LanguageServer : IAsyncDisposable
     /// <summary>Roslyn has finished loading the projects it was asked to open; raised on any thread.</summary>
     public event EventHandler? ProjectsLoaded;
 
-    /// <summary>The server's view of the code moved in a way only it knows (a project reloaded, a
-    /// file changed elsewhere): colours and diagnostics should be asked for again. Raised on any thread.</summary>
-    public event EventHandler? RefreshRequested;
+    /// <summary>The server's colours moved in a way only it knows (a project reloaded, a file changed elsewhere): the
+    /// semantic tokens should be asked for again. Raised on any thread.</summary>
+    public event EventHandler? ColoursRefreshRequested;
+
+    /// <summary>The server's diagnostics moved in a way only it knows: they should be pulled again, and only they, since
+    /// asking a long file's colours again costs the server a second. Raised on any thread.</summary>
+    public event EventHandler? DiagnosticsRefreshRequested;
 
     public string LogFolder { get; }
 
@@ -646,14 +650,14 @@ public sealed class LanguageServer : IAsyncDisposable
         [JsonRpcMethod("workspace/semanticTokens/refresh")]
         public object? RefreshTokens(JsonElement? request = null)
         {
-            Owner?.RefreshRequested?.Invoke(Owner, EventArgs.Empty);
+            Owner?.ColoursRefreshRequested?.Invoke(Owner, EventArgs.Empty);
             return null;
         }
 
         [JsonRpcMethod("workspace/diagnostic/refresh")]
         public object? RefreshDiagnostics(JsonElement? request = null)
         {
-            Owner?.RefreshRequested?.Invoke(Owner, EventArgs.Empty);
+            Owner?.DiagnosticsRefreshRequested?.Invoke(Owner, EventArgs.Empty);
             return null;
         }
 

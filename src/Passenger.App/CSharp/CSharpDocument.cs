@@ -64,9 +64,13 @@ public sealed class CSharpDocument : IDisposable
 
     public void Refresh()
     {
-        semantic?.Refresh();
-        Pull(TimeSpan.Zero);
+        RefreshColours();
+        RefreshDiagnostics();
     }
+
+    public void RefreshColours() => semantic?.Refresh();
+
+    public void RefreshDiagnostics() => Pull(TimeSpan.Zero);
 
     public void Dispose()
     {

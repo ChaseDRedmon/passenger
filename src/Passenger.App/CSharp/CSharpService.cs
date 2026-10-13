@@ -325,7 +325,8 @@ public sealed class CSharpService : IAsyncDisposable
             _ = TimeFirstColoursAsync(started, began);
             TaskCompletionSource loaded = new(TaskCreationOptions.RunContinuationsAsynchronously);
             started.Loaded += (_, _) => loaded.TrySetResult();
-            started.Server.RefreshRequested += (_, _) => UiThread.Post(RefreshAll);
+            started.Server.ColoursRefreshRequested += (_, _) => UiThread.Post(() => Each(document => document.RefreshColours()));
+            started.Server.DiagnosticsRefreshRequested += (_, _) => UiThread.Post(() => Each(document => document.RefreshDiagnostics()));
             started.Server.Exited += (_, why) => UiThread.Post(() => OnExited(started, why));
             started.Server.NotResponding += (_, why) => UiThread.Post(() => OnNotResponding(started, why));
             session = started;
@@ -512,11 +513,13 @@ public sealed class CSharpService : IAsyncDisposable
         Start(restarting);
     }
 
-    private void RefreshAll()
+    private void RefreshAll() => Each(document => document.Refresh());
+
+    private void Each(Action<CSharpDocument> act)
     {
         foreach (CSharpDocument features in documents.Values)
         {
-            features.Refresh();
+            act(features);
         }
     }
 
