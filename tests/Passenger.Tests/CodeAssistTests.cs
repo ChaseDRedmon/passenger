@@ -1481,6 +1481,69 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
         }
     }
 
+    /// <summary>A file of 20,000 lines is a million numbers of tokens, which the server takes a second to make and the IDE
+    /// megabytes to read: while typing goes on with pauses, only the lines on screen are asked for again (Rider's and VS
+    /// Code's way), and what only the server colours on screen is coloured from them; once typing stops, the whole file is
+    /// asked for once. Counted in the protocol's own trace.</summary>
+    [AvaloniaFact]
+    public void Typing_with_pauses_in_a_file_of_twenty_thousand_lines_asks_for_the_screens_colours_and_the_whole_files_once_it_stops()
+    {
+        string source = TwentyThousandLines();
+        string path = project.PathOf("Paused.cs");
+        File.WriteAllText(path, source);
+        MainWindow? window = null;
+        int whole = 0;
+        int screens = 0;
+        try
+        {
+            window = project.Open("Paused.cs");
+            CodeEditor editor = window.EditorArea.CodeEditor;
+            OpenDocument document = window.EditorArea.Active!;
+            TokenKind? KindAt(int offset) => document.Highlighter?.GetSpans(document.Text.Snapshot, offset, 1)
+                .Where(s => s.Start == offset).Select(s => (TokenKind?)s.Kind).FirstOrDefault();
+            int far = source.LastIndexOf("value98 * 3", StringComparison.Ordinal);
+            Ui.WaitFor(() => KindAt(far) == TokenKind.Local, "the server's colours on the file's last local");
+            Ui.Settle();
+            Passenger.Lsp.LanguageServer.Trace = (_, message) =>
+            {
+                if (message.StartsWith("-->", StringComparison.Ordinal) && message.Contains("\"textDocument/semanticTokens/full\"", StringComparison.Ordinal))
+                {
+                    Interlocked.Increment(ref whole);
+                }
+                else if (message.StartsWith("-->", StringComparison.Ordinal) && message.Contains("\"textDocument/semanticTokens/range\"", StringComparison.Ordinal))
+                {
+                    Interlocked.Increment(ref screens);
+                }
+            };
+
+            // Statements typed one by one, a pause after each long enough for the screen's colours and short of the idle.
+            int at = source.IndexOf("seed + 0;", StringComparison.Ordinal) + "seed + 0;".Length;
+            editor.Selections = SelectionSet.Single(at);
+            editor.Focus();
+            for (int i = 0; i < 4; i++)
+            {
+                window.KeyTextInput($" int fresh{i} = value0;");
+                int used = editor.Selections.Primary.Caret - "value0;".Length;
+                Ui.PumpUntil(() => KindAt(used) == TokenKind.Local, $"the screen's colours on the local used in statement {i + 1}");
+                Screenshot.Pump(TimeSpan.FromMilliseconds(300));
+            }
+            Assert.True(screens > 0, "The screen's colours were never asked for as the statements were typed");
+            Assert.True(whole == 0, $"The whole file's colours were asked for {whole} times while typing went on with pauses");
+
+            // Once typing stops, the whole file's, once.
+            Ui.PumpUntil(() => Volatile.Read(ref whole) > 0, "the whole file's colours once typing stopped");
+            Ui.Settle();
+            Assert.Equal(1, whole);
+            Assert.Equal(TokenKind.Local, KindAt(far + 4 * " int freshN = value0;".Length));
+        }
+        finally
+        {
+            Passenger.Lsp.LanguageServer.Trace = null;
+            window?.Close();
+            File.Delete(path);
+        }
+    }
+
     /// <summary>Two hundred methods of a hundred lines and more, every fiftieth with an error: a string given a number.</summary>
     private static string TwentyThousandLines()
     {

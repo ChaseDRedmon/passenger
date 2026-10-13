@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Runtime.CompilerServices;
 using System.Text;
 
 namespace Passenger.Lsp;
@@ -43,6 +44,8 @@ internal sealed class TracedStream(Stream inner, int server, string direction) :
     public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
         ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
 
+    // Pooled: a long answer arrives in thousands of reads, each finishing later than it began, which would make a task each.
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder<>))]
     public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
     {
         int read = await inner.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
@@ -61,6 +64,7 @@ internal sealed class TracedStream(Stream inner, int server, string direction) :
     public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
         WriteAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
 
+    [AsyncMethodBuilder(typeof(PoolingAsyncValueTaskMethodBuilder))]
     public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
     {
         await inner.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);

@@ -8,13 +8,22 @@ namespace Passenger.Languages.CSharp;
 /// name is a struct, a field, a local, an extension method) replaces the syntax's guess wherever the
 /// server says something. Tokens are asked for once edits settle and whenever the server says the
 /// code moved: the lines on screen first, as Rider and VS Code ask (Roslyn colours a screen in milliseconds and a long
-/// file in about a second), then the whole file. Each answer is decoded off the UI thread against the snapshot it was
-/// asked for and carried through the edits made since, so colours never lag a keystroke behind the text nor jump when
-/// an answer lands.</summary>
+/// file in about a second), then the whole file once typing has stopped (<see cref="Idle"/>). Each answer is decoded off
+/// the UI thread against the snapshot it was asked for and carried through the edits made since, so colours never lag a
+/// keystroke behind the text nor jump when an answer lands.</summary>
 public sealed class SemanticHighlighter : IHighlighter, IDisposable
 {
     /// <summary>How long typing must pause before new tokens are asked for.</summary>
     private static readonly TimeSpan Settle = TimeSpan.FromMilliseconds(300);
+
+    /// <summary>How much longer the text must stay as it is, the screen's tokens come, before the whole file's are asked
+    /// for: a long file's take the server a second and their answer megabytes to read, which the next key would throw
+    /// away, and meanwhile the whole file's last are carried through the edits.</summary>
+    private static readonly TimeSpan Idle = TimeSpan.FromSeconds(2);
+
+    /// <summary>The most changes the whole file's tokens are carried through before they are asked for again at the next
+    /// pause, idle or not: every frame drawn beyond the screen's carries them through each.</summary>
+    private const int MostCarried = 64;
 
     private readonly IHighlighter syntax;
     private readonly LspDocument document;
@@ -145,6 +154,7 @@ public sealed class SemanticHighlighter : IHighlighter, IDisposable
 
     private async Task Fetch(TimeSpan delay, int request, CancellationToken cancel)
     {
+        bool held = true;
         try
         {
             if (delay > TimeSpan.Zero)
@@ -160,6 +170,15 @@ public sealed class SemanticHighlighter : IHighlighter, IDisposable
                 if (near is not null && !await Land(near, snapshot, version, range, request, cancel))
                 {
                     return;
+                }
+                if (whole is not null && history.Count - After(whole.Version) <= MostCarried)
+                {
+                    // The rest of the file once typing stops: nothing on screen waits for it, so no screenshot does.
+                    BackgroundWork.End();
+                    held = false;
+                    await Task.Delay(Idle, cancel);
+                    BackgroundWork.Begin();
+                    held = true;
                 }
             }
             (SemanticTokens? all, _) = await document.SemanticTokensAsync(cancel);
@@ -183,7 +202,10 @@ public sealed class SemanticHighlighter : IHighlighter, IDisposable
                 askedFor = null;
                 Forget();
             }
-            BackgroundWork.End();
+            if (held)
+            {
+                BackgroundWork.End();
+            }
         }
     }
 

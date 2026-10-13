@@ -213,7 +213,50 @@ public sealed record SemanticTokensRangeParams(TextDocumentIdentifier TextDocume
 public sealed class SemanticTokens
 {
     public string? ResultId { get; init; }
+
+    [JsonConverter(typeof(TokenData))]
     public int[] Data { get; init; } = [];
+}
+
+/// <summary>A file's tokens, five numbers each, read into one array of their count: a long file's are a million numbers,
+/// which the serializer's own reading grows a list to hold, doubling it, before copying it out.</summary>
+public sealed class TokenData : JsonConverter<int[]>
+{
+    public override int[] Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        if (reader.TokenType != JsonTokenType.StartArray)
+        {
+            throw new JsonException($"Semantic tokens are an array of numbers, not {reader.TokenType}");
+        }
+        // A converter is given its whole value, so a copy of the reader can count it first.
+        Utf8JsonReader counting = reader;
+        int count = 0;
+        while (counting.Read() && counting.TokenType == JsonTokenType.Number)
+        {
+            count++;
+        }
+        int[] data = new int[count];
+        for (int i = 0; i < count; i++)
+        {
+            reader.Read();
+            data[i] = reader.GetInt32();
+        }
+        if (!reader.Read() || reader.TokenType != JsonTokenType.EndArray)
+        {
+            throw new JsonException("Semantic tokens hold something other than numbers");
+        }
+        return data;
+    }
+
+    public override void Write(Utf8JsonWriter writer, int[] value, JsonSerializerOptions options)
+    {
+        writer.WriteStartArray();
+        foreach (int number in value)
+        {
+            writer.WriteNumberValue(number);
+        }
+        writer.WriteEndArray();
+    }
 }
 
 public sealed record SemanticTokensLegend(IReadOnlyList<string> TokenTypes, IReadOnlyList<string> TokenModifiers);
