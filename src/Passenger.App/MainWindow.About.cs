@@ -3,13 +3,14 @@ using Avalonia.Input;
 
 namespace Passenger.App;
 
-/// <summary>About Passenger, where Rider has it: the application menu's first item on macOS, Help's last elsewhere.</summary>
+/// <summary>About Passenger, where Rider has it: the application menu's first item on macOS, Help's last elsewhere, after
+/// Check for Updates.</summary>
 public partial class MainWindow
 {
     private void AddAbout() =>
         actions!.Add(new IdeAction(AppActions.About, "About", "Help", _ => ShowAbout())
         {
-            Menus = OperatingSystem.IsMacOS() ? [] : [new MenuPlace("Help", 3, 0)],
+            Menus = OperatingSystem.IsMacOS() ? [] : [new MenuPlace("Help", 3, 1)],
         });
 
     /// <summary>About, over this window until it is closed; its links close it and open the notices or the licence in
@@ -21,16 +22,17 @@ public partial class MainWindow
         return dialog;
     }
 
-    /// <summary>macOS's application menu, as Rider's: About Passenger, then Settings (Cmd+,); the system adds Services,
-    /// Hide and Quit after them.</summary>
+    /// <summary>macOS's application menu, as Rider's: About Passenger and Check for Updates, then Settings (Cmd+,); the
+    /// system adds Services, Hide and Quit after them.</summary>
     public NativeMenu ApplicationMenu()
     {
         NativeMenuItem about = new("About Passenger") { Command = new MenuCommand(() => Request(AppActions.About)) };
+        NativeMenuItem updates = new("Check for Updates...") { Command = new MenuCommand(() => Request(AppActions.CheckForUpdates)) };
         NativeMenuItem settings = new("Settings...")
         {
             Gesture = new KeyGesture(Key.OemComma, KeyModifiers.Meta),
             Command = new MenuCommand(() => Request(AppActions.ShowSettings)),
         };
-        return new NativeMenu { Items = { about, new NativeMenuItemSeparator(), settings } };
+        return new NativeMenu { Items = { about, updates, new NativeMenuItemSeparator(), settings } };
     }
 }

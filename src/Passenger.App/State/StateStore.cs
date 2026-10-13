@@ -5,15 +5,16 @@ using Passenger.App.Debugging;
 using Passenger.App.Docking;
 using Passenger.App.Navigation;
 using Passenger.App.Settings;
+using Passenger.App.Updates;
 using Passenger.App.Welcome;
 using Passenger.App.Workspace;
 
 namespace Passenger.App.State;
 
 /// <summary>The IDE's own state, in one folder: the app's documents at its top (the settings, the layout a folder
-/// without its own opens on, the recent solutions), and each folder's under <c>workspaces/&lt;name&gt;-&lt;hash&gt;/</c>,
-/// as Rider keeps a project's workspace.xml. Only the window a person uses keeps one; a headless IDE starts on the
-/// defaults.</summary>
+/// without its own opens on, the recent solutions, the release last announced), and each folder's under
+/// <c>workspaces/&lt;name&gt;-&lt;hash&gt;/</c>, as Rider keeps a project's workspace.xml. Only the window a person uses
+/// keeps one; a headless IDE starts on the defaults.</summary>
 public sealed class StateStore
 {
     private readonly Dictionary<string, ProjectState> projects = new(StringComparer.Ordinal);
@@ -24,6 +25,7 @@ public sealed class StateStore
         Settings = new(Path.Combine(root, "settings.json"));
         Layout = new(Path.Combine(root, "layout.json"));
         Recent = new(Path.Combine(root, "recentSolutions.json"));
+        Updates = new(Path.Combine(root, "updates.json"));
     }
 
     /// <summary>The folder: PASSENGER_SETTINGS names it, else the user's local application data.</summary>
@@ -40,6 +42,9 @@ public sealed class StateStore
 
     /// <summary>The folders and solutions opened lately, which the Welcome screen lists and a start reopens.</summary>
     public StateDocument<RecentSolutionsState> Recent { get; }
+
+    /// <summary>The newest release the window has said is out, which it says once.</summary>
+    public StateDocument<UpdatesState> Updates { get; }
 
     /// <summary>A folder's own documents.</summary>
     public ProjectState Project(string folder)
@@ -58,6 +63,7 @@ public sealed class StateStore
         Settings.Flush();
         Layout.Flush();
         Recent.Flush();
+        Updates.Flush();
         foreach (ProjectState project in projects.Values)
         {
             project.Flush();

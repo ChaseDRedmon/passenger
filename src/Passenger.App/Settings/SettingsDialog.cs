@@ -14,6 +14,7 @@ public sealed class SettingsDialog : Window
 {
     public const string Appearance = "Appearance";
     public const string SystemPage = "System Settings";
+    public const string UpdatesPage = "Updates";
     public const string EditorPage = "Editor";
     public const string TerminalPage = "Terminal";
     public const string RunPage = "Run";
@@ -21,7 +22,7 @@ public sealed class SettingsDialog : Window
     public const string McpPage = "MCP Server";
     public const string DiagnosticsPage = "Diagnostics";
 
-    private static readonly string[] Order = [Appearance, SystemPage, EditorPage, RunPage, TerminalPage, McpPage, DiagnosticsPage, KeymapPage];
+    private static readonly string[] Order = [Appearance, SystemPage, UpdatesPage, EditorPage, RunPage, TerminalPage, McpPage, DiagnosticsPage, KeymapPage];
 
     private readonly Action<AppSettings> apply;
 
@@ -177,6 +178,12 @@ public sealed class SettingsDialog : Window
         TextBlock unit = new() { Text = "seconds", VerticalAlignment = VerticalAlignment.Center };
         Add(SystemPage, "Save when idle for", new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { idle, seconds, unit } },
             "autosave files idle inactive seconds");
+
+        // Rider's System Settings, Updates; what is sent is said under it.
+        Add(UpdatesPage, "Check for updates", Check(Working.CheckForUpdates, v => Change(s => s with { CheckForUpdates = v })),
+            "updates check new version release newer download github automatic",
+            "Passenger asks GitHub for its latest release when it starts and once a day, and says in the status bar when a "
+            + "newer one is out. Nothing is sent but the request, which names Passenger and its version.");
 
         Add(EditorPage, "Font size", Number(Working.EditorFontSize, AppSettings.MinFontSize, AppSettings.MaxFontSize, 1, v => Change(s => s with { EditorFontSize = v })), "font size text");
         Add(EditorPage, "Line spacing", Number(Working.EditorLineSpacing, AppSettings.MinLineSpacing, AppSettings.MaxLineSpacing, 0.1, v => Change(s => s with { EditorLineSpacing = v })), "font line height");

@@ -30,6 +30,8 @@ public partial class App : Application
                 IdeErrors.Write($"Passenger {Product.Version} ({Product.Commit ?? "no commit"}) on {RuntimeInformation.OSDescription} "
                     + $"({Product.Runtime}): window shown {Stopwatch.GetElapsedTime(Program.StartedAt).TotalSeconds:0.00} s after launch");
                 window.Start(Program.Options);
+                // Only the person's window asks for the latest release on its own.
+                window.WatchForUpdates();
             };
             desktop.MainWindow = window;
             if (OperatingSystem.IsMacOS())

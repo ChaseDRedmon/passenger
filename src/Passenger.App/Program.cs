@@ -28,6 +28,7 @@ internal static class Program
         try
         {
             options = LaunchOptions.Parse(args);
+            _ = Updates.ReleaseFeed.Default;
         }
         catch (FormatException error)
         {

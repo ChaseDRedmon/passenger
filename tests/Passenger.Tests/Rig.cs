@@ -70,6 +70,9 @@ public sealed class TestRun : IDisposable
         // and zsh takes its startup files, and from them its history, from ZDOTDIR.
         Environment.SetEnvironmentVariable("HISTFILE", Path.Combine(Root, "history"));
         Environment.SetEnvironmentVariable("ZDOTDIR", Directory.CreateDirectory(Path.Combine(Root, "zsh")).FullName);
+        // No test reaches GitHub: a window or a Passenger started that checks for updates without a stand-in of its own
+        // asks a loopback port nothing listens on.
+        Environment.SetEnvironmentVariable(Passenger.App.Updates.ReleaseFeed.Variable, "http://127.0.0.1:9/repos/Zaneris/passenger/releases/latest");
         // A run stopped before its end (Ctrl+C) leaves nothing either.
         AppDomain.CurrentDomain.ProcessExit += (_, _) => End();
     }

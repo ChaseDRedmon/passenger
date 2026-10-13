@@ -87,6 +87,7 @@ public partial class MainWindow : Window
         AddConflicts();
         AddErrors();
         AddAbout();
+        AddUpdates();
         AddAgents();
         AddShutdown();
         AddEditorWindows();
