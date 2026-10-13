@@ -49,7 +49,7 @@ package-win rid="win-x64":
 package-win rid="win-x64":
     $sh = (Get-Command sh -ErrorAction SilentlyContinue).Source; if (-not $sh) { $sh = Join-Path (Split-Path (Split-Path (Get-Command git).Source)) 'bin\sh.exe' }; & $sh tools/package-win.sh {{rid}}
 
-# Passenger's own icons (Passenger.icns, passenger.png, Passenger.ico) from Assets/passenger.svg; macOS, by QuickLook.
+# Passenger's own icons (Passenger.icns, passenger.png, Passenger.ico) from Assets/passenger.svg; macOS, by sips.
 app-icon:
     tools/app-icon.sh
 

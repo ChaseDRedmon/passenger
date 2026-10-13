@@ -70,23 +70,12 @@ public sealed class AboutDialog : Window
                     Spacing = 20,
                     Children =
                     {
-                        // The icon's own rounded square (passenger.svg's, inset a sixteenth with a fifth's radius): QuickLook
-                        // drew passenger.png onto white, which its corners keep.
-                        new Border
+                        new Image
                         {
-                            Width = 56,
-                            Height = 56,
-                            Margin = new Thickness(4),
-                            CornerRadius = new CornerRadius(12.5),
-                            ClipToBounds = true,
+                            Source = new Bitmap(AssetLoader.Open(new Uri("avares://Passenger/Assets/passenger.png"))),
+                            Width = 64,
+                            Height = 64,
                             VerticalAlignment = VerticalAlignment.Top,
-                            Child = new Image
-                            {
-                                Source = new Bitmap(AssetLoader.Open(new Uri("avares://Passenger/Assets/passenger.png"))),
-                                Width = 64,
-                                Height = 64,
-                                Margin = new Thickness(-4),
-                            },
                         },
                         facts,
                     },
