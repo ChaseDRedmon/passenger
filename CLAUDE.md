@@ -100,6 +100,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   it is written debounced off the UI thread through a temporary file, merged over the file so values it does not know
   stay, and a file that does not read is set aside as `.bad` and logged. New state is a document there, never a file of
   its own.
+- Logs: one folder, `logs/` under the state root, written by `IdeLog` off a queue with every file rotated by size:
+  `passenger.log` (IDE errors, the language server's warnings and errors, each folder's startup phases with times),
+  `roslyn/` (the server's own logs), `lsp.log`, `dap.log` and `vstest.log`. Settings | Diagnostics turns on protocol
+  traces (`TraceProtocols`) and a line for every program started (`LogEveryProgram`; otherwise only failing or slow
+  ones); Help | Show Log opens the folder. What the language server says to show reaches the status bar.
 - `src/Passenger.App/Vcs`: Git through the `git` executable (`Git`, porcelain v2), Myers' line diff (`LineDiff`) for
   the gutter's change bars, and `VcsController`, the window's working tree: status, branch, each open file's bars,
   commit, push, update, checkout and rollback (after which open files take their text from disk); `DiffView` is the
