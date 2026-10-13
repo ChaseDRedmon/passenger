@@ -115,8 +115,8 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.App/State`: the IDE's own state, in one `StateStore` under `PASSENGER_SETTINGS` or the user's local
   application data, kept only by the person's window: the app's documents at its top (`settings.json`, `layout.json`,
   `recentSolutions.json`, `updates.json`)
-  and each folder's under `workspaces/<name>-<hash>/` (editors and recent files, layout, breakpoints, bookmarks, the
-  profiler's `snapshots/`). A
+  and each folder's under `workspaces/<name>-<hash>/` (editors and recent files, layout, breakpoints, bookmarks, run
+  configurations, the profiler's `snapshots/`). A
   `StateDocument` is a record that is an `IStateDocument`: its `Upgrades` from each older version and its `Clamped` value;
   it is written debounced off the UI thread through a temporary file, merged over the file so values it does not know
   stay (and an entry another window removed stays removed), and a file that does not read is set aside as `.bad` and logged. New state is a document there, never a file of
@@ -152,8 +152,16 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`ProcessRunner` streams a process into a document; `BuildOutput` reads MSBuild's error lines),
   and the bottom panel's Build, Run and Problems windows. Every console (Run, Build, Debug, the profiler's) is written
   through `ConsoleSink`: a frame's output at a time, colour codes stripped whole across reads, the head trimmed past
-  Rider's 1024 KB, and what is typed into it sent to the program. `Workspace/SolutionModel` reads
-  solutions and projects for the Explorer's Solution view.
+  Rider's 1024 KB, and what is typed into it sent to the program. A run configuration is data (`RunConfiguration`: the
+  folder's own in `runConfigurations.json`, the rest made from the executable projects' launch profiles, those that
+  cannot launch here saying why); `LaunchPlan.ResolveAsync` works one out once, in one MSBuild request, into what Run,
+  Debug, Profile, Hot Reload and a debugged test host start, and `RunConfigurationsDialog` is Run > Edit
+  Configurations. A test project's first Project launch profile gives its variables to its tests.
+- `src/Passenger.App/Workspace`: `SolutionModel` reads solutions and projects for the Explorer's Solution view.
+  `EditorConfig` reads the .editorconfig files over a file (its own parser and globs); `FileIndent` picks a file's
+  indent (its .editorconfig, else `Indentation.Detect` on its lines, else its language) and names it in the status bar;
+  `OpenDocument.Save` applies the save-time properties. Every edit from the language server goes through
+  `LineEndings.Fit`, then `Indentation.Fit`.
 - `src/Passenger.App`: the shell. Explorer, editor tabs, files on disk. Each action is an `IdeAction` (id, title,
   group, menu places, `Run`, `WhyNot`, whether its keys work while the terminal has them) that its feature adds to the
   window's `ActionRegistry`: `MainWindow.Actions.cs` for the window's own, a partial's or controller's `Add…Actions`
