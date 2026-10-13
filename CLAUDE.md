@@ -37,7 +37,8 @@ Debug build, so `just build` never changes the files under it; reconnect the ser
 lines and columns count from 1 and its paths are the folder's. Anything it gets wrong is a Passenger bug to fix.
 
 The screenshot is the self-check for anything visible (with nothing named it shows the Welcome screen, its list
-empty, since a screenshot keeps no state). It opens what the command line names, takes
+empty, since a screenshot keeps no state: unless PASSENGER_SETTINGS names a folder, its state and logs go to a
+temporary one removed as it ends, never the person's own log). It opens what the command line names, takes
 its steps in order through the window's real input, waits for background work to land, and captures
 the compositor's own frame:
 

@@ -47,7 +47,7 @@ internal static class Program
         }
         if (options.Screenshot is { } screenshot)
         {
-            return Screenshot.Run(options, screenshot);
+            return Apart(() => Screenshot.Run(options, screenshot));
         }
         IClassicDesktopStyleApplicationLifetime? desktop = null;
         int code = BuildAvaloniaApp()
@@ -56,6 +56,35 @@ internal static class Program
         // The loop has stopped with the window; what it ended as it closed (the debugger, Roslyn) still has a moment.
         (desktop?.MainWindow as MainWindow)?.Ended?.Wait();
         return code;
+    }
+
+    /// <summary>A screenshot keeps nothing of the person's: unless PASSENGER_SETTINGS names a folder, its state and logs
+    /// (Roslyn's server's among them) go to a temporary one, removed when it ends, never the person's own log.</summary>
+    private static int Apart(Func<int> run)
+    {
+        if (Environment.GetEnvironmentVariable("PASSENGER_SETTINGS") is { Length: > 0 })
+        {
+            return run();
+        }
+        string scratch = Directory.CreateTempSubdirectory("passenger-screenshot-").FullName;
+        Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", scratch);
+        try
+        {
+            return run();
+        }
+        finally
+        {
+            // The log is written off a queue: what it still holds would make the folder again after it went.
+            IdeLog.Flush();
+            try
+            {
+                Directory.Delete(scratch, recursive: true);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                // A log the language server still holds open on Windows: the system's temporary folder is cleared in time.
+            }
+        }
     }
 
     public static void ApplyTheme(Application app, ThemeChoice? theme)
