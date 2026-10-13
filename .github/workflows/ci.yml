@@ -1,5 +1,7 @@
 # Every push to main and every pull request: the solution built (warnings are errors) and every test run, on macOS
-# (arm64) and Windows, as `just build` and `just test` run them. Actions are pinned to a release's commit.
+# (arm64) and Windows, as `just build` and `just test` run them; and on Linux, the solution restored from nothing. Every
+# restore is locked to the packages.lock.json files (GitHub sets CI, which Directory.Build.props makes
+# RestoreLockedMode). Actions are pinned to a release's commit.
 name: CI
 
 on:
@@ -75,11 +77,12 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.nuget/packages
-          key: nuget-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('global.json', '**/Directory.Packages.props', '**/Directory.Build.props', '**/*.csproj') }}
+          key: nuget-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('global.json', '**/Directory.Packages.props', '**/Directory.Build.props', '**/*.csproj', '**/packages.lock.json') }}
           restore-keys: nuget-${{ runner.os }}-${{ runner.arch }}-
 
+      # Only what the lock files name, each package's content hash checked against them.
       - name: Restore
-        run: dotnet restore
+        run: dotnet restore --locked-mode
 
       # Saved once restored, so a failing build or test still leaves the next run its packages.
       - name: Cache NuGet packages
@@ -147,3 +150,18 @@ jobs:
           name: test-results-${{ runner.os }}
           path: TestResults/
           if-no-files-found: ignore
+
+  # #57's first step: the solution restores on Linux, in locked mode, with no package cache.
+  packages:
+    name: Packages (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore Passenger.slnx --locked-mode
