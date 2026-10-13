@@ -83,6 +83,8 @@ public sealed class DebugController
         {
             await StopAsync();
         }
+        // Not the last session's while this one starts, nor once it could not: a caller asks Session whether it did.
+        Session = null;
         view.Clear();
         executionPoint = null;
         frame = null;

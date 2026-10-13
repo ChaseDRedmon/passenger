@@ -43,4 +43,20 @@ public class AttachTests(ITestOutputHelper testOutputHelper)
         host.Request("pause", new ThreadArguments(0));
         Assert.Equal("pause", (await host.WaitForStoppedEvent()).Reason);
     }
+
+    [Fact]
+    public async Task An_attach_to_a_program_that_is_not_dotnet_fails_its_configurationDone_saying_why()
+    {
+        Process other = Debuggees.NotDotnet();
+        using DebugSession host = DebugSession.ForAttach(testOutputHelper, other);
+        await host
+            .WithInitializeRequest()
+            .WithAttachRequest(other.Id)
+            .WaitForInitializedEvent();
+
+        DapException failed = Assert.Throws<DapException>(() => host.WithConfigurationDoneRequest());
+        Assert.Contains($"Could not attach to process {other.Id}", failed.Reason, StringComparison.Ordinal);
+        Assert.Contains("not a .NET program", failed.Reason, StringComparison.Ordinal);
+        Assert.False(other.HasExited, "The attach that failed ended the program it could not take hold of");
+    }
 }

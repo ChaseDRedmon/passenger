@@ -235,12 +235,17 @@ public partial class MainWindow : Window
             // VSTest runs the tests the moment this says yes: it waits until the debugger has hold of the test host.
             try
             {
-                return await session.ProcessStarted.WaitAsync(TimeSpan.FromSeconds(30)) == processId;
+                if (await session.ProcessStarted.WaitAsync(TimeSpan.FromSeconds(30)) == processId)
+                {
+                    return true;
+                }
             }
             catch (TimeoutException)
             {
-                return false;
             }
+            // Given up on: left running, the session would say the tests run until Stop, with nothing under it.
+            await debug.StopAsync();
+            return false;
         };
         Bottom.Tests.ActionRequested += (_, action) => RunAppAction(action);
         Bottom.Tests.RunRequested += (_, debugging) =>

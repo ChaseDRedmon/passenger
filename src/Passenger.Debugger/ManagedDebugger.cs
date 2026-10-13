@@ -309,7 +309,7 @@ public partial class ManagedDebugger
         catch { /* */ }
 
         _logger?.Invoke($"Debugger listening on port {remoteAttachInfo.Port}, awaiting connection from debuggee");
-        _ = Task.Run(SendAllBreakpointEvents);
+        SendAllBreakpointEvents();
     }
 
     private void SendAllBreakpointEvents()

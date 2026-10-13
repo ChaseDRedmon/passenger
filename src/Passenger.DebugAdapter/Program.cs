@@ -64,7 +64,7 @@ adapter.ShutdownRequested += () => disconnected.TrySetResult();
 connection.Start();
 await Task.WhenAny(disconnected.Task, connection.Completion);
 // A client that closed its end without disconnecting leaves the debuggee to be let go here.
-adapter.Abort();
+await adapter.AbortAsync();
 Log("Exiting");
 logWriter?.Dispose();
 // A read of standard input cannot be cancelled, and the client may hold its end open: exit rather

@@ -474,6 +474,29 @@ public sealed class DebuggerTests : IDisposable
         }
     }
 
+    [AvaloniaFact]
+    public void Debug_tests_with_a_test_host_the_debugger_cannot_attach_to_ends_the_session_saying_why()
+    {
+        // What VSTest hands the IDE to attach to, here a host with no .NET in it.
+        using Process host = Debugging.Helpers.Debuggees.NotDotnet();
+        try
+        {
+            MainWindow window = Open();
+            Task<bool> attached = window.Tests.AttachDebugger!(host.Id);
+            Ui.WaitFor(() => attached.IsCompleted, "the attach to give up", TimeSpan.FromSeconds(30));
+
+            Assert.False(attached.Result, "The IDE told VSTest the debugger had hold of a test host it could not attach to");
+            Assert.False(window.Debugger.IsDebugging, "The session went on after its attach failed, saying the tests run");
+            Assert.Contains($"Could not debug Tests: Could not attach to process {host.Id}", window.Status, StringComparison.Ordinal);
+            Assert.Contains("not a .NET program", window.Status, StringComparison.Ordinal);
+            window.Close();
+        }
+        finally
+        {
+            Processes.Kill(host.Id);
+        }
+    }
+
     private MainWindow Open()
     {
         MainWindow window = new() { Width = 1200, Height = 800 };

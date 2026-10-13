@@ -90,6 +90,9 @@ public sealed class DebugSession : IDisposable
         return new DebugSession(output, debuggee, terminateDebuggee: false);
     }
 
+    /// <summary>The adapter, to attach to a program the test started; the program ends with the session.</summary>
+    public static DebugSession ForAttach(ITestOutputHelper output, Process program) => new(output, program, terminateDebuggee: false);
+
     /// <summary>The adapter alone, to launch a program itself; the program ends with the session.</summary>
     public static DebugSession ForLaunch(ITestOutputHelper output) => new(output, null, terminateDebuggee: true);
 
@@ -468,4 +471,14 @@ public static class Debuggees
     }
 
     public static string Apphost(string name) => Path.ChangeExtension(Program(name), OperatingSystem.IsWindows() ? ".exe" : null);
+
+    /// <summary>A program with no .NET in it, running a minute unless ended first: what an attach cannot take hold of.</summary>
+    public static Process NotDotnet()
+    {
+        ProcessStartInfo start = OperatingSystem.IsWindows()
+            ? ChildProcesses.Command("ping", ["-n", "60", "127.0.0.1"])
+            : ChildProcesses.Command("/bin/sleep", ["60"]);
+        start.RedirectStandardOutput = true;
+        return ChildProcesses.Start(start);
+    }
 }

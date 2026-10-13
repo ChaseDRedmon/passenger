@@ -33,13 +33,28 @@ public sealed class DebugAdapter
     /// A terminate is not the end, since a client may still disconnect after it. Raised on any thread.</summary>
     public event Action? ShutdownRequested;
 
-    /// <summary>Lets the debuggee go when the client went away without disconnecting. Does nothing
-    /// after a disconnect, which let it go already.</summary>
-    public void Abort()
+    /// <summary>Lets the debuggee go when the client went away without disconnecting, under the engine's lock as a disconnect
+    /// is, so the event loop is not amid one of the program's events. Does nothing after a disconnect, which let it go
+    /// already. A request still holding the lock after 10 s (one that never ends) is not waited for longer.</summary>
+    public async Task AbortAsync()
     {
         try
         {
-            debugger.Disconnect(true);
+            using CancellationTokenSource limit = new(TimeSpan.FromSeconds(10));
+            IDisposable? held = null;
+            try
+            {
+                held = await debugger.DapRequestAndRuntimeEventLock.LockAsync(limit.Token);
+                await debugger.DrainRuntimeEventQueue();
+            }
+            catch (OperationCanceledException)
+            {
+                log?.Invoke("Abort: a request still holds the engine after 10 s; the program is let go without waiting for it");
+            }
+            using (held)
+            {
+                debugger.Disconnect(true);
+            }
         }
         catch (Exception error)
         {
