@@ -37,8 +37,9 @@ internal sealed class Stripe : Border
             [lower] = Group(),
             [bottom] = Group(),
         };
-        gap = new Rectangle { Height = 1, Width = 20, Margin = new Thickness(0, 6) };
-        gap.Bind(Shape.FillProperty, gap.GetResourceObservable("Passenger.Hover"));
+        // Wide apart and drawn plainly, so the upper and lower windows read as two places, not one list.
+        gap = new Rectangle { Height = 1, Width = 22, Margin = new Thickness(0, 12) };
+        gap.Bind(Shape.FillProperty, gap.GetResourceObservable("Passenger.StripeSeparator"));
         StackPanel sides = new() { [DockPanel.DockProperty] = Dock.Top, Children = { groups[upper], gap, groups[lower] } };
         groups[bottom].VerticalAlignment = VerticalAlignment.Bottom;
         groups[bottom][DockPanel.DockProperty] = Dock.Bottom;
