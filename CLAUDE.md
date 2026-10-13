@@ -161,6 +161,12 @@ window or takes the focus; it shows everything but the system's own window chrom
   cannot launch here saying why); `LaunchPlan.ResolveAsync` works one out once, in one MSBuild request, into what Run,
   Debug, Profile, Hot Reload and a debugged test host start, and `RunConfigurationsDialog` is Run > Edit
   Configurations. A test project's first Project launch profile gives its variables to its tests.
+- `src/Passenger.App/Testing`: unit testing works in Passenger's own `TestItem` (its id the project and full name, plus
+  a data row's name) and `TestOutcome`, behind `ITestRunner`; `VsTestRunner` is the only file that knows VSTest's
+  object model. `TestFinder` shows a solution's tests from code as it opens, before any build: test projects' files
+  parsed off the UI thread, an open file's from its own parse (`TestsAtCaret.Read` is the one reading of a file's
+  tests), changed ones through the folder watcher; discovery and runs merge into those rows by id.
+  `MainWindow.Tests.cs` wires it.
 - `src/Passenger.App/Workspace`: `SolutionModel` reads solutions and projects for the Explorer's Solution view, and
   `SolutionEdits` is every change to a .sln or .slnx (solution folders, the files they list, projects in and out): a
   .sln line by line and a .slnx through XDocument with its whitespace kept, so the rest of the file stays byte for byte
