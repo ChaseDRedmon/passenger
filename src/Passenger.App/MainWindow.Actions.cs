@@ -179,13 +179,13 @@ public partial class MainWindow
             {
                 RunSelected();
             }
-        }, _ => Unconfigured("run"), ("Run", 0, 3));
+        }, _ => Unconfigured("run"), ("Run", 0, 4));
         Add(A.Stop, "Stop", "Run", context =>
         {
             _ = debug.StopAsync();
             runner.Stop();
             builder.Stop();
-        }, _ => debug.IsDebugging || runner.IsRunning || builder.IsRunning ? null : "Nothing is running", ("Run", 0, 4));
+        }, _ => debug.IsDebugging || runner.IsRunning || builder.IsRunning ? null : "Nothing is running", ("Run", 0, 5));
         Add(A.EditBreakpoint, "Edit Breakpoint...", "Debug", c =>
         {
             int line = c.Caret.Line;

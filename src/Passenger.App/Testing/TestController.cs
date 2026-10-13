@@ -164,14 +164,28 @@ public sealed class TestController : IAsyncDisposable
             Message?.Invoke(this, $"{prefix}Running {Count(methods)}");
             HashSet<TestResult> applied = new(ReferenceEqualityComparer.Instance);
             void Apply(IReadOnlyList<TestResult> results) => Tree.Apply(results.Where(applied.Add));
-            RunSummary summary = await runner!.RunAsync(
-                [.. methods.SelectMany(m => m.Cases)],
-                UiThread.Marshal<IReadOnlyList<TestResult>>(Apply),
-                log: UiThread.Marshal(log),
-                debugger: debug ? new DebugLauncher(this) : null,
-                cancel: stop.Token);
+            RunSummary? summary = null;
+            // Each test project's tests run with its launch profile's environment, so projects whose differ run apart.
+            foreach (IGrouping<string, (TestCase Case, IReadOnlyDictionary<string, string> Environment)> group in methods.SelectMany(m => m.Cases)
+                .Select(c => (Case: c, Environment: EnvironmentOf(c.Source)))
+                .GroupBy(c => string.Join('\n', c.Environment.Select(v => $"{v.Key}={v.Value}")), StringComparer.Ordinal))
+            {
+                if (summary is { Canceled: true })
+                {
+                    break;
+                }
+                RunSummary part = await runner!.RunAsync(
+                    [.. group.Select(c => c.Case)],
+                    UiThread.Marshal<IReadOnlyList<TestResult>>(Apply),
+                    log: UiThread.Marshal(log),
+                    debugger: debug ? new DebugLauncher(this) : null,
+                    environment: group.First().Environment,
+                    cancel: stop.Token);
+                summary = summary is null ? part : new RunSummary(summary.Elapsed + part.Elapsed, summary.Canceled || part.Canceled,
+                    summary.Aborted || part.Aborted, summary.Error ?? part.Error) { Results = [.. summary.Results, .. part.Results] };
+            }
             // VSTest may tell a result on another thread behind the run's end: every one is in before the end is.
-            Apply(summary.Results);
+            Apply(summary!.Results);
             Tree.End();
             Summary = prefix + Tally(methods, summary);
             Message?.Invoke(this, Summary);
@@ -327,6 +341,17 @@ public sealed class TestController : IAsyncDisposable
     }
 
     private static string DisplayName(ProjectModel project) => Path.GetFileNameWithoutExtension(project.Path);
+
+    /// <summary>The environment a test assembly's tests run with: its project's first launch profile that runs the project,
+    /// its variables, as Rider's VSTest runner gives a test project's launchSettings.json to its test host.</summary>
+    private IReadOnlyDictionary<string, string> EnvironmentOf(string source)
+    {
+        string assembly = PathNames.Canonical(source);
+        return resolved?.Assemblies.FirstOrDefault(a => PathNames.Same(a.Path, assembly))?.Project is { } project
+            && Run.LaunchProfile.Read(project).FirstOrDefault(p => p.RunsProject) is { } profile
+            ? profile.EnvironmentVariables
+            : new Dictionary<string, string>();
+    }
 
     private static string Count(IReadOnlyList<TestNode> methods)
     {

@@ -100,10 +100,10 @@ public sealed class DebugController
     /// <summary>The session started, stopped, ran on or ended.</summary>
     public event EventHandler? StateChanged;
 
-    /// <summary>Launches a program under the debugger (after it is built), its output in the Debug
+    /// <summary>Launches a plan's program under the debugger (after its build), its output in the Debug
     /// window's Console. Null once the session is open (the program may have ended already), else why it could not.</summary>
-    public Task<string?> StartAsync(DebugTarget target, string name) =>
-        OpenAsync((built, log, output) => DebugSession.LaunchAsync(target, Breakpoints, built, log, output), name, launched: true);
+    public Task<string?> StartAsync(Run.LaunchPlan plan) =>
+        OpenAsync((built, log, output) => DebugSession.LaunchAsync(plan, Breakpoints, built, log, output), plan.Name, launched: true);
 
     /// <summary>Attaches the debugger to a running .NET process, its output (if any) in the Console. Null once the session
     /// is open, else why it could not.</summary>

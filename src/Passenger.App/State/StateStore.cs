@@ -4,6 +4,7 @@ using System.Text.Json.Nodes;
 using Passenger.App.Debugging;
 using Passenger.App.Docking;
 using Passenger.App.Navigation;
+using Passenger.App.Run;
 using Passenger.App.Settings;
 using Passenger.App.Updates;
 using Passenger.App.Welcome;
@@ -76,7 +77,7 @@ public sealed class StateStore
     }
 }
 
-/// <summary>A folder's documents: what its window had open, its layout, breakpoints and bookmarks.</summary>
+/// <summary>A folder's documents: what its window had open, its layout, breakpoints, bookmarks and run configurations.</summary>
 public sealed class ProjectState
 {
     internal ProjectState(string root, string folder)
@@ -87,6 +88,7 @@ public sealed class ProjectState
         Layout = new(Path.Combine(Folder, "layout.json"));
         Breakpoints = new(Path.Combine(Folder, "breakpoints.json"));
         Bookmarks = new(Path.Combine(Folder, "bookmarks.json"));
+        RunConfigurations = new(Path.Combine(Folder, "runConfigurations.json"));
     }
 
     /// <summary>The folder the documents are in.</summary>
@@ -109,11 +111,15 @@ public sealed class ProjectState
 
     public StateDocument<BookmarksState> Bookmarks { get; }
 
+    /// <summary>The person's own run configurations and the one chosen.</summary>
+    public StateDocument<RunConfigurationsState> RunConfigurations { get; }
+
     public void Flush()
     {
         Workspace.Flush();
         Layout.Flush();
         Breakpoints.Flush();
         Bookmarks.Flush();
+        RunConfigurations.Flush();
     }
 }

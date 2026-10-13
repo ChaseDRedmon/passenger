@@ -488,6 +488,14 @@ public static class Ui
         }
     }
 
+    /// <summary>Waits for a task the window started (a run, a debug session's start) as <see cref="WaitFor"/> waits, and
+    /// gives its answer.</summary>
+    public static T Await<T>(Task<T> task, string what, TimeSpan? limit = null)
+    {
+        WaitFor(() => task.IsCompleted, what, limit);
+        return task.GetAwaiter().GetResult();
+    }
+
     /// <summary>Lets the window's background work land, as a screenshot does, then finds what it shows, with no wait of
     /// the test's own: what that work brings (Git's answers, a search's) must be work the window counts.</summary>
     public static void Landed(Func<bool> shown, string what)

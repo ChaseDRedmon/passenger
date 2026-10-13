@@ -135,6 +135,25 @@ public sealed class UnitTestsTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void A_test_projects_launch_profile_gives_its_variables_to_its_tests_run_and_debugged()
+    {
+        Directory.CreateDirectory(Path.Combine(folder, "Properties"));
+        Write("Properties/launchSettings.json",
+            "{ \"profiles\": { \"Sums\": { \"commandName\": \"Project\", \"environmentVariables\": { \"PASSENGER_GREETING\": \"from the profile\" } } } }");
+        Write("GreetingTests.cs", "using Xunit;\n\nnamespace Sums.Tests;\n\npublic class GreetingTests\n{\n    [Fact]\n" +
+            "    public void The_profile_greets() => Assert.Equal(\"from the profile\", Environment.GetEnvironmentVariable(\"PASSENGER_GREETING\"));\n}\n");
+        MainWindow window = Open();
+        Assert.True(window.Perform(AppActions.RunAllTests));
+        Ui.WaitFor(() => !window.Tests.IsBusy && Method(window, "The_profile_greets")?.State is TestState.Passed or TestState.Failed, "the run of every test", TimeSpan.FromSeconds(120));
+        TestNode greets = Method(window, "The_profile_greets")!;
+        Assert.True(greets.State == TestState.Passed, $"A test ran without its project's launch profile's variables, which Rider gives it:\n{greets.Details}");
+
+        Assert.Null(Ui.Await(window.Tests.RunAsync(window.Folder!, [greets], debug: true), "the test debugged", TimeSpan.FromSeconds(120)));
+        Assert.True(greets.State == TestState.Passed, $"A test debugged ran without its project's launch profile's variables:\n{greets.Details}");
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Run_until_failure_repeats_a_test_until_it_fails_and_shows_that_run()
     {
         // Passes twice, then fails: it counts its runs in a file of its own.

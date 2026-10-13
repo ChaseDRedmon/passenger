@@ -299,8 +299,9 @@ public sealed partial class PassengerTools(MainWindow window)
     });
 
     [McpServerTool(Name = "run", Title = "Run a configuration", Destructive = true), Description(
-        "Runs a run configuration (the chosen one if none is named) as Run does, and waits up to waitSeconds for it to end. " +
-        "Returns its output so far and its exit code once it has one; a run refused (one already running, nothing to run) is an error.")]
+        "Runs a run configuration (the chosen one if none is named) as Run does, building it first when it says so, and waits up to " +
+        "waitSeconds for it to end. Returns its output so far and its exit code once it has one; a run refused (one already running, " +
+        "nothing to run, a failed build) is an error.")]
     public Task<RunResult> Run(
         string? configuration = null,
         [Description(Arguments)] string? arguments = null,
@@ -308,7 +309,7 @@ public sealed partial class PassengerTools(MainWindow window)
     {
         Choose(configuration);
         string name = window.Configuration?.Name ?? string.Empty;
-        if (window.RunSelected(arguments) is { } refused)
+        if (await window.RunAsync(arguments).WaitAsync(cancel) is { } refused)
         {
             throw new InvalidOperationException(refused);
         }

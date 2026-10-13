@@ -102,19 +102,13 @@ public partial class MainWindow
         bool loaded = workspace is not null && workspace.LoadsAs(read);
         workspace = read;
         Explorer.Reload(Solution);
-        string? chosen = configuration?.Name;
-        configurations = Configure();
-        configuration = configurations.FirstOrDefault(c => c.Name == chosen) ?? configurations.FirstOrDefault();
-        RunConfigName.Text = configuration?.Name ?? "No configurations";
+        Configure();
         ShowWorkspaceName();
         if (!loaded)
         {
             StartCSharp();
         }
     }
-
-    /// <summary>The run configurations of the projects loaded.</summary>
-    private IReadOnlyList<RunConfiguration> Configure() => RunConfiguration.From(Projects);
 
     /// <summary>The language server on the workspace, in place of the one before, the files open since before (the same
     /// folder with another solution) its too; none for a folder with neither a solution nor a project.</summary>

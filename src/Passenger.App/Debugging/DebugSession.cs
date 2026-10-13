@@ -150,17 +150,17 @@ public sealed class DebugSession
     /// <summary>The adapter's process, for a test to see it gone.</summary>
     public int AdapterProcessId => adapter.Id;
 
-    /// <summary>Starts the adapter and launches a program under it (an apphost or a .dll run under
-    /// dotnet), with the breakpoints the store has, stopping on exceptions the user's code leaves
+    /// <summary>Starts the adapter and launches a plan's program under it (a .dll under dotnet, or an
+    /// executable), with the breakpoints the store has, stopping on exceptions the user's code leaves
     /// unhandled, as Rider does by default. What the program writes, and the debugger's own words ("console"), go to
     /// <paramref name="output"/> on the connection's thread, in order.</summary>
-    public static Task<DebugSession> LaunchAsync(DebugTarget target, BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output) =>
-        StartAsync(target.Program, "launch", new LaunchArguments
+    public static Task<DebugSession> LaunchAsync(Run.LaunchPlan plan, BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output) =>
+        StartAsync(plan.Built ?? plan.Program, "launch", new LaunchArguments
         {
-            Program = target.Program,
-            Args = target.Arguments,
-            Cwd = target.WorkingDirectory,
-            Env = target.Environment,
+            Program = plan.Program,
+            Args = plan.Arguments,
+            Cwd = plan.WorkingDirectory,
+            Env = plan.Environment,
             Console = "internalConsole",
             JustMyCode = true,
             StopAtEntry = false,

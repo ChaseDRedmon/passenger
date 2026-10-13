@@ -199,7 +199,7 @@ public sealed class McpTests : IDisposable
             {
                 if (message.StartsWith("Pushed", StringComparison.Ordinal) || message.StartsWith("Push failed", StringComparison.Ordinal))
                 {
-                    window.RunSelected();
+                    _ = window.RunAsync();
                     pressed = window.Status;
                 }
             };

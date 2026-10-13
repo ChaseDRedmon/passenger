@@ -248,6 +248,47 @@ public sealed class DebuggerTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void A_configuration_is_run_debugged_and_profiled_with_the_same_arguments_variable_and_working_folder()
+    {
+        Write("Program.cs", "Console.WriteLine($\"seen [{string.Join(\"|\", args)}] {Environment.GetEnvironmentVariable(\"PASSENGER_SEEN\")} in {Environment.CurrentDirectory}\");\n");
+        Write("Properties/launchSettings.json", """
+            { "profiles": { "Seen": { "commandName": "Project", "commandLineArgs": "first \"second word\"", "workingDirectory": "work dir",
+              "environmentVariables": { "PASSENGER_SEEN": "yes, seen" } } } }
+            """);
+        string work = Path.GetDirectoryName(Write("work dir/.keep", string.Empty))!;
+        string settings = TestFolders.Create("settings-");
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings };
+        window.Show();
+        window.OpenFolder(folder);
+        Ui.Settle();
+        try
+        {
+            Assert.Equal("Sum: Seen", window.Configuration?.Name);
+            string seen = $"seen [first|second word] yes, seen in {PathNames.Canonical(work)}";
+
+            Assert.Null(Ui.Await(window.RunAsync(), "the run to start", TimeSpan.FromMinutes(2)));
+            Ui.WaitFor(() => window.Runner.Ended.IsCompleted, "the run to end");
+            string ran = window.BottomPanel.Run.Document.Snapshot.ToString();
+            Assert.True(ran.Contains(seen, StringComparison.Ordinal), $"Run did not give the program what Debug and Profile give it, {seen}:\n{ran}");
+
+            Assert.Null(Ui.Await(window.DebugAsync(), "the debug session to start", TimeSpan.FromMinutes(2)));
+            Ui.WaitFor(() => !window.Debugger.IsDebugging, "the debugged program to end");
+            string debugged = window.BottomPanel.Debug.Console.Document.Snapshot.ToString();
+            Assert.True(debugged.Contains(seen, StringComparison.Ordinal), $"Debug did not give the program what Run and Profile give it, {seen}:\n{debugged}");
+
+            Assert.Null(Ui.Await(window.ProfileAsync(), "the profiled run to start", TimeSpan.FromMinutes(2)));
+            Ui.WaitFor(() => window.ProfilerView.Snapshot is not null, "the profiled program to end", TimeSpan.FromMinutes(2));
+            string profiled = window.BottomPanel.Run.Document.Snapshot.ToString();
+            Assert.True(profiled.Contains(seen, StringComparison.Ordinal), $"Profile did not give the program what Run and Debug give it, {seen}:\n{profiled}");
+        }
+        finally
+        {
+            window.Close();
+            TestFolders.Delete(settings);
+        }
+    }
+
+    [AvaloniaFact]
     public void An_exception_stop_names_the_exception_at_the_line_that_threw_it()
     {
         Write("Program.cs", "int[] values = [1, 2];\nint index = 5;\nConsole.WriteLine(values[index]);\n");

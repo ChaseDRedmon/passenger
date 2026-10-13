@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Xml;
+using System.Xml.Linq;
 using Microsoft.TestPlatform.VsTestConsole.TranslationLayer;
 using Microsoft.VisualStudio.TestPlatform.ObjectModel;
 using Microsoft.VisualStudio.TestPlatform.ObjectModel.Client;
@@ -109,10 +111,13 @@ public sealed class TestRunner : IDisposable
     }
 
     /// <summary>Runs tests, their results told a batch at a time as VSTest sends them; done when the run ends, with its
-    /// time and whether it was stopped, which cancellation does, keeping the results of what has run.</summary>
-    public async Task<RunSummary> RunAsync(IReadOnlyList<TestCase> tests, Action<IReadOnlyList<TestResult>> results, Action<string>? log = null, ITestHostLauncher? debugger = null, CancellationToken cancel = default)
+    /// time and whether it was stopped, which cancellation does, keeping the results of what has run. The environment
+    /// given is set in the test hosts VSTest starts, as its run settings' EnvironmentVariables are.</summary>
+    public async Task<RunSummary> RunAsync(IReadOnlyList<TestCase> tests, Action<IReadOnlyList<TestResult>> results, Action<string>? log = null,
+        ITestHostLauncher? debugger = null, IReadOnlyDictionary<string, string>? environment = null, CancellationToken cancel = default)
     {
         Run handler = new(results, log);
+        string settings = Settings(environment, log);
         using (cancel.Register(() => Task.Run(console.CancelTestRun)))
         {
             // Not held: a debugged run waits here while stopped at a breakpoint, which TestController lets screenshots past.
@@ -120,15 +125,38 @@ public sealed class TestRunner : IDisposable
             {
                 if (debugger is null)
                 {
-                    console.RunTests(tests, RunSettings, new TestPlatformOptions(), handler);
+                    console.RunTests(tests, settings, new TestPlatformOptions(), handler);
                 }
                 else
                 {
-                    console.RunTestsWithCustomTestHost(tests, RunSettings, new TestPlatformOptions(), handler, debugger);
+                    console.RunTestsWithCustomTestHost(tests, settings, new TestPlatformOptions(), handler, debugger);
                 }
             });
             return await handler.Done.Task;
         }
+    }
+
+    /// <summary>A run's settings: VSTest's design mode, as an IDE runs it, and the environment, each variable an element as
+    /// VSTest reads them; a name XML cannot hold is left out and said.</summary>
+    private static string Settings(IReadOnlyDictionary<string, string>? environment, Action<string>? log)
+    {
+        if (environment is not { Count: > 0 })
+        {
+            return RunSettings;
+        }
+        XElement variables = new("EnvironmentVariables");
+        foreach ((string name, string value) in environment)
+        {
+            try
+            {
+                variables.Add(new XElement(XmlConvert.VerifyName(name), value));
+            }
+            catch (XmlException)
+            {
+                log?.Invoke($"The environment variable {name} cannot be given to the tests: VSTest names each in XML, which cannot hold that name");
+            }
+        }
+        return new XElement("RunSettings", new XElement("RunConfiguration", new XElement("DesignMode", "true"), variables)).ToString(SaveOptions.DisableFormatting);
     }
 
     public void Dispose()

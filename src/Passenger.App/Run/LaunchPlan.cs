@@ -1,0 +1,171 @@
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using Passenger.App.Workspace;
+using Passenger.Core;
+
+namespace Passenger.App.Run;
+
+/// <summary>The project a launch builds first, for one framework when it has several.</summary>
+public sealed record BuildStep(string Project, string? Framework);
+
+/// <summary>Why a configuration cannot be launched, in words for the person.</summary>
+public sealed class LaunchException(string message) : Exception(message);
+
+/// <summary>What a run configuration launches, worked out once: the program (the project's built assembly under the
+/// <c>dotnet</c> that builds it, or another program), its arguments, working folder and environment, and the build that
+/// comes first. Run, Debug, Profile and a debugged test host each start a plan, so they launch the same thing.</summary>
+public sealed partial record LaunchPlan
+{
+    /// <summary>The configuration's name, as the windows and the status bar say it.</summary>
+    public required string Name { get; init; }
+
+    /// <summary>The program started: the <c>dotnet</c> host for an assembly, or an executable.</summary>
+    public required string Program { get; init; }
+
+    /// <summary>The program's arguments, the assembly first when it runs under <c>dotnet</c>.</summary>
+    public IReadOnlyList<string> Arguments { get; init; } = [];
+
+    public required string WorkingDirectory { get; init; }
+
+    /// <summary>Set over the IDE's own environment, which the program inherits.</summary>
+    public IReadOnlyDictionary<string, string> Environment { get; init; } = new Dictionary<string, string>();
+
+    /// <summary>The project, and the framework of it that runs; null for a test host VSTest describes.</summary>
+    public string? Project { get; init; }
+
+    public string? Framework { get; init; }
+
+    /// <summary>The build before launch, or null when the configuration launches what was built last.</summary>
+    public BuildStep? Build { get; init; }
+
+    /// <summary>The file the build makes and the launch needs (the project's assembly), checked once the build is done.</summary>
+    public string? Built { get; init; }
+
+    public ConsoleKind Console { get; init; }
+
+    /// <summary>Where the browser opens once the program listens, or null (#51).</summary>
+    public string? BrowserUrl { get; init; }
+
+    /// <summary>The program as its messages name it: the project's assembly, else the executable, without its extension.</summary>
+    public string ProgramName => System.IO.Path.GetFileNameWithoutExtension(Built ?? Program);
+
+    /// <summary>Null when the plan can launch now, its build done: else that the build made no program (unless what starts
+    /// it builds it), or that the working folder is gone ("Could not run Hello: its working folder ... does not exist").</summary>
+    public string? WhyNot(string verb, bool built = true)
+    {
+        if (built && Built is { } file && !File.Exists(file))
+        {
+            return $"Could not {verb} {ProgramName}: {System.IO.Path.GetFileName(file)} has not been built";
+        }
+        return Directory.Exists(WorkingDirectory) ? null : $"Could not {verb} {ProgramName}: its working folder {WorkingDirectory} does not exist";
+    }
+
+    /// <summary>Works out what a configuration launches among the open folder's projects, asking MSBuild where the project
+    /// builds (and any property its values name), which needs no build. Throws a <see cref="LaunchException"/> saying why
+    /// it cannot: a kind of profile Passenger does not run, a project gone or unloaded, MSBuild's refusal.</summary>
+    public static async Task<LaunchPlan> ResolveAsync(RunConfiguration configuration, IReadOnlyList<ProjectModel> projects, CancellationToken cancel = default)
+    {
+        if (configuration.Unsupported is { } why)
+        {
+            throw new LaunchException($"{configuration.Name} cannot run here: {why}");
+        }
+        ProjectModel project = projects.FirstOrDefault(p => PathNames.Same(p.Path, configuration.Project))
+            ?? throw new LaunchException($"{configuration.Name} cannot run: its project {System.IO.Path.GetFileName(configuration.Project)} is not loaded in the open folder");
+        string? framework = configuration.Framework is { Length: > 0 } chosen ? chosen
+            : project.TargetFrameworks.Count > 1 ? project.TargetFrameworks[0] : null;
+        HashSet<string> names = new(StringComparer.OrdinalIgnoreCase) { "TargetPath", "ProjectDir" };
+        foreach (string text in (string[])[configuration.Program, configuration.Arguments, configuration.WorkingDirectory, .. configuration.Environment.Values])
+        {
+            foreach (Match macro in Macro().Matches(text))
+            {
+                names.Add(macro.Groups[1].Value);
+            }
+        }
+        IReadOnlyDictionary<string, string> properties = await EvaluateAsync(project, framework, names, cancel);
+        string Expand(string text) => System.Environment.ExpandEnvironmentVariables(
+            Macro().Replace(text, macro => properties.GetValueOrDefault(macro.Groups[1].Value, string.Empty)));
+
+        string target = PathNames.Canonical(properties.GetValueOrDefault("TargetPath") is { Length: > 0 } path
+            ? path
+            : throw new LaunchException($"MSBuild could not say what {project.Name} builds"));
+        List<string> arguments = [.. CommandLine.Split(Expand(configuration.Arguments))];
+        string program;
+        string? built = null;
+        if (configuration.Program is { Length: > 0 } named)
+        {
+            program = Executable(Expand(named), project.Folder);
+        }
+        else if (target.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+        {
+            program = Dotnet.Host();
+            arguments.Insert(0, target);
+            built = target;
+        }
+        else
+        {
+            program = built = target;
+        }
+        string working = configuration.WorkingDirectory is { Length: > 0 } folder
+            ? System.IO.Path.TrimEndingDirectorySeparator(PathNames.Canonical(System.IO.Path.Combine(project.Folder, Expand(folder))))
+            : System.IO.Path.GetDirectoryName(target)!;
+        return new LaunchPlan
+        {
+            Name = configuration.Name,
+            Program = program,
+            Arguments = arguments,
+            WorkingDirectory = working,
+            Environment = configuration.Environment.ToDictionary(v => v.Key, v => Expand(v.Value)),
+            Project = project.Path,
+            Framework = framework,
+            Build = configuration.BuildBeforeLaunch ? new BuildStep(project.Path, framework) : null,
+            Built = built,
+            Console = configuration.Console,
+            BrowserUrl = configuration.LaunchBrowser && configuration.BrowserUrl.Length > 0 ? Expand(configuration.BrowserUrl) : null,
+        };
+    }
+
+    /// <summary>A program a configuration names: the .NET command line by name is the one the IDE builds with, a path is
+    /// the project folder's when relative, and a bare name is looked for on the PATH as a shell would.</summary>
+    private static string Executable(string named, string projectFolder)
+    {
+        if (named is "dotnet" or "dotnet.exe")
+        {
+            return Dotnet.Host();
+        }
+        if (named.IndexOfAny(['/', '\\']) >= 0 || System.IO.Path.IsPathRooted(named))
+        {
+            return PathNames.Canonical(System.IO.Path.Combine(projectFolder, named));
+        }
+        return Programs.OnPath(named) ?? Programs.OnPath(named + (OperatingSystem.IsWindows() ? ".exe" : string.Empty)) ?? named;
+    }
+
+    /// <summary>The properties MSBuild evaluates for the project (with its framework when it has several), in one request.</summary>
+    private static async Task<IReadOnlyDictionary<string, string>> EvaluateAsync(ProjectModel project, string? framework, IReadOnlyCollection<string> names, CancellationToken cancel)
+    {
+        List<string> args = ["msbuild", project.Path, "-nologo", .. names.Select(n => $"-getProperty:{n}")];
+        if (framework is not null)
+        {
+            args.Add($"-property:TargetFramework={framework}");
+        }
+        ChildResult msbuild = await ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(args, project.Folder), cancel: cancel);
+        string output = msbuild.Output.Trim();
+        if (!msbuild.Succeeded || output.Length == 0)
+        {
+            throw new LaunchException($"MSBuild could not say what {project.Name} builds: {msbuild.Error.Trim()} {output}".Trim());
+        }
+        try
+        {
+            using JsonDocument read = JsonDocument.Parse(output);
+            return read.RootElement.GetProperty("Properties").EnumerateObject()
+                .ToDictionary(p => p.Name, p => p.Value.GetString() ?? string.Empty, StringComparer.OrdinalIgnoreCase);
+        }
+        catch (Exception error) when (error is JsonException or KeyNotFoundException or InvalidOperationException)
+        {
+            throw new LaunchException($"MSBuild's answer about {project.Name} did not read: {output}");
+        }
+    }
+
+    /// <summary>An MSBuild property named in a value, <c>$(TargetDir)</c>, as Visual Studio expands it in a launch profile.</summary>
+    [GeneratedRegex(@"\$\(([A-Za-z_][A-Za-z0-9_.-]*)\)")]
+    private static partial Regex Macro();
+}

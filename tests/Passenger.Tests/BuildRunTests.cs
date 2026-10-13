@@ -538,13 +538,18 @@ public sealed class BuildRunTests : IDisposable
             }
             """);
         MainWindow window = Open();
-        // A profile that runs something else (a container here) is not the project's to run.
-        Assert.Equal(["Hello: Greet"], window.Configurations.Select(c => c.Name));
+        // A profile that runs something else (a container here) is listed, as Rider lists it, and says why it does not run.
+        Assert.Equal(["Hello: Greet", "Hello: Docker"], window.Configurations.Select(c => c.Name));
         Assert.Contains("Hi [--name|Ada Lovelace]", RunToEnd(window), StringComparison.Ordinal);
 
         // Arguments given for one run replace the profile's, and its environment stays.
-        window.RunSelected("one \"two three\"");
+        Assert.Null(Ui.Await(window.RunAsync("one \"two three\""), "the run to start", TimeSpan.FromMinutes(2)));
         Assert.Contains("Hi [one|two three]", RunToEnd(window), StringComparison.Ordinal);
+
+        Assert.True(window.SelectConfiguration("Hello: Docker"));
+        Assert.Equal("Hello: Docker cannot run here: a container profile runs in Docker, which Passenger does not start",
+            Ui.Await(window.RunAsync(), "the run's refusal"));
+        Assert.Equal("Hello: Docker cannot run here: a container profile runs in Docker, which Passenger does not start", window.Status);
         window.Close();
     }
 

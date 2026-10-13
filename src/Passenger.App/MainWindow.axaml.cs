@@ -48,8 +48,6 @@ public partial class MainWindow : Window
     /// <summary>The build's last lines, which its outcome carries.</summary>
     private readonly Queue<string> builtLines = new();
     private const int BuiltLinesKept = 20;
-    private IReadOnlyList<RunConfiguration> configurations = [];
-    private RunConfiguration? configuration;
     private readonly Passenger.App.Explorer.ExplorerView Explorer = new();
     private readonly ToolWindows.ToolViews Bottom = new();
     private readonly ToolWindows.StructureView Structure = new();
@@ -209,9 +207,9 @@ public partial class MainWindow : Window
             StopButton.IsVisible = false;
             StatusText.Text = RunEnded(ran, code);
         };
-        Bottom.Build.RerunClicked += (_, _) => Build(buildKind, lastProjects);
+        Bottom.Build.RerunClicked += (_, _) => Build(buildKind, lastProjects, framework: buildFramework);
         Bottom.Build.StopClicked += (_, _) => builder.Stop();
-        Bottom.Run.RerunClicked += (_, _) => RunSelected();
+        Bottom.Run.RerunClicked += (_, _) => Request(AppActions.RunProgram);
         Bottom.Run.StopClicked += (_, _) => runner.Stop();
         Bottom.Problems.Chosen += (_, problem) =>
         {
@@ -374,9 +372,7 @@ public partial class MainWindow : Window
         Explorer.Load(folder, Solution);
         _ = vcs.OpenAsync(folder);
         Explorer.Tree.Unloaded.Clear();
-        configurations = Configure();
-        configuration = configurations.FirstOrDefault();
-        RunConfigName.Text = configuration?.Name ?? "No configurations";
+        LoadConfigurations();
         index.Build(folder);
         Watch(folder);
         StartCSharp();
@@ -511,27 +507,11 @@ public partial class MainWindow : Window
     /// <summary>The open folder, canonical, or null before one is opened.</summary>
     public string? Folder => folder;
 
-    public IReadOnlyList<RunConfiguration> Configurations => configurations;
-
-    public RunConfiguration? Configuration => configuration;
-
     /// <summary>The program the Run window shows, while it runs or since it last did.</summary>
     public ProcessRunner Runner => runner;
 
     /// <summary>The build, rebuild or clean the Build window shows, while it runs or since it last did.</summary>
     public ProcessRunner Builder => builder;
-
-    /// <summary>Chooses the run configuration by name, as the toolbar's menu does; false when there is none.</summary>
-    public bool SelectConfiguration(string name)
-    {
-        if (configurations.FirstOrDefault(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase)) is not { } chosen)
-        {
-            return false;
-        }
-        configuration = chosen;
-        RunConfigName.Text = chosen.Name;
-        return true;
-    }
 
     /// <summary>Builds as Build does, and says how it ended once it has: built, failed, stopped, refused or unable to start.
     /// Canceled (the Unit Tests window's Stop), the build is stopped as the Build window's Stop stops it.</summary>
@@ -552,38 +532,6 @@ public partial class MainWindow : Window
         return built.Task;
     }
 
-    /// <summary>Builds, then launches the chosen configuration under the debugger, as Rider's Debug does,
-    /// with these arguments in place of its own if given; the Debug window opens on its Console until the
-    /// program stops somewhere. Null once its session is open, or what stopped it (a failed build, no configuration,
-    /// the adapter's refusal).</summary>
-    public async Task<string?> DebugAsync(string? arguments = null)
-    {
-        if (configuration is not { } chosen)
-        {
-            return "Nothing to debug: no executable project";
-        }
-        if (await BuildAsync() is { Succeeded: false } unbuilt)
-        {
-            return unbuilt.Message;
-        }
-        BackgroundWork.Begin();
-        try
-        {
-            DebugTarget target = await DebugTarget.ResolveAsync(chosen, arguments);
-            ShowToolWindow("debug");
-            Bottom.Debug.ShowTab(console: true);
-            return await debug.StartAsync(target, chosen.Name);
-        }
-        catch (Exception error) when (error is InvalidOperationException or IOException)
-        {
-            return error.Message;
-        }
-        finally
-        {
-            BackgroundWork.End();
-        }
-    }
-
     /// <summary>The status bar's text, which says what the last action came to, for the person. What an operation came to
     /// is its own answer (a build's outcome, a commit's), never this, which anything may have replaced since.</summary>
     public string? Status => StatusText.Text;
@@ -594,8 +542,9 @@ public partial class MainWindow : Window
 
     /// <summary>Builds, rebuilds or cleans the solution, or the projects given one after another (stopping at the first
     /// that fails), as Rider's Build menu and the Solution view's do: the output in the Build window, the problems of all
-    /// of them in Problems. <paramref name="then"/> always hears how it ended, a build refused or never started included.</summary>
-    public void Build(BuildKind kind, IReadOnlyList<string>? projects = null, Action<BuildOutcome>? then = null)
+    /// of them in Problems. <paramref name="then"/> always hears how it ended, a build refused or never started included. A
+    /// framework given builds the projects for it alone, as a run configuration's build before launch does.</summary>
+    public void Build(BuildKind kind, IReadOnlyList<string>? projects = null, Action<BuildOutcome>? then = null, string? framework = null)
     {
         if (folder is null || IsBuilding)
         {
@@ -606,6 +555,7 @@ public partial class MainWindow : Window
         }
         buildKind = kind;
         lastProjects = projects;
+        buildFramework = projects is { Count: > 0 } ? framework : null;
         IReadOnlyList<string> whole = workspace!.BuildTargets(Projects);
         buildQueue.Clear();
         foreach (string target in projects is { Count: > 0 } ? projects : whole)
@@ -637,13 +587,14 @@ public partial class MainWindow : Window
     private readonly Queue<string> buildQueue = new();
     private BuildKind buildKind;
     private IReadOnlyList<string>? lastProjects;
+    private string? buildFramework;
 
     private void BuildNext()
     {
         string target = buildQueue.Dequeue();
         string verb = buildKind switch { BuildKind.Rebuild => "Rebuilding", BuildKind.Clean => "Cleaning", _ => "Building" };
         StatusText.Text = $"{verb} {Path.GetFileName(target)}…";
-        if (builder.StartDotnet(BuildOutput.Arguments(target, buildKind), folder!) is { } problem)
+        if (builder.StartDotnet(BuildOutput.Arguments(target, buildKind, buildFramework), folder!) is { } problem)
         {
             FinishBuild(new BuildOutcome(BuildStatus.NotStarted, problem));
         }
@@ -658,66 +609,6 @@ public partial class MainWindow : Window
             chosen.Add(owner.Path);
         }
         return chosen;
-    }
-
-    /// <summary>Runs the chosen configuration with <c>dotnet run</c>, its output in the Run window, with these
-    /// arguments in place of its own if given. Null once it runs (<see cref="ProcessRunner.Ended"/> is its end), else why
-    /// it could not, which the status bar says too.</summary>
-    public string? RunSelected(string? arguments = null)
-    {
-        if (configuration is not { } chosen || runner.IsRunning)
-        {
-            StatusText.Text = configuration is null ? "Nothing to run: no executable project" : "Already running";
-            return StatusText.Text;
-        }
-        Editors.SaveAll();
-        Bottom.Run.Clear();
-        Bottom.Run.SetRunning(true);
-        StopButton.IsVisible = true;
-        ShowToolWindow("run");
-        ran = chosen.Name;
-        if (settings.HotReload)
-        {
-            // dotnet watch applies each save to the running program, as Rider's Hot Reload does, and restarts it
-            // for an edit that cannot be applied rather than asking.
-            StatusText.Text = $"Running {chosen.Name} with Hot Reload: a save applies its changes";
-            return Started(runner.StartDotnet(["watch", "--non-interactive", .. chosen.RunArguments(arguments)], chosen.Project.Folder,
-                new Dictionary<string, string> { ["DOTNET_WATCH_SUPPRESS_EMOJIS"] = "1", ["DOTNET_WATCH_RESTART_ON_RUDE_EDIT"] = "true" }));
-        }
-        StatusText.Text = $"Running {chosen.Name}";
-        return Started(runner.StartDotnet(chosen.RunArguments(arguments), chosen.Project.Folder));
-    }
-
-    /// <summary>The run configuration the Run window last ran.</summary>
-    private string ran = string.Empty;
-
-    /// <summary>How a run that ended is named, in the status bar and to an agent.</summary>
-    public static string RunEnded(string name, int code) => $"{name} exited with code {code}";
-
-    /// <summary>A run that could not start leaves the Run window idle, Stop hidden, and says why.</summary>
-    private string? Started(string? problem)
-    {
-        if (problem is not null)
-        {
-            Bottom.Run.SetRunning(false);
-            StopButton.IsVisible = debug.IsDebugging;
-            StatusText.Text = problem;
-        }
-        return problem;
-    }
-
-    /// <summary>Debug, from its key or the toolbar: what stopped it, if anything, goes to the status bar.</summary>
-    public void DebugSelected()
-    {
-        _ = Debug();
-
-        async Task Debug()
-        {
-            if (await DebugAsync() is { } problem)
-            {
-                StatusText.Text = problem;
-            }
-        }
     }
 
     /// <summary>Shows where the debugger stopped: the file and line, and the Debug window's frames.</summary>
@@ -921,10 +812,8 @@ public partial class MainWindow : Window
                 Explorer.Tree.Unloaded.Add(project);
             }
             Explorer.Refresh();
-            configurations = Configure();
-            configuration = configurations.FirstOrDefault();
-            RunConfigName.Text = configuration?.Name ?? "No configurations";
         }
+        LoadConfigurations();
         Editors.Restore(kept.Editors, kept.EditorWindows);
         foreach (string file in kept.RecentFiles.Where(File.Exists).Reverse())
         {
@@ -946,33 +835,11 @@ public partial class MainWindow : Window
 
     private void OnBuildClicked(object? sender, RoutedEventArgs e) => BuildSolution();
 
-    private void OnRunClicked(object? sender, RoutedEventArgs e) => RunSelected();
+    private void OnRunClicked(object? sender, RoutedEventArgs e) => Request(AppActions.RunProgram);
 
     private void OnDebugClicked(object? sender, RoutedEventArgs e) => Request(AppActions.Debug);
 
     private void OnStopClicked(object? sender, RoutedEventArgs e) => Request(AppActions.Stop);
-
-    /// <summary>The run configurations to choose from, as a menu under the toolbar widget.</summary>
-    private void OnRunConfigClicked(object? sender, RoutedEventArgs e)
-    {
-        ContextMenu menu = new();
-        foreach (RunConfiguration each in configurations)
-        {
-            MenuItem item = new() { Header = each.Name };
-            RunConfiguration chosen = each;
-            item.Click += (_, _) =>
-            {
-                configuration = chosen;
-                RunConfigName.Text = chosen.Name;
-            };
-            menu.Items.Add(item);
-        }
-        if (menu.Items.Count == 0)
-        {
-            menu.Items.Add(new MenuItem { Header = "No executable projects", IsEnabled = false });
-        }
-        menu.Open(RunConfigButton);
-    }
 
     /// <summary>Goes to a file and position (go to definition, a usage), remembering where it came
     /// from for Back.</summary>
@@ -1319,10 +1186,7 @@ public partial class MainWindow : Window
             return;
         }
         Explorer.Refresh();
-        string? chosen = configuration?.Name;
-        configurations = Configure();
-        configuration = configurations.FirstOrDefault(c => c.Name == chosen) ?? configurations.FirstOrDefault();
-        RunConfigName.Text = configuration?.Name ?? "No configurations";
+        Configure();
         StatusText.Text = $"{Path.GetFileNameWithoutExtension(project)} {(unloaded ? "unloaded" : "reloaded")}";
         KeepWorkspace();
     }
@@ -1444,15 +1308,20 @@ public partial class MainWindow : Window
             [.. tests.Tree.Roots.SelectMany(r => r.Methods).Where(m => m.Cases.Any(c => Testing.TestsAtCaret.Matches(c.FullyQualifiedName, context.Type, context.Method)))];
     }
 
-    /// <summary>A test host VSTest would start, started under the debugger; its process for VSTest to talk to.</summary>
+    /// <summary>A test host VSTest would start, started under the debugger as a plan of its own (VSTest built it, and its
+    /// environment has the test project's launch profile's); its process for VSTest to talk to.</summary>
     private async Task<int> LaunchTestHost(Microsoft.VisualStudio.TestPlatform.ObjectModel.TestProcessStartInfo start)
     {
-        DebugTarget target = new(start.FileName ?? throw new InvalidOperationException("VSTest gave no test host"),
-            start.WorkingDirectory ?? folder ?? Environment.CurrentDirectory,
-            CommandLine.Split(start.Arguments),
-            start.EnvironmentVariables?.Where(v => v.Value is not null).ToDictionary(v => v.Key, v => v.Value!) ?? []);
+        LaunchPlan plan = new()
+        {
+            Name = "Tests",
+            Program = start.FileName ?? throw new InvalidOperationException("VSTest gave no test host"),
+            Arguments = CommandLine.Split(start.Arguments),
+            WorkingDirectory = start.WorkingDirectory ?? folder ?? Environment.CurrentDirectory,
+            Environment = start.EnvironmentVariables?.Where(v => v.Value is not null).ToDictionary(v => v.Key, v => v.Value!) ?? [],
+        };
         ShowToolWindow("debug");
-        string? problem = await debug.StartAsync(target, "Tests");
+        string? problem = await debug.StartAsync(plan);
         if (debug.Session is not { } session)
         {
             throw new InvalidOperationException(problem ?? "The debugger could not start the test host");

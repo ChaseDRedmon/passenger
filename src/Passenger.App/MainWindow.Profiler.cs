@@ -1,6 +1,6 @@
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
-using Passenger.App.Debugging;
+using Passenger.App.Run;
 using Passenger.App.Workspace;
 using Passenger.Editor;
 using Microsoft.Diagnostics.NETCore.Client;
@@ -74,8 +74,9 @@ public partial class MainWindow
         }
     }
 
-    /// <summary>Builds, then starts the chosen configuration under the profiler from its first instruction, as Rider's
-    /// Profile does. Null once it runs, or what stopped it, which the profiler window says too.</summary>
+    /// <summary>Resolves and builds the chosen configuration, then starts its plan under the profiler from its first
+    /// instruction, as Rider's Profile does, with these arguments in place of its own if given. Null once it runs, or what
+    /// stopped it, which the profiler window says too (all but a failed build, which the Build window shows).</summary>
     public async Task<string?> ProfileAsync(string? arguments = null)
     {
         if (profiling is not null)
@@ -86,15 +87,20 @@ public partial class MainWindow
         {
             return "Nothing to profile: no executable project";
         }
-        if (await BuildAsync() is { Succeeded: false } unbuilt)
+        (LaunchPlan? plan, string? problem) = await ResolvePlanAsync(chosen, arguments);
+        if (plan?.Build is { } step && await BuildAsync(step) is { Succeeded: false } unbuilt)
         {
             return unbuilt.Message;
         }
         ShowToolWindow("profiler");
+        if ((plan is null ? problem : plan.WhyNot("profile")) is { } why)
+        {
+            profilerView!.Stopped(why);
+            return why;
+        }
         try
         {
-            DebugTarget target = await DebugTarget.ResolveAsync(chosen, arguments);
-            ProfileTarget profiled = new(Core.Dotnet.Host(), [target.Program, .. target.Arguments], target.WorkingDirectory, target.Environment);
+            ProfileTarget profiled = new(plan!.Program, plan.Arguments, plan.WorkingDirectory, plan.Environment);
             Bottom.Run.Clear();
             ToolWindows.ConsoleSink console = Bottom.Run.Sink;
             // Held until the program has reached the profiler (or never will), not while it runs: that is the person's.

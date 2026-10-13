@@ -17,47 +17,6 @@ public enum ProblemSeverity
     Warning,
 }
 
-/// <summary>Something that can be run from the toolbar: an executable project, or one of its launch
-/// profiles (named "Project: profile", as Rider names them), run with <c>dotnet run</c>, which builds it
-/// first.</summary>
-public sealed record RunConfiguration(string Name, ProjectModel Project, LaunchProfile? Profile = null)
-{
-    /// <summary>The configurations of the workspace's projects loaded: each executable's launch profiles, or the project
-    /// itself when it has none.</summary>
-    public static IReadOnlyList<RunConfiguration> From(IEnumerable<ProjectModel> projects)
-    {
-        List<RunConfiguration> configurations = [];
-        foreach (ProjectModel project in projects.Where(p => p.Exists && p.IsRunnable))
-        {
-            string name = System.IO.Path.GetFileNameWithoutExtension(project.Path);
-            IReadOnlyList<LaunchProfile> profiles = LaunchProfile.Read(project);
-            if (profiles.Count == 0)
-            {
-                configurations.Add(new RunConfiguration(name, project));
-            }
-            configurations.AddRange(profiles.Select(p => new RunConfiguration($"{name}: {p.Name}", project, p)));
-        }
-        return configurations;
-    }
-
-    /// <summary>The program's arguments: the ones given, or else the profile's.</summary>
-    public IReadOnlyList<string> Arguments(string? given = null) => CommandLine.Split(given ?? Profile?.CommandLineArgs);
-
-    /// <summary><c>dotnet run</c>'s own arguments for this configuration, with the program's after <c>--</c>
-    /// when they replace the profile's.</summary>
-    public IReadOnlyList<string> RunArguments(string? given = null)
-    {
-        List<string> arguments = ["run", "--project", Project.Path];
-        arguments.AddRange(Profile is null ? ["--no-launch-profile"] : ["--launch-profile", Profile.Name]);
-        if (given is not null)
-        {
-            arguments.Add("--");
-            arguments.AddRange(CommandLine.Split(given));
-        }
-        return arguments;
-    }
-}
-
 /// <summary>How a build ended, as each caller hears it.</summary>
 public enum BuildStatus
 {
@@ -98,13 +57,23 @@ public enum BuildKind
 public static partial class BuildOutput
 {
     /// <summary>The arguments a build, rebuild or clean runs with: no terminal logger animation, no repeated summary,
-    /// lines not wrapped, so every problem is one line read once.</summary>
-    public static IReadOnlyList<string> Arguments(string target, BuildKind kind = BuildKind.Build) => kind switch
+    /// lines not wrapped, so every problem is one line read once. A framework given builds a project for that one alone,
+    /// as a run configuration's build before launch does.</summary>
+    public static IReadOnlyList<string> Arguments(string target, BuildKind kind = BuildKind.Build, string? framework = null)
     {
-        BuildKind.Clean => ["clean", target, "-nologo", "-tl:off", "-clp:NoSummary;ForceNoAlign"],
-        BuildKind.Rebuild => ["build", target, "--no-incremental", "-nologo", "-tl:off", "-clp:NoSummary;ForceNoAlign"],
-        _ => ["build", target, "-nologo", "-tl:off", "-clp:NoSummary;ForceNoAlign"],
-    };
+        List<string> arguments = kind switch
+        {
+            BuildKind.Clean => ["clean", target],
+            BuildKind.Rebuild => ["build", target, "--no-incremental"],
+            _ => ["build", target],
+        };
+        if (framework is not null)
+        {
+            arguments.AddRange(["--framework", framework]);
+        }
+        arguments.AddRange(["-nologo", "-tl:off", "-clp:NoSummary;ForceNoAlign"]);
+        return arguments;
+    }
 
     public static Problem? Parse(string line)
     {
