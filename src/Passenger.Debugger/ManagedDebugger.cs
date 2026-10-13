@@ -60,24 +60,90 @@ public partial class ManagedDebugger
     private AsyncStepper? _asyncStepper;
     private CilExpressionEvaluator _expressionEvaluator = null!;
 
-    private Process? _debuggeeProcess;
+    /// <summary>A process attached to, held on Windows (its handle open, so its id is never another's meanwhile) for the
+    /// exit code the system tells a process that is not its parent.</summary>
+    private Process? _attached;
 
-    /// <summary>The program the adapter launched on macOS and Linux, and how it ended once it has.</summary>
+    /// <summary>The program the adapter launched, and how it ended once it has.</summary>
     private SuspendedLaunch? _launch;
     private Task<int?>? _launchExit;
     private Task? _launchOutput;
-    private int _exitReported;
 
-    /// <summary>Tells the client the program has ended, once, after the last of its output.</summary>
+    /// <summary>When the launched program's output was last read (a <see cref="Stopwatch"/> timestamp).</summary>
+    private long _lastOutputAt;
+    private int _exitReported;
+    private TaskCompletionSource _exitTold = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Tells the client the program has ended, once, after the last of its output. A second caller (the runtime's
+    /// word of the end, after the wait's) returns only once it has been told, so the end it tells next comes after.</summary>
     private void ReportExit(int? exitCode)
     {
         if (Interlocked.Exchange(ref _exitReported, 1) == 1)
         {
+            _exitTold.Task.Wait(TimeSpan.FromSeconds(15));
             return;
         }
-        // A program's own child holding its output open must not hold up the news.
-        _launchOutput?.Wait(TimeSpan.FromSeconds(1));
-        OnExited?.Invoke(exitCode);
+        try
+        {
+            WaitForLastOutput();
+            OnExited?.Invoke(exitCode);
+        }
+        finally
+        {
+            _exitTold.TrySetResult();
+        }
+    }
+
+    /// <summary>Waits for the launched program's output readers to end, while its output still comes: a program it started
+    /// that holds its output open gives up the wait once a second passes with nothing read, and 10 s at the most.</summary>
+    private void WaitForLastOutput()
+    {
+        if (_launchOutput is not { } output)
+        {
+            return;
+        }
+        long began = Stopwatch.GetTimestamp();
+        while (!output.Wait(TimeSpan.FromMilliseconds(100)))
+        {
+            long quietSince = Math.Max(began, Interlocked.Read(ref _lastOutputAt));
+            if (Stopwatch.GetElapsedTime(quietSince) >= TimeSpan.FromSeconds(1) || Stopwatch.GetElapsedTime(began) >= TimeSpan.FromSeconds(10))
+            {
+                return;
+            }
+        }
+    }
+
+    /// <summary>How the program ended, once the runtime has said it has: a launched one's as its wait saw it, an attached
+    /// one's as Windows tells it; null where it cannot be known (attached on macOS or Linux, where only a parent learns it).</summary>
+    private int? EndedWith()
+    {
+        // The program's own end follows the runtime's word of it by a moment.
+        if (_launchExit is { } ended)
+        {
+            return ended.Wait(TimeSpan.FromSeconds(2)) ? ended.Result : null;
+        }
+        try
+        {
+            return OperatingSystem.IsWindows() && _attached is { } attached && attached.WaitForExit(TimeSpan.FromSeconds(2)) ? attached.ExitCode : null;
+        }
+        catch (Exception error) when (error is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Opens a process's handle and keeps it open with the process; false when the system will not open it.</summary>
+    private static bool TryHold(Process process)
+    {
+        try
+        {
+            _ = process.SafeHandle;
+            return true;
+        }
+        catch (Exception error) when (error is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return false;
+        }
     }
 
     // Every event below is raised on any thread (the runtime's callback thread, a request's, an output reader).
@@ -262,10 +328,15 @@ public partial class ManagedDebugger
         }
         catch (Exception error)
         {
+            process.Dispose();
             _logger?.Invoke($"Attaching to process {processId} failed: {error}");
             throw new InvalidOperationException($"Could not attach to process {processId}: {error.Message}", error);
         }
-        finally
+        if (OperatingSystem.IsWindows() && TryHold(process))
+        {
+            _attached = process;
+        }
+        else
         {
             process.Dispose();
         }
@@ -733,8 +804,8 @@ public partial class ManagedDebugger
         _process = null;
         _corDebug = null;
 
-        _debuggeeProcess?.Dispose();
-        _debuggeeProcess = null;
+        _attached?.Dispose();
+        _attached = null;
         _launch?.Dispose();
         _launch = null;
     }

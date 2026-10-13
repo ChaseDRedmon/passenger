@@ -5,6 +5,16 @@ if (args is ["child"])
 	Console.WriteLine("child ran");
 	return;
 }
+if (args is ["flood"])
+{
+	// 64 KB on standard output, more than a pipe holds unread, then an exit code of its own.
+	for (int i = 0; i < 1024; i++)
+	{
+		Console.Out.Write($"{i:D5} {new string((char)('a' + i % 26), 57)}\n");
+	}
+	Environment.ExitCode = 42;
+	return;
+}
 if (args is ["busy"])
 {
 	Busy.Spin(TimeSpan.FromMilliseconds(800));

@@ -133,8 +133,26 @@ public class LaunchTests(ITestOutputHelper testOutputHelper)
             Debuggees.Line("PassengerCases", "Console.WriteLine($\"child said: {said}\");"), []);
         StoppedEvent stopped = await host.WaitForStoppedEvent();
         host.WithStackTraceRequest(stopped.ThreadId!.Value, out StackTraceResponse stack)
-            .WithEvaluateRequest(stack.StackFrames[0].Id, "said", out EvaluateResponse said);
+            .WithEvaluateRequest(stack.StackFrames[0].Id, "said", out EvaluateResponse said)
+            .WithEvaluateRequest(stack.StackFrames[0].Id, "Environment.GetEnvironmentVariable(\"DOTNET_DefaultDiagnosticPortSuspend\")", out EvaluateResponse hold);
         Assert.Equal("\"child ran\"", said.Result);
+        Assert.True(hold.Result == "null", $"The program was held at its start by DOTNET_DefaultDiagnosticPortSuspend, which is still in its environment ({hold.Result}) for every .NET program it starts");
+    }
+
+    [Fact]
+    public async Task A_program_writing_64_KB_runs_to_its_end_with_all_it_wrote_and_its_own_exit_code()
+    {
+        using DebugSession host = DebugSession.ForLaunch(testOutputHelper);
+        await host
+            .WithInitializeRequest()
+            .WithLaunchRequest(Debuggees.Program("PassengerCases"), stopAtEntry: false, justMyCode: true, arguments: ["flood"])
+            .WaitForInitializedEvent();
+        host.WithConfigurationDoneRequest();
+
+        (string output, int? exitCode) = await host.WaitForEnd();
+        string expected = string.Concat(Enumerable.Range(0, 1024).Select(i => $"{i:D5} {new string((char)('a' + i % 26), 57)}\n"));
+        Assert.True(output == expected, $"The program's 64 KB of output came {output.Length} characters long, ending \"{output[Math.Max(0, output.Length - 70)..]}\"");
+        Assert.True(exitCode == 42, $"The program exited with 42, and the debugger said {(exitCode is int code ? code.ToString() : "nothing")}");
     }
 
     [Fact]

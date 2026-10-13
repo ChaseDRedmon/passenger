@@ -45,6 +45,28 @@ public class AttachTests(ITestOutputHelper testOutputHelper)
     }
 
     [Fact]
+    public async Task An_attached_programs_end_says_its_exit_code_where_the_system_tells_it_and_makes_none_up()
+    {
+        // Held at its start until the attach lets it go, so it cannot end before the debugger has it; its output is read.
+        ProcessStartInfo start = Passenger.Core.ChildProcesses.Command(Debuggees.Apphost("PassengerCases"), ["flood"]);
+        start.Environment["DOTNET_DefaultDiagnosticPortSuspend"] = "1";
+        start.RedirectStandardOutput = true;
+        Process program = Passenger.Core.ChildProcesses.Start(start);
+        _ = program.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);
+        using DebugSession host = DebugSession.ForAttach(testOutputHelper, program);
+        await host
+            .WithInitializeRequest()
+            .WithAttachRequest(program.Id)
+            .WaitForInitializedEvent();
+        host.WithConfigurationDoneRequest();
+
+        (_, int? exitCode) = await host.WaitForEnd();
+        // Windows tells whoever holds a process's handle how it ended; macOS and Linux tell its parent alone.
+        int? told = OperatingSystem.IsWindows() ? 42 : null;
+        Assert.True(exitCode == told, $"The attached program ended with 42, and the debugger said {(exitCode is int code ? code.ToString() : "nothing")}");
+    }
+
+    [Fact]
     public async Task An_attach_to_a_program_that_is_not_dotnet_fails_its_configurationDone_saying_why()
     {
         Process other = Debuggees.NotDotnet();

@@ -31,6 +31,9 @@ public sealed class DebugSession
     private (string Path, int Line)? runToCursor;
     private volatile bool killed;
 
+    /// <summary>The adapter said the program ended: with its exit code, or (attached, where none can be known) without.</summary>
+    private bool programEnded;
+
     /// <summary>The adapter's one disconnect, once asked: nothing more is asked of it, since it may go before answering.</summary>
     private Task? disconnected;
 
@@ -263,7 +266,7 @@ public sealed class DebugSession
             }
             IdeErrors.Write($"Passenger's debugger (process {adapter.Id}) stopped with exit code {code} debugging {Program}"
                 + (said.Length > 0 ? $":\n{said}" : string.Empty));
-            if (State != DebugState.Ended && ExitCode is null)
+            if (State != DebugState.Ended && !programEnded)
             {
                 Failure = $"the debugger itself stopped (exit code {code})";
                 log($"Passenger's debugger stopped unexpectedly with exit code {code}");
@@ -397,8 +400,10 @@ public sealed class DebugSession
                 break;
             case "exited":
                 ExitCode = body.Read<ExitedEvent>().ExitCode;
+                programEnded = true;
                 break;
             case "terminated":
+                programEnded = true;
                 _ = StopAsync();
                 break;
         }

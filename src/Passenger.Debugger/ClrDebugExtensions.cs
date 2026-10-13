@@ -63,7 +63,10 @@ public static class ClrDebugExtensions
             unsafe
             {
                 int registerHr = DbgShim.RegisterForRuntimeStartup(checked((uint)pid), &OnRuntimeStartup, GCHandle.ToIntPtr(startupHandle), out unregisterToken);
-                Marshal.ThrowExceptionForHR(registerHr);
+                if (registerHr < 0)
+                {
+                    throw new InvalidOperationException($"dbgshim could not watch for its runtime to start: {Described(registerHr)}", Marshal.GetExceptionForHR(registerHr));
+                }
             }
             log?.Invoke($"Registered for the runtime's start in process {pid}");
 
@@ -84,9 +87,17 @@ public static class ClrDebugExtensions
             log?.Invoke($"The runtime in process {pid} answered the handshake: 0x{result.Hr:X8}");
             if (result.CorDebug is not { } corDebug)
             {
-                throw new InvalidOperationException($"dbgshim could not take hold of process {pid}'s runtime: 0x{result.Hr:X8}");
+                throw new InvalidOperationException($"dbgshim could not take hold of process {pid}'s runtime: {Described(result.Hr)}");
             }
-            return (corDebug, attach(corDebug));
+            try
+            {
+                return (corDebug, attach(corDebug));
+            }
+            catch (Exception error)
+            {
+                log?.Invoke($"Taking hold of process {pid} as its runtime started failed: {error}");
+                throw new InvalidOperationException(Described(error.HResult), error);
+            }
         }
         finally
         {
@@ -99,6 +110,14 @@ public static class ClrDebugExtensions
             startupHandle.Free();
         }
     }
+
+    /// <summary>An HRESULT as a person reads it: the system's words, and for the one Windows gives a debugger kept from a
+    /// process, when it gives it (ICorDebug attaches as Windows' own debugger too, and puts a handle in the process).</summary>
+    private static string Described(int hr) => hr switch
+    {
+        unchecked((int)0x80070005) => "Windows denied the debugger access to the process (E_ACCESSDENIED), as it does to one that is ending or that another debugger has",
+        _ => Marshal.GetExceptionForHR(hr)?.Message ?? $"0x{hr:X8}",
+    };
 
     // public static ICorDebug Manual(int pid)
     // {

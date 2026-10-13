@@ -60,50 +60,8 @@ public partial class ManagedDebugger
         return program;
     }
 
-    /// <summary>The thread Windows started a process on, its earliest: the .NET host runs the program's Main on it. Null
-    /// when it cannot be told (the process gone, its threads not to be read).</summary>
-    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
-    private static int? InitialThread(Process process)
-    {
-        try
-        {
-            return process.Threads.Cast<ProcessThread>().MinBy(thread => thread.StartTime)?.Id;
-        }
-        catch (Exception error) when (error is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException)
-        {
-            return null;
-        }
-    }
-
-    private static Process StartHeldByDiagnosticPort(LaunchInfo launchInfo)
-    {
-        ProcessStartInfo processStartInfo = new ProcessStartInfo
-        {
-            FileName = launchInfo.Program,
-            WorkingDirectory = launchInfo.Cwd ?? Environment.CurrentDirectory,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            // Its own input, never the adapter's: that is the protocol's pipe, which a program reading
-            // its console would otherwise drain. The client writes to it with WriteInput.
-            RedirectStandardInput = true,
-        };
-        foreach (string arg in launchInfo.Arguments)
-        {
-            processStartInfo.ArgumentList.Add(arg);
-        }
-        foreach ((string? key, string? value) in launchInfo.Env)
-        {
-            processStartInfo.Environment[key] = value;
-        }
-        processStartInfo.Environment["DOTNET_DefaultDiagnosticPortSuspend"] = "1";
-        return Process.Start(processStartInfo) ?? throw new InvalidOperationException("Process start failed");
-    }
-
-    /// <summary>
-    /// Actually perform the launch using DbgShim APIs
-    /// </summary>
+    /// <summary>Starts the program held before its first instruction, on every system alike (<see cref="SuspendedLaunch"/>),
+    /// and takes hold of it as its runtime starts. A failure answers configurationDone saying which step failed.</summary>
     private async Task PerformLaunch()
     {
         if (_pendingLaunchInfo is null)
@@ -115,57 +73,51 @@ public partial class ManagedDebugger
         LaunchInfo launchInfo = _pendingLaunchInfo;
         _pendingLaunchInfo = null;
 
-        int processId;
-        Func<Task> resume;
-        Action kill;
         _exitReported = 0;
-        if (OperatingSystem.IsWindows())
+        _exitTold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        SuspendedLaunch launch;
+        try
         {
-            // Held by the diagnostic port, whose variable is cleared in the program before it goes on, so its own .NET
-            // children run free; Windows is to move to a suspended start as macOS and Linux have.
-            Process process = StartHeldByDiagnosticPort(launchInfo);
-            _debuggeeProcess = process;
-            _launchOutput = Task.WhenAll(Forward(process.StandardOutput.BaseStream, isError: false), Forward(process.StandardError.BaseStream, isError: true));
-            _initialThreadId = InitialThread(process);
-            processId = process.Id;
-            resume = () => DiagnosticClientHelper.DiagnosticClientResumeRuntime(process.Id);
-            kill = () => process.Kill();
+            launch = SuspendedLaunch.Start(Resolve(launchInfo.Program), launchInfo.Arguments, launchInfo.Cwd ?? Environment.CurrentDirectory, launchInfo.Env);
         }
-        else
+        catch (Exception error)
         {
-            SuspendedLaunch launch = SuspendedLaunch.Start(Resolve(launchInfo.Program), launchInfo.Arguments, launchInfo.Cwd ?? Environment.CurrentDirectory, launchInfo.Env);
-            _launch = launch;
-            _launchOutput = Task.WhenAll(Forward(launch.Output, isError: false), Forward(launch.Error, isError: true));
-            _launchExit = Task.Run(launch.WaitForExit);
-            // The exit is told as soon as the program has gone, not when the runtime's word of it is handled:
-            // mscordbi can crash tearing the session down first (a race in its transport), taking that word with it.
-            _ = _launchExit.ContinueWith(ended => ReportExit(ended.Result), TaskScheduler.Default);
-            processId = launch.ProcessId;
-            resume = () =>
-            {
-                launch.Resume();
-                return Task.CompletedTask;
-            };
-            kill = launch.Kill;
+            _logger?.Invoke($"Starting {launchInfo.Program} failed: {error}");
+            throw new InvalidOperationException($"Could not start {launchInfo.Program}: {error.Message}", error);
         }
+        _launch = launch;
+        _initialThreadId = launch.InitialThreadId;
+        _launchOutput = Task.WhenAll(Forward(launch.Output, isError: false), Forward(launch.Error, isError: true));
+        _launchExit = Task.Run(launch.WaitForExit);
+        // The exit is told as soon as the program has gone, not when the runtime's word of it is handled:
+        // mscordbi can crash tearing the session down first (a race in its transport), taking that word with it.
+        _ = _launchExit.ContinueWith(ended => ReportExit(ended.Result), TaskScheduler.Default);
+        int processId = launch.ProcessId;
 
         _logger?.Invoke($"Process created suspended with PID: {processId}");
 
         _exited.Reset();
         try
         {
-            (_corDebug, _process) = await ClrDebugExtensions.Automatic(processId, _ => resume(), corDebug =>
+            (_corDebug, _process) = await ClrDebugExtensions.Automatic(processId, _ =>
+            {
+                launch.Resume();
+                return Task.CompletedTask;
+            }, corDebug =>
             {
                 corDebug.Initialize();
                 corDebug.SetManagedHandler(_callbacks);
                 return corDebug.DebugActiveProcess(processId, false);
             }, _logger);
         }
-        catch
+        catch (Exception error)
         {
+            _logger?.Invoke($"Taking hold of process {processId} failed: {error}");
+            // A program that ended meanwhile is why, whatever the debugger was refused on the way.
+            string ended = _launchExit.Wait(TimeSpan.FromMilliseconds(500)) && _launchExit.Result is int code ? $" (the program had ended, with exit code {code})" : "";
             // A program the debugger could not take hold of (not .NET, or failed first) is not left behind, held.
-            kill();
-            throw;
+            launch.Kill();
+            throw new InvalidOperationException($"Could not take hold of process {processId} as it started: {error.Message}{ended}", error);
         }
         _isAttached = true;
         ConfigureExceptionCallbacks();
@@ -185,6 +137,7 @@ public partial class ManagedDebugger
                 int read;
                 while ((read = await reader.ReadAsync(buffer)) > 0)
                 {
+                    Interlocked.Exchange(ref _lastOutputAt, Stopwatch.GetTimestamp());
                     InvokeOnOutputWithTryCatch(new string(buffer, 0, read), isError);
                 }
             }
@@ -1241,17 +1194,6 @@ public partial class ManagedDebugger
             {
                 _logger?.Invoke($"The program's input is closed: {error.Message}");
             }
-            return;
-        }
-        if (_debuggeeProcess is not { HasExited: false } process)
-        {
-            return;
-        }
-        process.StandardInput.Write(text);
-        process.StandardInput.Flush();
-        if (close)
-        {
-            process.StandardInput.Close();
         }
     }
 

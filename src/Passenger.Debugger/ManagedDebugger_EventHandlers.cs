@@ -24,11 +24,7 @@ public partial class ManagedDebugger
     private void HandleProcessExited(object? sender, ExitProcessCorDebugManagedCallbackEventArgs exitProcessCorDebugManagedCallbackEventArgs)
     {
         _logger?.Invoke($"Process exited");
-        // The program's own end follows the runtime's word of it by a moment.
-        int? exitCode = _launchExit is { } ended
-            ? (ended.Wait(TimeSpan.FromSeconds(2)) ? ended.Result : null)
-            : _debuggeeProcess?.HasExited is true ? _debuggeeProcess.ExitCode : null;
-        ReportExit(exitCode);
+        ReportExit(EndedWith());
         OnTerminated?.Invoke();
     }
 
@@ -42,9 +38,9 @@ public partial class ManagedDebugger
     }
 
     /// <summary>Notes the thread running Main. The runtime announces it first (as netcoredbg relies on, upstream #59), but
-    /// to a debugger that takes hold once the program is under way (Windows' launch, through the diagnostic port) it lists
-    /// the threads in the order they were made, and Windows makes the finalizer's before Main's. So where the thread the
-    /// program was started on is known (<see cref="_initialThreadId"/>), that one is Main's.</summary>
+    /// to a debugger that takes hold once the program is under way it lists the threads in the order they were made, and
+    /// Windows makes the finalizer's before Main's. So where the thread the program was started on is known
+    /// (<see cref="_initialThreadId"/>, a launch on Windows), that one is Main's.</summary>
     private void NoteMainThread(ICorDebugThread thread)
     {
         if (_mainThreadId is null || thread.Id == _initialThreadId)

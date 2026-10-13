@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
 using Microsoft.Diagnostics.NETCore.Client;
@@ -72,7 +73,7 @@ public sealed class DebugSession : IDisposable
             {
                 initialized.TrySetResult();
             }
-            else if (name is "stopped" or "breakpoint" or "output" or "terminated")
+            else if (name is "stopped" or "breakpoint" or "output" or "exited" or "terminated")
             {
                 events.Writer.TryWrite((name, body.Clone()));
             }
@@ -151,11 +152,12 @@ public sealed class DebugSession : IDisposable
         return this;
     }
 
-    public DebugSession WithLaunchRequest(string program, bool stopAtEntry, bool justMyCode)
+    public DebugSession WithLaunchRequest(string program, bool stopAtEntry, bool justMyCode, IReadOnlyList<string>? arguments = null)
     {
         Request("launch", new LaunchArguments
         {
             Program = program,
+            Args = arguments,
             Cwd = Path.GetDirectoryName(program),
             Console = "internalConsole",
             JustMyCode = justMyCode,
@@ -193,10 +195,53 @@ public sealed class DebugSession : IDisposable
 
     public DebugSession WithClearBreakpointsRequest(string filePath) => WithBreakpointsRequest(filePath, [], out _);
 
+    /// <summary>configurationDone, which launches or attaches; a failure quotes the engine's log, which says what failed where
+    /// (on CI, the only word of it).</summary>
     public DebugSession WithConfigurationDoneRequest()
     {
-        Request("configurationDone");
+        try
+        {
+            Request("configurationDone");
+        }
+        catch (DapException failed)
+        {
+            throw new DapException(failed.Command, $"{failed.Reason}\n{Heard()}");
+        }
         return this;
+    }
+
+    /// <summary>What the program wrote to its standard output and how it ended (no exit code when none was told), read
+    /// from the events to the session's end.</summary>
+    public async Task<(string Output, int? ExitCode)> WaitForEnd()
+    {
+        using CancellationTokenSource limit = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        limit.CancelAfter(EventLimit);
+        StringBuilder output = new();
+        int? exitCode = null;
+        while (true)
+        {
+            (string Name, JsonElement Body) next;
+            try
+            {
+                next = await events.Reader.ReadAsync(limit.Token);
+            }
+            catch (OperationCanceledException) when (!TestContext.Current.CancellationToken.IsCancellationRequested)
+            {
+                throw new TimeoutException($"The session had not ended after {EventLimit.TotalSeconds:0} s. {Heard()}");
+            }
+            if (next.Name == "terminated")
+            {
+                return (output.ToString(), exitCode);
+            }
+            if (next.Name == "exited")
+            {
+                exitCode = next.Body.Deserialize<ExitedEvent>(DapConnection.Options)!.ExitCode;
+            }
+            else if (next.Name == "output" && next.Body.Deserialize<OutputEvent>(DapConnection.Options) is { Category: "stdout" } written)
+            {
+                output.Append(written.Output);
+            }
+        }
     }
 
     /// <summary>Lets a program started suspended go on, as a client that held it does once configurationDone has answered.

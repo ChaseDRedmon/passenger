@@ -187,8 +187,14 @@ public sealed class DebugAdapter
             Column = column,
         });
         debugger.OnBreakpointChanged += breakpoint => connection.SendEvent("breakpoint", new BreakpointEvent { Reason = "changed", Breakpoint = ToProtocol(breakpoint, isEvent: true) });
-        // The process's exit code is not known when the debugger attached rather than launched.
-        debugger.OnExited += exitCode => connection.SendEvent("exited", new ExitedEvent(exitCode ?? 0));
+        // Told only when known: a process attached to on macOS or Linux tells its exit code to its parent alone.
+        debugger.OnExited += exitCode =>
+        {
+            if (exitCode is int code)
+            {
+                connection.SendEvent("exited", new ExitedEvent(code));
+            }
+        };
         debugger.OnTerminated += () => connection.SendEvent("terminated", new TerminatedEvent());
         debugger.OnThreadStarted += threadId => connection.SendEvent("thread", new ThreadEvent("started", threadId));
         debugger.OnThreadExited += threadId => connection.SendEvent("thread", new ThreadEvent("exited", threadId));
