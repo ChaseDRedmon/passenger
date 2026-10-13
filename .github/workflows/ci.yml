@@ -1,7 +1,7 @@
 # Every push to main and every pull request: the solution built (warnings are errors) and every test run, on macOS
-# (arm64) and Windows, as `just build` and `just test` run them; and on Linux, the solution restored from nothing. Every
-# restore is locked to the packages.lock.json files (GitHub sets CI, which Directory.Build.props makes
-# RestoreLockedMode). Actions are pinned to a release's commit.
+# (arm64) and Windows, as `just build` and `just test` run them; and on Linux, the solution restored from nothing and
+# every package checked against THIRD_PARTY_NOTICES.md. Every restore is locked to the packages.lock.json files
+# (GitHub sets CI, which Directory.Build.props makes RestoreLockedMode). Actions are pinned to a release's commit.
 name: CI
 
 on:
@@ -21,6 +21,8 @@ concurrency:
 env:
   DOTNET_NOLOGO: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
+  # Avalonia's build task sends usage data from every build unless this is in the environment.
+  AVALONIA_TELEMETRY_OPTOUT: 1
 
 jobs:
   test:
@@ -153,7 +155,8 @@ jobs:
 
   # #57's first step: the solution restores on Linux, in locked mode, with no package cache, so every package is
   # downloaded again and its signature checked against nuget.config's trusted signers, as NuGet does on Linux (and
-  # Windows) but not on macOS.
+  # Windows) but not on macOS. Then every package restored, and every one Roslyn's server carries, must be named in
+  # the notices.
   packages:
     name: Packages (Linux)
     runs-on: ubuntu-latest
@@ -167,3 +170,6 @@ jobs:
 
       - name: Restore
         run: dotnet restore Passenger.slnx --locked-mode
+
+      - name: Every package in the notices
+        run: python3 -I tools/check-notices.py

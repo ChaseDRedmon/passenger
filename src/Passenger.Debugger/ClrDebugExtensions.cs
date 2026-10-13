@@ -7,7 +7,8 @@ using Passenger.Debugger.Models;
 
 namespace Passenger.Debugger;
 
-// Originally based on https://github.com/lordmilko/ClrDebug/blob/5f46218f4b840ab8a94920623dc263b5f2334138/Samples/NetCore/Program.cs
+// Originally based on https://github.com/lordmilko/ClrDebug/blob/5f46218f4b840ab8a94920623dc263b5f2334138/Samples/NetCore/Program.cs,
+// Copyright (c) 2022 lordmilko, under the MIT licence THIRD_PARTY_NOTICES.md gives in full.
 public static class ClrDebugExtensions
 {
     /// <summary>dbgshim's word that a runtime has started (or was running already), on dbgshim's own thread. A starting

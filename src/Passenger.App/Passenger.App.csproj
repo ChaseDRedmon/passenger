@@ -40,11 +40,10 @@
     <ProjectReference Include="../Passenger.DebugAdapter/Passenger.DebugAdapter.csproj" ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>
 
-  <!-- TraceEvent's props give every build it is in its Windows-only natives (msdia140, KernelTraceControl) under x86/,
-       amd64/ and arm64/, since the profiler's own build is for any processor; a publish for another system leaves
-       them out. -->
-  <Target Name="LeaveOutWindowsTraceNatives" AfterTargets="ComputeResolvedFilesToPublishList"
-          Condition="'$(RuntimeIdentifier)' != '' And !$(RuntimeIdentifier.StartsWith('win-'))">
+  <!-- TraceEvent's props give a build its Windows natives under x86/, amd64/ and arm64/: msdia140 (the DIA SDK, for
+       native symbols) and KernelTraceControl (for kernel ETW sessions). The profiler only reads EventPipe traces, with
+       no symbol reader, and loads neither, so no publish carries them, Windows' included. -->
+  <Target Name="LeaveOutWindowsTraceNatives" AfterTargets="ComputeResolvedFilesToPublishList">
     <ItemGroup>
       <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)"
                              Condition="'%(Filename)' == 'msdia140' Or $([System.String]::Copy('%(Filename)').StartsWith('KernelTraceControl'))" />

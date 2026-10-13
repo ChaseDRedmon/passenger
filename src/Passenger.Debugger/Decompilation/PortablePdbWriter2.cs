@@ -22,6 +22,9 @@ using SequencePoint = ICSharpCode.Decompiler.DebugInfo.SequencePoint;
 
 namespace Passenger.Debugger.Decompilation;
 
+// ILSpy's PortablePdbWriter (ICSharpCode.Decompiler/DebugInfo/PortablePdbWriter.cs), Copyright (c) 2018 Siegfried
+// Pammer, under the MIT licence THIRD_PARTY_NOTICES.md gives in full; changed to decompile its files in parallel and
+// return their text.
 public class PortablePdbWriter2
 {
     private const string decompilerVersion = DecompilerVersionInfo.Version;

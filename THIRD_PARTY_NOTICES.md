@@ -1,33 +1,90 @@
 # Third-party notices
 
-What Passenger uses that others made, and under what terms.
+What Passenger uses that others made, and under what terms. Each package is named by its NuGet id, with the licence
+and the copyright its package states (its nuspec's licence expression or licence file and its copyright line, else its
+authors). `tools/check-notices.py`, which CI runs after its restore (`just notices` here), fails naming any package
+the solution restores, or Roslyn's language server carries, that is not named here.
 
-## Packages
+## In the app
 
-| Package | Licence | Source |
+What `just publish` carries for macOS and Windows: the app, the debugger beside it under `debugger/` and Roslyn's
+language server under `roslyn/`. Packages restored with these whose files no macOS or Windows build carries (SkiaSharp's
+and HarfBuzzSharp's natives for Linux and the browser, dbgshim's for Linux and 32-bit Windows) are left out.
+
+| Package | In Passenger | Licence | Copyright |
+|---|---|---|---|
+| The .NET runtime (`Microsoft.NETCore.App`) | the app and the debugger are self-contained; Roslyn's server runs on the installed .NET | MIT | © Microsoft Corporation. All rights reserved. |
+| `Avalonia`, `Avalonia.Desktop`, `Avalonia.Native`, `Avalonia.Win32`, `Avalonia.X11`, `Avalonia.FreeDesktop`, `Avalonia.FreeDesktop.AtSpi`, `Avalonia.Remote.Protocol`, `Avalonia.Themes.Fluent`, `Avalonia.Skia`, `Avalonia.HarfBuzz`, `Avalonia.Headless` | the UI, and the headless platform the screenshots draw on | MIT | Copyright 2013-2026 © The AvaloniaUI Project |
+| `Avalonia.Fonts.Inter` | the Inter typeface, itself under the SIL Open Font License 1.1, Copyright (c) 2016 The Inter Project Authors (https://github.com/rsms/inter) | MIT | Copyright 2013-2026 © The AvaloniaUI Project |
+| `Avalonia.Angle.Windows.Natives` | ANGLE's OpenGL ES (`av_libglesv2.dll`), Windows only | BSD-3-Clause (the package's LICENSE) | Copyright 2018 The ANGLE Project Authors |
+| `MicroCom.Runtime` | Avalonia's COM interop | MIT | Copyright 2021 © Nikita Tsukanov |
+| `Tmds.DBus.Protocol` | Avalonia's D-Bus client, for Linux desktops | MIT | Tom Deseyn |
+| `SkiaSharp`, `SkiaSharp.NativeAssets.macOS`, `SkiaSharp.NativeAssets.Win32` | drawing, with Skia (BSD-3-Clause) | MIT | © Microsoft Corporation. All rights reserved. |
+| `HarfBuzzSharp`, `HarfBuzzSharp.NativeAssets.macOS`, `HarfBuzzSharp.NativeAssets.Win32` | text shaping, with HarfBuzz (Old MIT) | MIT | © Microsoft Corporation. All rights reserved. |
+| `Microsoft.CodeAnalysis.CSharp`, `Microsoft.CodeAnalysis.Common` | Roslyn: colour before the server answers, and the debugger's expressions | MIT | © Microsoft Corporation. All rights reserved. |
+| `roslyn-language-server.osx-arm64`, `roslyn-language-server.osx-x64`, `roslyn-language-server.win-x64`, `roslyn-language-server.win-arm64` | Roslyn's language server, one per system, copied under `roslyn/` with the package's own `ThirdPartyNotices.rtf`; what it carries is listed below | MIT | © Microsoft Corporation. All rights reserved. |
+| `StreamJsonRpc` | JSON-RPC with the language server and the debug adapter | MIT | © Microsoft Corporation. All rights reserved. |
+| `Microsoft.VisualStudio.Threading.Only` | StreamJsonRpc's, whose NonConcurrentSynchronizationContext keeps the language server's messages in order | MIT | © Microsoft Corporation. All rights reserved. |
+| `Microsoft.VisualStudio.Validation` | StreamJsonRpc's | MIT | © Microsoft Corporation. All rights reserved. |
+| `Microsoft.NET.StringTools` | StreamJsonRpc's | MIT | © Microsoft Corporation. All rights reserved. |
+| `Nerdbank.Streams`, `Nerdbank.MessagePack` | StreamJsonRpc's | MIT | © Andrew Arnott. All rights reserved. |
+| `MessagePack`, `MessagePack.Annotations` | StreamJsonRpc's | MIT | © Yoshifumi Kawai and contributors. All rights reserved. |
+| `PolyType` | Nerdbank.MessagePack's | MIT | 2024, Eirik Tsarpalis (its copyright line and its author) |
+| `Newtonsoft.Json` | StreamJsonRpc's | MIT | Copyright © James Newton-King 2008 |
+| `ModelContextProtocol.Core` | the C# MCP SDK, for Passenger's MCP server | Apache-2.0 | © Model Context Protocol a Series of LF Projects, LLC. |
+| `Microsoft.Extensions.AI.Abstractions` | the MCP SDK's content types | MIT | © Microsoft Corporation. All rights reserved. |
+| `Microsoft.TestPlatform.TranslationLayer`, `Microsoft.TestPlatform.ObjectModel` | VSTest's client, for finding, running and debugging tests | MIT | © Microsoft Corporation. All rights reserved. |
+| `Microsoft.Diagnostics.NETCore.Client` | the debugger's and the profiler's diagnostic port | MIT | © Microsoft Corporation. All rights reserved. |
+| `Microsoft.Diagnostics.Runtime` | ClrMD, reading the profiler's memory snapshots | MIT | © Microsoft Corporation. All rights reserved. |
+| `Microsoft.Diagnostics.Tracing.TraceEvent` | reading the profiler's EventPipe traces, with its COM interop assemblies `Dia2Lib.dll` and `TraceReloggerLib.dll`; its Windows natives (`msdia140.dll`, `KernelTraceControl.dll`), which reading EventPipe never loads, are left out of every publish (`Passenger.App.csproj`) | MIT | © Microsoft Corporation. All rights reserved. |
+| `Porta.Pty` | the terminal's pseudo-terminal, with its native forkpty shim (`libporta_pty`) | MIT | Tom Laird-McConnell All Rights Reserved |
+| `Microsoft.Windows.Console.ConPTY` | Porta.Pty's console host (`conpty.dll`, `OpenConsole.exe`), Windows only | MIT | © Microsoft Corporation |
+| `Microsoft.Diagnostics.DbgShim`, `Microsoft.Diagnostics.DbgShim.osx-arm64`, `Microsoft.Diagnostics.DbgShim.osx-x64`, `Microsoft.Diagnostics.DbgShim.win-x64`, `Microsoft.Diagnostics.DbgShim.win-arm64` | the debugger's way into a runtime (dbgshim), one native per system | MIT | © Microsoft Corporation. All rights reserved. |
+| `Microsoft.DiaSymReader` | the expression compiler's | MIT | © Microsoft Corporation. All rights reserved. |
+| `ICSharpCode.Decompiler` | ILSpy's decompiler, for frames without source | MIT | Copyright 2011-2026 AlphaSierraPapa |
+| `MP.Microsoft.CodeAnalysis.CSharp.ExpressionEvaluator.ExpressionCompiler`, `MP.Microsoft.CodeAnalysis.ExpressionEvaluator.ExpressionCompiler` | Roslyn's expression compiler, packed from Roslyn's source by MattParkerDev (https://github.com/MattParkerDev/roslyn, branch custom-ee-5.9.0) | MIT | no copyright line; its authors: .NET Foundation and contributors |
+| `NeoSmart.AsyncLock` | the debugger's locks | MIT | Copyright NeoSmart Technologies 2017-2022 |
+| `ZLinq` | the debugger's queries | MIT | © Cysharp, Inc. |
+
+### Inside `roslyn/`
+
+Roslyn's language server carries these packages' assemblies in its own package, which Microsoft gives as a whole under
+MIT with the `ThirdPartyNotices.rtf` copied beside them. What each package says of itself on nuget.org, at the version
+the server's `.deps.json` names, or, for a version not published there, what its releases there say:
+
+| Package | Licence | Copyright |
 |---|---|---|
-| Avalonia, Avalonia.Desktop, Avalonia.Themes.Fluent, Avalonia.Skia, Avalonia.HarfBuzz, Avalonia.Headless | MIT | https://github.com/AvaloniaUI/Avalonia |
-| Avalonia.Fonts.Inter (the Inter typeface) | SIL Open Font License 1.1 | https://github.com/rsms/inter |
-| SkiaSharp (with Skia, BSD-3-Clause) | MIT | https://github.com/mono/SkiaSharp |
-| HarfBuzzSharp (with HarfBuzz, Old MIT) | MIT | https://github.com/mono/SkiaSharp |
-| Microsoft.CodeAnalysis.CSharp (Roslyn) | MIT | https://github.com/dotnet/roslyn |
-| roslyn-language-server (Roslyn's language server, copied beside the app under `roslyn/`) | MIT | https://github.com/dotnet/roslyn |
-| StreamJsonRpc | MIT | https://github.com/microsoft/vs-streamjsonrpc |
-| Microsoft.VisualStudio.Threading (StreamJsonRpc's, whose NonConcurrentSynchronizationContext keeps the language server's messages in order) | MIT | https://github.com/microsoft/vs-threading |
-| ModelContextProtocol.Core (the C# MCP SDK, for Passenger's MCP server) | Apache-2.0 | https://github.com/modelcontextprotocol/csharp-sdk |
-| Microsoft.Extensions.AI.Abstractions (the MCP SDK's content types) | MIT | https://github.com/dotnet/extensions |
-| Microsoft.TestPlatform.TranslationLayer, Microsoft.TestPlatform.ObjectModel (VSTest's client, for finding, running and debugging tests) | MIT | https://github.com/microsoft/vstest |
-| Microsoft.Diagnostics.DbgShim, Microsoft.Diagnostics.NETCore.Client (the debugger's and the profiler's runtime interface) | MIT | https://github.com/dotnet/diagnostics |
-| ICSharpCode.Decompiler (ILSpy's decompiler, for frames without source) | MIT | https://github.com/icsharpcode/ILSpy |
-| MP.Microsoft.CodeAnalysis.CSharp.ExpressionEvaluator.ExpressionCompiler (Roslyn's expression compiler, packed from Roslyn's source by MattParkerDev) | MIT | https://github.com/MattParkerDev/roslyn (branch custom-ee-5.9.0) |
-| Microsoft.Diagnostics.Runtime (ClrMD, reading the profiler's memory snapshots) | MIT | https://github.com/microsoft/clrmd |
-| Microsoft.Diagnostics.Tracing.TraceEvent (reading the profiler's EventPipe traces) | MIT | https://github.com/microsoft/perfview |
-| Porta.Pty (the terminal's pseudo-terminal, with its native forkpty shim, libporta_pty) | MIT | https://github.com/tomlm/Porta.Pty |
-| Microsoft.Windows.Console.ConPTY (Porta.Pty's console host on Windows: conpty.dll and OpenConsole.exe) | MIT | https://github.com/microsoft/terminal |
-| NeoSmart.AsyncLock | MIT | https://github.com/neosmart/AsyncLock |
-| ZLinq | MIT | https://github.com/Cysharp/ZLinq |
-| Krafs.Publicizer (build time only) | MIT | https://github.com/krafs/Publicizer |
-| Microsoft.CodeAnalysis.BannedApiAnalyzers (the tests' build only: the entry points a test may not call) | MIT | https://github.com/dotnet/roslyn |
+| `Microsoft.Bcl.AsyncInterfaces`, `Microsoft.Build.Framework`, `Microsoft.Build.Locator`, `Microsoft.CodeAnalysis.Elfie`, `Microsoft.DiaSymReader`, `Microsoft.Extensions.Configuration`, `Microsoft.Extensions.Configuration.Abstractions`, `Microsoft.Extensions.Configuration.Binder`, `Microsoft.Extensions.DependencyInjection`, `Microsoft.Extensions.DependencyInjection.Abstractions`, `Microsoft.Extensions.FileSystemGlobbing`, `Microsoft.Extensions.Logging`, `Microsoft.Extensions.Logging.Abstractions`, `Microsoft.Extensions.Logging.Configuration`, `Microsoft.Extensions.Logging.Console`, `Microsoft.Extensions.Options`, `Microsoft.Extensions.Options.ConfigurationExtensions`, `Microsoft.Extensions.Primitives`, `Microsoft.NET.StringTools`, `Microsoft.TestPlatform.ObjectModel`, `Microsoft.TestPlatform.TranslationLayer`, `Microsoft.VisualStudio.SolutionPersistence`, `Microsoft.VisualStudio.Threading.Only`, `System.CodeDom`, `System.ComponentModel.Composition`, `System.Composition.AttributedModel`, `System.Composition.Convention`, `System.Composition.Hosting`, `System.Composition.Runtime`, `System.Composition.TypedParts`, `System.Configuration.ConfigurationManager`, `System.Diagnostics.EventLog`, `System.Diagnostics.PerformanceCounter`, `System.Management`, `System.Security.Cryptography.Pkcs`, `System.Security.Cryptography.ProtectedData`, `System.Security.Permissions`, `System.Windows.Extensions` | MIT | © Microsoft Corporation. All rights reserved. |
+| `Microsoft.ServiceHub.Framework` (4.10.147), `Microsoft.VisualStudio.Composition` (18.9.20), `Microsoft.VisualStudio.Validation` (18.7.1), `StreamJsonRpc` (2.26.10), `System.CommandLine` (3.0.0-preview.6.26324.102): versions not on nuget.org | MIT (their releases there) | © Microsoft Corporation. All rights reserved. |
+| `NuGet.Common`, `NuGet.Configuration`, `NuGet.DependencyResolver.Core`, `NuGet.Frameworks`, `NuGet.LibraryModel`, `NuGet.Packaging`, `NuGet.ProjectModel`, `NuGet.Protocol`, `NuGet.Versioning` | Apache-2.0 | © Microsoft Corporation. All rights reserved. |
+| `Humanizer.Core` | MIT | Copyright (c) .NET Foundation and Contributors |
+| `ICSharpCode.Decompiler` (9.1.0.7988) | MIT | Copyright 2011-2025 AlphaSierraPapa |
+| `MessagePack`, `MessagePack.Annotations` | MIT | © Yoshifumi Kawai and contributors. All rights reserved. |
+| `Nerdbank.MessagePack`, `Nerdbank.Streams` | MIT | © Andrew Arnott. All rights reserved. |
+| `Newtonsoft.Json` (13.0.4) | MIT | Copyright © James Newton-King 2008 |
+| `PolyType` | MIT | 2024, Eirik Tsarpalis |
+| `SQLite3MC.PCLRaw.bundle`, `SQLite3MC.PCLRaw.lib`, `SQLite3MC.PCLRaw.provider` (SQLite3 Multiple Ciphers, the native `libsqlite3mc`) | MIT | Copyright (c) 2023-2026 Ulrich Telle, et al. |
+| `SQLitePCLRaw.core` | Apache-2.0 | Copyright 2014-2025 SourceGear, LLC |
+| `Microsoft.VisualStudio.Telemetry` (18.3.124, not on nuget.org) | not open source: its releases there link the Microsoft Visual Studio Telemetry license terms (https://visualstudio.microsoft.com/license-terms/mt736442/) | © Microsoft Corporation. All rights reserved. |
+| `Microsoft.VisualStudio.RemoteControl` | not open source: the same terms (mt736442) | © Microsoft Corporation. All rights reserved. |
+| `Microsoft.VisualStudio.Utilities.Internal` | not open source: the Microsoft Visual Studio Internal Utilities license terms (https://visualstudio.microsoft.com/license-terms/mt736439/) | © Microsoft Corporation. All rights reserved. |
+| `Microsoft.ServiceHub.Client` (4.6.3200), `Microsoft.VisualStudio.Debugger.Contracts` (18.3.0-beta.26277.4), `Microsoft.VisualStudio.RpcContracts` (18.9.918): versions not on nuget.org | not open source: their releases there carry the Microsoft Visual Studio Add-ons and Extensions license terms | © Microsoft Corporation. All rights reserved. |
+
+## Building and testing only
+
+Packages the build or the tests use that no app carries.
+
+| Package | In Passenger | Licence | Copyright |
+|---|---|---|---|
+| `Avalonia.BuildServices` | Avalonia's build task, whose telemetry `AVALONIA_TELEMETRY_OPTOUT` turns off (the README says how) | MIT | Copyright 2023-2025 © The AvaloniaUI Project |
+| `Microsoft.CodeAnalysis.Analyzers` | Roslyn's analyzers, which come with Microsoft.CodeAnalysis.Common | MIT | © Microsoft Corporation. All rights reserved. |
+| `Krafs.Publicizer` | the debugger's build | MIT | © Krafs 2024 |
+| `Microsoft.CodeAnalysis.BannedApiAnalyzers` | the tests' build: the entry points a test may not call | MIT | © Microsoft Corporation. All rights reserved. |
+| `xunit.v3`, `xunit.v3.assert`, `xunit.v3.common`, `xunit.v3.core.mtp-v1`, `xunit.v3.extensibility.core`, `xunit.v3.mtp-v1`, `xunit.v3.runner.common`, `xunit.v3.runner.inproc.console`, `xunit.analyzers`, `xunit.runner.visualstudio` | the tests | Apache-2.0 | Copyright (C) .NET Foundation |
+| `Avalonia.Headless.XUnit` | the tests on Avalonia's headless platform | MIT | Copyright 2013-2026 © The AvaloniaUI Project |
+| `Microsoft.NET.Test.Sdk`, `Microsoft.TestPlatform.TestHost`, `Microsoft.CodeCoverage` | the tests' host | MIT | © Microsoft Corporation. All rights reserved. |
+| `Microsoft.Testing.Platform`, `Microsoft.Testing.Platform.MSBuild`, `Microsoft.Testing.Extensions.Telemetry`, `Microsoft.Testing.Extensions.TrxReport.Abstractions`, `Microsoft.ApplicationInsights` | xunit.v3's test platform | MIT | © Microsoft Corporation. All rights reserved. |
+| `Microsoft.Bcl.AsyncInterfaces`, `Microsoft.Win32.Registry` | the test platform's | MIT | © Microsoft Corporation. All rights reserved. |
 
 ## SharpDbg and ICorDebugSharp
 
@@ -49,6 +106,62 @@ Passenger's own from there:
 MIT License
 
 Copyright (c) 2026 Matthew Parker
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## Code from ILSpy and ClrDebug
+
+Two of the debugger's files came with SharpDbg from projects of their own:
+
+- `src/Passenger.Debugger/Decompilation/PortablePdbWriter2.cs` is ILSpy's `PortablePdbWriter`
+  (`ICSharpCode.Decompiler/DebugInfo/PortablePdbWriter.cs`, https://github.com/icsharpcode/ILSpy), changed to decompile
+  its files in parallel and return their text: MIT, Copyright (c) 2018 Siegfried Pammer, as the file's header in ILSpy
+  says.
+- `src/Passenger.Debugger/ClrDebugExtensions.cs` began as ClrDebug's .NET Core sample (`Samples/NetCore/Program.cs` at
+  commit 5f46218, https://github.com/lordmilko/ClrDebug): its automatic attach, and its manual one kept in comments.
+  MIT, Copyright (c) 2022 lordmilko.
+
+```
+Copyright (c) 2018 Siegfried Pammer
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this
+software and associated documentation files (the "Software"), to deal in the Software
+without restriction, including without limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons
+to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or
+substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE
+FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
+```
+MIT License
+
+Copyright (c) 2022 lordmilko
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

@@ -4,6 +4,10 @@ set windows-shell := ["powershell.exe", "-NoLogo", "-Command"]
 
 app := "src/Passenger.App"
 
+# Avalonia's build task (Avalonia.BuildServices) sends usage data from every build of an Avalonia project unless this
+# is in the environment, the only place it looks; every recipe here builds with it set.
+export AVALONIA_TELEMETRY_OPTOUT := "1"
+
 # Build everything (Debug). Warnings are errors.
 build:
     dotnet build
@@ -37,6 +41,10 @@ app-icon:
 # Rewrite Theme/Icons.axaml from the list in tools/icons.py (fetches any icon not yet cached).
 icons:
     python3 -I tools/icons.py
+
+# Fail naming any package the solution restores, or Roslyn's server carries, that THIRD_PARTY_NOTICES.md does not name.
+notices:
+    python3 -I tools/check-notices.py
 
 # Rewrite the terminal's table of wide characters from the Unicode Character Database (tools/unicode-widths.py).
 unicode-widths:

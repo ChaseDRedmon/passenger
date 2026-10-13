@@ -53,7 +53,13 @@ just run                   # run it
 just screenshot shell.png  # draw the main window to a PNG off-screen (--size 1600x1000 --scale 2)
 just publish osx-arm64     # a self-contained Release build (osx-x64, win-x64, win-arm64 too)
 just package-mac           # Passenger.app, zipped; signed with PASSENGER_SIGN_IDENTITY, else ad hoc
+just notices               # fail naming any package THIRD_PARTY_NOTICES.md does not name
 ```
+
+Every recipe sets `AVALONIA_TELEMETRY_OPTOUT=1`. Avalonia's build task (Avalonia.BuildServices, which every Avalonia
+package brings) otherwise sends AvaloniaUI a record of each build: a machine id it keeps, hashes of the machine and
+user names and of the project's name, the system, the IDE and the CI it ran under. It reads its opt-out only from the
+environment, so set the variable yourself for a build outside `just` (`dotnet build`, an IDE's).
 
 Packages come only from nuget.org (`nuget.config`), at the versions and content each project's `packages.lock.json`
 pins, and on Windows and Linux only as nuget.org signed them (NuGet checks no signatures on macOS). A restore on your

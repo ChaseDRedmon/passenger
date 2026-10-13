@@ -30,7 +30,7 @@
   </ItemGroup>
 
   <!-- The server's files become this project's output items, so every project that references this
-       one (the app, the tests) gets them beside its own binaries. -->
+       one (the app, the tests) gets them beside its own binaries, with the package's third-party notices. -->
   <Target Name="IncludeRoslynServer" BeforeTargets="AssignTargetPaths">
     <PropertyGroup>
       <RoslynServerPackage>$([MSBuild]::EnsureTrailingSlash('$(NuGetPackageRoot)'))roslyn-language-server.$(RoslynServerRid.ToLowerInvariant())/$(RoslynServerVersion.ToLowerInvariant())/</RoslynServerPackage>
@@ -39,15 +39,21 @@
     <ItemGroup>
       <!-- tools/<the .NET it is built for>/<rid>/, found, so a server built for a newer .NET still is. -->
       <RoslynServerEntry Include="$(RoslynServerPackage)tools/*/$(RoslynServerRid)/Microsoft.CodeAnalysis.LanguageServer.dll" />
+      <RoslynServerNotices Include="$(RoslynServerPackage)ThirdPartyNotices.*" />
     </ItemGroup>
     <Error Condition="'@(RoslynServerEntry->Count())' != '1'"
            Text="roslyn-language-server.$(RoslynServerRid) $(RoslynServerVersion) does not hold exactly one tools/*/$(RoslynServerRid)/Microsoft.CodeAnalysis.LanguageServer.dll (it holds '@(RoslynServerEntry)'): the package's layout has changed." />
+    <Error Condition="'@(RoslynServerNotices)' == ''"
+           Text="roslyn-language-server.$(RoslynServerRid) $(RoslynServerVersion) has no ThirdPartyNotices file at its root, which Passenger carries beside the server." />
     <PropertyGroup>
       <RoslynServerFolder>@(RoslynServerEntry->'%(RootDir)%(Directory)')</RoslynServerFolder>
     </PropertyGroup>
     <ItemGroup>
-      <RoslynServerFile Include="$(RoslynServerFolder)**/*" />
+      <!-- The package's files only: a server run from the package folder leaves its MEF cache in cache/ there. -->
+      <RoslynServerFile Include="$(RoslynServerFolder)**/*" Exclude="$(RoslynServerFolder)cache/**" />
       <None Include="@(RoslynServerFile)" Link="roslyn/%(RoslynServerFile.RecursiveDir)%(RoslynServerFile.Filename)%(RoslynServerFile.Extension)"
+            CopyToOutputDirectory="PreserveNewest" Visible="false" />
+      <None Include="@(RoslynServerNotices)" Link="roslyn/%(RoslynServerNotices.Filename)%(RoslynServerNotices.Extension)"
             CopyToOutputDirectory="PreserveNewest" Visible="false" />
     </ItemGroup>
   </Target>
