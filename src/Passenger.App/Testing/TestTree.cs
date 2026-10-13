@@ -1,9 +1,7 @@
-using System.Collections;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using Avalonia;
-using Microsoft.VisualStudio.TestPlatform.ObjectModel;
 
 namespace Passenger.App.Testing;
 
@@ -26,14 +24,18 @@ public enum TestNodeKind
     Namespace,
     Class,
     Method,
+
+    /// <summary>One of a theory's data rows (or NUnit's cases), found by a runner or made by its run.</summary>
+    Row,
 }
 
-/// <summary>A row of the Unit Tests window: a project, a target framework, a namespace, a class or a test method. A
-/// group's state is its methods' (failed over running over not run over passed), its duration their sum, both kept up
-/// to date by each method's change rather than summed again.</summary>
+/// <summary>A row of the Unit Tests window: a project, a target framework, a namespace, a class, a test method or one of
+/// its data rows. A group's state is its methods' (failed over running over not run over passed), its duration their
+/// sum, both kept up to date by each method's change rather than summed again; a method's state is all its results', a
+/// data row's its own.</summary>
 public sealed class TestNode : Observable
 {
-    private readonly List<TestResult> results = [];
+    private readonly List<TestOutcome> results = [];
 
     /// <summary>A group's methods by state, or a method's results by state, indexed by <see cref="TestState"/>.</summary>
     private readonly int[] counts = new int[5];
@@ -41,13 +43,16 @@ public sealed class TestNode : Observable
     private long ticks;
     private bool isExpanded;
 
+    /// <summary>How many outcomes the method's run is waiting for.</summary>
+    private int expected;
+
     public TestNode(TestNodeKind kind, string name, TestNode? parent)
     {
         Kind = kind;
         Name = name;
         Parent = parent;
         Depth = parent is null ? 0 : parent.Depth + 1;
-        isExpanded = kind != TestNodeKind.Method;
+        isExpanded = kind is not (TestNodeKind.Method or TestNodeKind.Row);
     }
 
     public TestNodeKind Kind { get; }
@@ -57,17 +62,31 @@ public sealed class TestNode : Observable
     public int Depth { get; }
     public Thickness Indent => new(Depth * 16, 0, 0, 0);
 
-    /// <summary>A method's test cases: one, or a theory's rows.</summary>
-    public List<TestCase> Cases { get; } = [];
+    /// <summary>A method's tests as a runner found them, which a run runs: the method, or each of its data rows; none
+    /// until a runner has looked.</summary>
+    public List<TestItem> Items { get; } = [];
 
-    /// <summary>The results of a method's last run, one per case or data row.</summary>
-    public IReadOnlyList<TestResult> Results => results;
+    /// <summary>A method as its code declares it now: where it is, while it is typed.</summary>
+    public TestItem? FromCode { get; internal set; }
 
-    /// <summary>What the row says: a theory counts its cases.</summary>
-    public string Label => Kind == TestNodeKind.Method && Cases.Count > 1 ? $"{Name} ({Cases.Count} cases)" : Name;
+    /// <summary>A data row's test; null for a row its method's run made.</summary>
+    public TestItem? Item { get; internal set; }
 
-    public string? Path => Cases.FirstOrDefault(c => !string.IsNullOrEmpty(c.CodeFilePath))?.CodeFilePath ?? Children.Select(c => c.Path).FirstOrDefault(p => p is not null);
-    public int Line => Cases.FirstOrDefault(c => c.LineNumber > 0)?.LineNumber ?? Children.Select(c => c.Line).FirstOrDefault(l => l > 0);
+    /// <summary>A project row's project file, as its tests' <see cref="TestItem.Project"/> names it.</summary>
+    public string? Project { get; internal set; }
+
+    /// <summary>Taken out of the tree by a load: the method was renamed or removed.</summary>
+    public bool Gone { get; private set; }
+
+    /// <summary>The results of a method's last run, one per test or data row; a data row's own.</summary>
+    public IReadOnlyList<TestOutcome> Results => results;
+
+    /// <summary>A method's full name, Namespace.Class.Method, nested types after a '+'.</summary>
+    public string? FullName => FromCode?.Method ?? Items.FirstOrDefault()?.Method ?? Item?.Method;
+
+    public string? Path => Located?.Path ?? (Kind == TestNodeKind.Row ? Parent?.Path : Children.Select(c => c.Path).FirstOrDefault(p => p is not null));
+
+    public int Line => Located?.Line ?? (Kind == TestNodeKind.Row ? Parent?.Line ?? 0 : Children.Select(c => c.Line).FirstOrDefault(l => l > 0));
 
     public TestState State
     {
@@ -95,53 +114,64 @@ public sealed class TestNode : Observable
 
     public bool HasChildren => Children.Count > 0;
 
-    /// <summary>Every test case under this row.</summary>
-    public IEnumerable<TestCase> AllCases => Kind == TestNodeKind.Method ? Cases : Children.SelectMany(c => c.AllCases);
-
-    public IEnumerable<TestNode> Methods => Kind == TestNodeKind.Method ? [this] : Children.SelectMany(c => c.Methods);
+    /// <summary>The methods under this row, or the method itself; none under a data row.</summary>
+    public IEnumerable<TestNode> Methods => Kind switch
+    {
+        TestNodeKind.Method => [this],
+        TestNodeKind.Row => [],
+        _ => Children.SelectMany(c => c.Methods),
+    };
 
     /// <summary>What the details pane shows: each result's outcome, message, stack and output.</summary>
     public string Details => string.Join("\n\n", results.Select(r =>
     {
-        string header = results.Count > 1 ? $"{r.DisplayName ?? r.TestCase.DisplayName}: {r.Outcome}" : r.Outcome.ToString();
-        string output = string.Join(string.Empty, r.Messages.Select(m => m.Text));
-        return string.Join('\n', new[] { header, r.ErrorMessage, r.ErrorStackTrace, output.Length > 0 ? $"Output:\n{output.TrimEnd()}" : null }.Where(t => !string.IsNullOrWhiteSpace(t)));
+        string header = results.Count > 1 ? $"{r.Row ?? r.DisplayName ?? r.Test.DisplayName}: {r.State}" : r.State.ToString();
+        return string.Join('\n', new[] { header, r.Message, r.StackTrace, r.Output is { } output ? $"Output:\n{output.TrimEnd()}" : null }.Where(t => !string.IsNullOrWhiteSpace(t)));
     }));
 
-    internal void Begin()
+    /// <summary>Where the code or a runner says it is: the code's, which follows typing, over the last build's.</summary>
+    private TestItem? Located => FromCode ?? Item ?? Items.FirstOrDefault(i => i.Path is not null);
+
+    /// <summary>A method or row about to run: its results go, and it is running until as many outcomes as it runs
+    /// tests have come.</summary>
+    internal void Begin(int tests)
     {
         results.Clear();
         Array.Clear(counts);
         AddTicks(-ticks);
+        expected = tests;
         State = TestState.Running;
         Raise(nameof(Details));
     }
 
-    internal void Add(TestResult result)
+    internal void Add(TestOutcome outcome)
     {
-        results.Add(result);
-        counts[(int)Of(result.Outcome)]++;
-        AddTicks(result.Duration.Ticks);
-        State = Combine(counts, running: results.Count < Cases.Count);
+        results.Add(outcome);
+        counts[(int)outcome.State]++;
+        AddTicks(outcome.Duration.Ticks);
+        State = Combine(counts, running: results.Count < expected);
         Raise(nameof(Details));
     }
 
-    /// <summary>A method still running when its run ended was never run: it goes back to not run.</summary>
+    /// <summary>A method or row still running when its run ended was never run: it goes back to not run.</summary>
     internal void End()
     {
-        if (Kind == TestNodeKind.Method && State == TestState.Running)
+        if (State == TestState.Running)
         {
             State = Combine(counts, running: false);
         }
     }
 
+    internal void Leave() => Gone = true;
+
+    internal void RaiseShape() => Raise(nameof(HasChildren));
+
     /// <summary>A group's counts and duration made again from its methods, once, when the tree is loaded (a method found
-    /// again may have more or fewer cases).</summary>
+    /// again may have more or fewer tests).</summary>
     internal void Recount()
     {
-        if (Kind == TestNodeKind.Method)
+        if (Kind is TestNodeKind.Method or TestNodeKind.Row)
         {
-            Raise(nameof(Label));
             return;
         }
         Array.Clear(counts);
@@ -178,26 +208,19 @@ public sealed class TestNode : Observable
         State = Combine(counts, running: false);
     }
 
+    /// <summary>A method's time is its groups' too; a data row's is already its method's.</summary>
     private void AddTicks(long delta)
     {
         if (delta == 0)
         {
             return;
         }
-        for (TestNode? node = this; node is not null; node = node.Parent)
+        for (TestNode? node = this; node is not null; node = Kind == TestNodeKind.Row ? null : node.Parent)
         {
             node.ticks += delta;
             node.Raise(nameof(Duration));
         }
     }
-
-    private static TestState Of(TestOutcome outcome) => outcome switch
-    {
-        TestOutcome.Passed => TestState.Passed,
-        TestOutcome.Failed => TestState.Failed,
-        TestOutcome.Skipped => TestState.Skipped,
-        _ => TestState.NotRun,
-    };
 
     /// <summary>Failed over running over not run over passed; skipped only when all were.</summary>
     private static TestState Combine(int[] counts, bool running) =>
@@ -209,15 +232,26 @@ public sealed class TestNode : Observable
         : TestState.NotRun;
 }
 
-/// <summary>The tests of one assembly as discovery found them: its project, and its target framework when the project
-/// has several.</summary>
-public sealed record TestSource(string Project, string? Framework, IReadOnlyList<TestCase> Cases);
+/// <summary>The tests a runner found in one of a project's assemblies, built for one target framework.</summary>
+public sealed record TestSource(string Framework, IReadOnlyList<TestItem> Tests);
 
-/// <summary>The Unit Tests window's tree: the tests discovered, by project, target framework, namespace, class and method,
-/// flattened to the rows that are open so a virtualizing list draws only what is on screen.</summary>
+/// <summary>A test project's tests: those its code declares, and those a runner found in each of its assemblies. The same
+/// parts make an equal value, which the tree takes for a project unchanged.</summary>
+public sealed record ProjectTests(string Project, string Name, CodeTests Code, IReadOnlyList<TestSource> Discovered);
+
+/// <summary>The Unit Tests window's tree: the tests by project, target framework, namespace, class, method and data row,
+/// flattened to the rows that are open so a virtualizing list draws only what is on screen. The code's tests and a
+/// runner's merge on their method's id, so a run's results land on the rows the code showed, and a test the code
+/// declares stays whatever a run reported.</summary>
 public sealed class TestTree
 {
-    private readonly Dictionary<(Guid, string), TestNode> byCase = [];
+    /// <summary>Each project's tree as last loaded, with what it was loaded from and its rows by their tests' keys.</summary>
+    private Dictionary<string, Built> projects = new(StringComparer.Ordinal);
+
+    /// <summary>The methods and rows the run under way began, which its end ends.</summary>
+    private List<TestNode> running = [];
+
+    private string emptyText = string.Empty;
 
     public TestRows Rows { get; } = [];
 
@@ -229,100 +263,109 @@ public sealed class TestTree
 
     public IReadOnlyList<TestNode> Roots { get; private set; } = [];
 
-    /// <summary>The tree for what discovery found. A row found before by the same name is the same row, so what was open
-    /// or closed stays so, a chosen row stays chosen, and a method keeps its last results until it runs again.</summary>
-    public void Load(IReadOnlyList<TestSource> sources)
+    /// <summary>What the window says while the tree has no rows: why there are none yet.</summary>
+    public string EmptyText
     {
-        Dictionary<string, TestNode> before = [];
-        foreach (TestNode root in Roots)
+        get => emptyText;
+        set
         {
-            Index(root, string.Empty);
+            if (emptyText != value)
+            {
+                emptyText = value;
+                EmptyTextChanged?.Invoke(this, EventArgs.Empty);
+            }
         }
-        byCase.Clear();
-        Dictionary<string, TestNode> built = [];
-        Dictionary<TestNode, string> keys = new(ReferenceEqualityComparer.Instance);
+    }
+
+    public event EventHandler? EmptyTextChanged;
+
+    /// <summary>The tree for the test projects' tests. A project loaded from the same parts as before is kept whole; in
+    /// another a row with the same place and name is the same row, so what was open or closed stays so, a chosen row
+    /// stays chosen, and a test keeps its last results until it runs again.</summary>
+    public void Load(IReadOnlyList<ProjectTests> tests)
+    {
+        Dictionary<string, Built> next = new(StringComparer.Ordinal);
         List<TestNode> roots = [];
-        HashSet<string> multiTargeted = [.. sources.GroupBy(s => s.Project).Where(g => g.Count(s => s.Framework is not null) > 1).Select(g => g.Key)];
-        foreach (TestSource source in sources)
+        foreach (ProjectTests project in tests)
         {
-            TestNode root = Node(null, TestNodeKind.Project, source.Project);
-            if (!roots.Contains(root))
+            if (next.ContainsKey(project.Project))
+            {
+                continue;
+            }
+            Built? was = projects.GetValueOrDefault(project.Project);
+            Built built = was is not null && was.Input == project ? was : Build(project, was);
+            next[project.Project] = built;
+            if (built.Root is { } root)
             {
                 roots.Add(root);
             }
-            TestNode top = source.Framework is { } framework && multiTargeted.Contains(source.Project) ? Node(root, TestNodeKind.Framework, framework) : root;
-            foreach (TestCase test in source.Cases.OrderBy(c => c.FullyQualifiedName, StringComparer.Ordinal))
+        }
+        foreach ((string path, Built gone) in projects)
+        {
+            if (!next.ContainsKey(path) && gone.Root is { } root)
             {
-                (string space, string type, string method) = Split(test.FullyQualifiedName);
-                TestNode parent = space.Length == 0 ? top : Node(top, TestNodeKind.Namespace, space);
-                TestNode owner = Node(parent, TestNodeKind.Class, type);
-                TestNode leaf = Node(owner, TestNodeKind.Method, method);
-                leaf.Cases.Add(test);
-                byCase[(test.Id, test.Source)] = leaf;
+                Leave(root);
             }
         }
+        projects = next;
         Roots = roots;
-        foreach (TestNode root in roots)
-        {
-            root.Recount();
-        }
         Rows.Show([.. roots.SelectMany(r => Visible(r, includeSelf: true))]);
         Updated?.Invoke(this, EventArgs.Empty);
-
-        void Index(TestNode node, string parentKey)
-        {
-            string key = $"{parentKey}/{(int)node.Kind}:{node.Name}";
-            before[key] = node;
-            foreach (TestNode child in node.Children)
-            {
-                Index(child, key);
-            }
-        }
-
-        // The node the key names: the one made already in this load, else the one before it, emptied, else a new one.
-        TestNode Node(TestNode? parent, TestNodeKind kind, string name)
-        {
-            string key = $"{(parent is null ? string.Empty : keys[parent])}/{(int)kind}:{name}";
-            if (built.TryGetValue(key, out TestNode? made))
-            {
-                return made;
-            }
-            if (!before.Remove(key, out made) || made.Parent != parent)
-            {
-                made = new TestNode(kind, name, parent);
-            }
-            made.Children.Clear();
-            made.Cases.Clear();
-            built[key] = made;
-            keys[made] = key;
-            parent?.Children.Add(made);
-            return made;
-        }
     }
 
-    public TestNode? Node(TestCase test) => byCase.GetValueOrDefault((test.Id, test.Source));
+    /// <summary>The row a test is shown by: its data row's, else its method's.</summary>
+    public TestNode? Node(TestItem test) =>
+        projects.TryGetValue(test.Project, out Built? built) ? built.ByKey.GetValueOrDefault(test.Key) : null;
 
-    /// <summary>The methods about to run go to running.</summary>
-    public void Begin(IEnumerable<TestNode> methods)
+    /// <summary>The tests about to run go to running, each method waiting for as many outcomes as it runs tests; the
+    /// rows a method's last run made wait to be made again.</summary>
+    public void Begin(IReadOnlyList<TestItem> tests)
     {
-        foreach (TestNode method in methods.Distinct())
+        Dictionary<TestNode, int> methods = new(ReferenceEqualityComparer.Instance);
+        List<TestNode> rows = [];
+        foreach (TestItem test in tests)
         {
-            method.Begin();
+            if (Node(test) is not { } node)
+            {
+                continue;
+            }
+            TestNode method = node.Kind == TestNodeKind.Row ? node.Parent! : node;
+            methods[method] = methods.GetValueOrDefault(method) + 1;
+            rows.AddRange(node.Kind == TestNodeKind.Row ? [node] : node.Children.Where(c => c.Item is null));
         }
+        foreach ((TestNode method, int count) in methods)
+        {
+            method.Begin(count);
+        }
+        foreach (TestNode row in rows)
+        {
+            row.Begin(1);
+        }
+        running = [.. methods.Keys, .. rows];
         Updated?.Invoke(this, EventArgs.Empty);
     }
 
-    /// <summary>Results as they come, each changing its method and the groups above it, nothing else.</summary>
-    public void Apply(IEnumerable<TestResult> results)
+    /// <summary>Outcomes as they come, each changing its row, its method and the groups above them, nothing else. A
+    /// result naming a data row its test does not have (a theory whose rows its run makes) is that row's, made now.</summary>
+    public void Apply(IEnumerable<TestOutcome> outcomes)
     {
         bool any = false;
-        foreach (TestResult result in results)
+        bool reshaped = false;
+        foreach (TestOutcome outcome in outcomes)
         {
-            if (Node(result.TestCase) is { } method)
+            if (Node(outcome.Test) is not { } node)
             {
-                method.Add(result);
-                any = true;
+                continue;
             }
+            TestNode method = node.Kind == TestNodeKind.Row ? node.Parent! : node;
+            TestNode? row = node.Kind == TestNodeKind.Row ? node : outcome.Row is { } name ? MadeRow(method, name, ref reshaped) : null;
+            row?.Add(outcome);
+            method.Add(outcome);
+            any = true;
+        }
+        if (reshaped)
+        {
+            Rows.Show([.. Roots.SelectMany(r => Visible(r, includeSelf: true))]);
         }
         if (any)
         {
@@ -330,11 +373,26 @@ public sealed class TestTree
         }
     }
 
+    /// <summary>The run is over: what it began and never heard of goes back to not run, and a row a method's run made
+    /// before and did not make again goes.</summary>
     public void End()
     {
-        foreach (TestNode method in Roots.SelectMany(r => r.Methods))
+        bool reshaped = false;
+        foreach (TestNode node in running)
         {
-            method.End();
+            if (node is { Kind: TestNodeKind.Row, Item: null, Results.Count: 0 } stale && stale.Parent is { Results.Count: > 0 } method)
+            {
+                method.Children.Remove(stale);
+                stale.Leave();
+                method.RaiseShape();
+                reshaped |= method.IsExpanded;
+            }
+            node.End();
+        }
+        running = [];
+        if (reshaped)
+        {
+            Rows.Show([.. Roots.SelectMany(r => Visible(r, includeSelf: true))]);
         }
         Updated?.Invoke(this, EventArgs.Empty);
     }
@@ -384,6 +442,149 @@ public sealed class TestTree
         }
     }
 
+    /// <summary>A project's tree from its parts, the rows of its tree before taken again where they are the same. A test
+    /// a runner found in a file whose code no longer declares its method was renamed or removed since the build, and is
+    /// left out; one in a file the code was not read from (an inherited test's base, a test of an attribute the code's
+    /// reading does not know) stays.</summary>
+    private static Built Build(ProjectTests project, Built? was)
+    {
+        Dictionary<string, TestNode> before = new(StringComparer.Ordinal);
+        if (was?.Root is { } oldRoot)
+        {
+            Index(oldRoot, string.Empty);
+        }
+        Dictionary<string, TestNode> made = new(StringComparer.Ordinal);
+        Dictionary<TestNode, string> keys = new(ReferenceEqualityComparer.Instance);
+        Dictionary<TestNode, List<TestNode>> runRows = new(ReferenceEqualityComparer.Instance);
+        HashSet<TestNode> hadChildren = new(ReferenceEqualityComparer.Instance);
+        Dictionary<string, TestNode> byKey = new(StringComparer.Ordinal);
+        TestNode root = Node(null, TestNodeKind.Project, project.Name, $"{(int)TestNodeKind.Project}:{project.Project}");
+        root.Project = project.Project;
+        List<(TestNode Top, IReadOnlyList<TestItem> Found)> tops = [];
+        if (project.Discovered.Count > 1)
+        {
+            tops.AddRange(project.Discovered.Select(s => (Node(root, TestNodeKind.Framework, s.Framework), s.Tests)));
+        }
+        else
+        {
+            tops.Add((root, project.Discovered.Count == 1 ? project.Discovered[0].Tests : []));
+        }
+        foreach ((TestNode top, IReadOnlyList<TestItem> found) in tops)
+        {
+            IEnumerable<TestItem> kept = found.Where(t => t.Path is null || !project.Code.MethodsByFile.TryGetValue(t.Path, out IReadOnlySet<string>? declared)
+                || declared.Contains(t.Method[(t.Method.LastIndexOf('.') + 1)..]));
+            // A nested type ("Outer+Inner") after its outer type's methods: '/' sorts after '.', where '+' sorts before.
+            foreach (TestItem test in kept.Concat(project.Code.Tests).OrderBy(t => t.Method.Replace('+', '/'), StringComparer.Ordinal).ThenBy(t => t.Row, StringComparer.Ordinal))
+            {
+                (string space, string type, string name) = Split(test.Method);
+                TestNode parent = space.Length == 0 ? top : Node(top, TestNodeKind.Namespace, space);
+                TestNode method = Node(Node(parent, TestNodeKind.Class, type), TestNodeKind.Method, name);
+                if (test.Framework is null)
+                {
+                    method.FromCode ??= test;
+                    continue;
+                }
+                method.Items.Add(test);
+                if (test.Row is { } row)
+                {
+                    TestNode data = Node(method, TestNodeKind.Row, row);
+                    data.Item = test;
+                    byKey[test.Key] = data;
+                }
+                else
+                {
+                    byKey[test.Key] = method;
+                }
+            }
+        }
+        // The rows a run made stay under their method until it runs again, unless a runner has found the row since.
+        HashSet<TestNode> restored = new(ReferenceEqualityComparer.Instance);
+        foreach ((TestNode method, List<TestNode> rows) in runRows)
+        {
+            foreach (TestNode row in rows.Where(r => r.Item is null && !method.Children.Contains(r)))
+            {
+                method.Children.Add(row);
+                restored.Add(row);
+            }
+        }
+        foreach (TestNode left in before.Values.Where(n => !restored.Contains(n)))
+        {
+            left.Leave();
+        }
+        foreach (TestNode node in made.Values.Where(n => n.HasChildren != hadChildren.Contains(n)))
+        {
+            node.RaiseShape();
+        }
+        root.Recount();
+        return new Built(project, root.HasChildren ? root : null, byKey);
+
+        void Index(TestNode node, string parentKey)
+        {
+            string key = node.Parent is null ? $"{(int)node.Kind}:{project.Project}" : $"{parentKey}/{(int)node.Kind}:{node.Name}";
+            before[key] = node;
+            foreach (TestNode child in node.Children)
+            {
+                Index(child, key);
+            }
+        }
+
+        // The node the key names: the one made already in this load, else the one before it, emptied, else a new one.
+        TestNode Node(TestNode? parent, TestNodeKind kind, string name, string? rootKey = null)
+        {
+            string key = rootKey ?? $"{keys[parent!]}/{(int)kind}:{name}";
+            if (made.TryGetValue(key, out TestNode? node))
+            {
+                return node;
+            }
+            if (!before.Remove(key, out node) || node.Parent != parent)
+            {
+                node = new TestNode(kind, name, parent);
+            }
+            else if (node.HasChildren)
+            {
+                hadChildren.Add(node);
+                if (kind == TestNodeKind.Method && node.Children.Any(c => c.Item is null))
+                {
+                    runRows[node] = [.. node.Children.Where(c => c.Item is null)];
+                }
+            }
+            node.Children.Clear();
+            node.Items.Clear();
+            node.FromCode = null;
+            node.Item = null;
+            made[key] = node;
+            keys[node] = key;
+            parent?.Children.Add(node);
+            return node;
+        }
+    }
+
+    /// <summary>A row made by a method's run: the one made before by that name, else a new one, under the method.</summary>
+    private static TestNode MadeRow(TestNode method, string name, ref bool reshaped)
+    {
+        foreach (TestNode child in method.Children)
+        {
+            if (child.Name == name)
+            {
+                return child;
+            }
+        }
+        TestNode row = new(TestNodeKind.Row, name, method);
+        method.Children.Add(row);
+        method.RaiseShape();
+        reshaped |= method.IsExpanded;
+        return row;
+    }
+
+    private static void Leave(TestNode node)
+    {
+        node.Leave();
+        foreach (TestNode child in node.Children)
+        {
+            Leave(child);
+        }
+    }
+
     private static IEnumerable<TestNode> Visible(TestNode node, bool includeSelf)
     {
         if (includeSelf)
@@ -403,22 +604,20 @@ public sealed class TestTree
         }
     }
 
-    /// <summary>"A.B.Class.Method" as its namespace, class and method; a parameter list (NUnit's cases) stays with
-    /// the method.</summary>
-    internal static (string Namespace, string Class, string Method) Split(string fullyQualifiedName)
+    /// <summary>"A.B.Class.Method" as its namespace, class and method.</summary>
+    internal static (string Namespace, string Class, string Method) Split(string method)
     {
-        int parameters = fullyQualifiedName.IndexOf('(');
-        string name = parameters >= 0 ? fullyQualifiedName[..parameters] : fullyQualifiedName;
-        string rest = parameters >= 0 ? fullyQualifiedName[parameters..] : string.Empty;
-        int method = name.LastIndexOf('.');
-        if (method < 0)
+        int last = method.LastIndexOf('.');
+        if (last < 0)
         {
-            return (string.Empty, string.Empty, fullyQualifiedName);
+            return (string.Empty, string.Empty, method);
         }
-        string type = name[..method];
+        string type = method[..last];
         int owner = type.LastIndexOf('.');
-        return owner < 0 ? (string.Empty, type, name[(method + 1)..] + rest) : (type[..owner], type[(owner + 1)..], name[(method + 1)..] + rest);
+        return owner < 0 ? (string.Empty, type, method[(last + 1)..]) : (type[..owner], type[(owner + 1)..], method[(last + 1)..]);
     }
+
+    private sealed record Built(ProjectTests Input, TestNode? Root, Dictionary<string, TestNode> ByKey);
 }
 
 /// <summary>The rows shown, changed a run of rows at a time: a list draws, and keeps its selection over, one change for

@@ -160,7 +160,7 @@ public sealed class TestGutter
     }
 
     /// <summary>Indexes the tree's methods once for each set of tests found, as <see cref="TestsAtCaret.Matches"/> would
-    /// match them: a method by its whole name (a theory's rows, NUnit's cases, in one), a type by every name it starts.</summary>
+    /// match them: a method by its whole name (its data rows in it), a type by every name it starts.</summary>
     private void Index()
     {
         if (ReferenceEquals(indexed, tree.Roots))
@@ -172,14 +172,14 @@ public sealed class TestGutter
         byType.Clear();
         foreach (TestNode method in tree.Roots.SelectMany(r => r.Methods))
         {
-            foreach (Microsoft.VisualStudio.TestPlatform.ObjectModel.TestCase test in method.Cases)
+            if (method.FullName?.Replace('+', '.') is not { } name)
             {
-                string name = test.FullyQualifiedName.Split('(')[0].Replace('+', '.');
-                Add(byMethod, name, method);
-                for (int dot = name.IndexOf('.', StringComparison.Ordinal); dot > 0; dot = name.IndexOf('.', dot + 1))
-                {
-                    Add(byType, name[..dot], method);
-                }
+                continue;
+            }
+            Add(byMethod, name, method);
+            for (int dot = name.IndexOf('.', StringComparison.Ordinal); dot > 0; dot = name.IndexOf('.', dot + 1))
+            {
+                Add(byType, name[..dot], method);
             }
         }
 

@@ -351,7 +351,7 @@ public sealed partial class PassengerTools(MainWindow window)
             throw new InvalidOperationException(discovery);
         }
         List<Testing.TestNode>? chosen = filter is null ? null
-            : [.. tests.Tree.Roots.SelectMany(r => r.Methods).Where(m => m.Cases.Any(c => c.FullyQualifiedName.Contains(filter, StringComparison.Ordinal)))];
+            : [.. tests.Tree.Roots.SelectMany(r => r.Methods).Where(m => m.FullName is { } name && name.Contains(filter, StringComparison.Ordinal))];
         if (chosen is { Count: 0 })
         {
             throw new InvalidOperationException($"No test's name contains '{filter}'");

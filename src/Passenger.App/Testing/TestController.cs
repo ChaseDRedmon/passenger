@@ -1,14 +1,13 @@
-using Microsoft.VisualStudio.TestPlatform.ObjectModel;
-using Microsoft.VisualStudio.TestPlatform.ObjectModel.Client.Interfaces;
 using Passenger.App.Workspace;
 using Passenger.Core;
 using Passenger.Editor;
 
 namespace Passenger.App.Testing;
 
-/// <summary>Unit testing in the IDE, as Rider's: the solution's test projects built and their tests found, runs of
-/// all of them, a chosen few or the ones that failed, results as they come, and a test debugged under Passenger's
-/// own debugger. A UI-thread object: everything a run says crosses to the UI thread before it changes the tree.</summary>
+/// <summary>Unit testing in the IDE, as Rider's: the test projects built and their tests found by a runner, runs of all
+/// of them, a chosen few or the ones that failed, results as they come, and a test debugged under Passenger's own
+/// debugger. It works in the IDE's own tests and outcomes, through <see cref="ITestRunner"/>. A UI-thread object:
+/// everything a run says crosses to the UI thread before it changes the tree.</summary>
 public sealed class TestController : IAsyncDisposable
 {
     /// <summary>What the window says when Stop ends a run before its tests ran.</summary>
@@ -17,7 +16,8 @@ public sealed class TestController : IAsyncDisposable
     private readonly Func<CancellationToken, Task<Run.BuildOutcome>> build;
     private readonly Func<IReadOnlyList<ProjectModel>> projects;
     private readonly Action<string> log;
-    private TestRunner? runner;
+    private readonly Func<string, CancellationToken, Task<ITestRunner>> startRunner;
+    private ITestRunner? runner;
     private string? folder;
     private IReadOnlyList<TestNode> lastRun = [];
 
@@ -30,14 +30,21 @@ public sealed class TestController : IAsyncDisposable
 
     /// <summary>What discovery found in each assembly, by its path, with the time the assembly was written then: an
     /// assembly not built again since is not asked again.</summary>
-    private readonly Dictionary<string, (DateTime Written, IReadOnlyList<TestCase> Cases)> discovered = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (DateTime Written, IReadOnlyList<TestItem> Tests)> discovered = new(StringComparer.Ordinal);
 
-    public TestController(TestTree tree, Func<CancellationToken, Task<Run.BuildOutcome>> build, Func<IReadOnlyList<ProjectModel>> projects, Action<string> log)
+    /// <summary>Each project's assemblies' tests as last discovered, by project path; a project's list is the same object
+    /// until what was found in it changes, so the tree keeps the project as it was.</summary>
+    private Dictionary<string, IReadOnlyList<TestSource>> sources = new(StringComparer.Ordinal);
+
+    public TestController(TestTree tree, Func<CancellationToken, Task<Run.BuildOutcome>> build, Func<IReadOnlyList<ProjectModel>> projects, Action<string> log,
+        Func<string, CancellationToken, Task<ITestRunner>>? startRunner = null)
     {
         Tree = tree;
         this.build = build;
         this.projects = projects;
         this.log = log;
+        this.startRunner = startRunner ?? VsTestRunner.StartAsync;
+        Load();
     }
 
     public TestTree Tree { get; }
@@ -53,10 +60,10 @@ public sealed class TestController : IAsyncDisposable
     /// <summary>Something for the status bar.</summary>
     public event EventHandler<string>? Message;
 
-    /// <summary>A test to debug: the debugger launches the test host VSTest gives and says what process it is.</summary>
-    public Func<TestProcessStartInfo, Task<int>>? LaunchUnderDebugger { get; set; }
+    /// <summary>A test to debug: the debugger launches the test host the runner gives and says what process it is.</summary>
+    public Func<TestHostStart, Task<int>>? LaunchUnderDebugger { get; set; }
 
-    /// <summary>A test to debug in a test host VSTest started itself: the debugger attaches to it, true once it has.</summary>
+    /// <summary>A test to debug in a test host the runner started itself: the debugger attaches to it, true once it has.</summary>
     public Func<int, Task<bool>>? AttachDebugger { get; set; }
 
     /// <summary>Builds, then finds the tests of every test project. Null once found, or what stopped it.</summary>
@@ -72,13 +79,13 @@ public sealed class TestController : IAsyncDisposable
         using CancellationTokenSource stop = Begin();
         try
         {
-            return await DiscoverCore(workspace, stop.Token);
+            return await DiscoverCore(workspace, build: true, stop.Token);
         }
         catch (OperationCanceledException) when (stop.IsCancellationRequested)
         {
             return Stopped();
         }
-        catch (Exception error) when (error is IOException or InvalidOperationException or TestPlatformException)
+        catch (Exception error) when (error is IOException or InvalidOperationException)
         {
             return $"The tests could not be found: {error.Message}";
         }
@@ -122,11 +129,11 @@ public sealed class TestController : IAsyncDisposable
 
     /// <summary>The first of these rows' tests that failed in the last run, if one did.</summary>
     public TestNode? FirstFailed(IEnumerable<TestNode> rows) =>
-        rows.SelectMany(r => r.Methods).FirstOrDefault(m => m.State == TestState.Failed);
+        rows.SelectMany(r => r.Kind == TestNodeKind.Row ? [r] : r.Methods).FirstOrDefault(m => m.State == TestState.Failed);
 
     private bool stopRequested;
 
-    /// <summary>Runs tests: these rows' (all when none), building and finding them first when nothing has been found.</summary>
+    /// <summary>Runs tests: these rows' (all when none), after a build and a look for the tests built since.</summary>
     public async Task<string?> RunAsync(string workspace, IEnumerable<TestNode>? rows = null, bool debug = false, bool build = true, string prefix = "")
     {
         UiThread.Check();
@@ -137,55 +144,50 @@ public sealed class TestController : IAsyncDisposable
         IsBusy = true;
         BackgroundWork.Begin();
         holdingWork = true;
+        List<TestNode>? chosen = rows?.ToList();
         using CancellationTokenSource stop = Begin();
         try
         {
-            if (Tree.Roots.Count == 0 || rows is null)
+            // A run builds first, as Rider's does, and finds what is new.
+            if ((build || runner is null) && await DiscoverCore(workspace, build, stop.Token) is { } problem)
             {
-                // A run of everything builds first, as Rider's does, and finds what is new.
-                if (await DiscoverCore(workspace, stop.Token) is { } problem)
-                {
-                    return problem;
-                }
-            }
-            else if (build && await this.build(stop.Token) is { Succeeded: false } unbuilt)
-            {
-                return unbuilt.Message;
+                return problem;
             }
             stop.Token.ThrowIfCancellationRequested();
-            List<TestNode> methods = [.. (rows ?? Tree.Roots).SelectMany(r => r.Methods).Distinct()];
-            if (methods.Count == 0)
+            List<TestItem> tests = Chosen(chosen ?? Tree.Roots);
+            if (tests.Count == 0)
             {
-                return "There are no tests to run";
+                return chosen is null ? "There are no tests to run" : "None of these tests was found in the test projects as built";
             }
-            lastRun = methods;
-            Tree.Begin(methods);
+            List<TestNode> methods = [.. tests.Select(Tree.Node).OfType<TestNode>().Select(n => n.Kind == TestNodeKind.Row ? n.Parent! : n).Distinct()];
+            lastRun = chosen ?? [];
+            Tree.Begin(tests);
             Changed?.Invoke(this, EventArgs.Empty);
-            Message?.Invoke(this, $"{prefix}Running {Count(methods)}");
-            HashSet<TestResult> applied = new(ReferenceEqualityComparer.Instance);
-            void Apply(IReadOnlyList<TestResult> results) => Tree.Apply(results.Where(applied.Add));
+            Message?.Invoke(this, $"{prefix}Running {tests.Count} test{(tests.Count == 1 ? "" : "s")}");
+            HashSet<TestOutcome> applied = new(ReferenceEqualityComparer.Instance);
+            void Apply(IReadOnlyList<TestOutcome> outcomes) => Tree.Apply(outcomes.Where(applied.Add));
             RunSummary? summary = null;
             // Each test project's tests run with its launch profile's environment, so projects whose differ run apart.
-            foreach (IGrouping<string, (TestCase Case, IReadOnlyDictionary<string, string> Environment)> group in methods.SelectMany(m => m.Cases)
-                .Select(c => (Case: c, Environment: EnvironmentOf(c.Source)))
-                .GroupBy(c => string.Join('\n', c.Environment.Select(v => $"{v.Key}={v.Value}")), StringComparer.Ordinal))
+            foreach (IGrouping<string, (TestItem Test, IReadOnlyDictionary<string, string> Environment)> group in tests
+                .Select(t => (Test: t, Environment: EnvironmentOf(t.Project)))
+                .GroupBy(t => string.Join('\n', t.Environment.Select(v => $"{v.Key}={v.Value}")), StringComparer.Ordinal))
             {
                 if (summary is { Canceled: true })
                 {
                     break;
                 }
                 RunSummary part = await runner!.RunAsync(
-                    [.. group.Select(c => c.Case)],
-                    UiThread.Marshal<IReadOnlyList<TestResult>>(Apply),
+                    [.. group.Select(t => t.Test)],
+                    UiThread.Marshal<IReadOnlyList<TestOutcome>>(Apply),
                     log: UiThread.Marshal(log),
                     debugger: debug ? new DebugLauncher(this) : null,
                     environment: group.First().Environment,
                     cancel: stop.Token);
                 summary = summary is null ? part : new RunSummary(summary.Elapsed + part.Elapsed, summary.Canceled || part.Canceled,
-                    summary.Aborted || part.Aborted, summary.Error ?? part.Error) { Results = [.. summary.Results, .. part.Results] };
+                    summary.Aborted || part.Aborted, summary.Error ?? part.Error) { Outcomes = [.. summary.Outcomes, .. part.Outcomes] };
             }
-            // VSTest may tell a result on another thread behind the run's end: every one is in before the end is.
-            Apply(summary!.Results);
+            // A runner may tell an outcome on another thread behind the run's end: every one is in before the end is.
+            Apply(summary!.Outcomes);
             Tree.End();
             Summary = prefix + Tally(methods, summary);
             Message?.Invoke(this, Summary);
@@ -195,7 +197,7 @@ public sealed class TestController : IAsyncDisposable
         {
             return Stopped();
         }
-        catch (Exception error) when (error is IOException or InvalidOperationException or TestPlatformException)
+        catch (Exception error) when (error is IOException or InvalidOperationException)
         {
             return $"The tests could not run: {error.Message}";
         }
@@ -240,15 +242,48 @@ public sealed class TestController : IAsyncDisposable
         stopping?.Cancel();
     }
 
-    /// <summary>Ends vstest.console on a worker thread, since its end waits for the process; it needs no UI thread, so the
+    /// <summary>Ends the runner on a worker thread, since its end waits for its process; it needs no UI thread, so the
     /// process can wait for it once the window's loop has stopped.</summary>
     public ValueTask DisposeAsync()
     {
         UiThread.Check();
-        TestRunner? ending = runner;
+        ITestRunner? ending = runner;
         runner = null;
         // Not held: the window's end waits for it with no UI thread to come back to (MainWindow.Ended).
         return ending is null ? ValueTask.CompletedTask : new ValueTask(Task.Run(ending.Dispose));
+    }
+
+    /// <summary>The tests these rows run: a method's or a group's tests as a runner found them, a data row's own (its
+    /// method's for a row its run made); none of a method no runner has found, or one no longer in the tree.</summary>
+    private static List<TestItem> Chosen(IEnumerable<TestNode> rows)
+    {
+        List<TestItem> tests = [];
+        HashSet<string> seen = new(StringComparer.Ordinal);
+        foreach (TestNode row in rows.Where(r => !r.Gone))
+        {
+            IEnumerable<TestItem> its = row.Kind == TestNodeKind.Row ? row.Item is { } item ? [item] : row.Parent!.Items : row.Methods.SelectMany(m => m.Items);
+            tests.AddRange(its.Where(t => seen.Add(t.Key)));
+        }
+        return tests;
+    }
+
+    /// <summary>The tree for the test projects discovered: each one's tests from what was discovered in it.</summary>
+    private void Load()
+    {
+        Tree.Load([.. projects().Where(p => sources.ContainsKey(p.Path))
+            .Select(p => new ProjectTests(p.Path, Path.GetFileNameWithoutExtension(p.Path), CodeTests.None, sources[p.Path]))]);
+        Tree.EmptyText = "Run All finds the solution's tests and runs them";
+    }
+
+    /// <summary>Lets go of another folder's runner and what was discovered in it.</summary>
+    private void Forget(string? workspace)
+    {
+        runner?.Dispose();
+        runner = null;
+        discovered.Clear();
+        sources = new(StringComparer.Ordinal);
+        resolved = null;
+        folder = workspace;
     }
 
     private CancellationTokenSource Begin()
@@ -263,8 +298,8 @@ public sealed class TestController : IAsyncDisposable
     {
         if (runner is { IsUsable: false } stuck)
         {
-            // A discovery that never said it had stopped: vstest.console ends, its test hosts with it, and the next
-            // run starts another.
+            // A discovery that never said it had stopped: its runner ends, its test hosts with it, and the next run
+            // starts another.
             runner = null;
             _ = Task.Run(stuck.Dispose);
         }
@@ -272,17 +307,22 @@ public sealed class TestController : IAsyncDisposable
         return StoppedMessage;
     }
 
-    private async Task<string?> DiscoverCore(string workspace, CancellationToken cancel)
+    private async Task<string?> DiscoverCore(string workspace, bool build, CancellationToken cancel)
     {
-        if (await build(cancel) is { Succeeded: false } unbuilt)
+        if (build && await this.build(cancel) is { Succeeded: false } unbuilt)
         {
             return unbuilt.Message;
         }
         cancel.ThrowIfCancellationRequested();
+        if (folder != workspace)
+        {
+            Forget(workspace);
+        }
         IReadOnlyList<ProjectModel> tests = [.. projects().Where(p => p.Exists && p.IsTestProject)];
         if (tests.Count == 0)
         {
-            Tree.Load([]);
+            sources = new(StringComparer.Ordinal);
+            Load();
             return "There are no test projects: none references a test SDK or adapter";
         }
         IReadOnlyList<TestAssembly> assemblies = await Assemblies(tests, workspace, cancel);
@@ -298,31 +338,38 @@ public sealed class TestController : IAsyncDisposable
                 log($"{assembly.Project.Name}: {Path.GetFileName(assembly.Path)} ({assembly.Framework}) has not been built");
             }
         }
-        if (folder != workspace)
-        {
-            runner?.Dispose();
-            runner = null;
-            discovered.Clear();
-            folder = workspace;
-        }
-        runner ??= await TestRunner.StartAsync(workspace, cancel);
+        runner ??= await startRunner(workspace, cancel);
         // Only what was built again since it was last looked through is looked through again.
         Dictionary<string, DateTime> written = built.ToDictionary(a => a.Path, a => File.GetLastWriteTimeUtc(a.Path), StringComparer.Ordinal);
-        List<string> stale = [.. written.Where(w => !discovered.TryGetValue(w.Key, out var known) || known.Written != w.Value).Select(w => w.Key)];
+        List<TestAssembly> stale = [.. built.Where(a => !discovered.TryGetValue(a.Path, out var known) || known.Written != written[a.Path])];
         if (stale.Count > 0)
         {
-            IReadOnlyList<TestCase> found = await runner.DiscoverAsync(stale, UiThread.Marshal(log), cancel);
-            Dictionary<string, List<TestCase>> bySource = found.GroupBy(c => c.Source, StringComparer.Ordinal)
-                .GroupBy(g => PathNames.Canonical(g.Key), StringComparer.Ordinal)
-                .ToDictionary(g => g.Key, g => g.SelectMany(c => c).ToList(), StringComparer.Ordinal);
-            foreach (string assembly in stale)
+            IReadOnlyList<TestItem> found = await runner.DiscoverAsync(stale, UiThread.Marshal(log), cancel);
+            Dictionary<(string, string?), List<TestItem>> byAssembly = [];
+            foreach (TestItem test in found)
             {
-                discovered[assembly] = (written[assembly], bySource.GetValueOrDefault(PathNames.Canonical(assembly)) ?? []);
+                if (!byAssembly.TryGetValue((test.Project, test.Framework), out List<TestItem>? its))
+                {
+                    byAssembly[(test.Project, test.Framework)] = its = [];
+                }
+                its.Add(test);
+            }
+            foreach (TestAssembly assembly in stale)
+            {
+                discovered[assembly.Path] = (written[assembly.Path], byAssembly.GetValueOrDefault((assembly.Project.Path, assembly.Framework)) ?? []);
             }
         }
         cancel.ThrowIfCancellationRequested();
-        Tree.Load([.. built.Select(a => new TestSource(DisplayName(a.Project), a.Framework, discovered[a.Path].Cases))]);
-        int count = built.Sum(a => discovered[a.Path].Cases.Count);
+        Dictionary<string, IReadOnlyList<TestSource>> next = new(StringComparer.Ordinal);
+        foreach (IGrouping<string, TestAssembly> project in built.GroupBy(a => a.Project.Path))
+        {
+            List<TestSource> now = [.. project.Select(a => new TestSource(a.Framework, discovered[a.Path].Tests))];
+            next[project.Key] = sources.TryGetValue(project.Key, out IReadOnlyList<TestSource>? was)
+                && was.Select(s => (s.Framework, s.Tests)).SequenceEqual(now.Select(s => (s.Framework, s.Tests))) ? was : now;
+        }
+        sources = next;
+        Load();
+        int count = built.Sum(a => discovered[a.Path].Tests.Count);
         int projectCount = built.Select(a => a.Project).Distinct().Count();
         Message?.Invoke(this, $"Found {count} test{(count == 1 ? "" : "s")} in {projectCount} project{(projectCount == 1 ? "" : "s")}");
         return null;
@@ -340,63 +387,44 @@ public sealed class TestController : IAsyncDisposable
         return assemblies;
     }
 
-    private static string DisplayName(ProjectModel project) => Path.GetFileNameWithoutExtension(project.Path);
-
-    /// <summary>The environment a test assembly's tests run with: its project's first launch profile that runs the project,
-    /// its variables, as Rider's VSTest runner gives a test project's launchSettings.json to its test host.</summary>
-    private IReadOnlyDictionary<string, string> EnvironmentOf(string source)
-    {
-        string assembly = PathNames.Canonical(source);
-        return resolved?.Assemblies.FirstOrDefault(a => PathNames.Same(a.Path, assembly))?.Project is { } project
-            && Run.LaunchProfile.Read(project).FirstOrDefault(p => p.RunsProject) is { } profile
+    /// <summary>The environment a test project's tests run with: its first launch profile that runs the project, its
+    /// variables, as Rider's VSTest runner gives a test project's launchSettings.json to its test host.</summary>
+    private IReadOnlyDictionary<string, string> EnvironmentOf(string project) =>
+        resolved?.Assemblies.FirstOrDefault(a => a.Project.Path == project)?.Project is { } built
+            && Run.LaunchProfile.Read(built).FirstOrDefault(p => p.RunsProject) is { } profile
             ? profile.EnvironmentVariables
             : new Dictionary<string, string>();
-    }
-
-    private static string Count(IReadOnlyList<TestNode> methods)
-    {
-        int tests = methods.Sum(m => m.Cases.Count);
-        return $"{tests} test{(tests == 1 ? "" : "s")}";
-    }
 
     private static string Tally(IReadOnlyList<TestNode> methods, RunSummary summary)
     {
-        List<TestResult> results = [.. methods.SelectMany(m => m.Results)];
-        int passed = results.Count(r => r.Outcome == TestOutcome.Passed);
-        int failed = results.Count(r => r.Outcome == TestOutcome.Failed);
-        int skipped = results.Count(r => r.Outcome == TestOutcome.Skipped);
+        List<TestOutcome> results = [.. methods.SelectMany(m => m.Results)];
+        int passed = results.Count(r => r.State == TestState.Passed);
+        int failed = results.Count(r => r.State == TestState.Failed);
+        int skipped = results.Count(r => r.State == TestState.Skipped);
         string ending = summary.Canceled ? ", stopped" : summary.Aborted ? $", broken off{(summary.Error is { } why ? $": {why}" : "")}" : string.Empty;
         return $"Tests passed: {passed}, failed: {failed}{(skipped > 0 ? $", skipped: {skipped}" : "")} of {results.Count} in {summary.Elapsed.TotalSeconds:0.0} s{ending}";
     }
 
-    /// <summary>VSTest's way to debug: it hands over the test host it would start, and the IDE starts it under its
-    /// debugger instead, or attaches to the one it started.</summary>
-    private sealed class DebugLauncher(TestController owner) : ITestHostLauncher3
+    /// <summary>The debugger for a run: the runner's test host started under it, or attached to, on the UI thread, from
+    /// when the run is the debugger session's rather than work a screenshot waits for.</summary>
+    private sealed class DebugLauncher(TestController owner) : ITestDebugLauncher
     {
-        public bool IsDebug => true;
-
-        public int LaunchTestHost(TestProcessStartInfo defaultTestHostStartInfo) => LaunchTestHost(defaultTestHostStartInfo, CancellationToken.None);
-
-        public int LaunchTestHost(TestProcessStartInfo defaultTestHostStartInfo, CancellationToken cancellationToken) =>
+        public Task<int> LaunchAsync(TestHostStart start) =>
             owner.LaunchUnderDebugger is { } launch
                 ? UiThread.InvokeAsync(() =>
                 {
                     owner.ReleaseWork();
-                    return launch(defaultTestHostStartInfo);
-                }).GetAwaiter().GetResult()
+                    return launch(start);
+                })
                 : throw new InvalidOperationException("No debugger can start the test host");
 
-        public bool AttachDebuggerToProcess(int pid) => AttachDebuggerToProcess(pid, CancellationToken.None);
-
-        // VSTest starts a .NET test host itself and waits on this before it runs a test in it.
-        public bool AttachDebuggerToProcess(int pid, CancellationToken cancellationToken) =>
-            owner.AttachDebugger is { } attach && UiThread.InvokeAsync(() =>
-            {
-                owner.ReleaseWork();
-                return attach(pid);
-            }).GetAwaiter().GetResult();
-
-        public bool AttachDebuggerToProcess(AttachDebuggerInfo attachDebuggerInfo, CancellationToken cancellationToken) =>
-            AttachDebuggerToProcess(attachDebuggerInfo.ProcessId, cancellationToken);
+        public Task<bool> AttachAsync(int processId) =>
+            owner.AttachDebugger is { } attach
+                ? UiThread.InvokeAsync(() =>
+                {
+                    owner.ReleaseWork();
+                    return attach(processId);
+                })
+                : Task.FromResult(false);
     }
 }

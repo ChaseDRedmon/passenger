@@ -197,7 +197,7 @@ public partial class MainWindow
     /// among them, found first when they have not been.</summary>
     private void RunProjectTests(IReadOnlyList<string> projects, string what, bool debug)
     {
-        HashSet<string> names = [.. projects.Select(Path.GetFileNameWithoutExtension).OfType<string>()];
+        HashSet<string> chosen = new(projects, StringComparer.Ordinal);
         RunTests(async () =>
         {
             if (Roots().Count == 0 && await tests.DiscoverAsync(folder!) is { } problem)
@@ -207,7 +207,7 @@ public partial class MainWindow
             return Roots() is { Count: > 0 } found ? await tests.RunAsync(folder!, found, debug) : $"No tests were found in {what}";
         });
 
-        List<Testing.TestNode> Roots() => [.. tests.Tree.Roots.Where(r => names.Contains(r.Name))];
+        List<Testing.TestNode> Roots() => [.. tests.Tree.Roots.Where(r => r.Project is { } project && chosen.Contains(project))];
     }
 
     private static SolutionFolder? FindFolder(IEnumerable<SolutionEntry> entries, string path)

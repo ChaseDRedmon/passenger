@@ -10,9 +10,9 @@ using Passenger.App.Testing;
 
 namespace Passenger.App.ToolWindows;
 
-/// <summary>Rider's Unit Tests window: the tests by project, namespace, class and method, each marked with how it
-/// last ran and how long it took; the chosen one's message, stack trace and output beside the tree; the run's tally
-/// above. Double-click or F4 goes to a test's source.</summary>
+/// <summary>Rider's Unit Tests window: the tests by project, namespace, class and method, a theory's data rows under
+/// it, each marked with how it last ran and how long it took; the chosen one's message, stack trace and output beside the
+/// tree; the run's tally above; and while there are none, why. Double-click or F4 goes to a test's source.</summary>
 public sealed class TestsView : DockPanel
 {
     /// <summary>The most failed tests a group's details show, so choosing a project of thousands shows at once.</summary>
@@ -39,7 +39,7 @@ public sealed class TestsView : DockPanel
         {
             if (tree.SelectedItem is TestNode node)
             {
-                if (node.HasChildren)
+                if (node.HasChildren && node.Kind != TestNodeKind.Method)
                 {
                     model.Toggle(node);
                 }
@@ -76,12 +76,13 @@ public sealed class TestsView : DockPanel
         status.Bind(TextBlock.ForegroundProperty, status.GetResourceObservable("Passenger.TextMuted"));
         placeholder = new TextBlock
         {
-            Text = "Run All finds the solution's tests and runs them",
+            Text = model.EmptyText,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
         };
         placeholder.Bind(TextBlock.ForegroundProperty, placeholder.GetResourceObservable("Passenger.TextMuted"));
         model.Rows.CollectionChanged += (_, _) => placeholder.IsVisible = model.Rows.Count == 0;
+        model.EmptyTextChanged += (_, _) => placeholder.Text = model.EmptyText;
 
         Grid split = new() { ColumnDefinitions = new ColumnDefinitions("2*,1,3*") };
         HairlineDivider divider = new(GridResizeDirection.Columns) { [Grid.ColumnProperty] = 1 };
@@ -157,7 +158,7 @@ public sealed class TestsView : DockPanel
             details.Text = string.Empty;
             return;
         }
-        if (node.Kind == TestNodeKind.Method)
+        if (node.Kind is TestNodeKind.Method or TestNodeKind.Row)
         {
             details.Text = node.Details;
             return;
@@ -299,7 +300,7 @@ public sealed class TestsView : DockPanel
                 return;
             }
             Margin = node.Indent;
-            label.Text = node.Label;
+            label.Text = node.Name;
             chevron.IsVisible = node.HasChildren;
             ShowExpanded(node);
             ShowState(node);
@@ -319,8 +320,8 @@ public sealed class TestsView : DockPanel
                 case nameof(TestNode.IsExpanded):
                     ShowExpanded(node);
                     break;
-                case nameof(TestNode.Label):
-                    label.Text = node.Label;
+                case nameof(TestNode.HasChildren):
+                    chevron.IsVisible = node.HasChildren;
                     break;
             }
         }

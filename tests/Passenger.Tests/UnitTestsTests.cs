@@ -62,6 +62,9 @@ public sealed class UnitTestsTests : IDisposable
         // Run All has no key of Rider's: the Unit Tests window's button runs it.
         Assert.True(window.Perform(AppActions.RunAllTests));
         Ui.WaitFor(() => !window.Tests.IsBusy && Method(window, "Two_and_two_make_four")?.State == TestState.Passed, "the run of every test", TimeSpan.FromSeconds(120));
+        // The tally: vstest.console ran under the SDK's dotnet, which VSTest's translation layer is told through a
+        // constructor of its own; a version of the package without it fails here, naming it.
+        Assert.Equal("Tests passed: 3, failed: 1, skipped: 1 of 5", System.Text.RegularExpressions.Regex.Replace(window.BottomPanel.Tests.Status, @" in \d+\.\d s$", string.Empty));
         // The runner's log in the logs folder has what it found and how the run went.
         IdeErrors.Flush();
         string run = Ui.Shared(runnerLog)[Math.Min(logged, Ui.Shared(runnerLog).Length)..];
@@ -301,15 +304,15 @@ public sealed class UnitTestsTests : IDisposable
 
         // Run All with nothing changed: Few.Tests stays closed, the chosen test stays chosen with its new result shown, and
         // the tests found before run again without being looked for again.
-        Microsoft.VisualStudio.TestPlatform.ObjectModel.TestCase found = failing.Cases[0];
-        Microsoft.VisualStudio.TestPlatform.ObjectModel.TestResult last = failing.Results[0];
+        TestItem found = failing.Items[0];
+        TestOutcome last = failing.Results[0];
         Assert.True(window.Perform(AppActions.RunAllTests));
         Ui.WaitFor(() => !window.Tests.IsBusy && Method(window, "Case_0107")?.Results.FirstOrDefault() is { } fresh && fresh != last, "Run All again", TimeSpan.FromSeconds(180));
         Assert.False(window.Tests.Tree.Roots.Single(r => r.Name == "Few.Tests").IsExpanded, "Run All opened the project that was closed");
         Assert.DoesNotContain(window.Tests.Tree.Rows, r => r.Name == "FewTests");
         Assert.Equal("Case_0107", (tree.SelectedItem as TestNode)?.Name);
         Assert.Contains("case 107 failed", details.Text, StringComparison.Ordinal);
-        Assert.Same(found, Method(window, "Case_0107")!.Cases[0]);
+        Assert.Same(found, Method(window, "Case_0107")!.Items[0]);
         window.Close();
     }
 
