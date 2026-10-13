@@ -44,6 +44,40 @@ public sealed class FolderWatchTests : IDisposable
         window.Close();
     }
 
+    /// <summary>A save writes the new text beside the file and moves it over the file, which the watcher takes for no
+    /// change of which files there are. The folder read again in that moment (another program's new file seen) listed the
+    /// temporary file, and nothing read it again once the save was done, so it stayed offered until the next new file.</summary>
+    [AvaloniaFact]
+    public void A_saves_temporary_file_there_as_the_folder_is_read_is_never_offered_by_go_to_file_find_in_files_or_the_explorer()
+    {
+        File.WriteAllText(Path.Combine(folder, "Shop.cs"), "class Shop { }\n");
+        MainWindow window = Open();
+        string saving = "Shop.cs" + FileText.SaveSuffix;
+
+        // There as a save has it, as another program's new file makes the window read the folder again.
+        File.WriteAllText(Path.Combine(folder, saving), "class Shop { }\n");
+        File.WriteAllText(Path.Combine(folder, "Two.cs"), "class Two { }\n");
+        Ui.WaitFor(() => window.ExplorerView.Tree.Rows.Any(r => r.Name == "Two.cs"), "the new file in the Explorer");
+        Ui.WaitFor(() => window.FileIndex.Files.Contains("Two.cs"), "the new file in Go to File");
+        Assert.False(window.ExplorerView.Tree.Rows.Any(r => r.Name == saving), $"The Explorer shows {saving}, a save's temporary file, as a file of the folder");
+
+        Ui.Press(window, Ui.Shortcut(AppActions.GoToFile));
+        window.KeyTextInput("Shop");
+        Ui.Settle();
+        Avalonia.Controls.ListBox results = Avalonia.Controls.ControlExtensions.FindControl<Avalonia.Controls.ListBox>(window.Popup!, "Results")!;
+        string[] offered = [.. results.Items.OfType<Passenger.App.Navigation.FileHit>().Select(h => h.Name)];
+        Assert.True(offered.SequenceEqual(["Shop.cs"]), $"Go to File offers [{string.Join(", ", offered)}] for Shop, a save's temporary file among them");
+        Ui.Press(window, "ESCAPE");
+
+        Passenger.App.Navigation.FindInFilesPopup find = window.ShowFindInFiles(replace: false)!;
+        find.Text = "class Shop";
+        Task searching = find.SearchAsync();
+        Ui.WaitFor(() => searching.IsCompleted, "the search");
+        string[] found = [.. find.Matches.Select(m => Path.GetFileName(m.Path))];
+        Assert.True(found.SequenceEqual(["Shop.cs"]), $"Find in Files finds class Shop in [{string.Join(", ", found)}], a save's temporary file among them");
+        window.Close();
+    }
+
     [AvaloniaFact]
     public void A_file_with_unsaved_edits_changed_on_disk_asks_which_to_keep()
     {

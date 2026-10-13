@@ -3,9 +3,9 @@ using Passenger.Text;
 
 namespace Passenger.App.Workspace;
 
-/// <summary>Every file under the open folder, by relative path, for Go to File. Built off the UI
-/// thread when the folder opens; build output, dependencies and version control are left out, and a
-/// symlinked folder is not followed, since it can loop.</summary>
+/// <summary>Every file under the open folder, by relative path, for Go to File and Find in Files. Built off the UI
+/// thread when the folder opens; build output, dependencies, version control and a save's temporary file (gone once the
+/// save is done, which walks nothing again) are left out, and a symlinked folder is not followed, since it can loop.</summary>
 public sealed class FileIndex
 {
     /// <summary>The most files indexed, so a folder that is really a disk does not hold the IDE up.</summary>
@@ -87,7 +87,7 @@ public sealed class FileIndex
                         folders.Push(directory);
                     }
                 }
-                else if (entry.Name != ".DS_Store")
+                else if (entry.Name != ".DS_Store" && !FileText.IsSaving(entry.Name))
                 {
                     found.Add(Path.GetRelativePath(root, entry.FullName));
                 }

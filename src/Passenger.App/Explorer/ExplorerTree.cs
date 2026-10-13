@@ -251,13 +251,14 @@ public sealed class ExplorerTree
         new(NodeKind.Folder, Path.GetFileName(path) is { Length: > 0 } name ? name : path, path, depth, dimmed,
             node => Contents(path, node.Depth + 1, node.IsDimmed, skip: null));
 
-    /// <summary>A folder's entries, folders first; a project hides its own build output and file.</summary>
+    /// <summary>A folder's entries, folders first, a save's temporary file left out (nothing reads the folder again once
+    /// the save is done); a project hides its own build output and file.</summary>
     private static List<ExplorerNode> Contents(string folder, int depth, bool dimmed, string? skip)
     {
         try
         {
             return new DirectoryInfo(folder).EnumerateFileSystemInfos()
-                .Where(e => !Hidden.Contains(e.Name))
+                .Where(e => !Hidden.Contains(e.Name) && !(e is FileInfo && FileText.IsSaving(e.Name)))
                 .Where(e => skip is null || (e.FullName != skip && !(e is DirectoryInfo && e.Name is "bin" or "obj")))
                 .OrderBy(e => e is FileInfo)
                 .ThenBy(e => e.Name, StringComparer.OrdinalIgnoreCase)
