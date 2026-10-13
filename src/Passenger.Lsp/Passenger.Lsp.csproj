@@ -49,8 +49,18 @@
       <RoslynServerFolder>@(RoslynServerEntry->'%(RootDir)%(Directory)')</RoslynServerFolder>
     </PropertyGroup>
     <ItemGroup>
+      <!-- Under Visual Studio's terms, not open source, and loaded on no path Passenger takes: Visual Studio's ServiceHub
+           client, its debugger's and RPC contracts, and its remote settings client (THIRD_PARTY_NOTICES.md says how that
+           was found, and why Telemetry and Utilities.Internal stay). Each is left out with its satellite resources. -->
+      <RoslynServerLeftOut Include="Microsoft.ServiceHub.Client;Microsoft.VisualStudio.Debugger.Contracts;Microsoft.VisualStudio.RemoteControl;Microsoft.VisualStudio.RpcContracts" />
+      <RoslynServerLeftOutGone Include="@(RoslynServerLeftOut)" Condition="!Exists('$(RoslynServerFolder)%(Identity).dll')" />
+    </ItemGroup>
+    <Error Condition="'@(RoslynServerLeftOutGone)' != ''"
+           Text="roslyn-language-server.$(RoslynServerRid) $(RoslynServerVersion) no longer carries @(RoslynServerLeftOutGone->'%(Identity).dll', ', '), which Passenger leaves out: check again what the server loads, then the list and THIRD_PARTY_NOTICES.md." />
+    <ItemGroup>
       <!-- The package's files only: a server run from the package folder leaves its MEF cache in cache/ there. -->
-      <RoslynServerFile Include="$(RoslynServerFolder)**/*" Exclude="$(RoslynServerFolder)cache/**" />
+      <RoslynServerFile Include="$(RoslynServerFolder)**/*"
+                        Exclude="$(RoslynServerFolder)cache/**;@(RoslynServerLeftOut->'$(RoslynServerFolder)%(Identity).dll');@(RoslynServerLeftOut->'$(RoslynServerFolder)*/%(Identity).resources.dll')" />
       <None Include="@(RoslynServerFile)" Link="roslyn/%(RoslynServerFile.RecursiveDir)%(RoslynServerFile.Filename)%(RoslynServerFile.Extension)"
             CopyToOutputDirectory="PreserveNewest" Visible="false" />
       <None Include="@(RoslynServerNotices)" Link="roslyn/%(RoslynServerNotices.Filename)%(RoslynServerNotices.Extension)"

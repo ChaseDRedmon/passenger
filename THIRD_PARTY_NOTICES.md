@@ -22,7 +22,7 @@ and HarfBuzzSharp's natives for Linux and the browser, dbgshim's for Linux and 3
 | `SkiaSharp`, `SkiaSharp.NativeAssets.macOS`, `SkiaSharp.NativeAssets.Win32` | drawing, with Skia (BSD-3-Clause) | MIT | © Microsoft Corporation. All rights reserved. |
 | `HarfBuzzSharp`, `HarfBuzzSharp.NativeAssets.macOS`, `HarfBuzzSharp.NativeAssets.Win32` | text shaping, with HarfBuzz (Old MIT) | MIT | © Microsoft Corporation. All rights reserved. |
 | `Microsoft.CodeAnalysis.CSharp`, `Microsoft.CodeAnalysis.Common` | Roslyn: colour before the server answers, and the debugger's expressions | MIT | © Microsoft Corporation. All rights reserved. |
-| `roslyn-language-server.osx-arm64`, `roslyn-language-server.osx-x64`, `roslyn-language-server.win-x64`, `roslyn-language-server.win-arm64` | Roslyn's language server, one per system, copied under `roslyn/` with the package's own `ThirdPartyNotices.rtf`; what it carries is listed below | MIT | © Microsoft Corporation. All rights reserved. |
+| `roslyn-language-server.osx-arm64`, `roslyn-language-server.osx-x64`, `roslyn-language-server.win-x64`, `roslyn-language-server.win-arm64` | Roslyn's language server, one per system, copied under `roslyn/` with the package's own `ThirdPartyNotices.rtf`, less four assemblies under Visual Studio's terms; what it carries is listed below | MIT | © Microsoft Corporation. All rights reserved. |
 | `StreamJsonRpc` | JSON-RPC with the language server and the debug adapter | MIT | © Microsoft Corporation. All rights reserved. |
 | `Microsoft.VisualStudio.Threading.Only` | StreamJsonRpc's, whose NonConcurrentSynchronizationContext keeps the language server's messages in order | MIT | © Microsoft Corporation. All rights reserved. |
 | `Microsoft.VisualStudio.Validation` | StreamJsonRpc's | MIT | © Microsoft Corporation. All rights reserved. |
@@ -66,9 +66,37 @@ the server's `.deps.json` names, or, for a version not published there, what its
 | `SQLite3MC.PCLRaw.bundle`, `SQLite3MC.PCLRaw.lib`, `SQLite3MC.PCLRaw.provider` (SQLite3 Multiple Ciphers, the native `libsqlite3mc`) | MIT | Copyright (c) 2023-2026 Ulrich Telle, et al. |
 | `SQLitePCLRaw.core` | Apache-2.0 | Copyright 2014-2025 SourceGear, LLC |
 | `Microsoft.VisualStudio.Telemetry` (18.3.124, not on nuget.org) | not open source: its releases there link the Microsoft Visual Studio Telemetry license terms (https://visualstudio.microsoft.com/license-terms/mt736442/) | © Microsoft Corporation. All rights reserved. |
-| `Microsoft.VisualStudio.RemoteControl` | not open source: the same terms (mt736442) | © Microsoft Corporation. All rights reserved. |
-| `Microsoft.VisualStudio.Utilities.Internal` | not open source: the Microsoft Visual Studio Internal Utilities license terms (https://visualstudio.microsoft.com/license-terms/mt736439/) | © Microsoft Corporation. All rights reserved. |
-| `Microsoft.ServiceHub.Client` (4.6.3200), `Microsoft.VisualStudio.Debugger.Contracts` (18.3.0-beta.26277.4), `Microsoft.VisualStudio.RpcContracts` (18.9.918): versions not on nuget.org | not open source: their releases there carry the Microsoft Visual Studio Add-ons and Extensions license terms | © Microsoft Corporation. All rights reserved. |
+| `Microsoft.VisualStudio.Utilities.Internal` (16.3.90) | not open source: the Microsoft Visual Studio Internal Utilities license terms (https://visualstudio.microsoft.com/license-terms/mt736439/) | © Microsoft Corporation. All rights reserved. |
+
+The package carries six assemblies under Visual Studio's terms rather than an open-source licence. Which of them the
+server loads was found by logging every assembly each server and build host loaded through Passenger's C# tests (startup,
+projects and solutions opened, completion, hover, signature help, pulled diagnostics, colours, definitions, usages,
+renames, code actions and fixes, formatting, inlay hints), by reading Roslyn's source at the package's commit
+(dotnet/roslyn dc1db3e7), and by running those tests without each.
+
+Left out of `roslyn/` (`RoslynServerLeftOut` in `src/Passenger.Lsp/Passenger.Lsp.csproj`, with their satellite
+resources; the build fails if the package stops carrying one, and a test checks that none is beside the server and that
+the server never looks for one), since no path Passenger takes loads them:
+
+- `Microsoft.ServiceHub.Client` (4.6.3200; the Visual Studio Add-ons and Extensions terms): Visual Studio's ServiceHub
+  client, used only by its out-of-process host (`ServiceHubRemoteHostClient`). The server reads it only because it
+  searches every `Microsoft.ServiceHub*` file beside it for MEF parts, and it has none the server uses.
+- `Microsoft.VisualStudio.Debugger.Contracts` (18.3.0-beta.26277.4) and `Microsoft.VisualStudio.RpcContracts` (18.9.918),
+  under the same terms: Visual Studio's Hot Reload logging and RPC contracts, used only by Roslyn's ServiceHub host
+  (`Microsoft.CodeAnalysis.Remote.ServiceHub`), which the server never loaded on any of those paths.
+- `Microsoft.VisualStudio.RemoteControl` (16.3.52; the Telemetry terms, mt736442): Visual Studio Telemetry's client for
+  remote settings, experiments and its manifest, which no server loaded on any of those paths (the telemetry session
+  Razor makes, below, is never started).
+
+Kept: `Microsoft.VisualStudio.Telemetry` and `Microsoft.VisualStudio.Utilities.Internal`, which the server's own Razor
+support needs. It is in the server's MEF composition whenever `Microsoft.VisualStudioCode.RazorExtension.dll` is beside
+it, and no option turns it off. Its telemetry reporter derives from a class that takes a Visual Studio telemetry session,
+so without Telemetry the composition has errors and is never cached, Razor's start fails with an error in the server's
+log at every start, and a server whose composition was cached with Telemetry fails at `initialized` and loads no project;
+leaving out the Razor extension too only moves the error to the server's own part that implements one of its interfaces.
+At `initialized` Razor's in-process services create Visual Studio Telemetry's default session, which loads
+Utilities.Internal; nothing in the server starts that session, which it must be to send anything (`--telemetryLevel off`
+governs only Roslyn's own telemetry, which goes nowhere without C# Dev Kit).
 
 ## Building and testing only
 

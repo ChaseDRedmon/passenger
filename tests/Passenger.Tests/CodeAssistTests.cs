@@ -128,6 +128,47 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
         window.Close();
     }
 
+    /// <summary>What Roslyn's server package carries under Visual Studio's terms rather than an open-source licence and
+    /// Passenger.Lsp.csproj leaves out of roslyn/ (RoslynServerLeftOut), since nothing Passenger asks of the server loads them.</summary>
+    private static readonly string[] LeftOut =
+    [
+        "Microsoft.ServiceHub.Client", "Microsoft.VisualStudio.Debugger.Contracts", "Microsoft.VisualStudio.RemoteControl",
+        "Microsoft.VisualStudio.RpcContracts",
+    ];
+
+    [AvaloniaFact]
+    public void The_language_server_completes_without_the_visual_studio_assemblies_passenger_leaves_out_and_never_looks_for_one()
+    {
+        string roslyn = Path.Combine(AppContext.BaseDirectory, "roslyn");
+        string[] carried = [.. Directory.EnumerateFiles(roslyn, "*.dll", SearchOption.AllDirectories)
+            .Where(file => LeftOut.Any(name => Path.GetFileName(file).StartsWith(name + ".", StringComparison.Ordinal)))];
+        Assert.True(carried.Length == 0, $"Passenger carries Visual Studio's own assemblies beside the language server, whose terms are not open source:\n{string.Join('\n', carried)}");
+
+        MainWindow window = project.Open("Program.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "static void Main()\n    {\n");
+        window.KeyTextInput("        System.Console.");
+        Ui.Settle();
+        window.KeyTextInput("WriteL");
+        Ui.Settle();
+        Assert.Equal("WriteLine", window.Assist.CompletionLabels.FirstOrDefault());
+        Ui.WaitFor(() => window.Assist.ItemDocumentation is { Length: > 0 }, "WriteLine's documentation");
+
+        // Razor's start, in every server, is where it first loads Visual Studio's own assemblies: once it is done, the
+        // server has looked for none of those left out (a failed load is logged with the assembly's name).
+        int server = window.CSharpService!.Session!.Server.ProcessId;
+        string log = string.Empty;
+        Ui.WaitFor(() => (log = ServerLog(server)).Contains("Razor extension startup finished.", StringComparison.Ordinal), "the language server's Razor support to start");
+        string[] looked = [.. log.Split('\n').Where(line => LeftOut.Any(name => line.Contains(name, StringComparison.Ordinal)))];
+        Assert.True(looked.Length == 0, $"The language server looked for an assembly Passenger leaves out, so something it does needs it:\n{string.Join('\n', looked)}");
+        window.Close();
+    }
+
+    /// <summary>The log of the language server with this process, as a person opening the logs folder would find it.</summary>
+    private static string ServerLog(int process) =>
+        Directory.EnumerateFiles(Passenger.App.CSharp.CSharpService.LogFolder, $"server-*-{process}.log").FirstOrDefault() is { } path
+            ? Ui.Shared(path) : string.Empty;
+
     [AvaloniaFact]
     public void Find_usages_groups_them_by_what_they_do_project_and_file_previews_the_chosen_one_and_keeps_each_search()
     {
