@@ -20,6 +20,8 @@ just publish RID           # self-contained Release build, ReadyToRun (osx-arm64
 just package-mac [RID] [--dry-run]  # artifacts/package/Passenger-macos-arm64.dmg (or -x64), checked mounted; signed
                            # with PASSENGER_SIGN_IDENTITY and notarized with PASSENGER_NOTARY_PROFILE when set, else ad hoc
 just icons                 # rewrite Theme/Icons.axaml from the list in tools/icons.py (icons from a fixed commit)
+just app-icon              # Passenger.icns, Passenger.ico and passenger.png from Assets/passenger.svg, by sips; fails
+                           # unless every size's corners are transparent (never write the three files any other way)
 just package-win [RID]     # artifacts/package/Passenger-windows-x64.exe (or -arm64), Velopack's per-user installer;
                            # signed on Windows by PASSENGER_SIGNTOOL_PARAMS or PASSENGER_ARTIFACT_SIGNING_METADATA
 just notices               # fail naming any package the solution, Roslyn's server or a dotnet tool carries that the
@@ -86,6 +88,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   alone (`CSharpClassifier`); the language server's semantic colours layer over it. `CSharpHighlighter` is also each
   open file's one syntax service (`OpenDocument.Syntax`: the newest tree, carried through the edits since): a feature
   that reads C# syntax (templates, postfix, test marks, selection ranges, inline values) uses it, never a fresh parse.
+  A key costs what it changed, not the file's size: folds (`FoldRegions`) and bracket depths come from the parse
+  before through the nodes Roslyn reused, never from a walk of the whole tree, and the server's colours are asked for
+  the screen's lines first and the whole file only once typing stops.
 - `src/Passenger.Lsp`: the Language Server Protocol client (StreamJsonRpc over stdio) and the
   Roslyn language server it runs, downloaded per platform at build and copied beside the app under
   `roslyn/`, less the four Visual Studio assemblies it never loads (`RoslynServerLeftOut`; the build fails if the
@@ -98,7 +103,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   over the editor; `WorkspaceEdits` applies renames and fixes across files.
 - `src/Passenger.App/Editors`: `EditorArea` is a tree of splits, each an `EditorGroup` (tabs, find bar, editor); its
   `CodeEditor` and `Active` are the active group's, so code that acts on "the editor" keeps working, and wiring for every
-  editor's events goes through `ForEachEditor`, since a split makes a new one.
+  editor's events goes through `ForEachEditor`, since a split makes a new one. An editor window (Open Tab in New Window,
+  or a tab dragged out) is an `EditorFrame` of the same `EditorArea`, never a second area, so a file shown in two
+  windows is one `OpenDocument`; the folder keeps the windows in `WorkspaceState.EditorWindows`.
 - `src/Passenger.App/Docking`: the tool windows' frame, in IntelliJ's six places. `DockHost` is the layout and what
   it keeps; `Stripe`, `ToolPane` and `FloatWindow` (a window of its own that knows nothing of tool windows) are its
   parts. A window moves by dragging a stripe button or a header (`DockDrag` says where it lands); `DragGesture` and
@@ -107,7 +114,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   one `Dock.Add` in `MainWindow.AddToolWindows`.
 - `src/Passenger.App/State`: the IDE's own state, in one `StateStore` under `PASSENGER_SETTINGS` or the user's local
   application data, kept only by the person's window: the app's documents at its top (`settings.json`, `layout.json`,
-  `recentSolutions.json`)
+  `recentSolutions.json`, `updates.json`)
   and each folder's under `workspaces/<name>-<hash>/` (editors and recent files, layout, breakpoints, bookmarks, the
   profiler's `snapshots/`). A
   `StateDocument` is a record that is an `IStateDocument`: its `Upgrades` from each older version and its `Clamped` value;
@@ -130,6 +137,11 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.App/Settings`: `AppSettings` (the store's `settings.json`) and Rider's searchable `SettingsDialog`;
   `MainWindow.Settings.cs` applies them live. A new setting is a property, an option row in the dialog, a line in
   `ApplySettings`, and its range in `Clamped` when it has one.
+- `src/Passenger.App/Updates`: the update check. `Releases` asks GitHub's releases/latest (a GET naming Passenger and its
+  version, nothing else) and offers a release newer than `Product.Version`, never a draft or pre-release, linking this
+  system's download by the release's fixed names; `UpdatesState` (`updates.json`) keeps the version announced.
+  `MainWindow.Updates.cs` is the status bar's notice, Check for Updates (`app.checkForUpdates`) and the person's
+  window's check on start and daily while Settings' Check for updates is on.
 - `src/Passenger.Profiler`: the profiler with no UI. `ProfilingSession` starts a program held at a diagnostic port of
   its own and streams EventPipe to a .nettrace; `Snapshot` reads it (TraceEvent) into call trees and hot spots.
   `App/Profiling` is the window (`ProfilerView`, `FlameGraph`), `MainWindow.Profiler.cs` the Profile action.
@@ -174,6 +186,11 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `site/`: passenger-ide.net, plain HTML and CSS, deployed to Cloudflare Pages by `.github/workflows/site.yml` on a push that
   touches it. Its downloads are the latest GitHub release's assets, by fixed names (#56); its share card,
   `images/social.png`, is drawn from `tools/social-card.html` (the command is in its first comment).
+- `.github/workflows`: `test.yml` is every test on macOS and Windows, called by `ci.yml` (each push and pull request,
+  with the packages' and notices' jobs) and by `release.yml`, which a pushed `vX.Y.Z` tag runs: the tests, then both
+  disk images and both Windows installers at the tag's version, `SHA256SUMS` and Velopack's feeds, published as the
+  release under the fixed names the site and the updater link to. Its Run workflow with dry run builds it all and
+  publishes nothing.
 
 ## Rules
 
@@ -234,7 +251,8 @@ A run keeps to a folder of its own (`TestRun`, set up by a module initializer be
 folders (`TestFolders.Create`) and the shells' history, with an empty Git configuration in place of the person's
 (`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM`). Nothing changes those variables afterwards; a test that needs fresh
 state gives the window a folder of its own (`MainWindow.StateFolder`). So a run never touches the person's settings,
-log, history or Git signing and hooks. After every window test, pass or fail, the windows it left open are closed,
+log, history or Git signing and hooks. No test reaches GitHub: the run points `PASSENGER_RELEASES` at a dead loopback
+address, and a test that needs releases gives its window a `Releases` feed of its own (`UpdatesTests`). After every window test, pass or fail, the windows it left open are closed,
 what they started is waited out and its folders are removed (`TestsLeaveNothingBehind`), so one failure never
 cascades into the next test's waits. The run sets its own nice value to 0 when it starts below it (GitHub's macOS
 runner starts at −10), since MSBuild keeps no idle node at any other; a test that needs one skips, saying why, when
