@@ -18,6 +18,8 @@ public sealed class VcsController
 
     private const string Busy = "Git is still busy with the last change";
 
+    private const string NotInGit = "The folder is not in a Git repository";
+
     private readonly Dictionary<OpenDocument, Tracked> documents = [];
 
     /// <summary>Files' texts in the commit <see cref="textsOf"/> (null before the first commit), which a read sets once
@@ -71,7 +73,8 @@ public sealed class VcsController
 
     private string? knownHistory;
 
-    /// <summary>What happened, for the status bar: a commit made, a push refused and git's reason.</summary>
+    /// <summary>What happened, for the status bar: what is under way (a push), and each operation's outcome in the words
+    /// it returns them in (a commit made, a push refused and git's reason).</summary>
     public event EventHandler<string>? Message;
 
     /// <summary>A commit, a rollback, a stash or a change of branch is running. Another is refused until it ends, since
@@ -390,22 +393,21 @@ public sealed class VcsController
     }
 
     /// <summary>Commits the chosen files with a message, then pushes when asked, as Rider's Commit and Commit and
-    /// Push do. Whether the commit was made.</summary>
-    public async Task<bool> CommitAsync(IReadOnlyList<FileChange> chosen, string message, bool amend, bool push)
+    /// Push do: the commit's outcome with the commit made, and the push's once the commit is made and one was asked for.</summary>
+    public async Task<CommitResult> CommitAsync(IReadOnlyList<FileChange> chosen, string message, bool amend, bool push)
     {
+        UiThread.Check();
         if (git is not { } repository)
         {
-            return false;
+            return new CommitResult(Report(false, NotInGit), null, null);
         }
         if (chosen.Count == 0 && !amend)
         {
-            Message?.Invoke(this, "No files are chosen to commit");
-            return false;
+            return new CommitResult(Report(false, "No files are chosen to commit"), null, null);
         }
         if (message.Trim().Length == 0)
         {
-            Message?.Invoke(this, "The commit message is empty");
-            return false;
+            return new CommitResult(Report(false, "The commit message is empty"), null, null);
         }
         return await OneAtATimeAsync(async () =>
         {
@@ -414,64 +416,65 @@ public sealed class VcsController
             GitResult commit = await repository.CommitAsync(paths, message, amend);
             if (!commit.Succeeded)
             {
-                Message?.Invoke(this, commit.Message);
+                VcsOutcome failed = Report(false, commit.Message);
                 await RefreshAsync();
-                return false;
+                return new CommitResult(failed, null, null);
             }
+            CommitInfo? made = await repository.HeadAsync();
             int count = chosen.Count;
             string committed = count == 1 ? "1 file committed" : $"{count} files committed";
-            Message?.Invoke(this, $"{committed}: {FirstLine(message)}");
+            VcsOutcome done = Report(true, $"{committed}: {FirstLine(message)}");
             await RefreshAsync();
-            if (push)
-            {
-                await PushAsync();
-            }
-            return true;
-        }, false);
+            return new CommitResult(done, made, push ? await PushAsync() : null);
+        }, refused => new CommitResult(refused, null, null));
     }
 
-    public async Task<bool> PushAsync()
+    public async Task<VcsOutcome> PushAsync()
     {
         UiThread.Check();
         if (git is not { } repository)
         {
-            return false;
+            return Report(false, NotInGit);
         }
         Message?.Invoke(this, "Pushing...");
         GitResult pushed = await repository.PushAsync();
-        Message?.Invoke(this, pushed.Succeeded ? $"Pushed {Branch}" : $"Push failed: {pushed.Message}");
-        return pushed.Succeeded;
+        return Report(pushed.Succeeded, pushed.Succeeded ? $"Pushed {Branch}" : $"Push failed: {pushed.Message}");
     }
 
     /// <summary>Rider's Update Project: the upstream's commits brought in, then the open files and Git read again.</summary>
-    public async Task<bool> UpdateAsync()
+    public async Task<VcsOutcome> UpdateAsync()
     {
         UiThread.Check();
         if (git is not { } repository)
         {
-            return false;
+            return Report(false, NotInGit);
         }
         SaveFirst?.Invoke();
         Message?.Invoke(this, "Updating...");
         GitResult pulled = await repository.PullAsync();
         ReloadOpenFiles();
         await RefreshAsync();
-        Message?.Invoke(this, pulled.Succeeded ? Summary(pulled.Output, "Updated") : $"Update failed: {pulled.Message}");
-        return pulled.Succeeded;
+        return Report(pulled.Succeeded, pulled.Succeeded ? Summary(pulled.Output, "Updated") : $"Update failed: {pulled.Message}");
     }
 
-    public async Task<bool> FetchAsync()
+    public async Task<VcsOutcome> FetchAsync()
     {
         UiThread.Check();
         if (git is not { } repository)
         {
-            return false;
+            return Report(false, NotInGit);
         }
         Message?.Invoke(this, "Fetching...");
         GitResult fetched = await repository.FetchAsync();
         await RefreshAsync();
-        Message?.Invoke(this, fetched.Succeeded ? "Fetched" : $"Fetch failed: {fetched.Message}");
-        return fetched.Succeeded;
+        return Report(fetched.Succeeded, fetched.Succeeded ? "Fetched" : $"Fetch failed: {fetched.Message}");
+    }
+
+    /// <summary>An operation's outcome, told to the status bar in the words it is returned in.</summary>
+    private VcsOutcome Report(bool succeeded, string message)
+    {
+        Message?.Invoke(this, message);
+        return new VcsOutcome(succeeded, message);
     }
 
     private static string Summary(string output, string fallback) =>
@@ -480,61 +483,56 @@ public sealed class VcsController
     /// <summary>The last commit's message, which Amend starts from.</summary>
     public async Task<string?> LastMessageAsync() => git is { } repository ? await repository.LastMessageAsync() : null;
 
-    public async Task<bool> CheckoutAsync(string branch) =>
-        (await SwitchAsync(repository => repository.CheckoutAsync(branch), $"Checked out {branch}")).Succeeded;
+    public Task<VcsOutcome> CheckoutAsync(string branch) =>
+        SwitchAsync(repository => repository.CheckoutAsync(branch), $"Checked out {branch}");
 
     /// <summary>The Git log's commit actions, as Rider's: each saves first, and the open files follow what it did.</summary>
-    public async Task<bool> CheckoutRevisionAsync(string hash) =>
-        (await SwitchAsync(repository => repository.CheckoutRevisionAsync(hash), $"Checked out {Short(hash)}")).Succeeded;
+    public Task<VcsOutcome> CheckoutRevisionAsync(string hash) =>
+        SwitchAsync(repository => repository.CheckoutRevisionAsync(hash), $"Checked out {Short(hash)}");
 
-    public async Task<string?> NewBranchAtAsync(string name, string hash)
-    {
-        GitResult created = await SwitchAsync(repository => repository.NewBranchAtAsync(name, hash), $"Created and checked out {name} at {Short(hash)}");
-        return created.Succeeded ? null : created.Message;
-    }
+    public Task<VcsOutcome> NewBranchAtAsync(string name, string hash) =>
+        SwitchAsync(repository => repository.NewBranchAtAsync(name, hash), $"Created and checked out {name} at {Short(hash)}");
 
-    public async Task<bool> CherryPickAsync(string hash) =>
-        (await SwitchAsync(repository => repository.CherryPickAsync(hash), $"Cherry-picked {Short(hash)}")).Succeeded;
+    public Task<VcsOutcome> CherryPickAsync(string hash) =>
+        SwitchAsync(repository => repository.CherryPickAsync(hash), $"Cherry-picked {Short(hash)}");
 
-    public async Task<bool> RevertAsync(string hash) =>
-        (await SwitchAsync(repository => repository.RevertAsync(hash), $"Reverted {Short(hash)}")).Succeeded;
+    public Task<VcsOutcome> RevertAsync(string hash) =>
+        SwitchAsync(repository => repository.RevertAsync(hash), $"Reverted {Short(hash)}");
 
-    public async Task<bool> ResetAsync(string hash, ResetMode mode) =>
-        (await SwitchAsync(repository => repository.ResetAsync(hash, mode), $"Reset {Branch ?? "HEAD"} to {Short(hash)} ({mode.ToString().ToLowerInvariant()})")).Succeeded;
+    public Task<VcsOutcome> ResetAsync(string hash, ResetMode mode) =>
+        SwitchAsync(repository => repository.ResetAsync(hash, mode), $"Reset {Branch ?? "HEAD"} to {Short(hash)} ({mode.ToString().ToLowerInvariant()})");
 
     private static string Short(string hash) => hash.Length > 8 ? hash[..8] : hash;
 
-    /// <summary>Creates a branch from the head and checks it out; null when it worked, else git's reason.</summary>
-    public async Task<string?> NewBranchAsync(string name)
-    {
-        GitResult created = await SwitchAsync(repository => repository.NewBranchAsync(name), $"Created and checked out {name}");
-        return created.Succeeded ? null : created.Message;
-    }
+    /// <summary>Creates a branch from the head and checks it out.</summary>
+    public Task<VcsOutcome> NewBranchAsync(string name) =>
+        SwitchAsync(repository => repository.NewBranchAsync(name), $"Created and checked out {name}");
 
     /// <summary>Rider's Stash Changes: every uncommitted change, new files too, put away under a message; the open files
-    /// take the head's text again. Null when it worked, else git's reason.</summary>
-    public async Task<string?> StashAsync(string message)
-    {
-        GitResult stashed = await SwitchAsync(repository => repository.StashAsync(message.Trim()), "Stashed the changes");
-        return stashed.Succeeded ? null : stashed.Message;
-    }
+    /// take the head's text again.</summary>
+    public Task<VcsOutcome> StashAsync(string message) =>
+        SwitchAsync(repository => repository.StashAsync(message.Trim()), "Stashed the changes");
 
     public async Task<IReadOnlyList<StashInfo>> StashesAsync() => git is { } repository ? await repository.StashesAsync() : [];
 
     /// <summary>Rider's Unstash Changes: a stash's changes back in the files, the stash dropped after with
     /// <paramref name="pop"/>.</summary>
-    public async Task<bool> UnstashAsync(StashInfo stash, bool pop) =>
-        (await SwitchAsync(repository => repository.UnstashAsync(stash.Index, pop), pop ? $"Unstashed {stash.Message}" : $"Applied {stash.Message}")).Succeeded;
+    public Task<VcsOutcome> UnstashAsync(StashInfo stash, bool pop) =>
+        SwitchAsync(repository => repository.UnstashAsync(stash.Index, pop), pop ? $"Unstashed {stash.Message}" : $"Applied {stash.Message}");
 
-    public async Task<bool> DropStashAsync(StashInfo stash) =>
-        (await SwitchAsync(repository => repository.DropStashAsync(stash.Index), $"Dropped {stash.Message}")).Succeeded;
+    public Task<VcsOutcome> DropStashAsync(StashInfo stash) =>
+        SwitchAsync(repository => repository.DropStashAsync(stash.Index), $"Dropped {stash.Message}");
 
     /// <summary>Puts files back as the last commit has them; the open ones take their text from disk again.</summary>
-    public async Task<bool> RollbackAsync(IReadOnlyList<FileChange> changes)
+    public async Task<VcsOutcome> RollbackAsync(IReadOnlyList<FileChange> changes)
     {
-        if (git is not { } repository || changes.Count == 0)
+        if (git is not { } repository)
         {
-            return false;
+            return Report(false, NotInGit);
+        }
+        if (changes.Count == 0)
+        {
+            return Report(false, "No files are chosen to roll back");
         }
         return await OneAtATimeAsync(async () =>
         {
@@ -542,20 +540,18 @@ public sealed class VcsController
             GitResult rolled = await repository.RollbackAsync(changes);
             ReloadOpenFiles();
             await RefreshAsync();
-            Message?.Invoke(this, rolled.Succeeded ? $"Rolled back {Files(changes.Count)}" : rolled.Message);
-            return rolled.Succeeded;
-        }, false);
+            return Report(rolled.Succeeded, rolled.Succeeded ? $"Rolled back {Files(changes.Count)}" : rolled.Message);
+        }, refused => refused);
     }
 
-    /// <summary>Runs a change to the working tree unless another is still running, which it refuses with
-    /// <paramref name="refused"/>.</summary>
-    private async Task<T> OneAtATimeAsync<T>(Func<Task<T>> change, T refused)
+    /// <summary>Runs a change to the working tree unless another is still running, which it refuses, answering with what
+    /// <paramref name="refused"/> makes of the refusal.</summary>
+    private async Task<T> OneAtATimeAsync<T>(Func<Task<T>> change, Func<VcsOutcome, T> refused)
     {
         UiThread.Check();
         if (IsBusy)
         {
-            Message?.Invoke(this, Busy);
-            return refused;
+            return refused(Report(false, Busy));
         }
         IsBusy = true;
         BusyChanged?.Invoke(this, EventArgs.Empty);
@@ -583,11 +579,11 @@ public sealed class VcsController
         }
     }
 
-    private async Task<GitResult> SwitchAsync(Func<Git, Task<GitResult>> change, string done)
+    private async Task<VcsOutcome> SwitchAsync(Func<Git, Task<GitResult>> change, string done)
     {
         if (git is not { } repository)
         {
-            return new GitResult(1, string.Empty, "The folder is not in a Git repository");
+            return Report(false, NotInGit);
         }
         return await OneAtATimeAsync(async () =>
         {
@@ -598,9 +594,8 @@ public sealed class VcsController
                 ReloadOpenFiles();
             }
             await RefreshAsync();
-            Message?.Invoke(this, switched.Succeeded ? done : switched.Message);
-            return switched;
-        }, new GitResult(1, string.Empty, Busy));
+            return Report(switched.Succeeded, switched.Succeeded ? done : switched.Message);
+        }, refused => refused);
     }
 
     /// <summary>A file's text as the last commit has it, or null when it has none (new, or outside the tree). A file
@@ -726,4 +721,19 @@ public sealed class VcsController
 
     /// <summary>The newest comparison of a file, running or done, and the texts it is between.</summary>
     private sealed record Compared(string Head, TextSnapshot Text, Task<FileDiff> Diff);
+}
+
+/// <summary>What an operation on the working tree came to: whether it worked, and what the person is told of it (git's own
+/// words when it did not), the words the status bar is told as it lands.</summary>
+public sealed record VcsOutcome(bool Succeeded, string Message)
+{
+    /// <summary>Why it did not work, or null when it did.</summary>
+    public string? Problem => Succeeded ? null : Message;
+}
+
+/// <summary>A commit's outcome, the commit it made, and the push's outcome when one was asked for after it: a push the
+/// remote refuses is a failure of its own, with the commit made all the same.</summary>
+public sealed record CommitResult(VcsOutcome Commit, CommitInfo? Made, VcsOutcome? Push)
+{
+    public bool Succeeded => Commit.Succeeded && Push?.Succeeded != false;
 }

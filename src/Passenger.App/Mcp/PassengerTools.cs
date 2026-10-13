@@ -42,7 +42,10 @@ public sealed partial class PassengerTools(MainWindow window)
             {
                 window.OpenFolder(Path.GetDirectoryName(full)!);
             }
-            window.OpenFile(full);
+            if (window.OpenFile(full) is { } problem)
+            {
+                throw new InvalidOperationException(problem);
+            }
         }
         else
         {
@@ -291,23 +294,36 @@ public sealed partial class PassengerTools(MainWindow window)
     {
         // The build goes on without an agent that gives up on it, shown in the Build window.
         BuildOutcome built = await window.BuildAsync().WaitAsync(cancel);
-        IReadOnlyList<Finding> problems = [.. window.BottomPanel.Problems.Problems.Select(p => new Finding(
+        IReadOnlyList<Finding> problems = [.. built.Problems.Select(p => new Finding(
             p.Severity == ProblemSeverity.Error ? "error" : "warning", p.Code, p.Message, p.Path is { } at ? Relative(at) : p.Project, p.Position.Line + 1, p.Position.Column + 1))];
-        return new BuildResult(built.Succeeded, built.Message, problems.Count(p => p.Severity == "error"), problems.Count(p => p.Severity == "warning"), problems, Tail(window.BottomPanel.Build, 20));
+        return new BuildResult(built.Succeeded, built.Message, problems.Count(p => p.Severity == "error"), problems.Count(p => p.Severity == "warning"), problems, string.Join('\n', built.Output));
     });
 
     [McpServerTool(Name = "run", Title = "Run a configuration", Destructive = true), Description(
         "Runs a run configuration (the chosen one if none is named) as Run does, and waits up to waitSeconds for it to end. " +
-        "Returns its output so far and its exit code once it has one.")]
+        "Returns its output so far and its exit code once it has one; a run refused (one already running, nothing to run) is an error.")]
     public Task<RunResult> Run(
         string? configuration = null,
         [Description(Arguments)] string? arguments = null,
         int waitSeconds = 30, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         Choose(configuration);
-        window.RunSelected(arguments);
-        await Until(() => !window.Runner.IsRunning, TimeSpan.FromSeconds(waitSeconds), cancel);
-        return new RunResult(window.Runner.IsRunning, window.Status, Tail(window.BottomPanel.Run, 200));
+        string name = window.Configuration?.Name ?? string.Empty;
+        if (window.RunSelected(arguments) is { } refused)
+        {
+            throw new InvalidOperationException(refused);
+        }
+        Task<int> ended = window.Runner.Ended;
+        try
+        {
+            await ended.WaitAsync(TimeSpan.FromSeconds(Math.Max(0, waitSeconds)), cancel);
+        }
+        catch (TimeoutException)
+        {
+            // Still running when the wait is up: the answer says so, and the program goes on.
+        }
+        int? code = ended.IsCompletedSuccessfully ? ended.Result : null;
+        return new RunResult(code is null, code, code is int exit ? MainWindow.RunEnded(name, exit) : $"Running {name}", Tail(window.BottomPanel.Run, 200));
     });
 
     [McpServerTool(Name = "stop", Title = "Stop", Destructive = false), Description("Stops whatever is running or being debugged, as Stop does.")]
@@ -347,7 +363,7 @@ public sealed partial class PassengerTools(MainWindow window)
             await Until(() => run.IsCompleted || window.Debugger.Session is { State: DebugState.Paused }, TimeSpan.FromMinutes(5), cancel);
             if (!run.IsCompleted)
             {
-                await Until(() => window.BottomPanel.Debug.Frames.Count > 0, TimeSpan.FromSeconds(5), cancel);
+                await Until(() => window.Debugger.Stop is not null, TimeSpan.FromSeconds(5), cancel);
                 return TestInfo(tests) with { Debugger = await DebugSnapshotAsync() };
             }
         }
@@ -592,22 +608,26 @@ public sealed partial class PassengerTools(MainWindow window)
     private async Task<DebugSnapshot> AfterResume(TimeSpan limit, CancellationToken cancel)
     {
         await Until(() => window.Debugger.Session is not { State: DebugState.Running or DebugState.Starting }, limit, cancel);
-        // A stop is shown (its frames chosen) a moment after the state says paused.
-        await Until(() => window.Debugger.Session is not { State: DebugState.Paused } || window.BottomPanel.Debug.Frames.Count > 0, TimeSpan.FromSeconds(5), cancel);
+        // A stop is read (its frames, the exception it is on) a moment after the state says paused.
+        await Until(() => window.Debugger.Session is not { State: DebugState.Paused } || window.Debugger.Stop is not null, TimeSpan.FromSeconds(5), cancel);
         return await DebugSnapshotAsync();
     }
 
+    /// <summary>Where the debugger is, from its own model: the session's state in its words, and while paused the stop
+    /// it read with the top frame's locals.</summary>
     private async Task<DebugSnapshot> DebugSnapshotAsync()
     {
-        if (window.Debugger.Session is not { } session || session.State == DebugState.Ended)
+        DebugController debugger = window.Debugger;
+        if (debugger.Session is not { } session || session.State == DebugState.Ended)
         {
-            return new DebugSnapshot("not debugging", null, null, [], [], window.Debugger.Session?.ExitCode, window.Status);
+            return new DebugSnapshot("not debugging", null, null, [], [], debugger.Session?.ExitCode, debugger.Summary);
         }
         if (session.State != DebugState.Paused || session.StoppedThread is null)
         {
-            return new DebugSnapshot(session.State.ToString().ToLowerInvariant(), null, null, [], [], null, window.Status);
+            return new DebugSnapshot(session.State.ToString().ToLowerInvariant(), null, null, [], [], null, debugger.Summary);
         }
-        IReadOnlyList<DapStackFrame> frames = await Stack(session);
+        // The controller's stop is always the one paused at now, since every change drops it; before it is read, the session's.
+        IReadOnlyList<DapStackFrame> frames = debugger.Stop is { } stop && stop.Thread == session.StoppedThread ? stop.Frames : await Stack(session);
         DapStackFrame? top = frames.FirstOrDefault(f => f.Source?.Path is not null) ?? (frames.Count > 0 ? frames[0] : null);
         List<VariableInfo> locals = [];
         if (top is not null)
@@ -637,7 +657,7 @@ public sealed partial class PassengerTools(MainWindow window)
             [.. frames.Take(20).Select((f, i) => $"{i}: {f.Name}{(f.Source?.Path is { } p ? $" at {Relative(p)}:{f.Line}" : "")}")],
             locals,
             null,
-            window.Status,
+            debugger.Summary,
             exception);
     }
 
@@ -725,9 +745,12 @@ public sealed partial class PassengerTools(MainWindow window)
         {
             return open;
         }
-        window.OpenFile(full);
+        if (window.OpenFile(full) is { } problem)
+        {
+            throw new FileNotFoundException($"{full} could not be opened: {problem}");
+        }
         return window.EditorArea.Documents.FirstOrDefault(d => d.Path == full)
-            ?? throw new FileNotFoundException($"{full} could not be opened: {window.Status}");
+            ?? throw new FileNotFoundException($"{full} is not open in the editor");
     }
 
     private static int Offset(OpenDocument document, int line, int column)
@@ -876,7 +899,7 @@ public sealed record HierarchyEntry(string Name, string? Detail, string Path, in
 
 public sealed record BuildResult(bool Succeeded, string Outcome, int Errors, int Warnings, IReadOnlyList<Finding> Problems, string OutputTail);
 
-public sealed record RunResult(bool StillRunning, string? Status, string Output);
+public sealed record RunResult(bool StillRunning, int? ExitCode, string Status, string Output);
 
 public sealed record BreakpointInfo(string Path, int Line, bool Enabled, string Status, string? Condition, string? HitCondition, string? LogMessage, bool Suspend, string? Message);
 

@@ -17,6 +17,7 @@ public sealed class ProcessRunner
     private readonly bool takesInput;
     private Process? process;
     private bool running;
+    private TaskCompletionSource<int> ended = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public ProcessRunner(OutputView console, bool takesInput = false)
     {
@@ -47,6 +48,10 @@ public sealed class ProcessRunner
 
     /// <summary>The process last started (dotnet run, dotnet watch, a build), for a test to see it gone.</summary>
     public int? ProcessId => process?.Id;
+
+    /// <summary>The exit code of the process last started, once <see cref="Exited"/> has said it ended: its own end,
+    /// whatever starts after it.</summary>
+    public Task<int> Ended => ended.Task;
 
     /// <summary>Starts the .NET command line; why it could not, or null once it runs.</summary>
     public string? StartDotnet(IReadOnlyList<string> arguments, string folder, IReadOnlyDictionary<string, string>? environment = null)
@@ -99,6 +104,7 @@ public sealed class ProcessRunner
         }
         process = started;
         running = true;
+        TaskCompletionSource<int> ending = ended = new(TaskCreationOptions.RunContinuationsAsynchronously);
         if (takesInput)
         {
             console.Input = ProgramInput.Of(started.StandardInput);
@@ -120,6 +126,7 @@ public sealed class ProcessRunner
                 }
                 console.Append($"\nProcess finished with exit code {code}.\n");
                 running = false;
+                ending.TrySetResult(code);
                 Exited?.Invoke(this, code);
             });
         }, TaskScheduler.Default);

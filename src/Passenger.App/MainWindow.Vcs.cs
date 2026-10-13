@@ -57,7 +57,7 @@ public partial class MainWindow
         commitView.IgnoreRequested += (_, path) => Ignore(path);
         gitLog.NewBranchRequested += (_, commit) =>
         {
-            NamePopup popup = new($"New Branch from {commit.Short}", string.Empty, name => vcs.NewBranchAtAsync(name, commit.Hash));
+            NamePopup popup = new($"New Branch from {commit.Short}", string.Empty, async name => (await vcs.NewBranchAtAsync(name, commit.Hash)).Problem);
             popup.Done += (_, _) => ClosePopup();
             ShowPopup(popup);
         };
@@ -152,7 +152,7 @@ public partial class MainWindow
             StatusText.Text = "The folder is not in a Git repository";
             return null;
         }
-        NamePopup popup = new("Stash Changes", string.Empty, vcs.StashAsync);
+        NamePopup popup = new("Stash Changes", string.Empty, async message => (await vcs.StashAsync(message)).Problem);
         popup.Done += (_, _) => ClosePopup();
         ShowPopup(popup);
         return popup;
@@ -166,7 +166,8 @@ public partial class MainWindow
             StatusText.Text = "The folder is not in a Git repository";
             return null;
         }
-        UnstashPopup popup = new(await vcs.StashesAsync(), vcs.UnstashAsync, vcs.DropStashAsync, (title, text, yes) => Confirm(title, text, yes));
+        UnstashPopup popup = new(await vcs.StashesAsync(), async (stash, pop) => (await vcs.UnstashAsync(stash, pop)).Succeeded,
+            async stash => (await vcs.DropStashAsync(stash)).Succeeded, (title, text, yes) => Confirm(title, text, yes));
         popup.Done += (_, _) =>
         {
             // Escape may have closed it while a pop ran, and another popup taken its place since.
@@ -182,7 +183,7 @@ public partial class MainWindow
     /// <summary>Create New Branch: from the head, checked out at once, as Rider's is.</summary>
     public void ShowNewBranch()
     {
-        NamePopup popup = new("Create New Branch", string.Empty, vcs.NewBranchAsync);
+        NamePopup popup = new("Create New Branch", string.Empty, async name => (await vcs.NewBranchAsync(name)).Problem);
         popup.Done += (_, _) => ClosePopup();
         ShowPopup(popup);
     }
@@ -365,54 +366,57 @@ public partial class MainWindow
         menu.Open(editor);
     }
 
-    /// <summary>The window's version control actions, from the keymap or the branch menu.</summary>
-    private void RunVcsAction(string action)
+    /// <summary>The window's version control actions, from the keymap or the branch menu; false for one that does nothing
+    /// here.</summary>
+    private bool RunVcsAction(string action)
     {
         switch (action)
         {
             case AppActions.ShowCommit:
                 ShowToolWindow("commit");
-                break;
+                return true;
             case AppActions.Commit:
                 // Rider saves every file before a commit, so the window lists what the editors show.
                 Editors.SaveAll();
                 ShowToolWindow("commit");
                 _ = vcs.RefreshAsync();
                 commitView!.FocusMessage();
-                break;
+                return true;
             case AppActions.Push:
                 _ = vcs.PushAsync();
-                break;
+                return true;
             case AppActions.Branches:
                 ShowBranches();
-                break;
+                return true;
             case AppActions.Stash:
                 ShowStash();
-                break;
+                return true;
             case AppActions.Unstash:
                 _ = ShowUnstashAsync();
-                break;
+                return true;
             case AppActions.NextChange or AppActions.PreviousChange:
                 GoToChange(action == AppActions.NextChange ? 1 : -1);
-                break;
+                return true;
             case AppActions.RollbackLines:
                 _ = RollbackLinesAsync();
-                break;
+                return true;
             case AppActions.ShowGit:
                 ShowToolWindow("git");
-                break;
+                return true;
             case AppActions.Annotate when Editors.Active is { } annotated:
                 _ = ToggleAnnotationsAsync(annotated);
-                break;
+                return true;
             case AppActions.UpdateProject:
                 _ = vcs.UpdateAsync();
-                break;
+                return true;
             case AppActions.Fetch:
                 _ = vcs.FetchAsync();
-                break;
+                return true;
             case AppActions.ShowDiff when Editors.Active is { } shown:
                 _ = ShowDiffAsync(shown.Path);
-                break;
+                return true;
+            default:
+                return false;
         }
     }
 

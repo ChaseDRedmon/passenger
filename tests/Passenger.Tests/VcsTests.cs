@@ -119,9 +119,9 @@ public sealed class VcsTests : IDisposable
         Git("commit", "-q", "-am", "Twice");
         window.Vcs.ReloadOpenFiles();
         Ui.Landed(() => Text(window).Contains("count += 2", StringComparison.Ordinal), "the branch's text");
-        Task<bool> checkout = window.Vcs.CheckoutAsync("main");
+        Task<VcsOutcome> checkout = window.Vcs.CheckoutAsync("main");
         Ui.Landed(() => checkout.IsCompleted, "the checkout done");
-        Assert.True(checkout.Result, window.Status);
+        Assert.True(checkout.Result.Succeeded, checkout.Result.Message);
         Assert.Equal("main", window.Vcs.Branch);
         Assert.Equal(Original, Text(window));
         Assert.False(window.EditorArea.Active!.IsModified);
@@ -883,9 +883,9 @@ public sealed class VcsTests : IDisposable
         Assert.Equal("main", window.Vcs.Branch);
 
         // The unsaved edit to Notes.cs is saved and goes along; Shop.cs, open, takes the other branch's text.
-        Task<bool> checkout = window.Vcs.CheckoutAsync("other");
+        Task<VcsOutcome> checkout = window.Vcs.CheckoutAsync("other");
         Ui.Landed(() => checkout.IsCompleted, "the checkout done");
-        Assert.True(checkout.Result, window.Status);
+        Assert.True(checkout.Result.Succeeded, checkout.Result.Message);
         Assert.Equal("sealed class Notes { }\n", File.ReadAllText(Path.Combine(folder, "Notes.cs")));
         window.OpenFile(Path.Combine(folder, "Shop.cs"));
         Ui.Landed(() => Text(window).Contains("count += 5", StringComparison.Ordinal), "the other branch's text");
@@ -897,7 +897,7 @@ public sealed class VcsTests : IDisposable
         window.Perform(AppActions.Save);
         window.KeyTextInput("// unsaved\n");
         Ui.Landed(() => window.Vcs.Changes.Any(c => c.Name == "Shop.cs"), "Shop.cs listed as changed");
-        Task<bool> rollback = window.Vcs.RollbackAsync([.. window.Vcs.Changes.Where(c => c.Name == "Shop.cs")]);
+        Task<VcsOutcome> rollback = window.Vcs.RollbackAsync([.. window.Vcs.Changes.Where(c => c.Name == "Shop.cs")]);
         Ui.Landed(() => rollback.IsCompleted, "the rollback done");
         string head = Git("show", "HEAD:Shop.cs");
         Assert.Equal(head, File.ReadAllText(Path.Combine(folder, "Shop.cs")));
@@ -918,16 +918,16 @@ public sealed class VcsTests : IDisposable
         MainWindow window = Open();
         Ui.Landed(() => window.Vcs.Changes.Count == 2, "both files listed as changed");
 
-        Task<bool> rollback = window.Vcs.RollbackAsync([.. window.Vcs.Changes.Where(c => c.Name == "[ab].cs")]);
+        Task<VcsOutcome> rollback = window.Vcs.RollbackAsync([.. window.Vcs.Changes.Where(c => c.Name == "[ab].cs")]);
         Ui.Landed(() => rollback.IsCompleted, "the rollback done");
         Assert.Equal("class Ab { }\n", File.ReadAllText(Path.Combine(folder, "[ab].cs")));
         Assert.Equal("class A { int x; }\n", File.ReadAllText(Path.Combine(folder, "a.cs")));
 
         File.WriteAllText(Path.Combine(folder, "[ab].cs"), "class Ab { int y; }\n");
         Ui.WaitFor(() => window.Vcs.Changes.Count == 2, "both files changed again");
-        Task<bool> commit = window.Vcs.CommitAsync([.. window.Vcs.Changes.Where(c => c.Name == "[ab].cs")], "Only brackets", amend: false, push: false);
+        Task<CommitResult> commit = window.Vcs.CommitAsync([.. window.Vcs.Changes.Where(c => c.Name == "[ab].cs")], "Only brackets", amend: false, push: false);
         Ui.Landed(() => commit.IsCompleted, "the commit made");
-        Assert.True(commit.Result, window.Status);
+        Assert.True(commit.Result.Succeeded, commit.Result.Commit.Message);
         Assert.Equal("[ab].cs", Git("show", "--name-only", "--format=", "HEAD").Trim());
         window.Close();
     }

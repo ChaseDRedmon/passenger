@@ -125,36 +125,40 @@ public partial class MainWindow
         }
     }
 
-    /// <summary>Ends the run (Get Snapshot) and shows what it found. Asked again while the snapshot is read (Get
-    /// Snapshot as the program ends, say), it answers with that same reading.</summary>
-    public Task<Snapshot?> SnapshotAsync()
+    /// <summary>Ends the run (Get Snapshot) and shows what it found: the last run's snapshot, or why it has none. Asked
+    /// again while the snapshot is read (Get Snapshot as the program ends, say), it answers with that same reading.</summary>
+    public Task<SnapshotRead> SnapshotAsync()
     {
         if (profiling is { } run)
         {
             profiling = null;
             snapshotting = ReadSnapshotAsync(run);
         }
-        return snapshotting ?? Task.FromResult(profilerView!.Snapshot);
+        return snapshotting ?? Task.FromResult(new SnapshotRead(null, "Nothing has been profiled"));
     }
 
-    private Task<Snapshot?>? snapshotting;
+    private Task<SnapshotRead>? snapshotting;
 
-    private async Task<Snapshot?> ReadSnapshotAsync(ProfilingSession run)
+    private async Task<SnapshotRead> ReadSnapshotAsync(ProfilingSession run)
     {
-        StatusText.Text = $"Reading the snapshot of {profilingName}...";
+        string name = profilingName;
+        StatusText.Text = $"Reading the snapshot of {name}...";
         using IDisposable held = BackgroundWork.Scope();
         try
         {
             Snapshot snapshot = await run.StopAsync();
-            profilerView!.Show(snapshot, profilingName);
+            profilerView!.Show(snapshot, name);
             await KeepSnapshotsAsync(trim: true);
-            StatusText.Text = $"Snapshot of {profilingName}: {snapshot.Samples:N0} samples, kept in {Path.GetDirectoryName(snapshot.TracePath)}";
-            return snapshot;
+            string read = $"Snapshot of {name}: {snapshot.Samples:N0} samples, kept in {Path.GetDirectoryName(snapshot.TracePath)}";
+            StatusText.Text = read;
+            return new SnapshotRead(snapshot, read);
         }
         catch (Exception error) when (error is IOException or InvalidOperationException or TimeoutException)
         {
-            profilerView!.Stopped($"The snapshot could not be read: {error.Message}");
-            return null;
+            string unread = $"The snapshot could not be read: {error.Message}";
+            profilerView!.Stopped(unread);
+            StatusText.Text = unread;
+            return new SnapshotRead(null, unread);
         }
         finally
         {
@@ -263,3 +267,7 @@ public partial class MainWindow
         NavigateTo(Lsp.DocumentUris.ToPath(location.Uri), new TextPosition(location.Range.Start.Line, location.Range.Start.Character));
     }
 }
+
+/// <summary>A profiled run's snapshot as read at its end, or none, and what the person is told of it: the profiler window
+/// and the status bar say the same.</summary>
+public sealed record SnapshotRead(Snapshot? Snapshot, string Message);

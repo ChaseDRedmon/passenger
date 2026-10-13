@@ -157,6 +157,74 @@ public sealed class McpTests : IDisposable
         }
     }
 
+    /// <summary>Commit and Push to a remote that refuses every push: the agent hears the refusal, in git's words, as the
+    /// tool's error, and the commit stays made, as the Commit window's Commit and Push leaves it.</summary>
+    [Fact]
+    public async Task An_agents_push_the_remote_refuses_is_an_error_naming_the_refusal_and_the_commit_stays_made()
+    {
+        string root = TestFolders.Create("mcp-push-");
+        try
+        {
+            string work = Repository(root, refusing: true);
+            await using McpClient client = await Start(["--mcp", work]);
+            CallToolResult refused = await Result(client, "vcs_commit", new() { ["message"] = "Two as a number", ["push"] = true });
+            string said = string.Concat(refused.Content.OfType<TextContentBlock>().Select(t => t.Text));
+            Assert.True(refused.IsError == true, $"A push the remote refused was answered as done: {said}");
+            Assert.Contains("pre-receive hook declined", said, StringComparison.Ordinal);
+            Assert.Contains("pushes are closed here", said, StringComparison.Ordinal);
+            Assert.Equal("Two as a number", TestGit.Run(work, "log", "-1", "--format=%s").Trim());
+            Assert.True(TestGit.Run(Path.Combine(root, "remote.git"), "for-each-ref", "refs/heads").Trim().Length == 0, "The remote took the push it refused");
+        }
+        finally
+        {
+            TestFolders.Delete(root);
+        }
+    }
+
+    /// <summary>A tool's answer is what its own operation came to, whatever the status bar says by the time the answer is
+    /// written: here the person presses Run (with nothing to run) just as the agent's push lands.</summary>
+    [AvaloniaFact]
+    public void An_agents_answer_is_its_operations_outcome_whatever_the_status_bar_says_meanwhile()
+    {
+        string root = TestFolders.Create("mcp-push-");
+        try
+        {
+            MainWindow window = AgentsWindow(Repository(root, refusing: false));
+            string? pressed = null;
+            window.Vcs.Message += (_, message) =>
+            {
+                if (message.StartsWith("Pushed", StringComparison.Ordinal) || message.StartsWith("Push failed", StringComparison.Ordinal))
+                {
+                    window.RunSelected();
+                    pressed = window.Status;
+                }
+            };
+            McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
+            try
+            {
+                Task<JsonElement> committing = Task.Run(() => Call(client, "vcs_commit", new() { ["message"] = "Two as a number", ["push"] = true }));
+                Press(Question(window, "the question for the agent's commit"), "Allow");
+                string answer = Await(committing, "the agent's commit and push").GetString()!;
+                Assert.Equal("Nothing to run: no executable project", pressed);
+                Assert.True(answer.EndsWith(" Two as a number; Pushed main", StringComparison.Ordinal),
+                    $"The agent's commit and push was answered with what the status bar said by then, not what came of it: {answer}");
+            }
+            finally
+            {
+                Await(Task.Run(async () =>
+                {
+                    await client.DisposeAsync();
+                    return true;
+                }), "the agent going");
+                window.Close();
+            }
+        }
+        finally
+        {
+            TestFolders.Delete(root);
+        }
+    }
+
     /// <summary>Passenger killed outright (SIGKILL, TerminateProcess), as a crash ends it, while it runs, profiles, debugs
     /// and builds a program and its language server loads the project. Each program writes its id to a file named for how
     /// it was started and runs until it is ended; the load (the BuildHost's design-time build) and, once the folder has a
@@ -928,4 +996,29 @@ public sealed class McpTests : IDisposable
             : null;
 
     private void Write(string relative, string text) => File.WriteAllText(Path.Combine(folder, relative), text);
+
+    /// <summary>A working tree under a folder (work), one commit in and Notes.txt changed since, whose origin is a bare
+    /// repository beside it (remote.git) that refuses every push when <paramref name="refusing"/>, its pre-receive hook
+    /// saying why.</summary>
+    private static string Repository(string root, bool refusing)
+    {
+        string remote = Path.Combine(root, "remote.git");
+        string work = Path.Combine(root, "work");
+        Directory.CreateDirectory(work);
+        TestGit.Run(root, "init", "-q", "--bare", remote);
+        if (refusing)
+        {
+            string hook = Path.Combine(remote, "hooks", "pre-receive");
+            File.WriteAllText(hook, "#!/bin/sh\necho 'pushes are closed here' >&2\nexit 1\n");
+            if (!OperatingSystem.IsWindows())
+            {
+                File.SetUnixFileMode(hook, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
+        }
+        File.WriteAllText(Path.Combine(work, "Notes.txt"), "one\ntwo\nthree\n");
+        TestGit.Init(work);
+        TestGit.Run(work, "remote", "add", "origin", remote);
+        File.WriteAllText(Path.Combine(work, "Notes.txt"), "one\n2\nthree\n");
+        return work;
+    }
 }

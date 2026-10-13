@@ -163,15 +163,24 @@ public sealed class Git
     public async Task<IReadOnlyList<CommitInfo>> LogAsync(int most = 2000)
     {
         // An unborn HEAD (a new repository, an orphan branch) is left out rather than failing the whole log.
-        GitResult log = await RunAsync(Root, ["log", "--branches", "--remotes", "--tags", "--ignore-missing", "HEAD", "--topo-order", $"--max-count={most}",
-            "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s%x1e", "--"]);
-        if (!log.Succeeded)
-        {
-            // A branch with no commits yet has no history to read.
-            return [];
-        }
+        GitResult log = await RunAsync(Root, ["log", "--branches", "--remotes", "--tags", "--ignore-missing", "HEAD", "--topo-order", $"--max-count={most}", CommitFormat, "--"]);
+        // A branch with no commits yet has no history to read.
+        return log.Succeeded ? Commits(log.Output) : [];
+    }
+
+    /// <summary>The commit HEAD names, as the log reads it, or null before the first commit.</summary>
+    public async Task<CommitInfo?> HeadAsync()
+    {
+        GitResult log = await RunAsync(Root, ["log", "-1", CommitFormat, "HEAD", "--"]);
+        return log.Succeeded ? Commits(log.Output).FirstOrDefault() : null;
+    }
+
+    private const string CommitFormat = "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s%x1e";
+
+    private static List<CommitInfo> Commits(string output)
+    {
         List<CommitInfo> commits = [];
-        foreach (string record in log.Output.Split('\x1e'))
+        foreach (string record in output.Split('\x1e'))
         {
             string[] field = record.Trim('\n').Split('\x1f');
             if (field.Length < 7)

@@ -32,13 +32,14 @@ public partial class MainWindow
         };
     }
 
-    private void RunBookmarkAction(string action)
+    /// <summary>A bookmark action; false for one that does nothing here.</summary>
+    private bool RunBookmarkAction(string action)
     {
         switch (action)
         {
             case AppActions.ToggleBookmark when Editors.Active is { } active:
                 bookmarks.Toggle(active.Path, Editors.CodeEditor.CaretPosition.Line);
-                break;
+                return true;
             case AppActions.NextBookmark or AppActions.PreviousBookmark:
                 if (bookmarks.Next(Editors.Active?.Path, Editors.Active is null ? -1 : Editors.CodeEditor.CaretPosition.Line, action == AppActions.NextBookmark ? 1 : -1) is { } next)
                 {
@@ -48,10 +49,12 @@ public partial class MainWindow
                 {
                     StatusText.Text = "No bookmarks";
                 }
-                break;
+                return true;
             case AppActions.ShowBookmarks:
                 ShowToolWindow("bookmarks");
-                break;
+                return true;
+            default:
+                return false;
         }
     }
 }

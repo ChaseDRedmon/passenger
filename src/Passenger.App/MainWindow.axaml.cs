@@ -44,6 +44,10 @@ public partial class MainWindow : Window
     private Action<BuildOutcome>? afterBuild;
     private TaskCompletionSource? building;
     private readonly List<Problem> problems = [];
+
+    /// <summary>The build's last lines, which its outcome carries.</summary>
+    private readonly Queue<string> builtLines = new();
+    private const int BuiltLinesKept = 20;
     private IReadOnlyList<RunConfiguration> configurations = [];
     private RunConfiguration? configuration;
     private readonly Passenger.App.Explorer.ExplorerView Explorer = new();
@@ -177,6 +181,11 @@ public partial class MainWindow : Window
             {
                 problems.Add(problem);
             }
+            builtLines.Enqueue(line);
+            if (builtLines.Count > BuiltLinesKept)
+            {
+                builtLines.Dequeue();
+            }
         };
         builder.Exited += (_, code) => OnBuilt(code);
         runner = new ProcessRunner(Bottom.Run, takesInput: true);
@@ -184,7 +193,7 @@ public partial class MainWindow : Window
         {
             Bottom.Run.SetRunning(false);
             StopButton.IsVisible = false;
-            StatusText.Text = $"{configuration?.Name} exited with code {code}";
+            StatusText.Text = RunEnded(ran, code);
         };
         Bottom.Build.RerunClicked += (_, _) => Build(buildKind, lastProjects);
         Bottom.Build.StopClicked += (_, _) => builder.Stop();
@@ -369,13 +378,14 @@ public partial class MainWindow : Window
         followed = shown;
     }
 
-    public void OpenFile(string path)
+    /// <summary>Opens a file in the editor; null once it is open, else why not, which the status bar says too.</summary>
+    public string? OpenFile(string path)
     {
         string full = PathNames.Canonical(Path.IsPathRooted(path) || folder is null ? path : Path.Combine(folder, path));
         if (Editors.Open(full) is { } problem)
         {
             StatusText.Text = problem;
-            return;
+            return problem;
         }
         recent.Remove(full);
         recent.Insert(0, full);
@@ -384,6 +394,7 @@ public partial class MainWindow : Window
             recent.RemoveAt(recent.Count - 1);
         }
         Explorer.Reveal(full);
+        return null;
     }
 
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
@@ -455,85 +466,80 @@ public partial class MainWindow : Window
         }
     }
 
-    private void RunAppAction(string action)
+    /// <summary>Runs one of the IDE's own actions; false for one that does nothing here (no file open for a code action,
+    /// nothing being debugged for a step).</summary>
+    private bool RunAppAction(string action)
     {
         if (action.StartsWith("app.code.", StringComparison.Ordinal))
         {
-            if (Editors.Active is not null)
-            {
-                assist.Run(action);
-            }
-            return;
+            return Editors.Active is not null && assist.Run(action);
         }
         if (action.StartsWith("app.vcs.", StringComparison.Ordinal))
         {
-            RunVcsAction(action);
-            return;
+            return RunVcsAction(action);
         }
         if (action.StartsWith("app.bookmarks.", StringComparison.Ordinal))
         {
-            RunBookmarkAction(action);
-            return;
+            return RunBookmarkAction(action);
         }
         switch (action)
         {
             case AppActions.ExtendSelection:
                 ExtendSelection();
-                break;
+                return true;
             case AppActions.CallHierarchy:
                 _ = ShowCallHierarchyAsync();
-                break;
+                return true;
             case AppActions.TypeHierarchy:
                 _ = ShowTypeHierarchyAsync();
-                break;
+                return true;
             case AppActions.ShrinkSelection:
                 ShrinkSelection();
-                break;
+                return true;
             case AppActions.Build:
                 BuildSolution();
-                break;
+                return true;
             case AppActions.RebuildSolution:
                 Build(BuildKind.Rebuild);
-                break;
+                return true;
             case AppActions.CleanSolution:
                 Build(BuildKind.Clean);
-                break;
+                return true;
             case AppActions.BuildSelected:
                 BuildSelected(BuildKind.Build);
-                break;
+                return true;
             case AppActions.RebuildSelected:
                 BuildSelected(BuildKind.Rebuild);
-                break;
+                return true;
             case AppActions.CleanSelected:
                 BuildSelected(BuildKind.Clean);
-                break;
+                return true;
             case AppActions.RunProgram:
                 RunSelected();
-                break;
+                return true;
             case AppActions.Rerun when debug.IsDebugging:
                 DebugSelected();
-                break;
+                return true;
             case AppActions.Rerun:
                 RunSelected();
-                break;
+                return true;
             case AppActions.Debug:
                 DebugSelected();
-                break;
+                return true;
             case AppActions.Resume when !debug.IsDebugging:
                 // F5 starts debugging when nothing is being debugged, as in Visual Studio.
                 DebugSelected();
-                break;
+                return true;
             case AppActions.Stop:
                 _ = debug.StopAsync();
                 runner.Stop();
                 builder.Stop();
-                break;
+                return true;
             case AppActions.ShowDebug:
                 ShowToolWindow("debug");
-                break;
+                return true;
             case { } debugging when debugging.StartsWith("app.debug.", StringComparison.Ordinal):
-                debug.Run(debugging);
-                break;
+                return debug.Run(debugging);
             case AppActions.EditBreakpoint when Editors.Active is { } file:
                 int caretLine = Editors.CodeEditor.CaretPosition.Line;
                 if (debug.Breakpoints.In(file.Path).FirstOrDefault(b => b.Line == caretLine) is not { } editing)
@@ -543,163 +549,165 @@ public partial class MainWindow : Window
                     editing = debug.Breakpoints.In(file.Path).First(b => b.Line == caretLine);
                 }
                 ShowBreakpointPopup(editing);
-                break;
+                return true;
             case AppActions.ViewBreakpoints:
                 ShowBreakpoints(null);
-                break;
+                return true;
             case AppActions.ShowTests:
                 ShowToolWindow("tests");
-                break;
+                return true;
             case AppActions.ShowTerminal:
                 ToggleTerminal();
-                break;
+                return true;
             case AppActions.FindAction:
                 ShowFindAction();
-                break;
+                return true;
             case AppActions.RecentFiles:
                 ShowRecentFiles();
-                break;
+                return true;
             case AppActions.FindInFiles or AppActions.ReplaceInFiles:
                 ShowFindInFiles(replace: action == AppActions.ReplaceInFiles);
-                break;
+                return true;
             case AppActions.ShowSettings:
                 ShowSettings();
-                break;
+                return true;
             case AppActions.ShowLog:
                 ErrorsPopup.ShowLog();
-                break;
+                return true;
             case AppActions.ShowNuGet:
                 ShowToolWindow("nuget");
-                break;
+                return true;
             case AppActions.ShowProfiler:
                 ShowToolWindow("profiler");
-                break;
+                return true;
             case AppActions.Profile:
                 _ = ProfileReportingAsync();
-                break;
+                return true;
             case AppActions.ShowStructure:
                 ShowToolWindow("structure");
                 _ = Structure.Refresh();
-                break;
+                return true;
             case AppActions.SplitRight when Editors.Active is { } splitting:
                 Editors.Split(Editors.ActiveGroup, splitting, Avalonia.Layout.Orientation.Horizontal, move: false);
-                break;
+                return true;
             case AppActions.SplitDown when Editors.Active is { } splitting:
                 Editors.Split(Editors.ActiveGroup, splitting, Avalonia.Layout.Orientation.Vertical, move: false);
-                break;
+                return true;
             case AppActions.MoveToOppositeGroup when Editors.Active is { } moving:
                 Editors.MoveToOpposite(Editors.ActiveGroup, moving);
-                break;
+                return true;
             case AppActions.MaximizeToolWindow:
                 Dock.ToggleMaximize();
-                break;
+                return true;
             case AppActions.HideAllToolWindows:
                 Dock.ToggleHideAll();
-                break;
+                return true;
             case AppActions.RunAllTests:
                 RunTests(() => tests.RunAsync(folder!));
-                break;
+                return true;
             case AppActions.RunTests or AppActions.DebugTests:
                 RunTestsInContext(debug: action == AppActions.DebugTests);
-                break;
+                return true;
             case AppActions.RunTestsUntilFailure:
                 RunTestsInContext(debug: false, untilFailure: true);
-                break;
+                return true;
             case AppActions.RerunTests:
                 RunTests(() => tests.RerunAsync(folder!));
-                break;
+                return true;
             case AppActions.RerunFailedTests:
                 RunTests(() => tests.RerunFailedAsync(folder!));
-                break;
+                return true;
             case AppActions.StopTests:
                 tests.Stop();
-                break;
+                return true;
             case AppActions.ShowBuild:
                 ShowToolWindow("build");
-                break;
+                return true;
             case AppActions.ShowRun:
                 ShowToolWindow("run");
-                break;
+                return true;
             case AppActions.ShowProblems:
                 ShowToolWindow("problems");
-                break;
+                return true;
             case AppActions.ShowFind:
                 ShowToolWindow("find");
-                break;
+                return true;
             case AppActions.ToggleSolutionAnalysis:
                 ToggleSolutionAnalysis();
-                break;
+                return true;
             case AppActions.HideToolWindow:
                 HideToolWindow();
-                break;
+                return true;
             case AppActions.FocusEditor:
                 FocusEditor();
-                break;
+                return true;
             case AppActions.Back:
                 StepHistory(-1);
-                break;
+                return true;
             case AppActions.Forward:
                 StepHistory(1);
-                break;
+                return true;
             case AppActions.Open:
                 _ = PickFolder();
-                break;
+                return true;
             case AppActions.Exit:
                 Close();
-                break;
+                return true;
             case AppActions.ShowContextMenu:
                 ShowFocusedContextMenu();
-                break;
+                return true;
             case AppActions.Save:
                 Editors.SaveActive();
-                break;
+                return true;
             case AppActions.SaveAll:
                 Editors.SaveAll();
-                break;
+                return true;
             case AppActions.CloseTab:
                 // The split worked in loses its tab, as Rider's Close does; the file stays open in any other.
                 if (Editors.Active is { } active)
                 {
                     Editors.CloseTab(Editors.ActiveGroup, active);
                 }
-                break;
+                return true;
             case AppActions.NextTab:
                 Editors.Cycle(1);
-                break;
+                return true;
             case AppActions.PreviousTab:
                 Editors.Cycle(-1);
-                break;
+                return true;
             case AppActions.FocusExplorer:
                 Dock.Show("explorer");
                 Explorer.FocusRows();
-                break;
+                return true;
             case AppActions.GoToFile:
                 ShowGoToFile();
-                break;
+                return true;
             case AppActions.GoToLine:
                 ShowGoToLine();
-                break;
+                return true;
             case AppActions.GoToSymbol:
                 ShowSymbols("Go to Symbol", "A type or member, by name or CamelHumps", SearchSymbols);
-                break;
+                return true;
             case AppActions.GoToEverything:
                 ShowSymbols("Go to Everything", "A type, member or file", SearchEverything);
-                break;
+                return true;
             case AppActions.FileStructure:
                 ShowFileStructure();
-                break;
+                return true;
             case AppActions.Find:
                 Editors.ShowFind(replace: false);
-                break;
+                return true;
             case AppActions.Replace:
                 Editors.ShowFind(replace: true);
-                break;
+                return true;
             case AppActions.FindNext:
                 Editors.FindBar.Next();
-                break;
+                return true;
             case AppActions.FindPrevious:
                 Editors.FindBar.Previous();
-                break;
+                return true;
+            default:
+                return false;
         }
     }
 
@@ -761,7 +769,7 @@ public partial class MainWindow : Window
 
     /// <summary>Builds, then launches the chosen configuration under the debugger, as Rider's Debug does,
     /// with these arguments in place of its own if given; the Debug window opens on its Console until the
-    /// program stops somewhere. Null once it runs, or what stopped it (a failed build, no configuration,
+    /// program stops somewhere. Null once its session is open, or what stopped it (a failed build, no configuration,
     /// the adapter's refusal).</summary>
     public async Task<string?> DebugAsync(string? arguments = null)
     {
@@ -779,8 +787,7 @@ public partial class MainWindow : Window
             DebugTarget target = await DebugTarget.ResolveAsync(chosen, arguments);
             ShowToolWindow("debug");
             Bottom.Debug.ShowTab(console: true);
-            await debug.StartAsync(target, chosen.Name);
-            return debug.IsDebugging ? null : StatusText.Text;
+            return await debug.StartAsync(target, chosen.Name);
         }
         catch (Exception error) when (error is InvalidOperationException or IOException)
         {
@@ -794,17 +801,12 @@ public partial class MainWindow : Window
 
     /// <summary>Runs an action by id, as its shortcut would: the IDE's own (app.*) wherever the focus is,
     /// an editor's on the active editor. False for one that does nothing here.</summary>
-    public bool Perform(string action)
-    {
-        if (AppActions.IsApp(action))
-        {
-            RunAppAction(action);
-            return true;
-        }
-        return Editors.Active is not null && Editors.CodeEditor.TryExecute(action);
-    }
+    public bool Perform(string action) => AppActions.IsApp(action)
+        ? RunAppAction(action)
+        : Editors.Active is not null && Editors.CodeEditor.TryExecute(action);
 
-    /// <summary>The status bar's text, which says what the last action came to.</summary>
+    /// <summary>The status bar's text, which says what the last action came to, for the person. What an operation came to
+    /// is its own answer (a build's outcome, a commit's), never this, which anything may have replaced since.</summary>
     public string? Status => StatusText.Text;
 
     /// <summary>Builds the solution (or, with none, the folder's projects) with the .NET command line, its output
@@ -841,6 +843,7 @@ public partial class MainWindow : Window
         afterBuild = then;
         Editors.SaveAll();
         problems.Clear();
+        builtLines.Clear();
         Bottom.Build.Clear();
         Bottom.Build.SetRunning(true);
         ShowToolWindow("build");
@@ -891,34 +894,41 @@ public partial class MainWindow : Window
     }
 
     /// <summary>Runs the chosen configuration with <c>dotnet run</c>, its output in the Run window, with these
-    /// arguments in place of its own if given.</summary>
-    public void RunSelected(string? arguments = null)
+    /// arguments in place of its own if given. Null once it runs (<see cref="ProcessRunner.Ended"/> is its end), else why
+    /// it could not, which the status bar says too.</summary>
+    public string? RunSelected(string? arguments = null)
     {
         if (configuration is not { } chosen || runner.IsRunning)
         {
             StatusText.Text = configuration is null ? "Nothing to run: no executable project" : "Already running";
-            return;
+            return StatusText.Text;
         }
         Editors.SaveAll();
         Bottom.Run.Clear();
         Bottom.Run.SetRunning(true);
         StopButton.IsVisible = true;
         ShowToolWindow("run");
+        ran = chosen.Name;
         if (settings.HotReload)
         {
             // dotnet watch applies each save to the running program, as Rider's Hot Reload does, and restarts it
             // for an edit that cannot be applied rather than asking.
             StatusText.Text = $"Running {chosen.Name} with Hot Reload: a save applies its changes";
-            Started(runner.StartDotnet(["watch", "--non-interactive", .. chosen.RunArguments(arguments)], chosen.Project.Folder,
+            return Started(runner.StartDotnet(["watch", "--non-interactive", .. chosen.RunArguments(arguments)], chosen.Project.Folder,
                 new Dictionary<string, string> { ["DOTNET_WATCH_SUPPRESS_EMOJIS"] = "1", ["DOTNET_WATCH_RESTART_ON_RUDE_EDIT"] = "true" }));
-            return;
         }
         StatusText.Text = $"Running {chosen.Name}";
-        Started(runner.StartDotnet(chosen.RunArguments(arguments), chosen.Project.Folder));
+        return Started(runner.StartDotnet(chosen.RunArguments(arguments), chosen.Project.Folder));
     }
 
+    /// <summary>The run configuration the Run window last ran.</summary>
+    private string ran = string.Empty;
+
+    /// <summary>How a run that ended is named, in the status bar and to an agent.</summary>
+    public static string RunEnded(string name, int code) => $"{name} exited with code {code}";
+
     /// <summary>A run that could not start leaves the Run window idle, Stop hidden, and says why.</summary>
-    private void Started(string? problem)
+    private string? Started(string? problem)
     {
         if (problem is not null)
         {
@@ -926,6 +936,7 @@ public partial class MainWindow : Window
             StopButton.IsVisible = debug.IsDebugging;
             StatusText.Text = problem;
         }
+        return problem;
     }
 
     /// <summary>Debug, from its key or the toolbar: what stopped it, if anything, goes to the status bar.</summary>
@@ -971,10 +982,11 @@ public partial class MainWindow : Window
             : new BuildOutcome(BuildStatus.Failed, $"{noun} failed: {errors} error{(errors == 1 ? "" : "s")}, {warnings} warning{(warnings == 1 ? "" : "s")}; Problems lists them"));
     }
 
-    /// <summary>The one way a build that began ends: its window, Problems and the status bar say how, its caller hears it,
-    /// and the background work it held is let go.</summary>
-    private void FinishBuild(BuildOutcome outcome)
+    /// <summary>The one way a build that began ends: its window, Problems and the status bar say how, its caller hears it
+    /// with what it found, and the background work it held is let go.</summary>
+    private void FinishBuild(BuildOutcome ended)
     {
+        BuildOutcome outcome = ended with { Problems = [.. problems], Output = [.. builtLines] };
         buildQueue.Clear();
         Action<BuildOutcome>? then = afterBuild;
         afterBuild = null;
@@ -1658,10 +1670,10 @@ public partial class MainWindow : Window
             CommandLine.Split(start.Arguments),
             start.EnvironmentVariables?.Where(v => v.Value is not null).ToDictionary(v => v.Key, v => v.Value!) ?? []);
         ShowToolWindow("debug");
-        await debug.StartAsync(target, "Tests");
+        string? problem = await debug.StartAsync(target, "Tests");
         if (debug.Session is not { } session)
         {
-            throw new InvalidOperationException("The debugger could not start the test host");
+            throw new InvalidOperationException(problem ?? "The debugger could not start the test host");
         }
         return await session.ProcessStarted.WaitAsync(TimeSpan.FromSeconds(30));
     }

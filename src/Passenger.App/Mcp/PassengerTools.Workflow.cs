@@ -43,7 +43,8 @@ public sealed partial class PassengerTools
 
     [McpServerTool(Name = "vcs_commit", Title = "Commit", Destructive = true), Description(
         "Commits files with a message, as the Commit window does (every file saved first): the paths given, else every changed file that is not unversioned. " +
-        "amend changes the last commit; push pushes after. Returns the new commit.")]
+        "amend changes the last commit; push pushes after. Returns the new commit, and how the push went; a push the remote refuses is an error " +
+        "naming git's reason, the commit made all the same.")]
     public Task<string> VcsCommit(string message, IReadOnlyList<string>? paths = null, bool amend = false, bool push = false, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         VcsController vcs = window.Vcs;
@@ -51,12 +52,18 @@ public sealed partial class PassengerTools
         IReadOnlyList<FileChange> chosen = paths is null
             ? [.. vcs.Changes.Where(c => c.Kind is not ChangeKind.Unversioned)]
             : [.. paths.Select(Resolve).Select(p => vcs.Changes.FirstOrDefault(c => c.Path == p) ?? throw new ArgumentException($"{Relative(p)} has no changes to commit"))];
-        if (!await vcs.CommitAsync(chosen, message, amend, push))
+        CommitResult result = await vcs.CommitAsync(chosen, message, amend, push);
+        if (!result.Commit.Succeeded)
         {
-            throw new InvalidOperationException(window.Status ?? "The commit failed");
+            throw new InvalidOperationException(result.Commit.Message);
         }
-        CommitInfo head = (await vcs.Repository!.LogAsync(1))[0];
-        return $"{head.Short} {head.Subject}" + (push ? $"; {window.Status}" : string.Empty);
+        string made = result.Made is { } head ? $"{head.Short} {head.Subject}" : result.Commit.Message;
+        return result.Push switch
+        {
+            null => made,
+            { Succeeded: true } pushed => $"{made}; {pushed.Message}",
+            { } refused => throw new InvalidOperationException($"Committed {made}, but the push did not go: {refused.Message}"),
+        };
     });
 
     [McpServerTool(Name = "vcs_log", Title = "The history", ReadOnly = true), Description(
@@ -73,16 +80,10 @@ public sealed partial class PassengerTools
     public Task<string> VcsCheckout(string branch, bool create = false, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         VcsController vcs = window.Vcs;
-        if (create)
+        VcsOutcome switched = create ? await vcs.NewBranchAsync(branch) : await vcs.CheckoutAsync(branch);
+        if (switched.Problem is { } failed)
         {
-            if (await vcs.NewBranchAsync(branch) is { } failed)
-            {
-                throw new InvalidOperationException(failed);
-            }
-        }
-        else if (!await vcs.CheckoutAsync(branch))
-        {
-            throw new InvalidOperationException(window.Status ?? $"Could not check out {branch}");
+            throw new InvalidOperationException(failed);
         }
         return $"On {vcs.Branch}";
     });
@@ -103,16 +104,16 @@ public sealed partial class PassengerTools
                 throw new InvalidOperationException($"No stash {index}; there are {before.Count}");
             }
             window.EditorArea.SaveAll();
-            bool done = action switch
+            VcsOutcome done = action switch
             {
-                "push" => await vcs.StashAsync(message) is null,
+                "push" => await vcs.StashAsync(message),
                 "pop" or "apply" => await vcs.UnstashAsync(stash!, action == "pop"),
                 "drop" => await vcs.DropStashAsync(stash!),
                 _ => throw new ArgumentException($"No stash action '{action}'; there are list, push, pop, apply and drop", nameof(action)),
             };
-            if (!done)
+            if (done.Problem is { } failed)
             {
-                throw new InvalidOperationException(window.Status ?? $"Could not {action} the stash");
+                throw new InvalidOperationException(failed);
             }
         }
         return [.. (await vcs.StashesAsync()).Select(s => new StashSummary(s.Index, s.Message, s.Time))];
@@ -186,8 +187,8 @@ public sealed partial class PassengerTools
         {
             await Until(() => running.HasExited, TimeSpan.FromMinutes(10), cancel);
         }
-        Passenger.Profiler.Snapshot snapshot = await window.SnapshotAsync() ?? window.ProfilerView.Snapshot
-            ?? throw new InvalidOperationException(window.Status ?? "The run left no snapshot");
+        SnapshotRead read = await window.SnapshotAsync();
+        Passenger.Profiler.Snapshot snapshot = read.Snapshot ?? throw new InvalidOperationException(read.Message);
         List<ProfileFrame> path = [];
         if (snapshot.Threads.FirstOrDefault() is { } busiest)
         {

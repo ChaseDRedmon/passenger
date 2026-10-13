@@ -269,10 +269,11 @@ public sealed class CommitView : DockPanel
     /// <summary>Puts the keys in the message, as Rider's Commit shortcut does.</summary>
     public void FocusMessage() => message.Focus();
 
-    /// <summary>Commits the chosen files with the message (pushing after when asked), then empties the message.</summary>
+    /// <summary>Commits the chosen files with the message (pushing after when asked), then empties the message. Whether the
+    /// commit was made, whatever came of the push.</summary>
     public async Task<bool> CommitAsync(bool push)
     {
-        if (!await vcs.CommitAsync(Chosen, Message, Amend, push))
+        if (!(await vcs.CommitAsync(Chosen, Message, Amend, push)).Commit.Succeeded)
         {
             return false;
         }

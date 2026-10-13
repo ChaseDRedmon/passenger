@@ -41,6 +41,9 @@ public sealed class DebugController
     /// gone on is dropped rather than shown over what is now true.</summary>
     private int shown;
 
+    /// <summary>The session's name, as the status bar names it ("Tests", a run configuration's).</summary>
+    private string name = string.Empty;
+
     /// <summary>Clears the last stop's frames and values a moment after the program goes on, as Rider's views do: a step
     /// that stops again at once replaces them without the panes going blank between.</summary>
     private readonly DispatcherTimer clearing = new() { Interval = TimeSpan.FromMilliseconds(100) };
@@ -77,6 +80,14 @@ public sealed class DebugController
 
     public bool IsDebugging => Session is { State: not DebugState.Ended };
 
+    /// <summary>The stop the program is paused at as the controller has read it (the stopped thread's frames, the exception
+    /// it stopped on described), which the Debug window shows; null while it runs, before the stop is read, and after.</summary>
+    public DebugStop? Stop { get; private set; }
+
+    /// <summary>The session's state in the words the status bar is told as it changes (debugging, paused and on what,
+    /// running, ended and how), or null with no session.</summary>
+    public string? Summary => Session is { } session ? Said(session) : null;
+
     /// <summary>A toolbar button of the Debug window: an app action for the window to run.</summary>
     public event EventHandler<string>? ActionRequested;
 
@@ -90,17 +101,18 @@ public sealed class DebugController
     public event EventHandler? StateChanged;
 
     /// <summary>Launches a program under the debugger (after it is built), its output in the Debug
-    /// window's Console.</summary>
-    public Task StartAsync(DebugTarget target, string name) =>
+    /// window's Console. Null once the session is open (the program may have ended already), else why it could not.</summary>
+    public Task<string?> StartAsync(DebugTarget target, string name) =>
         OpenAsync((built, log, output) => DebugSession.LaunchAsync(target, Breakpoints, built, log, output), name, launched: true);
 
-    /// <summary>Attaches the debugger to a running .NET process, its output (if any) in the Console.</summary>
-    public Task AttachAsync(int processId, string name) =>
+    /// <summary>Attaches the debugger to a running .NET process, its output (if any) in the Console. Null once the session
+    /// is open, else why it could not.</summary>
+    public Task<string?> AttachAsync(int processId, string name) =>
         OpenAsync((built, log, output) => DebugSession.AttachAsync(processId, Breakpoints, built, log, output), name, launched: false);
 
     /// <summary>Starts a session, its output in the Console; a program it launched reads what is typed there, as in
     /// Rider's Debug console (one attached to has an input of its own).</summary>
-    private async Task OpenAsync(Func<BuiltLines, Action<string>, Action<OutputEvent>, Task<DebugSession>> open, string name, bool launched)
+    private async Task<string?> OpenAsync(Func<BuiltLines, Action<string>, Action<OutputEvent>, Task<DebugSession>> open, string name, bool launched)
     {
         UiThread.Check();
         if (IsDebugging)
@@ -109,6 +121,8 @@ public sealed class DebugController
         }
         // Not the last session's while this one starts, nor once it could not: a caller asks Session whether it did.
         Session = null;
+        this.name = name;
+        Stop = null;
         view.Clear();
         clearing.Stop();
         executionPoint = null;
@@ -143,16 +157,19 @@ public sealed class DebugController
             {
                 view.Console.Input = new ConsoleInput(text => Send(session.InputAsync(text)), () => Send(session.CloseInputAsync()));
             }
-            session.StateChanged += (_, _) => _ = OnStateChanged(session, name);
-            await OnStateChanged(session, name);
+            session.StateChanged += (_, _) => _ = OnStateChanged(session);
+            await OnStateChanged(session);
+            return null;
         }
         catch (Exception error) when (error is DapException or IOException or InvalidOperationException or TimeoutException)
         {
             lines = null;
             view.Console.Flush();
             view.SetState(DebugState.Ended);
-            Message?.Invoke(this, $"Could not debug {name}: {(error is DapException dap ? dap.Reason : error.Message)}");
+            string failed = $"Could not debug {name}: {(error is DapException dap ? dap.Reason : error.Message)}";
+            Message?.Invoke(this, failed);
             StateChanged?.Invoke(this, EventArgs.Empty);
+            return failed;
         }
     }
 
@@ -177,8 +194,9 @@ public sealed class DebugController
     }
 
     /// <summary>Runs one of the debugger's actions (<c>app.debug.*</c>) on the active editor and the
-    /// session. Resume without a session is the caller's Debug, as F5 is in Visual Studio's keymap.</summary>
-    public void Run(string action)
+    /// session. Resume without a session is the caller's Debug, as F5 is in Visual Studio's keymap. False for one that
+    /// does nothing here (a step with nothing being debugged).</summary>
+    public bool Run(string action)
     {
         UiThread.Check();
         OpenDocument? active = editors.Active;
@@ -187,40 +205,42 @@ public sealed class DebugController
         {
             case AppActions.ToggleBreakpoint when active is not null:
                 Breakpoints.Toggle(active.Path, caretLine);
-                break;
+                return true;
             case AppActions.ToggleBreakpointEnabled when active is not null:
                 Breakpoints.ToggleEnabled(active.Path, caretLine);
-                break;
-            case AppActions.Resume:
+                return true;
+            case AppActions.Resume when Session is not null:
                 _ = ResumeAsync(session => session.ContinueAsync(), "resume");
-                break;
-            case AppActions.Pause:
-                _ = Session?.PauseAsync();
-                break;
-            case AppActions.StepOver:
+                return true;
+            case AppActions.Pause when Session is { } session:
+                _ = session.PauseAsync();
+                return true;
+            case AppActions.StepOver when Session is not null:
                 _ = ResumeAsync(session => session.StepOverAsync(), "step over");
-                break;
-            case AppActions.StepInto:
+                return true;
+            case AppActions.StepInto when Session is not null:
                 _ = ResumeAsync(session => session.StepIntoAsync(), "step into");
-                break;
-            case AppActions.StepOut:
+                return true;
+            case AppActions.StepOut when Session is not null:
                 _ = ResumeAsync(session => session.StepOutAsync(), "step out");
-                break;
+                return true;
             case AppActions.RunToCursor when active is not null && Session is { State: DebugState.Paused }:
                 _ = ResumeAsync(session => session.RunToCursorAsync(active.Path, caretLine), "run to the cursor");
-                break;
+                return true;
             case AppActions.SetNextStatement when active is not null && Session is { State: DebugState.Paused } session:
                 _ = SetNextStatementAsync(session, active.Path, caretLine);
-                break;
+                return true;
             case AppActions.ShowExecutionPoint when executionPoint is { } point:
                 Navigate?.Invoke(this, (point.Path, new TextPosition(Current(point.Path, point.Line), 0)));
-                break;
+                return true;
             case AppActions.AddToWatches when Session is { State: DebugState.Paused } && SelectedOrWord() is { Length: > 0 } watched:
                 _ = Evaluate(watched, watch: true);
-                break;
+                return true;
             case AppActions.Evaluate when Session is { State: DebugState.Paused }:
                 view.FocusEvaluate(SelectedOrWord());
-                break;
+                return true;
+            default:
+                return false;
         }
     }
 
@@ -368,7 +388,7 @@ public sealed class DebugController
 
     private static bool IsWordChar(char c) => char.IsLetterOrDigit(c) || c == '_';
 
-    private async Task OnStateChanged(DebugSession session, string name)
+    private async Task OnStateChanged(DebugSession session)
     {
         if (session != Session)
         {
@@ -387,6 +407,7 @@ public sealed class DebugController
         // Every stop is new and every run lets the last one's frames and values go: none is asked of again.
         shown++;
         frame = null;
+        Stop = null;
         clearing.Stop();
         switch (session.State)
         {
@@ -397,9 +418,7 @@ public sealed class DebugController
                 {
                     break;
                 }
-                Message?.Invoke(this, stopException is { } thrown ? $"{name}: paused on {thrown.Text}"
-                    : undescribed is { } why ? $"{name}: paused on an exception the debugger could not describe ({why})"
-                    : $"{name}: paused ({session.StopReason})");
+                Message?.Invoke(this, Said(session));
                 break;
             case DebugState.Running:
                 executionPoint = null;
@@ -407,7 +426,7 @@ public sealed class DebugController
                 UpdateAllMarks();
                 ClearInlineValues();
                 clearing.Start();
-                Message?.Invoke(this, $"{name}: running");
+                Message?.Invoke(this, Said(session));
                 break;
             case DebugState.Ended:
                 executionPoint = null;
@@ -417,13 +436,24 @@ public sealed class DebugController
                 view.ShowFrames([], null, [], null);
                 view.Tree.Show([]);
                 view.SetState(DebugState.Ended);
-                Message?.Invoke(this, session.Failure is { } failure
-                    ? $"Debugging {name} ended: {failure}"
-                    : $"Debugging {name} ended{(session.ExitCode is int code ? $" with exit code {code}" : "")}");
+                Message?.Invoke(this, Said(session));
                 break;
         }
         StateChanged?.Invoke(this, EventArgs.Empty);
     }
+
+    /// <summary>A session's state in words: the status bar's as it changes, and <see cref="Summary"/>'s.</summary>
+    private string Said(DebugSession session) => session.State switch
+    {
+        DebugState.Starting => $"Debugging {name}",
+        DebugState.Paused when stopException is { } thrown => $"{name}: paused on {thrown.Text}",
+        DebugState.Paused when undescribed is { } why => $"{name}: paused on an exception the debugger could not describe ({why})",
+        DebugState.Paused => $"{name}: paused ({session.StopReason})",
+        DebugState.Running => $"{name}: running",
+        _ => session.Failure is { } failure
+            ? $"Debugging {name} ended: {failure}"
+            : $"Debugging {name} ended{(session.ExitCode is int code ? $" with exit code {code}" : "")}",
+    };
 
     /// <summary>Shows a stop: its exception described, then its thread's frames and the top one's values. An exception the
     /// debugger cannot describe (a getter of its own that never returns) still shows where the program stopped.</summary>
@@ -479,6 +509,10 @@ public sealed class DebugController
         }
         DapStackFrame? top = stack.FirstOrDefault(f => f.Source?.Path is not null) ?? stack.FirstOrDefault();
         executionPoint = thread == session.StoppedThread && top?.Source?.Path is { } path ? (path, top.Line - 1) : executionPoint;
+        if (thread == session.StoppedThread)
+        {
+            Stop = new DebugStop(thread, session.StopReason, stack, top, stopException?.Text);
+        }
         view.ShowFrames(threads, threads.FirstOrDefault(t => t.Id == thread), stack, top);
         UpdateAllMarks();
         if (top is not null)
@@ -701,3 +735,7 @@ public sealed class DebugController
     /// <summary>The built line a line of a file has, while a session runs.</summary>
     private int Built(string path, int line) => lines?.ToBuilt(path, line) ?? line;
 }
+
+/// <summary>A stop as the debugger read it: the thread that stopped and why, its frames (the top one with source among
+/// them), and the exception it stopped on, described as the stop's line shows it.</summary>
+public sealed record DebugStop(int Thread, string? Reason, IReadOnlyList<DapStackFrame> Frames, DapStackFrame? Top, string? Exception);

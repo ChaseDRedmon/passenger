@@ -72,10 +72,17 @@ public enum BuildStatus
     NotStarted,
 }
 
-/// <summary>A build's end and what to tell the person about it.</summary>
+/// <summary>A build's end and what to tell the person about it, with what it found and its last words: the build's own,
+/// whatever the Problems and Build windows show by the time a caller reads them.</summary>
 public sealed record BuildOutcome(BuildStatus Status, string Message)
 {
     public bool Succeeded => Status == BuildStatus.Succeeded;
+
+    /// <summary>The errors and warnings the build reported, each once, as Problems lists them.</summary>
+    public IReadOnlyList<Problem> Problems { get; init; } = [];
+
+    /// <summary>The last lines the build wrote.</summary>
+    public IReadOnlyList<string> Output { get; init; } = [];
 }
 
 /// <summary>What a build does: Rider's Build, Rebuild (everything again, nothing taken from the last build) and Clean.</summary>
