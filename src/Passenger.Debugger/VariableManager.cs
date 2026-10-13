@@ -42,12 +42,15 @@ public readonly record struct FrameStackDepth
     }
 };
 public record struct VariablesReference(StoredReferenceKind ReferenceKind, ICorDebugValue? ObjectValue, ThreadId ThreadId, FrameStackDepth FrameStackDepth, ICorDebugValue? DebuggerProxyInstance, uint[]? ArrayIndices = null, uint? ArrayStartOffset = null, uint? ArrayCount = null);
-/// <summary>
-/// Manages variable references for scopes and variables
-/// </summary>
+/// <summary>The references of a stop's scopes and values. Each is numbered above every one before it in the session, and a
+/// stop's are let go when the program goes on, so one from an earlier stop is refused rather than naming whatever value
+/// took its number at this one.</summary>
 public class VariableManager
 {
     private int _nextReference = 1;
+
+    /// <summary>The first reference of the stop the program is at: any below it was an earlier stop's.</summary>
+    private int _firstOfStop = 1;
     private readonly Dictionary<int, VariablesReference> _references = new();
     private readonly Lock _lock = new();
 
@@ -79,6 +82,15 @@ public class VariableManager
         }
     }
 
+    /// <summary>Whether a reference no longer held was given at an earlier stop, rather than never given.</summary>
+    public bool IsFromEarlierStop(int reference)
+    {
+        lock (_lock)
+        {
+            return reference > 0 && reference < _firstOfStop;
+        }
+    }
+
     /// <summary>
     /// Clear all references
     /// </summary>
@@ -91,7 +103,7 @@ public class VariableManager
             List<ICorDebugHandleValue> handleReferences = _references.Values.SelectMany(GetHandleValues).Distinct().ToList();
             handleReferences.ForEach(h => h.Dispose());
             _references.Clear();
-            _nextReference = 1;
+            _firstOfStop = _nextReference;
         }
     }
 
@@ -102,7 +114,7 @@ public class VariableManager
         lock (_lock)
         {
             _references.Clear();
-            _nextReference = 1;
+            _firstOfStop = _nextReference;
         }
     }
 
@@ -115,7 +127,7 @@ public class VariableManager
             List<ICorDebugHandleValue> handleReferences = _references.Values.SelectMany(GetHandleValues).Distinct().ToList();
             handleReferences.ForEach(h => h.TryDispose());
             _references.Clear();
-            _nextReference = 1;
+            _firstOfStop = _nextReference;
         }
     }
 

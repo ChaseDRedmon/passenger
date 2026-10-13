@@ -424,6 +424,43 @@ public sealed class DebuggerTests : IDisposable
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void A_value_from_the_stop_before_a_step_opens_to_an_error_never_to_another_values_members()
+    {
+        Write("Program.cs", "static class Program\n{\n    static void Main()\n    {\n        Inner inner = new();\n        Visited visited = new();\n"
+            + "        Visit(visited);\n        Console.WriteLine(Console.ReadLine());\n    }\n\n    static void Visit(Visited visited)\n    {\n"
+            + "        Console.WriteLine(visited.VisitedField);\n    }\n}\n\nsealed class Inner\n{\n    public int InnerField = 1;\n}\n\n"
+            + "sealed class Visited\n{\n    public string VisitedField = \"v\";\n}\n");
+        MainWindow window = Open();
+        window.EditorArea.CodeEditor.GoTo(new TextPosition(6, 8));
+        Ui.Run(window, AppActions.ToggleBreakpoint);
+        Ui.Run(window, AppActions.Debug);
+        Ui.WaitFor(() => Row(window, "inner") is not null, "the stop before the call");
+        Passenger.App.ToolWindows.DebugView view = window.BottomPanel.Debug;
+        VariableNode stale = Row(window, "inner")!;
+        Assert.True(stale.HasChildren);
+
+        Ui.Run(window, AppActions.StepInto);
+        Ui.WaitFor(() => Row(window, "inner") is null && Row(window, "visited") is not null, "the stop in the method called");
+        // The row the last stop showed, opened as a click on it would: what it named is gone with that stop.
+        Task opened = view.Tree.Expand(stale);
+        Ui.WaitFor(() => opened.IsCompleted, "the row's members to be asked for");
+        Assert.DoesNotContain(stale.Children ?? [], c => c.Name == "VisitedField");
+        VariableNode refused = Assert.Single(stale.Children ?? []);
+        Assert.Equal(VariableRole.Error, refused.Role);
+        Assert.Contains("earlier stop", refused.Value, StringComparison.Ordinal);
+        Assert.DoesNotContain(view.Tree.Rows, r => r.Parent == stale);
+
+        // Run on to a read of input, the Debug window lets the stop's frames and values go, as Rider's does.
+        Ui.Run(window, AppActions.Resume);
+        Ui.WaitFor(() => window.Debugger.Session?.State == DebugState.Running && view.Tree.Rows.Count == 0 && view.Frames.Count == 0,
+            "the last stop's frames and values to be cleared while the program runs");
+        Assert.Null(view.SelectedFrame);
+        Ui.Run(window, AppActions.Stop);
+        Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
+        window.Close();
+    }
+
     /// <summary>The middle of a line's number in the gutter, in the window's coordinates.</summary>
     private static Point Gutter(MainWindow window, CodeEditor editor, int line)
     {
@@ -436,8 +473,10 @@ public sealed class DebuggerTests : IDisposable
         editor.TranslatePoint(editor.GutterColumnPoint(GutterColumn.Marks, line), window)!.Value;
 
     /// <summary>A top-level row of the Variables view, by name.</summary>
-    private static string? Value(MainWindow window, string name) =>
-        window.BottomPanel.Debug.Tree.Rows.FirstOrDefault(r => r.Depth == 0 && r.Name == name)?.Value;
+    private static string? Value(MainWindow window, string name) => Row(window, name)?.Value;
+
+    private static VariableNode? Row(MainWindow window, string name) =>
+        window.BottomPanel.Debug.Tree.Rows.FirstOrDefault(r => r.Depth == 0 && r.Name == name);
 
     [AvaloniaFact]
     public void Pause_stops_a_running_program_and_shows_where_it_is_in_its_loop()

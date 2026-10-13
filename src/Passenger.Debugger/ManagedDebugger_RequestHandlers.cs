@@ -656,7 +656,7 @@ public partial class ManagedDebugger
             return CreateSyntheticAsyncStackFrameInfo(frameId, syntheticFrame.Value.threadId, syntheticFrame.Value.physicalFrameStackDepth, syntheticFrame.Value.frame, decompileIfNeeded: true);
         }
 
-        (ThreadId threadId, FrameStackDepth frameStackDepth) frameInfo = _frameReferenceManager.GetFrameInfoById(frameId) ?? throw new ArgumentException($"Unknown stack frame ID '{frameId}'.", nameof(frameId));
+        (ThreadId threadId, FrameStackDepth frameStackDepth) frameInfo = _frameReferenceManager.GetFrameInfoById(frameId) ?? throw new ArgumentException(_frameReferenceManager.Unknown(frameId));
         ICorDebugFrame frame = GetFrameForThreadIdAndStackDepth(frameInfo.threadId, frameInfo.frameStackDepth);
         if (frame is not ICorDebugILFrame)
         {
@@ -754,7 +754,7 @@ public partial class ManagedDebugger
         (ThreadId threadId, FrameStackDepth frameStackDepth)? frameInfo = _frameReferenceManager.GetFrameInfoById(frameId);
         if (frameInfo is not var (threadId, frameStackDepth))
         {
-            return result;
+            throw new ArgumentException(_frameReferenceManager.Unknown(frameId));
         }
 
         ICorDebugFrame frame = GetFrameForThreadIdAndStackDepth(threadId, frameStackDepth);
@@ -794,7 +794,9 @@ public partial class ManagedDebugger
         VariablesReference? variablesReferenceNullable = _variableManager.GetReference(variablesReferenceInt);
         if (variablesReferenceNullable is not { } variablesReference)
         {
-            throw new ArgumentException("Invalid variables reference");
+            throw new ArgumentException(_variableManager.IsFromEarlierStop(variablesReferenceInt)
+                ? "This value is from an earlier stop, and the program has run on since"
+                : "Invalid variables reference");
         }
 
         try
@@ -902,7 +904,7 @@ public partial class ManagedDebugger
         (ThreadId threadId, FrameStackDepth frameStackDepth)? frameInfo = _frameReferenceManager.GetFrameInfoById(frameId.Value);
         if (frameInfo is not var (threadId, frameStackDepth))
         {
-            throw new InvalidOperationException("Frame ID does not exist");
+            throw new InvalidOperationException(_frameReferenceManager.Unknown(frameId.Value));
         }
 
         ICorDebugThread? thread = _threads.GetValueOrDefault(threadId.Value)?.Thread;

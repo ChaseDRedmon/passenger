@@ -60,10 +60,11 @@ public class StackTraceTests(ITestOutputHelper testOutputHelper)
         Assert.EndsWith("MyClassContainingAnotherClass.cs", stopInfo2.filePath);
         Assert.Equal(19, stopInfo2.line);
 
+        // Numbered on from the first stop's five frames, so an id from that stop never names one of these.
         List<DapStackFrame> expectedStackFrames2 =
         [
-            new() { Id = 1, Column = 4, EndColumn =   5, Line = 19, EndLine = 19, Name = "DebuggableConsoleApp.dll!DebuggableConsoleApp.MyGenericClassContainingAnotherGenericClass<int, string>.MyNestedGenericClass<double, bool>.Test()", Source = new DapSource { Name = "MyClassContainingAnotherClass.cs", SourceReference = 0, Path = breakpointedFilePath2 } },
-            new() { Id = 2, Column = 4, EndColumn = 103, Line = 35, EndLine = 35, Name = "DebuggableConsoleApp.dll!DebuggableConsoleApp.Program.Main(string[] args)", Source = new DapSource { Name = "Program.cs", SourceReference = 0, Path = Debuggees.Source("DebuggableConsoleApp", "Program.cs") } },
+            new() { Id = 6, Column = 4, EndColumn =   5, Line = 19, EndLine = 19, Name = "DebuggableConsoleApp.dll!DebuggableConsoleApp.MyGenericClassContainingAnotherGenericClass<int, string>.MyNestedGenericClass<double, bool>.Test()", Source = new DapSource { Name = "MyClassContainingAnotherClass.cs", SourceReference = 0, Path = breakpointedFilePath2 } },
+            new() { Id = 7, Column = 4, EndColumn = 103, Line = 35, EndLine = 35, Name = "DebuggableConsoleApp.dll!DebuggableConsoleApp.Program.Main(string[] args)", Source = new DapSource { Name = "Program.cs", SourceReference = 0, Path = Debuggees.Source("DebuggableConsoleApp", "Program.cs") } },
         ];
 
         debugProtocolHost.WithStackTraceRequest(stoppedEvent2.ThreadId!.Value, out StackTraceResponse? stackTraceResponse2, null);

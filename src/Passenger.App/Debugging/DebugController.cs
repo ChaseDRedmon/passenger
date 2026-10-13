@@ -1,3 +1,4 @@
+using Avalonia.Threading;
 using Passenger.App.Editors;
 using Passenger.App.ToolWindows;
 using Passenger.App.Workspace;
@@ -25,6 +26,9 @@ public sealed class DebugController
     private BuiltLines? lines;
 
     private (string Expression, string Value)? lastResult;
+
+    /// <summary>The frame chosen at the stop shown: its variables are the view's, a hover evaluates in it. None while the
+    /// program runs, so nothing asks of a frame the debugger has let go.</summary>
     private DapStackFrame? frame;
 
     /// <summary>The exception the program stopped on, and the frame it was thrown in, shown at that frame's line.</summary>
@@ -33,10 +37,27 @@ public sealed class DebugController
     /// <summary>Why the exception the program stopped on could not be described, when it could not.</summary>
     private string? undescribed;
 
+    /// <summary>Counts the stops shown and the runs between them, so what a stop's requests bring back once the program has
+    /// gone on is dropped rather than shown over what is now true.</summary>
+    private int shown;
+
+    /// <summary>Clears the last stop's frames and values a moment after the program goes on, as Rider's views do: a step
+    /// that stops again at once replaces them without the panes going blank between.</summary>
+    private readonly DispatcherTimer clearing = new() { Interval = TimeSpan.FromMilliseconds(100) };
+
     public DebugController(EditorArea editors, DebugView view)
     {
         this.editors = editors;
         this.view = view;
+        clearing.Tick += (_, _) =>
+        {
+            clearing.Stop();
+            if (Session is not { State: DebugState.Paused })
+            {
+                view.ShowFrames([], null, [], null);
+                view.Tree.Show([]);
+            }
+        };
         Breakpoints.Changed += (_, path) => UpdateMarks(path);
         view.ActionRequested += (_, action) => ActionRequested?.Invoke(this, action);
         view.FrameChosen += (_, chosen) => _ = ChooseFrame(chosen, navigate: true);
@@ -96,6 +117,7 @@ public sealed class DebugController
         // Not the last session's while this one starts, nor once it could not: a caller asks Session whether it did.
         Session = null;
         view.Clear();
+        clearing.Stop();
         executionPoint = null;
         frame = null;
         stopException = null;
@@ -338,24 +360,34 @@ public sealed class DebugController
             return;
         }
         view.SetState(session.State);
+        // Every stop is new and every run lets the last one's frames and values go: none is asked of again.
+        shown++;
+        frame = null;
+        clearing.Stop();
         switch (session.State)
         {
             case DebugState.Paused:
+                int stop = shown;
                 await ShowStop(session);
+                if (stop != shown)
+                {
+                    break;
+                }
                 Message?.Invoke(this, stopException is { } thrown ? $"{name}: paused on {thrown.Text}"
                     : undescribed is { } why ? $"{name}: paused on an exception the debugger could not describe ({why})"
                     : $"{name}: paused ({session.StopReason})");
                 break;
             case DebugState.Running:
                 executionPoint = null;
+                stopException = null;
                 UpdateAllMarks();
                 ClearInlineValues();
+                clearing.Start();
                 Message?.Invoke(this, $"{name}: running");
                 break;
             case DebugState.Ended:
                 executionPoint = null;
                 lines = null;
-                frame = null;
                 UpdateAllMarks();
                 ClearInlineValues();
                 view.ShowFrames([], null, [], null);
@@ -377,6 +409,7 @@ public sealed class DebugController
         {
             return;
         }
+        int stop = shown;
         stopException = null;
         undescribed = null;
         if (session.StopReason == "exception")
@@ -391,6 +424,10 @@ public sealed class DebugController
             catch (DapException error)
             {
                 undescribed = error.Reason;
+            }
+            if (stop != shown)
+            {
+                return;
             }
         }
         try
@@ -409,8 +446,13 @@ public sealed class DebugController
         {
             return;
         }
+        int stop = shown;
         IReadOnlyList<DapThread> threads = await session.ThreadsAsync();
         IReadOnlyList<DapStackFrame> stack = await session.StackTraceAsync(thread);
+        if (stop != shown)
+        {
+            return;
+        }
         DapStackFrame? top = stack.FirstOrDefault(f => f.Source?.Path is not null) ?? stack.FirstOrDefault();
         executionPoint = thread == session.StoppedThread && top?.Source?.Path is { } path ? (path, top.Line - 1) : executionPoint;
         view.ShowFrames(threads, threads.FirstOrDefault(t => t.Id == thread), stack, top);
@@ -423,6 +465,10 @@ public sealed class DebugController
 
     private async Task ChooseFrame(DapStackFrame chosen, bool navigate)
     {
+        if (Session is not { State: DebugState.Paused })
+        {
+            return;
+        }
         frame = chosen;
         if (navigate && chosen.Source?.Path is { } path && File.Exists(path))
         {

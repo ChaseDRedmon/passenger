@@ -227,6 +227,41 @@ public class StepTests(ITestOutputHelper testOutputHelper)
         Assert.Equal(("step", 21), (stepped.Reason, stepped.Line));
     }
 
+    [Fact]
+    public async Task A_frame_or_value_from_before_a_step_is_refused_rather_than_naming_one_of_the_new_stops()
+    {
+        using DebugSession host = await AttachToBreakpoint(20);
+        StoppedEvent stopped = await host.WaitForStoppedEvent();
+        int thread = stopped.ThreadId!.Value;
+        DapStackFrame before = host.GetTopStackFrame(thread);
+        host.WithScopesRequest(before.Id, out ScopesResponse scopes);
+        int locals = scopes.Scopes.Single().VariablesReference;
+        host.WithVariablesRequest(locals, out List<DapVariable> variables);
+        int structVar = variables.Single(v => v.Name == "structVar").VariablesReference;
+        Assert.True(structVar > 0, "structVar has no members to open");
+
+        // Into AnotherClass.MyStaticMethod, whose frame, scope and values are asked for as the IDE asks at a stop.
+        StoppedEvent stepped = await host.WithStepInRequest(thread).WaitForStoppedEvent();
+        Assert.EndsWith("AnotherClass.cs", stepped.ReadStopInfo().filePath);
+        DapStackFrame after = host.GetTopStackFrame(thread);
+        host.WithScopesRequest(after.Id, out ScopesResponse afterScopes);
+        host.WithVariablesRequest(afterScopes.Scopes.Single().VariablesReference, out List<DapVariable> now);
+        Assert.Contains(now, v => v.Name == "myList");
+
+        Assert.NotEqual(before.Id, after.Id);
+        foreach (Action stale in new Action[]
+        {
+            () => host.WithVariablesRequest(locals, out _),
+            () => host.WithVariablesRequest(structVar, out _),
+            () => host.WithScopesRequest(before.Id, out _),
+            () => host.WithEvaluateRequest(before.Id, "myInt", out _),
+        })
+        {
+            DapException refused = Assert.Throws<DapException>(stale);
+            Assert.Contains("earlier stop", refused.Reason, StringComparison.Ordinal);
+        }
+    }
+
     /// <summary>DebuggableConsoleApp attached to as it starts, with a breakpoint on a line of MyClass.cs.</summary>
     private async Task<DebugSession> AttachToBreakpoint(int line)
     {

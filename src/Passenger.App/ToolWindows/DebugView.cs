@@ -242,8 +242,8 @@ public sealed class DebugView : DockPanel
         }
     }
 
-    /// <summary>What can be pressed in each state, and what the panes show: the last stop's
-    /// frames and values stay until the program stops again, as Rider leaves them while it runs.</summary>
+    /// <summary>What can be pressed in each state. The panes show what the controller gives them: a stop's frames and
+    /// values, cleared a moment after the program goes on, as Rider's are.</summary>
     public void SetState(DebugState state)
     {
         bool paused = state == DebugState.Paused;

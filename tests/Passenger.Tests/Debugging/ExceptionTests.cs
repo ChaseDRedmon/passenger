@@ -58,7 +58,7 @@ public class ExceptionTests(ITestOutputHelper testOutputHelper)
         Assert.Equal(expectedVariables.Count, variables.Count);
         variables.ShouldBeEquivalentToDebuggerVariables(expectedVariables);
 
-        debugProtocolHost.WithEvaluateRequest(stackTraceResponse.StackFrames.First().Id, "$exception", out EvaluateResponse? evaluateResponse2);
+        debugProtocolHost.WithEvaluateRequest(stackTraceResponse2.StackFrames.First().Id, "$exception", out EvaluateResponse? evaluateResponse2);
         Assert.Equal(expectedVariables[0].Value, evaluateResponse2.Result);
 
         var expectedExceptionInfoResponse = new ExceptionInfoResponse
@@ -121,12 +121,13 @@ public class ExceptionTests(ITestOutputHelper testOutputHelper)
             .WithStackTraceRequest(stoppedEvent2.ThreadId!.Value, out StackTraceResponse? stackTraceResponse2, null)
             .WithScopesRequest(stackTraceResponse2.StackFrames!.First().Id, out ScopesResponse? scopesResponse2);
 
+        // Numbered on from the frame the first stop gave.
         List<DapStackFrame> expectedStackFrames =
         [
-            new() { Id = 1, Column = 0, EndColumn =  null, Line =  0, EndLine =  null, Name = "System.Private.CoreLib.dll!System.Number.ThrowFormatException<char>(System.ReadOnlySpan<char> value)", Source = null, PresentationHint = "subtle" },
-            new() { Id = 2, Column = 0, EndColumn =  null, Line =  0, EndLine =  null, Name = "System.Private.CoreLib.dll!System.Int32.Parse(string s)",                 Source = null, PresentationHint = "subtle" },
-            new() { Id = 3, Column = 5, EndColumn = 32,    Line = 18, EndLine = 18,    Name = "DebuggableConsoleApp.dll!DebuggableConsoleApp.Exceptions.Test(DebuggableConsoleApp.ExceptionToThrow exceptionToThrow)", Source = new DapSource { Name = "Exceptions.cs", SourceReference = 0, Path = breakpointedFilePath } },
-            new() { Id = 4, Column = 4, EndColumn = 38,    Line = 34, EndLine = 34,    Name = "DebuggableConsoleApp.dll!DebuggableConsoleApp.Program.Main(string[] args)",    Source = new DapSource { Name = "Program.cs",    SourceReference = 0, Path = Debuggees.Source("DebuggableConsoleApp", "Program.cs") } },
+            new() { Id = 2, Column = 0, EndColumn =  null, Line =  0, EndLine =  null, Name = "System.Private.CoreLib.dll!System.Number.ThrowFormatException<char>(System.ReadOnlySpan<char> value)", Source = null, PresentationHint = "subtle" },
+            new() { Id = 3, Column = 0, EndColumn =  null, Line =  0, EndLine =  null, Name = "System.Private.CoreLib.dll!System.Int32.Parse(string s)",                 Source = null, PresentationHint = "subtle" },
+            new() { Id = 4, Column = 5, EndColumn = 32,    Line = 18, EndLine = 18,    Name = "DebuggableConsoleApp.dll!DebuggableConsoleApp.Exceptions.Test(DebuggableConsoleApp.ExceptionToThrow exceptionToThrow)", Source = new DapSource { Name = "Exceptions.cs", SourceReference = 0, Path = breakpointedFilePath } },
+            new() { Id = 5, Column = 4, EndColumn = 38,    Line = 34, EndLine = 34,    Name = "DebuggableConsoleApp.dll!DebuggableConsoleApp.Program.Main(string[] args)",    Source = new DapSource { Name = "Program.cs",    SourceReference = 0, Path = Debuggees.Source("DebuggableConsoleApp", "Program.cs") } },
         ];
 
         Assert.Equal(expectedStackFrames, stackTraceResponse2.StackFrames.WithoutResolution());
@@ -143,7 +144,7 @@ public class ExceptionTests(ITestOutputHelper testOutputHelper)
         Assert.Equal(expectedVariables.Count, variables.Count);
         variables.ShouldBeEquivalentToDebuggerVariables(expectedVariables);
 
-        debugProtocolHost.WithEvaluateRequest(stackTraceResponse.StackFrames.First().Id, "$exception", out EvaluateResponse? evaluateResponse2);
+        debugProtocolHost.WithEvaluateRequest(stackTraceResponse2.StackFrames.First().Id, "$exception", out EvaluateResponse? evaluateResponse2);
         Assert.Equal(expectedVariables[0].Value, evaluateResponse2.Result);
 
         var expectedExceptionInfoResponse = new ExceptionInfoResponse
