@@ -12,7 +12,8 @@ public partial class MainWindow
 {
     private WorkspaceModel? workspace;
 
-    /// <summary>The solution opened by name, which a folder with several keeps over the one its name would pick.</summary>
+    /// <summary>The solution or project opened by name, which a folder with several keeps over the solution its name would
+    /// pick.</summary>
     private string? namedSolution;
 
     /// <summary>The open folder's solution and projects; null with no folder open.</summary>
@@ -101,7 +102,7 @@ public partial class MainWindow
     {
         bool loaded = workspace is not null && workspace.LoadsAs(read);
         workspace = read;
-        Explorer.Reload(Solution);
+        Explorer.Reload(read);
         Configure();
         ShowWorkspaceName();
         if (!loaded)
@@ -134,16 +135,18 @@ public partial class MainWindow
         ShowSolutionProblems();
     }
 
-    /// <summary>Rider names the window's project widget after the solution, the folder only without one.</summary>
+    /// <summary>Rider names the window's project widget and its title after the solution (or the project opened alone), the
+    /// folder only without one.</summary>
     private void ShowWorkspaceName()
     {
         if (workspace is null)
         {
             return;
         }
-        string shown = workspace.Solution?.Name ?? Path.GetFileName(workspace.Folder);
+        string shown = workspace.Name;
         ProjectName.Text = shown;
         ProjectBadgeText.Text = Initials(shown);
         ProjectBadge.IsVisible = true;
+        ShowTitle();
     }
 }

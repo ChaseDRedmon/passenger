@@ -29,7 +29,7 @@ public static class MainMenu
     private static readonly MenuPlace[] Submenus =
     [
         new("View/" + ToolWindows, 0, 0),
-        new("File/" + RecentSolutions, 0, 2),
+        new("File/" + RecentSolutions, 0, 3),
         new("Edit/Find", 3, 0),
         new("Navigate/Bookmarks", 4, 0),
         new("Code/Folding", 3, 0),

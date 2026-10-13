@@ -12,9 +12,9 @@ namespace Passenger.Tests;
 /// for or says why it cannot, and the shortcuts a window's menus and popups show are the ones its own keys run.</summary>
 public sealed class ActionsTests : IDisposable
 {
-    /// <summary>What Find Action lists but this test leaves alone: the IDE's end, the system's folder picker, Finder
+    /// <summary>What Find Action lists but this test leaves alone: the IDE's end, the system's file and folder pickers, Finder
     /// (Explorer) opened on the log, and Find Action itself, which the test chooses each of the others from.</summary>
-    private static readonly string[] LeftAlone = [AppActions.Exit, AppActions.Open, AppActions.ShowLog, AppActions.FindAction];
+    private static readonly string[] LeftAlone = [AppActions.Exit, AppActions.Open, AppActions.OpenFolder, AppActions.ShowLog, AppActions.FindAction];
 
     private readonly string folder = TestFolders.Create("actions-");
 

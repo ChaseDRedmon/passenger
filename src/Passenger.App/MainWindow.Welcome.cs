@@ -1,14 +1,21 @@
+using Avalonia.Controls;
+using Avalonia.Platform.Storage;
 using Passenger.App.Welcome;
+using Passenger.App.Workspace;
 using Passenger.Core;
 
 namespace Passenger.App;
 
-/// <summary>The recent folders and solutions: kept in the store's recentSolutions.json by the window a person uses as
-/// each opens, listed by the Welcome screen (in the editor area while nothing is open) and File, Recent Solutions, and the
-/// last reopened on a start that names nothing, as Rider's Reopen projects on startup. Clone Repository is beside them.</summary>
+/// <summary>Opening a workspace: File, Open (a solution or project) and Open Folder, and the recent folders, solutions and
+/// projects, kept in the store's recentSolutions.json by the window a person uses as each opens, listed by the Welcome
+/// screen (in the editor area while nothing is open), File, Recent Solutions and the toolbar's project widget, and the last
+/// reopened on a start that names nothing, as Rider's Reopen projects on startup. Clone Repository is beside them.</summary>
 public partial class MainWindow
 {
     private readonly WelcomeView welcome = new();
+
+    /// <summary>What Open's panel lists first; All Files is beside it, so another file can be chosen and refused with why.</summary>
+    private static readonly FilePickerFileType SolutionsAndProjects = new("Solutions and Projects") { Patterns = ["*.sln", "*.slnx", "*.csproj"] };
 
     /// <summary>The Welcome screen, which the editor area shows until a folder opens.</summary>
     public WelcomeView Welcome => welcome;
@@ -17,22 +24,86 @@ public partial class MainWindow
     {
         Editors.ShowWelcome(welcome);
         welcome.OpenRequested += (_, _) => Request(AppActions.Open);
+        welcome.OpenFolderRequested += (_, _) => Request(AppActions.OpenFolder);
         welcome.CloneRequested += (_, _) => Request(AppActions.CloneRepository);
         welcome.Chosen += (_, row) => OpenRecent(row.Path);
         welcome.RemoveRequested += (_, row) => ForgetRecent(row.Path);
-        actions!.Add(new IdeAction(AppActions.CloneRepository, "Clone Repository...", "Git", _ => ShowCloneRepository())
+        actions!.Add(new IdeAction(AppActions.OpenFolder, "Open Folder...", "IDE", context => _ = PickFolder()) { Menus = [new MenuPlace("File", 0, 1)] });
+        actions.Add(new IdeAction(AppActions.CloneRepository, "Clone Repository...", "Git", _ => ShowCloneRepository())
         {
-            Menus = [new MenuPlace("File", 0, 1), new MenuPlace("Git", 4, 0)],
+            Menus = [new MenuPlace("File", 0, 2), new MenuPlace("Git", 4, 0)],
         });
     }
 
-    /// <summary>The recent folders and solutions, the newest first, each marked when it is gone from disk; none in a
-    /// window that keeps no state.</summary>
+    /// <summary>Opens what File, Open or Open Folder chose: a solution (.sln, .slnx) or C# project (.csproj) as the workspace
+    /// over its folder, or a folder. Null once it is open, else why not (it is not there, or is another kind of file), which
+    /// the status bar and the Welcome screen say.</summary>
+    public string? Open(string path)
+    {
+        string full = PathNames.Canonical(path);
+        string? why = Directory.Exists(full) || (File.Exists(full) && WorkspaceModel.Opens(full)) ? null
+            : File.Exists(full) ? $"{Path.GetFileName(full)} was not opened: Open takes a solution (.sln, .slnx), a C# project (.csproj) or a folder"
+            : $"{RecentRow.Home(full)} was not opened: it does not exist";
+        welcome.Say(why);
+        if (why is not null)
+        {
+            StatusText.Text = why;
+            return why;
+        }
+        OpenFolder(full);
+        return null;
+    }
+
+    /// <summary>File, Open: a solution or project in the system's panel. Avalonia's panel takes files or folders, never both
+    /// as Rider's does, so a folder is Open Folder's.</summary>
+    private async Task PickWorkspace()
+    {
+        IReadOnlyList<IStorageFile> picked = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Open",
+            FileTypeFilter = [SolutionsAndProjects, FilePickerFileTypes.All],
+            SuggestedStartLocation = await StorageProvider.TryGetFolderFromPathAsync(BesideLast()),
+        });
+        if (picked.Count == 1 && picked[0].TryGetLocalPath() is { } path)
+        {
+            Open(path);
+        }
+    }
+
+    private async Task PickFolder()
+    {
+        IReadOnlyList<IStorageFolder> picked = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "Open Folder",
+            SuggestedStartLocation = await StorageProvider.TryGetFolderFromPathAsync(BesideLast()),
+        });
+        if (picked.Count == 1 && picked[0].TryGetLocalPath() is { } path)
+        {
+            Open(path);
+        }
+    }
+
+    /// <summary>Rider's project widget: Open, Open Folder and Clone Repository, then the recent ones to open.</summary>
+    private void ShowProjectMenu()
+    {
+        ActionContext context = actions!.Context();
+        List<Control> items = [.. ((string[])[AppActions.Open, AppActions.OpenFolder, AppActions.CloneRepository]).Select(id => FlyoutEntry(new MenuEntry(id), context))];
+        IReadOnlyList<(string Title, Action Open)> recent = RecentMenu();
+        if (recent.Count > 0)
+        {
+            items.Add(new Separator());
+            items.AddRange(recent.Select(r => Command(r.Title, r.Open)));
+        }
+        Open(new ContextMenu { ItemsSource = items }, ProjectButton);
+    }
+
+    /// <summary>The recent folders, solutions and projects, the newest first, each marked when it is gone from disk; none in
+    /// a window that keeps no state.</summary>
     public IReadOnlyList<RecentRow> RecentSolutions =>
         keepsWorkspace ? [.. state!.Recent.Value.Newest().Select(recent => RecentRow.Of(recent.Path, recent.Entry))] : [];
 
-    /// <summary>Opens a recent folder or solution, as the Welcome screen and File, Recent Solutions do: null once it is
-    /// open, else why not (it is gone), which the status bar and the Welcome screen say.</summary>
+    /// <summary>Opens a recent folder, solution or project, as the Welcome screen and File, Recent Solutions do: null once it
+    /// is open, else why not (it is gone), which the status bar and the Welcome screen say.</summary>
     public string? OpenRecent(string path)
     {
         if (!Directory.Exists(path) && !File.Exists(path))
@@ -43,12 +114,10 @@ public partial class MainWindow
             ShowRecent();
             return gone;
         }
-        welcome.Say(null);
-        OpenFolder(path);
-        return null;
+        return Open(path);
     }
 
-    /// <summary>Takes a folder or solution off the recent ones for good.</summary>
+    /// <summary>Takes a folder, solution or project off the recent ones for good.</summary>
     public void ForgetRecent(string path)
     {
         if (keepsWorkspace)
@@ -59,16 +128,15 @@ public partial class MainWindow
         }
     }
 
-    /// <summary>Puts the workspace just opened at the top of the recent ones: its solution, or the folder without one, by
-    /// the name the toolbar shows.</summary>
+    /// <summary>Puts the workspace just opened at the top of the recent ones as what it was opened as (its solution, the
+    /// project opened alone, or the folder without either), by the name the toolbar shows.</summary>
     private void Remember()
     {
-        if (!keepsWorkspace || folder is null)
+        if (!keepsWorkspace || workspace is null)
         {
             return;
         }
-        string path = Solution?.Path ?? folder;
-        state!.Recent.Set(state.Recent.Value.Opened(path, Solution?.Name ?? Path.GetFileName(folder), DateTimeOffset.UtcNow));
+        state!.Recent.Set(state.Recent.Value.Opened(workspace.OpenedAs, workspace.Name, DateTimeOffset.UtcNow));
         ShowRecent();
     }
 
@@ -95,7 +163,7 @@ public partial class MainWindow
     /// <summary>Clone Repository: the dialog over this window, and the clone opened once it is made.</summary>
     public Vcs.CloneDialog ShowCloneRepository()
     {
-        Vcs.CloneDialog dialog = new(CloneFolder());
+        Vcs.CloneDialog dialog = new(BesideLast());
         dialog.Closed += (_, _) =>
         {
             if (dialog.Cloned is { } cloned)
@@ -107,9 +175,9 @@ public partial class MainWindow
         return dialog;
     }
 
-    /// <summary>Where a clone goes unless the person says otherwise: beside the folder opened last, else in the home
-    /// folder.</summary>
-    private string CloneFolder()
+    /// <summary>Beside the folder opened last, else the home folder: where a clone goes unless the person says otherwise,
+    /// and where Open's panel starts.</summary>
+    private string BesideLast()
     {
         string? last = RecentSolutions.FirstOrDefault()?.Path;
         string? lastFolder = last is null ? null : File.Exists(last) ? Path.GetDirectoryName(Path.GetDirectoryName(last)) : Path.GetDirectoryName(last);
@@ -118,6 +186,6 @@ public partial class MainWindow
 
     /// <summary>File, Recent Solutions: each but the one open, newest first, by name and where it is.</summary>
     private IReadOnlyList<(string Title, Action Open)> RecentMenu() =>
-        [.. RecentSolutions.Where(r => folder is null || !(PathNames.Same(r.Path, folder) || PathNames.Same(r.Path, Solution?.Path ?? string.Empty)))
+        [.. RecentSolutions.Where(r => folder is null || !(PathNames.Same(r.Path, folder) || PathNames.Same(r.Path, workspace?.OpenedAs ?? string.Empty)))
             .Select(r => ($"{r.Name} – {r.Shown}", (Action)(() => OpenRecent(r.Path))))];
 }

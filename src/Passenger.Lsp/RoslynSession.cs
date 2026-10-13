@@ -11,11 +11,12 @@ public sealed class RoslynSession : IAsyncDisposable
     private readonly Dictionary<string, LspDocument> documents = new(StringComparer.Ordinal);
     private readonly TaskCompletionSource coloured = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    private RoslynSession(LanguageServer server, string folder, string? solution)
+    private RoslynSession(LanguageServer server, string folder, string? solution, IReadOnlyList<string> projects)
     {
         Server = server;
         Folder = folder;
         Solution = solution;
+        Projects = solution is null ? projects : [];
         server.ProjectsLoaded += (_, _) =>
         {
             IsLoaded = true;
@@ -30,6 +31,10 @@ public sealed class RoslynSession : IAsyncDisposable
     public LanguageServer Server { get; }
     public string Folder { get; }
     public string? Solution { get; }
+
+    /// <summary>The projects it opened, with no solution to open.</summary>
+    public IReadOnlyList<string> Projects { get; }
+
     public bool IsLoaded { get; private set; }
 
     /// <summary>Done once the server has first given a document its colours, the last of the phases a folder's opening
@@ -49,7 +54,7 @@ public sealed class RoslynSession : IAsyncDisposable
         CancellationToken cancel = default, IReadOnlyDictionary<string, object?>? options = null, Action<LanguageServer>? started = null)
     {
         LanguageServer server = await LanguageServer.StartRoslynAsync(folder, logFolder, cancel, options).ConfigureAwait(false);
-        RoslynSession session = new(server, folder, solution);
+        RoslynSession session = new(server, folder, solution, projects);
         try
         {
             cancel.ThrowIfCancellationRequested();

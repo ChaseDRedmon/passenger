@@ -92,8 +92,10 @@ public sealed class CommandLineTests : IDisposable
 
         window.Start(LaunchOptions.Parse([project]));
         Ui.Settle();
-        Assert.True(window.Folder == PathNames.Canonical(Path.GetDirectoryName(project)!) && window.EditorArea.Active is null,
-            $"Tool.csproj was to open its folder with no file open; the folder is {window.Folder} and the editor shows {window.EditorArea.Active?.Path}");
+        Assert.True(window.Folder == PathNames.Canonical(Path.GetDirectoryName(project)!) && window.WorkspaceModel?.ProjectFile == PathNames.Canonical(project)
+            && window.EditorArea.Active is null,
+            $"Tool.csproj was to open its folder with it as the workspace and no file open; the folder is {window.Folder}, the workspace is " +
+            $"{window.WorkspaceModel?.OpenedAs} and the editor shows {window.EditorArea.Active?.Path}");
         window.Close();
     }
 

@@ -1,5 +1,6 @@
 using System.Globalization;
 using Avalonia;
+using Passenger.App.Workspace;
 using Passenger.Editor;
 using Passenger.Text;
 
@@ -31,8 +32,9 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
     /// (<c>--no-mcp</c> says never).</summary>
     public bool ListenForAgents { get; init; } = true;
 
-    /// <summary>The solution (.sln, .slnx) PATH names, the workspace over <see cref="Folder"/>, its own folder.</summary>
-    public string? Solution { get; init; }
+    /// <summary>The solution (.sln, .slnx) or C# project (.csproj) PATH names, the workspace over <see cref="Folder"/>, its
+    /// own folder.</summary>
+    public string? Workspace { get; init; }
 
     public static LaunchOptions Empty { get; } = new(null, [], null, null, null);
 
@@ -159,7 +161,7 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
         }
 
         CheckMode(given, mcp, shot is not null, listen);
-        (string? folder, string? solution, List<string> files) = Opened(path, named);
+        (string? folder, string? workspace, List<string> files) = Opened(path, named);
         if (mcp == McpMode.Attach && files.Count > 0)
         {
             throw new FormatException($"--mcp-attach finds the window by its folder, and '{path}' is a file");
@@ -169,7 +171,7 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
             throw new FormatException("--caret needs a file to put the caret in, the PATH or a --file");
         }
         ScreenshotOptions? screenshot = shot is null ? null : Checked(new ScreenshotOptions(shot, size, scale, steps, crop), cropText, points);
-        return new LaunchOptions(folder, files, caret, theme, screenshot) { Solution = solution, Mcp = mcp, AttachTo = attachTo, ListenForAgents = listen };
+        return new LaunchOptions(folder, files, caret, theme, screenshot) { Workspace = workspace, Mcp = mcp, AttachTo = attachTo, ListenForAgents = listen };
     }
 
     /// <summary>Refuses the first flag the chosen mode does not take: a window takes all but a screenshot's, a screenshot
@@ -199,13 +201,13 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
         }
     }
 
-    /// <summary>The folder, solution and files that the path and the <c>--file</c>s name, as full paths, each refused unless
-    /// it exists as what it is named for. A solution or a C# project is the workspace, as Rider opens one, not a file to
-    /// edit: the solution itself, a project its folder (with the folder's own solution, if it has one).</summary>
-    private static (string? Folder, string? Solution, List<string> Files) Opened(string? path, List<string> named)
+    /// <summary>The folder, workspace and files that the path and the <c>--file</c>s name, as full paths, each refused unless
+    /// it exists as what it is named for. A solution or a C# project is the workspace over its folder, as Rider opens one,
+    /// not a file to edit.</summary>
+    private static (string? Folder, string? Workspace, List<string> Files) Opened(string? path, List<string> named)
     {
         string? folder = null;
-        string? solution = null;
+        string? workspace = null;
         List<string> files = [];
         if (path is not null)
         {
@@ -217,16 +219,13 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
             {
                 string full = Path.GetFullPath(path);
                 folder = Path.GetDirectoryName(full);
-                switch (Path.GetExtension(full).ToLowerInvariant())
+                if (WorkspaceModel.Opens(full))
                 {
-                    case ".sln" or ".slnx":
-                        solution = full;
-                        break;
-                    case ".csproj":
-                        break;
-                    default:
-                        files.Add(full);
-                        break;
+                    workspace = full;
+                }
+                else
+                {
+                    files.Add(full);
                 }
             }
             else
@@ -246,7 +245,7 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
             }
             files.Add(full);
         }
-        return (folder, solution, files);
+        return (folder, workspace, files);
     }
 
     /// <summary>The screenshot, refused unless its PNG has a folder to go in, its frame is one the headless window draws,

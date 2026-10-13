@@ -26,13 +26,13 @@ public sealed partial class PassengerTools(MainWindow window)
 
     // Workspace and editor
 
-    [McpServerTool(Name = "open", Title = "Open a folder, solution or file", Destructive = false), Description(
-        "Opens a folder or solution (a directory, .sln or .slnx) as the workspace, or a file in the editor (opening its folder " +
-        "first if none is open). Starts the C# language server for the workspace. Returns the workspace.")]
+    [McpServerTool(Name = "open", Title = "Open a folder, solution, project or file", Destructive = false), Description(
+        "Opens a folder, solution or project (a directory, .sln, .slnx or .csproj) as the workspace, or a file in the editor " +
+        "(opening its folder first if none is open). Starts the C# language server for the workspace. Returns the workspace.")]
     public Task<Workspace> Open([Description("Absolute path, or relative to the open folder")] string path, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         string full = Resolve(path);
-        if (Directory.Exists(full) || full.EndsWith(".sln", StringComparison.OrdinalIgnoreCase) || full.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase))
+        if (Directory.Exists(full) || (File.Exists(full) && WorkspaceModel.Opens(full)))
         {
             window.OpenFolder(full);
         }

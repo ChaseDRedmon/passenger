@@ -74,6 +74,15 @@ public sealed class ExplorerTree
         Show(root);
     }
 
+    /// <summary>A project opened alone, as Rider opens a project file: the project at the top, its dependencies and files
+    /// under it.</summary>
+    public void LoadProject(ProjectModel project)
+    {
+        IsSolutionView = true;
+        solution = null;
+        Show(Project(project, 0));
+    }
+
     public void Toggle(ExplorerNode node)
     {
         if (node.IsExpanded)

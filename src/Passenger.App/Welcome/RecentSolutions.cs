@@ -3,9 +3,10 @@ using Passenger.App.State;
 
 namespace Passenger.App.Welcome;
 
-/// <summary>The folders and solutions opened lately, as Rider's recentSolutions.xml keeps them, by path (a solution file,
-/// or a folder without one, canonical): what the Welcome screen and File, Recent Solutions list, and the one reopened on
-/// start. Kept by path rather than as a list, so two windows' openings and removals merge entry by entry.</summary>
+/// <summary>The folders and solutions opened lately, as Rider's recentSolutions.xml keeps them, by path (a solution file, a
+/// project opened alone, or a folder without either, canonical): what the Welcome screen and File, Recent Solutions list,
+/// and the one reopened on start. Kept by path rather than as a list, so two windows' openings and removals merge entry
+/// by entry.</summary>
 public sealed record RecentSolutionsState : IStateDocument<RecentSolutionsState>
 {
     /// <summary>How many are kept, the oldest dropped past it, as IntelliJ's recent projects are.</summary>

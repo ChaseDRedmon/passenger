@@ -8,6 +8,10 @@ namespace Passenger.App;
 public static class AppActions
 {
     public const string Open = "app.open";
+
+    /// <summary>A folder to open: the system's panel takes files or folders, not both as Rider's does, so Open takes the
+    /// solution or project files and this the folder. Rider's keymaps have no keys for it.</summary>
+    public const string OpenFolder = "app.openFolder";
     public const string Exit = "app.exit";
     public const string Save = "app.save";
     public const string SaveAll = "app.saveAll";

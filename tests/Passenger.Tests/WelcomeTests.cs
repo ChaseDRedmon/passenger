@@ -6,6 +6,7 @@ using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
 using Passenger.App;
+using Passenger.App.Explorer;
 using Passenger.App.Vcs;
 using Passenger.App.Welcome;
 using Passenger.Core;
@@ -16,7 +17,8 @@ namespace Passenger.Tests;
 /// each folder it opens, and a start that names nothing reopens the last unless Settings says not to. The Welcome screen
 /// lists them newest first, narrowed as a search is typed, opened by Up, Down and Enter, removed for good by Delete; one
 /// gone from disk is marked and refused with why. Clone Repository clones and opens, says why it could not, and stops
-/// when canceled; File, Recent Solutions opens one with its recent files.</summary>
+/// when canceled; File, Recent Solutions opens one with its recent files. File, Open takes the solution or project chosen
+/// as the workspace, of a folder's several, kept and reopened as itself, and refuses anything else with why.</summary>
 public sealed class WelcomeTests : IDisposable
 {
     private readonly string settings = TestFolders.Create("settings-");
@@ -156,6 +158,78 @@ public sealed class WelcomeTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void Open_takes_the_solution_chosen_of_a_folders_several_and_Recent_Solutions_keeps_and_reopens_that_one()
+    {
+        using IDisposable theme = TestsTheme();
+        string folder = Solutions();
+        string a = PathNames.Canonical(Path.Combine(folder, "A.sln"));
+        string b = PathNames.Canonical(Path.Combine(folder, "B.slnx"));
+        MainWindow window = Started(LaunchOptions.Empty);
+
+        // Named for its folder, A.sln is what the folder opens as on its own: only the choice makes B the workspace.
+        Assert.Null(window.Open(folder));
+        Ui.Settle();
+        OpenedAs(window, a, "A", ["AppA"]);
+        Assert.Null(window.Open(b));
+        Ui.Settle();
+        OpenedAs(window, b, "B", ["AppB"]);
+
+        // With another folder open, File, Recent Solutions lists B as itself, newest first, and opens it as B again.
+        window.Open(beta);
+        Ui.Settle();
+        NativeMenuItem[] items = [.. Ui.Submenu(Ui.Submenu(window.MenuBar, "File"), MainMenu.RecentSolutions).Items.OfType<NativeMenuItem>()];
+        Assert.Equal([$"B – {RecentRow.Home(b)}", $"A – {RecentRow.Home(a)}"], items.Select(i => i.Header));
+        items[0].Command!.Execute(null);
+        Ui.Settle();
+        OpenedAs(window, b, "B", ["AppB"]);
+        window.Close();
+
+        MainWindow next = Started(LaunchOptions.Empty);
+        OpenedAs(next, b, "B", ["AppB"]);
+        next.Close();
+    }
+
+    [AvaloniaFact]
+    public void Open_takes_a_project_beside_a_folders_solutions_as_the_workspace_alone_and_Recent_Solutions_reopens_it()
+    {
+        using IDisposable theme = TestsTheme();
+        string tool = PathNames.Canonical(Path.Combine(Solutions(), "Tool.csproj"));
+        MainWindow window = Started(LaunchOptions.Empty);
+
+        Assert.Null(window.Open(tool));
+        Ui.Settle();
+        OpenedAs(window, tool, "Tool", ["Tool"]);
+        ExplorerTree tree = window.ExplorerView.Tree;
+        Assert.True(tree.IsSolutionView && tree.Rows[0].Kind == NodeKind.Project && tree.Rows.Any(r => r.Depth == 1 && r.Name == "Tool.cs"),
+            $"The Solution view was to show Tool, its files under it; it shows [{string.Join(", ", tree.Rows.Select(r => $"{r.Kind} {r.Name}"))}]");
+        Assert.Equal(("Tool", tool), (window.RecentSolutions[0].Name, window.RecentSolutions[0].Path));
+        window.Close();
+
+        MainWindow next = Started(LaunchOptions.Empty);
+        OpenedAs(next, tool, "Tool", ["Tool"]);
+        next.Close();
+    }
+
+    [AvaloniaFact]
+    public void Open_refuses_a_file_that_is_no_solution_or_project_and_a_path_that_is_not_there_and_says_why()
+    {
+        using IDisposable theme = TestsTheme();
+        string notes = Path.Combine(alpha, "notes.txt");
+        File.WriteAllText(notes, "No solution\n");
+        MainWindow window = Started(LaunchOptions.Empty);
+
+        string? why = window.Open(notes);
+        Assert.True(why == "notes.txt was not opened: Open takes a solution (.sln, .slnx), a C# project (.csproj) or a folder" && window.Folder is null,
+            $"notes.txt was to be refused with the reason; Open said '{why}' and opened {window.Folder ?? "nothing"}");
+        Assert.True(window.Status == why && window.Welcome.Notice == why, $"The status bar says '{window.Status}' and the Welcome screen '{window.Welcome.Notice}', not why");
+
+        why = window.Open(Path.Combine(alpha, "Gone.sln"));
+        Assert.True(why?.EndsWith("Gone.sln was not opened: it does not exist", StringComparison.Ordinal) == true && window.Folder is null,
+            $"Gone.sln, which is not there, was to be refused with the reason; Open said '{why}' and opened {window.Folder ?? "nothing"}");
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Clone_Repository_clones_into_the_folder_chosen_and_opens_the_clone()
     {
         using IDisposable theme = TestsTheme();
@@ -276,6 +350,40 @@ public sealed class WelcomeTests : IDisposable
     }
 
     private static string Name(string folder) => Path.GetFileName(folder);
+
+    /// <summary>A folder named A holding A.sln (AppA), B.slnx (AppB) and, beside them, the project Tool.csproj.</summary>
+    private string Solutions()
+    {
+        string folder = Path.Combine(alpha, "A");
+        string project = "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n";
+        Directory.CreateDirectory(Path.Combine(folder, "AppA"));
+        Directory.CreateDirectory(Path.Combine(folder, "AppB"));
+        File.WriteAllText(Path.Combine(folder, "AppA", "AppA.csproj"), project);
+        File.WriteAllText(Path.Combine(folder, "AppB", "AppB.csproj"), project);
+        File.WriteAllText(Path.Combine(folder, "Tool.csproj"), project);
+        File.WriteAllText(Path.Combine(folder, "Tool.cs"), "class Tool { }\n");
+        File.WriteAllText(Path.Combine(folder, "A.sln"),
+            "Microsoft Visual Studio Solution File, Format Version 12.00\n" +
+            "Project(\"{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}\") = \"AppA\", \"AppA\\AppA.csproj\", \"{0F7C6F3B-9D31-4B0B-8B9C-3E2B1D3F0A11}\"\nEndProject\n");
+        File.WriteAllText(Path.Combine(folder, "B.slnx"), "<Solution>\n  <Project Path=\"AppB/AppB.csproj\" />\n</Solution>\n");
+        return PathNames.Canonical(folder);
+    }
+
+    /// <summary>That the window has a solution or project as its workspace, as a person sees it and the language server
+    /// loads it: its folder open, its name at the Explorer's top and in the title, its projects, and those the server
+    /// opens (the solution, or the project alone).</summary>
+    private static void OpenedAs(MainWindow window, string path, string name, string[] projects)
+    {
+        Lsp.RoslynSession? server = window.CSharpService?.Session;
+        string has = $"the folder {window.Folder}, {window.ExplorerView.Tree.Rows.FirstOrDefault()?.Name} at the Explorer's top, the title " +
+            $"'{window.Title}', the projects [{string.Join(", ", window.WorkspaceModel?.Projects.Select(p => p.Name) ?? [])}], and the language " +
+            $"server opened {server?.Solution ?? string.Join(", ", server?.Projects ?? [])}";
+        bool solution = path.EndsWith(".sln", StringComparison.Ordinal) || path.EndsWith(".slnx", StringComparison.Ordinal);
+        Assert.True(window.Folder == Path.GetDirectoryName(path) && window.ExplorerView.Tree.Rows.FirstOrDefault()?.Name == name && window.Title == name
+            && window.WorkspaceModel?.Projects.Select(p => p.Name).SequenceEqual(projects) == true
+            && (solution ? server?.Solution == path : server is { Solution: null } && server.Projects.SequenceEqual([path])),
+            $"{Path.GetFileName(path)} was to be the workspace; the window has {has}");
+    }
 
     /// <summary>Whether the window shows its Welcome screen: in it, and not hidden.</summary>
     private static bool Shown(MainWindow window) => TopLevel.GetTopLevel(window.Welcome) == window && window.Welcome.IsEffectivelyVisible;

@@ -23,7 +23,7 @@
                     <Button Name="MenuButton" Classes="tool" ToolTip.Tip="Main menu" Click="OnMenuClicked">
                         <PathIcon Data="{StaticResource Icon.Menu}" />
                     </Button>
-                    <Button Classes="widget" ToolTip.Tip="Open a solution, project or folder" Click="OnOpenClicked">
+                    <Button Name="ProjectButton" Classes="widget" ToolTip.Tip="Open a solution, project or folder" Click="OnProjectClicked">
                         <StackPanel Orientation="Horizontal" Spacing="7">
                             <Border Name="ProjectBadge" IsVisible="False" Width="20" Height="20" CornerRadius="4"
                                     Background="{DynamicResource Passenger.Badge}">

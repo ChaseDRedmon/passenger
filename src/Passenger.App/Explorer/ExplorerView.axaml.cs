@@ -144,13 +144,16 @@ public partial class ExplorerView : UserControl
     private string? folder;
     private Workspace.SolutionModel? solution;
 
-    /// <summary>Shows a folder: its solution's view if it has one, its files otherwise.</summary>
-    public void Load(string path, Workspace.SolutionModel? model)
+    /// <summary>The project opened alone, as Rider opens a project file, which the Solution view shows at its top.</summary>
+    private Workspace.ProjectModel? project;
+
+    /// <summary>Shows a workspace: its solution's view if it has one (or the project it was opened as), its folder's files
+    /// otherwise.</summary>
+    public void Load(Workspace.WorkspaceModel workspace)
     {
-        folder = path;
-        solution = model;
-        ViewSwitch.IsVisible = model is not null;
-        Show(solutionView: model is not null);
+        folder = workspace.Folder;
+        Take(workspace);
+        Show(solutionView: ViewSwitch.IsVisible);
         Hint.IsVisible = false;
         Rows.IsVisible = true;
     }
@@ -159,11 +162,17 @@ public partial class ExplorerView : UserControl
     public void RefreshFolders(IEnumerable<string> folders) => Tree.RefreshFolders(folders);
 
     /// <summary>The folder's solution read again (a project added or changed on disk), the rows open kept.</summary>
-    public void Reload(Workspace.SolutionModel? model)
+    public void Reload(Workspace.WorkspaceModel workspace)
     {
-        solution = model;
-        ViewSwitch.IsVisible = model is not null;
+        Take(workspace);
         Refresh();
+    }
+
+    private void Take(Workspace.WorkspaceModel workspace)
+    {
+        solution = workspace.Solution;
+        project = workspace.ProjectFile is null ? null : workspace.Projects.FirstOrDefault();
+        ViewSwitch.IsVisible = solution is not null || project is not null;
     }
 
     private void Show(bool solutionView)
@@ -171,6 +180,11 @@ public partial class ExplorerView : UserControl
         if (solutionView && solution is not null)
         {
             Tree.LoadSolution(solution);
+            ViewName.Text = "Solution";
+        }
+        else if (solutionView && project is not null)
+        {
+            Tree.LoadProject(project);
             ViewName.Text = "Solution";
         }
         else if (folder is not null)

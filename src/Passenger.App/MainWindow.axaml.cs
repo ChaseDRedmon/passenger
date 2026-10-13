@@ -300,11 +300,11 @@ public partial class MainWindow : Window
     /// <summary>Every file of the open folder, as Go to File searches them.</summary>
     public FileIndex FileIndex => index;
 
-    /// <summary>Opens what the command line named: a folder or solution, files in it, a caret position. Named nothing,
-    /// the window that keeps state reopens what was opened last, or shows the Welcome screen.</summary>
+    /// <summary>Opens what the command line named: a folder, solution or project, files in it, a caret position. Named
+    /// nothing, the window that keeps state reopens what was opened last, or shows the Welcome screen.</summary>
     public void Start(LaunchOptions options)
     {
-        if ((options.Solution ?? options.Folder) is { } path)
+        if ((options.Workspace ?? options.Folder) is { } path)
         {
             OpenFolder(path);
         }
@@ -332,15 +332,16 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>Opens a folder, or a solution (.sln, .slnx) and its folder, as the workspace. The workspace already open is
-    /// only read again: its language server and open files are kept.</summary>
+    /// <summary>Opens a folder, or a solution (.sln, .slnx) or C# project (.csproj) over its folder, as the workspace; what
+    /// a person chooses goes through <see cref="Open"/>, which refuses anything else. The workspace already open is only
+    /// read again: its language server and open files are kept.</summary>
     public void OpenFolder(string path)
     {
         string named = PathNames.Canonical(path);
-        bool solutionNamed = File.Exists(named) && (named.EndsWith(".sln", StringComparison.OrdinalIgnoreCase) || named.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase));
-        string opening = solutionNamed ? Path.GetDirectoryName(named)! : named;
-        WorkspaceModel? withSolution = WorkspaceModel.ReadSolution(opening, solutionNamed ? named : opening == folder ? namedSolution : null);
-        if (opening == folder && withSolution?.Solution?.Path == Solution?.Path)
+        bool fileNamed = File.Exists(named) && WorkspaceModel.Opens(named);
+        string opening = fileNamed ? Path.GetDirectoryName(named)! : named;
+        WorkspaceModel? withSolution = WorkspaceModel.ReadSolution(opening, fileNamed ? named : opening == folder ? namedSolution : null);
+        if (opening == folder && (withSolution?.OpenedAs ?? opening) == workspace?.OpenedAs)
         {
             Read(withSolution);
             return;
@@ -363,13 +364,13 @@ public partial class MainWindow : Window
         Autosave();
         folder = opening;
         // Where the log's timing of the language server's start (MainWindow.Workspace's CSharpService) begins.
-        IdeErrors.Write($"Opened {opening}{(withSolution?.Solution is { } solution ? $" with {Path.GetFileName(solution.Path)}" : string.Empty)}");
+        IdeErrors.Write($"Opened {opening}{(withSolution is { } read && read.OpenedAs != opening ? $" with {Path.GetFileName(read.OpenedAs)}" : string.Empty)}");
         agentSocket?.Describe(folder);
-        namedSolution = solutionNamed ? named : null;
+        namedSolution = fileNamed ? named : null;
         // A folder without a solution has no projects until the walk for them lands: none to load, run or build meanwhile.
         reads++;
         workspace = withSolution ?? new WorkspaceModel(opening, null, []);
-        Explorer.Load(folder, Solution);
+        Explorer.Load(workspace);
         _ = vcs.OpenAsync(folder);
         Explorer.Tree.Unloaded.Clear();
         LoadConfigurations();
@@ -1362,15 +1363,6 @@ public partial class MainWindow : Window
         ShowPopup(window);
     }
 
-    private async Task PickFolder()
-    {
-        IReadOnlyList<IStorageFolder> picked = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = "Open" });
-        if (picked.Count == 1 && picked[0].TryGetLocalPath() is { } path)
-        {
-            OpenFolder(path);
-        }
-    }
-
     private void UpdateStatus()
     {
         OpenDocument? active = Editors.Active;
@@ -1383,17 +1375,22 @@ public partial class MainWindow : Window
         }
         // With a file open the status bar's path names it, so the message line is left for messages.
         StatusText.Text = active is null ? where : string.Empty;
-        // Nothing open, the window is Rider's Welcome window; else it names the file its own editors show, an editor
-        // window in front or not.
-        OpenDocument? shown = Editors.ShownInMain;
-        string idle = folder is null ? "Welcome to Passenger" : Path.GetFileName(folder);
-        Title = shown is null ? idle : $"{(folder is null ? "" : Path.GetFileName(folder) + " – ")}{shown.Name}";
+        ShowTitle();
         LineEndingText.Text = active is null ? "" : active.LineEnding == "\r\n" ? "CRLF" : "LF";
         EncodingText.Text = active?.EncodingName ?? "";
         IndentText.Text = active?.Indentation.Shown ?? "";
         ToolTip.SetTip(IndentText, active?.Indentation.Tip(active.Language.Name));
         LanguageText.Text = LanguageLabel();
         UpdateCaret();
+    }
+
+    /// <summary>The window's title, as Rider's: the solution (or the project opened alone, or the folder) and the file its
+    /// own editors show, an editor window in front or not; with nothing open, the Welcome window's.</summary>
+    private void ShowTitle()
+    {
+        string? named = folder is null ? null : workspace?.Name ?? Path.GetFileName(folder);
+        OpenDocument? shown = Editors.ShownInMain;
+        Title = shown is null ? named ?? "Welcome to Passenger" : $"{(named is null ? "" : named + " – ")}{shown.Name}";
     }
 
     /// <summary>The file's language, with the language server's state beside it while it is not ready, or the work it
@@ -1438,7 +1435,7 @@ public partial class MainWindow : Window
         BeginMoveDrag(e);
     }
 
-    private void OnOpenClicked(object? sender, RoutedEventArgs e) => _ = PickFolder();
+    private void OnProjectClicked(object? sender, RoutedEventArgs e) => ShowProjectMenu();
 
     /// <summary>The project badge's two letters, as Rider draws them: the first two words' initials,
     /// or a lone word's first two letters.</summary>
