@@ -36,6 +36,12 @@ public partial class MainWindow
             testGutter.Forget(document);
             tests.Finder.Closed(document.Path);
         };
+        // The grouping and outcomes chosen are the folder's, as Rider keeps a session's.
+        tests.Tree.ViewChanged += (_, _) => folderState?.UnitTests.Set(new Testing.UnitTestsState
+        {
+            Grouping = [.. tests.Tree.Grouping],
+            Outcomes = [.. tests.Tree.Outcomes.Order()],
+        });
         Bottom.Tests.ActionRequested += (_, action) => Request(action);
         Bottom.Tests.RunRequested += (_, debugging) =>
         {
@@ -50,6 +56,13 @@ public partial class MainWindow
                 NavigateTo(PathNames.Canonical(path), new TextPosition(Math.Max(0, node.Line - 1), 0));
             }
         };
+    }
+
+    /// <summary>The Unit Tests window's grouping and outcomes as the folder kept them, or Rider's defaults.</summary>
+    private void RestoreUnitTests(Testing.UnitTestsState kept)
+    {
+        tests.Tree.Group(kept.Grouping);
+        tests.Tree.ShowOutcomes(kept.Outcomes);
     }
 
     /// <summary>The Unit Tests window follows the folder's projects: their tests are found from code once the folder's
@@ -196,7 +209,7 @@ public partial class MainWindow
         });
 
         List<Testing.TestNode> Matching() =>
-            [.. tests.Tree.Roots.SelectMany(r => r.Methods).Where(m => m.FullName is { } name && Testing.TestsAtCaret.Matches(name, context.Type, context.Method))];
+            [.. tests.Tree.Methods.Where(m => m.FullName is { } name && Testing.TestsAtCaret.Matches(name, context.Type, context.Method))];
     }
 
     /// <summary>A test host a runner would start, started under the debugger as a plan of its own (the runner built it, and

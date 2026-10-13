@@ -193,7 +193,7 @@ public sealed class TestController : IAsyncDisposable
                 return problem;
             }
             stop.Token.ThrowIfCancellationRequested();
-            List<TestItem> tests = Chosen(chosen ?? Tree.Roots);
+            List<TestItem> tests = Chosen(chosen ?? Tree.Methods);
             if (tests.Count == 0)
             {
                 return chosen is null ? "There are no tests to run" : "None of these tests was found in the test projects as built";
@@ -268,7 +268,7 @@ public sealed class TestController : IAsyncDisposable
 
     public Task<string?> RerunFailedAsync(string workspace)
     {
-        List<TestNode> failed = [.. Tree.Roots.SelectMany(r => r.Methods).Where(m => m.State == TestState.Failed)];
+        List<TestNode> failed = [.. Tree.Methods.Where(m => m.State == TestState.Failed)];
         return failed.Count == 0 ? Task.FromResult<string?>("No test failed") : RunAsync(workspace, failed);
     }
 
@@ -311,7 +311,10 @@ public sealed class TestController : IAsyncDisposable
     private void Load()
     {
         IReadOnlyList<ProjectModel> tests = Finder.Projects;
-        Tree.Load([.. tests.Select(p => new ProjectTests(p.Path, Path.GetFileNameWithoutExtension(p.Path), code.GetValueOrDefault(p.Path) ?? CodeTests.None, sources.GetValueOrDefault(p.Path) ?? NoSources))]);
+        Tree.Load([.. tests.Select(p => new ProjectTests(p.Path, Path.GetFileNameWithoutExtension(p.Path), code.GetValueOrDefault(p.Path) ?? CodeTests.None, sources.GetValueOrDefault(p.Path) ?? NoSources)
+        {
+            DeclaredFramework = p.TargetFrameworks is [{ } only] && !only.Contains('$', StringComparison.Ordinal) ? only : null,
+        })]);
         Tree.EmptyText = folder is null ? "Open a folder or solution to see its tests"
             : awaitingProjects || Finder.IsLooking ? "Looking for tests…"
             : tests.Count == 0 ? "No test projects: none references xUnit, NUnit or MSTest"

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Threading;
@@ -649,6 +650,220 @@ public sealed class UnitTestsTests : IDisposable
         Assert.Equal(TestState.Passed, Method(window, "Doubles")!.State);
         Assert.Equal(2, Method(window, "Doubles")!.Children.Count);
         window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Group_by_categories_shows_each_test_under_its_xunit_traits_nunit_categories_and_mstest_test_categories()
+    {
+        string solution = NewFolder();
+        Write(solution, "Xunit.Tests/Xunit.Tests.csproj", TestProject("net10.0"));
+        Write(solution, "Xunit.Tests/SumTests.cs",
+            "using Xunit;\n\nnamespace Sums.Tests;\n\n[Trait(\"Category\", \"Slow\")]\npublic class SumTests\n{\n    [Fact]\n    [Trait(\"Owner\", \"Ann\")]\n    public void Adds() { }\n\n" +
+            "    [Fact]\n    public void Subtracts() { }\n}\n\npublic class PlainTests\n{\n    [Fact]\n    public void Plain() { }\n}\n");
+        Write(solution, "NUnit.Tests/NUnit.Tests.csproj", PackagesProject("NUnit", "NUnit3TestAdapter"));
+        Write(solution, "NUnit.Tests/ParserTests.cs",
+            "using NUnit.Framework;\n\nnamespace Parsing.Tests;\n\n[TestFixture]\npublic class ParserTests\n{\n    [Test]\n    [Category(\"Fast\")]\n    public void Reads() { }\n}\n");
+        Write(solution, "MSTest.Tests/MSTest.Tests.csproj", PackagesProject("MSTest"));
+        Write(solution, "MSTest.Tests/StoreTests.cs",
+            "using Microsoft.VisualStudio.TestTools.UnitTesting;\n\nnamespace Store.Tests;\n\n[TestClass]\npublic class StoreTests\n{\n    [TestMethod]\n" +
+            "    [TestCategory(\"Fast\")]\n    [TestCategory(\"Slow\")]\n    public void Keeps() { }\n}\n");
+        Write(solution, "Tests.slnx", "<Solution>\n  <Project Path=\"Xunit.Tests/Xunit.Tests.csproj\" />\n  <Project Path=\"NUnit.Tests/NUnit.Tests.csproj\" />\n" +
+            "  <Project Path=\"MSTest.Tests/MSTest.Tests.csproj\" />\n</Solution>\n");
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(solution);
+        Tree(window);
+        Ui.WaitFor(() => Method(window, "Keeps") is not null, "the tests read from the code");
+
+        // Rider's Group By: Categories puts each test under every category it has (its class's too), a trait not named
+        // Category by its name and value, and a test with none under <Uncategorized>; a class says its namespace.
+        GroupBy(window, "Categories");
+        Assert.Equal(
+            [
+                "Fast", "  Parsing.Tests.ParserTests", "    Reads", "  Store.Tests.StoreTests", "    Keeps",
+                "Owner [Ann]", "  Sums.Tests.SumTests", "    Adds",
+                "Slow", "  Store.Tests.StoreTests", "    Keeps", "  Sums.Tests.SumTests", "    Adds", "    Subtracts",
+                "<Uncategorized>", "  Sums.Tests.PlainTests", "    Plain",
+            ],
+            Shown(window));
+        Assert.True(Count(window, "All Tests") == "5", $"A test under two categories was counted twice: All says {Count(window, "All Tests")} of 5 tests");
+
+        // The Project level turned on from the same menu is Rider's Project and Categories, ticked there.
+        GroupBy(window, "Project");
+        Assert.Equal(
+            [
+                "Xunit.Tests", "  Owner [Ann]", "    Sums.Tests.SumTests", "      Adds", "  Slow", "    Sums.Tests.SumTests", "      Adds", "      Subtracts",
+                "  <Uncategorized>", "    Sums.Tests.PlainTests", "      Plain",
+                "NUnit.Tests", "  Fast", "    Parsing.Tests.ParserTests", "      Reads",
+                "MSTest.Tests", "  Fast", "    Store.Tests.StoreTests", "      Keeps", "  Slow", "    Store.Tests.StoreTests", "      Keeps",
+            ],
+            Shown(window));
+        Click(window, ToolbarControl<Button>(window, "Group By"));
+        MenuItem ticked = Assert.Single(window.BottomPanel.Tests.OpenMenu!.Items.OfType<MenuItem>(), i => i is { ToggleType: MenuItemToggleType.Radio, IsChecked: true });
+        Assert.Equal("Project and Categories", ticked.Header);
+        window.BottomPanel.Tests.OpenMenu!.Close();
+
+        // Back to Rider's default, the tree is as it opened.
+        GroupBy(window, "Projects and Namespaces");
+        Assert.Equal(
+            [
+                "Xunit.Tests", "  Sums.Tests", "    PlainTests", "      Plain", "    SumTests", "      Adds", "      Subtracts",
+                "NUnit.Tests", "  Parsing.Tests", "    ParserTests", "      Reads",
+                "MSTest.Tests", "  Store.Tests", "    StoreTests", "      Keeps",
+            ],
+            Shown(window));
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void After_a_run_the_failed_filter_shows_the_failures_alone_as_many_as_it_counts_and_a_modifier_adds_the_ignored()
+    {
+        MainWindow window = Open();
+        Assert.True(window.Perform(AppActions.RunAllTests));
+        Ui.WaitFor(() => !window.Tests.IsBusy && Method(window, "Two_and_two_make_four")?.State == TestState.Passed, "the run of every test", TimeSpan.FromSeconds(120));
+        Tree(window);
+        // Each outcome's filter says how many tests have it, a theory's rows each one as the run's tally counts them; one
+        // no test has is hidden, as Rider hides empty filters.
+        Assert.Equal(["5", "3", "1", "1"], new[] { "All Tests", "Passed Tests", "Failed Tests", "Ignored Tests" }.Select(f => Count(window, f)));
+        Assert.False(Filter(window, "Tests Not Run").IsVisible, "The filter for tests not run shows though every test ran");
+
+        // Failed alone, with the class it is in closed: the class opens to show the failure, and nothing else.
+        window.Tests.Tree.Toggle(window.Tests.Tree.Rows.Single(r => r.Name == "SumTests"));
+        Click(window, Filter(window, "Failed Tests"));
+        Assert.Equal(["Sums.Tests", "  Sums.Tests", "    SumTests", "      Two_and_two_make_five"], Shown(window));
+        Assert.Equal(int.Parse(Count(window, "Failed Tests"), System.Globalization.CultureInfo.CurrentCulture), ShownTests(window));
+        Assert.Equal([true, false], new[] { "Failed Tests", "All Tests" }.Select(f => Filter(window, f).IsChecked == true));
+
+        // With the platform's modifier held, Ignored is added to Failed rather than taking its place.
+        Click(window, Filter(window, "Ignored Tests"), OperatingSystem.IsMacOS() ? Avalonia.Input.RawInputModifiers.Meta : Avalonia.Input.RawInputModifiers.Control);
+        Assert.Equal(["Sums.Tests", "  Sums.Tests", "    SumTests", "      Not_yet", "      Two_and_two_make_five"], Shown(window));
+        Assert.Equal(2, ShownTests(window));
+
+        // Passed alone shows a theory's passing rows under it, opened.
+        Click(window, Filter(window, "Passed Tests"));
+        Assert.Equal(
+            ["Sums.Tests", "  Sums.Tests", "    SumTests", "      Doubles", "        Doubles(value: 1, twice: 2)", "        Doubles(value: 2, twice: 4)", "      Two_and_two_make_four"],
+            Shown(window));
+        Assert.Equal(int.Parse(Count(window, "Passed Tests"), System.Globalization.CultureInfo.CurrentCulture), ShownTests(window));
+
+        // All shows every test again.
+        Click(window, Filter(window, "All Tests"));
+        Assert.Equal(5, ShownTests(window));
+        Assert.Empty(window.Tests.Tree.Outcomes);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Find_in_the_unit_tests_window_narrows_the_tree_to_the_tests_named_and_the_rows_above_them()
+    {
+        Write("ParseTests.cs", "using Xunit;\n\nnamespace Sums.Parsing;\n\npublic class ParseTests\n{\n    [Fact]\n    public void Reads_two() { }\n\n    [Fact]\n    public void Reads_four() { }\n}\n");
+        MainWindow window = Open();
+        ListBox tree = Tree(window);
+        Ui.WaitFor(() => Method(window, "Reads_four") is not null, "the tests read from the code");
+
+        // The keys in the tree, Find goes to the window's search, where a word narrows the tree whatever its case.
+        Click(window, tree.ContainerFromItem(window.Tests.Tree.Rows.Single(r => r.Name == "SumTests"))!);
+        Ui.Run(window, AppActions.Find);
+        window.KeyTextInput("FOUR");
+        Ui.Settle();
+        Assert.Equal(["Sums.Tests", "  Sums.Parsing", "    ParseTests", "      Reads_four", "  Sums.Tests", "    SumTests", "      Two_and_two_make_four"], Shown(window));
+
+        // Find again chooses the search's text; a class's name keeps every test in it.
+        Ui.Run(window, AppActions.Find);
+        window.KeyTextInput("parsetests");
+        Ui.Settle();
+        Assert.Equal(["Sums.Tests", "  Sums.Parsing", "    ParseTests", "      Reads_four", "      Reads_two"], Shown(window));
+
+        // Nothing matching says so; Escape empties the search and every test is back.
+        window.KeyTextInput("x");
+        Ui.Settle();
+        Assert.Empty(window.Tests.Tree.Rows);
+        Assert.Contains("No matching tests", ShownTexts(window));
+        Ui.Press(window, "Escape");
+        Assert.Equal(6, ShownTests(window));
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void The_grouping_and_outcomes_chosen_come_back_when_the_folder_opens_again_and_another_folder_has_its_own()
+    {
+        string settings = NewFolder();
+        string other = NewFolder();
+        Write(other, "Other.Tests/Other.Tests.csproj", TestProject("net10.0"));
+        Write(other, "Other.Tests/OtherTests.cs", "using Xunit;\n\nnamespace Other.Tests;\n\npublic class OtherTests\n{\n    [Fact]\n    public void Elsewhere() { }\n}\n");
+        MainWindow first = Keeping(settings, folder);
+        Ui.WaitFor(() => Method(first, "Doubles") is not null, "the tests read from the code");
+        GroupBy(first, "Categories");
+        Click(first, Filter(first, "Tests Not Run"));
+        first.Close();
+
+        // Rider keeps a session's grouping and filters with the solution.
+        MainWindow second = Keeping(settings, folder);
+        Ui.WaitFor(() => Method(second, "Doubles") is not null, "the tests read from the code");
+        Assert.Equal([TestGroupLevel.Category], second.Tests.Tree.Grouping);
+        Assert.True(Filter(second, "Tests Not Run").IsChecked, "The filter chosen for tests not run was not chosen when the folder opened again");
+        Assert.Equal(
+            ["<Uncategorized>", "  Sums.Tests.SumTests", "    Doubles", "    Not_yet", "    Two_and_two_make_five", "    Two_and_two_make_four"],
+            Shown(second));
+
+        // Another folder opens on its own, Rider's defaults having never been changed there; the first's come back with it.
+        second.OpenFolder(other);
+        Ui.WaitFor(() => Method(second, "Elsewhere") is not null, "the other folder's tests");
+        Assert.Equal(TestGroupings.Default, second.Tests.Tree.Grouping);
+        Assert.True(Filter(second, "All Tests").IsChecked, "Another folder opened with the first folder's filter");
+        Assert.Equal(["Other.Tests", "  Other.Tests", "    OtherTests", "      Elsewhere"], Shown(second));
+        second.OpenFolder(folder);
+        Assert.Equal([TestGroupLevel.Category], second.Tests.Tree.Grouping);
+        Assert.Equal([TestState.NotRun], second.Tests.Tree.Outcomes);
+        second.Close();
+    }
+
+    /// <summary>The window a person uses, as the app makes it: one that keeps its state, here in the test's own folder.</summary>
+    private static MainWindow Keeping(string settings, string open)
+    {
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings };
+        window.Show();
+        window.KeepLayout();
+        window.OpenFolder(open);
+        Ui.Settle();
+        Tree(window);
+        return window;
+    }
+
+    /// <summary>A control of the Unit Tests window's toolbar, by the tip it shows.</summary>
+    private static T ToolbarControl<T>(MainWindow window, string tip) where T : Control =>
+        window.BottomPanel.Tests.GetVisualDescendants().OfType<T>().FirstOrDefault(c => ToolTip.GetTip(c) is string text && text.StartsWith(tip, StringComparison.Ordinal))
+            ?? throw new InvalidOperationException($"The Unit Tests window's toolbar has no {tip}");
+
+    private static ToggleButton Filter(MainWindow window, string tests) => ToolbarControl<ToggleButton>(window, $"Filter {tests}");
+
+    /// <summary>How many tests an outcome's filter says have it.</summary>
+    private static string Count(MainWindow window, string tests) => Filter(window, tests).GetVisualDescendants().OfType<TextBlock>().Single().Text!;
+
+    /// <summary>The tests the tree shows: data rows, and methods without them.</summary>
+    private static int ShownTests(MainWindow window) =>
+        window.Tests.Tree.Rows.Count(r => r.Kind == TestNodeKind.Row || r is { Kind: TestNodeKind.Method, HasChildren: false });
+
+    /// <summary>A click where the pointer finds a control.</summary>
+    private static void Click(MainWindow window, Control control, Avalonia.Input.RawInputModifiers modifiers = Avalonia.Input.RawInputModifiers.None)
+    {
+        Assert.True(control.IsEffectivelyVisible, $"{ToolTip.GetTip(control) ?? control.GetType().Name} is hidden");
+        Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)!.Value;
+        window.MouseDown(at, Avalonia.Input.MouseButton.Left, modifiers);
+        window.MouseUp(at, Avalonia.Input.MouseButton.Left, modifiers);
+        Ui.Settle();
+    }
+
+    /// <summary>Chooses an item of the toolbar's Group By menu.</summary>
+    private static void GroupBy(MainWindow window, string item)
+    {
+        Click(window, ToolbarControl<Button>(window, "Group By"));
+        ContextMenu menu = window.BottomPanel.Tests.OpenMenu ?? throw new InvalidOperationException("Group By opened no menu");
+        MenuItem chosen = menu.Items.OfType<MenuItem>().FirstOrDefault(i => (string?)i.Header == item)
+            ?? throw new InvalidOperationException($"Group By has no {item}: [{string.Join(", ", menu.Items.OfType<MenuItem>().Select(i => i.Header))}]");
+        chosen.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
+        menu.Close();
+        Ui.Settle();
     }
 
     private string NewFolder()

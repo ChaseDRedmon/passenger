@@ -73,7 +73,18 @@ public partial class MainWindow
         Add(A.Exit, "Exit", "IDE", _ => Close(), menu: OperatingSystem.IsMacOS() ? null : ("File", 4, 0));
         Add(A.FindAction, "Find Action...", "IDE", _ => ShowFindAction(), menu: ("Help", 0, 0));
 
-        Add(A.Find, "Find", "IDE", _ => Editors.ShowFind(replace: false), NeedsFile, ("Edit/Find", 0, 0));
+        // Rider's Unit Tests window takes Find's keys for its search while it has them.
+        Add(A.Find, "Find", "IDE", c =>
+        {
+            if (c.ToolWindow?.Id == "tests")
+            {
+                Bottom.Tests.FocusSearch();
+            }
+            else
+            {
+                Editors.ShowFind(replace: false);
+            }
+        }, c => c.ToolWindow?.Id == "tests" ? null : NeedsFile(c), ("Edit/Find", 0, 0));
         Add(A.Replace, "Replace", "IDE", _ => Editors.ShowFind(replace: true), NeedsFile, ("Edit/Find", 0, 1));
         Add(A.FindNext, "Find Next", "IDE", _ => Editors.FindBar.Next(), NeedsFile, ("Edit/Find", 0, 2));
         Add(A.FindPrevious, "Find Previous", "IDE", _ => Editors.FindBar.Previous(), NeedsFile, ("Edit/Find", 0, 3));

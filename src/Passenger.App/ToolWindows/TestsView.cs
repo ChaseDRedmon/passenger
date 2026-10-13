@@ -1,8 +1,10 @@
 using System.ComponentModel;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Templates;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
@@ -12,20 +14,41 @@ using Passenger.Text;
 
 namespace Passenger.App.ToolWindows;
 
-/// <summary>Rider's Unit Tests window: the tests by project, namespace, class and method, a theory's data rows under
-/// it, each marked with how it last ran and how long it took; the chosen one's message, stack trace and output beside the
-/// tree, its stack trace's frames links to their lines, as Rider's output pane has them; the run's tally above; and while
-/// there are none, why. Double-click or F4 goes to a test's source.</summary>
+/// <summary>Rider's Unit Tests window: the tests grouped as its Group By chooses (by project and namespace at first), then
+/// by class and method, a theory's data rows under it, each marked with how it last ran and how long it took; the chosen
+/// one's message, stack trace (its frames links to their lines) and output beside the tree; above it Rider's toolbar
+/// (Expand All, Collapse All, Group By, a filter for each outcome with how many tests have it, the search) and the run's
+/// tally; and while there are none, why. Double-click or F4 goes to a test's source.</summary>
 public sealed class TestsView : DockPanel
 {
     /// <summary>The most failed tests a group's details show, so choosing a project of thousands shows at once.</summary>
     private const int GroupDetailsLimit = 100;
 
+    /// <summary>Rider's outcome filters after All, in its toolbar's order: the outcome, Rider's name for its tests, and its
+    /// mark as the tree draws it.</summary>
+    private static readonly (TestState State, string Name, string Icon, string Brush)[] Filters =
+    [
+        (TestState.Passed, "Passed Tests", "Icon.TestPassed", "Passenger.Test.Passed"),
+        (TestState.Failed, "Failed Tests", "Icon.TestFailed", "Passenger.Test.Failed"),
+        (TestState.Skipped, "Ignored Tests", "Icon.TestSkipped", "Passenger.Test.Skipped"),
+        (TestState.NotRun, "Tests Not Run", "Icon.TestNotRun", "Passenger.Test.NotRun"),
+        (TestState.Running, "Running Tests", "Icon.TestRunning", "Passenger.Test.Running"),
+    ];
+
     private readonly ListBox tree;
     private readonly CodeEditor details;
     private readonly TextBlock status;
     private readonly TextBlock placeholder;
+    private readonly TextBox search;
+    private readonly Button groupBy;
+    private readonly ToggleButton all;
+    private readonly TextBlock allCount;
+    private readonly Dictionary<TestState, (ToggleButton Button, TextBlock Count)> filters = [];
     private bool detailsQueued;
+    private bool countsQueued;
+
+    /// <summary>Whether the filter being clicked adds to those chosen (Ctrl, ⌘ or Shift held) rather than replacing them.</summary>
+    private bool adding;
 
     public TestsView(TestTree model)
     {
@@ -74,10 +97,20 @@ public sealed class TestsView : DockPanel
             Margin = new Thickness(6, 4, 0, 0),
         };
         details.LinkClicked += (_, link) => LinkClicked?.Invoke(this, (LinkTarget)link.Target);
-        // Results come by the thousand: the chosen row's details are written again once they have, not once each.
-        model.ResultApplied += (_, _) => QueueDetails();
-        model.Updated += (_, _) => QueueDetails();
-        status = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0) };
+        // Results come by the thousand: the chosen row's details and the filters' counts are written again once they
+        // have, not once each.
+        model.ResultApplied += (_, _) =>
+        {
+            QueueDetails();
+            QueueCounts();
+        };
+        model.Updated += (_, _) =>
+        {
+            QueueDetails();
+            QueueCounts();
+        };
+        model.ViewChanged += (_, _) => ShowFilters();
+        status = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0), TextTrimming = TextTrimming.CharacterEllipsis };
         status.Bind(TextBlock.ForegroundProperty, status.GetResourceObservable("Passenger.TextMuted"));
         placeholder = new TextBlock
         {
@@ -86,8 +119,8 @@ public sealed class TestsView : DockPanel
             VerticalAlignment = VerticalAlignment.Center,
         };
         placeholder.Bind(TextBlock.ForegroundProperty, placeholder.GetResourceObservable("Passenger.TextMuted"));
-        model.Rows.CollectionChanged += (_, _) => placeholder.IsVisible = model.Rows.Count == 0;
-        model.EmptyTextChanged += (_, _) => placeholder.Text = model.EmptyText;
+        model.Rows.CollectionChanged += (_, _) => ShowPlaceholder();
+        model.EmptyTextChanged += (_, _) => ShowPlaceholder();
 
         Grid split = new() { ColumnDefinitions = new ColumnDefinitions("2*,1,3*") };
         HairlineDivider divider = new(GridResizeDirection.Columns) { [Grid.ColumnProperty] = 1 };
@@ -96,8 +129,57 @@ public sealed class TestsView : DockPanel
         split.Children.Add(divider);
         split.Children.Add(details);
 
-        Border topBar = new() { [DockProperty] = Dock.Top, Height = 32, BorderThickness = new Thickness(0, 0, 0, 1), Child = status };
+        // Rider's toolbar above the tree: what changes the tree, then a filter for each outcome; its search on the right.
+        PathIcon magnifier = new() { Width = 14, Height = 14, Margin = new Thickness(8, 0, 0, 0) };
+        magnifier.Bind(PathIcon.DataProperty, magnifier.GetResourceObservable("Icon.Search"));
+        search = new TextBox
+        {
+            [DockProperty] = Dock.Right,
+            Classes = { "search" },
+            Width = 220,
+            Margin = new Thickness(6, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            PlaceholderText = $"{(OperatingSystem.IsMacOS() ? "⌘F" : "Ctrl+F")} to filter",
+            InnerLeftContent = magnifier,
+        };
+        search.TextChanged += (_, _) => model.SearchFor(search.Text ?? string.Empty);
+        search.KeyDown += OnSearchKey;
+        groupBy = Tool("Icon.GroupBy", "Group By", ShowGroupBy);
+        all = Filter("Icon.TestAll", "Passenger.Icon", "All Tests", out allCount);
+        all.Click += (_, _) =>
+        {
+            model.ShowOutcomes([]);
+            // A click toggles the button itself; what it shows is what was chosen.
+            ShowFilters();
+        };
+        StackPanel bar = new()
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 2,
+            Margin = new Thickness(6, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Children =
+            {
+                Tool("Icon.ExpandAll", "Expand All", model.ExpandAll),
+                Tool("Icon.CollapseAll", "Collapse All", model.CollapseAll),
+                groupBy,
+                Divider(),
+                all,
+            },
+        };
+        foreach ((TestState state, string name, string icon, string brush) in Filters)
+        {
+            ToggleButton button = Filter(icon, brush, name, out TextBlock count);
+            button.Click += (_, _) => Choose(state);
+            filters[state] = (button, count);
+            bar.Children.Add(button);
+        }
+        DockPanel top = new() { Children = { search, bar, status } };
+        DockPanel.SetDock(bar, Dock.Left);
+        Border topBar = new() { [DockProperty] = Dock.Top, Height = 34, BorderThickness = new Thickness(0, 0, 0, 1), Child = top };
         topBar.Bind(Border.BorderBrushProperty, topBar.GetResourceObservable("Passenger.Divider"));
+        ShowFilters();
+        ShowPlaceholder();
         StackPanel left = new()
         {
             Spacing = 2,
@@ -105,11 +187,11 @@ public sealed class TestsView : DockPanel
             HorizontalAlignment = HorizontalAlignment.Center,
             Children =
             {
-                Tool(AppActions.RunAllTests, "Icon.Run", "Run All Tests"),
-                Tool(AppActions.RunTests, "Icon.RunOutline", "Run Selected Tests"),
-                Tool(AppActions.DebugTests, "Icon.Debug", "Debug Selected Tests"),
-                Tool(AppActions.RerunFailedTests, "Icon.Rerun", "Rerun Failed Tests"),
-                Tool(AppActions.StopTests, "Icon.Stop", "Stop"),
+                ActionTool(AppActions.RunAllTests, "Icon.Run", "Run All Tests"),
+                ActionTool(AppActions.RunTests, "Icon.RunOutline", "Run Selected Tests"),
+                ActionTool(AppActions.DebugTests, "Icon.Debug", "Debug Selected Tests"),
+                ActionTool(AppActions.RerunFailedTests, "Icon.Rerun", "Rerun Failed Tests"),
+                ActionTool(AppActions.StopTests, "Icon.Stop", "Stop"),
             },
         };
         Border leftBar = new() { [DockProperty] = Dock.Left, Width = 36, BorderThickness = new Thickness(0, 0, 1, 0), Child = left };
@@ -177,11 +259,13 @@ public sealed class TestsView : DockPanel
             Show(node.Details);
             return;
         }
-        List<TestNode> failed = [.. node.Methods.Where(m => m.State == TestState.Failed).Take(GroupDetailsLimit + 1)];
+        // A test under two categories is one failure.
+        IEnumerable<TestNode> failing = node.Methods.Where(m => m.State == TestState.Failed).DistinctBy(m => m.Identity);
+        List<TestNode> failed = [.. failing.Take(GroupDetailsLimit + 1)];
         string shown = string.Join("\n\n", failed.Take(GroupDetailsLimit).Select(m => $"{m.Name}\n{m.Details}"));
         if (failed.Count > GroupDetailsLimit)
         {
-            int more = node.Methods.Count(m => m.State == TestState.Failed) - GroupDetailsLimit;
+            int more = failing.Count() - GroupDetailsLimit;
             shown += $"\n\n…and {more} more failed";
         }
         Show(shown);
@@ -234,14 +318,162 @@ public sealed class TestsView : DockPanel
         }
     }
 
-    private Button Tool(string action, string icon, string tip)
+    /// <summary>The search, its text chosen, from Find's keys while the window has them.</summary>
+    public void FocusSearch()
     {
-        Button button = new() { Classes = { "tool" }, Content = new PathIcon() };
+        search.Focus();
+        search.SelectAll();
+    }
+
+    /// <summary>The Group By menu while it is open.</summary>
+    public ContextMenu? OpenMenu { get; private set; }
+
+    /// <summary>A toolbar button that runs one of the window's actions.</summary>
+    private Button ActionTool(string action, string icon, string tip)
+    {
         string? keys = AppActions.Keymap().ShortcutsFor(action).FirstOrDefault()?.Display();
-        ToolTip.SetTip(button, keys is null ? tip : $"{tip} ({keys})");
+        return Tool(icon, keys is null ? tip : $"{tip} ({keys})", () => ActionRequested?.Invoke(this, action));
+    }
+
+    private static Button Tool(string icon, string tip, Action run)
+    {
+        Button button = new() { Classes = { "tool" }, Content = new PathIcon(), Focusable = false };
+        ToolTip.SetTip(button, tip);
         ((PathIcon)button.Content).Bind(PathIcon.DataProperty, button.GetResourceObservable(icon));
-        button.Click += (_, _) => ActionRequested?.Invoke(this, action);
+        button.Click += (_, _) => run();
         return button;
+    }
+
+    /// <summary>An outcome's filter: its mark and how many tests have it. A click with Ctrl, ⌘ or Shift held adds it to
+    /// those chosen, as Rider's does.</summary>
+    private ToggleButton Filter(string icon, string brush, string name, out TextBlock count)
+    {
+        PathIcon mark = new();
+        mark.Bind(PathIcon.DataProperty, mark.GetResourceObservable(icon));
+        mark.Bind(PathIcon.ForegroundProperty, mark.GetResourceObservable(brush));
+        count = new TextBlock { VerticalAlignment = VerticalAlignment.Center };
+        ToggleButton button = new()
+        {
+            Classes = { "outcome" },
+            Focusable = false,
+            Content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5, Children = { mark, count } },
+        };
+        ToolTip.SetTip(button, $"Filter {name}\nHold {(OperatingSystem.IsMacOS() ? "⌘" : "Ctrl")} to select multiple filters");
+        button.AddHandler(PointerPressedEvent, (_, e) => adding = (e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Meta | KeyModifiers.Shift)) != 0,
+            RoutingStrategies.Tunnel, handledEventsToo: true);
+        return button;
+    }
+
+    private Border Divider()
+    {
+        Border line = new() { Width = 1, Height = 18, Margin = new Thickness(4, 0), VerticalAlignment = VerticalAlignment.Center };
+        line.Bind(Border.BackgroundProperty, line.GetResourceObservable("Passenger.Divider"));
+        return line;
+    }
+
+    /// <summary>An outcome's filter clicked: that outcome alone (All again if it was so already), or with a modifier held
+    /// that outcome added to or taken from those chosen.</summary>
+    private void Choose(TestState state)
+    {
+        bool add = adding;
+        adding = false;
+        HashSet<TestState> next = add ? [.. Model.Outcomes] : [];
+        if (add)
+        {
+            if (!next.Remove(state))
+            {
+                next.Add(state);
+            }
+        }
+        else if (Model.Outcomes.Count != 1 || !Model.Outcomes.Contains(state))
+        {
+            next.Add(state);
+        }
+        Model.ShowOutcomes(next);
+        // A click toggles the button itself; what it shows is what was chosen.
+        ShowFilters();
+    }
+
+    /// <summary>The filters as chosen, each with how many tests have its outcome; one no test has hidden unless it is
+    /// chosen, as Rider hides empty filters.</summary>
+    private void ShowFilters()
+    {
+        int[] counts = Model.Counts();
+        allCount.Text = counts.Sum().ToString(System.Globalization.CultureInfo.CurrentCulture);
+        all.IsChecked = Model.Outcomes.Count == 0;
+        foreach ((TestState state, (ToggleButton button, TextBlock count)) in filters)
+        {
+            count.Text = counts[(int)state].ToString(System.Globalization.CultureInfo.CurrentCulture);
+            button.IsChecked = Model.Outcomes.Contains(state);
+            button.IsVisible = counts[(int)state] > 0 || Model.Outcomes.Contains(state);
+        }
+    }
+
+    private void QueueCounts()
+    {
+        if (countsQueued)
+        {
+            return;
+        }
+        countsQueued = true;
+        Dispatcher.UIThread.Post(() =>
+        {
+            countsQueued = false;
+            ShowFilters();
+        }, DispatcherPriority.Background);
+    }
+
+    /// <summary>Why the tree has no rows: none yet, or none the filters and search let through.</summary>
+    private void ShowPlaceholder()
+    {
+        placeholder.IsVisible = Model.Rows.Count == 0;
+        placeholder.Text = Model.Roots.Count > 0 ? "No matching tests" : Model.EmptyText;
+    }
+
+    /// <summary>Rider's Group By: its predefined groupings, the one in use ticked, then each level, ticked while it is on.</summary>
+    private void ShowGroupBy()
+    {
+        List<Control> items = [];
+        foreach ((string name, IReadOnlyList<TestGroupLevel> levels) in TestGroupings.Predefined)
+        {
+            MenuItem item = new() { Header = name, ToggleType = MenuItemToggleType.Radio, IsChecked = levels.SequenceEqual(Model.Grouping) };
+            item.Click += (_, _) => Model.Group(levels);
+            items.Add(item);
+        }
+        items.Add(new Separator());
+        foreach (TestGroupLevel level in Enum.GetValues<TestGroupLevel>())
+        {
+            bool on = Model.Grouping.Contains(level);
+            MenuItem item = new() { Header = TestGroupings.Title(level), ToggleType = MenuItemToggleType.CheckBox, IsChecked = on };
+            item.Click += (_, _) => Model.Group(on ? Model.Grouping.Where(l => l != level) : [.. Model.Grouping, level]);
+            items.Add(item);
+        }
+        ContextMenu menu = new() { ItemsSource = items, Placement = PlacementMode.BottomEdgeAlignedLeft };
+        OpenMenu?.Close();
+        OpenMenu = menu;
+        menu.Closed += (_, _) => OpenMenu = OpenMenu == menu ? null : OpenMenu;
+        menu.Open(groupBy);
+    }
+
+    /// <summary>The search's keys: Down or Enter goes to the tree, Escape empties the search, then goes there.</summary>
+    private void OnSearchKey(object? sender, KeyEventArgs e)
+    {
+        switch (e.Key)
+        {
+            case Key.Escape when !string.IsNullOrEmpty(search.Text):
+                search.Text = string.Empty;
+                e.Handled = true;
+                break;
+            case Key.Down or Key.Enter or Key.Escape:
+                if (tree.SelectedItem is null && Model.Rows.Count > 0)
+                {
+                    tree.SelectedIndex = 0;
+                }
+                Control? row = tree.SelectedItem is { } chosen ? tree.ContainerFromItem(chosen) : null;
+                (row ?? tree).Focus();
+                e.Handled = true;
+                break;
+        }
     }
 
     private static string Format(TimeSpan duration) =>
@@ -349,6 +581,9 @@ public sealed class TestsView : DockPanel
                     break;
                 case nameof(TestNode.HasChildren):
                     chevron.IsVisible = node.HasChildren;
+                    break;
+                case nameof(TestNode.Depth):
+                    Margin = node.Indent;
                     break;
             }
         }

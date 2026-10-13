@@ -165,14 +165,14 @@ public sealed class TestGutter
     /// match them: a method by its whole name (its data rows in it), a type by every name it starts.</summary>
     private void Index()
     {
-        if (ReferenceEquals(indexed, tree.Roots))
+        if (ReferenceEquals(indexed, tree.Methods))
         {
             return;
         }
-        indexed = tree.Roots;
+        indexed = tree.Methods;
         byMethod.Clear();
         byType.Clear();
-        foreach (TestNode method in tree.Roots.SelectMany(r => r.Methods))
+        foreach (TestNode method in tree.Methods)
         {
             if (method.FullName?.Replace('+', '.') is not { } name)
             {

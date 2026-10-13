@@ -1,0 +1,103 @@
+using System.Text.Json.Nodes;
+using Passenger.App.State;
+
+namespace Passenger.App.Testing;
+
+/// <summary>What the Unit Tests window groups tests by above their classes: Rider's Group By levels, in the order its
+/// menu lists them and a tree nests them.</summary>
+public enum TestGroupLevel
+{
+    TargetFramework,
+    Project,
+    FileSystem,
+    Namespace,
+    Category,
+    Duration,
+}
+
+/// <summary>Rider's groupings: its predefined ones, the levels a person turns on or off, and how a test's traits and
+/// time name the groups it is in.</summary>
+public static class TestGroupings
+{
+    /// <summary>What a test without a category is under, as Rider names it.</summary>
+    public const string Uncategorized = "<Uncategorized>";
+
+    /// <summary>Rider's default: each project's tests by namespace.</summary>
+    public static readonly IReadOnlyList<TestGroupLevel> Default = [TestGroupLevel.Project, TestGroupLevel.Namespace];
+
+    /// <summary>Rider's predefined groupings, in its Group By menu's order.</summary>
+    public static readonly IReadOnlyList<(string Name, IReadOnlyList<TestGroupLevel> Levels)> Predefined =
+    [
+        ("Test Hierarchy", []),
+        ("Project Structure", [TestGroupLevel.Project, TestGroupLevel.FileSystem]),
+        ("Projects", [TestGroupLevel.Project]),
+        ("Namespaces", [TestGroupLevel.Namespace]),
+        ("Projects and Namespaces", Default),
+        ("Categories", [TestGroupLevel.Category]),
+        ("Project and Categories", [TestGroupLevel.Project, TestGroupLevel.Category]),
+    ];
+
+    /// <summary>Rider's grades of a test's time: the most each takes, and its group's name.</summary>
+    private static readonly (TimeSpan Under, string Name)[] Grades =
+    [
+        (TimeSpan.FromMilliseconds(100), "Fast (<100 ms)"),
+        (TimeSpan.FromSeconds(1), "Medium (>100 ms)"),
+        (TimeSpan.FromSeconds(15), "Slow (>1 sec)"),
+        (TimeSpan.FromSeconds(30), "Slower (>15 sec)"),
+        (TimeSpan.MaxValue, "Slowest (>30 sec)"),
+    ];
+
+    public static string Title(TestGroupLevel level) => level switch
+    {
+        TestGroupLevel.TargetFramework => "Target Framework",
+        TestGroupLevel.FileSystem => "File System",
+        _ => level.ToString(),
+    };
+
+    /// <summary>The levels as a tree nests them, each once, those this build does not have left out.</summary>
+    public static IReadOnlyList<TestGroupLevel> Ordered(IEnumerable<TestGroupLevel> levels) => [.. levels.Where(Enum.IsDefined).Distinct().Order()];
+
+    /// <summary>A test's categories as Rider names them: NUnit's Category and MSTest's TestCategory, and an xUnit trait named
+    /// Category, by each of their comma-separated values; any other trait as "Name [Value]".</summary>
+    public static IEnumerable<string> Categories(IEnumerable<KeyValuePair<string, string>> traits)
+    {
+        foreach ((string name, string value) in traits)
+        {
+            bool category = name.Equals("Category", StringComparison.OrdinalIgnoreCase) || name.Equals("TestCategory", StringComparison.OrdinalIgnoreCase);
+            foreach (string each in value.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+            {
+                yield return category ? each : $"{name.Trim()} [{each}]";
+            }
+        }
+    }
+
+    /// <summary>The grade of a test that ran for this long, with its rank among them; Not Run, after them all, when it never
+    /// ran.</summary>
+    public static (string Name, int Rank) Grade(TimeSpan? took)
+    {
+        if (took is not { } time)
+        {
+            return ("Not Run", Grades.Length);
+        }
+        int rank = Array.FindIndex(Grades, g => time < g.Under);
+        return (Grades[rank].Name, rank);
+    }
+}
+
+/// <summary>The Unit Tests window's choices for a folder, as Rider keeps a session's: how its tests are grouped and which
+/// outcomes it shows (none for all of them).</summary>
+public sealed record UnitTestsState : IStateDocument<UnitTestsState>
+{
+    public List<TestGroupLevel> Grouping { get; init; } = [.. TestGroupings.Default];
+
+    public List<TestState> Outcomes { get; init; } = [];
+
+    public static IReadOnlyList<Action<JsonObject>> Upgrades { get; } = [StateStore.Unversioned];
+
+    /// <summary>A level or outcome this build does not have is left out, and each is kept once, levels in their order.</summary>
+    public UnitTestsState Clamped() => this with
+    {
+        Grouping = [.. TestGroupings.Ordered(Grouping ?? [])],
+        Outcomes = [.. (Outcomes ?? []).Where(Enum.IsDefined).Distinct().Order()],
+    };
+}

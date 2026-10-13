@@ -90,8 +90,8 @@ public sealed class StateStore
     }
 }
 
-/// <summary>A folder's documents: what its window had open, its layout, breakpoints, bookmarks, run configurations and
-/// Find in Files' scope.</summary>
+/// <summary>A folder's documents: what its window had open, its layout, breakpoints, bookmarks, run configurations,
+/// Find in Files' scope and the Unit Tests window's grouping and outcomes.</summary>
 public sealed class ProjectState
 {
     internal ProjectState(string root, string folder)
@@ -104,6 +104,7 @@ public sealed class ProjectState
         Bookmarks = new(Path.Combine(Folder, "bookmarks.json"));
         RunConfigurations = new(Path.Combine(Folder, "runConfigurations.json"));
         Find = new(Path.Combine(Folder, "find.json"));
+        UnitTests = new(Path.Combine(Folder, "unitTests.json"));
     }
 
     /// <summary>The folder the documents are in.</summary>
@@ -132,6 +133,9 @@ public sealed class ProjectState
     /// <summary>Find in Files' scope: the one chosen last, and the project, directory and named scope it showed.</summary>
     public StateDocument<FindScopeState> Find { get; }
 
+    /// <summary>How the Unit Tests window groups the folder's tests and which outcomes it shows, as Rider keeps a session's.</summary>
+    public StateDocument<Testing.UnitTestsState> UnitTests { get; }
+
     public void Flush()
     {
         Workspace.Flush();
@@ -140,5 +144,6 @@ public sealed class ProjectState
         Bookmarks.Flush();
         RunConfigurations.Flush();
         Find.Flush();
+        UnitTests.Flush();
     }
 }

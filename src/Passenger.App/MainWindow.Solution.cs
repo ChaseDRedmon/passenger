@@ -200,14 +200,14 @@ public partial class MainWindow
         HashSet<string> chosen = new(projects, StringComparer.Ordinal);
         RunTests(async () =>
         {
-            if (Roots().Count == 0 && await tests.DiscoverAsync(folder!) is { } problem)
+            if (Found().Count == 0 && await tests.DiscoverAsync(folder!) is { } problem)
             {
                 return problem;
             }
-            return Roots() is { Count: > 0 } found ? await tests.RunAsync(folder!, found, debug) : $"No tests were found in {what}";
+            return Found() is { Count: > 0 } found ? await tests.RunAsync(folder!, found, debug) : $"No tests were found in {what}";
         });
 
-        List<Testing.TestNode> Roots() => [.. tests.Tree.Roots.Where(r => r.Project is { } project && chosen.Contains(project))];
+        List<Testing.TestNode> Found() => [.. tests.Tree.Methods.Where(m => m.ProjectPath is { } project && chosen.Contains(project))];
     }
 
     private static SolutionFolder? FindFolder(IEnumerable<SolutionEntry> entries, string path)

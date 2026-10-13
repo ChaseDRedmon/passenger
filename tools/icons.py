@@ -80,6 +80,11 @@ ICONS = [
     ("TestSkipped", "Subtract", "16_filled"),
     ("TestNotRun", "Circle", "16_regular"),
     ("TestRunning", "Circle", "16_filled"),
+    # The Unit Tests window's toolbar, as Rider's: every outcome's filter, Expand All, Collapse All and Group By.
+    ("TestAll", "Circle Half Fill", "16_regular"),
+    ("ExpandAll", "Arrow Expand All", "20_regular"),
+    ("CollapseAll", "Arrow Collapse All", "20_regular"),
+    ("GroupBy", "Group List", "20_regular"),
     ("Pin", "Pin", "16_regular"),
     # The merge window's Apply All Non-Conflicting Changes (turned on its side, the two arrows meeting in the result) and
     # Resolve Simple Conflicts, Rider's magic wand.

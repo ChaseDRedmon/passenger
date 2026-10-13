@@ -358,7 +358,7 @@ public sealed partial class PassengerTools(MainWindow window)
         string folder = window.Folder ?? throw new InvalidOperationException("No folder is open");
         Testing.TestController tests = window.Tests;
         List<Testing.TestNode> Matching() =>
-            [.. tests.Tree.Roots.SelectMany(r => r.Methods).Where(m => m.FullName is { } name && name.Contains(filter!, StringComparison.Ordinal))];
+            [.. tests.Tree.Methods.Where(m => m.FullName is { } name && name.Contains(filter!, StringComparison.Ordinal))];
         // A test the code's reading does not know (an attribute of the project's own) is found by a runner.
         if (filter is not null && Matching().Count == 0 && await tests.DiscoverAsync(folder).WaitAsync(cancel) is { } discovery)
         {
@@ -390,33 +390,20 @@ public sealed partial class PassengerTools(MainWindow window)
     [McpServerTool(Name = "tests_list", Title = "The unit tests", ReadOnly = true), Description(
         "Every test the Unit Tests window shows (found in the test projects' code, and by the runner once built), each with its state from the " +
         "last run: passed, failed, skipped, notRun.")]
-    public Task<IReadOnlyList<TestInfoRow>> TestsList(CancellationToken cancel = default) => OnUi(cancel, () => Task.FromResult((IReadOnlyList<TestInfoRow>)[.. window.Tests.Tree.Roots
-        .SelectMany(r => r.Methods)
+    public Task<IReadOnlyList<TestInfoRow>> TestsList(CancellationToken cancel = default) => OnUi(cancel, () => Task.FromResult((IReadOnlyList<TestInfoRow>)[.. window.Tests.Tree.Methods
         .Select(m => new TestInfoRow(TestName(m), m.State.ToString().ToLowerInvariant(), m.Path is { } at ? $"{Relative(at)}:{m.Line}" : null))]));
 
     private TestRunInfo TestInfo(Testing.TestController tests)
     {
-        List<Testing.TestNode> failed = [.. tests.Tree.Roots.SelectMany(r => r.Methods).Where(m => m.State == Testing.TestState.Failed)];
+        List<Testing.TestNode> failed = [.. tests.Tree.Methods.Where(m => m.State == Testing.TestState.Failed)];
         return new TestRunInfo(tests.Summary, [.. failed.Select(m => new TestFailure(TestName(m), m.Path is { } at ? $"{Relative(at)}:{m.Line}" : null, m.Details))]);
     }
 
     /// <summary>A test's full name, Namespace.Class.Method, and the target framework it ran under when its project has several.</summary>
     private static string TestName(Testing.TestNode method)
     {
-        Stack<string> names = new();
-        string? framework = null;
-        for (Testing.TestNode? node = method; node is { Kind: not Testing.TestNodeKind.Project }; node = node.Parent)
-        {
-            if (node.Kind == Testing.TestNodeKind.Framework)
-            {
-                framework = node.Name;
-            }
-            else
-            {
-                names.Push(node.Name);
-            }
-        }
-        return framework is null ? string.Join('.', names) : $"{string.Join('.', names)} ({framework})";
+        string name = method.FullName ?? method.Name;
+        return method.Framework is { } framework ? $"{name} ({framework})" : name;
     }
 
     // The debugger

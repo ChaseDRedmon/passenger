@@ -790,6 +790,7 @@ public partial class MainWindow : Window
         debug.Breakpoints.Restore(opening.Breakpoints.Value);
         bookmarks.Restore(opening.Bookmarks.Value);
         findScope = opening.Find.Value;
+        RestoreUnitTests(opening.UnitTests.Value);
         folderState = opening;
         WorkspaceState kept = opening.Workspace.Value;
         if (kept.UnloadedProjects.Count > 0)
