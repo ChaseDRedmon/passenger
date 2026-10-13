@@ -7,8 +7,9 @@ using Passenger.Text;
 
 namespace Passenger.App;
 
-/// <summary>Unit testing in the window: the Unit Tests window's runs, the gutter's run icons and their menu, and a test
-/// debugged under the IDE's own debugger.</summary>
+/// <summary>Unit testing in the window: the Unit Tests window's tree from the moment a folder opens (the test projects'
+/// code read for their tests, open files as they are typed, files changed on disk), its runs, the gutter's run icons and
+/// their menu, and a test debugged under the IDE's own debugger.</summary>
 public partial class MainWindow
 {
     /// <summary>The unit test runner, its tree and its runs.</summary>
@@ -17,7 +18,7 @@ public partial class MainWindow
     /// <summary>The run icons beside the tests of each open file.</summary>
     public Testing.TestGutter TestGutter => testGutter;
 
-    /// <summary>Wires the Unit Tests window and the gutter's icons to the window.</summary>
+    /// <summary>Wires the Unit Tests window, the gutter's icons and the tests found from code to the window.</summary>
     private void AddUnitTests()
     {
         tests.Message += (_, message) =>
@@ -27,8 +28,14 @@ public partial class MainWindow
         };
         tests.LaunchUnderDebugger = LaunchTestHost;
         tests.AttachDebugger = AttachTestHost;
+        // The gutter reads each open file's tests from its parse; the tree takes the same read.
+        testGutter.Read += (_, read) => tests.Finder.OpenRead(read.Document.Path, read.Tests);
         Editors.Opened += (_, document) => testGutter.Watch(document);
-        Editors.Closed += (_, document) => testGutter.Forget(document);
+        Editors.Closed += (_, document) =>
+        {
+            testGutter.Forget(document);
+            tests.Finder.Closed(document.Path);
+        };
         Bottom.Tests.ActionRequested += (_, action) => Request(action);
         Bottom.Tests.RunRequested += (_, debugging) =>
         {
@@ -43,6 +50,29 @@ public partial class MainWindow
                 NavigateTo(PathNames.Canonical(path), new TextPosition(Math.Max(0, node.Line - 1), 0));
             }
         };
+    }
+
+    /// <summary>The Unit Tests window follows the folder's projects: their tests are found from code once the folder's
+    /// projects are known, which for a folder without a solution is once the walk for them has landed.</summary>
+    private void FindTests()
+    {
+        Task read = WorkspaceRead;
+        tests.Open(folder, projectsRead: read.IsCompleted);
+        if (!read.IsCompleted)
+        {
+            _ = FindTestsOnceRead(read, folder);
+        }
+    }
+
+    private async Task FindTestsOnceRead(Task read, string? opening)
+    {
+        // Held from the walk's end to the look it starts, so a screenshot or a test never finds the window between them.
+        using IDisposable held = BackgroundWork.Scope();
+        await read;
+        if (folder == opening)
+        {
+            tests.Open(folder);
+        }
     }
 
     /// <summary>A run of tests shown in the Unit Tests window; what stopped it, if anything, in the status bar.</summary>
@@ -130,7 +160,8 @@ public partial class MainWindow
         });
     }
 
-    /// <summary>Runs (or debugs) a test method, or every test of a type, finding the tests first if need be.</summary>
+    /// <summary>Runs (or debugs) a test method, or every test of a type, as the tree has them from the code: the run
+    /// builds first and finds them as built.</summary>
     private void RunTestsAt(string type, string? method, bool debug, bool untilFailure = false)
     {
         if (folder is null)
@@ -142,7 +173,7 @@ public partial class MainWindow
         {
             if (Matching() is not { Count: > 0 })
             {
-                // Tests not yet found are found first, as a build would make them.
+                // A test the code's reading does not know (an attribute of the project's own) is found by a runner.
                 if (await tests.DiscoverAsync(folder) is { } problem)
                 {
                     return problem;

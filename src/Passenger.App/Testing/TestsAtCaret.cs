@@ -1,15 +1,41 @@
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Passenger.Languages.CSharp;
 using Passenger.Text;
 
 namespace Passenger.App.Testing;
 
+/// <summary>A test method a file declares: its type's full name (nested types after a '+'), its name, the editor's line
+/// (from zero) its name is on, and the traits its attributes and its type's give it. Abstract and generic types' tests
+/// run only through the types deriving from them.</summary>
+public sealed record DeclaredTest(string Type, string Method, int Line, IReadOnlyList<KeyValuePair<string, string>> Traits, bool Abstract)
+{
+    public bool SameAs(DeclaredTest other) =>
+        Type == other.Type && Method == other.Method && Line == other.Line && Abstract == other.Abstract && Traits.SequenceEqual(other.Traits);
+}
+
+/// <summary>What a C# file declares for testing: the types that hold tests and the tests, with the lines their names
+/// are on, and the name of every method it declares, test or not, by which a test a runner found there and since
+/// removed is known to be gone.</summary>
+public sealed record FileTests(IReadOnlyList<(string Type, int Line)> Types, IReadOnlyList<DeclaredTest> Tests, IReadOnlySet<string> Methods)
+{
+    public static readonly FileTests None = new([], [], new HashSet<string>(StringComparer.Ordinal));
+
+    /// <summary>Whether a later read says the same: typing inside a method's body changes nothing of it.</summary>
+    public bool SameAs(FileTests other) =>
+        Types.SequenceEqual(other.Types) && Tests.Count == other.Tests.Count && Tests.Zip(other.Tests).All(p => p.First.SameAs(p.Second)) && Methods.SetEquals(other.Methods);
+}
+
 /// <summary>What Rider's Run Tests runs from the editor: the test method the caret is in, else every test of the
-/// class it is in, found from the file's own syntax so it needs no build to know where it is; and the test methods
-/// a file declares, for the gutter's marks. The syntax is the file's shared parse; lines are the editor's.</summary>
+/// class it is in, found from the file's own syntax so it needs no build to know where it is; and the tests a file
+/// declares, for the gutter's marks and the Unit Tests window's tree. The syntax is an open file's shared parse, or a
+/// closed file's own; lines are the editor's.</summary>
 public static class TestsAtCaret
 {
+    /// <summary>A closed file's parse: preprocessor symbols as the editor's (a Debug build's), no documentation comments.</summary>
+    private static readonly CSharpParseOptions ClosedFile = new(LanguageVersion.Preview, DocumentationMode.None, preprocessorSymbols: ["DEBUG", "TRACE", "NET", "NETCOREAPP"]);
+
     private static readonly HashSet<string> TestAttributes = new(StringComparer.Ordinal)
     {
         "Fact", "Theory", "AvaloniaFact", "AvaloniaTheory", "Test", "TestCase", "TestCaseSource", "TestMethod", "DataTestMethod",
@@ -32,18 +58,43 @@ public static class TestsAtCaret
         return type is null ? null : (FullName(type), method?.Identifier.ValueText);
     }
 
-    /// <summary>Every method with a test attribute the file declares, with its type's full name and the editor's line
-    /// (from zero) its name is on.</summary>
-    public static IReadOnlyList<(string Type, string Method, int Line)> Declared(ParsedText syntax) =>
-        [.. Types(syntax.Root).SelectMany(t => t.Members.OfType<MethodDeclarationSyntax>()).Where(IsTest)
-            .Select(m => (FullName((TypeDeclarationSyntax)m.Parent!), m.Identifier.ValueText, syntax.Text.GetLineFromOffset(m.Identifier.SpanStart)))];
+    /// <summary>Everything a file declares for testing, read without going into any member's body.</summary>
+    public static FileTests Read(ParsedText syntax)
+    {
+        List<(string, int)> types = [];
+        List<DeclaredTest> tests = [];
+        HashSet<string> methods = new(StringComparer.Ordinal);
+        foreach (TypeDeclarationSyntax type in Types(syntax.Root))
+        {
+            string name = FullName(type);
+            bool any = false;
+            bool inherited = InheritedOnly(type);
+            IReadOnlyList<KeyValuePair<string, string>>? typeTraits = null;
+            foreach (MethodDeclarationSyntax method in type.Members.OfType<MethodDeclarationSyntax>())
+            {
+                methods.Add(method.Identifier.ValueText);
+                if (!IsTest(method))
+                {
+                    continue;
+                }
+                any = true;
+                typeTraits ??= Traits(type.AttributeLists);
+                tests.Add(new DeclaredTest(name, method.Identifier.ValueText, syntax.Text.GetLineFromOffset(method.Identifier.SpanStart),
+                    [.. typeTraits, .. Traits(method.AttributeLists)], inherited));
+            }
+            if (any)
+            {
+                types.Add((name, syntax.Text.GetLineFromOffset(type.Identifier.SpanStart)));
+            }
+        }
+        return new FileTests(types, tests, methods);
+    }
 
-    /// <summary>Every type the file declares that has a test method, with the editor's line (from zero) its name is on.</summary>
-    public static IReadOnlyList<(string Type, int Line)> DeclaredTypes(ParsedText syntax) =>
-        [.. Types(syntax.Root).Where(t => t.Members.OfType<MethodDeclarationSyntax>().Any(IsTest))
-            .Select(t => (FullName(t), syntax.Text.GetLineFromOffset(t.Identifier.SpanStart)))];
+    /// <summary>A file not open in an editor, parsed on its own: an open one's tests are read from its shared parse.</summary>
+    public static FileTests Read(string text) =>
+        Read(new ParsedText(CSharpSyntaxTree.ParseText(text, ClosedFile), TextSnapshot.From(text)));
 
-    /// <summary>Whether a discovered test belongs to a type and method (a theory's rows, NUnit's cases included).</summary>
+    /// <summary>Whether a test's full name (a theory's rows, NUnit's cases included) belongs to a type and method.</summary>
     public static bool Matches(string fullyQualifiedName, string type, string? method)
     {
         string name = fullyQualifiedName.Split('(')[0];
@@ -56,21 +107,45 @@ public static class TestsAtCaret
     private static IEnumerable<TypeDeclarationSyntax> Types(SyntaxNode root) =>
         root.DescendantNodes(n => n is CompilationUnitSyntax or BaseNamespaceDeclarationSyntax or TypeDeclarationSyntax).OfType<TypeDeclarationSyntax>();
 
-    private static bool IsTest(MethodDeclarationSyntax method) => method.AttributeLists.SelectMany(l => l.Attributes).Any(IsTest);
+    private static bool IsTest(MethodDeclarationSyntax method) => method.AttributeLists.SelectMany(l => l.Attributes).Any(a => TestAttributes.Contains(Name(a)));
 
-    private static bool IsTest(AttributeSyntax attribute)
+    /// <summary>An abstract or generic type, or one inside such a type: a runner runs its tests as a derived type's.</summary>
+    private static bool InheritedOnly(TypeDeclarationSyntax type) =>
+        type.AncestorsAndSelf().OfType<TypeDeclarationSyntax>().Any(t => t.TypeParameterList is not null || t.Modifiers.Any(SyntaxKind.AbstractKeyword));
+
+    /// <summary>The traits as VSTest's adapters name them: xUnit's Trait(name, value), NUnit's Category and MSTest's
+    /// TestCategory, when written as string literals.</summary>
+    private static IReadOnlyList<KeyValuePair<string, string>> Traits(SyntaxList<AttributeListSyntax> lists)
+    {
+        List<KeyValuePair<string, string>> traits = [];
+        foreach (AttributeSyntax attribute in lists.SelectMany(l => l.Attributes))
+        {
+            string[] values = [.. (attribute.ArgumentList?.Arguments ?? []).Where(a => a.NameEquals is null && a.NameColon is null)
+                .Select(a => a.Expression is LiteralExpressionSyntax { RawKind: (int)SyntaxKind.StringLiteralExpression } literal ? literal.Token.ValueText : null)
+                .OfType<string>()];
+            switch (Name(attribute))
+            {
+                case "Trait" when values.Length == 2:
+                    traits.Add(new(values[0], values[1]));
+                    break;
+                case "Category" or "TestCategory" when values.Length == 1:
+                    traits.Add(new(Name(attribute), values[0]));
+                    break;
+            }
+        }
+        return traits;
+    }
+
+    private static string Name(AttributeSyntax attribute)
     {
         string name = attribute.Name switch
         {
             QualifiedNameSyntax qualified => qualified.Right.Identifier.ValueText,
+            AliasQualifiedNameSyntax alias => alias.Name.Identifier.ValueText,
             SimpleNameSyntax simple => simple.Identifier.ValueText,
             _ => attribute.Name.ToString(),
         };
-        if (name.EndsWith("Attribute", StringComparison.Ordinal))
-        {
-            name = name[..^"Attribute".Length];
-        }
-        return TestAttributes.Contains(name);
+        return name.EndsWith("Attribute", StringComparison.Ordinal) ? name[..^"Attribute".Length] : name;
     }
 
     private static string FullName(TypeDeclarationSyntax type)

@@ -109,6 +109,7 @@ public partial class MainWindow
         {
             StartCSharp();
         }
+        FindTests();
     }
 
     /// <summary>The language server on the workspace, in place of the one before, the files open since before (the same

@@ -7,9 +7,10 @@ namespace Passenger.App.Testing;
 
 /// <summary>The run icons beside the tests and test classes each open C# file declares, as Rider's gutter has them,
 /// coloured by how each last ran. A file's tests are read off the UI thread from its own parse as each lands, none made
-/// for them, so typing in one file reads no other. The icons follow the Unit Tests window at once when tests are found or
-/// a run begins or ends, and at most every 150 ms while its results come in (a pause would never come in a long run);
-/// with no test known, and none known before, there is nothing to follow.</summary>
+/// for them, so typing in one file reads no other; the Unit Tests window's tree takes the same read (<see cref="Read"/>).
+/// The icons follow the Unit Tests window at once when tests are found or a run begins or ends, and at most every 150 ms
+/// while its results come in (a pause would never come in a long run); with no test known, and none known before, there
+/// is nothing to follow.</summary>
 public sealed class TestGutter
 {
     private static readonly TimeSpan Throttle = TimeSpan.FromMilliseconds(150);
@@ -56,12 +57,15 @@ public sealed class TestGutter
         {
             return;
         }
-        document.Parsed += (_, parsed) => Read(document, parsed);
+        document.Parsed += (_, parsed) => ReadParse(document, parsed);
         if (document.Syntax?.Newest is { } now)
         {
-            Read(document, now);
+            ReadParse(document, now);
         }
     }
+
+    /// <summary>An open file's tests were read from a parse of its text as it stands.</summary>
+    public event EventHandler<(OpenDocument Document, FileTests Tests)>? Read;
 
     /// <summary>Lets go of a closed file.</summary>
     public void Forget(OpenDocument document)
@@ -81,14 +85,14 @@ public sealed class TestGutter
         {
             return null;
         }
-        foreach ((string type, string method, int at) in file.Methods)
+        foreach (DeclaredTest test in file.Tests.Tests)
         {
-            if (at == line)
+            if (test.Line == line)
             {
-                return (type, method);
+                return (test.Type, test.Method);
             }
         }
-        foreach ((string type, int at) in file.Types)
+        foreach ((string type, int at) in file.Tests.Types)
         {
             if (at == line)
             {
@@ -98,7 +102,7 @@ public sealed class TestGutter
         return null;
     }
 
-    private void Read(OpenDocument document, ParsedText parsed)
+    private void ReadParse(OpenDocument document, ParsedText parsed)
     {
         if (files.TryGetValue(document, out Declared? file))
         {
@@ -108,16 +112,15 @@ public sealed class TestGutter
 
     private async Task ReadAsync(OpenDocument document, Declared file, int asked, ParsedText parsed)
     {
-        (IReadOnlyList<(string Type, int Line)> types, IReadOnlyList<(string Type, string Method, int Line)> methods) =
-            await BackgroundWork.Run(() => (TestsAtCaret.DeclaredTypes(parsed), TestsAtCaret.Declared(parsed)));
+        FileTests tests = await BackgroundWork.Run(() => TestsAtCaret.Read(parsed));
         // A later parse's read is under way, the text has moved on to one that will land, or the file was closed.
         if (asked != file.Asked || !ReferenceEquals(document.Text.Snapshot, parsed.Text) || !files.ContainsKey(document))
         {
             return;
         }
         file.Reads++;
-        file.Types = types;
-        file.Methods = methods;
+        file.Tests = tests;
+        Read?.Invoke(this, (document, tests));
         Index();
         Colour(document, file);
     }
@@ -141,17 +144,16 @@ public sealed class TestGutter
     {
         if (document.Syntax is null)
         {
-            file.Types = [];
-            file.Methods = [];
+            file.Tests = FileTests.None;
         }
-        List<TestMark> marks = new(file.Types.Count + file.Methods.Count);
-        foreach ((string type, int line) in file.Types)
+        List<TestMark> marks = new(file.Tests.Types.Count + file.Tests.Tests.Count);
+        foreach ((string type, int line) in file.Tests.Types)
         {
             marks.Add(new TestMark(line, MarkOf(byType.GetValueOrDefault(type.Replace('+', '.')))));
         }
-        foreach ((string type, string method, int line) in file.Methods)
+        foreach (DeclaredTest test in file.Tests.Tests)
         {
-            marks.Add(new TestMark(line, MarkOf(byMethod.GetValueOrDefault($"{type.Replace('+', '.')}.{method}"))));
+            marks.Add(new TestMark(test.Line, MarkOf(byMethod.GetValueOrDefault($"{test.Type.Replace('+', '.')}.{test.Method}"))));
         }
         if (!marks.SequenceEqual(document.TestMarks))
         {
@@ -205,7 +207,6 @@ public sealed class TestGutter
     {
         public int Asked { get; set; }
         public int Reads { get; set; }
-        public IReadOnlyList<(string Type, int Line)> Types { get; set; } = [];
-        public IReadOnlyList<(string Type, string Method, int Line)> Methods { get; set; } = [];
+        public FileTests Tests { get; set; } = FileTests.None;
     }
 }

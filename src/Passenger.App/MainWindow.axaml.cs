@@ -337,6 +337,7 @@ public partial class MainWindow : Window
         {
             WalkForProjects();
         }
+        FindTests();
         Editors.ShowFolderHint(folder);
         RestoreWorkspace();
         ShowWorkspaceName();
@@ -1141,6 +1142,7 @@ public partial class MainWindow : Window
         Explorer.Refresh();
         Configure();
         StatusText.Text = $"{Path.GetFileNameWithoutExtension(project)} {(unloaded ? "unloaded" : "reloaded")}";
+        FindTests();
         KeepWorkspace();
     }
 

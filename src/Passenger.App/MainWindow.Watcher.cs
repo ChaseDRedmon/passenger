@@ -66,6 +66,7 @@ public partial class MainWindow
                 document.ReadConventions();
             }
         }
+        tests.Finder.FolderChanged(changes);
         foreach (OpenDocument document in Editors.Documents.Where(d => changes.Paths.Contains(d.Path)).ToList())
         {
             if (File.Exists(document.Path))

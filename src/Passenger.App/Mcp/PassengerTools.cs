@@ -346,12 +346,14 @@ public sealed partial class PassengerTools(MainWindow window)
     {
         string folder = window.Folder ?? throw new InvalidOperationException("No folder is open");
         Testing.TestController tests = window.Tests;
-        if (filter is not null && tests.Tree.Roots.Count == 0 && await tests.DiscoverAsync(folder).WaitAsync(cancel) is { } discovery)
+        List<Testing.TestNode> Matching() =>
+            [.. tests.Tree.Roots.SelectMany(r => r.Methods).Where(m => m.FullName is { } name && name.Contains(filter!, StringComparison.Ordinal))];
+        // A test the code's reading does not know (an attribute of the project's own) is found by a runner.
+        if (filter is not null && Matching().Count == 0 && await tests.DiscoverAsync(folder).WaitAsync(cancel) is { } discovery)
         {
             throw new InvalidOperationException(discovery);
         }
-        List<Testing.TestNode>? chosen = filter is null ? null
-            : [.. tests.Tree.Roots.SelectMany(r => r.Methods).Where(m => m.FullName is { } name && name.Contains(filter, StringComparison.Ordinal))];
+        List<Testing.TestNode>? chosen = filter is null ? null : Matching();
         if (chosen is { Count: 0 })
         {
             throw new InvalidOperationException($"No test's name contains '{filter}'");
@@ -375,7 +377,8 @@ public sealed partial class PassengerTools(MainWindow window)
     });
 
     [McpServerTool(Name = "tests_list", Title = "The unit tests", ReadOnly = true), Description(
-        "Every test found (after tests_run or Run All), each with its state from the last run: passed, failed, skipped, notRun.")]
+        "Every test the Unit Tests window shows (found in the test projects' code, and by the runner once built), each with its state from the " +
+        "last run: passed, failed, skipped, notRun.")]
     public Task<IReadOnlyList<TestInfoRow>> TestsList(CancellationToken cancel = default) => OnUi(cancel, () => Task.FromResult((IReadOnlyList<TestInfoRow>)[.. window.Tests.Tree.Roots
         .SelectMany(r => r.Methods)
         .Select(m => new TestInfoRow(TestName(m), m.State.ToString().ToLowerInvariant(), m.Path is { } at ? $"{Relative(at)}:{m.Line}" : null))]));

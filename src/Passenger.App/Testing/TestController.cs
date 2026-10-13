@@ -4,14 +4,17 @@ using Passenger.Editor;
 
 namespace Passenger.App.Testing;
 
-/// <summary>Unit testing in the IDE, as Rider's: the test projects built and their tests found by a runner, runs of all
-/// of them, a chosen few or the ones that failed, results as they come, and a test debugged under Passenger's own
-/// debugger. It works in the IDE's own tests and outcomes, through <see cref="ITestRunner"/>. A UI-thread object:
-/// everything a run says crosses to the UI thread before it changes the tree.</summary>
+/// <summary>Unit testing in the IDE, as Rider's: the solution's tests shown as their code declares them from the moment
+/// it opens, the test projects built and their tests found by a runner, runs of all of them, a chosen few or the ones
+/// that failed, results as they come, and a test debugged under Passenger's own debugger. It works in the IDE's own
+/// tests and outcomes, through <see cref="ITestRunner"/>. A UI-thread object: everything a run says crosses to the UI
+/// thread before it changes the tree.</summary>
 public sealed class TestController : IAsyncDisposable
 {
     /// <summary>What the window says when Stop ends a run before its tests ran.</summary>
     public const string StoppedMessage = "Tests stopped";
+
+    private static readonly IReadOnlyList<TestSource> NoSources = [];
 
     private readonly Func<CancellationToken, Task<Run.BuildOutcome>> build;
     private readonly Func<IReadOnlyList<ProjectModel>> projects;
@@ -36,6 +39,9 @@ public sealed class TestController : IAsyncDisposable
     /// until what was found in it changes, so the tree keeps the project as it was.</summary>
     private Dictionary<string, IReadOnlyList<TestSource>> sources = new(StringComparer.Ordinal);
 
+    /// <summary>The tests each test project's code declares, by project path.</summary>
+    private IReadOnlyDictionary<string, CodeTests> code = new Dictionary<string, CodeTests>();
+
     public TestController(TestTree tree, Func<CancellationToken, Task<Run.BuildOutcome>> build, Func<IReadOnlyList<ProjectModel>> projects, Action<string> log,
         Func<string, CancellationToken, Task<ITestRunner>>? startRunner = null)
     {
@@ -44,10 +50,18 @@ public sealed class TestController : IAsyncDisposable
         this.projects = projects;
         this.log = log;
         this.startRunner = startRunner ?? VsTestRunner.StartAsync;
+        Finder.Changed += (_, found) =>
+        {
+            code = found;
+            Load();
+        };
         Load();
     }
 
     public TestTree Tree { get; }
+
+    /// <summary>The tests the code declares, which the tree shows before any build.</summary>
+    public TestFinder Finder { get; } = new();
 
     public bool IsBusy { get; private set; }
 
@@ -65,6 +79,30 @@ public sealed class TestController : IAsyncDisposable
 
     /// <summary>A test to debug in a test host the runner started itself: the debugger attaches to it, true once it has.</summary>
     public Func<int, Task<bool>>? AttachDebugger { get; set; }
+
+    /// <summary>Opens a folder's tests, or the same folder's again after its projects were read again: its test projects'
+    /// code is read for the tests it declares, and what was discovered in projects no longer there goes. Until a folder
+    /// without a solution has been walked for its projects there are none to read, and the window says it is looking.</summary>
+    public void Open(string? workspace, bool projectsRead = true)
+    {
+        UiThread.Check();
+        if (workspace != folder && !IsBusy)
+        {
+            Forget(workspace);
+        }
+        if (projectsRead)
+        {
+            Finder.Scan(workspace, workspace is null ? [] : projects());
+        }
+        else if (workspace != Finder.Folder)
+        {
+            Finder.Scan(workspace, []);
+        }
+        awaitingProjects = !projectsRead;
+        Load();
+    }
+
+    private bool awaitingProjects;
 
     /// <summary>Builds, then finds the tests of every test project. Null once found, or what stopped it.</summary>
     public async Task<string?> DiscoverAsync(string workspace)
@@ -133,7 +171,8 @@ public sealed class TestController : IAsyncDisposable
 
     private bool stopRequested;
 
-    /// <summary>Runs tests: these rows' (all when none), after a build and a look for the tests built since.</summary>
+    /// <summary>Runs tests: these rows' (all when none), after a build and a look for the tests built since, so a test
+    /// the code declares runs once it has been built.</summary>
     public async Task<string?> RunAsync(string workspace, IEnumerable<TestNode>? rows = null, bool debug = false, bool build = true, string prefix = "")
     {
         UiThread.Check();
@@ -267,12 +306,16 @@ public sealed class TestController : IAsyncDisposable
         return tests;
     }
 
-    /// <summary>The tree for the test projects discovered: each one's tests from what was discovered in it.</summary>
+    /// <summary>The tree for the test projects: each one's tests from its code and from what was discovered in it, and
+    /// what the window says while it has none.</summary>
     private void Load()
     {
-        Tree.Load([.. projects().Where(p => sources.ContainsKey(p.Path))
-            .Select(p => new ProjectTests(p.Path, Path.GetFileNameWithoutExtension(p.Path), CodeTests.None, sources[p.Path]))]);
-        Tree.EmptyText = "Run All finds the solution's tests and runs them";
+        IReadOnlyList<ProjectModel> tests = Finder.Projects;
+        Tree.Load([.. tests.Select(p => new ProjectTests(p.Path, Path.GetFileNameWithoutExtension(p.Path), code.GetValueOrDefault(p.Path) ?? CodeTests.None, sources.GetValueOrDefault(p.Path) ?? NoSources))]);
+        Tree.EmptyText = folder is null ? "Open a folder or solution to see its tests"
+            : awaitingProjects || Finder.IsLooking ? "Looking for tests…"
+            : tests.Count == 0 ? "No test projects: none references xUnit, NUnit or MSTest"
+            : "No tests in the test projects yet";
     }
 
     /// <summary>Lets go of another folder's runner and what was discovered in it.</summary>

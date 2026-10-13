@@ -15,9 +15,10 @@ using Passenger.Text;
 
 namespace Passenger.Tests;
 
-/// <summary>Unit testing from the window, as Rider's: Run All finds and runs a project's tests and marks each, Run
-/// Tests at the caret runs that test alone, and Debug Tests stops at a breakpoint inside one. The project is xUnit's,
-/// run through the SDK's own VSTest.</summary>
+/// <summary>Unit testing from the window, as Rider's: the Unit Tests window shows a solution's tests from their code as
+/// it opens and follows them as they are typed, Run All finds and runs a project's tests and marks each where the code
+/// put it, Run Tests at the caret runs that test alone, and Debug Tests stops at a breakpoint inside one. The project is
+/// xUnit's, run through the SDK's own VSTest.</summary>
 [Collection(Debugging.Helpers.DebugSession.Collection)]
 public sealed class UnitTestsTests : IDisposable
 {
@@ -376,7 +377,10 @@ public sealed class UnitTestsTests : IDisposable
         Ui.WaitFor(() => !window.Tests.IsBusy, "the run to stop while it finds the tests", TimeSpan.FromSeconds(60));
         Assert.True(Processes.Gone(testHost, TimeSpan.FromSeconds(30)), $"The test host finding the tests ({Processes.Describe(testHost)}) still ran after Stop");
         Assert.Equal(TestController.StoppedMessage, window.BottomPanel.Tests.Status);
-        Assert.Empty(window.Tests.Tree.Roots);
+        // The tests the code declares stay shown, none of them left running.
+        List<TestNode> shown = [.. window.Tests.Tree.Roots.SelectMany(r => r.Methods)];
+        Assert.Contains(shown, m => m.Name == "Slow");
+        Assert.All(shown, m => Assert.Equal(TestState.NotRun, m.State));
         window.Close();
     }
 
@@ -463,6 +467,160 @@ public sealed class UnitTestsTests : IDisposable
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void A_solution_never_built_shows_its_xunit_nunit_and_mstest_tests_from_their_code_as_it_opens()
+    {
+        string solution = NewFolder();
+        Write(solution, "Library/Library.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+        Write(solution, "Library/Sum.cs", "namespace Library;\n\npublic static class Sum\n{\n    public static int Of(int a, int b) => a + b;\n}\n");
+        Write(solution, "Xunit.Tests/Xunit.Tests.csproj", TestProject("net10.0"));
+        Write(solution, "Xunit.Tests/SumTests.cs",
+            "using Xunit;\n\nnamespace Sums.Tests;\n\npublic class SumTests\n{\n    [Fact]\n    public void Adds() { }\n\n    [Theory]\n    [InlineData(1)]\n    [InlineData(2)]\n" +
+            "    public void Doubles(int value) { }\n\n    public void Helper() { }\n}\n\npublic abstract class BaseTests\n{\n    [Fact]\n    public void Inherited() { }\n}\n");
+        Write(solution, "NUnit.Tests/NUnit.Tests.csproj", PackagesProject("NUnit", "NUnit3TestAdapter"));
+        Write(solution, "NUnit.Tests/ParserTests.cs",
+            "using NUnit.Framework;\n\nnamespace Parsing.Tests;\n\n[TestFixture]\npublic class ParserTests\n{\n    [Test]\n    public void Reads() { }\n\n" +
+            "    [TestCase(1)]\n    [TestCase(2)]\n    public void Counts(int lines) { }\n}\n");
+        Write(solution, "MSTest.Tests/MSTest.Tests.csproj", PackagesProject("MSTest"));
+        Write(solution, "MSTest.Tests/StoreTests.cs",
+            "using Microsoft.VisualStudio.TestTools.UnitTesting;\n\nnamespace Store.Tests;\n\n[TestClass]\npublic class StoreTests\n{\n    [TestMethod]\n    public void Keeps() { }\n}\n");
+        Write(solution, "Tests.slnx", "<Solution>\n  <Project Path=\"Library/Library.csproj\" />\n  <Project Path=\"Xunit.Tests/Xunit.Tests.csproj\" />\n" +
+            "  <Project Path=\"NUnit.Tests/NUnit.Tests.csproj\" />\n  <Project Path=\"MSTest.Tests/MSTest.Tests.csproj\" />\n</Solution>\n");
+
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(solution);
+        Tree(window);
+        // Each test project's tests by namespace, class and method, the library's none, a theory one test, and an abstract
+        // class's tests only as the classes deriving from it run them.
+        Assert.Equal(
+            [
+                "Xunit.Tests", "  Sums.Tests", "    SumTests", "      Adds", "      Doubles",
+                "NUnit.Tests", "  Parsing.Tests", "    ParserTests", "      Counts", "      Reads",
+                "MSTest.Tests", "  Store.Tests", "    StoreTests", "      Keeps",
+            ],
+            Shown(window));
+        Assert.False(window.IsBuilding, "Showing the tests started a build");
+        TestNode doubles = Method(window, "Doubles")!;
+        Assert.Empty(doubles.Children);
+        Assert.Equal((Path.Combine(solution, "Xunit.Tests", "SumTests.cs"), 13), (doubles.Path, doubles.Line));
+
+        // A file another program writes, and one it deletes: the tree follows the folder.
+        Write(solution, "Xunit.Tests/MoreTests.cs", "using Xunit;\n\nnamespace Sums.Tests;\n\npublic class MoreTests\n{\n    [Fact]\n    public void Written_elsewhere() { }\n}\n");
+        File.Delete(Path.Combine(solution, "MSTest.Tests", "StoreTests.cs"));
+        Ui.WaitFor(() => Method(window, "Written_elsewhere") is not null && Method(window, "Keeps") is null, "the tree to follow a file written and one deleted by another program");
+        Assert.DoesNotContain("MSTest.Tests", Shown(window));
+
+        // Another folder, with no test project: the first folder's tests go, and the window says why there are none.
+        string plain = NewFolder();
+        Write(plain, "Library/Library.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+        window.OpenFolder(plain);
+        Ui.Settle();
+        Assert.Empty(window.Tests.Tree.Rows);
+        Assert.Contains("No test projects: none references xUnit, NUnit or MSTest", ShownTexts(window));
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Run_all_lands_on_the_tests_shown_from_code_with_a_theorys_rows_under_it_and_a_test_it_never_ran_stays()
+    {
+        // xUnit cannot list a theory's rows of a record before it runs them: they come from the run.
+        Write("ShapeTests.cs",
+            "using Xunit;\n\nnamespace Sums.Tests;\n\npublic sealed record Shape(int Sides);\n\npublic class ShapeTests\n{\n" +
+            "    public static IEnumerable<object[]> Shapes => [[new Shape(3)], [new Shape(4)]];\n\n" +
+            "    [Theory]\n    [MemberData(nameof(Shapes))]\n    public void Has_sides(Shape shape) => Assert.True(shape.Sides > 2);\n}\n");
+        MainWindow window = Open();
+        window.Autosaves = false;
+        Tree(window);
+        TestNode four = Method(window, "Two_and_two_make_four")!;
+        TestNode five = Method(window, "Two_and_two_make_five")!;
+        TestNode doubles = Method(window, "Doubles")!;
+        TestNode sides = Method(window, "Has_sides")!;
+        Assert.All([four, five, doubles, sides], m => Assert.Equal(TestState.NotRun, m.State));
+        Assert.Empty(doubles.Children);
+
+        Assert.True(window.Perform(AppActions.RunAllTests));
+        Assert.True(window.IsBuilding, "Run All did not build first");
+        // Typed while the run builds what was saved, so the run never hears of it.
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        editor.Selections = SelectionSet.Single(Text(editor).LastIndexOf('}'));
+        editor.Focus();
+        foreach (string key in new[] { "[", "Fact", "]", "\n", "public void Typed_during_the_run(", ") ", "{", " }", "\n" })
+        {
+            window.KeyTextInput(key);
+            Screenshot.Pump(TimeSpan.FromMilliseconds(40));
+        }
+        Ui.WaitFor(() => !window.Tests.IsBusy && four.State == TestState.Passed, "the run of every test", TimeSpan.FromSeconds(120));
+
+        // The results are on the rows the code showed, a theory's rows under it, those the run made too.
+        Assert.Same(four, Method(window, "Two_and_two_make_four"));
+        Assert.Same(doubles, Method(window, "Doubles"));
+        Assert.Same(sides, Method(window, "Has_sides"));
+        Assert.Equal(TestState.Failed, five.State);
+        Assert.Equal(TestState.Skipped, Method(window, "Not_yet")!.State);
+        Assert.Equal(["Doubles(value: 1, twice: 2)", "Doubles(value: 2, twice: 4)"], doubles.Children.Select(r => r.Name).Order(StringComparer.Ordinal));
+        Assert.All(doubles.Children, r => Assert.Equal(TestState.Passed, r.State));
+        Assert.Equal(TestState.Passed, doubles.State);
+        Assert.Equal(["Has_sides(shape: Shape { Sides = 3 })", "Has_sides(shape: Shape { Sides = 4 })"], sides.Children.Select(r => r.Name).Order(StringComparer.Ordinal));
+        Assert.All(sides.Children, r => Assert.Equal(TestState.Passed, r.State));
+        TestNode typed = Method(window, "Typed_during_the_run") ?? throw new InvalidOperationException("The test typed during the run left the tree when the run ended");
+        Assert.Equal(TestState.NotRun, typed.State);
+        Assert.Empty(typed.Results);
+
+        // A theory's row opened shows under its method, and chosen shows its own result.
+        window.Tests.Tree.Toggle(doubles);
+        ListBox tree = Tree(window);
+        TestNode row = doubles.Children[0];
+        Assert.Equal(window.Tests.Tree.Rows.IndexOf(doubles) + 1, window.Tests.Tree.Rows.IndexOf(row));
+        tree.SelectedItem = row;
+        Ui.Settle();
+        Assert.Equal("Passed", Details(window).Text);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Typing_a_test_adds_it_to_the_tree_renaming_or_removing_one_follows_and_a_test_that_ran_keeps_its_result()
+    {
+        MainWindow window = Open();
+        Assert.True(window.Perform(AppActions.RunAllTests));
+        Ui.WaitFor(() => !window.Tests.IsBusy && Method(window, "Two_and_two_make_four")?.State == TestState.Passed, "the run of every test", TimeSpan.FromSeconds(120));
+        TestNode four = Method(window, "Two_and_two_make_four")!;
+        TestOutcome ran = four.Results[0];
+        CodeEditor editor = window.EditorArea.CodeEditor;
+
+        // A test typed before the class's end comes into the tree as it is typed, not run.
+        editor.Selections = SelectionSet.Single(Text(editor).LastIndexOf('}'));
+        editor.Focus();
+        foreach (string key in new[] { "[", "Fact", "]", "\n", "public void Added(", ") ", "{", " }", "\n" })
+        {
+            window.KeyTextInput(key);
+            Screenshot.Pump(TimeSpan.FromMilliseconds(40));
+        }
+        Ui.WaitFor(() => Method(window, "Added") is not null, "the typed test in the tree");
+        Assert.Equal(TestState.NotRun, Method(window, "Added")!.State);
+
+        // Renamed: the new name comes, and the old one goes though the last build still has it.
+        int five = Text(editor).IndexOf("make_five", StringComparison.Ordinal) + "make_".Length;
+        editor.Selections = SelectionSet.Single(new Selection(five, five + "five".Length));
+        window.KeyTextInput("six");
+        Ui.WaitFor(() => Method(window, "Two_and_two_make_six") is not null && Method(window, "Two_and_two_make_five") is null, "the renamed test in the tree by its new name alone");
+
+        // Removed: the skipped test, attribute and all.
+        int from = Text(editor).IndexOf("    [Fact(Skip", StringComparison.Ordinal);
+        int to = Text(editor).IndexOf("Not_yet() { }\n", StringComparison.Ordinal) + "Not_yet() { }\n".Length;
+        editor.Selections = SelectionSet.Single(new Selection(from, to));
+        Ui.Press(window, "Back");
+        Ui.WaitFor(() => Method(window, "Not_yet") is null, "the removed test gone from the tree");
+
+        // What stayed kept its last results all the while.
+        Assert.Same(four, Method(window, "Two_and_two_make_four"));
+        Assert.Equal(TestState.Passed, four.State);
+        Assert.Same(ran, four.Results[0]);
+        Assert.Equal(TestState.Passed, Method(window, "Doubles")!.State);
+        Assert.Equal(2, Method(window, "Doubles")!.Children.Count);
+        window.Close();
+    }
+
     private string NewFolder()
     {
         string made = PathNames.Canonical(TestFolders.Create("tests-"));
@@ -478,6 +636,21 @@ public sealed class UnitTestsTests : IDisposable
         "    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n" +
         "  <ItemGroup>\n    <PackageReference Include=\"Microsoft.NET.Test.Sdk\" Version=\"18.10.1\" />\n    <PackageReference Include=\"xunit\" Version=\"2.9.3\" />\n" +
         "    <PackageReference Include=\"xunit.runner.visualstudio\" Version=\"3.1.5\" />\n  </ItemGroup>\n</Project>\n";
+
+    /// <summary>A test project of another framework's packages, never restored here.</summary>
+    private static string PackagesProject(params string[] packages) =>
+        "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n  <ItemGroup>\n" +
+        "    <PackageReference Include=\"Microsoft.NET.Test.Sdk\" Version=\"18.10.1\" />\n" +
+        string.Concat(packages.Select(p => $"    <PackageReference Include=\"{p}\" Version=\"*\" />\n")) + "  </ItemGroup>\n</Project>\n";
+
+    /// <summary>The Unit Tests window's rows as a person reads them, indented by depth.</summary>
+    private static List<string> Shown(MainWindow window) => [.. window.Tests.Tree.Rows.Select(r => new string(' ', r.Depth * 2) + r.Name)];
+
+    /// <summary>The words the Unit Tests window shows.</summary>
+    private static List<string?> ShownTexts(MainWindow window) =>
+        [.. window.BottomPanel.Tests.GetVisualDescendants().OfType<TextBlock>().Where(t => t.IsEffectivelyVisible).Select(t => t.Text)];
+
+    private static string Text(CodeEditor editor) => editor.Document.Snapshot.ToString();
 
     private static string Write(string root, string relative, string text)
     {
