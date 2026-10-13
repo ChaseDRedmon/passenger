@@ -140,6 +140,7 @@ public static class AppActions
     public const string Fetch = "app.vcs.fetch";
     public const string Stash = "app.vcs.stash";
     public const string Unstash = "app.vcs.unstash";
+    public const string CloneRepository = "app.vcs.clone";
 
     /// <summary>The person's own shortcuts over the Visual Studio keymap's, by action (an empty list unbinds it), as
     /// Settings keeps them.</summary>

@@ -50,6 +50,10 @@ public sealed record AppSettings : IStateDocument<AppSettings>
 
     public int IdleSeconds { get; init; } = 15;
 
+    /// <summary>Rider's "Reopen projects on startup": started with nothing named, the window opens the folder or solution
+    /// opened last, rather than the Welcome screen.</summary>
+    public bool ReopenProjectsOnStartup { get; init; } = true;
+
     /// <summary>Rider's console cycle buffer size (<c>idea.cycle.buffer.size</c>): how much of a Run, Build or Debug
     /// console's text is kept, in KB, the oldest lines dropped past it.</summary>
     public int ConsoleBufferKb { get; init; } = ToolWindows.OutputView.DefaultLimitKb;

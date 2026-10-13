@@ -61,14 +61,7 @@ public sealed class MenuTests : IDisposable
         window.Close();
     }
 
-    /// <summary>A menu as the platform opens it: asked to bring its items up to date first.</summary>
-    private static NativeMenu Open(NativeMenu parent, string title)
-    {
-        NativeMenu menu = Item(parent, title).Menu!;
-        Type bridge = menu.GetType().GetInterfaces().First(i => i.GetMethod("RaiseNeedsUpdate") is not null);
-        bridge.GetMethod("RaiseNeedsUpdate")!.Invoke(menu, null);
-        return menu;
-    }
+    private static NativeMenu Open(NativeMenu parent, string title) => Ui.Submenu(parent, title);
 
     private static NativeMenuItem Item(NativeMenu menu, string title) =>
         menu.Items.OfType<NativeMenuItem>().First(i => i.Header == title);

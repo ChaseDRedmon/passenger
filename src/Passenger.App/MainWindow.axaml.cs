@@ -71,6 +71,7 @@ public partial class MainWindow : Window
         // editor actions go to the editor when it has the focus.
         AddHandler(KeyDownEvent, OnKeyDownFirst, RoutingStrategies.Tunnel);
         AddActions();
+        AddWelcome();
         AddChords();
         AddToolWindows();
         AddVcs();
@@ -103,7 +104,6 @@ public partial class MainWindow : Window
             }
         };
         Editors.Opened += (_, document) => document.Text.Changed += (_, change) => history.Follow(document.Path, change);
-        Editors.OpenRequested += (_, _) => _ = PickFolder();
         Editors.ActiveChanged += (_, _) => UpdateStatus();
         Editors.CaretMoved += (_, _) => UpdateCaret();
         Editors.SaveFailed += (_, problem) => StatusText.Text = problem;
@@ -289,12 +289,17 @@ public partial class MainWindow : Window
     /// <summary>Every file of the open folder, as Go to File searches them.</summary>
     public FileIndex FileIndex => index;
 
-    /// <summary>Opens what the command line named: a folder or solution, files in it, a caret position.</summary>
+    /// <summary>Opens what the command line named: a folder or solution, files in it, a caret position. Named nothing,
+    /// the window that keeps state reopens what was opened last, or shows the Welcome screen.</summary>
     public void Start(LaunchOptions options)
     {
         if ((options.Solution ?? options.Folder) is { } path)
         {
             OpenFolder(path);
+        }
+        else if (options.Files.Count == 0)
+        {
+            ReopenLast();
         }
         foreach (string file in options.Files)
         {
@@ -309,6 +314,10 @@ public partial class MainWindow : Window
         if (options.Caret is { } caret && Editors.Active is not null)
         {
             Editors.CodeEditor.GoTo(caret);
+        }
+        if (folder is null && Editors.Documents.Count == 0)
+        {
+            welcome.FocusSearch();
         }
     }
 
@@ -366,6 +375,7 @@ public partial class MainWindow : Window
         RestoreWorkspace();
         ShowWorkspaceName();
         UpdateStatus();
+        Remember();
         _ = KeepSnapshotsAsync();
     }
 
@@ -823,6 +833,7 @@ public partial class MainWindow : Window
         bookmarks.Changed += (_, _) => folderState?.Bookmarks.Set(bookmarks.Capture());
         keepsWorkspace = true;
         RestoreWorkspace();
+        ShowRecent();
     }
 
     /// <summary>The folder this window keeps its state and its folders' snapshots in: the store's own unless one is named,
@@ -1479,7 +1490,9 @@ public partial class MainWindow : Window
         }
         // With a file open the status bar's path names it, so the message line is left for messages.
         StatusText.Text = active is null ? where : string.Empty;
-        Title = active is null ? where : $"{(folder is null ? "" : Path.GetFileName(folder) + " – ")}{active.Name}";
+        // Nothing open, the window is Rider's Welcome window.
+        string idle = folder is null ? "Welcome to Passenger" : where;
+        Title = active is null ? idle : $"{(folder is null ? "" : Path.GetFileName(folder) + " – ")}{active.Name}";
         LineEndingText.Text = active is null ? "" : active.Text.LineEnding == "\r\n" ? "CRLF" : "LF";
         EncodingText.Text = active?.EncodingName ?? "";
         IndentText.Text = active is null ? "" : $"{active.Language.IndentSize} spaces";
@@ -1533,7 +1546,7 @@ public partial class MainWindow : Window
 
     /// <summary>The project badge's two letters, as Rider draws them: the first two words' initials,
     /// or a lone word's first two letters.</summary>
-    private static string Initials(string name)
+    internal static string Initials(string name)
     {
         string[] words = name.Split([' ', '-', '_', '.'], StringSplitOptions.RemoveEmptyEntries);
         string letters = words.Length switch

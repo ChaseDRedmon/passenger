@@ -299,11 +299,13 @@ internal static class StateFile
     {
         disk.Remove("version");
         JsonObject written = new() { ["version"] = version };
-        MergeInto(written, disk, known is null ? [] : (JsonObject)JsonNode.Parse(known)!, (JsonObject)JsonNode.Parse(mine)!);
+        MergeInto(written, disk, known is null ? [] : (JsonObject)JsonNode.Parse(known)!, (JsonObject)JsonNode.Parse(mine)!, nested: false);
         return written;
     }
 
-    private static void MergeInto(JsonObject into, JsonObject disk, JsonObject before, JsonObject after)
+    /// <summary>Merges one object's values. In an object inside the document (a dictionary: shortcuts, recent solutions),
+    /// an entry this side has unchanged that the file no longer has was removed by another side, and stays removed.</summary>
+    private static void MergeInto(JsonObject into, JsonObject disk, JsonObject before, JsonObject after, bool nested)
     {
         foreach ((string name, JsonNode? there) in disk)
         {
@@ -319,7 +321,7 @@ internal static class StateFile
         }
         foreach ((string name, JsonNode? now) in after)
         {
-            if (!disk.ContainsKey(name))
+            if (!disk.ContainsKey(name) && !(nested && before.TryGetPropertyValue(name, out JsonNode? was) && JsonNode.DeepEquals(was, now)))
             {
                 into[name] = now?.DeepClone();
             }
@@ -331,7 +333,7 @@ internal static class StateFile
         if (there is JsonObject thereObject && was is JsonObject wasObject && now is JsonObject nowObject)
         {
             JsonObject merged = [];
-            MergeInto(merged, thereObject, wasObject, nowObject);
+            MergeInto(merged, thereObject, wasObject, nowObject, nested: true);
             return merged;
         }
         return (JsonNode.DeepEquals(was, now) ? there : now)?.DeepClone();

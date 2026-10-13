@@ -61,7 +61,7 @@ public partial class MainWindow
         Dock.Actions = actions;
         AddEditing();
         Add(A.Open, "Open...", "IDE", context => _ = PickFolder(), menu: ("File", 0, 0));
-        actions.Add(new IdeAction(A.RecentFiles, "Recent Files", "IDE", _ => ShowRecentFiles()) { Menus = [new("File", 0, 1), new("View", 1, 0)] });
+        actions.Add(new IdeAction(A.RecentFiles, "Recent Files", "IDE", _ => ShowRecentFiles()) { Menus = [new("File", 0, 3), new("View", 1, 0)] });
         Add(A.Save, "Save", "IDE", _ => Editors.SaveActive(), NeedsFile, ("File", 1, 0));
         Add(A.SaveAll, "Save All", "IDE", _ => Editors.SaveAll(), _ => Editors.Documents.Any(d => d.IsModified) ? null : "Every file is saved", ("File", 1, 1));
         // The split worked in loses its tab, as Rider's Close does; the file stays open in any other.

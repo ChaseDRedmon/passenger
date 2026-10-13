@@ -163,6 +163,8 @@ public sealed class SettingsDialog : Window
         theme.SelectionChanged += (_, _) => Change(s => s with { Theme = theme.SelectedIndex switch { 1 => ThemeChoice.Dark, 2 => ThemeChoice.Light, _ => ThemeChoice.System } });
         Add(Appearance, "Theme", theme, "colour color dark light");
 
+        Add(SystemPage, "Reopen projects on startup", Check(Working.ReopenProjectsOnStartup, v => Change(s => s with { ReopenProjectsOnStartup = v })),
+            "reopen last solution project folder startup start launch welcome screen recent");
         Add(SystemPage, "Save when leaving the IDE", Check(Working.SaveOnDeactivation, v => Change(s => s with { SaveOnDeactivation = v })),
             "autosave files switching to a different application or the built-in terminal focus frame deactivation");
         NumericUpDown seconds = Number(Working.IdleSeconds, AppSettings.MinIdleSeconds, AppSettings.MaxIdleSeconds, 1, v => Change(s => s with { IdleSeconds = (int)v }));

@@ -21,10 +21,10 @@ public sealed class EditorArea : UserControl
     private readonly ContentControl splits = new();
     private readonly Canvas assist = new() { ClipToBounds = false };
     private readonly DropOverlay dropOverlay = new();
-    private readonly StackPanel emptyState;
+    private readonly ContentControl emptyState = new() { HorizontalContentAlignment = HorizontalAlignment.Stretch, VerticalContentAlignment = VerticalAlignment.Stretch };
+    private readonly StackPanel folderHint;
     private readonly TextBlock emptyTitle;
     private readonly TextBlock emptyHint;
-    private readonly Button openButton;
     private readonly List<Action<CodeEditor>> editorHooks = [];
     private readonly Dictionary<OpenDocument, int> held = [];
     private Node root;
@@ -38,9 +38,8 @@ public sealed class EditorArea : UserControl
         emptyTitle = new TextBlock { Text = "Passenger", FontSize = 28, FontWeight = FontWeight.SemiBold, HorizontalAlignment = HorizontalAlignment.Center };
         emptyTitle.Bind(TextBlock.ForegroundProperty, emptyTitle.GetResourceObservable("Passenger.Text"));
         emptyHint = new TextBlock { Classes = { "muted" }, Text = "Open a solution, project or folder to start.", HorizontalAlignment = HorizontalAlignment.Center };
-        openButton = new Button { Classes = { "primary" }, Content = "Open…", HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 8, 0, 0) };
-        openButton.Click += (_, _) => OpenRequested?.Invoke(this, EventArgs.Empty);
-        emptyState = new StackPanel { Spacing = 10, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Children = { emptyTitle, emptyHint, openButton } };
+        folderHint = new StackPanel { Spacing = 10, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Children = { emptyTitle, emptyHint } };
+        emptyState.Content = folderHint;
         TabDrag = new DragGesture<(EditorGroup Group, OpenDocument Document)>(this, dropOverlay,
             (_, at) => Target(at) is { } target ? (target.Zone, null) : null, (tab, at) => Drop(tab.Group, tab.Document, at));
         Content = new Panel { Children = { splits, emptyState, assist, dropOverlay } };
@@ -57,7 +56,6 @@ public sealed class EditorArea : UserControl
 
     public event EventHandler<OpenDocument>? Closed;
     public event EventHandler? CaretMoved;
-    public event EventHandler? OpenRequested;
 
     /// <summary>A file that could not be written, and why: it stays open with its edits.</summary>
     public event EventHandler<string>? SaveFailed;
@@ -97,12 +95,15 @@ public sealed class EditorArea : UserControl
         }
     }
 
+    /// <summary>What the area shows with no file open before a folder is: the Welcome screen.</summary>
+    public void ShowWelcome(Control welcome) => emptyState.Content = welcome;
+
     /// <summary>The empty area's words once a folder is open: it has files now, just none showing.</summary>
     public void ShowFolderHint(string folder)
     {
         emptyTitle.Text = Path.GetFileName(folder);
         emptyHint.Text = "Open a file from the Explorer.";
-        openButton.IsVisible = false;
+        emptyState.Content = folderHint;
     }
 
     /// <summary>Opens a file in a tab of the active group (or shows its tab if open), returning why not if it can't be.</summary>

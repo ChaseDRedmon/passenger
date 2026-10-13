@@ -42,19 +42,22 @@ public partial class MainWindow
         {
             return new NativeMenuItemSeparator();
         }
-        if (entry.IsToolWindows)
+        if (entry.IsListed)
         {
-            NativeMenu windows = new();
-            windows.NeedsUpdate += (_, _) =>
+            NativeMenu listed = new();
+            listed.NeedsUpdate += (_, _) =>
             {
-                windows.Items.Clear();
-                foreach (Docking.ToolWindow window in Dock.Windows.OrderBy(w => w.Title, StringComparer.Ordinal))
+                listed.Items.Clear();
+                foreach ((string title, Action run) in Listed(entry.Title!))
                 {
-                    string id = window.Id;
-                    windows.Items.Add(new NativeMenuItem(window.Title) { Command = new MenuCommand(() => ShowToolWindow(id)) });
+                    listed.Items.Add(new NativeMenuItem(title) { Command = new MenuCommand(run) });
+                }
+                if (listed.Items.Count == 0)
+                {
+                    listed.Items.Add(new NativeMenuItem("Nothing yet") { IsEnabled = false });
                 }
             };
-            return new NativeMenuItem(MainMenu.ToolWindows) { Menu = windows };
+            return new NativeMenuItem(entry.Title!) { Menu = listed };
         }
         if (entry.Items is { } items)
         {
@@ -99,6 +102,14 @@ public partial class MainWindow
         flyout.ShowAt(MenuButton);
     }
 
+    /// <summary>What a listed submenu holds as it opens: every tool window the dock has, or the recent solutions.</summary>
+    private IReadOnlyList<(string Title, Action Run)> Listed(string submenu) => submenu switch
+    {
+        MainMenu.ToolWindows => [.. Dock.Windows.OrderBy(w => w.Title, StringComparer.Ordinal).Select(w => (w.Title, (Action)(() => ShowToolWindow(w.Id))))],
+        MainMenu.RecentSolutions => RecentMenu(),
+        _ => throw new InvalidOperationException($"No window lists a submenu called {submenu}"),
+    };
+
     /// <summary>An entry of a menu in the window (the menu button's, a context menu): its action's title and one-key
     /// shortcut, disabled where it cannot run in the context the menu opened in, and run there when chosen.</summary>
     private Control FlyoutEntry(MenuEntry entry, ActionContext context)
@@ -107,17 +118,17 @@ public partial class MainWindow
         {
             return new Separator();
         }
-        if (entry.IsToolWindows)
+        if (entry.IsListed)
         {
-            MenuItem windows = new() { Header = MainMenu.ToolWindows };
-            foreach (Docking.ToolWindow window in Dock.Windows.OrderBy(w => w.Title, StringComparer.Ordinal))
+            MenuItem listed = new() { Header = entry.Title };
+            foreach ((string title, Action run) in Listed(entry.Title!))
             {
-                MenuItem item = new() { Header = window.Title };
-                string id = window.Id;
-                item.Click += (_, _) => ShowToolWindow(id);
-                windows.Items.Add(item);
+                MenuItem item = new() { Header = title };
+                item.Click += (_, _) => run();
+                listed.Items.Add(item);
             }
-            return windows;
+            listed.IsEnabled = listed.Items.Count > 0;
+            return listed;
         }
         if (entry.Items is { } items)
         {

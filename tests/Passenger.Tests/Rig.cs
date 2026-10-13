@@ -525,6 +525,15 @@ public static class Ui
         Settle();
     }
 
+    /// <summary>A submenu of the menu bar as the platform opens it: asked to bring its items up to date first.</summary>
+    public static NativeMenu Submenu(NativeMenu parent, string title)
+    {
+        NativeMenu menu = parent.Items.OfType<NativeMenuItem>().First(i => i.Header == title).Menu!;
+        Type bridge = menu.GetType().GetInterfaces().First(i => i.GetMethod("RaiseNeedsUpdate") is not null);
+        bridge.GetMethod("RaiseNeedsUpdate")!.Invoke(menu, null);
+        return menu;
+    }
+
     /// <summary>The clipboard's text, read as a paste would read it.</summary>
     public static string? Clipboard(TopLevel window)
     {

@@ -76,6 +76,82 @@ public sealed class Git
     /// <summary>Makes a folder a working tree, as Rider's Create Git Repository does.</summary>
     public static Task<GitResult> InitAsync(string folder) => RunAsync(folder, ["init"]);
 
+    /// <summary>Clones a repository into a folder, as Rider's Clone Repository does: each line git says of its progress
+    /// goes to <paramref name="progress"/> as it is said, on another thread. Canceled, git is ended with all it started
+    /// and the task is canceled; what it had made of the folder is the caller's to remove.</summary>
+    public static async Task<GitResult> CloneAsync(string url, string destination, Action<string> progress, CancellationToken cancel)
+    {
+        // The clone opens next: a screenshot waits for it.
+        using IDisposable held = BackgroundWork.Scope();
+        string parent = System.IO.Path.GetDirectoryName(destination)!;
+        Directory.CreateDirectory(parent);
+        // After "--" a URL that begins with a dash is a URL, never an option such as --upload-pack.
+        if (Start(parent, ["clone", "--progress", "--", url, destination]) is not { } start)
+        {
+            return NotInstalled;
+        }
+        start.RedirectStandardOutput = true;
+        start.RedirectStandardError = true;
+        Process process;
+        try
+        {
+            process = ChildProcesses.Start(start);
+        }
+        catch (System.ComponentModel.Win32Exception missing)
+        {
+            return new GitResult(127, string.Empty, $"git is not installed: {missing.Message}");
+        }
+        using (process)
+        {
+            Task<string> output = process.StandardOutput.ReadToEndAsync(CancellationToken.None);
+            Task<string> said = LinesAsync(process.StandardError, progress);
+            using (cancel.Register(() => ChildProcesses.Kill(process)))
+            {
+                await process.WaitForExitAsync(CancellationToken.None);
+            }
+            string errors = await said;
+            cancel.ThrowIfCancellationRequested();
+            return new GitResult(process.ExitCode, await output, errors);
+        }
+    }
+
+    /// <summary>What git writes to its errors, each line handed on as it ends, and the lines it finished, whole: progress
+    /// writes its line again and again after a carriage return, which ends a line handed on but not one kept.</summary>
+    private static async Task<string> LinesAsync(StreamReader errors, Action<string> line)
+    {
+        StringBuilder kept = new();
+        StringBuilder current = new();
+        char[] buffer = new char[1024];
+        int read;
+        while ((read = await errors.ReadAsync(buffer)) > 0)
+        {
+            for (int i = 0; i < read; i++)
+            {
+                char c = buffer[i];
+                if (c is not ('\r' or '\n'))
+                {
+                    current.Append(c);
+                    continue;
+                }
+                if (current.Length > 0)
+                {
+                    line(current.ToString());
+                    if (c == '\n')
+                    {
+                        kept.AppendLine(current.ToString());
+                    }
+                }
+                current.Clear();
+            }
+        }
+        if (current.Length > 0)
+        {
+            line(current.ToString());
+            kept.AppendLine(current.ToString());
+        }
+        return kept.ToString();
+    }
+
     /// <summary>The branch, HEAD's commit, and the changed and unversioned files (ignored ones and a save's temporary file
     /// left out, renames with where they came from), in one git so the three agree.</summary>
     public async Task<GitStatus> StatusAsync()
@@ -547,7 +623,7 @@ public sealed class Git
         using IDisposable held = BackgroundWork.Scope();
         if (Start(folder, arguments) is not { } start)
         {
-            return new GitResult(127, string.Empty, OperatingSystem.IsMacOS() ? "git is not installed: xcode-select --install installs it" : "git is not installed");
+            return NotInstalled;
         }
         try
         {
@@ -591,6 +667,9 @@ public sealed class Git
             return [];
         }
     }
+
+    private static GitResult NotInstalled =>
+        new(127, string.Empty, OperatingSystem.IsMacOS() ? "git is not installed: xcode-select --install installs it" : "git is not installed");
 
     /// <summary>How git is started for every call, or null when it is not installed.</summary>
     private static ProcessStartInfo? Start(string folder, IReadOnlyList<string> arguments)
