@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Xml.Linq;
+using Passenger.Editor;
 
 namespace Passenger.App.Packages;
 
@@ -113,13 +114,13 @@ public sealed class FolderFeed(string folder) : IPackageFeed
 {
     public string Name => folder;
 
-    public Task<IReadOnlyList<PackageSummary>> SearchAsync(string query, bool prerelease, CancellationToken cancel) => Task.Run(() =>
+    public Task<IReadOnlyList<PackageSummary>> SearchAsync(string query, bool prerelease, CancellationToken cancel) => BackgroundWork.Run(() =>
         (IReadOnlyList<PackageSummary>)[.. Read(prerelease)
             .Where(p => query.Trim().Length == 0 || p.Id.Contains(query.Trim(), StringComparison.OrdinalIgnoreCase))
             .GroupBy(p => p.Id, StringComparer.OrdinalIgnoreCase)
             .Select(g => g.OrderByDescending(p => p.Version, VersionOrder.Instance).First())], cancel);
 
-    public Task<IReadOnlyList<string>> VersionsAsync(string id, bool prerelease, CancellationToken cancel) => Task.Run(() =>
+    public Task<IReadOnlyList<string>> VersionsAsync(string id, bool prerelease, CancellationToken cancel) => BackgroundWork.Run(() =>
         (IReadOnlyList<string>)[.. Read(prerelease).Where(p => p.Id.Equals(id, StringComparison.OrdinalIgnoreCase)).Select(p => p.Version).OrderByDescending(v => v, VersionOrder.Instance)], cancel);
 
     private IEnumerable<PackageSummary> Read(bool prerelease)

@@ -5,6 +5,7 @@ using Microsoft.VisualStudio.TestPlatform.ObjectModel.Client;
 using Microsoft.VisualStudio.TestPlatform.ObjectModel.Client.Interfaces;
 using Microsoft.VisualStudio.TestPlatform.ObjectModel.Logging;
 using Passenger.Core;
+using Passenger.Editor;
 
 namespace Passenger.App.Testing;
 
@@ -43,7 +44,7 @@ public sealed class TestRunner : IDisposable
         VsTestConsoleWrapper wrapper = Create(console, host, parameters);
         // The translation layer's async calls wait for vstest.console's handshake before they start it (and so for
         // ever); its blocking calls start it and wait for the connection, so they run on a worker thread.
-        await Task.Run(wrapper.StartSession, cancellation);
+        await BackgroundWork.Run(wrapper.StartSession, cancellation);
         return new TestRunner(wrapper);
     }
 
@@ -62,7 +63,7 @@ public sealed class TestRunner : IDisposable
     public async Task<IReadOnlyList<TestCase>> DiscoverAsync(IReadOnlyList<string> assemblies, Action<string>? log = null)
     {
         Discovery handler = new(log);
-        await Task.Run(() => console.DiscoverTests(assemblies, RunSettings, new TestPlatformOptions(), handler));
+        await BackgroundWork.Run(() => console.DiscoverTests(assemblies, RunSettings, new TestPlatformOptions(), handler));
         return await handler.Done.Task;
     }
 
@@ -71,6 +72,7 @@ public sealed class TestRunner : IDisposable
     public async Task<RunSummary> RunAsync(IReadOnlyList<TestCase> tests, Action<TestResult> result, Action<IReadOnlyList<TestCase>>? started = null, Action<string>? log = null, ITestHostLauncher? debugger = null)
     {
         Run handler = new(result, started, log);
+        // Not held: a debugged run waits here while stopped at a breakpoint, which TestController lets screenshots past.
         await Task.Run(() =>
         {
             if (debugger is null)

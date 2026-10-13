@@ -29,6 +29,7 @@ public partial class MainWindow
             ("the test runner", tests.DisposeAsync().AsTask()),
             ("the language server", csharp?.DisposeAsync().AsTask() ?? Task.CompletedTask),
         ];
+        // Not held: nothing it does is drawn, and the process waits for it once the window's loop has stopped.
         Ended = Task.Run(async () =>
         {
             try

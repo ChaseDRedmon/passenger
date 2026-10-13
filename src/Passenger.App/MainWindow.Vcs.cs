@@ -198,17 +198,12 @@ public partial class MainWindow
         }
         OpenDocument? open = Editors.Documents.FirstOrDefault(d => d.Path == path);
         TextDocument mine = open?.Text ?? new TextDocument(File.Exists(path) ? FileText.Load(path)?.Text ?? string.Empty : string.Empty);
-        FileDiff diff;
-        using (BackgroundWork.Scope())
+        // An open file's differences are its change bars' own when they are of its text now.
+        if (open is null || await vcs.DiffAsync(open) is not { } diff)
         {
-            // An open file's differences are its change bars' own when they are of its text now.
-            if (open is null || await vcs.DiffAsync(open) is not { } kept)
-            {
-                string head = await vcs.HeadTextAsync(path) ?? string.Empty;
-                TextSnapshot text = mine.Snapshot;
-                kept = await Task.Run(() => FileDiff.Compare(head, text));
-            }
-            diff = kept;
+            string head = await vcs.HeadTextAsync(path) ?? string.Empty;
+            TextSnapshot text = mine.Snapshot;
+            diff = await BackgroundWork.Run(() => FileDiff.Compare(head, text));
         }
         // Closed while the differences were read, the file's text is one nothing would save: it is shown, not edited.
         if (open is not null && !Editors.Documents.Contains(open))
@@ -259,11 +254,7 @@ public partial class MainWindow
         string leftTitle = parent is null ? "Before the first commit" : parent[..Math.Min(8, parent.Length)];
         TextDocument mine = new(after);
         TextSnapshot text = mine.Snapshot;
-        FileDiff diff;
-        using (BackgroundWork.Scope())
-        {
-            diff = await Task.Run(() => FileDiff.Compare(before, text));
-        }
+        FileDiff diff = await BackgroundWork.Run(() => FileDiff.Compare(before, text));
         DiffView view = new(file.Name, diff, mine, editable: false, titles: (leftTitle, commit.Short));
         List<IDisposable> colours = [];
         if (Workspace.Language.ForPath(file.Path).Name == "C#")
@@ -327,68 +318,24 @@ public partial class MainWindow
         ShowPopup(popup, editor.TranslatePoint(new Avalonia.Point(4, below.Y + 2), this));
     }
 
-    private readonly Dictionary<OpenDocument, IReadOnlyList<BlameLine>> blamed = [];
-
-    /// <summary>The blame shown for a file, line by line, or null when it is not annotated.</summary>
-    public IReadOnlyList<BlameLine>? BlameOf(OpenDocument document) => blamed.GetValueOrDefault(document);
-
-    /// <summary>Annotate with Git Blame, or Close Annotations when the file shows them.</summary>
+    /// <summary>Annotate with Git Blame, or Close Annotations when the file shows them or is about to.</summary>
     public async Task ToggleAnnotationsAsync(OpenDocument document)
     {
-        if (blamed.Remove(document))
+        if (vcs.IsAnnotated(document))
         {
-            document.GutterAnnotations = [];
+            vcs.CloseAnnotations(document);
             return;
         }
-        if (await BlameAsync(document) is null)
+        if (!await vcs.AnnotateAsync(document))
         {
             StatusText.Text = $"{document.Name} is not tracked by Git";
-            return;
         }
-        // An edit moves the lines, so the blame is read again once typing pauses.
-        Avalonia.Threading.DispatcherTimer again = new() { Interval = TimeSpan.FromMilliseconds(500) };
-        again.Tick += async (_, _) =>
-        {
-            again.Stop();
-            if (blamed.ContainsKey(document))
-            {
-                await BlameAsync(document);
-            }
-        };
-        document.Text.Changed += (_, _) =>
-        {
-            if (blamed.ContainsKey(document))
-            {
-                again.Stop();
-                again.Start();
-            }
-        };
-    }
-
-    private async Task<IReadOnlyList<BlameLine>?> BlameAsync(OpenDocument document)
-    {
-        if (vcs.Repository is not { } repository || await repository.BlameAsync(document.Path, document.Text.Snapshot.ToString()) is not { } lines)
-        {
-            return null;
-        }
-        blamed[document] = lines;
-        // Each commit's block is named at its first line, as Rider draws it; a change not committed yet says so.
-        List<string?> labels = [];
-        for (int i = 0; i < lines.Count; i++)
-        {
-            BlameLine line = lines[i];
-            bool first = i == 0 || lines[i - 1].Hash != line.Hash;
-            string author = line.Author.Length > 14 ? line.Author[..14] : line.Author;
-            labels.Add(!first ? null : line.IsCommitted ? $"{line.Time.ToLocalTime():yyyy-MM-dd} {author}" : "Not committed yet");
-        }
-        document.GutterAnnotations = labels;
-        return lines;
     }
 
     /// <summary>A click on a line's annotation: its commit, chosen in the Git window's log.</summary>
     private async Task ShowBlamedCommitAsync(OpenDocument document, int line)
     {
-        if (BlameOf(document) is not { } lines || line >= lines.Count || !lines[line].IsCommitted)
+        if (vcs.BlameOf(document) is not { } lines || line >= lines.Count || !lines[line].IsCommitted)
         {
             return;
         }
@@ -401,7 +348,7 @@ public partial class MainWindow
     private void ShowGutterMenu(CodeEditor editor, OpenDocument document)
     {
         ContextMenu menu = new();
-        MenuItem annotate = new() { Header = blamed.ContainsKey(document) ? "Close Annotations" : "Annotate with Git Blame", IsEnabled = vcs.Repository is not null };
+        MenuItem annotate = new() { Header = vcs.IsAnnotated(document) ? "Close Annotations" : "Annotate with Git Blame", IsEnabled = vcs.Repository is not null };
         annotate.Click += (_, _) => _ = ToggleAnnotationsAsync(document);
         menu.Items.Add(annotate);
         menu.Open(editor);

@@ -20,6 +20,7 @@ public sealed class AgentSocket : IDisposable
         this.window = window;
         this.listener = listener;
         Path = path;
+        // Not held: it listens for as long as the window does.
         _ = Task.Run(AcceptAsync);
     }
 

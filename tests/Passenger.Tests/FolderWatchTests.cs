@@ -207,7 +207,7 @@ public sealed class FolderWatchTests : IDisposable
         Git("-c", "user.email=tests@passenger.invalid", "-c", "user.name=Passenger Tests", "commit", "-q", "--allow-empty", "-m", "First");
         MainWindow window = Open(FolderWatching.Inotify);
         window.OpenFile("src/App/App.cs");
-        Ui.WaitFor(() => window.Vcs.Branch == "main", "the branch to be read");
+        Ui.Landed(() => window.Vcs.Branch == "main", "the branch");
 
         string[] watched = Watched(window);
         foreach (string kept in new[] { ".", ".git", ".git/refs", ".git/refs/heads", "src", "src/App" })

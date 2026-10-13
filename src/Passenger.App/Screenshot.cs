@@ -31,15 +31,7 @@ public static class Screenshot
 
         MainWindow window = new() { Width = options.Size.Width, Height = options.Size.Height, Autosaves = false };
         window.SetRenderScaling(options.Scale);
-        window.Show();
-        bool settled = Settle();
-        window.Start(launch);
-        settled &= Settle();
-        foreach (ScriptStep step in options.Steps)
-        {
-            Take(window, step);
-            settled &= Settle();
-        }
+        bool settled = Prepare(window, launch, options.Steps);
 
         // A diff or a dialog the steps opened is what the person would be looking at.
         WriteableBitmap frame = window.Frontmost.CaptureRenderedFrame()
@@ -69,6 +61,23 @@ public static class Screenshot
         }
         Console.WriteLine($"screenshot: {options.Path} after {elapsed:F0} ms");
         return 0;
+    }
+
+    /// <summary>Shows the window, opens what the command line names and takes the steps, the background work each
+    /// starts landed before the next: the window as its picture is taken, with no wait of its own. False when work was
+    /// still pending at the limit.</summary>
+    public static bool Prepare(MainWindow window, LaunchOptions launch, IReadOnlyList<ScriptStep> steps)
+    {
+        window.Show();
+        bool settled = Settle();
+        window.Start(launch);
+        settled &= Settle();
+        foreach (ScriptStep step in steps)
+        {
+            Take(window, step);
+            settled &= Settle();
+        }
+        return settled;
     }
 
     private static void Take(MainWindow window, ScriptStep step)

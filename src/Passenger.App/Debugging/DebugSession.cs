@@ -224,6 +224,7 @@ public sealed class DebugSession
     /// pool, never failing, so a window gone meanwhile (a test's, its dispatcher with it) leaves no failed request behind.</summary>
     private Task EndProcessesAsync(TimeSpan answer, TimeSpan exit)
     {
+        // Not held: the window's end waits for these with no UI thread to come back to (MainWindow.Ended).
         Task asked = disconnected ??= Task.Run(DisconnectAsync);
         return Task.Run(async () =>
         {

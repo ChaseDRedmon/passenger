@@ -6,6 +6,7 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using Passenger.App.Packages;
 using Passenger.App.Workspace;
+using Passenger.Editor;
 
 namespace Passenger.App.ToolWindows;
 
@@ -32,7 +33,7 @@ public sealed class NuGetView : DockPanel
     private readonly StackPanel details;
     private readonly TextBox log;
     private readonly TextBlock status;
-    private readonly DispatcherTimer typing;
+    private readonly Debounce typing;
     private CancellationTokenSource? asking;
     private CancellationTokenSource? showing;
     private IReadOnlyList<PackageRow> rows = [];
@@ -50,17 +51,8 @@ public sealed class NuGetView : DockPanel
         ((PathIcon)refresh.Content).Bind(PathIcon.DataProperty, refresh.GetResourceObservable("Icon.Rerun"));
         ToolTip.SetTip(refresh, "Refresh");
         refresh.Click += (_, _) => _ = RefreshAsync();
-        typing = new DispatcherTimer { Interval = Pause };
-        typing.Tick += (_, _) =>
-        {
-            typing.Stop();
-            _ = RefreshAsync();
-        };
-        search.TextChanged += (_, _) =>
-        {
-            typing.Stop();
-            typing.Start();
-        };
+        typing = new Debounce(Pause, RefreshAsync);
+        search.TextChanged += (_, _) => typing.Restart();
         prerelease.IsCheckedChanged += (_, _) => _ = RefreshAsync();
         Border top = new()
         {
@@ -148,6 +140,8 @@ public sealed class NuGetView : DockPanel
         CancellationTokenSource cancel = asking = new();
         string? chosen = Selected?.Id;
         Dictionary<string, Dictionary<string, string?>> installed = Installed();
+        // The feed's answer is the list shown next, so a screenshot waits for it rather than for "Searching".
+        using IDisposable held = BackgroundWork.Scope();
         try
         {
             IReadOnlyList<PackageRow> found;
@@ -207,6 +201,7 @@ public sealed class NuGetView : DockPanel
         }
         busy = true;
         status.Text = "Working...";
+        using IDisposable held = BackgroundWork.Scope();
         bool done;
         try
         {
@@ -265,6 +260,7 @@ public sealed class NuGetView : DockPanel
             return;
         }
         IReadOnlyList<string> found;
+        using IDisposable held = BackgroundWork.Scope();
         try
         {
             found = await Feed.VersionsAsync(row.Id, prerelease.IsChecked == true, cancel.Token);

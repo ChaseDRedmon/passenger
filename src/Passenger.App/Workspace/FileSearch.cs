@@ -1,4 +1,5 @@
 using System.Text;
+using Passenger.Editor;
 using Passenger.Text;
 
 namespace Passenger.App.Workspace;
@@ -25,7 +26,7 @@ public static class FileSearch
 
     /// <summary>The matches, file by file in the index's order, at most <see cref="MostMatches"/>.</summary>
     public static Task<IReadOnlyList<SearchMatch>> FindAsync(string root, IReadOnlyList<string> files, SearchQuery query,
-        IReadOnlyDictionary<string, TextSnapshot> open, CancellationToken cancellation) => Task.Run(() =>
+        IReadOnlyDictionary<string, TextSnapshot> open, CancellationToken cancellation) => BackgroundWork.Run(() =>
     {
         List<SearchMatch> found = [];
         if (query.IsEmpty || Problem(query) is not null)

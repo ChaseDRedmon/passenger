@@ -4,7 +4,8 @@ namespace Passenger.Editor;
 
 /// <summary>Counts background work still to land on the UI thread, so a screenshot can wait for it
 /// rather than capture a half-finished frame. Anything that runs off the UI thread and changes what
-/// is drawn enters here, best through <see cref="Scope"/> or <see cref="Track"/>, which no path out can forget.</summary>
+/// is drawn enters here, best through <see cref="Scope"/>, <see cref="Track"/> or <see cref="Run{T}(Func{T}, CancellationToken)"/>,
+/// which no path out can forget.</summary>
 public static class BackgroundWork
 {
     /// <summary>The count of holds in the low half, and in the high half the generation they belong to, which
@@ -44,6 +45,44 @@ public static class BackgroundWork
     {
         IDisposable held = Scope();
         _ = task.ContinueWith(_ => Dispatcher.UIThread.Post(held.Dispose), TaskScheduler.Default);
+    }
+
+    /// <summary>Work for the thread pool (Task.Run's), held until its answer is back on the caller's thread: an await
+    /// on the UI thread lets go only there, so what it then draws is in the frame a screenshot waits for. Not for what
+    /// the UI thread may block on (the window's end), which it could never come back to.</summary>
+    public static async Task<T> Run<T>(Func<T> work, CancellationToken cancel = default)
+    {
+        using (Scope())
+        {
+            return await Task.Run(work, cancel);
+        }
+    }
+
+    /// <inheritdoc cref="Run{T}(Func{T}, CancellationToken)"/>
+    public static async Task<T> Run<T>(Func<Task<T>> work, CancellationToken cancel = default)
+    {
+        using (Scope())
+        {
+            return await Task.Run(work, cancel);
+        }
+    }
+
+    /// <inheritdoc cref="Run{T}(Func{T}, CancellationToken)"/>
+    public static async Task Run(Action work, CancellationToken cancel = default)
+    {
+        using (Scope())
+        {
+            await Task.Run(work, cancel);
+        }
+    }
+
+    /// <inheritdoc cref="Run{T}(Func{T}, CancellationToken)"/>
+    public static async Task Run(Func<Task> work, CancellationToken cancel = default)
+    {
+        using (Scope())
+        {
+            await Task.Run(work, cancel);
+        }
     }
 
     /// <summary>Takes one hold off the count, if there is one and, for a scope's, the count is still of its generation.</summary>

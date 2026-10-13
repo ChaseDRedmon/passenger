@@ -239,6 +239,7 @@ public sealed class CSharpService : IAsyncDisposable
         }
         documents.Clear();
         RoslynSession? ending = session;
+        // Not held: the window's end waits for it with no UI thread to come back to (MainWindow.Ended).
         return ending is null ? ValueTask.CompletedTask : new ValueTask(Task.Run(() => ending.DisposeAsync().AsTask()));
     }
 
@@ -251,7 +252,7 @@ public sealed class CSharpService : IAsyncDisposable
             string logs = LogFolder;
             IReadOnlyDictionary<string, object?>? options = solutionWide ? FullSolution : null;
             // Started on a worker: the process, its log and the wait for its answer are no work for the window's thread.
-            RoslynSession started = await Task.Run(() => RoslynSession.StartAsync(opening.Folder, solution, projects, logs, cancel, options), cancel);
+            RoslynSession started = await BackgroundWork.Run(() => RoslynSession.StartAsync(opening.Folder, solution, projects, logs, cancel, options), cancel);
             if (cancel.IsCancellationRequested)
             {
                 // Disposed, or started again, just as this server started: nothing else will end it.

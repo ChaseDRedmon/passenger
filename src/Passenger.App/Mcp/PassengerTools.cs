@@ -744,7 +744,7 @@ public sealed partial class PassengerTools(MainWindow window)
         {
             open.TryAdd(document.Path, document.Text.Snapshot);
         }
-        return Task.Run(() =>
+        return BackgroundWork.Run(() =>
         {
             string[] paths = [.. places.Select(p => new Uri(p.Uri).LocalPath)];
             Dictionary<(string Path, int Line), string> texts = ReadLines([.. paths.Select((path, i) => (path, places[i].Line))], open, cancel);

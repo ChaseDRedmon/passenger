@@ -3,7 +3,6 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
-using Avalonia.Threading;
 using Passenger.Editor;
 using Passenger.Text;
 
@@ -20,7 +19,7 @@ public sealed class DiffView : DockPanel
 
     private readonly Bands bands;
     private readonly TextBlock count;
-    private readonly DispatcherTimer rediff;
+    private readonly Debounce rediff;
     private FileDiff shown;
     private int comparing;
     private bool following;
@@ -76,12 +75,7 @@ public sealed class DiffView : DockPanel
 
         Left.ScrollChanged += (_, _) => Follow(Left, Right, toLeft: false);
         Right.ScrollChanged += (_, _) => Follow(Right, Left, toLeft: true);
-        rediff = new DispatcherTimer { Interval = RediffDelay };
-        rediff.Tick += (_, _) =>
-        {
-            rediff.Stop();
-            _ = CompareAsync();
-        };
+        rediff = new Debounce(RediffDelay, CompareAsync);
         mine.Changed += OnMineChanged;
         // Closed, the diff lets go of the file's text and colours, which may outlive it by far, and drops a late comparison.
         DetachedFromVisualTree += (_, _) =>
@@ -141,11 +135,7 @@ public sealed class DiffView : DockPanel
         Right.GoTo(new TextPosition(Math.Min(target.NewStart, Right.Document.Snapshot.LineCount - 1), 0));
     }
 
-    private void OnMineChanged(object? sender, DocumentChangedEventArgs e)
-    {
-        rediff.Stop();
-        rediff.Start();
-    }
+    private void OnMineChanged(object? sender, DocumentChangedEventArgs e) => rediff.Restart();
 
     /// <summary>Compares the file's text as it is now, off the window's thread, unless the differences shown are of it;
     /// a newer text's answer wins.</summary>
@@ -158,13 +148,10 @@ public sealed class DiffView : DockPanel
             return;
         }
         FileDiff from = shown;
-        using (BackgroundWork.Scope())
+        FileDiff diff = await BackgroundWork.Run(() => from.Compare(text));
+        if (generation == comparing)
         {
-            FileDiff diff = await Task.Run(() => from.Compare(text));
-            if (generation == comparing)
-            {
-                Show(diff);
-            }
+            Show(diff);
         }
     }
 

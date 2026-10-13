@@ -2,6 +2,7 @@ using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using Passenger.App.Debugging;
 using Passenger.App.Workspace;
+using Passenger.Editor;
 using Microsoft.Diagnostics.NETCore.Client;
 using Passenger.Profiler;
 using Passenger.Text;
@@ -58,7 +59,11 @@ public partial class MainWindow
             ProfileTarget profiled = new(Core.Dotnet.Host(), [target.Program, .. target.Arguments], target.WorkingDirectory, target.Environment);
             ShowToolWindow("profiler");
             Bottom.Run.Document.Clear();
-            profiling = await ProfilingSession.StartAsync(profiled, SnapshotFolder, UiThread.Marshal<string>(line => Bottom.Run.Document.Append(line + "\n")));
+            // Held until the program has reached the profiler (or never will), not while it runs: that is the person's.
+            using (BackgroundWork.Scope())
+            {
+                profiling = await ProfilingSession.StartAsync(profiled, SnapshotFolder, UiThread.Marshal<string>(line => Bottom.Run.Document.Append(line + "\n")));
+            }
             profilingName = chosen.Name;
             ProfilingSession running = profiling;
             profilerView!.Running(chosen.Name, () => running.Elapsed);
@@ -98,6 +103,7 @@ public partial class MainWindow
     private async Task<Snapshot?> ReadSnapshotAsync(ProfilingSession run)
     {
         StatusText.Text = $"Reading the snapshot of {profilingName}...";
+        using IDisposable held = BackgroundWork.Scope();
         try
         {
             Snapshot snapshot = await run.StopAsync();
@@ -125,6 +131,7 @@ public partial class MainWindow
             return null;
         }
         StatusText.Text = $"Taking a memory snapshot of {profilingName}...";
+        using IDisposable held = BackgroundWork.Scope();
         try
         {
             MemorySnapshot heap = await run.TakeMemorySnapshotAsync();
@@ -146,7 +153,7 @@ public partial class MainWindow
         StatusText.Text = $"Reading {Path.GetFileName(path)}...";
         try
         {
-            Snapshot snapshot = await Task.Run(() => Snapshot.Read(path));
+            Snapshot snapshot = await BackgroundWork.Run(() => Snapshot.Read(path));
             profilerView!.Show(snapshot, Path.GetFileNameWithoutExtension(path));
             StatusText.Text = $"{Path.GetFileName(path)}: {snapshot.Samples:N0} samples";
             return snapshot;

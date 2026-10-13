@@ -203,11 +203,7 @@ public partial class MainWindow
         {
             return false;
         }
-        string? problem;
-        using (BackgroundWork.Scope())
-        {
-            problem = await DotnetAsync(folder, ["sln", solution.Path, "remove", project]);
-        }
+        string? problem = await DotnetAsync(folder, ["sln", solution.Path, "remove", project]);
         if (problem is not null)
         {
             StatusText.Text = $"{name} could not be removed: {problem}";
@@ -230,7 +226,7 @@ public partial class MainWindow
     }
 
     /// <summary>Runs the .NET command line to its end, off the UI thread: null when it succeeded, else what it said.</summary>
-    private static Task<string?> DotnetAsync(string folder, IReadOnlyList<string> arguments) => Task.Run<string?>(async () =>
+    private static Task<string?> DotnetAsync(string folder, IReadOnlyList<string> arguments) => BackgroundWork.Run<string?>(async () =>
     {
         try
         {

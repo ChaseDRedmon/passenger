@@ -80,6 +80,7 @@ public static class McpHost
         using CancellationTokenSource done = new();
         // The agent's own IDE: nobody else is at it to ask.
         McpServer server = McpServer.Create(new StreamServerTransport(input, output, "passenger"), Options(window, new AgentConnection(done.Token, attached: false)));
+        // Not held: it serves for as long as the agent stays, and each tool holds what it starts.
         _ = Task.Run(async () =>
         {
             try
@@ -125,6 +126,7 @@ public static class McpHost
             using NetworkStream stream = new(socket, ownsSocket: true);
             Stream input = Console.OpenStandardInput();
             Stream output = Console.OpenStandardOutput();
+            // No window in this process: the copies are the whole of it, for as long as either side stays.
             Task.WaitAny(
                 Task.Run(() => input.CopyTo(stream)),
                 Task.Run(() =>

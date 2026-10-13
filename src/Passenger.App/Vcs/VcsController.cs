@@ -1,4 +1,3 @@
-using Avalonia.Threading;
 using Passenger.App.Workspace;
 using Passenger.Editor;
 using Passenger.Text;
@@ -12,6 +11,9 @@ public sealed class VcsController
 {
     /// <summary>How long typing pauses before a file's change bars are worked out again.</summary>
     private static readonly TimeSpan MarksDelay = TimeSpan.FromMilliseconds(120);
+
+    /// <summary>How long typing pauses before an annotated file is blamed again: a git each time, so longer.</summary>
+    private static readonly TimeSpan BlameDelay = TimeSpan.FromMilliseconds(500);
 
     private const string Busy = "Git is still busy with the last change";
 
@@ -269,17 +271,18 @@ public sealed class VcsController
         {
             return;
         }
-        DispatcherTimer timer = new() { Interval = MarksDelay };
-        Tracked tracked = new(timer);
-        timer.Tick += (_, _) =>
-        {
-            timer.Stop();
-            _ = MarkAsync(document);
-        };
+        Tracked tracked = new(new Debounce(MarksDelay, () => MarkAsync(document)), new Debounce(BlameDelay, () => BlameAsync(document)));
         tracked.OnChanged = (_, _) =>
         {
-            timer.Stop();
-            timer.Start();
+            // Outside a working tree a file has no bars to move; once one is found, every open file's are worked out.
+            if (git is not null)
+            {
+                tracked.Marks.Restart();
+            }
+            if (tracked.Annotated)
+            {
+                tracked.Reblame.Restart();
+            }
         };
         tracked.OnSaved = (_, _) => _ = ReadAsync();
         document.Text.Changed += tracked.OnChanged;
@@ -293,10 +296,96 @@ public sealed class VcsController
         UiThread.Check();
         if (documents.Remove(document, out Tracked? tracked))
         {
-            tracked.Timer.Stop();
+            tracked.Marks.Stop();
+            tracked.Reblame.Stop();
+            // A blame still running lands nowhere.
+            tracked.Blaming++;
             document.Text.Changed -= tracked.OnChanged;
             document.Saved -= tracked.OnSaved;
         }
+    }
+
+    /// <summary>The blame an annotated file shows, line by line, or null when it shows none.</summary>
+    public IReadOnlyList<BlameLine>? BlameOf(OpenDocument document) => documents.GetValueOrDefault(document)?.Blame;
+
+    /// <summary>Whether a file's annotations are open, its blame shown or on its way.</summary>
+    public bool IsAnnotated(OpenDocument document) => documents.GetValueOrDefault(document)?.Annotated == true;
+
+    /// <summary>Annotate with Git Blame: each line named in the gutter by the commit that last changed it, blamed again
+    /// after each pause in typing until <see cref="CloseAnnotations"/>. False, with nothing shown, when Git does not
+    /// track the file.</summary>
+    public async Task<bool> AnnotateAsync(OpenDocument document)
+    {
+        UiThread.Check();
+        if (!documents.TryGetValue(document, out Tracked? tracked))
+        {
+            return false;
+        }
+        tracked.Annotated = true;
+        return await BlameAsync(document);
+    }
+
+    /// <summary>Close Annotations: the gutter's column goes, and a blame still running lands nowhere.</summary>
+    public void CloseAnnotations(OpenDocument document)
+    {
+        UiThread.Check();
+        if (documents.TryGetValue(document, out Tracked? tracked))
+        {
+            Unannotate(document, tracked);
+        }
+    }
+
+    private static void Unannotate(OpenDocument document, Tracked tracked)
+    {
+        tracked.Annotated = false;
+        tracked.Blame = null;
+        tracked.Blaming++;
+        tracked.Reblame.Stop();
+        document.GutterAnnotations = [];
+    }
+
+    /// <summary>Blames the file's text as it is now and shows it, unless annotations closed, another blame began or the
+    /// text changed meanwhile (the pause after that edit blames it again). False only when git said it does not track
+    /// the file, which closes them.</summary>
+    private async Task<bool> BlameAsync(OpenDocument document)
+    {
+        if (!documents.TryGetValue(document, out Tracked? tracked) || !tracked.Annotated)
+        {
+            return true;
+        }
+        int blaming = ++tracked.Blaming;
+        TextSnapshot text = document.Text.Snapshot;
+        IReadOnlyList<BlameLine>? lines = git is { } repository ? await repository.BlameAsync(document.Path, text.ToString()) : null;
+        if (blaming != tracked.Blaming)
+        {
+            return true;
+        }
+        if (lines is null)
+        {
+            Unannotate(document, tracked);
+            return false;
+        }
+        if (!ReferenceEquals(text, document.Text.Snapshot))
+        {
+            return true;
+        }
+        tracked.Blame = lines;
+        document.GutterAnnotations = Labels(lines);
+        return true;
+    }
+
+    /// <summary>Each commit's block named at its first line, as Rider draws it; a change not committed yet says so.</summary>
+    private static List<string?> Labels(IReadOnlyList<BlameLine> lines)
+    {
+        List<string?> labels = [];
+        for (int i = 0; i < lines.Count; i++)
+        {
+            BlameLine line = lines[i];
+            bool first = i == 0 || lines[i - 1].Hash != line.Hash;
+            string author = line.Author.Length > 14 ? line.Author[..14] : line.Author;
+            labels.Add(!first ? null : line.IsCommitted ? $"{line.Time.ToLocalTime():yyyy-MM-dd} {author}" : "Not committed yet");
+        }
+        return labels;
     }
 
     /// <summary>Commits the chosen files with a message, then pushes when asked, as Rider's Commit and Commit and
@@ -469,6 +558,8 @@ public sealed class VcsController
         }
         IsBusy = true;
         BusyChanged?.Invoke(this, EventArgs.Empty);
+        // Held whole, the waits between its gits too (a rollback's retries): the files and the lists follow what it did.
+        using IDisposable held = BackgroundWork.Scope();
         try
         {
             return await change();
@@ -600,7 +691,7 @@ public sealed class VcsController
     private async Task<FileDiff> CompareAsync(string head, FileDiff? earlier, TextSnapshot text)
     {
         Comparisons++;
-        (FileDiff diff, long bytes) = await Task.Run(() =>
+        (FileDiff diff, long bytes) = await BackgroundWork.Run(() =>
         {
             long before = GC.GetAllocatedBytesForCurrentThread();
             FileDiff compared = earlier?.Compare(text) ?? FileDiff.Compare(head, text);
@@ -614,11 +705,20 @@ public sealed class VcsController
 
     private static string Files(int count) => count == 1 ? "1 file" : $"{count} files";
 
-    private sealed class Tracked(DispatcherTimer timer)
+    /// <summary>An open file as Git follows it: one handler for its edits and one for its saves, and one wait each for its
+    /// bars and its blame, all dropped with it.</summary>
+    private sealed class Tracked(Debounce marks, Debounce reblame)
     {
-        public DispatcherTimer Timer { get; } = timer;
+        public Debounce Marks { get; } = marks;
+        public Debounce Reblame { get; } = reblame;
         public int Generation { get; set; }
         public Compared? Last { get; set; }
+        public bool Annotated { get; set; }
+        public IReadOnlyList<BlameLine>? Blame { get; set; }
+
+        /// <summary>The newest blame's number: one that lands under another was overtaken, or annotations closed.</summary>
+        public int Blaming { get; set; }
+
         public EventHandler<Passenger.Text.DocumentChangedEventArgs>? OnChanged { get; set; }
         public EventHandler? OnSaved { get; set; }
     }

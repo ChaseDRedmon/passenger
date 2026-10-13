@@ -208,6 +208,7 @@ public sealed class TestController : IAsyncDisposable
         UiThread.Check();
         TestRunner? ending = runner;
         runner = null;
+        // Not held: the window's end waits for it with no UI thread to come back to (MainWindow.Ended).
         return ending is null ? ValueTask.CompletedTask : new ValueTask(Task.Run(ending.Dispose));
     }
 

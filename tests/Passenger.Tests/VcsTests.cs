@@ -40,26 +40,26 @@ public sealed class VcsTests : IDisposable
     {
         MainWindow window = Open();
         CodeEditor editor = window.EditorArea.CodeEditor;
-        Ui.WaitFor(() => window.Vcs.Branch == "main", "the branch to be read");
+        Assert.Equal("main", window.Vcs.Branch);
 
         // Line 3 changed, and a line added after the last.
         editor.GoTo(new TextPosition(2, 4));
         window.KeyTextInput("long ");
-        Ui.WaitFor(() => Marks(window).Any(m => m.Kind == ChangeMarkKind.Modified && m.Line == 2), "a modified bar on line 3");
+        Ui.Landed(() => Marks(window).Any(m => m.Kind == ChangeMarkKind.Modified && m.Line == 2), "a modified bar on line 3");
 
         CommitView commit = window.CommitView;
         window.Perform(AppActions.Commit);
-        Ui.WaitFor(() => commit.Chosen.Any(c => c.Name == "Shop.cs" && c.Kind == ChangeKind.Modified), "Shop.cs listed as modified");
+        Ui.Landed(() => commit.Chosen.Any(c => c.Name == "Shop.cs" && c.Kind == ChangeKind.Modified), "Shop.cs listed as modified");
         Assert.True(window.DockHost.IsShown("commit"));
         commit.Message = "Count with a long";
         Task<bool> committed = commit.CommitAsync(push: false);
-        Ui.WaitFor(() => committed.IsCompleted, "the commit");
+        Ui.Landed(() => committed.IsCompleted, "the commit made");
         Assert.True(committed.Result, window.Status);
 
         // Committed: saved first, in the log, the bars gone and nothing left to commit.
         Assert.Equal("Count with a long", Git("log", "-1", "--format=%s").Trim());
         Assert.Contains("long int count;", File.ReadAllText(Path.Combine(folder, "Shop.cs")), StringComparison.Ordinal);
-        Ui.WaitFor(() => Marks(window).Count == 0 && window.Vcs.Changes.Count == 0, "the bars and the changes to clear");
+        Ui.Landed(() => Marks(window).Count == 0 && window.Vcs.Changes.Count == 0, "the bars and the changes cleared");
         Assert.Empty(commit.Rows);
         Assert.Empty(commit.Message);
         window.Close();
@@ -70,15 +70,14 @@ public sealed class VcsTests : IDisposable
     {
         MainWindow window = Open();
         CodeEditor editor = window.EditorArea.CodeEditor;
-        Ui.WaitFor(() => window.Vcs.Repository is not null, "the working tree");
         editor.GoTo(new TextPosition(2, 4));
         window.KeyTextInput("long ");
-        Ui.WaitFor(() => Marks(window).Any(m => m.Kind == ChangeMarkKind.Modified && m.Line == 2), "a modified bar on line 3");
+        Ui.Landed(() => Marks(window).Any(m => m.Kind == ChangeMarkKind.Modified && m.Line == 2), "a modified bar on line 3");
 
         Assert.Null(window.Rename(Passenger.App.Workspace.PathNames.Canonical(Path.Combine(folder, "Shop.cs")), "Store.cs"));
         editor.GoTo(new TextPosition(0, 0));
         window.KeyTextInput("sealed ");
-        Ui.WaitFor(() => Marks(window).Any(m => m.Line == 0), "a bar for the line typed after the rename, against the last commit's Shop.cs", TimeSpan.FromSeconds(20));
+        Ui.Landed(() => Marks(window).Any(m => m.Line == 0), "a bar for the line typed after the rename, against the last commit's Shop.cs");
         Assert.Equal("Store.cs", window.EditorArea.Active?.Name);
         Assert.Contains(Marks(window), m => m.Kind == ChangeMarkKind.Modified && m.Line == 2);
         window.Close();
@@ -89,22 +88,21 @@ public sealed class VcsTests : IDisposable
     {
         MainWindow window = Open();
         CodeEditor editor = window.EditorArea.CodeEditor;
-        Ui.WaitFor(() => window.Vcs.Repository is not null, "the working tree");
         editor.ApplyEdits([new TextEdit(editor.Document.Snapshot.GetLineStart(4), 0, "    // added\n")]);
         editor.GoTo(new TextPosition(0, 0));
         window.KeyTextInput("public ");
-        Ui.WaitFor(() => Marks(window).Count == 2, "two change bars");
+        Ui.Landed(() => Marks(window).Count == 2, "two change bars");
         Assert.Contains(Marks(window), m => m.Kind == ChangeMarkKind.Added && m.Line == 4 && m.Count == 1);
 
         // The added line goes; the other change stays.
         editor.GoTo(new TextPosition(4, 2));
         window.Perform(AppActions.RollbackLines);
-        Ui.WaitFor(() => !Text(window).Contains("// added", StringComparison.Ordinal), "the added line to go");
+        Ui.Landed(() => !Text(window).Contains("// added", StringComparison.Ordinal), "the added line gone");
         Assert.StartsWith("public class Shop", Text(window), StringComparison.Ordinal);
         editor.GoTo(new TextPosition(0, 3));
         window.Perform(AppActions.RollbackLines);
-        Ui.WaitFor(() => Text(window) == Original, "the file to be as committed");
-        Ui.WaitFor(() => Marks(window).Count == 0, "the bars to clear");
+        Ui.Landed(() => Text(window) == Original, "the file as committed");
+        Ui.Landed(() => Marks(window).Count == 0, "the bars cleared");
         window.Close();
     }
 
@@ -112,22 +110,22 @@ public sealed class VcsTests : IDisposable
     public void A_new_branch_from_the_toolbar_is_checked_out_and_going_back_reloads_the_open_file()
     {
         MainWindow window = Open();
-        Ui.WaitFor(() => window.Vcs.Branch == "main", "the branch to be read");
+        Assert.Equal("main", window.Vcs.Branch);
         window.ShowNewBranch();
         Ui.Settle();
         NamePopup popup = Assert.IsType<NamePopup>(window.Popup);
         popup.Text = "feature/sale";
         Task submitted = popup.SubmitAsync();
-        Ui.WaitFor(() => submitted.IsCompleted && window.Vcs.Branch == "feature/sale", "the new branch to be checked out");
+        Ui.Landed(() => submitted.IsCompleted && window.Vcs.Branch == "feature/sale", "the new branch checked out");
         Assert.False(window.IsPopupOpen);
 
         // A commit on the branch, then main again: the editor shows main's text without being asked.
         File.WriteAllText(Path.Combine(folder, "Shop.cs"), Original.Replace("count++", "count += 2", StringComparison.Ordinal));
         Git("commit", "-q", "-am", "Twice");
         window.Vcs.ReloadOpenFiles();
-        Ui.WaitFor(() => Text(window).Contains("count += 2", StringComparison.Ordinal), "the branch's text");
+        Ui.Landed(() => Text(window).Contains("count += 2", StringComparison.Ordinal), "the branch's text");
         Task<bool> checkout = window.Vcs.CheckoutAsync("main");
-        Ui.WaitFor(() => checkout.IsCompleted, "the checkout");
+        Ui.Landed(() => checkout.IsCompleted, "the checkout done");
         Assert.True(checkout.Result, window.Status);
         Assert.Equal("main", window.Vcs.Branch);
         Assert.Equal(Original, Text(window));
@@ -147,7 +145,7 @@ public sealed class VcsTests : IDisposable
         window.Perform(AppActions.Save);
         _ = window.Vcs.RefreshAsync();
         CommitView commit = window.CommitView;
-        Ui.WaitFor(() => window.Vcs.Changes.Count == 2, "a changed file and a new one");
+        Ui.Landed(() => window.Vcs.Changes.Count == 2, "a changed file and a new one listed");
         Assert.DoesNotContain(commit.Chosen, c => c.Kind == ChangeKind.Unversioned);
 
         string? asked = null;
@@ -162,7 +160,7 @@ public sealed class VcsTests : IDisposable
         }
         window.Perform(AppActions.ShowCommit);
         RollbackChosen(commit);
-        WaitForNothingChanged(window);
+        AssertNothingChanged(window);
         Assert.Contains("deleted", asked, StringComparison.Ordinal);
         Assert.False(File.Exists(added));
         Assert.Equal(Original, Text(window));
@@ -180,7 +178,7 @@ public sealed class VcsTests : IDisposable
         window.KeyTextInput("sealed ");
         window.Perform(AppActions.Save);
         _ = window.Vcs.RefreshAsync();
-        Ui.WaitFor(() => window.Vcs.Changes.Count == 2, "a changed file and a new one");
+        Ui.Landed(() => window.Vcs.Changes.Count == 2, "a changed file and a new one listed");
         window.Confirm = (_, _, _) => Task.FromResult(true);
         foreach (CommitRow row in window.CommitView.Rows.OfType<CommitRow>())
         {
@@ -202,7 +200,7 @@ public sealed class VcsTests : IDisposable
         try
         {
             RollbackChosen(window.CommitView);
-            WaitForNothingChanged(window);
+            AssertNothingChanged(window);
         }
         finally
         {
@@ -212,7 +210,7 @@ public sealed class VcsTests : IDisposable
         }
         Assert.Equal(Original, File.ReadAllText(shop));
         Assert.False(File.Exists(added), "The new file stayed after the program holding it let go");
-        Ui.WaitFor(() => Text(window) == Original, "the open file to take the last commit's text");
+        Ui.Landed(() => Text(window) == Original, "the open file at the last commit's text");
         Assert.Equal("Rolled back 2 files", window.Status);
         window.Close();
     }
@@ -222,17 +220,16 @@ public sealed class VcsTests : IDisposable
     {
         MainWindow window = Open();
         CodeEditor editor = window.EditorArea.CodeEditor;
-        Ui.WaitFor(() => window.Vcs.Repository is not null, "the working tree");
         editor.ApplyEdits([new TextEdit(editor.Document.Snapshot.GetLineStart(4), 0, "    int total;\n")]);
         editor.GoTo(new TextPosition(2, 4));
         window.KeyTextInput("long ");
         window.Perform(AppActions.Save);
         _ = window.Vcs.RefreshAsync();
-        Ui.WaitFor(() => window.Vcs.Changes.Count == 1, "Shop.cs changed");
+        Ui.Landed(() => window.Vcs.Changes.Count == 1, "Shop.cs listed as changed");
 
         // From the Commit window, as a double-click on the file does.
         Task<DiffWindow?> opening = window.ShowDiffAsync(window.Vcs.Changes[0].Path);
-        Ui.WaitFor(() => opening.IsCompleted, "the diff to open");
+        Ui.Landed(() => opening.IsCompleted, "the diff open");
         DiffWindow diff = opening.Result!;
         Assert.Same(diff, window.Frontmost);
         DiffView view = diff.View;
@@ -256,7 +253,6 @@ public sealed class VcsTests : IDisposable
     public void A_closed_diff_is_let_go_by_the_open_file_it_showed()
     {
         MainWindow window = Open();
-        Ui.WaitFor(() => window.Vcs.Repository is not null, "the working tree");
         WeakReference<DiffView> closed = DiffAndClose(window);
 
         GC.Collect();
@@ -270,10 +266,9 @@ public sealed class VcsTests : IDisposable
     public void An_edit_in_a_diff_after_the_files_tab_closed_is_saved_with_the_others_and_as_the_diff_closes()
     {
         MainWindow window = Open();
-        Ui.WaitFor(() => window.Vcs.Repository is not null, "the working tree");
         string shop = window.EditorArea.Active!.Path;
         Task<DiffWindow?> opening = window.ShowDiffAsync(shop);
-        Ui.WaitFor(() => opening.IsCompleted, "the diff to open");
+        Ui.Landed(() => opening.IsCompleted, "the diff open");
         DiffWindow diff = opening.Result!;
 
         // The file's tab closes under the diff, whose right side still edits the file.
@@ -304,15 +299,14 @@ public sealed class VcsTests : IDisposable
     {
         MainWindow window = Open();
         CodeEditor editor = window.EditorArea.CodeEditor;
-        Ui.WaitFor(() => window.Vcs.Repository is not null, "the working tree");
         editor.GoTo(new TextPosition(4, 4));
         window.KeyTextInput("public ");
-        Ui.WaitFor(() => Marks(window).Count == 1, "a change bar on line 5");
+        Ui.Landed(() => Marks(window).Count == 1, "a change bar on line 5");
 
         Avalonia.Point at = editor.TranslatePoint(editor.GutterColumnPoint(GutterColumn.Changes, 4), window)!.Value;
         window.MouseDown(at, Avalonia.Input.MouseButton.Left);
         window.MouseUp(at, Avalonia.Input.MouseButton.Left);
-        Ui.WaitFor(() => window.Popup is ChangePopup, "the change's popup");
+        Ui.Landed(() => window.Popup is ChangePopup, "the change's popup");
         ChangePopup popup = (ChangePopup)window.Popup!;
         Assert.Equal("    void Add() { count++; }", popup.Before);
         // The bar's click is the change's, not a breakpoint's.
@@ -322,7 +316,7 @@ public sealed class VcsTests : IDisposable
             .OfType<Avalonia.Controls.Button>()
             .First(b => Avalonia.Controls.ToolTip.GetTip(b) as string == "Rollback");
         rollback.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
-        Ui.WaitFor(() => Text(window) == Original, "the line to be as committed");
+        Ui.Landed(() => Text(window) == Original, "the line as committed");
         Assert.False(window.IsPopupOpen);
         window.Close();
     }
@@ -341,16 +335,16 @@ public sealed class VcsTests : IDisposable
         window.OpenFile(generated);
         CodeEditor editor = window.EditorArea.CodeEditor;
         VcsController vcs = window.Vcs;
-        Ui.WaitFor(() => Marks(window).Count == 1667, "a bar for each line generated anew");
+        Ui.Landed(() => Marks(window).Count == 1667, "a bar for each line generated anew");
 
         // Typed in, the file is compared again with the last commit off the window's thread, in the memory a few copies of
         // its 1 MB of text take: keeping every step of the comparison took over 100 MB.
         editor.GoTo(new TextPosition(0, 4));
         window.KeyTextInput("const ");
-        Ui.WaitFor(() => Marks(window).Count == 1668, "a bar for the first line typed in");
+        Ui.Landed(() => Marks(window).Count == 1668, "a bar for the first line typed in");
         editor.GoTo(new TextPosition(8, 4));
         window.KeyTextInput("const ");
-        Ui.WaitFor(() => Marks(window).Count == 1669, "a bar for the second line typed in");
+        Ui.Landed(() => Marks(window).Count == 1669, "a bar for the second line typed in");
         Assert.Equal([new ChangeMark(0, 1, ChangeMarkKind.Modified), new ChangeMark(5, 1, ChangeMarkKind.Modified), new ChangeMark(8, 1, ChangeMarkKind.Modified)], Marks(window).Take(3));
         Assert.True(vcs.LargestComparison < 16_000_000, $"Comparing the file with the last commit took {vcs.LargestComparison / 1e6:F0} MB");
 
@@ -372,7 +366,7 @@ public sealed class VcsTests : IDisposable
         Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(popup).OfType<Avalonia.Controls.Button>()
             .First(b => Avalonia.Controls.ToolTip.GetTip(b) as string == "Show Diff")
             .RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
-        Ui.WaitFor(() => window.Frontmost is DiffWindow, "the diff window");
+        Ui.Landed(() => window.Frontmost is DiffWindow, "the diff window");
         DiffWindow diff = (DiffWindow)window.Frontmost;
         Assert.Equal(1669, diff.View.Hunks.Count);
         Assert.True(vcs.Comparisons == comparisons, $"Show Diff compared the file {vcs.Comparisons - comparisons} times again");
@@ -383,7 +377,7 @@ public sealed class VcsTests : IDisposable
         window.Perform(AppActions.RollbackLines);
         Assert.StartsWith("    int value0 = 0;\n    int value1 = 1;\n", Text(window), StringComparison.Ordinal);
         Assert.True(vcs.Comparisons == comparisons, $"Rollback Lines compared the file {vcs.Comparisons - comparisons} times again");
-        Ui.WaitFor(() => Marks(window).Count == 1668, "the rolled back line's bar to go");
+        Ui.Landed(() => Marks(window).Count == 1668, "the rolled back line's bar gone");
         window.Close();
     }
 
@@ -392,7 +386,6 @@ public sealed class VcsTests : IDisposable
     {
         MainWindow window = Open();
         CodeEditor editor = window.EditorArea.CodeEditor;
-        Ui.WaitFor(() => window.Vcs.Repository is not null, "the working tree");
 
         // Two blank lines after the last, which git diff lists as added.
         editor.GoTo(new TextPosition(6, 0));
@@ -400,17 +393,17 @@ public sealed class VcsTests : IDisposable
         Ui.Press(window, "ENTER");
         Assert.Equal(Original + "\n\n", Text(window));
         // The first Enter's bar can land before the second's: the wait is for the bar over both.
-        Ui.WaitFor(() => Marks(window).SequenceEqual([new ChangeMark(6, 2, ChangeMarkKind.Added)]), "a bar over both blank lines", TimeSpan.FromSeconds(10));
+        Ui.Landed(() => Marks(window).SequenceEqual([new ChangeMark(6, 2, ChangeMarkKind.Added)]), "a bar over both blank lines");
         Task<DiffWindow?> opening = window.ShowDiffAsync(window.EditorArea.Active!.Path);
-        Ui.WaitFor(() => opening.IsCompleted, "the diff to open");
+        Ui.Landed(() => opening.IsCompleted, "the diff open");
         Assert.Equal([new DiffHunk(6, 0, 6, 2)], opening.Result!.View.Hunks);
         opening.Result.Close();
 
         // Rolled back from the second of them, the file is as committed.
         editor.GoTo(new TextPosition(7, 0));
         window.Perform(AppActions.RollbackLines);
-        Ui.WaitFor(() => Text(window) == Original, "the blank lines to go");
-        Ui.WaitFor(() => Marks(window).Count == 0, "the bar to go");
+        Ui.Landed(() => Text(window) == Original, "the blank lines gone");
+        Ui.Landed(() => Marks(window).Count == 0, "the bar gone");
         window.Close();
     }
 
@@ -430,7 +423,7 @@ public sealed class VcsTests : IDisposable
         MainWindow window = Open();
         GitLogView log = window.GitLog;
         window.Perform(AppActions.ShowGit);
-        Ui.WaitFor(() => log.Rows.Count == 4, "the four commits");
+        Ui.Landed(() => log.Rows.Count == 4, "the four commits");
         Assert.Equal(Git("log", "--all", "--topo-order", "--format=%H").Split('\n', StringSplitOptions.RemoveEmptyEntries), log.Rows.Select(r => r.Commit.Hash));
         GraphRow merge = log.Rows[0];
         Assert.Equal("Merge side", merge.Commit.Subject);
@@ -446,14 +439,14 @@ public sealed class VcsTests : IDisposable
         log.Select(twice);
         // Read again (as after a commit elsewhere), the chosen commit stays chosen.
         Task reload = log.LoadAsync();
-        Ui.WaitFor(() => reload.IsCompleted, "the log to be read again");
+        Ui.Landed(() => reload.IsCompleted, "the log read again");
         Assert.Equal(twice.Hash, log.Selected?.Hash);
-        Ui.WaitFor(() => log.Files.Count == 1, "the commit's file");
+        Ui.Landed(() => log.Files.Count == 1, "the commit's file");
         FileChange changed = Assert.Single(log.Files);
         Assert.Equal((Passenger.App.Workspace.PathNames.Canonical(shop), ChangeKind.Modified), (changed.Path, changed.Kind));
         Assert.Contains("Twice", log.Details, StringComparison.Ordinal);
         Task<DiffWindow?> opening = window.ShowCommitDiffAsync(twice, changed);
-        Ui.WaitFor(() => opening.IsCompleted, "the commit's diff");
+        Ui.Landed(() => opening.IsCompleted, "the commit's diff");
         DiffView diff = opening.Result!.View;
         Assert.Equal(Original, diff.Left.Document.Snapshot.ToString());
         Assert.Contains("count += 2", diff.Right.Document.Snapshot.ToString(), StringComparison.Ordinal);
@@ -483,10 +476,10 @@ public sealed class VcsTests : IDisposable
             window.OpenFolder(clone);
             window.OpenFile(Path.Combine(clone, "Shop.cs"));
             Ui.Settle();
-            Ui.WaitFor(() => window.Vcs.Branch == "main", "the clone's branch");
+            Assert.Equal("main", window.Vcs.Branch);
             window.Perform(AppActions.UpdateProject);
-            Ui.WaitFor(() => Text(window).Contains("long count", StringComparison.Ordinal), "the upstream's change in the open file");
-            Ui.WaitFor(() => window.Status?.StartsWith("Updated", StringComparison.Ordinal) == true, "the update to finish");
+            Ui.Landed(() => Text(window).Contains("long count", StringComparison.Ordinal), "the upstream's change in the open file");
+            Ui.Landed(() => window.Status?.StartsWith("Updated", StringComparison.Ordinal) == true, "the update's end in the status bar");
             Assert.False(window.EditorArea.Active!.IsModified);
             window.Close();
         }
@@ -504,11 +497,10 @@ public sealed class VcsTests : IDisposable
         string twice = Git("rev-parse", "HEAD").Trim();
         string first = Git("rev-parse", "HEAD~1").Trim();
         MainWindow window = Open();
-        Ui.WaitFor(() => window.Vcs.Repository is not null, "the working tree");
         Passenger.App.Workspace.OpenDocument shop = window.EditorArea.Active!;
         Task annotating = window.ToggleAnnotationsAsync(shop);
-        Ui.WaitFor(() => annotating.IsCompleted, "the blame");
-        IReadOnlyList<BlameLine> blame = window.BlameOf(shop)!;
+        Ui.Landed(() => annotating.IsCompleted, "the blame");
+        IReadOnlyList<BlameLine> blame = window.Vcs.BlameOf(shop)!;
         Assert.Equal(first, blame[0].Hash);
         Assert.Equal(twice, blame[4].Hash);
         Assert.Equal("Twice", blame[4].Summary);
@@ -520,29 +512,139 @@ public sealed class VcsTests : IDisposable
 
         // A typed line is not committed yet, once the blame is read again.
         window.EditorArea.CodeEditor.ApplyEdits([new TextEdit(0, 0, "// new\n")]);
-        Ui.WaitFor(() => window.BlameOf(shop) is { Count: > 0 } now && !now[0].IsCommitted, "the typed line to be blamed");
-        Ui.WaitFor(() => shop.GutterAnnotations[0] == "Not committed yet", "its annotation");
+        Ui.Landed(() => window.Vcs.BlameOf(shop) is { Count: > 0 } now && !now[0].IsCommitted, "the typed line blamed");
+        Assert.Equal("Not committed yet", shop.GutterAnnotations[0]);
 
         // A click on a line's annotation chooses its commit in the Git window.
         CodeEditor editor = window.EditorArea.CodeEditor;
         Point line5 = editor.TranslatePoint(new Point(10, (5 * editor.LineHeight) + (editor.LineHeight / 2) - editor.ScrollOffset.Y), window)!.Value;
         window.MouseDown(line5, Avalonia.Input.MouseButton.Left);
         window.MouseUp(line5, Avalonia.Input.MouseButton.Left);
-        Ui.WaitFor(() => window.GitLog.Selected?.Hash == twice, "the commit chosen in the log");
+        Ui.Landed(() => window.GitLog.Selected?.Hash == twice, "the commit chosen in the log");
 
         // Closing them takes the column away.
         Task closing = window.ToggleAnnotationsAsync(shop);
-        Ui.WaitFor(() => closing.IsCompleted, "the annotations to close");
+        Ui.Landed(() => closing.IsCompleted, "the annotations closed");
         Assert.Empty(shop.GutterAnnotations);
         Assert.False(editor.IsInAnnotationColumn(new Point(4, 4)));
         window.Close();
     }
 
     [AvaloniaFact]
+    public void Annotations_opened_and_closed_again_and_again_blame_the_file_once_for_each_pause_in_typing()
+    {
+        MainWindow window = Open();
+        Passenger.App.Workspace.OpenDocument shop = window.EditorArea.Active!;
+        int blames = 0;
+        EventHandler<Passenger.Core.ChildEnd> counted = (_, end) =>
+        {
+            if (end.Command.Contains(" blame ", StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref blames);
+            }
+        };
+        Passenger.Core.ChildProcesses.Ended += counted;
+        try
+        {
+            // On, off, on, off and on again: a blame each time they open.
+            for (int i = 0; i < 5; i++)
+            {
+                Task toggled = window.ToggleAnnotationsAsync(shop);
+                Ui.Landed(() => toggled.IsCompleted, "the annotations opened or closed");
+            }
+            Ui.WaitFor(() => Volatile.Read(ref blames) == 3, "a blame for each of the three openings");
+            Assert.NotEmpty(shop.GutterAnnotations);
+
+            // Two edits before typing pauses: one blame, not one for every time the annotations were opened.
+            window.EditorArea.CodeEditor.ApplyEdits([new TextEdit(0, 0, "// one\n")]);
+            window.EditorArea.CodeEditor.ApplyEdits([new TextEdit(0, 0, "// two\n")]);
+            Ui.Landed(() => shop.GutterAnnotations is ["Not committed yet", ..], "the typed lines blamed");
+            // Past the pause's length again, so a second blame of the same pause would have run.
+            Passenger.App.Screenshot.Pump(TimeSpan.FromSeconds(1.5));
+            Ui.Settle();
+            Assert.True(Volatile.Read(ref blames) == 4, $"One pause in typing blamed the file {Volatile.Read(ref blames) - 3} times");
+        }
+        finally
+        {
+            Passenger.Core.ChildProcesses.Ended -= counted;
+        }
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Annotating_a_large_file_git_does_not_track_says_so_and_shows_nothing()
+    {
+        // Larger than a pipe holds: git refuses the file before it reads the text it is given, so writing it fails.
+        string notes = Path.Combine(folder, "Notes.txt");
+        File.WriteAllText(notes, string.Concat(Enumerable.Repeat("A line of notes that nobody has committed yet.\n", 4500)));
+        Assert.True(new FileInfo(notes).Length > 200_000);
+        MainWindow window = Open();
+        window.OpenFile(notes);
+        Passenger.App.Workspace.OpenDocument opened = window.EditorArea.Active!;
+        Task annotating = window.ToggleAnnotationsAsync(opened);
+        Ui.Landed(() => annotating.IsCompleted, "the blame");
+        Assert.True(annotating.IsCompletedSuccessfully, $"Annotating the file failed: {annotating.Exception?.InnerException}");
+        Assert.Equal("Notes.txt is not tracked by Git", window.Status);
+        Assert.Empty(opened.GutterAnnotations);
+        Assert.False(window.Vcs.IsAnnotated(opened), "The annotations stayed open on a file with nothing to show");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Closing_annotations_while_the_blame_runs_leaves_the_gutter_empty()
+    {
+        MainWindow window = Open();
+        Passenger.App.Workspace.OpenDocument shop = window.EditorArea.Active!;
+        Task opening = window.ToggleAnnotationsAsync(shop);
+        Assert.False(opening.IsCompleted, "The blame was read before the window's thread ran again");
+        Task closing = window.ToggleAnnotationsAsync(shop);
+        Ui.Landed(() => opening.IsCompleted && closing.IsCompleted, "the blame and the close");
+        Assert.Empty(shop.GutterAnnotations);
+        Assert.Null(window.Vcs.BlameOf(shop));
+
+        // Nor does typing bring them back.
+        window.EditorArea.CodeEditor.ApplyEdits([new TextEdit(0, 0, "// new\n")]);
+        Passenger.App.Screenshot.Pump(TimeSpan.FromSeconds(1));
+        Ui.Settle();
+        Assert.Empty(shop.GutterAnnotations);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_screenshot_of_a_working_tree_taken_with_no_wait_shows_its_branch_and_change_bars()
+    {
+        string shop = Path.Combine(folder, "Shop.cs");
+        File.WriteAllText(shop, Original.Replace("int count", "long count", StringComparison.Ordinal));
+        // Git's status made slower than the rest of the window's opening, as a large tree's is: only waiting for Git sees it.
+        string hook = Path.Combine(folder, ".git", "slow-status.sh");
+        File.WriteAllText(hook, "#!/bin/sh\nsleep 1\nexit 1\n");
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(hook, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+        Git("config", "core.fsmonitor", Unix(hook));
+        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false };
+        Assert.True(Screenshot.Prepare(window, LaunchOptions.Parse([folder, "--file", shop]), []), "The screenshot's window never settled");
+
+        Assert.Equal("main", Avalonia.Controls.ControlExtensions.FindControl<Avalonia.Controls.TextBlock>(window, "BranchName")?.Text);
+        Assert.Equal([new ChangeMark(2, 1, ChangeMarkKind.Modified)], Marks(window));
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Point bar = editor.TranslatePoint(editor.GutterColumnPoint(GutterColumn.Changes, 2), window)!.Value;
+        Avalonia.Media.Color drawn = Ui.Pixel(window, bar);
+        Assert.True(drawn == Modified(), $"The changed line's bar is drawn {drawn}, not the modified bar's colour");
+        window.Close();
+    }
+
+    private static Avalonia.Media.Color Modified() =>
+        Avalonia.Controls.ResourceNodeExtensions.TryFindResource(Avalonia.Application.Current!, "Passenger.Vcs.Modified", Avalonia.Styling.ThemeVariant.Dark, out object? brush) && brush is Avalonia.Media.ISolidColorBrush solid
+            ? solid.Color
+            : throw new InvalidOperationException("The theme has no modified bar's colour");
+
+    [AvaloniaFact]
     public void Stashing_puts_every_change_away_unsaved_and_new_files_too_and_unstashing_brings_them_back()
     {
         MainWindow window = Open();
-        Ui.WaitFor(() => window.Vcs.Branch == "main", "the branch to be read");
+        Assert.Equal("main", window.Vcs.Branch);
         CodeEditor editor = window.EditorArea.CodeEditor;
         editor.GoTo(new TextPosition(2, 4));
         window.KeyTextInput("long ");
@@ -554,19 +656,19 @@ public sealed class VcsTests : IDisposable
         Ui.Settle();
         stash.Text = "Half-done count";
         Task stashing = stash.SubmitAsync();
-        Ui.WaitFor(() => stashing.IsCompleted, "the stash");
-        Ui.WaitFor(() => Text(window) == Original, $"the file back as the commit has it ({window.Status})");
+        Ui.Landed(() => stashing.IsCompleted, "the stash made");
+        Ui.Landed(() => Text(window) == Original, $"the file back as the commit has it ({window.Status})");
         Assert.False(File.Exists(notes));
         Assert.False(window.EditorArea.Active!.IsModified);
         Assert.Contains("Half-done count", Git("stash", "list"), StringComparison.Ordinal);
 
         // Unstash Changes lists it; Pop puts both back and drops it.
         Task<UnstashPopup?> showing = window.ShowUnstashAsync();
-        Ui.WaitFor(() => showing.IsCompleted, "the stashes");
+        Ui.Landed(() => showing.IsCompleted, "the stashes");
         UnstashPopup unstash = showing.Result!;
         Assert.Contains("Half-done count", Assert.Single(unstash.Stashes).Message, StringComparison.Ordinal);
         Task popping = unstash.PopAsync();
-        Ui.WaitFor(() => popping.IsCompleted && Text(window).Contains("long int count", StringComparison.Ordinal), "the change back in the open file");
+        Ui.Landed(() => popping.IsCompleted && Text(window).Contains("long int count", StringComparison.Ordinal), "the change back in the open file");
         Assert.True(File.Exists(notes));
         Assert.Empty(Git("stash", "list"));
         Assert.False(window.IsPopupOpen);
@@ -581,7 +683,7 @@ public sealed class VcsTests : IDisposable
         File.AppendAllText(Path.Combine(folder, "Shop.cs"), "// newer\n");
         Git("stash", "push", "-m", "Newer");
         MainWindow window = Open();
-        Ui.WaitFor(() => window.Vcs.Branch == "main", "the branch to be read");
+        Assert.Equal("main", window.Vcs.Branch);
         List<string> asked = [];
         bool agree = false;
         window.Confirm = (title, text, yes) =>
@@ -590,7 +692,7 @@ public sealed class VcsTests : IDisposable
             return Task.FromResult(agree);
         };
         Task<UnstashPopup?> showing = window.ShowUnstashAsync();
-        Ui.WaitFor(() => showing.IsCompleted, "the stashes");
+        Ui.Landed(() => showing.IsCompleted, "the stashes");
         UnstashPopup unstash = showing.Result!;
         Assert.Equal(2, unstash.Stashes.Count);
         Ui.Settle();
@@ -599,14 +701,14 @@ public sealed class VcsTests : IDisposable
 
         // Backspace, the key a Mac labels delete, does nothing at all.
         Ui.Press(window, "BACK_SPACE");
-        Ui.WaitFor(() => !window.Vcs.IsBusy, "whatever Backspace began to end");
+        Ui.Landed(() => !window.Vcs.IsBusy, "the end of whatever Backspace began");
         Assert.True(Stashes().Length == 2, $"Backspace in Unstash Changes dropped a stash, leaving [{string.Join(", ", Stashes())}]");
         Assert.Empty(asked);
         Assert.True(window.IsPopupOpen, "Backspace closed Unstash Changes");
 
         // Delete asks first, naming the chosen stash; a no keeps it, and the popup on it.
         Ui.Press(window, "DELETE");
-        Ui.WaitFor(() => !window.Vcs.IsBusy, "whatever Delete began to end");
+        Ui.Landed(() => !window.Vcs.IsBusy, "the end of whatever Delete began");
         Assert.Equal(2, Stashes().Length);
         string question = Assert.Single(asked);
         Assert.True(question.Contains("stash@{0}", StringComparison.Ordinal) && question.Contains("Newer", StringComparison.Ordinal), $"Drop asked \"{question}\"");
@@ -621,7 +723,7 @@ public sealed class VcsTests : IDisposable
         window.KeyPress(Avalonia.Input.Key.Delete, Avalonia.Input.RawInputModifiers.None, Avalonia.Input.PhysicalKey.None, null);
         buttons[0].RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
         Assert.True(window.IsPopupOpen, "A second drop pressed while the first ran closed Unstash Changes before it ended");
-        Ui.WaitFor(() => !window.IsPopupOpen, "the drop to end");
+        Ui.Landed(() => !window.IsPopupOpen, "the drop's end");
         Assert.Equal(2, asked.Count);
         Assert.Equal("On main: Older", Assert.Single(Stashes()));
         Assert.StartsWith("Dropped", window.Status, StringComparison.Ordinal);
@@ -632,10 +734,10 @@ public sealed class VcsTests : IDisposable
     public void Stashing_a_change_and_a_new_file_leaves_the_git_log_as_it_was()
     {
         MainWindow window = Open();
-        Ui.WaitFor(() => window.Vcs.Branch == "main", "the branch to be read");
+        Assert.Equal("main", window.Vcs.Branch);
         window.Perform(AppActions.ShowGit);
         GitLogView log = window.GitLog;
-        Ui.WaitFor(() => log.Rows.Count == 1, "the log");
+        Ui.Landed(() => log.Rows.Count == 1, "the log");
         string before = Listed(log);
 
         // A stash with a new file in it is three commits of git's own under refs/stash.
@@ -646,12 +748,12 @@ public sealed class VcsTests : IDisposable
         Ui.Settle();
         stash.Text = "Half-done count";
         Task stashing = stash.SubmitAsync();
-        Ui.WaitFor(() => stashing.IsCompleted, "the stash");
+        Ui.Landed(() => stashing.IsCompleted, "the stash made");
         Assert.Single(Stashes());
 
         // Read again, as after any commit, the log lists what it did.
         Task reading = log.LoadAsync();
-        Ui.WaitFor(() => reading.IsCompleted, "the log to be read again");
+        Ui.Landed(() => reading.IsCompleted, "the log read again");
         Assert.True(Listed(log) == before, $"After one stash the log lists\n{Listed(log)}\nwhere it listed\n{before}");
         window.Close();
 
@@ -665,31 +767,31 @@ public sealed class VcsTests : IDisposable
         Git("commit", "-q", "-am", "Twice");
         File.WriteAllText(Path.Combine(folder, "notes.txt"), "scratch\n");
         MainWindow window = Open();
-        Ui.WaitFor(() => window.Vcs.Branch == "main", "the branch to be read");
+        Assert.Equal("main", window.Vcs.Branch);
 
         // The Commit window's Add to .gitignore: the file leaves the changes.
         window.Perform(AppActions.ShowCommit);
         Avalonia.Controls.ListBox changes = Find(window.CommitView, window.CommitView.Rows);
-        Ui.WaitFor(() => window.CommitView.Rows.OfType<CommitRow>().Any(r => r.Change.Name == "notes.txt"), "the unversioned file listed");
+        Ui.Landed(() => window.CommitView.Rows.OfType<CommitRow>().Any(r => r.Change.Name == "notes.txt"), "the unversioned file listed");
         changes.SelectedItem = window.CommitView.Rows.OfType<CommitRow>().First(r => r.Change.Name == "notes.txt");
         Ui.ChooseFromMenu(changes, "Add to .gitignore");
         Assert.Equal("notes.txt\n", File.ReadAllText(Path.Combine(folder, ".gitignore")));
-        Ui.WaitFor(() => window.Vcs.Changes.All(c => c.Name != "notes.txt"), "the ignored file to leave the changes");
+        Ui.Landed(() => window.Vcs.Changes.All(c => c.Name != "notes.txt"), "the ignored file gone from the changes");
 
         // The log's Revert Commit undoes "Twice" with a commit of its own, and the open file follows.
         window.Perform(AppActions.ShowGit);
         GitLogView log = window.GitLog;
-        Ui.WaitFor(() => log.Rows.Any(r => r.Commit.Subject == "Twice"), "the log");
+        Ui.Landed(() => log.Rows.Any(r => r.Commit.Subject == "Twice"), "the log");
         Avalonia.Controls.ListBox commits = Find(log, log.Rows);
         log.Select(log.Rows.First(r => r.Commit.Subject == "Twice").Commit);
         Ui.ChooseFromMenu(commits, "Revert Commit");
-        Ui.WaitFor(() => Git("log", "-1", "--format=%s").Trim() == "Revert \"Twice\"", "the revert's commit");
-        Ui.WaitFor(() => Text(window).Contains("count++", StringComparison.Ordinal), "the open file to follow the revert");
+        Ui.Landed(() => Git("log", "-1", "--format=%s").Trim() == "Revert \"Twice\"", "the revert's commit");
+        Ui.Landed(() => Text(window).Contains("count++", StringComparison.Ordinal), "the revert in the open file");
         // Git reads what the revert did (slower on Windows) before it takes another change; one asked for meanwhile is refused.
-        Ui.WaitFor(() => !window.Vcs.IsBusy, "Git to finish the revert");
+        Ui.Landed(() => !window.Vcs.IsBusy, "the revert's end");
 
         // Copy Revision Number and New Branch from the first commit.
-        Ui.WaitFor(() => log.Rows.Any(r => r.Commit.Subject == "First"), "the first commit in the log");
+        Ui.Landed(() => log.Rows.Any(r => r.Commit.Subject == "First"), "the first commit in the log");
         Passenger.App.Vcs.CommitInfo first = log.Rows.First(r => r.Commit.Subject == "First").Commit;
         log.Select(first);
         Ui.ChooseFromMenu(commits, "Copy Revision Number");
@@ -698,9 +800,9 @@ public sealed class VcsTests : IDisposable
         NamePopup popup = Assert.IsType<NamePopup>(window.Popup);
         popup.Text = "from-first";
         Task named = popup.SubmitAsync();
-        Ui.WaitFor(() => named.IsCompleted, "the new branch");
+        Ui.Landed(() => named.IsCompleted, "the new branch");
         Assert.True(popup.Problem is null, $"The new branch was refused: {popup.Problem}");
-        Ui.WaitFor(() => window.Vcs.Branch == "from-first", "the new branch checked out");
+        Assert.Equal("from-first", window.Vcs.Branch);
         Assert.Equal(first.Hash, Git("rev-parse", "HEAD").Trim());
         window.Close();
     }
@@ -722,15 +824,15 @@ public sealed class VcsTests : IDisposable
         Ui.Settle();
         window.EditorArea.CodeEditor.Selections = SelectionSet.Single(0);
         window.KeyTextInput("sealed ");
-        Ui.WaitFor(() => window.Vcs.Branch == "main", "the branch");
+        Assert.Equal("main", window.Vcs.Branch);
 
         // The unsaved edit to Notes.cs is saved and goes along; Shop.cs, open, takes the other branch's text.
         Task<bool> checkout = window.Vcs.CheckoutAsync("other");
-        Ui.WaitFor(() => checkout.IsCompleted, "the checkout");
+        Ui.Landed(() => checkout.IsCompleted, "the checkout done");
         Assert.True(checkout.Result, window.Status);
         Assert.Equal("sealed class Notes { }\n", File.ReadAllText(Path.Combine(folder, "Notes.cs")));
         window.OpenFile(Path.Combine(folder, "Shop.cs"));
-        Ui.WaitFor(() => Text(window).Contains("count += 5", StringComparison.Ordinal), "the other branch's text");
+        Ui.Landed(() => Text(window).Contains("count += 5", StringComparison.Ordinal), "the other branch's text");
         Assert.False(window.EditorArea.Active!.IsModified);
 
         // Rolled back with unsaved edits on top of saved ones: the editor and the disk are both at HEAD.
@@ -738,12 +840,12 @@ public sealed class VcsTests : IDisposable
         window.KeyTextInput("// saved\n");
         window.Perform(AppActions.Save);
         window.KeyTextInput("// unsaved\n");
-        Ui.WaitFor(() => window.Vcs.Changes.Any(c => c.Name == "Shop.cs"), "Shop.cs changed");
+        Ui.Landed(() => window.Vcs.Changes.Any(c => c.Name == "Shop.cs"), "Shop.cs listed as changed");
         Task<bool> rollback = window.Vcs.RollbackAsync([.. window.Vcs.Changes.Where(c => c.Name == "Shop.cs")]);
-        Ui.WaitFor(() => rollback.IsCompleted, "the rollback");
+        Ui.Landed(() => rollback.IsCompleted, "the rollback done");
         string head = Git("show", "HEAD:Shop.cs");
         Assert.Equal(head, File.ReadAllText(Path.Combine(folder, "Shop.cs")));
-        Ui.WaitFor(() => Text(window) == head, "the editor at HEAD");
+        Ui.Landed(() => Text(window) == head, "the editor at HEAD");
         Assert.Equal(0, asked);
         window.Close();
     }
@@ -758,17 +860,17 @@ public sealed class VcsTests : IDisposable
         File.WriteAllText(Path.Combine(folder, "[ab].cs"), "class Ab { int x; }\n");
         File.WriteAllText(Path.Combine(folder, "a.cs"), "class A { int x; }\n");
         MainWindow window = Open();
-        Ui.WaitFor(() => window.Vcs.Changes.Count == 2, "both files changed");
+        Ui.Landed(() => window.Vcs.Changes.Count == 2, "both files listed as changed");
 
         Task<bool> rollback = window.Vcs.RollbackAsync([.. window.Vcs.Changes.Where(c => c.Name == "[ab].cs")]);
-        Ui.WaitFor(() => rollback.IsCompleted, "the rollback");
+        Ui.Landed(() => rollback.IsCompleted, "the rollback done");
         Assert.Equal("class Ab { }\n", File.ReadAllText(Path.Combine(folder, "[ab].cs")));
         Assert.Equal("class A { int x; }\n", File.ReadAllText(Path.Combine(folder, "a.cs")));
 
         File.WriteAllText(Path.Combine(folder, "[ab].cs"), "class Ab { int y; }\n");
         Ui.WaitFor(() => window.Vcs.Changes.Count == 2, "both files changed again");
         Task<bool> commit = window.Vcs.CommitAsync([.. window.Vcs.Changes.Where(c => c.Name == "[ab].cs")], "Only brackets", amend: false, push: false);
-        Ui.WaitFor(() => commit.IsCompleted, "the commit");
+        Ui.Landed(() => commit.IsCompleted, "the commit made");
         Assert.True(commit.Result, window.Status);
         Assert.Equal("[ab].cs", Git("show", "--name-only", "--format=", "HEAD").Trim());
         window.Close();
@@ -784,11 +886,11 @@ public sealed class VcsTests : IDisposable
         Git("commit", "-q", "-m", "Models");
         MainWindow window = Open();
         window.Perform(AppActions.ShowGit);
-        Ui.WaitFor(() => window.GitLog.Rows.Count == 2, "the log");
-        Ui.WaitFor(() => window.FileIndex.Files.Count == 3, "the files for Go to File");
+        Ui.Landed(() => window.GitLog.Rows.Count == 2, "the log");
+        Ui.Landed(() => window.FileIndex.Files.Count == 3, "the files for Go to File");
         // The log may be read once before the window's first look at the repository knows its history, and once after.
         Task known = window.Vcs.RefreshAsync();
-        Ui.WaitFor(() => known.IsCompleted, "the repository's history to be known");
+        Ui.Landed(() => known.IsCompleted, "the repository's history");
         Passenger.App.Explorer.ExplorerTree tree = window.ExplorerView.Tree;
         tree.Expand(tree.Rows.First(r => r.Name == "Models"));
         Passenger.App.Explorer.ExplorerNode[] chosen = [.. tree.Rows.Where(r => r.Name is "Order.cs" or "Line.cs")];
@@ -798,7 +900,7 @@ public sealed class VcsTests : IDisposable
         window.EditorArea.CodeEditor.Selections = SelectionSet.Single(0);
         window.KeyTextInput("sealed ");
         window.Perform(AppActions.Save);
-        Ui.WaitFor(() => window.Vcs.Changes.Any(c => c.Name == "Shop.cs"), "the save to be seen");
+        Ui.Landed(() => window.Vcs.Changes.Any(c => c.Name == "Shop.cs"), "the save seen");
         Passenger.App.Screenshot.Pump(TimeSpan.FromMilliseconds(400));
         Ui.Settle();
 
@@ -825,7 +927,7 @@ public sealed class VcsTests : IDisposable
         MainWindow window = Open();
         window.Perform(AppActions.ShowCommit);
         CommitView commit = window.CommitView;
-        Ui.WaitFor(() => commit.Rows.OfType<CommitRow>().Count() == 4, "the four changed files listed");
+        Ui.Landed(() => commit.Rows.OfType<CommitRow>().Count() == 4, "the four changed files listed");
         Assert.Equal(4, commit.Chosen.Count);
         Avalonia.Controls.ListBox changes = Find(commit, commit.Rows);
         CommitRow a = commit.Rows.OfType<CommitRow>().First(r => r.Change.Name == "A.cs");
@@ -833,10 +935,10 @@ public sealed class VcsTests : IDisposable
 
         // Read again with nothing new (the window coming to the front), then with a new file: A.cs stays chosen, its row kept.
         Task again = window.Vcs.RefreshAsync();
-        Ui.WaitFor(() => again.IsCompleted, "the status read again");
+        Ui.Landed(() => again.IsCompleted, "the status read again");
         File.WriteAllText(Path.Combine(folder, "Notes.txt"), "new\n");
         Task newer = window.Vcs.RefreshAsync();
-        Ui.WaitFor(() => newer.IsCompleted, "the status read with the new file");
+        Ui.Landed(() => newer.IsCompleted, "the status read with the new file");
         Assert.Contains(commit.Rows.OfType<CommitRow>(), r => r.Change.Name == "Notes.txt");
         Assert.Same(a, commit.Rows.OfType<CommitRow>().First(r => r.Change.Name == "A.cs"));
         Assert.Equal(["A.cs"], changes.SelectedItems!.OfType<CommitRow>().Select(r => r.Change.Name));
@@ -844,7 +946,7 @@ public sealed class VcsTests : IDisposable
         // Deleted meanwhile, A.cs is listed anew, and is still the file chosen.
         File.Delete(Path.Combine(folder, "A.cs"));
         Task deleted = window.Vcs.RefreshAsync();
-        Ui.WaitFor(() => deleted.IsCompleted, "the status read with A.cs deleted");
+        Ui.Landed(() => deleted.IsCompleted, "the status read with A.cs deleted");
         Assert.Equal([("A.cs", ChangeKind.Deleted)], changes.SelectedItems!.OfType<CommitRow>().Select(r => (r.Change.Name, r.Change.Kind)));
 
         // Rollback asks naming the file it will roll back, and rolls back that one alone.
@@ -856,7 +958,7 @@ public sealed class VcsTests : IDisposable
         Assert.DoesNotContain(shown, t => t is "B.cs" or "C.cs" or "Shop.cs" or "Notes.txt");
         Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(dialog).OfType<Avalonia.Controls.Button>().First(b => (string?)b.Content == "Rollback")
             .RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
-        Ui.WaitFor(() => window.Vcs.Changes.All(c => c.Name != "A.cs"), "A.cs rolled back");
+        Ui.Landed(() => window.Vcs.Changes.All(c => c.Name != "A.cs"), "A.cs rolled back");
         Assert.Equal("class A { }\n", File.ReadAllText(Path.Combine(folder, "A.cs")));
         Assert.Equal(["B.cs", "C.cs", "Notes.txt", "Shop.cs"], window.Vcs.Changes.Select(c => c.Name).Order(StringComparer.Ordinal));
         window.Close();
@@ -870,7 +972,7 @@ public sealed class VcsTests : IDisposable
         window.Perform(AppActions.ShowCommit);
         CommitView commit = window.CommitView;
         _ = window.Vcs.RefreshAsync();
-        Ui.WaitFor(() => commit.Chosen.Any(c => c.Name == "Shop.cs"), "Shop.cs listed");
+        Ui.Landed(() => commit.Chosen.Any(c => c.Name == "Shop.cs"), "Shop.cs listed");
         commit.Message = "More";
         Ui.Settle();
         Avalonia.Controls.Button[] buttons = [.. Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(commit).OfType<Avalonia.Controls.Button>()
@@ -883,10 +985,10 @@ public sealed class VcsTests : IDisposable
         press.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
         Assert.All(buttons, b => Assert.False(b.IsEnabled, "A commit can be pressed again while one runs"));
         press.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
-        Ui.WaitFor(() => window.Vcs.Changes.Count == 0 && window.Status?.StartsWith("1 file committed", StringComparison.Ordinal) == true, $"the commit ({window.Status})");
+        Ui.Landed(() => window.Vcs.Changes.Count == 0 && window.Status?.StartsWith("1 file committed", StringComparison.Ordinal) == true, $"the commit ({window.Status})");
         Assert.Equal("2", Git("rev-list", "--count", "HEAD").Trim());
         // Git reads what the commit did (slower on Windows) before it takes another change; one asked for meanwhile is refused.
-        Ui.WaitFor(() => !window.Vcs.IsBusy, "Git to finish the commit");
+        Ui.Landed(() => !window.Vcs.IsBusy, "the commit's end");
 
         // Stash Changes asked twice while the first runs: one stash and no complaint, and Commit off meanwhile.
         File.AppendAllText(Path.Combine(folder, "Shop.cs"), "// stashed\n");
@@ -897,7 +999,7 @@ public sealed class VcsTests : IDisposable
         Task first = stash.SubmitAsync();
         Task second = stash.SubmitAsync();
         Assert.All(buttons, b => Assert.False(b.IsEnabled, "A commit can be pressed while a stash runs"));
-        Ui.WaitFor(() => first.IsCompleted && second.IsCompleted, "the stash");
+        Ui.Landed(() => first.IsCompleted && second.IsCompleted, "the stash made");
         Assert.Null(stash.Problem);
         Assert.Single(Git("stash", "list").Split('\n', StringSplitOptions.RemoveEmptyEntries));
         window.Close();
@@ -909,9 +1011,9 @@ public sealed class VcsTests : IDisposable
         MainWindow window = Open();
         window.Perform(AppActions.ShowGit);
         GitLogView log = window.GitLog;
-        Ui.WaitFor(() => log.Rows.Count == 1, "the log");
+        Ui.Landed(() => log.Rows.Count == 1, "the log");
         log.Select(log.Rows[0].Commit);
-        Ui.WaitFor(() => log.Files.Count == 1, "the commit's file");
+        Ui.Landed(() => log.Files.Count == 1, "the commit's file");
         Avalonia.Controls.ListBox files = Find(log, log.Files);
         Avalonia.Controls.TextBox details = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(log).OfType<Avalonia.Controls.TextBox>().Single(t => t.Text == log.Details);
         (double filesHeight, double detailsHeight) = (files.Bounds.Height, details.Bounds.Height);
@@ -945,28 +1047,29 @@ public sealed class VcsTests : IDisposable
         }
         Git("config", "core.fsmonitor", Unix(hook));
         MainWindow window = Open();
-        Ui.WaitFor(() => window.Vcs.Branch == "main", "the branch to be read");
+        Assert.Equal("main", window.Vcs.Branch);
         CodeEditor editor = window.EditorArea.CodeEditor;
         CommitView commit = window.CommitView;
         window.Perform(AppActions.ShowCommit);
         editor.GoTo(new TextPosition(2, 4));
         window.KeyTextInput("long ");
         window.Perform(AppActions.Save);
-        Ui.WaitFor(() => commit.Chosen.Any(c => c.Name == "Shop.cs"), "Shop.cs listed");
+        Ui.Landed(() => commit.Chosen.Any(c => c.Name == "Shop.cs"), "Shop.cs listed");
 
         // Saved again: that save's status is the slow one, and has read the index before the commit is made.
         editor.GoTo(new TextPosition(0, 0));
         window.KeyTextInput("sealed ");
         File.WriteAllText(slow, string.Empty);
         window.Perform(AppActions.Save);
-        Ui.WaitFor(() => !File.Exists(slow), "the save's status to begin", TimeSpan.FromSeconds(30));
+        // Not settled: the slow status is background work, which settling would wait out before the commit began.
+        Ui.PumpUntil(() => !File.Exists(slow), "the save's status to begin", TimeSpan.FromSeconds(30));
         commit.Message = "Count with a long";
         Task<bool> committed = commit.CommitAsync(push: false);
-        Ui.WaitFor(() => committed.IsCompleted, "the commit");
+        Ui.Landed(() => committed.IsCompleted, "the commit made");
         Assert.True(committed.Result, window.Status);
 
         // The slow status ends after the commit's own: what it found before the commit never lands over it.
-        Ui.WaitFor(() => File.Exists(slept), "the slow status to end");
+        Ui.Landed(() => File.Exists(slept), "the slow status ended");
         Passenger.App.Screenshot.Pump(TimeSpan.FromSeconds(1));
         Ui.Settle();
         Assert.True(window.Vcs.Changes.Count == 0,
@@ -996,12 +1099,12 @@ public sealed class VcsTests : IDisposable
         }
         Ui.Settle();
         Task opened = window.Vcs.RefreshAsync();
-        Ui.WaitFor(() => opened.IsCompleted && window.Vcs.Branch == "main", "the working tree to be read");
+        Ui.Landed(() => opened.IsCompleted && window.Vcs.Branch == "main", "the working tree read");
 
         // Back from another program with five files open: the status is read again, and no file's last-commit text.
         int reads = window.Vcs.HeadReads;
         Task back = window.Vcs.RefreshAsync();
-        Ui.WaitFor(() => back.IsCompleted, "the status read again");
+        Ui.Landed(() => back.IsCompleted, "the status read again");
         Assert.True(window.Vcs.HeadReads == reads, $"Coming back to the window read last-commit texts {window.Vcs.HeadReads - reads} times though HEAD had not moved");
 
         // HEAD moved back a commit in a terminal: every open file's bars are against it, from one read of their texts.
@@ -1034,20 +1137,15 @@ public sealed class VcsTests : IDisposable
         return window;
     }
 
-    /// <summary>Waits for Git to list nothing changed; failing, it says what is still listed, whether Git is still busy,
-    /// what the status bar says (git's own words when a rollback failed) and what git finds on disk.</summary>
-    private void WaitForNothingChanged(MainWindow window)
+    /// <summary>Lets the window's background work land and finds Git listing nothing changed; failing, it says what is
+    /// still listed, whether Git is still busy, what the status bar says (git's own words when a rollback failed) and what
+    /// git finds on disk.</summary>
+    private void AssertNothingChanged(MainWindow window)
     {
-        try
-        {
-            Ui.WaitFor(() => window.Vcs.Changes.Count == 0, "nothing left changed");
-        }
-        catch (TimeoutException waited)
-        {
-            string listed = string.Join(", ", window.Vcs.Changes.Select(c => $"{c.Name} ({c.Kind})"));
-            throw new TimeoutException($"{waited.Message}: Git still lists {listed} and is {(window.Vcs.IsBusy ? "still busy" : "idle")}, "
-                + $"the status bar says \"{window.Status}\" and git status says \"{Git("status", "--porcelain").Trim()}\"", waited);
-        }
+        Ui.Settle();
+        string listed = string.Join(", ", window.Vcs.Changes.Select(c => $"{c.Name} ({c.Kind})"));
+        Assert.True(window.Vcs.Changes.Count == 0, $"Once its work had landed Git still listed {listed} and was {(window.Vcs.IsBusy ? "still busy" : "idle")}, "
+            + $"the status bar said \"{window.Status}\" and git status says \"{Git("status", "--porcelain").Trim()}\"");
     }
 
     /// <summary>Presses the Commit window's Rollback, as the person would.</summary>
@@ -1064,12 +1162,12 @@ public sealed class VcsTests : IDisposable
     private static WeakReference<DiffView> DiffAndClose(MainWindow window)
     {
         Task<DiffWindow?> opening = window.ShowDiffAsync(window.EditorArea.Active!.Path);
-        Ui.WaitFor(() => opening.IsCompleted, "the diff to open");
+        Ui.Landed(() => opening.IsCompleted, "the diff open");
         DiffWindow diff = opening.Result!;
         Assert.Same(window.EditorArea.Active!.Text, diff.View.Right.Document);
         diff.View.Right.Focus();
         diff.KeyTextInput("// ");
-        Ui.WaitFor(() => diff.View.Hunks.Count == 1, "the difference typed");
+        Ui.Landed(() => diff.View.Hunks.Count == 1, "the difference typed");
         diff.Close();
         Ui.Settle();
         Assert.Empty(window.OwnedWindows);

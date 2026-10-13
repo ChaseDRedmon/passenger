@@ -211,6 +211,29 @@ public static class Ui
         }
     }
 
+    /// <summary>Lets the window's background work land, as a screenshot does, then finds what it shows, with no wait of
+    /// the test's own: what that work brings (Git's answers, a search's) must be work the window counts.</summary>
+    public static void Landed(Func<bool> shown, string what)
+    {
+        Settle();
+        Assert.True(shown(), $"Once its background work had landed the window still lacked {what}");
+    }
+
+    /// <summary>Waits for something to become true while background work is still under way (a git made slow, an answer
+    /// held back), running the dispatcher's loop but never waiting for that work to land as <see cref="WaitFor"/> does.</summary>
+    public static void PumpUntil(Func<bool> condition, string what, TimeSpan? limit = null)
+    {
+        DateTime until = DateTime.UtcNow + (limit ?? TimeSpan.FromSeconds(90));
+        while (!condition())
+        {
+            if (DateTime.UtcNow > until)
+            {
+                throw new TimeoutException($"Waited {(limit ?? TimeSpan.FromSeconds(90)).TotalSeconds} s for {what}");
+            }
+            Passenger.App.Screenshot.Pump(TimeSpan.FromMilliseconds(20));
+        }
+    }
+
     /// <summary>Opens a control's right-click menu for what it has chosen, as the menu key does, and chooses an item,
     /// failing if it is not there or cannot run.</summary>
     public static void ChooseFromMenu(Control owner, string item)

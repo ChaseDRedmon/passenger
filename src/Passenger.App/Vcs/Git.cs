@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using Passenger.Core;
+using Passenger.Editor;
 
 namespace Passenger.App.Vcs;
 
@@ -534,6 +535,8 @@ public sealed class Git
 
     private static async Task<GitResult> RunAsync(string folder, IReadOnlyList<string> arguments, string? input = null)
     {
+        // What git answers is what the window shows next (the branch, the bars, the log, a blame): a screenshot waits for it.
+        using IDisposable held = BackgroundWork.Scope();
         if (Start(folder, arguments) is not { } start)
         {
             return new GitResult(127, string.Empty, OperatingSystem.IsMacOS() ? "git is not installed: xcode-select --install installs it" : "git is not installed");
@@ -553,6 +556,7 @@ public sealed class Git
     /// git is not there or fails to start.</summary>
     private static async Task<byte[]> OutputAsync(string folder, IReadOnlyList<string> arguments, string input)
     {
+        using IDisposable held = BackgroundWork.Scope();
         if (Start(folder, arguments) is not { } start)
         {
             return [];

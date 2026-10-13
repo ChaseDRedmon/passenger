@@ -58,7 +58,7 @@ public sealed class PackagesTests : IDisposable
         NuGetView nuget = window.NuGet;
         nuget.Query = "sample";
         Task searched = nuget.RefreshAsync();
-        Ui.WaitFor(() => searched.IsCompleted && nuget.Versions.Count == 2, "the package and its versions");
+        Ui.Landed(() => searched.IsCompleted && nuget.Versions.Count == 2, "the package and its versions");
         Assert.Equal("Passenger.Sample", Assert.Single(nuget.Rows).Id);
         Assert.Equal(["1.1.0", "1.0.0"], nuget.Versions);
 
@@ -67,12 +67,12 @@ public sealed class PackagesTests : IDisposable
         Run(nuget, nuget.InstallAsync(lib));
         Assert.Equal("1.0.0", Version(window));
 
-        Ui.WaitFor(() => nuget.Selected?.IsInstalled == true && nuget.Versions.Count == 2, "the package marked installed");
+        Ui.Landed(() => nuget.Selected?.IsInstalled == true && nuget.Versions.Count == 2, "the package marked installed");
         nuget.ChosenVersion = "1.1.0";
         Run(nuget, nuget.InstallAsync(Assert.Single(window.Projects)));
         Assert.Equal("1.1.0", Version(window));
 
-        Ui.WaitFor(() => nuget.Selected?.IsInstalled == true, "the package still chosen");
+        Ui.Landed(() => nuget.Selected?.IsInstalled == true, "the package still chosen");
         Run(nuget, nuget.RemoveAsync(Assert.Single(window.Projects)));
         Assert.Null(Version(window));
         Assert.DoesNotContain("Passenger.Sample", File.ReadAllText(project), StringComparison.Ordinal);
@@ -87,11 +87,11 @@ public sealed class PackagesTests : IDisposable
         NuGetView nuget = window.NuGet;
         nuget.Query = "sample";
         Task searched = nuget.RefreshAsync();
-        Ui.WaitFor(() => searched.IsCompleted && nuget.Versions.Count == 2, "the package and its versions");
+        Ui.Landed(() => searched.IsCompleted && nuget.Versions.Count == 2, "the package and its versions");
 
         Button install = InstallButton(nuget, "Lib") ?? throw new Xunit.Sdk.XunitException("The NuGet window lists no Lib project to install the package in");
         install.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        Ui.WaitFor(() => !nuget.IsBusy && Version(window) is not null, "the package installed in Lib", TimeSpan.FromMinutes(2));
+        Ui.Landed(() => !nuget.IsBusy && Version(window) is not null, "the package installed in Lib");
         Assert.Equal("1.1.0", Version(window));
         Assert.Contains("Passenger.Sample", File.ReadAllText(project), StringComparison.Ordinal);
         window.Close();
@@ -115,7 +115,7 @@ public sealed class PackagesTests : IDisposable
         MainWindow window = Open(new FolderFeed(feed));
         NuGetView nuget = window.NuGet;
         Prerelease(nuget).IsChecked = true;
-        Ui.WaitFor(() => nuget.Versions.Count == 9, "the installed package's versions, prereleases too");
+        Ui.Landed(() => nuget.Versions.Count == 9, "the installed package's versions, prereleases too");
         Assert.Equal(["1.1.0", "1.0.0", "1.0.0-rc.1", "1.0.0-beta.10", "1.0.0-beta.2", "1.0.0-beta", "1.0.0-alpha.beta", "1.0.0-alpha.1", "1.0.0-alpha"], nuget.Versions);
 
         ComboBox picker = Assert.Single(Descendants<ComboBox>(nuget));
@@ -135,7 +135,8 @@ public sealed class PackagesTests : IDisposable
         MainWindow window = Open(held);
         NuGetView nuget = window.NuGet;
         nuget.Query = "passenger";
-        Ui.WaitFor(() => nuget.Rows.Count == 2 && nuget.Selected is not null, "both packages listed, the first chosen");
+        // The window waits on the versions held back, as background work, so nothing settles until they are let go.
+        Ui.PumpUntil(() => nuget.Rows.Count == 2 && nuget.Selected is not null, "both packages listed, the first chosen");
 
         // The first row is chosen as the list fills; the other and then the first again are chosen before any answer.
         PackageRow first = nuget.Selected!;
@@ -143,8 +144,7 @@ public sealed class PackagesTests : IDisposable
         list.SelectedItem = nuget.Rows.Single(r => r.Id != first.Id);
         list.SelectedItem = first;
         held.Release();
-        Ui.WaitFor(() => held.Answered == 3, "the versions of all three choices");
-        Ui.Settle();
+        Ui.Landed(() => held.Answered == 3, "the versions of all three choices");
 
         List<ComboBox> pickers = [.. Descendants<ComboBox>(nuget)];
         Assert.True(pickers.Count == 1, $"The details of {first.Id} were shown {pickers.Count} times");
@@ -158,13 +158,13 @@ public sealed class PackagesTests : IDisposable
         MainWindow window = Open(new NuGetOrgFeed(new HttpClient(new RecordedNuGetOrg())));
         NuGetView nuget = window.NuGet;
         nuget.Query = "moq";
-        Ui.WaitFor(() => nuget.Versions.Count > 0, "Moq's versions");
+        Ui.Landed(() => nuget.Versions.Count > 0, "Moq's versions");
         Assert.Equal(["4.21.0", "4.20.72", "4.20.70", "4.20.69", "4.18.4", "4.7.0", "4.5.30"], nuget.Versions);
         Assert.Equal("4.21.0", nuget.ChosenVersion);
 
         // A listed prerelease joins them; the unlisted 4.20.0-rc does not.
         Prerelease(nuget).IsChecked = true;
-        Ui.WaitFor(() => nuget.Versions.Contains("4.6.62-alpha"), "Moq's listed prerelease");
+        Ui.Landed(() => nuget.Versions.Contains("4.6.62-alpha"), "Moq's listed prerelease");
         Assert.Equal(["4.21.0", "4.20.72", "4.20.70", "4.20.69", "4.18.4", "4.7.0", "4.6.62-alpha", "4.5.30"], nuget.Versions);
         window.Close();
     }
@@ -191,6 +191,8 @@ public sealed class PackagesTests : IDisposable
         Ui.Settle();
         window.NuGet.Feed = packages;
         window.Perform(AppActions.ShowNuGet);
+        // Shown before a query is typed, so the window's first list is its own and not a second search for that query.
+        Ui.Settle();
         return window;
     }
 
@@ -203,7 +205,7 @@ public sealed class PackagesTests : IDisposable
 
     private static void Run(NuGetView nuget, Task<bool> change)
     {
-        Ui.WaitFor(() => change.IsCompleted, "the dotnet command", TimeSpan.FromMinutes(2));
+        Ui.Landed(() => change.IsCompleted, "the dotnet command's end");
         Assert.True(change.Result, nuget.Log);
     }
 
