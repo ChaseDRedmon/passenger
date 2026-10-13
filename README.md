@@ -9,7 +9,8 @@ An IDE for C# and modern .NET, inspired by JetBrains Rider, written in C# with A
 It's early, but it's a working IDE: an editor of its own (a rope, multiple carets, code folding, Rider's Visual Studio
 keymaps), Roslyn's colours, diagnostics, completion, hovers, fixes, refactorings, rename and navigation through the
 Roslyn language server, a Solution view, building, running and unit tests, a debugger and a profiler of its own, Git,
-NuGet and a terminal. An MCP server gives an agent the same IDE. The [MVP milestone](https://github.com/Zaneris/passenger/milestone/1)
+NuGet and a terminal. And your coding agent can use all of it too: debugging, profiling and testing in the same IDE
+you do. The [MVP milestone](https://github.com/Zaneris/passenger/milestone/1)
 lists what comes next.
 
 The pictures here are of a small sample shop, drawn by Passenger itself on Avalonia's headless platform.
@@ -69,25 +70,35 @@ pins, and on Windows and Linux only as nuget.org signed them (NuGet checks no si
 machine updates a lock file when you add or change a package; commit it with the change, since CI restores only what
 the lock files name.
 
-## For agents
+## Your coding agent, using the IDE as you do
 
-Passenger is a Model Context Protocol server, so a coding agent can use what the IDE knows: diagnostics, symbols,
-definitions, usages, renames and fixes from Roslyn, builds and runs, unit tests, the debugger (breakpoints, stepping,
-evaluation, the stopped program's variables), Git (status, diffs of unsaved text, commits, the log, branches), NuGet,
-the IDE's own terminal, and screenshots of the window. Two ways to connect, shown here for Claude Code:
+Connect a coding agent such as Claude Code to Passenger and it works through the IDE, not just your files. It finds
+where things are declared and used, reads the compiler's warnings, and renames and fixes code as the IDE does. It
+builds, runs and tests. It sets breakpoints, steps through the program, reads and changes its variables, and profiles
+a run to find what is slow. It commits, adds packages, types into the terminal, and takes a screenshot to see what you
+see.
+
+Connect it to the window you have open and watch it work: its breakpoints and stops show in your editor, its runs in
+your Run window. Or give it a Passenger of its own with no window, for work it does alone. A window lets agents in
+only once you turn on Settings | MCP Server | Enable MCP Server, through a connection only you can reach, and asks you
+the first time an agent wants to change anything.
+
+Tell your agent to start Passenger with `--mcp-attach`, and it joins the window you have open. Passenger is
+`/Applications/Passenger.app/Contents/MacOS/Passenger` on a Mac and `%LOCALAPPDATA%\PassengerIDE\current\Passenger.exe`
+on Windows. For a Passenger of the agent's own, with no window, use `--mcp` and the folder or solution instead.
 
 ```sh
-# Passenger with no window, its own IDE over a folder or solution
-claude mcp add passenger -- /path/to/Passenger --mcp /path/to/solution
-# the Passenger window you have open: the agent's breakpoints and stops show in it
-claude mcp add passenger -- /path/to/Passenger --mcp-attach
+# Claude Code
+claude mcp add passenger -- /Applications/Passenger.app/Contents/MacOS/Passenger --mcp-attach
+# Codex CLI
+codex mcp add passenger -- /Applications/Passenger.app/Contents/MacOS/Passenger --mcp-attach
 ```
 
-A window lets agents in only once you turn on Settings | MCP Server | Enable MCP Server (never when started with
-`--no-mcp`): it then listens on a socket of its own that only you can reach, and `--mcp-attach` joins the window whose
-folder holds the agent's working directory. An agent asks before its first use of each tool that changes something
-(an edit, a build or run, a commit, a terminal command). In this repository, `.mcp.json` runs `just mcp`, which starts
-the last build over this folder.
+Claude Desktop takes it in Settings | Developer | Edit Config (`"mcpServers": {"passenger": {"command": "<Passenger's
+path>", "args": ["--mcp-attach"]}}`), and the Codex desktop app in Settings | MCP servers | Add server (STDIO, with
+the same command and argument). Passenger connects through MCP, the standard most coding agents use to reach their
+tools, so any other agent that can add an MCP server connects the same way. In this repository, `.mcp.json` runs
+`just mcp`, which starts the last build over this folder.
 
 ## Licence
 
