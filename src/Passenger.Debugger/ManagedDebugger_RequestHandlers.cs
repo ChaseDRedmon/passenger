@@ -245,6 +245,7 @@ public partial class ManagedDebugger
     private void ContinueWithVariableClearAllowSuperfluousContinue()
     {
         ArgumentNullException.ThrowIfNull(_process);
+        _stopShown = false;
         _pauseRequested = false;
         EvalStatus.ImplicitOff = null;
         _unhandledByUser = null;
@@ -268,6 +269,7 @@ public partial class ManagedDebugger
     private void ContinueWithVariableClear()
     {
         ArgumentNullException.ThrowIfNull(_process);
+        _stopShown = false;
         _pauseRequested = false;
         EvalStatus.ImplicitOff = null;
         _unhandledByUser = null;
@@ -289,6 +291,10 @@ public partial class ManagedDebugger
     {
         _logger?.Invoke("Pause");
         ArgumentNullException.ThrowIfNull(_process);
+        if (_stopShown)
+        {
+            return;
+        }
         if (_process.IsRunning is false)
         {
             // Held for one of the runtime's own events (a module loading, a thread starting): the pause is taken where
@@ -302,7 +308,7 @@ public partial class ManagedDebugger
         // ICorDebug's Stop is synchronous and raises no callback of its own, so the stop is reported here.
         if (PausedThread() is { } thread)
         {
-            OnStopped?.Invoke(thread, "pause");
+            ReportStop(thread, "pause");
             return;
         }
         // No thread runs managed code yet (the runtime is still starting): the pause is taken at its next event.
@@ -315,13 +321,13 @@ public partial class ManagedDebugger
     /// so the next step is not refused as one already in progress.</summary>
     private bool TakePendingPause()
     {
-        if (!_pauseRequested || PausedThread() is not { } thread)
+        if (!_pauseRequested || _stopShown || PausedThread() is not { } thread)
         {
             return false;
         }
         _pauseRequested = false;
         EndStepForStop();
-        OnStopped?.Invoke(thread, "pause");
+        ReportStop(thread, "pause");
         return true;
     }
 
@@ -808,6 +814,7 @@ public partial class ManagedDebugger
         {
             throw new ArgumentException(_frameReferenceManager.Unknown(frameId));
         }
+        RequireStop();
 
         ICorDebugFrame frame = GetFrameForThreadIdAndStackDepth(threadId, frameStackDepth);
         if (frame is not ICorDebugILFrame ilFrame)
@@ -850,6 +857,7 @@ public partial class ManagedDebugger
                 ? "This value is from an earlier stop, and the program has run on since"
                 : "Invalid variables reference");
         }
+        RequireStop();
 
         try
         {
@@ -970,6 +978,7 @@ public partial class ManagedDebugger
         {
             throw new InvalidOperationException(_frameReferenceManager.Unknown(frameId.Value));
         }
+        RequireStop();
 
         ICorDebugThread? thread = _threads.GetValueOrDefault(threadId.Value)?.Thread;
         ArgumentNullException.ThrowIfNull(thread);
@@ -1071,11 +1080,17 @@ public partial class ManagedDebugger
     public async Task<ExceptionInfo> ExceptionInfo(ThreadId threadId)
     {
         _logger?.Invoke($"ExceptionInfo for thread {threadId.Value}");
+        RequireStop();
         ICorDebugThread thread = _process!.GetThread(threadId.Value);
         if (thread.TryGetCurrentException(out ICorDebugValue? currentException) is not Cor.S_OK)
         {
             _logger?.Invoke("No current exception");
             throw new InvalidOperationException("No current exception on thread");
+        }
+        // No code runs to read it once an evaluation has timed out, until the program runs on.
+        if (EvalStatus.ImplicitOff is { } off)
+        {
+            return UnevaluatedExceptionInfo(StopFrame(thread), threadId, currentException, off);
         }
 
         FrameStackDepth frameStackDepth = new FrameStackDepth(0);
@@ -1103,7 +1118,8 @@ public partial class ManagedDebugger
         catch (COMException error) when (error.HResult is Cor.CORDBG_E_ILLEGAL_AT_GC_UNSAFE_POINT or Cor.CORDBG_E_FUNC_EVAL_BAD_START_POINT)
         {
             // A thread whose exception came while another thread's evaluation ran is held where no code can run on it.
-            return UnevaluatedExceptionInfo(thread, threadId, currentException);
+            return UnevaluatedExceptionInfo(StopFrame(thread), threadId, currentException,
+                "It was thrown while the debugger ran code on another thread, so its thread is held where no code can run, and its properties cannot be read.");
         }
 
         // An exception's details, its inner exceptions' within (upstream #50), as deep as they go,
@@ -1112,7 +1128,7 @@ public partial class ManagedDebugger
         {
             string detailMessage = await GetExceptionPropertyValue(exception, "Message");
             List<ExceptionInfo.ExceptionDetails> inner = [];
-            ICorDebugValue? innerValue = depth < 10 ? await exception.GetPropertyValue(ProcessRuntimeEventsUntilEvalEvent, EvalStatus, (ICorDebugILFrame)thread.ActiveFrame, "InnerException") : null;
+            ICorDebugValue? innerValue = depth < 10 ? await exception.GetPropertyValue(ProcessRuntimeEventsUntilEvalEvent, EvalStatus, StopFrame(thread), "InnerException") : null;
             try
             {
                 if (innerValue is not null && innerValue.UnwrapDebugValue() is not ICorDebugReferenceValue { IsNull: true })
@@ -1148,7 +1164,7 @@ public partial class ManagedDebugger
 
         async Task<string> GetExceptionPropertyValue(ICorDebugValue exception, string propertyName)
         {
-            ICorDebugValue propertyValue = await exception.GetPropertyValue(ProcessRuntimeEventsUntilEvalEvent, EvalStatus, (ICorDebugILFrame)thread.ActiveFrame, propertyName)
+            ICorDebugValue propertyValue = await exception.GetPropertyValue(ProcessRuntimeEventsUntilEvalEvent, EvalStatus, StopFrame(thread), propertyName)
                 ?? throw new InvalidOperationException($"Exception property '{propertyName}' returned no value");
             try
             {
@@ -1165,18 +1181,24 @@ public partial class ManagedDebugger
         }
     }
 
+    /// <summary>The top frame of a thread's stop, found again for each use, as running code neuters a frame: an evaluation that
+    /// could not be stopped, still running on the thread, has its frames above it.</summary>
+    private static ICorDebugILFrame StopFrame(ICorDebugThread thread) =>
+        EnumerateFramesForThread(thread).FirstOrDefault() as ICorDebugILFrame
+            ?? throw new InvalidOperationException("The thread is stopped outside managed code, so its exception cannot be read");
+
     /// <summary>An exception as its own fields give it, read without running code on its thread: its type and the message
     /// it was made with, and why there is no more.</summary>
-    private ExceptionInfo UnevaluatedExceptionInfo(ICorDebugThread thread, ThreadId threadId, ICorDebugValue exception)
+    private ExceptionInfo UnevaluatedExceptionInfo(ICorDebugILFrame frame, ThreadId threadId, ICorDebugValue exception, string why)
     {
         string typeName = GetCorDebugTypeFriendlyName(exception.ExactType);
-        ICorDebugValue? field = exception.UnwrapDebugValueToObjectOrNull()?.GetClassFieldValue((ICorDebugILFrame)thread.ActiveFrame, "_message");
+        ICorDebugValue? field = exception.UnwrapDebugValueToObjectOrNull()?.GetClassFieldValue(frame, "_message");
         string message = field?.UnwrapDebugValue() is ICorDebugStringValue text ? text.String : "";
         int lastDot = typeName.LastIndexOf('.');
         return new ExceptionInfo
         {
             ExceptionId = $"CLR/{typeName}",
-            Description = $"Exception thrown: '{typeName}': '{message}'\n It was thrown while the debugger ran code on another thread, so its thread is held where no code can run, and its properties cannot be read.",
+            Description = $"Exception thrown: '{typeName}': '{message}'\n {why}",
             BreakMode = _exceptionBreakModes.GetValueOrDefault(threadId, ExceptionBreakMode.Unknown),
             Code = 0,
             Details = new ExceptionInfo.ExceptionDetails

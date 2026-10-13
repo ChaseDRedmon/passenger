@@ -439,11 +439,28 @@ public partial class ManagedDebugger
         _process.Continue(false);
     }
 
+    /// <summary>Set once the client is told the program has stopped, until it lets the program go on (a continue, a step):
+    /// an event that comes meanwhile, which the runtime had on its way as a pause stopped the program, waits until then.</summary>
+    private bool _stopShown;
+
+    private void ReportStop(int threadId, string reason)
+    {
+        _stopShown = true;
+        OnStopped?.Invoke(threadId, reason);
+    }
+
+    private void ReportStop(int threadId, string reason, string filePath, int line, int column, List<int>? hitBreakpointIds)
+    {
+        _stopShown = true;
+        OnStopped2?.Invoke(threadId, filePath, line, column, reason, hitBreakpointIds);
+    }
+
     /// <summary>Hands the first event put off during an evaluation to the event loop in place of a continue, the process
-    /// still stopped and its thread still where the event found it; true when there was one.</summary>
+    /// still stopped and its thread still where the event found it; true when there was one. None is handed over while a
+    /// stop is shown.</summary>
     private bool TakeDeferredEvent()
     {
-        if (EvalStatus.IsRunning || !_deferredEvents.TryDequeue(out CorDebugManagedCallbackEventArgs? later))
+        if (EvalStatus.IsRunning || _stopShown || !_deferredEvents.TryDequeue(out CorDebugManagedCallbackEventArgs? later))
         {
             return false;
         }
@@ -745,6 +762,16 @@ public partial class ManagedDebugger
         }
     }
 
+    /// <summary>Refuses a request that reads the program's threads while it runs, saying so, where ICorDebug would answer
+    /// CORDBG_E_PROCESS_NOT_SYNCHRONIZED: a stop the client was told of holds until the client lets the program go on.</summary>
+    private void RequireStop()
+    {
+        if (_process is { } process && process.TryIsRunning(out bool running) is Cor.S_OK && running)
+        {
+            throw new InvalidOperationException("The program is running, so its threads' frames and values cannot be read until it stops");
+        }
+    }
+
     private ICorDebugFunctionBreakpoint? TryGetEntryBreakpoint(CORDB_ADDRESS moduleBaseAddress, int methodToken, int ilOffset)
     {
         return _entryBreakpoint is { } entry && entry.ModuleBaseAddress == moduleBaseAddress &&
@@ -904,6 +931,7 @@ public partial class ManagedDebugger
         _stepping = null;
         _stepAfterEvaluation = null;
         _unhandledByUser = null;
+        _stopShown = false;
         EvalStatus.Abandoned.Clear();
         EvalStatus.ImplicitOff = null;
         _threads.Clear();

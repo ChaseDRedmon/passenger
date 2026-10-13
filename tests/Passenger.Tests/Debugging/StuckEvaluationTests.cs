@@ -74,6 +74,23 @@ public class StuckEvaluationTests(ITestOutputHelper testOutputHelper)
         Assert.Equal(0, exitCode);
     }
 
+    [Fact]
+    public async Task An_exception_stop_is_still_described_once_an_evaluation_there_could_not_be_stopped()
+    {
+        using DebugSession host = await DebugSession.LaunchToBreakpoint(testOutputHelper, "PassengerCases", Line("Console.WriteLine(\"end\");"), ["all"]);
+        StoppedEvent stop = await host.WaitForStoppedEvent();
+        Assert.Equal("exception", stop.Reason);
+        int thread = stop.ThreadId!.Value;
+        host.WithEvaluateRequest(host.GetTopStackFrame(thread).Id, "Reads.Input", out EvaluateResponse stuck);
+        Assert.Contains("could not be stopped", stuck.Result, StringComparison.Ordinal);
+
+        // Read from the exception's own fields, as no code runs on the thread while the evaluation does.
+        ExceptionInfoResponse info = host.Request<ExceptionInfoResponse>("exceptionInfo", new ThreadArguments(thread));
+        Assert.Equal(("System.InvalidOperationException", "thrown in user code"), (info.Details?.FullTypeName, info.Details?.Message));
+        Assert.Contains("Implicit evaluation is disabled", info.Description, StringComparison.Ordinal);
+        Assert.Single(host.Locals(stop), v => v.Name == "$exception");
+    }
+
     /// <summary>PassengerCases' "reads" case launched with breakpoints on the lines that hold the code given.</summary>
     private async Task<DebugSession> LaunchToBreakpoints(params string[] code)
     {

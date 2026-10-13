@@ -111,13 +111,21 @@ public sealed class DebugSession : IDisposable
         return host;
     }
 
-    /// <summary>The top frame's variables at a stop, by name.</summary>
+    /// <summary>The top frame's variables at a stop, by name; a failure quotes the engine's log, which says what the program
+    /// was doing meanwhile.</summary>
     public List<DapVariable> Locals(StoppedEvent stop)
     {
-        DapStackFrame top = GetTopStackFrame(stop.ThreadId!.Value);
-        WithScopesRequest(top.Id, out ScopesResponse scopes);
-        WithVariablesRequest(scopes.Scopes.Single().VariablesReference, out List<DapVariable> variables);
-        return variables;
+        try
+        {
+            DapStackFrame top = GetTopStackFrame(stop.ThreadId!.Value);
+            WithScopesRequest(top.Id, out ScopesResponse scopes);
+            WithVariablesRequest(scopes.Scopes.Single().VariablesReference, out List<DapVariable> variables);
+            return variables;
+        }
+        catch (DapException failed)
+        {
+            throw new DapException(failed.Command, $"{failed.Reason}\n{Heard()}");
+        }
     }
 
     /// <summary>A request's answer, waited for no longer than <see cref="RequestLimit"/> (or the limit given): one the

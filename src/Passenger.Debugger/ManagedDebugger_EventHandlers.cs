@@ -271,11 +271,11 @@ public partial class ManagedDebugger
             SourceInfo? sourceInfo = GetSourceInfoAtFrame(corThread.ActiveFrame, _justMyCode is false);
             if (sourceInfo is null)
             {
-                OnStopped?.Invoke(corThread.Id, "entry");
+                ReportStop(corThread.Id, "entry");
             }
             else
             {
-                OnStopped2?.Invoke(corThread.Id, sourceInfo.Value.FilePath, sourceInfo.Value.StartLine, sourceInfo.Value.StartColumn, "entry", null);
+                ReportStop(corThread.Id, "entry", sourceInfo.Value.FilePath, sourceInfo.Value.StartLine, sourceInfo.Value.StartColumn, null);
             }
 
             return;
@@ -377,11 +377,11 @@ public partial class ManagedDebugger
             // There exists a 'function breakpoint' type, but netcoredbg et al do not use it, so lets just use 'breakpoint'
             if (sourceInfo is null)
             {
-                OnStopped?.Invoke(corThread.Id, "breakpoint");
+                ReportStop(corThread.Id, "breakpoint");
             }
             else
             {
-                OnStopped2?.Invoke(corThread.Id, sourceInfo.Value.FilePath, sourceInfo.Value.StartLine, sourceInfo.Value.StartColumn, "breakpoint", [managedBreakpoint.Id]);
+                ReportStop(corThread.Id, "breakpoint", sourceInfo.Value.FilePath, sourceInfo.Value.StartLine, sourceInfo.Value.StartColumn, [managedBreakpoint.Id]);
             }
 
             return;
@@ -392,7 +392,7 @@ public partial class ManagedDebugger
             throw new UnreachableException("Breakpoint was not resolved from PDB - this should never happen, as source breakpoints are only bound to resolved source locations");
         }
 
-        OnStopped2?.Invoke(corThread.Id, managedBreakpoint.FilePath, resolvedBreakpoint.StartLine, resolvedBreakpoint.StartColumn, "breakpoint", [managedBreakpoint.Id]);
+        ReportStop(corThread.Id, "breakpoint", managedBreakpoint.FilePath, resolvedBreakpoint.StartLine, resolvedBreakpoint.StartColumn, [managedBreakpoint.Id]);
     }
 
     private void TryBindEntryBreakpoint(ModuleInfo moduleInfo)
@@ -482,7 +482,7 @@ public partial class ManagedDebugger
         int line = sourceInfo.Value.StartLine;
         int column = sourceInfo.Value.StartColumn;
         //_logger?.Invoke($"StepComplete: method 0x{ilFrame.Function.Token} IL offset {ilFrame.IP.pnOffset}, reason: {stepCompleteEventArgs.Reason}");
-        OnStopped2?.Invoke(corThread.Id, sourceFilePath, line, column, "step", null);
+        ReportStop(corThread.Id, "step", sourceFilePath, line, column, null);
     }
 
     /// <summary>A breakpoint that stops ends the step in progress, on its own thread or another, as Rider's does: the
@@ -512,7 +512,16 @@ public partial class ManagedDebugger
         }
         if (EvalStatus.ThreadId is not { } evaluating)
         {
-            return false;
+            if (!_stopShown)
+            {
+                return false;
+            }
+            // On its way as a pause stopped the program: answered, it waits for the client's continue, and the pause's
+            // own hold keeps the program where the client sees it.
+            _logger?.Invoke($"Put off: {callbackEvent.GetType().Name} on thread {thread.Id}, while a stop is shown");
+            _deferredEvents.Enqueue(callbackEvent);
+            _process!.Continue(false);
+            return true;
         }
         if (thread.Id != evaluating)
         {
@@ -531,7 +540,7 @@ public partial class ManagedDebugger
             return;
         }
         EndStepForStop();
-        OnStopped?.Invoke(corThread.Id, "pause");
+        ReportStop(corThread.Id, "pause");
     }
 
     private void HandleException(object? sender, ExceptionCorDebugManagedCallbackEventArgs exceptionEventArgs)
@@ -611,12 +620,13 @@ public partial class ManagedDebugger
                 break;
         }
 
-        if (EvalStatus.IsRunning)
+        if (EvalStatus.IsRunning || _stopShown)
         {
-            // Another thread's, queued with the evaluation's own event: decided while its frame is good, its stop put off.
+            // Another thread's, queued with the evaluation's own event or on its way as a pause stopped the program:
+            // decided while its frame is good, its stop put off.
             if (shouldStop)
             {
-                _logger?.Invoke($"Put off: a stop at an exception on thread {corThread.Id}, during an evaluation on thread {EvalStatus.ThreadId}");
+                _logger?.Invoke($"Put off: a stop at an exception on thread {corThread.Id}, during an evaluation on thread {EvalStatus.ThreadId} or a stop shown");
                 _deferredEvents.Enqueue(new DeferredExceptionStop(corThread, breakMode, handler));
             }
             _process!.Continue(false);
@@ -635,7 +645,7 @@ public partial class ManagedDebugger
         EndStepForStop();
         _exceptionBreakModes[new ThreadId(corThread.Id)] = breakMode;
         _unhandledByUser = breakMode is ExceptionBreakMode.UserUnhandled && handler is { } range ? (corThread.Id, range) : null;
-        OnStopped?.Invoke(corThread.Id, "exception");
+        ReportStop(corThread.Id, "exception");
     }
 
     private static string GetCurrentExceptionType(ICorDebugThread thread)

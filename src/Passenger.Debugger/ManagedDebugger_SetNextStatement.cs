@@ -42,6 +42,6 @@ public partial class ManagedDebugger
         // Every frame and value of the thread was invalidated by the move: the stop is new.
         _variableManager.ClearAndDisposeHandleValues();
         _frameReferenceManager.Clear();
-        OnStopped?.Invoke(threadId, "goto");
+        ReportStop(threadId, "goto");
     }
 }
