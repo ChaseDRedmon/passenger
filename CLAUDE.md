@@ -173,7 +173,11 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.App/Welcome`: the Welcome screen (`WelcomeView`, in the editor area while nothing is open) and the
   recent folders and solutions (`RecentSolutions`, the store's `recentSolutions.json`), read by the screen, File >
   Recent Solutions and a start that names nothing (Settings' Reopen projects on startup); `MainWindow.Welcome.cs`
-  wires them and Clone Repository (`Vcs/CloneDialog`, `Git.CloneAsync`). `Installation.cs` is what an installed
+  wires them and Clone Repository (`Vcs/CloneDialog`, `Git.CloneAsync`). `MainWindow.Open` is how File > Open (a
+  solution or project), Open Folder, the Welcome screen and Recent Solutions open a workspace, refusing anything else
+  with why (Avalonia's panel takes files or folders, never both). A .csproj opens on its own, as Rider opens one
+  (`WorkspaceModel.ProjectFile`); what was opened is kept and reopened as itself (`WorkspaceModel.OpenedAs`), under
+  the name that is also the window's title. `Installation.cs` is what an installed
   Windows copy does on install, update and uninstall (Velopack's hooks): the file types it opens, under the user.
 - `src/Passenger.App/Mcp`: Passenger as an MCP server (the official C# SDK). `PassengerTools` is every tool, each
   run on the UI thread as the window's own commands are and ended by its `CancellationToken`, answering with what its
