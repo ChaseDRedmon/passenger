@@ -1712,6 +1712,7 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
         MainWindow? window = null;
         int whole = 0;
         int screens = 0;
+        int refreshedSince = 0;
         try
         {
             window = project.Open("Paused.cs");
@@ -1732,6 +1733,12 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
                 {
                     Interlocked.Increment(ref screens);
                 }
+                else if (message.StartsWith("<--", StringComparison.Ordinal) && message.Contains("\"workspace/semanticTokens/refresh\"", StringComparison.Ordinal)
+                    && Volatile.Read(ref whole) > 0)
+                {
+                    // The server's word that its colours moved, after the file's were asked for: they are rightly asked again.
+                    Interlocked.Increment(ref refreshedSince);
+                }
             };
 
             // Statements typed one by one, a pause after each long enough for the screen's colours and short of the idle.
@@ -1751,7 +1758,9 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
             // Once typing stops, the whole file's, once.
             Ui.PumpUntil(() => Volatile.Read(ref whole) > 0, "the whole file's colours once typing stopped");
             Ui.Settle();
-            Assert.Equal(1, whole);
+            int refreshes = Volatile.Read(ref refreshedSince);
+            Assert.True(whole <= 1 + refreshes,
+                $"Once typing stopped the whole file's colours were asked for {whole} times, with {refreshes} word from the server since that they moved");
             Assert.Equal(TokenKind.Local, KindAt(far + 4 * " int freshN = value0;".Length));
         }
         finally
