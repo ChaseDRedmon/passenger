@@ -102,5 +102,5 @@ public static class FileSearch
 
     /// <summary>Every match's replacement as an edit, so an open file changes only where its matches are.</summary>
     public static IReadOnlyList<TextEdit> Replacements(TextSnapshot text, SearchQuery query, string replacement) =>
-        [.. TextSearch.FindAll(text, query, int.MaxValue).Matches.Select(m => new TextEdit(m.Start, m.Length, TextSearch.Replacement(text, query, m, replacement)))];
+        TextSearch.FindAll(text, query, int.MaxValue).Replacements(replacement);
 }

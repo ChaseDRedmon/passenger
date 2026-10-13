@@ -156,6 +156,63 @@ public sealed class FindInFilesTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void Replace_in_files_fills_a_regexs_groups_from_each_match_where_it_stands_and_words_take_an_alternation_whole()
+    {
+        string calls = Path.Combine(folder, "Calls.cs");
+        File.WriteAllText(calls, "// catalog cat hotdog dog\nfoo(1); bar (2);\n");
+        MainWindow window = Open();
+        window.OpenFile(Path.Combine(folder, "Beta.cs"));
+        Ui.Settle();
+        OpenDocument beta = window.EditorArea.Active!;
+        window.Confirm = (_, _, _) => Task.FromResult(true);
+        FindInFilesPopup popup = window.ShowFindInFiles(replace: true)!;
+        popup.Regex = true;
+        Search(popup, @"(\w+)(?=\()");
+        Assert.Equal(2, popup.Matches.Count);
+
+        // The closed Calls.cs is written and the open Beta.cs edited, each group filled in from the match its lookahead found.
+        popup.Replacement = "$1_";
+        popup.RequestReplace();
+        Ui.WaitFor(() => File.ReadAllText(calls) != "// catalog cat hotdog dog\nfoo(1); bar (2);\n", "Calls.cs to be written");
+        Assert.Equal("// catalog cat hotdog dog\nfoo_(1); bar (2);\n", File.ReadAllText(calls));
+        Assert.Contains("    void Count_() { }", beta.Text.Snapshot.ToString(), StringComparison.Ordinal);
+
+        popup.Words = true;
+        Search(popup, "cat|dog");
+        Assert.True(popup.Matches.Count == 2, $"cat|dog with Words found {popup.Matches.Count}: a word's part (catalog, hotdog) was taken for a whole word");
+        popup.Replacement = "pet";
+        popup.RequestReplace();
+        Ui.WaitFor(() => File.ReadAllText(calls).StartsWith("// catalog pet", StringComparison.Ordinal), "Calls.cs to be written again");
+        Assert.Equal("// catalog pet hotdog pet\nfoo_(1); bar (2);\n", File.ReadAllText(calls));
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Replacing_every_lines_start_in_files_comments_each_line_and_leaves_each_files_end_alone()
+    {
+        string gamma = Path.Combine(folder, "Gamma.cs");
+        File.WriteAllText(gamma, "class Gamma\r\n{\r\n\r\n}\r\n");
+        MainWindow window = Open();
+        window.OpenFile(Path.Combine(folder, "Beta.cs"));
+        Ui.Settle();
+        OpenDocument beta = window.EditorArea.Active!;
+        window.Confirm = (_, _, _) => Task.FromResult(true);
+        FindInFilesPopup popup = window.ShowFindInFiles(replace: true)!;
+        popup.Regex = true;
+        Search(popup, "^");
+        // Every line's start, an empty line's too, but not the end after a file's last break, as in Rider.
+        Assert.Equal((4, 5, 4), (popup.Matches.Count(m => m.Name == "Alpha.cs"), popup.Matches.Count(m => m.Name == "Beta.cs"), popup.Matches.Count(m => m.Name == "Gamma.cs")));
+
+        popup.Replacement = "// ";
+        popup.RequestReplace();
+        Ui.WaitFor(() => File.ReadAllText(gamma).StartsWith("// ", StringComparison.Ordinal), "Gamma.cs to be written");
+        Assert.Equal("// class Alpha\n// {\n//     int count;\n// }\n", File.ReadAllText(Path.Combine(folder, "Alpha.cs")));
+        Assert.Equal("// class Gamma\r\n// {\r\n// \r\n// }\r\n", File.ReadAllText(gamma));
+        Assert.Equal("// // the count of things\n// class Beta\n// {\n//     void Count() { }\n// }\n", beta.Text.Snapshot.ToString());
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Recent_files_offers_the_files_behind_the_one_in_front_and_opens_one_where_it_was_left()
     {
         MainWindow window = Open();

@@ -135,6 +135,11 @@ public partial class FindBar : UserControl
         }
         Selection primary = editor.Selections.Primary;
         current = forward ? result.NextFrom(primary.End) : result.PreviousFrom(primary.Start);
+        // An empty match (a line's start) the caret already stands on is passed, or Next would stay on it.
+        if (forward && primary.IsEmpty && result.Matches[current] is { Length: 0 } here && here.Start == primary.End)
+        {
+            current = (current + 1) % result.Matches.Count;
+        }
         editor.Select(result.Matches[current]);
         Show();
     }
@@ -152,7 +157,8 @@ public partial class FindBar : UserControl
             editor.Select(match);
             return;
         }
-        string replacement = TextSearch.Replacement(editor.Document.Snapshot, CurrentQuery, match, ReplaceWith.Text ?? string.Empty);
+        // The result is found again at every change of the document, so its matches are this text's.
+        string replacement = result.Replacement(current, ReplaceWith.Text ?? string.Empty);
         int after = match.Start + replacement.Length;
         editor.ApplyEdits([new TextEdit(match.Start, match.Length, replacement)], SelectionSet.Single(after));
         Step(forward: true);
@@ -164,11 +170,7 @@ public partial class FindBar : UserControl
         {
             return;
         }
-        TextSnapshot text = editor.Document.Snapshot;
-        SearchQuery query = CurrentQuery;
-        SearchResult all = TextSearch.FindAll(text, query, int.MaxValue);
-        string with = ReplaceWith.Text ?? string.Empty;
-        List<TextEdit> edits = all.Matches.Select(m => new TextEdit(m.Start, m.Length, TextSearch.Replacement(text, query, m, with))).ToList();
+        IReadOnlyList<TextEdit> edits = TextSearch.FindAll(editor.Document.Snapshot, CurrentQuery, int.MaxValue).Replacements(ReplaceWith.Text ?? string.Empty);
         editor.ApplyEdits(edits);
         Count.Text = $"Replaced {edits.Count}";
     }

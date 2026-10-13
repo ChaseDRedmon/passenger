@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Headless;
 using Avalonia.Interactivity;
 using Avalonia.Headless.XUnit;
@@ -78,6 +79,84 @@ public sealed class FindTests : IDisposable
         window.Perform(AppActions.Save);
         Assert.Equal("int foo\r\nfoo bar\r\nbar foo\r\nend", File.ReadAllText(Path.Combine(folder, "Notes.txt")));
         window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_regex_replacement_fills_its_groups_from_the_match_where_it_stands_lookahead_and_all()
+    {
+        (MainWindow window, CodeEditor editor) = Open("foo(1); bar (2); baz(3);");
+        Ui.Press(window, Ui.Shortcut(AppActions.Replace));
+        FindBar bar = window.EditorArea.FindBar;
+        bar.FindControl<ToggleButton>("UseRegex")!.IsChecked = true;
+        window.KeyTextInput(@"(\w+)(?=\()");
+        Ui.Settle();
+        Assert.Equal("1/2", bar.CountText);
+        bar.FindControl<TextBox>("ReplaceWith")!.Text = "$1_";
+
+        Click(bar, "ReplaceButton");
+        Assert.True(editor.Document.Snapshot.ToString() == "foo_(1); bar (2); baz(3);",
+            $"Replace wrote '{editor.Document.Snapshot}': the group was not filled in from the match its lookahead found");
+        editor.TryExecute(EditorActions.Undo);
+
+        Click(bar, "ReplaceAllButton");
+        Assert.True(editor.Document.Snapshot.ToString() == "foo_(1); bar (2); baz_(3);",
+            $"Replace All wrote '{editor.Document.Snapshot}': the groups were not filled in from the matches their lookahead found");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void With_words_on_a_regex_alternation_finds_whole_words_on_both_sides()
+    {
+        (MainWindow window, CodeEditor editor) = Open("catalog cat hotdog dog");
+        Ui.Press(window, Ui.Shortcut(AppActions.Replace));
+        FindBar bar = window.EditorArea.FindBar;
+        bar.FindControl<ToggleButton>("UseRegex")!.IsChecked = true;
+        bar.FindControl<ToggleButton>("WholeWords")!.IsChecked = true;
+        window.KeyTextInput("cat|dog");
+        Ui.Settle();
+        Assert.True(bar.CountText == "1/2", $"The count says {bar.CountText}: cat|dog found a word's part (catalog, hotdog) as a whole word");
+        bar.FindControl<TextBox>("ReplaceWith")!.Text = "pet";
+        Click(bar, "ReplaceAllButton");
+        Assert.Equal("catalog pet hotdog pet", editor.Document.Snapshot.ToString());
+
+        // A stray ')' is the person's regex not reading, never a close of the group Words puts it in.
+        bar.FindControl<TextBox>("Query")!.Text = "pet)|(dog";
+        Ui.Settle();
+        Assert.Contains("'pet)|(dog'", bar.CountText, StringComparison.Ordinal);
+        Assert.Empty(editor.Highlights);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Replacing_every_lines_start_comments_each_line_and_leaves_the_end_after_the_last_break_alone()
+    {
+        (MainWindow window, CodeEditor editor) = Open("one\n\ntwo\n");
+        Ui.Press(window, Ui.Shortcut(AppActions.Replace));
+        FindBar bar = window.EditorArea.FindBar;
+        bar.FindControl<ToggleButton>("UseRegex")!.IsChecked = true;
+        window.KeyTextInput("^");
+        Ui.Settle();
+        // Each line's start, the empty one's too, but not the end after the last break, as in Rider.
+        Assert.Equal(("1/3", new Selection(0, 0)), (bar.CountText, editor.Selections.Primary));
+        Ui.Press(window, "ENTER");
+        Assert.Equal(("2/3", new Selection(4, 4)), (bar.CountText, editor.Selections.Primary));
+
+        // Replace puts the prefix at the line's start and goes on to the next line's.
+        bar.FindControl<TextBox>("ReplaceWith")!.Text = "// ";
+        Click(bar, "ReplaceButton");
+        Assert.Equal("one\n// \ntwo\n", editor.Document.Snapshot.ToString());
+        Assert.Equal(new Selection(8, 8), editor.Selections.Primary);
+        editor.TryExecute(EditorActions.Undo);
+
+        Click(bar, "ReplaceAllButton");
+        Assert.Equal("// one\n// \n// two\n", editor.Document.Snapshot.ToString());
+        window.Close();
+    }
+
+    private static void Click(FindBar bar, string button)
+    {
+        bar.FindControl<Button>(button)!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Ui.Settle();
     }
 
     private (MainWindow Window, CodeEditor Editor) Open(string text)
