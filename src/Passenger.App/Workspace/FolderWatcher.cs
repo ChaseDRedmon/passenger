@@ -324,7 +324,7 @@ public sealed class FolderWatcher : IDisposable
 
     private void Note(string path, bool created)
     {
-        if (path.EndsWith(FileText.SaveSuffix, StringComparison.Ordinal))
+        if (FileText.IsSaving(path))
         {
             return;
         }

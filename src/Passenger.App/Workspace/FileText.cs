@@ -71,6 +71,10 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom)
     /// <summary>The temporary file a save writes first, which nothing but the save should see.</summary>
     public const string SaveSuffix = ".passenger-save";
 
+    /// <summary>Whether a path is a save's temporary file, there beside its file for the moment the save writes: what
+    /// reads the folder meanwhile (the folder watcher, Git's status) passes it over rather than take it for a new file.</summary>
+    public static bool IsSaving(string path) => path.EndsWith(SaveSuffix, StringComparison.Ordinal);
+
     /// <summary>Writes through a temporary file beside the target, so a failed write never leaves a half-written file
     /// where the old one was; a symlink is written through to its target, the file keeps its permissions, and one
     /// deleted since it was opened is written anew. A text the encoding cannot hold is written as UTF-8 instead, never

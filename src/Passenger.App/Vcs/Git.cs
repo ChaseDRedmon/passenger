@@ -76,8 +76,8 @@ public sealed class Git
     /// <summary>Makes a folder a working tree, as Rider's Create Git Repository does.</summary>
     public static Task<GitResult> InitAsync(string folder) => RunAsync(folder, ["init"]);
 
-    /// <summary>The branch, HEAD's commit, and the changed and unversioned files (ignored ones left out, renames with
-    /// where they came from), in one git so the three agree.</summary>
+    /// <summary>The branch, HEAD's commit, and the changed and unversioned files (ignored ones and a save's temporary file
+    /// left out, renames with where they came from), in one git so the three agree.</summary>
     public async Task<GitStatus> StatusAsync()
     {
         GitResult status = await RunAsync(Root, ["status", "--porcelain=v2", "-z", "--branch", "--no-ahead-behind", "--untracked-files=all"]);
@@ -116,6 +116,9 @@ public sealed class Git
                     break;
                 case 'u':
                     changes.Add(new FileChange(Full(entry.Split(' ', 11)[10]), ChangeKind.Conflicted));
+                    break;
+                // A save under way as git read the folder: the saved file's change, which the read after the save lists.
+                case '?' when Workspace.FileText.IsSaving(entry):
                     break;
                 case '?':
                     changes.Add(new FileChange(Full(entry[2..]), ChangeKind.Unversioned));

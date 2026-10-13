@@ -14,7 +14,7 @@ namespace Passenger.Tests;
 /// large rewrite's off the window's thread), which a rename keeps and a commit clears; Rollback Lines and Rollback put
 /// changes back; a branch made from the toolbar is checked out, and going back reloads the open file; Commit, Stash and
 /// Unstash run one at a time, a drop asked first and the log leaving the stash out; a status older than a commit never
-/// lands after it, and the last commit's texts are read again only when HEAD moves.</summary>
+/// lands after it, nor lists a save's temporary file, and the last commit's texts are read again only when HEAD moves.</summary>
 public sealed class VcsTests : IDisposable
 {
     private const string Original = "class Shop\n{\n    int count;\n\n    void Add() { count++; }\n}\n";
@@ -164,6 +164,30 @@ public sealed class VcsTests : IDisposable
         Assert.Contains("deleted", asked, StringComparison.Ordinal);
         Assert.False(File.Exists(added));
         Assert.Equal(Original, Text(window));
+        window.Close();
+    }
+
+    /// <summary>A save writes the new text beside the file and moves it over the file. Git reading the folder in that
+    /// moment (a read under way as Save is pressed) listed the temporary file as a new one in place of the file saved, and
+    /// Rollback of what the Commit window listed deleted it and left the saved edit, as on the Windows runner.</summary>
+    [AvaloniaFact]
+    public void A_file_saved_as_git_reads_the_folder_is_listed_as_changed_and_its_saves_temporary_file_never_is()
+    {
+        MainWindow window = Open();
+        string saving = Path.Combine(folder, "Shop.cs" + Passenger.App.Workspace.FileText.SaveSuffix);
+        List<string> listed = [];
+        window.Vcs.Changed += (_, _) => listed.AddRange(window.Vcs.Changes.Select(c => c.Name));
+        window.EditorArea.CodeEditor.GoTo(new TextPosition(0, 0));
+        window.KeyTextInput("sealed ");
+        _ = window.Vcs.RefreshAsync();
+        window.Perform(AppActions.Save);
+
+        // That read may find the temporary file; one made while it is there, as a save has it, finds it for certain.
+        File.WriteAllText(saving, "sealed " + Original);
+        _ = window.Vcs.RefreshAsync();
+        Ui.Settle();
+        Assert.Equal(["Shop.cs"], window.Vcs.Changes.Select(c => c.Name));
+        Assert.DoesNotContain(Path.GetFileName(saving), listed);
         window.Close();
     }
 
