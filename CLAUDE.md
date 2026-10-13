@@ -89,7 +89,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   goes with the text before it; the hints at an offset are a caret place of their own, as IntelliJ's inlays are.
   `CodeEditor.Usages.cs` is what the caret lights up: the host's usage highlights (an edit takes them away unless
   kept, as Highlight Usages in File's are) and the bracket pair from a highlighter that is an `IBraceMatcher`
-  (`CSharpHighlighter`, from its syntax, never the server).
+  (`CSharpHighlighter`, from its syntax, never the server). Soft wrap (`CodeEditor.Wrapping.cs`) makes every line one or
+  more rows: `Rows` maps lines to rows and back, so whatever turns an offset into a place, a click into an offset or a
+  line into a height goes through a row's `RowSpan`, never a `LineSpan` alone; an edit wraps again only the lines it
+  touched.
 - `src/Passenger.Languages`: colour before any language server answers. C# is Roslyn's parser
   in-process, incremental and off the UI thread (`CSharpHighlighter`), classified from syntax
   alone (`CSharpClassifier`); the language server's semantic colours layer over it. `CSharpHighlighter` is also each
@@ -109,7 +112,12 @@ window or takes the focus; it shows everything but the system's own window chrom
   folder; `CSharpDocument` gives an open file its semantic colours and diagnostics; `CodeAssist`
   is completion, hover, signature help and the code actions (`app.code.*`), its popups on a layer
   over the editor; `WorkspaceEdits` applies renames and fixes across files. `UsageHighlighting` asks the server's
-  `documentHighlight` once a split's caret rests and is Highlight Usages in File.
+  `documentHighlight` once a split's caret rests and is Highlight Usages in File. `CodeAssist.Surround.cs` is Surround With
+  and Complete Current Statement, from the file's syntax with no server (surround templates are `LiveTemplates` entries
+  with a `Surround` scope); `CodeAssist.Refactorings.cs` is Optimize Imports (shared with Code Cleanup), Safe Delete
+  (the server's definition and references, the removal from `SafeDeletion`) and the server's Introduce Field,
+  Introduce Parameter and Encapsulate Field under Rider's names. The server's colour and diagnostics refreshes are two
+  events, each refreshing only its own.
 - `src/Passenger.App/Editors`: `EditorArea` is a tree of splits, each an `EditorGroup` (tabs, find bar, editor); its
   `CodeEditor` and `Active` are the active group's, so code that acts on "the editor" keeps working, and wiring for every
   editor's events goes through `ForEachEditor`, since a split makes a new one. An editor window (Open Tab in New Window,
@@ -310,7 +318,8 @@ platform with real Skia text): a window or an editor, real key presses by Rider'
 own; a test says what a person would see or get ("an edit saved keeps the file's line endings",
 "typing never loses a word's colour"), and its failure message names the consequence. The long
 random editing session checks every key against a plain string model, which is what keeps the rope,
-the line index and undo honest; keep it passing rather than narrowing it. One test of something a person sees or
+the line index and undo honest; keep it passing rather than narrowing it; it also runs with soft wrap on, moves checked against what a move among rows
+must do and rows against a fresh editor's. One test of something a person sees or
 gets is worth more than many that restate the code they call: a test that only checks one type or function on its own
 is deleted, and what it covered tested through the window instead. `BannedSymbols.txt` makes that a build error
 (RS0030) for the internals tests used to drive directly (the terminal's emulator, a Roslyn or profiling session started
