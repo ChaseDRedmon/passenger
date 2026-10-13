@@ -1,13 +1,28 @@
+using System.Globalization;
 using Passenger.Languages.CSharp;
 
 namespace Passenger.App.CSharp;
 
-/// <summary>A live template: its abbreviation, what it says it is, where it may go, its text in Rider's syntax and its
-/// variables' defaults (a default naming another of Rider's macros is worked out where it is inserted). As Rider's, one
-/// template may be typed by its abbreviation, offered by Surround With, or both.</summary>
-public sealed record LiveTemplate(string Abbreviation, string Description, TemplateScope Scope, string Text, IReadOnlyDictionary<string, string> Defaults)
+/// <summary>A template's variable as Rider's Edit variables shows it: its name in the text, the macro its value comes
+/// from where the template goes (none leaves it empty), the macro's argument (a constant's value, a date's format), and
+/// whether Tab stops at it to be typed over.</summary>
+public sealed record TemplateVariable(string Name, string Macro = "", string Parameter = "", bool Editable = true);
+
+/// <summary>A live template: its shortcut, what it says it is, where it may be typed, its text in Rider's syntax and its
+/// variables. As Rider's, one template may be typed by its shortcut (Generation), offered by Surround With, or both; a
+/// built-in one is known by its <see cref="Key"/>, the shortcut it ships with, however the person changes it.</summary>
+public sealed record LiveTemplate(string Abbreviation, string Description, TemplateScope Scope, string Text, IReadOnlyList<TemplateVariable> Variables)
 {
-    /// <summary>Whether its abbreviation and Tab, or completion, expand it.</summary>
+    /// <summary>What the settings know it by: a built-in one's shortcut as shipped, the person's own a name of its own.</summary>
+    public string Key { get; init; } = Abbreviation;
+
+    /// <summary>Whether it ships with Passenger, rather than being one the person added.</summary>
+    public bool BuiltIn { get; init; }
+
+    /// <summary>Whether it is in use: one turned off is neither expanded nor offered.</summary>
+    public bool Enabled { get; init; } = true;
+
+    /// <summary>Whether its shortcut and Tab, or completion, expand it.</summary>
     public bool Live { get; init; } = true;
 
     /// <summary>Where Surround With offers it around the code chosen, none when it does not.</summary>
@@ -15,69 +30,247 @@ public sealed record LiveTemplate(string Abbreviation, string Description, Templ
 
     /// <summary>The digit that chooses it in Surround With's list, as Rider marks its everyday ones.</summary>
     public char? Mnemonic { get; init; }
+
+    /// <summary>Rider's Reformat: its lines indented as the code around it, a tab its indentation's unit; otherwise it goes
+    /// in as written.</summary>
+    public bool Reformat { get; init; } = true;
+
+    /// <summary>The variables in its text, in the order Tab visits them: those it lists, then any others as they appear.</summary>
+    public IReadOnlyList<TemplateVariable> VariablesInText()
+    {
+        List<string> named = LiveTemplates.Names(Text);
+        return [.. Variables.Where(v => named.Contains(v.Name)), .. named.Where(n => Variables.All(v => v.Name != n)).Select(n => new TemplateVariable(n))];
+    }
+
+    /// <summary>Whether it is the same template in every part a person can change.</summary>
+    public bool SameAs(LiveTemplate other) =>
+        Abbreviation == other.Abbreviation && Description == other.Description && Scope == other.Scope && Text == other.Text
+        && Variables.SequenceEqual(other.Variables) && Enabled == other.Enabled && Live == other.Live && Surround == other.Surround
+        && Mnemonic == other.Mnemonic && Reformat == other.Reformat;
 }
 
-/// <summary>Rider's C# live templates, the ones used every day: the abbreviation then Tab, or picked from completion; and
-/// its surround templates, offered by Surround With with their text from Rider's own.</summary>
+/// <summary>Rider's Availability: the places a template is offered, each as its Availability configuration lists it.
+/// Generation uses the places a shortcut is typed (statements, type members, types and namespaces), Surround With those
+/// code is chosen in (statements, an expression, whole lines, types, anywhere).</summary>
+[Flags]
+public enum TemplateAvailability
+{
+    None = 0,
+    Statements = 1,
+    TypeMembers = 2,
+    TypesAndNamespaces = 4,
+    Expressions = 8,
+    LineStart = 16,
+    Everywhere = 32,
+}
+
+/// <summary>Rider's Use in: typed by its shortcut, offered by Surround With, or both.</summary>
+public enum TemplateUse
+{
+    Generation,
+    Surround,
+    Both,
+}
+
+/// <summary>Where a template goes, for its macros: the type and namespace it goes in, the file and the line (from 1).</summary>
+public readonly record struct TemplateSite(string? TypeName, string? Namespace, string? FilePath, int Line);
+
+/// <summary>One of Rider's macros a variable's value may come from: its name, as the template keeps it, what Choose macro
+/// shows for it, the name of its one argument when it takes one, and its value where the template goes.</summary>
+public sealed record TemplateMacro(string Name, string Description, string? Parameter, Func<TemplateSite, string, string?> Value);
+
+/// <summary>Rider's C# live templates, the ones used every day: the shortcut then Tab, or picked from completion; and its
+/// surround templates, offered by Surround With with their text from Rider's own. The built-in ones are here; what a person
+/// changed or added is kept in the settings as differences from them (<see cref="Settings.TemplateChange"/>), so a
+/// built-in one a later Passenger adds or improves arrives with it.</summary>
 public static class LiveTemplates
 {
-    /// <summary>The default that takes the name of the type the template goes in.</summary>
-    public const string TypeName = "typeName()";
+    /// <summary>The names Rider gives the template syntax's own variables, which are no variable to fill.</summary>
+    private static readonly string[] Reserved = ["END", "SELECTION", "SELSTART", "SELEND"];
 
-    private static Dictionary<string, string> D(params (string Name, string Value)[] values) => values.ToDictionary(v => v.Name, v => v.Value);
+    /// <summary>Rider's macros that need nothing but the file and where the template goes, by Rider's names.</summary>
+    public static IReadOnlyList<TemplateMacro> Macros { get; } =
+    [
+        new("constant", "Constant value", "Constant value", (_, value) => value),
+        new("typeName", "Containing type name", null, (site, _) => site.TypeName),
+        new("getCurrentNamespace", "Containing namespace", null, (site, _) => site.Namespace),
+        new("getFileName", "Current file name", null, (site, _) => site.FilePath is { } path ? Path.GetFileName(path) : null),
+        new("getFileNameWithoutExtension", "Current file name without extension", null,
+            (site, _) => site.FilePath is { } path ? Path.GetFileNameWithoutExtension(path) : null),
+        new("getCurrentDate", "Current date in specified format", "format", (_, format) => Formatted(DateTime.Now, format, "d")),
+        new("getCurrentTime", "Current date and time in specified format", "format", (_, format) => Formatted(DateTime.Now, format, "g")),
+        new("getUserName", "Short name of the current user", null, (_, _) => Environment.UserName),
+        new("guid", "New GUID", null, (_, _) => Guid.NewGuid().ToString()),
+        new("lineNumber", "Current line number", null, (site, _) => site.Line.ToString(CultureInfo.InvariantCulture)),
+    ];
+
+    private static TemplateVariable[] V(params TemplateVariable[] variables) => variables;
+
+    private static TemplateVariable C(string name, string value) => new(name, "constant", value);
 
     private const SurroundScope Statements = SurroundScope.Statements;
 
-    public static IReadOnlyList<LiveTemplate> All { get; } =
-    [
-        new("for", "Simple \"for\" loop", TemplateScope.Statement, "for (int $INDEX$ = 0; $INDEX$ < $UPPER$; $INDEX$++)\n{\n\t$SELECTION$$END$\n}", D(("INDEX", "i"), ("UPPER", "length")))
+    public static IReadOnlyList<LiveTemplate> BuiltIn { get; } = [.. new LiveTemplate[]
+    {
+        new("for", "Simple \"for\" loop", TemplateScope.Statement, "for (int $INDEX$ = 0; $INDEX$ < $UPPER$; $INDEX$++)\n{\n\t$SELECTION$$END$\n}", V(C("INDEX", "i"), C("UPPER", "length")))
             { Surround = Statements, Mnemonic = '3' },
-        new("forr", "Reverse \"for\" loop", TemplateScope.Statement, "for (int $INDEX$ = $MAX$ - 1; $INDEX$ >= 0; $INDEX$--)\n{\n\t$END$\n}", D(("INDEX", "i"), ("MAX", "length"))),
-        new("foreach", "foreach block", TemplateScope.Statement, "foreach (var $VARIABLE$ in $COLLECTION$)\n{\n\t$SELECTION$$END$\n}", D(("VARIABLE", "item"), ("COLLECTION", "collection")))
+        new("forr", "Reverse 'for' loop", TemplateScope.Statement, "for (int $INDEX$ = $MAX$ - 1; $INDEX$ >= 0; $INDEX$--)\n{\n\t$END$\n}", V(C("INDEX", "i"), C("MAX", "length"))),
+        new("foreach", "foreach block", TemplateScope.Statement, "foreach (var $VARIABLE$ in $COLLECTION$)\n{\n\t$SELECTION$$END$\n}", V(C("VARIABLE", "item"), C("COLLECTION", "collection")))
             { Surround = Statements },
-        new("if", "if statement", TemplateScope.Statement, "if ($CONDITION$)\n{\n\t$SELECTION$$END$\n}", D(("CONDITION", "true"))) { Surround = Statements, Mnemonic = '1' },
-        new("else", "else statement", TemplateScope.Statement, "else\n{\n\t$END$\n}", D()),
-        new("while", "while loop", TemplateScope.Statement, "while ($CONDITION$)\n{\n\t$SELECTION$$END$\n}", D(("CONDITION", "true"))) { Surround = Statements, Mnemonic = '2' },
-        new("do", "do...while loop", TemplateScope.Statement, "do\n{\n\t$SELECTION$$END$\n} while ($CONDITION$);", D(("CONDITION", "true"))) { Surround = Statements, Mnemonic = '4' },
-        new("switch", "switch statement", TemplateScope.Statement, "switch ($EXPRESSION$)\n{\n\t$END$\n}", D(("EXPRESSION", "expression"))),
+        new("if", "if statement", TemplateScope.Statement, "if ($CONDITION$)\n{\n\t$SELECTION$$END$\n}", V(C("CONDITION", "true"))) { Surround = Statements, Mnemonic = '1' },
+        new("else", "else statement", TemplateScope.Statement, "else\n{\n\t$END$\n}", V()),
+        new("while", "while loop", TemplateScope.Statement, "while ($CONDITION$)\n{\n\t$SELECTION$$END$\n}", V(C("CONDITION", "true"))) { Surround = Statements, Mnemonic = '2' },
+        new("do", "do...while loop", TemplateScope.Statement, "do\n{\n\t$SELECTION$$END$\n} while ($CONDITION$);", V(C("CONDITION", "true"))) { Surround = Statements, Mnemonic = '4' },
+        new("switch", "switch statement", TemplateScope.Statement, "switch ($EXPRESSION$)\n{\n\t$END$\n}", V(C("EXPRESSION", "expression"))),
         new("try", "try catch", TemplateScope.Statement,
             "try\n{\n\t$SELECTION$\n}\ncatch ($EXCEPTION$ $EX_NAME$)\n{\n\t$SELSTART$Console.WriteLine($EX_NAME$);\n\tthrow;$SELEND$\n}",
-            D(("EXCEPTION", "Exception"), ("EX_NAME", "e"))) { Surround = Statements, Mnemonic = '8' },
-        new("tryf", "try finally", TemplateScope.Statement, "try\n{\n\t$SELECTION$\n}\nfinally\n{\n\t$END$\n}", D()) { Surround = Statements, Mnemonic = '9' },
-        new("using", "using statement", TemplateScope.Statement, "using ($RESOURCE$)\n{\n\t$SELECTION$$END$\n}", D(("RESOURCE", "resource"))) { Surround = Statements },
-        new("lock", "lock statement", TemplateScope.Statement, "lock ($EXPRESSION$)\n{\n\t$SELECTION$$END$\n}", D(("EXPRESSION", "this"))) { Surround = Statements, Mnemonic = '5' },
-        new("cw", "Console.WriteLine", TemplateScope.Statement, "Console.WriteLine($END$);", D()),
-        new("thr", "throw new", TemplateScope.Statement, "throw new $EXCEPTION$($END$);", D(("EXCEPTION", "InvalidOperationException"))),
-        new("prop", "Property", TemplateScope.Member, "public $TYPE$ $NAME$ { get; set; }$END$", D(("TYPE", "int"), ("NAME", "Name"))),
-        new("propg", "Property with a get accessor", TemplateScope.Member, "public $TYPE$ $NAME$ { get; }$END$", D(("TYPE", "int"), ("NAME", "Name"))),
-        new("ctor", "Constructor", TemplateScope.Member, "public $TYPE$($END$)\n{\n}", D(("TYPE", TypeName))),
-        new("svm", "static void Main", TemplateScope.Member, "static void Main(string[] args)\n{\n\t$END$\n}", D()),
-        new("sim", "static int Main", TemplateScope.Member, "static int Main(string[] args)\n{\n\t$END$\n\treturn 0;\n}", D()),
-        new("class", "Class", TemplateScope.Type, "public class $NAME$\n{\n\t$END$\n}", D(("NAME", "Name"))),
-        new("record", "Record", TemplateScope.Type, "public record $NAME$($END$);", D(("NAME", "Name"))),
-        new("interface", "Interface", TemplateScope.Type, "public interface $NAME$\n{\n\t$END$\n}", D(("NAME", "IName"))),
-        new("struct", "Struct", TemplateScope.Type, "public struct $NAME$\n{\n\t$END$\n}", D(("NAME", "Name"))),
-        new("enum", "Enum", TemplateScope.Type, "public enum $NAME$\n{\n\t$END$\n}", D(("NAME", "Name"))),
+            V(C("EXCEPTION", "Exception"), C("EX_NAME", "e"))) { Surround = Statements, Mnemonic = '8' },
+        new("tryf", "try finally", TemplateScope.Statement, "try\n{\n\t$SELECTION$\n}\nfinally\n{\n\t$END$\n}", V()) { Surround = Statements, Mnemonic = '9' },
+        new("using", "using statement", TemplateScope.Statement, "using ($RESOURCE$)\n{\n\t$SELECTION$$END$\n}", V(C("RESOURCE", "resource"))) { Surround = Statements },
+        new("lock", "lock statement", TemplateScope.Statement, "lock ($EXPRESSION$)\n{\n\t$SELECTION$$END$\n}", V(C("EXPRESSION", "this"))) { Surround = Statements, Mnemonic = '5' },
+        new("cw", "Console.WriteLine", TemplateScope.Statement, "Console.WriteLine($END$);", V()),
+        new("thr", "throw new", TemplateScope.Statement, "throw new $EXCEPTION$($END$);", V(C("EXCEPTION", "InvalidOperationException"))),
+        new("prop", "Property", TemplateScope.Member, "public $TYPE$ $NAME$ { get; set; }$END$", V(C("TYPE", "int"), C("NAME", "Name"))),
+        new("propg", "Property with a 'get' accessor", TemplateScope.Member, "public $TYPE$ $NAME$ { get; }$END$", V(C("TYPE", "int"), C("NAME", "Name"))),
+        // Rider's: the type's own name, not to be typed over.
+        new("ctor", "Constructor", TemplateScope.Member, "public $TYPE$($END$)\n{\n}", V(new TemplateVariable("TYPE", "typeName", Editable: false))),
+        new("svm", "'void Main' method", TemplateScope.Member, "static void Main(string[] args)\n{\n\t$END$\n}", V()),
+        new("sim", "'int Main' method", TemplateScope.Member, "static int Main(string[] args)\n{\n\t$END$\n\treturn 0;\n}", V()),
+        new("class", "Class", TemplateScope.Type, "public class $NAME$\n{\n\t$END$\n}", V(C("NAME", "Name"))),
+        new("record", "Record", TemplateScope.Type, "public record $NAME$($END$);", V(C("NAME", "Name"))),
+        new("interface", "Interface", TemplateScope.Type, "public interface $NAME$\n{\n\t$END$\n}", V(C("NAME", "IName"))),
+        new("struct", "Struct", TemplateScope.Type, "public struct $NAME$\n{\n\t$END$\n}", V(C("NAME", "Name"))),
+        new("enum", "Enum", TemplateScope.Type, "public enum $NAME$\n{\n\t$END$\n}", V(C("NAME", "Name"))),
 
-        // Rider's surround templates that are not typed here by an abbreviation.
-        new("cast", "cast", TemplateScope.None, "(($TYPE$)$SELECTION$)", D()) { Live = false, Surround = SurroundScope.Expression, Mnemonic = '0' },
-        new("()", "parentheses", TemplateScope.None, "($SELECTION$$END$)", D()) { Live = false, Surround = SurroundScope.Everywhere, Mnemonic = '6' },
-        new("{}", "braces", TemplateScope.None, "{\n\t$SELECTION$$END$\n}", D()) { Live = false, Surround = SurroundScope.Everywhere, Mnemonic = '7' },
-        new("#if", "#if directive", TemplateScope.None, "#if $EXPRESSION$\n$SELECTION$$END$\n#endif", D(("EXPRESSION", "true")))
+        // Rider's surround templates that are not typed here by a shortcut.
+        new("cast", "cast", TemplateScope.None, "(($TYPE$)$SELECTION$)", V()) { Live = false, Surround = SurroundScope.Expression, Mnemonic = '0' },
+        new("()", "parentheses", TemplateScope.None, "($SELECTION$$END$)", V()) { Live = false, Surround = SurroundScope.Everywhere, Mnemonic = '6' },
+        new("{}", "braces", TemplateScope.None, "{\n\t$SELECTION$$END$\n}", V()) { Live = false, Surround = SurroundScope.Everywhere, Mnemonic = '7' },
+        new("#if", "#if directive", TemplateScope.None, "#if $EXPRESSION$\n$SELECTION$$END$\n#endif", V(C("EXPRESSION", "true")))
             { Live = false, Surround = SurroundScope.Lines },
-        new("#region", "#region directive", TemplateScope.None, "#region $NAME$\n$SELECTION$$END$\n#endregion", D(("NAME", "MyRegion")))
+        new("#region", "#region directive", TemplateScope.None, "#region $NAME$\n$SELECTION$$END$\n#endregion", V(C("NAME", "MyRegion")))
             { Live = false, Surround = SurroundScope.Lines },
-        new("namespace", "namespace declaration", TemplateScope.None, "namespace $NAME$\n{\n\t$END$$SELECTION$\n}", D(("NAME", "MyNamespace")))
+        new("namespace", "namespace declaration", TemplateScope.None, "namespace $NAME$\n{\n\t$END$$SELECTION$\n}", V(C("NAME", "MyNamespace")))
             { Live = false, Surround = SurroundScope.Types },
-    ];
+    }.Select(t => t with { BuiltIn = true })];
+
+    /// <summary>What a template's availability is and what it is used in, read from where it is offered.</summary>
+    public static (TemplateAvailability Availability, TemplateUse Use) Availability(LiveTemplate template)
+    {
+        TemplateAvailability where = TemplateAvailability.None;
+        if (template.Live)
+        {
+            where |= (template.Scope & TemplateScope.Statement) != 0 ? TemplateAvailability.Statements : 0;
+            where |= (template.Scope & TemplateScope.Member) != 0 ? TemplateAvailability.TypeMembers : 0;
+            where |= (template.Scope & TemplateScope.Type) != 0 ? TemplateAvailability.TypesAndNamespaces : 0;
+        }
+        where |= (template.Surround & SurroundScope.Statements) != 0 ? TemplateAvailability.Statements : 0;
+        where |= (template.Surround & SurroundScope.Expression) != 0 ? TemplateAvailability.Expressions : 0;
+        where |= (template.Surround & SurroundScope.Lines) != 0 ? TemplateAvailability.LineStart : 0;
+        where |= (template.Surround & SurroundScope.Types) != 0 ? TemplateAvailability.TypesAndNamespaces : 0;
+        where |= (template.Surround & SurroundScope.Everywhere) != 0 ? TemplateAvailability.Everywhere : 0;
+        TemplateUse use = !template.Live ? TemplateUse.Surround : template.Surround != SurroundScope.None ? TemplateUse.Both : TemplateUse.Generation;
+        return (where, use);
+    }
+
+    /// <summary>A template offered where an availability says, in what it is used in; a place one use has no meaning
+    /// for (Surround With in a type member, a shortcut at a line's start) is none for that use.</summary>
+    public static LiveTemplate Available(LiveTemplate template, TemplateAvailability where, TemplateUse use)
+    {
+        TemplateScope scope = TemplateScope.None;
+        SurroundScope surround = SurroundScope.None;
+        if (use != TemplateUse.Surround)
+        {
+            scope |= where.HasFlag(TemplateAvailability.Statements) ? TemplateScope.Statement : 0;
+            scope |= where.HasFlag(TemplateAvailability.TypeMembers) ? TemplateScope.Member : 0;
+            scope |= where.HasFlag(TemplateAvailability.TypesAndNamespaces) ? TemplateScope.Type : 0;
+        }
+        if (use != TemplateUse.Generation)
+        {
+            surround |= where.HasFlag(TemplateAvailability.Statements) ? SurroundScope.Statements : 0;
+            surround |= where.HasFlag(TemplateAvailability.Expressions) ? SurroundScope.Expression : 0;
+            surround |= where.HasFlag(TemplateAvailability.LineStart) ? SurroundScope.Lines : 0;
+            surround |= where.HasFlag(TemplateAvailability.TypesAndNamespaces) ? SurroundScope.Types : 0;
+            surround |= where.HasFlag(TemplateAvailability.Everywhere) ? SurroundScope.Everywhere : 0;
+        }
+        return template with { Live = use != TemplateUse.Surround, Scope = scope, Surround = surround };
+    }
+
+    /// <summary>The variables a template's text names, in the order they first appear, without the syntax's own.</summary>
+    public static List<string> Names(string text)
+    {
+        List<string> names = [];
+        for (int i = 0; i < text.Length; i++)
+        {
+            if (text[i] != '$')
+            {
+                continue;
+            }
+            int close = text.IndexOf('$', i + 1);
+            if (close < 0)
+            {
+                break;
+            }
+            string name = text[(i + 1)..close];
+            if (name.Length > 0 && !Reserved.Contains(name) && !names.Contains(name))
+            {
+                names.Add(name);
+            }
+            i = close;
+        }
+        return names;
+    }
+
+    /// <summary>A date as a macro's format asks, its fallback for none or one that does not parse.</summary>
+    private static string Formatted(DateTime when, string format, string fallback)
+    {
+        try
+        {
+            return when.ToString(format.Length == 0 ? fallback : format, CultureInfo.CurrentCulture);
+        }
+        catch (FormatException)
+        {
+            return when.ToString(fallback, CultureInfo.CurrentCulture);
+        }
+    }
+}
+
+/// <summary>The templates in force: the live and surround templates with the person's changes, and the postfix
+/// templates turned on, with whether completion lists them.</summary>
+public sealed class TemplateSet
+{
+    public TemplateSet(IReadOnlyList<LiveTemplate> live, IReadOnlyList<PostfixTemplate> postfix, bool postfixInCompletion = true)
+    {
+        All = live;
+        Postfix = postfix;
+        PostfixInCompletion = postfixInCompletion;
+    }
+
+    /// <summary>Passenger's own, as shipped.</summary>
+    public static TemplateSet Default { get; } = new(LiveTemplates.BuiltIn, PostfixTemplates.All);
+
+    /// <summary>The templates as the settings leave them: no postfix template at all while Postfix Completion is off.</summary>
+    public static TemplateSet Of(Settings.AppSettings settings) => new(Settings.TemplateChange.Applied(settings.LiveTemplates),
+        settings.PostfixCompletion ? [.. PostfixTemplates.All.Where(t => settings.PostfixTemplates.GetValueOrDefault(t.Name, true))] : [],
+        settings.PostfixInCompletion);
+
+    /// <summary>Every live and surround template, those turned off too.</summary>
+    public IReadOnlyList<LiveTemplate> All { get; }
+
+    /// <summary>The postfix templates turned on.</summary>
+    public IReadOnlyList<PostfixTemplate> Postfix { get; }
+
+    /// <summary>Rider's Show postfix templates in completion autopopup: whether the list after a dot offers them, which
+    /// Tab expands either way.</summary>
+    public bool PostfixInCompletion { get; }
 
     /// <summary>The templates that may go where a scope allows.</summary>
-    public static IEnumerable<LiveTemplate> In(TemplateScope scope) => All.Where(t => t.Live && (t.Scope & scope) != 0);
+    public IEnumerable<LiveTemplate> In(TemplateScope scope) => All.Where(t => t.Enabled && t.Live && (t.Scope & scope) != 0);
 
     /// <summary>What Surround With offers around code standing in these scopes, in Rider's order: those with a digit by
     /// it (1 to 9, then 0), then the rest by name.</summary>
-    public static IReadOnlyList<LiveTemplate> Around(SurroundScope scope) =>
-        [.. All.Where(t => (t.Surround & scope) != 0)
+    public IReadOnlyList<LiveTemplate> Around(SurroundScope scope) =>
+        [.. All.Where(t => t.Enabled && (t.Surround & scope) != 0)
             .OrderBy(t => t.Mnemonic is { } digit ? (digit == '0' ? 10 : digit - '0') : 11)
             .ThenBy(t => t.Abbreviation, StringComparer.Ordinal)];
 }

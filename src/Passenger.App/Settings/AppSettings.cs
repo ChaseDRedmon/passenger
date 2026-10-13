@@ -128,6 +128,20 @@ public sealed record AppSettings : IStateDocument<AppSettings>
     /// unbinds the action.</summary>
     public Dictionary<string, string[]> Shortcuts { get; init; } = [];
 
+    /// <summary>Rider's Live Templates as the person left them, by template: a built-in one's changes (its key the
+    /// shortcut it ships with), and the whole of each they added (<see cref="TemplateChange"/>).</summary>
+    public Dictionary<string, TemplateChange> LiveTemplates { get; init; } = [];
+
+    /// <summary>Rider's Postfix Completion: the postfix templates turned off (false), by name; one not named is on.</summary>
+    public Dictionary<string, bool> PostfixTemplates { get; init; } = [];
+
+    /// <summary>Rider's Enable postfix completion: off, no postfix template is offered or expanded.</summary>
+    public bool PostfixCompletion { get; init; } = true;
+
+    /// <summary>Rider's Show postfix templates in completion autopopup: the list after a dot offers them, which Tab after
+    /// one's name expands either way.</summary>
+    public bool PostfixInCompletion { get; init; } = true;
+
     /// <summary>The terminal's shell, or null for the user's own login shell.</summary>
     public string? TerminalShell { get; init; }
 
@@ -170,6 +184,8 @@ public sealed record AppSettings : IStateDocument<AppSettings>
             IdleSeconds = Math.Clamp(IdleSeconds, MinIdleSeconds, MaxIdleSeconds),
             ConsoleBufferKb = Math.Clamp(ConsoleBufferKb, MinConsoleBufferKb, MaxConsoleBufferKb),
             Shortcuts = (Shortcuts ?? []).Where(s => s.Value is not null).ToDictionary(s => s.Key, s => s.Value.Where(k => k is not null).ToArray()),
+            LiveTemplates = (LiveTemplates ?? []).Where(t => t.Value is not null).ToDictionary(t => t.Key, t => t.Value.Clamped()),
+            PostfixTemplates = PostfixTemplates ?? [],
             TerminalShell = string.IsNullOrWhiteSpace(TerminalShell) ? null : TerminalShell,
             SoftWrapFiles = SoftWrapFiles ?? defaults.SoftWrapFiles,
         };

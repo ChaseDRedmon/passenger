@@ -17,6 +17,8 @@ public sealed class SettingsDialog : Window
     public const string UpdatesPage = "Updates";
     public const string EditorPage = "Editor";
     public const string CodeFoldingPage = "Code Folding";
+    public const string LiveTemplatesPage = "Live Templates";
+    public const string PostfixPage = "Postfix Completion";
     public const string TerminalPage = "Terminal";
     public const string BuildPage = "Build";
     public const string RunPage = "Run";
@@ -27,7 +29,8 @@ public sealed class SettingsDialog : Window
     /// <summary>Rider's names for <see cref="BuildResultsMode"/>'s choices, in its order.</summary>
     public static readonly string[] BuildResultsChoices = ["Always", "Only if errors or warnings received", "Only if errors received", "Never"];
 
-    private static readonly string[] Order = [Appearance, SystemPage, UpdatesPage, EditorPage, CodeFoldingPage, BuildPage, RunPage, TerminalPage, McpPage, DiagnosticsPage, KeymapPage];
+    private static readonly string[] Order = [Appearance, SystemPage, UpdatesPage, EditorPage, CodeFoldingPage, PostfixPage, LiveTemplatesPage, BuildPage, RunPage,
+        TerminalPage, McpPage, DiagnosticsPage, KeymapPage];
 
     private readonly Action<AppSettings> apply;
 
@@ -49,8 +52,8 @@ public sealed class SettingsDialog : Window
         this.actions = actions;
         Working = current;
         Title = "Settings";
-        Width = 860;
-        Height = 600;
+        Width = 980;
+        Height = 700;
         MinWidth = 640;
         MinHeight = 400;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
@@ -109,6 +112,12 @@ public sealed class SettingsDialog : Window
 
     /// <summary>The settings as the options now stand.</summary>
     public AppSettings Working { get; private set; }
+
+    /// <summary>The Live Templates page.</summary>
+    public LiveTemplatesPane Templates { get; private set; } = null!;
+
+    /// <summary>The Postfix Completion page.</summary>
+    public PostfixTemplatesPane Postfix { get; private set; } = null!;
 
     public string Query
     {
@@ -236,6 +245,15 @@ public sealed class SettingsDialog : Window
             $"{Folding} block comments .net");
         Add(CodeFoldingPage, "XML tags", Check(Working.FoldXmlTags, v => Change(s => s with { FoldXmlTags = v })),
             $"{Folding} xml elements tags project csproj props axaml xaml");
+
+        // Rider's Editor, General, Postfix Completion and Editor, Live Templates, C#: each a page of its own, found by its
+        // templates' words too.
+        Postfix = new PostfixTemplatesPane(Working, Change);
+        AddPage(PostfixPage, Postfix, "postfix templates completion expression dot autopopup "
+            + string.Join(' ', Languages.CSharp.PostfixTemplates.All.Select(t => $"{t.Name} {t.Description} {t.Example}")));
+        Templates = new LiveTemplatesPane(TemplateChange.Applied(Working.LiveTemplates), list => Change(s => s with { LiveTemplates = TemplateChange.Of(list) }));
+        AddPage(LiveTemplatesPage, Templates, "live templates c# shortcut abbreviation snippet expand tab surround with generation availability mnemonic variables macros "
+            + string.Join(' ', CSharp.LiveTemplates.BuiltIn.Select(t => $"{t.Abbreviation} {t.Description}")));
 
         // Rider's Toolset and Build, Presentation, by its names: the implicit build's option only while the explicit's is on.
         CheckBox implicitly = Check(Working.OpenBuildWindowOnImplicitBuild, v => Change(s => s with { OpenBuildWindowOnImplicitBuild = v }));
@@ -366,6 +384,10 @@ public sealed class SettingsDialog : Window
             Rebind(action, [.. keep, pressed.Notation()]);
         }
     }
+
+    /// <summary>A page that is one control of its own (the live templates' list and editor), the whole of its width, found
+    /// by a search for any of its words.</summary>
+    private void AddPage(string page, Control content, string keywords) => options.Add(new Option(page, page, content, $"{page} {keywords}"));
 
     /// <summary>An option's row: its label, what edits it, and a note under the editor when it needs saying what it
     /// does.</summary>

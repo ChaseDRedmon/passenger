@@ -222,8 +222,12 @@ internal sealed class ChoicePopup : Border
     /// <summary>What is offered, by its words.</summary>
     public IReadOnlyList<string> Titles { get; }
 
+    /// <summary>What the list is titled.</summary>
+    public string Title { get; }
+
     public ChoicePopup(string title, IReadOnlyList<Choice> choices)
     {
+        Title = title;
         Titles = [.. choices.Select(c => c.Text)];
         bool numbered = choices.Any(c => c.Mnemonic is not null);
         Classes.Add("popup");
@@ -278,6 +282,7 @@ internal sealed class ChoicePopup : Border
         };
         list.AddHandler(KeyDownEvent, OnKeyDown, RoutingStrategies.Tunnel);
         list.DoubleTapped += (_, _) => Choose();
+        list.SelectionChanged += (_, _) => Moved?.Invoke(this, list.SelectedItem as Choice);
         Dispatcher.UIThread.Post(() =>
         {
             list.Focus();
@@ -290,6 +295,9 @@ internal sealed class ChoicePopup : Border
 
     /// <summary>The choice made, or null when dismissed.</summary>
     public event EventHandler<Choice?>? Done;
+
+    /// <summary>The choice the list has selected now, as Up and Down move it.</summary>
+    public event EventHandler<Choice?>? Moved;
 
     private void OnKeyDown(object? sender, KeyEventArgs e)
     {

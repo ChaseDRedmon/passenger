@@ -19,7 +19,7 @@ public sealed partial class CodeAssist
         }
         CloseCompletion();
         SurroundTarget target = SurroundScopes.Of(parser.Current, Editor.Selections.Primary.Range);
-        IReadOnlyList<LiveTemplate> offered = LiveTemplates.Around(target.Scope);
+        IReadOnlyList<LiveTemplate> offered = Templates.Around(target.Scope);
         if (offered.Count == 0)
         {
             Message?.Invoke(this, "Nothing here to surround: choose code, not a comment or a string");
@@ -68,8 +68,7 @@ public sealed partial class CodeAssist
             }
             lines[i] = lines[i][strip..];
         }
-        Dictionary<string, string> defaults = template.Defaults.ToDictionary(d => d.Key, d => d.Value);
-        Editor.InsertSnippet(range, Snippet.Parse(template.Text, defaults, indent, Editor.Indent.Unit, string.Join('\n', lines)));
+        Editor.InsertSnippet(range, Snippet.Parse(template.Text, Values(template, range.Start), indent, Editor.Indent.Unit, string.Join('\n', lines)));
     }
 
     /// <summary>Rider's Complete Current Statement on the caret's line (<see cref="StatementCompletion"/>), as one undo step.</summary>

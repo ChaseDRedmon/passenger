@@ -1439,12 +1439,15 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
         Ui.Press(window, "TAB");
         Assert.Contains("        var copy = total;", Text(), StringComparison.Ordinal);
 
-        // In the middle of an expression only an expression's template fits: .par wraps the name before it, .if is not offered.
+        // In the middle of an expression only an expression's template fits: .par asks which expression, the name before
+        // it first, and wraps the one chosen; .if is not offered.
         PlaceAfter(editor, "var copy = total;");
         Ui.Press(window, "ENTER");
         window.KeyTextInput("int doubled = 2 * total.par");
         Ui.Settle();
         Ui.Press(window, "TAB");
+        Assert.Equal(["total", "2 * total"], window.Assist.Offered);
+        Ui.Press(window, "ENTER");
         Assert.Contains("        int doubled = 2 * (total)\n", Text(), StringComparison.Ordinal);
         Ui.Press(window, "ESCAPE");
         window.KeyTextInput(" + total.if");

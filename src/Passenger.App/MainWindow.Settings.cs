@@ -63,6 +63,7 @@ public partial class MainWindow
             ApplyTo(group.Editor, next);
         }
         FollowViewSettings(before, next);
+        assist.Templates = CSharp.TemplateSet.Of(next);
         terminal!.View.FontSize = next.TerminalFontSize;
         foreach (ToolWindows.OutputView console in (ToolWindows.OutputView[])[Bottom.Run, Bottom.Build, Bottom.Debug.Console])
         {

@@ -34,6 +34,9 @@ public sealed partial class CodeAssist
     private Completion? open;
     private Control? modal;
 
+    /// <summary>What undoes what the open modal showed in the editor, run as it closes however it closes.</summary>
+    private Action? modalClosed;
+
     public CodeAssist(EditorArea editors, Canvas layer, Func<CSharpService?> service)
     {
         this.editors = editors;
@@ -414,13 +417,13 @@ public sealed partial class CodeAssist
             // Rider lists the live templates that may go here with the server's items, ahead of a keyword they share.
             TemplateScope scope = Syntax is { } syntax ? TemplateScopes.At(syntax, caret).Scope : TemplateScope.None;
             templatesOffered.Clear();
-            foreach (LiveTemplate template in LiveTemplates.In(scope))
+            foreach (LiveTemplate template in Templates.In(scope))
             {
                 templatesOffered[new CompletionItem { Label = template.Abbreviation, Kind = 15, Detail = template.Description, SortText = "!" + template.Abbreviation }] = template;
             }
             // After an expression and a dot, the postfix templates that may wrap it, after its members.
             postfixOffered.Clear();
-            foreach ((PostfixTemplate postfix, PostfixTarget target) in Postfixes(Math.Min(start, caret), caret))
+            foreach ((PostfixTemplate postfix, PostfixTarget target) in Templates.PostfixInCompletion ? Postfixes(Math.Min(start, caret), caret) : [])
             {
                 postfixOffered[new CompletionItem { Label = postfix.Name, Kind = 15, Detail = postfix.Example, SortText = "~" + postfix.Name }] = (postfix, target);
             }
@@ -581,73 +584,6 @@ public sealed partial class CodeAssist
             return;
         }
         Editor.ApplyEdits([placed], SelectionSet.Single(placed.Start + into));
-    }
-
-    /// <summary>Rider's abbreviation and Tab: the word before the caret, when a live template has it as its
-    /// abbreviation and may go here, becomes the template. Whether one did.</summary>
-    private bool TryExpandTemplate()
-    {
-        if (Current is null || Editor.Selections.HasMultiple || !Editor.Selections.Primary.IsEmpty)
-        {
-            return false;
-        }
-        int caret = Editor.Selections.Primary.Caret;
-        int start = WordStart(caret);
-        if (start == caret)
-        {
-            return false;
-        }
-        string word = Editor.Document.Snapshot.GetText(start, caret - start);
-        if (Postfixes(start, caret).FirstOrDefault(p => p.Template.Name == word) is { Template: { } postfix } found)
-        {
-            ExpandPostfix(postfix, found.Target, caret);
-            return true;
-        }
-        TemplateScope scope = Syntax is { } syntax ? TemplateScopes.At(syntax, caret).Scope : TemplateScope.None;
-        if (LiveTemplates.In(scope).FirstOrDefault(t => t.Abbreviation == word) is not { } template)
-        {
-            return false;
-        }
-        Expand(template, start, caret);
-        return true;
-    }
-
-    /// <summary>The postfix templates that may wrap the expression before a dot ending just before a word, and what
-    /// each would wrap; none when no dot or no expression is there.</summary>
-    private IEnumerable<(PostfixTemplate Template, PostfixTarget Target)> Postfixes(int word, int caret)
-    {
-        if (word < 1 || Syntax is not { } syntax || word > syntax.Text.Length || syntax.Text[word - 1] != '.'
-            || PostfixTemplates.Before(syntax, word - 1, caret) is not { } target)
-        {
-            return [];
-        }
-        return PostfixTemplates.All.Where(t => !t.Statement || target.WholeStatement).Select(t => (t, target));
-    }
-
-    /// <summary>A postfix template in place of its expression, the dot and the name typed after it.</summary>
-    private void ExpandPostfix(PostfixTemplate template, PostfixTarget target, int caret)
-    {
-        int start = template.Statement ? target.Start : target.ChainStart;
-        string expression = (template.Statement ? target.Text : target.ChainText).Replace("$", "$$", StringComparison.Ordinal);
-        TextSnapshot text = Editor.Document.Snapshot;
-        int lineStart = text.GetLineStart(text.GetLineFromOffset(start));
-        string before = text.GetText(lineStart, start - lineStart);
-        string indent = before[..(before.Length - before.TrimStart().Length)];
-        string unit = Editor.Indent.Unit;
-        Dictionary<string, string> defaults = template.Defaults.ToDictionary(d => d.Key, d => d.Value == "$name" ? target.Name : d.Value);
-        Editor.InsertSnippet(TextRange.FromBounds(start, caret), Snippet.Parse(template.Text.Replace("$EXPR$", expression, StringComparison.Ordinal), defaults, indent, unit));
-    }
-
-    /// <summary>Puts a live template over its abbreviation, indented as the line it is on, and starts filling it in.</summary>
-    private void Expand(LiveTemplate template, int start, int end)
-    {
-        TextSnapshot text = Editor.Document.Snapshot;
-        string line = text.GetText(text.GetLineStart(text.GetLineFromOffset(start)), start - text.GetLineStart(text.GetLineFromOffset(start)));
-        string indent = line[..(line.Length - line.TrimStart().Length)];
-        string unit = Editor.Indent.Unit;
-        string? typeName = Syntax is { } syntax ? TemplateScopes.At(syntax, end).TypeName : null;
-        Dictionary<string, string> defaults = template.Defaults.ToDictionary(d => d.Key, d => d.Value == LiveTemplates.TypeName ? typeName ?? "Name" : d.Value);
-        Editor.InsertSnippet(TextRange.FromBounds(start, end), Snippet.Parse(template.Text, defaults, indent, unit));
     }
 
     private void CloseCompletion()
@@ -1625,6 +1561,9 @@ public sealed partial class CodeAssist
             modal = null;
             Editor.Focus();
         }
+        Action? closed = modalClosed;
+        modalClosed = null;
+        closed?.Invoke();
     }
 
     /// <summary>The popups go to the layer over the active editor's window, an editor window's when it has the active
