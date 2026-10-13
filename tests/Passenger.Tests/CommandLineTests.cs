@@ -97,7 +97,8 @@ public sealed class CommandLineTests : IDisposable
         }
         catch (OperationCanceledException)
         {
-            process.Kill(entireProcessTree: true);
+            // Not the runtime's tree kill of this process's own child, which can hang it (ChildProcesses.Kill says why).
+            global::Passenger.Core.ChildProcesses.Kill(process);
             Assert.Fail($"'passenger {arguments}' was still running after two minutes rather than refused");
         }
         await output;

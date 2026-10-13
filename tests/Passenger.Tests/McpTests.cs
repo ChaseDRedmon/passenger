@@ -6,6 +6,7 @@ using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using Passenger.App;
 using Passenger.App.Settings;
+using Passenger.Core;
 using Passenger.Editor;
 
 namespace Passenger.Tests;
@@ -23,6 +24,7 @@ public sealed class McpTests : IDisposable
     private readonly string folder = Directory.CreateTempSubdirectory("passenger-mcp-").FullName;
     private readonly string settings = Directory.CreateTempSubdirectory("passenger-agents-").FullName;
     private readonly List<string> errors = [];
+    private readonly List<Process> passengers = [];
     private string? settingsBefore;
 
     public McpTests()
@@ -39,6 +41,19 @@ public sealed class McpTests : IDisposable
 
     public void Dispose()
     {
+        // Each Passenger the test started is given its input's end and its window's end limit to go, then killed.
+        lock (passengers)
+        {
+            foreach (Process passenger in passengers)
+            {
+                EndInput(passenger);
+                if (!passenger.WaitForExit(MainWindow.EndLimit + TimeSpan.FromSeconds(5)))
+                {
+                    ChildProcesses.Kill(passenger);
+                }
+                passenger.Dispose();
+            }
+        }
         if (settingsBefore is not null)
         {
             Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", settingsBefore.Length == 0 ? null : settingsBefore);
@@ -174,35 +189,15 @@ public sealed class McpTests : IDisposable
               </Target>
             </Project>
             """);
-        ProcessStartInfo start = new(Passenger, ["--mcp", folder])
-        {
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        };
-        start.Environment["PASSENGER_SETTINGS"] = settings;
-        start.Environment["PASSENGER_ENGINE_LOG"] = EngineLog;
         // No build nodes or compiler server left for others' builds to use, which the kill would end under them.
-        start.Environment["MSBUILDDISABLENODEREUSE"] = "1";
-        start.Environment["UseSharedCompilation"] = "false";
-        using Process passenger = Process.Start(start)!;
-        passenger.ErrorDataReceived += (_, e) =>
-        {
-            lock (errors)
-            {
-                errors.Add(e.Data ?? string.Empty);
-            }
-        };
-        passenger.BeginErrorReadLine();
+        Process passenger = StartPassenger(["--mcp", folder], environment: new() { ["MSBUILDDISABLENODEREUSE"] = "1", ["UseSharedCompilation"] = "false" });
         List<int> started = [];
         Task<CallToolResult>? building = null;
         using CancellationTokenSource giveUp = CancellationTokenSource.CreateLinkedTokenSource(Cancel);
         McpClient? client = null;
         try
         {
-            client = await Exchange("Starting passenger --mcp", TimeSpan.FromMinutes(1),
-                cancel => McpClient.CreateAsync(new StreamClientTransport(passenger.StandardInput.BaseStream, passenger.StandardOutput.BaseStream), cancellationToken: cancel));
+            client = await Connect(passenger, ["--mcp", folder]);
             int load = await WrittenId("load.pid", "the language server's load of the project");
             await Call(client, "run", new() { ["arguments"] = "run", ["waitSeconds"] = 1 });
             int run = await WrittenId("run.pid", "the program Run started");
@@ -231,11 +226,7 @@ public sealed class McpTests : IDisposable
         }
         finally
         {
-            // The tests' own child: killed alone, never by the runtime's tree kill (ChildProcesses.Kill says why).
-            if (!passenger.HasExited)
-            {
-                passenger.Kill();
-            }
+            ChildProcesses.Kill(passenger);
             foreach (int id in started)
             {
                 Processes.Kill(id);
@@ -267,19 +258,20 @@ public sealed class McpTests : IDisposable
         Ui.Settle();
         string socket = window.AgentSocket!;
 
-        // The agent's calls run on the UI thread, so the test lets it run while they are answered.
+        // The agent's calls run on the UI thread, which the test keeps running; it stays until the window is looked at.
+        TaskCompletionSource looked = new(TaskCreationOptions.RunContinuationsAsynchronously);
         Task<string?> agent = Task.Run(async () =>
         {
             await using McpClient client = await Start(["--mcp-attach", ProcessId]);
             await Call(client, "breakpoint_set", new() { ["path"] = "Program.cs", ["line"] = 4 });
-            return (await Call(client, "workspace")).GetProperty("folder").GetString();
+            string? folderSeen = (await Call(client, "workspace")).GetProperty("folder").GetString();
+            await looked.Task.WaitAsync(AgentLimit);
+            return folderSeen;
         });
-        int shown = 0;
-        WaitFor(() =>
-        {
-            shown = Math.Max(shown, window.Agents);
-            return agent.IsCompleted;
-        }, "the agent's calls", AgentLimit);
+        WaitFor(() => window.Agents == 1 || agent.IsCompleted, "the window to show the agent", AgentLimit);
+        int shown = window.Agents;
+        looked.TrySetResult();
+        WaitFor(() => agent.IsCompleted, "the agent's calls", AgentLimit);
         // The status bar says an agent is on the window while it is, and stops saying so once it goes.
         Assert.Equal(1, shown);
         WaitFor(() => window.Agents == 0, "the window to see the agent go");
@@ -588,31 +580,92 @@ public sealed class McpTests : IDisposable
     /// <summary>The debugger engine's log of what Passenger debugs, which a failed call quotes.</summary>
     private string EngineLog => Path.Combine(settings, "engine.log");
 
-    /// <summary>Passenger started as an agent's MCP server, with the tests' state folder (where windows' sockets are, and
-    /// its log), the engine's log and any other change to the environment, its standard error kept.</summary>
-    private Task<McpClient> Start(IList<string> arguments, string? workingDirectory = null, Dictionary<string, string?>? environment = null)
+    /// <summary>Passenger started as an agent's MCP server (<see cref="StartPassenger"/>), and the agent's client to it.</summary>
+    private Task<McpClient> Start(IList<string> arguments, string? workingDirectory = null, Dictionary<string, string?>? environment = null) =>
+        Connect(StartPassenger(arguments, workingDirectory, environment), arguments);
+
+    /// <summary>Passenger started as the IDE starts a child, with the tests' state folder (where windows' sockets are, and
+    /// its log), the engine's log and any other change to the environment (null takes a variable away), its standard
+    /// error kept. Not the SDK's own process transport: that ends a server with the runtime's tree kill, which can hang
+    /// this process (ChildProcesses.Kill says why). The agent going closes its input; <see cref="Dispose"/> ends the rest.</summary>
+    private Process StartPassenger(IList<string> arguments, string? workingDirectory = null, Dictionary<string, string?>? environment = null)
     {
-        Dictionary<string, string?> variables = new() { ["PASSENGER_SETTINGS"] = settings, ["PASSENGER_ENGINE_LOG"] = EngineLog };
+        ProcessStartInfo start = ChildProcesses.Command(Passenger, arguments, workingDirectory);
+        start.Environment["PASSENGER_SETTINGS"] = settings;
+        start.Environment["PASSENGER_ENGINE_LOG"] = EngineLog;
         foreach ((string name, string? value) in environment ?? new())
         {
-            variables[name] = value;
+            if (value is null)
+            {
+                start.Environment.Remove(name);
+            }
+            else
+            {
+                start.Environment[name] = value;
+            }
         }
-        StdioClientTransport transport = new(new StdioClientTransportOptions
+        start.RedirectStandardInput = true;
+        start.RedirectStandardOutput = true;
+        start.RedirectStandardError = true;
+        Process passenger = ChildProcesses.Start(start);
+        passenger.ErrorDataReceived += (_, e) =>
         {
-            Name = "passenger",
-            Command = Passenger,
-            Arguments = arguments,
-            WorkingDirectory = workingDirectory,
-            EnvironmentVariables = variables,
-            StandardErrorLines = line =>
+            if (e.Data is not null)
             {
                 lock (errors)
                 {
-                    errors.Add(line);
+                    errors.Add(e.Data);
                 }
-            },
-        });
-        return Exchange($"Starting passenger {string.Join(' ', arguments)}", TimeSpan.FromMinutes(1), cancel => McpClient.CreateAsync(transport, cancellationToken: cancel));
+            }
+        };
+        passenger.BeginErrorReadLine();
+        lock (passengers)
+        {
+            passengers.Add(passenger);
+        }
+        return passenger;
+    }
+
+    /// <summary>An agent's client to a Passenger this test started, over its standard input and output.</summary>
+    private Task<McpClient> Connect(Process passenger, IList<string> arguments) =>
+        Exchange($"Starting passenger {string.Join(' ', arguments)}", TimeSpan.FromMinutes(1), cancel => McpClient.CreateAsync(new PassengerTransport(passenger), cancellationToken: cancel));
+
+    /// <summary>The SDK's stream transport over a Passenger's input and output; the agent going closes the input, as the
+    /// SDK's process transport does, and Passenger ends on its own.</summary>
+    private sealed class PassengerTransport(Process passenger) : IClientTransport
+    {
+        public string Name => "passenger";
+
+        public async Task<ITransport> ConnectAsync(CancellationToken cancellationToken = default) =>
+            new Session(await new StreamClientTransport(passenger.StandardInput.BaseStream, passenger.StandardOutput.BaseStream).ConnectAsync(cancellationToken), passenger);
+
+        private sealed class Session(ITransport inner, Process passenger) : ITransport
+        {
+            public string? SessionId => inner.SessionId;
+
+            public System.Threading.Channels.ChannelReader<JsonRpcMessage> MessageReader => inner.MessageReader;
+
+            public Task SendMessageAsync(JsonRpcMessage message, CancellationToken cancellationToken = default) => inner.SendMessageAsync(message, cancellationToken);
+
+            public async ValueTask DisposeAsync()
+            {
+                await inner.DisposeAsync();
+                EndInput(passenger);
+            }
+        }
+    }
+
+    /// <summary>Closes a Passenger's input, which ends it as an agent going does; one that has gone already is left.</summary>
+    private static void EndInput(Process passenger)
+    {
+        try
+        {
+            passenger.StandardInput.Close();
+        }
+        catch (Exception gone) when (gone is IOException or ObjectDisposedException or InvalidOperationException)
+        {
+            // It had gone, its pipe with it.
+        }
     }
 
     /// <summary>The window's state, its socket for agents included, in the tests' own folder rather than the person's.</summary>
