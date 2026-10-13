@@ -50,8 +50,8 @@ artifacts/bin/Passenger.App/debug/Passenger . --file src/Passenger.App/App.axaml
 
 A step after one that opens a dialog goes to that dialog, as a person's keys and clicks would. `--key` takes
 "cmd+shift+L" or Rider's "meta shift L"; `--drag X1,Y1,X2,Y2` drags (`--drag-hold` keeps the button down,
-to capture a tool window over its drop place); `--crop X,Y,W,H`, `--click X,Y` and `--hover X,Y` (the
-pointer left to rest, for a hover card) are in logical units; `--wait MS` gives a running program time.
+to capture a tool window over its drop place); `--right-click X,Y` opens the menu of what is there; `--crop X,Y,W,H`,
+`--click X,Y` and `--hover X,Y` (the pointer left to rest, for a hover card) are in logical units; `--wait MS` gives a running program time.
 
 Headless, the dispatcher's timers (the editor's hover, a caret's blink) fire only inside a running dispatcher frame,
 never from running its queued jobs: a wait that needs one pumps a frame (`Screenshot.Pump`, `Ui.WaitFor` in tests).
@@ -87,6 +87,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   Studio keymaps) and the highlighting contract (`IHighlighter`), with JetBrains Mono embedded.
   An inlay hint (`CodeEditor.Hints.cs`) is a parameter's name, which goes with the text after it, or a type, which
   goes with the text before it; the hints at an offset are a caret place of their own, as IntelliJ's inlays are.
+  `CodeEditor.Usages.cs` is what the caret lights up: the host's usage highlights (an edit takes them away unless
+  kept, as Highlight Usages in File's are) and the bracket pair from a highlighter that is an `IBraceMatcher`
+  (`CSharpHighlighter`, from its syntax, never the server).
 - `src/Passenger.Languages`: colour before any language server answers. C# is Roslyn's parser
   in-process, incremental and off the UI thread (`CSharpHighlighter`), classified from syntax
   alone (`CSharpClassifier`); the language server's semantic colours layer over it. `CSharpHighlighter` is also each
@@ -105,17 +108,24 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.App/CSharp`: the language server in the IDE. `CSharpService` runs Roslyn for the
   folder; `CSharpDocument` gives an open file its semantic colours and diagnostics; `CodeAssist`
   is completion, hover, signature help and the code actions (`app.code.*`), its popups on a layer
-  over the editor; `WorkspaceEdits` applies renames and fixes across files.
+  over the editor; `WorkspaceEdits` applies renames and fixes across files. `UsageHighlighting` asks the server's
+  `documentHighlight` once a split's caret rests and is Highlight Usages in File.
 - `src/Passenger.App/Editors`: `EditorArea` is a tree of splits, each an `EditorGroup` (tabs, find bar, editor); its
   `CodeEditor` and `Active` are the active group's, so code that acts on "the editor" keeps working, and wiring for every
   editor's events goes through `ForEachEditor`, since a split makes a new one. An editor window (Open Tab in New Window,
   or a tab dragged out) is an `EditorFrame` of the same `EditorArea`, never a second area, so a file shown in two
-  windows is one `OpenDocument`; the folder keeps the windows in `WorkspaceState.EditorWindows`.
+  windows is one `OpenDocument`; the folder keeps the windows in `WorkspaceState.EditorWindows`. Pinned tabs come
+  first (`EditorTab.IsPinned`, kept as `KeptTab.Pinned`); `EditorArea.CloseTab` is the one close a person's goes
+  through, which Reopen Closed Tab remembers. The tab actions are `MainWindow.Tabs.cs`, filling a tab's menu through
+  `EditorArea.TabMenuOpening` with `ActionContext.Tab` naming the tab they act on. `MainWindow.CloseSolution` ends what
+  the folder runs and shows the Welcome screen; `LeaveFolder` is what switching or closing a folder lets go of, so new
+  per-folder state is let go there.
 - `src/Passenger.App/Docking`: the tool windows' frame, in IntelliJ's six places. `DockHost` is the layout and what
   it keeps; `Stripe`, `ToolPane` and `FloatWindow` (a window of its own that knows nothing of tool windows) are its
   parts. A window moves by dragging a stripe button or a header (`DockDrag` says where it lands); `DragGesture` and
   `DropOverlay` are the one drag and drop zone, which editor tabs share. The layout is kept in the state store as a
-  `DockLayout`, with the folder open and as the one a folder without its own opens on. A new tool window is a view and
+  `DockLayout`, with the folder open and as the one a folder without its own opens on; `DockHost.RestoreDefault` puts
+  each window back where `Dock.Add` put it. A new tool window is a view and
   one `Dock.Add` in `MainWindow.AddToolWindows`.
 - `src/Passenger.App/State`: the IDE's own state, in one `StateStore` under `PASSENGER_SETTINGS` or the user's local
   application data, kept only by the person's window: the app's documents at its top (`settings.json`, `layout.json`,
@@ -184,7 +194,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   `SolutionEdits` is every change to a .sln or .slnx (solution folders, the files they list, projects in and out): a
   .sln line by line and a .slnx through XDocument with its whitespace kept, so the rest of the file stays byte for byte
   as it was; never `dotnet sln`, which rewrites a whole .sln. `MainWindow.Solution.cs` is the Solution view's New
-  Solution Folder, Existing Project, Existing Item, Rename and Remove.
+  Solution Folder, Existing Project, Existing Item, Rename and Remove. `ProjectEdits` puts a project's
+  `ProjectReference`s in and takes them out as text, the rest kept byte for byte (never `dotnet add reference`), for
+  Add > Reference (`MainWindow.References.cs`). `MainWindow.FileMoves.cs` is the Explorer's Cut, Copy, Paste and drags,
+  every move through `EditorArea.MoveFile` so open files, breakpoints and bookmarks follow.
   `EditorConfig` reads the .editorconfig files over a file (its own parser and globs); `FileIndent` picks a file's
   indent (its .editorconfig, else `Indentation.Detect` on its lines, else its language) and names it in the status bar;
   `OpenDocument.Save` applies the save-time properties. Every edit from the language server goes through
