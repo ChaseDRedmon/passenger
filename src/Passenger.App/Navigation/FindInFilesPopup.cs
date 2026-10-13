@@ -440,7 +440,7 @@ public sealed class FindInFilesPopup : UserControl
         TextDocument shown = new(text.ToString());
         preview.Show(shown, SelectionSet.Single(0), default);
         (preview.Highlighter as IDisposable)?.Dispose();
-        preview.Highlighter = match.Path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) ? new Languages.CSharp.CSharpHighlighter(shown) : null;
+        preview.Highlighter = Languages.Highlighters.For(Workspace.Language.ForPath(match.Path).Name, shown);
         if (match.Line < shown.Snapshot.LineCount)
         {
             int at = shown.Snapshot.GetLineStart(match.Line) + match.Column;

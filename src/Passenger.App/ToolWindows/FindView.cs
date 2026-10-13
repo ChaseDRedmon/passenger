@@ -288,7 +288,8 @@ public sealed class FindView : DockPanel
         {
             TextDocument document = new(text);
             preview.Document = document;
-            preview.Highlighter = usage.Path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) ? new CSharpHighlighter(document) : null;
+            (preview.Highlighter as IDisposable)?.Dispose();
+            preview.Highlighter = Languages.Highlighters.For(Workspace.Language.ForPath(usage.Path).Name, document);
             preview.Tag = usage.Path;
         }
         TextSnapshot snapshot = preview.Document.Snapshot;

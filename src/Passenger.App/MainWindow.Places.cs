@@ -140,10 +140,10 @@ public partial class MainWindow
             else if (TextOf(place.Path) is { } read)
             {
                 TextDocument closed = new(read.ToString());
-                CSharpHighlighter? colours = place.Path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) ? new CSharpHighlighter(closed) : null;
-                if (colours is not null)
+                IHighlighter? colours = Languages.Highlighters.For(Workspace.Language.ForPath(place.Path).Name, closed);
+                if (colours is IDisposable disposable)
                 {
-                    made.Add(colours);
+                    made.Add(disposable);
                 }
                 file = (closed.Snapshot, colours);
             }
