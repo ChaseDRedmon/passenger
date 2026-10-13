@@ -74,15 +74,32 @@ public sealed class ProfilerTests : IDisposable
     [Fact]
     public async Task Profiling_a_program_that_ends_before_it_reaches_the_profiler_says_it_never_did()
     {
-        // Not .NET, and gone at once: it never connects to the profiler's port, and the wait for it ends before 30 s.
+        // Not .NET, and gone at once: it never connects to the profiler's port, which is not waited on once it has ended.
         ProfileTarget target = OperatingSystem.IsWindows()
-            ? new("cmd.exe", ["/c", "exit 0"], folder, new Dictionary<string, string>())
-            : new("/usr/bin/true", [], folder, new Dictionary<string, string>());
-        using CancellationTokenSource soon = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
-        soon.CancelAfter(TimeSpan.FromSeconds(3));
+            ? new("cmd.exe", ["/c", "exit 3"], folder, new Dictionary<string, string>())
+            : new("/bin/sh", ["-c", "exit 3"], folder, new Dictionary<string, string>());
+        IReadOnlyList<string> before = Ports();
+        Stopwatch clock = Stopwatch.StartNew();
 
-        TimeoutException failed = await Assert.ThrowsAsync<TimeoutException>(() => ProfilingSession.StartAsync(target, folder, cancellation: soon.Token));
-        Assert.Contains("never reached the profiler", failed.Message, StringComparison.Ordinal);
+        ProfilingException failed = await Assert.ThrowsAsync<ProfilingException>(() => ProfilingSession.StartAsync(target, folder, cancellation: TestContext.Current.CancellationToken));
+        Assert.Contains("never reached the profiler: it ended first, with exit code 3", failed.Message, StringComparison.Ordinal);
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(20), $"the profiler waited {clock.Elapsed.TotalSeconds:0} s for a program that had ended");
+        Assert.Equal(before, Ports());
+    }
+
+    [Fact]
+    public async Task A_program_that_cannot_start_is_not_profiled_and_leaves_no_port_listening()
+    {
+        // There, but no program: Unix will not run a file it may not execute, nor Windows text named .exe.
+        string notAProgram = Path.Combine(folder, OperatingSystem.IsWindows() ? "not-a-program.exe" : "not-a-program");
+        File.WriteAllText(notAProgram, "just text\n");
+        ProfileTarget target = new(notAProgram, [], folder, new Dictionary<string, string>());
+        IReadOnlyList<string> before = Ports();
+
+        ProfilingException failed = await Assert.ThrowsAsync<ProfilingException>(() => ProfilingSession.StartAsync(target, folder, cancellation: TestContext.Current.CancellationToken));
+        Assert.StartsWith("Could not start not-a-program", failed.Message, StringComparison.Ordinal);
+        // The port it was to reach is closed with it: no listener left waiting, nor its socket in /tmp.
+        Assert.Equal(before, Ports());
     }
 
     [Fact]
@@ -124,13 +141,15 @@ public sealed class ProfilerTests : IDisposable
     [AvaloniaFact]
     public void Profile_builds_and_runs_the_configuration_and_its_end_shows_the_snapshot()
     {
-        string project = Path.Combine(folder, "Spinner");
-        Directory.CreateDirectory(project);
-        File.WriteAllText(Path.Combine(project, "Spinner.csproj"),
-            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
-        File.WriteAllText(Path.Combine(project, "Program.cs"), """
+        // Twenty threads: the main one spins, the others wait for it all along.
+        string project = Project("Spinner", """
             using System.Diagnostics;
-            Console.WriteLine($"spun {Work.Spin(TimeSpan.FromMilliseconds(600)) > 0}");
+            using ManualResetEventSlim spun = new();
+            Thread[] waiting = [.. Enumerable.Range(0, 19).Select(i => new Thread(() => Work.Wait(spun)))];
+            foreach (Thread thread in waiting) { thread.Start(); }
+            Console.WriteLine($"spun {Work.Spin(TimeSpan.FromMilliseconds(1000)) > 0}");
+            spun.Set();
+            foreach (Thread thread in waiting) { thread.Join(); }
             static class Work
             {
                 public static double Spin(TimeSpan time)
@@ -143,38 +162,147 @@ public sealed class ProfilerTests : IDisposable
                     }
                     return total;
                 }
+
+                [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+                public static void Wait(ManualResetEventSlim until) => until.Wait();
             }
             """);
-        Restore.Run(project);
+        string settings = Directory.CreateTempSubdirectory("passenger-settings-").FullName;
+        string? settingsBefore = Environment.GetEnvironmentVariable("PASSENGER_SETTINGS");
+        Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", settings);
+        try
+        {
+            MainWindow window = new() { Width = 1200, Height = 800 };
+            window.Show();
+            window.OpenFolder(project);
+            Ui.Settle();
+            // The folder's snapshots are kept with its state, as many as the cap from earlier runs, the first the oldest.
+            string kept = window.SnapshotFolder;
+            Assert.StartsWith(Path.Combine(settings, "workspaces", "Spinner-"), kept, StringComparison.Ordinal);
+            Directory.CreateDirectory(kept);
+            for (int i = 0; i < Snapshots.Kept; i++)
+            {
+                string earlier = Path.Combine(kept, $"Spinner-earlier-{i}.nettrace");
+                File.WriteAllText(earlier, "an earlier run");
+                File.SetLastWriteTimeUtc(earlier, DateTime.UtcNow.AddHours(-Snapshots.Kept + i));
+            }
+
+            Task<string?> started = window.ProfileAsync();
+            Ui.WaitFor(() => started.IsCompleted, "the build and the start", TimeSpan.FromMinutes(3));
+            Assert.Null(started.Result);
+            Assert.True(window.DockHost.IsShown("profiler"));
+            Ui.WaitFor(() => window.ProfilerView.Snapshot is not null, "the program's end to show its snapshot", TimeSpan.FromMinutes(2));
+            Ui.Settle();
+
+            Passenger.App.Profiling.ProfilerView view = window.ProfilerView;
+            Snapshot snapshot = view.Snapshot!;
+            Assert.StartsWith("Main thread", snapshot.Threads[0].Name, StringComparison.Ordinal);
+            Assert.Equal(snapshot.Samples, view.Flame.Root!.Total);
+            // The hot path is open down the main thread: Spin is listed without a click.
+            Assert.Contains(view.Rows, r => r.Node.Name.StartsWith("Work.Spin", StringComparison.Ordinal));
+            Assert.StartsWith("Spinner-", Path.GetFileName(snapshot.TracePath), StringComparison.Ordinal);
+            Assert.Contains("spun True", window.BottomPanel.Run.Document.Snapshot.ToString(), StringComparison.Ordinal);
+
+            // What the run holds grows with where its threads were caught, not with how often: each stack is kept once,
+            // and a waiting thread's samples, all at one stack, as a handful of runs.
+            Assert.True(snapshot.Stacks * 10 < snapshot.Samples, $"{snapshot.Stacks} stacks kept for {snapshot.Samples} samples");
+            Assert.True(snapshot.Runs * 4 < snapshot.Samples, $"{snapshot.Runs} runs kept for {snapshot.Samples} samples");
+            IReadOnlyList<CallNode> waiters = [.. snapshot.Threads.Where(t => Find(t.Children, n => n.Name.StartsWith("Work.Wait", StringComparison.Ordinal)) is not null)];
+            Assert.Equal(19, waiters.Count);
+            foreach (CallNode waiter in waiters)
+            {
+                ThreadLine line = Assert.Single(snapshot.Timeline, l => l.Name == waiter.Name);
+                Assert.True(line.Runs.Count * 4 <= line.Samples, $"{waiter.Name} waited through {line.Samples} samples, kept as {line.Runs.Count} runs");
+            }
+
+            // The run is kept with the earlier ones, the oldest gone past the cap, and the status bar says where.
+            Assert.Equal(kept, Path.GetDirectoryName(snapshot.TracePath));
+            Assert.Equal(Snapshots.Kept, Directory.GetFiles(kept, "*.nettrace").Length);
+            Assert.False(File.Exists(Path.Combine(kept, "Spinner-earlier-0.nettrace")), "the oldest snapshot was kept past the cap");
+            Assert.True(File.Exists(Path.Combine(kept, "Spinner-earlier-1.nettrace")), "a snapshot within the cap was removed");
+            Assert.Contains($"kept in {kept}", window.Status, StringComparison.Ordinal);
+            Assert.Equal(snapshot.TracePath, view.Kept[0].Path);
+            Assert.Equal(Snapshots.Kept, view.Kept.Count);
+            Assert.Contains(kept, view.KeptSummary, StringComparison.Ordinal);
+
+            // A stretch chosen on the timeline is what the other views show, worked out off the UI thread: the choice
+            // takes the UI thread a sliver of what working the stretch out takes, and the stretch lands once it is done.
+            (double From, double To) half = (snapshot.StartMs, snapshot.StartMs + ((snapshot.EndMs - snapshot.StartMs) / 2));
+            long allocated = GC.GetAllocatedBytesForCurrentThread();
+            Snapshot worked = snapshot.Within(half.From, half.To);
+            long working = GC.GetAllocatedBytesForCurrentThread() - allocated;
+            allocated = GC.GetAllocatedBytesForCurrentThread();
+            view.Timeline.Select(half.From, half.To);
+            long choosing = GC.GetAllocatedBytesForCurrentThread() - allocated;
+            Assert.True(choosing * 4 < working, $"choosing a stretch made {choosing} bytes on the UI thread, working it out {working}");
+            Assert.Same(snapshot, view.Snapshot);
+            Ui.Settle();
+            Assert.NotSame(snapshot, view.Snapshot);
+            Assert.Same(snapshot, view.Snapshot!.Whole);
+            Assert.Equal(worked.Samples, view.Snapshot.Samples);
+            Assert.True(view.Snapshot.Samples < snapshot.Samples);
+            Assert.Contains("ms of", view.Status, StringComparison.Ordinal);
+
+            // Stretches chosen one after another show the last, never an earlier one landing late; a click, the whole run.
+            view.Timeline.Select(snapshot.StartMs, snapshot.EndMs - 1);
+            view.Timeline.Select(half.To, snapshot.EndMs);
+            Ui.Settle();
+            Assert.Equal(half.To, view.Snapshot.StartMs);
+            view.Timeline.Select(half.From, half.To);
+            view.Timeline.ClearSelection();
+            Ui.Settle();
+            Assert.Same(snapshot, view.Snapshot);
+            window.Close();
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", settingsBefore);
+            TestFolders.Delete(settings);
+        }
+    }
+
+    [AvaloniaFact]
+    public void Profiling_a_configuration_whose_working_folder_is_gone_says_why_in_the_profiler_window()
+    {
+        string project = Project("Spinner", "Console.WriteLine(\"ran\");\n");
+        Directory.CreateDirectory(Path.Combine(project, "Properties"));
+        File.WriteAllText(Path.Combine(project, "Properties", "launchSettings.json"),
+            "{ \"profiles\": { \"Elsewhere\": { \"commandName\": \"Project\", \"workingDirectory\": \"gone\" } } }");
         MainWindow window = new() { Width = 1200, Height = 800 };
         window.Show();
         window.OpenFolder(project);
         Ui.Settle();
+        Assert.Equal("Spinner: Elsewhere", window.Configuration?.Name);
+        IReadOnlyList<string> before = Ports();
+
         Task<string?> started = window.ProfileAsync();
         Ui.WaitFor(() => started.IsCompleted, "the build and the start", TimeSpan.FromMinutes(3));
-        Assert.Null(started.Result);
+        string gone = Path.Combine(window.Folder!, "gone");
+        Assert.Equal($"Could not profile Spinner: its working folder {gone} does not exist", started.Result);
+        Assert.Null(window.Profiling);
         Assert.True(window.DockHost.IsShown("profiler"));
-        Ui.WaitFor(() => window.ProfilerView.Snapshot is not null, "the program's end to show its snapshot", TimeSpan.FromMinutes(2));
-
-        Passenger.App.Profiling.ProfilerView view = window.ProfilerView;
-        Snapshot snapshot = view.Snapshot!;
-        Assert.StartsWith("Main thread", snapshot.Threads[0].Name, StringComparison.Ordinal);
-        Assert.Equal(snapshot.Samples, view.Flame.Root!.Total);
-        // The hot path is open down the main thread: Spin is listed without a click.
-        Assert.Contains(view.Rows, r => r.Node.Name.StartsWith("Work.Spin", StringComparison.Ordinal));
-        Assert.StartsWith("Spinner-", Path.GetFileName(snapshot.TracePath), StringComparison.Ordinal);
-        Assert.Contains("spun True", window.BottomPanel.Run.Document.Snapshot.ToString(), StringComparison.Ordinal);
-
-        // A stretch chosen on the timeline is what the other views show; a click goes back to the whole run.
-        view.Timeline.Select(snapshot.StartMs, snapshot.StartMs + ((snapshot.EndMs - snapshot.StartMs) / 2));
-        Assert.NotSame(snapshot, view.Snapshot);
-        Assert.Same(snapshot, view.Snapshot!.Whole);
-        Assert.True(view.Snapshot.Samples < snapshot.Samples);
-        Assert.Contains("ms of", view.Status, StringComparison.Ordinal);
-        view.Timeline.ClearSelection();
-        Assert.Same(snapshot, view.Snapshot);
+        Assert.Equal(started.Result, window.ProfilerView.Status);
+        Assert.Equal(started.Result, window.ProfilerView.Placeholder);
+        Assert.Equal(before, Ports());
         window.Close();
     }
+
+    /// <summary>A console project restored in the tests' folder, with this as its Program.cs.</summary>
+    private string Project(string name, string program)
+    {
+        string project = Path.Combine(folder, name);
+        Directory.CreateDirectory(project);
+        File.WriteAllText(Path.Combine(project, $"{name}.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
+        File.WriteAllText(Path.Combine(project, "Program.cs"), program);
+        Restore.Run(project);
+        return project;
+    }
+
+    /// <summary>The diagnostic ports this process's profiler is listening at: a socket in /tmp each, or a named pipe on Windows.</summary>
+    private static IReadOnlyList<string> Ports() => OperatingSystem.IsWindows()
+        ? [.. Directory.GetFiles(@"\\.\pipe\").Where(p => Path.GetFileName(p).StartsWith($"passenger-profile-{Environment.ProcessId}-", StringComparison.Ordinal)).Order(StringComparer.Ordinal)]
+        : [.. Directory.GetFiles(Directory.Exists("/tmp") ? "/tmp" : Path.GetTempPath(), $"pp-{Environment.ProcessId}-*.sock").Order(StringComparer.Ordinal)];
 
     private static CallNode? Find(IEnumerable<CallNode> nodes, Func<CallNode, bool> match)
     {

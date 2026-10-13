@@ -24,8 +24,10 @@ public partial class MainWindow
     /// <summary>The run being profiled, or null.</summary>
     public ProfilingSession? Profiling => profiling;
 
-    /// <summary>Where snapshots are kept: a .nettrace file a run, which PerfView and speedscope read too.</summary>
-    public static string SnapshotFolder => Path.Combine(Path.GetTempPath(), "Passenger", "snapshots");
+    /// <summary>Where the open folder's snapshots are kept, a .nettrace file a run (which PerfView and speedscope read
+    /// too): beside its state, as Rider keeps a solution's, the newest <see cref="Snapshots.Kept"/>. With no folder open,
+    /// the store's own.</summary>
+    public string SnapshotFolder => Path.Combine(folder is null ? State.StateStore.DefaultRoot : State.ProjectState.FolderOf(State.StateStore.DefaultRoot, folder), "snapshots");
 
     private void AddProfiler()
     {
@@ -35,11 +37,36 @@ public partial class MainWindow
         profilerView.KillRequested += (_, _) => profiling?.Kill();
         profilerView.OpenRequested += (_, method) => _ = OpenMethodAsync(method);
         profilerView.OpenSnapshotRequested += (_, _) => _ = PickSnapshotAsync();
+        profilerView.OpenKeptRequested += (_, path) => _ = OpenSnapshotAsync(path);
+        profilerView.RevealSnapshotsRequested += (_, _) =>
+        {
+            Directory.CreateDirectory(SnapshotFolder);
+            ChildProcesses.Reveal(SnapshotFolder);
+        };
         profilerView.MemoryRequested += (_, _) => _ = MemorySnapshotAsync();
     }
 
+    /// <summary>Lists the open folder's snapshots in the profiler window, after taking off those past the cap; read off
+    /// the UI thread.</summary>
+    private async Task KeepSnapshotsAsync(bool trim = false)
+    {
+        string kept = SnapshotFolder;
+        IReadOnlyList<SnapshotFile> files = await BackgroundWork.Run(() =>
+        {
+            if (trim)
+            {
+                Snapshots.Trim(kept);
+            }
+            return Snapshots.List(kept);
+        });
+        if (kept == SnapshotFolder)
+        {
+            profilerView!.ShowKept(kept, files);
+        }
+    }
+
     /// <summary>Builds, then starts the chosen configuration under the profiler from its first instruction, as Rider's
-    /// Profile does. Null once it runs, or what stopped it.</summary>
+    /// Profile does. Null once it runs, or what stopped it, which the profiler window says too.</summary>
     public async Task<string?> ProfileAsync(string? arguments = null)
     {
         if (profiling is not null)
@@ -54,11 +81,11 @@ public partial class MainWindow
         {
             return unbuilt.Message;
         }
+        ShowToolWindow("profiler");
         try
         {
             DebugTarget target = await DebugTarget.ResolveAsync(chosen, arguments);
             ProfileTarget profiled = new(Core.Dotnet.Host(), [target.Program, .. target.Arguments], target.WorkingDirectory, target.Environment);
-            ShowToolWindow("profiler");
             Bottom.Run.Clear();
             ToolWindows.ConsoleSink console = Bottom.Run.Sink;
             // Held until the program has reached the profiler (or never will), not while it runs: that is the person's.
@@ -89,7 +116,8 @@ public partial class MainWindow
             }), TaskScheduler.Default);
             return null;
         }
-        catch (Exception error) when (error is InvalidOperationException or IOException or TimeoutException)
+        catch (Exception error) when (error is ProfilingException or InvalidOperationException or IOException or UnauthorizedAccessException
+            or TimeoutException or System.ComponentModel.Win32Exception or DiagnosticsClientException)
         {
             profiling = null;
             profilerView!.Stopped(error.Message);
@@ -119,7 +147,8 @@ public partial class MainWindow
         {
             Snapshot snapshot = await run.StopAsync();
             profilerView!.Show(snapshot, profilingName);
-            StatusText.Text = $"Snapshot of {profilingName}: {snapshot.Samples:N0} samples, kept in {snapshot.TracePath}";
+            await KeepSnapshotsAsync(trim: true);
+            StatusText.Text = $"Snapshot of {profilingName}: {snapshot.Samples:N0} samples, kept in {Path.GetDirectoryName(snapshot.TracePath)}";
             return snapshot;
         }
         catch (Exception error) when (error is IOException or InvalidOperationException or TimeoutException)

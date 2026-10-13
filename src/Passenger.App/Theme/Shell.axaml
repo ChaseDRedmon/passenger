@@ -306,6 +306,10 @@
         <Setter Property="Background" Value="{DynamicResource Passenger.Hover}" />
         <Setter Property="Foreground" Value="{DynamicResource Passenger.Text}" />
     </Style>
+    <!-- A tab with nothing behind it yet is dimmed, not filled; before :checked, so the open one keeps its band. -->
+    <Style Selector="ToggleButton.panelTab:disabled /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="Transparent" />
+    </Style>
     <Style Selector="ToggleButton.panelTab:checked /template/ ContentPresenter#PART_ContentPresenter">
         <Setter Property="Background" Value="{DynamicResource Passenger.Selected}" />
         <Setter Property="Foreground" Value="{DynamicResource Passenger.Text}" />

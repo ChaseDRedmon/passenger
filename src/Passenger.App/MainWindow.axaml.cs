@@ -373,6 +373,7 @@ public partial class MainWindow : Window
         RestoreWorkspace();
         ShowWorkspaceName();
         UpdateStatus();
+        _ = KeepSnapshotsAsync();
     }
 
     private string? followed;

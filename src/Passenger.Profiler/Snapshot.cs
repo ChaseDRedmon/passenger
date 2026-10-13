@@ -41,20 +41,54 @@ public sealed record AllocatedType(string Name, long Bytes, int Ticks, CallNode 
 /// <summary>A garbage collection: its number, generation, why, when it began and how long the program was paused.</summary>
 public sealed record Collection(int Number, int Generation, string Reason, double AtMs, double PauseMs);
 
-/// <summary>A sample: the thread, when it was taken (milliseconds from the trace's start), and its stack as numbers into
-/// the snapshot's table of frames, where it was caught first.</summary>
-public readonly record struct Sample(int Thread, double AtMs, int[] Frames);
+/// <summary>A thread's samples in a row that caught it at one stack (a number into the snapshot's table of stacks): when
+/// the first and the last were taken, in milliseconds from the trace's start, and how many, evenly spaced between. A
+/// thread waiting all run long is one; one busy, a run per change of where it was caught. Sixteen bytes: its times are
+/// kept as floats, to a sixteenth of a millisecond ten minutes in and a quarter of one an hour in.</summary>
+public readonly struct SampleRun(double fromMs, double toMs, int stack, int count)
+{
+    private readonly float from = (float)fromMs;
+    private readonly float length = (float)(toMs - fromMs);
 
-/// <summary>An allocation tick: when, the type, the bytes it stands for, and the allocating stack, its frame first.</summary>
-public readonly record struct AllocationTick(double AtMs, string Type, long Bytes, int[] Frames);
+    public double FromMs => from;
 
-/// <summary>A thread's row of the timeline: its name and when it was sampled.</summary>
-public sealed record ThreadLine(int Id, string Name, IReadOnlyList<double> Times);
+    public double ToMs => (double)from + length;
+
+    public int Stack { get; } = stack;
+
+    public int Count { get; } = count;
+
+    /// <summary>How many of its samples were taken from one time to another.</summary>
+    public int Within(double fromMs, double toMs)
+    {
+        if (ToMs < fromMs || FromMs > toMs)
+        {
+            return 0;
+        }
+        if (FromMs >= fromMs && ToMs <= toMs)
+        {
+            return Count;
+        }
+        // Partly inside, so at least two samples a step apart: those whose times fall within.
+        double step = (ToMs - FromMs) / (Count - 1);
+        int first = Math.Max(0, (int)Math.Ceiling(((fromMs - FromMs) / step) - 1e-9));
+        int last = Math.Min(Count - 1, (int)Math.Floor(((toMs - FromMs) / step) + 1e-9));
+        return Math.Max(0, last - first + 1);
+    }
+}
+
+/// <summary>An allocation tick: when, the type, the bytes it stands for, and the allocating stack (a number into the
+/// snapshot's table of stacks).</summary>
+public readonly record struct AllocationTick(double AtMs, string Type, long Bytes, int Stack);
+
+/// <summary>A thread's row of the timeline: its name, how many samples it had, and the runs of them in time.</summary>
+public sealed record ThreadLine(int Id, string Name, int Samples, IReadOnlyList<SampleRun> Runs);
 
 /// <summary>What a profiling run found, or a stretch of it: per thread, the call tree of its samples; the hot spots across
 /// them all; the allocations and collections; and when each thread was sampled, for the timeline. A sample is a thread
-/// caught at one stack, about once a millisecond (<see cref="SampleMs"/> says how often). The run's samples are kept,
-/// so any interval of it (<see cref="Within"/>) has the same views.</summary>
+/// caught at one stack, about once a millisecond (<see cref="SampleMs"/> says how often). Each distinct stack is kept
+/// once and a thread's samples as runs at one stack, so what a run holds grows with where its threads went rather than
+/// with how long they were watched; any interval of it (<see cref="Within"/>) has the same views.</summary>
 public sealed class Snapshot
 {
     /// <summary>EventPipe's sampler: every managed thread's stack, each millisecond.</summary>
@@ -63,16 +97,25 @@ public sealed class Snapshot
     /// <summary>The runtime's own events: method loads, which name the frames, and the GC's.</summary>
     public const string RuntimeProvider = "Microsoft-Windows-DotNETRuntime";
 
-    private readonly IReadOnlyList<Sample> samples;
+    /// <summary>The longest a thread may go unsampled with its samples still one run, past which a stretch would count
+    /// samples into the gap: many times the sampler's period, even on a machine that slows it.</summary>
+    private const double LongestGap = 50;
+
+    /// <summary>Each thread's runs, in time.</summary>
+    private readonly IReadOnlyList<(int Thread, SampleRun[] Runs)> runs;
+    private readonly IReadOnlyList<int[]> stacks;
     private readonly IReadOnlyList<(string Method, string Module)> frames;
     private readonly IReadOnlyDictionary<int, string> threadNames;
     private readonly IReadOnlyList<AllocationTick> ticks;
     private readonly IReadOnlyList<Collection> allCollections;
+    private readonly Lazy<IReadOnlyList<ThreadLine>> timeline;
 
-    private Snapshot(IReadOnlyList<Sample> samples, IReadOnlyList<(string Method, string Module)> frames, IReadOnlyDictionary<int, string> threadNames,
-        IReadOnlyList<AllocationTick> ticks, IReadOnlyList<Collection> collections, double startMs, double endMs, string trace, Snapshot? whole)
+    private Snapshot(IReadOnlyList<(int Thread, SampleRun[] Runs)> runs, IReadOnlyList<int[]> stacks, IReadOnlyList<(string Method, string Module)> frames,
+        IReadOnlyDictionary<int, string> threadNames, IReadOnlyList<AllocationTick> ticks, IReadOnlyList<Collection> collections,
+        double startMs, double endMs, string trace, Snapshot? whole)
     {
-        this.samples = samples;
+        this.runs = runs;
+        this.stacks = stacks;
         this.frames = frames;
         this.threadNames = threadNames;
         this.ticks = ticks;
@@ -81,16 +124,28 @@ public sealed class Snapshot
         EndMs = endMs;
         TracePath = trace;
         Whole = whole ?? this;
-        IReadOnlyList<Sample> inside = [.. samples.Where(x => x.AtMs >= startMs && x.AtMs <= endMs)];
-        Samples = inside.Count;
-        SampleMs = whole?.SampleMs ?? Period(samples);
-        (All, HotSpots, IReadOnlyDictionary<int, CallNode> byId) = Build(inside);
+        // A thread's samples at a stack inside the stretch, counted once a pair however many runs they came in.
+        Dictionary<(int Thread, int Stack), int> counted = [];
+        int samples = 0;
+        foreach ((int thread, SampleRun[] taken) in runs)
+        {
+            foreach (SampleRun run in taken)
+            {
+                int inside = run.Within(startMs, endMs);
+                if (inside > 0)
+                {
+                    counted[(thread, run.Stack)] = counted.GetValueOrDefault((thread, run.Stack)) + inside;
+                    samples += inside;
+                }
+            }
+        }
+        Samples = samples;
+        SampleMs = whole?.SampleMs ?? Period(runs);
+        (All, HotSpots, IReadOnlyDictionary<int, CallNode> byId) = Build(counted);
         Threads = All.Ordered;
         Collections = [.. collections.Where(c => c.AtMs >= startMs && c.AtMs <= endMs)];
         Allocations = Allocated([.. ticks.Where(t => t.AtMs >= startMs && t.AtMs <= endMs)]);
-        Timeline = [.. inside.GroupBy(x => x.Thread)
-            .Select(g => new ThreadLine(g.Key, byId.TryGetValue(g.Key, out CallNode? thread) ? thread.Name : $"Thread {g.Key}", [.. g.Select(x => x.AtMs)]))
-            .OrderByDescending(t => t.Times.Count)];
+        timeline = new(() => Lines(byId));
     }
 
     /// <summary>The whole run this is a stretch of (itself when it is the whole).</summary>
@@ -116,11 +171,18 @@ public sealed class Snapshot
     public IReadOnlyList<HotSpot> HotSpots { get; }
 
     /// <summary>Each thread's samples in time, the busiest thread first.</summary>
-    public IReadOnlyList<ThreadLine> Timeline { get; }
+    public IReadOnlyList<ThreadLine> Timeline => timeline.Value;
 
     public TimeSpan Duration => TimeSpan.FromMilliseconds(Math.Max(0, EndMs - StartMs));
 
     public int Samples { get; }
+
+    /// <summary>The distinct stacks the whole run's samples and allocation ticks caught, each kept once.</summary>
+    public int Stacks => stacks.Count;
+
+    /// <summary>The runs the whole run's samples are kept as (<see cref="SampleRun"/>): what it holds grows with these
+    /// rather than with its samples.</summary>
+    public int Runs => runs.Sum(t => t.Runs.Length);
 
     /// <summary>How long a sample stands for: the time between the sampler's passes over the busiest thread, the whole run's.
     /// The runtime asks for one a millisecond, but a loaded machine, or a program run at background priority (whose
@@ -133,28 +195,30 @@ public sealed class Snapshot
     /// <summary>The .nettrace file the run was written to, which other tools (PerfView, speedscope) read too.</summary>
     public string TracePath { get; }
 
-    /// <summary>The same views over a stretch of the run, as selecting an interval on dotTrace's timeline gives.</summary>
+    /// <summary>The same views over a stretch of the run, as selecting an interval on dotTrace's timeline gives. Its work
+    /// grows with the run's stacks and runs, and it reads the run without changing it, so any thread may ask.</summary>
     public Snapshot Within(double fromMs, double toMs)
     {
         Snapshot whole = Whole;
         double from = Math.Max(whole.StartMs, Math.Min(fromMs, toMs));
         double to = Math.Min(whole.EndMs, Math.Max(fromMs, toMs));
-        return new Snapshot(whole.samples, whole.frames, whole.threadNames, whole.ticks, whole.allCollections, from, to, whole.TracePath, whole);
+        return new Snapshot(whole.runs, whole.stacks, whole.frames, whole.threadNames, whole.ticks, whole.allCollections, from, to, whole.TracePath, whole);
     }
 
     /// <summary>When a method was on a sampled stack, first to last, or null when it never was: what the timeline shows
     /// to say where a method ran.</summary>
     public (double From, double To)? Span(string method)
     {
-        HashSet<int> matching = [.. Enumerable.Range(0, frames.Count).Where(i => frames[i].Method.Contains(method, StringComparison.Ordinal))];
+        bool[] named = [.. frames.Select(f => f.Method.Contains(method, StringComparison.Ordinal))];
+        bool[] holding = [.. stacks.Select(s => s.Any(f => named[f]))];
         double first = double.MaxValue;
         double last = double.MinValue;
-        foreach (Sample sample in samples)
+        foreach (SampleRun run in runs.SelectMany(t => t.Runs))
         {
-            if (sample.AtMs >= StartMs && sample.AtMs <= EndMs && sample.Frames.Any(matching.Contains))
+            if (holding[run.Stack] && run.Within(StartMs, EndMs) > 0)
             {
-                first = Math.Min(first, sample.AtMs);
-                last = Math.Max(last, sample.AtMs);
+                first = Math.Min(first, Math.Max(run.FromMs, StartMs));
+                last = Math.Max(last, Math.Min(run.ToMs, EndMs));
             }
         }
         return first <= last ? (first, last) : null;
@@ -162,47 +226,53 @@ public sealed class Snapshot
 
     /// <summary>The mean time between the busiest thread's samples, which the sampler takes on every pass it makes; a
     /// millisecond, as asked for, when there are too few to measure.</summary>
-    private static double Period(IReadOnlyList<Sample> taken)
+    private static double Period(IReadOnlyList<(int Thread, SampleRun[] Runs)> taken)
     {
-        IGrouping<int, Sample>? busiest = taken.GroupBy(x => x.Thread).MaxBy(g => g.Count());
-        if (busiest is null || busiest.Count() < 2)
+        if (taken.Count == 0)
         {
             return 1;
         }
-        double first = busiest.Min(x => x.AtMs);
-        double last = busiest.Max(x => x.AtMs);
-        return last > first ? (last - first) / (busiest.Count() - 1) : 1;
+        SampleRun[] busiest = taken.MaxBy(t => t.Runs.Sum(r => r.Count)).Runs;
+        int count = busiest.Sum(r => r.Count);
+        double first = busiest.Min(r => r.FromMs);
+        double last = busiest.Max(r => r.ToMs);
+        return count >= 2 && last > first ? (last - first) / (count - 1) : 1;
     }
 
-    /// <summary>The call trees (a root per thread under one for all) and hot spots of some samples.</summary>
-    private (CallNode All, IReadOnlyList<HotSpot> HotSpots, IReadOnlyDictionary<int, CallNode> Threads) Build(IReadOnlyList<Sample> taken)
+    /// <summary>The call trees (a root per thread under one for all) and hot spots of each thread's samples at each stack.</summary>
+    private (CallNode All, IReadOnlyList<HotSpot> HotSpots, IReadOnlyDictionary<int, CallNode> Threads) Build(Dictionary<(int Thread, int Stack), int> counted)
     {
         CallNode all = new("All threads", string.Empty, null);
         Dictionary<int, CallNode> threads = [];
         Dictionary<int, (int Self, int Total)> spots = [];
-        HashSet<int> counted = [];
-        foreach (Sample sample in taken)
+        // The stack a frame was last counted for, so a recursive method's total counts each stack once.
+        int[] countedFor = new int[frames.Count];
+        int stamp = 0;
+        foreach (((int thread, int stack), int count) in counted)
         {
-            if (!threads.TryGetValue(sample.Thread, out CallNode? node))
+            if (!threads.TryGetValue(thread, out CallNode? node))
             {
-                threads[sample.Thread] = node = all.Child(threadNames.GetValueOrDefault(sample.Thread, $"Thread {sample.Thread}"), string.Empty);
+                threads[thread] = node = all.Child(threadNames.GetValueOrDefault(thread, $"Thread {thread}"), string.Empty);
             }
-            all.Total++;
-            node.Total++;
+            int[] caught = stacks[stack];
+            all.Total += count;
+            node.Total += count;
             // From the thread's first frame to where it was caught.
-            for (int i = sample.Frames.Length - 1; i >= 0; i--)
+            for (int i = caught.Length - 1; i >= 0; i--)
             {
-                (string method, string module) = frames[sample.Frames[i]];
+                (string method, string module) = frames[caught[i]];
                 node = node.Child(method, module);
-                node.Total++;
+                node.Total += count;
             }
-            node.Self++;
-            counted.Clear();
-            for (int i = 0; i < sample.Frames.Length; i++)
+            node.Self += count;
+            stamp++;
+            for (int i = 0; i < caught.Length; i++)
             {
-                int frame = sample.Frames[i];
+                int frame = caught[i];
                 (int Self, int Total) spot = spots.GetValueOrDefault(frame);
-                spots[frame] = (spot.Self + (i == 0 ? 1 : 0), spot.Total + (counted.Add(frame) ? 1 : 0));
+                bool first = countedFor[frame] != stamp;
+                countedFor[frame] = stamp;
+                spots[frame] = (spot.Self + (i == 0 ? count : 0), spot.Total + (first ? count : 0));
             }
         }
         // The thread the program's entry point runs on is its main thread, as dotTrace names it.
@@ -220,6 +290,23 @@ public sealed class Snapshot
         return (all, hot, threads);
     }
 
+    /// <summary>The timeline's rows: each thread sampled in the stretch, with its runs there, the busiest first.</summary>
+    private IReadOnlyList<ThreadLine> Lines(IReadOnlyDictionary<int, CallNode> byId)
+    {
+        List<ThreadLine> lines = [];
+        foreach ((int thread, SampleRun[] taken) in runs)
+        {
+            int samples = taken.Sum(r => r.Within(StartMs, EndMs));
+            if (samples > 0)
+            {
+                // The whole run's rows are its own runs; a stretch's, those it holds.
+                IReadOnlyList<SampleRun> held = ReferenceEquals(Whole, this) ? taken : [.. taken.Where(r => r.Within(StartMs, EndMs) > 0)];
+                lines.Add(new ThreadLine(thread, byId.TryGetValue(thread, out CallNode? named) ? named.Name : $"Thread {thread}", samples, held));
+            }
+        }
+        return [.. lines.OrderByDescending(t => t.Samples)];
+    }
+
     /// <summary>The types some allocation ticks name, with their back traces.</summary>
     private IReadOnlyList<AllocatedType> Allocated(IReadOnlyList<AllocationTick> taken)
     {
@@ -230,7 +317,7 @@ public sealed class Snapshot
             int kilobytes = (int)Math.Max(1, tick.Bytes / 1024);
             so.Root.Total += kilobytes;
             CallNode at = so.Root;
-            foreach (int frame in tick.Frames)
+            foreach (int frame in stacks[tick.Stack])
             {
                 at = at.Child(frames[frame].Method, frames[frame].Module);
                 at.Total += kilobytes;
@@ -304,7 +391,8 @@ public sealed class Snapshot
     }
 
     /// <summary>Reads a .nettrace file EventPipe wrote: the samples' stacks, with the methods named from the run's own
-    /// method load events, the allocation ticks and the collections.</summary>
+    /// method load events, the allocation ticks and the collections. Each stack is named once (the trace numbers its own),
+    /// kept once however many samples caught it, and a thread's samples in a row at one stack become one run.</summary>
     public static Snapshot Read(string nettrace)
     {
         string etlx = TraceLog.CreateFromEventPipeDataFile(nettrace, null, new TraceLogOptions { ContinueOnError = true });
@@ -313,8 +401,13 @@ public sealed class Snapshot
             using TraceLog log = new(etlx);
             Dictionary<(string, string), int> table = [];
             List<(string Method, string Module)> named = [];
-            List<Sample> samples = [];
+            List<int[]> stacks = [];
+            Dictionary<int[], int> distinct = new(StackComparer.Instance);
+            Dictionary<CallStackIndex, int> numbered = [];
+            // Each thread's runs, the last of which its next sample at the same stack lengthens.
+            Dictionary<int, List<SampleRun>> runs = [];
             Dictionary<int, string> threads = [];
+            Dictionary<string, string> types = new(StringComparer.Ordinal);
             List<AllocationTick> ticks = [];
             List<Collection> collections = [];
             (int Number, int Generation, string Reason, double At)? collecting = null;
@@ -327,8 +420,12 @@ public sealed class Snapshot
                     {
                         case "GC/AllocationTick":
                             string type = data.PayloadByName("TypeName") as string is { Length: > 0 } typed ? typed : "(unknown type)";
+                            if (!types.TryGetValue(type, out string? known))
+                            {
+                                types[type] = known = type;
+                            }
                             long bytes = Convert.ToInt64(data.PayloadByName("AllocationAmount64") ?? data.PayloadByName("AllocationAmount") ?? 0L, System.Globalization.CultureInfo.InvariantCulture);
-                            ticks.Add(new AllocationTick(data.TimeStampRelativeMSec, type, bytes, Frames(data.CallStack(), table, named)));
+                            ticks.Add(new AllocationTick(data.TimeStampRelativeMSec, known, bytes, Stack(data)));
                             break;
                         case "GC/Start":
                             collecting = (Convert.ToInt32(data.PayloadByName("Count") ?? 0, System.Globalization.CultureInfo.InvariantCulture),
@@ -347,20 +444,49 @@ public sealed class Snapshot
                     }
                     continue;
                 }
-                if (data.ProviderName != SampleProvider || data.CallStack() is not { } stack)
+                if (data.ProviderName != SampleProvider || data.CallStackIndex() == CallStackIndex.Invalid)
                 {
                     continue;
                 }
                 int threadId = data.ThreadID;
-                if (!threads.ContainsKey(threadId))
+                if (!runs.TryGetValue(threadId, out List<SampleRun>? taken))
                 {
+                    runs[threadId] = taken = [];
                     threads[threadId] = data.Thread()?.ThreadInfo is { Length: > 0 } info ? $"Thread {threadId} ({info})" : $"Thread {threadId}";
                 }
-                samples.Add(new Sample(threadId, data.TimeStampRelativeMSec, Frames(stack, table, named)));
+                int stack = Stack(data);
+                double at = data.TimeStampRelativeMSec;
+                if (taken.Count > 0 && taken[^1] is { } run && run.Stack == stack && at >= run.FromMs && at - run.ToMs <= LongestGap)
+                {
+                    taken[^1] = new SampleRun(run.FromMs, Math.Max(run.ToMs, at), stack, run.Count + 1);
+                }
+                else
+                {
+                    taken.Add(new SampleRun(at, at, stack, 1));
+                }
             }
-            double first = samples.Count == 0 ? 0 : samples.Min(x => x.AtMs);
-            double last = samples.Count == 0 ? 0 : samples.Max(x => x.AtMs);
-            return new Snapshot(samples, named, threads, ticks, collections, first, last, nettrace, null);
+            (int Thread, SampleRun[] Runs)[] kept = [.. runs.Select(t => (t.Key, t.Value.ToArray()))];
+            double first = kept.Length == 0 ? 0 : kept.Min(t => t.Runs.Min(r => r.FromMs));
+            double end = kept.Length == 0 ? 0 : kept.Max(t => t.Runs.Max(r => r.ToMs));
+            return new Snapshot(kept, stacks, named, threads, ticks, collections, first, end, nettrace, null);
+
+            // The event's stack as a number into the table, each the trace numbers named once and each distinct one kept once.
+            int Stack(TraceEvent data)
+            {
+                CallStackIndex index = data.CallStackIndex();
+                if (numbered.TryGetValue(index, out int number))
+                {
+                    return number;
+                }
+                int[] caught = Frames(index == CallStackIndex.Invalid ? null : log.CallStacks[index], table, named);
+                if (!distinct.TryGetValue(caught, out number))
+                {
+                    distinct[caught] = number = stacks.Count;
+                    stacks.Add(caught);
+                }
+                numbered[index] = number;
+                return number;
+            }
         }
         finally
         {
@@ -371,6 +497,21 @@ public sealed class Snapshot
             catch (IOException)
             {
             }
+        }
+    }
+
+    /// <summary>Stacks compared by their frames, so one caught again is the one kept.</summary>
+    private sealed class StackComparer : IEqualityComparer<int[]>
+    {
+        public static readonly StackComparer Instance = new();
+
+        public bool Equals(int[]? x, int[]? y) => x is not null && y is not null ? x.AsSpan().SequenceEqual(y) : x == y;
+
+        public int GetHashCode(int[] stack)
+        {
+            HashCode hash = new();
+            hash.AddBytes(System.Runtime.InteropServices.MemoryMarshal.AsBytes(stack.AsSpan()));
+            return hash.ToHashCode();
         }
     }
 }

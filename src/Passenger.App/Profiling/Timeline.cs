@@ -87,25 +87,21 @@ public sealed class Timeline : Control
 
         IBrush busy = Brush("Passenger.Graph.0", Brushes.SteelBlue);
         double msPerPixel = (whole.EndMs - whole.StartMs) / width;
-        for (int row = 0; row < Math.Min(MostThreads, whole.Timeline.Count); row++)
+        IReadOnlyList<double[]> rows = Columns(width);
+        double full = Math.Max(1, msPerPixel);
+        for (int row = 0; row < rows.Count; row++)
         {
-            ThreadLine line = whole.Timeline[row];
             double y = CollectionsRow + (row * Row);
-            Draw(context, Short(line.Name), y, face, text);
-            int[] columns = new int[(int)Math.Ceiling(width) + 1];
-            foreach (double at in line.Times)
+            Draw(context, Short(whole.Timeline[row].Name), y, face, text);
+            double[] counts = rows[row];
+            for (int column = 0; column < counts.Length; column++)
             {
-                columns[Math.Clamp((int)((at - whole.StartMs) / msPerPixel), 0, columns.Length - 1)]++;
-            }
-            // A sample a millisecond: a column whose every millisecond was sampled is solid.
-            double full = Math.Max(1, msPerPixel);
-            for (int column = 0; column < columns.Length; column++)
-            {
-                if (columns[column] == 0)
+                if (counts[column] <= 0)
                 {
                     continue;
                 }
-                using (context.PushOpacity(Math.Clamp(0.25 + (0.75 * columns[column] / full), 0.25, 1)))
+                // A sample a millisecond: a column whose every millisecond was sampled is solid.
+                using (context.PushOpacity(Math.Clamp(0.25 + (0.75 * counts[column] / full), 0.25, 1)))
                 {
                     // A sample stands for its millisecond, which may be wider than a pixel.
                     context.FillRectangle(busy, new Rect(Label + column, y + 2, Math.Max(1, 1 / msPerPixel), Row - 4));
@@ -178,6 +174,38 @@ public sealed class Timeline : Control
         }
         Select(from, to);
     }
+
+    /// <summary>The samples in each pixel's column of the busiest threads' rows, a run's spread evenly over the columns it
+    /// spans; counted once for the run and the width, not again for each frame a drag draws.</summary>
+    private IReadOnlyList<double[]> Columns(double width)
+    {
+        if (columns is { } cached && ReferenceEquals(cached.Of, whole) && cached.Width == width)
+        {
+            return cached.Rows;
+        }
+        Snapshot run = whole!;
+        double msPerPixel = (run.EndMs - run.StartMs) / width;
+        List<double[]> rows = [];
+        foreach (ThreadLine line in run.Timeline.Take(MostThreads))
+        {
+            double[] row = new double[(int)Math.Ceiling(width) + 1];
+            foreach (SampleRun samples in line.Runs)
+            {
+                int from = Math.Clamp((int)((samples.FromMs - run.StartMs) / msPerPixel), 0, row.Length - 1);
+                int to = Math.Clamp((int)((samples.ToMs - run.StartMs) / msPerPixel), 0, row.Length - 1);
+                double each = (double)samples.Count / (to - from + 1);
+                for (int column = from; column <= to; column++)
+                {
+                    row[column] += each;
+                }
+            }
+            rows.Add(row);
+        }
+        columns = (run, width, rows);
+        return rows;
+    }
+
+    private (Snapshot Of, double Width, IReadOnlyList<double[]> Rows)? columns;
 
     private double X(double ms, double width) => whole is null ? Label : Label + ((ms - whole.StartMs) / (whole.EndMs - whole.StartMs) * width);
 

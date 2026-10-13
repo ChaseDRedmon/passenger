@@ -68,12 +68,9 @@ public sealed class ProjectState
 {
     internal ProjectState(string root, string folder)
     {
-        string hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(folder)))[..12];
-        string name = $"{Path.GetFileName(folder)}-{hash}";
-        string workspaces = Path.Combine(root, "workspaces");
-        Folder = Path.Combine(workspaces, name);
+        Folder = FolderOf(root, folder);
         // Before the store, the workspace was one file named as this folder is.
-        Workspace = new(Path.Combine(Folder, "workspace.json"), formerly: Path.Combine(workspaces, $"{name}.json"));
+        Workspace = new(Path.Combine(Folder, "workspace.json"), formerly: Folder + ".json");
         Layout = new(Path.Combine(Folder, "layout.json"));
         Breakpoints = new(Path.Combine(Folder, "breakpoints.json"));
         Bookmarks = new(Path.Combine(Folder, "bookmarks.json"));
@@ -81,6 +78,14 @@ public sealed class ProjectState
 
     /// <summary>The folder the documents are in.</summary>
     public string Folder { get; }
+
+    /// <summary>Where a store keeps an open folder's own things, <c>workspaces/&lt;name&gt;-&lt;hash&gt;</c>: its
+    /// documents, and the profiler's snapshots of its programs, which a window keeps whether or not it keeps state.</summary>
+    public static string FolderOf(string root, string folder)
+    {
+        string hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(folder)))[..12];
+        return Path.Combine(root, "workspaces", $"{Path.GetFileName(folder)}-{hash}");
+    }
 
     /// <summary>The editors' splits, tabs and carets, the recent files and the projects unloaded.</summary>
     public StateDocument<WorkspaceState> Workspace { get; }

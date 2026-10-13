@@ -7,6 +7,7 @@ using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
+using Passenger.Editor;
 using Passenger.Profiler;
 
 namespace Passenger.App.Profiling;
@@ -38,7 +39,8 @@ public sealed class TreeRow(CallNode node, int depth, ObservableCollection<TreeR
 
 /// <summary>The profiler's tool window, as dotTrace's in Rider: while a run goes, its time and Get Snapshot (which ends
 /// the run and leaves the program going) and Kill; then the snapshot as a call tree by thread with the hot path opened,
-/// the hot spots by their own time, or a flame graph. A double-click on a method goes to its source.</summary>
+/// the hot spots by their own time, or a flame graph. A double-click on a method goes to its source. The Snapshots page
+/// lists the open folder's earlier runs, as Rider's Recent Snapshots does.</summary>
 public sealed class ProfilerView : DockPanel
 {
     private readonly ObservableCollection<TreeRow> rows = [];
@@ -57,6 +59,10 @@ public sealed class ProfilerView : DockPanel
     private readonly Button heap;
     private readonly FlameGraph flame;
     private readonly ScrollViewer flameScroll;
+    private readonly ListBox kept;
+    private readonly TextBlock keptSummary;
+    private readonly DockPanel keptPage;
+    private string? keptFolder;
     private readonly TextBlock status;
     private readonly TextBlock placeholder;
     private readonly Button stop;
@@ -145,6 +151,36 @@ public sealed class ProfilerView : DockPanel
         memory.Children.Add(heapTypes);
         flame = new FlameGraph();
         flameScroll = new ScrollViewer { Content = flame, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        kept = new ListBox
+        {
+            Classes = { "tree" },
+            ItemTemplate = new FuncDataTemplate<SnapshotFile>((file, _) => file is null ? new TextBlock() : KeptRow(file), supportsRecycling: false),
+        };
+        kept.DoubleTapped += (_, _) => OpenKept();
+        kept.KeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Enter)
+            {
+                OpenKept();
+                e.Handled = true;
+            }
+        };
+        keptSummary = new TextBlock { Margin = new Thickness(12, 8), TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center };
+        Button reveal = new()
+        {
+            Content = OperatingSystem.IsMacOS() ? "Reveal in Finder" : "Show in Explorer",
+            Padding = new Thickness(10, 3),
+            Margin = new Thickness(0, 0, 12, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        reveal.Click += (_, _) => RevealSnapshotsRequested?.Invoke(this, EventArgs.Empty);
+        DockPanel keptHead = new() { [DockProperty] = Dock.Top };
+        DockPanel.SetDock(reveal, Dock.Right);
+        keptHead.Children.Add(reveal);
+        keptHead.Children.Add(keptSummary);
+        keptPage = new DockPanel();
+        keptPage.Children.Add(keptHead);
+        keptPage.Children.Add(kept);
         placeholder = new TextBlock
         {
             Text = "Profile runs the chosen configuration under the profiler; Get Snapshot shows where its time went",
@@ -158,7 +194,7 @@ public sealed class ProfilerView : DockPanel
         stop.Click += (_, _) => StopRequested?.Invoke(this, EventArgs.Empty);
         kill = new Button { Content = "Kill", Padding = new Thickness(10, 3), IsVisible = false };
         kill.Click += (_, _) => KillRequested?.Invoke(this, EventArgs.Empty);
-        pages = [PageButton("Call Tree"), PageButton("Hot Spots"), PageButton("Flame Graph"), PageButton("Allocations"), PageButton("GC"), PageButton("Memory")];
+        pages = [PageButton("Call Tree"), PageButton("Hot Spots"), PageButton("Flame Graph"), PageButton("Allocations"), PageButton("GC"), PageButton("Memory"), PageButton("Snapshots")];
         StackPanel left = new() { Orientation = Orientation.Horizontal, Spacing = 2, Margin = new Thickness(6, 0), VerticalAlignment = VerticalAlignment.Center };
         foreach (ToggleButton page in pages)
         {
@@ -181,17 +217,11 @@ public sealed class ProfilerView : DockPanel
         top.Bind(Border.BorderBrushProperty, top.GetResourceObservable("Passenger.Divider"));
         Children.Add(top);
         timeline = new Timeline();
-        timeline.Chosen += (_, stretch) =>
-        {
-            if (timeline.Snapshot is { } whole)
-            {
-                Fill(stretch is { } chosen ? whole.Within(chosen.From, chosen.To) : whole);
-            }
-        };
+        timeline.Chosen += (_, stretch) => _ = ChooseAsync(stretch);
         timelineBand = new Border { [DockProperty] = Dock.Top, BorderThickness = new Thickness(0, 0, 0, 1), Child = timeline, IsVisible = false, Padding = new Thickness(0, 4) };
         timelineBand.Bind(Border.BorderBrushProperty, timelineBand.GetResourceObservable("Passenger.Divider"));
         Children.Add(timelineBand);
-        Children.Add(new Panel { Children = { tree, spots, flameScroll, allocations, garbage, memory, placeholder } });
+        Children.Add(new Panel { Children = { tree, spots, flameScroll, allocations, garbage, memory, keptPage, placeholder } });
         ticking = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
         ticking.Tick += (_, _) => status.Text = $"Profiling {running}: {elapsed?.Invoke().TotalSeconds:0.0} s";
         ShowPage(0);
@@ -222,8 +252,60 @@ public sealed class ProfilerView : DockPanel
         heapTypes.ItemsSource = snapshot.Types;
         memorySummary.Text = $"{snapshot.Objects:N0} objects, {snapshot.Bytes / 1048576.0:N1} MB live, in {snapshot.Types.Count:N0} types (read in {snapshot.Took.TotalSeconds:0.0} s)";
         pages[5].IsEnabled = true;
-        placeholder.IsVisible = false;
         ShowPage(5);
+    }
+
+    /// <summary>The open folder's snapshots, the newest first, as the Snapshots page lists them.</summary>
+    public IReadOnlyList<SnapshotFile> Kept => kept.ItemsSource as IReadOnlyList<SnapshotFile> ?? [];
+
+    /// <summary>The Snapshots page's line saying where they are kept.</summary>
+    public string KeptSummary => keptSummary.Text ?? string.Empty;
+
+    /// <summary>A kept snapshot chosen to open: its path.</summary>
+    public event EventHandler<string>? OpenKeptRequested;
+
+    /// <summary>The folder the snapshots are kept in, to show in the file manager.</summary>
+    public event EventHandler? RevealSnapshotsRequested;
+
+    /// <summary>Lists the snapshots kept for the open folder on the Snapshots page; with nothing else to show, the window
+    /// opens on them, as Rider's profiler opens on its recent snapshots.</summary>
+    public void ShowKept(string folder, IReadOnlyList<SnapshotFile> files)
+    {
+        keptFolder = folder;
+        kept.ItemsSource = files;
+        keptSummary.Text = files.Count == 0
+            ? $"No snapshots yet. Each run's is kept in {folder}, the newest {Snapshots.Kept}."
+            : $"{files.Count} snapshot{(files.Count == 1 ? "" : "s")}, the newest first, kept in {folder}. Past {Snapshots.Kept}, the oldest go.";
+        pages[6].IsEnabled = true;
+        int current = Array.FindIndex(pages, p => p.IsChecked == true);
+        ShowPage(Snapshot is null && Memory is null && !ticking.IsEnabled && files.Count > 0 ? 6 : Math.Max(0, current));
+    }
+
+    private void OpenKept()
+    {
+        if (kept.SelectedItem is SnapshotFile file)
+        {
+            OpenKeptRequested?.Invoke(this, file.Path);
+        }
+    }
+
+    private static Control KeptRow(SnapshotFile file)
+    {
+        TextBlock when = Muted(file.Written.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.CurrentCulture), 160);
+        when.FontFamily = CSharp.Fonts.Mono;
+        when.FontSize = 12;
+        TextBlock size = Muted($"{file.Bytes / 1048576.0,7:N1} MB", 100);
+        size.FontFamily = CSharp.Fonts.Mono;
+        size.FontSize = 12;
+        // Named for its program and when it ran, which the row says already.
+        string program = System.Text.RegularExpressions.Regex.Replace(file.Name, @"-\d{8}-\d{6}(-\d+)?$", string.Empty);
+        return new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Height = 22,
+            Margin = new Thickness(6, 0),
+            Children = { when, size, new TextBlock { Text = program, VerticalAlignment = VerticalAlignment.Center, FontWeight = FontWeight.SemiBold } },
+        };
     }
 
     private Control HeapRow(HeapType type)
@@ -268,11 +350,15 @@ public sealed class ProfilerView : DockPanel
         kill.IsVisible = true;
         heap.IsVisible = true;
         placeholder.Text = $"Profiling {name}. Get Snapshot when it has done what is to be measured.";
-        placeholder.IsVisible = Snapshot is null;
         ticking.Start();
+        if (Snapshot is null)
+        {
+            ShowPage(0);
+        }
     }
 
-    /// <summary>The run is over; it found nothing to show (it failed) when null, and says why.</summary>
+    /// <summary>The run is over, or never began; when it found nothing to show, says why, in the window's middle while
+    /// it has no snapshot to show.</summary>
     public void Stopped(string? why = null)
     {
         ticking.Stop();
@@ -282,20 +368,60 @@ public sealed class ProfilerView : DockPanel
         if (why is not null)
         {
             status.Text = why;
+            if (Snapshot is null)
+            {
+                placeholder.Text = why;
+                ShowPage(0);
+            }
         }
     }
+
+    /// <summary>What the window's middle says while it has nothing on the page shown.</summary>
+    public string Placeholder => placeholder.IsVisible ? placeholder.Text ?? string.Empty : string.Empty;
 
     public void Show(Snapshot snapshot, string name)
     {
         Stopped();
         snapshotName = name;
+        choosing++;
         timeline.Snapshot = snapshot;
         timelineBand.IsVisible = true;
+        // A snapshot opened from the list is shown, not the list again.
+        if (pages[6].IsChecked == true)
+        {
+            pages[6].IsChecked = false;
+            pages[0].IsChecked = true;
+        }
         Fill(snapshot);
     }
 
     /// <summary>The timeline, where a drag chooses the stretch the other views show.</summary>
     public Timeline Timeline => timeline;
+
+    /// <summary>Which stretch was chosen last, so one worked out after another was chosen is dropped.</summary>
+    private int choosing;
+
+    /// <summary>Shows a stretch of the run, or all of it. A stretch's trees are worked out off the UI thread, which a long
+    /// run's would hold for a while; the window shows the run as it was until they land.</summary>
+    private async Task ChooseAsync((double From, double To)? stretch)
+    {
+        if (timeline.Snapshot is not { } whole)
+        {
+            return;
+        }
+        int chosen = ++choosing;
+        if (stretch is not { } span)
+        {
+            Fill(whole);
+            return;
+        }
+        status.Text = $"{snapshotName}: reading {span.From - whole.StartMs:N0} to {span.To - whole.StartMs:N0} ms...";
+        Snapshot within = await BackgroundWork.Run(() => whole.Within(span.From, span.To));
+        if (chosen == choosing)
+        {
+            Fill(within);
+        }
+    }
 
     /// <summary>Shows a snapshot, the whole run's or a stretch of it, in every view but the timeline.</summary>
     private void Fill(Snapshot snapshot)
@@ -306,7 +432,6 @@ public sealed class ProfilerView : DockPanel
         status.Text = ReferenceEquals(whole, snapshot)
             ? $"{snapshotName}: {snapshot.Duration.TotalSeconds:0.0} s, {snapshot.Threads.Count} thread{(snapshot.Threads.Count == 1 ? "" : "s")}, {snapshot.Samples:N0} samples"
             : $"{snapshotName}: {snapshot.StartMs - whole.StartMs:N0} to {snapshot.EndMs - whole.StartMs:N0} ms of {whole.Duration.TotalMilliseconds:N0}, {snapshot.Samples:N0} samples";
-        placeholder.IsVisible = false;
         foreach (ToggleButton page in pages)
         {
             page.IsEnabled = true;
@@ -482,15 +607,22 @@ public sealed class ProfilerView : DockPanel
         return button;
     }
 
-    /// <summary>Shows the call tree (0), the hot spots (1) or the flame graph (2).</summary>
+    /// <summary>Shows a page: the call tree (0), the hot spots, the flame graph, the allocations, the collections, the
+    /// heap (5) or the kept snapshots (6); the placeholder's words when it has nothing to show.</summary>
     public void ShowPage(int page)
     {
-        Control[] views = [tree, spots, flameScroll, allocations, garbage, memory];
+        Control[] views = [tree, spots, flameScroll, allocations, garbage, memory, keptPage];
+        bool shown = false;
         for (int i = 0; i < views.Length; i++)
         {
-            views[i].IsVisible = i == page && (Snapshot is not null || (i == 5 && Memory is not null));
+            bool showing = i == page && (i switch { 5 => Memory is not null, 6 => keptFolder is not null, _ => Snapshot is not null });
+            views[i].IsVisible = showing;
+            shown |= showing;
             pages[i].IsChecked = i == page;
         }
+        placeholder.IsVisible = !shown;
+        // The run's timeline goes with its views, not with the list of runs.
+        timelineBand.IsVisible = timeline.Snapshot is not null && page != 6;
     }
 
     private string Share(int samples) => Snapshot is { Samples: > 0 } shot ? $"{100.0 * samples / shot.Samples,5:0.0}%" : "";
