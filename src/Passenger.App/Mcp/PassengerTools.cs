@@ -233,10 +233,9 @@ public sealed partial class PassengerTools(MainWindow window)
     {
         (OpenDocument document, LspDocument lsp) = await Code(path, cancel);
         window.OpenFile(document.Path);
-        CodeEditor editor = window.EditorArea.CodeEditor;
         using Passenger.Text.ChangeTracker asked = new(document.Text);
-        IReadOnlyList<LspTextEdit> edits = await lsp.FormatAsync(editor.Indent);
-        if (WorkspaceEdits.Carried(asked, edits) is not { } placed)
+        IReadOnlyList<LspTextEdit> edits = await lsp.FormatAsync(document.Indentation.Options);
+        if (WorkspaceEdits.Carried(asked, edits, document.Indentation.Options) is not { } placed)
         {
             return "Not reformatted: the file was edited while the language server worked on it";
         }

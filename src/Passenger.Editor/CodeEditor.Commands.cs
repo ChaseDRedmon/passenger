@@ -327,7 +327,7 @@ public sealed partial class CodeEditor
         }
         string normalized = pasted.Replace("\r\n", "\n");
         bool wholeLines = lineCopy is not null && normalized == lineCopy.Replace("\r\n", "\n");
-        Apply(TextEditing.Paste(document.Snapshot, selections, pasted, wholeLines, document.LineEnding));
+        Apply(TextEditing.Paste(document.Snapshot, selections, pasted, wholeLines, document.LineEnding, ReindentsPaste ? Indent : null));
     }
 
     private static bool IsEdit(string action) => action.StartsWith("editor.", StringComparison.Ordinal);

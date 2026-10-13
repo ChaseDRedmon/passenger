@@ -61,7 +61,7 @@ public static class WorkspaceEdits
                     if (FileText.Load(path) is { } file)
                     {
                         TextSnapshot snapshot = TextSnapshot.From(file.Text);
-                        List<TextEdit> edits = Convert(snapshot, change.Edits, TextDocument.DetectLineEnding(file.Text));
+                        List<TextEdit> edits = Convert(snapshot, change.Edits, TextDocument.DetectLineEnding(file.Text), FileIndent.Of(path, file.Text));
                         FileText.Save(path, snapshot.Apply(edits.OrderBy(e => e.Start).ToList()).ToString(), file.Encoding, file.HasBom);
                     }
                 }
@@ -94,34 +94,37 @@ public static class WorkspaceEdits
     private static List<TextEdit>? Placed(OpenDocument open, FileEdits change, ChangeTracker? asked)
     {
         string eol = open.Text.LineEnding;
+        IndentOptions indent = open.Indentation.Options;
         if (change.Version is { } version && version == open.Text.Version)
         {
-            return Convert(open.Text.Snapshot, change.Edits, eol);
+            return Convert(open.Text.Snapshot, change.Edits, eol, indent);
         }
         if (asked is null || (change.Version is { } answered && answered != asked.Version))
         {
-            return change.Version is null ? Convert(open.Text.Snapshot, change.Edits, eol) : null;
+            return change.Version is null ? Convert(open.Text.Snapshot, change.Edits, eol, indent) : null;
         }
-        return Carried(asked, change.Edits) is { } mapped ? [.. mapped] : null;
+        return Carried(asked, change.Edits, indent) is { } mapped ? [.. mapped] : null;
     }
 
-    /// <summary>A server's edits answered for the text <paramref name="asked"/> began with, in its document's line breaks,
-    /// carried onto the text as it is now; null when the code they change was edited meanwhile.</summary>
-    public static IReadOnlyList<TextEdit>? Carried(ChangeTracker asked, IReadOnlyList<LspTextEdit> edits) =>
-        asked.Map(Convert(asked.Snapshot, edits, asked.Document.LineEnding));
+    /// <summary>A server's edits answered for the text <paramref name="asked"/> began with, in its document's line breaks
+    /// and <paramref name="indent"/>, carried onto the text as it is now; null when the code they change was edited meanwhile.</summary>
+    public static IReadOnlyList<TextEdit>? Carried(ChangeTracker asked, IReadOnlyList<LspTextEdit> edits, IndentOptions indent) =>
+        asked.Map(Convert(asked.Snapshot, edits, asked.Document.LineEnding, indent));
 
     /// <summary>LSP edits as the editor's, in one snapshot's offsets (its lines as the server counts them), sorted, their
     /// line breaks the file's own <paramref name="eol"/> (<see cref="LineEndings.Fit"/>): Roslyn writes the system's, CRLF
-    /// on Windows, into any file. An edit that comes to nothing once its breaks are the file's is left out.</summary>
-    public static List<TextEdit> Convert(TextSnapshot snapshot, IReadOnlyList<LspTextEdit> edits, string eol)
+    /// on Windows, into any file; and the indentation they write in the file's own characters
+    /// (<see cref="Indentation.Fit(TextSnapshot, IReadOnlyList{TextEdit}, IndentOptions)"/>), which Roslyn may not know
+    /// when no .editorconfig gives it. An edit that comes to nothing once fitted is left out.</summary>
+    public static List<TextEdit> Convert(TextSnapshot snapshot, IReadOnlyList<LspTextEdit> edits, string eol, IndentOptions indent)
     {
         ServerLines lines = ServerLines.Of(snapshot);
-        return LineEndings.Fit(snapshot, edits.Select(e =>
+        return Indentation.Fit(snapshot, LineEndings.Fit(snapshot, edits.Select(e =>
         {
             int start = lines.OffsetOf(e.Range.Start);
             int end = lines.OffsetOf(e.Range.End);
             return new TextEdit(start, Math.Max(0, end - start), e.NewText);
-        }), eol);
+        }), eol), indent);
     }
 
     /// <summary>Why an edit's file operations cannot all be made, found before any is: each is played over what the

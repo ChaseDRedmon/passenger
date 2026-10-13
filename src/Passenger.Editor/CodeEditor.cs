@@ -50,6 +50,7 @@ public sealed partial class CodeEditor : Control
     private Metrics metrics;
     private Palette palette;
     private bool rainbowBraces = true;
+    private IndentOptions indent = new();
     private (TextRunProperties Value, TextRunProperties Exception) annotationRuns;
     private TextRunProperties? questionRun;
 
@@ -254,7 +255,24 @@ public sealed partial class CodeEditor : Control
         set => SetValue(FontFamilyProperty, value);
     }
 
-    public IndentOptions Indent { get; set; } = new();
+    /// <summary>How Enter, Tab, Shift+Tab, Backspace and a paste indent, and how wide a tab is drawn.</summary>
+    public IndentOptions Indent
+    {
+        get => indent;
+        set
+        {
+            bool redraw = value.TabWidth != indent.TabWidth;
+            indent = value;
+            if (redraw)
+            {
+                RefreshStyle();
+            }
+        }
+    }
+
+    /// <summary>Whether a pasted block takes the document's indentation; off where indentation is the text's own (Markdown's
+    /// code blocks, plain text).</summary>
+    public bool ReindentsPaste { get; set; } = true;
 
     /// <summary>Whether the font may join characters into ligatures (=> drawn as one arrow). Off, as
     /// in Rider, so every character stays the one typed.</summary>

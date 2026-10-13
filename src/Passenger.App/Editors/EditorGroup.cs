@@ -154,7 +154,8 @@ public sealed class EditorGroup : DockPanel
         document.PropertyChanged += OnDocumentChanged;
         (SelectionSet selections, Vector scroll) = views.TryGetValue(document, out var view) ? view : (document.Selections, document.Scroll);
         Editor.LineCommentPrefix = document.Language.LineComment;
-        Editor.Indent = new IndentOptions(document.Language.IndentSize);
+        Editor.Indent = document.Indentation.Options;
+        Editor.ReindentsPaste = document.Language.ReindentsPaste;
         Editor.Show(document.Text, selections, scroll);
         Editor.Highlighter = document.Highlighter;
         Editor.SetMarkers(document.Markers);
@@ -298,7 +299,10 @@ public sealed class EditorGroup : DockPanel
                 break;
             case nameof(OpenDocument.Path):
                 Editor.LineCommentPrefix = document.Language.LineComment;
-                Editor.Indent = new IndentOptions(document.Language.IndentSize);
+                Editor.ReindentsPaste = document.Language.ReindentsPaste;
+                break;
+            case nameof(OpenDocument.Indentation):
+                Editor.Indent = document.Indentation.Options;
                 break;
         }
     }

@@ -110,11 +110,17 @@ public sealed class LanguageServer : IAsyncDisposable
 
     /// <summary>Changes one of the server's options while it runs (a setting turned on): it hears the configuration
     /// changed and asks for it again. A server that has stopped is not told: one started again reads its options afresh.</summary>
-    public void SetOption(string name, object? value)
+    public void SetOption(string name, object? value) => SetOptions(new Dictionary<string, object?> { [name] = value });
+
+    /// <summary>Changes several of the server's options at once, which it asks for again once.</summary>
+    public void SetOptions(IReadOnlyDictionary<string, object?> changed)
     {
         lock (options)
         {
-            options[name] = value;
+            foreach ((string name, object? value) in changed)
+            {
+                options[name] = value;
+            }
         }
         Notify("workspace/didChangeConfiguration", new { settings = new { } });
     }

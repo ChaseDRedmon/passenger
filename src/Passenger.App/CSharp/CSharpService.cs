@@ -5,6 +5,7 @@ using Passenger.App.Workspace;
 using Passenger.Core;
 using Passenger.Editor;
 using Passenger.Lsp;
+using Passenger.Text;
 
 namespace Passenger.App.CSharp;
 
@@ -103,6 +104,31 @@ public sealed class CSharpService : IAsyncDisposable
             SolutionProblemsChanged?.Invoke(this, EventArgs.Empty);
         }
     }
+
+    /// <summary>The indentation Roslyn was told to write where no .editorconfig gives one; its own default at first.</summary>
+    private IndentOptions told = new();
+
+    /// <summary>Roslyn's indentation where no .editorconfig gives one (its fixes, completions, generated code) made the C#
+    /// file being edited's, so what it writes there indents as that file's own lines do. Roslyn's options are the whole
+    /// server's, so they follow the file shown; an .editorconfig's, which Roslyn reads itself, come first in any case.</summary>
+    public void FollowIndent(OpenDocument? shown)
+    {
+        UiThread.Check();
+        if (shown is not { Language.Name: "C#" } || shown.Indentation.Options == told)
+        {
+            return;
+        }
+        told = shown.Indentation.Options;
+        session?.Server.SetOptions(IndentSettings(told));
+    }
+
+    /// <summary>Roslyn's options for an indentation, by the names it asks for them under.</summary>
+    private static Dictionary<string, object?> IndentSettings(IndentOptions indent) => new()
+    {
+        ["indent_style"] = indent.UseTabs ? "tab" : "space",
+        ["indent_size"] = indent.Size.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        ["tab_width"] = indent.TabWidth.ToString(System.Globalization.CultureInfo.InvariantCulture),
+    };
 
     /// <summary>Every error and warning the solution-wide analysis has found, by file; null with it off.</summary>
     public IReadOnlyList<(string Path, Diagnostic Diagnostic)>? SolutionProblems
@@ -280,7 +306,12 @@ public sealed class CSharpService : IAsyncDisposable
             string? solution = opening.Solution?.Path;
             string[] projects = [.. opening.Projects.Select(p => p.Path)];
             string logs = LogFolder;
-            IReadOnlyDictionary<string, object?>? options = solutionWide ? FullSolution : null;
+            IndentOptions startedWith = told;
+            Dictionary<string, object?> options = new(IndentSettings(startedWith));
+            foreach ((string name, object? value) in solutionWide ? FullSolution : new Dictionary<string, object?>())
+            {
+                options[name] = value;
+            }
             // Started on a worker: the process, its log and the wait for its answer are no work for the window's thread.
             RoslynSession started = await BackgroundWork.Run(() => RoslynSession.StartAsync(opening.Folder, solution, projects, logs, cancel, options, Hear), cancel);
             if (cancel.IsCancellationRequested)
@@ -298,6 +329,10 @@ public sealed class CSharpService : IAsyncDisposable
             started.Server.Exited += (_, why) => UiThread.Post(() => OnExited(started, why));
             started.Server.NotResponding += (_, why) => UiThread.Post(() => OnNotResponding(started, why));
             session = started;
+            if (told != startedWith)
+            {
+                started.Server.SetOptions(IndentSettings(told));
+            }
             SetState(started.Solution is { } opened ? $"Loading {Path.GetFileName(opened)}…" : "Loading projects…");
             foreach (CSharpDocument features in documents.Values)
             {

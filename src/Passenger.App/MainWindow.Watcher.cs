@@ -58,6 +58,14 @@ public partial class MainWindow
         {
             index.Build(folder);
         }
+        // An .editorconfig written, made or deleted: each open file follows what the ones over it say now.
+        if (changes.Paths.Any(p => Path.GetFileName(p) == EditorConfig.FileName))
+        {
+            foreach (OpenDocument document in Editors.Documents)
+            {
+                document.ReadConventions();
+            }
+        }
         foreach (OpenDocument document in Editors.Documents.Where(d => changes.Paths.Contains(d.Path)).ToList())
         {
             if (File.Exists(document.Path))

@@ -129,6 +129,7 @@ public partial class MainWindow
             csharp.Stopped += (_, message) => StatusText.Text = message;
             csharp.Said += (_, message) => StatusText.Text = message;
             WatchProblems(csharp);
+            csharp.FollowIndent(Editors.Active);
             csharp.Start(opening);
             foreach (OpenDocument open in Editors.Documents)
             {

@@ -108,6 +108,16 @@ public partial class MainWindow : Window
         };
         Editors.Opened += (_, document) => document.Text.Changed += (_, change) => history.Follow(document.Path, change);
         Editors.ActiveChanged += (_, _) => UpdateStatus();
+        Editors.ActiveChanged += (_, _) => csharp?.FollowIndent(Editors.Active);
+        // The indent widget and the line break follow a file's .editorconfig changed, or its save.
+        Editors.Opened += (_, document) => document.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName is nameof(OpenDocument.Indentation) or nameof(OpenDocument.LineEnding) && Editors.Active == document)
+            {
+                UpdateStatus();
+                csharp?.FollowIndent(document);
+            }
+        };
         Editors.CaretMoved += (_, _) => UpdateCaret();
         Editors.SaveFailed += (_, problem) => StatusText.Text = problem;
         Editors.Opened += (_, document) =>
@@ -1509,9 +1519,10 @@ public partial class MainWindow : Window
         OpenDocument? shown = Editors.ShownInMain;
         string idle = folder is null ? "Welcome to Passenger" : Path.GetFileName(folder);
         Title = shown is null ? idle : $"{(folder is null ? "" : Path.GetFileName(folder) + " – ")}{shown.Name}";
-        LineEndingText.Text = active is null ? "" : active.Text.LineEnding == "\r\n" ? "CRLF" : "LF";
+        LineEndingText.Text = active is null ? "" : active.LineEnding == "\r\n" ? "CRLF" : "LF";
         EncodingText.Text = active?.EncodingName ?? "";
-        IndentText.Text = active is null ? "" : $"{active.Language.IndentSize} spaces";
+        IndentText.Text = active?.Indentation.Shown ?? "";
+        ToolTip.SetTip(IndentText, active?.Indentation.Tip(active.Language.Name));
         LanguageText.Text = LanguageLabel();
         UpdateCaret();
     }

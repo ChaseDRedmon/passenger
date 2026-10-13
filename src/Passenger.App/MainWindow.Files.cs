@@ -95,7 +95,10 @@ public partial class MainWindow
             return $"{name} is already there";
         }
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllText(path, text);
+        // Made as its .editorconfig asks: its line breaks and its charset.
+        EditorConfig conventions = EditorConfig.For(path);
+        (System.Text.Encoding encoding, bool bom) = conventions.Charset ?? (new System.Text.UTF8Encoding(false), false);
+        FileText.Save(path, LineEndings.In(text, conventions.EndOfLine ?? "\n"), encoding, bom);
         FilesChanged();
         OpenFile(path);
         Explorer.Reveal(PathNames.Canonical(path));

@@ -461,6 +461,7 @@ public sealed class CodeAssist
             return;
         }
         TextDocument document = Editor.Document;
+        IndentOptions indent = Editor.Indent;
         using ChangeTracker asked = new(document);
         int typed = end ?? Editor.Selections.Primary.Caret;
         try
@@ -481,18 +482,18 @@ public sealed class CodeAssist
         }
         if (ClientCommands.CompletionEdit(item) is { } complex)
         {
-            CommitWhole(asked, complex, start, typed);
+            CommitWhole(asked, complex, start, typed, indent);
             return;
         }
         start = asked.MapOffset(start);
         int caret = Math.Min(asked.MapOffset(typed), Editor.Document.Snapshot.Length);
         string insert = item.TextEdit?.NewText ?? item.TextEditText ?? item.InsertText ?? item.Label;
         List<Passenger.Text.TextEdit> edits = [new Passenger.Text.TextEdit(start, Math.Max(0, caret - start), insert)];
-        if (item.AdditionalTextEdits is { Count: > 0 } extra && WorkspaceEdits.Carried(asked, extra) is { } placed)
+        if (item.AdditionalTextEdits is { Count: > 0 } extra && WorkspaceEdits.Carried(asked, extra, indent) is { } placed)
         {
             edits.AddRange(placed.Where(e => e.End <= start || e.Start >= caret));
         }
-        Editor.ApplyEdits(LineEndings.Fit(document.Snapshot, edits, document.LineEnding));
+        Editor.ApplyEdits(Indentation.Fit(document.Snapshot, LineEndings.Fit(document.Snapshot, edits, document.LineEnding), indent));
         if (item.Command is { } command)
         {
             Message?.Invoke(this, NotRun(item.Label, command));
@@ -502,7 +503,7 @@ public sealed class CodeAssist
     /// <summary>A completion whose code the server writes whole (an override's body, the async an await needs in its
     /// method): its edit in place of the name typed from <paramref name="start"/> to <paramref name="typed"/>, answered for
     /// the text <paramref name="asked"/> began with, and the caret where the server puts it.</summary>
-    private void CommitWhole(ChangeTracker asked, ComplexEdit complex, int start, int typed)
+    private void CommitWhole(ChangeTracker asked, ComplexEdit complex, int start, int typed, IndentOptions indent)
     {
         ServerLines lines = ServerLines.Of(asked.Snapshot);
         int from = lines.OffsetOf(complex.Edit.Range.Start);
@@ -511,7 +512,15 @@ public sealed class CodeAssist
         string eol = asked.Document.LineEnding;
         // Roslyn's edit covers the name as it stood when resolved; one that meets the name takes all of what was typed.
         (int first, int last) = from <= typed && to >= start ? (Math.Min(from, start), Math.Max(to, typed)) : (from, to);
-        if (LineEndings.Fit(asked.Snapshot, [new Passenger.Text.TextEdit(first, last - first, written)], eol) is not [Passenger.Text.TextEdit made])
+        if (LineEndings.Fit(asked.Snapshot, [new Passenger.Text.TextEdit(first, last - first, written)], eol) is not [Passenger.Text.TextEdit broken])
+        {
+            return;
+        }
+        // The server's caret is an offset in the text its edit leaves, which starts as this edit's does, or after a '\r' it took in.
+        int into = complex.Caret is { } caret && caret - from >= 0 && caret - from <= written.Length
+            ? Math.Min(LineEndings.In(asked.Snapshot.GetText(broken.Start, first - broken.Start) + written[..(caret - from)], eol).Length, broken.Text.Length)
+            : broken.Text.Length;
+        if (Indentation.Fit(asked.Snapshot, broken, indent, ref into) is not { } made)
         {
             return;
         }
@@ -520,10 +529,6 @@ public sealed class CodeAssist
             Message?.Invoke(this, "The completion was not inserted: the code it changes was edited meanwhile");
             return;
         }
-        // The server's caret is an offset in the text its edit leaves, which starts as this edit's does, or after a '\r' it took in.
-        int into = complex.Caret is { } caret && caret - from >= 0 && caret - from <= written.Length
-            ? Math.Min(LineEndings.In(asked.Snapshot.GetText(made.Start, first - made.Start) + written[..(caret - from)], eol).Length, made.Text.Length)
-            : made.Text.Length;
         Editor.ApplyEdits([placed], SelectionSet.Single(placed.Start + into));
     }
 
@@ -577,7 +582,7 @@ public sealed class CodeAssist
         int lineStart = text.GetLineStart(text.GetLineFromOffset(start));
         string before = text.GetText(lineStart, start - lineStart);
         string indent = before[..(before.Length - before.TrimStart().Length)];
-        string unit = Editor.Indent.UseTabs ? "\t" : new string(' ', Editor.Indent.Size);
+        string unit = Editor.Indent.Unit;
         Dictionary<string, string> defaults = template.Defaults.ToDictionary(d => d.Key, d => d.Value == "$name" ? target.Name : d.Value);
         Editor.InsertSnippet(TextRange.FromBounds(start, caret), Snippet.Parse(template.Text.Replace("$EXPR$", expression, StringComparison.Ordinal), defaults, indent, unit));
     }
@@ -588,7 +593,7 @@ public sealed class CodeAssist
         TextSnapshot text = Editor.Document.Snapshot;
         string line = text.GetText(text.GetLineStart(text.GetLineFromOffset(start)), start - text.GetLineStart(text.GetLineFromOffset(start)));
         string indent = line[..(line.Length - line.TrimStart().Length)];
-        string unit = Editor.Indent.UseTabs ? "\t" : new string(' ', Editor.Indent.Size);
+        string unit = Editor.Indent.Unit;
         string? typeName = Syntax is { } syntax ? TemplateScopes.At(syntax, end).TypeName : null;
         Dictionary<string, string> defaults = template.Defaults.ToDictionary(d => d.Key, d => d.Value == LiveTemplates.TypeName ? typeName ?? "Name" : d.Value);
         Editor.InsertSnippet(TextRange.FromBounds(start, end), Snippet.Parse(template.Text, defaults, indent, unit));
@@ -1166,7 +1171,7 @@ public sealed class CodeAssist
         try
         {
             using ChangeTracker asked = new(document.Text);
-            IReadOnlyList<LspTextEdit> edits = await lsp.FormatAsync(Editor.Indent);
+            IReadOnlyList<LspTextEdit> edits = await lsp.FormatAsync(document.Indentation.Options);
             if (ApplyAnswer(document, asked, edits, "Reformat Code"))
             {
                 Message?.Invoke(this, edits.Count == 0 ? "Already formatted" : "Reformatted");
@@ -1219,7 +1224,7 @@ public sealed class CodeAssist
             }
             string unformatted = document.Text.Snapshot.ToString();
             using ChangeTracker asked = new(document.Text);
-            IReadOnlyList<LspTextEdit> edits = await lsp.FormatAsync(Editor.Indent);
+            IReadOnlyList<LspTextEdit> edits = await lsp.FormatAsync(document.Indentation.Options);
             if (ApplyAnswer(document, asked, edits, "Code Cleanup") && document.Text.Snapshot.ToString() != unformatted)
             {
                 done.Add("reformatted");
@@ -1280,7 +1285,7 @@ public sealed class CodeAssist
         {
             return false;
         }
-        if (WorkspaceEdits.Carried(asked, answer) is not { } edits)
+        if (WorkspaceEdits.Carried(asked, answer, document.Indentation.Options) is not { } edits)
         {
             Message?.Invoke(this, $"{what} was not applied: the code it changes was edited meanwhile");
             return false;

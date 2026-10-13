@@ -23,6 +23,9 @@ public sealed class OpenDocument : Observable
     private IReadOnlyList<int> bookmarks = [];
     private IReadOnlyList<FoldRegion> foldRegions = [];
 
+    /// <summary>The indentation the file's own lines show, found when its text came from disk; null when they do not tell.</summary>
+    private IndentOptions? detected;
+
     public OpenDocument(string path, FileText file)
     {
         Path = path;
@@ -31,6 +34,10 @@ public sealed class OpenDocument : Observable
         HasBom = file.HasBom;
         EncodingName = file.EncodingName;
         Language = Language.ForPath(path);
+        detected = Passenger.Text.Indentation.Detect(file.Text, Language.Indent.TabWidth);
+        Conventions = EditorConfig.For(path);
+        Indentation = Choose();
+        FollowLineEnding(file.Text.Contains('\n', StringComparison.Ordinal));
         parser = Parser();
         highlighter = parser;
         Text.Changed += (_, change) =>
@@ -165,6 +172,56 @@ public sealed class OpenDocument : Observable
         }
         Raise(nameof(Path));
         Raise(nameof(Name));
+        ReadConventions();
+    }
+
+    /// <summary>What the .editorconfig files over the file say of it, as last read.</summary>
+    public EditorConfig Conventions { get; private set; }
+
+    /// <summary>How Enter, Tab, a paste, a template and the language server's edits indent the file, and why.</summary>
+    public FileIndent Indentation { get; private set; }
+
+    /// <summary>Reads the .editorconfig files over the file again (one changed on disk, the file moved) and follows them:
+    /// its indentation, and the line break a file with none yet starts with.</summary>
+    public void ReadConventions()
+    {
+        Conventions = EditorConfig.For(Path);
+        FollowLineEnding(Text.Snapshot.LineCount > 1);
+        Choose(raise: true);
+    }
+
+    /// <summary>The indentation from the .editorconfig, else the file's own lines, else its language; raised as changed.</summary>
+    private FileIndent Choose(bool raise = false)
+    {
+        FileIndent chosen = FileIndent.Choose(Conventions, detected, Language.Indent);
+        if (raise && chosen != Indentation)
+        {
+            Indentation = chosen;
+            Raise(nameof(Indentation));
+        }
+        return chosen;
+    }
+
+    /// <summary>A file with no line break yet takes the .editorconfig's <c>end_of_line</c> for the first one; one with
+    /// breaks keeps its own until it is saved.</summary>
+    private void FollowLineEnding(bool hasBreak)
+    {
+        if (!hasBreak)
+        {
+            SetLineEnding(Conventions.EndOfLine ?? "\n");
+        }
+    }
+
+    /// <summary>What Enter inserts: the file's own line break, or the one its .editorconfig gives it.</summary>
+    public string LineEnding => Text.LineEnding;
+
+    private void SetLineEnding(string eol)
+    {
+        if (Text.LineEnding != eol)
+        {
+            Text.LineEnding = eol;
+            Raise(nameof(LineEnding));
+        }
     }
 
     /// <summary>The in-process parser's colours and folds for the file's language; null for a language with none.</summary>
@@ -307,13 +364,34 @@ public sealed class OpenDocument : Observable
         }
         Text.SetText(file.Text, Selections);
         Text.MarkSaved();
+        // Text written elsewhere may indent otherwise than what it replaced.
+        detected = Passenger.Text.Indentation.Detect(file.Text, Language.Indent.TabWidth);
+        Choose(raise: true);
         Raise(nameof(IsModified));
         return true;
     }
 
-    public void Save()
+    /// <summary>Writes the file, first doing to its text what its .editorconfig asks of a save (trailing whitespace off
+    /// every line without one of <paramref name="carets"/>, a final line break, every break its <c>end_of_line</c>, as
+    /// one undoable step) and in its <c>charset</c>.</summary>
+    public void Save(SelectionSet? carets = null)
     {
-        (FileText written, string? converted) = FileText.Save(Path, Text.Snapshot.ToString(), Encoding, HasBom);
+        ReadConventions();
+        string text = Text.Snapshot.ToString();
+        SelectionSet kept = carets ?? Selections;
+        if (TextEditing.Saving(text, kept, Conventions.TrimTrailingWhitespace, Conventions.InsertFinalNewline, Conventions.EndOfLine, Text.LineEnding) is { } plan)
+        {
+            Text.BreakUndoGroup();
+            Text.Edit(plan.Edits, kept, plan.Selections);
+            Text.BreakUndoGroup();
+            text = Text.Snapshot.ToString();
+        }
+        if (Conventions.EndOfLine is { } eol)
+        {
+            SetLineEnding(eol);
+        }
+        (Encoding encoding, bool bom) = Conventions.Charset ?? (Encoding, HasBom);
+        (FileText written, string? converted) = FileText.Save(Path, text, encoding, bom);
         StoreAs(written);
         Text.MarkSaved();
         Raise(nameof(IsModified));
@@ -344,6 +422,13 @@ public sealed class OpenDocument : Observable
 public sealed record Language(string Name, string? LineComment, int IndentSize = 4)
 {
     public static readonly Language PlainText = new("Text", null);
+
+    /// <summary>How a file of the language indents when neither an .editorconfig nor its own lines say.</summary>
+    public IndentOptions Indent => new(IndentSize);
+
+    /// <summary>Whether a pasted block takes the file's indentation: not where indentation is the text's own (Markdown's
+    /// code blocks, plain text).</summary>
+    public bool ReindentsPaste => Name is not ("Text" or "Markdown");
 
     public static Language ForPath(string path) => System.IO.Path.GetExtension(path).ToLowerInvariant() switch
     {

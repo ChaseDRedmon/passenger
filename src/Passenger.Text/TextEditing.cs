@@ -1,19 +1,5 @@
 namespace Passenger.Text;
 
-/// <summary>How a document indents: <see cref="Size"/> columns a level, written as spaces or as tabs
-/// <see cref="TabWidth"/> columns wide.</summary>
-public readonly record struct IndentOptions(int Size = 4, bool UseTabs = false, int TabWidth = 4)
-{
-    /// <summary>Four spaces. Without this, <c>new()</c> on a record struct would skip the defaults
-    /// above and give a zero-wide indent.</summary>
-    public IndentOptions()
-        : this(4)
-    {
-    }
-
-    public string Unit => UseTabs ? "\t" : new string(' ', Size);
-}
-
 /// <summary>An edit worked out but not yet applied: the edits (in the snapshot it was planned on),
 /// where every caret ends up after them, and the kind of edit for undo.</summary>
 public sealed record EditPlan(IReadOnlyList<TextEdit> Edits, SelectionSet Selections, EditKind Kind);
@@ -466,21 +452,13 @@ public static class TextEditing
     }
 
     /// <summary>Paste: whole lines from a line copy go in above each caret's line; text with one line
-    /// per caret is dealt out one line each; anything else goes in at every caret.</summary>
-    public static EditPlan Paste(TextSnapshot text, SelectionSet selections, string clipboard, bool wholeLines, string eol)
+    /// per caret is dealt out one line each; anything else goes in at every caret. Given the document's
+    /// <paramref name="indent"/>, a block's lines are indented with it, a level of the block's own for each of its.</summary>
+    public static EditPlan Paste(TextSnapshot text, SelectionSet selections, string clipboard, bool wholeLines, string eol, IndentOptions? indent = null)
     {
         string normalized = LineEndings.In(clipboard, eol);
-        if (wholeLines && selections.Items.All(s => s.IsEmpty))
-        {
-            List<TextEdit> edits = selections.Items
-                .Select(s => text.GetLine(text.GetLineFromOffset(s.Caret)).Start)
-                .Distinct()
-                .Select(start => new TextEdit(start, 0, normalized))
-                .ToList();
-            return Mapped(edits, selections, EditKind.Other);
-        }
         string[] parts = normalized.Split(eol);
-        if (selections.HasMultiple && parts.Length == selections.Count)
+        if (selections.HasMultiple && parts.Length == selections.Count && !(wholeLines && selections.Items.All(s => s.IsEmpty)))
         {
             List<Replacement> dealt = [];
             for (int i = 0; i < selections.Count; i++)
@@ -490,7 +468,65 @@ public static class TextEditing
             }
             return Build(dealt, selections, EditKind.Other);
         }
+        if (indent is { } to)
+        {
+            // The first line's indentation is the block's own only where it starts a line's.
+            bool firstLine = wholeLines || selections.Items.All(s => TextNavigation.IndentEnd(text, text.GetLine(text.GetLineFromOffset(s.Start))) >= s.Start);
+            normalized = Indentation.Reindent(normalized, Indentation.Of(normalized, to, firstLine), to, firstLine);
+        }
+        if (wholeLines && selections.Items.All(s => s.IsEmpty))
+        {
+            List<TextEdit> edits = selections.Items
+                .Select(s => text.GetLine(text.GetLineFromOffset(s.Caret)).Start)
+                .Distinct()
+                .Select(start => new TextEdit(start, 0, normalized))
+                .ToList();
+            return Mapped(edits, selections, EditKind.Other);
+        }
         return Insert(text, selections, normalized, EditKind.Other);
+    }
+
+    /// <summary>What a save does to the text first, as .editorconfig asks: the spaces and tabs ending each line go, but on
+    /// a line with a caret (Rider keeps that line's, so a space just typed stays); the text ends with a line break; every
+    /// break is <paramref name="convertTo"/>. Null when there is nothing to do.</summary>
+    public static EditPlan? Saving(string text, SelectionSet selections, bool trimTrailing, bool finalNewline, string? convertTo, string eol)
+    {
+        List<TextEdit> edits = [];
+        int[] carets = [.. selections.Items.Select(s => s.Caret).Order()];
+        int next = 0;
+        int start = 0;
+        while (trimTrailing || convertTo is not null)
+        {
+            int feed = text.IndexOf('\n', start);
+            int end = feed < 0 ? text.Length : feed > start && text[feed - 1] == '\r' ? feed - 1 : feed;
+            while (next < carets.Length && carets[next] < start)
+            {
+                next++;
+            }
+            int trimmed = end;
+            while (trimTrailing && trimmed > start && text[trimmed - 1] is ' ' or '\t')
+            {
+                trimmed--;
+            }
+            if (trimmed < end && !(next < carets.Length && carets[next] <= end))
+            {
+                edits.Add(new TextEdit(trimmed, end - trimmed, string.Empty));
+            }
+            if (feed < 0)
+            {
+                break;
+            }
+            if (convertTo is not null && (end < feed ? "\r\n" : "\n") != convertTo)
+            {
+                edits.Add(end < feed ? new TextEdit(end, 1, string.Empty) : new TextEdit(feed, 0, "\r"));
+            }
+            start = feed + 1;
+        }
+        if (finalNewline && text.Length > 0 && text[^1] != '\n')
+        {
+            edits.Add(new TextEdit(text.Length, 0, convertTo ?? eol));
+        }
+        return edits.Count == 0 ? null : new EditPlan(edits, MapThrough(selections, edits), EditKind.Other);
     }
 
     /// <summary>Join Lines, as Rider: a caret joins its line with the next, a selection the lines it covers.

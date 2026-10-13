@@ -783,6 +783,99 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
     }
 
     [AvaloniaFact]
+    public void A_tab_indented_editorconfig_has_enter_tab_a_template_a_completion_and_a_fix_indent_with_tabs()
+    {
+        MainWindow window = project.Open("Tabs/Tabbed.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Assert.Equal("Tab, from .editorconfig", IndentShown(window));
+
+        // Enter carries the line's tab, Tab adds one, Shift+Tab takes it back.
+        PlaceAfter(editor, "public int X { get; }");
+        editor.Focus();
+        Ui.Press(window, "ENTER");
+        Ui.Press(window, "TAB");
+        window.KeyTextInput("// note");
+        Assert.Contains("\tpublic int X { get; }\n\t\t// note\n", editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
+        Ui.Press(window, "shift TAB");
+        Assert.Contains("\tpublic int X { get; }\n\t// note\n", editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
+
+        // Roslyn's override, from completion.
+        OverrideAfter(window, editor, "// note");
+        AssertTabbed(editor, "\t// note\n\tpublic override string ToString()\n\t{\n\t\treturn base.ToString();\n\t}\n", "the override");
+
+        // A live template's lines.
+        PlaceAfter(editor, "int made = 0;");
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("if");
+        Ui.Settle();
+        Ui.Press(window, "TAB");
+        Ui.Press(window, "ESCAPE");
+        AssertTabbed(editor, "\t\tint made = 0;\n\t\tif (true)\n\t\t{\n\t\t\t\n\t\t}\n", "the if template");
+
+        // Roslyn's fix: a type it makes.
+        OpenDocument tabbed = window.EditorArea.Active!;
+        PlaceAfter(editor, "int made = 0;");
+        window.KeyTextInput(" Foo gadget = null;");
+        Ui.WaitFor(() => window.CSharpService!.For(tabbed)!.Diagnostics.Any(d => d.Code?.ToString() == "CS0246"), "Foo's error");
+        PlaceAfter(editor, "Fo");
+        Ui.Run(window, AppActions.QuickFix);
+        Ui.WaitFor(() => window.Assist.Offered.Contains("Generate nested class 'Foo'"), "the offer to nest Foo");
+        Choose(window, "Generate nested class 'Foo'");
+        Ui.WaitFor(() => editor.Document.Snapshot.ToString().Contains("class Foo", StringComparison.Ordinal), "Foo to be generated");
+        AssertTabbed(editor, "\t}\n\n\tprivate class Foo\n\t{\n\t}\n}\n", "the nested type");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Where_no_editorconfig_says_completions_and_reformatting_indent_as_the_files_own_lines()
+    {
+        MainWindow window = project.Open("Detected/TwoSpaces.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Assert.Equal("2 spaces, detected", IndentShown(window));
+        OverrideAfter(window, editor, "public int X { get; }");
+        string text = editor.Document.Snapshot.ToString();
+        Assert.True(text.Contains("  public int X { get; }\n  public override string ToString()\n  {\n    return base.ToString();\n  }\n", StringComparison.Ordinal),
+            $"The override in a file of two spaces is not indented with two:\n{text}");
+        Ui.Run(window, AppActions.Reformat);
+        Ui.WaitFor(() => window.Status is "Reformatted" or "Already formatted", "the reformat");
+        Assert.True(editor.Document.Snapshot.ToString().Contains("\n    if (made > 0)\n    {\n      made--;\n", StringComparison.Ordinal),
+            $"Reformatting a file of two spaces indented it otherwise:\n{editor.Document.Snapshot}");
+
+        window.OpenFile(project.PathOf("Detected/TabsOwn.cs"));
+        Ui.Settle();
+        Assert.Equal("Tab, detected", IndentShown(window));
+        OverrideAfter(window, editor, "public int X { get; }");
+        AssertTabbed(editor, "\tpublic int X { get; }\n\tpublic override string ToString()\n\t{\n\t\treturn base.ToString();\n\t}\n", "the override in a file of tabs");
+        window.Close();
+    }
+
+    /// <summary>Chooses ToString() from completion on a new line after some text, which overrides it there.</summary>
+    private static void OverrideAfter(MainWindow window, CodeEditor editor, string after)
+    {
+        PlaceAfter(editor, after);
+        editor.Focus();
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("override ");
+        window.KeyTextInput("T");
+        Ui.Settle();
+        window.KeyTextInput("oS");
+        Ui.WaitFor(() => window.Assist.CompletionLabels.FirstOrDefault() == "ToString()", "ToString offered to override");
+        Ui.Press(window, "ENTER");
+        Ui.Settle();
+    }
+
+    /// <summary>That the text holds what was written, and that no line of it is indented with a space.</summary>
+    private static void AssertTabbed(CodeEditor editor, string written, string what)
+    {
+        string text = editor.Document.Snapshot.ToString();
+        string shown = text.Replace("\t", "→", StringComparison.Ordinal);
+        Assert.True(text.Contains(written, StringComparison.Ordinal), $"{what} is not indented with tabs:\n{shown}");
+        Assert.False(text.Split('\n').Any(line => line.StartsWith(' ')), $"After {what} a line of the tab-indented file starts with a space:\n{shown}");
+    }
+
+    private static string? IndentShown(MainWindow window) => Avalonia.Controls.ControlExtensions.FindControl<Avalonia.Controls.TextBlock>(window, "IndentText")!.Text;
+
+    [AvaloniaFact]
     public void Choosing_await_in_a_method_not_yet_async_makes_the_method_async_as_well()
     {
         MainWindow window = project.Open("Loop.cs");
@@ -1596,6 +1689,13 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
             File.WriteAllText(PathOf("Breaks/.editorconfig"), "root = true\n\n[LfFile.cs]\nend_of_line = crlf\n\n[CrlfFile.cs]\nend_of_line = lf\n");
             File.WriteAllText(PathOf("Breaks/LfFile.cs"), "class LfFile\n{\n    public int X { get; }\n\n    static void Make()\n    {\n        int made = 0;\n    }\n}\n");
             File.WriteAllText(PathOf("Breaks/CrlfFile.cs"), "class CrlfFile\r\n{\r\n    public int X { get; }\r\n\r\n    static void Make()\r\n    {\r\n        int made = 0;\r\n    }\r\n}\r\n");
+            // Tabs: an .editorconfig asks for tabs. Detected: no .editorconfig says, and each file's own lines do.
+            Directory.CreateDirectory(PathOf("Tabs"));
+            File.WriteAllText(PathOf("Tabs/.editorconfig"), "[*.cs]\nindent_style = tab\n");
+            File.WriteAllText(PathOf("Tabs/Tabbed.cs"), "class Tabbed\n{\n\tpublic int X { get; }\n\n\tstatic void Make()\n\t{\n\t\tint made = 0;\n\t}\n}\n");
+            Directory.CreateDirectory(PathOf("Detected"));
+            File.WriteAllText(PathOf("Detected/TwoSpaces.cs"), "class TwoSpaces\n{\n  public int X { get; }\n\n  static void Make()\n  {\n    int made = 0;\n    if (made > 0)\n    {\n      made--;\n    }\n  }\n}\n");
+            File.WriteAllText(PathOf("Detected/TabsOwn.cs"), "class TabsOwn\n{\n\tpublic int X { get; }\n\n\tstatic void Make()\n\t{\n\t\tint made = 0;\n\t}\n}\n");
             File.WriteAllText(PathOf("Messy.cs"), "using System.Text;\nusing System;\nusing System.Collections.Generic;\n\nstatic class Messy\n{\n    public static int Count()\n    {\n          List<string> names = [];\n        Console.WriteLine(names.Count);\n      return names.Count;\n    }\n}\n");
             TestFolders.Prepare(() => Restore.Run(folder), folder);
         }
