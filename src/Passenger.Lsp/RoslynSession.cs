@@ -31,21 +31,32 @@ public sealed class RoslynSession : IAsyncDisposable
     public string? Solution { get; }
     public bool IsLoaded { get; private set; }
 
+    /// <summary>Starts a server on a folder and has it open the solution or projects. Cancelled or failed, it ends the
+    /// server it started: one given up (another folder opened) never goes on loading this folder unseen.</summary>
     /// <param name="solution">The solution to open; with none, <paramref name="projects"/> are opened. The caller decides
     /// both (the IDE's workspace model), so the server opens what the Explorer and the build see.</param>
     /// <param name="options">Server options to start with, over Passenger's own (the solution-wide analysis' scope).</param>
     public static async Task<RoslynSession> StartAsync(string folder, string? solution, IReadOnlyList<string> projects, string logFolder,
         CancellationToken cancel = default, IReadOnlyDictionary<string, object?>? options = null)
     {
-        LanguageServer server = await LanguageServer.StartRoslynAsync(folder, logFolder, cancel, options);
+        LanguageServer server = await LanguageServer.StartRoslynAsync(folder, logFolder, cancel, options).ConfigureAwait(false);
         RoslynSession session = new(server, folder, solution);
-        if (solution is not null)
+        try
         {
-            await server.NotifyAsync("solution/open", new OpenSolutionParams(new Uri(solution).AbsoluteUri));
+            cancel.ThrowIfCancellationRequested();
+            if (solution is not null)
+            {
+                await server.NotifyAsync("solution/open", new OpenSolutionParams(new Uri(solution).AbsoluteUri)).ConfigureAwait(false);
+            }
+            else
+            {
+                await server.NotifyAsync("project/open", new OpenProjectParams([.. projects.Select(p => new Uri(p).AbsoluteUri)])).ConfigureAwait(false);
+            }
         }
-        else
+        catch
         {
-            await server.NotifyAsync("project/open", new OpenProjectParams([.. projects.Select(p => new Uri(p).AbsoluteUri)]));
+            await session.DisposeAsync().ConfigureAwait(false);
+            throw;
         }
         return session;
     }
@@ -71,13 +82,14 @@ public sealed class RoslynSession : IAsyncDisposable
     public async Task<IReadOnlyList<SymbolInformation>> SymbolsAsync(string query, CancellationToken cancel = default) =>
         await Server.RequestAsync<List<SymbolInformation>>("workspace/symbol", new WorkspaceSymbolParams(query), cancel) ?? [];
 
+    /// <summary>Closes the documents, on the caller's thread as they are its, then ends the server without holding it.</summary>
     public async ValueTask DisposeAsync()
     {
         foreach (LspDocument document in documents.Values.ToList())
         {
             document.Dispose();
         }
-        await Server.DisposeAsync();
+        await Server.DisposeAsync().ConfigureAwait(false);
     }
 }
 

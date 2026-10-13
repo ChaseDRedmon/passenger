@@ -1,6 +1,7 @@
 using Passenger.App.CSharp;
 using Passenger.App.Run;
 using Passenger.App.Workspace;
+using Passenger.Editor;
 
 namespace Passenger.App;
 
@@ -24,14 +25,66 @@ public partial class MainWindow
     public IReadOnlyList<ProjectModel> Projects =>
         workspace is null ? [] : [.. workspace.Projects.Where(p => !Explorer.Tree.Unloaded.Contains(p.Path))];
 
+    /// <summary>Bumped by each read of the folder, so a walk for projects that lands after a later read is dropped.</summary>
+    private int reads;
+
+    /// <summary>The read of the open folder under way, done once it has landed: a folder without a solution is walked for
+    /// its projects on a worker, which an agent's Open waits for before it says what the workspace holds.</summary>
+    public Task WorkspaceRead { get; private set; } = Task.CompletedTask;
+
     /// <summary>Reads the solution's files again (after a package or project change, here or on disk), keeping the run
     /// configuration chosen when it is still there and the Explorer's rows open.</summary>
     public void ReloadSolution()
     {
         if (folder is not null)
         {
-            Reload(WorkspaceModel.Read(folder, namedSolution));
+            Read(WorkspaceModel.ReadSolution(folder, namedSolution));
         }
+    }
+
+    /// <summary>Takes the open folder's solution, read now; or for a folder without one the projects it had, read again
+    /// now, and those added or gone since once a worker has walked its folders for them.</summary>
+    private void Read(WorkspaceModel? withSolution)
+    {
+        reads++;
+        Reload(withSolution ?? workspace!.Reread());
+        if (withSolution is null)
+        {
+            WalkForProjects();
+        }
+    }
+
+    /// <summary>Walks the open folder for its projects off the window's thread, as background work, and takes what it
+    /// finds when it differs from what the window has, unless another read or folder came first.</summary>
+    private void WalkForProjects()
+    {
+        string walking = folder!;
+        string? named = namedSolution;
+        int walk = ++reads;
+        TaskCompletionSource landed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        WorkspaceRead = landed.Task;
+        // Held through the walk, then by the crossing, which lets go of what it can never deliver.
+        IDisposable held = BackgroundWork.Scope();
+        Task.Run(() => WorkspaceModel.Read(walking, named)).ContinueWith(walked =>
+        {
+            // Seen here, so a walk that failed after another read began is no unobserved task's error later.
+            _ = walked.Exception;
+            UiThread.Post(() =>
+            {
+                try
+                {
+                    if (walk == reads && walking == folder && walked.GetAwaiter().GetResult() is { } found && !workspace!.LoadsAs(found))
+                    {
+                        Reload(found);
+                    }
+                }
+                finally
+                {
+                    landed.TrySetResult();
+                }
+            });
+            held.Dispose();
+        }, TaskScheduler.Default);
     }
 
     /// <summary>Takes a new read of the open folder. The language server starts again only when what it loaded changed:

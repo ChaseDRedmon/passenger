@@ -131,7 +131,8 @@ public sealed class LanguageServer : IAsyncDisposable
     public bool HasExited => killed || process.HasExited;
 
     /// <summary>Starts the Roslyn language server Passenger ships (under <c>roslyn/</c> beside the
-    /// app), initializes it for a folder, and returns once it has said what it can do.</summary>
+    /// app), initializes it for a folder, and returns once it has said what it can do. Cancelled or failed, it leaves no
+    /// process behind, at once rather than once the server answers.</summary>
     public static async Task<LanguageServer> StartRoslynAsync(string folder, string logFolder, CancellationToken cancel, IReadOnlyDictionary<string, object?>? options = null)
     {
         string server = Path.Combine(AppContext.BaseDirectory, "roslyn", "Microsoft.CodeAnalysis.LanguageServer.dll");
@@ -153,7 +154,7 @@ public sealed class LanguageServer : IAsyncDisposable
         ServerLog log;
         try
         {
-            log = new ServerLog(Path.Combine(logFolder, $"server-{process.Id}.log"));
+            log = ServerLog.Begin(logFolder, process.Id);
         }
         catch
         {
@@ -176,13 +177,17 @@ public sealed class LanguageServer : IAsyncDisposable
         {
             string root = new Uri(Path.GetFullPath(folder)).AbsoluteUri;
             InitializeParams initialize = new(Environment.ProcessId, root, [new WorkspaceFolder(root, Path.GetFileName(folder))], ClientCapabilities.Value);
-            JsonElement result = await rpc.InvokeWithParameterObjectAsync<JsonElement>("initialize", initialize, cancel);
+            // Given up at once, not cancelled (whose $/cancelRequest can fail unobserved as the connection goes): it fails with the connection, unseen.
+            Task<JsonElement> answer = rpc.InvokeWithParameterObjectAsync<JsonElement>("initialize", initialize, CancellationToken.None);
+            _ = answer.ContinueWith(t => _ = t.Exception, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            JsonElement result = await answer.WaitAsync(cancel).ConfigureAwait(false);
             server2.Capabilities = result.GetProperty("capabilities");
             if (server2.Capabilities.TryGetProperty("semanticTokensProvider", out JsonElement tokens) && tokens.TryGetProperty("legend", out JsonElement legend))
             {
                 server2.Legend = legend.Deserialize<SemanticTokensLegend>(Json.Options);
             }
-            await rpc.NotifyWithParameterObjectAsync("initialized", new { });
+            cancel.ThrowIfCancellationRequested();
+            await rpc.NotifyWithParameterObjectAsync("initialized", new { }).ConfigureAwait(false);
         }
         catch
         {
@@ -327,6 +332,8 @@ public sealed class LanguageServer : IAsyncDisposable
     public async Task<IReadOnlyList<HierarchyItem>> SubtypesAsync(HierarchyItem item, CancellationToken cancel = default) =>
         await RequestAsync<List<HierarchyItem>>("typeHierarchy/subtypes", new HierarchyItemParams(item), cancel) ?? [];
 
+    /// <summary>Asks the server to shut down and exit, waits a little for it to go, then ends it and its log. Nothing in it
+    /// blocks the caller's thread, the window's included: each wait is awaited, and what follows one runs off it.</summary>
     public async ValueTask DisposeAsync()
     {
         disposing = true;
@@ -336,16 +343,23 @@ public sealed class LanguageServer : IAsyncDisposable
             if (!HasExited)
             {
                 using CancellationTokenSource limit = new(TimeSpan.FromSeconds(3));
-                await rpc.InvokeWithCancellationAsync<object?>("shutdown", [], limit.Token);
-                await rpc.NotifyAsync("exit");
+                await rpc.InvokeWithCancellationAsync<object?>("shutdown", [], limit.Token).ConfigureAwait(false);
+                await rpc.NotifyAsync("exit").ConfigureAwait(false);
             }
         }
         catch (Exception error) when (error is OperationCanceledException or ConnectionLostException or RemoteRpcException or ObjectDisposedException)
         {
         }
         rpc.Dispose();
+        try
+        {
+            using CancellationTokenSource limit = new(TimeSpan.FromSeconds(2));
+            await process.WaitForExitAsync(limit.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+        }
         // Killed whether it went or not: a server that exits can leave its BuildHost running, in its process group.
-        process.WaitForExit(2000);
         ChildProcesses.Kill(process);
         process.Dispose();
         log.Dispose();
@@ -372,8 +386,60 @@ public sealed class LanguageServer : IAsyncDisposable
     /// deleting, and closed at the stream's end or the server's, so the folder it is in can go.</summary>
     private sealed class ServerLog(string path) : IDisposable
     {
+        /// <summary>The servers' logs kept in a folder, the newest: older ones go as a server starts, as the IDE's own
+        /// log keeps a dozen rotations, so a folder that every server of every session writes to stays small.</summary>
+        private const int Kept = 20;
+
         private readonly StreamWriter writer = new(new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete)) { AutoFlush = true };
         private bool closed;
+
+        /// <summary>A new server's log, named by when it began, so the names sort oldest first, and by its process, the id
+        /// the IDE's log names when it ends; the oldest logs past <see cref="Kept"/> are deleted, but those of servers
+        /// still running (another window's, another IDE's on the same settings).</summary>
+        public static ServerLog Begin(string folder, int processId)
+        {
+            string[] older;
+            try
+            {
+                older = [.. Directory.EnumerateFiles(folder, "server-*.log").Order(StringComparer.Ordinal)];
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                older = [];
+            }
+            foreach (string stale in older.SkipLast(Kept - 1).Where(log => !Running(log)))
+            {
+                try
+                {
+                    File.Delete(stale);
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                {
+                    // Open somewhere that shares no deletion (a reader on Windows): it goes another time.
+                }
+            }
+            return new ServerLog(Path.Combine(folder, $"server-{DateTime.Now:yyyyMMdd-HHmmss}-{processId}.log"));
+        }
+
+        /// <summary>Whether a log's process, the last part of its name, is running: its own or, its id reused, another's,
+        /// which only keeps the log a while longer.</summary>
+        private static bool Running(string log)
+        {
+            string name = Path.GetFileNameWithoutExtension(log);
+            if (!int.TryParse(name.AsSpan(name.LastIndexOf('-') + 1), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int id))
+            {
+                return false;
+            }
+            try
+            {
+                using Process process = Process.GetProcessById(id);
+                return true;
+            }
+            catch (Exception error) when (error is ArgumentException or InvalidOperationException)
+            {
+                return false;
+            }
+        }
 
         /// <summary>A line the server wrote, or null for the end of its stream, which closes the file.</summary>
         public void Write(string? line)

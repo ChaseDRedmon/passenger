@@ -27,8 +27,9 @@ public sealed class CSharpService : IAsyncDisposable
     /// <summary>The state changed (starting, loading projects, ready, failed); raised on the UI thread.</summary>
     public event EventHandler? StateChanged;
 
-    /// <summary>Where this IDE's language servers keep their logs, a file to each server.</summary>
-    public static string LogFolder { get; } = Path.Combine(Path.GetTempPath(), "passenger", "logs", $"roslyn-{Environment.ProcessId}");
+    /// <summary>Where the language servers keep their logs, a file to each server: beside the IDE's own log, so Help, Show
+    /// Log finds them, and the newest kept as servers start.</summary>
+    public static string LogFolder => Path.Combine(IdeErrors.LogFolder, "roslyn");
 
     public string State { get; private set; } = string.Empty;
     public bool IsReady => session is { IsLoaded: true };
@@ -245,11 +246,15 @@ public sealed class CSharpService : IAsyncDisposable
     {
         try
         {
-            RoslynSession started = await RoslynSession.StartAsync(opening.Folder, opening.Solution?.Path, [.. opening.Projects.Select(p => p.Path)], LogFolder,
-                cancel, solutionWide ? FullSolution : null);
+            string? solution = opening.Solution?.Path;
+            string[] projects = [.. opening.Projects.Select(p => p.Path)];
+            string logs = LogFolder;
+            IReadOnlyDictionary<string, object?>? options = solutionWide ? FullSolution : null;
+            // Started on a worker: the process, its log and the wait for its answer are no work for the window's thread.
+            RoslynSession started = await Task.Run(() => RoslynSession.StartAsync(opening.Folder, solution, projects, logs, cancel, options), cancel);
             if (cancel.IsCancellationRequested)
             {
-                // Disposed, or started again, while this server started: nothing else will end it.
+                // Disposed, or started again, just as this server started: nothing else will end it.
                 await started.DisposeAsync();
                 return;
             }
@@ -279,8 +284,9 @@ public sealed class CSharpService : IAsyncDisposable
             RefreshAll();
             StartAnalysis();
         }
-        catch (OperationCanceledException)
+        catch (Exception error) when (error is OperationCanceledException || cancel.IsCancellationRequested)
         {
+            // Given up (another folder opened, the window closed): however its end came, there is nothing to say of it.
         }
         catch (Exception error)
         {

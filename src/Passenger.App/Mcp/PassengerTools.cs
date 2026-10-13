@@ -47,6 +47,8 @@ public sealed partial class PassengerTools(MainWindow window)
         {
             throw new FileNotFoundException($"No folder or file at {full}");
         }
+        // A folder without a solution has its projects once the walk for them lands.
+        await window.WorkspaceRead.WaitAsync(cancel);
         await Task.Yield();
         return Snapshot();
     });

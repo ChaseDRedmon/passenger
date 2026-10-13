@@ -9,16 +9,27 @@ public sealed record WorkspaceModel(string Folder, SolutionModel? Solution, IRea
     /// <summary>The most projects taken from a folder with no solution, so a monorepo does not load hundreds at once.</summary>
     private const int ProjectLimit = 200;
 
-    /// <summary>The most folders searched for them, so a folder that is really a disk does not hold the window up.</summary>
+    /// <summary>The most folders searched for them, so a folder that is really a disk is not walked for minutes.</summary>
     private const int FolderLimit = 5_000;
 
-    /// <summary>Reads a folder, with the solution it was opened by, which stays its solution while it is there.</summary>
-    public static WorkspaceModel Read(string folder, string? named = null)
+    /// <summary>Reads a folder, with the solution it was opened by, which stays its solution while it is there. A folder
+    /// without one is walked for its projects, which is a worker's job, never the window's thread's.</summary>
+    public static WorkspaceModel Read(string folder, string? named = null) =>
+        ReadSolution(folder, named) ?? new WorkspaceModel(folder, null, [.. ProjectsUnder(folder).Select(ProjectModel.Load)]);
+
+    /// <summary>A folder read through its solution: a listing of the folder's top and the files the solution names, quick
+    /// enough for the window's thread. Null for a folder without one (or one that does not read), whose projects only a
+    /// walk of its folders finds.</summary>
+    public static WorkspaceModel? ReadSolution(string folder, string? named = null)
     {
         string? path = named is not null && File.Exists(named) ? named : SolutionModel.Find(folder);
-        SolutionModel? solution = path is null ? null : SolutionModel.Load(path);
-        return new WorkspaceModel(folder, solution, solution is not null ? [.. solution.Projects] : [.. ProjectsUnder(folder).Select(ProjectModel.Load)]);
+        return path is not null && SolutionModel.Load(path) is { } solution ? new WorkspaceModel(folder, solution, [.. solution.Projects]) : null;
     }
+
+    /// <summary>A folder without a solution read again through the projects found before: those still there, their files
+    /// read again (a package added), as quick as a solution's read. Only the walk finds those added since.</summary>
+    public WorkspaceModel Reread() =>
+        new(Folder, null, [.. Projects.Where(p => File.Exists(p.Path)).Select(p => ProjectModel.Load(p.Path))]);
 
     /// <summary>What building the whole builds: the solution, or each project loaded in turn when some are unloaded or
     /// there is no solution; the folder when it has neither, for the .NET command line to say why.</summary>

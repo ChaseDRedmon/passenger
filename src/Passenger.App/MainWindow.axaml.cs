@@ -318,10 +318,10 @@ public partial class MainWindow : Window
         string named = PathNames.Canonical(path);
         bool solutionNamed = File.Exists(named) && (named.EndsWith(".sln", StringComparison.OrdinalIgnoreCase) || named.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase));
         string opening = solutionNamed ? Path.GetDirectoryName(named)! : named;
-        WorkspaceModel read = WorkspaceModel.Read(opening, solutionNamed ? named : opening == folder ? namedSolution : null);
-        if (opening == folder && read.Solution?.Path == Solution?.Path)
+        WorkspaceModel? withSolution = WorkspaceModel.ReadSolution(opening, solutionNamed ? named : opening == folder ? namedSolution : null);
+        if (opening == folder && withSolution?.Solution?.Path == Solution?.Path)
         {
-            Reload(read);
+            Read(withSolution);
             return;
         }
         if (folder is not null && folder != opening)
@@ -343,7 +343,9 @@ public partial class MainWindow : Window
         folder = opening;
         agentSocket?.Describe(folder);
         namedSolution = solutionNamed ? named : null;
-        workspace = read;
+        // A folder without a solution has no projects until the walk for them lands: none to load, run or build meanwhile.
+        reads++;
+        workspace = withSolution ?? new WorkspaceModel(opening, null, []);
         Explorer.Load(folder, Solution);
         _ = vcs.OpenAsync(folder);
         Explorer.Tree.Unloaded.Clear();
@@ -353,6 +355,10 @@ public partial class MainWindow : Window
         index.Build(folder);
         Watch(folder);
         StartCSharp();
+        if (withSolution is null)
+        {
+            WalkForProjects();
+        }
         Editors.ShowFolderHint(folder);
         RestoreWorkspace();
         ShowWorkspaceName();
