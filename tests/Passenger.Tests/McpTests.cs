@@ -347,10 +347,10 @@ public sealed class McpTests : IDisposable
     }
 
     /// <summary>The MSBuild nodes a build of Passenger's leaves for its next build, which no other build takes up, end with
-    /// Passenger, whether it ends as its agent leaves or is killed. The build's two projects build at once, each with a
-    /// step of a few seconds, so that MSBuild runs one in a node while the test looks at what the build runs in. They are
-    /// restored first: opening a solution never restored, the language server restores it, and a build after that runs in
-    /// the node its restore left, by then no process's child, rather than starting one the test would see.</summary>
+    /// Passenger, whether it ends as its agent leaves or is killed. The two projects build at once, each with a step of a
+    /// few seconds, so MSBuild runs one in a node the test sees. They are restored first: the language server restores a
+    /// solution never restored, and a build after that runs in the node its restore left, no process's child. MSBuild
+    /// sometimes ends a node it meant to keep (<see cref="NodeBuilds"/>): the test builds until one stays.</summary>
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -383,18 +383,25 @@ public sealed class McpTests : IDisposable
         try
         {
             client = await Connect(passenger, ["--mcp", two]);
-            HashSet<int> before = [.. Processes.Descendants(passenger.Id)];
-            Task<JsonElement> building = Call(client, "build");
-            await WrittenId("two/A/step.pid", "project A's step");
-            await WrittenId("two/B/step.pid", "project B's step");
-            int[] during = [.. Processes.Descendants(passenger.Id).Where(id => !before.Contains(id))];
-            IReadOnlyDictionary<int, string> listed = Processes.Listed();
-            JsonElement built = await building;
-            Assert.True(built.GetProperty("succeeded").GetBoolean(), built.GetProperty("outcome").GetString());
-            left.AddRange(during.Where(Processes.IsRunning));
-            if (left.Count == 0)
+            for (int build = 1; left.Count == 0; build++)
             {
-                Assert.Fail($"The build left nothing for the next build to use, so there is nothing to see end with Passenger.{NoNodeLeft(passenger.Id, during, listed)}");
+                await UntilMSBuildKeepsNodes();
+                // The ids a build's steps write are that build's, so what the test sees running is too.
+                File.Delete(Path.Combine(two, "A", "step.pid"));
+                File.Delete(Path.Combine(two, "B", "step.pid"));
+                HashSet<int> before = [.. Processes.Descendants(passenger.Id)];
+                Task<JsonElement> building = Call(client, "build");
+                await WrittenId("two/A/step.pid", "project A's step");
+                await WrittenId("two/B/step.pid", "project B's step");
+                int[] during = [.. Processes.Descendants(passenger.Id).Where(id => !before.Contains(id))];
+                IReadOnlyDictionary<int, string> listed = Processes.Listed();
+                JsonElement built = await building;
+                Assert.True(built.GetProperty("succeeded").GetBoolean(), built.GetProperty("outcome").GetString());
+                left.AddRange(during.Where(Processes.IsRunning));
+                if (left.Count == 0 && build == NodeBuilds)
+                {
+                    Assert.Fail($"{NodeBuilds} builds left nothing for the next build to use, so there is nothing to see end with Passenger.{NoNodeLeft(passenger.Id, during, listed)}");
+                }
             }
 
             if (killed)
@@ -428,20 +435,41 @@ public sealed class McpTests : IDisposable
         }
     }
 
-    /// <summary>Why a build may have left no node, for its failure to say: what the build ran (id, parent, nice value,
-    /// command) and Passenger's MSBuild nodes now, with their MSBuild variables. MSBuild keeps none at a priority other than
-    /// normal (a nice value other than 0), nor while the machine runs more than one and a half a processor of the nodes it
-    /// counts (those named MSBuild, its server's, not a dotnet build's); and an idle node a build took up, no process's
-    /// child, is not among what it ran.</summary>
+    /// <summary>The builds the test makes for one to leave a node. A node MSBuild meant to keep ends when its build, given the
+    /// node's last message, closes their pipe before the node has stopped taking a closed pipe for a failure
+    /// (OutOfProcNode.HandleShutdown): rarely, on a loaded machine, and the next build starts a node again.</summary>
+    private const int NodeBuilds = 3;
+
+    /// <summary>Waits, before a build, until MSBuild would keep its node: while it counts more nodes than it keeps (<see
+    /// cref="Processes.MSBuildNodesCounted"/>), for other builds to end. One that stays over skips the test, saying why:
+    /// no build could leave a node to see end.</summary>
+    private static async Task UntilMSBuildKeepsNodes()
+    {
+        DateTime until = DateTime.UtcNow + TimeSpan.FromMinutes(2);
+        (int counted, int most) = Processes.MSBuildNodesCounted();
+        while (counted > most && DateTime.UtcNow < until)
+        {
+            await Task.Delay(500);
+            (counted, most) = Processes.MSBuildNodesCounted();
+        }
+        Assert.SkipWhen(counted > most,
+            $"MSBuild keeps no node for the next build while it counts more than {most} nodes (the MSBuild executable's, which its server starts), and {counted} still ran after two minutes");
+    }
+
+    /// <summary>Why the last build may have left no node, for its failure to say: what it ran (id, parent, nice value,
+    /// command) and Passenger's MSBuild nodes now, with their MSBuild variables. MSBuild keeps none at a nice value other
+    /// than 0, nor while it counts more than it keeps (<see cref="Processes.MSBuildNodesCounted"/>), and ends one it kept
+    /// as <see cref="NodeBuilds"/> says; an idle node a build took up, no process's child, is not among what it ran.</summary>
     private static string NoNodeLeft(int passenger, IReadOnlyList<int> ran, IReadOnlyDictionary<int, string> listed)
     {
         IReadOnlyDictionary<int, string> now = Processes.Listed();
         IReadOnlyDictionary<int, string> nodes = Processes.MSBuildNodes();
         string[] ours = [.. nodes.Where(n => $"{n.Value} ".Contains($"passenger-{passenger} ", StringComparison.Ordinal)).Select(n => $"{Seen(n.Key)} {n.Value}")];
-        int named = nodes.Keys.Count(id => now.TryGetValue(id, out string? line) && line.Split(' ', 5, StringSplitOptions.RemoveEmptyEntries) is [_, _, _, string program, ..] && program.EndsWith("/MSBuild", StringComparison.Ordinal));
+        (int counted, int most) = Processes.MSBuildNodesCounted();
         return $"\nPassenger: {Seen(passenger)}\nWhat its build ran while both steps did:\n{string.Join('\n', ran.Select(Seen))}" +
             $"\nPassenger's MSBuild nodes now:\n{string.Join('\n', ours)}" +
-            $"\nMSBuild keeps no node at a nice value other than 0, nor while more than {Environment.ProcessorCount * 3 / 2} nodes named MSBuild run: {named} of the machine's {nodes.Count} do";
+            $"\nMSBuild keeps no node at a nice value other than 0, nor while it counts more than {most} nodes (the MSBuild executable's): {counted} of the machine's {nodes.Count} run;" +
+            " and a node it meant to keep ends when its build closes their pipe first, now and then";
 
         string Seen(int id) => listed.TryGetValue(id, out string? line) || now.TryGetValue(id, out line) ? line : Processes.Describe(id);
     }

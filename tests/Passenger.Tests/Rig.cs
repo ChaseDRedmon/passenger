@@ -905,6 +905,17 @@ public static partial class Processes
         }
     }
 
+    /// <summary>The worker nodes MSBuild counts now as a build ends, and the most it keeps for the next build, one and a half
+    /// a processor: the MSBuild executable's (those of MSBuild's server, which a terminal's dotnet build uses), not the
+    /// .NET host's that a build Passenger starts runs in. While it counts more, a build ending keeps none of its nodes.
+    /// None counted on Windows, which has no ps.</summary>
+    public static (int Counted, int Most) MSBuildNodesCounted()
+    {
+        int counted = Listed().Values.Count(line => line.Split(' ', 5, StringSplitOptions.RemoveEmptyEntries) is [_, _, _, string program, string rest]
+            && program.EndsWith("/MSBuild", StringComparison.Ordinal) && rest.Contains("/nodemode:1", StringComparison.Ordinal));
+        return (counted, Math.Max(1, Environment.ProcessorCount * 3 / 2));
+    }
+
     private static string[] Ps(params string[] arguments)
     {
         using System.Diagnostics.Process ps = System.Diagnostics.Process.Start(new ProcessStartInfo("ps", arguments) { RedirectStandardOutput = true })!;
