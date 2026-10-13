@@ -2,8 +2,6 @@ using System.Collections.Immutable;
 using System.Reflection.Metadata;
 
 namespace Passenger.Debugger.ExpressionEvaluator.Cil;
-
-// 🤖
 internal sealed class LocalCountSignatureProvider : ISignatureTypeProvider<object, object?>
 {
     public static LocalCountSignatureProvider Instance { get; } = new();

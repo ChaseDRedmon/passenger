@@ -149,12 +149,12 @@ public sealed class DebugAdapter
         });
         connection.Handle<ThreadArguments, ContinueResponse>("continue", async _ =>
         {
-            await Locked(() => debugger.HandleContinueRequest());
+            await Locked(() => debugger.Continue());
             return new ContinueResponse(AllThreadsContinued: true);
         });
-        connection.Handle<ThreadArguments>("next", arguments => Locked(() => debugger.StepNext(arguments.ThreadId)));
-        connection.Handle<ThreadArguments>("stepIn", arguments => Locked(() => debugger.StepIn(arguments.ThreadId)));
-        connection.Handle<ThreadArguments>("stepOut", arguments => Locked(() => debugger.StepOut(arguments.ThreadId)));
+        connection.Handle<ThreadArguments>("next", arguments => Locked(() => debugger.Step(arguments.ThreadId, StepType.StepOver)));
+        connection.Handle<ThreadArguments>("stepIn", arguments => Locked(() => debugger.Step(arguments.ThreadId, StepType.StepIn)));
+        connection.Handle<ThreadArguments>("stepOut", arguments => Locked(() => debugger.Step(arguments.ThreadId, StepType.StepOut)));
         connection.Handle<ThreadArguments>("pause", _ => Locked(() => debugger.Pause()));
         connection.Handle<DisconnectArguments>("disconnect", arguments => Locked(() => debugger.Disconnect(arguments.TerminateDebuggee ?? false)), then: RequestShutdown);
         connection.Handle<TerminateArguments>("terminate", _ => Locked(() => debugger.Terminate()));
@@ -169,24 +169,20 @@ public sealed class DebugAdapter
 
     private void Subscribe()
     {
-        debugger.OnStopped += (threadId, _) => stoppedThread = threadId;
-        debugger.OnStopped2 += (threadId, _, _, _, _, _) => stoppedThread = threadId;
-        debugger.OnStopped += (threadId, reason) => connection.SendEvent("stopped", new StoppedEvent
+        debugger.OnStopped += stop =>
         {
-            Reason = StopReason(reason),
-            ThreadId = threadId,
-            AllThreadsStopped = true,
-        });
-        debugger.OnStopped2 += (threadId, filePath, line, column, reason, hitBreakpointIds) => connection.SendEvent("stopped", new StoppedEvent
-        {
-            Reason = StopReason(reason),
-            ThreadId = threadId,
-            AllThreadsStopped = true,
-            HitBreakpointIds = hitBreakpointIds,
-            Source = new DapSource { Path = filePath },
-            Line = line,
-            Column = column,
-        });
+            stoppedThread = stop.ThreadId;
+            connection.SendEvent("stopped", new StoppedEvent
+            {
+                Reason = StopReason(stop.Reason),
+                ThreadId = stop.ThreadId,
+                AllThreadsStopped = true,
+                HitBreakpointIds = stop.HitBreakpointIds,
+                Source = stop.FilePath is { } path ? new DapSource { Path = path } : null,
+                Line = stop.FilePath is null ? null : LineOut(stop.Line),
+                Column = stop.FilePath is null ? null : ColumnOut(stop.Column),
+            });
+        };
         debugger.OnBreakpointChanged += breakpoint => connection.SendEvent("breakpoint", new BreakpointEvent { Reason = "changed", Breakpoint = ToProtocol(breakpoint, isEvent: true) });
         // Told only when known: a process attached to on macOS or Linux tells its exit code to its parent alone.
         debugger.OnExited += exitCode =>
@@ -278,43 +274,8 @@ public sealed class DebugAdapter
         try
         {
             int processId = arguments.ProcessId ?? throw new InvalidOperationException("Missing process ID");
-            RemoteAttachInfo? remote = null;
-            if (arguments.CoreClrMobileDebuggerOptions is { } options)
-            {
-                ArgumentException.ThrowIfNullOrWhiteSpace(options.Address);
-                ArgumentException.ThrowIfNullOrWhiteSpace(options.Platform);
-                ArgumentException.ThrowIfNullOrWhiteSpace(options.MscordbiPath);
-                ArgumentException.ThrowIfNullOrWhiteSpace(options.AssembliesPath);
-                if (!File.Exists(options.MscordbiPath))
-                {
-                    throw new InvalidOperationException($"coreClrMobileDebuggerOptions.mscordbiPath does not exist: {options.MscordbiPath}");
-                }
-                if (!Directory.Exists(options.AssembliesPath))
-                {
-                    throw new InvalidOperationException($"coreClrMobileDebuggerOptions.assembliesPath does not exist: {options.AssembliesPath}");
-                }
-                remote = new RemoteAttachInfo
-                {
-                    Address = options.Address,
-                    Port = options.Port ?? throw new InvalidOperationException("coreClrMobileDebuggerOptions.port is missing"),
-                    Platform = options.Platform,
-                    IsServer = options.IsServer ?? throw new InvalidOperationException("coreClrMobileDebuggerOptions.isServer is missing"),
-                    MscordbiPath = options.MscordbiPath,
-                    AssembliesPath = options.AssembliesPath,
-                };
-            }
             bool justMyCode = arguments.JustMyCode ?? true;
-            await Locked(() =>
-            {
-                if (remote is null)
-                {
-                    debugger.Attach(processId, justMyCode);
-                }
-                else
-                {
-                    debugger.AttachRemote(remote, justMyCode);
-                }
-            });
+            await Locked(() => debugger.Attach(processId, justMyCode));
         }
         catch (Exception error)
         {

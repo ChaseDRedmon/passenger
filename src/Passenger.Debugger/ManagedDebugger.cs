@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Threading.Channels;
 using NeoSmart.AsyncLock;
 using Passenger.Debugger.ExpressionEvaluator.Cil;
@@ -8,7 +9,6 @@ using Passenger.Debugger.Models.Response;
 
 namespace Passenger.Debugger;
 
-// v1 of this class was AI generated, and could definitely do with some cleaning up
 public partial class ManagedDebugger
 {
     private ICorDebug? _corDebug;
@@ -44,7 +44,6 @@ public partial class ManagedDebugger
     /// </summary>
     internal int ModuleSet_Version { get; private set; }
     private bool _isAttached;
-    private bool _isRemoteAttach;
     private int? _pendingAttachProcessId;
     private bool _justMyCode;
     private bool _stopAtEntry;
@@ -147,9 +146,7 @@ public partial class ManagedDebugger
     }
 
     // Every event below is raised on any thread (the runtime's callback thread, a request's, an output reader).
-    public event Action<int, string>? OnStopped;
-    // ThreadId, FilePath, Line, Column, Reason, HitBreakpointIds, DecompiledSourceInfo
-    public event Action<int, string, int, int, string, List<int>?>? OnStopped2;
+    public event Action<StopInfo>? OnStopped;
     public event Action<int?>? OnExited;
     public event Action? OnTerminated;
     public event Action<int>? OnThreadStarted;
@@ -167,9 +164,8 @@ public partial class ManagedDebugger
     public event Action<BreakpointManager.BreakpointInfo>? OnBreakpointChanged;
     public event Func<LaunchInfo, int> SendRunInTerminalRequest = null!;
 
-    public EvalStatus EvalStatus { get; }
+    internal EvalStatus EvalStatus { get; }
 
-    private Task? _runtimeEventCallbackProcessing;
     private readonly Channel<CorDebugManagedCallbackEventArgs> _runtimeEventChannel;
     public readonly AsyncLock DapRequestAndRuntimeEventLock = new();
 
@@ -189,7 +185,7 @@ public partial class ManagedDebugger
             SingleWriter = false
         });
         _callbacks.OnAnyEvent += QueueEvent;
-        _runtimeEventCallbackProcessing = Task.Run(ProcessRuntimeEventQueue);
+        _ = Task.Run(ProcessRuntimeEventQueue);
     }
 
     private void QueueEvent(object? sender, CorDebugManagedCallbackEventArgs e)
@@ -284,13 +280,13 @@ public partial class ManagedDebugger
             handle.TryDispose();
         }
         _logger?.Invoke($"The evaluation given up on thread {thread.Id} has returned; its end is let go");
-        if (_stepAfterEvaluation is (int stepping, AsyncStepper.StepType type) && stepping == thread.Id)
+        if (_stepAfterEvaluation is (int stepping, StepType type) && stepping == thread.Id)
         {
             // The evaluation's session is over (the runtime ends it before it tells of the end), so this stepper is the stop's.
             _stepAfterEvaluation = null;
             SetupStepper(thread, type, EnumerateFramesForThread(thread).First());
         }
-        Continue();
+        Continue(clearVariables: false);
     }
 
     private async Task OnAnyEvent(object? sender, CorDebugManagedCallbackEventArgs e)
@@ -319,7 +315,7 @@ public partial class ManagedDebugger
                 default:
                     if (_process is not null)
                     {
-                        Continue();
+                        Continue(clearVariables: false);
                     }
                     break;
             }
@@ -329,7 +325,7 @@ public partial class ManagedDebugger
             _logger?.Invoke($"Error handling event {e.GetType().Name}: {ex}");
             if (_process is not null && _process.TryIsRunning(out bool isRunning) is Cor.S_OK && isRunning is false)
             {
-                Continue();
+                Continue(clearVariables: false);
             }
         }
     }
@@ -337,7 +333,7 @@ public partial class ManagedDebugger
     private void HandleLogMessage(object? sender, LogMessageCorDebugManagedCallbackEventArgs logMessageEvent)
     {
         _logger?.Invoke($"Log: {logMessageEvent.Message}");
-        Continue();
+        Continue(clearVariables: false);
     }
 
     /// <summary>Takes hold of a process before configurationDone answers, under the engine's lock: a running one where it is,
@@ -399,25 +395,6 @@ public partial class ManagedDebugger
         }
     }
 
-    private void PerformRemoteAttach(RemoteAttachInfo remoteAttachInfo)
-    {
-        _logger?.Invoke($"Attaching to remote process on {remoteAttachInfo.Address}:{remoteAttachInfo.Port}");
-
-        _exited.Reset();
-        _corDebug = ClrDebugExtensions.Mobile(remoteAttachInfo);
-        _corDebug.SetManagedHandler(_callbacks);
-        try
-        {
-            // It is expected that this does not return a ICorDebugProcess in the remote scenario - it is obtained via the CreateProcess callback instead
-            // ClrDebug throws because it does not expect to receive a null pointer
-            _ = _corDebug.DebugActiveProcess(0, false);
-        }
-        catch { /* */ }
-
-        _logger?.Invoke($"Debugger listening on port {remoteAttachInfo.Port}, awaiting connection from debuggee");
-        SendAllBreakpointEvents();
-    }
-
     private void SendAllBreakpointEvents()
     {
         // Send a breakpoint changed event with verified false for every breakpoint, so the IDE can mark the BP as unverified, until it receives our later BP events when we bind them
@@ -427,32 +404,42 @@ public partial class ManagedDebugger
         }
     }
 
-    /// <summary>Lets the process go on after one of the runtime's own events, unless another thread's event put off during
-    /// an evaluation is handled first, or a pause waits to be taken there. During an evaluation it only lets that go on.</summary>
-    private void Continue()
+    /// <summary>Lets the program go on, unless another thread's event put off during an evaluation is handled first, or a
+    /// pause waits to be taken there; during an evaluation it only lets that go on. <paramref name="clearVariables"/> when
+    /// the program runs on from a stop or from an event that does not stop it: the stop's values and frames go with it,
+    /// and a pause asked for meanwhile. <paramref name="allowSuperfluous"/> for the client's continue of a program running.</summary>
+    private void Continue(bool clearVariables, bool allowSuperfluous = false)
     {
         ArgumentNullException.ThrowIfNull(_process);
+        if (clearVariables)
+        {
+            _stopShown = false;
+            _pauseRequested = false;
+            EvalStatus.ImplicitOff = null;
+            _unhandledByUser = null;
+            _variableManager.ClearAndDisposeHandleValues();
+            _frameReferenceManager.Clear();
+        }
         if (!EvalStatus.IsRunning && (TakeDeferredEvent() || TakePendingPause()))
         {
             return;
         }
-        _process.Continue(false);
+        int result = _process.TryContinue(false);
+        if (result is Cor.CORDBG_E_SUPERFLOUS_CONTINUE && allowSuperfluous)
+        {
+            return;
+        }
+        Marshal.ThrowExceptionForHR(result);
     }
 
     /// <summary>Set once the client is told the program has stopped, until it lets the program go on (a continue, a step):
     /// an event that comes meanwhile, which the runtime had on its way as a pause stopped the program, waits until then.</summary>
     private bool _stopShown;
 
-    private void ReportStop(int threadId, string reason)
+    private void ReportStop(int threadId, string reason, string? filePath = null, int line = 0, int column = 0, IReadOnlyList<int>? hitBreakpointIds = null)
     {
         _stopShown = true;
-        OnStopped?.Invoke(threadId, reason);
-    }
-
-    private void ReportStop(int threadId, string reason, string filePath, int line, int column, List<int>? hitBreakpointIds)
-    {
-        _stopShown = true;
-        OnStopped2?.Invoke(threadId, filePath, line, column, reason, hitBreakpointIds);
+        OnStopped?.Invoke(new StopInfo(threadId, reason, filePath, line, column, hitBreakpointIds));
     }
 
     /// <summary>Hands the first event put off during an evaluation to the event loop in place of a continue, the process
@@ -500,7 +487,7 @@ public partial class ManagedDebugger
     private bool _pauseRequested;
 
     /// <summary>A step asked of a thread whose evaluation was given up and runs on, begun once that evaluation returns.</summary>
-    private (int ThreadId, AsyncStepper.StepType Type)? _stepAfterEvaluation;
+    private (int ThreadId, StepType Type)? _stepAfterEvaluation;
 
     /// <summary>A thread stopped at an exception its user's code left unhandled, and the stack range of the frame of the
     /// handler outside that code which caught it, until the program runs on: a step from the stop steps out of it.</summary>
@@ -517,14 +504,22 @@ public partial class ManagedDebugger
 
     /// <summary>Steps out of the frame of a handler outside the user's code, Just My Code: the step ends where the user's
     /// code goes on, as Visual Studio's does from an exception that code left unhandled, rather than in the handler.</summary>
-    private void StepOutOfHandler(ICorDebugThread thread, ICorDebugFrame handler)
+    private void StepOutOfHandler(ICorDebugThread thread, ICorDebugFrame handler) =>
+        BeginStep(handler.CreateStepper(), thread, handler, justMyCode: true, stepper => stepper.StepOut());
+
+    /// <summary>Makes a stepper (a frame's, or a thread's outside managed code) the step in progress: it stops nowhere
+    /// unmapped, and, Just My Code, only in the user's code; <paramref name="step"/> says where it goes.</summary>
+    private ICorDebugStepper BeginStep(ICorDebugStepper stepper, ICorDebugThread thread, ICorDebugFrame? from, bool justMyCode, Action<ICorDebugStepper> step)
     {
-        ICorDebugStepper stepper = handler.CreateStepper();
         stepper.SetUnmappedStopMask(CorDebugUnmappedStop.STOP_NONE);
-        stepper.SetJMC(true);
-        stepper.StepOut();
+        if (justMyCode)
+        {
+            stepper.SetJMC(true);
+        }
+        step(stepper);
         _stepper = stepper;
-        _stepping = RangeOf(handler) is { } range ? (thread.Id, range) : null;
+        _stepping = from is not null && RangeOf(from) is { } range ? (thread.Id, range) : null;
+        return stepper;
     }
 
     /// <summary>A step under way whose frame an exception will unwind, to a handler outside the user's code: the runtime's
@@ -548,10 +543,8 @@ public partial class ManagedDebugger
         StepOutOfHandler(thread, handler);
     }
 
-    /// <summary>
-    /// Setup a stepper without continuing execution
-    /// </summary>
-    internal ICorDebugStepper SetupStepper(ICorDebugThread thread, AsyncStepper.StepType stepType, ICorDebugFrame? from = null)
+    /// <summary>A step from a frame, the thread's top one unless another is given, set up without letting the program go.</summary>
+    internal ICorDebugStepper SetupStepper(ICorDebugThread thread, StepType stepType, ICorDebugFrame? from = null)
     {
         ICorDebugFrame frame = from ?? thread.ActiveFrame;
         if (frame is not ICorDebugILFrame ilFrame)
@@ -566,50 +559,28 @@ public partial class ManagedDebugger
 
         ICorDebugStepper stepper = frame.CreateStepper();
         stepper.SetInterceptMask(CorDebugIntercept.INTERCEPT_ALL & ~(CorDebugIntercept.INTERCEPT_SECURITY | CorDebugIntercept.INTERCEPT_CLASS_INIT));
-        stepper.SetUnmappedStopMask(CorDebugUnmappedStop.STOP_NONE);
-        if (_justMyCode)
+        return BeginStep(stepper, thread, frame, _justMyCode, stepper =>
         {
-            stepper.SetJMC(true);
-        }
-
-        if (stepType == AsyncStepper.StepType.StepOut)
-        {
-            stepper.StepOut();
-        }
-        else // StepIn or StepOver
-        {
-            int currentIlOffset = ilFrame.IP.pnOffset;
+            if (stepType == StepType.StepOut)
+            {
+                stepper.StepOut();
+                return;
+            }
+            bool stepIn = stepType is StepType.StepIn;
             // A module the debugger could not read has no lines: the step is the runtime's own, an instruction's.
-            (int ilStartOffset, int ilEndOffset)? nullableResult = FindModule(frame.Function.Module)?.MetadataReader.GetStartAndEndSequencePointIlOffsetsForIlOffset(frame.Function.Token, currentIlOffset);
-            if (nullableResult is var (startIlOffset, endIlOffset))
+            if (FindModule(frame.Function.Module)?.MetadataReader.GetStartAndEndSequencePointIlOffsetsForIlOffset(frame.Function.Token, ilFrame.IP.pnOffset) is not var (start, end))
             {
-                if (startIlOffset == endIlOffset)
-                {
-                    endIlOffset = frame.Function.ILCode.Size;
-                }
-                COR_DEBUG_STEP_RANGE stepRange = new COR_DEBUG_STEP_RANGE
-                {
-                    startOffset = checked((uint)startIlOffset),
-                    endOffset = checked((uint)endIlOffset)
-                };
-                bool stepIn = stepType is AsyncStepper.StepType.StepIn;
-                stepper.StepRange(stepIn, [stepRange], 1);
-            }
-            else
-            {
-                bool stepIn = stepType is AsyncStepper.StepType.StepIn;
                 stepper.Step(stepIn);
+                return;
             }
-        }
-
-        _stepper = stepper;
-        _stepping = RangeOf(frame) is { } range ? (thread.Id, range) : null;
-        return stepper;
+            // A sequence point of no length steps to the end of the method.
+            COR_DEBUG_STEP_RANGE range = new() { startOffset = checked((uint)start), endOffset = checked((uint)(start == end ? frame.Function.ILCode.Size : end)) };
+            stepper.StepRange(stepIn, [range], 1);
+        });
     }
 
-    /// <summary>
-    /// Try to bind a breakpoint to the actual code using symbol information
-    /// </summary>
+    /// <summary>Binds a line breakpoint in the module whose symbols name its file best; false, with why on the breakpoint,
+    /// when none can take it.</summary>
     private bool TryBindBreakpoint(BreakpointManager.BreakpointInfo bp)
     {
         try
@@ -693,9 +664,7 @@ public partial class ManagedDebugger
         }
     }
 
-    /// <summary>
-    /// Try to bind all pending breakpoints (called when a new module is loaded)
-    /// </summary>
+    /// <summary>Binds the line breakpoints no module could take yet, as one with symbols loads.</summary>
     private void TryBindPendingBreakpoints()
     {
         IEnumerable<BreakpointManager.BreakpointInfo> pendingBreakpoints = _breakpointManager.GetPendingBreakpoints().Where(bp => !bp.IsFunctionBreakpoint);
@@ -1014,12 +983,15 @@ public partial class ManagedDebugger
     }
 }
 
-public class EvalStatus
+/// <summary>Where a stop is, when the debugger can say: the client need not ask before showing it.</summary>
+public sealed record StopInfo(int ThreadId, string Reason, string? FilePath, int Line, int Column, IReadOnlyList<int>? HitBreakpointIds);
+
+internal sealed class EvalStatus
 {
     /// <summary>The thread an evaluation runs on, while one runs: the only thread of the program let go meanwhile.</summary>
-    public int? ThreadId { get; set; }
+    internal int? ThreadId { get; set; }
 
-    public bool IsRunning => ThreadId is not null;
+    internal bool IsRunning => ThreadId is not null;
 
     /// <summary>Cancelled when the running evaluation is given up, so its wait for the runtime's events ends with it and
     /// nothing reads them outside the engine's lock.</summary>

@@ -1,8 +1,6 @@
 using Passenger.Debugger.Interop;
 
 namespace Passenger.Debugger.ExpressionEvaluator.Cil;
-
-// 🤖
 internal sealed class EvaluationHandleScope : IDisposable
 {
     private readonly HashSet<ICorDebugHandleValue> _handles = new(ReferenceEqualityComparer.Instance);

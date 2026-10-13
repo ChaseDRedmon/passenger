@@ -501,7 +501,6 @@ public partial class ModuleMetadataReader : IDisposable
         MethodDefinition methodDef = _peMetadataReader.GetMethodDefinition(methodHandle);
         TypeDefinitionHandle typeDef = methodDef.GetDeclaringType();
         TypeDefinition typeDefObj = _peMetadataReader.GetTypeDefinition(typeDef);
-        //var typeNamespace = _peMetadataReader.GetNamespaceDefinition(typeDefObj.NamespaceDefinition);
         string typeNamespaceName = _peMetadataReader.GetString(typeDefObj.Namespace);
         if (string.IsNullOrEmpty(typeNamespaceName) is false && namespaces.Contains(typeNamespaceName) is false)
         {
@@ -685,7 +684,6 @@ public partial class ModuleMetadataReader : IDisposable
         }
 
         MethodDefinitionHandle methodHandle = MetadataTokens.MethodDefinitionHandle(methodToken);
-        //var methodDebugInfoHandle = methodHandle.ToDebugInformationHandle();
         EntityHandle entityHandle = MetadataTokens.EntityHandle(methodToken);
 
         AsyncMethodSteppingInfo result = new AsyncMethodSteppingInfo();

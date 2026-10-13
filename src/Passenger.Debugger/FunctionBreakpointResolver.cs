@@ -4,7 +4,6 @@ using System.Reflection.Metadata.Ecma335;
 
 namespace Passenger.Debugger;
 
-// 🤖 AI, not reviewed in depth
 internal sealed record FunctionBreakpointPattern(string? TypeName, string MethodName, int? MethodArity, ImmutableArray<string>? Parameters)
 {
     public static FunctionBreakpointPattern Parse(string value)

@@ -106,12 +106,12 @@ public static class CorDebugValueExtensions
         return corDebugGenericValue;
     }
 
-    public static async Task<ICorDebugValue?> GetPropertyValue(this ICorDebugValue objectValue, Func<Task<CorDebugManagedCallbackEventArgs>> processEventsUntilEvalEventFunc, EvalStatus evalStatus, ICorDebugILFrame ilFrame, string propertyName)
+    internal static async Task<ICorDebugValue?> GetPropertyValue(this ICorDebugValue objectValue, Func<Task<CorDebugManagedCallbackEventArgs>> processEventsUntilEvalEventFunc, EvalStatus evalStatus, ICorDebugILFrame ilFrame, string propertyName)
     {
         return (await GetPropertyValueWithSetter(objectValue, processEventsUntilEvalEventFunc, evalStatus, ilFrame, propertyName))?.Value;
     }
 
-    public static async Task<(ICorDebugValue Value, ICorDebugFunction? SetterFunction)?> GetPropertyValueWithSetter(this ICorDebugValue objectValue, Func<Task<CorDebugManagedCallbackEventArgs>> processEventsUntilEvalEventFunc, EvalStatus evalStatus, ICorDebugILFrame ilFrame, string propertyName)
+    internal static async Task<(ICorDebugValue Value, ICorDebugFunction? SetterFunction)?> GetPropertyValueWithSetter(this ICorDebugValue objectValue, Func<Task<CorDebugManagedCallbackEventArgs>> processEventsUntilEvalEventFunc, EvalStatus evalStatus, ICorDebugILFrame ilFrame, string propertyName)
     {
         ICorDebugObjectValue unwrappedValue = objectValue.UnwrapDebugValueToObject();
 
@@ -172,11 +172,6 @@ public static class CorDebugValueExtensions
         return returnValue is null ? null : (returnValue, setterFunction);
     }
 
-    public static ICorDebugFunction? GetPropertySetter(this ICorDebugObjectValue objectValue, string propertyName)
-    {
-        return null;
-    }
-
     public static bool IsExceptionType(this ICorDebugType corDebugType)
     {
         ICorDebugType? type = corDebugType;
@@ -192,7 +187,6 @@ public static class CorDebugValueExtensions
         return false;
     }
 
-    public static string GetThreadName(this ICorDebugThread thread) => thread.GetThreadNameOrNull() ?? "<No Name>";
     public static string? GetThreadNameOrNull(this ICorDebugThread thread)
     {
         // GetObject fails with CORDBG_E_BAD_THREAD_STATE while a thread has no managed Thread object yet

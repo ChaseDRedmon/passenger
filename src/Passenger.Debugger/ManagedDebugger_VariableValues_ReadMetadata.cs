@@ -40,42 +40,4 @@ public partial class ManagedDebugger
         string? stringCtorArg = reader.ReadSerializedString();
         return stringCtorArg;
     }
-    private static (string, string?) GetCustomAttributeCtorStringArgAndNamedArg(nint customAttributePointer, uint customAttributeSize, string namedArgumentName) => GetCustomAttributeCtorStringArgAndNamedArg(customAttributePointer, checked((int)customAttributeSize), namedArgumentName)!;
-
-    private static unsafe (string?, string?) GetCustomAttributeCtorStringArgAndNamedArg(IntPtr ppData, int pcbData, string namedArgumentName)
-    {
-        BlobReader reader = new BlobReader((byte*)ppData, pcbData);
-
-        // 1. Prolog (must be 0x0001)
-        ushort prolog = reader.ReadUInt16();
-        if (prolog != 0x0001)
-        {
-            throw new InvalidOperationException("Invalid custom attribute prolog");
-        }
-
-        // 2. Read constructor fixed arguments
-        // DebuggerDisplay has one string ctor arg
-        string? stringCtorArg = reader.ReadSerializedString();
-
-        // 3. Number of named arguments
-        ushort namedCount = reader.ReadUInt16();
-
-        // 4. Parse named arguments
-        for (int i = 0; i < namedCount; i++)
-        {
-            byte fieldOrProp = reader.ReadByte(); // 0x53 or 0x54
-            SignatureTypeCode type = reader.ReadSignatureTypeCode();
-            string name = reader.ReadSerializedString()!;
-
-            // We assume the named argument is a string, update or make new method if needed
-            string? value = reader.ReadSerializedString();
-
-            if (name == namedArgumentName)
-            {
-                return (stringCtorArg, value);
-            }
-        }
-
-        return (stringCtorArg, null);
-    }
 }

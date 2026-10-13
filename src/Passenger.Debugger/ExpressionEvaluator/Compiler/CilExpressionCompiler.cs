@@ -91,8 +91,6 @@ internal sealed class CompiledEvaluationMethod : IDisposable
         throw new InvalidOperationException($"Generated evaluation method '{typeName}.{methodName}' was not found");
     }
 }
-
-// 🤖
 internal sealed class CilExpressionCompiler(ManagedDebugger debugger)
 {
     private static readonly PortableExecutableReference _intrinsicMethodsReference = MetadataReference.CreateFromImage(CreateIntrinsicMethodsAssembly());

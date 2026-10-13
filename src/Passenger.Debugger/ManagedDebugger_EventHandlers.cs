@@ -11,14 +11,7 @@ public partial class ManagedDebugger
     private void HandleProcessCreated(object? sender, CreateProcessCorDebugManagedCallbackEventArgs createProcessCorDebugManagedCallbackEventArgs)
     {
         _logger?.Invoke("Process created event");
-        if (_process is null && _isRemoteAttach)
-        {
-            _process = createProcessCorDebugManagedCallbackEventArgs.Process;
-            _isAttached = true;
-            ConfigureExceptionCallbacks();
-            _logger?.Invoke($"Remote debuggee established connection to debugger, PID: {_process.Id}");
-        }
-        Continue();
+        Continue(clearVariables: false);
     }
 
     private void HandleProcessExited(object? sender, ExitProcessCorDebugManagedCallbackEventArgs exitProcessCorDebugManagedCallbackEventArgs)
@@ -34,7 +27,7 @@ public partial class ManagedDebugger
         NoteMainThread(corThread);
         _threads[corThread.Id] = new ThreadInfo(corThread);
         OnThreadStarted?.Invoke(corThread.Id);
-        Continue();
+        Continue(clearVariables: false);
     }
 
     /// <summary>Notes the thread running Main. The runtime announces it first (as netcoredbg relies on, upstream #59), but
@@ -55,7 +48,7 @@ public partial class ManagedDebugger
         _threads.Remove(corThread.Id);
         _exceptionBreakModes.Remove(new ThreadId(corThread.Id));
         OnThreadExited?.Invoke(corThread.Id);
-        Continue();
+        Continue(clearVariables: false);
     }
 
     private void HandleModuleLoaded(object? sender, LoadModuleCorDebugManagedCallbackEventArgs loadModuleCorDebugManagedCallbackEventArgs)
@@ -101,14 +94,14 @@ public partial class ManagedDebugger
         if (metadataReader is null)
         {
             _logger?.Invoke($"  Module metadata unavailable for {moduleName}");
-            Continue();
+            Continue(clearVariables: false);
             return;
         }
         if (TryConsumeTransientEvaluationModule(metadataReader.Mvid))
         {
             _logger?.Invoke($"  Ignoring transient evaluation module {metadataReader.Mvid}");
             metadataReader.Dispose();
-            Continue();
+            Continue(clearVariables: false);
             return;
         }
 
@@ -161,7 +154,7 @@ public partial class ManagedDebugger
             }
         }
 
-        Continue();
+        Continue(clearVariables: false);
     }
 
     /// <summary>A type loaded: one emitted into a module made as the program runs adds to that module's metadata, which is
@@ -179,7 +172,7 @@ public partial class ManagedDebugger
         {
             _logger?.Invoke($"A loaded class's module could not be told: {error.Message}");
         }
-        Continue();
+        Continue(clearVariables: false);
     }
 
     private void HandleModuleUnloaded(object? sender, UnloadModuleCorDebugManagedCallbackEventArgs unloadModuleEvent)
@@ -187,7 +180,7 @@ public partial class ManagedDebugger
         ICorDebugModule corModule = unloadModuleEvent.Module;
         if (FindModule(corModule, reread: false) is not { } moduleInfo)
         {
-            Continue();
+            Continue(clearVariables: false);
             return;
         }
         CORDB_ADDRESS baseAddress = moduleInfo.BaseAddress;
@@ -228,7 +221,7 @@ public partial class ManagedDebugger
         }
 
         OnModuleUnloaded?.Invoke(moduleInfo.ModulePath, moduleInfo.ModuleName, moduleInfo.ModulePath);
-        Continue();
+        Continue(clearVariables: false);
     }
 
     private async Task HandleBreakpoint(object? sender, BreakpointCorDebugManagedCallbackEventArgs breakpointCorDebugManagedCallbackEventArgs)
@@ -244,7 +237,7 @@ public partial class ManagedDebugger
         if (_stepper is { IsActive: false })
         {
             // The step is complete and its StepComplete queued behind this, at the same place: the step's stop stands for both.
-            ContinueWithVariableClear();
+            Continue(clearVariables: true);
             return;
         }
         // A step still going is ended only once this breakpoint stops (EndStepForStop), never by one that tests false or logs.
@@ -252,7 +245,7 @@ public partial class ManagedDebugger
         if (breakpoint is not ICorDebugFunctionBreakpoint functionBreakpoint)
         {
             _logger?.Invoke("Unknown breakpoint type hit");
-            Continue(); // may be incorrect
+            Continue(clearVariables: false);
             return;
         }
 
@@ -296,7 +289,7 @@ public partial class ManagedDebugger
                 }
                 if (shouldStop is false)
                 {
-                    ContinueWithVariableClear();
+                    Continue(clearVariables: true);
                     return;
                 }
 
@@ -311,8 +304,8 @@ public partial class ManagedDebugger
                 {
                     // Step into Task.NotifyDebuggerOfWaitCompletion to continue the async
                     // step-out toward the awaiting caller's next user-code location.
-                    SetupStepper(corThread, AsyncStepper.StepType.StepIn);
-                    ContinueWithVariableClear();
+                    SetupStepper(corThread, StepType.StepIn);
+                    Continue(clearVariables: true);
                     return;
                 }
             }
@@ -322,7 +315,7 @@ public partial class ManagedDebugger
         if (managedBreakpoint is null)
         {
             _logger?.Invoke("Hit a breakpoint that has since been replaced - continuing");
-            ContinueWithVariableClear();
+            Continue(clearVariables: true);
             return;
         }
 
@@ -331,7 +324,7 @@ public partial class ManagedDebugger
         if (managedBreakpoint.HitCondition is not null && EvaluateHitCondition(managedBreakpoint.HitCount, managedBreakpoint.HitCondition) is false)
         {
             _logger?.Invoke($"Hit count condition not met: count={managedBreakpoint.HitCount}, condition={managedBreakpoint.HitCondition}");
-            ContinueWithVariableClear();
+            Continue(clearVariables: true);
             return;
         }
 
@@ -348,7 +341,7 @@ public partial class ManagedDebugger
             else if (!holds)
             {
                 _logger?.Invoke($"Conditional breakpoint condition not met: {condition}");
-                ContinueWithVariableClear();
+                Continue(clearVariables: true);
                 return;
             }
         }
@@ -366,7 +359,7 @@ public partial class ManagedDebugger
         if (!managedBreakpoint.Suspend)
         {
             // A tracepoint lets the program go on, as Visual Studio's and Rider's do.
-            ContinueWithVariableClear();
+            Continue(clearVariables: true);
             return;
         }
 
@@ -425,32 +418,25 @@ public partial class ManagedDebugger
     {
         ICorDebugThread corThread = stepCompleteEventArgs.Thread;
         ICorDebugILFrame ilFrame = (ICorDebugILFrame)corThread.ActiveFrame;
-        // If we have an active async stepper, it means we would have a breakpoint set up for either yield or resume for the next await statement
-        // We would then have done a regular step over/in/out to get to that breakpoint
-        // Since the step has completed, it means we did not hit the breakpoint, so we can clear the active async step
+        // An async step's breakpoint at an await, which the step ran to, was not hit: the async step is over.
         _asyncStepper?.ClearActiveAsyncStep();
         ICorDebugStepper stepper = _stepper ?? throw new InvalidOperationException("No stepper found for step complete");
-        stepper.Deactivate(); // I really don't know if its necessary to deactivate the steppers once done
+        stepper.Deactivate();
         _stepper = null;
         ModuleInfo? module = FindModule(ilFrame.Function.Module);
         if (module is not null && module.MetadataReader.IsCurrentSequencePointHidden(ilFrame.Function.Token, ilFrame.IP.pnOffset))
         {
-            // Skip hidden sequence points so source lookup does not report
-            // the preceding visible line as the step destination.
-            SetupStepper(corThread, AsyncStepper.StepType.StepOver);
-            ContinueWithVariableClear();
+            // Past a hidden sequence point, which would show the line before it as where the step ended.
+            SetupStepper(corThread, StepType.StepOver);
+            Continue(clearVariables: true);
             return;
         }
         SourceInfo? sourceInfo = module is null ? null : GetSourceInfoAtFrame(ilFrame, _justMyCode is false);
         if (module is null || sourceInfo is null)
         {
-            // sourceInfo will be null if we could not find a PDB for the module
-            // Bottom line - if we have no PDB, we have no source info, and there is no possible way for the user to map the stop location to a source file/line
-            // Either justMyCode is enabled, or this is a genuinely unmapped method, ie compiler generated with DebuggerStepThrough etc
-            // also, landing in an async state machine will not have source info, allowing us to keep stepping to the MoveNext
-            // TODO: This should probably be more sophisticated - mark the CorDebugFunction as non user code - `JMCStatus = false`, enable JMC for the stepper and then step over, in case the non user code calls user code, e.g. LINQ methods
-            SetupStepper(corThread, AsyncStepper.StepType.StepIn);
-            ContinueWithVariableClear();
+            // No line to show (no symbols, code the compiler made, an async state machine's start): the step goes on to one.
+            SetupStepper(corThread, StepType.StepIn);
+            Continue(clearVariables: true);
             return;
         }
         ModuleMetadataReader metadataReader = module.MetadataReader;
@@ -458,8 +444,8 @@ public partial class ManagedDebugger
         (int currentIlOffset, int? nextUserCodeIlOffset) = metadataReader.GetFrameCurrentIlOffsetAndNextUserCodeIlOffset(ilFrame);
         if (stepCompleteEventArgs.Reason is CorDebugStepReason.STEP_CALL && currentIlOffset < nextUserCodeIlOffset)
         {
-            SetupStepper(corThread, AsyncStepper.StepType.StepOver);
-            ContinueWithVariableClear();
+            SetupStepper(corThread, StepType.StepOver);
+            Continue(clearVariables: true);
             return;
         }
 
@@ -472,8 +458,8 @@ public partial class ManagedDebugger
                 metadataImport.HasAnyAttribute(mdMethodDef, AttributeConstants.JmcMethodAttributeNames);
             if (methodIsNotDebuggable)
             {
-                SetupStepper(corThread, AsyncStepper.StepType.StepIn);
-                ContinueWithVariableClear();
+                SetupStepper(corThread, StepType.StepIn);
+                Continue(clearVariables: true);
                 return;
             }
         }
@@ -481,7 +467,6 @@ public partial class ManagedDebugger
         string sourceFilePath = sourceInfo.Value.FilePath;
         int line = sourceInfo.Value.StartLine;
         int column = sourceInfo.Value.StartColumn;
-        //_logger?.Invoke($"StepComplete: method 0x{ilFrame.Function.Token} IL offset {ilFrame.IP.pnOffset}, reason: {stepCompleteEventArgs.Reason}");
         ReportStop(corThread.Id, "step", sourceFilePath, line, column, null);
     }
 
@@ -507,7 +492,7 @@ public partial class ManagedDebugger
         {
             // The code of an evaluation given up, which runs on until it returns: it never stops part way either.
             _logger?.Invoke($"Let go: {callbackEvent.GetType().Name} on thread {thread.Id}, in an evaluation given up");
-            Continue();
+            Continue(clearVariables: false);
             return true;
         }
         if (EvalStatus.ThreadId is not { } evaluating)
@@ -546,7 +531,7 @@ public partial class ManagedDebugger
     private void HandleException(object? sender, ExceptionCorDebugManagedCallbackEventArgs exceptionEventArgs)
     {
         // ICorDebugManagedCallback2 supplies the exception stage needed for filtering.
-        Continue();
+        Continue(clearVariables: false);
     }
 
     private void HandleException2(object? sender, Exception2CorDebugManagedCallbackEventArgs exceptionEventArgs)
@@ -555,7 +540,7 @@ public partial class ManagedDebugger
         if (EvalStatus.ThreadId == corThread.Id || EvalStatus.Abandoned.ContainsKey(corThread.Id))
         {
             // The evaluated code's own: caught inside it, or the evaluation's result.
-            Continue();
+            Continue(clearVariables: false);
             return;
         }
 
@@ -634,7 +619,7 @@ public partial class ManagedDebugger
         }
         if (shouldStop is false)
         {
-            ContinueWithVariableClear();
+            Continue(clearVariables: true);
             return;
         }
         StopAtException(corThread, breakMode, handler);

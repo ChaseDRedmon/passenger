@@ -5,7 +5,6 @@ using System.Security.Cryptography;
 using ICSharpCode.Decompiler.Metadata;
 
 namespace Passenger.Debugger.Decompilation;
-// 🤖
 internal sealed class DebuggingAssemblyResolver(List<string> modulePaths) : IAssemblyResolver
 {
     private readonly List<string> _modulePaths = modulePaths;

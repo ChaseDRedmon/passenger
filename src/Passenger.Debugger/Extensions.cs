@@ -156,7 +156,7 @@ public static class Extensions
         return metadataImport.HasAnyAttribute(token, [AttributeConstants.ExtensionMethodAttributeName]);
     }
 
-    public static async Task<ICorDebugValue?> CallParameterlessInstanceMethodAsync(this ICorDebugEval eval, Func<Task<CorDebugManagedCallbackEventArgs>> processEventsUntilEvalEventFunc, EvalStatus evalStatus, ICorDebugFunction corDebugFunction, ICorDebugValue corDebugValue)
+    internal static async Task<ICorDebugValue?> CallParameterlessInstanceMethodAsync(this ICorDebugEval eval, Func<Task<CorDebugManagedCallbackEventArgs>> processEventsUntilEvalEventFunc, EvalStatus evalStatus, ICorDebugFunction corDebugFunction, ICorDebugValue corDebugValue)
     {
         const bool isStatic = false;
 
@@ -168,7 +168,7 @@ public static class Extensions
         return result;
     }
 
-    public static async Task<ICorDebugValue?> CallParameterizedFunctionAsync(this ICorDebugEval eval, Func<Task<CorDebugManagedCallbackEventArgs>> processEventsUntilEvalEventFunc, EvalStatus evalStatus, ICorDebugFunction corDebugFunction, int typeParamCount, ICorDebugType[]? typeParameterArgs, int paramCount, ICorDebugValue[] corDebugValues, bool throwOnException = false)
+    internal static async Task<ICorDebugValue?> CallParameterizedFunctionAsync(this ICorDebugEval eval, Func<Task<CorDebugManagedCallbackEventArgs>> processEventsUntilEvalEventFunc, EvalStatus evalStatus, ICorDebugFunction corDebugFunction, int typeParamCount, ICorDebugType[]? typeParameterArgs, int paramCount, ICorDebugValue[] corDebugValues, bool throwOnException = false)
     {
         // Ensure that the object passed in corDebugValues is a CorDebugReferenceValue (when containing object is an instance class), ie must not be dereferenced
         return await RunEvalAsync(eval, processEventsUntilEvalEventFunc, evalStatus, throwOnException,
@@ -185,28 +185,28 @@ public static class Extensions
             });
     }
 
-    public static async Task<ICorDebugValue?> NewParameterizedObjectNoConstructorAsync(this ICorDebugEval eval, Func<Task<CorDebugManagedCallbackEventArgs>> processEventsUntilEvalEventFunc, EvalStatus evalStatus, ICorDebugClass pClass, int nTypeArgs, ICorDebugType[]? ppTypeArgs, bool throwOnException = false)
+    internal static async Task<ICorDebugValue?> NewParameterizedObjectNoConstructorAsync(this ICorDebugEval eval, Func<Task<CorDebugManagedCallbackEventArgs>> processEventsUntilEvalEventFunc, EvalStatus evalStatus, ICorDebugClass pClass, int nTypeArgs, ICorDebugType[]? ppTypeArgs, bool throwOnException = false)
     {
         return await RunEvalAsync(eval, processEventsUntilEvalEventFunc, evalStatus, throwOnException,
             () => eval.NewParameterizedObjectNoConstructor(pClass, nTypeArgs, ppTypeArgs),
             e => e.Eval.Result);
     }
 
-    public static async Task<ICorDebugValue?> NewParameterizedObjectAsync(this ICorDebugEval eval, Func<Task<CorDebugManagedCallbackEventArgs>> processEventsUntilEvalEventFunc, EvalStatus evalStatus, ICorDebugFunction corDebugFunction, int nTypeArgs, ICorDebugType[]? ppTypeArgs, int argCount, ICorDebugValue[] argValues, bool throwOnException = false)
+    internal static async Task<ICorDebugValue?> NewParameterizedObjectAsync(this ICorDebugEval eval, Func<Task<CorDebugManagedCallbackEventArgs>> processEventsUntilEvalEventFunc, EvalStatus evalStatus, ICorDebugFunction corDebugFunction, int nTypeArgs, ICorDebugType[]? ppTypeArgs, int argCount, ICorDebugValue[] argValues, bool throwOnException = false)
     {
         return await RunEvalAsync(eval, processEventsUntilEvalEventFunc, evalStatus, throwOnException,
             () => eval.NewParameterizedObject(corDebugFunction, nTypeArgs, ppTypeArgs, argCount, argValues),
             e => e.Eval.Result);
     }
 
-    public static async Task<ICorDebugValue?> NewParameterizedArrayAsync(this ICorDebugEval eval, Func<Task<CorDebugManagedCallbackEventArgs>> processEventsUntilEvalEventFunc, EvalStatus evalStatus, ICorDebugType elementType, uint length, bool throwOnException = false)
+    internal static async Task<ICorDebugValue?> NewParameterizedArrayAsync(this ICorDebugEval eval, Func<Task<CorDebugManagedCallbackEventArgs>> processEventsUntilEvalEventFunc, EvalStatus evalStatus, ICorDebugType elementType, uint length, bool throwOnException = false)
     {
         return await RunEvalAsync(eval, processEventsUntilEvalEventFunc, evalStatus, throwOnException,
             () => eval.NewParameterizedArray(elementType, 1, [length], [0]),
             e => e.Eval.Result);
     }
 
-    public static async Task<ICorDebugValue> NewStringAsync(this ICorDebugEval eval, Func<Task<CorDebugManagedCallbackEventArgs>> processEventsUntilEvalEventFunc, EvalStatus evalStatus, string str, bool throwOnException = false)
+    internal static async Task<ICorDebugValue> NewStringAsync(this ICorDebugEval eval, Func<Task<CorDebugManagedCallbackEventArgs>> processEventsUntilEvalEventFunc, EvalStatus evalStatus, string str, bool throwOnException = false)
     {
         return (await RunEvalAsync(eval, processEventsUntilEvalEventFunc, evalStatus, throwOnException,
             () => eval.NewString(str),

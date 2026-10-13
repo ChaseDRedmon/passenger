@@ -21,13 +21,9 @@ public enum ExceptionBreakpointFilter { All, UserUnhandled }
 
 public partial class ManagedDebugger
 {
-    // Store launch info for deferred attach in ConfigurationDone
     private LaunchInfo? _pendingLaunchInfo;
-    private RemoteAttachInfo? _pendingRemoteAttachInfo;
 
-    /// <summary>
-    /// Stores the launch request info for use in handling ConfigurationDone
-    /// </summary>
+    /// <summary>The program to launch, started by configurationDone once the client's breakpoints are set.</summary>
     public void Launch(LaunchInfo launchInfo, bool justMyCode)
     {
         EnsureNoProcessBeingDebugged();
@@ -193,21 +189,9 @@ public partial class ManagedDebugger
         _pendingAttachProcessId = processId;
     }
 
-    public void AttachRemote(RemoteAttachInfo remoteAttachInfo, bool justMyCode)
-    {
-        EnsureNoProcessBeingDebugged();
-        _justMyCode = justMyCode;
-        _stopAtEntry = false;
-        _pendingRemoteAttachInfo = remoteAttachInfo;
-        _isRemoteAttach = true;
-    }
-
-    /// <summary>
-    /// Called when DAP configuration is complete - performs deferred launch or attach
-    /// </summary>
+    /// <summary>The client's breakpoints are set: the launch or attach asked for is made.</summary>
     public async Task ConfigurationDone()
     {
-        //System.Diagnostics.Debugger.Launch();
         _logger?.Invoke("ConfigurationDone");
 
         if (_pendingLaunchInfo is { LaunchRequestConsoleType: LaunchRequestConsoleType.ExternalTerminal or LaunchRequestConsoleType.IntegratedTerminal })
@@ -217,14 +201,9 @@ public partial class ManagedDebugger
             // Held at its diagnostic port for the debugger, which lets it go only once registered for its runtime.
             await PerformAttach(launchedProcessId, (_, _) => DiagnosticClientHelper.DiagnosticClientResumeRuntime(launchedProcessId));
         }
-        else if (_pendingLaunchInfo is not null) // If we have a pending launch, perform it
+        else if (_pendingLaunchInfo is not null)
         {
             await PerformLaunch();
-        }
-        else if (_pendingRemoteAttachInfo is not null)
-        {
-            PerformRemoteAttach(_pendingRemoteAttachInfo);
-            _pendingRemoteAttachInfo = null;
         }
         else if (_pendingAttachProcessId is int processId)
         {
@@ -233,60 +212,15 @@ public partial class ManagedDebugger
         }
     }
 
-    /// <summary>
-    /// Continue execution
-    /// </summary>
-    public void HandleContinueRequest()
+    /// <summary>The client's continue: the program runs on from the stop shown, all its threads.</summary>
+    public void Continue()
     {
         _logger?.Invoke("Continue");
-        ContinueWithVariableClearAllowSuperfluousContinue();
+        Continue(clearVariables: true, allowSuperfluous: true);
     }
 
-    private void ContinueWithVariableClearAllowSuperfluousContinue()
-    {
-        ArgumentNullException.ThrowIfNull(_process);
-        _stopShown = false;
-        _pauseRequested = false;
-        EvalStatus.ImplicitOff = null;
-        _unhandledByUser = null;
-        _variableManager.ClearAndDisposeHandleValues();
-        _frameReferenceManager.Clear();
-        // Another thread's event put off while this stop's evaluations ran comes next, rather than lost to the continue.
-        if (TakeDeferredEvent())
-        {
-            return;
-        }
-
-        int result = _process.TryContinue(false);
-        if (result is Cor.CORDBG_E_SUPERFLOUS_CONTINUE)
-        {
-            return;
-        }
-
-        Marshal.ThrowExceptionForHR(result);
-    }
-
-    private void ContinueWithVariableClear()
-    {
-        ArgumentNullException.ThrowIfNull(_process);
-        _stopShown = false;
-        _pauseRequested = false;
-        EvalStatus.ImplicitOff = null;
-        _unhandledByUser = null;
-        _variableManager.ClearAndDisposeHandleValues();
-        _frameReferenceManager.Clear();
-        // As at the person's continue: a condition tested or a step begun lets nothing put off pass unseen.
-        if (TakeDeferredEvent())
-        {
-            return;
-        }
-
-        _process.Continue(false);
-    }
-
-    /// <summary>
-    /// Pause execution
-    /// </summary>
+    /// <summary>The client's pause: a running program stops wherever it is; one held for the runtime's own event stops
+    /// there once a thread runs managed code; one stopped already stays as it is.</summary>
     public void Pause()
     {
         _logger?.Invoke("Pause");
@@ -356,32 +290,14 @@ public partial class ManagedDebugger
         {
             return false;
         }
-        if (_stepper is not null)
-        {
-            throw new InvalidOperationException("A step operation is already in progress");
-        }
-        ICorDebugStepper stepper = thread.CreateStepper();
-        stepper.SetUnmappedStopMask(CorDebugUnmappedStop.STOP_NONE);
-        if (_justMyCode)
-        {
-            stepper.SetJMC(true);
-        }
-        stepper.StepOut();
-        _stepper = stepper;
-        _stepping = null;
-        ContinueWithVariableClear();
+        BeginStep(thread.CreateStepper(), thread, null, _justMyCode, stepper => stepper.StepOut());
+        Continue(clearVariables: true);
         return true;
     }
 
-    public Task StepNext(int threadId) => Step(threadId, AsyncStepper.StepType.StepOver);
-
-    public Task StepIn(int threadId) => Step(threadId, AsyncStepper.StepType.StepIn);
-
-    public Task StepOut(int threadId) => Step(threadId, AsyncStepper.StepType.StepOut);
-
     /// <summary>Steps a thread on, or refuses saying why: a step answered as taken that never set the program going would
     /// leave the IDE waiting for a stop that never comes. An async method's step over an await is the async stepper's.</summary>
-    private async Task Step(int threadId, AsyncStepper.StepType type)
+    public async Task Step(int threadId, StepType type)
     {
         _logger?.Invoke($"{type} on thread {threadId}");
         ArgumentNullException.ThrowIfNull(_process);
@@ -404,7 +320,7 @@ public partial class ManagedDebugger
             // The thread runs an evaluation given up, above the stop: a stepper made now would be the evaluation's, and the
             // runtime ends it with the evaluation. The step is taken from the stop once the evaluation has returned.
             _stepAfterEvaluation = (threadId, type);
-            ContinueWithVariableClear();
+            Continue(clearVariables: true);
             return;
         }
         if (_unhandledByUser is (int stopped, StackRange caught) && stopped == threadId
@@ -413,7 +329,7 @@ public partial class ManagedDebugger
             // Stopped at an exception the user's code left unhandled: the step goes where that code goes on, past the
             // handler that caught it. A step from the throw would end in a frame the exception unwinds, and never stop.
             StepOutOfHandler(thread, handler);
-            ContinueWithVariableClear();
+            Continue(clearVariables: true);
             return;
         }
         if (StepOutToManagedCode(thread))
@@ -425,12 +341,12 @@ public partial class ManagedDebugger
             (bool handledByAsyncStepper, bool? useSimpleStepper) = await _asyncStepper.TrySetupAsyncStep(thread, type);
             if (handledByAsyncStepper && useSimpleStepper is false)
             {
-                ContinueWithVariableClear();
+                Continue(clearVariables: true);
                 return;
             }
         }
         SetupStepper(thread, type);
-        ContinueWithVariableClear();
+        Continue(clearVariables: true);
     }
 
     /// <summary>Sets a file's breakpoints to those asked for. One asked for again just as it was (its line, column,
@@ -553,9 +469,6 @@ public partial class ManagedDebugger
         return result;
     }
 
-    /// <summary>
-    /// Get all threads
-    /// </summary>
     public List<(int id, string name)> GetThreads()
     {
         List<(int, string)> result = new List<(int, string)>();
@@ -598,9 +511,8 @@ public partial class ManagedDebugger
         }
     }
 
-    /// <summary>
-    /// Get stack trace for a thread
-    /// </summary>
+    /// <summary>A thread's frames from <paramref name="startFrame"/>, as many as asked: its own, then the callers of its
+    /// async frames, which only their state machines know.</summary>
     public List<StackFrameInfo> GetStackTrace(int threadIdInt, int startFrame = 0, int? levels = null)
     {
         List<StackFrameInfo> result = new List<StackFrameInfo>();
@@ -794,9 +706,7 @@ public partial class ManagedDebugger
         };
     }
 
-    /// <summary>
-    /// Get scopes for a stack frame
-    /// </summary>
+    /// <summary>A frame's one scope, Locals, when it has locals, arguments or an exception to show; none otherwise.</summary>
     public List<ScopeInfo> GetScopes(int frameId)
     {
         List<ScopeInfo> result = new List<ScopeInfo>();
@@ -843,9 +753,8 @@ public partial class ManagedDebugger
         return result;
     }
 
-    /// <summary>
-    /// Get variables for a scope
-    /// </summary>
+    /// <summary>What a reference names: a frame's locals, an object's members, an array's elements, a collection's
+    /// results. One from an earlier stop is refused, the program having run on since.</summary>
     public async Task<List<VariableInfo>> GetVariables(int variablesReferenceInt)
     {
         List<VariableInfo> result = new List<VariableInfo>();
@@ -1018,9 +927,7 @@ public partial class ManagedDebugger
         return variableInfo;
     }
 
-    /// <summary>
-    /// Terminate the debugged process
-    /// </summary>
+    /// <summary>Ends the program and lets go of it, once the runtime has seen it go.</summary>
     public void Terminate()
     {
         _logger?.Invoke("Terminate");
@@ -1052,9 +959,7 @@ public partial class ManagedDebugger
         Dispose();
     }
 
-    /// <summary>
-    /// Disconnect from the debuggee and Dispose
-    /// </summary>
+    /// <summary>Ends the session: the program ends with it when asked, else it is let go to run on.</summary>
     public void Disconnect(bool terminateDebuggee)
     {
         _logger?.Invoke($"Disconnect (terminate: {terminateDebuggee})");

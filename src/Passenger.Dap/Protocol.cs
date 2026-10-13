@@ -60,12 +60,7 @@ public sealed record AttachArguments
 {
     public int? ProcessId { get; init; }
     public bool? JustMyCode { get; init; }
-
-    /// <summary>This debugger's own: a runtime on a device, reached over the network.</summary>
-    public RemoteRuntime? CoreClrMobileDebuggerOptions { get; init; }
 }
-
-public sealed record RemoteRuntime(string? Address, int? Port, string? Platform, bool? IsServer, string? MscordbiPath, string? AssembliesPath);
 
 public sealed record DapSource
 {

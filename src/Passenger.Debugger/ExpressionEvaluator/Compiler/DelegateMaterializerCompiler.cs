@@ -7,8 +7,6 @@ using Microsoft.CodeAnalysis.Emit;
 namespace Passenger.Debugger.ExpressionEvaluator.Compiler;
 
 internal sealed record DelegateMaterializerAssembly(string AssemblyName, Guid ModuleVersionId, string TypeName, string MethodName, byte[] Assembly);
-
-// 🤖
 internal static class DelegateMaterializerCompiler
 {
     public static DelegateMaterializerAssembly Compile(IEnumerable<MetadataReference> references)

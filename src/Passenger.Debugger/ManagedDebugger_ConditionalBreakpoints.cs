@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using Passenger.Debugger.ExpressionEvaluator;
 using Passenger.Debugger.ExpressionEvaluator.Cil;
 using Passenger.Debugger.ExpressionEvaluator.Compiler;
@@ -26,11 +25,11 @@ public partial class ManagedDebugger
                 _logger?.Invoke($"Condition evaluation error for '{condition}': {result.Error}");
                 return (true, result.Error);
             }
-            if (result.Value?.UnwrapDebugValue() is not ICorDebugGenericValue { Type: CorElementType.BOOLEAN })
+            if (result.Value?.UnwrapDebugValue() is not ICorDebugGenericValue { Type: CorElementType.BOOLEAN } holds)
             {
                 return (true, "it is not a bool");
             }
-            return (IsTruthyValue(result.Value), null);
+            return (holds.GetValueAsBytes()[0] != 0, null);
         }
         catch (Exception ex)
         {
@@ -43,52 +42,4 @@ public partial class ManagedDebugger
     /// it is never bound to be hit.</summary>
     private static bool EvaluateHitCondition(int hitCount, string hitCondition) =>
         Passenger.Dap.HitCondition.TryParse(hitCondition, out Passenger.Dap.HitCondition condition, out _) && condition.IsMet(hitCount);
-
-    /// <summary>
-    /// Check if a debug value is truthy (true, non-zero, non-null)
-    /// </summary>
-    private static bool IsTruthyValue(ICorDebugValue? value)
-    {
-        if (value is null)
-        {
-            return false;
-        }
-
-        ICorDebugValue unwrapped = value.UnwrapDebugValue();
-
-        if (unwrapped is ICorDebugGenericValue genericValue)
-        {
-            nint buffer = Marshal.AllocHGlobal(genericValue.Size);
-            try
-            {
-                genericValue.GetValue(buffer);
-                return genericValue.Type switch
-                {
-                    CorElementType.BOOLEAN => Marshal.ReadByte(buffer) != 0,
-                    CorElementType.I1 or CorElementType.U1 => Marshal.ReadByte(buffer) != 0,
-                    CorElementType.I2 or CorElementType.U2 => Marshal.ReadInt16(buffer) != 0,
-                    CorElementType.I4 or CorElementType.U4 => Marshal.ReadInt32(buffer) != 0,
-                    CorElementType.I8 or CorElementType.U8 => Marshal.ReadInt64(buffer) != 0,
-                    CorElementType.R4 => BitConverter.ToSingle(BitConverter.GetBytes(Marshal.ReadInt32(buffer)), 0) != 0,
-                    CorElementType.R8 => BitConverter.ToDouble(BitConverter.GetBytes(Marshal.ReadInt64(buffer)), 0) != 0,
-                    _ => true // Unknown types - default to true
-                };
-            }
-            catch
-            {
-                return false;
-            }
-            finally
-            {
-                Marshal.FreeHGlobal(buffer);
-            }
-        }
-
-        if (unwrapped is ICorDebugReferenceValue refValue)
-        {
-            return !refValue.IsNull;
-        }
-
-        return true;
-    }
 }

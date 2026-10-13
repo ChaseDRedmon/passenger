@@ -2,8 +2,6 @@ using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 
 namespace Passenger.Debugger;
-
-// 🤖
 public partial class ModuleMetadataReader
 {
     private (DocumentHandle Document, int Score) BestDocument(string sourceFilePath)

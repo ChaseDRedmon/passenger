@@ -25,8 +25,6 @@ internal readonly record struct ResolvedRuntimeMethod(ResolvedRuntimeType Declar
 
 internal readonly record struct ResolvedEvaluationMethod(MethodDefinitionHandle Handle, MethodSignature<string> Signature, bool IsStatic);
 internal sealed record ResolvedCilType(PrimitiveTypeCode? Primitive, ResolvedRuntimeType? RuntimeType, ResolvedCilType? ElementType = null, int ArrayRank = 0, bool IsSzArray = false);
-
-// 🤖
 internal sealed class EvaluationMetadataResolver(ManagedDebugger debugger, MetadataReader evaluationReader, PEReader evaluationPeReader, ICorDebugAppDomain appDomain, ICorDebugType[] typeGenericArguments, ICorDebugType[] methodGenericArguments, ModuleInfo? currentFrameModule)
 {
     /// <summary>

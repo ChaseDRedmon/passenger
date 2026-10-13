@@ -3,20 +3,20 @@ using Passenger.Debugger.Interop;
 
 namespace Passenger.Debugger;
 
-public class AsyncStepper
+public enum StepType
+{
+    StepIn,
+    StepOver,
+    StepOut
+}
+
+internal sealed class AsyncStepper
 {
     private readonly ManagedDebugger _debugger;
     private enum AsyncStepStatus
     {
         YieldBreakpoint,
         ResumeBreakpoint
-    }
-
-    public enum StepType
-    {
-        StepIn,
-        StepOver,
-        StepOut
     }
 
     private class AsyncBreakpoint
@@ -81,7 +81,7 @@ public class AsyncStepper
     /// <summary>
     /// Call SetNotificationForWaitCompletion on the async builder
     /// </summary>
-    private async Task<bool> SetNotificationForWaitCompletion(ICorDebugValue builder, ICorDebugILFrame? frame, ICorDebugThread thread)
+    private async Task<bool> SetNotificationForWaitCompletion(ICorDebugValue builder, ICorDebugThread thread)
     {
         try
         {
@@ -122,7 +122,7 @@ public class AsyncStepper
     /// <summary>
     /// Setup breakpoint in Task.NotifyDebuggerOfWaitCompletion method
     /// </summary>
-    private bool SetupNotifyDebuggerOfWaitCompletionBreakpoint(ICorDebugThread thread)
+    private bool SetupNotifyDebuggerOfWaitCompletionBreakpoint()
     {
         try
         {
@@ -259,11 +259,11 @@ public class AsyncStepper
                         }
 
                         // Not async void - use NotifyDebuggerOfWaitCompletion magic
-                        bool success = await SetNotificationForWaitCompletion(builder, frame as ICorDebugILFrame, thread);
+                        bool success = await SetNotificationForWaitCompletion(builder, thread);
                         if (success)
                         {
                             // Setup breakpoint in Task.NotifyDebuggerOfWaitCompletion
-                            bool notifyBpSuccess = SetupNotifyDebuggerOfWaitCompletionBreakpoint(thread);
+                            bool notifyBpSuccess = SetupNotifyDebuggerOfWaitCompletionBreakpoint();
                             if (notifyBpSuccess)
                             {
                                 // Async step-out handled - no need for stepper

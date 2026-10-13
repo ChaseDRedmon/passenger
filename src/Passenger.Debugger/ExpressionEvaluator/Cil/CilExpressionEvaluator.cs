@@ -2,8 +2,6 @@ using Passenger.Debugger.ExpressionEvaluator.Compiler;
 using Passenger.Debugger.Interop;
 
 namespace Passenger.Debugger.ExpressionEvaluator.Cil;
-
-// 🤖
 internal sealed class CilExpressionEvaluator(RuntimeAssemblyPrimitiveTypeClasses primitiveTypes, ManagedDebugger debugger)
 {
     private readonly CilExpressionCompiler _compiler = new(debugger);

@@ -2,8 +2,6 @@ using System.Reflection.Metadata;
 using Passenger.Debugger.Interop;
 
 namespace Passenger.Debugger.ExpressionEvaluator.Cil;
-
-// 🤖
 internal sealed class EvaluationClosure(TypeDefinitionHandle type, MethodDefinitionHandle constructor)
 {
     public TypeDefinitionHandle Type { get; } = type;
