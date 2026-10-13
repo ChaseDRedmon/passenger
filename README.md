@@ -2,6 +2,8 @@
 
 An IDE for C# and modern .NET, inspired by JetBrains Rider, written in C# with Avalonia. Windows and macOS first.
 
+**[passenger-ide.net](https://passenger-ide.net)**: what it does, downloads, and how to connect a coding agent.
+
 ![Passenger's editor: completion open after a dot, parameter name hints before literal arguments, and the change bars of uncommitted lines](site/images/editor.webp)
 
 It's early, but it's a working IDE: an editor of its own (a rope, multiple carets, code folding, Rider's Visual Studio
