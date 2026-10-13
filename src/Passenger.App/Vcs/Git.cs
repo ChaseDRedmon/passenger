@@ -457,20 +457,71 @@ public sealed class Git
     /// <summary>The branch moved to a commit: soft keeps the changes staged, mixed keeps them in the files, hard drops them.</summary>
     public Task<GitResult> ResetAsync(string hash, ResetMode mode) => RunAsync(Root, ["reset", $"--{mode.ToString().ToLowerInvariant()}", "--end-of-options", hash]);
 
-    /// <summary>Puts files back as the last commit has them (Rider's Rollback); new files are deleted.</summary>
+    /// <summary>Puts files back as the last commit has them (Rider's Rollback); new files are deleted. A file another
+    /// program holds is tried again (<see cref="Attempts"/>), and one it never lets go of is named in the result, the
+    /// rest rolled back all the same.</summary>
     public async Task<GitResult> RollbackAsync(IReadOnlyList<FileChange> changes)
     {
+        string[] tracked = [.. changes.Where(c => c.Kind is not ChangeKind.Unversioned).SelectMany(c => c.From is { } from ? new[] { c.Path, from } : [c.Path]).Select(Relative)];
+        GitResult restored = tracked.Length == 0 ? new GitResult(0, string.Empty, string.Empty) : await RestoreAsync(tracked);
+        List<string> kept = [];
         foreach (FileChange added in changes.Where(c => c.Kind is ChangeKind.Unversioned))
         {
-            File.Delete(added.Path);
+            if (await DeleteAsync(added.Path) is { } refused)
+            {
+                kept.Add(refused);
+            }
         }
-        string[] tracked = [.. changes.Where(c => c.Kind is not ChangeKind.Unversioned).SelectMany(c => c.From is { } from ? new[] { c.Path, from } : [c.Path]).Select(Relative)];
-        if (tracked.Length == 0)
+        if (kept.Count == 0)
         {
-            return new GitResult(0, string.Empty, string.Empty);
+            return restored;
         }
-        GitResult restore = await RunAsync(Root, ["restore", "--source=HEAD", "--staged", "--worktree", "--", .. tracked.Select(Literal)]);
-        return restore;
+        string[] reasons = [.. restored.Succeeded ? [] : new[] { restored.Message }, .. kept];
+        return new GitResult(restored.Succeeded ? 1 : restored.Code, restored.Output, string.Join('\n', reasons));
+    }
+
+    /// <summary>How often a rollback tries a file, half a second apart. Windows refuses to delete or replace a file that
+    /// another program has open without sharing deletes (a virus scanner, an indexer, a reader), and git's restore deletes
+    /// each file before it writes the commit's, so for that moment it failed with "unable to unlink old" and left the
+    /// file changed; macOS never refuses.</summary>
+    private const int Attempts = 3;
+
+    private static readonly TimeSpan Retry = TimeSpan.FromMilliseconds(500);
+
+    /// <summary>The files as the last commit has them, in the index and on disk. A failure is tried again whatever git
+    /// said, its words being in the person's language: restoring twice is the same as once.</summary>
+    private async Task<GitResult> RestoreAsync(string[] relative)
+    {
+        for (int attempt = 1; ; attempt++)
+        {
+            GitResult restored = await RunAsync(Root, ["restore", "--source=HEAD", "--staged", "--worktree", "--", .. relative.Select(Literal)]);
+            if (restored.Succeeded || attempt == Attempts)
+            {
+                return restored;
+            }
+            await Task.Delay(Retry);
+        }
+    }
+
+    /// <summary>Deletes a new file, tried again as a restore is; why not, when it was never let go of.</summary>
+    private static async Task<string?> DeleteAsync(string path)
+    {
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                File.Delete(path);
+                return null;
+            }
+            catch (Exception refused) when (refused is IOException or UnauthorizedAccessException)
+            {
+                if (attempt == Attempts)
+                {
+                    return refused.Message;
+                }
+            }
+            await Task.Delay(Retry);
+        }
     }
 
     public string Relative(string path) => System.IO.Path.GetRelativePath(Root, path).Replace('\\', '/');

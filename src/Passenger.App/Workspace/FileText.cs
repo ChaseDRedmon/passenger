@@ -26,7 +26,7 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom)
     /// UTF-8 if it decodes as UTF-8 and Latin-1 otherwise, which reads every byte.</summary>
     public static FileText? Load(string path)
     {
-        byte[] bytes = File.ReadAllBytes(path);
+        byte[] bytes = Read(path);
         if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
         {
             return new FileText(Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3), new UTF8Encoding(true), true);
@@ -51,6 +51,17 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom)
         {
             return new FileText(Encoding.Latin1.GetString(bytes), Encoding.Latin1, false);
         }
+    }
+
+    /// <summary>A file's bytes, read sharing writes and deletes, so the read is never in another program's way: on Windows
+    /// one that shared only reading (File.ReadAllBytes) made git's checkout or rollback of the file, which deletes it
+    /// first, fail for that moment, as the folder watcher reads a file again right after each change to it.</summary>
+    private static byte[] Read(string path)
+    {
+        using FileStream stream = new(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using MemoryStream bytes = new();
+        stream.CopyTo(bytes);
+        return bytes.ToArray();
     }
 
     /// <summary>A file about to be written by a save, so a folder watcher takes it for the change it is rather than a

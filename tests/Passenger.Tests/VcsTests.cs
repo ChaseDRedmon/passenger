@@ -162,10 +162,58 @@ public sealed class VcsTests : IDisposable
         }
         window.Perform(AppActions.ShowCommit);
         RollbackChosen(commit);
-        Ui.WaitFor(() => window.Vcs.Changes.Count == 0, "nothing left changed");
+        WaitForNothingChanged(window);
         Assert.Contains("deleted", asked, StringComparison.Ordinal);
         Assert.False(File.Exists(added));
         Assert.Equal(Original, Text(window));
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Rollback_puts_back_a_file_another_program_was_reading_and_deletes_a_new_one_it_held_once_they_are_let_go()
+    {
+        MainWindow window = Open();
+        string shop = Path.Combine(folder, "Shop.cs");
+        string added = Path.Combine(folder, "Prices.cs");
+        File.WriteAllText(added, "class Prices { }\n");
+        window.EditorArea.CodeEditor.GoTo(new TextPosition(0, 0));
+        window.KeyTextInput("sealed ");
+        window.Perform(AppActions.Save);
+        _ = window.Vcs.RefreshAsync();
+        Ui.WaitFor(() => window.Vcs.Changes.Count == 2, "a changed file and a new one");
+        window.Confirm = (_, _, _) => Task.FromResult(true);
+        foreach (CommitRow row in window.CommitView.Rows.OfType<CommitRow>())
+        {
+            row.IsChosen = true;
+        }
+
+        // Another program reads both until git has tried once, which Windows refuses (git deletes the old file first).
+        FileStream reading = new(shop, FileMode.Open, FileAccess.Read, FileShare.Read);
+        FileStream holding = new(added, FileMode.Open, FileAccess.Read, FileShare.Read);
+        EventHandler<Passenger.Core.ChildEnd> letGo = (_, end) =>
+        {
+            if (end.Command.Contains(" restore ", StringComparison.Ordinal))
+            {
+                reading.Dispose();
+                holding.Dispose();
+            }
+        };
+        Passenger.Core.ChildProcesses.Ended += letGo;
+        try
+        {
+            RollbackChosen(window.CommitView);
+            WaitForNothingChanged(window);
+        }
+        finally
+        {
+            Passenger.Core.ChildProcesses.Ended -= letGo;
+            reading.Dispose();
+            holding.Dispose();
+        }
+        Assert.Equal(Original, File.ReadAllText(shop));
+        Assert.False(File.Exists(added), "The new file stayed after the program holding it let go");
+        Ui.WaitFor(() => Text(window) == Original, "the open file to take the last commit's text");
+        Assert.Equal("Rolled back 2 files", window.Status);
         window.Close();
     }
 
@@ -982,6 +1030,22 @@ public sealed class VcsTests : IDisposable
         window.OpenFile(Path.Combine(folder, "Shop.cs"));
         Ui.Settle();
         return window;
+    }
+
+    /// <summary>Waits for Git to list nothing changed; failing, it says what is still listed, whether Git is still busy,
+    /// what the status bar says (git's own words when a rollback failed) and what git finds on disk.</summary>
+    private void WaitForNothingChanged(MainWindow window)
+    {
+        try
+        {
+            Ui.WaitFor(() => window.Vcs.Changes.Count == 0, "nothing left changed");
+        }
+        catch (TimeoutException waited)
+        {
+            string listed = string.Join(", ", window.Vcs.Changes.Select(c => $"{c.Name} ({c.Kind})"));
+            throw new TimeoutException($"{waited.Message}: Git still lists {listed} and is {(window.Vcs.IsBusy ? "still busy" : "idle")}, "
+                + $"the status bar says \"{window.Status}\" and git status says \"{Git("status", "--porcelain").Trim()}\"", waited);
+        }
     }
 
     /// <summary>Presses the Commit window's Rollback, as the person would.</summary>
