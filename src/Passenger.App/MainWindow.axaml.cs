@@ -358,6 +358,7 @@ public partial class MainWindow : Window
         debug.Breakpoints.Clear();
         bookmarks.Clear();
         history.Clear();
+        Editors.Commands.Clear();
         findScope = new FindScopeState();
         chosenScope = null;
         return true;
@@ -451,7 +452,11 @@ public partial class MainWindow : Window
             return;
         }
         CodeEditor editor = Editors.CodeEditor;
-        if (editor.IsFocused && !shifted && assist.TakeKey(action))
+        if (editor.IsFocused && !shifted && action is EditorActions.Undo or EditorActions.Redo && UndoCommand(action == EditorActions.Redo, Editors.Active))
+        {
+            e.Handled = true;
+        }
+        else if (editor.IsFocused && !shifted && assist.TakeKey(action))
         {
             e.Handled = true;
         }
@@ -715,6 +720,8 @@ public partial class MainWindow : Window
         debug.Breakpoints.Changed += (_, _) => folderState?.Breakpoints.Set(debug.Breakpoints.Capture());
         bookmarks.Changed += (_, _) => folderState?.Bookmarks.Set(bookmarks.Capture());
         findSettings = store.Find.Value;
+        assist.RenameSettings = store.Refactorings.Value;
+        assist.RenameSettingsChanged += (_, _) => state?.Refactorings.Set(assist.RenameSettings);
         keepsWorkspace = true;
         RestoreWorkspace();
         ShowRecent();

@@ -67,6 +67,13 @@ public sealed class TextDocument
     public bool CanUndo => undo.Count > 0;
     public bool CanRedo => redo.Count > 0;
 
+    /// <summary>The step the next <see cref="Undo"/> takes back, or null: the same object for as long as it is that step,
+    /// so a change made in several files at once (a rename) knows whether it is still each one's latest.</summary>
+    public object? NextUndo => undo.Count > 0 ? undo[^1] : null;
+
+    /// <summary>The step the next <see cref="Redo"/> makes again, or null, as <see cref="NextUndo"/> is.</summary>
+    public object? NextRedo => redo.Count > 0 ? redo[^1] : null;
+
     public static string DetectLineEnding(string text)
     {
         int lf = text.IndexOf('\n');

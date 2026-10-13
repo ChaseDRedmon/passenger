@@ -155,6 +155,10 @@ public partial class MainWindow
                 editor.TryExecute(action);
                 return;
         }
+        if (action is E.Undo or E.Redo && UndoCommand(action == E.Redo, Editors.Active))
+        {
+            return;
+        }
         Editors.CodeEditor.TryExecute(action);
     }
 

@@ -109,6 +109,28 @@ public sealed partial class CodeAssist
     /// <summary>The name in the rename box while it is open, null otherwise.</summary>
     public string? Renaming => modal is RenameBox box ? box.Text : null;
 
+    /// <summary>The files the open rename box offers to rename with the type, none while it offers none.</summary>
+    public IReadOnlyList<string> RenameOffersFiles => modal is RenameBox box ? box.Files : [];
+
+    /// <summary>Rename's options as they were left: whether a type's files and a file's type are renamed with it.</summary>
+    public RenameSettings RenameSettings
+    {
+        get => renameSettings;
+        set
+        {
+            if (value != renameSettings)
+            {
+                renameSettings = value;
+                RenameSettingsChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    private RenameSettings renameSettings = new();
+
+    /// <summary>An option of Rename's turned on or off, for the window to keep.</summary>
+    public event EventHandler? RenameSettingsChanged;
+
     /// <summary>While the debugger is paused, the value of what the pointer rests on, which the hover
     /// card shows instead of the symbol's description, as Rider does.</summary>
     public Func<int, CancellationToken, Task<string?>>? DebuggerValue { get; set; }
@@ -1047,7 +1069,9 @@ public sealed partial class CodeAssist
         {
             return;
         }
-        RenameBox box = new(text.GetText(word));
+        string old = text.GetText(word);
+        RenameBox box = new(old);
+        box.RenamesFilesChanged += (_, on) => RenameSettings = RenameSettings with { RenameFiles = on };
         ChangeTracker opened = new(Editor.Document);
         ShowModal(box, word.Start, async name =>
         {
@@ -1064,9 +1088,11 @@ public sealed partial class CodeAssist
                 if (await Now(document).RenameAsync(at, name) is { } edit)
                 {
                     List<string> dropped = [];
-                    int files = WorkspaceEdits.Apply(editors, edit, asked, dropped);
+                    List<(string From, string To)> moves = box.RenamesFiles ? [.. box.Files.Select(f => (f, TypeRename.Renamed(f, name)))] : [];
+                    int files = TypeRename.Apply(editors, edit, moves, $"Rename {old} to {name}", asked, dropped);
+                    string renamedFiles = moves.Count > 0 ? $"; {string.Join(", ", moves.Select(m => $"{Path.GetFileName(m.From)} to {Path.GetFileName(m.To)}"))}" : string.Empty;
                     Message?.Invoke(this, dropped.Count > 0 ? $"Renamed, but not in {string.Join(", ", dropped)}: it was edited meanwhile"
-                        : files > 1 ? $"Renamed in {files} files" : "Renamed");
+                        : (files > 1 ? $"Renamed in {files} files" : "Renamed") + renamedFiles);
                 }
                 else
                 {
@@ -1082,6 +1108,31 @@ public sealed partial class CodeAssist
                 Message?.Invoke(this, $"Rename failed: {failed.Message}");
             }
         });
+        _ = OfferFileRenames(box, document, word.Start);
+    }
+
+    /// <summary>Rider's Also rename files to reflect this change, offered in the open rename box once the server says the
+    /// name is a type's declared in files named after it.</summary>
+    private async Task OfferFileRenames(RenameBox box, OpenDocument document, int offset)
+    {
+        BackgroundWork.Begin();
+        try
+        {
+            if (service()?.Session?.Folder is { } folder && await TypeRename.NamedAsync(editors, folder, Now(document), offset) is { Files.Count: > 0 } named
+                && modal == box)
+            {
+                box.OfferFiles(named.Files, RenameSettings.RenameFiles);
+                Place(box, offset, above: true);
+            }
+        }
+        catch (LanguageServerFailed)
+        {
+            // The rename asks the same server, and says why it could not.
+        }
+        finally
+        {
+            BackgroundWork.End();
+        }
     }
 
     private async Task GoToDefinition(int offset)

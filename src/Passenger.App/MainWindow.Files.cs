@@ -1,4 +1,5 @@
 using Avalonia.Input.Platform;
+using Passenger.App.CSharp;
 using Passenger.App.Editors;
 using Passenger.App.Explorer;
 using Passenger.App.Run;
@@ -93,7 +94,10 @@ public partial class MainWindow
                 _ = OpenTerminalAt(node.Kind == NodeKind.Folder ? path : Path.GetDirectoryName(path)!);
                 break;
             case ExplorerAction.Rename when path is not null:
-                AskName("Rename", Path.GetFileName(path), name => Rename(path, name));
+                AskRename(path);
+                break;
+            case ExplorerAction.Undo or ExplorerAction.Redo:
+                UndoCommand(action == ExplorerAction.Redo, null);
                 break;
             case ExplorerAction.Delete when path is not null && node.Kind == NodeKind.Project:
                 await RemoveProjectAsync(path);
@@ -254,8 +258,102 @@ public partial class MainWindow
         }
     }
 
+    /// <summary>Rider's Rename on a row: a C# file named after a type it declares offers to rename the type too, Rider's
+    /// Rename type 'Foo' to match the new file name, checked as it was left (on until turned off).</summary>
+    private void AskRename(string path)
+    {
+        if (TypeRename.NamedAfterFile(Editors, path) is not { } type)
+        {
+            AskName("Rename", Path.GetFileName(path), name => Rename(path, name));
+            return;
+        }
+        Vcs.NamePopup? popup = null;
+        popup = new Vcs.NamePopup("Rename", Path.GetFileName(path), name => RenameWithTypeAsync(path, name, type, popup?.Option?.IsChecked == true),
+            option: ($"Rename type '{type.Name}' to match the new file name", assist.RenameSettings.RenameType));
+        popup.OptionChanged += (_, on) => assist.RenameSettings = assist.RenameSettings with { RenameType = on };
+        popup.Done += (_, _) => ClosePopup();
+        ShowPopup(popup);
+    }
+
+    /// <summary>Renames a C# file and, when asked, the type it is named after, as Rider's Rename of a file does: the
+    /// language server renames the type everywhere it is used, then the file takes its new name and any other file named
+    /// after the type (a partial part's Foo.Designer.cs) the type's, all one command for Undo. Null once renamed, else why
+    /// not, in Rider's words where it has them.</summary>
+    public async Task<string?> RenameWithTypeAsync(string path, string name, (string Name, int Offset) type, bool renameType)
+    {
+        string renamed = TypeRename.Stem(name);
+        if (!renameType || renamed == type.Name)
+        {
+            return Rename(path, name);
+        }
+        if (Invalid(name) is { } problem)
+        {
+            return problem;
+        }
+        if (!name.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
+        {
+            return "The new file name extension is not valid for source code files";
+        }
+        if (!Microsoft.CodeAnalysis.CSharp.SyntaxFacts.IsValidIdentifier(renamed))
+        {
+            return "The new file name cannot be used as a valid type name";
+        }
+        string target = Path.Combine(Path.GetDirectoryName(path)!, name);
+        if ((File.Exists(target) || Directory.Exists(target)) && !string.Equals(target, path, StringComparison.OrdinalIgnoreCase))
+        {
+            return $"{name} is already there";
+        }
+        if (csharp?.Session is not { IsLoaded: true } session)
+        {
+            return csharp?.Unready("Renaming the type") ?? "Renaming the type needs the C# language server, which runs for a folder";
+        }
+        OpenDocument? open = Editors.Documents.FirstOrDefault(d => d.Path == path);
+        // A file not open is shown to the server for the question alone, as Rider renames without opening it.
+        Lsp.LspDocument? shown = null;
+        BackgroundWork.Begin();
+        try
+        {
+            Lsp.LspDocument server = open is not null ? csharp.For(open)?.Lsp ?? throw new Lsp.LanguageServerFailed("the C# language server has not opened the file yet")
+                : shown = session.Open(path, new TextDocument(FileText.Load(path)?.Text ?? string.Empty));
+            using Asked asked = WorkspaceEdits.Track(Editors);
+            System.Text.Json.JsonElement? edit = await server.RenameAsync(type.Offset, renamed);
+            (string Type, IReadOnlyList<string> Files)? named = await TypeRename.NamedAsync(Editors, session.Folder, server, type.Offset);
+            shown?.Dispose();
+            shown = null;
+            if (edit is not { } made)
+            {
+                return $"{type.Name} can't be renamed";
+            }
+            List<(string From, string To)> moves = [(path, target)];
+            if (named is { } parts)
+            {
+                moves.AddRange(parts.Files.Where(f => f != path).Select(f => (f, TypeRename.Renamed(f, renamed))));
+            }
+            List<string> dropped = [];
+            int files = TypeRename.Apply(Editors, made, moves, $"Rename {type.Name} to {renamed}", asked, dropped);
+            FilesChanged();
+            Explorer.Reveal(PathNames.Canonical(target));
+            StatusText.Text = $"Renamed {Path.GetFileName(path)} to {name}, and {type.Name} to {renamed} in {files} file{(files == 1 ? "" : "s")}"
+                + (dropped.Count > 0 ? $", but not in {string.Join(", ", dropped)}: it was edited meanwhile" : string.Empty);
+            return null;
+        }
+        catch (Lsp.LanguageServerFailed failed)
+        {
+            return $"{type.Name} could not be renamed: {failed.Reason}";
+        }
+        catch (WorkspaceEditFailed failed)
+        {
+            return failed.Message;
+        }
+        finally
+        {
+            shown?.Dispose();
+            BackgroundWork.End();
+        }
+    }
+
     /// <summary>Renames a file or folder in place. Its open files keep their tabs, splits and undo, saved first, and
-    /// its bookmarks and breakpoints go with it.</summary>
+    /// its bookmarks and breakpoints go with it. Undo in the Solution view renames it back, as Rider's does.</summary>
     public string? Rename(string path, string name)
     {
         if (Invalid(name) is { } problem)
@@ -271,9 +369,12 @@ public partial class MainWindow
         {
             return $"{name} is already there";
         }
-        if (Editors.MoveFile(path, target) is { } failed)
+        using (Editors.Commands.Record($"Rename {Path.GetFileName(path)} to {name}"))
         {
-            return failed;
+            if (Editors.MoveFile(path, target) is { } failed)
+            {
+                return failed;
+            }
         }
         Explorer.Reveal(PathNames.Canonical(target));
         return null;

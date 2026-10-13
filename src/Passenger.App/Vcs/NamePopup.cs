@@ -10,25 +10,37 @@ namespace Passenger.App.Vcs;
 
 /// <summary>Asks for a name, as Rider's Create New Branch does: Enter tries it, and when that fails the reason shows
 /// under the box and the name stays to correct; Escape gives up. With kinds to choose from, as Rider's New Class/Interface
-/// has, they are listed under the box, the first chosen, and Up and Down choose another while the name is typed.</summary>
+/// has, they are listed under the box, the first chosen, and Up and Down choose another while the name is typed. With an
+/// option, as Rider's Rename of a file has Rename type, it is a check box under the box, clicked while the keys stay
+/// with the name.</summary>
 public sealed class NamePopup : UserControl
 {
     private readonly TextBox name;
     private readonly TextBlock problem;
     private readonly ListBox? kinds;
+    private readonly CheckBox? option;
     private readonly IReadOnlyList<string> kindNames;
     private readonly Func<string, Task<string?>> attempt;
     private bool trying;
 
     /// <param name="attempt">Tries the name: null when it worked, else why not.</param>
     /// <param name="kinds">What can be made, each with its icon, the first chosen; none to ask for the name alone.</param>
-    public NamePopup(string title, string initial, Func<string, Task<string?>> attempt, IReadOnlyList<(string Name, Control Icon)>? kinds = null)
+    /// <param name="option">A check box's words and whether it starts checked; none for no option.</param>
+    public NamePopup(string title, string initial, Func<string, Task<string?>> attempt, IReadOnlyList<(string Name, Control Icon)>? kinds = null,
+        (string Text, bool On)? option = null)
     {
         this.attempt = attempt;
         Width = 360;
         name = new TextBox { Classes = { "search" }, Text = initial };
         problem = new TextBlock { Classes = { "muted" }, FontSize = 12, IsVisible = false, TextWrapping = TextWrapping.Wrap };
-        StackPanel body = new() { Spacing = 8, Children = { new TextBlock { Classes = { "paneTitle" }, Text = title }, name, problem } };
+        StackPanel body = new() { Spacing = 8, Children = { new TextBlock { Classes = { "paneTitle" }, Text = title }, name } };
+        if (option is { } asked)
+        {
+            this.option = new CheckBox { Content = asked.Text, IsChecked = asked.On, Focusable = false, FontSize = 12, MinHeight = 0 };
+            this.option.IsCheckedChanged += (_, _) => OptionChanged?.Invoke(this, this.option.IsChecked == true);
+            body.Children.Add(this.option);
+        }
+        body.Children.Add(problem);
         kindNames = [.. (kinds ?? []).Select(k => k.Name)];
         if (kinds is { Count: > 0 })
         {
@@ -78,6 +90,12 @@ public sealed class NamePopup : UserControl
 
     /// <summary>The kind chosen, or null when there are none to choose from.</summary>
     public string? Kind => kinds is { SelectedIndex: >= 0 and var at } ? kindNames[at] : null;
+
+    /// <summary>The option's check box, or null when there is none.</summary>
+    public CheckBox? Option => option;
+
+    /// <summary>The option checked or cleared.</summary>
+    public event EventHandler<bool>? OptionChanged;
 
     /// <summary>Tries the name typed, as Enter does; Enter again while it is being tried (a stash running) does nothing.</summary>
     public async Task SubmitAsync()

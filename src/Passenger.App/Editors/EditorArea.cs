@@ -33,6 +33,7 @@ public sealed partial class EditorArea : UserControl
 
     public EditorArea()
     {
+        Commands = new CommandHistory(this);
         activeGroup = NewGroup();
         activeGroup.IsCurrent = true;
         emptyTitle = new TextBlock { Text = "Passenger", FontSize = 28, FontWeight = FontWeight.SemiBold, HorizontalAlignment = HorizontalAlignment.Center };
@@ -66,6 +67,9 @@ public sealed partial class EditorArea : UserControl
 
     /// <summary>A file or folder moved through <see cref="MoveFile"/>, with the open files that went with it.</summary>
     public event EventHandler<FileMove>? Moved;
+
+    /// <summary>The commands that changed several files at once or moved one (a rename), which Undo takes back whole.</summary>
+    public CommandHistory Commands { get; }
 
     /// <summary>The active group's editor: the one keys and the IDE's actions go to.</summary>
     public CodeEditor CodeEditor => activeGroup.Editor;

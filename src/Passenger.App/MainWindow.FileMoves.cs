@@ -1,3 +1,4 @@
+using Passenger.App.Editors;
 using Passenger.App.Explorer;
 using Passenger.App.Workspace;
 using Passenger.Core;
@@ -189,17 +190,56 @@ public partial class MainWindow
         }
     }
 
-    /// <summary>Whether the editor's Cut, Copy or Paste is the Explorer's here: its rows have the keys (the Edit menu
-    /// of the Mac's menu bar runs them where the keys are, as Rider's does).</summary>
+    /// <summary>Whether the editor's Cut, Copy, Paste, Undo or Redo is the Explorer's here: its rows have the keys (the
+    /// Edit menu of the Mac's menu bar runs them where the keys are, as Rider's does).</summary>
     private static bool ExplorerEdits(string action, ActionContext context) =>
-        action is E.Cut or E.Copy or E.Paste && context.ToolWindow?.Id == "explorer" && context.Focused is not Avalonia.Controls.TextBox;
+        action is E.Cut or E.Copy or E.Paste or E.Undo or E.Redo && context.ToolWindow?.Id == "explorer" && context.Focused is not Avalonia.Controls.TextBox;
 
-    /// <summary>The editor's Cut, Copy or Paste run on the Explorer's chosen row.</summary>
+    /// <summary>The editor's Cut, Copy or Paste run on the Explorer's chosen row; its Undo and Redo on the last command
+    /// that renamed or moved files.</summary>
     private void ExplorerEdit(string action)
     {
-        if (Explorer.Selected is { } row)
+        if (action is E.Undo or E.Redo)
+        {
+            UndoCommand(action == E.Redo, null);
+        }
+        else if (Explorer.Selected is { } row)
         {
             _ = ExplorerActionAsync(action switch { E.Cut => ExplorerAction.Cut, E.Copy => ExplorerAction.Copy, _ => ExplorerAction.Paste }, row);
         }
+    }
+
+    /// <summary>Undo or Redo that reaches a command of several files or of a file moved (a rename) takes all of it back
+    /// or makes all of it again, once the person agrees, as Rider asks "Undo Rename?" of a change beyond the one file;
+    /// in an editor, only when that command is its file's next step. False when Undo there is the file's own.</summary>
+    private bool UndoCommand(bool redo, OpenDocument? document)
+    {
+        if ((redo ? Editors.Commands.ToRedo(document) : Editors.Commands.ToUndo(document)) is not { } command)
+        {
+            return false;
+        }
+        _ = UndoCommandAsync(command, redo);
+        return true;
+    }
+
+    private async Task UndoCommandAsync(CommandHistory.Command command, bool redo)
+    {
+        string verb = redo ? "Redo" : "Undo";
+        if (Editors.Commands.Blocked(command, redo) is { } changed)
+        {
+            StatusText.Text = $"Cannot {verb.ToLowerInvariant()} {command.Name}: {changed}";
+            return;
+        }
+        // Named as they are now: after the command's moves for an undo, before them for a redo.
+        IEnumerable<string> files = command.Texts.Select(t => t.Document?.Path ?? (redo ? t.Path : command.Moved(t.Path)))
+            .Concat(command.Moves.Select(m => redo ? m.From : m.To));
+        if (!await Confirm(verb, $"{verb} {command.Name}? It changes {Together([.. files.Select(Path.GetFileName).OfType<string>().Distinct()])}.", verb))
+        {
+            return;
+        }
+        // Asked again: a file may have changed while the question was open.
+        string? failed = Editors.Commands.Blocked(command, redo) ?? (redo ? Editors.Commands.Redo(command) : Editors.Commands.Undo(command));
+        FilesChanged();
+        StatusText.Text = failed is null ? $"{(redo ? "Redone" : "Undone")}: {command.Name}" : $"Cannot {verb.ToLowerInvariant()} {command.Name}: {failed}";
     }
 }

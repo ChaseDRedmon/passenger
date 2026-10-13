@@ -250,6 +250,7 @@ public sealed class VcsController
         string? failure = null;
         try
         {
+            await indexed;
             status = await repository.StatusAsync();
             merge = await repository.MergeStateAsync(status.Branch, status.Head);
             refs = history ? await repository.RefsAsync() : null;
@@ -836,11 +837,37 @@ public sealed class VcsController
     }
 
     /// <summary>A file or folder moved here (a rename, a code fix): until a commit has its files at their new paths,
-    /// their change bars, diff and rollback compare with what the last commit has where they were, as Rider's do.</summary>
+    /// their change bars, diff and rollback compare with what the last commit has where they were, as Rider's do. What
+    /// the index has of it moves with it, as git mv moves it, so the status shows a rename; the next read waits for that.</summary>
     public void Moved(string from, string to)
     {
         moves.Add((from, to));
         heads.Clear();
+        if (git is { } repository)
+        {
+            indexed = MoveInIndexAsync(indexed, repository, from, to);
+        }
+    }
+
+    /// <summary>The index's moves still under way, which a read waits out so it never shows a move half made.</summary>
+    private Task indexed = Task.CompletedTask;
+
+    /// <summary>One move made in the index after those before it; it never fails, so the reads waiting on it go on.</summary>
+    private async Task MoveInIndexAsync(Task before, Git repository, string from, string to)
+    {
+        await before;
+        try
+        {
+            GitResult moved = await repository.MoveInIndexAsync(from, to);
+            if (!moved.Succeeded)
+            {
+                Message?.Invoke(this, $"Git did not take {Path.GetFileName(from)}'s move: {moved.Message}");
+            }
+        }
+        catch (Exception error)
+        {
+            IdeErrors.Report(error);
+        }
     }
 
     /// <summary>Where a path was before every move since the folder opened.</summary>

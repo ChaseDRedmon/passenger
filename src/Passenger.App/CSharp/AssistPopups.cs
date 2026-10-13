@@ -331,20 +331,23 @@ internal sealed class ChoicePopup : Border
 internal sealed record Choice(string Text, string Detail, object Value, bool DetailIsCode = false, char? Mnemonic = null);
 
 /// <summary>Rider's inline rename: the name in a box over itself, all of it selected; Enter renames,
-/// Escape leaves it.</summary>
+/// Escape leaves it. For a type declared in files named after it, Rider's Also rename files to reflect this change is a
+/// check box under it, with the files it would rename, clicked while the keys stay with the name.</summary>
 internal sealed class RenameBox : Border
 {
     // Styled as the Border it is, so the theme's Border.popup reaches it.
     protected override Type StyleKeyOverride => typeof(Border);
 
     private readonly TextBox name;
+    private readonly StackPanel body;
+    private CheckBox? renameFiles;
 
     public RenameBox(string current)
     {
         Classes.Add("popup");
         Padding = new Thickness(8, 6);
         name = new TextBox { Text = current, Classes = { "search" }, MinWidth = 220, FontFamily = Fonts.Mono };
-        Child = new StackPanel
+        body = new StackPanel
         {
             Spacing = 4,
             Children =
@@ -353,6 +356,7 @@ internal sealed class RenameBox : Border
                 name,
             },
         };
+        Child = body;
         name.AddHandler(KeyDownEvent, OnKeyDown, RoutingStrategies.Tunnel);
         Dispatcher.UIThread.Post(() =>
         {
@@ -366,6 +370,34 @@ internal sealed class RenameBox : Border
 
     /// <summary>The name as the box has it now.</summary>
     public string Text => name.Text ?? string.Empty;
+
+    /// <summary>The files named after the type renamed, once offered; none otherwise.</summary>
+    public IReadOnlyList<string> Files { get; private set; } = [];
+
+    /// <summary>Whether the files offered are to be renamed with the type.</summary>
+    public bool RenamesFiles => renameFiles?.IsChecked == true;
+
+    /// <summary>Rider's Also rename files to reflect this change, checked or cleared.</summary>
+    public event EventHandler<bool>? RenamesFilesChanged;
+
+    /// <summary>Offers to rename the files named after the type with it, checked as the option was left.</summary>
+    public void OfferFiles(IReadOnlyList<string> files, bool on)
+    {
+        Files = files;
+        renameFiles = new CheckBox { Content = "Also rename files to reflect this change", IsChecked = on, Focusable = false, FontSize = 12, MinHeight = 0 };
+        renameFiles.IsCheckedChanged += (_, _) => RenamesFilesChanged?.Invoke(this, RenamesFiles);
+        body.Children.Add(renameFiles);
+        body.Children.Add(new TextBlock
+        {
+            Text = $"Corresponding files to be renamed: {string.Join(", ", files.Select(Path.GetFileName))}",
+            Classes = { "muted" },
+            FontSize = 11,
+            TextWrapping = TextWrapping.Wrap,
+            MaxWidth = 360,
+        });
+        // Measured again now, as it grew, so it is placed for its new size before the next layout.
+        InvalidateMeasure();
+    }
 
     private void OnKeyDown(object? sender, KeyEventArgs e)
     {

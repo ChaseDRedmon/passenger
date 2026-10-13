@@ -166,18 +166,26 @@ public sealed partial class PassengerTools(MainWindow window)
     });
 
     [McpServerTool(Name = "rename", Title = "Rename a symbol", Destructive = true), Description(
-        "Renames the symbol at a position everywhere it is used, as the IDE's Rename does, and saves the files it changes.")]
-    public Task<string> Rename(string path, int line, int column, [Description("The new name")] string newName, CancellationToken cancel = default) => OnUi(cancel, async () =>
+        "Renames the symbol at a position everywhere it is used, as the IDE's Rename does, and saves the files it changes. A type's " +
+        "files named after it (Foo.cs, Foo.Designer.cs) take its new name too, unless renameFiles is false.")]
+    public Task<string> Rename(string path, int line, int column, [Description("The new name")] string newName,
+        [Description("Whether a type's files named after it are renamed with it, as Rider's Also rename files to reflect this change")] bool renameFiles = true,
+        CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         (OpenDocument document, LspDocument lsp) = await Code(path, cancel);
-        if (await lsp.RenameAsync(Offset(document, line, column), newName) is not { } edit)
+        int offset = Offset(document, line, column);
+        (string Type, IReadOnlyList<string> Files)? named = window.CSharpService?.Session?.Folder is { } folder
+            ? await TypeRename.NamedAsync(window.EditorArea, folder, lsp, offset) : null;
+        if (await lsp.RenameAsync(offset, newName) is not { } edit)
         {
             return "This can't be renamed";
         }
         IReadOnlyList<string> files = [.. Shapes.WorkspaceEdit(edit).Select(f => DocumentUris.ToPath(f.Uri)).Distinct()];
-        WorkspaceEdits.Apply(window.EditorArea, edit);
+        List<(string From, string To)> moves = renameFiles && named is { } type ? [.. type.Files.Select(f => (f, TypeRename.Renamed(f, newName)))] : [];
+        TypeRename.Apply(window.EditorArea, edit, moves, $"Rename {named?.Type ?? "symbol"} to {newName}", null, []);
         window.EditorArea.SaveAll();
-        return $"Renamed in {files.Count} file{(files.Count == 1 ? "" : "s")}: {string.Join(", ", files.Select(Relative))}";
+        string renamed = moves.Count > 0 ? $"; renamed {string.Join(", ", moves.Select(m => $"{Relative(m.From)} to {Relative(m.To)}"))}" : string.Empty;
+        return $"Renamed in {files.Count} file{(files.Count == 1 ? "" : "s")}: {string.Join(", ", files.Select(Relative))}{renamed}";
     });
 
     [McpServerTool(Name = "code_actions", Title = "Fixes and refactorings", ReadOnly = true), Description(

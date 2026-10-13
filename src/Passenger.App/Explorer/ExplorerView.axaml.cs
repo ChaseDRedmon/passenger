@@ -19,6 +19,8 @@ public enum ExplorerAction
     Cut,
     Copy,
     Paste,
+    Undo,
+    Redo,
     AddReference,
     Compare,
     OpenInTerminal,
@@ -595,12 +597,14 @@ public partial class ExplorerView : UserControl
         {
             return;
         }
-        // The editor's Cut, Copy and Paste keys, whatever the keymap makes them, act on the rows while they have the keys.
+        // The editor's Cut, Copy, Paste, Undo and Redo keys, whatever the keymap makes them, act on the rows that have them.
         ExplorerAction? clipboard = AppActions.Keymap().ActionFor(new Shortcut(Keystroke.From(e))) switch
         {
             EditorActions.Cut when node.IsMovable => ExplorerAction.Cut,
             EditorActions.Copy when node.IsMovable => ExplorerAction.Copy,
             EditorActions.Paste when node.Into is not null => ExplorerAction.Paste,
+            EditorActions.Undo => ExplorerAction.Undo,
+            EditorActions.Redo => ExplorerAction.Redo,
             _ => null,
         };
         if (clipboard is { } asked)

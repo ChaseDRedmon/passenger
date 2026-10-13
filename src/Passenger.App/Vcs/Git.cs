@@ -762,6 +762,45 @@ public sealed class Git
     /// <summary>Whether a path is in the working tree, where git has a last commit's text for it.</summary>
     public bool IsInside(string path) => PathNames.Within(path, Root);
 
+    /// <summary>What the index has at a path (a file, or a folder's files) moved to where the file now is, as git mv
+    /// moves it with the file: each keeps its staged content under the new name, so the status shows the move as a
+    /// rename and the change the file has beyond that as its own. A path the index does not have, or has in conflict,
+    /// is left alone.</summary>
+    public async Task<GitResult> MoveInIndexAsync(string from, string to)
+    {
+        if (!IsInside(from) || !IsInside(to))
+        {
+            return new GitResult(0, string.Empty, string.Empty);
+        }
+        string source = Relative(from);
+        string target = Relative(to);
+        GitResult staged = await RunAsync(Root, ["ls-files", "--stage", "-z", "--", Literal(source)]);
+        if (!staged.Succeeded)
+        {
+            return staged;
+        }
+        StringBuilder moves = new();
+        foreach (string entry in staged.Output.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+        {
+            // "<mode> <object> <stage>\t<path>"
+            int tab = entry.IndexOf('\t', StringComparison.Ordinal);
+            string[] fields = tab < 0 ? [] : entry[..tab].Split(' ');
+            if (fields.Length != 3)
+            {
+                continue;
+            }
+            string path = entry[(tab + 1)..];
+            if (fields[2] != "0")
+            {
+                return new GitResult(0, string.Empty, string.Empty);
+            }
+            // Mode 0 takes the old path out of the index, as update-index --index-info reads it.
+            moves.Append(System.Globalization.CultureInfo.InvariantCulture, $"0 {new string('0', fields[1].Length)}\t{path}\0");
+            moves.Append(System.Globalization.CultureInfo.InvariantCulture, $"{fields[0]} {fields[1]}\t{target}{path[source.Length..]}\0");
+        }
+        return moves.Length == 0 ? staged : await RunAsync(Root, ["update-index", "-z", "--index-info"], moves.ToString());
+    }
+
     /// <summary>Rider's Update Project: the branch's upstream merged in (or rebased onto, as the person's pull.rebase
     /// says).</summary>
     public Task<GitResult> PullAsync() => RunAsync(Root, ["pull", "--no-edit"]);
