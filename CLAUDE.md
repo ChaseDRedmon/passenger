@@ -117,7 +117,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   and Complete Current Statement, from the file's syntax with no server (surround templates are `LiveTemplates` entries
   with a `Surround` scope); `CodeAssist.Refactorings.cs` is Optimize Imports (shared with Code Cleanup), Safe Delete
   (the server's definition and references, the removal from `SafeDeletion`) and the server's Introduce Field,
-  Introduce Parameter and Encapsulate Field under Rider's names. The server's colour and diagnostics refreshes are two
+  Introduce Parameter and Encapsulate Field under Rider's names. `TypeRename` renames a type with the files named after
+  it (their name up to the first dot), from Rename, the Solution view's Rename of a file and MCP's `rename`; Rename's
+  options are the store's `refactorings.json`. The server's colour and diagnostics refreshes are two
   events, each refreshing only its own.
 - `src/Passenger.App/Editors`: `EditorArea` is a tree of splits, each an `EditorGroup` (tabs, find bar, editor); its
   `CodeEditor` and `Active` are the active group's, so code that acts on "the editor" keeps working, and wiring for every
@@ -125,7 +127,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   or a tab dragged out) is an `EditorFrame` of the same `EditorArea`, never a second area, so a file shown in two
   windows is one `OpenDocument`; the folder keeps the windows in `WorkspaceState.EditorWindows`. Pinned tabs come
   first (`EditorTab.IsPinned`, kept as `KeptTab.Pinned`); `EditorArea.CloseTab` is the one close a person's goes
-  through, which Reopen Closed Tab remembers. The tab actions are `MainWindow.Tabs.cs`, filling a tab's menu through
+  through, which Reopen Closed Tab remembers. `EditorArea.Commands` is Rider's global undo: a command that changes
+  several files or moves one (`Commands.Record`, as renames do) is undone and redone whole, asked first. The tab actions are `MainWindow.Tabs.cs`, filling a tab's menu through
   `EditorArea.TabMenuOpening` with `ActionContext.Tab` naming the tab they act on. `MainWindow.CloseSolution` ends what
   the folder runs and shows the Welcome screen; `LeaveFolder` is what switching or closing a folder lets go of, so new
   per-folder state is let go there.
@@ -138,7 +141,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   one `Dock.Add` in `MainWindow.AddToolWindows`.
 - `src/Passenger.App/State`: the IDE's own state, in one `StateStore` under `PASSENGER_SETTINGS` or the user's local
   application data, kept only by the person's window: the app's documents at its top (`settings.json`, `layout.json`,
-  `recentSolutions.json`, `updates.json`, `find.json`)
+  `recentSolutions.json`, `updates.json`, `find.json`, `refactorings.json`)
   and each folder's under `workspaces/<name>-<hash>/` (editors and recent files, layout, breakpoints, bookmarks, run
   configurations, Find in Files' scope, the profiler's `snapshots/`). A
   `StateDocument` is a record that is an `IStateDocument`: its `Upgrades` from each older version and its `Clamped` value;
@@ -156,7 +159,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   side-by-side diff and `CommitGraph` the log's lanes. `GitView` is the Git window's content: the Log and a `GitLogView`
   tab per Show History, given a `HistoryScope` (a file followed with `--follow`, a folder, or lines with `-L`), read by
   `Git.HistoryAsync`, as `vcs_log` with a path reads it. `MainWindow.History.cs` is Show History, Show History for
-  Selection, Compare with Branch or Tag and Compare with Revision. `MainWindow.Vcs.cs` is the branch widget, the Commit and Git
+  Selection, Compare with Branch or Tag and Compare with Revision. `MergeState` is what a merge, rebase, cherry-pick or
+  revert stopped on and Rider's words for its sides (during a rebase yours is git's theirs); `ConflictsDialog` is
+  Rider's Conflicts dialog and `MergeWindow`/`MergeView` the three-way merge over `ThreeWayMerge`;
+  `MainWindow.Conflicts.cs` wires them with Continue Rebase and the aborts, and `vcs_status`/`vcs_resolve` give an
+  agent the same. A file moved through `EditorArea.MoveFile` takes its index entry with it, as git mv does. `MainWindow.Vcs.cs` is the branch widget, the Commit and Git
   windows' places (`ToolWindows/CommitView`, `GitLogView`) and the `app.vcs.*` actions.
 - `src/Passenger.App/Packages`: NuGet. `IPackageFeed` is nuget.org's v3 search and flat container (`NuGetOrgFeed`) or a
   folder of .nupkg files (`FolderFeed`, what the tests use offline); `PackageManager` changes projects through
@@ -196,7 +203,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   uses the terminal (Rider's Use external console) runs in a Terminal tab of its name (`TerminalPanel.RunAsync`, a
   `TerminalRun` with its process, exit code and Stop); Debug answers the adapter's runInTerminal the same way
   (`DebugController.RunInTerminal`), and `debug_input`/`debug_output` use that tab. In a program's tab, Run, Debug,
-  Rerun, Stop and the debugger's keys stay with the IDE.
+  Rerun, Stop and the debugger's keys stay with the IDE. Console links come from `ToolWindows/ConsoleLinks` (URLs, .NET
+  stack frames, compiler messages; in the terminal also paths to any file, hidden until Cmd/Ctrl), drawn by
+  `CodeEditor.Links` and `TerminalView.Links`; `MainWindow.Browse` is the only way the IDE opens a browser (recording
+  `Browsed` for tests), and Run and Debug open a plan's `BrowserUrl` once its port answers (`Run/BrowserLaunch`).
 - `src/Passenger.App/Testing`: unit testing works in Passenger's own `TestItem` (its id the project and full name, plus
   a data row's name) and `TestOutcome`, behind `ITestRunner`; `VsTestRunner` is the only file that knows VSTest's
   object model. `TestFinder` shows a solution's tests from code as it opens, before any build: test projects' files
