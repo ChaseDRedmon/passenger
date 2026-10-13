@@ -288,8 +288,7 @@ public sealed class IdeErrorsTests : IDisposable
         File.WriteAllText(Path.Combine(at, "Sample.csproj"),
             "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
         File.WriteAllText(Path.Combine(at, "Program.cs"), "class Program\n{\n    static void Main()\n    {\n    }\n}\n");
-        using Process restore = Process.Start(new ProcessStartInfo("dotnet", ["restore", at]) { RedirectStandardOutput = true, RedirectStandardError = true })!;
-        restore.WaitForExit();
+        Restore.Run(at);
     }
 
     /// <summary>The language servers' logs this test's IDE wrote, one to each server it started, where Help, Show Log finds

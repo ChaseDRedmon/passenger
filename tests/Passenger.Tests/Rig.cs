@@ -396,15 +396,29 @@ public sealed class InputWait : IDisposable
 }
 
 /// <summary>Programs the IDE started for a test, by id, as a process list would show them.</summary>
+/// <summary>A test's restore, run as the IDE runs the .NET command line (<see cref="Passenger.Core.ChildProcesses.DotnetCommand"/>):
+/// what MSBuild leaves of it is the tests' own and ends with them, and no variable of dotnet test's holds its output open.</summary>
+public static class Restore
+{
+    public static Task<Passenger.Core.ChildResult> RunAsync(string target) =>
+        Passenger.Core.ChildProcesses.RunAsync(Passenger.Core.ChildProcesses.DotnetCommand(["restore", target]), limit: TimeSpan.FromMinutes(5));
+
+    /// <summary>The restore, waited for off the UI thread, whose continuations would otherwise wait on it.</summary>
+    public static Passenger.Core.ChildResult Run(string target) => Task.Run(() => RunAsync(target)).GetAwaiter().GetResult();
+}
+
 public static class Processes
 {
     /// <summary>The id a program wrote to a file once it was running, the window's loop running meanwhile (not settling,
     /// which a build under way would not let it do).</summary>
-    public static int WrittenId(string file, string what)
+    public static int WrittenId(string file, string what) => WrittenId([file], what);
+
+    /// <summary>The id the first of several programs to run wrote to its file.</summary>
+    public static int WrittenId(IReadOnlyList<string> files, string what)
     {
         DateTime until = DateTime.UtcNow.AddMinutes(2);
         int id;
-        while ((id = ReadId(file)) <= 0)
+        while ((id = files.Select(ReadId).FirstOrDefault(i => i > 0)) <= 0)
         {
             if (DateTime.UtcNow > until)
             {
@@ -508,7 +522,7 @@ public static class Processes
     }
 
     /// <summary>The id in a file, or 0 before there is one. The writer may still have it open, which Windows refuses a reader.</summary>
-    private static int ReadId(string file)
+    public static int ReadId(string file)
     {
         try
         {
@@ -537,10 +551,11 @@ public static class Processes
         }
     }
 
-    /// <summary>Whether a process has gone within a few seconds, the time a killed one may take to leave the list.</summary>
-    public static bool Gone(int id)
+    /// <summary>Whether a process has gone within a few seconds, the time a killed one may take to leave the list, or within
+    /// the time given.</summary>
+    public static bool Gone(int id, TimeSpan? within = null)
     {
-        DateTime until = DateTime.UtcNow.AddSeconds(15);
+        DateTime until = DateTime.UtcNow + (within ?? TimeSpan.FromSeconds(15));
         while (IsRunning(id) && DateTime.UtcNow < until)
         {
             Thread.Sleep(100);

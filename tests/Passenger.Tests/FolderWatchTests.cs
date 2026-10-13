@@ -354,10 +354,7 @@ public sealed class FolderWatchTests : IDisposable
         Write("Extra/Use.cs", "public static class Use\n{\n    public static int Count()\n    {\n        int count = Helper.Name;\n        return count;\n    }\n}\n");
         Write("Foo.sln", ClassicSolution);
         Write("Foo.slnx", "<Solution>\n  <Project Path=\"App/App.csproj\" />\n  <Project Path=\"Extra/Extra.csproj\" />\n</Solution>\n");
-        using (System.Diagnostics.Process restore = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("dotnet", ["restore", Path.Combine(folder, "Foo.slnx")]) { RedirectStandardOutput = true, RedirectStandardError = true })!)
-        {
-            restore.WaitForExit();
-        }
+        Restore.Run(Path.Combine(folder, "Foo.slnx"));
         string slnx = Path.Combine(folder, "Foo.slnx");
         string sln = Path.Combine(folder, "Foo.sln");
         MainWindow window = Open();

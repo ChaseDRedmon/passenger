@@ -739,6 +739,9 @@ public partial class MainWindow : Window
     /// <summary>The program the Run window shows, while it runs or since it last did.</summary>
     public ProcessRunner Runner => runner;
 
+    /// <summary>The build, rebuild or clean the Build window shows, while it runs or since it last did.</summary>
+    public ProcessRunner Builder => builder;
+
     /// <summary>Chooses the run configuration by name, as the toolbar's menu does; false when there is none.</summary>
     public bool SelectConfiguration(string name)
     {

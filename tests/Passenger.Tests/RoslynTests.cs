@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Passenger.Lsp;
 using Passenger.Text;
 
@@ -80,9 +79,7 @@ public sealed class RoslynTests : IClassFixture<RoslynTests.ProjectSession>
                 "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
             File.WriteAllText(Path.Combine(folder, "Program.cs"), "class Program\n{\n    static void Main() { }\n}\n");
             File.WriteAllText(Path.Combine(folder, "Helper.cs"), "static class Helper\n{\n    public static int Twice(int value) => value * 2;\n}\n");
-            using Process restore = Process.Start(new ProcessStartInfo("dotnet", ["restore", folder]) { RedirectStandardOutput = true, RedirectStandardError = true })!;
-            await restore.WaitForExitAsync();
-            Assert.Equal(0, restore.ExitCode);
+            Assert.Equal(0, (await Restore.RunAsync(folder)).ExitCode);
 
             TaskCompletionSource loaded = new(TaskCreationOptions.RunContinuationsAsynchronously);
             Session = await RoslynSession.StartAsync(folder, null, [Path.Combine(folder, "Sample.csproj")], Path.Combine(folder, ".logs"));

@@ -35,8 +35,7 @@ public sealed class McpTests : IDisposable
             "int total = 0;\nfor (int i = 1; i <= 3; i++)\n{\n    total += Helper.Twice(i);\n}\nConsole.WriteLine($\"total {total}\");\nthrow new InvalidOperationException(\"the end\");\n");
         Write("Helper.cs",
             "static class Helper\n{\n    public static int Twice(int value)\n    {\n        int unused = 1;\n        return value * 2;\n    }\n}\n");
-        using Process restore = Process.Start(new ProcessStartInfo("dotnet", ["restore", folder]) { RedirectStandardOutput = true, RedirectStandardError = true })!;
-        restore.WaitForExit();
+        Restore.Run(folder);
     }
 
     public void Dispose()
@@ -199,8 +198,8 @@ public sealed class McpTests : IDisposable
               </Target>
             </Project>
             """);
-        // No build nodes or compiler server left for others' builds to use, which the kill would end under them.
-        Process passenger = StartPassenger(["--mcp", folder], environment: new() { ["MSBUILDDISABLENODEREUSE"] = "1", ["UseSharedCompilation"] = "false" });
+        // No compiler server left for others' builds to use, which the kill would end under them (the IDE's nodes are its own).
+        Process passenger = StartPassenger(["--mcp", folder], environment: new() { ["UseSharedCompilation"] = "false" });
         List<int> started = [];
         Task<CallToolResult>? building = null;
         using CancellationTokenSource giveUp = CancellationTokenSource.CreateLinkedTokenSource(Cancel);
@@ -244,6 +243,80 @@ public sealed class McpTests : IDisposable
             // The build's call, given up, ends with the server; its failure is nobody's to report.
             giveUp.Cancel();
             _ = building?.ContinueWith(call => call.Exception, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
+            if (client is not null)
+            {
+                try
+                {
+                    await client.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5), CancellationToken.None);
+                }
+                catch (Exception gone) when (gone is IOException or TimeoutException or ObjectDisposedException or OperationCanceledException or InvalidOperationException)
+                {
+                    // The server is gone, as the test made it.
+                }
+            }
+        }
+    }
+
+    /// <summary>The MSBuild nodes a build of Passenger's leaves for its next build, which no other build takes up, end with
+    /// Passenger, whether it ends as its agent leaves or is killed. The build's two projects build at once, each with a
+    /// step of a few seconds, so that MSBuild runs one in a node while the test looks at what the build runs in.</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task The_msbuild_nodes_a_build_leaves_for_the_next_end_with_passenger(bool killed)
+    {
+        string two = Path.Combine(folder, "two");
+        Directory.CreateDirectory(Path.Combine(two, "A"));
+        Directory.CreateDirectory(Path.Combine(two, "B"));
+        Write("two/Two.slnx", "<Solution>\n  <Project Path=\"A/A.csproj\" />\n  <Project Path=\"B/B.csproj\" />\n</Solution>\n");
+        foreach (string project in new[] { "two/A/A.csproj", "two/B/B.csproj" })
+        {
+            Write(project, """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <PropertyGroup>
+                    <TargetFramework>net10.0</TargetFramework>
+                  </PropertyGroup>
+                  <Target Name="Wait" BeforeTargets="Build" Condition="'$(DesignTimeBuild)' != 'true'">
+                    <Exec Condition="'$(OS)' != 'Windows_NT'" Command="echo $$ &gt; step.pid; sleep 3" />
+                    <Exec Condition="'$(OS)' == 'Windows_NT'" Command="powershell -NoProfile -Command &quot;Set-Content -Path step.pid -Value $PID; Start-Sleep -Seconds 3&quot;" />
+                  </Target>
+                </Project>
+                """);
+        }
+        // No compiler server among what the build starts, which is the machine's to share.
+        Process passenger = StartPassenger(["--mcp", two], environment: new() { ["UseSharedCompilation"] = "false" });
+        List<int> left = [];
+        McpClient? client = null;
+        try
+        {
+            client = await Connect(passenger, ["--mcp", two]);
+            HashSet<int> before = [.. Processes.Descendants(passenger.Id)];
+            Task<JsonElement> building = Call(client, "build");
+            await WrittenId("two/A/step.pid", "project A's step");
+            await WrittenId("two/B/step.pid", "project B's step");
+            IReadOnlyList<int> during = Processes.Descendants(passenger.Id);
+            JsonElement built = await building;
+            Assert.True(built.GetProperty("succeeded").GetBoolean(), built.GetProperty("outcome").GetString());
+            left.AddRange(during.Where(id => !before.Contains(id) && Processes.IsRunning(id)));
+            Assert.True(left.Count > 0, "The build left nothing for the next build to use, so there is nothing to see end with Passenger");
+
+            if (killed)
+            {
+                passenger.Kill();
+            }
+            else
+            {
+                await client.DisposeAsync();
+                client = null;
+                Assert.True(passenger.WaitForExit(MainWindow.EndLimit + TimeSpan.FromSeconds(5)), "Passenger did not end once its agent left");
+            }
+            string[] running = [.. left.Where(id => !Processes.Gone(id)).Select(Processes.Describe)];
+            Assert.True(running.Length == 0, $"After Passenger {(killed ? "was killed" : "ended")}, {running.Length} of the {left.Count} processes its build left went on:\n{string.Join('\n', running)}");
+        }
+        finally
+        {
+            ChildProcesses.Kill(passenger);
+            left.ForEach(Processes.Kill);
             if (client is not null)
             {
                 try

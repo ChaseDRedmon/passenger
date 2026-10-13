@@ -143,10 +143,7 @@ public sealed class ProfilerTests : IDisposable
                 }
             }
             """);
-        using (Process restore = Process.Start(new ProcessStartInfo("dotnet", ["restore", project]) { RedirectStandardOutput = true, RedirectStandardError = true })!)
-        {
-            restore.WaitForExit();
-        }
+        Restore.Run(project);
         MainWindow window = new() { Width = 1200, Height = 800 };
         window.Show();
         window.OpenFolder(project);

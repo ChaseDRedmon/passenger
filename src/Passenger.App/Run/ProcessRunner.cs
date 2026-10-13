@@ -111,13 +111,15 @@ public sealed partial class ProcessRunner
         return null;
     }
 
+    /// <summary>Ends the process and all it started, and on macOS and Linux what it left holding its output after it ended,
+    /// which keeps the console running until then.</summary>
     public void Stop()
     {
         UiThread.Check();
-        if (running && process is { HasExited: false } alive)
+        if (running && process is { } started)
         {
             WasStopped = true;
-            ChildProcesses.Kill(alive);
+            ChildProcesses.Kill(started);
         }
     }
 

@@ -39,13 +39,24 @@ public static class ChildProcesses
         return start;
     }
 
-    /// <summary>The .NET command line (<see cref="Dotnet.Host"/>) with these arguments: in English, as the IDE reads what
-    /// it says, and with no first-run banner. A <see cref="FileNotFoundException"/> when there is none.</summary>
+    /// <summary>The .NET command line (<see cref="Dotnet.Host"/>) with these arguments, in English (the IDE reads what it
+    /// says) and with no first-run banner. It builds in its own process and MSBuild's worker nodes, never in MSBuild's server,
+    /// which outlives it and goes on with what it runs when it is ended. A node ends what it runs when its build goes; one
+    /// left for the next build is the IDE's alone, in the group (the job on Windows) of the build that started it, so it
+    /// ends with the IDE (<see cref="Lifeline"/>). A <see cref="FileNotFoundException"/> when there is none.</summary>
     public static ProcessStartInfo DotnetCommand(IEnumerable<string> arguments, string? folder = null)
     {
         ProcessStartInfo start = Command(Dotnet.Host(), arguments, folder);
         start.Environment["DOTNET_CLI_UI_LANGUAGE"] = "en";
         start.Environment["DOTNET_NOLOGO"] = "1";
+        // The SDK's switch for MSBuild's server, and MSBuild's own, which a person's environment may set over the SDK's.
+        start.Environment["DOTNET_CLI_USE_MSBUILD_SERVER"] = "0";
+        start.Environment["MSBUILDUSESERVER"] = "0";
+        // No other build takes up a node of the IDE's, to have it ended under it when the IDE ends.
+        start.Environment.TryGetValue("MSBUILDNODEHANDSHAKESALT", out string? salt);
+        start.Environment["MSBUILDNODEHANDSHAKESALT"] = $"{salt}passenger-{Environment.ProcessId}";
+        // dotnet test's, for what it tests (an IDE run under it): each node would hold the command's output open as its own.
+        start.Environment.Remove("MSBUILDENSURESTDOUTFORTASKPROCESSES");
         return start;
     }
 

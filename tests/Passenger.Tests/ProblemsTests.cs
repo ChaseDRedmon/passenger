@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Passenger.App;
@@ -21,8 +20,7 @@ public sealed class ProblemsTests : IDisposable
         Write("Helper.cs", "static class Helper\n{\n    public static int Twice(int value) => value * 2;\n}\n");
         Write("Caller.cs", "static class Caller\n{\n    public static int Four() => Helper.Twice(2);\n}\n");
         Write("Bad.cs", "class Bad\n{\n    public int Count = \"none\";\n}\n");
-        using Process restore = Process.Start(new ProcessStartInfo("dotnet", ["restore", folder]) { RedirectStandardOutput = true, RedirectStandardError = true })!;
-        restore.WaitForExit();
+        Restore.Run(folder);
     }
 
     public void Dispose() => TestFolders.Delete(folder);

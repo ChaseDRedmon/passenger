@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Avalonia;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
@@ -21,8 +20,7 @@ public sealed class BuildRunTests : IDisposable
         Write("src/Hello/Hello.csproj",
             "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
         Write("src/Hello/Program.cs", "Console.WriteLine(\"Hello from the run\");\n");
-        using Process restore = Process.Start(new ProcessStartInfo("dotnet", ["restore", Path.Combine(folder, "Sample.slnx")]) { RedirectStandardOutput = true, RedirectStandardError = true })!;
-        restore.WaitForExit();
+        Restore.Run(Path.Combine(folder, "Sample.slnx"));
     }
 
     public void Dispose() => TestFolders.Delete(folder);
@@ -167,10 +165,7 @@ public sealed class BuildRunTests : IDisposable
         Write("src/Tools/Tool.cs", "public static class Tool\n{\n    public static int Count => \"none\";\n}\n");
         string hello = Path.Combine(folder, "src", "Hello", "bin", "Debug", "net10.0", "Hello.dll");
         string tools = Path.Combine(folder, "src", "Tools", "bin", "Debug", "net10.0", "Tools.dll");
-        using (Process restore = Process.Start(new ProcessStartInfo("dotnet", ["restore", Path.Combine(folder, "Sample.slnx")]) { RedirectStandardOutput = true, RedirectStandardError = true })!)
-        {
-            restore.WaitForExit();
-        }
+        Restore.Run(Path.Combine(folder, "Sample.slnx"));
         MainWindow window = Open();
         ExplorerTree tree = window.ExplorerView.Tree;
         tree.Expand(Assert.Single(tree.Rows, r => r.Kind == NodeKind.SolutionFolder && r.Name == "src"));
@@ -200,31 +195,103 @@ public sealed class BuildRunTests : IDisposable
     }
 
     /// <summary>dotnet test sets MSBuild's MSBUILDENSURESTDOUTFORTASKPROCESSES for the process it tests, as for an IDE started
-    /// under it. A handshake salt of the test's own keeps MSBuild from reusing a node another build left, so Roslyn's restore
-    /// starts one, as on a machine with none idle; it waits two minutes to be reused, not fifteen.</summary>
+    /// under it. MSBuild of the test's own (<see cref="OwnMSBuild"/>) has no node idle to reuse, so Roslyn's restore starts
+    /// one, as on a machine with none idle.</summary>
     [AvaloniaFact]
     public void A_solution_of_two_projects_opened_under_dotnet_tests_environment_loads_in_the_language_server()
     {
-        Write("Sample.slnx", "<Solution>\n  <Folder Name=\"/src/\">\n    <Project Path=\"src/Hello/Hello.csproj\" />\n    <Project Path=\"src/Tools/Tools.csproj\" />\n  </Folder>\n</Solution>\n");
-        Write("src/Tools/Tools.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
-        Dictionary<string, string?> before = new[] { "MSBUILDENSURESTDOUTFORTASKPROCESSES", "MSBUILDNODEHANDSHAKESALT", "MSBUILDNODECONNECTIONTIMEOUT" }
-            .ToDictionary(name => name, Environment.GetEnvironmentVariable);
+        WriteTwoProjects();
+        using OwnMSBuild msbuild = new(("MSBUILDENSURESTDOUTFORTASKPROCESSES", "1"));
+        // Settling waits for Roslyn to say the projects loaded, which it says once its restore's output has ended.
+        MainWindow window = Open();
+        Assert.True(window.CSharpService?.IsReady, window.CSharpService?.State);
+        window.Close();
+    }
+
+    /// <summary>The build the IDE starts under dotnet test's environment, its two projects built at once, so MSBuild starts a
+    /// node for one, which waits to be reused once the build is done: the output the variable would give it is not to be
+    /// held open with it.</summary>
+    [AvaloniaFact]
+    public void A_build_of_two_projects_under_dotnet_tests_environment_ends_and_the_build_window_says_so()
+    {
+        WriteTwoProjects();
+        using OwnMSBuild msbuild = new(("MSBUILDENSURESTDOUTFORTASKPROCESSES", "1"));
+        MainWindow window = Open();
         try
         {
-            Environment.SetEnvironmentVariable("MSBUILDENSURESTDOUTFORTASKPROCESSES", "1");
-            Environment.SetEnvironmentVariable("MSBUILDNODEHANDSHAKESALT", Guid.NewGuid().ToString("N"));
-            Environment.SetEnvironmentVariable("MSBUILDNODECONNECTIONTIMEOUT", "120000");
-            // Settling waits for Roslyn to say the projects loaded, which it says once its restore's output has ended.
-            MainWindow window = Open();
-            Assert.True(window.CSharpService?.IsReady, window.CSharpService?.State);
-            window.Close();
+            window.Perform(AppActions.Build);
+            int command = window.Builder.ProcessId ?? 0;
+            Assert.True(Processes.Gone(command, TimeSpan.FromMinutes(2)), "The build's dotnet command never ended");
+            DateTime heard = DateTime.UtcNow.AddSeconds(10);
+            while (window.IsBuilding && DateTime.UtcNow < heard)
+            {
+                Passenger.App.Screenshot.Pump(TimeSpan.FromMilliseconds(50));
+            }
+            Assert.False(window.IsBuilding, "The build's dotnet command ended, but the Build window still says it is building: a node MSBuild started holds its output open");
+            Assert.Equal("Build succeeded", window.Status);
+            Assert.EndsWith("Process finished with exit code 0.\n", window.BottomPanel.Build.Document.Snapshot.ToString(), StringComparison.Ordinal);
         }
         finally
         {
-            foreach ((string name, string? value) in before)
+            window.Perform(AppActions.Stop);
+            Ui.WaitFor(() => !window.IsBuilding, "the build to stop");
+            window.Close();
+        }
+    }
+
+    /// <summary>Stop pressed while each project's build runs a step that goes on writing to the project's output folder until
+    /// it is ended, as a code generator, a bundler or tests run in the build would. A build has run before it, as the day's
+    /// first does, which leaves its nodes (and by MSBuild's defaults its server) for the next to build in; the environment
+    /// is a person's IDE's, not dotnet test's.</summary>
+    [AvaloniaFact]
+    public void Stopping_a_build_ends_its_steps_wherever_msbuild_ran_them_and_nothing_more_is_written_after()
+    {
+        WriteTwoProjects();
+        using OwnMSBuild msbuild = new(("MSBUILDENSURESTDOUTFORTASKPROCESSES", null));
+        MainWindow window = Open();
+        List<int> steps = [];
+        try
+        {
+            window.Perform(AppActions.Build);
+            Ui.WaitFor(() => !window.IsBuilding, "the first build", TimeSpan.FromMinutes(2));
+            Assert.Equal("Build succeeded", window.Status);
+
+            Write("Directory.Build.targets", """
+                <Project>
+                  <Target Name="Write" BeforeTargets="Build" Condition="'$(DesignTimeBuild)' != 'true'">
+                    <Exec Condition="'$(OS)' != 'Windows_NT'" Command="echo $$ &gt; step.pid; while true; do date &gt;&gt; '$(OutDir)written.txt'; sleep 0.2; done" />
+                    <Exec Condition="'$(OS)' == 'Windows_NT'" Command="powershell -NoProfile -Command &quot;Set-Content -Path step.pid -Value $PID; while ($true) { Add-Content -Path '$(OutDir)written.txt' -Value (Get-Date -Format o); Start-Sleep -Milliseconds 200 }&quot;" />
+                  </Target>
+                </Project>
+                """);
+            string[] projects = ["Hello", "Tools"];
+            window.Perform(AppActions.Build);
+            int command = window.Builder.ProcessId ?? 0;
+            // Both projects build at once; one that waits for the other would never start, its step never ending.
+            _ = Processes.WrittenId([.. projects.Select(p => Path.Combine(folder, "src", p, "step.pid"))], "a project's step to start");
+            Passenger.App.Screenshot.Pump(TimeSpan.FromSeconds(1));
+            steps.AddRange(projects.Select(p => Processes.ReadId(Path.Combine(folder, "src", p, "step.pid"))).Where(id => id > 0));
+            window.Perform(AppActions.Stop);
+            Ui.WaitFor(() => !window.IsBuilding, "the build to stop");
+            Assert.Equal("Build stopped", window.Status);
+
+            foreach (int step in steps)
             {
-                Environment.SetEnvironmentVariable(name, value);
+                Assert.True(Processes.Gone(step), $"After Stop, the build's step {Processes.Describe(step)} went on running: MSBuild ran it in a process that Stop did not end");
             }
+            Assert.True(Processes.Gone(command), "After Stop, the build's dotnet command went on running");
+            string[] written = [.. projects.Select(p => Path.Combine(folder, "src", p, "bin", "Debug", "net10.0", "written.txt")).Where(File.Exists)];
+            Assert.NotEmpty(written);
+            long[] lengths = [.. written.Select(f => new FileInfo(f).Length)];
+            Passenger.App.Screenshot.Pump(TimeSpan.FromSeconds(2));
+            Assert.True(lengths.SequenceEqual(written.Select(f => new FileInfo(f).Length)), "After Stop, the build went on writing to its output folder");
+        }
+        finally
+        {
+            steps.ForEach(Processes.Kill);
+            window.Perform(AppActions.Stop);
+            Ui.WaitFor(() => !window.IsBuilding, "the build to stop");
+            window.Close();
         }
     }
 
@@ -340,10 +407,7 @@ public sealed class BuildRunTests : IDisposable
         Write("Sample.slnx", "<Solution>\n  <Project Path=\"src/Hello/Hello.csproj\" />\n  <Project Path=\"src/Site/Site.csproj\" />\n</Solution>\n");
         Write("src/Site/Site.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Web\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
         Write("src/Site/Program.cs", "WebApplication app = WebApplication.Create(args);\napp.Urls.Add(\"http://127.0.0.1:0\");\napp.MapGet(\"/\", () => \"Hello\");\napp.Run();\n");
-        using (Process restore = Process.Start(new ProcessStartInfo("dotnet", ["restore", Path.Combine(folder, "src", "Site")]) { RedirectStandardOutput = true, RedirectStandardError = true })!)
-        {
-            restore.WaitForExit();
-        }
+        Restore.Run(Path.Combine(folder, "src", "Site"));
         MainWindow window = Open();
         Assert.Equal(["Hello", "Site"], window.Configurations.Select(c => c.Name));
         try
@@ -479,10 +543,52 @@ public sealed class BuildRunTests : IDisposable
         return window;
     }
 
+    /// <summary>The solution with a second project, a library, which builds at the same time as the first.</summary>
+    private void WriteTwoProjects()
+    {
+        Write("Sample.slnx", "<Solution>\n  <Folder Name=\"/src/\">\n    <Project Path=\"src/Hello/Hello.csproj\" />\n    <Project Path=\"src/Tools/Tools.csproj\" />\n  </Folder>\n</Solution>\n");
+        Write("src/Tools/Tools.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+        Write("src/Tools/Tool.cs", "public static class Tool\n{\n    public static int Count => 3;\n}\n");
+    }
+
     private void Write(string relative, string text)
     {
         string path = Path.Combine(folder, relative);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, text);
+    }
+
+    /// <summary>MSBuild of a test's own, for what the IDE starts while it lasts (the IDE passes its environment on): a handshake
+    /// salt no other build has, so no server or node another left is used and the test's builds start their own, as on a
+    /// machine with none idle; and variables set as the test needs, put back at its end. What its builds leave ends with the
+    /// tests' process, as with the IDE's.</summary>
+    private sealed class OwnMSBuild : IDisposable
+    {
+        private readonly Dictionary<string, string?> before = [];
+
+        public OwnMSBuild(params (string Name, string? Value)[] variables)
+        {
+            Set("MSBUILDNODEHANDSHAKESALT", Guid.NewGuid().ToString("N"));
+            // A node it leaves waits two minutes to be reused, not fifteen.
+            Set("MSBUILDNODECONNECTIONTIMEOUT", "120000");
+            foreach ((string name, string? value) in variables)
+            {
+                Set(name, value);
+            }
+        }
+
+        public void Dispose()
+        {
+            foreach ((string name, string? value) in before)
+            {
+                Environment.SetEnvironmentVariable(name, value);
+            }
+        }
+
+        private void Set(string name, string? value)
+        {
+            before.TryAdd(name, Environment.GetEnvironmentVariable(name));
+            Environment.SetEnvironmentVariable(name, value);
+        }
     }
 }
