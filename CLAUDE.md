@@ -83,11 +83,14 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.Editor`: the `CodeEditor` control (drawing, input, commands, in partial files),
   the keymap (`Keymap.cs`, chords included; defaults in `EditorActions.cs` follow Rider's Visual
   Studio keymaps) and the highlighting contract (`IHighlighter`), with JetBrains Mono embedded.
+  An inlay hint (`CodeEditor.Hints.cs`) is a parameter's name, which goes with the text after it, or a type, which
+  goes with the text before it; the hints at an offset are a caret place of their own, as IntelliJ's inlays are.
 - `src/Passenger.Languages`: colour before any language server answers. C# is Roslyn's parser
   in-process, incremental and off the UI thread (`CSharpHighlighter`), classified from syntax
   alone (`CSharpClassifier`); the language server's semantic colours layer over it. `CSharpHighlighter` is also each
   open file's one syntax service (`OpenDocument.Syntax`: the newest tree, carried through the edits since): a feature
   that reads C# syntax (templates, postfix, test marks, selection ranges, inline values) uses it, never a fresh parse.
+  `TypeHints` turns Roslyn's type hints into Rider's (after the name, left off where Rider calls the type evident).
   A key costs what it changed, not the file's size: folds (`FoldRegions`) and bracket depths come from the parse
   before through the nodes Roslyn reused, never from a walk of the whole tree, and the server's colours are asked for
   the screen's lines first and the whole file only once typing stops.
