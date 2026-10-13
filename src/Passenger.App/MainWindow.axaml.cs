@@ -759,11 +759,22 @@ public partial class MainWindow : Window
         return true;
     }
 
-    /// <summary>Builds as Build does, and says how it ended once it has: built, failed, stopped, refused or unable to start.</summary>
-    public Task<BuildOutcome> BuildAsync()
+    /// <summary>Builds as Build does, and says how it ended once it has: built, failed, stopped, refused or unable to start.
+    /// Canceled (the Unit Tests window's Stop), the build is stopped as the Build window's Stop stops it.</summary>
+    public Task<BuildOutcome> BuildAsync(CancellationToken cancel = default)
     {
         TaskCompletionSource<BuildOutcome> built = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        BuildSolution(outcome => built.TrySetResult(outcome));
+        CancellationTokenRegistration stopping = default;
+        BuildSolution(outcome =>
+        {
+            stopping.Dispose();
+            built.TrySetResult(outcome);
+        });
+        if (!built.Task.IsCompleted)
+        {
+            // Canceled on the UI thread, by Stop, so the build it stops is the one begun here, still running.
+            stopping = cancel.Register(builder.Stop);
+        }
         return built.Task;
     }
 

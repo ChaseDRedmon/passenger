@@ -1,6 +1,5 @@
 using Microsoft.VisualStudio.TestPlatform.ObjectModel;
 using Microsoft.VisualStudio.TestPlatform.ObjectModel.Client.Interfaces;
-using Passenger.App.Debugging;
 using Passenger.App.Workspace;
 using Passenger.Core;
 using Passenger.Editor;
@@ -12,14 +11,28 @@ namespace Passenger.App.Testing;
 /// own debugger. A UI-thread object: everything a run says crosses to the UI thread before it changes the tree.</summary>
 public sealed class TestController : IAsyncDisposable
 {
-    private readonly Func<Task<Run.BuildOutcome>> build;
+    /// <summary>What the window says when Stop ends a run before its tests ran.</summary>
+    public const string StoppedMessage = "Tests stopped";
+
+    private readonly Func<CancellationToken, Task<Run.BuildOutcome>> build;
     private readonly Func<IReadOnlyList<ProjectModel>> projects;
     private readonly Action<string> log;
     private TestRunner? runner;
     private string? folder;
     private IReadOnlyList<TestNode> lastRun = [];
 
-    public TestController(TestTree tree, Func<Task<Run.BuildOutcome>> build, Func<IReadOnlyList<ProjectModel>> projects, Action<string> log)
+    /// <summary>The build, discovery or run under way, which Stop cancels whichever it is.</summary>
+    private CancellationTokenSource? stopping;
+
+    /// <summary>The test projects last asked where they build, and the answer, kept until the folder's projects are read
+    /// again (a project or props file changed), which makes them other objects.</summary>
+    private (IReadOnlyList<ProjectModel> Projects, IReadOnlyList<TestAssembly> Assemblies)? resolved;
+
+    /// <summary>What discovery found in each assembly, by its path, with the time the assembly was written then: an
+    /// assembly not built again since is not asked again.</summary>
+    private readonly Dictionary<string, (DateTime Written, IReadOnlyList<TestCase> Cases)> discovered = new(StringComparer.Ordinal);
+
+    public TestController(TestTree tree, Func<CancellationToken, Task<Run.BuildOutcome>> build, Func<IReadOnlyList<ProjectModel>> projects, Action<string> log)
     {
         Tree = tree;
         this.build = build;
@@ -56,12 +69,22 @@ public sealed class TestController : IAsyncDisposable
         }
         IsBusy = true;
         BackgroundWork.Begin();
+        using CancellationTokenSource stop = Begin();
         try
         {
-            return await DiscoverCore(workspace);
+            return await DiscoverCore(workspace, stop.Token);
+        }
+        catch (OperationCanceledException) when (stop.IsCancellationRequested)
+        {
+            return Stopped();
+        }
+        catch (Exception error) when (error is IOException or InvalidOperationException or TestPlatformException)
+        {
+            return $"The tests could not be found: {error.Message}";
         }
         finally
         {
+            stopping = null;
             IsBusy = false;
             BackgroundWork.End();
             Changed?.Invoke(this, EventArgs.Empty);
@@ -114,20 +137,22 @@ public sealed class TestController : IAsyncDisposable
         IsBusy = true;
         BackgroundWork.Begin();
         holdingWork = true;
+        using CancellationTokenSource stop = Begin();
         try
         {
             if (Tree.Roots.Count == 0 || rows is null)
             {
                 // A run of everything builds first, as Rider's does, and finds what is new.
-                if (await DiscoverCore(workspace) is { } problem)
+                if (await DiscoverCore(workspace, stop.Token) is { } problem)
                 {
                     return problem;
                 }
             }
-            else if (build && await this.build() is { Succeeded: false } unbuilt)
+            else if (build && await this.build(stop.Token) is { Succeeded: false } unbuilt)
             {
                 return unbuilt.Message;
             }
+            stop.Token.ThrowIfCancellationRequested();
             List<TestNode> methods = [.. (rows ?? Tree.Roots).SelectMany(r => r.Methods).Distinct()];
             if (methods.Count == 0)
             {
@@ -138,27 +163,23 @@ public sealed class TestController : IAsyncDisposable
             Changed?.Invoke(this, EventArgs.Empty);
             Message?.Invoke(this, $"{prefix}Running {Count(methods)}");
             HashSet<TestResult> applied = new(ReferenceEqualityComparer.Instance);
-            void Apply(TestResult result)
-            {
-                if (applied.Add(result))
-                {
-                    Tree.Apply(result);
-                }
-            }
+            void Apply(IReadOnlyList<TestResult> results) => Tree.Apply(results.Where(applied.Add));
             RunSummary summary = await runner!.RunAsync(
                 [.. methods.SelectMany(m => m.Cases)],
-                UiThread.Marshal<TestResult>(Apply),
+                UiThread.Marshal<IReadOnlyList<TestResult>>(Apply),
                 log: UiThread.Marshal(log),
-                debugger: debug ? new DebugLauncher(this) : null);
+                debugger: debug ? new DebugLauncher(this) : null,
+                cancel: stop.Token);
             // VSTest may tell a result on another thread behind the run's end: every one is in before the end is.
-            foreach (TestResult result in summary.Results)
-            {
-                Apply(result);
-            }
+            Apply(summary.Results);
             Tree.End();
             Summary = prefix + Tally(methods, summary);
             Message?.Invoke(this, Summary);
             return null;
+        }
+        catch (OperationCanceledException) when (stop.IsCancellationRequested)
+        {
+            return Stopped();
         }
         catch (Exception error) when (error is IOException or InvalidOperationException or TestPlatformException)
         {
@@ -166,6 +187,7 @@ public sealed class TestController : IAsyncDisposable
         }
         finally
         {
+            stopping = null;
             IsBusy = false;
             ReleaseWork();
             Changed?.Invoke(this, EventArgs.Empty);
@@ -195,11 +217,13 @@ public sealed class TestController : IAsyncDisposable
         return failed.Count == 0 ? Task.FromResult<string?>("No test failed") : RunAsync(workspace, failed);
     }
 
+    /// <summary>Stops what is under way, whichever step it is at: the build, finding where the tests build, finding
+    /// them, or running them (what has run keeps its result).</summary>
     public void Stop()
     {
         UiThread.Check();
         stopRequested = true;
-        runner?.Cancel();
+        stopping?.Cancel();
     }
 
     /// <summary>Ends vstest.console on a worker thread, since its end waits for the process; it needs no UI thread, so the
@@ -213,42 +237,93 @@ public sealed class TestController : IAsyncDisposable
         return ending is null ? ValueTask.CompletedTask : new ValueTask(Task.Run(ending.Dispose));
     }
 
-    private async Task<string?> DiscoverCore(string workspace)
+    private CancellationTokenSource Begin()
     {
-        if (await build() is { Succeeded: false } unbuilt)
+        CancellationTokenSource stop = new();
+        stopping = stop;
+        return stop;
+    }
+
+    /// <summary>What the window says of a run stopped before its tests ran; a build stopped says so itself.</summary>
+    private string Stopped()
+    {
+        if (runner is { IsUsable: false } stuck)
+        {
+            // A discovery that never said it had stopped: vstest.console ends, its test hosts with it, and the next
+            // run starts another.
+            runner = null;
+            _ = Task.Run(stuck.Dispose);
+        }
+        Message?.Invoke(this, StoppedMessage);
+        return StoppedMessage;
+    }
+
+    private async Task<string?> DiscoverCore(string workspace, CancellationToken cancel)
+    {
+        if (await build(cancel) is { Succeeded: false } unbuilt)
         {
             return unbuilt.Message;
         }
+        cancel.ThrowIfCancellationRequested();
         IReadOnlyList<ProjectModel> tests = [.. projects().Where(p => p.Exists && p.IsTestProject)];
         if (tests.Count == 0)
         {
             Tree.Load([]);
             return "There are no test projects: none references a test SDK or adapter";
         }
-        List<(ProjectModel Project, string Assembly)> assemblies = [];
-        foreach (ProjectModel project in tests)
+        IReadOnlyList<TestAssembly> assemblies = await Assemblies(tests, workspace, cancel);
+        List<TestAssembly> built = [];
+        foreach (TestAssembly assembly in assemblies)
         {
-            try
+            if (File.Exists(assembly.Path))
             {
-                assemblies.Add((project, PathNames.Canonical((await DebugTarget.ResolveAsync(project)).Program)));
+                built.Add(assembly);
             }
-            catch (Exception error) when (error is IOException or InvalidOperationException)
+            else
             {
-                log($"{project.Name}: {error.Message}");
+                log($"{assembly.Project.Name}: {Path.GetFileName(assembly.Path)} ({assembly.Framework}) has not been built");
             }
         }
-        if (runner is null || folder != workspace)
+        if (folder != workspace)
         {
             runner?.Dispose();
-            runner = await TestRunner.StartAsync(workspace);
+            runner = null;
+            discovered.Clear();
             folder = workspace;
         }
-        IReadOnlyList<TestCase> found = await runner.DiscoverAsync([.. assemblies.Select(a => a.Assembly)], UiThread.Marshal(log));
-        // Each test is its project's by the assembly VSTest found it in, named as the file system names it.
-        Dictionary<string, string> sources = found.Select(c => c.Source).Distinct(StringComparer.Ordinal).ToDictionary(s => s, PathNames.Canonical, StringComparer.Ordinal);
-        Tree.Load([.. assemblies.Select(a => (DisplayName(a.Project), (IReadOnlyList<TestCase>)[.. found.Where(c => PathNames.Same(sources[c.Source], a.Assembly))]))]);
-        Message?.Invoke(this, $"Found {found.Count} test{(found.Count == 1 ? "" : "s")} in {assemblies.Count} project{(assemblies.Count == 1 ? "" : "s")}");
+        runner ??= await TestRunner.StartAsync(workspace, cancel);
+        // Only what was built again since it was last looked through is looked through again.
+        Dictionary<string, DateTime> written = built.ToDictionary(a => a.Path, a => File.GetLastWriteTimeUtc(a.Path), StringComparer.Ordinal);
+        List<string> stale = [.. written.Where(w => !discovered.TryGetValue(w.Key, out var known) || known.Written != w.Value).Select(w => w.Key)];
+        if (stale.Count > 0)
+        {
+            IReadOnlyList<TestCase> found = await runner.DiscoverAsync(stale, UiThread.Marshal(log), cancel);
+            Dictionary<string, List<TestCase>> bySource = found.GroupBy(c => c.Source, StringComparer.Ordinal)
+                .GroupBy(g => PathNames.Canonical(g.Key), StringComparer.Ordinal)
+                .ToDictionary(g => g.Key, g => g.SelectMany(c => c).ToList(), StringComparer.Ordinal);
+            foreach (string assembly in stale)
+            {
+                discovered[assembly] = (written[assembly], bySource.GetValueOrDefault(PathNames.Canonical(assembly)) ?? []);
+            }
+        }
+        cancel.ThrowIfCancellationRequested();
+        Tree.Load([.. built.Select(a => new TestSource(DisplayName(a.Project), a.Framework, discovered[a.Path].Cases))]);
+        int count = built.Sum(a => discovered[a.Path].Cases.Count);
+        int projectCount = built.Select(a => a.Project).Distinct().Count();
+        Message?.Invoke(this, $"Found {count} test{(count == 1 ? "" : "s")} in {projectCount} project{(projectCount == 1 ? "" : "s")}");
         return null;
+    }
+
+    /// <summary>The test projects' assemblies, from MSBuild once for these projects as the folder last read them.</summary>
+    private async Task<IReadOnlyList<TestAssembly>> Assemblies(IReadOnlyList<ProjectModel> tests, string workspace, CancellationToken cancel)
+    {
+        if (resolved is { } known && known.Projects.SequenceEqual(tests, ReferenceEqualityComparer.Instance))
+        {
+            return known.Assemblies;
+        }
+        IReadOnlyList<TestAssembly> assemblies = await TestAssemblies.ResolveAsync(tests, workspace, UiThread.Marshal(log), cancel);
+        resolved = (tests, assemblies);
+        return assemblies;
     }
 
     private static string DisplayName(ProjectModel project) => Path.GetFileNameWithoutExtension(project.Path);

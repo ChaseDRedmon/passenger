@@ -362,22 +362,31 @@ public sealed partial class PassengerTools(MainWindow window)
         "Every test found (after tests_run or Run All), each with its state from the last run: passed, failed, skipped, notRun.")]
     public Task<IReadOnlyList<TestInfoRow>> TestsList(CancellationToken cancel = default) => OnUi(cancel, () => Task.FromResult((IReadOnlyList<TestInfoRow>)[.. window.Tests.Tree.Roots
         .SelectMany(r => r.Methods)
-        .Select(m => new TestInfoRow(string.Join('.', Ancestry(m)), m.State.ToString().ToLowerInvariant(), m.Path is { } at ? $"{Relative(at)}:{m.Line}" : null))]));
+        .Select(m => new TestInfoRow(TestName(m), m.State.ToString().ToLowerInvariant(), m.Path is { } at ? $"{Relative(at)}:{m.Line}" : null))]));
 
     private TestRunInfo TestInfo(Testing.TestController tests)
     {
         List<Testing.TestNode> failed = [.. tests.Tree.Roots.SelectMany(r => r.Methods).Where(m => m.State == Testing.TestState.Failed)];
-        return new TestRunInfo(tests.Summary, [.. failed.Select(m => new TestFailure(string.Join('.', Ancestry(m)), m.Path is { } at ? $"{Relative(at)}:{m.Line}" : null, m.Details))]);
+        return new TestRunInfo(tests.Summary, [.. failed.Select(m => new TestFailure(TestName(m), m.Path is { } at ? $"{Relative(at)}:{m.Line}" : null, m.Details))]);
     }
 
-    private static IEnumerable<string> Ancestry(Testing.TestNode method)
+    /// <summary>A test's full name, Namespace.Class.Method, and the target framework it ran under when its project has several.</summary>
+    private static string TestName(Testing.TestNode method)
     {
         Stack<string> names = new();
+        string? framework = null;
         for (Testing.TestNode? node = method; node is { Kind: not Testing.TestNodeKind.Project }; node = node.Parent)
         {
-            names.Push(node.Name);
+            if (node.Kind == Testing.TestNodeKind.Framework)
+            {
+                framework = node.Name;
+            }
+            else
+            {
+                names.Push(node.Name);
+            }
         }
-        return names;
+        return framework is null ? string.Join('.', names) : $"{string.Join('.', names)} ({framework})";
     }
 
     // The debugger

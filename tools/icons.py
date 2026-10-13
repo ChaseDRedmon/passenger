@@ -68,6 +68,11 @@ ICONS = [
     ("Diff", "Split Vertical", "20_regular"),
     ("Profile", "Top Speed", "20_regular"),
     ("Bookmark", "Bookmark", "20_regular"),
+    ("TestPassed", "Checkmark", "16_filled"),
+    ("TestFailed", "Dismiss", "16_filled"),
+    ("TestSkipped", "Subtract", "16_filled"),
+    ("TestNotRun", "Circle", "16_regular"),
+    ("TestRunning", "Circle", "16_filled"),
 ]
 
 

@@ -44,8 +44,15 @@ public sealed class TestRunner : IDisposable
         VsTestConsoleWrapper wrapper = Create(console, host, parameters);
         // The translation layer's async calls wait for vstest.console's handshake before they start it (and so for
         // ever); its blocking calls start it and wait for the connection, so they run on a worker thread.
-        await BackgroundWork.Run(wrapper.StartSession, cancellation);
-        return new TestRunner(wrapper);
+        await BackgroundWork.Run(wrapper.StartSession);
+        TestRunner runner = new(wrapper);
+        if (cancellation.IsCancellationRequested)
+        {
+            // Stopped while it started: it ends now, rather than run idle until the IDE does.
+            _ = Task.Run(runner.Dispose);
+            cancellation.ThrowIfCancellationRequested();
+        }
+        return runner;
     }
 
     /// <summary>A wrapper that runs vstest.console.dll under the dotnet host. The public constructors run a .dll under
@@ -59,36 +66,68 @@ public sealed class TestRunner : IDisposable
             ?? throw new InvalidOperationException("This VSTest translation layer cannot be told which dotnet runs vstest.console");
     }
 
-    /// <summary>The tests in built test assemblies, as their adapters find them.</summary>
-    public async Task<IReadOnlyList<TestCase>> DiscoverAsync(IReadOnlyList<string> assemblies, Action<string>? log = null)
+    /// <summary>How long a discovery told to stop has to say it has, before the runner is taken for stuck (an adapter that
+    /// never returns) and ended, its test hosts with it.</summary>
+    private static readonly TimeSpan StopLimit = TimeSpan.FromSeconds(10);
+
+    /// <summary>Whether the runner can be asked again: not once a discovery that was stopped never said so.</summary>
+    public bool IsUsable { get; private set; } = true;
+
+    /// <summary>The tests in built test assemblies, as their adapters find them. Canceled, VSTest stops finding them and
+    /// ends its test hosts; one that does not within a few seconds leaves the runner unusable, to be ended.</summary>
+    public async Task<IReadOnlyList<TestCase>> DiscoverAsync(IReadOnlyList<string> assemblies, Action<string>? log = null, CancellationToken cancel = default)
     {
         Discovery handler = new(log);
-        await BackgroundWork.Run(() => console.DiscoverTests(assemblies, RunSettings, new TestPlatformOptions(), handler));
-        return await handler.Done.Task;
-    }
-
-    /// <summary>Runs tests, each result told as it comes; done when the run ends, with its time and whether it was
-    /// stopped.</summary>
-    public async Task<RunSummary> RunAsync(IReadOnlyList<TestCase> tests, Action<TestResult> result, Action<IReadOnlyList<TestCase>>? started = null, Action<string>? log = null, ITestHostLauncher? debugger = null)
-    {
-        Run handler = new(result, started, log);
-        // Not held: a debugged run waits here while stopped at a breakpoint, which TestController lets screenshots past.
-        await Task.Run(() =>
+        // The blocking call returns once VSTest has told the handler discovery is complete, stopped or not.
+        Task discovering = BackgroundWork.Run(() => console.DiscoverTests(assemblies, RunSettings, new TestPlatformOptions(), handler));
+        using (cancel.Register(() => Task.Run(console.CancelDiscovery)))
         {
-            if (debugger is null)
+            try
             {
-                console.RunTests(tests, RunSettings, new TestPlatformOptions(), handler);
+                await discovering.WaitAsync(cancel);
             }
-            else
+            catch (OperationCanceledException) when (cancel.IsCancellationRequested)
             {
-                console.RunTestsWithCustomTestHost(tests, RunSettings, new TestPlatformOptions(), handler, debugger);
+                try
+                {
+                    await discovering.WaitAsync(StopLimit);
+                }
+                catch (TimeoutException)
+                {
+                    IsUsable = false;
+                    _ = discovering.ContinueWith(ended => _ = ended.Exception, TaskScheduler.Default);
+                }
+                catch (Exception error) when (error is IOException or InvalidOperationException or TestPlatformException)
+                {
+                }
+                throw;
             }
-        });
+        }
         return await handler.Done.Task;
     }
 
-    /// <summary>Stops the run in progress; what has run keeps its result.</summary>
-    public void Cancel() => console.CancelTestRun();
+    /// <summary>Runs tests, their results told a batch at a time as VSTest sends them; done when the run ends, with its
+    /// time and whether it was stopped, which cancellation does, keeping the results of what has run.</summary>
+    public async Task<RunSummary> RunAsync(IReadOnlyList<TestCase> tests, Action<IReadOnlyList<TestResult>> results, Action<string>? log = null, ITestHostLauncher? debugger = null, CancellationToken cancel = default)
+    {
+        Run handler = new(results, log);
+        using (cancel.Register(() => Task.Run(console.CancelTestRun)))
+        {
+            // Not held: a debugged run waits here while stopped at a breakpoint, which TestController lets screenshots past.
+            await Task.Run(() =>
+            {
+                if (debugger is null)
+                {
+                    console.RunTests(tests, RunSettings, new TestPlatformOptions(), handler);
+                }
+                else
+                {
+                    console.RunTestsWithCustomTestHost(tests, RunSettings, new TestPlatformOptions(), handler, debugger);
+                }
+            });
+            return await handler.Done.Task;
+        }
+    }
 
     public void Dispose()
     {
@@ -137,7 +176,7 @@ public sealed class TestRunner : IDisposable
         }
     }
 
-    private sealed class Run(Action<TestResult> result, Action<IReadOnlyList<TestCase>>? started, Action<string>? log) : ITestRunEventsHandler
+    private sealed class Run(Action<IReadOnlyList<TestResult>> results, Action<string>? log) : ITestRunEventsHandler
     {
         private readonly List<TestResult> all = [];
 
@@ -145,18 +184,16 @@ public sealed class TestRunner : IDisposable
 
         public void HandleTestRunStatsChange(TestRunChangedEventArgs? testRunChangedArgs)
         {
-            if (testRunChangedArgs?.ActiveTests is { } active && started is not null)
+            List<TestResult> batch = [.. testRunChangedArgs?.NewTestResults ?? []];
+            if (batch.Count == 0)
             {
-                started([.. active]);
+                return;
             }
-            foreach (TestResult each in testRunChangedArgs?.NewTestResults ?? [])
+            lock (all)
             {
-                lock (all)
-                {
-                    all.Add(each);
-                }
-                result(each);
+                all.AddRange(batch);
             }
+            results(batch);
         }
 
         public void HandleTestRunComplete(TestRunCompleteEventArgs testRunCompleteArgs, TestRunChangedEventArgs? lastChunkArgs, ICollection<AttachmentSet>? runContextAttachments, ICollection<string>? executorUris)
