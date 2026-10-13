@@ -319,6 +319,86 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
         window.Close();
     }
 
+    /// <summary>Edits that make and unmake the line breaks only Roslyn counts (a lone '\r', a '\r' parted from its '\n' or
+    /// given one, the Unicode separators, edits that meet at a break) keep the server's lines of the file in step without
+    /// reading it again: each change sent is where it was made, so code typed below them afterwards is squiggled and
+    /// coloured on its own words.</summary>
+    [AvaloniaFact]
+    public void Edits_that_make_and_unmake_line_breaks_only_roslyn_counts_keep_the_server_in_step_without_reading_the_file_again()
+    {
+        string separator = ((char)0x2028).ToString();
+        string paragraph = ((char)0x2029).ToString();
+        string next = ((char)0x85).ToString();
+        string path = project.PathOf("Mixed.cs");
+        File.WriteAllText(path, $"static class Mixed\n{{\n    /* Pasted:{separator}one,\r\ntwo,{next}three. */\n    public static int Value()\n    {{\n        int total = 1;\n          return total;\n    }}\n}}\n");
+        MainWindow? window = null;
+        try
+        {
+            window = project.Open("Mixed.cs");
+            CodeEditor editor = window.EditorArea.CodeEditor;
+            OpenDocument document = window.EditorArea.Active!;
+            Ui.Settle();
+            int At(string text) => document.Text.Snapshot.ToString().IndexOf(text, StringComparison.Ordinal);
+            void Edit(string what, params TextEdit[] edits)
+            {
+                long before = Passenger.Lsp.ServerLines.CharactersRead;
+                document.Text.Edit(edits, editor.Selections, editor.Selections);
+                TextSnapshot text = document.Text.Snapshot;
+                Passenger.Lsp.ServerLines carried = Passenger.Lsp.ServerLines.Of(text);
+                long read = Passenger.Lsp.ServerLines.CharactersRead - before;
+                Assert.True(read < text.Length, $"{what}: {read} characters were read to find the server's lines, the whole file again");
+                Passenger.Lsp.ServerLines fresh = Passenger.Lsp.ServerLines.Of(TextSnapshot.From(text.ToString()));
+                Assert.True(fresh.LineCount == carried.LineCount,
+                    $"{what}: the server's lines as they were carried are {carried.LineCount}, the file's are {fresh.LineCount}: every position sent from here on is off");
+                for (int offset = 0; offset <= text.Length; offset++)
+                {
+                    Assert.True(carried.PositionOf(offset) == fresh.PositionOf(offset),
+                        $"{what}: offset {offset} is at {carried.PositionOf(offset)} on the server's lines as they were carried, at {fresh.PositionOf(offset)} on the file's: every position sent from here on is off");
+                }
+                Screenshot.Pump(TimeSpan.FromMilliseconds(10));
+            }
+
+            Edit("A lone carriage return put in", new TextEdit(At("one,"), 0, "\r"));
+            Edit("A line feed given to it", new TextEdit(At("one,"), 0, "\n"));
+            Edit("Text put between a CR and its LF, and more further on", new TextEdit(At("\r\ntwo,") + 1, 0, "y"), new TextEdit(At("three."), 0, "x"));
+            Edit("The line feed taken from after a CR", new TextEdit(At("\r\none,") + 1, 1, string.Empty));
+            Edit("Separators pasted", new TextEdit(At("Pasted:"), 0, $"a{paragraph}b\r\nc\rd{separator}"));
+            Edit("A separator replaced", new TextEdit(At(separator + "\rone,"), 1, " "));
+            Edit("Edits meeting at a break", new TextEdit(At("xthree."), 1, "\r"), new TextEdit(At("xthree.") + 1, 0, "\n"));
+            Edit("Text ending in a CR put before a LF", new TextEdit(At("y\ntwo,") + 1, 0, "end\r"));
+            Edit("A CR at the end of the text", new TextEdit(document.Text.Snapshot.Length, 0, "\r"));
+            // Batches of up to three edits anywhere in the comment, of text that is mostly breaks.
+            Random random = new(7);
+            string[] pieces = ["\r", "\n", "\r\n", separator, paragraph, next, "a", "bc"];
+            for (int batch = 0; batch < 150; batch++)
+            {
+                int from = At("/*") + 2;
+                int to = At("*/");
+                int[] cuts = [.. Enumerable.Range(0, random.Next(1, 4) * 2).Select(_ => random.Next(from, to + 1)).Order()];
+                TextEdit[] edits = [.. Enumerable.Range(0, cuts.Length / 2).Select(i => new TextEdit(cuts[2 * i], random.Next(3) == 0 ? cuts[2 * i + 1] - cuts[2 * i] : 0,
+                    string.Concat(Enumerable.Range(0, random.Next(0, 4)).Select(_ => pieces[random.Next(pieces.Length)]))))];
+                Edit($"Random batch {batch + 1} ({string.Join("; ", edits.Select(e => $"{e.Start}+{e.Length} '{e.Text.Replace("\r", "\\r").Replace("\n", "\\n")}'"))})", edits);
+            }
+            Edit("Everything after the comment replaced", new TextEdit(At("*/") + 2, document.Text.Snapshot.Length - At("*/") - 2,
+                "\n    public static int Value()\n    {\n        int total = 1;\n          return total;\n    }\n}\n"));
+
+            PlaceAfter(editor, "int total = 1;");
+            window.KeyTextInput(" int wrong = \"text\";");
+            Ui.WaitFor(() => document.Markers.Any(m => m.Kind == MarkerKind.Error), "the squiggle under the error typed");
+            TextSnapshot after = editor.Document.Snapshot;
+            Marker error = Assert.Single(document.Markers, m => m.Kind == MarkerKind.Error);
+            Assert.Equal("\"text\"", after.GetText(error.Range));
+            int use = after.ToString().IndexOf("return total", StringComparison.Ordinal) + "return ".Length;
+            Ui.WaitFor(() => document.Highlighter!.GetSpans(editor.Document.Snapshot, use, 1).Any(s => s.Start == use && s.Kind == TokenKind.Local),
+                "the server's colour on the local's use");
+        }
+        finally
+        {
+            window?.Close();
+            File.Delete(path);
+        }
+    }
+
     [AvaloniaFact]
     public void A_reformat_breaks_lines_as_the_file_does_whatever_the_system_would()
     {
@@ -1284,6 +1364,74 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
             Ui.Settle();
             Assert.Equal(TokenKind.Local, KindAt(far + moved + Digits.Length));
             Assert.Equal(TokenKind.Local, KindAt(fresh));
+        }
+        finally
+        {
+            window?.Close();
+            File.Delete(path);
+        }
+    }
+
+    /// <summary>Squiggles in a file of 20,000 lines stay on their words as lines go in above them, and so do the diagnostics
+    /// a fix asked for at the caret is given, which are on the server's lines. A key finds those lines from what it changed,
+    /// reading a few characters rather than the whole file (twice, once with diagnostics to move and once for the change
+    /// sent to the server).</summary>
+    [AvaloniaFact]
+    public void Squiggles_in_a_file_of_twenty_thousand_lines_stay_on_their_words_as_lines_go_in_above_and_a_key_reads_only_what_it_changed()
+    {
+        string source = TwentyThousandLines();
+        string path = project.PathOf("Squiggled.cs");
+        File.WriteAllText(path, source);
+        MainWindow? window = null;
+        try
+        {
+            window = project.Open("Squiggled.cs");
+            CodeEditor editor = window.EditorArea.CodeEditor;
+            OpenDocument document = window.EditorArea.Active!;
+            Passenger.App.CSharp.CSharpDocument csharp = window.CSharpService!.For(document)!;
+            string[] literals = ["25", "75", "125", "175"];
+            Ui.WaitFor(() => document.Markers.Count(m => m.Kind == MarkerKind.Error) == literals.Length, "the four errors' squiggles");
+            void OnTheirWords(string when)
+            {
+                TextSnapshot text = document.Text.Snapshot;
+                Marker[] errors = [.. document.Markers.Where(m => m.Kind == MarkerKind.Error).OrderBy(m => m.Range.Start)];
+                Assert.True(errors.Select(m => text.GetText(m.Range)).SequenceEqual(literals),
+                    $"{when} the squiggles are under {string.Join(", ", errors.Select(m => $"'{text.GetText(m.Range)}'"))}");
+                Passenger.Lsp.Diagnostic[] diagnosed = [.. csharp.Diagnostics.Where(d => d.Severity == 1).OrderBy(d => d.Range.Start.Line)];
+                Assert.Equal(literals.Length, diagnosed.Length);
+                for (int i = 0; i < literals.Length; i++)
+                {
+                    int line = text.GetLineFromOffset(errors[i].Range.Start);
+                    Assert.Equal($"        string wrong{literals[i]} = {literals[i]};", text.GetLineText(line));
+                    TextPosition start = new(diagnosed[i].Range.Start.Line, diagnosed[i].Range.Start.Character);
+                    TextPosition end = new(diagnosed[i].Range.End.Line, diagnosed[i].Range.End.Character);
+                    Assert.True(start.Line == line && text.GetText(TextRange.FromBounds(text.GetOffset(start), text.GetOffset(end))) == literals[i],
+                        $"{when} the diagnostic under '{literals[i]}' on line {line + 1} is at {start.Line + 1}:{start.Column + 1}");
+                }
+            }
+            OnTheirWords("Before any key");
+
+            int top = source.IndexOf("seed + 0;", StringComparison.Ordinal) + "seed + 0;".Length;
+            editor.Selections = SelectionSet.Single(top);
+            editor.Focus();
+            Ui.Settle();
+            const int Keys = 5;
+            long read = 0;
+            for (int i = 0; i < Keys; i++)
+            {
+                long before = Passenger.Lsp.ServerLines.CharactersRead;
+                window.KeyPress(Avalonia.Input.Key.Enter, Avalonia.Input.RawInputModifiers.None, Avalonia.Input.PhysicalKey.Enter, null);
+                window.KeyRelease(Avalonia.Input.Key.Enter, Avalonia.Input.RawInputModifiers.None, Avalonia.Input.PhysicalKey.Enter, null);
+                Screenshot.Pump(TimeSpan.FromMilliseconds(10));
+                read += Passenger.Lsp.ServerLines.CharactersRead - before;
+                OnTheirWords($"After {i + 1} lines went in above them");
+            }
+            Assert.Equal(source.Count(c => c == '\n') + Keys, document.Text.Snapshot.LineCount - 1);
+            Assert.True(read / Keys < source.Length / 100,
+                $"A key read {read / Keys} characters to find the server's lines, of the file's {source.Length}: it read the whole file again");
+
+            Ui.Settle();
+            OnTheirWords("Once the server's diagnostics came again");
         }
         finally
         {

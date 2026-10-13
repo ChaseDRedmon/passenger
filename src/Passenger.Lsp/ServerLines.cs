@@ -14,6 +14,9 @@ public sealed class ServerLines
 
     private static readonly ConditionalWeakTable<TextSnapshot, ServerLines> Known = new();
 
+    [ThreadStatic]
+    private static long read;
+
     /// <summary>The offset just past each break the server counts and the editor does not, in order.</summary>
     private readonly int[] extra;
 
@@ -27,8 +30,28 @@ public sealed class ServerLines
 
     public int LineCount => Text.LineCount + extra.Length;
 
+    /// <summary>How many characters this thread has read to find where the server's lines break: what a key costs here,
+    /// for a test to count rather than time.</summary>
+    public static long CharactersRead => read;
+
     /// <summary>The lines of a snapshot, found once and kept with it; safe from any thread.</summary>
     public static ServerLines Of(TextSnapshot text) => Known.GetValue(text, Find);
+
+    /// <summary>The lines of the text a change made, carried from those of the text before it and kept with it, reading
+    /// again only around each edit, so a key in a long file never reads all of it; null when the text before had none,
+    /// as nothing asked for them. Carried as the change is heard, before anything moved with it asks for them.</summary>
+    public static ServerLines? After(DocumentChangedEventArgs change)
+    {
+        if (Known.TryGetValue(change.After, out ServerLines? known))
+        {
+            return known;
+        }
+        if (!Known.TryGetValue(change.Before, out ServerLines? before))
+        {
+            return null;
+        }
+        return Known.GetValue(change.After, after => before.Through(change.Edits, after));
+    }
 
     /// <summary>An offset as the server's line and column (UTF-16 units); between the halves of "\r\n" it is the
     /// column past the '\r', as Roslyn counts it.</summary>
@@ -87,8 +110,74 @@ public sealed class ServerLines
         return found >= 0 ? found + 1 : ~found;
     }
 
+    /// <summary>These lines carried through edits (sorted, in this text's offsets) to the text they make. A break the server
+    /// counts comes or goes only in text an edit put in, or just before an edit, where a '\r' may lose or meet its '\n';
+    /// every other moves with the text.</summary>
+    private ServerLines Through(IReadOnlyList<TextEdit> edits, TextSnapshot after)
+    {
+        List<int>? found = null;
+        int e = 0;
+        int delta = 0;
+        foreach (TextEdit edit in edits)
+        {
+            while (e < extra.Length && extra[e] < edit.Start)
+            {
+                Add(ref found, extra[e] + delta);
+                e++;
+            }
+            // A break the edit replaced, or one just before it whose next character it changed: read again below.
+            while (e < extra.Length && extra[e] <= edit.End)
+            {
+                e++;
+            }
+            int at = edit.Start + delta;
+            if (at > 0)
+            {
+                Check(after, at - 1, ref found);
+            }
+            ReadOnlySpan<char> text = edit.Text;
+            read += text.Length + 1;
+            int i = 0;
+            while (i < text.Length && text[i..].IndexOfAny(Breaks) is int next and >= 0)
+            {
+                i += next;
+                Check(after, at + i, ref found);
+                i++;
+            }
+            delta += edit.Text.Length - edit.Length;
+        }
+        while (e < extra.Length)
+        {
+            Add(ref found, extra[e] + delta);
+            e++;
+        }
+        return new ServerLines(after, found is null ? [] : [.. found]);
+    }
+
+    /// <summary>Notes the character at an offset when it is a break the server counts and the editor does not.</summary>
+    private static void Check(TextSnapshot text, int offset, ref List<int>? found)
+    {
+        char c = text[offset];
+        bool counts = c == '\r' ? offset + 1 == text.Length || text[offset + 1] != '\n' : Breaks.Contains(c);
+        if (counts)
+        {
+            Add(ref found, offset + 1);
+        }
+    }
+
+    /// <summary>Adds an offset past a break, once: edits that meet read the character between them twice.</summary>
+    private static void Add(ref List<int>? found, int offset)
+    {
+        found ??= [];
+        if (found.Count == 0 || found[^1] < offset)
+        {
+            found.Add(offset);
+        }
+    }
+
     private static ServerLines Find(TextSnapshot text)
     {
+        read += text.Length;
         List<int> extra = [];
         int at = 0;
         bool carriage = false;

@@ -26,6 +26,14 @@ public sealed class CSharpDocument : IDisposable
     private SemanticHighlighter? semantic;
     private CancellationTokenSource? pulling;
 
+    /// <summary>The diagnostics as pulled, and each one's range in the text as it stands, moved with every edit since.</summary>
+    private Diagnostic[] pulled = [];
+    private TextRange[] ranges = [];
+
+    /// <summary>The diagnostics placed on the server's lines of the text as it stands, made when first asked for after an
+    /// edit, so a key costs a move of each range rather than a line table of the file.</summary>
+    private IReadOnlyList<Diagnostic>? placed = [];
+
     internal CSharpDocument(CSharpService service, OpenDocument document)
     {
         this.service = service;
@@ -37,7 +45,7 @@ public sealed class CSharpDocument : IDisposable
     public LspDocument? Lsp { get; private set; }
 
     /// <summary>The diagnostics last pulled, moved with the text since, so their lines are the text's as it is now.</summary>
-    public IReadOnlyList<Diagnostic> Diagnostics { get; private set; } = [];
+    public IReadOnlyList<Diagnostic> Diagnostics => placed ??= Placed();
 
     internal void Connect(RoslynSession session)
     {
@@ -78,12 +86,14 @@ public sealed class CSharpDocument : IDisposable
 
     private void OnChanged(object? sender, DocumentChangedEventArgs e)
     {
-        if (Diagnostics.Count > 0)
+        if (ranges.Length > 0)
         {
             // Moved with the text, as the markers are, so a fix asked for at the caret finds the problems on its line.
-            ServerLines before = ServerLines.Of(e.Before);
-            ServerLines after = ServerLines.Of(e.After);
-            Diagnostics = [.. Diagnostics.Select(d => Moved(d, e.Edits, before, after))];
+            for (int i = 0; i < ranges.Length; i++)
+            {
+                ranges[i] = TextEditing.MapRange(ranges[i], e.Edits);
+            }
+            placed = null;
         }
         if (document.Markers.Count > 0)
         {
@@ -101,21 +111,28 @@ public sealed class CSharpDocument : IDisposable
 
     private void OnSaved(object? sender, EventArgs e) => Lsp?.Saved();
 
-    private static Diagnostic Moved(Diagnostic diagnostic, IReadOnlyList<TextEdit> edits, ServerLines before, ServerLines after)
+    /// <summary>The diagnostics pulled, each on the server's lines where its range has been carried to.</summary>
+    private Diagnostic[] Placed()
     {
-        TextRange was = TextRange.FromBounds(before.OffsetOf(diagnostic.Range.Start), before.OffsetOf(diagnostic.Range.End));
-        TextRange now = TextEditing.MapRange(was, edits);
-        int length = after.Text.Length;
-        return new Diagnostic
+        ServerLines lines = ServerLines.Of(document.Text.Snapshot);
+        int length = lines.Text.Length;
+        Diagnostic[] moved = new Diagnostic[pulled.Length];
+        for (int i = 0; i < pulled.Length; i++)
         {
-            Range = new LspRange(after.PositionOf(Math.Min(now.Start, length)), after.PositionOf(Math.Min(now.End, length))),
-            Severity = diagnostic.Severity,
-            Code = diagnostic.Code,
-            Source = diagnostic.Source,
-            Message = diagnostic.Message,
-            Tags = diagnostic.Tags,
-            Data = diagnostic.Data,
-        };
+            Diagnostic diagnostic = pulled[i];
+            TextRange now = ranges[i];
+            moved[i] = new Diagnostic
+            {
+                Range = new LspRange(lines.PositionOf(Math.Min(now.Start, length)), lines.PositionOf(Math.Min(now.End, length))),
+                Severity = diagnostic.Severity,
+                Code = diagnostic.Code,
+                Source = diagnostic.Source,
+                Message = diagnostic.Message,
+                Tags = diagnostic.Tags,
+                Data = diagnostic.Data,
+            };
+        }
+        return moved;
     }
 
     private void Pull(TimeSpan delay)
@@ -144,8 +161,11 @@ public sealed class CSharpDocument : IDisposable
             {
                 return;
             }
-            Diagnostics = found;
-            document.Markers = found.Select(Marker).OfType<Marker>().ToList();
+            ServerLines lines = ServerLines.Of(document.Text.Snapshot);
+            pulled = [.. found];
+            ranges = [.. pulled.Select(d => Offsets(lines, d.Range))];
+            placed = found;
+            document.Markers = pulled.Select((d, i) => Marker(d, ranges[i])).OfType<Marker>().ToList();
             service.FileProblemsChanged();
             (IReadOnlyList<LspInlayHint> hints, int hinted) = await lsp.InlayHintsAsync(cancel);
             if (!cancel.IsCancellationRequested && hinted == document.Text.Version)
@@ -169,7 +189,7 @@ public sealed class CSharpDocument : IDisposable
 
     /// <summary>What a diagnostic draws as: errors, warnings and information squiggled; code the
     /// compiler calls unnecessary faded; the server's quieter hints left off the page.</summary>
-    private Marker? Marker(Diagnostic diagnostic)
+    private static Marker? Marker(Diagnostic diagnostic, TextRange range)
     {
         bool unnecessary = diagnostic.Tags?.Contains(1) == true;
         MarkerKind? kind = diagnostic.Severity switch
@@ -179,13 +199,18 @@ public sealed class CSharpDocument : IDisposable
             3 => unnecessary ? MarkerKind.Unnecessary : MarkerKind.Info,
             _ => unnecessary ? MarkerKind.Unnecessary : null,
         };
-        if (kind is not { } k || Lsp is not { } lsp)
+        if (kind is not { } k)
         {
             return null;
         }
-        int start = lsp.OffsetOf(diagnostic.Range.Start);
-        int end = lsp.OffsetOf(diagnostic.Range.End);
         string code = diagnostic.Code?.ToString() is { Length: > 0 } c ? $"{c}: " : string.Empty;
-        return new Marker(TextRange.FromBounds(start, Math.Max(start, end)), k, code + diagnostic.Message);
+        return new Marker(range, k, code + diagnostic.Message);
+    }
+
+    /// <summary>A range of the server's as offsets in the text it was given for, never ending before it starts.</summary>
+    private static TextRange Offsets(ServerLines lines, LspRange range)
+    {
+        int start = lines.OffsetOf(range.Start);
+        return TextRange.FromBounds(start, Math.Max(start, lines.OffsetOf(range.End)));
     }
 }

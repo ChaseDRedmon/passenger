@@ -2,6 +2,7 @@ using System.Text;
 using Avalonia;
 using Passenger.Editor;
 using Passenger.Languages.CSharp;
+using Passenger.Lsp;
 using Passenger.Text;
 
 namespace Passenger.App.Workspace;
@@ -34,6 +35,8 @@ public sealed class OpenDocument : Observable
         highlighter = parser;
         Text.Changed += (_, change) =>
         {
+            // Ahead of what moves with the change (the caret, then the breadcrumbs), which found afresh would read the file.
+            ServerLines.After(change);
             Selections = TextEditing.MapThrough(Selections, change.Edits).Clamp(change.After.Length);
             if (foldRegions.Count > 0)
             {

@@ -279,10 +279,12 @@ public sealed class LspDocument : IDisposable
 
     /// <summary>The edits sent last to first, the order an incremental sync is read in, so each change's place in the text
     /// before the edit is its place in the text the changes sent before it left. Edits that touch go as one change: the
-    /// later one can decide whether a '\r' where they meet ends a line.</summary>
+    /// later one can decide whether a '\r' where they meet ends a line. The server's lines are carried to the new text
+    /// here, so the next change, and every request until then, finds them without reading the file.</summary>
     private void OnChanged(object? sender, DocumentChangedEventArgs e)
     {
         ServerLines before = ServerLines.Of(e.Before);
+        ServerLines.After(e);
         List<TextDocumentContentChangeEvent> changes = [];
         for (int last = e.Edits.Count - 1; last >= 0;)
         {
