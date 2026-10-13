@@ -154,7 +154,9 @@ public sealed class McpTests : IDisposable
             Assert.Equal("main", (await Call(client, "vcs_status")).GetProperty("branch").GetString());
 
             // The IDE's own terminal runs it in the folder, and its answer comes back.
-            string answer = (await Call(client, "terminal_run", new() { ["command"] = "echo $((6*7)) && ls" })).GetString()!;
+            // Windows' own PowerShell (5.1, where pwsh is not installed) has no &&, and sh has no PowerShell subexpressions.
+            string command = OperatingSystem.IsWindows() ? "echo (6*7); ls" : "echo $((6*7)) && ls";
+            string answer = (await Call(client, "terminal_run", new() { ["command"] = command })).GetString()!;
             Assert.Contains("42", answer, StringComparison.Ordinal);
             Assert.Contains("Notes.txt", answer, StringComparison.Ordinal);
         }
