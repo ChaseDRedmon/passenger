@@ -1,9 +1,9 @@
 # Every push to main and every pull request: the solution built (warnings are errors) and every test run, on macOS
-# (arm64) and Windows, as `just build` and `just test` run them; the macOS disk images made and checked, as
-# `just package-mac` makes them; the Windows installer built, installed, used and uninstalled, as `just package-win`
-# builds it; and on Linux, the solution restored from nothing and every package checked against THIRD_PARTY_NOTICES.md.
-# Every restore is locked to the packages.lock.json files (GitHub sets CI, which Directory.Build.props makes
-# RestoreLockedMode). Actions are pinned to a release's commit.
+# (arm64) and Windows, as `just build` and `just test` run them (test.yml, which a release runs first too); the macOS
+# disk images made and checked, as `just package-mac` makes them; the Windows installer built, installed, used and
+# uninstalled, as `just package-win` builds it; and on Linux, the solution restored from nothing and every package
+# checked against THIRD_PARTY_NOTICES.md. Every restore is locked to the packages.lock.json files (GitHub sets CI,
+# which Directory.Build.props makes RestoreLockedMode). Actions are pinned to a release's commit.
 name: CI
 
 on:
@@ -27,138 +27,16 @@ env:
   AVALONIA_TELEMETRY_OPTOUT: 1
 
 jobs:
+  # The solution built and every test run on macOS and Windows (test.yml), as a release runs them too.
   test:
-    name: ${{ matrix.name }}
-    strategy:
-      # One system's failure never hides the other's result.
-      fail-fast: false
-      matrix:
-        include:
-          - name: macOS (arm64)
-            os: macos-latest
-          - name: Windows (x64)
-            os: windows-latest
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
-    defaults:
-      run:
-        shell: bash
-    steps:
-      # The whole history: tools/package-mac.sh names a build by its tags and commits.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-
-      # The SDK global.json names exactly (a release candidate), and .NET 10 for the debuggees and the tests' projects.
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
-        with:
-          global-json-file: global.json
-          dotnet-version: 10.0.x
-
-      # The runner's .NET is in ~/.dotnet, not where the macOS installer puts it: registered as an installer registers
-      # another place, so the IDE started with launchd's bare environment (McpTests) finds its runtime, as on a Mac.
-      - name: Register .NET's install location
-        if: runner.os == 'macOS'
-        run: sudo mkdir -p /etc/dotnet && echo "$DOTNET_ROOT" | sudo tee /etc/dotnet/install_location
-
-      # The runtime's createdump (a memory snapshot) reads its program as a debugger does, which macOS lets a third party's
-      # tool do once a member of _developer answers the system.privilege.taskport password prompt, remembered for ten
-      # hours. A developer's Mac asks once a session; the runner has no one to answer, so the prompt waits for ever. The
-      # runner joins _developer and the right asks its members nothing, as developer mode does for Apple's own tools; the
-      # state before is printed for a hang that remains.
-      - name: Let debugging tools read the runner's processes
-        if: runner.os == 'macOS'
-        run: |
-          DevToolsSecurity -status
-          id -Gn
-          security authorizationdb read system.privilege.taskport | plutil -p -
-          sudo dseditgroup -o edit -a "$USER" -t user _developer
-          sudo dscacheutil -flushcache
-          sudo security authorizationdb write system.privilege.taskport is-developer
-
-      - name: Restore cached NuGet packages
-        id: nuget
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.nuget/packages
-          key: nuget-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('global.json', '**/Directory.Packages.props', '**/Directory.Build.props', '**/*.csproj', '**/packages.lock.json') }}
-          restore-keys: nuget-${{ runner.os }}-${{ runner.arch }}-
-
-      # Only what the lock files name, each package's content hash checked against them.
-      - name: Restore
-        run: dotnet restore --locked-mode
-
-      # Saved once restored, so a failing build or test still leaves the next run its packages.
-      - name: Cache NuGet packages
-        if: steps.nuget.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.nuget/packages
-          key: ${{ steps.nuget.outputs.cache-primary-key }}
-
-      - name: Build
-        run: dotnet build --no-restore
-
-      # A file the .gitignore matches never reaches a clone (#58). After the build, so one that wrote beside the
-      # sources shows too; and no tracked file may match a rule, since its folder's other files would not be seen.
-      - name: No source is ignored by Git
-        run: |
-          hidden=$(git ls-files --others --ignored --exclude-standard -- src tests tools site
-                   git ls-files --cached --ignored --exclude-standard)
-          if [ -n "$hidden" ]; then
-            echo "::error title=Ignored sources::The .gitignore matches these, so a clone would not have them or their neighbours"
-            echo "$hidden"
-            exit 1
-          fi
-
-      # A test hung for 10 minutes is stopped and named, rather than holding the job to its timeout. On a failure the
-      # failed tests are listed last, as annotations and in the run's summary.
-      - name: Test
-        shell: pwsh
-        timeout-minutes: 40
-        run: |
-          dotnet test tests/Passenger.Tests --no-build --results-directory TestResults `
-            --logger trx --logger "console;verbosity=normal" `
-            --blame-hang-timeout 10m --blame-hang-dump-type none
-          $code = $LASTEXITCODE
-          if ($code -eq 0) { exit 0 }
-          $failed = @(Get-ChildItem TestResults -Recurse -Filter *.trx -ErrorAction SilentlyContinue | ForEach-Object {
-            ([xml](Get-Content -Raw $_.FullName)).TestRun.Results.UnitTestResult |
-              Where-Object { $_ -and $_.outcome -notin 'Passed', 'NotExecuted' }
-          })
-          # The workflow command's own escapes: % and line breaks in a message, and : and , in a property too.
-          function Escape([string] $text, [switch] $property) {
-            $text = $text.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
-            if ($property) { $text = $text.Replace(':', '%3A').Replace(',', '%2C') }
-            $text
-          }
-          $heading = "Tests failed on ${env:RUNNER_OS}: $($failed.Count)"
-          if ($failed.Count -eq 0) {
-            $heading = "dotnet test failed on ${env:RUNNER_OS} with no failed test in its results: the log above says what crashed or hung"
-          }
-          $summary = @("### $heading", '')
-          Write-Host "`n$heading"
-          foreach ($test in $failed) {
-            $message = "$($test.Output.ErrorInfo.Message)".Trim()
-            Write-Host "  $($test.testName) ($($test.outcome))"
-            Write-Host "::error title=$(Escape $test.testName -property)::$(Escape $message)"
-            $summary += "- ``$($test.testName)`` ($($test.outcome)): $(($message -split "`n")[0].Trim())"
-          }
-          $summary | Add-Content -Path $env:GITHUB_STEP_SUMMARY -Encoding utf8
-          exit $code
-
-      - name: Upload test results
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: test-results-${{ runner.os }}
-          path: TestResults/
-          if-no-files-found: ignore
+    name: Test
+    uses: ./.github/workflows/test.yml
 
   # #36: each processor's disk image, made with no Developer ID here (the app signed ad hoc, nothing notarized), which
   # tools/package-mac.sh mounts read-only and checks before it is done: the app's signature, its version and the volume's,
   # Roslyn's server and the debugger's adapter in it, and every Mach-O file built for the image's processor. The x64
-  # image is cross-published on the arm64 runner. Publishing the images with a release is #56's.
+  # image is cross-published on the arm64 runner. A release (release.yml) makes the same images, with the Developer ID
+  # when the repository's secrets hold one.
   package:
     name: Disk image (${{ matrix.rid }})
     strategy:

@@ -1,0 +1,412 @@
+# A release (#56): a vX.Y.Z tag pushed runs every test on macOS and Windows (test.yml), then makes the macOS disk
+# images (tools/package-mac.sh) and the Windows installers (tools/package-win.sh) at the tag's version, checks that each
+# build says that version, and publishes them as the tag's GitHub release with SHA256SUMS, notes from the tag
+# (tools/release-notes.sh) and Velopack's update feed for each Windows channel. The site's download buttons take
+# releases/latest/download/NAME, so the installers' names never change: Passenger-macos-arm64.dmg,
+# Passenger-macos-x64.dmg, Passenger-windows-x64.exe and Passenger-windows-arm64.exe. There are no Linux tarballs yet
+# (#57): a Linux publish builds, but nobody has run one, and the launcher and install.sh that site/linux.html describes
+# do not exist; the site says a release without them has no Linux build.
+#
+# Signed only when the repository's secrets hold the credentials, and otherwise unsigned, as the owner decided the MVP
+# may ship (#34, #36):
+# - macOS, the Developer ID: MACOS_DEVELOPER_ID_P12_BASE64 (the Developer ID Application certificate and its private
+#   key, a .p12 in base64) and MACOS_DEVELOPER_ID_PASSWORD (the .p12's); then notarized with an App Store Connect API
+#   key: APPLE_API_KEY_P8_BASE64 (the AuthKey_*.p8 in base64), APPLE_API_KEY_ID and APPLE_API_ISSUER_ID.
+# - Windows, Azure Artifact Signing: AZURE_TENANT_ID, AZURE_CLIENT_ID and AZURE_CLIENT_SECRET (an identity with the
+#   account's Artifact Signing Certificate Profile Signer role), AZURE_ARTIFACT_SIGNING_ENDPOINT (the account region's,
+#   such as https://eus.codesigning.azure.net), AZURE_ARTIFACT_SIGNING_ACCOUNT and AZURE_ARTIFACT_SIGNING_PROFILE.
+# - Or Windows, a certificate: WINDOWS_CERTIFICATE_PFX_BASE64 and WINDOWS_CERTIFICATE_PASSWORD, timestamped by the
+#   repository variable WINDOWS_TIMESTAMP_URL (DigiCert's when it is not set).
+#
+# Run by hand (Actions > Release > Run workflow), it is a dry run unless unticked: everything is built and checked, and
+# what the release would carry, with its notes, is kept as the run's artifact instead of being published. From a branch
+# it can only be a dry run, at the version the packaging scripts take there; from a tag, unticked, it publishes that
+# tag's release. Only the last job, which publishes, can write to the repository. Actions are pinned to a release's
+# commit.
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Dry run (build and check everything, keep it as the run's artifact, publish nothing)
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+# One run per tag or branch at a time, and never cancelled part way through publishing.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  # Avalonia's build task sends usage data from every build unless this is in the environment.
+  AVALONIA_TELEMETRY_OPTOUT: 1
+
+jobs:
+  # What is released, before an hour of tests: the tag's version in numbers, as every package's version must be. A dry
+  # run from a branch takes the version as tools/package-mac.sh and package-win.sh do: a vX.Y.Z tag on the commit, else
+  # Directory.Build.props'.
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      publish: ${{ steps.version.outputs.publish }}
+    steps:
+      # The whole history, for the tags on the commit.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: The version released
+        id: version
+        env:
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            tag=$GITHUB_REF_NAME
+          elif [ "$DRY_RUN" = true ]; then
+            tag=$(git describe --tags --exact-match --match 'v[0-9]*' 2> /dev/null || true)
+          else
+            echo "::error title=No tag::A release is published from a vX.Y.Z tag: run this from a tag, or as a dry run"
+            exit 1
+          fi
+          if [ -z "$tag" ]; then
+            version=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' Directory.Build.props | head -n 1)
+          elif echo "$tag" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
+            version=${tag#v}
+          else
+            echo "::error title=Not a release tag::$tag is not vX.Y.Z in numbers, which every package's version must be"
+            exit 1
+          fi
+          publish=true
+          [ "$DRY_RUN" != true ] || publish=false
+          echo "Passenger $version${tag:+ from $tag}, $([ "$publish" = true ] && echo published || echo a dry run)"
+          {
+            echo "version=$version"
+            echo "tag=$tag"
+            echo "publish=$publish"
+          } >> "$GITHUB_OUTPUT"
+
+  test:
+    name: Test
+    needs: version
+    uses: ./.github/workflows/test.yml
+
+  # Each system's package as `just package-mac` and `just package-win` make it, with the Developer ID or the Windows
+  # signature when the secrets hold one. The x64 disk image is cross-published on the arm64 runner and the arm64
+  # installer on the x64 one, as CI does.
+  package:
+    name: Package (${{ matrix.rid }})
+    needs: [version, test]
+    strategy:
+      # One system's failure never hides the other's result.
+      fail-fast: false
+      matrix:
+        include:
+          - rid: osx-arm64
+            os: macos-latest
+          - rid: osx-x64
+            os: macos-latest
+          - rid: win-x64
+            os: windows-latest
+          - rid: win-arm64
+            os: windows-latest
+    runs-on: ${{ matrix.os }}
+    # Apple's notary can take a while with each of the two submissions an image makes.
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      RID: ${{ matrix.rid }}
+    steps:
+      # The whole history: the scripts take the version from the commit's tag and count its commits.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # .NET 10 runs vpk, as in CI's installer job.
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+          dotnet-version: 10.0.x
+
+      # The test job's packages; this job saves none of its own.
+      - name: Restore cached NuGet packages
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('global.json', '**/Directory.Packages.props', '**/Directory.Build.props', '**/*.csproj', '**/packages.lock.json') }}
+          restore-keys: nuget-${{ runner.os }}-${{ runner.arch }}-
+
+      # The Developer ID goes into a keychain of the job's own, made the default so codesign and notarytool find it, and
+      # the API key into a notarytool profile there. The notary needs the Developer ID; the Developer ID alone signs.
+      - name: Developer ID and notary
+        if: runner.os == 'macOS'
+        env:
+          MACOS_DEVELOPER_ID_P12_BASE64: ${{ secrets.MACOS_DEVELOPER_ID_P12_BASE64 }}
+          MACOS_DEVELOPER_ID_PASSWORD: ${{ secrets.MACOS_DEVELOPER_ID_PASSWORD }}
+          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          if [ -z "$MACOS_DEVELOPER_ID_P12_BASE64" ]; then
+            if [ -n "$APPLE_API_KEY_P8_BASE64" ]; then
+              echo "::error title=No Developer ID::APPLE_API_KEY_P8_BASE64 is set but MACOS_DEVELOPER_ID_P12_BASE64 is not; the notary takes only what a Developer ID signed"
+              exit 1
+            fi
+            echo "No Developer ID in the secrets: the app is signed ad hoc and not notarized (Open Anyway, once)"
+            exit 0
+          fi
+          keychain=$RUNNER_TEMP/passenger-signing.keychain-db
+          password=$(openssl rand -base64 32)
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          echo "PASSENGER_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+          echo "$MACOS_DEVELOPER_ID_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/developer-id.p12"
+          security import "$RUNNER_TEMP/developer-id.p12" -k "$keychain" -f pkcs12 -P "$MACOS_DEVELOPER_ID_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/developer-id.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" > /dev/null
+          # shellcheck disable=SC2046 # the search list's paths, which have no spaces on the runner
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          security default-keychain -d user -s "$keychain"
+          security find-identity -v -p codesigning "$keychain"
+          # By its SHA-1, which no other identity in the keychains can share.
+          identities=$(security find-identity -v -p codesigning "$keychain" | sed -n 's/^ *[0-9]*) \([0-9A-F]\{40\}\) "Developer ID Application: .*"$/\1/p')
+          identity=${identities%%[[:space:]]*}
+          if [ -z "$identity" ]; then
+            echo "::error title=No Developer ID::MACOS_DEVELOPER_ID_P12_BASE64 holds no Developer ID Application identity"
+            exit 1
+          fi
+          echo "PASSENGER_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
+          if [ -z "$APPLE_API_KEY_P8_BASE64" ]; then
+            echo "::warning title=Not notarized::No APPLE_API_KEY_P8_BASE64: the app and the image are signed but not notarized"
+            exit 0
+          fi
+          key=$RUNNER_TEMP/notary-key.p8
+          echo "$APPLE_API_KEY_P8_BASE64" | base64 --decode > "$key"
+          xcrun notarytool store-credentials passenger-notary --key "$key" --key-id "$APPLE_API_KEY_ID" \
+            --issuer "$APPLE_API_ISSUER_ID" --keychain "$keychain"
+          rm -f "$key"
+          echo "PASSENGER_NOTARY_PROFILE=passenger-notary" >> "$GITHUB_ENV"
+
+      # tools/package-win.sh signs through vpk with one of the two; Azure's credential reads its identity from the
+      # environment, as the package step gives it.
+      - name: Windows signature
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_ARTIFACT_SIGNING_ENDPOINT: ${{ secrets.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          AZURE_ARTIFACT_SIGNING_ACCOUNT: ${{ secrets.AZURE_ARTIFACT_SIGNING_ACCOUNT }}
+          AZURE_ARTIFACT_SIGNING_PROFILE: ${{ secrets.AZURE_ARTIFACT_SIGNING_PROFILE }}
+          WINDOWS_CERTIFICATE_PFX_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_PFX_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          TIMESTAMP_URL: ${{ vars.WINDOWS_TIMESTAMP_URL || 'http://timestamp.digicert.com' }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:AZURE_CLIENT_ID -and $env:WINDOWS_CERTIFICATE_PFX_BASE64) {
+            throw 'Both Azure Artifact Signing and a certificate are in the secrets; sign with one'
+          }
+          if ($env:AZURE_CLIENT_ID) {
+            foreach ($name in 'AZURE_ARTIFACT_SIGNING_ENDPOINT', 'AZURE_ARTIFACT_SIGNING_ACCOUNT', 'AZURE_ARTIFACT_SIGNING_PROFILE') {
+              if (-not [Environment]::GetEnvironmentVariable($name)) { throw "AZURE_CLIENT_ID is in the secrets but $name is not" }
+            }
+            $metadata = Join-Path $env:RUNNER_TEMP 'artifact-signing.json'
+            @{
+              Endpoint = $env:AZURE_ARTIFACT_SIGNING_ENDPOINT
+              CodeSigningAccountName = $env:AZURE_ARTIFACT_SIGNING_ACCOUNT
+              CertificateProfileName = $env:AZURE_ARTIFACT_SIGNING_PROFILE
+            } | ConvertTo-Json | Set-Content -Path $metadata -Encoding utf8
+            "PASSENGER_ARTIFACT_SIGNING_METADATA=$metadata" >> $env:GITHUB_ENV
+            'Signed by Azure Artifact Signing'
+          } elseif ($env:WINDOWS_CERTIFICATE_PFX_BASE64) {
+            # The certificate with its key into the user's store, which signtool takes it from by its thumbprint, and
+            # the rest of its chain among the intermediate authorities.
+            $flags = [Security.Cryptography.X509Certificates.X509KeyStorageFlags]'UserKeySet, PersistKeySet'
+            $chain = [Security.Cryptography.X509Certificates.X509Certificate2Collection]::new()
+            $chain.Import([Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_PFX_BASE64), $env:WINDOWS_CERTIFICATE_PASSWORD, $flags)
+            $signer = $chain | Where-Object HasPrivateKey | Select-Object -First 1
+            if (-not $signer) { throw 'WINDOWS_CERTIFICATE_PFX_BASE64 holds no certificate with its private key' }
+            foreach ($store in 'My', 'CA') {
+              $opened = [Security.Cryptography.X509Certificates.X509Store]::new($store, 'CurrentUser')
+              $opened.Open('ReadWrite')
+              $chain | Where-Object { ($_.HasPrivateKey) -eq ($store -eq 'My') } | ForEach-Object { $opened.Add($_) }
+              $opened.Close()
+            }
+            "PASSENGER_SIGNTOOL_PARAMS=/sha1 $($signer.Thumbprint) /fd sha256 /tr $env:TIMESTAMP_URL /td sha256" >> $env:GITHUB_ENV
+            "Signed by $($signer.Subject)"
+          } else {
+            'No signing secrets: the installer is unsigned, and SmartScreen asks once (More info > Run anyway)'
+          }
+
+      - name: Make and check the disk image
+        if: runner.os == 'macOS'
+        run: tools/package-mac.sh "$RID"
+
+      - name: Build the installer
+        if: runner.os == 'Windows'
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: tools/package-win.sh "$RID"
+
+      # The version Product reads (About, the log, the update check) is the tag's, as the build stamped it into the
+      # informational version with the commit: "1.2.0+<commit>", which FileVersionInfo gives as the product version.
+      - name: The build says the tag's version
+        shell: pwsh
+        run: |
+          $assembly = (Resolve-Path "artifacts/package/$env:RID/publish/Passenger.dll").Path
+          $said = [Diagnostics.FileVersionInfo]::GetVersionInfo($assembly).ProductVersion
+          $expected = "$env:VERSION+$(git rev-parse HEAD)"
+          if ($said -ne $expected) {
+            Write-Host "::error title=Wrong version::Passenger.dll for $env:RID says it is $said, not $expected"
+            exit 1
+          }
+          Write-Host "Passenger.dll for $env:RID says it is $said"
+
+      # The Windows channels' update feed, as Velopack's GithubSource reads it from a release (#35):
+      # releases.<rid>.json, which names the full package and its SHA-256, beside the package.
+      - name: Gather the release's files
+        run: |
+          mkdir -p artifacts/release
+          case $RID in
+            osx-*)
+              cp "artifacts/package/Passenger-macos-${RID#osx-}.dmg" artifacts/release/
+              ;;
+            win-*)
+              cp "artifacts/package/Passenger-windows-${RID#win-}.exe" "artifacts/package/$RID/velopack/releases.$RID.json" \
+                "artifacts/package/$RID/velopack/PassengerIDE-$VERSION-$RID-full.nupkg" artifacts/release/
+              ;;
+          esac
+          ls -l artifacts/release
+
+      - name: Forget the Developer ID
+        if: always() && runner.os == 'macOS'
+        run: |
+          if [ -n "${PASSENGER_KEYCHAIN:-}" ]; then
+            security delete-keychain "$PASSENGER_KEYCHAIN"
+          fi
+
+      - name: Upload the release's files
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: package-${{ matrix.rid }}
+          path: artifacts/release/
+          if-no-files-found: error
+          # Disk images and installers are compressed already.
+          compression-level: 0
+          retention-days: 1
+
+  # Everything the release carries, in one place: checked by name, so a renamed package never replaces one the site
+  # links to, with SHA256SUMS over it and the notes. A dry run keeps it as the run's artifact.
+  assets:
+    name: Assets
+    needs: [version, package]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      TAG: ${{ needs.version.outputs.tag }}
+    steps:
+      # The whole history and its tags, for the notes.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download the packages
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: package-*
+          path: release/assets
+          merge-multiple: true
+
+      - name: Check the release's files
+        working-directory: release/assets
+        run: |
+          expected="Passenger-macos-arm64.dmg
+          Passenger-macos-x64.dmg
+          Passenger-windows-arm64.exe
+          Passenger-windows-x64.exe
+          PassengerIDE-$VERSION-win-arm64-full.nupkg
+          PassengerIDE-$VERSION-win-x64-full.nupkg
+          releases.win-arm64.json
+          releases.win-x64.json"
+          found=$(find . -mindepth 1 -maxdepth 1 | sed 's:^\./::' | LC_ALL=C sort)
+          expected=$(echo "$expected" | sed 's/^ *//' | LC_ALL=C sort)
+          if [ "$found" != "$expected" ]; then
+            echo "::error title=Wrong files::The release would carry other files than its fixed names"
+            diff <(echo "$expected") <(echo "$found") || true
+            exit 1
+          fi
+          for rid in win-x64 win-arm64; do
+            jq -e --arg version "$VERSION" --arg file "PassengerIDE-$VERSION-$rid-full.nupkg" \
+              '.Assets | length == 1 and .[0].Version == $version and .[0].Type == "Full" and .[0].FileName == $file' \
+              "releases.$rid.json" > /dev/null || {
+              echo "::error title=Wrong feed::releases.$rid.json does not name the full package of $VERSION alone"
+              cat "releases.$rid.json"
+              echo
+              exit 1
+            }
+          done
+
+      - name: Checksums
+        working-directory: release/assets
+        run: |
+          sha256sum -- * > ../SHA256SUMS
+          mv ../SHA256SUMS .
+          cat SHA256SUMS
+
+      - name: Notes
+        run: |
+          tools/release-notes.sh ${TAG:+"$TAG"} > release/notes.md
+          cat release/notes.md
+
+      - name: Keep the release's files
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: Passenger-${{ needs.version.outputs.version }}
+          path: release/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: ${{ needs.version.outputs.publish == 'true' && 1 || 7 }}
+
+  # The only job that can write to the repository, and only for a tag's release.
+  release:
+    name: Publish
+    needs: [version, assets]
+    if: needs.version.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: Passenger-${{ needs.version.outputs.version }}
+          path: release
+
+      # gh uploads the files to a draft and publishes it once they are all there, so releases/latest never lacks one.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.version.outputs.tag }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: gh release create "$TAG" release/assets/* --verify-tag --title "Passenger $VERSION" --notes-file release/notes.md

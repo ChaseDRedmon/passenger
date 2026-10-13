@@ -1,0 +1,50 @@
+#!/bin/sh
+# A release's notes (#56), for `gh release create --notes-file`: `tools/release-notes.sh [vX.Y.Z]` writes to standard
+# output the tag's own message when it is an annotated tag that says more than its name, else the first line of each
+# commit since the previous vX.Y.Z tag (every commit, for the first release). With no tag, as in a dry run from a
+# branch, the commits since the last tag up to HEAD. GitHub keeps at most 125,000 characters of notes, so a longer list
+# is cut, ending with a link to the rest.
+set -eu
+fail() {
+    echo "release-notes: $*" >&2
+    exit 1
+}
+tag=${1:-}
+root=$(cd "$(dirname "$0")/.." && pwd)
+repository=${GITHUB_REPOSITORY:-Zaneris/passenger}
+if [ -n "$tag" ]; then
+    git -C "$root" rev-parse -q --verify "refs/tags/$tag" > /dev/null || fail "there is no tag $tag"
+    # The tag, even where a branch has the same name.
+    head=refs/tags/$tag
+else
+    head=HEAD
+fi
+if [ "$(git -C "$root" rev-parse --is-shallow-repository)" = true ]; then
+    fail "a shallow clone has neither every tag nor every commit since the last; fetch the whole history"
+fi
+
+# A signed tag's signature is not its message, and "v1.2.0" or "1.2.0" alone says nothing the release does not.
+if [ -n "$tag" ] && [ "$(git -C "$root" cat-file -t "$head")" = tag ]; then
+    message=$(git -C "$root" for-each-ref --format='%(contents:subject)%0a%0a%(contents:body)' "$head")
+    if [ -n "$message" ] && [ "$message" != "$tag" ] && [ "$message" != "${tag#v}" ]; then
+        printf '%s\n' "$message"
+        exit 0
+    fi
+fi
+
+previous=$(git -C "$root" describe --tags --abbrev=0 --match 'v[0-9]*' "$head^" 2> /dev/null || true)
+if [ -n "$previous" ]; then
+    range=$previous..$head
+    rest=https://github.com/$repository/compare/$previous...${tag:-$(git -C "$root" rev-parse HEAD)}
+    echo "Changes since $previous:"
+else
+    range=$head
+    rest=https://github.com/$repository/commits/${tag:-$(git -C "$root" rev-parse HEAD)}
+    echo "Changes in the first release:"
+fi
+echo
+git -C "$root" log --no-merges --format='- %s' "$range" | awk -v max=100000 -v rest="$rest" '
+    { total += length($0) + 1 }
+    total <= max { print; next }
+    { left++ }
+    END { if (left) printf "- and %d more: %s\n", left, rest }'
