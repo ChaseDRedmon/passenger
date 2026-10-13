@@ -14,7 +14,7 @@ build:
 
 # Every test: the IDE driven whole, headless. A filter narrows them: just test Editing
 test filter="":
-    dotnet test tests/Passenger.Tests {{ if filter == "" { "" } else { "--filter " + filter } }}
+    dotnet test tests/Passenger.Tests {{ if filter == "" { "" } else { "--filter " + quote(filter) } }}
 
 # Run the IDE (Debug, JIT): just run [--theme dark|light|system]
 run *args:
