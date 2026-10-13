@@ -1,7 +1,7 @@
 using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
+using Passenger.Languages.CSharp;
 using Passenger.Text;
 
 namespace Passenger.App.CSharp;
@@ -11,14 +11,16 @@ namespace Passenger.App.CSharp;
 /// the selection's place names and the text did not declare before, whatever name the server gave it.</summary>
 internal sealed class ExtractedMethod : IDisposable
 {
-    private readonly TextSnapshot before;
+    private readonly CSharpHighlighter syntax;
+    private readonly ParsedText before;
     private int start;
     private int end;
 
-    public ExtractedMethod(TextDocument document, Selection selection)
+    public ExtractedMethod(TextDocument document, CSharpHighlighter syntax, Selection selection)
     {
         Document = document;
-        before = document.Snapshot;
+        this.syntax = syntax;
+        before = syntax.Current;
         start = selection.Start;
         end = selection.End;
         document.Changed += OnChanged;
@@ -31,8 +33,8 @@ internal sealed class ExtractedMethod : IDisposable
     public int? Call()
     {
         TextSpan made = TextSpan.FromBounds(start, end);
-        HashSet<string> old = Declared(CSharpSyntaxTree.ParseText(before.ToString()).GetRoot());
-        SyntaxNode root = CSharpSyntaxTree.ParseText(Document.Snapshot.ToString()).GetRoot();
+        HashSet<string> old = Declared(before.Root);
+        SyntaxNode root = syntax.Current.Root;
         HashSet<string> declared = Declared(root);
         foreach (InvocationExpressionSyntax call in root.DescendantNodes(made).OfType<InvocationExpressionSyntax>())
         {

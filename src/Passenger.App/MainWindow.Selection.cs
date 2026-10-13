@@ -26,8 +26,8 @@ public partial class MainWindow
             grownFrom.Clear();
         }
         TextSnapshot text = document.Text.Snapshot;
-        bool csharp = document.Language.Name == "C#";
-        SelectionSet wider = now.With(s => SelectionRanges.Extend(text, s.Range, csharp) is { } next ? new Selection(next.Start, next.End) : s);
+        ParsedText? csharp = document.Syntax?.Current;
+        SelectionSet wider = now.With(s => SelectionRanges.Extend(text, csharp, s.Range) is { } next ? new Selection(next.Start, next.End) : s);
         if (wider.SameAs(now))
         {
             return;

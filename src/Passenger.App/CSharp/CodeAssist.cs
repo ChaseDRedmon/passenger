@@ -113,6 +113,9 @@ public sealed class CodeAssist
 
     private CSharpDocument? Current => editors.Active is { } active ? service()?.For(active) : null;
 
+    /// <summary>The shown file's syntax as it stands, the one parse of it everything shares; null for a file not C#.</summary>
+    private ParsedText? Syntax => editors.Active?.Syntax?.Current;
+
     /// <summary>The server's document for the file shown, asked for each time it is used, since a server started again
     /// has a new one: null for a file that is not C#, and, said in the status bar for a command
     /// (<paramref name="what"/>), while the server cannot take it.</summary>
@@ -376,7 +379,7 @@ public sealed class CodeAssist
                 ? lsp.OffsetOf(edit.Range.Start)
                 : WordStart(caret);
             // Rider lists the live templates that may go here with the server's items, ahead of a keyword they share.
-            (TemplateScope scope, _) = TemplateScopes.At(Editor.Document.Snapshot, caret);
+            TemplateScope scope = Syntax is { } syntax ? TemplateScopes.At(syntax, caret).Scope : TemplateScope.None;
             templatesOffered.Clear();
             foreach (LiveTemplate template in LiveTemplates.In(scope))
             {
@@ -562,7 +565,7 @@ public sealed class CodeAssist
             ExpandPostfix(postfix, found.Target, caret);
             return true;
         }
-        (TemplateScope scope, _) = TemplateScopes.At(Editor.Document.Snapshot, caret);
+        TemplateScope scope = Syntax is { } syntax ? TemplateScopes.At(syntax, caret).Scope : TemplateScope.None;
         if (LiveTemplates.In(scope).FirstOrDefault(t => t.Abbreviation == word) is not { } template)
         {
             return false;
@@ -575,8 +578,8 @@ public sealed class CodeAssist
     /// each would wrap; none when no dot or no expression is there.</summary>
     private IEnumerable<(PostfixTemplate Template, PostfixTarget Target)> Postfixes(int word, int caret)
     {
-        TextSnapshot text = Editor.Document.Snapshot;
-        if (word < 1 || text[word - 1] != '.' || PostfixTemplates.Before(text, word - 1, caret) is not { } target)
+        if (word < 1 || Syntax is not { } syntax || word > syntax.Text.Length || syntax.Text[word - 1] != '.'
+            || PostfixTemplates.Before(syntax, word - 1, caret) is not { } target)
         {
             return [];
         }
@@ -604,7 +607,7 @@ public sealed class CodeAssist
         string line = text.GetText(text.GetLineStart(text.GetLineFromOffset(start)), start - text.GetLineStart(text.GetLineFromOffset(start)));
         string indent = line[..(line.Length - line.TrimStart().Length)];
         string unit = Editor.Indent.UseTabs ? "\t" : new string(' ', Editor.Indent.Size);
-        (_, string? typeName) = TemplateScopes.At(text, end);
+        string? typeName = Syntax is { } syntax ? TemplateScopes.At(syntax, end).TypeName : null;
         Dictionary<string, string> defaults = template.Defaults.ToDictionary(d => d.Key, d => d.Value == LiveTemplates.TypeName ? typeName ?? "Name" : d.Value);
         Editor.InsertSnippet(TextRange.FromBounds(start, end), Snippet.Parse(template.Text, defaults, indent, unit));
     }
@@ -942,7 +945,7 @@ public sealed class CodeAssist
         {
             Selection primary = Editor.Selections.Primary;
             using Asked asked = WorkspaceEdits.Track(editors);
-            using ExtractedMethod? made = renameMethod ? new ExtractedMethod(Editor.Document, primary) : null;
+            using ExtractedMethod? made = renameMethod && document.Syntax is { } syntax ? new ExtractedMethod(Editor.Document, syntax, primary) : null;
             CodeAction? action = (await lsp.CodeActionsAsync(primary.Range, [])).Where(a => a.Disabled is null).FirstOrDefault(pick);
             if (action is null)
             {

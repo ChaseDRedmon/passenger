@@ -40,6 +40,7 @@ public partial class MainWindow : Window
     private readonly ProcessRunner runner;
     private readonly DebugController debug;
     private readonly Testing.TestController tests;
+    private readonly Testing.TestGutter testGutter;
     private Action<BuildOutcome>? afterBuild;
     private TaskCompletionSource? building;
     private readonly List<Problem> problems = [];
@@ -204,31 +205,9 @@ public partial class MainWindow : Window
             Bottom.Tests.Status = message;
         };
         tests.LaunchUnderDebugger = LaunchTestHost;
-        DispatcherTimer marksTimer = new() { Interval = TimeSpan.FromMilliseconds(150) };
-        marksTimer.Tick += (_, _) =>
-        {
-            marksTimer.Stop();
-            UpdateAllTestMarks();
-        };
-        Bottom.TestTree.Updated += (_, _) =>
-        {
-            marksTimer.Stop();
-            UpdateAllTestMarks();
-        };
-        Bottom.TestTree.ResultApplied += (_, _) =>
-        {
-            marksTimer.Stop();
-            marksTimer.Start();
-        };
-        Editors.Opened += (_, document) =>
-        {
-            UpdateTestMarks(document);
-            document.Text.Changed += (_, _) =>
-            {
-                marksTimer.Stop();
-                marksTimer.Start();
-            };
-        };
+        testGutter = new Testing.TestGutter(Bottom.TestTree);
+        Editors.Opened += (_, document) => testGutter.Watch(document);
+        Editors.Closed += (_, document) => testGutter.Forget(document);
         tests.AttachDebugger = async processId =>
         {
             ShowToolWindow("debug");
@@ -1522,6 +1501,9 @@ public partial class MainWindow : Window
     /// <summary>The unit test runner, its tree and its runs.</summary>
     public Testing.TestController Tests => tests;
 
+    /// <summary>The run icons beside the tests of each open file.</summary>
+    public Testing.TestGutter TestGutter => testGutter;
+
     /// <summary>Rider's Unload Project: the project shows dimmed with nothing under it, and leaves the run configurations,
     /// the solution's builds and the test runner until it is reloaded; the folder keeps the choice.</summary>
     public void SetUnloaded(string project, bool unloaded)
@@ -1559,50 +1541,10 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>The run icons of a file's tests, coloured by how each last ran (a class's by all of its tests').</summary>
-    private void UpdateTestMarks(OpenDocument document)
-    {
-        if (!document.Path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
-        {
-            return;
-        }
-        TextSnapshot text = document.Text.Snapshot;
-        List<TestMark> marks = [];
-        foreach ((string type, int line) in Testing.TestsAtCaret.DeclaredTypes(text))
-        {
-            marks.Add(new TestMark(line, MarkOf(Found(type, null))));
-        }
-        foreach ((string type, string method, int line) in Testing.TestsAtCaret.Declared(text))
-        {
-            marks.Add(new TestMark(line, MarkOf(Found(type, method))));
-        }
-        document.TestMarks = marks;
-
-        IReadOnlyList<Testing.TestNode> Found(string type, string? method) =>
-            [.. tests.Tree.Roots.SelectMany(r => r.Methods).Where(m => m.Cases.Any(c => Testing.TestsAtCaret.Matches(c.FullyQualifiedName, type, method)))];
-
-        static TestMarkKind MarkOf(IReadOnlyList<Testing.TestNode> methods) =>
-            methods.Any(m => m.State == Testing.TestState.Running) ? TestMarkKind.Running
-            : methods.Any(m => m.State == Testing.TestState.Failed) ? TestMarkKind.Failed
-            : methods.Count > 0 && methods.All(m => m.State is Testing.TestState.Passed or Testing.TestState.Skipped) && methods.Any(m => m.State == Testing.TestState.Passed) ? TestMarkKind.Passed
-            : TestMarkKind.NotRun;
-    }
-
-    private void UpdateAllTestMarks()
-    {
-        foreach (OpenDocument document in Editors.Documents)
-        {
-            UpdateTestMarks(document);
-        }
-    }
-
     /// <summary>Rider's menu on a test's run icon: run or debug that test, or all of its class's.</summary>
     private void ShowTestMenu(CodeEditor editor, OpenDocument document, int line)
     {
-        TextSnapshot text = document.Text.Snapshot;
-        (string Type, string? Method)? target = Testing.TestsAtCaret.Declared(text).Where(d => d.Line == line).Select(d => ((string, string?)?)(d.Type, d.Method)).FirstOrDefault()
-            ?? Testing.TestsAtCaret.DeclaredTypes(text).Where(d => d.Line == line).Select(d => ((string, string?)?)(d.Type, null)).FirstOrDefault();
-        if (target is not { } chosen)
+        if (testGutter.At(document, line) is not { } chosen)
         {
             return;
         }
@@ -1639,7 +1581,7 @@ public partial class MainWindow : Window
             RunTests(() => tests.RunAsync(folder, chosen, debug));
             return;
         }
-        if (Editors.Active is not { } active || Testing.TestsAtCaret.At(active.Text.Snapshot, Editors.CodeEditor.CaretPosition.Line) is not { } context)
+        if (Editors.Active?.Syntax is not { } syntax || Testing.TestsAtCaret.At(syntax.Current, Editors.CodeEditor.CaretPosition.Line) is not { } context)
         {
             StatusText.Text = "No test is at the caret";
             return;

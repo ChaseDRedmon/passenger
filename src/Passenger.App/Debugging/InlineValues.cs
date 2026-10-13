@@ -3,6 +3,8 @@ using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
 using Passenger.Editor;
+using Passenger.Languages.CSharp;
+using Passenger.Text;
 
 namespace Passenger.App.Debugging;
 
@@ -14,21 +16,18 @@ public static class InlineValues
     /// <summary>The longest value shown in full; a longer one is cut, as Rider cuts them.</summary>
     private const int Longest = 60;
 
-    public static IReadOnlyList<LineAnnotation> For(string text, int stopLine, IReadOnlyDictionary<string, string> values)
+    /// <summary>The values to show from the file's syntax, by the editor's lines (from zero).</summary>
+    public static IReadOnlyList<LineAnnotation> For(ParsedText syntax, int stopLine, IReadOnlyDictionary<string, string> values)
     {
-        if (values.Count == 0)
+        TextSnapshot text = syntax.Text;
+        if (values.Count == 0 || stopLine < 0 || stopLine >= text.LineCount)
         {
             return [];
         }
-        SyntaxTree tree = CSharpSyntaxTree.ParseText(text);
-        SourceText source = tree.GetText();
-        if (stopLine < 0 || stopLine >= source.Lines.Count)
-        {
-            return [];
-        }
-        SyntaxNode root = tree.GetRoot();
-        TextLine stop = source.Lines[stopLine];
-        int position = stop.Start + (source.ToString(stop.Span).Length - source.ToString(stop.Span).TrimStart().Length);
+        SyntaxNode root = syntax.Root;
+        LineSpan stop = text.GetLine(stopLine);
+        string content = text.GetText(stop.Start, stop.Length);
+        int position = stop.Start + (content.Length - content.TrimStart().Length);
         SyntaxNode? at = root.FindToken(Math.Min(position, Math.Max(0, root.FullSpan.End - 1))).Parent;
         SyntaxNode? body = at?.AncestorsAndSelf().FirstOrDefault(n => n is BaseMethodDeclarationSyntax or LocalFunctionStatementSyntax
             or AccessorDeclarationSyntax or AnonymousFunctionExpressionSyntax);
@@ -43,7 +42,7 @@ public static class InlineValues
             {
                 continue;
             }
-            int line = source.Lines.GetLineFromPosition(token.SpanStart).LineNumber;
+            int line = text.GetLineFromOffset(token.SpanStart);
             List<string> onLine = named.TryGetValue(line, out List<string>? list) ? list : named[line] = [];
             if (!onLine.Contains(token.ValueText))
             {

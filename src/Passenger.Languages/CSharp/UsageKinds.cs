@@ -20,12 +20,9 @@ public enum UsageKind
 /// server says only where usages are; Rider's grouping needs this.</summary>
 public static class UsageKinds
 {
-    /// <summary>Each usage's kind, by where it starts in the text.</summary>
-    public static IReadOnlyList<UsageKind> Classify(string text, IReadOnlyList<int> offsets)
-    {
-        SyntaxNode root = CSharpSyntaxTree.ParseText(text).GetRoot();
-        return [.. offsets.Select(offset => Classify(root, offset))];
-    }
+    /// <summary>Each usage's kind, by where it starts in the file's syntax.</summary>
+    public static IReadOnlyList<UsageKind> Classify(SyntaxNode root, IReadOnlyList<int> offsets) =>
+        [.. offsets.Select(offset => Classify(root, offset))];
 
     private static UsageKind Classify(SyntaxNode root, int offset)
     {

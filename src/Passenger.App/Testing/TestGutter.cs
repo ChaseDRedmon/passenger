@@ -1,0 +1,211 @@
+using Avalonia.Threading;
+using Passenger.App.Workspace;
+using Passenger.Editor;
+using Passenger.Languages.CSharp;
+
+namespace Passenger.App.Testing;
+
+/// <summary>The run icons beside the tests and test classes each open C# file declares, as Rider's gutter has them,
+/// coloured by how each last ran. A file's tests are read off the UI thread from its own parse as each lands, none made
+/// for them, so typing in one file reads no other. The icons follow the Unit Tests window at once when tests are found or
+/// a run begins or ends, and at most every 150 ms while its results come in (a pause would never come in a long run);
+/// with no test known, and none known before, there is nothing to follow.</summary>
+public sealed class TestGutter
+{
+    private static readonly TimeSpan Throttle = TimeSpan.FromMilliseconds(150);
+
+    private readonly TestTree tree;
+    private readonly DispatcherTimer timer;
+    private readonly Dictionary<OpenDocument, Declared> files = [];
+
+    /// <summary>The tree's methods by their full names (nested types' '+' as '.'), and by every type they are under.</summary>
+    private readonly Dictionary<string, HashSet<TestNode>> byMethod = [];
+    private readonly Dictionary<string, HashSet<TestNode>> byType = [];
+    private IReadOnlyList<TestNode>? indexed;
+    private bool colouredWithTests;
+
+    public TestGutter(TestTree tree)
+    {
+        this.tree = tree;
+        timer = new DispatcherTimer { Interval = Throttle };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            ColourAll();
+        };
+        tree.Updated += (_, _) =>
+        {
+            timer.Stop();
+            ColourAll();
+        };
+        tree.ResultApplied += (_, _) =>
+        {
+            if (!timer.IsEnabled)
+            {
+                timer.Start();
+            }
+        };
+    }
+
+    /// <summary>Gives an open file its icons, read now if its parse is of the text as it stands, and again after each
+    /// parse of it that lands.</summary>
+    public void Watch(OpenDocument document)
+    {
+        UiThread.Check();
+        if (!files.TryAdd(document, new Declared()))
+        {
+            return;
+        }
+        document.Parsed += (_, parsed) => Read(document, parsed);
+        if (document.Syntax?.Newest is { } now)
+        {
+            Read(document, now);
+        }
+    }
+
+    /// <summary>Lets go of a closed file.</summary>
+    public void Forget(OpenDocument document)
+    {
+        UiThread.Check();
+        files.Remove(document);
+    }
+
+    /// <summary>How many times a file's tests have been read from its syntax, for a test to count.</summary>
+    public int Reads(OpenDocument document) => files.TryGetValue(document, out Declared? file) ? file.Reads : 0;
+
+    /// <summary>The test method, else the test class, whose icon is on a line, as the file was last read.</summary>
+    public (string Type, string? Method)? At(OpenDocument document, int line)
+    {
+        UiThread.Check();
+        if (!files.TryGetValue(document, out Declared? file))
+        {
+            return null;
+        }
+        foreach ((string type, string method, int at) in file.Methods)
+        {
+            if (at == line)
+            {
+                return (type, method);
+            }
+        }
+        foreach ((string type, int at) in file.Types)
+        {
+            if (at == line)
+            {
+                return (type, null);
+            }
+        }
+        return null;
+    }
+
+    private void Read(OpenDocument document, ParsedText parsed)
+    {
+        if (files.TryGetValue(document, out Declared? file))
+        {
+            _ = ReadAsync(document, file, ++file.Asked, parsed);
+        }
+    }
+
+    private async Task ReadAsync(OpenDocument document, Declared file, int asked, ParsedText parsed)
+    {
+        (IReadOnlyList<(string Type, int Line)> types, IReadOnlyList<(string Type, string Method, int Line)> methods) =
+            await BackgroundWork.Run(() => (TestsAtCaret.DeclaredTypes(parsed), TestsAtCaret.Declared(parsed)));
+        // A later parse's read is under way, the text has moved on to one that will land, or the file was closed.
+        if (asked != file.Asked || !ReferenceEquals(document.Text.Snapshot, parsed.Text) || !files.ContainsKey(document))
+        {
+            return;
+        }
+        file.Reads++;
+        file.Types = types;
+        file.Methods = methods;
+        Index();
+        Colour(document, file);
+    }
+
+    private void ColourAll()
+    {
+        Index();
+        bool known = byMethod.Count > 0;
+        if (!known && !colouredWithTests)
+        {
+            return;
+        }
+        colouredWithTests = known;
+        foreach ((OpenDocument document, Declared file) in files)
+        {
+            Colour(document, file);
+        }
+    }
+
+    private void Colour(OpenDocument document, Declared file)
+    {
+        if (document.Syntax is null)
+        {
+            file.Types = [];
+            file.Methods = [];
+        }
+        List<TestMark> marks = new(file.Types.Count + file.Methods.Count);
+        foreach ((string type, int line) in file.Types)
+        {
+            marks.Add(new TestMark(line, MarkOf(byType.GetValueOrDefault(type.Replace('+', '.')))));
+        }
+        foreach ((string type, string method, int line) in file.Methods)
+        {
+            marks.Add(new TestMark(line, MarkOf(byMethod.GetValueOrDefault($"{type.Replace('+', '.')}.{method}"))));
+        }
+        if (!marks.SequenceEqual(document.TestMarks))
+        {
+            document.TestMarks = marks;
+        }
+    }
+
+    /// <summary>Indexes the tree's methods once for each set of tests found, as <see cref="TestsAtCaret.Matches"/> would
+    /// match them: a method by its whole name (a theory's rows, NUnit's cases, in one), a type by every name it starts.</summary>
+    private void Index()
+    {
+        if (ReferenceEquals(indexed, tree.Roots))
+        {
+            return;
+        }
+        indexed = tree.Roots;
+        byMethod.Clear();
+        byType.Clear();
+        foreach (TestNode method in tree.Roots.SelectMany(r => r.Methods))
+        {
+            foreach (Microsoft.VisualStudio.TestPlatform.ObjectModel.TestCase test in method.Cases)
+            {
+                string name = test.FullyQualifiedName.Split('(')[0].Replace('+', '.');
+                Add(byMethod, name, method);
+                for (int dot = name.IndexOf('.', StringComparison.Ordinal); dot > 0; dot = name.IndexOf('.', dot + 1))
+                {
+                    Add(byType, name[..dot], method);
+                }
+            }
+        }
+
+        static void Add(Dictionary<string, HashSet<TestNode>> index, string key, TestNode method)
+        {
+            if (!index.TryGetValue(key, out HashSet<TestNode>? methods))
+            {
+                index[key] = methods = new HashSet<TestNode>(ReferenceEqualityComparer.Instance);
+            }
+            methods.Add(method);
+        }
+    }
+
+    private static TestMarkKind MarkOf(HashSet<TestNode>? methods) =>
+        methods is null || methods.Count == 0 ? TestMarkKind.NotRun
+        : methods.Any(m => m.State == TestState.Running) ? TestMarkKind.Running
+        : methods.Any(m => m.State == TestState.Failed) ? TestMarkKind.Failed
+        : methods.All(m => m.State is TestState.Passed or TestState.Skipped) && methods.Any(m => m.State == TestState.Passed) ? TestMarkKind.Passed
+        : TestMarkKind.NotRun;
+
+    /// <summary>What a file was last read to declare, and how many reads were asked for and made.</summary>
+    private sealed class Declared
+    {
+        public int Asked { get; set; }
+        public int Reads { get; set; }
+        public IReadOnlyList<(string Type, int Line)> Types { get; set; } = [];
+        public IReadOnlyList<(string Type, string Method, int Line)> Methods { get; set; } = [];
+    }
+}

@@ -22,6 +22,9 @@ internal sealed class SnapshotText : SourceText
         this.change = change;
     }
 
+    /// <summary>The editor's snapshot this reads.</summary>
+    public TextSnapshot Snapshot => snapshot;
+
     public override Encoding? Encoding => null;
 
     public override int Length => snapshot.Length;

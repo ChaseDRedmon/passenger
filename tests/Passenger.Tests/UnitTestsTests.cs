@@ -350,6 +350,60 @@ public sealed class UnitTestsTests : IDisposable
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void Typing_in_one_file_among_many_open_reads_and_marks_that_files_tests_and_no_others()
+    {
+        string solution = NewFolder();
+        List<string> paths = [];
+        for (int i = 0; i < 12; i++)
+        {
+            StringBuilder file = new("using Xunit;\n\nnamespace Many.Tests;\n\n");
+            file.Append(System.Globalization.CultureInfo.InvariantCulture, $"public class File{i}Tests\n{{\n");
+            for (int test = 0; test < 3; test++)
+            {
+                file.Append(System.Globalization.CultureInfo.InvariantCulture, $"    [Fact]\n    public void Case_{test}() {{ }}\n\n");
+            }
+            paths.Add(Write(solution, $"File{i}Tests.cs", file.Append("}\n").ToString()));
+        }
+        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false };
+        window.Show();
+        window.OpenFolder(solution);
+        foreach (string path in paths)
+        {
+            window.OpenFile(path);
+        }
+        Ui.Settle();
+        List<Passenger.App.Workspace.OpenDocument> open = [.. window.EditorArea.Documents];
+        Assert.Equal(12, open.Count);
+        Ui.WaitFor(() => open.All(d => d.TestMarks.Count == 4), "every file's run icons");
+        Passenger.App.Workspace.OpenDocument typed = window.EditorArea.Active!;
+        List<Passenger.App.Workspace.OpenDocument> others = [.. open.Where(d => d != typed)];
+        Dictionary<Passenger.App.Workspace.OpenDocument, int> marked = others.ToDictionary(d => d, _ => 0);
+        foreach (Passenger.App.Workspace.OpenDocument other in others)
+        {
+            other.PropertyChanged += (_, e) => marked[other] += e.PropertyName == nameof(other.TestMarks) ? 1 : 0;
+        }
+        Dictionary<Passenger.App.Workspace.OpenDocument, int> reads = others.ToDictionary(d => d, window.TestGutter.Reads);
+
+        // A test typed into the file shown, a key at a time with pauses, then left long enough for anything waiting on one.
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        editor.Selections = SelectionSet.Single(editor.Document.Snapshot.ToString().LastIndexOf('}'));
+        editor.Focus();
+        foreach (string key in new[] { "[", "Fact", "]", "\n", "public void Added(", ") ", "{", " }", "\n" })
+        {
+            window.KeyTextInput(key);
+            Screenshot.Pump(TimeSpan.FromMilliseconds(40));
+        }
+        Ui.WaitFor(() => typed.TestMarks.Count == 5, "the new test's run icon");
+        Screenshot.Pump(TimeSpan.FromMilliseconds(400));
+        Ui.Settle();
+        Assert.Contains(new TestMark(editor.Document.Snapshot.GetLineFromOffset(editor.Document.Snapshot.ToString().IndexOf("Added", StringComparison.Ordinal)), TestMarkKind.NotRun), typed.TestMarks);
+        Assert.True(others.All(d => marked[d] == 0), $"Typing in {typed.Name} gave other files their run icons again: {string.Join(", ", others.Where(d => marked[d] > 0).Select(d => $"{d.Name} {marked[d]} times"))}");
+        Assert.True(others.All(d => window.TestGutter.Reads(d) == reads[d]), $"Typing in {typed.Name} read other files' tests again: {string.Join(", ", others.Where(d => window.TestGutter.Reads(d) != reads[d]).Select(d => d.Name))}");
+        Assert.True(window.TestGutter.Reads(typed) > 0, "The file typed in was never read for its tests");
+        window.Close();
+    }
+
     private string NewFolder()
     {
         string made = PathNames.Canonical(Directory.CreateTempSubdirectory("passenger-tests-").FullName);

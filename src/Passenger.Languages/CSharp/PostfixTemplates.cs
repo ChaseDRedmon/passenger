@@ -1,6 +1,7 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Text;
 using Passenger.Text;
 
 namespace Passenger.Languages.CSharp;
@@ -18,8 +19,6 @@ public readonly record struct PostfixTarget(int Start, string Text, bool WholeSt
 /// <summary>Rider's C# postfix templates, the everyday ones, and the expression before a dot they would wrap.</summary>
 public static class PostfixTemplates
 {
-    private static readonly CSharpParseOptions Options = new(LanguageVersion.Preview, DocumentationMode.Parse);
-
     private static Dictionary<string, string> D(params (string Name, string Value)[] values) => values.ToDictionary(v => v.Name, v => v.Value);
 
     public static IReadOnlyList<PostfixTemplate> All { get; } =
@@ -44,16 +43,18 @@ public static class PostfixTemplates
     ];
 
     /// <summary>The expression a template typed after a dot would wrap: what ends at the dot, read from the text with
-    /// the dot and the half-typed name taken out and the statement ended there. The whole chain before the dot
-    /// (<c>a.b().c</c>); for a statement's template, the expression must be all of its statement.</summary>
-    public static PostfixTarget? Before(TextSnapshot text, int dot, int caret)
+    /// the dot and the half-typed name taken out and the statement ended there, which the file's own tree is carried to
+    /// by an incremental parse of that one change. The whole chain before the dot (<c>a.b().c</c>); for a statement's
+    /// template, the expression must be all of its statement.</summary>
+    public static PostfixTarget? Before(ParsedText syntax, int dot, int caret)
     {
-        if (dot <= 0 || dot >= text.Length || text[dot] != '.')
+        TextSnapshot text = syntax.Text;
+        if (dot <= 0 || dot >= text.Length || caret < dot || caret > text.Length || text[dot] != '.')
         {
             return null;
         }
-        string source = text.GetText(0, dot) + ";" + text.GetText(caret, text.Length - caret);
-        SyntaxNode root = CSharpSyntaxTree.ParseText(source, Options).GetRoot();
+        SourceText ended = syntax.Tree.GetText().WithChanges(new TextChange(TextSpan.FromBounds(dot, caret), ";"));
+        SyntaxNode root = syntax.Tree.WithChangedText(ended).GetRoot();
         SyntaxToken last = root.FindToken(dot - 1);
         if (last.Span.End != dot || last.Parent is null)
         {
@@ -84,7 +85,8 @@ public static class PostfixTemplates
             return null;
         }
         bool whole = outermost.Parent is ExpressionStatementSyntax statement && statement.Expression == outermost;
-        return new PostfixTarget(outermost.SpanStart, source[outermost.SpanStart..dot], whole, chain.SpanStart, source[chain.SpanStart..dot], NameFor(outermost));
+        return new PostfixTarget(outermost.SpanStart, text.GetText(outermost.SpanStart, dot - outermost.SpanStart), whole,
+            chain.SpanStart, text.GetText(chain.SpanStart, dot - chain.SpanStart), NameFor(outermost));
     }
 
     /// <summary>The kinds a chain before a dot is made of: names, accesses, calls, indexers, literals, parentheses.</summary>

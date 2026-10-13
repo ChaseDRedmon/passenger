@@ -41,7 +41,7 @@ public partial class MainWindow
             Sub("Folding", Item(E.ToggleFold), Item(E.Fold), Item(E.Unfold), Item(E.FoldAll), Item(E.UnfoldAll)),
             separator,
             Item(A.Reformat), Item(A.CodeCleanup));
-        if (Testing.TestsAtCaret.At(active.Text.Snapshot, editor.CaretPosition.Line) is { } test)
+        if (active.Syntax is { } syntax && Testing.TestsAtCaret.At(syntax.Current, editor.CaretPosition.Line) is { } test)
         {
             string name = test.Method ?? test.Type[(test.Type.LastIndexOfAny(['.', '+']) + 1)..];
             items.Add(new Separator());

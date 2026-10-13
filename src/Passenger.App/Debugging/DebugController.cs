@@ -563,7 +563,7 @@ public sealed class DebugController
                 continue;
             }
             int line = Current(document.Path, current.Line - 1);
-            IReadOnlyList<LineAnnotation> inline = InlineValues.For(document.Text.Snapshot.ToString(), line, values);
+            IReadOnlyList<LineAnnotation> inline = document.Syntax is { } syntax ? InlineValues.For(syntax.Current, line, values) : [];
             document.LineAnnotations = stopException is { } thrown && thrown.FrameId == current.Id
                 ? [new LineAnnotation(line, thrown.Text, LineAnnotationKind.Exception), .. inline]
                 : inline;

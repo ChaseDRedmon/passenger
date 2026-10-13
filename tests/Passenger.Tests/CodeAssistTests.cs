@@ -1,3 +1,4 @@
+using System.Text;
 using Avalonia;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
@@ -1103,6 +1104,64 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
         Ui.WaitFor(() => subtypes.IsCompleted, "the subtypes");
         Assert.Contains(window.Hierarchy.Rows, r => r.Depth == 1 && r.Node.Item.Name.Contains("Square", StringComparison.Ordinal));
         window.Close();
+    }
+
+    /// <summary>Completion after a dot reads the file's syntax (the live templates that fit there, the postfix templates
+    /// for what is before the dot), which in a file of 20,000 lines is the highlighter's tree carried over the edit, never
+    /// the file parsed again on the UI thread. What the window allocates is the count, not a time a slow machine would
+    /// stretch: the frame that opens the list allocates less than one parse of the file does.</summary>
+    [AvaloniaFact]
+    public void Typing_a_dot_in_a_file_of_twenty_thousand_lines_opens_completion_without_parsing_the_file_again()
+    {
+        StringBuilder text = new("using System;\n\nstatic class Long\n{\n");
+        // Two hundred methods of a hundred lines: 20,000 lines, as many as Roslyn parses fresh every time.
+        for (int i = 0; i < 200; i++)
+        {
+            text.Append(System.Globalization.CultureInfo.InvariantCulture, $"    public static int Method{i}(int seed)\n    {{\n        int value0 = seed + {i};\n");
+            for (int j = 1; j < 100; j++)
+            {
+                text.Append(System.Globalization.CultureInfo.InvariantCulture, $"        int value{j} = value{j - 1} * 3 + \"{i}:{j}\".Length;\n");
+            }
+            text.Append("        return value99;\n    }\n\n");
+        }
+        text.Append("    public static void Last()\n    {\n        Console\n    }\n}\n");
+        string source = text.ToString();
+        Assert.True(source.Count(c => c == '\n') > 20_000);
+        string path = project.PathOf("Long.cs");
+        File.WriteAllText(path, source);
+        MainWindow? window = null;
+        try
+        {
+            window = project.Open("Long.cs");
+            CodeEditor editor = window.EditorArea.CodeEditor;
+            PlaceAfter(editor, "        Console");
+            editor.Focus();
+            Ui.Settle();
+
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            _ = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(source).GetRoot();
+            long parse = GC.GetAllocatedBytesForCurrentThread() - before;
+
+            // The list opens in the frame that has the server's answer, where the syntax at the dot is read.
+            window.KeyTextInput(".");
+            long opening = 0;
+            DateTime limit = DateTime.UtcNow.AddSeconds(60);
+            while (!window.Assist.IsCompletionOpen && DateTime.UtcNow < limit)
+            {
+                before = GC.GetAllocatedBytesForCurrentThread();
+                Screenshot.Pump(TimeSpan.FromMilliseconds(10));
+                opening = GC.GetAllocatedBytesForCurrentThread() - before;
+            }
+            Assert.True(window.Assist.IsCompletionOpen, "Completion never opened after the dot");
+            Assert.Contains("WriteLine", window.Assist.CompletionLabels);
+            Assert.True(opening < parse,
+                $"The frame that opened completion allocated {opening / 1024} KB on the UI thread, more than the {parse / 1024} KB of one parse of the file: it parsed the file again");
+        }
+        finally
+        {
+            window?.Close();
+            File.Delete(path);
+        }
     }
 
     private static void PlaceAfter(CodeEditor editor, string text)

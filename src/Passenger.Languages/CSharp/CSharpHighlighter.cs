@@ -6,7 +6,8 @@ using Passenger.Text;
 
 namespace Passenger.Languages.CSharp;
 
-/// <summary>Colours a C# document as it is typed. Roslyn reads the document's own snapshots, told the
+/// <summary>Colours a C# document as it is typed, and is the one parse of it that everything else reading its syntax
+/// shares (<see cref="Current"/>, <see cref="Parsed"/>). Roslyn reads the document's own snapshots, told the
 /// range each edit changed, so each parse is incremental and runs on a worker thread. Nothing is classified ahead:
 /// the editor asks for the lines it draws, and they are classified from the newest tree there and
 /// then (Roslyn's trees are immutable and safe to read from any thread). Edits made since that tree
@@ -24,9 +25,17 @@ public sealed class CSharpHighlighter : IHighlighter, IDisposable
     private readonly List<(int Version, IReadOnlyList<TextEdit> Edits)> sinceTree = [];
     private SnapshotText text;
     private SyntaxTree? tree;
+    private TextSnapshot? treeText;
     private int version;
     private bool parsing;
     private bool disposed;
+
+    /// <summary>The parse under way, which a caller asking for the syntax before the first has landed waits for.</summary>
+    private Task<(SyntaxTree Tree, IReadOnlyList<FoldRegion> Folds)>? running;
+
+    /// <summary>The syntax given for <see cref="currentVersion"/> of the text.</summary>
+    private ParsedText? current;
+    private int currentVersion = -1;
 
     /// <summary>The spans given for each range asked of the newest text: a frame asks for each run of lines between
     /// folds, and a caret's line on its own.</summary>
@@ -51,6 +60,30 @@ public sealed class CSharpHighlighter : IHighlighter, IDisposable
 
     /// <summary>A parse of the text as it stands found its folds.</summary>
     public event EventHandler? FoldsChanged;
+
+    /// <summary>A parse of the text as it stands landed: its syntax, for work on it off the UI thread. Raised on the UI
+    /// thread, once typing has paused long enough for a parse to catch up with it.</summary>
+    public event EventHandler<ParsedText>? Parsed;
+
+    /// <summary>The syntax of the text as it stands, for whatever else reads it (live templates' scopes, postfix
+    /// templates, Extend Selection, the tests a file declares, inline values): the newest parse, carried through the
+    /// edits made since by Roslyn's incremental parse, which reads again only around them, so nothing parses the whole
+    /// file on the UI thread. Made once for each version of the text, on the UI thread, where the text changes.</summary>
+    public ParsedText Current
+    {
+        get
+        {
+            if (current is null || currentVersion != version)
+            {
+                current = tree is not null && sinceTree.Count == 0 ? new ParsedText(tree, treeText!) : new ParsedText(Carried(), text.Snapshot);
+                currentVersion = version;
+            }
+            return current;
+        }
+    }
+
+    /// <summary>The newest parse when it is of the text as it stands, else null until one is (<see cref="Parsed"/>).</summary>
+    public ParsedText? Newest => tree is not null && sinceTree.Count == 0 ? Current : null;
 
     public IReadOnlyList<SyntaxSpan> GetSpans(TextSnapshot snapshot, int start, int length)
     {
@@ -125,7 +158,7 @@ public sealed class CSharpHighlighter : IHighlighter, IDisposable
         int parsedVersion = version;
         (int Start, int Length)[] warm = [.. asked];
         BackgroundWork.Begin();
-        Task.Run(() =>
+        Task<(SyntaxTree Tree, IReadOnlyList<FoldRegion> Folds)> parse = Task.Run(() =>
         {
             SyntaxTree parsed = previous is null ? CSharpSyntaxTree.ParseText(parsedText, Options) : previous.WithChangedText(parsedText);
             // Classifying the lines on screen here builds the tree's nodes there (Roslyn makes them on
@@ -138,7 +171,9 @@ public sealed class CSharpHighlighter : IHighlighter, IDisposable
                 CSharpClassifier.Classify(root, TextSpan.FromBounds(Math.Min(start, end), Math.Min(start + length, end)));
             }
             return (Tree: parsed, Folds: FoldRegions.Of(root));
-        }).ContinueWith(done => OnUi(() =>
+        });
+        running = parse;
+        parse.ContinueWith(done => OnUi(() =>
         {
             try
             {
@@ -146,6 +181,7 @@ public sealed class CSharpHighlighter : IHighlighter, IDisposable
                 if (done.IsCompletedSuccessfully && !disposed)
                 {
                     tree = done.Result.Tree;
+                    treeText = parsedText.Snapshot;
                     parsedText.ForgetHistory();
                     sinceTree.RemoveAll(batch => batch.Version <= parsedVersion);
                     cached.Clear();
@@ -154,6 +190,7 @@ public sealed class CSharpHighlighter : IHighlighter, IDisposable
                     {
                         Folds = done.Result.Folds;
                         FoldsChanged?.Invoke(this, EventArgs.Empty);
+                        Parsed?.Invoke(this, Current);
                     }
                 }
                 if (parsedVersion != version)
@@ -166,6 +203,19 @@ public sealed class CSharpHighlighter : IHighlighter, IDisposable
                 BackgroundWork.End();
             }
         }), TaskScheduler.Default);
+    }
+
+    /// <summary>The newest tree carried to the text as it stands. Asked before the first parse has landed, that parse is
+    /// waited for rather than made twice.</summary>
+    private SyntaxTree Carried()
+    {
+        SyntaxTree? basis = tree;
+        if (basis is null && running is { } first)
+        {
+            ((IAsyncResult)first).AsyncWaitHandle.WaitOne();
+            basis = first.IsCompletedSuccessfully ? first.Result.Tree : null;
+        }
+        return basis is null ? CSharpSyntaxTree.ParseText(text, Options) : basis.WithChangedText(text);
     }
 
     private void OnUi(Action action)

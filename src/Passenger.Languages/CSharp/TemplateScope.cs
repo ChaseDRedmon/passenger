@@ -1,7 +1,6 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
-using Passenger.Text;
 
 namespace Passenger.Languages.CSharp;
 
@@ -16,16 +15,15 @@ public enum TemplateScope
     Type = 4,
 }
 
-/// <summary>Reads the scope at a place from a parse of the text, and the type a member would go in.</summary>
+/// <summary>Reads the scope at a place from the file's syntax, and the type a member would go in.</summary>
 public static class TemplateScopes
 {
-    private static readonly CSharpParseOptions Options = new(LanguageVersion.Preview, DocumentationMode.Parse);
-
     /// <summary>The scopes a word ending at an offset stands in: a file of top-level statements takes statements and
     /// types both; in a comment, a string or an expression's middle, none.</summary>
-    public static (TemplateScope Scope, string? TypeName) At(TextSnapshot text, int offset)
+    public static (TemplateScope Scope, string? TypeName) At(ParsedText syntax, int offset)
     {
-        SyntaxNode root = CSharpSyntaxTree.ParseText(new SnapshotText(text), Options).GetRoot();
+        SyntaxNode root = syntax.Root;
+        offset = Math.Clamp(offset, 0, root.FullSpan.End);
         SyntaxToken token = root.FindToken(Math.Max(0, offset - 1));
         if (root.FindTrivia(Math.Max(0, offset - 1)) is { RawKind: not 0 } trivia && trivia.Span.Contains(Math.Max(0, offset - 1))
             && trivia.Kind() is not SyntaxKind.WhitespaceTrivia and not SyntaxKind.EndOfLineTrivia)

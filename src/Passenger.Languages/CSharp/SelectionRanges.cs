@@ -12,19 +12,19 @@ namespace Passenger.Languages.CSharp;
 /// with its doc comment after the member alone. In any other text: the word, the line's text, the line, the whole.</summary>
 public static class SelectionRanges
 {
-    private static readonly CSharpParseOptions Options = new(LanguageVersion.Preview, DocumentationMode.Parse, preprocessorSymbols: ["DEBUG", "TRACE", "NET", "NETCOREAPP"]);
-
-    /// <summary>The next range out from a selection, or null when it already holds everything.</summary>
-    public static TextRange? Extend(TextSnapshot text, TextRange selection, bool csharp) =>
-        (csharp ? InCSharp(text, selection) : InText(text, selection))
+    /// <summary>The next range out from a selection, or null when it already holds everything; from the file's syntax
+    /// when it is C#, else from its words and lines.</summary>
+    public static TextRange? Extend(TextSnapshot text, ParsedText? csharp, TextRange selection) =>
+        (csharp is not null ? InCSharp(csharp, selection) : InText(text, selection))
             .Where(r => r.Start <= selection.Start && r.End >= selection.End && r.Length > selection.Length)
             .OrderBy(r => r.Length)
             .Cast<TextRange?>()
             .FirstOrDefault();
 
-    private static IEnumerable<TextRange> InCSharp(TextSnapshot snapshot, TextRange selection)
+    private static IEnumerable<TextRange> InCSharp(ParsedText syntax, TextRange selection)
     {
-        SyntaxNode root = CSharpSyntaxTree.ParseText(new SnapshotText(snapshot), Options).GetRoot();
+        TextSnapshot snapshot = syntax.Text;
+        SyntaxNode root = syntax.Root;
         SyntaxToken token = root.FindToken(Math.Min(selection.Start, Math.Max(0, root.FullSpan.End - 1)));
         // A caret just after a word takes that word, as one before a word takes the one it is before.
         if (selection.Length == 0 && selection.Start <= token.SpanStart && token.GetPreviousToken() is { } previous

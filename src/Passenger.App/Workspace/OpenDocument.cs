@@ -50,6 +50,14 @@ public sealed class OpenDocument : Observable
     /// <summary>Raised after a save, so the language server hears of it.</summary>
     public event EventHandler? Saved;
 
+    /// <summary>A parse of the C# text as it stands landed (<see cref="CSharpHighlighter.Parsed"/>), for work on its
+    /// syntax off the UI thread.</summary>
+    public event EventHandler<ParsedText>? Parsed;
+
+    /// <summary>The file's C# syntax, parsed as it is typed, which everything else reading it shares rather than parse
+    /// the file again; null for a file that is not C#.</summary>
+    public CSharpHighlighter? Syntax => parser as CSharpHighlighter;
+
     /// <summary>Raised when a save wrote the file as UTF-8 because its own encoding could not hold the text, with what
     /// the status bar says of it.</summary>
     public event EventHandler<string>? Converted;
@@ -143,6 +151,7 @@ public sealed class OpenDocument : Observable
             (parser as IDisposable)?.Dispose();
             parser = Parser();
             FoldRegions = [];
+            TestMarks = [];
             Highlighter = parser;
         }
         Raise(nameof(Path));
@@ -163,6 +172,7 @@ public sealed class OpenDocument : Observable
             HashSet<int> folded = [.. foldRegions.Where(r => r.Folded).Select(r => r.Start)];
             FoldRegions = [.. csharp.Folds.Select(r => r with { Folded = folded.Contains(r.Start) })];
         };
+        csharp.Parsed += (_, parsed) => Parsed?.Invoke(this, parsed);
         return csharp;
     }
 
