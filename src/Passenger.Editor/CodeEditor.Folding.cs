@@ -36,6 +36,7 @@ public sealed partial class CodeEditor
         folds = [.. regions.OrderBy(r => r.Start)];
         InvalidateVisual();
         UpdateScrollBars();
+        FollowInputMethod();
     }
 
     /// <summary>The regions in lines for the text as it stands.</summary>
@@ -207,6 +208,7 @@ public sealed partial class CodeEditor
         }
         UpdateScrollBars();
         InvalidateVisual();
+        FollowInputMethod();
         FoldsToggled?.Invoke(this, folds);
     }
 

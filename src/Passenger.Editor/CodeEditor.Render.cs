@@ -101,7 +101,6 @@ public sealed partial class CodeEditor
                 DrawCarets(context, text, rangeStart, rangeEnd, first, last, left);
             }
             DrawSnippet(context, text, left);
-            DrawPreedit(context, text, left);
             if (ChangeBackgrounds)
             {
                 DrawChangeRules(context, first, last, gutter, size.Width);
@@ -210,7 +209,7 @@ public sealed partial class CodeEditor
             {
                 continue;
             }
-            double x = left + XOf(text, caret);
+            double x = left + CaretXOf(text, caret);
             double y = TopOf(line) - scroll.Y;
             context.FillRectangle(palette.Caret, new Rect(Math.Round(x), y, 2, metrics.LineHeight));
         }

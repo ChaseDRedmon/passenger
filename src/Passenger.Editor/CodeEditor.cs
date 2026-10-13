@@ -332,6 +332,7 @@ public sealed partial class CodeEditor : Control
             ForgetLines();
             InvalidateArrange();
             InvalidateVisual();
+            FollowInputMethod();
             SelectionChanged?.Invoke(this, EventArgs.Empty);
         }
     }
@@ -404,6 +405,7 @@ public sealed partial class CodeEditor : Control
         scroll = offset;
         UpdateScrollBars();
         InvalidateVisual();
+        FollowInputMethod();
         SelectionChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -471,6 +473,7 @@ public sealed partial class CodeEditor : Control
         scroll = clamped;
         UpdateScrollBars();
         InvalidateVisual();
+        FollowInputMethod();
         ScrollChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -502,6 +505,8 @@ public sealed partial class CodeEditor : Control
             pendingGoTo = null;
             Dispatcher.UIThread.Post(() => GoTo(document.Snapshot.GetPosition(Math.Min(offset, document.Snapshot.Length))));
         }
+        // The gutter's width, and with it the caret's x, follows the text's line count and the font.
+        FollowInputMethod();
         return finalSize;
     }
 
@@ -560,6 +565,7 @@ public sealed partial class CodeEditor : Control
         }
         RestartBlink();
         InvalidateVisual();
+        FollowInputMethod();
         if (changed)
         {
             SelectionChanged?.Invoke(this, EventArgs.Empty);
@@ -619,6 +625,7 @@ public sealed partial class CodeEditor : Control
         if (!editing)
         {
             selections = TextEditing.MapThrough(selections, e.Edits).Clamp(e.After.Length);
+            FollowInputMethod();
             SelectionChanged?.Invoke(this, EventArgs.Empty);
         }
         widestStale = true;

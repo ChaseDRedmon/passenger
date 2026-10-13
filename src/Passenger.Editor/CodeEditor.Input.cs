@@ -24,6 +24,9 @@ public sealed partial class CodeEditor
     private EditorInputMethod? inputMethod;
     private string preedit = string.Empty;
 
+    /// <summary>Where in the composition the input method's cursor is; null at its end.</summary>
+    private int? preeditCursor;
+
     private EditorInputMethod InputMethod => inputMethod ??= new EditorInputMethod(this);
 
     protected override void OnKeyDown(KeyEventArgs e)
@@ -57,6 +60,7 @@ public sealed partial class CodeEditor
             return;
         }
         preedit = string.Empty;
+        preeditCursor = null;
         Apply(TextEditing.Type(document.Snapshot, selections, typed));
         e.Handled = true;
         Typed?.Invoke(this, typed);
@@ -389,22 +393,31 @@ public sealed partial class CodeEditor
             return;
         }
         preedit = string.Empty;
+        preeditCursor = null;
         inputMethod?.Discard();
     }
 
-    private void DrawPreedit(DrawingContext context, TextSnapshot text, double left)
+    /// <summary>Where a caret is drawn on its line: the primary's, while a composition shows there, at the input method's
+    /// cursor in it.</summary>
+    private double CaretXOf(TextSnapshot text, int caret)
     {
-        if (preedit.Length == 0)
+        double x = XOf(text, caret);
+        if (preedit.Length > 0 && preeditCursor is { } at && at < preedit.Length && caret == selections.Primary.Caret)
         {
-            return;
+            TextLine composed = PreeditLabel();
+            x += composed.GetDistanceFromCharacterHit(new CharacterHit(at)) - composed.WidthIncludingTrailingWhitespace;
         }
-        int caret = selections.Primary.Caret;
-        double x = left + XOf(text, caret);
-        double y = TopOf(text.GetLineFromOffset(caret)) - scroll.Y;
-        using TextLine line = Format(preedit, [], RunWith(palette.Preedit));
-        context.FillRectangle(palette.Background, new Rect(x, y, line.WidthIncludingTrailingWhitespace, metrics.LineHeight));
-        line.Draw(context, new Point(x, y + (metrics.LineHeight - line.Height) / 2));
-        context.FillRectangle(palette.Preedit, new Rect(x, y + metrics.LineHeight - 2, line.WidthIncludingTrailingWhitespace, 1));
+        return x;
+    }
+
+    /// <summary>Tells a focused editor's input method what moved, as a text box does: the caret's line, the selection in
+    /// it, where the caret is drawn. Not mid-edit, while the carets are still the text's before it.</summary>
+    private void FollowInputMethod()
+    {
+        if (inputMethod is not null && IsFocused && !editing)
+        {
+            inputMethod.Follow();
+        }
     }
 
     private enum DragMode
@@ -424,9 +437,13 @@ public sealed partial class CodeEditor
     private readonly record struct Drag(DragMode Mode, int Anchor, Point Start, int AnchorEnd = 0);
 
     /// <summary>What the platform's input method (accents, CJK composition) reads and writes: the
-    /// caret's line as the surrounding text, and its composition drawn inline at the caret.</summary>
+    /// caret's line as the surrounding text, the selection in it, which it may set to type over (press and hold's accents
+    /// replace the letter held), and its composition drawn inline at the caret.</summary>
     private sealed class EditorInputMethod(CodeEditor editor) : TextInputMethodClient
     {
+        /// <summary>What the input method was last told, so it hears of each change once.</summary>
+        private (string Text, TextSelection Selection, Rect Cursor)? told;
+
         public override Visual TextViewVisual => editor;
         public override bool SupportsPreedit => true;
         public override bool SupportsSurroundingText => true;
@@ -451,7 +468,7 @@ public sealed partial class CodeEditor
             {
                 TextSnapshot text = editor.document.Snapshot;
                 int caret = editor.selections.Primary.Caret;
-                double x = editor.TextLeft - editor.scroll.X + editor.XOf(text, caret);
+                double x = editor.TextLeft - editor.scroll.X + editor.CaretXOf(text, caret);
                 double y = editor.TopOf(text.GetLineFromOffset(caret)) - editor.scroll.Y;
                 return new Rect(x, y, 2, editor.metrics.LineHeight);
             }
@@ -467,13 +484,50 @@ public sealed partial class CodeEditor
             }
             set
             {
+                (TextSnapshot text, _, int start) = Surrounding();
+                Selection primary = editor.selections.Primary;
+                int anchor = Math.Clamp(start + value.Start, 0, text.Length) - primary.Caret;
+                int caret = Math.Clamp(start + value.End, 0, text.Length) - primary.Caret;
+                if (anchor == primary.Anchor - primary.Caret && caret == 0)
+                {
+                    return;
+                }
+                // Every caret moves as the primary does, so press and hold's accent replaces the letter at each.
+                editor.document.BreakUndoGroup();
+                editor.SetSelections(editor.selections.With(s => new Selection(
+                    Math.Clamp(s.Caret + anchor, 0, text.Length), Math.Clamp(s.Caret + caret, 0, text.Length))), reveal: true);
             }
         }
 
-        public override void SetPreeditText(string? preeditText)
+        public override void SetPreeditText(string? preeditText) => SetPreeditText(preeditText, null);
+
+        public override void SetPreeditText(string? preeditText, int? cursorPos)
         {
             editor.preedit = preeditText ?? string.Empty;
+            editor.preeditCursor = cursorPos;
             editor.InvalidateVisual();
+            editor.FollowInputMethod();
+        }
+
+        /// <summary>Raises what changed since the input method was last told: the surrounding text, the selection in it,
+        /// the caret's rectangle.</summary>
+        public void Follow()
+        {
+            (string Text, TextSelection Selection, Rect Cursor) now = (SurroundingText, Selection, CursorRectangle);
+            (string Text, TextSelection Selection, Rect Cursor)? before = told;
+            told = now;
+            if (before?.Text != now.Text)
+            {
+                RaiseSurroundingTextChanged();
+            }
+            if (before?.Selection != now.Selection)
+            {
+                RaiseSelectionChanged();
+            }
+            if (before?.Cursor != now.Cursor)
+            {
+                RaiseCursorRectangleChanged();
+            }
         }
 
         /// <summary>Asks the platform's input method to throw its composition away.</summary>

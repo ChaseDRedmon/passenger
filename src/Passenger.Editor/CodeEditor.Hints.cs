@@ -8,7 +8,8 @@ namespace Passenger.Editor;
 /// <summary>Inlay hints, as Rider's parameter name hints: a label on a chip inside a line, part of no document. The
 /// line is laid out as it always is and drawn in pieces, each moved right by the hints before it, so every column's
 /// x (the caret's, a selection's, a squiggle's) and every x's column go through <see cref="XWith"/> and
-/// <see cref="ColumnWith"/>. The caret at a hint's column stands after it, by its argument.</summary>
+/// <see cref="ColumnWith"/>. The caret at a hint's column stands after it, by its argument. An input method's
+/// composition is one more, at the primary caret, so the text after it moves aside as typed text would.</summary>
 public sealed partial class CodeEditor
 {
     private TextRunProperties? hintRun;
@@ -23,13 +24,36 @@ public sealed partial class CodeEditor
     {
         InlayHints = [.. hints.OrderBy(h => h.Offset)];
         InvalidateVisual();
+        FollowInputMethod();
     }
 
-    /// <summary>A hint where it stands on its line: the column it goes before, the room it takes, its label.</summary>
-    private readonly record struct Gap(int Column, double Width, TextLine Label, bool PadLeft);
+    /// <summary>A hint where it stands on its line: the column it goes before, the room it takes, its label, and whether
+    /// it is the input method's composition rather than a hint.</summary>
+    private readonly record struct Gap(int Column, double Width, TextLine Label, bool PadLeft, bool Composing = false);
 
-    /// <summary>The hints on a line, in column order; none on most lines.</summary>
+    /// <summary>The hints on a line, in column order, and the composition after any at the primary caret; none on most lines.</summary>
     private Gap[] GapsOn(LineSpan span)
+    {
+        Gap[] hints = HintsOn(span);
+        int caret = selections.Primary.Caret;
+        if (preedit.Length == 0 || caret < span.Start || caret > span.End)
+        {
+            return hints;
+        }
+        TextLine composed = PreeditLabel();
+        Gap composing = new(caret - span.Start, composed.WidthIncludingTrailingWhitespace, composed, false, Composing: true);
+        int at = 0;
+        while (at < hints.Length && hints[at].Column <= composing.Column)
+        {
+            at++;
+        }
+        return [.. hints[..at], composing, .. hints[at..]];
+    }
+
+    /// <summary>The composition as it is drawn.</summary>
+    private TextLine PreeditLabel() => labels.Get((preedit, -9), () => Format(preedit, [], RunWith(palette.Preedit)));
+
+    private Gap[] HintsOn(LineSpan span)
     {
         IReadOnlyList<InlayHint> hints = ShowInlayHints ? InlayHints : [];
         int low = 0;
@@ -130,6 +154,13 @@ public sealed partial class CodeEditor
 
     private void DrawHint(DrawingContext context, Gap gap, double x, double y)
     {
+        if (gap.Composing)
+        {
+            // Underlined until the input method commits it, as the system's own text fields show a composition.
+            gap.Label.Draw(context, new Point(x, y + (metrics.LineHeight - gap.Label.Height) / 2));
+            context.FillRectangle(palette.Preedit, new Rect(x, y + metrics.LineHeight - 2, gap.Width, 1));
+            return;
+        }
         double pad = metrics.CharWidth / 2;
         double start = x + (gap.PadLeft ? pad : 0);
         Rect chip = new(start, y + 2, gap.Label.WidthIncludingTrailingWhitespace + pad, metrics.LineHeight - 4);

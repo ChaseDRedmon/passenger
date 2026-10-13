@@ -1,7 +1,10 @@
+using System.Text;
 using Avalonia;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
+using Avalonia.Input.TextInput;
+using Passenger.Editor;
 using Passenger.Languages.CSharp;
 using Passenger.Text;
 
@@ -273,6 +276,107 @@ public sealed class EditingBehaviourTests
         Assert.False(rig.Editor.IsInSnippet);
         rig.Press("TAB");
         Assert.StartsWith("    int x", rig.Text, StringComparison.Ordinal);
+    }
+
+    [AvaloniaFact]
+    public void The_input_methods_window_opens_on_the_carets_line_below_a_fold_and_far_along_a_long_line_and_follows_the_caret()
+    {
+        StringBuilder text = new();
+        for (int i = 0; i < 40; i++)
+        {
+            text.Append("    int value").Append(i).Append(" = ").Append(i).Append(";\n");
+        }
+        text.Append(string.Concat(Enumerable.Range(0, 20_000).Select(i => $"w{i % 10} "))).Append('\n');
+        EditorRig rig = new(text.ToString());
+        TextSnapshot snapshot = rig.Document.Snapshot;
+        TextInputMethodClient client = InputMethodOf(rig.Editor);
+        // Lines 3 to 22 folded away behind line 2: the caret on line 30 is drawn on the eleventh row.
+        rig.Editor.SetFoldRegions([new FoldRegion(snapshot.GetLine(2).End, snapshot.GetLine(22).End, "...", Folded: true)]);
+        rig.PlaceCaret(snapshot.GetLineStart(30) + 6);
+        Ui.Settle();
+        Rect cursor = client.CursorRectangle;
+        double row = (10 * rig.Editor.LineHeight) - rig.Editor.ScrollOffset.Y;
+        Assert.True(Math.Abs(cursor.Y - row) < 0.5, $"The input method's window would open at y {cursor.Y}, a fold's height from the caret's row at {row}");
+        Assert.Equal(rig.Editor.PointOf(rig.Caret), cursor.TopLeft);
+
+        string seen = string.Empty;
+        client.CursorRectangleChanged += (_, _) => seen += "cursor ";
+        client.SelectionChanged += (_, _) => seen += "selection ";
+        client.SurroundingTextChanged += (_, _) => seen += "text ";
+        rig.Press("RIGHT");
+        Assert.True(seen.Contains("cursor", StringComparison.Ordinal) && seen.Contains("selection", StringComparison.Ordinal),
+            $"The caret moved and the input method heard only [{seen}], so its window stays where the caret was");
+        Assert.Equal(rig.Editor.PointOf(rig.Caret), client.CursorRectangle.TopLeft);
+        seen = string.Empty;
+        rig.Press("DOWN");
+        Assert.True(seen.Contains("text", StringComparison.Ordinal), $"The caret went to another line and the input method heard only [{seen}]");
+        Assert.Equal(rig.Text.Split('\n')[31], client.SurroundingText);
+        seen = string.Empty;
+        rig.Type("z");
+        Assert.True(seen.Contains("text", StringComparison.Ordinal) && seen.Contains("cursor", StringComparison.Ordinal),
+            $"A letter typed and the input method heard only [{seen}]");
+        // Unfolding above the caret moves it down the page, and the window with it.
+        seen = string.Empty;
+        double folded = client.CursorRectangle.Y;
+        rig.Editor.SetFoldRegions([]);
+        Assert.True(seen.Contains("cursor", StringComparison.Ordinal), $"The lines above the caret unfolded and the input method heard only [{seen}]");
+        Assert.Equal(folded + (20 * rig.Editor.LineHeight), client.CursorRectangle.Y, 3);
+
+        // Far along a long line the window opens at the caret drawn there, inside the view.
+        int far = rig.Document.Snapshot.GetLineStart(40) + 50_000;
+        rig.PlaceCaret(far);
+        Ui.Settle();
+        cursor = client.CursorRectangle;
+        Assert.Equal(rig.Editor.PointOf(far), cursor.TopLeft);
+        Assert.True(cursor.X > 0 && cursor.X < rig.Editor.Bounds.Width, $"The input method's window would open at x {cursor.X}, outside the editor's {rig.Editor.Bounds.Width}");
+    }
+
+    [AvaloniaFact]
+    public void Press_and_hold_replaces_the_letter_held_with_the_accent_chosen_at_every_caret()
+    {
+        EditorRig rig = new("caf\ncaf\n");
+        rig.PlaceCaret(3);
+        rig.AddCaret(7);
+        rig.Type("e");
+        Assert.Equal("cafe\ncafe\n", rig.Text);
+        TextInputMethodClient client = InputMethodOf(rig.Editor);
+        // macOS's accent menu selects the letter it was held for through the client, then types the accent over it.
+        TextSelection held = client.Selection;
+        client.Selection = new TextSelection(held.End - 1, held.End);
+        rig.Window.KeyTextInput("é");
+        Ui.Settle();
+        Assert.Equal("café\ncafé\n", rig.Text);
+        Assert.All(rig.Editor.Selections.Items, s => Assert.True(s.IsEmpty && rig.Text[s.Caret - 1] == 'é', $"A caret was left at {s.Caret}, not after an accent"));
+    }
+
+    [AvaloniaFact]
+    public void A_composition_moves_the_text_after_it_aside_rather_than_covering_it_and_goes_in_as_typed()
+    {
+        EditorRig rig = new("let = 1;\n");
+        rig.PlaceCaret(3);
+        TextInputMethodClient client = InputMethodOf(rig.Editor);
+        double after = rig.Editor.PointOf(4).X;
+        double caret = client.CursorRectangle.X;
+        double letter = rig.Editor.PointOf(1).X - rig.Editor.PointOf(0).X;
+        client.SetPreeditText("にほん");
+        Ui.Settle();
+        double moved = rig.Editor.PointOf(4).X - after;
+        Assert.True(moved > 2 * letter, $"The text after the composition moved {moved:0.#} to the right, less than its three characters: it is drawn under it");
+        Assert.Equal(caret + moved, client.CursorRectangle.X, 3);
+
+        rig.Window.KeyTextInput("日本");
+        Ui.Settle();
+        Assert.Equal("let日本 = 1;\n", rig.Text);
+        Assert.Equal(5, rig.Caret);
+        Assert.Equal(rig.Editor.PointOf(5).X, client.CursorRectangle.X, 3);
+    }
+
+    /// <summary>The editor's input method client, as the platform asks the focused element for it.</summary>
+    private static TextInputMethodClient InputMethodOf(CodeEditor editor)
+    {
+        TextInputMethodClientRequestedEventArgs request = new() { RoutedEvent = InputElement.TextInputMethodClientRequestedEvent };
+        editor.RaiseEvent(request);
+        return request.Client ?? throw new InvalidOperationException("The editor gave the input method no client");
     }
 
     private static Passenger.Editor.TokenKind? KindAt(CSharpHighlighter highlighter, EditorRig rig, int offset) =>
