@@ -51,6 +51,8 @@
             <SolidColorBrush x:Key="Passenger.Graph.4" Color="#DB5C5C" />
             <SolidColorBrush x:Key="Passenger.Graph.5" Color="#3FB3B3" />
             <SolidColorBrush x:Key="Passenger.Vcs.Ref" Color="#3A3D45" />
+            <!-- A favourite branch's star in the Git log's branches. -->
+            <SolidColorBrush x:Key="Passenger.Vcs.Favorite" Color="#E2A33F" />
             <SolidColorBrush x:Key="Passenger.Vcs.RefText" Color="#C9CCD6" />
             <SolidColorBrush x:Key="Passenger.Terminal.Foreground" Color="#CED0D6" />
             <SolidColorBrush x:Key="Passenger.Terminal.Background" Color="#1E1F22" />
@@ -199,6 +201,7 @@
             <SolidColorBrush x:Key="Passenger.Graph.4" Color="#C94040" />
             <SolidColorBrush x:Key="Passenger.Graph.5" Color="#1F8C8C" />
             <SolidColorBrush x:Key="Passenger.Vcs.Ref" Color="#EBECF0" />
+            <SolidColorBrush x:Key="Passenger.Vcs.Favorite" Color="#D08A0C" />
             <SolidColorBrush x:Key="Passenger.Vcs.RefText" Color="#4C5059" />
             <SolidColorBrush x:Key="Passenger.Terminal.Foreground" Color="#1E1F22" />
             <SolidColorBrush x:Key="Passenger.Terminal.Background" Color="#FFFFFF" />

@@ -95,6 +95,12 @@ ICONS = [
     ("Label", "Tag", "16_regular"),
     # A change bar's popup's Highlight Words, Rider's highlighter pen.
     ("Highlight", "Highlight", "16_regular"),
+    # The Git log's branches: a favourite's star (filled once marked), Update Selected and Navigate Log to Selected
+    # Branch Head; a tag is Local History's Label.
+    ("Star", "Star", "16_regular"),
+    ("StarFilled", "Star", "16_filled"),
+    ("Update", "Arrow Download", "16_regular"),
+    ("Locate", "Target", "16_regular"),
 ]
 
 

@@ -454,7 +454,10 @@ public partial class MainWindow : Window
         {
             if (!shifted)
             {
-                Request(action);
+                if (!BranchesTake(action))
+                {
+                    Request(action);
+                }
                 e.Handled = true;
             }
             return;
@@ -828,6 +831,7 @@ public partial class MainWindow : Window
         bookmarks.Restore(opening.Bookmarks.Value);
         findScope = opening.Find.Value;
         RestoreUnitTests(opening.UnitTests.Value);
+        GitBranches.Favorites = opening.GitBranches.Value;
         folderState = opening;
         WorkspaceState kept = opening.Workspace.Value;
         if (kept.UnloadedProjects.Count > 0)

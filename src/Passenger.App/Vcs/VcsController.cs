@@ -607,6 +607,121 @@ public sealed class VcsController
 
     private static string Short(string hash) => hash.Length > 8 ? hash[..8] : hash;
 
+    /// <summary>The Git log's branches, as its branches panel lists them, with the remotes; none outside a working tree.</summary>
+    public async Task<(IReadOnlyList<BranchInfo> Branches, IReadOnlyList<string> Remotes)> BranchTreeAsync() =>
+        git is { } repository ? await repository.BranchTreeAsync() : ([], []);
+
+    /// <summary>Rider's Checkout from the branches panel: a local branch checked out; a remote's as a local branch of the
+    /// same name tracking it, or that local branch where there is one already; a tag on its own (a detached head).</summary>
+    public Task<VcsOutcome> CheckoutRefAsync(BranchInfo branch, IReadOnlyList<BranchInfo> all)
+    {
+        if (branch.Kind == RefKind.Local)
+        {
+            return CheckoutAsync(branch.Name);
+        }
+        if (branch.Kind == RefKind.Tag)
+        {
+            return SwitchAsync(repository => repository.CheckoutRevisionAsync(branch.Ref.FullName), $"Checked out {branch.Name}", "Git checkout");
+        }
+        string local = branch.Name[(branch.Name.IndexOf('/', StringComparison.Ordinal) + 1)..];
+        return all.Any(b => b.Kind == RefKind.Local && b.Name == local)
+            ? CheckoutAsync(local)
+            : SwitchAsync(repository => repository.CheckoutTrackingAsync(branch.Name), $"Checked out new branch {local} from {branch.Name}", "Git checkout");
+    }
+
+    /// <summary>Rider's New Branch from: a branch made where another (or a tag) is, checked out.</summary>
+    public Task<VcsOutcome> NewBranchFromAsync(string name, BranchInfo from) =>
+        SwitchAsync(repository => repository.NewBranchAtAsync(name, from.Ref.FullName), $"Checked out new branch {name} from {from.Name}", "Git checkout");
+
+    /// <summary>Rider's Merge into Current: another branch merged into the one checked out; one that stops for conflicts
+    /// opens the Conflicts dialog.</summary>
+    public Task<VcsOutcome> MergeAsync(BranchInfo branch)
+    {
+        string into = Branch ?? "HEAD";
+        return SwitchAsync(repository => repository.MergeAsync(branch.Ref.FullName), $"Merged {branch.Name} to {into}", "Git merge", $"{branch.Name} Merged with Conflicts");
+    }
+
+    /// <summary>Rider's Rebase Current onto Selected; one that stops for conflicts opens the Conflicts dialog.</summary>
+    public Task<VcsOutcome> RebaseOntoAsync(BranchInfo onto)
+    {
+        if (Branch is not { } current)
+        {
+            return Task.FromResult(Report(false, "Rebase is not possible in the detached HEAD state"));
+        }
+        return SwitchAsync(repository => repository.RebaseAsync(onto.Ref.FullName), $"Rebased {current} on {onto.Name}", "Git rebase", "Rebase stopped due to conflicts");
+    }
+
+    /// <summary>Rider's Checkout and Rebase onto Current: a local branch checked out and rebased onto the branch that was.</summary>
+    public Task<VcsOutcome> CheckoutAndRebaseAsync(BranchInfo branch)
+    {
+        if (Branch is not { } current)
+        {
+            return Task.FromResult(Report(false, "Rebase is not possible in the detached HEAD state"));
+        }
+        return SwitchAsync(repository => repository.RebaseAsync(current, branch.Name), $"Checked out {branch.Name} and rebased it on {current}", "Git rebase", "Rebase stopped due to conflicts");
+    }
+
+    /// <summary>Rider's Rename of a local branch.</summary>
+    public Task<VcsOutcome> RenameBranchAsync(BranchInfo branch, string name) =>
+        SwitchAsync(repository => repository.RenameBranchAsync(branch.Name, name), $"Branch {branch.Name} was renamed to {name}", "Git branch");
+
+    /// <summary>Whether a local branch's commits are all in HEAD's history, so deleting it loses none.</summary>
+    public async Task<bool> IsMergedAsync(BranchInfo branch) => git is { } repository && await repository.IsMergedAsync(branch.Ref.FullName);
+
+    /// <summary>Rider's Delete: a local branch (one not merged only when <paramref name="force"/>), a remote's branch on the
+    /// remote, or a tag.</summary>
+    public Task<VcsOutcome> DeleteRefAsync(BranchInfo branch, bool force = false, IReadOnlyList<string>? remotes = null)
+    {
+        switch (branch.Kind)
+        {
+            case RefKind.Local:
+                return SwitchAsync(repository => repository.DeleteBranchAsync(branch.Name, force), $"Deleted branch {branch.Name}", "Git branch");
+            case RefKind.Tag:
+                return SwitchAsync(repository => repository.DeleteTagAsync(branch.Name), $"Deleted tag {branch.Name}", "Git tag");
+            default:
+                string remote = (remotes ?? []).Where(r => branch.Name.StartsWith(r + "/", StringComparison.Ordinal)).MaxBy(r => r.Length)
+                    ?? branch.Name[..Math.Max(0, branch.Name.IndexOf('/', StringComparison.Ordinal))];
+                return SwitchAsync(repository => repository.DeleteRemoteBranchAsync(remote, branch.Name[(remote.Length + 1)..]), $"Deleted remote branch {branch.Name}", "Git push");
+        }
+    }
+
+    /// <summary>Rider's Update of a local branch: the one checked out updated as Update Project does, another brought
+    /// forward to the branch it tracks.</summary>
+    public Task<VcsOutcome> UpdateBranchAsync(BranchInfo branch)
+    {
+        if (branch.IsCurrent)
+        {
+            return UpdateAsync();
+        }
+        if (branch.UpstreamRemote is not { } remote || branch.UpstreamBranch is not { } tracked)
+        {
+            return Task.FromResult(Report(false, $"Tracked branch is not configured for {branch.Name}"));
+        }
+        return SwitchAsync(repository => repository.FetchIntoAsync(remote, tracked, branch.Name), $"Updated {branch.Name}", "Git update");
+    }
+
+    /// <summary>Rider's Push of a branch: pushed to the branch it tracks, or to origin, then tracked.</summary>
+    public async Task<VcsOutcome> PushBranchAsync(BranchInfo branch)
+    {
+        UiThread.Check();
+        if (git is not { } repository)
+        {
+            return Report(false, NotInGit);
+        }
+        Message?.Invoke(this, "Pushing...");
+        GitResult pushed = await repository.PushBranchAsync(branch);
+        await RefreshAsync();
+        return Report(pushed.Succeeded, pushed.Succeeded ? $"Pushed {branch.Name}" : $"Push failed: {pushed.Message}");
+    }
+
+    /// <summary>The files that differ between a branch or tag and the working tree.</summary>
+    public async Task<IReadOnlyList<FileChange>> ChangesSinceAsync(BranchInfo branch) =>
+        git is { } repository ? await repository.ChangesSinceAsync(branch.Ref.FullName) : [];
+
+    /// <summary>The commits of one revision another lacks ("main..feature"), newest first.</summary>
+    public async Task<IReadOnlyList<CommitInfo>> LogAsync(IReadOnlyList<string> revisions) =>
+        git is { } repository ? await repository.LogAsync(revisions: revisions) : [];
+
     /// <summary>Creates a branch from the head and checks it out.</summary>
     public Task<VcsOutcome> NewBranchAsync(string name) =>
         SwitchAsync(repository => repository.NewBranchAsync(name), $"Created and checked out {name}", "Git checkout");

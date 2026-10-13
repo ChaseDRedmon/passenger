@@ -52,6 +52,19 @@ public enum RefKind
 /// and the short name it is shown by.</summary>
 public sealed record GitRef(string FullName, string Name, RefKind Kind);
 
+/// <summary>A branch or tag as the Git log's branches panel lists it: the commit it names, whether it is checked out, and
+/// for a local branch the remote and the remote's branch it tracks (its upstream), if any.</summary>
+public sealed record BranchInfo(GitRef Ref, string Hash, bool IsCurrent, string? UpstreamRemote = null, string? UpstreamBranch = null)
+{
+    public string Name => Ref.Name;
+
+    public RefKind Kind => Ref.Kind;
+
+    /// <summary>The upstream as the remote's branches are named (origin/main), or null.</summary>
+    public string? Upstream => UpstreamRemote is null || UpstreamBranch is null ? null
+        : $"{UpstreamRemote}/{(UpstreamBranch.StartsWith("refs/heads/", StringComparison.Ordinal) ? UpstreamBranch[11..] : UpstreamBranch)}";
+}
+
 /// <summary>A line as Git blame has it: the commit that last changed it (all zeros for a change not committed yet),
 /// who made it and when, and its subject.</summary>
 public sealed record BlameLine(string Hash, string Author, DateTimeOffset Time, string Summary)
@@ -431,12 +444,49 @@ public sealed class Git
         return [.. found.OrderBy(f => f.Ref.Kind).ThenBy(f => !f.Current).Select(f => f.Ref)];
     }
 
+    /// <summary>The branches, remotes' branches (less each remote's HEAD) and tags as the Git log's branches panel lists
+    /// them, each with the commit it names (a tag's, peeled), the current branch marked and each local branch's upstream;
+    /// and the remotes, which a remote branch's name begins with.</summary>
+    public async Task<(IReadOnlyList<BranchInfo> Branches, IReadOnlyList<string> Remotes)> BranchTreeAsync()
+    {
+        GitResult refs = await RunAsync(Root, ["for-each-ref",
+            "--format=%(HEAD)%1f%(refname)%1f%(objectname)%1f%(*objectname)%1f%(upstream:remotename)%1f%(upstream:remoteref)",
+            "refs/heads", "refs/remotes", "refs/tags"]);
+        GitResult remotes = await RunAsync(Root, ["remote"]);
+        List<BranchInfo> found = [];
+        foreach (string line in refs.Succeeded ? refs.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries) : [])
+        {
+            string[] field = line.Split('\x1f');
+            if (field.Length < 6)
+            {
+                continue;
+            }
+            string full = field[1];
+            GitRef? named = full switch
+            {
+                _ when full.StartsWith("refs/heads/", StringComparison.Ordinal) => new GitRef(full, full[11..], RefKind.Local),
+                _ when full.StartsWith("refs/remotes/", StringComparison.Ordinal) && !full.EndsWith("/HEAD", StringComparison.Ordinal) => new GitRef(full, full[13..], RefKind.Remote),
+                _ when full.StartsWith("refs/tags/", StringComparison.Ordinal) => new GitRef(full, full[10..], RefKind.Tag),
+                _ => null,
+            };
+            if (named is not null)
+            {
+                found.Add(new BranchInfo(named, field[3].Length > 0 ? field[3] : field[2], field[0] == "*",
+                    field[4].Length > 0 ? field[4] : null, field[5].Length > 0 ? field[5] : null));
+            }
+        }
+        return (found, remotes.Succeeded ? remotes.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : []);
+    }
+
     /// <summary>The history of every branch, remote and tag and of HEAD, newest first with a branch's commits together (as
-    /// Rider's log has it), at most this many. Not --all, which takes in the stash's own commits (and notes').</summary>
-    public async Task<IReadOnlyList<CommitInfo>> LogAsync(int most = 2000)
+    /// Rider's log has it), at most this many; or, given <paramref name="revisions"/>, theirs alone (a branch the log is
+    /// filtered to, "main..feature" for the commits of feature main lacks). Not --all, which takes in the stash's own
+    /// commits (and notes').</summary>
+    public async Task<IReadOnlyList<CommitInfo>> LogAsync(int most = 2000, IReadOnlyList<string>? revisions = null)
     {
         // An unborn HEAD (a new repository, an orphan branch) is left out rather than failing the whole log.
-        GitResult log = await RunAsync(Root, ["log", "--branches", "--remotes", "--tags", "--ignore-missing", "HEAD", "--topo-order", $"--max-count={most}", CommitFormat, "--"]);
+        string[] which = revisions is null ? ["--branches", "--remotes", "--tags", "--ignore-missing", "HEAD"] : ["--end-of-options", .. revisions];
+        GitResult log = await RunAsync(Root, ["log", "--topo-order", $"--max-count={most}", CommitFormat, .. which, "--"]);
         // A branch with no commits yet has no history to read.
         return log.Succeeded ? Commits(log.Output) : [];
     }
@@ -869,6 +919,51 @@ public sealed class Git
     /// a name, never an option, whoever gave it: an agent's "--orphan=x" is a branch git does not have, not an order to
     /// empty the working tree.</summary>
     public Task<GitResult> CheckoutAsync(string branch) => RunAsync(Root, ["switch", "--end-of-options", branch]);
+
+    /// <summary>A remote's branch checked out as a local branch of the same name that tracks it, as Rider's Checkout of a
+    /// remote branch makes one.</summary>
+    public Task<GitResult> CheckoutTrackingAsync(string remoteBranch) => RunAsync(Root, ["switch", "--track", "--end-of-options", remoteBranch]);
+
+    /// <summary>Another branch merged into the current one, git's own message for the merge commit.</summary>
+    public Task<GitResult> MergeAsync(string branch) => RunAsync(Root, ["merge", "--no-edit", "--end-of-options", branch]);
+
+    /// <summary>The current branch rebased onto another; or, given <paramref name="branch"/>, that branch checked out and
+    /// rebased onto <paramref name="onto"/> (Rider's Checkout and Rebase onto Current, "git rebase HEAD branch").</summary>
+    public Task<GitResult> RebaseAsync(string onto, string? branch = null) =>
+        RunAsync(Root, ["rebase", "--end-of-options", onto, .. branch is null ? Array.Empty<string>() : [branch]],
+            environment: new Dictionary<string, string> { ["GIT_EDITOR"] = "true" });
+
+    public Task<GitResult> RenameBranchAsync(string from, string to) => RunAsync(Root, ["branch", "-m", "--end-of-options", from, to]);
+
+    /// <summary>A local branch deleted; one not merged into HEAD (or its upstream) only when <paramref name="force"/>.</summary>
+    public Task<GitResult> DeleteBranchAsync(string name, bool force) => RunAsync(Root, ["branch", force ? "-D" : "-d", "--end-of-options", name]);
+
+    /// <summary>A remote's branch deleted on the remote, and its remote-tracking branch with it.</summary>
+    public Task<GitResult> DeleteRemoteBranchAsync(string remote, string branch) => RunAsync(Root, ["push", "--end-of-options", remote, $":refs/heads/{branch}"]);
+
+    public Task<GitResult> DeleteTagAsync(string name) => RunAsync(Root, ["tag", "-d", "--end-of-options", name]);
+
+    /// <summary>Whether every commit of a branch is in HEAD's history.</summary>
+    public async Task<bool> IsMergedAsync(string branch) => (await RunAsync(Root, ["merge-base", "--is-ancestor", branch, "HEAD"])).Succeeded;
+
+    /// <summary>A local branch that is not checked out brought up to date with the remote's branch it tracks, as Rider's
+    /// Update of a branch fetches it: forward only, refused where the two went apart.</summary>
+    public Task<GitResult> FetchIntoAsync(string remote, string remoteBranch, string local) =>
+        RunAsync(Root, ["fetch", "--end-of-options", remote, $"{remoteBranch}:refs/heads/{local}"]);
+
+    /// <summary>A local branch pushed to the branch it tracks, or to origin under its own name, then tracked, when it tracks
+    /// none.</summary>
+    public Task<GitResult> PushBranchAsync(BranchInfo branch) => branch.UpstreamRemote is { } remote && branch.UpstreamBranch is { } target
+        ? RunAsync(Root, ["push", "--end-of-options", remote, $"refs/heads/{branch.Name}:{target}"])
+        : RunAsync(Root, ["push", "-u", "--end-of-options", "origin", $"refs/heads/{branch.Name}:refs/heads/{branch.Name}"]);
+
+    /// <summary>The files that differ between a revision and the working tree (Rider's Show Diff with Working Tree), renames
+    /// found, each by its path now.</summary>
+    public async Task<IReadOnlyList<FileChange>> ChangesSinceAsync(string revision)
+    {
+        GitResult files = await RunAsync(Root, ["diff", "--name-status", "-z", "-M", "--end-of-options", revision, "--"]);
+        return files.Succeeded ? NameStatus(files.Output) : [];
+    }
 
     /// <summary>The stashes, the newest first.</summary>
     public async Task<IReadOnlyList<StashInfo>> StashesAsync()

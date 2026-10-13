@@ -77,6 +77,7 @@ public partial class MainWindow
         AddVcsActions();
         AddHistoryActions();
         AddMergeConflicts();
+        AddBranches();
         gitView.DiffRequested += (_, chosen) => _ = ShowCommitDiffAsync(chosen.Commit, chosen.File);
         gitView.CompareRequested += (_, chosen) => _ = CompareWithAsync(chosen.Local, chosen.Commit.Hash, chosen.Commit.Short, chosen.File.Path);
         commitView.OpenRequested += (_, path) => OpenFile(path);

@@ -14,7 +14,10 @@ namespace Passenger.App.ToolWindows;
 /// with its branches and tags, author and date, narrowed by text or hash; the chosen commit's files and its message
 /// beside the list. A double-click on a file shows what the commit did to it. Given a <see cref="HistoryScope"/> it is a
 /// Show History tab: the commits from HEAD that changed a file (under each name it had), a folder or some lines, each
-/// listing what it did there; for a file or lines, a double-click or Enter on a commit shows what it did to the file.</summary>
+/// listing what it did there; for a file or lines, a double-click or Enter on a commit shows what it did to the file.
+/// The Log has Rider's branches panel at its left, a branch chosen there filtering it to that branch's commits (its Branch
+/// filter, cleared by its x); given a <see cref="LogRange"/> it lists the commits of one branch another lacks, as Compare
+/// with Current does.</summary>
 public sealed class GitLogView : DockPanel
 {
     private const double LaneWidth = 12;
@@ -28,6 +31,8 @@ public sealed class GitLogView : DockPanel
     private readonly TextBox details;
     private readonly TextBox filter;
     private readonly TextBlock placeholder;
+    private readonly Border branchFilter;
+    private readonly TextBlock branchFilterText;
     private readonly EventHandler onHistoryChanged;
     private IReadOnlyList<GraphRow> all = [];
 
@@ -41,10 +46,12 @@ public sealed class GitLogView : DockPanel
     private int showing;
 
     /// <param name="scope">What Show History lists the commits of, or null for the Log of every branch.</param>
-    public GitLogView(VcsController vcs, HistoryScope? scope = null)
+    /// <param name="range">The commits of one branch another lacks, for Compare with Current.</param>
+    public GitLogView(VcsController vcs, HistoryScope? scope = null, LogRange? range = null)
     {
         this.vcs = vcs;
         Scope = scope;
+        Range = range;
         list = new ListBox
         {
             Classes = { "tree" },
@@ -114,12 +121,29 @@ public sealed class GitLogView : DockPanel
         ((PathIcon)refresh.Content).Bind(PathIcon.DataProperty, refresh.GetResourceObservable("Icon.Rerun"));
         ToolTip.SetTip(refresh, "Refresh");
         refresh.Click += (_, _) => _ = LoadAsync();
+        // Rider's Branch filter, shown while the log is filtered to a branch, its x showing every branch again.
+        branchFilterText = new TextBlock { VerticalAlignment = VerticalAlignment.Center };
+        PathIcon clearGlyph = new() { Classes = { "small" } };
+        clearGlyph.Bind(PathIcon.DataProperty, clearGlyph.GetResourceObservable("Icon.Close"));
+        Button clearBranch = new() { Classes = { "tabPin" }, Content = clearGlyph, Margin = new Thickness(6, 0, 0, 0) };
+        ToolTip.SetTip(clearBranch, "Clear Branch Filter");
+        clearBranch.Click += (_, _) => FilterBranch(null, all: true);
+        branchFilter = new Border
+        {
+            IsVisible = false,
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(8, 2, 4, 2),
+            Margin = new Thickness(0, 0, 8, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = new StackPanel { Orientation = Orientation.Horizontal, Children = { branchFilterText, clearBranch } },
+        };
+        branchFilter.Bind(Border.BackgroundProperty, branchFilter.GetResourceObservable("Passenger.Selected"));
         Border top = new()
         {
             [DockProperty] = Dock.Top,
             Height = 36,
             BorderThickness = new Thickness(0, 0, 0, 1),
-            Child = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, Children = { filter, refresh } },
+            Child = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, Children = { filter, branchFilter, refresh } },
         };
         top.Bind(Border.BorderBrushProperty, top.GetResourceObservable("Passenger.Divider"));
 
@@ -135,8 +159,25 @@ public sealed class GitLogView : DockPanel
         split.Children.Add(new Panel { Children = { list, placeholder } });
         split.Children.Add(divider);
         split.Children.Add(right);
-        Children.Add(top);
-        Children.Add(split);
+        if (scope is null && range is null)
+        {
+            Branches = new BranchesPanel(vcs);
+            Branches.FilterRequested += (_, branch) => FilterBranch(branch);
+            Branches.NavigateRequested += (_, branch) => _ = SelectHashAsync(branch.Hash);
+            Grid withBranches = new() { ColumnDefinitions = new ColumnDefinitions("240,1,*") };
+            HairlineDivider beside = new(GridResizeDirection.Columns) { [Grid.ColumnProperty] = 1 };
+            Grid.SetColumn(split, 2);
+            withBranches.Children.Add(Branches);
+            withBranches.Children.Add(beside);
+            withBranches.Children.Add(split);
+            Children.Add(top);
+            Children.Add(withBranches);
+        }
+        else
+        {
+            Children.Add(top);
+            Children.Add(split);
+        }
 
         onHistoryChanged = (_, _) =>
         {
@@ -159,6 +200,28 @@ public sealed class GitLogView : DockPanel
 
     /// <summary>What the commits are of, or null for the Log of every branch.</summary>
     public HistoryScope? Scope { get; }
+
+    /// <summary>The commits of one branch another lacks, for Compare with Current; null elsewhere.</summary>
+    public LogRange? Range { get; }
+
+    /// <summary>The Log's branches panel; null in a history or a comparison.</summary>
+    public BranchesPanel? Branches { get; }
+
+    /// <summary>The revision the Log is filtered to (refs/heads/feature, or HEAD), or null for every branch.</summary>
+    public string? BranchFilter { get; private set; }
+
+    /// <summary>The branch filter as the Log's toolbar shows it.</summary>
+    public string? BranchFilterName { get; private set; }
+
+    /// <summary>Rider's Update Branch Filter in Log: the Log lists a branch's commits alone (HEAD's for null), or every
+    /// branch's again with <paramref name="all"/>.</summary>
+    public void FilterBranch(BranchInfo? branch, bool all = false)
+    {
+        (BranchFilter, BranchFilterName) = all ? (null, null) : branch is null ? ("HEAD", "HEAD") : (branch.Ref.FullName, branch.Name);
+        branchFilter.IsVisible = BranchFilter is not null;
+        branchFilterText.Text = $"Branch: {BranchFilterName}";
+        _ = LoadAsync();
+    }
 
     /// <summary>A history's tab closed: it stops following the history.</summary>
     public void Close() => vcs.HistoryChanged -= onHistoryChanged;
@@ -216,8 +279,22 @@ public sealed class GitLogView : DockPanel
         int load = ++loads;
         stale = false;
         Git? repository = vcs.Repository;
+        if (Branches is not null)
+        {
+            await Branches.LoadAsync();
+            if (BranchFilter is { } filtered && filtered != "HEAD" && !Branches.Branches.Any(b => b.Ref.FullName == filtered))
+            {
+                // The branch filtered to is gone (deleted, renamed): every branch again.
+                (BranchFilter, BranchFilterName) = (null, null);
+                branchFilter.IsVisible = false;
+            }
+        }
         IReadOnlyList<HistoryCommit> history = repository is null || Scope is null ? [] : await repository.HistoryAsync(Scope);
-        IReadOnlyList<CommitInfo> commits = repository is null ? [] : Scope is null ? await repository.LogAsync() : [.. history.Select(h => h.Commit)];
+        IReadOnlyList<CommitInfo> commits = repository is null ? []
+            : Scope is not null ? [.. history.Select(h => h.Commit)]
+            : Range is { } range ? await repository.LogAsync(revisions: [$"{range.FromRef}..{range.ToRef}"])
+            : BranchFilter is { } branch ? await repository.LogAsync(revisions: [branch])
+            : await repository.LogAsync();
         if (load != loads)
         {
             return;
@@ -227,6 +304,7 @@ public sealed class GitLogView : DockPanel
         Filter();
         string name = Scope is null ? string.Empty : Path.GetFileName(Path.TrimEndingDirectorySeparator(Scope.Path));
         placeholder.Text = repository is null ? "The folder is not in a Git repository"
+            : Range is { } compared ? $"{compared.From} contains all commits from {compared.To}"
             : Scope is null ? "No commits yet"
             : Scope.IsLines ? $"No commit changed these lines of {name}"
             : $"Git has no history of {name}";
@@ -462,3 +540,7 @@ public sealed class GitLogView : DockPanel
         private Pen PenFor(int lane) => new(BrushFor(lane), 1.6);
     }
 }
+
+/// <summary>The commits of <see cref="To"/> that <see cref="From"/> lacks, as Rider's Compare with Current lists each way:
+/// the two by their full ref names and as they are shown.</summary>
+public sealed record LogRange(string FromRef, string From, string ToRef, string To);

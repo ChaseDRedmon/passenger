@@ -91,7 +91,7 @@ public sealed class StateStore
 }
 
 /// <summary>A folder's documents: what its window had open, its layout, breakpoints, bookmarks, run configurations,
-/// Find in Files' scope and the Unit Tests window's grouping and outcomes.</summary>
+/// Find in Files' scope, the Unit Tests window's grouping and outcomes, and the Git log's favourite branches.</summary>
 public sealed class ProjectState
 {
     internal ProjectState(string root, string folder)
@@ -105,6 +105,7 @@ public sealed class ProjectState
         RunConfigurations = new(Path.Combine(Folder, "runConfigurations.json"));
         Find = new(Path.Combine(Folder, "find.json"));
         UnitTests = new(Path.Combine(Folder, "unitTests.json"));
+        GitBranches = new(Path.Combine(Folder, "gitBranches.json"));
     }
 
     /// <summary>The folder the documents are in.</summary>
@@ -136,6 +137,9 @@ public sealed class ProjectState
     /// <summary>How the Unit Tests window groups the folder's tests and which outcomes it shows, as Rider keeps a session's.</summary>
     public StateDocument<Testing.UnitTestsState> UnitTests { get; }
 
+    /// <summary>The branches marked and unmarked as favourites in the Git log, as Rider keeps them for a project.</summary>
+    public StateDocument<ToolWindows.GitBranchesState> GitBranches { get; }
+
     public void Flush()
     {
         Workspace.Flush();
@@ -145,5 +149,6 @@ public sealed class ProjectState
         RunConfigurations.Flush();
         Find.Flush();
         UnitTests.Flush();
+        GitBranches.Flush();
     }
 }

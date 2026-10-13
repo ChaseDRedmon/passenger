@@ -1,0 +1,118 @@
+using Passenger.App.ToolWindows;
+using Passenger.App.Vcs;
+
+namespace Passenger.App;
+
+/// <summary>The Git log's branches panel's actions that ask the person something or open something: New Branch from and
+/// Rename (a name), Delete (asked first for a branch not merged or a remote's), Compare with Current (a tab of the Git
+/// window) and Show Diff with Working Tree (a window of the files that differ); and the favourites, kept with the folder.</summary>
+public partial class MainWindow
+{
+    /// <summary>The Git log's branches panel.</summary>
+    public BranchesPanel GitBranches => GitLog.Branches!;
+
+    private void AddBranches()
+    {
+        BranchesPanel panel = GitBranches;
+        panel.NewBranchRequested += (_, branch) => ShowNewBranchFrom(branch);
+        panel.RenameRequested += (_, branch) => ShowRenameBranch(branch);
+        panel.DeleteRequested += (_, branch) => _ = DeleteBranchAsync(branch);
+        panel.CompareRequested += (_, branch) => CompareWithCurrent(branch);
+        panel.WorkingTreeDiffRequested += (_, branch) => _ = ShowWorkingTreeDiffAsync(branch);
+        panel.FavoritesChanged += (_, favorites) => folderState?.GitBranches.Set(favorites);
+    }
+
+    /// <summary>Rider's Git.Rename.Local.Branch shares Rename's keys (Ctrl+R, R in its Visual Studio keymap): while the
+    /// branches panel has them, they rename the local branch chosen there rather than a symbol.</summary>
+    private bool BranchesTake(string action)
+    {
+        if (action != AppActions.Rename || gitView?.Log.Branches is not { IsKeyboardFocusWithin: true } panel || panel.Selected is not { Branch: { Kind: RefKind.Local } branch })
+        {
+            return false;
+        }
+        ShowRenameBranch(branch);
+        return true;
+    }
+
+    /// <summary>Rider's New Branch from: its name asked for (a remote branch's own name to begin with, as Rider fills it),
+    /// then made there and checked out.</summary>
+    public NamePopup ShowNewBranchFrom(BranchInfo from)
+    {
+        string initial = from.Kind switch
+        {
+            RefKind.Local => from.Name,
+            RefKind.Remote => from.Name[(from.Name.IndexOf('/', StringComparison.Ordinal) + 1)..],
+            _ => string.Empty,
+        };
+        NamePopup popup = new($"Create Branch from {from.Name}", initial, async name => (await vcs.NewBranchFromAsync(name.Trim(), from)).Problem);
+        popup.Done += (_, _) => ClosePopup();
+        ShowPopup(popup);
+        return popup;
+    }
+
+    /// <summary>Rider's Rename of a local branch; a log filtered to it follows it to its new name.</summary>
+    public NamePopup ShowRenameBranch(BranchInfo branch)
+    {
+        NamePopup popup = new($"Rename Branch {branch.Name}", branch.Name, async name =>
+        {
+            string renamed = name.Trim();
+            bool followed = GitLog.BranchFilter == branch.Ref.FullName;
+            VcsOutcome outcome = await vcs.RenameBranchAsync(branch, renamed);
+            if (outcome.Succeeded && followed)
+            {
+                GitLog.FilterBranch(branch with { Ref = branch.Ref with { FullName = $"refs/heads/{renamed}", Name = renamed } });
+            }
+            return outcome.Problem;
+        });
+        popup.Done += (_, _) => ClosePopup();
+        ShowPopup(popup);
+        return popup;
+    }
+
+    /// <summary>Rider's Delete: a local branch at once when its commits are all in HEAD's history, else once the person
+    /// agrees to lose them; a remote's branch, on the remote, once they agree; a tag at once.</summary>
+    public async Task<VcsOutcome?> DeleteBranchAsync(BranchInfo branch)
+    {
+        bool force = false;
+        if (branch.Kind == RefKind.Local && !await vcs.IsMergedAsync(branch))
+        {
+            if (!await Confirm("Branch Was Not Fully Merged",
+                $"The branch {branch.Name} was not fully merged to {vcs.Branch ?? "HEAD"}. Delete it and its unmerged commits?", "Delete"))
+            {
+                return null;
+            }
+            force = true;
+        }
+        else if (branch.Kind == RefKind.Remote && !await Confirm("Delete Remote Branch", $"Delete remote branch {branch.Name}?", "Delete"))
+        {
+            return null;
+        }
+        return await vcs.DeleteRefAsync(branch, force, GitBranches.Remotes);
+    }
+
+    /// <summary>Rider's Compare with Current: a tab of the Git window with the commits the branch has that the current one
+    /// lacks above, and those it lacks below.</summary>
+    public GitLogView CompareWithCurrent(BranchInfo branch)
+    {
+        string current = vcs.Branch ?? "HEAD";
+        string currentRef = vcs.Branch is { } name ? $"refs/heads/{name}" : "HEAD";
+        ShowToolWindow("git");
+        return GitWindow.ShowCompare(new LogRange(currentRef, current, branch.Ref.FullName, branch.Name), new LogRange(branch.Ref.FullName, branch.Name, currentRef, current));
+    }
+
+    /// <summary>Rider's Show Diff with Working Tree: the files that differ between a branch and the working tree, each
+    /// opening as the branch has it beside the file.</summary>
+    public async Task<ChangesWindow?> ShowWorkingTreeDiffAsync(BranchInfo branch)
+    {
+        if (vcs.Repository is not { } repository)
+        {
+            StatusText.Text = NoRepository;
+            return null;
+        }
+        IReadOnlyList<FileChange> files = await vcs.ChangesSinceAsync(branch);
+        ChangesWindow window = new(branch.Name, files, repository);
+        window.DiffRequested += (_, change) => _ = CompareWithAsync(change.Path, branch.Ref.FullName, branch.Name, change.From ?? change.Path);
+        window.Show(this);
+        return window;
+    }
+}
