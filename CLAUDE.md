@@ -134,7 +134,10 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.App/Vcs`: Git through the `git` executable (`Git`, porcelain v2), Myers' line diff (`LineDiff`) for
   the gutter's change bars, and `VcsController`, the window's working tree: status, branch, each open file's bars,
   commit, push, update, checkout and rollback (after which open files take their text from disk); `DiffView` is the
-  side-by-side diff and `CommitGraph` the log's lanes. `MainWindow.Vcs.cs` is the branch widget, the Commit and Git
+  side-by-side diff and `CommitGraph` the log's lanes. `GitView` is the Git window's content: the Log and a `GitLogView`
+  tab per Show History, given a `HistoryScope` (a file followed with `--follow`, a folder, or lines with `-L`), read by
+  `Git.HistoryAsync`, as `vcs_log` with a path reads it. `MainWindow.History.cs` is Show History, Show History for
+  Selection, Compare with Branch or Tag and Compare with Revision. `MainWindow.Vcs.cs` is the branch widget, the Commit and Git
   windows' places (`ToolWindows/CommitView`, `GitLogView`) and the `app.vcs.*` actions.
 - `src/Passenger.App/Packages`: NuGet. `IPackageFeed` is nuget.org's v3 search and flat container (`NuGetOrgFeed`) or a
   folder of .nupkg files (`FolderFeed`, what the tests use offline); `PackageManager` changes projects through
