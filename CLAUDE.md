@@ -38,7 +38,8 @@ lines and columns count from 1 and its paths are the folder's. Anything it gets 
 
 The screenshot is the self-check for anything visible (with nothing named it shows the Welcome screen, its list
 empty, since a screenshot keeps no state: unless PASSENGER_SETTINGS names a folder, its state and logs go to a
-temporary one removed as it ends, never the person's own log). It opens what the command line names, takes
+temporary one removed as it ends, never the person's own log, and its terminal's shell keeps its history and startup
+files apart from the person's). It opens what the command line names, takes
 its steps in order through the window's real input, waits for background work to land, and captures
 the compositor's own frame:
 

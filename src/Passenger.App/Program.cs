@@ -61,30 +61,38 @@ internal static class Program
     }
 
     /// <summary>A screenshot keeps nothing of the person's: unless PASSENGER_SETTINGS names a folder, its state and logs
-    /// (Roslyn's server's among them) go to a temporary one, removed when it ends, never the person's own log.</summary>
+    /// (Roslyn's server's among them) go to a temporary one, removed when it ends, and its terminal's shell never reads or
+    /// writes the person's history or startup files.</summary>
     private static int Apart(Func<int> run)
     {
-        if (Environment.GetEnvironmentVariable("PASSENGER_SETTINGS") is { Length: > 0 })
+        string? scratch = null;
+        if (Environment.GetEnvironmentVariable("PASSENGER_SETTINGS") is not { Length: > 0 } root)
         {
-            return run();
+            scratch = Directory.CreateTempSubdirectory("passenger-screenshot-").FullName;
+            root = scratch;
+            Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", scratch);
         }
-        string scratch = Directory.CreateTempSubdirectory("passenger-screenshot-").FullName;
-        Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", scratch);
+        // sh takes HISTFILE as given, and zsh takes its startup files, and from them its history, from ZDOTDIR.
+        Environment.SetEnvironmentVariable("HISTFILE", Path.Combine(root, "history"));
+        Environment.SetEnvironmentVariable("ZDOTDIR", Directory.CreateDirectory(Path.Combine(root, "zsh")).FullName);
         try
         {
             return run();
         }
         finally
         {
-            // The log is written off a queue: what it still holds would make the folder again after it went.
-            IdeLog.Flush();
-            try
+            if (scratch is not null)
             {
-                Directory.Delete(scratch, recursive: true);
-            }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-            {
-                // A log the language server still holds open on Windows: the system's temporary folder is cleared in time.
+                // The log is written off a queue: what it still holds would make the folder again after it went.
+                IdeLog.Flush();
+                try
+                {
+                    Directory.Delete(scratch, recursive: true);
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                {
+                    // A log the language server still holds open on Windows: the system's temporary folder is cleared in time.
+                }
             }
         }
     }
