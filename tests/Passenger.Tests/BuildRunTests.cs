@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Avalonia;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
@@ -294,6 +295,69 @@ public sealed class BuildRunTests : IDisposable
             Ui.WaitFor(() => !window.IsBuilding, "the build to stop");
             window.Close();
         }
+    }
+
+    /// <summary>Roslyn restores a project never restored itself, and its restore leaves an MSBuild node waiting to be reused,
+    /// in the language server's process group, which ends when the server is started again (after it crashed or hung). A
+    /// build the IDE starts never takes that node up, so the server started again while the build runs ends nothing of
+    /// the build's. On Windows the restore's node is no part of the server's tree once the restore has gone.</summary>
+    [AvaloniaFact]
+    public void A_build_goes_on_through_the_language_server_starting_again_while_it_runs()
+    {
+        WriteTwoProjects();
+        Write("Directory.Build.targets", """
+            <Project>
+              <Target Name="Wait" BeforeTargets="Build" Condition="'$(DesignTimeBuild)' != 'true'">
+                <Exec Condition="'$(OS)' != 'Windows_NT'" Command="echo $$ &gt; step.pid; sleep 4" />
+                <Exec Condition="'$(OS)' == 'Windows_NT'" Command="powershell -NoProfile -Command &quot;Set-Content -Path step.pid -Value $PID; Start-Sleep -Seconds 4&quot;" />
+              </Target>
+            </Project>
+            """);
+        using OwnMSBuild msbuild = new(("MSBUILDENSURESTDOUTFORTASKPROCESSES", null));
+        // Settling waits for the projects to load, which Roslyn says once its restore of Tools has ended.
+        MainWindow window = Open();
+        int server = window.CSharpService!.Session!.Server.ProcessId;
+        int[] restored = ServerNodes(server);
+        Assert.True(OperatingSystem.IsWindows() || restored.Length > 0,
+            $"The language server's restore left no MSBuild node in its process group, so there is none for a build to take up. MSBuild nodes now:\n{string.Join('\n', Processes.MSBuildNodes().Select(n => $"{Processes.Describe(n.Key)} {n.Value}"))}");
+        try
+        {
+            window.Perform(AppActions.Build);
+            string[] projects = ["Hello", "Tools"];
+            foreach (string project in projects)
+            {
+                Processes.WrittenId(Path.Combine(folder, "src", project, "step.pid"), $"{project}'s step to start");
+            }
+            Process.GetProcessById(server).Kill();
+            Ui.WaitFor(() => !window.IsBuilding, "the build", TimeSpan.FromMinutes(2));
+            Assert.True(window.Status == "Build succeeded",
+                $"The build failed once the language server was started again under it ({window.Status}):\n{window.BottomPanel.Build.Document.Snapshot}");
+            Ui.WaitFor(() => window.CSharpService.Session is { IsLoaded: true } session && session.Server.ProcessId != server, "the language server to be started again");
+        }
+        finally
+        {
+            window.Perform(AppActions.Stop);
+            Ui.WaitFor(() => !window.IsBuilding, "the build to stop");
+            window.Close();
+        }
+    }
+
+    /// <summary>The MSBuild worker nodes in a process group (the language server's), by the group ps lists for each process;
+    /// none on Windows, which has no ps.</summary>
+    private static int[] ServerNodes(int group)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return [];
+        }
+        using Process ps = Process.Start(new ProcessStartInfo("ps", ["-A", "-o", "pid=,pgid=,command="]) { RedirectStandardOutput = true })!;
+        string listed = ps.StandardOutput.ReadToEnd();
+        ps.WaitForExit();
+        return [.. listed.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.Split(' ', 3, StringSplitOptions.RemoveEmptyEntries))
+            .Where(words => words.Length == 3 && words[2].Contains("/nodemode:1", StringComparison.Ordinal)
+                && int.TryParse(words[1], System.Globalization.CultureInfo.InvariantCulture, out int pgid) && pgid == group)
+            .Select(words => int.Parse(words[0], System.Globalization.CultureInfo.InvariantCulture))];
     }
 
     [AvaloniaFact]

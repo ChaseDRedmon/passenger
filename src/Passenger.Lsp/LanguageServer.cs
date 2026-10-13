@@ -23,6 +23,9 @@ public sealed class LanguageServer : IAsyncDisposable
     /// <summary>The check: the folding ranges of a document never opened, which Roslyn answers with none.</summary>
     private static readonly FoldingRangeParams Check = new(new TextDocumentIdentifier("file:///passenger-is-the-server-answering.cs"));
 
+    /// <summary>Servers started in this IDE, for the handshake salt of each one's MSBuild nodes.</summary>
+    private static int started;
+
     private readonly Process process;
     private readonly JsonRpc rpc;
     private readonly ClientTarget client;
@@ -141,6 +144,9 @@ public sealed class LanguageServer : IAsyncDisposable
             server, "--stdio", "--logLevel", "Information", "--telemetryLevel", "off",
             "--extensionLogDirectory", logFolder, "--clientProcessId", Environment.ProcessId.ToString(),
         ]);
+        // The dotnet restore Roslyn runs leaves its MSBuild node in the server's process group, which a restart ends: a
+        // build of the IDE's that took that node up would lose it midway, so a server's nodes are its own.
+        start.Environment["MSBUILDNODEHANDSHAKESALT"] += $"-server-{Interlocked.Increment(ref started)}";
         start.RedirectStandardInput = true;
         start.RedirectStandardOutput = true;
         start.RedirectStandardError = true;
