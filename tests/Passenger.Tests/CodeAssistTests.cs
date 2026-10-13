@@ -1208,6 +1208,112 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
         }
     }
 
+    /// <summary>The server's colours for a file of 20,000 lines are hundreds of thousands of tokens, decoded off the UI
+    /// thread: no frame while they land allocates a quarter of what one decoded copy of them takes, nor a key half of it
+    /// (a key's drawing costs the same in a short file). Through the keys typed before they land, and after, a local keeps
+    /// its colour on its word, on screen and off it.</summary>
+    [AvaloniaFact]
+    public void Semantic_colours_in_a_file_of_twenty_thousand_lines_land_without_decoding_it_on_the_UI_thread_and_stay_on_their_words()
+    {
+        string source = TwentyThousandLines();
+        string path = project.PathOf("Coloured.cs");
+        File.WriteAllText(path, source);
+        MainWindow? window = null;
+        try
+        {
+            window = project.Open("Coloured.cs");
+            CodeEditor editor = window.EditorArea.CodeEditor;
+            OpenDocument document = window.EditorArea.Active!;
+            TokenKind? KindAt(int offset) => document.Highlighter?.GetSpans(document.Text.Snapshot, offset, 1)
+                .Where(s => s.Start == offset).Select(s => (TokenKind?)s.Kind).FirstOrDefault();
+            // A use of a local on screen, below where the keys go, and one at the end of the file.
+            int near = source.IndexOf("value0 * 3", StringComparison.Ordinal);
+            int far = source.LastIndexOf("value98 * 3", StringComparison.Ordinal);
+            Ui.WaitFor(() => KindAt(near) == TokenKind.Local && KindAt(far) == TokenKind.Local, "the server's colours on the locals");
+
+            Passenger.App.CSharp.CSharpDocument csharp = window.CSharpService!.For(document)!;
+            Task<(Passenger.Lsp.SemanticTokens? Tokens, int Version)> asking = csharp.Lsp!.SemanticTokensAsync();
+            Ui.WaitFor(() => asking.IsCompleted, "the whole file's tokens");
+            long decoded = asking.Result.Tokens!.Data.Length / 5 * System.Runtime.CompilerServices.Unsafe.SizeOf<SyntaxSpan>();
+            Assert.True(decoded > 1_000_000, $"The file's tokens decode to only {decoded / 1024} KB");
+
+            // Keys that open no completion, before the first statement's end: everything after them moves.
+            int typing = source.IndexOf("seed + 0;", StringComparison.Ordinal) + "seed + ".Length;
+            editor.Selections = SelectionSet.Single(typing);
+            editor.Focus();
+            Ui.Settle();
+            long keys = 0;
+            const string Digits = "123";
+            for (int i = 0; i < Digits.Length; i++)
+            {
+                long before = GC.GetAllocatedBytesForCurrentThread();
+                window.KeyTextInput(Digits[i].ToString());
+                Screenshot.Pump(TimeSpan.FromMilliseconds(10));
+                keys = Math.Max(keys, GC.GetAllocatedBytesForCurrentThread() - before);
+                Assert.True(KindAt(near + i + 1) == TokenKind.Local, $"After {i + 1} keys the local's use below them lost its colour: {KindAt(near + i + 1)}");
+            }
+
+            // A statement put in at once, whose use of the local only the server colours as one.
+            editor.Selections = SelectionSet.Single(document.Text.Snapshot.ToString().IndexOf("0;", typing, StringComparison.Ordinal) + 2);
+            const string Statement = " int fresh = value0;";
+            window.KeyTextInput(Statement);
+            int fresh = editor.Selections.Primary.Caret - "value0;".Length;
+            int moved = Digits.Length + Statement.Length;
+            long landing = 0;
+            DateTime limit = DateTime.UtcNow.AddSeconds(90);
+            while ((KindAt(fresh) != TokenKind.Local || BackgroundWork.Pending > 0) && DateTime.UtcNow < limit)
+            {
+                Assert.True(KindAt(near + moved) == TokenKind.Local, $"While the server's colours were out the local's use below lost its colour: {KindAt(near + moved)}");
+                long before = GC.GetAllocatedBytesForCurrentThread();
+                Screenshot.Pump(TimeSpan.FromMilliseconds(10));
+                landing = Math.Max(landing, GC.GetAllocatedBytesForCurrentThread() - before);
+            }
+            Assert.True(KindAt(fresh) == TokenKind.Local, "The local used in the statement put in never took the server's colour");
+            Assert.True(KindAt(near + moved) == TokenKind.Local, "The local's use below the keys lost its colour once the server's landed");
+            Assert.True(landing < decoded / 4,
+                $"A frame while the server's colours landed allocated {landing / 1024} KB on the UI thread, a quarter or more of the {decoded / 1024} KB the file's tokens decode to: they were decoded there");
+            Assert.True(keys < decoded / 2, $"A key allocated {keys / 1024} KB on the UI thread, half or more of the {decoded / 1024} KB the file's tokens decode to");
+
+            // Off screen, the whole file's colours are carried through keys until they come again.
+            for (int i = 0; i < Digits.Length; i++)
+            {
+                window.KeyTextInput(Digits[i].ToString());
+                Screenshot.Pump(TimeSpan.FromMilliseconds(10));
+                Assert.True(KindAt(far + moved + i + 1) == TokenKind.Local, $"After {i + 1} more keys the local's use at the end of the file lost its colour: {KindAt(far + moved + i + 1)}");
+            }
+            Ui.Settle();
+            Assert.Equal(TokenKind.Local, KindAt(far + moved + Digits.Length));
+            Assert.Equal(TokenKind.Local, KindAt(fresh));
+        }
+        finally
+        {
+            window?.Close();
+            File.Delete(path);
+        }
+    }
+
+    /// <summary>Two hundred methods of a hundred lines and more, every fiftieth with an error: a string given a number.</summary>
+    private static string TwentyThousandLines()
+    {
+        StringBuilder text = new("using System;\n\nstatic class Long\n{\n");
+        for (int i = 0; i < 200; i++)
+        {
+            text.Append(System.Globalization.CultureInfo.InvariantCulture, $"    public static int Method{i}(int seed)\n    {{\n        int value0 = seed + {i};\n");
+            if (i % 50 == 25)
+            {
+                text.Append(System.Globalization.CultureInfo.InvariantCulture, $"        string wrong{i} = {i};\n");
+            }
+            for (int j = 1; j < 100; j++)
+            {
+                text.Append(System.Globalization.CultureInfo.InvariantCulture, $"        int value{j} = value{j - 1} * 3 + \"{i}:{j}\".Length;\n");
+            }
+            text.Append("        return value99;\n    }\n\n");
+        }
+        string source = text.Append("}\n").ToString();
+        Assert.True(source.Count(c => c == '\n') > 20_000);
+        return source;
+    }
+
     private static void PlaceAfter(CodeEditor editor, string text)
     {
         int at = editor.Document.Snapshot.ToString().IndexOf(text, StringComparison.Ordinal);

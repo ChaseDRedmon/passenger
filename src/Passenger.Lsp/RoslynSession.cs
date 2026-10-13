@@ -224,6 +224,15 @@ public sealed class LspDocument : IDisposable
         return (tokens, version);
     }
 
+    /// <summary>The tokens of a range only, encoded from the document's start as the whole file's are: Roslyn colours a
+    /// screen of lines in milliseconds, where a long file takes it about a second.</summary>
+    public async Task<(SemanticTokens? Tokens, int Version)> SemanticTokensAsync(TextRange range, CancellationToken cancel = default)
+    {
+        int version = Text.Version;
+        SemanticTokens? tokens = await Server.RequestAsync<SemanticTokens>("textDocument/semanticTokens/range", new SemanticTokensRangeParams(Identifier, RangeOf(range)), cancel);
+        return (tokens, version);
+    }
+
     /// <summary>The symbol at an offset as a call hierarchy's root, if it is one that calls or is called.</summary>
     public async Task<HierarchyItem?> PrepareCallHierarchyAsync(int offset, CancellationToken cancel = default) =>
         (await Server.RequestAsync<List<HierarchyItem>>("textDocument/prepareCallHierarchy", new TextDocumentPositionParams(Identifier, PositionOf(offset)), cancel))?.FirstOrDefault();
