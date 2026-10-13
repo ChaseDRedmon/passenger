@@ -79,8 +79,8 @@ public sealed class TerminalPanel : DockPanel
 
     public TerminalSession? Active => tabs.FirstOrDefault(t => t.IsActive)?.Session;
 
-    /// <summary>Starts a shell in a tab of its own and shows it.</summary>
-    public async Task<TerminalSession> NewSessionAsync()
+    /// <summary>Starts a shell in a tab of its own and shows it: in the open folder, or in another (Open In, Terminal).</summary>
+    public async Task<TerminalSession> NewSessionAsync(string? at = null)
     {
         TerminalSession session = new(view.Session?.Screen.Columns ?? 120, view.Session?.Screen.Rows ?? 30);
         string name = ++opened == 1 ? "Local" : $"Local ({opened})";
@@ -90,7 +90,7 @@ public sealed class TerminalPanel : DockPanel
         session.Exited += (_, _) => Close(tab);
         try
         {
-            await session.StartAsync(folder(), Shell?.App, Shell?.Arguments);
+            await session.StartAsync(at ?? folder(), Shell?.App, Shell?.Arguments);
         }
         catch (Exception failed) when (failed is IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
         {

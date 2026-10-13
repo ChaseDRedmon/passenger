@@ -46,8 +46,23 @@ public sealed class ExplorerTree
         }
     }
 
-    private void Mark(ExplorerNode node) =>
+    private void Mark(ExplorerNode node)
+    {
         node.Change = node.IsFile && node.Path is { } path && changes.TryGetValue(path, out Vcs.ChangeKind kind) ? kind : null;
+        node.IsCut = node.Kind is NodeKind.File or NodeKind.Folder && node.Path is { } at && cut.Any(c => PathNames.Within(at, c));
+    }
+
+    private IReadOnlyList<string> cut = [];
+
+    /// <summary>Dims what was cut and waits to be pasted, as Rider's Solution view does, and what it holds.</summary>
+    public void SetCut(IReadOnlyList<string> paths)
+    {
+        cut = paths;
+        foreach (ExplorerNode row in Rows)
+        {
+            Mark(row);
+        }
+    }
 
     public ExplorerNode? Root { get; private set; }
 
@@ -288,13 +303,14 @@ public sealed class ExplorerTree
         {
             int below = node.Depth + 1;
             List<ExplorerNode> children = [];
-            children.AddRange(project.TargetFrameworks.Select(f => Leaf(NodeKind.Framework, f, null, below)));
-            children.AddRange(project.ProjectReferences.Select(r => Leaf(NodeKind.ProjectReference, Path.GetFileNameWithoutExtension(r), null, below)));
-            children.AddRange(project.Packages.Select(p => Leaf(NodeKind.Package, p.Name, p.Version, below)));
+            children.AddRange(project.TargetFrameworks.Select(f => Leaf(NodeKind.Framework, f, null, below, project)));
+            children.AddRange(project.ProjectReferences.Select(r => Leaf(NodeKind.ProjectReference, Path.GetFileNameWithoutExtension(r), null, below, project, r)));
+            children.AddRange(project.Packages.Select(p => Leaf(NodeKind.Package, p.Name, p.Version, below, project)));
             return children;
-        });
+        }) { Owner = project.Path };
 
-    private static ExplorerNode Leaf(NodeKind kind, string name, string? detail, int depth) => new(kind, name, null, depth, false, null, detail);
+    private static ExplorerNode Leaf(NodeKind kind, string name, string? detail, int depth, ProjectModel owner, string? referenced = null) =>
+        new(kind, name, null, depth, false, null, detail) { Owner = owner.Path, Referenced = referenced };
 
     private static ExplorerNode Folder(string path, int depth, bool dimmed) =>
         new(NodeKind.Folder, Path.GetFileName(path) is { Length: > 0 } name ? name : path, path, depth, dimmed,
@@ -373,6 +389,40 @@ public sealed class ExplorerNode : Observable
     /// <summary>A file the solution lists in a solution folder (Solution Items), rather than one of a project or folder.</summary>
     public bool IsSolutionItem => Kind == NodeKind.File && SolutionPath is not null;
 
+    /// <summary>The project a dependency (the Dependencies row and each one under it) belongs to.</summary>
+    public string? Owner { get; init; }
+
+    /// <summary>The project a project reference names.</summary>
+    public string? Referenced { get; init; }
+
+    /// <summary>Cut and waiting to be pasted, which dims it.</summary>
+    public bool IsCut
+    {
+        get => isCut;
+        set
+        {
+            if (Set(ref isCut, value))
+            {
+                Raise(nameof(Opacity));
+            }
+        }
+    }
+
+    private bool isCut;
+
+    /// <summary>The folder on disk what is pasted or dropped onto this row goes into: a folder, a project's folder, or for
+    /// a file of either, the folder holding it; null for the solution's own rows and the dependencies.</summary>
+    public string? Into => Kind switch
+    {
+        NodeKind.Folder => Path,
+        NodeKind.Project when Path is { } project => System.IO.Path.GetDirectoryName(project),
+        NodeKind.File when !IsSolutionItem && Path is { } file => System.IO.Path.GetDirectoryName(file),
+        _ => null,
+    };
+
+    /// <summary>A file or folder on disk that can be cut, copied or dragged, rather than a part of the solution.</summary>
+    public bool IsMovable => Kind is NodeKind.Folder || Kind == NodeKind.File && !IsSolutionItem;
+
     public bool HasChildren => load is not null;
     public bool IsDirectory => Kind == NodeKind.Folder;
     public bool IsFile => Kind == NodeKind.File;
@@ -434,7 +484,7 @@ public sealed class ExplorerNode : Observable
 
     public Thickness Indent => new(Depth * 16, 0, 0, 0);
     public double ChevronAngle => IsExpanded ? 90 : 0;
-    public double Opacity => IsDimmed ? 0.55 : 1;
+    public double Opacity => IsDimmed || IsCut ? 0.55 : 1;
     public Geometry Icon => FileIcons.For(this);
     public IBrush IconBrush => FileIcons.BrushFor(this);
 

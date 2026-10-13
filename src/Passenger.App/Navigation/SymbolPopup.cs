@@ -181,24 +181,8 @@ public sealed class SymbolPopup : UserControl
         else
         {
             (string letter, string brush) = Badge(row.Kind);
-            badge = new Border
-            {
-                Width = 16,
-                Height = 16,
-                CornerRadius = new CornerRadius(3),
-                Background = InfoCard.Brush(brush),
-                Margin = new Thickness(0, 0, 8, 0),
-                VerticalAlignment = VerticalAlignment.Center,
-                Child = new TextBlock
-                {
-                    Text = letter,
-                    FontSize = 10,
-                    FontWeight = FontWeight.Bold,
-                    Foreground = Brushes.Black,
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    VerticalAlignment = VerticalAlignment.Center,
-                },
-            };
+            badge = KindBadge(letter, brush);
+            badge.Margin = new Thickness(0, 0, 8, 0);
         }
         TextBlock where = new()
         {
@@ -233,6 +217,25 @@ public sealed class SymbolPopup : UserControl
         };
         return new DockPanel { Height = 24, Margin = new Thickness(row.Depth * 16, 0, 0, 0), Children = { where, badge, name } };
     }
+
+    /// <summary>A kind's letter on its colour, as Rider marks a symbol or a kind of type.</summary>
+    public static Control KindBadge(string letter, string brush) => new Border
+    {
+        Width = 16,
+        Height = 16,
+        CornerRadius = new CornerRadius(3),
+        Background = InfoCard.Brush(brush),
+        VerticalAlignment = VerticalAlignment.Center,
+        Child = new TextBlock
+        {
+            Text = letter,
+            FontSize = 10,
+            FontWeight = FontWeight.Bold,
+            Foreground = Brushes.Black,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        },
+    };
 
     /// <summary>The letter and colour Rider gives a symbol of each kind (the protocol's SymbolKind).</summary>
     public static (string Letter, string Brush) Badge(int kind) => kind switch

@@ -86,6 +86,13 @@ public sealed class DragGesture<T>(Visual surface, DropOverlay overlay, Func<T, 
         return current.Dragging;
     }
 
+    /// <summary>Forgets a press whose release was never seen (it went outside what takes the gesture's events), dropping nothing.</summary>
+    public void Cancel()
+    {
+        pressed = null;
+        Unlight();
+    }
+
     private void Unlight()
     {
         lit?.Hide();

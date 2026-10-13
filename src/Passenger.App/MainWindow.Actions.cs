@@ -100,7 +100,7 @@ public partial class MainWindow
     }
 
     /// <summary>The editor's actions, run where the keys are: a text box's own editing there, another editor (a diff's)
-    /// when it has them, else the active editor.</summary>
+    /// when it has them, the Explorer's Cut, Copy and Paste of files while its rows have them, else the active editor.</summary>
     private void AddEditing()
     {
         Dictionary<string, MenuPlace[]> menus = new()
@@ -129,7 +129,7 @@ public partial class MainWindow
             actions!.Add(new IdeAction(id, title, "Editor", context => Edit(id, context))
             {
                 InEditor = true,
-                WhyNot = context => context.File is null && context.Focused is not TextBox ? NoFile : null,
+                WhyNot = context => context.File is null && context.Focused is not TextBox && !ExplorerEdits(id, context) ? NoFile : null,
                 Menus = menus.GetValueOrDefault(id, []),
             });
         }
@@ -137,6 +137,11 @@ public partial class MainWindow
 
     private void Edit(string action, ActionContext context)
     {
+        if (ExplorerEdits(action, context))
+        {
+            ExplorerEdit(action);
+            return;
+        }
         switch (context.Focused)
         {
             case TextBox box when Edit(box, action):

@@ -32,6 +32,15 @@ public partial class MainWindow
         };
     }
 
+    /// <summary>Rider's Open In, Terminal from the Explorer: a new tab of the Terminal window, its shell started in a folder.</summary>
+    public Task<Terminal.TerminalSession> OpenTerminalAt(string at)
+    {
+        // The tab is made before the window shows, so showing it starts no shell of its own in the open folder.
+        Task<Terminal.TerminalSession> starting = terminal!.NewSessionAsync(at);
+        ShowToolWindow("terminal");
+        return starting;
+    }
+
     /// <summary>The terminal's shortcut: to the terminal from anywhere, and back to the editor from the terminal.</summary>
     private void ToggleTerminal()
     {

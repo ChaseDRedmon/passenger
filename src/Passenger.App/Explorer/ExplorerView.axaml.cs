@@ -1,5 +1,10 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Interactivity;
+using Passenger.App.Docking;
+using Passenger.Core;
+using Passenger.Editor;
 
 namespace Passenger.App.Explorer;
 
@@ -11,6 +16,12 @@ public enum ExplorerAction
     NewClass,
     Rename,
     Delete,
+    Cut,
+    Copy,
+    Paste,
+    AddReference,
+    Compare,
+    OpenInTerminal,
     CopyPath,
     Reveal,
     Build,
@@ -31,14 +42,34 @@ public enum ExplorerAction
     CompareWithBranch,
 }
 
+/// <summary>Files and folders dragged onto a row: moved into the folder it stands for, or copied with the platform's
+/// copy key held (Option on the Mac, Ctrl elsewhere).</summary>
+public sealed record ExplorerDrop(IReadOnlyList<ExplorerNode> Items, ExplorerNode Target, bool Copy);
+
 public partial class ExplorerView : UserControl
 {
+    private readonly DropOverlay drop = new();
+    private readonly DragGesture<IReadOnlyList<ExplorerNode>> drag;
+    private bool copyHeld;
+
     public ExplorerView()
     {
         InitializeComponent();
         Rows.ItemsSource = Tree.Rows;
         // Ahead of the list's own keys: it takes Enter for its selection, so a row would never open.
-        Rows.AddHandler(KeyDownEvent, OnRowsKeyDown, Avalonia.Interactivity.RoutingStrategies.Tunnel);
+        Rows.AddHandler(KeyDownEvent, OnRowsKeyDown, RoutingStrategies.Tunnel);
+        Surface.Children.Add(drop);
+        drag = new DragGesture<IReadOnlyList<ExplorerNode>>(Surface, drop, DropZoneAt, (items, at) =>
+        {
+            if (TargetAt(items, at) is { } target)
+            {
+                Dropped?.Invoke(this, new ExplorerDrop(items, target, copyHeld));
+            }
+        });
+        // Seen before a row takes the press for its selection, which the drag leaves as it is.
+        Rows.AddHandler(PointerPressedEvent, OnRowsPressed, RoutingStrategies.Tunnel, handledEventsToo: true);
+        Rows.AddHandler(PointerMovedEvent, OnRowsMoved, RoutingStrategies.Tunnel, handledEventsToo: true);
+        Rows.AddHandler(PointerReleasedEvent, OnRowsReleased, RoutingStrategies.Tunnel, handledEventsToo: true);
         Rows.ContextRequested += (_, e) =>
         {
             if (Rows.SelectedItem is ExplorerNode node && Menu(node) is { } menu)
@@ -63,6 +94,12 @@ public partial class ExplorerView : UserControl
 
     /// <summary>Whether Git has a path's history (it is in the folder's working tree), for a row's Git items.</summary>
     public Func<string, bool> IsVersioned { get; set; } = _ => false;
+
+    /// <summary>Files and folders dragged onto a folder, a project or a file's folder.</summary>
+    public event EventHandler<ExplorerDrop>? Dropped;
+
+    /// <summary>Whether a Paste would put something in: the menu's Paste is disabled otherwise, as Rider's is.</summary>
+    public Func<bool> CanPaste { get; set; } = () => false;
 
     /// <summary>The row chosen, if any.</summary>
     public ExplorerNode? Selected => Rows.SelectedItem as ExplorerNode;
@@ -121,15 +158,17 @@ public partial class ExplorerView : UserControl
 
     /// <summary>Rider's menu for a row: Build, Rebuild and Clean for the solution or the projects chosen (a solution
     /// folder's, every one under it), their unit tests, a project's packages, file and unloading, Add where things can go
-    /// (a new or existing project, a solution folder or an existing item into the solution's folders; a file, a folder or
-    /// a class on disk), Rename and Delete, which for what is the solution's own (a project, a solution folder, its files)
-    /// is Remove, and the path of what is on disk.</summary>
+    /// (a new or existing project, a solution folder or an existing item into the solution's folders; a file, a folder, a
+    /// type or a project's reference on disk), Edit (Cut, Copy and Paste, Rename, and Delete, which for what is the
+    /// solution's own is Remove), the path of what is on disk, Open In (the file manager, a terminal), Tools' Compare and
+    /// Git's history. A project's Dependencies add a reference, and a project reference is removed.</summary>
     private ContextMenu? Menu(ExplorerNode node)
     {
         bool onDisk = node.Kind is NodeKind.File or NodeKind.Folder or NodeKind.Project;
         bool holds = (node.Kind is NodeKind.Folder or NodeKind.Project or NodeKind.Solution or NodeKind.File) && !node.IsSolutionItem;
         bool solutionFolder = node.Kind == NodeKind.SolutionFolder;
-        if (!onDisk && !holds && !solutionFolder)
+        bool dependency = node is { Kind: NodeKind.Dependencies or NodeKind.ProjectReference, Owner: not null };
+        if (!onDisk && !holds && !solutionFolder && !dependency)
         {
             return null;
         }
@@ -192,30 +231,77 @@ public partial class ExplorerView : UserControl
                 }
                 add.Items.Add(Item("New File...", ExplorerAction.NewFile));
                 add.Items.Add(Item("New Folder...", ExplorerAction.NewFolder));
-                add.Items.Add(Item("Class...", ExplorerAction.NewClass));
+                // Rider's C# file templates share this place: Class, Interface, Record, Struct and Enum, chosen in its popup.
+                add.Items.Add(Item("Class/Interface...", ExplorerAction.NewClass));
+            }
+            if (node.Kind == NodeKind.Project)
+            {
+                add.Items.Add(new Separator());
+                add.Items.Add(Item("Reference...", ExplorerAction.AddReference));
             }
             menu.Items.Add(add);
             menu.Items.Add(new Separator());
         }
-        if (Renames(node))
+        if (node.Kind == NodeKind.Dependencies && node.Owner is not null)
         {
-            menu.Items.Add(Item("Rename...", ExplorerAction.Rename, "F2"));
+            menu.Items.Add(Item("Add Reference...", ExplorerAction.AddReference));
+            menu.Items.Add(Item("Manage NuGet Packages", ExplorerAction.ManageNuGet));
+            return menu;
+        }
+        if (node.Kind == NodeKind.ProjectReference && node.Referenced is not null)
+        {
+            menu.Items.Add(Item("Remove...", ExplorerAction.Delete, DeleteKey));
+            return menu;
+        }
+        // Rider's Edit submenu: the clipboard's actions, Delete and Rename.
+        MenuItem edit = new() { Header = "Edit" };
+        if (node.IsMovable)
+        {
+            edit.Items.Add(Action("Cut", ExplorerAction.Cut, EditorActions.Cut));
+            edit.Items.Add(Action("Copy", ExplorerAction.Copy, EditorActions.Copy));
+        }
+        if (node.Into is not null)
+        {
+            MenuItem paste = Action("Paste", ExplorerAction.Paste, EditorActions.Paste);
+            paste.IsEnabled = CanPaste();
+            edit.Items.Add(paste);
+        }
+        if (edit.Items.Count > 0 && (Removes(node) || Renames(node)))
+        {
+            edit.Items.Add(new Separator());
         }
         if (Removes(node))
         {
             // What is the solution's own only leaves the solution, as Rider's Remove does; its files stay on disk.
             bool removes = node.Kind is NodeKind.Project or NodeKind.SolutionFolder || node.IsSolutionItem;
-            menu.Items.Add(Item(removes ? "Remove..." : "Delete...", ExplorerAction.Delete, OperatingSystem.IsMacOS() ? "Back" : "Delete"));
+            edit.Items.Add(Item(removes ? "Remove..." : "Delete...", ExplorerAction.Delete, DeleteKey));
+        }
+        if (Renames(node))
+        {
+            edit.Items.Add(Item("Rename...", ExplorerAction.Rename, "F2"));
+        }
+        if (edit.Items.Count > 0)
+        {
+            menu.Items.Add(edit);
         }
         // A solution folder is in no folder on disk, so it has no path to copy or show.
         if (!solutionFolder)
         {
-            if (onDisk)
-            {
-                menu.Items.Add(new Separator());
-            }
             menu.Items.Add(Item("Copy Path", ExplorerAction.CopyPath));
-            menu.Items.Add(Item(OperatingSystem.IsMacOS() ? "Reveal in Finder" : "Show in Explorer", ExplorerAction.Reveal));
+            MenuItem openIn = new() { Header = "Open In" };
+            openIn.Items.Add(Item(OperatingSystem.IsMacOS() ? "Finder" : "Explorer", ExplorerAction.Reveal));
+            openIn.Items.Add(Item("Terminal", ExplorerAction.OpenInTerminal));
+            menu.Items.Add(openIn);
+        }
+        if (node.Kind == NodeKind.File && !node.IsSolutionItem)
+        {
+            // Rider's Compare With... for one file, Compare Files for two chosen together.
+            bool two = SelectedNodes.Contains(node) && SelectedNodes.Count(n => n.IsFile) == 2;
+            MenuItem tools = new() { Header = "Tools" };
+            MenuItem compare = Item(two ? "Compare Files" : "Compare With...", ExplorerAction.Compare);
+            compare.InputGesture = CompareKey;
+            tools.Items.Add(compare);
+            menu.Items.Add(tools);
         }
         if (node.Kind is NodeKind.File or NodeKind.Folder or NodeKind.Project or NodeKind.Solution && node.Path is { } versioned && IsVersioned(versioned))
         {
@@ -233,10 +319,17 @@ public partial class ExplorerView : UserControl
         return menu;
     }
 
+    private static string DeleteKey => OperatingSystem.IsMacOS() ? "Back" : "Delete";
+
+    /// <summary>Rider's Compare Files (CompareTwoFiles): Ctrl+D in its Visual Studio keymap, Cmd+D in Visual Studio OSX
+    /// (its Mac parent's Ctrl made Cmd), where the editor has the same keys for Duplicate.</summary>
+    private static KeyGesture CompareKey => new(Key.D, OperatingSystem.IsMacOS() ? KeyModifiers.Meta : KeyModifiers.Control);
+
     /// <summary>Whether F2 renames the row: what is on disk, but a file only the solution lists, and a solution folder.</summary>
     private static bool Renames(ExplorerNode node) => node.Kind is NodeKind.Folder or NodeKind.Project or NodeKind.SolutionFolder || node.Kind == NodeKind.File && !node.IsSolutionItem;
 
-    private static bool Removes(ExplorerNode node) => node.Kind is NodeKind.File or NodeKind.Folder or NodeKind.Project or NodeKind.SolutionFolder;
+    private static bool Removes(ExplorerNode node) => node.Kind is NodeKind.File or NodeKind.Folder or NodeKind.Project or NodeKind.SolutionFolder
+        || node is { Kind: NodeKind.ProjectReference, Referenced: not null };
 
     public ExplorerTree Tree { get; } = new();
 
@@ -375,10 +468,146 @@ public partial class ExplorerView : UserControl
         }
     }
 
+    /// <summary>A left press on a file or folder on disk may begin a drag of it, or of the rows chosen with it.</summary>
+    private void OnRowsPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (RowAt(e.GetPosition(Rows)) is { IsMovable: true } row)
+        {
+            // The rows chosen as it was pressed: the list then chooses the row alone.
+            IReadOnlyList<ExplorerNode> chosen = SelectedNodes;
+            drag.Begin(chosen.Contains(row) ? [.. chosen.Where(n => n.IsMovable)] : [row], e);
+        }
+    }
+
+    private void OnRowsMoved(object? sender, PointerEventArgs e)
+    {
+        if (!e.GetCurrentPoint(Rows).Properties.IsLeftButtonPressed)
+        {
+            // Released outside the rows before it became a drag, which they never heard.
+            drag.Cancel();
+            return;
+        }
+        copyHeld = CopyHeld(e.KeyModifiers);
+        // Once a drag, the pointer is the rows' until the release, wherever it goes.
+        if (drag.Continue(e) && e.Pointer.Captured != Rows)
+        {
+            e.Pointer.Capture(Rows);
+        }
+    }
+
+    private void OnRowsReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        copyHeld = CopyHeld(e.KeyModifiers);
+        if (drag.End(e))
+        {
+            e.Handled = true;
+        }
+        if (e.Pointer.Captured == Rows)
+        {
+            e.Pointer.Capture(null);
+        }
+    }
+
+    /// <summary>The platform's key for a copy rather than a move as files are dropped: Option on the Mac, Ctrl elsewhere.</summary>
+    private static bool CopyHeld(KeyModifiers modifiers) => modifiers.HasFlag(OperatingSystem.IsMacOS() ? KeyModifiers.Alt : KeyModifiers.Control);
+
+    /// <summary>The row drawn under a point of the list.</summary>
+    private ExplorerNode? RowAt(Point inRows)
+    {
+        foreach (Control container in Rows.GetRealizedContainers())
+        {
+            if (Rows.TranslatePoint(inRows, container) is { } at && new Rect(container.Bounds.Size).Contains(at))
+            {
+                return container.DataContext as ExplorerNode;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>The row of what holds a row: the nearest above it, less deep.</summary>
+    private ExplorerNode? Holder(ExplorerNode row)
+    {
+        for (int at = Tree.Rows.IndexOf(row) - 1; at >= 0; at--)
+        {
+            if (Tree.Rows[at].Depth < row.Depth)
+            {
+                return Tree.Rows[at];
+            }
+        }
+        return null;
+    }
+
+    /// <summary>The folder or project what is dragged would go into at a point: the one under it, or a file's; none where
+    /// it would not move (all of it there already) or a folder would go inside itself.</summary>
+    private ExplorerNode? TargetAt(IReadOnlyList<ExplorerNode> items, Point at)
+    {
+        if (Surface.TranslatePoint(at, Rows) is not { } inRows || RowAt(inRows) is not { } row)
+        {
+            return null;
+        }
+        ExplorerNode? target = row.Kind == NodeKind.File ? Holder(row) : row;
+        if (target is null or { Kind: NodeKind.File } || target.Into is not { } into)
+        {
+            return null;
+        }
+        if (items.Any(i => i.Kind == NodeKind.Folder && PathNames.Within(into, i.Path!))
+            || !copyHeld && items.All(i => PathNames.Same(Path.GetDirectoryName(i.Path!)!, into)))
+        {
+            return null;
+        }
+        return target;
+    }
+
+    /// <summary>Where a drop lights up: the folder's row with the rows under it that show, as one place.</summary>
+    private DropZone? DropZoneAt(IReadOnlyList<ExplorerNode> items, Point at)
+    {
+        if (TargetAt(items, at) is not { } target)
+        {
+            return null;
+        }
+        int first = Tree.Rows.IndexOf(target);
+        int last = first;
+        while (last + 1 < Tree.Rows.Count && Tree.Rows[last + 1].Depth > target.Depth)
+        {
+            last++;
+        }
+        Rect? place = null;
+        foreach (Control container in Rows.GetRealizedContainers())
+        {
+            int index = Rows.IndexFromContainer(container);
+            if (index >= first && index <= last && container.TranslatePoint(default, Surface) is { } corner)
+            {
+                Rect bounds = new(corner, container.Bounds.Size);
+                place = place is { } so ? so.Union(bounds) : bounds;
+            }
+        }
+        return place is { } lit ? new DropZone(lit.Intersect(new Rect(Surface.Bounds.Size))) : null;
+    }
+
     private void OnRowsKeyDown(object? sender, KeyEventArgs e)
     {
         if (Rows.SelectedItem is not ExplorerNode node)
         {
+            return;
+        }
+        // The editor's Cut, Copy and Paste keys, whatever the keymap makes them, act on the rows while they have the keys.
+        ExplorerAction? clipboard = AppActions.Keymap().ActionFor(new Shortcut(Keystroke.From(e))) switch
+        {
+            EditorActions.Cut when node.IsMovable => ExplorerAction.Cut,
+            EditorActions.Copy when node.IsMovable => ExplorerAction.Copy,
+            EditorActions.Paste when node.Into is not null => ExplorerAction.Paste,
+            _ => null,
+        };
+        if (clipboard is { } asked)
+        {
+            ActionRequested?.Invoke(this, (asked, node));
+            e.Handled = true;
+            return;
+        }
+        if (node is { Kind: NodeKind.File, IsSolutionItem: false } && CompareKey.Matches(e))
+        {
+            ActionRequested?.Invoke(this, (ExplorerAction.Compare, node));
+            e.Handled = true;
             return;
         }
         switch (e.Key)

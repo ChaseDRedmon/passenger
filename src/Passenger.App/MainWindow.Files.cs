@@ -18,6 +18,8 @@ public partial class MainWindow
     private void AddFileOperations()
     {
         Explorer.ActionRequested += (_, asked) => _ = ExplorerActionAsync(asked.Action, asked.Node);
+        Explorer.Dropped += (_, dropped) => _ = DropAsync(dropped);
+        Explorer.CanPaste = () => held is not null;
         Editors.Moved += (_, move) => OnFileMoved(move);
     }
 
@@ -67,7 +69,25 @@ public partial class MainWindow
                 AskName("New Folder", string.Empty, name => CreateFolder(into, name));
                 break;
             case ExplorerAction.NewClass when into is not null:
-                AskName("New Class", string.Empty, name => CreateClass(into, name));
+                AskType(into);
+                break;
+            case ExplorerAction.Cut or ExplorerAction.Copy:
+                await HoldAsync(node, cut: action == ExplorerAction.Cut);
+                break;
+            case ExplorerAction.Paste:
+                await PasteAsync(node);
+                break;
+            case ExplorerAction.AddReference when (node.Kind == NodeKind.Project ? path : node.Owner) is { } project:
+                ShowAddReference(project);
+                break;
+            case ExplorerAction.Delete when node is { Kind: NodeKind.ProjectReference, Owner: { } owner, Referenced: { } referenced }:
+                await RemoveReferenceAsync(owner, referenced);
+                break;
+            case ExplorerAction.Compare when node is { Kind: NodeKind.File, Path: not null }:
+                await CompareAsync(node);
+                break;
+            case ExplorerAction.OpenInTerminal when path is not null:
+                _ = OpenTerminalAt(node.Kind == NodeKind.Folder ? path : Path.GetDirectoryName(path)!);
                 break;
             case ExplorerAction.Rename when path is not null:
                 AskName("Rename", Path.GetFileName(path), name => Rename(path, name));
@@ -107,6 +127,45 @@ public partial class MainWindow
         Vcs.NamePopup popup = new(title, initial, name => Task.FromResult(attempt(name)));
         popup.Done += (_, _) => ClosePopup();
         ShowPopup(popup);
+    }
+
+    /// <summary>Asks for a name as <see cref="AskName"/> does, answering with the one taken, or null once the popup closes
+    /// without one (Escape, a click outside it).</summary>
+    private Task<string?> AskNameAsync(string title, string initial, Func<string, string?> refuse)
+    {
+        TaskCompletionSource<string?> answer = new();
+        string? taken = null;
+        Vcs.NamePopup popup = new(title, initial, name =>
+        {
+            string? why = refuse(name);
+            taken = why is null ? name : null;
+            return Task.FromResult(why);
+        });
+        popup.Done += (_, _) => ClosePopup();
+        popup.DetachedFromVisualTree += (_, _) => answer.TrySetResult(taken);
+        ShowPopup(popup);
+        return answer.Task;
+    }
+
+    /// <summary>The C# types Rider's Class/Interface makes, in the order its popup lists them (its file templates of that
+    /// group: Class, Interface, Record, Struct, Enum).</summary>
+    public static IReadOnlyList<string> TypeKinds { get; } = ["Class", "Interface", "Record", "Struct", "Enum"];
+
+    /// <summary>Rider's Add, Class/Interface: a name, and the kind of type chosen under it with Up and Down.</summary>
+    private void AskType(string into)
+    {
+        Vcs.NamePopup? popup = null;
+        popup = new Vcs.NamePopup("New Class/Interface", string.Empty, name => Task.FromResult(CreateType(into, name, popup?.Kind ?? TypeKinds[0])),
+            [.. TypeKinds.Select(kind => (kind, TypeBadge(kind)))]);
+        popup.Done += (_, _) => ClosePopup();
+        ShowPopup(popup);
+    }
+
+    /// <summary>The letter and colour Rider marks a kind of type with, as Go to Symbol shows it.</summary>
+    private static Avalonia.Controls.Control TypeBadge(string kind)
+    {
+        (string letter, string brush) = Navigation.SymbolPopup.Badge(kind switch { "Interface" => 11, "Struct" => 23, "Enum" => 10, _ => 5 });
+        return Navigation.SymbolPopup.KindBadge(kind == "Record" ? "R" : letter, brush);
     }
 
     /// <summary>Makes a file in a folder (folders in its name made too) and opens it; null when it worked, else why not.</summary>
@@ -151,17 +210,30 @@ public partial class MainWindow
 
     /// <summary>Rider's New Class: a file of its name holding a class in the namespace its folder gives (the project's
     /// name, then the folders under it).</summary>
-    public string? CreateClass(string into, string name)
+    public string? CreateClass(string into, string name) => CreateType(into, name, "Class");
+
+    /// <summary>Rider's Class/Interface: a file of its name holding a type of the kind chosen (<see cref="TypeKinds"/>), as
+    /// its file template for that kind writes it, in the namespace its folder gives.</summary>
+    public string? CreateType(string into, string name, string kind)
     {
         string type = Path.GetFileNameWithoutExtension(name);
         if (type.Length == 0 || !char.IsLetter(type[0]) && type[0] != '_' || !type.All(c => char.IsLetterOrDigit(c) || c == '_'))
         {
             return $"{type} is not a C# name";
         }
-        return CreateFile(into, type + ".cs", $"namespace {NamespaceFor(into)};\n\npublic class {type}\n{{\n}}\n");
+        string declaration = kind switch
+        {
+            "Interface" => $"public interface {type}\n{{\n}}\n",
+            "Record" => $"public record {type}();\n",
+            "Struct" => $"public struct {type}\n{{\n}}\n",
+            "Enum" => $"public enum {type}\n{{\n}}\n",
+            _ => $"public class {type}\n{{\n}}\n",
+        };
+        return CreateFile(into, type + ".cs", $"namespace {NamespaceFor(into)};\n\n{declaration}");
     }
 
-    /// <summary>The namespace a folder's code takes: its project's root namespace (its name), then the folders below.</summary>
+    /// <summary>The namespace a folder's code takes: its project's root namespace (its name, "Shop.App"), then the folders
+    /// below, each name a C# identifier or dotted ones, as Rider makes them.</summary>
     private string NamespaceFor(string into)
     {
         string full = PathNames.Canonical(into);
@@ -169,7 +241,13 @@ public partial class MainWindow
         string root = project is null ? Path.GetFileName(folder ?? full) : Path.GetFileNameWithoutExtension(project.Path);
         string below = project is null ? string.Empty : Path.GetRelativePath(project.Folder, full);
         IEnumerable<string> parts = [root, .. below == "." ? [] : below.Split(Path.DirectorySeparatorChar)];
-        return string.Join('.', parts.Select(p => new string([.. p.Select(c => char.IsLetterOrDigit(c) || c == '_' ? c : '_')])));
+        return string.Join('.', parts.SelectMany(p => p.Split('.', StringSplitOptions.RemoveEmptyEntries)).Select(Identifier));
+
+        static string Identifier(string part)
+        {
+            string name = new([.. part.Select(c => char.IsLetterOrDigit(c) || c == '_' ? c : '_')]);
+            return char.IsDigit(name[0]) ? "_" + name : name;
+        }
     }
 
     /// <summary>Renames a file or folder in place. Its open files keep their tabs, splits and undo, saved first, and

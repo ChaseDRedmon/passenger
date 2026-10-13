@@ -235,24 +235,27 @@ public partial class MainWindow
         return OpenLocalDiff(path, open, mine, diff, "HEAD");
     }
 
-    /// <summary>A version's text (the last commit's, a branch's, a revision's) beside the file's in a window over this one,
-    /// the right side the open file's own text when it is still open.</summary>
-    private DiffWindow OpenLocalDiff(string path, OpenDocument? open, TextDocument mine, FileDiff diff, string version)
+    /// <summary>A version's text (the last commit's, a branch's, a revision's), or another file's (Compare With, named by
+    /// <paramref name="other"/>), beside the file's in a window over this one, the right side the open file's own text when
+    /// it is still open.</summary>
+    private DiffWindow OpenLocalDiff(string path, OpenDocument? open, TextDocument mine, FileDiff diff, string version, string? other = null)
     {
         // Closed while the differences were read, the file's text is one nothing would save: it is shown, not edited.
         if (open is not null && !Editors.Documents.Contains(open))
         {
             open = null;
         }
-        DiffView view = new(Path.GetFileName(path), diff, mine, editable: open is not null, rightColours: open?.Highlighter,
-            titles: (version, open is not null ? "Your version" : "Your version (read-only)"));
+        string mineTitle = other is null ? "Your version" : InFolder(path);
+        string title = other is null ? $"{Path.GetFileName(path)}: {version} and your version" : $"{Path.GetFileName(other)} vs {Path.GetFileName(path)}";
+        DiffView view = new(other is null ? Path.GetFileName(path) : title, diff, mine, editable: open is not null, rightColours: open?.Highlighter,
+            titles: (version, open is not null ? mineTitle : $"{mineTitle} (read-only)"));
         IHighlighter? left = null;
-        if (Workspace.Language.ForPath(path).Name == "C#")
+        if (Workspace.Language.ForPath(other ?? path).Name == "C#")
         {
             left = new Languages.CSharp.CSharpHighlighter(view.Left.Document);
             view.Left.Highlighter = left;
         }
-        DiffWindow window = new($"{Path.GetFileName(path)}: {version} and your version", view);
+        DiffWindow window = new(title, view);
         window.Closed += (_, _) => (left as IDisposable)?.Dispose();
         if (open is { } file)
         {

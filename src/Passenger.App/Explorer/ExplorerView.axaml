@@ -14,7 +14,7 @@
             </Button>
             <TextBlock Classes="paneTitle" Text="Explorer" VerticalAlignment="Center" />
         </DockPanel>
-        <Panel>
+        <Panel Name="Surface">
             <TextBlock Name="Hint" Classes="muted" Text="Nothing open"
                        HorizontalAlignment="Center" VerticalAlignment="Center" />
             <ListBox Name="Rows" Classes="tree" IsVisible="False" SelectionMode="Multiple"

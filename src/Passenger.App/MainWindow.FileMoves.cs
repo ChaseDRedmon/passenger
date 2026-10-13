@@ -1,0 +1,205 @@
+using Passenger.App.Explorer;
+using Passenger.App.Workspace;
+using Passenger.Core;
+using E = Passenger.Editor.EditorActions;
+
+namespace Passenger.App;
+
+/// <summary>The Explorer's Cut, Copy and Paste, and its drags, as Rider's Solution view has them: files and folders cut
+/// or copied are pasted into a folder or a project's (a cut once, dimmed until then), or dragged onto one to move them
+/// (copied with the platform's copy key held). A copy into its own folder asks the copy's name, as Rider's Duplicate does,
+/// and a name already taken there asks whether to replace what has it. A move carries its open files' tabs, undo and
+/// carets, saved first as Rider's paste saves them, and what knows a file by its path follows it.</summary>
+public partial class MainWindow
+{
+    /// <summary>What Cut or Copy last put on the clipboard, whose text is their paths: a Paste finds them only while the
+    /// clipboard still holds that text, so text copied since is never taken for them.</summary>
+    private (IReadOnlyList<string> Paths, bool Cut, string Text)? held;
+
+    /// <summary>Cut or Copy on a row: it, or every file and folder chosen with it, but those inside another of them.</summary>
+    private async Task HoldAsync(ExplorerNode node, bool cut)
+    {
+        IReadOnlyList<ExplorerNode> chosen = Explorer.SelectedNodes;
+        List<string> paths = [.. (chosen.Contains(node) ? chosen : [node]).Where(n => n.IsMovable).Select(n => n.Path!)];
+        paths = [.. paths.Where(p => !paths.Any(other => PathNames.IsUnder(p, other)))];
+        if (paths.Count == 0)
+        {
+            return;
+        }
+        string text = string.Join(Environment.NewLine, paths);
+        held = (paths, cut, text);
+        Explorer.Tree.SetCut(cut ? paths : []);
+        if (Clipboard is { } clipboard)
+        {
+            await Avalonia.Input.Platform.ClipboardExtensions.SetTextAsync(clipboard, text);
+        }
+        StatusText.Text = $"{(cut ? "Cut" : "Copied")} {Together([.. paths.Select(Path.GetFileName).OfType<string>()])}";
+    }
+
+    /// <summary>Paste on a row: what was cut or copied goes into the folder the row stands for (<see cref="ExplorerNode.Into"/>).</summary>
+    private async Task PasteAsync(ExplorerNode node)
+    {
+        if (node.Into is not { } into)
+        {
+            return;
+        }
+        string? text = Clipboard is { } clipboard ? await Avalonia.Input.Platform.ClipboardExtensions.TryGetTextAsync(clipboard) : null;
+        if (held is not { } what || text != what.Text)
+        {
+            Forget();
+            StatusText.Text = "Nothing to paste: no files or folders were cut or copied";
+            return;
+        }
+        if (what.Cut)
+        {
+            // A cut is pasted once, as Rider's is.
+            Forget();
+        }
+        await PutAsync(what.Paths, into, copy: !what.Cut);
+    }
+
+    private void Forget()
+    {
+        held = null;
+        Explorer.Tree.SetCut([]);
+    }
+
+    private Task DropAsync(ExplorerDrop drop)
+    {
+        List<string> paths = [.. drop.Items.Select(i => i.Path!)];
+        return drop.Target.Into is { } into ? PutAsync([.. paths.Where(p => !paths.Any(other => PathNames.IsUnder(p, other)))], into, drop.Copy) : Task.CompletedTask;
+    }
+
+    /// <summary>Moves or copies files and folders into a folder: what is there already stays put, a folder never goes
+    /// inside itself, a copy into its own folder is named by the person, and a name taken there is replaced (what had it
+    /// going to the Trash) only once they agree. The status bar says what went where and what could not; the last one put
+    /// is chosen in the Explorer. Answers with where each went.</summary>
+    public async Task<IReadOnlyList<string>> PutAsync(IReadOnlyList<string> paths, string into, bool copy)
+    {
+        into = PathNames.Canonical(into);
+        List<string> put = [];
+        List<string> refused = [];
+        foreach (string source in paths)
+        {
+            string name = Path.GetFileName(source);
+            if (!File.Exists(source) && !Directory.Exists(source))
+            {
+                refused.Add($"{name} is no longer there");
+                continue;
+            }
+            if (Directory.Exists(source) && PathNames.Within(into, source))
+            {
+                refused.Add($"{name} cannot go inside itself");
+                continue;
+            }
+            string target = Path.Combine(into, name);
+            if (PathNames.Same(target, source))
+            {
+                if (!copy || await AskNameAsync($"Duplicate {name}", name, other => Invalid(other) ?? Taken(into, other)) is not { } other)
+                {
+                    continue;
+                }
+                target = Path.Combine(into, other);
+            }
+            else if (File.Exists(target) || Directory.Exists(target))
+            {
+                if (!await Confirm("Files Already Exist", $"{name} with the same name already exists in '{Path.GetFileName(into)}'. Replace?", "Replace")
+                    || !await DeleteAsync(target, asked: true))
+                {
+                    continue;
+                }
+            }
+            if ((copy ? CopyOnDisk(source, target) : Editors.MoveFile(source, target)) is { } problem)
+            {
+                refused.Add($"{name} could not be {(copy ? "copied" : "moved")}: {problem}");
+                continue;
+            }
+            put.Add(PathNames.Canonical(target));
+        }
+        if (put.Count > 0)
+        {
+            FilesChanged();
+            Explorer.Reveal(put[^1]);
+            // Read again, the rows lost the keys; they keep them, as Rider's do, for the next Paste.
+            Explorer.FocusRows();
+            refused.Insert(0, $"{(copy ? "Copied" : "Moved")} {Together([.. put.Select(Path.GetFileName).OfType<string>()])} to {Path.GetFileName(into)}");
+        }
+        StatusText.Text = string.Join("; ", refused);
+        return put;
+    }
+
+    private static string? Taken(string into, string name) =>
+        File.Exists(Path.Combine(into, name)) || Directory.Exists(Path.Combine(into, name)) ? $"{name} is already there" : null;
+
+    /// <summary>Copies a file or a folder with all it holds; the open files among them are saved first, so the copy is
+    /// what the editor shows. Null once copied, else why not.</summary>
+    private string? CopyOnDisk(string source, string target)
+    {
+        foreach (OpenDocument document in Editors.Documents.Where(d => d.IsModified && PathNames.Within(d.Path, source)))
+        {
+            if (!Editors.Save(document))
+            {
+                return $"{document.Name} could not be saved before it was copied";
+            }
+        }
+        try
+        {
+            if (Directory.Exists(source))
+            {
+                CopyFolder(source, target);
+            }
+            else
+            {
+                File.Copy(source, target);
+            }
+            return null;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return error.Message;
+        }
+    }
+
+    /// <summary>A folder's copy, a link inside it copied as the link it is rather than followed (it may loop).</summary>
+    private static void CopyFolder(string from, string to)
+    {
+        Directory.CreateDirectory(to);
+        foreach (FileSystemInfo entry in new DirectoryInfo(from).EnumerateFileSystemInfos())
+        {
+            string target = Path.Combine(to, entry.Name);
+            if (entry.LinkTarget is { } link)
+            {
+                if (entry is DirectoryInfo)
+                {
+                    Directory.CreateSymbolicLink(target, link);
+                }
+                else
+                {
+                    File.CreateSymbolicLink(target, link);
+                }
+            }
+            else if (entry is DirectoryInfo)
+            {
+                CopyFolder(entry.FullName, target);
+            }
+            else
+            {
+                File.Copy(entry.FullName, target);
+            }
+        }
+    }
+
+    /// <summary>Whether the editor's Cut, Copy or Paste is the Explorer's here: its rows have the keys (the Edit menu
+    /// of the Mac's menu bar runs them where the keys are, as Rider's does).</summary>
+    private static bool ExplorerEdits(string action, ActionContext context) =>
+        action is E.Cut or E.Copy or E.Paste && context.ToolWindow?.Id == "explorer" && context.Focused is not Avalonia.Controls.TextBox;
+
+    /// <summary>The editor's Cut, Copy or Paste run on the Explorer's chosen row.</summary>
+    private void ExplorerEdit(string action)
+    {
+        if (Explorer.Selected is { } row)
+        {
+            _ = ExplorerActionAsync(action switch { E.Cut => ExplorerAction.Cut, E.Copy => ExplorerAction.Copy, _ => ExplorerAction.Paste }, row);
+        }
+    }
+}
