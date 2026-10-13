@@ -8,6 +8,7 @@ using Avalonia.Input;
 using Avalonia.Input.Platform;
 using Passenger.App;
 using Passenger.App.Docking;
+using Passenger.Core;
 using Passenger.Terminal;
 
 namespace Passenger.Tests;
@@ -167,7 +168,7 @@ public sealed class TerminalTests
             // Typed into the view, the command runs in the folder, its answer on the screen.
             window.KeyTextInput(OperatingSystem.IsWindows() ? "echo %CD%" : "pwd");
             Ui.Press(window, "ENTER");
-            string where = Passenger.App.Workspace.PathNames.Canonical(folder);
+            string where = PathNames.Canonical(folder);
             Ui.WaitFor(() => Screen(shell).Contains(where, StringComparison.Ordinal), $"the folder on the screen:\n{Screen(shell)}");
 
             // The view's size is the shell's: it fills the window, in whole cells.

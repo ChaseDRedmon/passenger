@@ -1,3 +1,4 @@
+using Passenger.Core;
 using Passenger.Text;
 
 namespace Passenger.App.Navigation;
@@ -91,7 +92,7 @@ public sealed class NavigationHistory
         {
             for (int i = 0; i < places.Count; i++)
             {
-                places[i] = places[i] with { Path = Workspace.PathNames.Moved(places[i].Path, from, to) };
+                places[i] = places[i] with { Path = PathNames.Moved(places[i].Path, from, to) };
             }
         }
     }

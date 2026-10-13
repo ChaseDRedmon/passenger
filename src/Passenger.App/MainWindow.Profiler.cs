@@ -4,6 +4,7 @@ using Passenger.App.Debugging;
 using Passenger.App.Workspace;
 using Passenger.Editor;
 using Microsoft.Diagnostics.NETCore.Client;
+using Passenger.Core;
 using Passenger.Profiler;
 using Passenger.Text;
 
@@ -211,6 +212,6 @@ public partial class MainWindow
             StatusText.Text = $"{method} is not in the open code";
             return;
         }
-        NavigateTo(PathNames.Canonical(new Uri(location.Uri).LocalPath), new TextPosition(location.Range.Start.Line, location.Range.Start.Character));
+        NavigateTo(Lsp.DocumentUris.ToPath(location.Uri), new TextPosition(location.Range.Start.Line, location.Range.Start.Character));
     }
 }

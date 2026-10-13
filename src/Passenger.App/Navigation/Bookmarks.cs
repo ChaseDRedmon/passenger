@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using Passenger.App.State;
+using Passenger.Core;
 using Passenger.Text;
 
 namespace Passenger.App.Navigation;
@@ -112,10 +113,10 @@ public sealed class BookmarkStore
     public void Move(string from, string to)
     {
         HashSet<string> changed = [];
-        foreach (Bookmark bookmark in all.Where(b => Workspace.PathNames.Within(b.Path, from)))
+        foreach (Bookmark bookmark in all.Where(b => PathNames.Within(b.Path, from)))
         {
             changed.Add(bookmark.Path);
-            bookmark.Path = Workspace.PathNames.Moved(bookmark.Path, from, to);
+            bookmark.Path = PathNames.Moved(bookmark.Path, from, to);
             changed.Add(bookmark.Path);
         }
         foreach (string path in changed)

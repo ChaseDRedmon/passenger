@@ -6,6 +6,7 @@ using Passenger.App;
 using Passenger.App.Navigation;
 using Passenger.App.ToolWindows;
 using Passenger.App.Workspace;
+using Passenger.Core;
 using Passenger.Editor;
 using Passenger.Text;
 
@@ -33,7 +34,7 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
 
         Ui.Press(window, "Enter");
         Assert.Null(window.Popup);
-        Assert.Equal(Passenger.App.Workspace.PathNames.Canonical(project.PathOf("Helper.cs")), window.EditorArea.Active?.Path);
+        Assert.Equal(PathNames.Canonical(project.PathOf("Helper.cs")), window.EditorArea.Active?.Path);
         Assert.Equal(2, window.EditorArea.CodeEditor.CaretPosition.Line);
         window.Close();
     }

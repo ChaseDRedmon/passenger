@@ -108,6 +108,24 @@ public sealed class FileTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void A_file_another_program_reads_without_letting_it_be_deleted_is_still_saved_and_quitting_goes_ahead()
+    {
+        string path = Path.Combine(folder, "One.cs");
+        File.WriteAllText(path, "class One { }\n");
+        MainWindow window = Open();
+        Edit(window, "One.cs", "public ");
+
+        // As a virus scanner or a build reading it holds it: reading and writing shared, deleting (so replacing) not.
+        using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+        {
+            window.Close();
+            Assert.False(window.IsVisible, $"Quitting stopped at a file another program was reading: {window.Status}");
+        }
+        Assert.Equal("public class One { }\n", File.ReadAllText(path));
+        Assert.Empty(Directory.EnumerateFiles(folder, "*" + Passenger.App.Workspace.FileText.SaveSuffix));
+    }
+
+    [AvaloniaFact]
     public void Edits_are_saved_when_the_focus_goes_to_the_terminal_unless_settings_say_not_and_before_another_folder_opens()
     {
         string path = Path.Combine(folder, "One.cs");

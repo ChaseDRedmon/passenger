@@ -1,6 +1,7 @@
 using Passenger.App.Editors;
 using Passenger.App.ToolWindows;
 using Passenger.App.Workspace;
+using Passenger.Core;
 using Passenger.Dap;
 using Passenger.Editor;
 using Passenger.Text;

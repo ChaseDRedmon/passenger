@@ -4,6 +4,7 @@ using Avalonia.Headless.XUnit;
 using Passenger.App;
 using Passenger.App.Explorer;
 using Passenger.App.Run;
+using Passenger.Core;
 using Passenger.Text;
 
 namespace Passenger.Tests;
@@ -47,7 +48,7 @@ public sealed class BuildRunTests : IDisposable
         window.OpenFolder(Path.Combine(folder, "Zebra.slnx"));
         Ui.Settle();
         Assert.Equal("Zebra", window.Solution?.Name);
-        Assert.Equal(Passenger.App.Workspace.PathNames.Canonical(Path.Combine(folder, "Zebra.slnx")), window.CSharpService?.Session?.Solution);
+        Assert.Equal(PathNames.Canonical(Path.Combine(folder, "Zebra.slnx")), window.CSharpService?.Session?.Solution);
         // Read again (a package added), it stays the one opened, not the one the folder's files would pick.
         window.ReloadSolution();
         Assert.Equal("Zebra", window.Solution?.Name);
@@ -77,7 +78,7 @@ public sealed class BuildRunTests : IDisposable
         Ui.Settle();
         Problem problem = Assert.Single(window.BottomPanel.Problems.Problems, p => p.Code == "CS0029");
         Assert.Equal(ProblemSeverity.Error, problem.Severity);
-        Assert.Equal(Passenger.App.Workspace.PathNames.Canonical(Path.Combine(folder, "src", "Hello", "Program.cs")), problem.Path);
+        Assert.Equal(PathNames.Canonical(Path.Combine(folder, "src", "Hello", "Program.cs")), problem.Path);
         Assert.Equal(1, problem.Position.Line);
         window.Close();
     }
@@ -98,7 +99,7 @@ public sealed class BuildRunTests : IDisposable
         Assert.False(window.IsBuilding);
         Problem? problem = window.BottomPanel.Problems.Problems.SingleOrDefault(p => p.Code == "CS0029");
         Assert.True(problem is not null, $"The build failed but Problems has nothing for its error, listing [{string.Join(", ", window.BottomPanel.Problems.Problems.Select(p => $"{p.Code} {p.Path}"))}]");
-        Assert.Equal(Passenger.App.Workspace.PathNames.Canonical(Path.Combine(folder, "Shop (copy)", "Program.cs")), problem.Path);
+        Assert.Equal(PathNames.Canonical(Path.Combine(folder, "Shop (copy)", "Program.cs")), problem.Path);
         Assert.Equal(new TextPosition(1, 12), problem.Position);
         window.Close();
     }

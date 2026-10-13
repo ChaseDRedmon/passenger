@@ -1087,7 +1087,7 @@ public sealed class CodeAssist
         string root = service()?.Session?.Folder ?? string.Empty;
         List<Choice> choices = locations.Select(l =>
         {
-            string path = new Uri(l.Uri).LocalPath;
+            string path = DocumentUris.ToPath(l.Uri);
             string shown = root.Length > 0 && path.StartsWith(root, StringComparison.Ordinal) ? Path.GetRelativePath(root, path) : Path.GetFileName(path);
             return new Choice($"{shown}:{l.Range.Start.Line + 1}", LinePreview(path, l.Range.Start.Line), l, DetailIsCode: true);
         }).ToList();
@@ -1102,7 +1102,7 @@ public sealed class CodeAssist
     }
 
     private void Arrive(LspLocation location) =>
-        Navigate?.Invoke(this, (new Uri(location.Uri).LocalPath, new TextPosition(location.Range.Start.Line, location.Range.Start.Character)));
+        Navigate?.Invoke(this, (DocumentUris.ToPath(location.Uri), new TextPosition(location.Range.Start.Line, location.Range.Start.Character)));
 
     private async Task Reformat()
     {

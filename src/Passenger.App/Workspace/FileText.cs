@@ -105,7 +105,7 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom)
             {
                 File.SetUnixFileMode(temporary, File.GetUnixFileMode(target));
             }
-            File.Move(temporary, target, overwrite: true);
+            Replace(temporary, target, preamble, body);
         }
         catch
         {
@@ -114,6 +114,37 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom)
             throw;
         }
         return (written, unheld is null ? null : $"{Path.GetFileName(path)} was saved as UTF-8: {NameOf(encoding, bom)} cannot hold '{unheld}'");
+    }
+
+    /// <summary>Moves the written file over the target. Windows refuses that while another program holds the target
+    /// without sharing its deletion (a virus scanner, a build reading it): the move is tried again for a moment, then the
+    /// target is written in place, which such a program allows, so no save (nor the one quitting makes) fails for it.</summary>
+    private static void Replace(string temporary, string target, byte[] preamble, byte[] body)
+    {
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                File.Move(temporary, target, overwrite: true);
+                return;
+            }
+            catch (Exception refused) when (OperatingSystem.IsWindows() && refused is IOException or UnauthorizedAccessException && File.Exists(target))
+            {
+                if (attempt == 3)
+                {
+                    break;
+                }
+                Thread.Sleep(50);
+            }
+        }
+        using (FileStream stream = new(target, FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete))
+        {
+            stream.Write(preamble);
+            stream.Write(body);
+            stream.SetLength(stream.Position);
+            stream.Flush(flushToDisk: true);
+        }
+        File.Delete(temporary);
     }
 
     /// <summary>The first character of a text that an encoding cannot hold (Latin-1 has no € and no emoji), which its

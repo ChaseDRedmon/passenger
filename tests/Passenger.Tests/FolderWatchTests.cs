@@ -6,6 +6,7 @@ using Avalonia.Headless.XUnit;
 using Passenger.App;
 using Passenger.App.Explorer;
 using Passenger.App.Workspace;
+using Passenger.Core;
 
 namespace Passenger.Tests;
 

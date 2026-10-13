@@ -113,6 +113,7 @@
     <PackageReference Include="Microsoft.Diagnostics.NETCore.Client" />
     <PackageReference Include="NeoSmart.AsyncLock" />
     <PackageReference Include="ZLinq" />
+    <ProjectReference Include="../Passenger.Core/Passenger.Core.csproj" />
     <ProjectReference Include="../Passenger.Debugger.Interop/Passenger.Debugger.Interop.csproj" />
     <!-- For the protocol's hit counts, read as the IDE's Breakpoint popup reads them (HitCondition). -->
     <ProjectReference Include="../Passenger.Dap/Passenger.Dap.csproj" />

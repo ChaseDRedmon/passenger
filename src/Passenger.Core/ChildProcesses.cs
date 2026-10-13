@@ -49,6 +49,8 @@ public static class ChildProcesses
         ProcessStartInfo start = Command(Dotnet.Host(), arguments, folder);
         start.Environment["DOTNET_CLI_UI_LANGUAGE"] = "en";
         start.Environment["DOTNET_NOLOGO"] = "1";
+        // MSBuild writes UTF-8, which is how its output is read, on every Windows: by itself it does only from 10 1909 on.
+        start.Environment["DOTNET_CLI_FORCE_UTF8_ENCODING"] = "true";
         // The SDK's switch for MSBuild's server, and MSBuild's own, which a person's environment may set over the SDK's.
         start.Environment["DOTNET_CLI_USE_MSBUILD_SERVER"] = "0";
         start.Environment["MSBUILDUSESERVER"] = "0";

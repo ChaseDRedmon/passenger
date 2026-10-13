@@ -168,7 +168,7 @@ public sealed class LanguageServer : IAsyncDisposable
 
         try
         {
-            string root = new Uri(Path.GetFullPath(folder)).AbsoluteUri;
+            string root = DocumentUris.FromPath(folder);
             InitializeParams initialize = new(Environment.ProcessId, root, [new WorkspaceFolder(root, Path.GetFileName(folder))], ClientCapabilities.Value);
             // Given up at once, not cancelled (whose $/cancelRequest can fail unobserved as the connection goes): it fails with the connection, unseen.
             Task<JsonElement> answer = rpc.InvokeWithParameterObjectAsync<JsonElement>("initialize", initialize, CancellationToken.None);

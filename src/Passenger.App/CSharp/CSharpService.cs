@@ -1,5 +1,6 @@
 using Avalonia.Threading;
 using Passenger.App.Workspace;
+using Passenger.Core;
 using Passenger.Editor;
 using Passenger.Lsp;
 
@@ -92,7 +93,7 @@ public sealed class CSharpService : IAsyncDisposable
             Dictionary<string, IReadOnlyList<Diagnostic>> byPath = [];
             foreach (((string? _, string uri), (string? _, IReadOnlyList<Diagnostic> items)) in solutionReports)
             {
-                string path = PathNames.Canonical(new Uri(uri).LocalPath);
+                string path = DocumentUris.ToPath(uri);
                 byPath[path] = byPath.TryGetValue(path, out IReadOnlyList<Diagnostic>? before) ? [.. before, .. items] : items;
             }
             // An open file's problems are its own pull's, which the workspace's leave out and which follow typing.

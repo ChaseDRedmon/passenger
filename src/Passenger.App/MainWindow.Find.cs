@@ -26,7 +26,7 @@ public partial class MainWindow
     private void ShowUsages(string title, IReadOnlyList<LspLocation> locations)
     {
         List<Usage> usages = [];
-        foreach (IGrouping<string, LspLocation> file in locations.GroupBy(l => PathNames.Canonical(new Uri(l.Uri).LocalPath)))
+        foreach (IGrouping<string, LspLocation> file in locations.GroupBy(l => DocumentUris.ToPath(l.Uri)))
         {
             TextSnapshot snapshot = TextOf(file.Key) ?? TextSnapshot.Empty;
             ServerLines lines = ServerLines.Of(snapshot);

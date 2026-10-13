@@ -345,8 +345,13 @@ public sealed class DebugSession
     public async Task<IReadOnlyList<DapThread>> ThreadsAsync() =>
         (await connection.RequestAsync<ThreadsResponse>("threads", new DapEmpty())).Threads;
 
+    /// <summary>A thread's frames, each source on this disk named as the IDE names its files: a PDB records a file as the
+    /// build was given it (another letter case, an 8.3 name), and its stops would otherwise miss the open file.</summary>
     public async Task<IReadOnlyList<DapStackFrame>> StackTraceAsync(int threadId) =>
-        (await connection.RequestAsync<StackTraceResponse>("stackTrace", new StackTraceArguments(threadId))).StackFrames;
+        [.. (await connection.RequestAsync<StackTraceResponse>("stackTrace", new StackTraceArguments(threadId))).StackFrames.Select(f =>
+            f.Source is { Path: { } path } source && Path.IsPathFullyQualified(path) && File.Exists(path)
+                ? f with { Source = source with { Path = PathNames.Canonical(path) } }
+                : f)];
 
     public async Task<IReadOnlyList<DapScope>> ScopesAsync(int frameId) =>
         (await connection.RequestAsync<ScopesResponse>("scopes", new ScopesArguments(frameId))).Scopes;

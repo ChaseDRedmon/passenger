@@ -4,6 +4,7 @@ using Avalonia.Headless.XUnit;
 using Passenger.App;
 using Passenger.App.Debugging;
 using Passenger.App.Testing;
+using Passenger.Core;
 using Passenger.Editor;
 using Passenger.Text;
 
@@ -175,7 +176,7 @@ public sealed class UnitTestsTests : IDisposable
 
     private string Write(string relative, string text)
     {
-        string path = Path.Combine(Passenger.App.Workspace.PathNames.Canonical(folder), relative);
+        string path = Path.Combine(PathNames.Canonical(folder), relative);
         File.WriteAllText(path, text);
         return path;
     }

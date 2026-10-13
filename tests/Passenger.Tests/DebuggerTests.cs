@@ -7,6 +7,7 @@ using Avalonia.Input;
 using Avalonia.VisualTree;
 using Passenger.App;
 using Passenger.App.Debugging;
+using Passenger.Core;
 using Passenger.Dap;
 using Passenger.Editor;
 using Passenger.Text;
@@ -609,7 +610,7 @@ public sealed class DebuggerTests : IDisposable
 
     private string Write(string relative, string text)
     {
-        string path = Path.Combine(Passenger.App.Workspace.PathNames.Canonical(folder), relative);
+        string path = Path.Combine(PathNames.Canonical(folder), relative);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, text);
         return path;

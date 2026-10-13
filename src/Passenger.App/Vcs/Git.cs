@@ -69,7 +69,7 @@ public sealed class Git
     {
         GitResult top = await RunAsync(folder, ["rev-parse", "--show-toplevel"]);
         return top.Succeeded && top.Output.Trim() is { Length: > 0 } root
-            ? new Git(Workspace.PathNames.Canonical(root))
+            ? new Git(PathNames.Canonical(root))
             : null;
     }
 

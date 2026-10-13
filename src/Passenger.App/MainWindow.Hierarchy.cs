@@ -1,4 +1,5 @@
 using Passenger.App.ToolWindows;
+using Passenger.Core;
 using Passenger.Lsp;
 using Passenger.Text;
 
@@ -74,6 +75,6 @@ public partial class MainWindow
     private static HierarchyNode Node(HierarchyItem item, LspRange? at = null)
     {
         LspPosition where = (at ?? item.SelectionRange).Start;
-        return new HierarchyNode(item, Workspace.PathNames.Canonical(new Uri(item.Uri).LocalPath), new TextPosition(where.Line, where.Character));
+        return new HierarchyNode(item, DocumentUris.ToPath(item.Uri), new TextPosition(where.Line, where.Character));
     }
 }

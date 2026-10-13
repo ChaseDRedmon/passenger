@@ -5,6 +5,7 @@ using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Passenger.App.Workspace;
+using Passenger.Core;
 using Passenger.Editor;
 using Passenger.Text;
 
@@ -109,7 +110,7 @@ public sealed class EditorArea : UserControl
     /// <summary>Opens a file in a tab of the active group (or shows its tab if open), returning why not if it can't be.</summary>
     public string? Open(string path)
     {
-        string full = Path.GetFullPath(path);
+        string full = PathNames.Canonical(path);
         if (documents.FirstOrDefault(d => d.Path == full) is { } open)
         {
             Activate(open);
@@ -516,7 +517,7 @@ public sealed class EditorArea : UserControl
     /// <summary>A file's document, open already or read from disk now; null when it cannot be read as text.</summary>
     private OpenDocument? Load(string path)
     {
-        string full = Path.GetFullPath(path);
+        string full = PathNames.Canonical(path);
         if (documents.FirstOrDefault(d => d.Path == full) is { } open)
         {
             return open;

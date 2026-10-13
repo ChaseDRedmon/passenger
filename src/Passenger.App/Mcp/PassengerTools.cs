@@ -5,6 +5,7 @@ using Passenger.App.CSharp;
 using Passenger.App.Debugging;
 using Passenger.App.Run;
 using Passenger.App.Workspace;
+using Passenger.Core;
 using Passenger.Dap;
 using Passenger.Editor;
 using Passenger.Lsp;
@@ -170,7 +171,7 @@ public sealed partial class PassengerTools(MainWindow window)
         {
             return "This can't be renamed";
         }
-        IReadOnlyList<string> files = [.. Shapes.WorkspaceEdit(edit).Select(f => new Uri(f.Uri).LocalPath).Distinct()];
+        IReadOnlyList<string> files = [.. Shapes.WorkspaceEdit(edit).Select(f => DocumentUris.ToPath(f.Uri)).Distinct()];
         WorkspaceEdits.Apply(window.EditorArea, edit);
         window.EditorArea.SaveAll();
         return $"Renamed in {files.Count} file{(files.Count == 1 ? "" : "s")}: {string.Join(", ", files.Select(Relative))}";
@@ -254,7 +255,7 @@ public sealed partial class PassengerTools(MainWindow window)
         return (IReadOnlyList<SymbolFound>)[.. found
             .Where(s => kind is null || SymbolKinds.Name(s.Kind).Equals(kind, StringComparison.OrdinalIgnoreCase))
             .Take(limit)
-            .Select(s => new SymbolFound(s.Name, SymbolKinds.Name(s.Kind), s.ContainerName, Relative(new Uri(s.Location.Uri).LocalPath), s.Location.Range.Start.Line + 1, s.Location.Range.Start.Character + 1))];
+            .Select(s => new SymbolFound(s.Name, SymbolKinds.Name(s.Kind), s.ContainerName, Relative(DocumentUris.ToPath(s.Location.Uri)), s.Location.Range.Start.Line + 1, s.Location.Range.Start.Character + 1))];
     });
 
     [McpServerTool(Name = "outline", Title = "A file's structure", ReadOnly = true), Description(
@@ -746,7 +747,8 @@ public sealed partial class PassengerTools(MainWindow window)
         }
         return BackgroundWork.Run(() =>
         {
-            string[] paths = [.. places.Select(p => new Uri(p.Uri).LocalPath)];
+            Dictionary<string, string> byUri = places.Select(p => p.Uri).Distinct(StringComparer.Ordinal).ToDictionary(u => u, DocumentUris.ToPath, StringComparer.Ordinal);
+            string[] paths = [.. places.Select(p => byUri[p.Uri])];
             Dictionary<(string Path, int Line), string> texts = ReadLines([.. paths.Select((path, i) => (path, places[i].Line))], open, cancel);
             return (IReadOnlyList<(string, string)>)[.. paths.Select((path, i) => (Relative(folder, path), texts.GetValueOrDefault((path, places[i].Line), string.Empty)))];
         }, cancel);
@@ -813,11 +815,9 @@ public sealed partial class PassengerTools(MainWindow window)
             window.Debugger.Session?.State.ToString().ToLowerInvariant() ?? "not debugging");
     }
 
-    private string Resolve(string path)
-    {
-        string full = Path.IsPathRooted(path) || window.Folder is null ? Path.GetFullPath(path) : Path.GetFullPath(Path.Combine(window.Folder, path));
-        return File.Exists(full) || Directory.Exists(full) ? PathNames.Canonical(full) : full;
-    }
+    /// <summary>A path an agent gave, from the open folder unless rooted, as the IDE names it (in any letter case).</summary>
+    private string Resolve(string path) =>
+        PathNames.Canonical(Path.IsPathRooted(path) || window.Folder is null ? path : Path.Combine(window.Folder, path));
 
     private string Relative(string path) => Relative(window.Folder, path);
 

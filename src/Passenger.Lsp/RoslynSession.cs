@@ -46,11 +46,11 @@ public sealed class RoslynSession : IAsyncDisposable
             cancel.ThrowIfCancellationRequested();
             if (solution is not null)
             {
-                await server.NotifyAsync("solution/open", new OpenSolutionParams(new Uri(solution).AbsoluteUri)).ConfigureAwait(false);
+                await server.NotifyAsync("solution/open", new OpenSolutionParams(DocumentUris.FromPath(solution))).ConfigureAwait(false);
             }
             else
             {
-                await server.NotifyAsync("project/open", new OpenProjectParams([.. projects.Select(p => new Uri(p).AbsoluteUri)])).ConfigureAwait(false);
+                await server.NotifyAsync("project/open", new OpenProjectParams([.. projects.Select(DocumentUris.FromPath)])).ConfigureAwait(false);
             }
         }
         catch
@@ -65,7 +65,7 @@ public sealed class RoslynSession : IAsyncDisposable
     /// change to it, in order.</summary>
     public LspDocument Open(string path, TextDocument text)
     {
-        string uri = new Uri(Path.GetFullPath(path)).AbsoluteUri;
+        string uri = DocumentUris.FromPath(path);
         if (documents.TryGetValue(uri, out LspDocument? open))
         {
             return open;

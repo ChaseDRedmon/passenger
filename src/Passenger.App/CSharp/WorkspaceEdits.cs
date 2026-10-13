@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Passenger.App.Editors;
 using Passenger.App.Workspace;
+using Passenger.Core;
 using Passenger.Lsp;
 using Passenger.Text;
 
@@ -41,7 +42,7 @@ public static class WorkspaceEdits
                 files++;
                 continue;
             }
-            string path = new Uri(change.Uri).LocalPath;
+            string path = DocumentUris.ToPath(change.Uri);
             OpenDocument? open = editors.Documents.FirstOrDefault(d => d.Path == path);
             if (open is not null)
             {
@@ -209,8 +210,8 @@ public static class WorkspaceEdits
         public static Resource Read(JsonElement operation)
         {
             string kind = operation.GetProperty("kind").GetString() ?? string.Empty;
-            string path = new Uri(operation.GetProperty(kind == "rename" ? "oldUri" : "uri").GetString()!).LocalPath;
-            string? to = kind == "rename" ? new Uri(operation.GetProperty("newUri").GetString()!).LocalPath : null;
+            string path = DocumentUris.ToPath(operation.GetProperty(kind == "rename" ? "oldUri" : "uri").GetString()!);
+            string? to = kind == "rename" ? DocumentUris.ToPath(operation.GetProperty("newUri").GetString()!) : null;
             return new Resource(kind, path, to, operation.TryGetProperty("options", out JsonElement options) ? options : default);
         }
 

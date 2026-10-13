@@ -11,6 +11,7 @@ using Passenger.App.Debugging;
 using Passenger.App.Editors;
 using Passenger.App.Run;
 using Passenger.App.Workspace;
+using Passenger.Core;
 using Passenger.Editor;
 using Passenger.Text;
 
@@ -1185,7 +1186,7 @@ public partial class MainWindow : Window
         Navigation.HistoryPlace? from = Here();
         OpenFile(path);
         // Opened files are known by their canonical path: the one given may run through a symlink (macOS's /var).
-        if (Editors.Active is { } active && active.Path == PathNames.Canonical(Path.GetFullPath(path)))
+        if (Editors.Active is { } active && active.Path == PathNames.Canonical(path))
         {
             Editors.CodeEditor.GoTo(position);
             // Only a move to another line or file is a place to come back to, as in IntelliJ.
@@ -1339,7 +1340,7 @@ public partial class MainWindow : Window
 
     private Navigation.SymbolRow SymbolRowOf(Lsp.SymbolInformation symbol)
     {
-        string path = PathNames.Canonical(new Uri(symbol.Location.Uri).LocalPath);
+        string path = Lsp.DocumentUris.ToPath(symbol.Location.Uri);
         string where = folder is { } root && path.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal) ? Path.GetRelativePath(root, path) : Path.GetFileName(path);
         Lsp.LspPosition start = symbol.Location.Range.Start;
         return new Navigation.SymbolRow(symbol.Name, Container(symbol.ContainerName), $"{where}:{start.Line + 1}", symbol.Kind, path, new TextPosition(start.Line, start.Character));

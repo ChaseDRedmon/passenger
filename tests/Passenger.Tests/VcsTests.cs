@@ -5,6 +5,7 @@ using Avalonia.Headless.XUnit;
 using Passenger.App;
 using Passenger.App.ToolWindows;
 using Passenger.App.Vcs;
+using Passenger.Core;
 using Passenger.Editor;
 using Passenger.Text;
 
@@ -74,7 +75,7 @@ public sealed class VcsTests : IDisposable
         window.KeyTextInput("long ");
         Ui.Landed(() => Marks(window).Any(m => m.Kind == ChangeMarkKind.Modified && m.Line == 2), "a modified bar on line 3");
 
-        Assert.Null(window.Rename(Passenger.App.Workspace.PathNames.Canonical(Path.Combine(folder, "Shop.cs")), "Store.cs"));
+        Assert.Null(window.Rename(PathNames.Canonical(Path.Combine(folder, "Shop.cs")), "Store.cs"));
         editor.GoTo(new TextPosition(0, 0));
         window.KeyTextInput("sealed ");
         Ui.Landed(() => Marks(window).Any(m => m.Line == 0), "a bar for the line typed after the rename, against the last commit's Shop.cs");
@@ -467,7 +468,7 @@ public sealed class VcsTests : IDisposable
         Assert.Equal(twice.Hash, log.Selected?.Hash);
         Ui.Landed(() => log.Files.Count == 1, "the commit's file");
         FileChange changed = Assert.Single(log.Files);
-        Assert.Equal((Passenger.App.Workspace.PathNames.Canonical(shop), ChangeKind.Modified), (changed.Path, changed.Kind));
+        Assert.Equal((PathNames.Canonical(shop), ChangeKind.Modified), (changed.Path, changed.Kind));
         Assert.Contains("Twice", log.Details, StringComparison.Ordinal);
         Task<DiffWindow?> opening = window.ShowCommitDiffAsync(twice, changed);
         Ui.Landed(() => opening.IsCompleted, "the commit's diff");

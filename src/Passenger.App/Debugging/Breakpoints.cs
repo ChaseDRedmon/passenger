@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using Passenger.App.State;
+using Passenger.Core;
 using Passenger.Text;
 
 namespace Passenger.App.Debugging;
@@ -226,9 +227,9 @@ public sealed class BreakpointStore
     /// that the old path has none and the new one has them.</summary>
     public void Move(string from, string to)
     {
-        foreach (string path in byPath.Keys.Where(p => Workspace.PathNames.Within(p, from)).ToList())
+        foreach (string path in byPath.Keys.Where(p => PathNames.Within(p, from)).ToList())
         {
-            string moved = Workspace.PathNames.Moved(path, from, to);
+            string moved = PathNames.Moved(path, from, to);
             List<LineBreakpoint> list = byPath[path];
             byPath.Remove(path);
             foreach (LineBreakpoint breakpoint in list)
