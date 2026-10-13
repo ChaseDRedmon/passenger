@@ -71,16 +71,29 @@ public sealed partial class CodeEditor
                 SetSelections(SelectionSet.Single(new Selection(0, text.Length)), reveal: false);
                 return true;
             case EditorActions.SelectNextOccurrence:
+                if (selections.Count >= SelectionSet.MaxCount && selections.Items.All(s => !s.IsEmpty))
+                {
+                    CaretLimitReached?.Invoke(this, EventArgs.Empty);
+                    return true;
+                }
                 SetSelections(SelectionCommands.SelectNextOccurrence(text, selections), reveal: true);
                 return true;
             case EditorActions.UnselectOccurrence:
                 SetSelections(SelectionCommands.UnselectLast(selections), reveal: true);
                 return true;
             case EditorActions.SelectAllOccurrences:
-                SetSelections(SelectionCommands.SelectAllOccurrences(text, selections), reveal: false);
+                SetSelections(SelectionCommands.SelectAllOccurrences(text, selections, out bool every), reveal: false);
+                if (every)
+                {
+                    CaretLimitReached?.Invoke(this, EventArgs.Empty);
+                }
                 return true;
             case EditorActions.CaretPerLine:
-                SetSelections(SelectionCommands.CaretPerLine(text, selections), reveal: false);
+                SetSelections(SelectionCommands.CaretPerLine(text, selections, out bool lines), reveal: false);
+                if (lines)
+                {
+                    CaretLimitReached?.Invoke(this, EventArgs.Empty);
+                }
                 return true;
             case EditorActions.CloneCaretAbove:
                 CloneCaret(-1);
@@ -257,6 +270,11 @@ public sealed partial class CodeEditor
     private void CloneCaret(int direction)
     {
         TextSnapshot text = document.Snapshot;
+        if (selections.Count >= SelectionSet.MaxCount)
+        {
+            CaretLimitReached?.Invoke(this, EventArgs.Empty);
+            return;
+        }
         Selection edge = direction < 0 ? selections.Items[0] : selections.Items[^1];
         int row = RowOf(text.GetLineFromOffset(edge.Caret)) + direction;
         if (row < 0 || row >= RowCount)

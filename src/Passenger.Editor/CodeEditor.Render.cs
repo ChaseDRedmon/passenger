@@ -1,3 +1,4 @@
+using System.Globalization;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
@@ -7,9 +8,13 @@ using Passenger.Text;
 
 namespace Passenger.Editor;
 
+/// <summary>A frame: the rows on screen, each line's view (<see cref="ViewsOf"/>), and what goes over and beside them.
+/// A frame walks the rows it shows, never the lines a fold hides between them, and finds the carets, selections and
+/// markers on a line by halving rather than by looking at each.</summary>
 public sealed partial class CodeEditor
 {
-    private readonly LineCache lines = new();
+    private readonly LabelCache<(string Text, int Style)> labels = new();
+    private readonly LabelCache<(int Number, bool Current)> numbers = new();
     private readonly Dictionary<TokenKind, TextRunProperties> runProperties = [];
     private (TextRunProperties Current, TextRunProperties Other) numberRuns;
     private double measuredWidth;
@@ -24,15 +29,18 @@ public sealed partial class CodeEditor
 
         context.FillRectangle(palette.Background, new Rect(size));
 
-        int first = Math.Clamp(LineOfRow(Math.Max(0, (int)(scroll.Y / lineHeight))), 0, text.LineCount - 1);
-        int last = Math.Clamp(LineOfRow(Math.Max(0, (int)((scroll.Y + size.Height) / lineHeight))), 0, text.LineCount - 1);
+        List<int> shown = LinesOnRows(Math.Max(0, (int)(scroll.Y / lineHeight)), Math.Max(0, (int)((scroll.Y + size.Height) / lineHeight)), text.LineCount);
         placeholders.Clear();
-        int rangeStart = text.GetLineStart(first);
-        int rangeEnd = text.GetLine(last).EndIncludingBreak;
-        IReadOnlyList<SyntaxSpan> spans = highlighter?.GetSpans(text, rangeStart, rangeEnd - rangeStart) ?? [];
-        int spanIndex = 0;
-        HashSet<int> caretLines = selections.Items.Select(s => text.GetLineFromOffset(s.Caret)).ToHashSet();
+        int first = shown.Count > 0 ? shown[0] : 0;
+        int last = shown.Count > 0 ? shown[^1] : -1;
+        int row = shown.Count > 0 ? RowOf(first) : 0;
+        LineView[] lineViews = ViewsOf(text, shown, scroll.X - TextPadLeft, Math.Max(0, size.Width - gutter));
+        int rangeStart = shown.Count > 0 ? lineViews[0].Span.Start : 0;
+        int rangeEnd = shown.Count > 0 ? lineViews[^1].Span.EndIncludingBreak : 0;
+        HashSet<int> caretLines = CaretLines(text, rangeStart, rangeEnd);
+        bool noneSelected = selections.Items.All(s => s.IsEmpty);
         VisibleMarks marks = new(LineMarks, first, last);
+        Dictionary<int, IBrush>? tints = ChangeBackgrounds ? ChangeTints(first, last) : null;
         Dictionary<int, List<LineAnnotation>> annotations = [];
         foreach (LineAnnotation annotation in LineAnnotations)
         {
@@ -42,27 +50,23 @@ public sealed partial class CodeEditor
             }
         }
         bool focused = IsFocused;
+        double widest = 0;
 
         using (context.PushClip(new Rect(gutter, 0, Math.Max(0, size.Width - gutter), size.Height)))
         {
-            for (int line = first; line <= last; line++)
+            for (int i = 0; i < shown.Count; i++)
             {
-                if (IsHidden(line))
-                {
-                    continue;
-                }
-                LineSpan span = text.GetLine(line);
-                double y = TopOf(line) - scroll.Y;
-                string content = text.GetText(span.Start, span.Length);
-                TextLine layout = Layout(content, span, spans, ref spanIndex);
-                Gap[] gaps = GapsOn(span);
-                widestLine = Math.Max(widestLine, layout.WidthIncludingTrailingWhitespace + HintsWidth(gaps));
+                int line = shown[i];
+                LineView view = lineViews[i];
+                double y = (row + i) * lineHeight - scroll.Y;
+                Gap[] gaps = GapsOn(view.Span);
+                widest = Math.Max(widest, view.Width + HintsWidth(gaps));
 
-                if (caretLines.Contains(line) && selections.Items.All(s => s.IsEmpty))
+                if (noneSelected && caretLines.Contains(line))
                 {
                     context.FillRectangle(palette.CurrentLine, new Rect(gutter, y, size.Width - gutter, lineHeight));
                 }
-                if (ChangeBackgrounds && ChangeTint(line) is { } change)
+                if (tints is not null && tints.TryGetValue(line, out IBrush? change))
                 {
                     context.FillRectangle(change, new Rect(gutter, y, size.Width - gutter, lineHeight));
                 }
@@ -70,19 +74,19 @@ public sealed partial class CodeEditor
                 {
                     context.FillRectangle(tint, new Rect(gutter, y, size.Width - gutter, lineHeight));
                 }
-                DrawSelections(context, span, layout, gaps, left, y, size.Width, focused);
-                DrawHighlights(context, span, layout, gaps, left, y);
+                DrawSelections(context, view, gaps, left, y, size.Width, focused);
+                DrawHighlights(context, view, gaps, left, y);
                 if (gaps.Length == 0)
                 {
-                    layout.Draw(context, new Point(left, y + (lineHeight - layout.Height) / 2));
+                    view.Draw(context, left, y + (lineHeight - view.Height) / 2);
                 }
                 else
                 {
-                    DrawWithHints(context, layout, gaps, left, y);
+                    DrawWithHints(context, view, gaps, left, y);
                 }
-                DrawMarkers(context, span, layout, gaps, left, y);
-                double end = left + layout.Width + HintsWidth(gaps);
-                if (FoldedAt(text, line) is { } fold)
+                DrawMarkers(context, view, gaps, left, y, gutter, size.Width);
+                double end = left + view.CodeWidth + HintsWidth(gaps);
+                if (FoldedAt(line) is { } fold)
                 {
                     end = DrawPlaceholder(context, line, fold, end, y);
                 }
@@ -94,17 +98,7 @@ public sealed partial class CodeEditor
 
             if (focused && caretOn)
             {
-                foreach (Selection s in selections.Items)
-                {
-                    int line = text.GetLineFromOffset(s.Caret);
-                    if (line < first || line > last)
-                    {
-                        continue;
-                    }
-                    double x = left + XOf(text, s.Caret);
-                    double y = TopOf(line) - scroll.Y;
-                    context.FillRectangle(palette.Caret, new Rect(Math.Round(x), y, 2, lineHeight));
-                }
+                DrawCarets(context, text, rangeStart, rangeEnd, first, last, left);
             }
             DrawSnippet(context, text, left);
             DrawPreedit(context, text, left);
@@ -114,54 +108,132 @@ public sealed partial class CodeEditor
             }
         }
 
-        DrawGutter(context, text, first, last, caretLines, marks, gutter, size.Height);
-        lines.EndFrame();
-        if (widestLine > measuredWidth)
+        DrawGutter(context, shown, row, caretLines, marks, gutter, size.Height);
+        views.EndFrame();
+        labels.EndFrame();
+        numbers.EndFrame();
+        // The widest line drawn since the text changed, so a long line deleted gives its width back, but the view stays.
+        widestLine = widestStale ? Math.Max(widest, scroll.X + Viewport.Width - TextPadLeft - (metrics.CharWidth * 4)) : Math.Max(widestLine, widest);
+        widestStale = false;
+        if (widestLine != measuredWidth)
         {
-            // A longer line came into view: the horizontal extent grows, outside the render pass.
+            // The widest line drawn changed: the horizontal extent follows, outside the render pass.
             measuredWidth = widestLine;
             Dispatcher.UIThread.Post(UpdateScrollBars);
         }
         RefreshStripe();
     }
 
-    /// <summary>A line's x position of an offset, measured on its own formatted line.</summary>
+    /// <summary>A line's x position of an offset, measured on the line as it is drawn.</summary>
     private double XOf(TextSnapshot text, int offset)
     {
-        LineSpan span = text.GetLine(text.GetLineFromOffset(offset));
-        TextLine layout = PlainLayout(text.GetText(span.Start, span.Length));
-        return XWith(layout, GapsOn(span), Math.Min(offset, span.End) - span.Start);
+        LineView view = ViewOf(text, text.GetLineFromOffset(offset));
+        return XWith(view, GapsOn(view.Span), Math.Min(offset, view.Span.End) - view.Span.Start);
     }
 
     /// <summary>The offset nearest to x on a line.</summary>
     private int OffsetAtX(TextSnapshot text, int line, double x)
     {
-        LineSpan span = text.GetLine(Math.Clamp(line, 0, text.LineCount - 1));
-        string content = text.GetText(span.Start, span.Length);
-        TextLine layout = PlainLayout(content);
-        int column = ColumnWith(layout, GapsOn(span), x, content.Length);
-        if (column > 0 && column < content.Length && char.IsLowSurrogate(content[column]))
+        LineView view = ViewOf(text, Math.Clamp(line, 0, text.LineCount - 1));
+        LineSpan span = view.Span;
+        int column = ColumnWith(view, GapsOn(span), x, span.Length);
+        if (column > 0 && column < span.Length && char.IsLowSurrogate(text[span.Start + column]))
         {
             column--;
         }
         return span.Start + column;
     }
 
-    private void DrawSelections(DrawingContext context, LineSpan span, TextLine layout, Gap[] gaps, double left, double y, double width, bool focused)
+    /// <summary>The first selection that ends at or after an offset; selections never overlap, so their ends rise with
+    /// their starts.</summary>
+    private int FirstSelectionEndingFrom(int offset)
     {
-        IBrush brush = focused ? palette.Selection : palette.SelectionInactive;
-        foreach (Selection s in selections.Items)
+        IReadOnlyList<Selection> items = selections.Items;
+        int low = 0;
+        int high = items.Count;
+        while (low < high)
         {
+            int middle = (low + high) / 2;
+            if (items[middle].End < offset)
+            {
+                low = middle + 1;
+            }
+            else
+            {
+                high = middle;
+            }
+        }
+        return low;
+    }
+
+    /// <summary>The first caret at or after an offset; carets of selections that never overlap rise in order too.</summary>
+    private int FirstCaretFrom(int offset)
+    {
+        IReadOnlyList<Selection> items = selections.Items;
+        int low = 0;
+        int high = items.Count;
+        while (low < high)
+        {
+            int middle = (low + high) / 2;
+            if (items[middle].Caret < offset)
+            {
+                low = middle + 1;
+            }
+            else
+            {
+                high = middle;
+            }
+        }
+        return low;
+    }
+
+    /// <summary>The lines with a caret on them between two offsets: those on screen.</summary>
+    private HashSet<int> CaretLines(TextSnapshot text, int start, int end)
+    {
+        HashSet<int> lines = [];
+        IReadOnlyList<Selection> items = selections.Items;
+        for (int i = FirstCaretFrom(start); i < items.Count && items[i].Caret <= end; i++)
+        {
+            lines.Add(text.GetLineFromOffset(items[i].Caret));
+        }
+        return lines;
+    }
+
+    private void DrawCarets(DrawingContext context, TextSnapshot text, int start, int end, int first, int last, double left)
+    {
+        IReadOnlyList<Selection> items = selections.Items;
+        for (int i = FirstCaretFrom(start); i < items.Count && items[i].Caret <= end; i++)
+        {
+            int caret = items[i].Caret;
+            int line = text.GetLineFromOffset(caret);
+            if (line < first || line > last)
+            {
+                continue;
+            }
+            double x = left + XOf(text, caret);
+            double y = TopOf(line) - scroll.Y;
+            context.FillRectangle(palette.Caret, new Rect(Math.Round(x), y, 2, metrics.LineHeight));
+        }
+    }
+
+    private void DrawSelections(DrawingContext context, LineView view, Gap[] gaps, double left, double y, double width, bool focused)
+    {
+        LineSpan span = view.Span;
+        IBrush brush = focused ? palette.Selection : palette.SelectionInactive;
+        IReadOnlyList<Selection> items = selections.Items;
+        for (int i = FirstSelectionEndingFrom(span.Start); i < items.Count && items[i].Start < span.EndIncludingBreak; i++)
+        {
+            Selection s = items[i];
             // One starting at the next line's start covers none of this line, its break included.
-            if (s.IsEmpty || s.End < span.Start || s.Start >= span.EndIncludingBreak || (s.End == span.Start && span.Length > 0))
+            if (s.IsEmpty || (s.End == span.Start && span.Length > 0))
             {
                 continue;
             }
             int from = Math.Max(s.Start, span.Start) - span.Start;
             int to = Math.Min(s.End, span.End) - span.Start;
-            double x1 = left + XWith(layout, gaps, from);
+            double x1 = left + XWith(view, gaps, from);
             // A selection that runs on through the line break fills to the edge, as Rider draws it.
-            double x2 = s.End > span.End ? width : left + XWith(layout, gaps, to, beforeHints: true);
+            double x2 = s.End > span.End ? width : left + XWith(view, gaps, to, beforeHints: true);
             if (x2 > x1)
             {
                 context.FillRectangle(brush, new Rect(x1, y, x2 - x1, metrics.LineHeight));
@@ -169,8 +241,9 @@ public sealed partial class CodeEditor
         }
     }
 
-    private void DrawHighlights(DrawingContext context, LineSpan span, TextLine layout, Gap[] gaps, double left, double y)
+    private void DrawHighlights(DrawingContext context, LineView view, Gap[] gaps, double left, double y)
     {
+        LineSpan span = view.Span;
         IReadOnlyList<TextRange> ranges = Highlights;
         int low = 0;
         int high = ranges.Count;
@@ -190,8 +263,8 @@ public sealed partial class CodeEditor
         {
             int from = Math.Max(ranges[i].Start, span.Start) - span.Start;
             int to = Math.Min(ranges[i].End, span.End) - span.Start;
-            double x1 = left + XWith(layout, gaps, from);
-            double x2 = left + XWith(layout, gaps, to, beforeHints: true);
+            double x1 = left + XWith(view, gaps, from);
+            double x2 = left + XWith(view, gaps, to, beforeHints: true);
             if (x2 > x1)
             {
                 Rect box = new(x1, y + 1, x2 - x1, metrics.LineHeight - 2);
@@ -210,10 +283,28 @@ public sealed partial class CodeEditor
 
     /// <summary>Squiggles under errors, warnings and suggestions; unnecessary code is faded by laying
     /// the background over it, half see-through.</summary>
-    private void DrawMarkers(DrawingContext context, LineSpan span, TextLine layout, Gap[] gaps, double left, double y)
+    private void DrawMarkers(DrawingContext context, LineView view, Gap[] gaps, double left, double y, double clipLeft, double clipRight)
     {
-        foreach (Marker marker in Markers)
+        LineSpan span = view.Span;
+        IReadOnlyList<Marker> markers = Markers;
+        // The markers before the first that reaches this far all end before the line.
+        int low = 0;
+        int high = markers.Count;
+        while (low < high)
         {
+            int middle = (low + high) / 2;
+            if (markerReach[middle] < span.Start)
+            {
+                low = middle + 1;
+            }
+            else
+            {
+                high = middle;
+            }
+        }
+        for (int i = low; i < markers.Count; i++)
+        {
+            Marker marker = markers[i];
             if (marker.Range.Start > span.End)
             {
                 break;
@@ -224,8 +315,8 @@ public sealed partial class CodeEditor
             }
             int from = Math.Max(marker.Range.Start, span.Start) - span.Start;
             int to = Math.Min(marker.Range.End, span.End) - span.Start;
-            double x1 = left + XWith(layout, gaps, from);
-            double x2 = left + XWith(layout, gaps, to, beforeHints: true);
+            double x1 = left + XWith(view, gaps, from);
+            double x2 = left + XWith(view, gaps, to, beforeHints: true);
             if (x2 - x1 < metrics.CharWidth / 2)
             {
                 // A zero-width diagnostic (a missing semicolon) still needs something to see.
@@ -242,7 +333,7 @@ public sealed partial class CodeEditor
                 MarkerKind.Warning => palette.Warning,
                 _ => palette.Info,
             };
-            DrawWave(context, brush, x1, x2, y + metrics.LineHeight - 3);
+            DrawWave(context, brush, x1, x2, y + metrics.LineHeight - 3, clipLeft, clipRight);
         }
     }
 
@@ -254,7 +345,7 @@ public sealed partial class CodeEditor
         foreach (LineAnnotation annotation in annotations)
         {
             bool exception = annotation.Kind == LineAnnotationKind.Exception;
-            TextLine text = lines.Get(new LineKey(annotation.Text, exception ? -4 : -3), () =>
+            TextLine text = labels.Get((annotation.Text, exception ? -4 : -3), () =>
                 Format(annotation.Text, [], exception ? annotationRuns.Exception : annotationRuns.Value));
             double top = y + (metrics.LineHeight - text.Height) / 2;
             if (exception)
@@ -266,9 +357,21 @@ public sealed partial class CodeEditor
         }
     }
 
-    private static void DrawWave(DrawingContext context, IBrush brush, double x1, double x2, double y)
+    /// <summary>A squiggle from x1 to x2, drawn only where it can be seen: whole waves off either edge are left out, so
+    /// one under a line of a million characters costs the screen's width.</summary>
+    private static void DrawWave(DrawingContext context, IBrush brush, double x1, double x2, double y, double clipLeft, double clipRight)
     {
         const double Step = 2.5;
+        double skipped = Math.Floor((clipLeft - (Step * 2) - x1) / (Step * 2));
+        if (skipped > 0)
+        {
+            x1 += skipped * Step * 2;
+        }
+        x2 = Math.Min(x2, clipRight + (Step * 2));
+        if (x2 <= x1)
+        {
+            return;
+        }
         StreamGeometry wave = new();
         using (StreamGeometryContext path = wave.Open())
         {
@@ -284,20 +387,22 @@ public sealed partial class CodeEditor
         context.DrawGeometry(null, new Pen(brush, 1), wave);
     }
 
-    private void DrawGutter(DrawingContext context, TextSnapshot text, int first, int last, HashSet<int> caretLines, VisibleMarks marks, double gutter, double height)
+    private void DrawGutter(DrawingContext context, List<int> shown, int row, HashSet<int> caretLines, VisibleMarks marks, double gutter, double height)
     {
         context.FillRectangle(palette.Gutter, new Rect(0, 0, gutter, height));
-        if (!ShowLineNumbers)
+        if (!ShowLineNumbers || shown.Count == 0)
         {
             return;
         }
+        int first = shown[0];
+        int last = shown[^1];
         if (!ChangeBackgrounds)
         {
             DrawChanges(context, first, last, gutter);
         }
         if (annotationWidth > 0)
         {
-            DrawAnnotations(context, first, last);
+            DrawAnnotations(context, shown, row);
         }
         foreach (int marked in Bookmarks)
         {
@@ -306,7 +411,7 @@ public sealed partial class CodeEditor
                 DrawBookmark(context, annotationWidth + 3, TopOf(marked) - scroll.Y);
             }
         }
-        DrawFoldMarkers(context, text, first, last, gutter);
+        DrawFoldMarkers(context, first, last, gutter);
         double right = gutter - FoldWidth - GutterPadRight;
         Dictionary<int, TestMarkKind> tests = [];
         foreach (TestMark test in TestMarks)
@@ -316,13 +421,10 @@ public sealed partial class CodeEditor
                 tests[test.Line] = test.Kind;
             }
         }
-        for (int line = first; line <= last; line++)
+        for (int i = 0; i < shown.Count; i++)
         {
-            if (IsHidden(line))
-            {
-                continue;
-            }
-            double top = TopOf(line) - scroll.Y;
+            int line = shown[i];
+            double top = (row + i) * metrics.LineHeight - scroll.Y;
             if (marks.Executing.Contains(line))
             {
                 DrawExecutionArrow(context, right, top);
@@ -346,9 +448,8 @@ public sealed partial class CodeEditor
                 continue;
             }
             bool current = caretLines.Contains(line);
-            string label = (line + 1).ToString();
-            TextLine number = lines.Get(new LineKey(label, current ? -1 : -2), () =>
-                Format(label, [], current ? numberRuns.Current : numberRuns.Other));
+            TextLine number = numbers.Get((line + 1, current), () =>
+                Format((line + 1).ToString(CultureInfo.InvariantCulture), [], current ? numberRuns.Current : numberRuns.Other));
             double y = top + (metrics.LineHeight - number.Height) / 2;
             number.Draw(context, new Point(right - number.WidthIncludingTrailingWhitespace, y));
         }
@@ -398,7 +499,7 @@ public sealed partial class CodeEditor
         if (mark.Conditional && mark.Kind is LineMarkKind.Breakpoint or LineMarkKind.BreakpointBound)
         {
             context.DrawEllipse(fill, null, centre, radius, radius);
-            TextLine question = lines.Get(new LineKey("?", -5), () => Format("?", [], questionRun ??= new GenericTextRunProperties(
+            TextLine question = labels.Get(("?", -5), () => Format("?", [], questionRun ??= new GenericTextRunProperties(
                 new Typeface(FontFamily, FontStyle.Normal, FontWeight.Bold), FontSize * 0.75, foregroundBrush: palette.Background)));
             question.Draw(context, new Point(x - question.WidthIncludingTrailingWhitespace / 2, y - question.Height / 2));
             return;
@@ -448,37 +549,40 @@ public sealed partial class CodeEditor
     }
 
     /// <summary>The annotation column (Git blame): each line's text muted at the gutter's left, a rule after it.</summary>
-    private void DrawAnnotations(DrawingContext context, int first, int last)
+    private void DrawAnnotations(DrawingContext context, List<int> shown, int row)
     {
         context.FillRectangle(palette.CurrentLine, new Rect(0, 0, annotationWidth - 6, Bounds.Height));
-        for (int line = first; line <= last && line < GutterAnnotations.Count; line++)
+        for (int i = 0; i < shown.Count && shown[i] < GutterAnnotations.Count; i++)
         {
-            if (GutterAnnotations[line] is not { Length: > 0 } label || IsHidden(line))
+            if (GutterAnnotations[shown[i]] is not { Length: > 0 } label)
             {
                 continue;
             }
-            TextLine text = lines.Get(new LineKey(label, -3), () => Format(label, [], numberRuns.Other));
-            double y = TopOf(line) - scroll.Y + (metrics.LineHeight - text.Height) / 2;
+            TextLine text = labels.Get((label, -7), () => Format(label, [], numberRuns.Other));
+            double y = (row + i) * metrics.LineHeight - scroll.Y + (metrics.LineHeight - text.Height) / 2;
             text.Draw(context, new Point(8, y));
         }
     }
 
-    /// <summary>A diff side's tint for a line inside a change, or null.</summary>
-    private IBrush? ChangeTint(int line)
+    /// <summary>A diff side's tint for each line from <paramref name="first"/> to <paramref name="last"/> inside a change,
+    /// the first change's that holds it.</summary>
+    private Dictionary<int, IBrush> ChangeTints(int first, int last)
     {
+        Dictionary<int, IBrush> tints = [];
         foreach (ChangeMark change in ChangeMarks)
         {
-            if (line >= change.Line && line < change.Line + change.Count)
+            IBrush brush = change.Kind switch
             {
-                return change.Kind switch
-                {
-                    ChangeMarkKind.Added => palette.DiffAdded,
-                    ChangeMarkKind.Deleted => palette.DiffDeleted,
-                    _ => palette.DiffModified,
-                };
+                ChangeMarkKind.Added => palette.DiffAdded,
+                ChangeMarkKind.Deleted => palette.DiffDeleted,
+                _ => palette.DiffModified,
+            };
+            for (int line = Math.Max(first, change.Line); line <= Math.Min(last, change.Line + change.Count - 1); line++)
+            {
+                tints.TryAdd(line, brush);
             }
         }
-        return null;
+        return tints;
     }
 
     /// <summary>A diff side's rule where the other side has lines this one has none of.</summary>
@@ -585,38 +689,6 @@ public sealed partial class CodeEditor
         context.DrawGeometry(palette.ExecutionPoint, null, arrow);
     }
 
-    /// <summary>A visible line formatted with its colours, from the cache when its text and spans
-    /// are unchanged.</summary>
-    private TextLine Layout(string content, LineSpan span, IReadOnlyList<SyntaxSpan> spans, ref int spanIndex)
-    {
-        while (spanIndex < spans.Count && spans[spanIndex].End <= span.Start)
-        {
-            spanIndex++;
-        }
-        List<LineRun> runs = [];
-        for (int i = spanIndex; i < spans.Count && spans[i].Start < span.End; i++)
-        {
-            SyntaxSpan s = spans[i];
-            int start = Math.Max(s.Start, span.Start) - span.Start;
-            int end = Math.Min(s.End, span.End) - span.Start;
-            if (end > start && s.Kind != TokenKind.Text)
-            {
-                runs.Add(new LineRun(start, end - start, s.Kind));
-            }
-        }
-        LineRun[] array = [.. runs];
-        return lines.Get(new LineKey(content, Hash(array), array), () => Format(content, array, null));
-    }
-
-    private TextLine PlainLayout(string content) => lines.Get(new LineKey(content, 0, []), () => Format(content, [], null));
-
-    private TextLine Format(string content, LineRun[] runs, TextRunProperties? only)
-    {
-        TextRunProperties plain = only ?? Run(TokenKind.Text);
-        ITextSource source = runs.Length == 0 ? new SingleRun(content, plain) : new ColouredRuns(content, runs, plain, Run);
-        return TextFormatter.Current.FormatLine(source, 0, double.PositiveInfinity, new LineProperties(plain, metrics.CharWidth * Indent.TabWidth))!;
-    }
-
     /// <summary>The font and colour a token kind is drawn in, made once per theme.</summary>
     private TextRunProperties Run(TokenKind kind)
     {
@@ -640,118 +712,6 @@ public sealed partial class CodeEditor
     private GenericTextRunProperties ItalicRunWith(IBrush brush) =>
         new(new Typeface(FontFamily, FontStyle.Italic), FontSize, foregroundBrush: brush, fontFeatures: ligatures ? null : NoLigatures);
 
-    private static int Hash(LineRun[] runs)
-    {
-        HashCode hash = new();
-        foreach (LineRun run in runs)
-        {
-            hash.Add(run);
-        }
-        return hash.ToHashCode() | 1;
-    }
-
-    /// <summary>A coloured stretch of one line, in its columns.</summary>
-    private readonly record struct LineRun(int Start, int Length, TokenKind Kind);
-
-    /// <summary>A formatted line's identity: its text, and its colouring as a hash over the runs that
-    /// is checked against the runs themselves, so two colourings can never share a line.</summary>
-    private readonly struct LineKey(string text, int style, LineRun[]? runs = null) : IEquatable<LineKey>
-    {
-        private readonly LineRun[] runs = runs ?? [];
-
-        public string Text { get; } = text;
-        public int Style { get; } = style;
-
-        public bool Equals(LineKey other) => Style == other.Style && Text == other.Text && runs.AsSpan().SequenceEqual(other.runs);
-        public override bool Equals(object? obj) => obj is LineKey other && Equals(other);
-        public override int GetHashCode() => HashCode.Combine(Text, Style);
-    }
-
-    /// <summary>Formatted lines drawn in the last frame. A frame keeps the ones it draws again and
-    /// disposes the rest, so the cache never outgrows the screen.</summary>
-    private sealed class LineCache
-    {
-        private Dictionary<LineKey, TextLine> previous = [];
-        private Dictionary<LineKey, TextLine> current = [];
-
-        public TextLine Get(LineKey key, Func<TextLine> format)
-        {
-            if (current.TryGetValue(key, out TextLine? line))
-            {
-                return line;
-            }
-            if (previous.Remove(key, out line))
-            {
-                current[key] = line;
-                return line;
-            }
-            line = format();
-            current[key] = line;
-            return line;
-        }
-
-        public void EndFrame()
-        {
-            foreach (TextLine stale in previous.Values)
-            {
-                stale.Dispose();
-            }
-            previous.Clear();
-            (previous, current) = (current, previous);
-        }
-
-        public void Clear()
-        {
-            foreach (TextLine line in previous.Values.Concat(current.Values))
-            {
-                line.Dispose();
-            }
-            previous.Clear();
-            current.Clear();
-        }
-    }
-
-    private sealed class SingleRun(string text, TextRunProperties props) : ITextSource
-    {
-        public TextRun GetTextRun(int textSourceIndex) =>
-            textSourceIndex >= text.Length ? new TextEndOfParagraph() : new TextCharacters(text.AsMemory(textSourceIndex), props);
-    }
-
-    private sealed class ColouredRuns(string text, LineRun[] runs, TextRunProperties plain, Func<TokenKind, TextRunProperties> colour) : ITextSource
-    {
-        public TextRun GetTextRun(int textSourceIndex)
-        {
-            if (textSourceIndex >= text.Length)
-            {
-                return new TextEndOfParagraph();
-            }
-            foreach (LineRun run in runs)
-            {
-                if (textSourceIndex < run.Start)
-                {
-                    return new TextCharacters(text.AsMemory(textSourceIndex, run.Start - textSourceIndex), plain);
-                }
-                if (textSourceIndex < run.Start + run.Length)
-                {
-                    return new TextCharacters(text.AsMemory(textSourceIndex, run.Start + run.Length - textSourceIndex), colour(run.Kind));
-                }
-            }
-            return new TextCharacters(text.AsMemory(textSourceIndex), plain);
-        }
-    }
-
-    /// <summary>One unwrapped line whose tab stops are every <paramref name="tab"/> pixels.</summary>
-    private sealed class LineProperties(TextRunProperties props, double tab) : TextParagraphProperties
-    {
-        public override FlowDirection FlowDirection => FlowDirection.LeftToRight;
-        public override TextAlignment TextAlignment => TextAlignment.Left;
-        public override double LineHeight => 0;
-        public override bool FirstLineInParagraph => true;
-        public override TextRunProperties DefaultTextRunProperties => props;
-        public override TextWrapping TextWrapping => TextWrapping.NoWrap;
-        public override double Indent => 0;
-        public override double DefaultIncrementalTab => tab;
-    }
 
     /// <summary>Every brush the editor paints with, from the theme's <c>Passenger.Editor.*</c> and
     /// <c>Passenger.Syntax.*</c> resources, or a dark default for one the theme leaves out; and the problem counts'

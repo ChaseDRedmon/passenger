@@ -134,7 +134,14 @@ public sealed partial class CodeEditor
         else if (mods.HasFlag(KeyModifiers.Alt) && mods.HasFlag(KeyModifiers.Shift))
         {
             SelectionSet without = selections.RemoveAt(offset);
-            SetSelections(without != selections ? without : selections.Add(Selection.At(offset)), reveal: false);
+            if (without == selections && selections.Count >= SelectionSet.MaxCount)
+            {
+                CaretLimitReached?.Invoke(this, EventArgs.Empty);
+            }
+            else
+            {
+                SetSelections(without != selections ? without : selections.Add(Selection.At(offset)), reveal: false);
+            }
             drag = default;
             e.Handled = true;
             return;
@@ -348,7 +355,7 @@ public sealed partial class CodeEditor
     }
 
     /// <summary>Option-drag (Alt-drag): a selection on every line between the press and the pointer,
-    /// spanning the same columns on each.</summary>
+    /// spanning the same columns on each; on the most lines toward the pointer an editor keeps carets on.</summary>
     private SelectionSet ColumnSelection(TextSnapshot text, Point start, Point end)
     {
         int firstLine = Math.Clamp(start.Y + scroll.Y < 0 ? 0 : LineAtY(start.Y), 0, text.LineCount - 1);
@@ -357,6 +364,11 @@ public sealed partial class CodeEditor
         double toX = end.X - TextLeft + scroll.X;
         List<Selection> rows = [];
         int step = lastLine >= firstLine ? 1 : -1;
+        if (Math.Abs(lastLine - firstLine) >= SelectionSet.MaxCount)
+        {
+            firstLine = lastLine - (step * (SelectionSet.MaxCount - 1));
+            CaretLimitReached?.Invoke(this, EventArgs.Empty);
+        }
         for (int line = firstLine; ; line += step)
         {
             rows.Add(new Selection(OffsetAtX(text, line, fromX), OffsetAtX(text, line, toX)));
@@ -419,13 +431,17 @@ public sealed partial class CodeEditor
         public override bool SupportsPreedit => true;
         public override bool SupportsSurroundingText => true;
 
+        /// <summary>How much of the caret's line either side of it the input method is given: the whole of a line of
+        /// code, a stretch around the caret of a long one.</summary>
+        private const int Around = 1024;
+
         public override string SurroundingText
         {
             get
             {
-                TextSnapshot text = editor.document.Snapshot;
-                LineSpan line = text.GetLine(text.GetLineFromOffset(editor.selections.Primary.Caret));
-                return text.GetText(line.Start, line.Length);
+                (TextSnapshot text, LineSpan line, int start) = Surrounding();
+                int end = Math.Min(line.End, Math.Max(start, editor.selections.Primary.Caret) + Around);
+                return text.GetText(start, end - start);
             }
         }
 
@@ -436,7 +452,7 @@ public sealed partial class CodeEditor
                 TextSnapshot text = editor.document.Snapshot;
                 int caret = editor.selections.Primary.Caret;
                 double x = editor.TextLeft - editor.scroll.X + editor.XOf(text, caret);
-                double y = text.GetLineFromOffset(caret) * editor.metrics.LineHeight - editor.scroll.Y;
+                double y = editor.TopOf(text.GetLineFromOffset(caret)) - editor.scroll.Y;
                 return new Rect(x, y, 2, editor.metrics.LineHeight);
             }
         }
@@ -445,10 +461,9 @@ public sealed partial class CodeEditor
         {
             get
             {
-                TextSnapshot text = editor.document.Snapshot;
+                (_, _, int start) = Surrounding();
                 Selection primary = editor.selections.Primary;
-                int lineStart = text.GetLine(text.GetLineFromOffset(primary.Caret)).Start;
-                return new TextSelection(Math.Max(0, primary.Anchor - lineStart), primary.Caret - lineStart);
+                return new TextSelection(Math.Max(0, primary.Anchor - start), primary.Caret - start);
             }
             set
             {
@@ -463,5 +478,14 @@ public sealed partial class CodeEditor
 
         /// <summary>Asks the platform's input method to throw its composition away.</summary>
         public void Discard() => RequestReset();
+
+        /// <summary>The text, the caret's line, and where the stretch of it the input method is given begins.</summary>
+        private (TextSnapshot Text, LineSpan Line, int Start) Surrounding()
+        {
+            TextSnapshot text = editor.document.Snapshot;
+            int caret = editor.selections.Primary.Caret;
+            LineSpan line = text.GetLine(text.GetLineFromOffset(caret));
+            return (text, line, Math.Max(line.Start, Math.Min(caret, line.End) - Around));
+        }
     }
 }

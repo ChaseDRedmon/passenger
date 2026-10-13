@@ -38,6 +38,9 @@ public sealed partial class CodeEditor : Control
     private IHighlighter? highlighter;
     private Vector scroll;
     private double widestLine;
+
+    /// <summary>Whether the text changed since the last frame, whose lines then set the horizontal extent afresh.</summary>
+    private bool widestStale;
     private bool caretOn = true;
     private bool updatingBars;
     private bool editing;
@@ -112,9 +115,17 @@ public sealed partial class CodeEditor : Control
     /// <summary>The markers drawn over the text (sorted), from the language service.</summary>
     public IReadOnlyList<Marker> Markers { get; private set; } = [];
 
+    /// <summary>The furthest any marker up to each reaches, so a line finds its first marker by halving.</summary>
+    private int[] markerReach = [];
+
     public void SetMarkers(IReadOnlyList<Marker> markers)
     {
         Markers = [.. markers.OrderBy(m => m.Range.Start)];
+        markerReach = new int[Markers.Count];
+        for (int i = 0; i < Markers.Count; i++)
+        {
+            markerReach[i] = Math.Max(i > 0 ? markerReach[i - 1] : 0, Markers[i].Range.End);
+        }
         ProblemCount = CountProblems(Markers);
         counts.InvalidateMeasure();
         InvalidateArrange();
@@ -318,7 +329,7 @@ public sealed partial class CodeEditor : Control
             scroll = default;
             widestLine = 0;
             measuredWidth = 0;
-            lines.Clear();
+            ForgetLines();
             InvalidateArrange();
             InvalidateVisual();
             SelectionChanged?.Invoke(this, EventArgs.Empty);
@@ -339,6 +350,7 @@ public sealed partial class CodeEditor : Control
             {
                 highlighter.Changed += OnHighlighterChanged;
             }
+            colouring++;
             InvalidateVisual();
         }
     }
@@ -414,7 +426,7 @@ public sealed partial class CodeEditor : Control
         SetInlayHints([]);
         SetFoldRegions([]);
         SetHighlights([], -1);
-        hiddenCache = default;
+        foldLines = null;
         stripeBuild = null;
         stripeDrawn = default;
     }
@@ -524,8 +536,19 @@ public sealed partial class CodeEditor : Control
         InvalidateVisual();
     }
 
+    /// <summary>A command would have made more carets than <see cref="SelectionSet.MaxCount"/> and made that many at most,
+    /// or none: the host says so, as IntelliJ does.</summary>
+    public event EventHandler? CaretLimitReached;
+
     private void SetSelections(SelectionSet value, bool reveal)
     {
+        if (value.Count > SelectionSet.MaxCount)
+        {
+            // From anywhere else (a host's set, a column drag): the most the editor keeps, around the primary.
+            int from = Math.Clamp(value.PrimaryIndex - (SelectionSet.MaxCount / 2), 0, value.Count - SelectionSet.MaxCount);
+            value = SelectionSet.Create([.. value.Items.Skip(from).Take(SelectionSet.MaxCount)], value.PrimaryIndex - from);
+            CaretLimitReached?.Invoke(this, EventArgs.Empty);
+        }
         SelectionSet clamped = value.Clamp(document.Snapshot.Length);
         UnfoldAroundCarets(clamped);
         bool changed = !clamped.SameAs(selections) || clamped.PrimaryIndex != selections.PrimaryIndex;
@@ -598,11 +621,17 @@ public sealed partial class CodeEditor : Control
             selections = TextEditing.MapThrough(selections, e.Edits).Clamp(e.After.Length);
             SelectionChanged?.Invoke(this, EventArgs.Empty);
         }
+        widestStale = true;
         InvalidateArrange();
         InvalidateVisual();
     }
 
-    private void OnHighlighterChanged(object? sender, EventArgs e) => Dispatcher.UIThread.Post(InvalidateVisual);
+    private void OnHighlighterChanged(object? sender, EventArgs e)
+    {
+        // New colours for the same text: the lines are formatted again, each found again if its colours stayed.
+        Interlocked.Increment(ref colouring);
+        Dispatcher.UIThread.Post(InvalidateVisual);
+    }
 
     private void OnScrollBarChanged(object? sender, AvaloniaPropertyChangedEventArgs e)
     {
@@ -645,7 +674,7 @@ public sealed partial class CodeEditor : Control
             RunWith(palette.LineNumberCurrent),
             RunWith(palette.LineNumber));
         annotationRuns = (ItalicRunWith(palette.InlineValue), ItalicRunWith(palette.Error));
-        lines.Clear();
+        ForgetLines();
         // The stripe and the counts paint with the palette too, so they are drawn again with the next frame.
         stripeDrawn = default;
         InvalidateArrange();

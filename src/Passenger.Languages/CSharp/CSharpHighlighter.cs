@@ -27,8 +27,14 @@ public sealed class CSharpHighlighter : IHighlighter, IDisposable
     private int version;
     private bool parsing;
     private bool disposed;
-    private (int Version, int Start, int Length, SyntaxSpan[] Spans) cached = (-1, 0, 0, []);
-    private (int Start, int Length) lastAsked;
+
+    /// <summary>The spans given for each range asked of the newest text: a frame asks for each run of lines between
+    /// folds, and a caret's line on its own.</summary>
+    private readonly Dictionary<(int Start, int Length), SyntaxSpan[]> cached = [];
+    private int cachedVersion = -1;
+
+    /// <summary>The ranges asked of the newest text, which the next parse classifies ahead.</summary>
+    private readonly List<(int Start, int Length)> asked = [];
 
     public CSharpHighlighter(TextDocument document)
     {
@@ -52,11 +58,20 @@ public sealed class CSharpHighlighter : IHighlighter, IDisposable
         {
             return [];
         }
-        if (cached.Version == version && cached.Start == start && cached.Length == length)
+        if (cachedVersion != version)
         {
-            return cached.Spans;
+            cached.Clear();
+            asked.Clear();
+            cachedVersion = version;
         }
-        lastAsked = (start, length);
+        if (cached.TryGetValue((start, length), out SyntaxSpan[]? known))
+        {
+            return known;
+        }
+        if (asked.Count < 64)
+        {
+            asked.Add((start, length));
+        }
         // The range in the tree's text: the visible range carried back through the edits since.
         int from = start;
         int to = start + length;
@@ -76,7 +91,11 @@ public sealed class CSharpHighlighter : IHighlighter, IDisposable
             spans = Forward(spans, batch);
         }
         SyntaxSpan[] result = [.. spans];
-        cached = (version, start, length, result);
+        if (cached.Count >= 256)
+        {
+            cached.Clear();
+        }
+        cached[(start, length)] = result;
         return result;
     }
 
@@ -104,7 +123,7 @@ public sealed class CSharpHighlighter : IHighlighter, IDisposable
         SnapshotText parsedText = text;
         SyntaxTree? previous = tree;
         int parsedVersion = version;
-        (int Start, int Length) warm = lastAsked;
+        (int Start, int Length)[] warm = [.. asked];
         BackgroundWork.Begin();
         Task.Run(() =>
         {
@@ -114,7 +133,10 @@ public sealed class CSharpHighlighter : IHighlighter, IDisposable
             // thread finds them made.
             SyntaxNode root = parsed.GetRoot();
             int end = root.FullSpan.End;
-            CSharpClassifier.Classify(root, TextSpan.FromBounds(Math.Min(warm.Start, end), Math.Min(warm.Start + warm.Length, end)));
+            foreach ((int start, int length) in warm)
+            {
+                CSharpClassifier.Classify(root, TextSpan.FromBounds(Math.Min(start, end), Math.Min(start + length, end)));
+            }
             return (Tree: parsed, Folds: FoldRegions.Of(root));
         }).ContinueWith(done => OnUi(() =>
         {
@@ -126,7 +148,7 @@ public sealed class CSharpHighlighter : IHighlighter, IDisposable
                     tree = done.Result.Tree;
                     parsedText.ForgetHistory();
                     sinceTree.RemoveAll(batch => batch.Version <= parsedVersion);
-                    cached = (-1, 0, 0, []);
+                    cached.Clear();
                     Changed?.Invoke(this, EventArgs.Empty);
                     if (parsedVersion == version)
                     {

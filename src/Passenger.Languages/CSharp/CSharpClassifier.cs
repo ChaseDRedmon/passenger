@@ -49,9 +49,52 @@ internal static class CSharpClassifier
                 AddToken(token, spans);
             }
             AddTrivia(token.TrailingTrivia, spans);
-            token = token.GetNextToken(includeZeroWidth: false, includeSkipped: true);
+            token = Next(root, token);
         }
         return spans;
+    }
+
+    /// <summary>The token after this one, as <c>GetNextToken(includeZeroWidth: false, includeSkipped: true)</c> finds it,
+    /// but found from the root by position, which halves through a long list where GetNextToken walks its siblings from the
+    /// first: in a collection of a hundred thousand elements each token on screen would cost a walk of that many. Next to
+    /// skipped tokens, Roslyn's own walk steps into them.</summary>
+    private static SyntaxToken Next(SyntaxNode root, SyntaxToken token)
+    {
+        SyntaxToken at = token;
+        while (true)
+        {
+            if (at.Parent is not { IsStructuredTrivia: false } || Skipped(at.TrailingTrivia))
+            {
+                return at.GetNextToken(includeZeroWidth: false, includeSkipped: true);
+            }
+            int end = at.FullSpan.End;
+            if (end >= root.FullSpan.End)
+            {
+                return default;
+            }
+            SyntaxToken next = root.FindToken(end);
+            if (Skipped(next.LeadingTrivia))
+            {
+                return at.GetNextToken(includeZeroWidth: false, includeSkipped: true);
+            }
+            if (next.Span.Length > 0)
+            {
+                return next;
+            }
+            at = next;
+        }
+    }
+
+    private static bool Skipped(SyntaxTriviaList trivia)
+    {
+        foreach (SyntaxTrivia t in trivia)
+        {
+            if (t.IsKind(SyntaxKind.SkippedTokensTrivia))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     /// <summary>Every bracket's depth: an opener at the depth it opens at, its closer at the same, a stray closer at

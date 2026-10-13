@@ -11,9 +11,14 @@ public enum WordStop
 }
 
 /// <summary>Offsets a caret moves to. A move steps over a whole grapheme (an emoji, a letter and its
-/// accents) and treats a line break as one position, never landing inside "\r\n".</summary>
+/// accents) and treats a line break as one position, never landing inside "\r\n". A move reads what it steps over and
+/// a little around it, never its whole line, so a key on a line of a million characters costs what it does on a short one.</summary>
 public static class TextNavigation
 {
+    /// <summary>How far back a move looks for a character no grapheme reaches back over, where reading graphemes can
+    /// begin; past it (a long run of marks and symbols with no space or Latin letter in it), reading begins that far back.</summary>
+    private const int Lookback = 1024;
+
     public static int NextGrapheme(TextSnapshot text, int offset)
     {
         LineSpan line = text.GetLine(text.GetLineFromOffset(offset));
@@ -21,8 +26,16 @@ public static class TextNavigation
         {
             return line.Line == text.LineCount - 1 ? line.End : line.EndIncludingBreak;
         }
-        string content = text.GetText(offset, line.End - offset);
-        return offset + StringInfo.GetNextTextElementLength(content);
+        int available = line.End - offset;
+        for (int read = Math.Min(available, 32); ; read = Math.Min(available, read * 4))
+        {
+            // A grapheme as long as what was read may go on past it.
+            int length = StringInfo.GetNextTextElementLength(text.GetText(offset, read));
+            if (length < read || read == available)
+            {
+                return offset + length;
+            }
+        }
     }
 
     public static int PreviousGrapheme(TextSnapshot text, int offset)
@@ -32,15 +45,21 @@ public static class TextNavigation
         {
             return line.Line == 0 ? 0 : text.GetLine(line.Line - 1).End;
         }
-        string content = text.GetText(line.Start, Math.Min(offset, line.End) - line.Start);
-        int at = 0;
-        int previous = 0;
+        int end = Math.Min(offset, line.End);
+        int from = Math.Max(line.Start, end - Lookback);
+        string content = text.GetText(from, end - from);
+        int at = content.Length - 1;
+        while (at > 0 && !BeginsGrapheme(content[at]))
+        {
+            at--;
+        }
+        int previous = at;
         while (at < content.Length)
         {
             previous = at;
             at += StringInfo.GetNextTextElementLength(content, at);
         }
-        return line.Start + previous;
+        return from + previous;
     }
 
     public static int NextWord(TextSnapshot text, int offset, WordStop stop)
@@ -50,18 +69,19 @@ public static class TextNavigation
         {
             return line.Line == text.LineCount - 1 ? line.End : line.EndIncludingBreak;
         }
-        string content = text.GetText(line.Start, line.Length);
-        int i = offset - line.Start;
+        LineReader content = new(text, line);
+        int i = offset;
+        int end = line.End;
         if (stop == WordStop.End)
         {
-            while (i < content.Length && char.IsWhiteSpace(content[i]))
+            while (i < end && char.IsWhiteSpace(content[i]))
             {
                 i++;
             }
-            if (i < content.Length)
+            if (i < end)
             {
                 CharClass kind = Classify(content[i]);
-                while (i < content.Length && Classify(content[i]) == kind)
+                while (i < end && Classify(content[i]) == kind)
                 {
                     i++;
                 }
@@ -72,17 +92,17 @@ public static class TextNavigation
             CharClass kind = Classify(content[i]);
             if (kind != CharClass.Space)
             {
-                while (i < content.Length && Classify(content[i]) == kind)
+                while (i < end && Classify(content[i]) == kind)
                 {
                     i++;
                 }
             }
-            while (i < content.Length && char.IsWhiteSpace(content[i]))
+            while (i < end && char.IsWhiteSpace(content[i]))
             {
                 i++;
             }
         }
-        return line.Start + i;
+        return i;
     }
 
     public static int PreviousWord(TextSnapshot text, int offset)
@@ -92,21 +112,21 @@ public static class TextNavigation
         {
             return line.Line == 0 ? 0 : text.GetLine(line.Line - 1).End;
         }
-        string content = text.GetText(line.Start, line.Length);
-        int i = Math.Min(offset, line.End) - line.Start;
-        while (i > 0 && char.IsWhiteSpace(content[i - 1]))
+        LineReader content = new(text, line);
+        int i = Math.Min(offset, line.End);
+        while (i > line.Start && char.IsWhiteSpace(content[i - 1]))
         {
             i--;
         }
-        if (i > 0)
+        if (i > line.Start)
         {
             CharClass kind = Classify(content[i - 1]);
-            while (i > 0 && Classify(content[i - 1]) == kind)
+            while (i > line.Start && Classify(content[i - 1]) == kind)
             {
                 i--;
             }
         }
-        return line.Start + i;
+        return i;
     }
 
     /// <summary>The word, run of punctuation or run of spaces under <paramref name="offset"/>, as a
@@ -118,25 +138,25 @@ public static class TextNavigation
         {
             return new TextRange(line.Start, 0);
         }
-        string content = text.GetText(line.Start, line.Length);
-        int i = Math.Min(offset - line.Start, content.Length);
-        bool leftIsWord = i > 0 && Classify(content[i - 1]) == CharClass.Word;
-        if (i == content.Length || (leftIsWord && Classify(content[i]) != CharClass.Word))
+        LineReader content = new(text, line);
+        int i = Math.Min(offset, line.End);
+        bool leftIsWord = i > line.Start && Classify(content[i - 1]) == CharClass.Word;
+        if (i == line.End || (leftIsWord && Classify(content[i]) != CharClass.Word))
         {
             i--;
         }
         CharClass kind = Classify(content[i]);
         int start = i;
         int end = i + 1;
-        while (start > 0 && Classify(content[start - 1]) == kind)
+        while (start > line.Start && Classify(content[start - 1]) == kind)
         {
             start--;
         }
-        while (end < content.Length && Classify(content[end]) == kind)
+        while (end < line.End && Classify(content[end]) == kind)
         {
             end++;
         }
-        return TextRange.FromBounds(line.Start + start, line.Start + end);
+        return TextRange.FromBounds(start, end);
     }
 
     /// <summary>Home: to the line's first non-space character, or to column 0 if the caret is already
@@ -144,11 +164,36 @@ public static class TextNavigation
     public static int SmartHome(TextSnapshot text, int offset)
     {
         LineSpan line = text.GetLine(text.GetLineFromOffset(offset));
-        int indent = line.Start + IndentLength(text.GetText(line.Start, line.Length));
+        int indent = IndentEnd(text, line);
         return offset == indent || indent == line.End ? line.Start : indent;
     }
 
     public static int LineEnd(TextSnapshot text, int offset) => text.GetLine(text.GetLineFromOffset(offset)).End;
+
+    /// <summary>Where a line's leading spaces and tabs end, read no further than they go.</summary>
+    public static int IndentEnd(TextSnapshot text, LineSpan line)
+    {
+        LineReader content = new(text, line);
+        int i = line.Start;
+        while (i < line.End && content[i] is ' ' or '\t')
+        {
+            i++;
+        }
+        return i;
+    }
+
+    /// <summary>Where the run of whitespace ending at <paramref name="offset"/> on a line begins, read no further back
+    /// than it goes.</summary>
+    public static int WhitespaceBefore(TextSnapshot text, LineSpan line, int offset)
+    {
+        LineReader content = new(text, line);
+        int i = Math.Min(offset, line.End);
+        while (i > line.Start && char.IsWhiteSpace(content[i - 1]))
+        {
+            i--;
+        }
+        return i;
+    }
 
     /// <summary>How many leading spaces and tabs a line has.</summary>
     public static int IndentLength(string line)
@@ -185,4 +230,34 @@ public static class TextNavigation
         char.IsWhiteSpace(c) ? CharClass.Space
         : char.IsLetterOrDigit(c) || c == '_' || char.IsSurrogate(c) ? CharClass.Word
         : CharClass.Punctuation;
+
+    /// <summary>Whether a grapheme always begins at this character, whatever comes before it: a Latin or CJK one, which
+    /// no mark, joiner or emoji sequence reaches back over (but for the two emoji among them).</summary>
+    private static bool BeginsGrapheme(char c) =>
+        (c < '̀' && c is not '©' and not '®') || (c >= '一' && c <= '鿿');
+}
+
+/// <summary>A line's characters, read a block at a time around where a move looks rather than copied whole.</summary>
+internal sealed class LineReader(TextSnapshot text, LineSpan line)
+{
+    private const int Block = 256;
+
+    private readonly char[] block = new char[Block];
+    private int start = -1;
+    private int length;
+
+    /// <summary>The character at an offset of the line's content.</summary>
+    public char this[int offset]
+    {
+        get
+        {
+            if (offset < start || offset >= start + length)
+            {
+                start = Math.Max(line.Start, offset - (offset % Block));
+                length = Math.Min(Block, line.End - start);
+                text.CopyTo(start, block.AsSpan(0, length));
+            }
+            return block[offset - start];
+        }
+    }
 }

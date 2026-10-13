@@ -1,3 +1,4 @@
+using System.Globalization;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -110,6 +111,9 @@ public partial class MainWindow : Window
             debug?.Detach(document);
         };
         Editors.ForEachEditor(editor => editor.ProblemsRequested += (_, _) => ShowToolWindow("problems"));
+        // IntelliJ's words for its caret limit.
+        Editors.ForEachEditor(editor => editor.CaretLimitReached += (_, _) =>
+            StatusText.Text = string.Create(CultureInfo.InvariantCulture, $"Cannot create more than {SelectionSet.MaxCount:N0} carets"));
         Editors.ForEachEditor(editor => editor.ExecutionPointDragged += (_, line) =>
         {
             if (Editors.Active is { } active && debug?.Session is { State: DebugState.Paused } session)

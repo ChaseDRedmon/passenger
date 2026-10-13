@@ -55,7 +55,7 @@ public sealed partial class CodeEditor
         for (int i = low; i < hints.Count && hints[i].Offset <= span.End; i++)
         {
             InlayHint hint = hints[i];
-            TextLine label = lines.Get(new LineKey(hint.Label, -6), () => Format(hint.Label, [], hintRun ??= HintRun()));
+            TextLine label = labels.Get((hint.Label, -6), () => Format(hint.Label, [], hintRun ??= HintRun()));
             double width = label.WidthIncludingTrailingWhitespace + pad + (hint.PadLeft ? pad : 0) + (hint.PadRight ? pad : 0);
             gaps.Add(new Gap(hint.Offset - span.Start, width, label, hint.PadLeft));
         }
@@ -63,9 +63,9 @@ public sealed partial class CodeEditor
     }
 
     /// <summary>A column's x on a line with hints: after the hints at it, or before them for the end of a range.</summary>
-    private static double XWith(TextLine layout, Gap[] gaps, int column, bool beforeHints = false)
+    private static double XWith(LineView layout, Gap[] gaps, int column, bool beforeHints = false)
     {
-        double x = layout.GetDistanceFromCharacterHit(new CharacterHit(column));
+        double x = layout.DistanceOf(column);
         foreach (Gap gap in gaps)
         {
             if (gap.Column > column || (gap.Column == column && beforeHints))
@@ -78,12 +78,12 @@ public sealed partial class CodeEditor
     }
 
     /// <summary>The column nearest an x on a line with hints; an x over a hint is the column the hint stands before.</summary>
-    private static int ColumnWith(TextLine layout, Gap[] gaps, double x, int length)
+    private static int ColumnWith(LineView layout, Gap[] gaps, double x, int length)
     {
         double shift = 0;
         foreach (Gap gap in gaps)
         {
-            double at = layout.GetDistanceFromCharacterHit(new CharacterHit(gap.Column)) + shift;
+            double at = layout.DistanceOf(gap.Column) + shift;
             if (x < at)
             {
                 break;
@@ -94,15 +94,14 @@ public sealed partial class CodeEditor
             }
             shift += gap.Width;
         }
-        CharacterHit hit = layout.GetCharacterHitFromDistance(x - shift);
-        return Math.Clamp(hit.FirstCharacterIndex + hit.TrailingLength, 0, length);
+        return Math.Clamp(layout.ColumnAt(x - shift), 0, length);
     }
 
     private static double HintsWidth(Gap[] gaps) => gaps.Sum(g => g.Width);
 
     /// <summary>A line with hints: its text in pieces between them, each moved right by the hints before it, and
     /// each hint's label on its chip in the room left.</summary>
-    private void DrawWithHints(DrawingContext context, TextLine layout, Gap[] gaps, double left, double y)
+    private void DrawWithHints(DrawingContext context, LineView layout, Gap[] gaps, double left, double y)
     {
         double top = y + (metrics.LineHeight - layout.Height) / 2;
         double shift = 0;
@@ -110,13 +109,13 @@ public sealed partial class CodeEditor
         for (int i = 0; i <= gaps.Length; i++)
         {
             double to = i < gaps.Length
-                ? layout.GetDistanceFromCharacterHit(new CharacterHit(gaps[i].Column))
-                : layout.WidthIncludingTrailingWhitespace + metrics.CharWidth * 2;
+                ? layout.DistanceOf(gaps[i].Column)
+                : layout.Width + metrics.CharWidth * 2;
             if (to > from)
             {
                 using (context.PushClip(new Rect(left + shift + from, y, to - from, metrics.LineHeight)))
                 {
-                    layout.Draw(context, new Point(left + shift, top));
+                    layout.Draw(context, left + shift, top);
                 }
             }
             if (i == gaps.Length)

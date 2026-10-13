@@ -1,6 +1,7 @@
 namespace Passenger.Text;
 
-/// <summary>Commands that change only the carets: occurrence selection and caret cloning.</summary>
+/// <summary>Commands that change only the carets: occurrence selection and caret cloning. None makes more carets than
+/// <see cref="SelectionSet.MaxCount"/>; one that would have says so.</summary>
 public static class SelectionCommands
 {
     /// <summary>Select Next Occurrence (Alt+Shift+.): first the word under each empty caret, then the
@@ -21,14 +22,16 @@ public static class SelectionCommands
         }
         string needle = text.GetText(selections.Primary.Start, selections.Primary.Length);
         int from = selections.Items[^1].End;
-        int? found = Find(text, needle, from, wrap: true, skip: selections);
+        int? found = Find(text, needle, from, skip: selections);
         return found is { } at ? selections.Add(new Selection(at, at + needle.Length)) : selections;
     }
 
-    /// <summary>Select All Occurrences (Alt+Shift+;): a selection on every copy of the primary
-    /// selection, or of the word under the caret.</summary>
-    public static SelectionSet SelectAllOccurrences(TextSnapshot text, SelectionSet selections)
+    /// <summary>Select All Occurrences (Alt+Shift+;): a selection on every copy of the primary selection, or of the word
+    /// under the caret, the first <see cref="SelectionSet.MaxCount"/> of them (<paramref name="limited"/> past that),
+    /// the one the caret was on always among them.</summary>
+    public static SelectionSet SelectAllOccurrences(TextSnapshot text, SelectionSet selections, out bool limited)
     {
+        limited = false;
         Selection primary = selections.Primary;
         TextRange range = primary.IsEmpty ? TextNavigation.WordAt(text, primary.Caret) : primary.Range;
         if (range.Length == 0)
@@ -36,18 +39,27 @@ public static class SelectionCommands
             return selections;
         }
         string needle = text.GetText(range);
-        string haystack = text.ToString();
         List<Selection> all = [];
-        int primaryIndex = 0;
-        for (int at = haystack.IndexOf(needle, StringComparison.Ordinal); at >= 0; at = haystack.IndexOf(needle, at + needle.Length, StringComparison.Ordinal))
+        int primaryIndex = -1;
+        foreach (int at in text.Occurrences(needle))
         {
+            if (all.Count == SelectionSet.MaxCount)
+            {
+                limited = true;
+                break;
+            }
             if (at == range.Start)
             {
                 primaryIndex = all.Count;
             }
             all.Add(new Selection(at, at + needle.Length));
         }
-        return SelectionSet.Create(all, primaryIndex);
+        if (primaryIndex < 0 && limited)
+        {
+            all[^1] = new Selection(range.Start, range.End);
+            primaryIndex = all.Count - 1;
+        }
+        return SelectionSet.Create(all, Math.Max(0, primaryIndex));
     }
 
     /// <summary>Unselect Occurrence (Alt+Shift+,): drops the primary caret, the last added, if there
@@ -62,37 +74,65 @@ public static class SelectionCommands
         return SelectionSet.Create(rest, rest.Count - 1);
     }
 
-    /// <summary>A caret at the end of every line each selection covers (Alt+Shift+G).</summary>
-    public static SelectionSet CaretPerLine(TextSnapshot text, SelectionSet selections)
+    /// <summary>A caret at the end of every line each selection covers (Alt+Shift+G), on the first
+    /// <see cref="SelectionSet.MaxCount"/> lines (<paramref name="limited"/> past them).</summary>
+    public static SelectionSet CaretPerLine(TextSnapshot text, SelectionSet selections, out bool limited)
     {
+        limited = false;
         List<Selection> carets = [];
         foreach (int line in TextEditing.TouchedLines(text, selections))
         {
+            if (carets.Count == SelectionSet.MaxCount)
+            {
+                limited = true;
+                break;
+            }
             carets.Add(Selection.At(text.GetLine(line).End));
         }
         return carets.Count == 0 ? selections : SelectionSet.Create(carets, carets.Count - 1);
     }
 
-    private static int? Find(TextSnapshot text, string needle, int from, bool wrap, SelectionSet skip)
+    /// <summary>The first copy of the needle at or after <paramref name="from"/> that no selection starts at, else the first
+    /// before it, wrapping.</summary>
+    private static int? Find(TextSnapshot text, string needle, int from, SelectionSet skip)
     {
-        if (needle.Length == 0)
+        foreach (int at in text.Occurrences(needle, from, overlapping: true))
         {
-            return null;
-        }
-        string haystack = text.ToString();
-        int at = haystack.IndexOf(needle, from, StringComparison.Ordinal);
-        while (at >= 0 && skip.Items.Any(s => s.Start == at))
-        {
-            at = haystack.IndexOf(needle, at + 1, StringComparison.Ordinal);
-        }
-        if (at < 0 && wrap)
-        {
-            at = haystack.IndexOf(needle, StringComparison.Ordinal);
-            while (at >= 0 && skip.Items.Any(s => s.Start == at))
+            if (!StartsSelection(skip, at))
             {
-                at = haystack.IndexOf(needle, at + 1, StringComparison.Ordinal);
+                return at;
             }
         }
-        return at >= 0 ? at : null;
+        foreach (int at in text.Occurrences(needle, 0, overlapping: true))
+        {
+            if (at >= from)
+            {
+                break;
+            }
+            if (!StartsSelection(skip, at))
+            {
+                return at;
+            }
+        }
+        return null;
+    }
+
+    private static bool StartsSelection(SelectionSet selections, int offset)
+    {
+        int low = 0;
+        int high = selections.Count;
+        while (low < high)
+        {
+            int middle = (low + high) / 2;
+            if (selections.Items[middle].Start < offset)
+            {
+                low = middle + 1;
+            }
+            else
+            {
+                high = middle;
+            }
+        }
+        return low < selections.Count && selections.Items[low].Start == offset;
     }
 }

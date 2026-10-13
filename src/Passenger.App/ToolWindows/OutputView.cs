@@ -157,10 +157,20 @@ public sealed class OutputView : DockPanel
         public IReadOnlyList<SyntaxSpan> GetSpans(TextSnapshot text, int start, int length)
         {
             int end = start + length;
-            int first = spans.FindIndex(s => s.End > start);
-            if (first < 0)
+            // The stretches are in order and apart, so the first reaching past the start is found by halving.
+            int first = 0;
+            int high = spans.Count;
+            while (first < high)
             {
-                return [];
+                int middle = (first + high) / 2;
+                if (spans[middle].End <= start)
+                {
+                    first = middle + 1;
+                }
+                else
+                {
+                    high = middle;
+                }
             }
             List<SyntaxSpan> found = [];
             for (int i = first; i < spans.Count && spans[i].Start < end; i++)

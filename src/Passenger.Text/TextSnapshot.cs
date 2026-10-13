@@ -54,6 +54,39 @@ public sealed class TextSnapshot
         Rope.Visit(root, start, length, visit);
     }
 
+    /// <summary>Where <paramref name="needle"/> occurs from <paramref name="start"/> on, in order, matched ordinally; each
+    /// after the last one's end, or for <paramref name="overlapping"/> after its start. The text is read a block at a
+    /// time, so taking the first few reads little of it.</summary>
+    public IEnumerable<int> Occurrences(string needle, int start = 0, bool overlapping = false)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(start);
+        if (needle.Length == 0)
+        {
+            yield break;
+        }
+        const int Block = 1 << 16;
+        char[] buffer = new char[Block + needle.Length - 1];
+        int from = start;
+        while (from + needle.Length <= Length)
+        {
+            int read = Math.Min(buffer.Length, Length - from);
+            CopyTo(from, buffer.AsSpan(0, read));
+            int searched = 0;
+            while (true)
+            {
+                int found = buffer.AsSpan(searched, read - searched).IndexOf(needle.AsSpan(), StringComparison.Ordinal);
+                if (found < 0)
+                {
+                    break;
+                }
+                yield return from + searched + found;
+                searched += found + (overlapping ? 1 : needle.Length);
+            }
+            // Every start up to a needle's length from the block's end has been looked at; the rest begin the next block.
+            from += Math.Max(searched, read - needle.Length + 1);
+        }
+    }
+
     public int GetLineStart(int line)
     {
         CheckLine(line);

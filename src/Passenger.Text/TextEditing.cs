@@ -110,10 +110,15 @@ public static class TextEditing
                 replacements.Add(Removal(at - 1, at + 1, i));
                 continue;
             }
-            string lead = text.GetText(line.Start, at - line.Start);
-            if (!indent.UseTabs && lead.AsSpan().IndexOfAnyExcept(' ') < 0)
+            LineReader content = new(text, line);
+            int lead = at;
+            while (lead > line.Start && content[lead - 1] == ' ')
             {
-                int stop = (lead.Length - 1) / indent.Size * indent.Size;
+                lead--;
+            }
+            if (!indent.UseTabs && lead == line.Start)
+            {
+                int stop = (at - line.Start - 1) / indent.Size * indent.Size;
                 replacements.Add(Removal(line.Start + stop, at, i));
                 continue;
             }
@@ -171,9 +176,7 @@ public static class TextEditing
         {
             Selection s = selections.Items[i];
             LineSpan line = text.GetLine(text.GetLineFromOffset(s.Start));
-            string content = text.GetText(line.Start, line.Length);
-            int column = s.Start - line.Start;
-            string lineIndent = content[..Math.Min(TextNavigation.IndentLength(content), column)];
+            string lineIndent = text.GetText(line.Start, Math.Min(TextNavigation.IndentEnd(text, line), s.Start) - line.Start);
 
             LineSpan endLine = text.GetLine(text.GetLineFromOffset(s.End));
             // A later caret in these spaces breaks the line itself, so this one's spaces, and any pair, stop at it.
@@ -183,9 +186,9 @@ public static class TextEditing
             {
                 end++;
             }
-            string before = content[..column].TrimEnd();
+            int before = TextNavigation.WhitespaceBefore(text, line, s.Start);
             char next = end < limit ? text[end] : '\0';
-            int opener = before.Length > 0 ? Openers.IndexOf(before[^1]) : -1;
+            int opener = before > line.Start ? Openers.IndexOf(text[before - 1]) : -1;
             string extra = opener >= 0 ? indent.Unit : string.Empty;
 
             if (opener >= 0 && next == Closers[opener])
@@ -216,8 +219,7 @@ public static class TextEditing
             {
                 continue;
             }
-            string content = text.GetText(line.Start, line.Length);
-            string lineIndent = content[..TextNavigation.IndentLength(content)];
+            string lineIndent = text.GetText(line.Start, TextNavigation.IndentEnd(text, line) - line.Start);
             if (above)
             {
                 string inserted = lineIndent + eol;
@@ -225,8 +227,8 @@ public static class TextEditing
             }
             else
             {
-                string trimmed = content.TrimEnd();
-                bool opens = trimmed.Length > 0 && Openers.Contains(trimmed[^1]);
+                int trimmed = TextNavigation.WhitespaceBefore(text, line, line.End);
+                bool opens = trimmed > line.Start && Openers.Contains(text[trimmed - 1]);
                 string inserted = eol + lineIndent + (opens ? indent.Unit : string.Empty);
                 replacements.Add(new Replacement(line.End, line.End, inserted, inserted.Length, inserted.Length, i));
             }
