@@ -26,6 +26,16 @@ public sealed class OpenDocument : Observable
     /// <summary>The indentation the file's own lines show, found when its text came from disk; null when they do not tell.</summary>
     private IndentOptions? detected;
 
+    /// <summary>A CR file: each break, held as '\n', is written as '\r'.</summary>
+    private bool crBreaks;
+
+    /// <summary>The person chose the line separator, which a save keeps over the .editorconfig's <c>end_of_line</c>.</summary>
+    private bool separatorChosen;
+
+    /// <summary>The person chose the encoding, which a save keeps over the .editorconfig's <c>charset</c> and a read from
+    /// disk tries first.</summary>
+    private bool encodingChosen;
+
     public OpenDocument(string path, FileText file)
     {
         Path = path;
@@ -33,6 +43,7 @@ public sealed class OpenDocument : Observable
         Encoding = file.Encoding;
         HasBom = file.HasBom;
         EncodingName = file.EncodingName;
+        crBreaks = file.CrBreaks;
         Language = Language.ForPath(path);
         detected = Passenger.Text.Indentation.Detect(file.Text, Language.Indent.TabWidth);
         Conventions = EditorConfig.For(path);
@@ -77,6 +88,10 @@ public sealed class OpenDocument : Observable
     /// <summary>Raised when a save wrote the file as UTF-8 because its own encoding could not hold the text, with what
     /// the status bar says of it.</summary>
     public event EventHandler<string>? Converted;
+
+    /// <summary>Raised when an undo or redo of a line separator or encoding change could not write the file, with what the
+    /// status bar says; the file is left modified, for the next save to try again.</summary>
+    public event EventHandler<string>? WriteFailed;
 
     /// <summary>Colours from the in-process parser, replaced by the language server's layered over it
     /// once that is running; null for a language with neither.</summary>
@@ -186,6 +201,7 @@ public sealed class OpenDocument : Observable
     public void ReadConventions()
     {
         Conventions = EditorConfig.For(Path);
+        Raise(nameof(Conventions));
         FollowLineEnding(Text.Snapshot.LineCount > 1);
         Choose(raise: true);
     }
@@ -202,25 +218,204 @@ public sealed class OpenDocument : Observable
         return chosen;
     }
 
-    /// <summary>A file with no line break yet takes the .editorconfig's <c>end_of_line</c> for the first one; one with
-    /// breaks keeps its own until it is saved.</summary>
+    /// <summary>A file with no line break yet takes the .editorconfig's <c>end_of_line</c> for the first one, unless the
+    /// person chose one; one with breaks keeps its own until it is saved.</summary>
     private void FollowLineEnding(bool hasBreak)
     {
-        if (!hasBreak)
+        if (!hasBreak && !separatorChosen)
         {
-            SetLineEnding(Conventions.EndOfLine ?? "\n");
+            SetSeparator(Conventions.EndOfLine ?? LineSeparator.LF);
         }
     }
 
-    /// <summary>What Enter inserts: the file's own line break, or the one its .editorconfig gives it.</summary>
+    /// <summary>What Enter inserts: the file's own line break, or the one its .editorconfig gives it ('\n' in a CR file,
+    /// whose breaks are held so).</summary>
     public string LineEnding => Text.LineEnding;
 
-    private void SetLineEnding(string eol)
+    /// <summary>How the file's lines end on disk, as the status bar's line separator widget shows it.</summary>
+    public LineSeparator Separator => crBreaks ? LineSeparator.CR : Text.LineEnding == "\r\n" ? LineSeparator.CRLF : LineSeparator.LF;
+
+    /// <summary>The line separator a file read from disk has, by its first break.</summary>
+    private static LineSeparator SeparatorOf(FileText file) =>
+        file.CrBreaks ? LineSeparator.CR : TextDocument.DetectLineEnding(file.Text) == "\r\n" ? LineSeparator.CRLF : LineSeparator.LF;
+
+    private void SetSeparator(LineSeparator separator)
     {
-        if (Text.LineEnding != eol)
+        if (Separator != separator)
         {
-            Text.LineEnding = eol;
+            crBreaks = separator == LineSeparator.CR;
+            Text.LineEnding = separator.Held();
             Raise(nameof(LineEnding));
+        }
+    }
+
+    /// <summary>The line separator widget's tip, Rider's, with what the .editorconfig says of it.</summary>
+    public string SeparatorTip
+    {
+        get
+        {
+            string tip = $"Line Separator: {Separator.Escaped()}";
+            if (Conventions.EndOfLine is not { } asked)
+            {
+                return tip;
+            }
+            string said = Conventions.Said("end_of_line")!;
+            return asked == Separator ? $"{tip}\nAs the .editorconfig asks: {said}"
+                : separatorChosen ? $"{tip}\nChosen over the .editorconfig's {said}"
+                : $"{tip}\nThe next save makes it {asked}, as the .editorconfig asks: {said}";
+        }
+    }
+
+    /// <summary>The encoding widget's tip, Rider's, with what the .editorconfig says of it.</summary>
+    public string EncodingTip
+    {
+        get
+        {
+            string tip = $"File Encoding: {EncodingName}";
+            if (Conventions.Charset is not { } asked)
+            {
+                return tip;
+            }
+            string said = Conventions.Said("charset")!;
+            return asked.Name == EncodingName ? $"{tip}\nAs the .editorconfig asks: {said}"
+                : encodingChosen ? $"{tip}\nChosen over the .editorconfig's {said}"
+                : $"{tip}\nThe next save makes it {asked.Name}, as the .editorconfig asks: {said}";
+        }
+    }
+
+    /// <summary>Rider's Line Separators: every break made <paramref name="to"/>'s and the file written so, as one undoable
+    /// step whose undo and redo write it too, and which a save keeps over the .editorconfig's <c>end_of_line</c>.</summary>
+    public void ConvertLineSeparators(LineSeparator to)
+    {
+        IReadOnlyList<TextEdit> edits = TextEditing.Saving(Text.Snapshot.ToString(), Selections, false, false, to.Held(), Text.LineEnding)?.Edits ?? [];
+        Change(edits, Current with { Separator = to, SeparatorChosen = true }, write: true);
+    }
+
+    /// <summary>What another encoding would do to the file, read again or written in it.</summary>
+    public EncodingChange Weigh(FileEncoding to)
+    {
+        byte[]? bytes;
+        try
+        {
+            bytes = File.Exists(Path) ? FileText.Read(Path) : null;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            bytes = null;
+        }
+        return EncodingChange.Weigh(bytes, Text.Snapshot.ToString(), Encoding, crBreaks, to);
+    }
+
+    /// <summary>Rider's Reload: the file's bytes read again in the encoding replace the text, as one undoable step; the
+    /// file is left as it is.</summary>
+    public void ReloadIn(FileEncoding to)
+    {
+        FileText read = FileText.Decode(FileText.Read(Path), to.Encoding);
+        LineSeparator separator = read.Text.Contains('\n', StringComparison.Ordinal) ? SeparatorOf(read) : Separator;
+        // UTF-16 is written with its BOM, the only way it is read back as UTF-16.
+        bool bom = read.HasBom || to.CodePage is 1200 or 1201;
+        Change(LineDiff.Edits(Text.Snapshot.ToString(), read.Text), Current with { Encoding = to.Encoding, Bom = bom, Separator = separator, EncodingChosen = true }, write: false);
+    }
+
+    /// <summary>Rider's Convert: the text written in the encoding, as one undoable step whose undo and redo write it too.
+    /// A character it cannot hold, converted anyway, becomes '?' in the text as on disk.</summary>
+    public void ConvertTo(FileEncoding to) =>
+        Change(EncodingChange.Lost(to.Encoding, Text.Snapshot.ToString()), Current with { Encoding = to.Encoding, Bom = to.Bom, EncodingChosen = true }, write: true);
+
+    /// <summary>Rider's change and forget: an encoding that reads the file's bytes as the text it has and writes the text as
+    /// the bytes it has (an ASCII file) is taken with nothing read or written, as one undoable step.</summary>
+    public void TakeEncoding(FileEncoding to) =>
+        Change([], Current with { Encoding = to.Encoding, Bom = to.Bom, EncodingChosen = true }, write: false);
+
+    /// <summary>How the file is stored, which an undoable change of it puts back.</summary>
+    private sealed record Stored(Encoding Encoding, bool Bom, LineSeparator Separator, bool SeparatorChosen, bool EncodingChosen);
+
+    private Stored Current => new(Encoding, HasBom, Separator, separatorChosen, encodingChosen);
+
+    /// <summary>One undoable step that changes how the file is stored, and its text with it: undone or redone, the file
+    /// goes back to how it was or on again, written when the step wrote it, else saved as far as the file, read in the
+    /// encoding taken, is the text.</summary>
+    private void Change(IReadOnlyList<TextEdit> edits, Stored after, bool write)
+    {
+        Stored before = Current;
+        SelectionSet carets = Selections;
+        TextEdit[] sorted = [.. edits.OrderBy(e => e.Start)];
+        string changed = Text.Snapshot.Apply(sorted).ToString();
+        // Written before anything changes, so a write that fails leaves the file and the editor as they were.
+        (FileText, string?)? written = write ? FileText.Save(Path, changed, after.Encoding, after.Bom, after.Separator == LineSeparator.CR) : null;
+        Text.Perform(sorted, carets, TextEditing.MapThrough(carets, sorted).Clamp(changed.Length),
+            () => Undoable(() => Settle(before, write)),
+            () => Undoable(() => Settle(after, write)));
+        Restore(after);
+        if (written is { } done)
+        {
+            Wrote(done);
+        }
+        else
+        {
+            MarkSavedIfOnDisk();
+        }
+    }
+
+    /// <summary>The file as an undo or redo leaves it: stored so, written when the step wrote it.</summary>
+    private void Settle(Stored stored, bool write)
+    {
+        Restore(stored);
+        if (write)
+        {
+            Write(Encoding, HasBom);
+        }
+        else
+        {
+            MarkSavedIfOnDisk();
+        }
+    }
+
+    private void Restore(Stored stored)
+    {
+        separatorChosen = stored.SeparatorChosen;
+        encodingChosen = stored.EncodingChosen;
+        SetSeparator(stored.Separator);
+        Encoding = stored.Encoding;
+        HasBom = stored.Bom;
+        EncodingName = FileEncoding.Of(Encoding, HasBom).Name;
+        // The widgets' tips name the choices as well.
+        Raise(nameof(LineEnding));
+        Raise(nameof(EncodingName));
+    }
+
+    private void MarkSavedIfOnDisk()
+    {
+        if (OnDisk())
+        {
+            Text.MarkSaved();
+            Raise(nameof(IsModified));
+        }
+    }
+
+    /// <summary>Whether the file's bytes, read in the encoding taken, are the text as it stands.</summary>
+    private bool OnDisk()
+    {
+        try
+        {
+            return File.Exists(Path) && FileText.Decode(FileText.Read(Path), Encoding).Text == Text.Snapshot.ToString();
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>An undo or redo's write, which says why when it fails rather than end the key press that asked for it.</summary>
+    private void Undoable(Action settle)
+    {
+        try
+        {
+            settle();
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            WriteFailed?.Invoke(this, $"{Name} could not be saved: {error.Message}");
         }
     }
 
@@ -321,7 +516,7 @@ public sealed class OpenDocument : Observable
         FileText? file;
         try
         {
-            file = File.Exists(Path) ? FileText.Load(Path) : null;
+            file = File.Exists(Path) ? FileText.Load(Path, Chosen) : null;
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
@@ -339,6 +534,9 @@ public sealed class OpenDocument : Observable
         return false;
     }
 
+    /// <summary>The encoding the person chose for the file, which a read from disk tries before guessing.</summary>
+    private Encoding? Chosen => encodingChosen ? Encoding : null;
+
     /// <summary>Takes the file's text and encoding from disk again when something else changed them there (a checkout, a
     /// rollback), as one undoable step over only the lines that differ, so what is anchored elsewhere stays put; over unsaved
     /// changes only when asked (File Cache Conflict's Load File System Changes). Whether it changed the text.</summary>
@@ -347,7 +545,7 @@ public sealed class OpenDocument : Observable
         FileText? file;
         try
         {
-            file = (IsModified && !overUnsaved) || !File.Exists(Path) ? null : FileText.Load(Path);
+            file = (IsModified && !overUnsaved) || !File.Exists(Path) ? null : FileText.Load(Path, Chosen);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
@@ -364,6 +562,11 @@ public sealed class OpenDocument : Observable
         }
         Text.SetText(file.Text, Selections);
         Text.MarkSaved();
+        if (file.Text.Contains('\n', StringComparison.Ordinal))
+        {
+            // Enter goes on writing the breaks the file has now.
+            SetSeparator(SeparatorOf(file));
+        }
         // Text written elsewhere may indent otherwise than what it replaced.
         detected = Passenger.Text.Indentation.Detect(file.Text, Language.Indent.TabWidth);
         Choose(raise: true);
@@ -373,25 +576,35 @@ public sealed class OpenDocument : Observable
 
     /// <summary>Writes the file, first doing to its text what its .editorconfig asks of a save (trailing whitespace off
     /// every line without one of <paramref name="carets"/>, a final line break, every break its <c>end_of_line</c>, as
-    /// one undoable step) and in its <c>charset</c>.</summary>
+    /// one undoable step) and in its <c>charset</c>; a line separator or encoding the person chose stays.</summary>
     public void Save(SelectionSet? carets = null)
     {
         ReadConventions();
         string text = Text.Snapshot.ToString();
         SelectionSet kept = carets ?? Selections;
-        if (TextEditing.Saving(text, kept, Conventions.TrimTrailingWhitespace, Conventions.InsertFinalNewline, Conventions.EndOfLine, Text.LineEnding) is { } plan)
+        LineSeparator? asked = separatorChosen ? null : Conventions.EndOfLine;
+        if (TextEditing.Saving(text, kept, Conventions.TrimTrailingWhitespace, Conventions.InsertFinalNewline, asked?.Held(), Text.LineEnding) is { } plan)
         {
             Text.BreakUndoGroup();
             Text.Edit(plan.Edits, kept, plan.Selections);
             Text.BreakUndoGroup();
-            text = Text.Snapshot.ToString();
         }
-        if (Conventions.EndOfLine is { } eol)
+        if (asked is { } separator)
         {
-            SetLineEnding(eol);
+            SetSeparator(separator);
         }
-        (Encoding encoding, bool bom) = Conventions.Charset ?? (Encoding, HasBom);
-        (FileText written, string? converted) = FileText.Save(Path, text, encoding, bom);
+        FileEncoding? charset = encodingChosen ? null : Conventions.Charset;
+        Write(charset?.Encoding ?? Encoding, charset?.Bom ?? HasBom);
+    }
+
+    /// <summary>Writes the text as it stands, in an encoding and the file's line separator, and takes that as how the
+    /// file is stored.</summary>
+    private void Write(Encoding encoding, bool bom) => Wrote(FileText.Save(Path, Text.Snapshot.ToString(), encoding, bom, crBreaks));
+
+    /// <summary>Takes how a write stored the file, which now holds the text.</summary>
+    private void Wrote((FileText Written, string? Converted) write)
+    {
+        (FileText written, string? converted) = write;
         StoreAs(written);
         Text.MarkSaved();
         Raise(nameof(IsModified));
@@ -406,6 +619,10 @@ public sealed class OpenDocument : Observable
     /// UTF-8 but is the same bytes in Latin-1), so the next save writes it the same way.</summary>
     private void StoreAs(FileText file)
     {
+        if (file.CrBreaks != crBreaks && file.Text.Contains('\n', StringComparison.Ordinal))
+        {
+            SetSeparator(SeparatorOf(file));
+        }
         if (file.IsStoredAs(Encoding, HasBom))
         {
             return;

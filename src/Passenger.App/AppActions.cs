@@ -19,6 +19,13 @@ public static class AppActions
     /// <summary>Rider's New Project (NewRiderProject), a project added to the open solution.</summary>
     public const string NewProject = "app.newProject";
     public const string Exit = "app.exit";
+
+    // Rider's File Encoding (ChangeFileEncodingAction) and Line Separators (ConvertTo*LineSeparators), which its keymaps
+    // give no keys.
+    public const string FileEncoding = "app.fileEncoding";
+    public const string LineSeparatorsCrlf = "app.lineSeparators.crlf";
+    public const string LineSeparatorsLf = "app.lineSeparators.lf";
+    public const string LineSeparatorsCr = "app.lineSeparators.cr";
     public const string Save = "app.save";
     public const string SaveAll = "app.saveAll";
     public const string CloseTab = "app.closeTab";

@@ -48,7 +48,7 @@ public partial class MainWindow
             {
                 if (e.PropertyName == nameof(OpenDocument.EncodingName) && Editors.Active == document)
                 {
-                    EncodingText.Text = document.EncodingName;
+                    ShowStorage(document);
                 }
             };
         };

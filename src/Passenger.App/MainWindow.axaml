@@ -115,8 +115,14 @@
                     <TextBlock Name="AgentText" Classes="status" IsVisible="False"
                                ToolTip.Tip="An agent is using this window through Passenger's MCP server" />
                     <TextBlock Name="CaretText" Classes="status" />
-                    <TextBlock Name="LineEndingText" Classes="status" />
-                    <TextBlock Name="EncodingText" Classes="status" />
+                    <!-- Rider's line separator and encoding widgets: a click offers the others. Their frames reach into
+                         the spacing, so their words stand where the other items' do. -->
+                    <Button Name="LineSeparatorButton" Classes="statusItem" Margin="-6,0" Focusable="False" IsVisible="False" Click="OnLineSeparatorClicked">
+                        <TextBlock Name="LineEndingText" Classes="status" />
+                    </Button>
+                    <Button Name="EncodingButton" Classes="statusItem" Margin="-6,0" Focusable="False" IsVisible="False" Click="OnEncodingClicked">
+                        <TextBlock Name="EncodingText" Classes="status" />
+                    </Button>
                     <TextBlock Name="IndentText" Classes="status" />
                     <TextBlock Name="LanguageText" Classes="status" />
                 </StackPanel>

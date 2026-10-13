@@ -1,62 +1,100 @@
 using System.Text;
+using Passenger.Text;
 
 namespace Passenger.App.Workspace;
 
 /// <summary>A file's text and how it was stored, so saving writes it back the same way: the same encoding (or UTF-8,
 /// when that cannot hold what was typed), a byte-order mark only if it had one, and its own line endings (kept by the
-/// document).</summary>
-public sealed record FileText(string Text, Encoding Encoding, bool HasBom)
+/// document, but for a CR file's lone carriage returns, held as '\n' and written back as they were).</summary>
+public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool CrBreaks = false)
 {
     /// <summary>How much of a file is checked for a NUL byte before it is called binary.</summary>
     private const int BinaryProbe = 8000;
 
     private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
-    public string EncodingName => NameOf(Encoding, HasBom);
+    public string EncodingName => FileEncoding.Of(Encoding, HasBom).Name;
 
-    private static string NameOf(Encoding encoding, bool bom) => encoding switch
-    {
-        UTF8Encoding => bom ? "UTF-8 BOM" : "UTF-8",
-        UnicodeEncoding { CodePage: 1201 } => "UTF-16 BE",
-        UnicodeEncoding => "UTF-16",
-        _ => encoding.WebName.ToUpperInvariant(),
-    };
-
-    /// <summary>Reads a file as text, or returns null for one that looks binary. Without a BOM it is
-    /// UTF-8 if it decodes as UTF-8 and Latin-1 otherwise, which reads every byte.</summary>
-    public static FileText? Load(string path)
+    /// <summary>Reads a file as text, or returns null for one that looks binary. A BOM says its encoding; without one it is
+    /// read in <paramref name="chosen"/> (one the person chose for it) when that reads every byte, else as UTF-8 if it
+    /// decodes as UTF-8 and Latin-1 otherwise, which reads every byte.</summary>
+    public static FileText? Load(string path, Encoding? chosen = null)
     {
         byte[] bytes = Read(path);
-        if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+        if (Bom(bytes) is { } bom)
         {
-            return new FileText(Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3), new UTF8Encoding(true), true);
-        }
-        if (bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE)
-        {
-            return new FileText(Encoding.Unicode.GetString(bytes, 2, bytes.Length - 2), Encoding.Unicode, true);
-        }
-        if (bytes.Length >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF)
-        {
-            return new FileText(Encoding.BigEndianUnicode.GetString(bytes, 2, bytes.Length - 2), Encoding.BigEndianUnicode, true);
+            return Decode(bytes, bom);
         }
         if (bytes.AsSpan(0, Math.Min(bytes.Length, BinaryProbe)).Contains((byte)0))
         {
             return null;
         }
+        if (chosen is not null and not UnicodeEncoding && Strict(chosen, bytes) is { } read)
+        {
+            return Held(read, chosen, false);
+        }
         try
         {
-            return new FileText(StrictUtf8.GetString(bytes), new UTF8Encoding(false), false);
+            return Held(StrictUtf8.GetString(bytes), new UTF8Encoding(false), false);
         }
         catch (DecoderFallbackException)
         {
-            return new FileText(Encoding.Latin1.GetString(bytes), Encoding.Latin1, false);
+            return Held(Encoding.Latin1.GetString(bytes), Encoding.Latin1, false);
+        }
+    }
+
+    /// <summary>The encoding a byte-order mark at the start of the bytes is, or null without one.</summary>
+    public static Encoding? Bom(ReadOnlySpan<byte> bytes) =>
+        bytes.StartsWith((ReadOnlySpan<byte>)[0xEF, 0xBB, 0xBF]) ? new UTF8Encoding(true)
+        : bytes.StartsWith((ReadOnlySpan<byte>)[0xFF, 0xFE]) ? Encoding.Unicode
+        : bytes.StartsWith((ReadOnlySpan<byte>)[0xFE, 0xFF]) ? Encoding.BigEndianUnicode
+        : null;
+
+    /// <summary>A file's bytes read in an encoding, leaving out the BOM they start with when it is that encoding's; a
+    /// byte it does not read becomes its replacement character.</summary>
+    public static FileText Decode(byte[] bytes, Encoding encoding)
+    {
+        byte[] preamble = Preamble(encoding);
+        bool bom = preamble.Length > 0 && bytes.AsSpan().StartsWith(preamble);
+        int skip = bom ? preamble.Length : 0;
+        return Held(encoding.GetString(bytes, skip, bytes.Length - skip), encoding, bom);
+    }
+
+    /// <summary>The bytes of an encoding's BOM, whether or not it writes one itself.</summary>
+    public static byte[] Preamble(Encoding encoding) => encoding.CodePage switch
+    {
+        65001 => [0xEF, 0xBB, 0xBF],
+        1200 => [0xFF, 0xFE],
+        1201 => [0xFE, 0xFF],
+        _ => encoding.GetPreamble(),
+    };
+
+    /// <summary>A text as the editor holds it: a CR file's (lone carriage returns, and no '\n') with each as '\n', since
+    /// the editor's lines end only there.</summary>
+    private static FileText Held(string text, Encoding encoding, bool bom) =>
+        text.Contains('\r', StringComparison.Ordinal) && !text.Contains('\n', StringComparison.Ordinal)
+            ? new FileText(text.Replace('\r', '\n'), encoding, bom, CrBreaks: true)
+            : new FileText(text, encoding, bom);
+
+    /// <summary>Bytes read in an encoding that reads every one of them, or null when one is not in it.</summary>
+    private static string? Strict(Encoding encoding, byte[] bytes)
+    {
+        Encoding strict = (Encoding)encoding.Clone();
+        strict.DecoderFallback = DecoderFallback.ExceptionFallback;
+        try
+        {
+            return strict.GetString(bytes);
+        }
+        catch (DecoderFallbackException)
+        {
+            return null;
         }
     }
 
     /// <summary>A file's bytes, read sharing writes and deletes, so the read is never in another program's way: on Windows
     /// one that shared only reading (File.ReadAllBytes) made git's checkout or rollback of the file, which deletes it
     /// first, fail for that moment, as the folder watcher reads a file again right after each change to it.</summary>
-    private static byte[] Read(string path)
+    public static byte[] Read(string path)
     {
         using FileStream stream = new(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         using MemoryStream bytes = new();
@@ -79,11 +117,12 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom)
     /// <summary>Writes through a temporary file beside the target, so a failed write never leaves a half-written file
     /// where the old one was; a symlink is written through to its target, the file keeps its permissions, and one
     /// deleted since it was opened is written anew. A text the encoding cannot hold is written as UTF-8 instead, never
-    /// with a question mark for each such character; the result is how it was written, with why when it changed.</summary>
-    public static (FileText Written, string? Converted) Save(string path, string text, Encoding encoding, bool bom)
+    /// with a question mark for each such character; the result is how it was written, with why when it changed. A CR
+    /// file (<paramref name="crBreaks"/>) has each of the text's breaks written as '\r'.</summary>
+    public static (FileText Written, string? Converted) Save(string path, string text, Encoding encoding, bool bom, bool crBreaks = false)
     {
         string? unheld = Unheld(encoding, text);
-        FileText written = unheld is null ? new FileText(text, encoding, bom) : new FileText(text, new UTF8Encoding(false), false);
+        FileText written = unheld is null ? new FileText(text, encoding, bom, crBreaks) : new FileText(text, new UTF8Encoding(false), false, crBreaks);
         Writing?.Invoke(path);
         bool there = File.Exists(path) || new FileInfo(path).LinkTarget is not null;
         string target = there ? File.ResolveLinkTarget(path, returnFinalTarget: true)?.FullName ?? path : path;
@@ -91,8 +130,8 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
         }
-        byte[] preamble = written.HasBom ? written.Encoding.GetPreamble() : [];
-        byte[] body = written.Encoding.GetBytes(text);
+        byte[] preamble = written.HasBom ? Preamble(written.Encoding) : [];
+        byte[] body = written.Encoding.GetBytes(crBreaks ? LineEndings.In(text, "\r") : text);
         string temporary = target + SaveSuffix;
         try
         {
@@ -114,7 +153,7 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom)
             File.Delete(temporary);
             throw;
         }
-        return (written, unheld is null ? null : $"{Path.GetFileName(path)} was saved as UTF-8: {NameOf(encoding, bom)} cannot hold '{unheld}'");
+        return (written, unheld is null ? null : $"{Path.GetFileName(path)} was saved as UTF-8: {FileEncoding.Of(encoding, bom).Name} cannot hold '{unheld}'");
     }
 
     /// <summary>Moves the written file over the target. Windows refuses that while another program holds the target
@@ -150,7 +189,7 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom)
 
     /// <summary>The first character of a text that an encoding cannot hold (Latin-1 has no € and no emoji), which its
     /// encoder would write as a question mark; null when it holds them all, as every Unicode encoding does.</summary>
-    private static string? Unheld(Encoding encoding, string text)
+    public static string? Unheld(Encoding encoding, string text)
     {
         if (encoding is UTF8Encoding or UnicodeEncoding or UTF32Encoding)
         {
@@ -174,5 +213,5 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom)
     public bool IsStoredAs(Encoding encoding, bool bom) =>
         (bom == HasBom && encoding.CodePage == Encoding.CodePage) || Bytes(encoding, bom).AsSpan().SequenceEqual(Bytes(Encoding, HasBom));
 
-    private byte[] Bytes(Encoding encoding, bool bom) => [.. bom ? encoding.GetPreamble() : [], .. encoding.GetBytes(Text)];
+    private byte[] Bytes(Encoding encoding, bool bom) => [.. bom ? Preamble(encoding) : [], .. encoding.GetBytes(Text)];
 }

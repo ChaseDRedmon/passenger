@@ -62,7 +62,7 @@ public static class WorkspaceEdits
                     {
                         TextSnapshot snapshot = TextSnapshot.From(file.Text);
                         List<TextEdit> edits = Convert(snapshot, change.Edits, TextDocument.DetectLineEnding(file.Text), FileIndent.Of(path, file.Text));
-                        FileText.Save(path, snapshot.Apply(edits.OrderBy(e => e.Start).ToList()).ToString(), file.Encoding, file.HasBom);
+                        FileText.Save(path, snapshot.Apply(edits.OrderBy(e => e.Start).ToList()).ToString(), file.Encoding, file.HasBom, file.CrBreaks);
                     }
                 }
                 catch (Exception error) when (error is IOException or UnauthorizedAccessException)

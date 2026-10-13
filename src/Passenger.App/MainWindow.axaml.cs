@@ -83,6 +83,7 @@ public partial class MainWindow : Window
         AddPlaces();
         AddHierarchy();
         AddFileOperations();
+        AddFileProperties();
         AddAutosave();
         AddConflicts();
         AddErrors();
@@ -1209,8 +1210,7 @@ public partial class MainWindow : Window
         // With a file open the status bar's path names it, so the message line is left for messages.
         StatusText.Text = active is null ? where : string.Empty;
         ShowTitle();
-        LineEndingText.Text = active is null ? "" : active.LineEnding == "\r\n" ? "CRLF" : "LF";
-        EncodingText.Text = active?.EncodingName ?? "";
+        ShowStorage(active);
         IndentText.Text = active?.Indentation.Shown ?? "";
         ToolTip.SetTip(IndentText, active?.Indentation.Tip(active.Language.Name));
         LanguageText.Text = LanguageLabel();

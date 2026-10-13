@@ -70,7 +70,7 @@ public partial class MainWindow
         Add(A.Save, "Save", "IDE", _ => Editors.SaveActive(), NeedsFile, ("File", 1, 0));
         Add(A.SaveAll, "Save All", "IDE", _ => Editors.SaveAll(), _ => Editors.Documents.Any(d => d.IsModified) ? null : "Every file is saved", ("File", 1, 1));
         // Quit is the application menu's on macOS.
-        Add(A.Exit, "Exit", "IDE", _ => Close(), menu: OperatingSystem.IsMacOS() ? null : ("File", 3, 0));
+        Add(A.Exit, "Exit", "IDE", _ => Close(), menu: OperatingSystem.IsMacOS() ? null : ("File", 4, 0));
         Add(A.FindAction, "Find Action...", "IDE", _ => ShowFindAction(), menu: ("Help", 0, 0));
 
         Add(A.Find, "Find", "IDE", _ => Editors.ShowFind(replace: false), NeedsFile, ("Edit/Find", 0, 0));

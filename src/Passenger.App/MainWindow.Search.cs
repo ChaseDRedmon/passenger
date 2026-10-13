@@ -212,7 +212,7 @@ public partial class MainWindow
             else if (FileText.Load(path) is { } file)
             {
                 string after = FileSearch.ReplaceAll(file.Text, query, replacement);
-                if (after != file.Text && FileText.Save(path, after, file.Encoding, file.HasBom).Converted is { } note)
+                if (after != file.Text && FileText.Save(path, after, file.Encoding, file.HasBom, file.CrBreaks).Converted is { } note)
                 {
                     converted.Add(note);
                 }

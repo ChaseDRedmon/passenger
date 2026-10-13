@@ -21,7 +21,7 @@ public partial class MainWindow
         // macOS has Settings in the application menu, as Rider's there.
         actions!.Add(new IdeAction(AppActions.ShowSettings, "Settings...", "IDE", _ => ShowSettings())
         {
-            Menus = OperatingSystem.IsMacOS() ? [] : [new MenuPlace("File", 2, 0)],
+            Menus = OperatingSystem.IsMacOS() ? [] : [new MenuPlace("File", 3, 0)],
         });
     }
 

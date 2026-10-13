@@ -95,12 +95,12 @@ public sealed class EditorConfig
         .OrderByDescending(file => file.Length)
         .FirstOrDefault();
 
-    /// <summary>The line break <c>end_of_line</c> asks for ("\n" or "\r\n"); null for none, or for <c>cr</c>, which the
-    /// editor's lines do not end at.</summary>
-    public string? EndOfLine => Word(this["end_of_line"]) switch
+    /// <summary>The line separator <c>end_of_line</c> asks for; null for none.</summary>
+    public LineSeparator? EndOfLine => Word(this["end_of_line"]) switch
     {
-        "lf" => "\n",
-        "crlf" => "\r\n",
+        "lf" => LineSeparator.LF,
+        "crlf" => LineSeparator.CRLF,
+        "cr" => LineSeparator.CR,
         _ => null,
     };
 
@@ -108,17 +108,22 @@ public sealed class EditorConfig
 
     public bool InsertFinalNewline => Word(this["insert_final_newline"]) == "true";
 
-    /// <summary>The encoding <c>charset</c> asks a file be written in, and whether with a byte-order mark (UTF-16 always
-    /// has one, the only way it is read back as UTF-16); null for none.</summary>
-    public (Encoding Encoding, bool Bom)? Charset => Word(this["charset"]) switch
+    /// <summary>The encoding <c>charset</c> asks a file be written in (UTF-16 with its BOM, the only way it is read back as
+    /// UTF-16); null for none.</summary>
+    public FileEncoding? Charset => Word(this["charset"]) switch
     {
-        "latin1" => (Encoding.Latin1, false),
-        "utf-8" => (new UTF8Encoding(false), false),
-        "utf-8-bom" => (new UTF8Encoding(true), true),
-        "utf-16be" => (Encoding.BigEndianUnicode, true),
-        "utf-16le" => (Encoding.Unicode, true),
+        "latin1" => FileEncoding.Latin1,
+        "utf-8" => FileEncoding.Utf8,
+        "utf-8-bom" => FileEncoding.Utf8Bom,
+        "utf-16be" => FileEncoding.Utf16BigEndian,
+        "utf-16le" => FileEncoding.Utf16,
         _ => null,
     };
+
+    /// <summary>What a property says and the .editorconfig it comes from, as the status bar's tips name it
+    /// ("end_of_line = lf in /src/.editorconfig"); null when no section gives it.</summary>
+    public string? Said(string name) =>
+        properties.TryGetValue(name, out (string Value, string From) found) ? $"{name} = {Word(found.Value)} in {found.From}" : null;
 
     /// <summary>A value's first word, lower case: the known values are single words, and what follows one (an inline
     /// comment, which older versions of the format allowed) is not part of it.</summary>

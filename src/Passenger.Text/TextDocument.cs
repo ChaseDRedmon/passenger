@@ -112,6 +112,27 @@ public sealed class TextDocument
         Raise(before, after, sorted, ChangeReason.Edit);
     }
 
+    /// <summary>Changes the text, or only something kept beside it (how its file is stored), as an undoable step of its
+    /// own, even with no edits: <paramref name="undone"/> runs once Undo has put the text back, <paramref name="redone"/>
+    /// once Redo has made the edits again.</summary>
+    public void Perform(IReadOnlyList<TextEdit> edits, SelectionSet selectionsBefore, SelectionSet selectionsAfter, Action undone, Action redone)
+    {
+        TextEdit[] sorted = edits.Where(e => e.Length > 0 || e.Text.Length > 0).OrderBy(e => e.Start).ToArray();
+        TextSnapshot before = Snapshot;
+        List<Step> steps = [];
+        if (sorted.Length > 0)
+        {
+            steps.Add(new Step(before, before.Apply(sorted), sorted, [.. sorted.Select(e => before.GetText(e.Start, e.Length))]));
+        }
+        redo.Clear();
+        undo.Add(new UndoEntry(EditKind.Other, selectionsBefore, selectionsAfter, Environment.TickCount64, steps) { Undone = undone, Redone = redone });
+        mergeBroken = true;
+        if (steps.Count > 0)
+        {
+            Raise(before, steps[0].After, sorted, ChangeReason.Edit);
+        }
+    }
+
     /// <summary>Changes the whole text to another (a reload from disk, a replace across files) as one undoable step of
     /// one edit per changed stretch of lines, so carets, breakpoints and folds outside them stay where they were.</summary>
     public void SetText(string text, SelectionSet selectionsBefore)
@@ -186,6 +207,7 @@ public sealed class TextDocument
         }
         redo.Add(entry);
         mergeBroken = true;
+        entry.Undone?.Invoke();
         return entry.SelectionsBefore;
     }
 
@@ -204,6 +226,7 @@ public sealed class TextDocument
         }
         undo.Add(entry);
         mergeBroken = true;
+        entry.Redone?.Invoke();
         return entry.SelectionsAfter;
     }
 
@@ -248,6 +271,10 @@ public sealed class TextDocument
         public SelectionSet SelectionsAfter { get; set; } = selectionsAfter;
         public long Time { get; set; } = time;
         public List<Step> Steps { get; } = steps;
+
+        /// <summary>What <see cref="Perform"/> was given to run after the step is undone, and after it is redone.</summary>
+        public Action? Undone { get; init; }
+        public Action? Redone { get; init; }
     }
 
     /// <summary>One applied batch: the snapshots on either side, the edits and the text each one

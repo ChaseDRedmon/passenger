@@ -186,8 +186,9 @@ public partial class MainWindow
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         // Made as its .editorconfig asks: its line breaks and its charset.
         EditorConfig conventions = EditorConfig.For(path);
-        (System.Text.Encoding encoding, bool bom) = conventions.Charset ?? (new System.Text.UTF8Encoding(false), false);
-        FileText.Save(path, LineEndings.In(text, conventions.EndOfLine ?? "\n"), encoding, bom);
+        FileEncoding charset = conventions.Charset ?? FileEncoding.Utf8;
+        LineSeparator separator = conventions.EndOfLine ?? LineSeparator.LF;
+        FileText.Save(path, LineEndings.In(text, separator.Held()), charset.Encoding, charset.Bom, separator == LineSeparator.CR);
         FilesChanged();
         OpenFile(path);
         Explorer.Reveal(PathNames.Canonical(path));
