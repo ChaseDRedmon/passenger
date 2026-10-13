@@ -178,7 +178,7 @@ public partial class MainWindow : Window
             }
         };
         builder.Exited += (_, code) => OnBuilt(code);
-        runner = new ProcessRunner(Bottom.Run);
+        runner = new ProcessRunner(Bottom.Run, takesInput: true);
         runner.Exited += (_, code) =>
         {
             Bottom.Run.SetRunning(false);
@@ -197,7 +197,7 @@ public partial class MainWindow : Window
             }
         };
         debug = new DebugController(Editors, Bottom.Debug);
-        tests = new Testing.TestController(Bottom.TestTree, BuildAsync, () => Projects, line => Bottom.Build.Document.Append($"{line}\n"));
+        tests = new Testing.TestController(Bottom.TestTree, BuildAsync, () => Projects, line => Bottom.Build.Append($"{line}\n"));
         tests.Message += (_, message) =>
         {
             StatusText.Text = message;
@@ -849,7 +849,7 @@ public partial class MainWindow : Window
         afterBuild = then;
         Editors.SaveAll();
         problems.Clear();
-        Bottom.Build.Document.Clear();
+        Bottom.Build.Clear();
         Bottom.Build.SetRunning(true);
         ShowToolWindow("build");
         building = new TaskCompletionSource();
@@ -908,7 +908,7 @@ public partial class MainWindow : Window
             return;
         }
         Editors.SaveAll();
-        Bottom.Run.Document.Clear();
+        Bottom.Run.Clear();
         Bottom.Run.SetRunning(true);
         StopButton.IsVisible = true;
         ShowToolWindow("run");
@@ -967,7 +967,7 @@ public partial class MainWindow : Window
     {
         if (code == 0 && buildQueue.Count > 0 && !builder.WasStopped)
         {
-            Bottom.Build.Document.Append("\n");
+            Bottom.Build.Append("\n");
             BuildNext();
             return;
         }

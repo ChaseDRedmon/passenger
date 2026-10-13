@@ -55,6 +55,10 @@ public partial class MainWindow
             ApplyTo(group.Editor, next);
         }
         terminal!.View.FontSize = next.TerminalFontSize;
+        foreach (ToolWindows.OutputView console in (ToolWindows.OutputView[])[Bottom.Run, Bottom.Build, Bottom.Debug.Console])
+        {
+            console.Limit = next.ConsoleBufferKb * 1024;
+        }
         if (next.TerminalShell is { } shell && Run.CommandLine.Split(shell) is { Count: > 0 } parts)
         {
             terminal.Shell = (parts[0], [.. parts.Skip(1)]);

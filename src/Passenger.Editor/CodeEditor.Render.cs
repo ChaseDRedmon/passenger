@@ -698,7 +698,7 @@ public sealed partial class CodeEditor
         }
         if (!runProperties.TryGetValue(kind, out TextRunProperties? props))
         {
-            runProperties[kind] = props = RunWith(palette.Syntax(kind));
+            runProperties[kind] = props = kind == TokenKind.UserInput ? ItalicRunWith(palette.Syntax(kind)) : RunWith(palette.Syntax(kind));
         }
         return props;
     }

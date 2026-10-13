@@ -293,7 +293,7 @@ public sealed partial class PassengerTools(MainWindow window)
         BuildOutcome built = await window.BuildAsync().WaitAsync(cancel);
         IReadOnlyList<Finding> problems = [.. window.BottomPanel.Problems.Problems.Select(p => new Finding(
             p.Severity == ProblemSeverity.Error ? "error" : "warning", p.Code, p.Message, p.Path is { } at ? Relative(at) : p.Project, p.Position.Line + 1, p.Position.Column + 1))];
-        return new BuildResult(built.Succeeded, built.Message, problems.Count(p => p.Severity == "error"), problems.Count(p => p.Severity == "warning"), problems, Tail(window.BottomPanel.Build.Document, 20));
+        return new BuildResult(built.Succeeded, built.Message, problems.Count(p => p.Severity == "error"), problems.Count(p => p.Severity == "warning"), problems, Tail(window.BottomPanel.Build, 20));
     });
 
     [McpServerTool(Name = "run", Title = "Run a configuration", Destructive = true), Description(
@@ -307,7 +307,7 @@ public sealed partial class PassengerTools(MainWindow window)
         Choose(configuration);
         window.RunSelected(arguments);
         await Until(() => !window.Runner.IsRunning, TimeSpan.FromSeconds(waitSeconds), cancel);
-        return new RunResult(window.Runner.IsRunning, window.Status, Tail(window.BottomPanel.Run.Document, 200));
+        return new RunResult(window.Runner.IsRunning, window.Status, Tail(window.BottomPanel.Run, 200));
     });
 
     [McpServerTool(Name = "stop", Title = "Stop", Destructive = false), Description("Stops whatever is running or being debugged, as Stop does.")]
@@ -522,7 +522,7 @@ public sealed partial class PassengerTools(MainWindow window)
     });
 
     [McpServerTool(Name = "debug_output", Title = "The program's output", ReadOnly = true), Description("What the debugged program has written, the last lines of it.")]
-    public Task<string> DebugOutput(int lines = 200, CancellationToken cancel = default) => OnUi(cancel, () => Task.FromResult(Tail(window.BottomPanel.Debug.Console.Document, lines)));
+    public Task<string> DebugOutput(int lines = 200, CancellationToken cancel = default) => OnUi(cancel, () => Task.FromResult(Tail(window.BottomPanel.Debug.Console, lines)));
 
     // The IDE itself
 
@@ -825,9 +825,11 @@ public sealed partial class PassengerTools(MainWindow window)
         ? Path.GetRelativePath(folder, path)
         : path;
 
-    private static string Tail(TextDocument document, int lines)
+    /// <summary>A console's last lines, with what is on its way to it.</summary>
+    private static string Tail(ToolWindows.OutputView console, int lines)
     {
-        TextSnapshot text = document.Snapshot;
+        console.Flush();
+        TextSnapshot text = console.Document.Snapshot;
         int first = Math.Max(0, text.LineCount - lines);
         return text.GetText(text.GetLineStart(first), text.Length - text.GetLineStart(first));
     }

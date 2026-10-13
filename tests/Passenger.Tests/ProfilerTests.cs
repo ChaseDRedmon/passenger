@@ -18,24 +18,26 @@ public sealed class ProfilerTests : IDisposable
     [Fact]
     public async Task A_program_profiled_from_its_start_shows_its_busy_method_and_starts_children_freely()
     {
-        List<string> output = [];
+        System.Text.StringBuilder output = new();
         string program = Debuggees.Program("PassengerCases");
         // The GC sizes gen0 from the machine's largest cache, which on CI's Windows runner outgrows the 60 MB Busy allocates.
         Dictionary<string, string> youngCollections = new() { ["DOTNET_GCgen0size"] = "0x400000" };
         ProfileTarget target = new(Passenger.Core.Dotnet.Host(), [program, "busy"], Path.GetDirectoryName(program)!, youngCollections);
-        await using ProfilingSession run = await ProfilingSession.StartAsync(target, folder, line =>
+        await using ProfilingSession run = await ProfilingSession.StartAsync(target, folder, (text, _) =>
         {
             lock (output)
             {
-                output.Add(line);
+                output.Append(text);
             }
         }, TestContext.Current.CancellationToken);
         Snapshot snapshot = await run.WaitForExitAsync(TestContext.Current.CancellationToken).WaitAsync(TimeSpan.FromMinutes(2), TestContext.Current.CancellationToken);
 
+        await run.ExitedAsync();
         lock (output)
         {
-            Assert.Contains("spun True", output);
-            Assert.Contains("child said: child ran", output);
+            string[] lines = output.ToString().ReplaceLineEndings("\n").Split('\n');
+            Assert.Contains("spun True", lines);
+            Assert.Contains("child said: child ran", lines);
         }
         // In the main thread's tree, Spin is called from the program's entry point, on its stack for about the 800 ms it
         // spins: in time, since a loaded machine or a background process (whose timers macOS coalesces) gets a sample

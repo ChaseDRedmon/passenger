@@ -63,15 +63,6 @@ public sealed class DebugController
         view.FrameChosen += (_, chosen) => _ = ChooseFrame(chosen, navigate: true);
         view.ThreadChosen += (_, thread) => _ = ChooseThread(thread.Id);
         view.EvaluateRequested += (_, request) => _ = Evaluate(request.Expression, request.Watch);
-        view.InputEntered += (_, line) =>
-        {
-            if (Session is { } session)
-            {
-                // Echoed as a terminal would, since the program's output never repeats what it read.
-                view.Console.Document.Append($"{line}\n");
-                _ = session.InputAsync($"{line}\n");
-            }
-        };
         view.SetValueRequested += (_, request) => _ = SetValue(request.Node, request.Value);
         view.WatchRemoved += (_, expression) =>
         {
@@ -101,13 +92,15 @@ public sealed class DebugController
     /// <summary>Launches a program under the debugger (after it is built), its output in the Debug
     /// window's Console.</summary>
     public Task StartAsync(DebugTarget target, string name) =>
-        OpenAsync((built, log) => DebugSession.LaunchAsync(target, Breakpoints, built, log), name);
+        OpenAsync((built, log, output) => DebugSession.LaunchAsync(target, Breakpoints, built, log, output), name, launched: true);
 
     /// <summary>Attaches the debugger to a running .NET process, its output (if any) in the Console.</summary>
     public Task AttachAsync(int processId, string name) =>
-        OpenAsync((built, log) => DebugSession.AttachAsync(processId, Breakpoints, built, log), name);
+        OpenAsync((built, log, output) => DebugSession.AttachAsync(processId, Breakpoints, built, log, output), name, launched: false);
 
-    private async Task OpenAsync(Func<BuiltLines, Action<string>, Task<DebugSession>> open, string name)
+    /// <summary>Starts a session, its output in the Console; a program it launched reads what is typed there, as in
+    /// Rider's Debug console (one attached to has an input of its own).</summary>
+    private async Task OpenAsync(Func<BuiltLines, Action<string>, Action<OutputEvent>, Task<DebugSession>> open, string name, bool launched)
     {
         UiThread.Check();
         if (IsDebugging)
@@ -129,21 +122,43 @@ public sealed class DebugController
         Message?.Invoke(this, $"Debugging {name}");
         try
         {
-            DebugSession session = await open(built, line => view.Console.Document.Append($"{line}\n"));
+            ConsoleSink console = view.Console.Sink;
+            DebugSession session = await open(built, line => view.Console.Append($"{line}\n"), output =>
+            {
+                ConsoleStream? stream = output.Category switch
+                {
+                    "stdout" => ConsoleStream.Output,
+                    "stderr" => ConsoleStream.Error,
+                    "telemetry" => null,
+                    _ => ConsoleStream.System,
+                };
+                if (stream is { } into)
+                {
+                    console.Write(output.Output, into);
+                }
+            });
             Session = session;
             view.Tree.Load = reference => session.VariablesAsync(reference);
-            session.Output += (_, output) => view.Console.Append(output.Output, error: output.Category == "stderr");
+            if (launched)
+            {
+                view.Console.Input = new ConsoleInput(text => Send(session.InputAsync(text)), () => Send(session.CloseInputAsync()));
+            }
             session.StateChanged += (_, _) => _ = OnStateChanged(session, name);
             await OnStateChanged(session, name);
         }
         catch (Exception error) when (error is DapException or IOException or InvalidOperationException or TimeoutException)
         {
             lines = null;
+            view.Console.Flush();
             view.SetState(DebugState.Ended);
             Message?.Invoke(this, $"Could not debug {name}: {(error is DapException dap ? dap.Reason : error.Message)}");
             StateChanged?.Invoke(this, EventArgs.Empty);
         }
     }
+
+    /// <summary>Input for the program, which a session that has ended, or an adapter gone, may never take: its end says so.</summary>
+    private static void Send(Task sending) =>
+        _ = sending.ContinueWith(static sent => sent.Exception, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
 
     public async Task StopAsync()
     {
@@ -359,6 +374,15 @@ public sealed class DebugController
         {
             return;
         }
+        // What the program wrote before it stopped or ended is shown before the stop or the end is.
+        if (session.State == DebugState.Ended)
+        {
+            view.Console.Input = null;
+            view.Console.Sink.End(ConsoleStream.Output);
+            view.Console.Sink.End(ConsoleStream.Error);
+            view.Console.Sink.End(ConsoleStream.System);
+        }
+        view.Console.Flush();
         view.SetState(session.State);
         // Every stop is new and every run lets the last one's frames and values go: none is asked of again.
         shown++;

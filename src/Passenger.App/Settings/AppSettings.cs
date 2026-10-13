@@ -16,6 +16,8 @@ public sealed record AppSettings : IStateDocument<AppSettings>
     public const double MaxLineSpacing = 3;
     public const int MinIdleSeconds = 1;
     public const int MaxIdleSeconds = 3600;
+    public const int MinConsoleBufferKb = 16;
+    public const int MaxConsoleBufferKb = 102_400;
 
     public ThemeChoice Theme { get; init; } = ThemeChoice.System;
     public double EditorFontSize { get; init; } = 13;
@@ -48,6 +50,10 @@ public sealed record AppSettings : IStateDocument<AppSettings>
 
     public int IdleSeconds { get; init; } = 15;
 
+    /// <summary>Rider's console cycle buffer size (<c>idea.cycle.buffer.size</c>): how much of a Run, Build or Debug
+    /// console's text is kept, in KB, the oldest lines dropped past it.</summary>
+    public int ConsoleBufferKb { get; init; } = ToolWindows.OutputView.DefaultLimitKb;
+
     /// <summary>The person's shortcuts over the keymap's, by action, in keymap notation ("meta shift K"); an empty list
     /// unbinds the action.</summary>
     public Dictionary<string, string[]> Shortcuts { get; init; } = [];
@@ -74,6 +80,7 @@ public sealed record AppSettings : IStateDocument<AppSettings>
             EditorLineSpacing = Math.Clamp(EditorLineSpacing, MinLineSpacing, MaxLineSpacing),
             TerminalFontSize = Math.Clamp(TerminalFontSize, MinFontSize, MaxFontSize),
             IdleSeconds = Math.Clamp(IdleSeconds, MinIdleSeconds, MaxIdleSeconds),
+            ConsoleBufferKb = Math.Clamp(ConsoleBufferKb, MinConsoleBufferKb, MaxConsoleBufferKb),
             Shortcuts = (Shortcuts ?? []).Where(s => s.Value is not null).ToDictionary(s => s.Key, s => s.Value.Where(k => k is not null).ToArray()),
             TerminalShell = string.IsNullOrWhiteSpace(TerminalShell) ? null : TerminalShell,
         };

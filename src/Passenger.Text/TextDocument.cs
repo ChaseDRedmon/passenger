@@ -136,6 +136,21 @@ public sealed class TextDocument
         saved = Snapshot;
     }
 
+    /// <summary>Changes a stretch with no undo step, as a console's own edits are (its oldest output dropped, output put
+    /// before the line a person is typing): any history no longer lines up with the text, so it goes.</summary>
+    public void Rewrite(int start, int length, string text)
+    {
+        if (length == 0 && text.Length == 0)
+        {
+            return;
+        }
+        TextSnapshot before = Snapshot;
+        undo.Clear();
+        redo.Clear();
+        Raise(before, before.Replace(start, length, text), [new TextEdit(start, length, text)], ChangeReason.Edit);
+        saved = Snapshot;
+    }
+
     /// <summary>Empties the document with no undo step (a console cleared), forgetting its history.</summary>
     public void Clear()
     {

@@ -479,6 +479,103 @@ public sealed class DebuggerTests : IDisposable
         window.BottomPanel.Debug.Tree.Rows.FirstOrDefault(r => r.Depth == 0 && r.Name == name);
 
     [AvaloniaFact]
+    public void What_is_typed_into_the_debug_console_is_the_programs_input()
+    {
+        Write("Program.cs", "Console.Write(\"Name? \");\nstring? name = Console.ReadLine();\nConsole.WriteLine($\"read: {name}\");\n");
+        MainWindow window = Open();
+        try
+        {
+            Ui.Run(window, AppActions.Debug);
+            Passenger.App.ToolWindows.OutputView console = window.BottomPanel.Debug.Console;
+            Ui.WaitFor(() => console.Document.Snapshot.ToString().Contains("Name? ", StringComparison.Ordinal), "the program to ask");
+            window.BottomPanel.Debug.ShowTab(console: true);
+            Ui.Settle();
+            Point inConsole = console.Editor.TranslatePoint(new Point(console.Editor.Bounds.Width / 2, console.Editor.Bounds.Height / 2), window)!.Value;
+            window.MouseDown(inConsole, MouseButton.Left);
+            window.MouseUp(inConsole, MouseButton.Left);
+            window.KeyTextInput("Ada");
+            Ui.Press(window, "ENTER");
+            Ui.WaitFor(() => window.Debugger.Session?.State == DebugState.Ended, "the program to read the line and end");
+            Assert.Contains("Name? Ada\nread: Ada\n", console.Document.Snapshot.ToString(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            window.Perform(AppActions.Stop);
+            Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void Debugging_a_program_that_prints_100000_coloured_lines_leaves_the_console_free_of_colour_codes_and_the_window_responsive()
+    {
+        Write("Program.cs", "for (int i = 0; i < 100_000; i++)\n{\n    Console.WriteLine($\"\\u001b[3{i % 7 + 1}mline {i}\\u001b[0m\");\n}\nConsole.WriteLine(\"printed\");\n");
+        MainWindow window = Open();
+        Passenger.App.ToolWindows.OutputView console = window.BottomPanel.Debug.Console;
+        string Text() => console.Document.Snapshot.ToString();
+        try
+        {
+            // A key's wait, as the system would deliver one: a job at input's priority, posted from another thread now and then.
+            Avalonia.Threading.Dispatcher dispatcher = Avalonia.Threading.Dispatcher.UIThread;
+            List<double> waits = [];
+            using Timer keys = new(_ =>
+            {
+                long posted = Stopwatch.GetTimestamp();
+                dispatcher.Post(() =>
+                {
+                    lock (waits)
+                    {
+                        waits.Add(Stopwatch.GetElapsedTime(posted).TotalMilliseconds);
+                    }
+                }, Avalonia.Threading.DispatcherPriority.Input);
+            }, null, 0, 10);
+            double Worst()
+            {
+                lock (waits)
+                {
+                    double worst = waits.Count == 0 ? 0 : waits.Max();
+                    waits.Clear();
+                    return worst;
+                }
+            }
+            Stopwatch idle = Stopwatch.StartNew();
+            Ui.PumpUntil(() => idle.Elapsed > TimeSpan.FromSeconds(1), "a second of the window at rest");
+            double atRest = Worst();
+
+            // When the console's text grew, from the debugger's start to the program's last line.
+            List<long> grew = [];
+            console.Document.Changed += (_, change) =>
+            {
+                if (change.Edits.Any(e => e.Text.Length > 0))
+                {
+                    grew.Add(Stopwatch.GetTimestamp());
+                }
+            };
+            window.Perform(AppActions.Debug);
+            Ui.PumpUntil(() => Text().Contains("printed", StringComparison.Ordinal), "the program to print its last line", TimeSpan.FromMinutes(2));
+            double whilePrinting = Worst();
+            double span = Stopwatch.GetElapsedTime(grew[0], grew[^1]).TotalMilliseconds;
+
+            Ui.WaitFor(() => !window.Debugger.IsDebugging, "the program to end");
+            string text = Text();
+            Assert.DoesNotContain("\u001b", text, StringComparison.Ordinal);
+            Assert.DoesNotContain("[0m", text, StringComparison.Ordinal);
+            Assert.Contains("\nline 99999\nprinted\n", text, StringComparison.Ordinal);
+            Assert.True(text.Length <= Passenger.App.ToolWindows.OutputView.DefaultLimitKb * 1024, $"The console kept {text.Length} characters");
+            // A batch a frame at most, however many writes the program made and however many events the debugger sent.
+            Assert.True(grew.Count <= span / 16 + 10, $"The console took the output in {grew.Count} pieces over {span:0} ms, more than one a frame");
+            Assert.True(whilePrinting < Math.Max(500, 20 * atRest),
+                $"A key waited up to {whilePrinting:0} ms while the program printed, against {atRest:0} ms at rest");
+        }
+        finally
+        {
+            window.Perform(AppActions.Stop);
+            Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
     public void Pause_stops_a_running_program_and_shows_where_it_is_in_its_loop()
     {
         Write("Program.cs", "long turns = 0;\nConsole.WriteLine(\"looping\");\nwhile (true)\n{\n    turns++;\n}\n");

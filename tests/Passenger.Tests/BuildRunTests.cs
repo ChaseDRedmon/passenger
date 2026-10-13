@@ -160,6 +160,95 @@ public sealed class BuildRunTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void A_program_reading_its_input_reads_what_is_typed_into_the_run_console_and_ends_when_ctrl_d_ends_it()
+    {
+        Write("src/Hello/Program.cs",
+            "Console.Write(\"Name? \");\nstring? name = Console.ReadLine();\nConsole.WriteLine($\"Hello, {name}\");\n"
+            + "string rest = Console.In.ReadToEnd();\nConsole.WriteLine($\"then {rest.Length} more, and the end of its input\");\n");
+        MainWindow window = Open();
+        try
+        {
+            window.Perform(AppActions.RunProgram);
+            Ui.WaitFor(() => Output(window).Contains("Name? ", StringComparison.Ordinal), "the program to ask", TimeSpan.FromMinutes(2));
+            Passenger.App.ToolWindows.OutputView run = window.BottomPanel.Run;
+            Point inConsole = run.Editor.TranslatePoint(new Point(run.Editor.Bounds.Width / 2, run.Editor.Bounds.Height / 2), window)!.Value;
+            window.MouseDown(inConsole, Avalonia.Input.MouseButton.Left);
+            window.MouseUp(inConsole, Avalonia.Input.MouseButton.Left);
+            window.KeyTextInput("Adx");
+            Ui.Press(window, "BACK_SPACE");
+            window.KeyTextInput("a");
+            Ui.Press(window, "ENTER");
+            Ui.WaitFor(() => Output(window).Contains("Hello, Ada\n", StringComparison.Ordinal), "the program to read the line typed");
+            Assert.Contains("Name? Ada\nHello, Ada\n", Output(window), StringComparison.Ordinal);
+            TextSnapshot text = run.Document.Snapshot;
+            Passenger.Editor.SyntaxSpan typed = Assert.Single(run.Editor.Highlighter!.GetSpans(text, 0, text.Length), s => s.Kind == Passenger.Editor.TokenKind.UserInput);
+            Assert.Equal("Ada", text.GetText(typed.Start, typed.Length));
+
+            // Ctrl+D, Rider's Send EOF on every platform, sends what was typed and ends the input, which ends the program.
+            window.KeyTextInput("ok");
+            Ui.Press(window, "control D");
+            Ui.WaitFor(() => Output(window).Contains("Process finished", StringComparison.Ordinal), "the program to end at the end of its input");
+            Assert.Contains("ok^D\nthen 2 more, and the end of its input\n", Output(window), StringComparison.Ordinal);
+            Assert.Contains("exit code 0", Output(window), StringComparison.Ordinal);
+        }
+        finally
+        {
+            window.Perform(AppActions.Stop);
+            Ui.WaitFor(() => !window.Runner.IsRunning, "the run to end");
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void A_colour_code_split_between_two_reads_never_shows_in_the_run_console()
+    {
+        // The first sequence straddles 8,192 characters, where a read ends; the others, and a "\r\n", are cut by a pause in
+        // the writing, on standard output, then standard error a pause later, since the two streams' reads may cross.
+        Write("src/Hello/Program.cs",
+            "Console.Out.Write(new string('x', 8190) + \"\\u001b[32mgreen\\u001b[0m\\n\");\nConsole.Out.Flush();\n"
+            + "Console.Out.Write(\"before \\u001b[3\");\nConsole.Out.Flush();\nThread.Sleep(500);\n"
+            + "Console.Out.Write(\"1mred\\u001b[0m after\\r\");\nConsole.Out.Flush();\nThread.Sleep(300);\nConsole.Out.Write(\"\\n\");\nConsole.Out.Flush();\nThread.Sleep(300);\n"
+            + "Console.Error.Write(\"\\u001b]0;a title\\u0007error \\u001b[1;3\");\nConsole.Error.Flush();\nThread.Sleep(300);\n"
+            + "Console.Error.Write(\"1mbold\\u001b[0m\\n\");\nConsole.Error.Flush();\n");
+        MainWindow window = Open();
+        window.Perform(AppActions.RunProgram);
+        Ui.WaitFor(() => Output(window).Contains("Process finished", StringComparison.Ordinal), "the program to finish", TimeSpan.FromMinutes(2));
+        string output = Output(window);
+        Assert.DoesNotContain("\u001b", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("[3", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("1m", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("\r", output, StringComparison.Ordinal);
+        Assert.Contains(new string('x', 8190) + "green\n", output, StringComparison.Ordinal);
+        Assert.Contains("\nbefore red after\n", output, StringComparison.Ordinal);
+        TextSnapshot text = window.BottomPanel.Run.Document.Snapshot;
+        Passenger.Editor.SyntaxSpan error = Assert.Single(window.BottomPanel.Run.Editor.Highlighter!.GetSpans(text, 0, text.Length));
+        Assert.Equal("error bold\n", text.GetText(error.Start, error.Length));
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_console_keeps_riders_buffer_of_text_dropping_its_oldest_lines_past_it()
+    {
+        // Three megabytes, two lines of it on standard error, each between pauses since the two streams' reads may cross.
+        Write("src/Hello/Program.cs",
+            "for (int i = 0; i < 50_000; i++)\n{\n    Console.WriteLine($\"line {i:D6} \" + new string('x', 52));\n"
+            + "    if (i is 38_000 or 49_999)\n    {\n        Thread.Sleep(300);\n"
+            + "        Console.Error.WriteLine($\"error {i:D6} \" + new string('e', 51));\n        Thread.Sleep(300);\n    }\n}\n");
+        MainWindow window = Open();
+        window.Perform(AppActions.RunProgram);
+        Ui.WaitFor(() => Output(window).Contains("Process finished", StringComparison.Ordinal), "the program to finish", TimeSpan.FromMinutes(2));
+        TextSnapshot text = window.BottomPanel.Run.Document.Snapshot;
+        Assert.InRange(text.Length, 900 * 1024, Passenger.App.ToolWindows.OutputView.DefaultLimitKb * 1024);
+        Assert.Matches(@"^line \d{6} x{52}$", text.GetLineText(0));
+        Assert.DoesNotContain("line 000000 ", text.ToString(), StringComparison.Ordinal);
+        Assert.Contains($"line 049999 {new string('x', 52)}\n", text.ToString(), StringComparison.Ordinal);
+        // The error colour stays on the lines that came on standard error, however much was dropped before them since.
+        IReadOnlyList<Passenger.Editor.SyntaxSpan> errors = window.BottomPanel.Run.Editor.Highlighter!.GetSpans(text, 0, text.Length);
+        Assert.Equal([$"error 038000 {new string('e', 51)}\n", $"error 049999 {new string('e', 51)}\n"], errors.Select(e => text.GetText(e.Start, e.Length)));
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void The_projects_chosen_in_the_explorer_build_rebuild_and_clean_on_their_own()
     {
         Write("Sample.slnx", "<Solution>\n  <Folder Name=\"/src/\">\n    <Project Path=\"src/Hello/Hello.csproj\" />\n    <Project Path=\"src/Tools/Tools.csproj\" />\n  </Folder>\n</Solution>\n");

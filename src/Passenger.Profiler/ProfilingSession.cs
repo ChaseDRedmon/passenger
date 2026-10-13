@@ -27,15 +27,17 @@ public sealed class ProfilingSession : IAsyncDisposable
     private readonly DiagnosticsClientConnector connector;
     private readonly EventPipeSession session;
     private readonly Task copying;
+    private readonly Task reading;
     private readonly Stopwatch clock = Stopwatch.StartNew();
     private int stopped;
 
-    private ProfilingSession(Process process, DiagnosticsClientConnector connector, EventPipeSession session, Task copying, string trace)
+    private ProfilingSession(Process process, DiagnosticsClientConnector connector, EventPipeSession session, Task copying, Task reading, string trace)
     {
         this.process = process;
         this.connector = connector;
         this.session = session;
         this.copying = copying;
+        this.reading = reading;
         TracePath = trace;
     }
 
@@ -48,9 +50,13 @@ public sealed class ProfilingSession : IAsyncDisposable
 
     public string TracePath { get; }
 
+    /// <summary>The program's standard input, kept open as a console's is for a program that waits on a read: what the
+    /// person types goes here.</summary>
+    public StreamWriter Input => process.StandardInput;
+
     /// <summary>Starts a program under the profiler. The trace goes into <paramref name="folder"/>; the program's output
-    /// comes to <paramref name="output"/> a line at a time, on any thread.</summary>
-    public static async Task<ProfilingSession> StartAsync(ProfileTarget target, string folder, Action<string>? output = null, CancellationToken cancellation = default)
+    /// comes to <paramref name="output"/> as it is read, with whether it came on standard error, on any thread.</summary>
+    public static async Task<ProfilingSession> StartAsync(ProfileTarget target, string folder, Action<string, bool>? output = null, CancellationToken cancellation = default)
     {
         Directory.CreateDirectory(folder);
         string stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss", System.Globalization.CultureInfo.InvariantCulture);
@@ -74,10 +80,7 @@ public sealed class ProfilingSession : IAsyncDisposable
         }
         start.Environment["DOTNET_DiagnosticPorts"] = $"{port},suspend";
         Process process = ChildProcesses.Start(start);
-        process.OutputDataReceived += (_, e) => Line(e.Data);
-        process.ErrorDataReceived += (_, e) => Line(e.Data);
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
+        Task reading = Task.WhenAll(Read(process.StandardOutput, error: false), Read(process.StandardError, error: true));
 
         DiagnosticsClientConnector? connector;
         try
@@ -132,14 +135,24 @@ public sealed class ProfilingSession : IAsyncDisposable
             }
         });
         client.ResumeRuntime();
-        ProfilingSession profiling = new(process, connector, session, copying, trace);
+        ProfilingSession profiling = new(process, connector, session, copying, reading, trace);
         return profiling;
 
-        void Line(string? text)
+        // A read at a time, a prompt with no line end included.
+        async Task Read(StreamReader reader, bool error)
         {
-            if (text is not null)
+            char[] buffer = new char[8192];
+            int read;
+            try
             {
-                output?.Invoke(text);
+                while ((read = await reader.ReadAsync(buffer)) > 0)
+                {
+                    output?.Invoke(new string(buffer, 0, read), error);
+                }
+            }
+            catch (Exception gone) when (gone is IOException or ObjectDisposedException)
+            {
+                // The run was put away while the program still wrote.
             }
         }
     }
@@ -175,8 +188,13 @@ public sealed class ProfilingSession : IAsyncDisposable
     public Task<MemorySnapshot> TakeMemorySnapshotAsync(CancellationToken cancellation = default) =>
         process.HasExited ? throw new InvalidOperationException("The program has ended; a memory snapshot needs it running") : MemorySnapshot.TakeAsync(process.Id, cancellation);
 
-    /// <summary>Finishes when the program has ended, by itself or killed.</summary>
-    public Task ExitedAsync() => process.WaitForExitAsync();
+    /// <summary>Finishes when the program has ended, by itself or killed, and what it wrote has been read: all of it, unless
+    /// something it started holds its output on past a moment.</summary>
+    public async Task ExitedAsync()
+    {
+        await process.WaitForExitAsync();
+        await Task.WhenAny(reading, Task.Delay(TimeSpan.FromSeconds(2)));
+    }
 
     /// <summary>Ends the program.</summary>
     public void Kill() => ChildProcesses.Kill(process);

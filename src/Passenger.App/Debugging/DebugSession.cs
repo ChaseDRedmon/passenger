@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using Passenger.Core;
 using Passenger.Dap;
 
@@ -50,7 +51,7 @@ public sealed class DebugSession
     /// <summary>The adapter's one disconnect, once asked: nothing more is asked of it, since it may go before answering.</summary>
     private Task? disconnected;
 
-    private DebugSession(BreakpointStore breakpoints, BuiltLines lines, Action<string> log)
+    private DebugSession(BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output)
     {
         this.breakpoints = breakpoints;
         this.lines = lines;
@@ -97,6 +98,15 @@ public sealed class DebugSession
         connection = new DapConnection(adapter.StandardOutput.BaseStream, adapter.StandardInput.BaseStream, log);
         connection.EventReceived += (name, body) =>
         {
+            if (name == "output")
+            {
+                // Here, in order with the events around it, rather than a job for the window at each of a program's writes.
+                if (body.ValueKind == JsonValueKind.Object && body.Deserialize<OutputEvent>(DapConnection.Options) is { } written)
+                {
+                    output(written);
+                }
+                return;
+            }
             JsonElementCopy copy = new(body);
             UiThread.Post(() => OnEvent(name, copy));
         };
@@ -104,9 +114,6 @@ public sealed class DebugSession
     }
 
     public event EventHandler? StateChanged;
-
-    /// <summary>The program wrote to its output, or the debugger has something to say ("console").</summary>
-    public event EventHandler<OutputEvent>? Output;
 
     public DebugState State { get; private set; } = DebugState.Starting;
 
@@ -137,8 +144,9 @@ public sealed class DebugSession
 
     /// <summary>Starts the adapter and launches a program under it (an apphost or a .dll run under
     /// dotnet), with the breakpoints the store has, stopping on exceptions the user's code leaves
-    /// unhandled, as Rider does by default.</summary>
-    public static Task<DebugSession> LaunchAsync(DebugTarget target, BreakpointStore breakpoints, BuiltLines lines, Action<string> log) =>
+    /// unhandled, as Rider does by default. What the program writes, and the debugger's own words ("console"), go to
+    /// <paramref name="output"/> on the connection's thread, in order.</summary>
+    public static Task<DebugSession> LaunchAsync(DebugTarget target, BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output) =>
         StartAsync(target.Program, "launch", new LaunchArguments
         {
             Program = target.Program,
@@ -148,17 +156,17 @@ public sealed class DebugSession
             Console = "internalConsole",
             JustMyCode = true,
             StopAtEntry = false,
-        }, breakpoints, lines, log);
+        }, breakpoints, lines, log, output);
 
     /// <summary>Starts the adapter and attaches it to a running .NET process (a test host VSTest started), with the
     /// store's breakpoints, as Attach to Process does.</summary>
-    public static Task<DebugSession> AttachAsync(int processId, BreakpointStore breakpoints, BuiltLines lines, Action<string> log) =>
-        StartAsync($"process {processId}", "attach", new AttachArguments { ProcessId = processId, JustMyCode = true }, breakpoints, lines, log);
+    public static Task<DebugSession> AttachAsync(int processId, BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output) =>
+        StartAsync($"process {processId}", "attach", new AttachArguments { ProcessId = processId, JustMyCode = true }, breakpoints, lines, log, output);
 
-    private static async Task<DebugSession> StartAsync(string program, string request, object arguments, BreakpointStore breakpoints, BuiltLines lines, Action<string> log)
+    private static async Task<DebugSession> StartAsync(string program, string request, object arguments, BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output)
     {
         UiThread.Check();
-        DebugSession session = new(breakpoints, lines, log) { Program = program };
+        DebugSession session = new(breakpoints, lines, log, output) { Program = program };
         session.connection.Start();
         try
         {
@@ -219,6 +227,9 @@ public sealed class DebugSession
 
     /// <summary>Text for the program's standard input.</summary>
     public Task InputAsync(string text) => State == DebugState.Ended || disconnected is not null ? Task.CompletedTask : connection.RequestAsync("input", new InputArguments(text));
+
+    /// <summary>The end of the program's standard input, as Ctrl+D in its console.</summary>
+    public Task CloseInputAsync() => State == DebugState.Ended || disconnected is not null ? Task.CompletedTask : connection.RequestAsync("input", new InputArguments(string.Empty, Close: true));
 
     public async Task PauseAsync()
     {
@@ -486,9 +497,6 @@ public sealed class DebugSession
                 break;
             case "continued":
                 SetState(DebugState.Running);
-                break;
-            case "output":
-                Output?.Invoke(this, body.Read<OutputEvent>());
                 break;
             case "breakpoint":
                 BreakpointEvent changed = body.Read<BreakpointEvent>();

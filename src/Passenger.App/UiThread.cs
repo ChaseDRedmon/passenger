@@ -17,12 +17,16 @@ public static class UiThread
 
     /// <summary>Runs work on the UI thread, later, from any thread; only a crossing is held, since work posted on the
     /// UI thread is queued already where every wait runs it.</summary>
-    public static void Post(Action work)
+    public static void Post(Action work) => Post(work, DispatcherPriority.Default);
+
+    /// <summary><see cref="Post(Action)"/> at a priority of its own: work that can wait for the window's input and drawing
+    /// (a console's next batch of output) goes below them.</summary>
+    public static void Post(Action work, DispatcherPriority priority)
     {
         Dispatcher? owned = owner;
         if (owned?.CheckAccess() ?? Dispatcher.UIThread.CheckAccess())
         {
-            Dispatcher.UIThread.Post(() => Run(work));
+            Dispatcher.UIThread.Post(() => Run(work), priority);
             return;
         }
         IDisposable held = BackgroundWork.Scope();
@@ -36,7 +40,7 @@ public static class UiThread
             {
                 held.Dispose();
             }
-        });
+        }, priority);
         // A dispatcher that has shut down (a headless test's, once it is over) aborts what it will never run.
         operation.Aborted += (_, _) => held.Dispose();
         if (operation.Status == DispatcherOperationStatus.Aborted)

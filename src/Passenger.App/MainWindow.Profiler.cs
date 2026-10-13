@@ -59,19 +59,29 @@ public partial class MainWindow
             DebugTarget target = await DebugTarget.ResolveAsync(chosen, arguments);
             ProfileTarget profiled = new(Core.Dotnet.Host(), [target.Program, .. target.Arguments], target.WorkingDirectory, target.Environment);
             ShowToolWindow("profiler");
-            Bottom.Run.Document.Clear();
+            Bottom.Run.Clear();
+            ToolWindows.ConsoleSink console = Bottom.Run.Sink;
             // Held until the program has reached the profiler (or never will), not while it runs: that is the person's.
             using (BackgroundWork.Scope())
             {
-                profiling = await ProfilingSession.StartAsync(profiled, SnapshotFolder, UiThread.Marshal<string>(line => Bottom.Run.Document.Append(line + "\n")));
+                profiling = await ProfilingSession.StartAsync(profiled, SnapshotFolder,
+                    (text, error) => console.Write(text, error ? ToolWindows.ConsoleStream.Error : ToolWindows.ConsoleStream.Output));
             }
             profilingName = chosen.Name;
             ProfilingSession running = profiling;
+            Bottom.Run.Input = Run.ProgramInput.Of(running.Input);
             profilerView!.Running(chosen.Name, () => running.Elapsed);
             StatusText.Text = $"Profiling {chosen.Name}";
             // A program that ends by itself ends the run, and its snapshot shows.
             _ = running.ExitedAsync().ContinueWith(_ => UiThread.Post(() =>
             {
+                console.End(ToolWindows.ConsoleStream.Output);
+                console.End(ToolWindows.ConsoleStream.Error);
+                if (!runner.IsRunning)
+                {
+                    Bottom.Run.Input = null;
+                }
+                Bottom.Run.Flush();
                 if (profiling == running)
                 {
                     _ = SnapshotAsync();

@@ -1,23 +1,40 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Input.Platform;
+using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Passenger.Editor;
 using Passenger.Text;
 
 namespace Passenger.App.ToolWindows;
 
-/// <summary>A program's or a build's output: the code editor, read-only, following the end while the
-/// output grows, with Rider's run toolbar down its left side (rerun, stop, clear). What came from standard
-/// error is drawn in the error colour, as Rider's console draws it.</summary>
+/// <summary>A program's or a build's console: the code editor, read-only, following the end while the output grows, with
+/// Rider's run toolbar down its left side (rerun, stop, clear). Output comes through its <see cref="Sink"/> from any
+/// thread; standard error is drawn in the error colour, and what a person types goes to the program's <see cref="Input"/>
+/// a line at a time, in the input colour, as Rider's console takes it. It keeps Rider's console cycle buffer of text,
+/// the oldest lines dropped past it.</summary>
 public sealed class OutputView : DockPanel
 {
+    /// <summary>Rider's console cycle buffer, <c>idea.cycle.buffer.size</c>: 1024 KB of text.</summary>
+    public const int DefaultLimitKb = 1024;
+
     private readonly Button rerun;
     private readonly Button stop;
-    private readonly ErrorOutput errors = new();
+    private readonly ConsoleColours colours = new();
+    private int limit = DefaultLimitKb * 1024;
+    private ConsoleInput? input;
+
+    /// <summary>Where the line being typed begins, at the end when none is: output goes in before it.</summary>
+    private int typedFrom;
+
+    /// <summary>The console's own edits under way, which are never a Clear.</summary>
+    private bool editing;
 
     public OutputView()
     {
         Document = new TextDocument();
+        Sink = new ConsoleSink(Flush, limit);
         Editor = new CodeEditor
         {
             Document = Document,
@@ -26,7 +43,7 @@ public sealed class OutputView : DockPanel
             ShowLineNumbers = false,
             ShowErrorStripe = false,
             FontSize = 12.5,
-            Highlighter = errors,
+            Highlighter = colours,
         };
         rerun = Tool("Icon.Rerun", "Rerun");
         stop = Tool("Icon.Stop", "Stop");
@@ -34,7 +51,7 @@ public sealed class OutputView : DockPanel
         stop.IsEnabled = false;
         rerun.Click += (_, _) => RerunClicked?.Invoke(this, EventArgs.Empty);
         stop.Click += (_, _) => StopClicked?.Invoke(this, EventArgs.Empty);
-        clear.Click += (_, _) => Document.Clear();
+        clear.Click += (_, _) => Clear();
         Border toolbar = new()
         {
             [DockProperty] = Dock.Left,
@@ -46,12 +63,19 @@ public sealed class OutputView : DockPanel
         Children.Add(toolbar);
         Children.Add(Editor);
         Editor.ContextMenuRequested += (_, at) => ShowMenu(at);
+        // Ahead of the editor's own handling, which a read-only editor gives nothing to.
+        Editor.AddHandler(KeyDownEvent, OnKey, RoutingStrategies.Tunnel);
+        Editor.AddHandler(TextInputEvent, OnText, RoutingStrategies.Tunnel);
         Document.Changed += (_, change) =>
         {
-            // Output only ever grows at the end; anything taken away is a Clear, which takes the colours with it.
-            if (change.Edits.Any(e => e.Length > 0))
+            if (!editing)
             {
-                errors.Clear();
+                // Another's change ends the line being typed; one that takes text away is a Clear, colours and all.
+                if (change.Edits.Any(e => e.Length > 0))
+                {
+                    colours.Clear();
+                }
+                typedFrom = Document.Snapshot.Length;
             }
             Editor.ScrollToEnd();
         };
@@ -60,8 +84,44 @@ public sealed class OutputView : DockPanel
     public event EventHandler? RerunClicked;
     public event EventHandler? StopClicked;
 
+    /// <summary>A program's text as it reached the console, its colour codes gone: what a build's error list reads, a
+    /// batch at a time.</summary>
+    public event EventHandler<string>? Written;
+
     public TextDocument Document { get; }
     public CodeEditor Editor { get; }
+
+    /// <summary>Where programs write to this console, from any thread.</summary>
+    public ConsoleSink Sink { get; }
+
+    /// <summary>How much text the console keeps, in characters; past it the oldest lines go, as in Rider's console.</summary>
+    public int Limit
+    {
+        get => limit;
+        set
+        {
+            limit = Math.Max(1, value);
+            Sink.Limit = limit;
+            Trim();
+        }
+    }
+
+    /// <summary>Where the console's typing goes: the running program's input, or null when nothing will read it. The
+    /// program's end, or the end of its input (Ctrl+D), sets it back to null.</summary>
+    public ConsoleInput? Input
+    {
+        get => input;
+        set
+        {
+            UiThread.Check();
+            input = value;
+            if (value is null)
+            {
+                // What was typed and never sent stays as text, no longer a line being typed.
+                typedFrom = Document.Snapshot.Length;
+            }
+        }
+    }
 
     /// <summary>The console's menu, as Rider's: Copy the selection, Select All, and Clear All.</summary>
     private void ShowMenu(Point? at)
@@ -72,7 +132,7 @@ public sealed class OutputView : DockPanel
             MenuItem item = new() { Header = header };
             if (action is not null && keymap.ShortcutsFor(action).FirstOrDefault(s => s.Second is null) is { } keys)
             {
-                item.InputGesture = new Avalonia.Input.KeyGesture(keys.First.Key, keys.First.Modifiers);
+                item.InputGesture = new KeyGesture(keys.First.Key, keys.First.Modifiers);
             }
             item.Click += (_, _) => run();
             return item;
@@ -87,7 +147,7 @@ public sealed class OutputView : DockPanel
                 copy,
                 Item("Select All", EditorActions.SelectAll, () => Editor.TryExecute(EditorActions.SelectAll)),
                 new Separator(),
-                Item("Clear All", null, Document.Clear),
+                Item("Clear All", null, Clear),
             },
         };
         if (at is null)
@@ -103,21 +163,219 @@ public sealed class OutputView : DockPanel
     /// <summary>The console's menu while it is open.</summary>
     public ContextMenu? Menu { get; private set; }
 
-    /// <summary>Adds a program's output at the end; standard error's in its own colour.</summary>
+    /// <summary>Adds the IDE's own words (a command line, how a run ended, why it could not start) after everything
+    /// written before them, at once; in the error colour when they say what went wrong.</summary>
     public void Append(string text, bool error = false)
     {
-        int start = Document.Snapshot.Length;
-        Document.Append(text);
-        if (error && text.Length > 0)
+        UiThread.Check();
+        Flush();
+        Insert(text, [new ConsoleRun(0, text.Length, error ? ConsoleStream.Error : ConsoleStream.System)]);
+    }
+
+    /// <summary>Empties the console: its text, what is still on its way, and the line being typed.</summary>
+    public void Clear()
+    {
+        UiThread.Check();
+        Sink.Drop();
+        Document.Clear();
+    }
+
+    /// <summary>Takes in what waits in the sink now, rather than at the next frame: before the IDE says a program
+    /// ended or stopped, or reads what it wrote.</summary>
+    public void Flush()
+    {
+        UiThread.Check();
+        if (Sink.Take() is not { } batch)
         {
-            errors.Add(start, text.Length);
+            return;
         }
+        Insert(batch.Text, batch.Runs);
+        Written?.Invoke(this, batch.Runs.Count == 1 && batch.Runs[0].Stream != ConsoleStream.System
+            ? batch.Text
+            : string.Concat(batch.Runs.Where(r => r.Stream != ConsoleStream.System).Select(r => batch.Text.Substring(r.Start, r.Length))));
     }
 
     public void SetRunning(bool running)
     {
         stop.IsEnabled = running;
         rerun.IsEnabled = !running;
+    }
+
+    /// <summary>Puts text in before the line being typed (at the end when there is none), its error runs coloured, and
+    /// keeps the console within its limit.</summary>
+    private void Insert(string text, IReadOnlyList<ConsoleRun> runs)
+    {
+        if (text.Length == 0)
+        {
+            return;
+        }
+        int at = typedFrom;
+        Selection caret = Editor.Selections.Primary;
+        bool following = !Editor.Selections.HasMultiple && caret.IsEmpty && caret.Caret >= at;
+        int typedCaret = caret.Caret - at;
+        Edit(at, 0, text);
+        colours.Insert(at, text.Length, runs.Where(r => r.Stream == ConsoleStream.Error).Select(r => (at + r.Start, r.Length)));
+        typedFrom += text.Length;
+        Trim();
+        if (following)
+        {
+            // A caret at the end, or in the line being typed, stays where it was in that line.
+            Editor.Selections = SelectionSet.Single(typedFrom + typedCaret);
+        }
+    }
+
+    /// <summary>Drops the oldest lines while the text is past the limit, from a line's start where one is near enough.</summary>
+    private void Trim()
+    {
+        TextSnapshot text = Document.Snapshot;
+        int over = text.Length - limit;
+        if (over <= 0)
+        {
+            return;
+        }
+        int line = text.GetLineFromOffset(over);
+        int cut = text.GetLineStart(line) == over || line + 1 >= text.LineCount ? over : text.GetLineStart(line + 1);
+        cut = Math.Min(cut, typedFrom);
+        if (cut <= 0)
+        {
+            return;
+        }
+        Edit(0, cut, string.Empty);
+        colours.Trim(cut);
+        typedFrom -= cut;
+    }
+
+    private void Edit(int start, int length, string text)
+    {
+        editing = true;
+        try
+        {
+            if (start == Document.Snapshot.Length && length == 0)
+            {
+                Document.Append(text);
+            }
+            else
+            {
+                Document.Rewrite(start, length, text);
+            }
+        }
+        finally
+        {
+            editing = false;
+        }
+    }
+
+    private void OnText(object? sender, TextInputEventArgs e)
+    {
+        if (input is null || string.IsNullOrEmpty(e.Text))
+        {
+            return;
+        }
+        Type(e.Text);
+        e.Handled = true;
+    }
+
+    /// <summary>The keys a console with a program's input takes: Enter sends the line, Backspace takes back what was typed,
+    /// Ctrl+D (Rider's Send EOF, on every platform) ends the input, and Paste types the clipboard.</summary>
+    private void OnKey(object? sender, KeyEventArgs e)
+    {
+        if (input is null)
+        {
+            return;
+        }
+        if (e.Key == Key.Enter && e.KeyModifiers is KeyModifiers.None or KeyModifiers.Shift)
+        {
+            SendLine();
+        }
+        else if (e.Key == Key.Back && e.KeyModifiers == KeyModifiers.None)
+        {
+            Backspace();
+        }
+        else if (e.Key == Key.D && e.KeyModifiers == KeyModifiers.Control)
+        {
+            EndInput();
+        }
+        else if (AppActions.Keymap().ActionFor(new Shortcut(Keystroke.From(e))) == EditorActions.Paste)
+        {
+            _ = PasteAsync();
+        }
+        else
+        {
+            return;
+        }
+        e.Handled = true;
+    }
+
+    /// <summary>Text typed at the end of the line being typed, the caret after it.</summary>
+    private void Type(string typed)
+    {
+        string text = new([.. typed.Where(c => c >= ' ' && c != '\u007f')]);
+        if (text.Length == 0)
+        {
+            return;
+        }
+        int end = Document.Snapshot.Length;
+        Edit(end, 0, text);
+        colours.Insert(end, text.Length, [(end, text.Length)], TokenKind.UserInput);
+        Editor.Selections = SelectionSet.Single(Document.Snapshot.Length);
+    }
+
+    private void SendLine()
+    {
+        TextSnapshot text = Document.Snapshot;
+        string line = text.GetText(typedFrom, text.Length - typedFrom);
+        Edit(text.Length, 0, "\n");
+        typedFrom = Document.Snapshot.Length;
+        Editor.Selections = SelectionSet.Single(typedFrom);
+        input?.Send(line + "\n");
+    }
+
+    private void Backspace()
+    {
+        int end = Document.Snapshot.Length;
+        if (end == typedFrom)
+        {
+            return;
+        }
+        int length = end - typedFrom >= 2 && char.IsLowSurrogate(Document.Snapshot[end - 1]) && char.IsHighSurrogate(Document.Snapshot[end - 2]) ? 2 : 1;
+        Edit(end - length, length, string.Empty);
+        colours.Remove(end - length);
+        Editor.Selections = SelectionSet.Single(Document.Snapshot.Length);
+    }
+
+    /// <summary>Rider's Send EOF: what was typed goes without a line break, "^D" is shown, and the program's input ends.</summary>
+    private void EndInput()
+    {
+        if (input is not { } ending)
+        {
+            return;
+        }
+        TextSnapshot text = Document.Snapshot;
+        if (text.Length > typedFrom)
+        {
+            ending.Send(text.GetText(typedFrom, text.Length - typedFrom));
+        }
+        typedFrom = text.Length;
+        Input = null;
+        Append("^D\n");
+        ending.Close();
+    }
+
+    private async Task PasteAsync()
+    {
+        if (TopLevel.GetTopLevel(this)?.Clipboard is not { } clipboard || await clipboard.TryGetTextAsync() is not { Length: > 0 } pasted)
+        {
+            return;
+        }
+        string[] lines = pasted.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
+        for (int i = 0; i < lines.Length && input is not null; i++)
+        {
+            Type(lines[i]);
+            if (i < lines.Length - 1)
+            {
+                SendLine();
+            }
+        }
     }
 
     private static Button Tool(string icon, string tip)
@@ -128,22 +386,68 @@ public sealed class OutputView : DockPanel
         return button;
     }
 
-    /// <summary>The stretches of the console that came from standard error, in order.</summary>
-    private sealed class ErrorOutput : IHighlighter
+    /// <summary>The console's coloured stretches (standard error, what was typed), in order and apart. They are kept in
+    /// offsets from the start of all the console has held since it was last cleared, so dropping its oldest lines moves
+    /// none of them, and a line's colours are found by halving.</summary>
+    private sealed class ConsoleColours : IHighlighter
     {
         private readonly List<SyntaxSpan> spans = [];
 
+        /// <summary>How much text has been dropped from the start since the console was cleared.</summary>
+        private int dropped;
+
         public event EventHandler? Changed;
 
-        public void Add(int start, int length)
+        /// <summary>Text put in at an offset: the stretches from there on move after it, and those given are coloured.</summary>
+        public void Insert(int at, int length, IEnumerable<(int Start, int Length)> coloured, TokenKind kind = TokenKind.ErrorOutput)
         {
-            if (spans.Count > 0 && spans[^1].End == start)
+            int index = First(at + dropped);
+            for (int i = index; i < spans.Count; i++)
             {
-                spans[^1] = spans[^1] with { Length = spans[^1].Length + length };
+                spans[i] = spans[i] with { Start = spans[i].Start + length };
             }
-            else
+            foreach ((int start, int count) in coloured)
             {
-                spans.Add(new SyntaxSpan(start, length, TokenKind.ErrorOutput));
+                SyntaxSpan span = new(start + dropped, count, kind);
+                if (index > 0 && spans[index - 1].Kind == kind && spans[index - 1].End == span.Start)
+                {
+                    spans[index - 1] = spans[index - 1] with { Length = spans[index - 1].Length + count };
+                }
+                else
+                {
+                    spans.Insert(index++, span);
+                }
+            }
+            Changed?.Invoke(this, EventArgs.Empty);
+        }
+
+        /// <summary>Text from an offset to the end was taken away (a character typed, taken back).</summary>
+        public void Remove(int from)
+        {
+            int at = from + dropped;
+            for (int i = spans.Count - 1; i >= 0 && spans[i].End > at; i--)
+            {
+                if (spans[i].Start >= at)
+                {
+                    spans.RemoveAt(i);
+                }
+                else
+                {
+                    spans[i] = spans[i] with { Length = at - spans[i].Start };
+                }
+            }
+            Changed?.Invoke(this, EventArgs.Empty);
+        }
+
+        /// <summary>The oldest text, to an offset, was dropped.</summary>
+        public void Trim(int length)
+        {
+            dropped += length;
+            int gone = First(dropped);
+            spans.RemoveRange(0, gone);
+            if (spans.Count > 0 && spans[0].Start < dropped)
+            {
+                spans[0] = new SyntaxSpan(dropped, spans[0].End - dropped, spans[0].Kind);
             }
             Changed?.Invoke(this, EventArgs.Empty);
         }
@@ -151,33 +455,39 @@ public sealed class OutputView : DockPanel
         public void Clear()
         {
             spans.Clear();
+            dropped = 0;
             Changed?.Invoke(this, EventArgs.Empty);
         }
 
         public IReadOnlyList<SyntaxSpan> GetSpans(TextSnapshot text, int start, int length)
         {
-            int end = start + length;
-            // The stretches are in order and apart, so the first reaching past the start is found by halving.
-            int first = 0;
-            int high = spans.Count;
-            while (first < high)
+            int end = start + length + dropped;
+            List<SyntaxSpan> found = [];
+            for (int i = First(start + dropped); i < spans.Count && spans[i].Start < end; i++)
             {
-                int middle = (first + high) / 2;
-                if (spans[middle].End <= start)
+                found.Add(spans[i] with { Start = spans[i].Start - dropped });
+            }
+            return found;
+        }
+
+        /// <summary>The first stretch reaching past an offset, found by halving: they are in order and apart.</summary>
+        private int First(int offset)
+        {
+            int low = 0;
+            int high = spans.Count;
+            while (low < high)
+            {
+                int middle = (low + high) / 2;
+                if (spans[middle].End <= offset)
                 {
-                    first = middle + 1;
+                    low = middle + 1;
                 }
                 else
                 {
                     high = middle;
                 }
             }
-            List<SyntaxSpan> found = [];
-            for (int i = first; i < spans.Count && spans[i].Start < end; i++)
-            {
-                found.Add(spans[i]);
-            }
-            return found;
+            return low;
         }
     }
 }

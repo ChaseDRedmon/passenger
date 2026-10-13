@@ -30,22 +30,14 @@ public sealed class DebugView : DockPanel
     private readonly Dictionary<string, Button> tools = [];
     private readonly TextBlock placeholder;
     private readonly DockPanel consolePane;
-    private readonly TextBox input;
     private bool showingFrames;
 
     public DebugView()
     {
         VariablesTree tree = Tree;
         Console = new OutputView();
-        input = new TextBox
-        {
-            [DockProperty] = Dock.Bottom,
-            Classes = { "search" },
-            Margin = new Thickness(42, 4, 6, 6),
-            PlaceholderText = "Input for the program (Enter sends a line)",
-        };
-        input.AddHandler(KeyDownEvent, OnInputKey, Avalonia.Interactivity.RoutingStrategies.Tunnel);
-        consolePane = new DockPanel { IsVisible = false, Children = { input, Console } };
+        // What is typed into the console is the program's input, as in Rider's Debug console.
+        consolePane = new DockPanel { IsVisible = false, Children = { Console } };
 
         threads = new ComboBox
         {
@@ -181,9 +173,6 @@ public sealed class DebugView : DockPanel
     /// <summary>An expression to evaluate once (false), or to keep as a watch (true).</summary>
     public event EventHandler<(string Expression, bool Watch)>? EvaluateRequested;
 
-    /// <summary>A line typed for the program's input, without its line break.</summary>
-    public event EventHandler<string>? InputEntered;
-
     /// <summary>A watch to stop watching.</summary>
     public event EventHandler<string>? WatchRemoved;
 
@@ -255,7 +244,6 @@ public sealed class DebugView : DockPanel
         tools[AppActions.Pause].IsEnabled = state == DebugState.Running;
         tools[AppActions.Stop].IsEnabled = live;
         evaluate.IsEnabled = paused;
-        input.IsEnabled = live;
         placeholder.IsVisible = state == DebugState.Ended && Frames.Count == 0;
     }
 
@@ -264,7 +252,7 @@ public sealed class DebugView : DockPanel
     {
         ShowFrames([], null, [], null);
         Tree.Show([]);
-        Console.Document.Clear();
+        Console.Clear();
     }
 
     public void FocusEvaluate(string text)
@@ -296,17 +284,6 @@ public sealed class DebugView : DockPanel
         {
             evaluate.Text = string.Empty;
         }
-        e.Handled = true;
-    }
-
-    private void OnInputKey(object? sender, KeyEventArgs e)
-    {
-        if (e.Key != Key.Enter)
-        {
-            return;
-        }
-        InputEntered?.Invoke(this, input.Text ?? string.Empty);
-        input.Text = string.Empty;
         e.Handled = true;
     }
 

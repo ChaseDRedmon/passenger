@@ -1,26 +1,35 @@
 using System.Diagnostics;
 using System.Text;
-using System.Text.RegularExpressions;
-using Avalonia.Threading;
+using Passenger.App.ToolWindows;
 using Passenger.Core;
 using Passenger.Text;
 
 namespace Passenger.App.Run;
 
-/// <summary>A child process whose output and errors stream into a console as they arrive: read off
-/// the UI thread, appended on it in batches, terminal colour codes taken out, standard error in the
-/// error colour. Stopping kills the whole process tree, as a run's Stop button does.</summary>
-public sealed partial class ProcessRunner
+/// <summary>A child process whose output and errors stream into a console as they arrive, through its sink: read off the
+/// UI thread, colour codes taken out, standard error in the error colour. A program run (not a build) reads what the
+/// person types into the console, as in Rider; a build's input is closed, so a step that reads ends rather than waits.
+/// Stopping kills the whole process tree, as a run's Stop button does.</summary>
+public sealed class ProcessRunner
 {
-    private readonly object gate = new();
-    private readonly List<(StringBuilder Text, bool Error)> pending = [];
     private readonly StringBuilder partialLine = new();
-    private readonly ToolWindows.OutputView console;
+    private readonly OutputView console;
+    private readonly bool takesInput;
     private Process? process;
     private bool running;
-    private bool flushQueued;
 
-    public ProcessRunner(ToolWindows.OutputView console) => this.console = console;
+    public ProcessRunner(OutputView console, bool takesInput = false)
+    {
+        this.console = console;
+        this.takesInput = takesInput;
+        console.Written += (_, text) =>
+        {
+            if (running && Line is not null)
+            {
+                Lines(text);
+            }
+        };
+    }
 
     /// <summary>A whole line of output, for whoever reads it (the build's error list); UI thread.</summary>
     public event EventHandler<string>? Line;
@@ -69,13 +78,13 @@ public sealed partial class ProcessRunner
         WasStopped = false;
         start.RedirectStandardOutput = true;
         start.RedirectStandardError = true;
-        // Kept open for what the person types into the Run window.
-        start.RedirectStandardInput = true;
+        // Otherwise ChildProcesses closes it as the program starts.
+        start.RedirectStandardInput = takesInput;
         foreach ((string key, string value) in environment ?? new Dictionary<string, string>())
         {
             start.Environment[key] = value;
         }
-        Output.Append($"{ChildProcesses.Display(start)}\n");
+        console.Append($"{ChildProcesses.Display(start)}\n");
         Process started;
         try
         {
@@ -90,20 +99,26 @@ public sealed partial class ProcessRunner
         }
         process = started;
         running = true;
-        Task outputs = Task.WhenAll(Pump(started.StandardOutput, error: false), Pump(started.StandardError, error: true));
+        if (takesInput)
+        {
+            console.Input = ProgramInput.Of(started.StandardInput);
+        }
+        ConsoleSink sink = console.Sink;
+        Task outputs = Task.WhenAll(Pump(started.StandardOutput, sink, ConsoleStream.Output), Pump(started.StandardError, sink, ConsoleStream.Error));
         _ = outputs.ContinueWith(_ =>
         {
             started.WaitForExit();
             int code = started.ExitCode;
             UiThread.Post(() =>
             {
-                Flush();
+                console.Input = null;
+                console.Flush();
                 if (partialLine.Length > 0)
                 {
                     Line?.Invoke(this, partialLine.ToString());
                     partialLine.Clear();
                 }
-                Output.Append($"\nProcess finished with exit code {code}.\n");
+                console.Append($"\nProcess finished with exit code {code}.\n");
                 running = false;
                 Exited?.Invoke(this, code);
             });
@@ -123,47 +138,20 @@ public sealed partial class ProcessRunner
         }
     }
 
-    private async Task Pump(StreamReader reader, bool error)
+    /// <summary>Reads a stream into the sink as it comes, a read at a time, and ends the stream's state at its end.</summary>
+    private static async Task Pump(StreamReader reader, ConsoleSink sink, ConsoleStream stream)
     {
         char[] buffer = new char[8192];
         int read;
         while ((read = await reader.ReadAsync(buffer)) > 0)
         {
-            lock (gate)
-            {
-                if (pending.Count == 0 || pending[^1].Error != error)
-                {
-                    pending.Add((new StringBuilder(), error));
-                }
-                pending[^1].Text.Append(buffer, 0, read);
-                if (flushQueued)
-                {
-                    continue;
-                }
-                flushQueued = true;
-            }
-            Dispatcher.UIThread.Post(Flush, DispatcherPriority.Background);
+            sink.Write(buffer.AsSpan(0, read), stream);
         }
+        sink.End(stream);
     }
 
-    private void Flush()
+    private void Lines(string text)
     {
-        List<(string Text, bool Error)> chunks;
-        lock (gate)
-        {
-            chunks = [.. pending.Select(p => (Ansi().Replace(p.Text.Replace("\r\n", "\n").ToString(), string.Empty), p.Error))];
-            pending.Clear();
-            flushQueued = false;
-        }
-        foreach ((string chunk, bool error) in chunks)
-        {
-            console.Append(chunk, error);
-        }
-        string text = string.Concat(chunks.Select(c => c.Text));
-        if (text.Length == 0)
-        {
-            return;
-        }
         partialLine.Append(text);
         string lines = partialLine.ToString();
         int end = lines.LastIndexOf('\n');
@@ -178,7 +166,4 @@ public sealed partial class ProcessRunner
         partialLine.Clear();
         partialLine.Append(lines, end + 1, lines.Length - end - 1);
     }
-
-    [GeneratedRegex(@"\x1B\[[0-9;?]*[ -/]*[@-~]|\x1B\][^\x07]*\x07")]
-    private static partial Regex Ansi();
 }
