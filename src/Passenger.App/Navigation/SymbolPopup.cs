@@ -8,6 +8,7 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using Passenger.App.CSharp;
 using Passenger.Editor;
+using Passenger.Lsp;
 using Passenger.Text;
 
 namespace Passenger.App.Navigation;
@@ -25,7 +26,8 @@ public sealed record SymbolRow(string Name, string? Detail, string? Where, int K
 }
 
 /// <summary>A query over symbols, answered as it is typed (a moment after the last key, the previous answer given
-/// up): Go to Symbol, Go to Everything and File Structure. Up and Down move, Enter goes, Escape leaves.</summary>
+/// up): Go to Symbol, Go to Everything and File Structure. Up and Down move, Enter goes, Escape leaves. A search the
+/// language server cannot answer fails with a <see cref="LanguageServerFailed"/>, whose message the popup shows.</summary>
 public sealed class SymbolPopup : UserControl
 {
     private static readonly TimeSpan Pause = TimeSpan.FromMilliseconds(120);
@@ -119,9 +121,9 @@ public sealed class SymbolPopup : UserControl
         catch (OperationCanceledException)
         {
         }
-        catch (Exception error) when (error is StreamJsonRpc.RemoteInvocationException or StreamJsonRpc.ConnectionLostException or InvalidOperationException)
+        catch (LanguageServerFailed failed)
         {
-            empty.Text = error.Message;
+            empty.Text = failed.Message;
             empty.IsVisible = true;
             IsSettled = true;
         }

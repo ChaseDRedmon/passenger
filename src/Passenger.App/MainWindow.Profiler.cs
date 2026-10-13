@@ -204,7 +204,16 @@ public partial class MainWindow
         string typeName = type[(type.LastIndexOf('.') + 1)..];
         // Roslyn names a constructor by its type, and a lambda's method is the one that holds it.
         string query = name is ".ctor" ? typeName : name.Split('>')[0].TrimStart('<').Split('|')[0];
-        IReadOnlyList<Lsp.SymbolInformation> found = await session.SymbolsAsync(query, CancellationToken.None);
+        IReadOnlyList<Lsp.SymbolInformation> found;
+        try
+        {
+            found = await session.SymbolsAsync(query, CancellationToken.None);
+        }
+        catch (Lsp.LanguageServerFailed failed)
+        {
+            StatusText.Text = $"{method} could not be looked for: {failed.Reason}";
+            return;
+        }
         Lsp.SymbolInformation? best = found.FirstOrDefault(s => s.Name.StartsWith(query, StringComparison.Ordinal) && (s.ContainerName ?? string.Empty).EndsWith(typeName, StringComparison.Ordinal))
             ?? found.FirstOrDefault(s => s.Name.StartsWith(query, StringComparison.Ordinal));
         if (best?.Location is not { } location)

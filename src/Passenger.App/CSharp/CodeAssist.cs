@@ -113,6 +113,30 @@ public sealed class CodeAssist
 
     private CSharpDocument? Current => editors.Active is { } active ? service()?.For(active) : null;
 
+    /// <summary>The server's document for the file shown, asked for each time it is used, since a server started again
+    /// has a new one: null for a file that is not C#, and, said in the status bar for a command
+    /// (<paramref name="what"/>), while the server cannot take it.</summary>
+    private LspDocument? Ask(string? what = null)
+    {
+        if (Current is not { } current)
+        {
+            return null;
+        }
+        if (current.Lsp is null && what is not null && service() is { } csharp)
+        {
+            Message?.Invoke(this, csharp.Unready(what));
+        }
+        return current.Lsp;
+    }
+
+    /// <summary>An open file's server document as it is now, for what the person chose from an answer (a fix, a new
+    /// name): the server that answered may have been started again while they chose.</summary>
+    private LspDocument Now(OpenDocument document) => service()?.For(document)?.Lsp ?? throw new LanguageServerFailed(
+        service() is { } csharp ? $"the C# language server is not ready: {csharp.State}" : "no C# language server runs for this folder");
+
+    /// <summary>Says in the status bar why a command got nothing from the server.</summary>
+    private void Failed(string what, LanguageServerFailed failed) => Message?.Invoke(this, $"{what} failed: {failed.Reason}");
+
     /// <summary>Keys the open popups take before the editor does: the completion list's Up, Down, Enter,
     /// Tab and Escape, and Escape for a card.</summary>
     public bool TakeKey(string action)
@@ -368,8 +392,13 @@ public sealed class CodeAssist
                 list.ItemDefaults?.CommitCharacters ?? [], list.IsIncomplete);
             Filter();
         }
-        catch (Exception error) when (IsServerFailure(error))
+        catch (OperationCanceledException)
         {
+            // Typed on: the list is asked for again.
+        }
+        catch (LanguageServerFailed)
+        {
+            // No list, as with nothing to offer; typing on asks again.
         }
     }
 
@@ -456,8 +485,9 @@ public sealed class CodeAssist
                 item = await lsp.ResolveAsync(item) ?? item;
             }
         }
-        catch (Exception error) when (IsServerFailure(error))
+        catch (LanguageServerFailed)
         {
+            // The item goes in as listed, without what resolving would have added (a using it needs).
         }
         // The editor shows another file now: the item was for the one it showed.
         if (Editor.Document != document)
@@ -629,8 +659,13 @@ public sealed class CodeAssist
             itemCard.IsVisible = true;
             PlaceBeside(itemCard, completion);
         }
-        catch (Exception error) when (error is OperationCanceledException || IsServerFailure(error))
+        catch (OperationCanceledException)
         {
+            // Another item chosen, or the list closed.
+        }
+        catch (LanguageServerFailed)
+        {
+            // No card beside the list.
         }
         finally
         {
@@ -704,8 +739,13 @@ public sealed class CodeAssist
                     hoverCard.AddMarkdown(markdown);
                 }
             }
-            catch (Exception error) when (IsServerFailure(error))
+            catch (OperationCanceledException)
             {
+                return;
+            }
+            catch (LanguageServerFailed)
+            {
+                // The card says what the markers there say, without the symbol's description.
             }
         }
         if (hoverCard.IsEmpty || completion.IsVisible)
@@ -779,8 +819,13 @@ public sealed class CodeAssist
             signatureCard.IsVisible = true;
             Place(signatureCard, caret, above: true);
         }
-        catch (Exception error) when (IsServerFailure(error))
+        catch (OperationCanceledException)
         {
+            // The caret left the call, or asked again.
+        }
+        catch (LanguageServerFailed)
+        {
+            // No signature shown; the next bracket or comma asks again.
         }
     }
 
@@ -799,7 +844,8 @@ public sealed class CodeAssist
 
     private async Task ShowFixesCore(Func<CodeAction, bool>? only, string title)
     {
-        if (Current is not { Lsp: { } lsp } current)
+        string what = only is null ? "Show Context Actions" : title;
+        if (Ask(what) is not { } lsp || Current is not { } current || editors.Active is not { } document)
         {
             return;
         }
@@ -817,31 +863,32 @@ public sealed class CodeAssist
                 return;
             }
             List<Choice> choices = [.. actions.Select(a => new Choice(a.Title, a.Kind ?? string.Empty, a))];
-            ShowModal(new ChoicePopup(title, choices), primary.Caret, choice =>
-                choice?.Value is CodeAction chosen ? Carry(lsp, chosen, primary.Caret, chosen.Title, null) : Task.CompletedTask);
+            ShowModal(new ChoicePopup(title, choices), primary.Caret, what, choice =>
+                choice?.Value is CodeAction chosen ? Carry(document, chosen, primary.Caret, chosen.Title, null) : Task.CompletedTask);
         }
-        catch (Exception error) when (IsServerFailure(error))
+        catch (LanguageServerFailed failed)
         {
+            Failed(what, failed);
         }
     }
 
     /// <summary>A code action chosen, carried out: one that offers choices (a fix-all's scopes, the actions nested under
     /// it) offers them as a list at <paramref name="at"/> and applies the one chosen there; any other is applied at once.
     /// <paramref name="applied"/> runs once its change is made.</summary>
-    private async Task Carry(LspDocument lsp, CodeAction action, int at, string what, Asked? listed, Action? applied = null)
+    private async Task Carry(OpenDocument document, CodeAction action, int at, string what, Asked? listed, Action? applied = null)
     {
         IReadOnlyList<ActionChoice> choices = ClientCommands.Choices(action);
         if (choices.Count == 0)
         {
-            if (await Apply(lsp, action, null, what, listed))
+            if (await Apply(document, action, null, what, listed))
             {
                 applied?.Invoke();
             }
             return;
         }
-        ShowModal(new ChoicePopup(action.Title, [.. choices.Select(c => new Choice(c.Text, string.Empty, c))]), at, async choice =>
+        ShowModal(new ChoicePopup(action.Title, [.. choices.Select(c => new Choice(c.Text, string.Empty, c))]), at, what, async choice =>
         {
-            if (choice?.Value is ActionChoice chosen && await Apply(lsp, chosen.Action, chosen.Scope, what, null))
+            if (choice?.Value is ActionChoice chosen && await Apply(document, chosen.Action, chosen.Scope, what, null))
             {
                 applied?.Invoke();
             }
@@ -849,20 +896,22 @@ public sealed class CodeAssist
     }
 
     /// <summary>A code action's change made: resolved first when the server left it for later (a fix-all's over the scope
-    /// chosen), its edit applied, and a command it still carries, which Passenger cannot run, said in the status bar.
-    /// <paramref name="listed"/> follows the files from when the actions were asked for. Whether every file took it.</summary>
-    private async Task<bool> Apply(LspDocument lsp, CodeAction action, string? scope, string what, Asked? listed)
+    /// chosen), by the server running now, its edit applied, and a command it still carries, which Passenger cannot run,
+    /// said in the status bar, as is a server that cannot resolve it. <paramref name="listed"/> follows the files from
+    /// when the actions were asked for. Whether every file took it.</summary>
+    private async Task<bool> Apply(OpenDocument document, CodeAction action, string? scope, string what, Asked? listed)
     {
+        bool resolve = (action.Edit is null && action.Data is not null) || scope is not null;
         // An answer resolved now is for the text as it is now, and carried through what is typed while it comes.
-        using Asked? resolving = action.Edit is null || scope is not null ? WorkspaceEdits.Track(editors) : null;
+        using Asked? resolving = resolve ? WorkspaceEdits.Track(editors) : null;
         CodeAction chosen;
         try
         {
-            chosen = await lsp.ResolveChosenAsync(action, scope);
+            chosen = resolve ? await Now(document).ResolveChosenAsync(action, scope) : action;
         }
-        catch (Exception error) when (IsServerFailure(error))
+        catch (LanguageServerFailed failed)
         {
-            Message?.Invoke(this, $"{what} was not applied: the language server did not answer");
+            Message?.Invoke(this, $"{what} was not applied: {failed.Reason}");
             return false;
         }
         bool applied = chosen.Edit is { } edit && ApplyWorkspace(edit, resolving ?? listed, what);
@@ -884,7 +933,7 @@ public sealed class CodeAssist
     /// kind applied at once, and for Extract Method its new method's name then offered to rename, as Rider asks for it.</summary>
     private async Task Refactor(Func<CodeAction, bool> pick, string name, bool renameMethod)
     {
-        if (Current?.Lsp is not { } lsp)
+        if (Ask(name) is not { } lsp || editors.Active is not { } document)
         {
             return;
         }
@@ -901,7 +950,7 @@ public sealed class CodeAssist
                 return;
             }
             // Choices the server nests under the action (Introduce Variable's occurrences) are offered as a list first.
-            await Carry(lsp, action, primary.Caret, name, asked, () =>
+            await Carry(document, action, primary.Caret, name, asked, () =>
             {
                 Message?.Invoke(this, $"{name} done");
                 // The call that replaced the selection is where the new name is typed, in the file still shown.
@@ -912,8 +961,9 @@ public sealed class CodeAssist
                 }
             });
         }
-        catch (Exception error) when (IsServerFailure(error))
+        catch (LanguageServerFailed failed)
         {
+            Failed(name, failed);
         }
         finally
         {
@@ -923,7 +973,7 @@ public sealed class CodeAssist
 
     private void ShowRename()
     {
-        if (Current?.Lsp is not { } lsp)
+        if (Ask("Rename") is null || editors.Active is not { } document)
         {
             return;
         }
@@ -947,7 +997,8 @@ public sealed class CodeAssist
             try
             {
                 using Asked asked = WorkspaceEdits.Track(editors);
-                if (await lsp.RenameAsync(at, name) is { } edit)
+                // Asked of the server running now: the one there as the box opened may have been started again since.
+                if (await Now(document).RenameAsync(at, name) is { } edit)
                 {
                     List<string> dropped = [];
                     int files = WorkspaceEdits.Apply(editors, edit, asked, dropped);
@@ -959,9 +1010,9 @@ public sealed class CodeAssist
                     Message?.Invoke(this, "This can't be renamed");
                 }
             }
-            catch (Exception error) when (IsServerFailure(error))
+            catch (LanguageServerFailed failed)
             {
-                Message?.Invoke(this, "Rename failed");
+                Failed("Rename", failed);
             }
             catch (WorkspaceEditFailed failed)
             {
@@ -985,7 +1036,7 @@ public sealed class CodeAssist
 
     private async Task GoToDefinitionCore(int offset)
     {
-        if (Current?.Lsp is not { } lsp)
+        if (Ask("Go to Declaration") is not { } lsp)
         {
             return;
         }
@@ -993,8 +1044,9 @@ public sealed class CodeAssist
         {
             Go(await lsp.DefinitionAsync(offset), offset, "Declarations", "Cannot find a declaration to go to");
         }
-        catch (Exception error) when (IsServerFailure(error))
+        catch (LanguageServerFailed failed)
         {
+            Failed("Go to Declaration", failed);
         }
     }
 
@@ -1013,7 +1065,7 @@ public sealed class CodeAssist
 
     private async Task GoToImplementationCore(int offset)
     {
-        if (Current?.Lsp is not { } lsp)
+        if (Ask("Go to Implementation") is not { } lsp)
         {
             return;
         }
@@ -1021,8 +1073,9 @@ public sealed class CodeAssist
         {
             Go(await lsp.ImplementationAsync(offset), offset, "Implementations", "No implementations found");
         }
-        catch (Exception error) when (IsServerFailure(error))
+        catch (LanguageServerFailed failed)
         {
+            Failed("Go to Implementation", failed);
         }
     }
 
@@ -1041,7 +1094,7 @@ public sealed class CodeAssist
 
     private async Task FindUsagesCore(int offset)
     {
-        if (Current?.Lsp is not { } lsp)
+        if (Ask("Find Usages") is not { } lsp)
         {
             return;
         }
@@ -1062,8 +1115,9 @@ public sealed class CodeAssist
             string name = Editor.Document.Snapshot.GetText(start, end - start);
             UsagesFound?.Invoke(this, ($"Usages of {(name.Length > 0 ? name : "symbol")}", usages));
         }
-        catch (Exception error) when (IsServerFailure(error))
+        catch (LanguageServerFailed failed)
         {
+            Failed("Find Usages", failed);
         }
     }
 
@@ -1092,7 +1146,7 @@ public sealed class CodeAssist
             string shown = root.Length > 0 && PathNames.IsUnder(path, root) ? Path.GetRelativePath(root, path) : Path.GetFileName(path);
             return new Choice($"{shown}:{l.Range.Start.Line + 1}", LinePreview(path, l.Range.Start.Line), l, DetailIsCode: true);
         }).ToList();
-        ShowModal(new ChoicePopup(title, choices), offset, choice =>
+        ShowModal(new ChoicePopup(title, choices), offset, title, choice =>
         {
             if (choice?.Value is LspLocation location)
             {
@@ -1120,7 +1174,7 @@ public sealed class CodeAssist
 
     private async Task ReformatCore()
     {
-        if (Current?.Lsp is not { } lsp || editors.Active is not { } document)
+        if (Ask("Reformat Code") is not { } lsp || editors.Active is not { } document)
         {
             return;
         }
@@ -1133,8 +1187,9 @@ public sealed class CodeAssist
                 Message?.Invoke(this, edits.Count == 0 ? "Already formatted" : "Reformatted");
             }
         }
-        catch (Exception error) when (IsServerFailure(error))
+        catch (LanguageServerFailed failed)
         {
+            Failed("Reformat Code", failed);
         }
     }
 
@@ -1155,7 +1210,7 @@ public sealed class CodeAssist
     /// removed (IDE0005's fix), the usings sorted, then the file reformatted.</summary>
     private async Task CleanupCore()
     {
-        if (Current is not { Lsp: { } lsp } current || editors.Active is not { } document)
+        if (Ask("Code Cleanup") is not { } lsp || Current is not { } current || editors.Active is not { } document)
         {
             return;
         }
@@ -1163,7 +1218,7 @@ public sealed class CodeAssist
         try
         {
             List<Diagnostic> unused = [.. current.Diagnostics.Where(d => d.Code is { ValueKind: System.Text.Json.JsonValueKind.String } code && code.GetString() == "IDE0005")];
-            if (unused.Count > 0 && await ApplyNamed(lsp, LineRange(Editor.Document.Snapshot.GetLineFromOffset(lsp.OffsetOf(unused[0].Range.Start))), unused, "Remove unnecessary usings"))
+            if (unused.Count > 0 && await ApplyNamed(lsp, document, LineRange(Editor.Document.Snapshot.GetLineFromOffset(lsp.OffsetOf(unused[0].Range.Start))), unused, "Remove unnecessary usings"))
             {
                 done.Add("removed unused usings");
             }
@@ -1172,7 +1227,7 @@ public sealed class CodeAssist
             if (usingLine >= 0)
             {
                 string before = text.ToString();
-                if (await ApplyNamed(lsp, LineRange(usingLine), [], "Sort Usings") && Editor.Document.Snapshot.ToString() != before)
+                if (await ApplyNamed(lsp, document, LineRange(usingLine), [], "Sort Usings") && Editor.Document.Snapshot.ToString() != before)
                 {
                     done.Add("sorted the usings");
                 }
@@ -1186,8 +1241,9 @@ public sealed class CodeAssist
             }
             Message?.Invoke(this, done.Count == 0 ? "Already clean" : $"Code cleanup {string.Join(", ", done)}");
         }
-        catch (Exception error) when (IsServerFailure(error))
+        catch (LanguageServerFailed failed)
         {
+            Failed("Code Cleanup", failed);
         }
 
         TextRange LineRange(int line)
@@ -1198,7 +1254,7 @@ public sealed class CodeAssist
     }
 
     /// <summary>Runs the server's action of that title at a range, if it offers one; whether it did.</summary>
-    private async Task<bool> ApplyNamed(LspDocument lsp, TextRange range, IReadOnlyList<Diagnostic> diagnostics, string title)
+    private async Task<bool> ApplyNamed(LspDocument lsp, OpenDocument document, TextRange range, IReadOnlyList<Diagnostic> diagnostics, string title)
     {
         using Asked asked = WorkspaceEdits.Track(editors);
         IReadOnlyList<CodeAction> actions = await lsp.CodeActionsAsync(range, diagnostics);
@@ -1206,7 +1262,7 @@ public sealed class CodeAssist
         {
             return false;
         }
-        return await Apply(lsp, action, null, title, asked);
+        return await Apply(document, action, null, title, asked);
     }
 
     /// <summary>A workspace edit applied, its open files' edits carried through what was typed since the request; one
@@ -1268,28 +1324,13 @@ public sealed class CodeAssist
         _ = ShowHover(target.Range.Start, Editor.PointOf(target.Range.Start));
     }
 
-    private void ShowModal(Control popup, int offset, Func<Choice?, Task> done)
+    private void ShowModal(ChoicePopup popup, int offset, string what, Func<Choice?, Task> done)
     {
         CloseModal();
         modal = popup;
         layer.Children.Add(popup);
         Place(popup, offset, above: false);
-        if (popup is ChoicePopup choices)
-        {
-            choices.Done += async (_, choice) =>
-            {
-                CloseModal();
-                BackgroundWork.Begin();
-                try
-                {
-                    await done(choice);
-                }
-                finally
-                {
-                    BackgroundWork.End();
-                }
-            };
-        }
+        popup.Done += (_, choice) => _ = Carried(what, () => done(choice));
     }
 
     private void ShowModal(RenameBox box, int offset, Func<string?, Task> done)
@@ -1298,19 +1339,36 @@ public sealed class CodeAssist
         modal = box;
         layer.Children.Add(box);
         Place(box, offset, above: true);
-        box.Done += async (_, name) =>
+        box.Done += (_, name) => _ = Carried("Rename", () => done(name));
+    }
+
+    /// <summary>What a modal's answer does (a fix chosen, a new name), carried out as background work. A failure of the
+    /// server's, or an edit the disk refused, is said in the status bar, should the work not say it itself; anything else
+    /// is the IDE's own bug, reported as an IDE error rather than lost in the event's handler.</summary>
+    private async Task Carried(string what, Func<Task> done)
+    {
+        CloseModal();
+        BackgroundWork.Begin();
+        try
         {
-            CloseModal();
-            BackgroundWork.Begin();
-            try
-            {
-                await done(name);
-            }
-            finally
-            {
-                BackgroundWork.End();
-            }
-        };
+            await done();
+        }
+        catch (LanguageServerFailed failed)
+        {
+            Failed(what, failed);
+        }
+        catch (WorkspaceEditFailed failed)
+        {
+            Message?.Invoke(this, $"{what} failed: {failed.Message}");
+        }
+        catch (Exception error)
+        {
+            IdeErrors.Report(error);
+        }
+        finally
+        {
+            BackgroundWork.End();
+        }
     }
 
     private void CloseModal()
@@ -1433,9 +1491,6 @@ public sealed class CodeAssist
         string detail = item.LabelDetails?.Description ?? item.Detail ?? string.Empty;
         return new CompletionRow(item, letter, InfoCard.Brush(brush), detail);
     }
-
-    private static bool IsServerFailure(Exception error) =>
-        error is OperationCanceledException or StreamJsonRpc.RemoteInvocationException or StreamJsonRpc.ConnectionLostException or ObjectDisposedException;
 
     /// <summary>An open completion list: every item the server gave, and where the word it completes
     /// began.</summary>

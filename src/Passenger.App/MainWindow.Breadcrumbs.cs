@@ -67,8 +67,9 @@ public partial class MainWindow
                 ShowBreadcrumbs();
             }
         }
-        catch (Exception error) when (error is OperationCanceledException or StreamJsonRpc.RemoteInvocationException or StreamJsonRpc.ConnectionLostException or ObjectDisposedException)
+        catch (LanguageServerFailed)
         {
+            // The path keeps the file's own parts; the next edit asks again.
         }
     }
 

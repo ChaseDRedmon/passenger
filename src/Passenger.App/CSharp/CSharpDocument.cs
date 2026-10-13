@@ -9,7 +9,9 @@ namespace Passenger.App.CSharp;
 
 /// <summary>One open C# file's share of the language server: it is kept in step, coloured by what the
 /// compiler knows, and marked with the diagnostics the server reports, pulled once typing pauses.
-/// Between pulls the markers move with the text, so a squiggle never drifts off its code.</summary>
+/// Between pulls the markers move with the text, so a squiggle never drifts off its code. Of one server only: a server
+/// started again gives every open file a new one (<see cref="CSharpService"/>), so what asks the server for a file asks
+/// <see cref="CSharpService.For"/> each time rather than keep this or its <see cref="Lsp"/>.</summary>
 public sealed class CSharpDocument : IDisposable
 {
     /// <summary>How long typing must pause before diagnostics are asked for again.</summary>
@@ -151,8 +153,13 @@ public sealed class CSharpDocument : IDisposable
                 document.InlayHints = [.. hints.Where(h => (h.Kind is null or 2) && !Generic.Contains(h.Label.TrimEnd())).Select(h => new InlayHint(lsp.OffsetOf(h.Position), h.Label.TrimEnd(), h.PaddingLeft, h.PaddingRight))];
             }
         }
-        catch (Exception error) when (error is OperationCanceledException or StreamJsonRpc.RemoteInvocationException or StreamJsonRpc.ConnectionLostException or ObjectDisposedException)
+        catch (OperationCanceledException)
         {
+            // Typing went on, or the file was let go.
+        }
+        catch (LanguageServerFailed)
+        {
+            // The markers stand until the server answers again, or a server started again does.
         }
         finally
         {

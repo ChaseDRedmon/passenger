@@ -73,7 +73,7 @@ public sealed class CSharpService : IAsyncDisposable
             {
                 foreach (string option in FullSolution.Keys)
                 {
-                    _ = running.Server.SetOptionAsync(option, value ? FullSolution[option] : null);
+                    running.Server.SetOption(option, value ? FullSolution[option] : null);
                 }
             }
             StartAnalysis();
@@ -173,8 +173,13 @@ public sealed class CSharpService : IAsyncDisposable
                 }
             }
         }
-        catch (Exception error) when (error is OperationCanceledException or StreamJsonRpc.RemoteInvocationException or StreamJsonRpc.ConnectionLostException or ObjectDisposedException)
+        catch (OperationCanceledException)
         {
+            // Turned off, or the server let go.
+        }
+        catch (LanguageServerFailed)
+        {
+            // The server went: one started again is analysed afresh once it has loaded.
         }
         finally
         {
@@ -292,7 +297,7 @@ public sealed class CSharpService : IAsyncDisposable
         }
         catch (Exception error)
         {
-            SetState($"C# unavailable: {error.Message}");
+            SetState($"C# unavailable: {(error is LanguageServerFailed failed ? failed.Reason : error.Message)}");
         }
         finally
         {
@@ -358,9 +363,14 @@ public sealed class CSharpService : IAsyncDisposable
         }
     }
 
-    private void SetState(string state) => UiThread.Post(() =>
+    /// <summary>Set at once, not posted: what asks the server as it starts again says why it cannot from <see cref="State"/>.</summary>
+    private void SetState(string state)
     {
+        UiThread.Check();
         State = state;
         StateChanged?.Invoke(this, EventArgs.Empty);
-    });
+    }
+
+    /// <summary>What the status bar says when a command (<paramref name="what"/>) asks the server before it is ready.</summary>
+    public string Unready(string what) => $"{what} needs the C# language server: {State}";
 }

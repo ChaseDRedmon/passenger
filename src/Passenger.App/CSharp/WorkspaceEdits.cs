@@ -18,7 +18,8 @@ public static class WorkspaceEdits
     public static Asked Track(EditorArea editors) => new(editors.Documents.ToDictionary(d => d, d => new ChangeTracker(d.Text)));
 
     /// <summary>The edit applied; the number of files it changed. Throws <see cref="WorkspaceEditFailed"/> when its
-    /// file operations cannot all be made, found before anything changed, or when the disk refuses one on the way.</summary>
+    /// file operations cannot all be made, found before anything changed, or when the disk refuses one on the way, an
+    /// operation or a file not open being written.</summary>
     public static int Apply(EditorArea editors, JsonElement edit, Asked? asked = null, List<string>? dropped = null)
     {
         IReadOnlyList<FileEdits> changes = Shapes.WorkspaceEdit(edit);
@@ -53,11 +54,21 @@ public static class WorkspaceEdits
                 }
                 ApplyTo(editors, open, edits);
             }
-            else if (FileText.Load(path) is { } file)
+            else
             {
-                TextSnapshot snapshot = TextSnapshot.From(file.Text);
-                List<TextEdit> edits = Convert(snapshot, change.Edits, TextDocument.DetectLineEnding(file.Text));
-                FileText.Save(path, snapshot.Apply(edits.OrderBy(e => e.Start).ToList()).ToString(), file.Encoding, file.HasBom);
+                try
+                {
+                    if (FileText.Load(path) is { } file)
+                    {
+                        TextSnapshot snapshot = TextSnapshot.From(file.Text);
+                        List<TextEdit> edits = Convert(snapshot, change.Edits, TextDocument.DetectLineEnding(file.Text));
+                        FileText.Save(path, snapshot.Apply(edits.OrderBy(e => e.Start).ToList()).ToString(), file.Encoding, file.HasBom);
+                    }
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                {
+                    throw new WorkspaceEditFailed($"{Path.GetFileName(path)} could not be written: {error.Message}");
+                }
             }
             files++;
         }

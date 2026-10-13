@@ -127,8 +127,13 @@ public sealed class SemanticHighlighter : IHighlighter, IDisposable
                 Changed?.Invoke(this, EventArgs.Empty);
             });
         }
-        catch (Exception error) when (error is OperationCanceledException or StreamJsonRpc.RemoteInvocationException or StreamJsonRpc.ConnectionLostException or ObjectDisposedException)
+        catch (OperationCanceledException)
         {
+            // Asked again, or let go.
+        }
+        catch (LanguageServerFailed)
+        {
+            // The parser's colours stand until the server answers, or a server started again does.
         }
         finally
         {

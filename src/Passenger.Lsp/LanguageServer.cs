@@ -6,9 +6,10 @@ using StreamJsonRpc;
 namespace Passenger.Lsp;
 
 /// <summary>A language server process and the JSON-RPC connection to it over its standard input and
-/// output. Requests and notifications go out typed; what the server asks of the client (its settings,
-/// a capability it registers, a refresh) is answered here and surfaced as events, each raised on any
-/// thread. Its standard error and its own logs go to <see cref="LogFolder"/>.</summary>
+/// output. Requests and notifications go out typed, and each failure of the server's comes back as a
+/// <see cref="LanguageServerFailed"/>, the connection's own exceptions never past this class; what the server asks of
+/// the client (its settings, a capability it registers, a refresh) is answered here and surfaced as events, each raised
+/// on any thread. Its standard error and its own logs go to <see cref="LogFolder"/>.</summary>
 public sealed class LanguageServer : IAsyncDisposable
 {
     /// <summary>How long a request waits before the server is checked: one this old may be slow work (usages across a
@@ -92,21 +93,21 @@ public sealed class LanguageServer : IAsyncDisposable
     public IReadOnlyList<string?> WorkspaceDiagnosticSources => client.WorkspaceDiagnosticSources;
 
     /// <summary>Changes one of the server's options while it runs (a setting turned on): it hears the configuration
-    /// changed and asks for it again.</summary>
-    public Task SetOptionAsync(string name, object? value)
+    /// changed and asks for it again. A server that has stopped is not told: one started again reads its options afresh.</summary>
+    public void SetOption(string name, object? value)
     {
         lock (options)
         {
             options[name] = value;
         }
-        return NotifyAsync("workspace/didChangeConfiguration", new { settings = new { } });
+        Notify("workspace/didChangeConfiguration", new { settings = new { } });
     }
 
     /// <summary>Every document's diagnostics from one source, as the solution-wide analysis has them; a document unchanged
     /// since the result id given for it comes back as unchanged, with no items.</summary>
     public async Task<IReadOnlyList<WorkspaceDocumentDiagnosticReport>> WorkspaceDiagnosticsAsync(string? source, IReadOnlyList<PreviousResultId> previous, CancellationToken cancel = default) =>
         // Roslyn holds this pull open until something changes, so how long it waits says nothing of the server.
-        (await rpc.InvokeWithParameterObjectAsync<WorkspaceDiagnosticReport?>("workspace/diagnostic", new WorkspaceDiagnosticParams(source, previous), cancel))?.Items ?? [];
+        (await InvokeAsync<WorkspaceDiagnosticReport>("workspace/diagnostic", new WorkspaceDiagnosticParams(source, previous), cancel))?.Items ?? [];
 
     /// <summary>An option's value: one changed while running, else Passenger's own, else null for the server's default.</summary>
     private object? Option(string name)
@@ -182,7 +183,7 @@ public sealed class LanguageServer : IAsyncDisposable
             cancel.ThrowIfCancellationRequested();
             await rpc.NotifyWithParameterObjectAsync("initialized", new { }).ConfigureAwait(false);
         }
-        catch
+        catch (Exception error)
         {
             // A start given up (another folder opened) or failed leaves no server behind, nor its log held open.
             server2.disposing = true;
@@ -190,6 +191,10 @@ public sealed class LanguageServer : IAsyncDisposable
             rpc.Dispose();
             End(process);
             log.Dispose();
+            if (server2.Failure("initialize", error, cancel) is { } failed)
+            {
+                throw failed;
+            }
             throw;
         }
         return server2;
@@ -203,7 +208,8 @@ public sealed class LanguageServer : IAsyncDisposable
     }
 
     /// <summary>A request someone waits for the answer to: one still waiting after <see cref="SlowRequest"/> has the
-    /// server checked, and raises <see cref="NotResponding"/> if that goes unanswered too.</summary>
+    /// server checked, and raises <see cref="NotResponding"/> if that goes unanswered too. A
+    /// <see cref="LanguageServerFailed"/> when the server does not answer it.</summary>
     public async Task<T?> RequestAsync<T>(string method, object parameters, CancellationToken cancel = default)
     {
         long id = Interlocked.Increment(ref requests);
@@ -213,7 +219,7 @@ public sealed class LanguageServer : IAsyncDisposable
         }
         try
         {
-            return await rpc.InvokeWithParameterObjectAsync<T?>(method, parameters, cancel);
+            return await InvokeAsync<T>(method, parameters, cancel);
         }
         finally
         {
@@ -224,7 +230,45 @@ public sealed class LanguageServer : IAsyncDisposable
         }
     }
 
-    public Task NotifyAsync(string method, object parameters) => rpc.NotifyWithParameterObjectAsync(method, parameters);
+    /// <summary>A notification the caller waits to see sent (the solution to open); a <see cref="LanguageServerFailed"/>
+    /// when the server can no longer take it.</summary>
+    public async Task NotifyAsync(string method, object parameters)
+    {
+        try
+        {
+            await rpc.NotifyWithParameterObjectAsync(method, parameters);
+        }
+        catch (Exception error) when (Failure(method, error, CancellationToken.None) is { } failed)
+        {
+            throw failed;
+        }
+    }
+
+    private async Task<T?> InvokeAsync<T>(string method, object parameters, CancellationToken cancel)
+    {
+        try
+        {
+            return await rpc.InvokeWithParameterObjectAsync<T?>(method, parameters, cancel);
+        }
+        catch (Exception error) when (Failure(method, error, cancel) is { } failed)
+        {
+            throw failed;
+        }
+    }
+
+    /// <summary>The connection's exception as the server's failure: gone (it crashed, was ended for hanging or let go for
+    /// one started again, the connection disposed or its pipe closed), refused (an error it answered with), or cancelled
+    /// by the server rather than the caller (Roslyn cancels what a change made stale). Null for anything else: the
+    /// caller's own cancellation, or a bug (an answer that does not read as asked), which must surface as itself.</summary>
+    private LanguageServerFailed? Failure(string method, Exception error, CancellationToken cancel) => error switch
+    {
+        OperationCanceledException when cancel.IsCancellationRequested => null,
+        OperationCanceledException => new LanguageServerFailed("the language server cancelled it", method, error),
+        ConnectionLostException or ObjectDisposedException or IOException => new LanguageServerFailed(
+            killed ? "the language server stopped responding, so it was ended" : "the language server stopped before it answered", method, error),
+        RemoteRpcException refused => new LanguageServerFailed($"the language server refused it: {refused.Message.Split('\n')[0].Trim()}", method, error),
+        _ => null,
+    };
 
     /// <summary>Sends a notification nothing waits on (a document's change, its closing). One the server can no longer
     /// take, having ended or been ended, is dropped: a server started again is sent the open documents afresh.</summary>

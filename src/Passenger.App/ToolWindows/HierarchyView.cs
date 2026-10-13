@@ -81,6 +81,9 @@ public sealed class HierarchyView : DockPanel
     /// <summary>A row to go to.</summary>
     public event EventHandler<HierarchyNode>? GoToRequested;
 
+    /// <summary>A level could not be listed, and why, for the status bar.</summary>
+    public event EventHandler<string>? Failed;
+
     public IReadOnlyList<HierarchyRow> Rows => rows;
 
     public string Title => title.Text ?? string.Empty;
@@ -129,9 +132,11 @@ public sealed class HierarchyView : DockPanel
         {
             row.Children ??= await way.Load(row.Node.Item);
         }
-        catch (Exception error) when (error is StreamJsonRpc.RemoteInvocationException or StreamJsonRpc.ConnectionLostException or OperationCanceledException)
+        catch (LanguageServerFailed failed)
         {
+            // Opened empty, as a leaf is; the hierarchy shown again asks afresh.
             row.Children = [];
+            Failed?.Invoke(this, $"{way.Label} of {row.Node.Item.Name} could not be listed: {failed.Reason}");
         }
         int at = rows.IndexOf(row);
         if (at < 0)

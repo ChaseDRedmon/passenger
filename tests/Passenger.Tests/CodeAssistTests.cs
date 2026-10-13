@@ -707,6 +707,30 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
     }
 
     [AvaloniaFact]
+    public void A_fix_the_language_server_will_not_make_once_chosen_says_why_in_the_status_bar()
+    {
+        MainWindow window = project.Open("Program.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        OpenDocument program = window.EditorArea.Active!;
+        PlaceAfter(editor, "Helper.Twice(2);");
+        window.KeyTextInput(" int more = Helper.Thrice(2);");
+        Ui.WaitFor(() => window.CSharpService!.For(program)!.Diagnostics.Any(d => d.Code?.ToString() == "CS0117"), "Thrice's error");
+        PlaceAfter(editor, "Helper.Thr");
+        Ui.Run(window, AppActions.QuickFix);
+        Ui.WaitFor(() => window.Assist.Offered.Contains("Generate method 'Thrice'"), "the offer to generate Thrice");
+
+        // The call is changed under the open list, so the server no longer has the fix it offered when it is chosen.
+        int at = editor.Document.Snapshot.ToString().IndexOf("Thrice", StringComparison.Ordinal);
+        editor.ApplyEdits([new TextEdit(at, "Thrice".Length, "Twice")]);
+        Choose(window, "Generate method 'Thrice'");
+        Ui.WaitFor(() => window.Status?.StartsWith("Generate method 'Thrice' was not applied", StringComparison.Ordinal) == true,
+            $"the status bar to say the fix was not made (it says {window.Status})");
+        Assert.StartsWith("Generate method 'Thrice' was not applied: the language server refused it: ", window.Status, StringComparison.Ordinal);
+        Assert.DoesNotContain("Thrice(", File.ReadAllText(project.PathOf("Helper.cs")), StringComparison.Ordinal);
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Fix_all_offers_its_scopes_and_fixes_every_occurrence_in_the_one_chosen()
     {
         MainWindow window = project.Open("Loop.cs");

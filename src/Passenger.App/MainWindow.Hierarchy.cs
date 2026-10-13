@@ -17,53 +17,67 @@ public partial class MainWindow
     {
         hierarchy = new HierarchyView();
         hierarchy.GoToRequested += (_, node) => NavigateTo(node.Path, node.Where);
+        hierarchy.Failed += (_, why) => StatusText.Text = why;
         Dock.Add(new Docking.ToolWindow("hierarchy", "Hierarchy", "Icon.Hierarchy", hierarchy, Docking.ToolAnchor.RightTop));
     }
 
     /// <summary>Call Hierarchy: who calls the symbol at the caret, and whom it calls; null when shown, else why not.</summary>
     public async Task<string?> ShowCallHierarchyAsync()
     {
-        if (await Prepare((lsp, offset) => lsp.PrepareCallHierarchyAsync(offset)) is not ({ } server, { } item))
+        (HierarchyItem? item, string? why) = await Prepare("Call Hierarchy", "No method, property or event at the caret", (lsp, offset) => lsp.PrepareCallHierarchyAsync(offset));
+        if (item is null)
         {
-            return Said("No method, property or event at the caret");
+            return why;
         }
         ShowToolWindow("hierarchy");
         await Hierarchy.ShowAsync($"Calls of {item.Name}", Node(item), new HierarchyDirection("Callers", async of =>
-            [.. (await server.IncomingCallsAsync(of)).Select(call => Node(call.From, call.FromRanges.FirstOrDefault()))]),
+            [.. (await RunningServer().IncomingCallsAsync(of)).Select(call => Node(call.From, call.FromRanges.FirstOrDefault()))]),
             new HierarchyDirection("Callees", async of =>
-            [.. (await server.OutgoingCallsAsync(of)).Select(call => Node(call.To))]));
+            [.. (await RunningServer().OutgoingCallsAsync(of)).Select(call => Node(call.To))]));
         return null;
     }
 
     /// <summary>Type Hierarchy: the type at the caret's base types and interfaces, and the types that derive from it.</summary>
     public async Task<string?> ShowTypeHierarchyAsync()
     {
-        if (await Prepare((lsp, offset) => lsp.PrepareTypeHierarchyAsync(offset)) is not ({ } server, { } item))
+        (HierarchyItem? item, string? why) = await Prepare("Type Hierarchy", "No type at the caret", (lsp, offset) => lsp.PrepareTypeHierarchyAsync(offset));
+        if (item is null)
         {
-            return Said("No type at the caret");
+            return why;
         }
         ShowToolWindow("hierarchy");
         await Hierarchy.ShowAsync($"Hierarchy of {item.Name}", Node(item),
-            new HierarchyDirection("Supertypes", async of => [.. (await server.SupertypesAsync(of)).Select(t => Node(t))]),
-            new HierarchyDirection("Subtypes", async of => [.. (await server.SubtypesAsync(of)).Select(t => Node(t))]));
+            new HierarchyDirection("Supertypes", async of => [.. (await RunningServer().SupertypesAsync(of)).Select(t => Node(t))]),
+            new HierarchyDirection("Subtypes", async of => [.. (await RunningServer().SubtypesAsync(of)).Select(t => Node(t))]));
         return null;
     }
 
-    private async Task<(LanguageServer? Server, HierarchyItem? Item)> Prepare(Func<LspDocument, int, Task<HierarchyItem?>> prepare)
+    /// <summary>The symbol at the caret as a hierarchy's root, or why there is none, said in the status bar: nothing
+    /// there, the server not ready, or its failure.</summary>
+    private async Task<(HierarchyItem? Item, string? Why)> Prepare(string what, string none, Func<LspDocument, int, Task<HierarchyItem?>> prepare)
     {
-        if (Editors.Active is not { } active || csharp?.For(active)?.Lsp is not { } lsp || csharp.Session is not { } session)
+        if (Editors.Active is not { } active || csharp?.For(active) is not { } features)
         {
-            return (null, null);
+            return (null, Said(none));
+        }
+        if (features.Lsp is not { } lsp || !csharp.IsReady)
+        {
+            return (null, Said(csharp.Unready(what)));
         }
         try
         {
-            return (session.Server, await prepare(lsp, Editors.CodeEditor.Selections.Primary.Caret));
+            return await prepare(lsp, Editors.CodeEditor.Selections.Primary.Caret) is { } item ? (item, null) : (null, Said(none));
         }
-        catch (Exception error) when (error is StreamJsonRpc.RemoteInvocationException or StreamJsonRpc.ConnectionLostException)
+        catch (LanguageServerFailed failed)
         {
-            return (null, null);
+            return (null, Said($"{what} failed: {failed.Reason}"));
         }
     }
+
+    /// <summary>The server running now, asked for as each level of a hierarchy opens: the window may have been shown by
+    /// one since started again.</summary>
+    private LanguageServer RunningServer() =>
+        csharp?.Session?.Server ?? throw new LanguageServerFailed("the C# language server is not running");
 
     private string Said(string why)
     {

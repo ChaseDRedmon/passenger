@@ -120,8 +120,13 @@ public sealed class StructureView : DockPanel
             placeholder.IsVisible = Rows.Count == 0;
             Choose(now.CaretLine);
         }
-        catch (Exception error) when (error is OperationCanceledException or StreamJsonRpc.RemoteInvocationException or StreamJsonRpc.ConnectionLostException)
+        catch (OperationCanceledException)
         {
+            // Asked again since.
+        }
+        catch (LanguageServerFailed)
+        {
+            // The outline shown stands; the next change, or a server started again, asks afresh.
         }
     }
 

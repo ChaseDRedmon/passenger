@@ -1313,7 +1313,7 @@ public partial class MainWindow : Window
         }
         if (csharp?.Session is not { IsLoaded: true } session)
         {
-            throw new InvalidOperationException("The C# language server is still loading the solution");
+            throw new Lsp.LanguageServerFailed(csharp is null ? "no C# language server runs for this folder" : $"the C# language server is not ready: {csharp.State}");
         }
         IReadOnlyList<Lsp.SymbolInformation> found = await session.SymbolsAsync(query.Trim(), cancel);
         return [.. found.Take(200).Select(SymbolRowOf)];
@@ -1328,7 +1328,15 @@ public partial class MainWindow : Window
         {
             return [.. recent.Skip(Editors.Active is null ? 0 : 1).Select(path => FileRow(Path.GetRelativePath(root, path)))];
         }
-        IReadOnlyList<Navigation.SymbolRow> symbols = csharp?.Session is { IsLoaded: true } ? await SearchSymbols(query, cancel) : [];
+        IReadOnlyList<Navigation.SymbolRow> symbols = [];
+        try
+        {
+            symbols = csharp?.Session is { IsLoaded: true } ? await SearchSymbols(query, cancel) : [];
+        }
+        catch (Lsp.LanguageServerFailed)
+        {
+            // The files still match without the server.
+        }
         IEnumerable<Navigation.SymbolRow> files = index.Search(query).Take(20).Select(FileRow);
         static bool IsType(int kind) => kind is 5 or 10 or 11 or 23;
         return [.. symbols.Where(r => IsType(r.Kind)), .. files, .. symbols.Where(r => !IsType(r.Kind))];
@@ -1366,7 +1374,7 @@ public partial class MainWindow : Window
     /// containers of what matches kept.</summary>
     private void ShowFileStructure()
     {
-        if (Editors.Active is not { } active || csharp?.For(active)?.Lsp is not { } lsp)
+        if (Editors.Active is not { } active || csharp?.For(active)?.Lsp is null)
         {
             StatusText.Text = "File Structure needs a C# file the language server has open";
             return;
@@ -1375,6 +1383,8 @@ public partial class MainWindow : Window
         int caretLine = Editors.CodeEditor.CaretPosition.Line;
         Navigation.SymbolPopup popup = new($"File Structure: {active.Name}", "Filter by name, CamelHumps too", async (query, cancel) =>
         {
+            // The server's document now: one started again while the popup is open has a new one.
+            Lsp.LspDocument lsp = csharp?.For(active)?.Lsp ?? throw new Lsp.LanguageServerFailed("the C# language server is not running");
             outline ??= ToolWindows.StructureView.Flatten(await lsp.OutlineAsync(cancel), 0, active.Path, Lsp.ServerLines.Of(lsp.Text.Snapshot));
             return FilterOutline(outline, query.Trim());
         })

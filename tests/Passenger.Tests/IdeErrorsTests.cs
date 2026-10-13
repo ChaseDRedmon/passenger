@@ -6,6 +6,7 @@ using Avalonia.Headless.XUnit;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Passenger.App;
+using Passenger.App.ToolWindows;
 
 namespace Passenger.Tests;
 
@@ -261,7 +262,8 @@ public sealed class IdeErrorsTests : IDisposable
                 End(first);
             }
         }
-        Assert.Equal("C# server not responding; starting it again", window.Status);
+        // Said as the server is replaced, then by Find Usages, which it never answered, once its connection is gone.
+        Assert.Equal("Find Usages failed: the language server stopped responding, so it was ended", window.Status);
         Assert.Contains($"process {first}) is not responding: textDocument/references waited", Ui.IdeLog());
         Ui.WaitFor(() => !Running(first), "the server that stopped answering to be ended, not left behind");
 
@@ -269,10 +271,130 @@ public sealed class IdeErrorsTests : IDisposable
         window.Close();
     }
 
-    /// <summary>A restored console project with its Program.cs open, the language server ready on it.</summary>
-    private MainWindow OpenProgram()
+    [AvaloniaFact]
+    public void The_hierarchy_window_shown_before_the_language_server_started_again_still_opens_a_row_after_it()
     {
-        WriteProgram(folder);
+        MainWindow window = OpenProgram(Calls);
+        Place(window, "static void Ot");
+        Task<string?> shown = window.ShowCallHierarchyAsync();
+        Ui.WaitFor(() => shown.IsCompleted, "the call hierarchy");
+        Assert.Null(shown.Result);
+        HierarchyRow caller = Assert.Single(window.Hierarchy.Rows, r => r.Depth == 1);
+        Assert.Contains("Helper", caller.Node.Item.Name, StringComparison.Ordinal);
+
+        int server = window.CSharpService!.Session!.Server.ProcessId;
+        Process.GetProcessById(server).Kill();
+        Ui.WaitFor(() => window.CSharpService.Session is { IsLoaded: true } session && session.Server.ProcessId != server,
+            $"the language server to be started again ({window.CSharpService.State})");
+
+        // Its callers are asked of the server running now: the one the window was shown with is gone.
+        Task opening = window.Hierarchy.ExpandAsync(caller);
+        Ui.WaitFor(() => opening.IsCompleted, "the caller's row to open");
+        Assert.True(opening.IsCompletedSuccessfully, $"Opening a row of the Hierarchy window after the language server started again failed: {opening.Exception?.InnerException}");
+        Assert.True(caller.IsExpanded, "The caller's row did not open");
+        Assert.All(caller.Children!, c => Assert.Contains("Main", c.Item.Name, StringComparison.Ordinal));
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Call_hierarchy_asked_while_the_language_server_starts_again_says_why_it_cannot_and_works_once_it_is_back()
+    {
+        MainWindow window = OpenProgram(Calls);
+        Place(window, "static void Ot");
+        int first = window.CSharpService!.Session!.Server.ProcessId;
+
+        // Asked of a server that stops before it answers, as one that crashes or is ended for hanging does.
+        Processes.Suspend(first, "The language server");
+        Task<string?> asked;
+        try
+        {
+            asked = window.ShowCallHierarchyAsync();
+            Screenshot.Pump(TimeSpan.FromMilliseconds(200));
+            Assert.False(asked.IsCompleted, "Call Hierarchy answered from a stopped server");
+        }
+        finally
+        {
+            End(first);
+        }
+        Ui.PumpUntil(() => asked.IsCompleted, "Call Hierarchy to give up on the server that ended");
+        Assert.Equal("Call Hierarchy failed: the language server stopped before it answered", asked.Result);
+
+        // Asked while the next one starts: there is no server to ask.
+        Ui.PumpUntil(() => window.CSharpService.Session is null, "the ended server to be let go");
+        Task<string?> starting = window.ShowCallHierarchyAsync();
+        Assert.True(starting.IsCompleted, "Call Hierarchy waited for a server that is not there");
+        Assert.StartsWith("Call Hierarchy needs the C# language server: ", starting.Result, StringComparison.Ordinal);
+        Assert.Equal(starting.Result, window.Status);
+
+        Ui.WaitFor(() => window.CSharpService.Session is { IsLoaded: true }, $"the language server to be started again ({window.CSharpService.State})");
+        Task<string?> again = window.ShowCallHierarchyAsync();
+        Ui.WaitFor(() => again.IsCompleted, "the call hierarchy from the new server");
+        Assert.Null(again.Result);
+        Assert.Contains(window.Hierarchy.Rows, r => r.Depth == 1 && r.Node.Item.Name.Contains("Helper", StringComparison.Ordinal));
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_rename_that_cannot_write_a_file_it_changes_says_so_in_the_status_bar()
+    {
+        string library = Path.Combine(folder, "Library");
+        Directory.CreateDirectory(library);
+        File.WriteAllText(Path.Combine(library, "Helper.cs"), "static class Helper\n{\n    public static int Twice(int value) => value * 2;\n}\n");
+        MainWindow window = OpenProgram("class Program\n{\n    static void Main()\n    {\n        int result = Helper.Twice(2);\n    }\n}\n");
+        Place(window, "Helper.Tw");
+        using (Unwritable(Path.Combine(library, "Helper.cs")))
+        {
+            Ui.Run(window, AppActions.Rename);
+            Ui.Settle();
+            window.KeyTextInput("Double");
+            Ui.Press(window, "ENTER");
+            Ui.Settle();
+            Assert.StartsWith("Rename failed: Helper.cs could not be written", window.Status, StringComparison.Ordinal);
+        }
+        Assert.Contains("Twice", File.ReadAllText(Path.Combine(library, "Helper.cs")), StringComparison.Ordinal);
+        window.Close();
+    }
+
+    /// <summary>Three methods, each calling the next.</summary>
+    private const string Calls = "class Program\n{\n    static void Main()\n    {\n        Helper();\n    }\n\n    static void Helper()\n    {\n        Other();\n    }\n\n    static void Other()\n    {\n    }\n}\n";
+
+    /// <summary>Puts the caret just after some text of the file shown.</summary>
+    private static void Place(MainWindow window, string after)
+    {
+        int at = window.EditorArea.CodeEditor.Document.Snapshot.ToString().IndexOf(after, StringComparison.Ordinal);
+        Assert.True(at >= 0, $"'{after}' is not in the file");
+        window.EditorArea.CodeEditor.Selections = Text.SelectionSet.Single(at + after.Length);
+    }
+
+    /// <summary>A file no save can replace while this is held: its folder made read-only on macOS and Linux, and on Windows
+    /// the file held open for reading only, which refuses both the move over it and a write in place.</summary>
+    private static IDisposable Unwritable(string file)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read);
+        }
+        string parent = Path.GetDirectoryName(file)!;
+        UnixFileMode mode = File.GetUnixFileMode(parent);
+        File.SetUnixFileMode(parent, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        return new Restored(() =>
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                File.SetUnixFileMode(parent, mode);
+            }
+        });
+    }
+
+    private sealed class Restored(Action undo) : IDisposable
+    {
+        public void Dispose() => undo();
+    }
+
+    /// <summary>A restored console project with its Program.cs open, the language server ready on it.</summary>
+    private MainWindow OpenProgram(string? program = null)
+    {
+        WriteProgram(folder, program);
         MainWindow window = new() { Width = 1200, Height = 800 };
         window.Show();
         window.OpenFolder(folder);
@@ -283,11 +405,11 @@ public sealed class IdeErrorsTests : IDisposable
     }
 
     /// <summary>A console project in a folder, restored.</summary>
-    private static void WriteProgram(string at)
+    private static void WriteProgram(string at, string? program = null)
     {
         File.WriteAllText(Path.Combine(at, "Sample.csproj"),
             "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
-        File.WriteAllText(Path.Combine(at, "Program.cs"), "class Program\n{\n    static void Main()\n    {\n    }\n}\n");
+        File.WriteAllText(Path.Combine(at, "Program.cs"), program ?? "class Program\n{\n    static void Main()\n    {\n    }\n}\n");
         Restore.Run(at);
     }
 
