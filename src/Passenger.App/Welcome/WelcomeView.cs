@@ -13,9 +13,9 @@ using Passenger.Text;
 namespace Passenger.App.Welcome;
 
 /// <summary>Rider's Welcome screen, in the window while nothing is open: the folders, solutions and projects opened lately,
-/// newest first and narrowed as a search is typed, beside Open, Open Folder and Clone Repository. Up and Down choose one
-/// from the search box or the list, Enter opens it, and Delete (Backspace on the Mac) or its menu removes it. One gone from
-/// disk is marked, and the window says so when it is opened (<see cref="Say"/>).</summary>
+/// newest first and narrowed as a search is typed, beside New Solution, Open, Open Folder and Clone Repository. Up and Down
+/// choose one from the search box or the list, Enter opens it, and Delete (Backspace on the Mac) or its menu removes it.
+/// One gone from disk is marked, and the window says so when it is opened (<see cref="Say"/>).</summary>
 public sealed class WelcomeView : UserControl
 {
     private readonly TextBox search;
@@ -29,7 +29,7 @@ public sealed class WelcomeView : UserControl
         this.Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Editor.Background"));
         TextBlock title = new() { Text = "Welcome to Passenger", FontSize = 22, FontWeight = FontWeight.SemiBold, Margin = new Thickness(0, 0, 0, 4) };
         title.Bind(TextBlock.ForegroundProperty, title.GetResourceObservable("Passenger.Text"));
-        TextBlock subtitle = new() { Classes = { "muted" }, Text = "Open a solution, project or folder, or clone a repository, to start.", Margin = new Thickness(0, 0, 0, 20) };
+        TextBlock subtitle = new() { Classes = { "muted" }, Text = "Start a new solution, open a solution, project or folder, or clone a repository.", Margin = new Thickness(0, 0, 0, 20) };
 
         search = new TextBox { Classes = { "search" }, PlaceholderText = "Search recent solutions", Margin = new Thickness(0, 0, 12, 0) };
         search.TextChanged += (_, _) => Filter();
@@ -40,8 +40,10 @@ public sealed class WelcomeView : UserControl
         openFolder.Click += (_, _) => OpenFolderRequested?.Invoke(this, EventArgs.Empty);
         Button clone = new() { Content = "Clone Repository" };
         clone.Click += (_, _) => CloneRequested?.Invoke(this, EventArgs.Empty);
-        // New Solution (#8) goes first here, as Rider's does.
-        StackPanel buttons = new() { Orientation = Orientation.Horizontal, Spacing = 8, Children = { open, openFolder, clone } };
+        // New Solution goes first, as Rider's does.
+        NewSolutionButton = new Button { Content = "New Solution" };
+        NewSolutionButton.Click += (_, _) => NewSolutionRequested?.Invoke(this, EventArgs.Empty);
+        StackPanel buttons = new() { Orientation = Orientation.Horizontal, Spacing = 8, Children = { NewSolutionButton, open, openFolder, clone } };
         DockPanel bar = new() { Margin = new Thickness(0, 0, 0, 12) };
         DockPanel.SetDock(buttons, Dock.Right);
         bar.Children.Add(buttons);
@@ -79,6 +81,9 @@ public sealed class WelcomeView : UserControl
         Filter();
     }
 
+    /// <summary>New Solution, as File, New Solution does.</summary>
+    public event EventHandler? NewSolutionRequested;
+
     /// <summary>Open, as File, Open does: a solution or project.</summary>
     public event EventHandler? OpenRequested;
 
@@ -91,6 +96,9 @@ public sealed class WelcomeView : UserControl
 
     /// <summary>One to take off the list, by its key or its menu.</summary>
     public event EventHandler<RecentRow>? RemoveRequested;
+
+    /// <summary>The New Solution button, for a click on it.</summary>
+    public Button NewSolutionButton { get; }
 
     public string Query
     {

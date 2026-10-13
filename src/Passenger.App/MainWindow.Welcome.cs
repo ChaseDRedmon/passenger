@@ -23,11 +23,13 @@ public partial class MainWindow
     private void AddWelcome()
     {
         Editors.ShowWelcome(welcome);
+        welcome.NewSolutionRequested += (_, _) => Request(AppActions.NewSolution);
         welcome.OpenRequested += (_, _) => Request(AppActions.Open);
         welcome.OpenFolderRequested += (_, _) => Request(AppActions.OpenFolder);
         welcome.CloneRequested += (_, _) => Request(AppActions.CloneRepository);
         welcome.Chosen += (_, row) => OpenRecent(row.Path);
         welcome.RemoveRequested += (_, row) => ForgetRecent(row.Path);
+        AddNewProjectActions();
         actions!.Add(new IdeAction(AppActions.OpenFolder, "Open Folder...", "IDE", context => _ = PickFolder()) { Menus = [new MenuPlace("File", 0, 1)] });
         actions.Add(new IdeAction(AppActions.CloneRepository, "Clone Repository...", "Git", _ => ShowCloneRepository())
         {
@@ -83,11 +85,12 @@ public partial class MainWindow
         }
     }
 
-    /// <summary>Rider's project widget: Open, Open Folder and Clone Repository, then the recent ones to open.</summary>
+    /// <summary>Rider's project widget: New Solution, Open, Open Folder and Clone Repository, then the recent ones to
+    /// open.</summary>
     private void ShowProjectMenu()
     {
         ActionContext context = actions!.Context();
-        List<Control> items = [.. ((string[])[AppActions.Open, AppActions.OpenFolder, AppActions.CloneRepository]).Select(id => FlyoutEntry(new MenuEntry(id), context))];
+        List<Control> items = [.. ((string[])[AppActions.NewSolution, AppActions.Open, AppActions.OpenFolder, AppActions.CloneRepository]).Select(id => FlyoutEntry(new MenuEntry(id), context))];
         IReadOnlyList<(string Title, Action Open)> recent = RecentMenu();
         if (recent.Count > 0)
         {

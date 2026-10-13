@@ -21,6 +21,7 @@ public enum ExplorerAction
     Unload,
     Reload,
     NewSolutionFolder,
+    NewProject,
     AddExistingProject,
     AddExistingItem,
     RunTests,
@@ -114,9 +115,9 @@ public partial class ExplorerView : UserControl
 
     /// <summary>Rider's menu for a row: Build, Rebuild and Clean for the solution or the projects chosen (a solution
     /// folder's, every one under it), their unit tests, a project's packages, file and unloading, Add where things can go
-    /// (a solution folder, an existing project or item into the solution's folders; a file, a folder or a class on disk),
-    /// Rename and Delete, which for what is the solution's own (a project, a solution folder, its files) is Remove, and the
-    /// path of what is on disk.</summary>
+    /// (a new or existing project, a solution folder or an existing item into the solution's folders; a file, a folder or
+    /// a class on disk), Rename and Delete, which for what is the solution's own (a project, a solution folder, its files)
+    /// is Remove, and the path of what is on disk.</summary>
     private ContextMenu? Menu(ExplorerNode node)
     {
         bool onDisk = node.Kind is NodeKind.File or NodeKind.Folder or NodeKind.Project;
@@ -131,6 +132,15 @@ public partial class ExplorerView : UserControl
         {
             MenuItem item = new() { Header = header, InputGesture = keys is null ? null : KeyGesture.Parse(keys) };
             item.Click += (_, _) => ActionRequested?.Invoke(this, (action, node));
+            return item;
+        }
+        MenuItem Action(string header, ExplorerAction action, string id)
+        {
+            MenuItem item = Item(header, action);
+            if (AppActions.Keymap().ShortcutsFor(id).FirstOrDefault(s => s.Second is null) is { } keys)
+            {
+                item.InputGesture = new KeyGesture(keys.First.Key, keys.First.Modifiers);
+            }
             return item;
         }
         if (node.Kind is NodeKind.Solution or NodeKind.Project or NodeKind.SolutionFolder)
@@ -160,6 +170,7 @@ public partial class ExplorerView : UserControl
             MenuItem add = new() { Header = "Add" };
             if (node.Kind is NodeKind.Solution or NodeKind.SolutionFolder)
             {
+                add.Items.Add(Action("New Project...", ExplorerAction.NewProject, AppActions.NewProject));
                 add.Items.Add(Item("New Solution Folder...", ExplorerAction.NewSolutionFolder));
                 add.Items.Add(Item("Existing Project...", ExplorerAction.AddExistingProject));
             }

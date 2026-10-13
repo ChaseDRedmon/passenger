@@ -12,6 +12,12 @@ public static class AppActions
     /// <summary>A folder to open: the system's panel takes files or folders, not both as Rider's does, so Open takes the
     /// solution or project files and this the folder. Rider's keymaps have no keys for it.</summary>
     public const string OpenFolder = "app.openFolder";
+
+    /// <summary>Rider's New Solution (RiderNewSolution), which its keymaps give no keys.</summary>
+    public const string NewSolution = "app.newSolution";
+
+    /// <summary>Rider's New Project (NewRiderProject), a project added to the open solution.</summary>
+    public const string NewProject = "app.newProject";
     public const string Exit = "app.exit";
     public const string Save = "app.save";
     public const string SaveAll = "app.saveAll";
@@ -202,6 +208,7 @@ public static class AppActions
         {
             return keymap
                 .Bind(Open, "meta O")
+                .Bind(NewProject, "meta shift N")
                 .Bind(Save, "meta S")
                 .Bind(SaveAll, "meta shift S")
                 .Bind(CloseTab, "meta W", "meta F4")
@@ -295,6 +302,7 @@ public static class AppActions
         }
         return keymap
             .Bind(Open, "control O")
+            .Bind(NewProject, "control shift N")
             .Bind(Save, "control S")
             .Bind(SaveAll, "control shift S")
             .Bind(CloseTab, "control F4")

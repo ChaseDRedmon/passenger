@@ -80,13 +80,14 @@ public static class Screenshot
         settled &= Settle();
         foreach (ScriptStep step in steps)
         {
-            Take(window, step);
+            // A dialog a step opened takes the next ones, as it takes a person's keys and clicks.
+            Take(window.Frontmost, step);
             settled &= Settle();
         }
         return settled;
     }
 
-    private static void Take(MainWindow window, ScriptStep step)
+    private static void Take(Avalonia.Controls.Window window, ScriptStep step)
     {
         switch (step)
         {

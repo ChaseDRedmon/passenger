@@ -36,6 +36,9 @@ public partial class MainWindow
             case ExplorerAction.NewSolutionFolder when node.Kind is NodeKind.Solution or NodeKind.SolutionFolder:
                 AskName("New Solution Folder", string.Empty, name => AddSolutionFolder(node.SolutionPath, name));
                 break;
+            case ExplorerAction.NewProject when node.Kind is NodeKind.Solution or NodeKind.SolutionFolder:
+                ShowNewProject(node.SolutionPath);
+                break;
             case ExplorerAction.AddExistingProject when node.Kind is NodeKind.Solution or NodeKind.SolutionFolder:
                 await AddExistingProjectsAsync(node.SolutionPath);
                 break;
