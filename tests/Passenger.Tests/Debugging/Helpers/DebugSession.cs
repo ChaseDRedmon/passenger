@@ -185,14 +185,14 @@ public sealed class DebugSession : IDisposable
         return this;
     }
 
-    public DebugSession WithLaunchRequest(string program, bool stopAtEntry, bool justMyCode, IReadOnlyList<string>? arguments = null)
+    public DebugSession WithLaunchRequest(string program, bool stopAtEntry, bool justMyCode, IReadOnlyList<string>? arguments = null, string console = "internalConsole")
     {
         Request("launch", new LaunchArguments
         {
             Program = program,
             Args = arguments,
             Cwd = Path.GetDirectoryName(program),
-            Console = "internalConsole",
+            Console = console,
             JustMyCode = justMyCode,
             StopAtEntry = stopAtEntry,
         });

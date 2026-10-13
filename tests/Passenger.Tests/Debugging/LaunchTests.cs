@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using Passenger.Core;
 using Passenger.Dap;
 using Passenger.Tests.Debugging.Helpers;
 
@@ -170,5 +172,81 @@ public class LaunchTests(ITestOutputHelper testOutputHelper)
         IReadOnlyList<DapThread> threads = host.Request<ThreadsResponse>("threads").Threads;
         Assert.Equal("Main Thread", Assert.Single(threads, t => t.Id == stopped.ThreadId).Name);
         Assert.Single(threads, t => t.Name == "Main Thread");
+    }
+
+    /// <summary>A program the client starts in its terminal starts held, and the debugger has hold of it before any of it
+    /// runs: a breakpoint on Main's very first line stops it there, launch after launch, never missed by a Main that ran on.</summary>
+    [Fact]
+    public async Task A_program_started_in_the_clients_terminal_stops_at_a_breakpoint_on_Mains_first_line_every_time()
+    {
+        string source = Debuggees.Source("TerminalConsoleApp", "Program.cs");
+        int first = Debuggees.Line("TerminalConsoleApp", "// Main's first line");
+        for (int launch = 1; launch <= 5; launch++)
+        {
+            using DebugSession host = DebugSession.ForLaunch(testOutputHelper);
+            using Terminal terminal = new(host);
+            await host
+                .WithInitializeRequest()
+                .WithLaunchRequest(Debuggees.Program("TerminalConsoleApp"), stopAtEntry: false, justMyCode: true, console: "integratedTerminal")
+                .WaitForInitializedEvent();
+            host.WithBreakpointsRequest(first, source).WithConfigurationDoneRequest();
+
+            StoppedEvent stopped = await host.WaitForStoppedEvent();
+            Assert.True((stopped.Reason, stopped.Line) == ("breakpoint", first),
+                $"Launch {launch} in the terminal stopped for {stopped.Reason} at line {stopped.Line}, not at the breakpoint on Main's first line ({first})");
+            Assert.True(terminal.Program is { HasExited: false } program && host.GetTopStackFrame(stopped.ThreadId!.Value).Name.Contains("Main", StringComparison.Ordinal),
+                $"Launch {launch} stopped somewhere other than in the program the terminal started");
+        }
+    }
+
+    /// <summary>A client that cannot start the program in its terminal fails configurationDone saying so, and the debugger
+    /// goes on answering: the request never holds the engine.</summary>
+    [Fact]
+    public async Task A_client_that_cannot_start_the_program_in_its_terminal_fails_the_launch_saying_why()
+    {
+        using DebugSession host = DebugSession.ForLaunch(testOutputHelper);
+        host.Connection.Handle<RunInTerminalArguments, RunInTerminalResponse>("runInTerminal",
+            _ => Task.FromException<RunInTerminalResponse>(new InvalidOperationException("no terminal here")));
+        await host
+            .WithInitializeRequest()
+            .WithLaunchRequest(Debuggees.Program("TerminalConsoleApp"), stopAtEntry: false, justMyCode: true, console: "integratedTerminal")
+            .WaitForInitializedEvent();
+
+        DapException refused = Assert.Throws<DapException>(() => host.Request("configurationDone"));
+        Assert.Contains("could not start TerminalConsoleApp.dll in its terminal: no terminal here", refused.Reason, StringComparison.Ordinal);
+        Assert.Empty(host.Request<ThreadsResponse>("threads", limit: TimeSpan.FromSeconds(10)).Threads);
+    }
+
+    /// <summary>The client's terminal, as the tests' client keeps one: it starts what runInTerminal asks for, with the
+    /// variables asked for, its output read and dropped, and ends it with the test.</summary>
+    private sealed class Terminal : IDisposable
+    {
+        public Terminal(DebugSession host) => host.Connection.Handle<RunInTerminalArguments, RunInTerminalResponse>("runInTerminal", arguments =>
+        {
+            string program = arguments.Args[0] is "dotnet" ? Dotnet.Host() : arguments.Args[0];
+            ProcessStartInfo start = ChildProcesses.Command(program, arguments.Args.Skip(1), arguments.Cwd);
+            foreach ((string name, string value) in arguments.Env ?? new Dictionary<string, string>())
+            {
+                start.Environment[name] = value;
+            }
+            start.RedirectStandardOutput = true;
+            start.RedirectStandardError = true;
+            Process started = ChildProcesses.Start(start);
+            _ = started.StandardOutput.ReadToEndAsync();
+            _ = started.StandardError.ReadToEndAsync();
+            Program = started;
+            return Task.FromResult(new RunInTerminalResponse(started.Id));
+        });
+
+        public Process? Program { get; private set; }
+
+        public void Dispose()
+        {
+            if (Program is { } program)
+            {
+                ChildProcesses.Kill(program);
+                program.Dispose();
+            }
+        }
     }
 }

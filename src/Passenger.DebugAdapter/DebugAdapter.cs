@@ -20,6 +20,12 @@ public sealed class DebugAdapter
     private bool columnsStartAt1 = true;
     private int shutdownRequested;
 
+    /// <summary>Whether the client said at initialize that it starts programs in its terminal.</summary>
+    private bool runsInTerminal;
+
+    /// <summary>The longest the client may take to start a program in its terminal.</summary>
+    private static readonly TimeSpan RunInTerminalLimit = TimeSpan.FromSeconds(30);
+
     public DebugAdapter(DapConnection connection, Action<string>? log = null)
     {
         this.connection = connection;
@@ -208,6 +214,7 @@ public sealed class DebugAdapter
     {
         linesStartAt1 = arguments.LinesStartAt1 ?? true;
         columnsStartAt1 = arguments.ColumnsStartAt1 ?? true;
+        runsInTerminal = arguments.SupportsRunInTerminalRequest ?? false;
         return Task.FromResult(new DapCapabilities
         {
             SupportsConfigurationDoneRequest = true,
@@ -246,6 +253,10 @@ public sealed class DebugAdapter
                 "internalConsole" or null => LaunchRequestConsoleType.InternalConsole,
                 _ => throw new InvalidOperationException($"Invalid console type: '{arguments.Console}'"),
             };
+            if (console != LaunchRequestConsoleType.InternalConsole && !runsInTerminal)
+            {
+                throw new InvalidOperationException($"the client cannot start a program in a terminal ({arguments.Console}); use internalConsole");
+            }
             // A .dll runs under the host; an apphost or another executable runs itself.
             if (Path.GetExtension(program).Equals(".dll", StringComparison.OrdinalIgnoreCase))
             {
@@ -346,7 +357,10 @@ public sealed class DebugAdapter
         };
     }
 
-    private int RunInTerminal(LaunchInfo launch)
+    /// <summary>Asks the client to start the program in its terminal, held at its start for the debugger to take hold of,
+    /// and answers with its process. Asked from inside configurationDone, under the engine's lock, so a client that never
+    /// answers fails the request after <see cref="RunInTerminalLimit"/> rather than holding the engine for good.</summary>
+    private async Task<int> RunInTerminal(LaunchInfo launch)
     {
         string programForTitle = launch.Program is "dotnet" ? launch.Arguments[0] : launch.Program;
         Dictionary<string, string> env = new(launch.Env)
@@ -365,9 +379,22 @@ public sealed class DebugAdapter
             launch.Cwd,
             [launch.Program, .. launch.Arguments],
             env);
-        // Asked from inside the launch request, which waits on it: the connection reads its answer on
-        // another thread. VS Code answers with no process for its terminals (microsoft/vscode#61640).
-        RunInTerminalResponse response = connection.RequestAsync<RunInTerminalResponse>("runInTerminal", arguments).GetAwaiter().GetResult();
+        using CancellationTokenSource limit = new(RunInTerminalLimit);
+        RunInTerminalResponse response;
+        try
+        {
+            // The connection reads the answer on a thread of its own, so this wait never holds up the read that brings it.
+            response = await connection.RequestAsync<RunInTerminalResponse>("runInTerminal", arguments, limit.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (limit.IsCancellationRequested)
+        {
+            throw new TimeoutException($"The client did not start {Path.GetFileName(programForTitle)} in its terminal within {RunInTerminalLimit.TotalSeconds:0} s");
+        }
+        catch (DapException refused)
+        {
+            throw new InvalidOperationException($"The client could not start {Path.GetFileName(programForTitle)} in its terminal: {refused.Reason}", refused);
+        }
+        // VS Code answers with no process for its terminals (microsoft/vscode#61640).
         return response.ProcessId ?? throw new InvalidOperationException("runInTerminal returned no process ID; use internalConsole, or a client that returns one.");
     }
 

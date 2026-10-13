@@ -8,38 +8,15 @@ public static class DiagnosticClientHelper
     /// <summary>What holds a program at its start until a diagnostics client lets it go.</summary>
     private const string HoldVariable = "DOTNET_DefaultDiagnosticPortSuspend";
 
-    /// <summary>Lets go a program held at its start by the default diagnostic port. The variable that held it is cleared
-    /// in the program first, as the profiler clears its port's, so a .NET program it starts in turn (a build, a test
-    /// host, a child it waits for) runs as it would undebugged rather than held for a debugger that never comes.</summary>
-    public static async Task DiagnosticClientResumeRuntime(int debuggeeProcessId)
-    {
-        DiagnosticsClient diagnosticsClient = new DiagnosticsClient(debuggeeProcessId);
-        const int maxRetries = 5;
-        int delayMs = 50;
-
-        // For applications like godot, which start their own CLR, diagnostics IPC may not be available immediately.
-        for (int attempt = 1; attempt <= maxRetries; attempt++)
-        {
-            try
-            {
-                await Task.Delay(delayMs);
-                Release(diagnosticsClient);
-                return;
-            }
-            catch (ServerNotAvailableException) when (attempt < maxRetries)
-            {
-                delayMs *= 2;
-            }
-        }
-        Release(diagnosticsClient);
-    }
-
     /// <summary>Lets go a process held at its start by its diagnostic port, as an attach does once the debugger is registered
     /// for its runtime; one already running is let be, its runtime's answer (<paramref name="answered"/>) ending the wait
-    /// for a port. Fails when the process ends first, or 5 s pass with neither: no .NET in it, or none the debugger reaches.</summary>
+    /// for a port. The variable that held it is cleared in the program first, so a .NET program it starts in turn (a build,
+    /// a test host, a child it waits for) runs as it would undebugged rather than held for a debugger that never comes.
+    /// Fails when the process ends first, or 10 s pass with neither: no .NET in it, or none the debugger reaches.</summary>
     public static async Task LetGoIfHeld(Process process, Task answered)
     {
-        DateTime until = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        // A program a terminal has only just started may take a while to load its runtime on a busy machine.
+        DateTime until = DateTime.UtcNow + TimeSpan.FromSeconds(10);
         while (!answered.IsCompleted)
         {
             if (process.HasExited)
@@ -51,7 +28,7 @@ public static class DiagnosticClientHelper
             {
                 try
                 {
-                    new DiagnosticsClient(process.Id).ResumeRuntime();
+                    Release(new DiagnosticsClient(process.Id));
                     return;
                 }
                 catch (ServerNotAvailableException)
@@ -61,7 +38,7 @@ public static class DiagnosticClientHelper
             }
             if (DateTime.UtcNow >= until)
             {
-                throw new InvalidOperationException("it is not a .NET program the debugger can reach: no runtime in it answered, and it opened no diagnostic port within 5 s");
+                throw new InvalidOperationException("it is not a .NET program the debugger can reach: no runtime in it answered, and it opened no diagnostic port within 10 s");
             }
             // A program only just started opens its port a moment after it starts.
             await Task.WhenAny(answered, Task.Delay(50));

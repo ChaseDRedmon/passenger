@@ -162,7 +162,9 @@ public partial class ManagedDebugger
     /// <summary>The debugger has hold of a process it attached to, told before configurationDone answers.</summary>
     public event Action<int>? OnAttached;
     public event Action<BreakpointManager.BreakpointInfo>? OnBreakpointChanged;
-    public event Func<LaunchInfo, int> SendRunInTerminalRequest = null!;
+    /// <summary>Asks the client to start a program in its terminal, held at its start, and answers with its process; it
+    /// fails, rather than waits for good, when the client never answers.</summary>
+    public event Func<LaunchInfo, Task<int>> SendRunInTerminalRequest = null!;
 
     internal EvalStatus EvalStatus { get; }
 

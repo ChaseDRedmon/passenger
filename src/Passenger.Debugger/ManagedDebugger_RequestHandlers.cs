@@ -194,12 +194,21 @@ public partial class ManagedDebugger
     {
         _logger?.Invoke("ConfigurationDone");
 
-        if (_pendingLaunchInfo is { LaunchRequestConsoleType: LaunchRequestConsoleType.ExternalTerminal or LaunchRequestConsoleType.IntegratedTerminal })
+        if (_pendingLaunchInfo is { LaunchRequestConsoleType: LaunchRequestConsoleType.ExternalTerminal or LaunchRequestConsoleType.IntegratedTerminal } inTerminal)
         {
-            int launchedProcessId = await Task.Run(() => SendRunInTerminalRequest.Invoke(_pendingLaunchInfo)); // get off the dispatcher thread
             _pendingLaunchInfo = null;
-            // Held at its diagnostic port for the debugger, which lets it go only once registered for its runtime.
-            await PerformAttach(launchedProcessId, (_, _) => DiagnosticClientHelper.DiagnosticClientResumeRuntime(launchedProcessId));
+            int launchedProcessId = await SendRunInTerminalRequest.Invoke(inTerminal);
+            try
+            {
+                // Held at its port until the debugger is registered for its runtime, which then waits for the debugger's hold.
+                await PerformAttach(launchedProcessId, DiagnosticClientHelper.LetGoIfHeld);
+            }
+            catch
+            {
+                // Left held at its port, it would wait in the client's terminal for good.
+                EndHeld(launchedProcessId);
+                throw;
+            }
         }
         else if (_pendingLaunchInfo is not null)
         {
@@ -209,6 +218,20 @@ public partial class ManagedDebugger
         {
             _pendingAttachProcessId = null;
             await PerformAttach(processId, DiagnosticClientHelper.LetGoIfHeld);
+        }
+    }
+
+    /// <summary>Ends a program started in the client's terminal that the debugger could not take hold of.</summary>
+    private void EndHeld(int processId)
+    {
+        try
+        {
+            using Process held = Process.GetProcessById(processId);
+            held.Kill();
+        }
+        catch (Exception gone) when (gone is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            _logger?.Invoke($"Process {processId}, not taken hold of, could not be ended: {gone.Message}");
         }
     }
 

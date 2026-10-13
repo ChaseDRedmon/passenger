@@ -26,6 +26,7 @@
     <Project Path="tests/Debuggees/LoopingConsoleApp/LoopingConsoleApp.csproj" />
     <Project Path="tests/Debuggees/PassengerCases/PassengerCases.csproj" />
     <Project Path="tests/Debuggees/ReadsInputConsoleApp/ReadsInputConsoleApp.csproj" />
+    <Project Path="tests/Debuggees/TerminalConsoleApp/TerminalConsoleApp.csproj" />
     <Project Path="tests/Debuggees/TopLevelStatementsConsoleApp/TopLevelStatementsConsoleApp.csproj" />
   </Folder>
 </Solution>
