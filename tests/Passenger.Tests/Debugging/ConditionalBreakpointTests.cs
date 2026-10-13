@@ -167,6 +167,52 @@ public class ConditionalBreakpointTests(ITestOutputHelper testOutputHelper)
     }
 
     [Fact]
+    public async Task A_breakpoints_hit_count_and_id_outlast_its_files_breakpoints_being_sent_again()
+    {
+        bool startSuspended = true;
+        string file = Debuggees.Source("DebuggableConsoleApp", "HitConditionClass.cs");
+        using DebugSession host = DebugSession.ForAttach(testOutputHelper, startSuspended, out Process debuggee);
+        await host
+            .WithInitializeRequest()
+            .WithAttachRequest(debuggee.Id)
+            .WaitForInitializedEvent();
+        host
+            .WithBreakpointsRequest(file, [new DapSourceBreakpoint(9, HitCondition: "==3"), new DapSourceBreakpoint(10, HitCondition: "==5")], out SetBreakpointsResponse first)
+            .WithConfigurationDoneRequest()
+            .WithOptionalResumeRuntime(debuggee.Id, startSuspended);
+
+        // The third pass stops at line 9, with line 10's breakpoint two of its five hits in.
+        StoppedEvent third = await host.WaitForStoppedEvent();
+        Assert.Equal(9, third.ReadStopInfo().line);
+        Assert.Equal("2", Count(host, third));
+
+        // A breakpoint set in the file, as a click in the gutter or Run to Cursor does, then taken away again with line 9's.
+        host.WithBreakpointsRequest(file,
+            [new DapSourceBreakpoint(9, HitCondition: "==3"), new DapSourceBreakpoint(10, HitCondition: "==5"), new DapSourceBreakpoint(11)],
+            out SetBreakpointsResponse added);
+        StoppedEvent after = await host.WithContinueRequest().WaitForStoppedEvent();
+        Assert.Equal(11, after.ReadStopInfo().line);
+        host.WithBreakpointsRequest(file, [new DapSourceBreakpoint(10, HitCondition: "==5")], out SetBreakpointsResponse removed);
+
+        // Line 10's counted on through both: it stops on the fifth pass, not five passes after the last of them.
+        StoppedEvent fifth = await host.WithContinueRequest().WaitForStoppedEvent();
+        Assert.Equal(10, fifth.ReadStopInfo().line);
+        Assert.Equal("5", Count(host, fifth));
+        Assert.Equal(first.Breakpoints[1].Id, added.Breakpoints[1].Id);
+        Assert.Equal(first.Breakpoints[1].Id, removed.Breakpoints[0].Id);
+        Assert.Equal(first.Breakpoints[0].Id, added.Breakpoints[0].Id);
+        Assert.True(added.Breakpoints[2].Verified, "the breakpoint added while paused binds");
+    }
+
+    /// <summary>HitConditionClass's count of its passes, where the program stopped.</summary>
+    private static string Count(DebugSession host, StoppedEvent stop)
+    {
+        host.WithStackTraceRequest(stop.ThreadId!.Value, out StackTraceResponse stack);
+        host.WithEvaluateRequest(stack.StackFrames!.First().Id, "_count", out EvaluateResponse value);
+        return value.Result;
+    }
+
+    [Fact]
     public async Task HitCondition_GreaterThanOrEqual_StopsAfterThreshold()
     {
         bool startSuspended = true;

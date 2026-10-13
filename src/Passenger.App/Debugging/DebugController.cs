@@ -16,7 +16,13 @@ public sealed class DebugController
     private readonly DebugView view;
     private readonly List<string> watches = [];
     private readonly Dictionary<OpenDocument, EventHandler<DocumentChangedEventArgs>> following = [];
+
+    /// <summary>Where the program stopped, at its built line: shown where that line's code now is.</summary>
     private (string Path, int Line)? executionPoint;
+
+    /// <summary>The session's built lines, from its start to its end: the files' edits since the build.</summary>
+    private BuiltLines? lines;
+
     private (string Expression, string Value)? lastResult;
     private DapStackFrame? frame;
 
@@ -70,13 +76,13 @@ public sealed class DebugController
     /// <summary>Launches a program under the debugger (after it is built), its output in the Debug
     /// window's Console.</summary>
     public Task StartAsync(DebugTarget target, string name) =>
-        OpenAsync(log => DebugSession.LaunchAsync(target, Breakpoints, log), name);
+        OpenAsync((built, log) => DebugSession.LaunchAsync(target, Breakpoints, built, log), name);
 
     /// <summary>Attaches the debugger to a running .NET process, its output (if any) in the Console.</summary>
     public Task AttachAsync(int processId, string name) =>
-        OpenAsync(log => DebugSession.AttachAsync(processId, Breakpoints, log), name);
+        OpenAsync((built, log) => DebugSession.AttachAsync(processId, Breakpoints, built, log), name);
 
-    private async Task OpenAsync(Func<Action<string>, Task<DebugSession>> open, string name)
+    private async Task OpenAsync(Func<BuiltLines, Action<string>, Task<DebugSession>> open, string name)
     {
         UiThread.Check();
         if (IsDebugging)
@@ -89,11 +95,13 @@ public sealed class DebugController
         executionPoint = null;
         frame = null;
         lastResult = null;
+        BuiltLines built = new();
+        lines = built;
         view.SetState(DebugState.Starting);
         Message?.Invoke(this, $"Debugging {name}");
         try
         {
-            DebugSession session = await open(line => view.Console.Document.Append($"{line}\n"));
+            DebugSession session = await open(built, line => view.Console.Document.Append($"{line}\n"));
             Session = session;
             view.Tree.Load = reference => session.VariablesAsync(reference);
             session.Output += (_, output) => view.Console.Append(output.Output, error: output.Category == "stderr");
@@ -102,6 +110,7 @@ public sealed class DebugController
         }
         catch (Exception error) when (error is DapException or IOException or InvalidOperationException or TimeoutException)
         {
+            lines = null;
             view.SetState(DebugState.Ended);
             Message?.Invoke(this, $"Could not debug {name}: {(error is DapException dap ? dap.Reason : error.Message)}");
             StateChanged?.Invoke(this, EventArgs.Empty);
@@ -161,7 +170,7 @@ public sealed class DebugController
                 _ = SetNextStatementAsync(session, active.Path, caretLine);
                 break;
             case AppActions.ShowExecutionPoint when executionPoint is { } point:
-                Navigate?.Invoke(this, (point.Path, new TextPosition(point.Line, 0)));
+                Navigate?.Invoke(this, (point.Path, new TextPosition(Current(point.Path, point.Line), 0)));
                 break;
             case AppActions.AddToWatches when Session is { State: DebugState.Paused } && SelectedOrWord() is { Length: > 0 } watched:
                 _ = Evaluate(watched, watch: true);
@@ -184,7 +193,7 @@ public sealed class DebugController
             {
                 problem = "No thread is paused";
             }
-            else if (await session.GotoTargetAsync(path, line + 1) is not { } target)
+            else if (await session.GotoTargetAsync(path, Built(path, line) + 1) is not { } target)
             {
                 problem = $"Line {line + 1} is not in the method the program is paused in";
             }
@@ -204,11 +213,17 @@ public sealed class DebugController
         return problem;
     }
 
-    /// <summary>A file opened in a tab: its breakpoints follow its edits, and its gutter shows them.</summary>
+    /// <summary>A file opened in a tab: its breakpoints, and the stop shown in it, follow its edits, and its gutter shows them.</summary>
     public void Attach(OpenDocument document)
     {
         UiThread.Check();
-        EventHandler<DocumentChangedEventArgs> follow = (_, change) => Breakpoints.Follow(document.Path, change);
+        EventHandler<DocumentChangedEventArgs> follow = (_, change) =>
+        {
+            // The built lines first: a breakpoint's move asks them what it now asks of the debugger.
+            lines?.Follow(document.Path, change);
+            Breakpoints.Follow(document.Path, change);
+            FollowStop(document, change);
+        };
         following[document] = follow;
         document.Text.Changed += follow;
         UpdateMarks(document);
@@ -311,6 +326,7 @@ public sealed class DebugController
                 break;
             case DebugState.Ended:
                 executionPoint = null;
+                lines = null;
                 frame = null;
                 UpdateAllMarks();
                 ClearInlineValues();
@@ -372,7 +388,7 @@ public sealed class DebugController
         frame = chosen;
         if (navigate && chosen.Source?.Path is { } path && File.Exists(path))
         {
-            Navigate?.Invoke(this, (path, new TextPosition(Math.Max(0, chosen.Line - 1), Math.Max(0, chosen.Column - 1))));
+            Navigate?.Invoke(this, (path, new TextPosition(Current(path, Math.Max(0, chosen.Line - 1)), Math.Max(0, chosen.Column - 1))));
         }
         await ShowVariables();
     }
@@ -438,9 +454,10 @@ public sealed class DebugController
                 document.LineAnnotations = [];
                 continue;
             }
-            IReadOnlyList<LineAnnotation> inline = InlineValues.For(document.Text.Snapshot.ToString(), current.Line - 1, values);
+            int line = Current(document.Path, current.Line - 1);
+            IReadOnlyList<LineAnnotation> inline = InlineValues.For(document.Text.Snapshot.ToString(), line, values);
             document.LineAnnotations = stopException is { } thrown && thrown.FrameId == current.Id
-                ? [new LineAnnotation(current.Line - 1, thrown.Text, LineAnnotationKind.Exception), .. inline]
+                ? [new LineAnnotation(line, thrown.Text, LineAnnotationKind.Exception), .. inline]
                 : inline;
         }
     }
@@ -551,8 +568,28 @@ public sealed class DebugController
         }, Conditional: b.Condition is not null || b.HitCondition is not null, Tracepoint: !b.Suspend))];
         if (executionPoint is { } point && point.Path == document.Path)
         {
-            marks.Add(new LineMark(point.Line, LineMarkKind.ExecutionPoint));
+            marks.Add(new LineMark(Current(point.Path, point.Line), LineMarkKind.ExecutionPoint));
         }
         document.LineMarks = marks;
     }
+
+    /// <summary>Carries the stop shown in a file through an edit to it, as Rider's execution point and inline values go
+    /// with the text: the arrow from the built lines, the values a line at a time.</summary>
+    private void FollowStop(OpenDocument document, DocumentChangedEventArgs change)
+    {
+        if (executionPoint is { } point && point.Path == document.Path)
+        {
+            UpdateMarks(document);
+        }
+        if (document.LineAnnotations.Count > 0)
+        {
+            document.LineAnnotations = [.. document.LineAnnotations.Select(a => a with { Line = TextEditing.MapLine(change.Before, change.Edits, change.After, a.Line) })];
+        }
+    }
+
+    /// <summary>Where a built line of a file is now, while a session runs.</summary>
+    private int Current(string path, int line) => lines?.ToCurrent(path, line) ?? line;
+
+    /// <summary>The built line a line of a file has, while a session runs.</summary>
+    private int Built(string path, int line) => lines?.ToBuilt(path, line) ?? line;
 }

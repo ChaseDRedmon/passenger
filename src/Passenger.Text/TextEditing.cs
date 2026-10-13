@@ -586,6 +586,15 @@ public static class TextEditing
     /// exactly at it goes before it when <paramref name="afterInsertions"/>, after it otherwise.</summary>
     public static int MapOffset(int offset, IReadOnlyList<TextEdit> edits, bool afterInsertions) => Map(edits, offset, afterInsertions);
 
+    /// <summary>A line (from zero) carried through edits from one text to the other, as a breakpoint is: with its first
+    /// character, which text inserted before it or at its very start pushes along, so a line broken at its start goes
+    /// down with its code; a line removed lands where the removal did.</summary>
+    public static int MapLine(TextSnapshot before, IReadOnlyList<TextEdit> edits, TextSnapshot after, int line)
+    {
+        int start = before.GetLineStart(Math.Min(line, before.LineCount - 1));
+        return after.GetLineFromOffset(Math.Min(Map(edits, start, afterInsertions: true), after.Length));
+    }
+
     /// <summary>Carries carets through edits someone else made (sorted, non-overlapping, in the old
     /// text's coordinates): a caret inside a replaced range lands at its start.</summary>
     public static SelectionSet MapThrough(SelectionSet selections, IReadOnlyList<TextEdit> edits) =>

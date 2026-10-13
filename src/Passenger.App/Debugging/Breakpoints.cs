@@ -35,6 +35,9 @@ public enum BreakpointStatus
     /// <summary>No debugger has said, or none is running.</summary>
     Unknown,
     Bound,
+
+    /// <summary>Refused: it will not stop the program (a line written since the build), and its
+    /// <see cref="LineBreakpoint.Message"/> says why.</summary>
     Invalid,
 }
 
@@ -248,11 +251,7 @@ public sealed class BreakpointStore
         bool moved = false;
         foreach (LineBreakpoint breakpoint in list)
         {
-            int start = change.Before.GetLineStart(Math.Min(breakpoint.Line, change.Before.LineCount - 1));
-            // A breakpoint goes with its line's first character, which text inserted before it pushes
-            // along: a line broken at its very start takes the breakpoint down with the code.
-            int mapped = TextEditing.MapOffset(start, change.Edits, afterInsertions: true);
-            int line = change.After.GetLineFromOffset(Math.Min(mapped, change.After.Length));
+            int line = TextEditing.MapLine(change.Before, change.Edits, change.After, breakpoint.Line);
             if (line != breakpoint.Line)
             {
                 breakpoint.Line = line;

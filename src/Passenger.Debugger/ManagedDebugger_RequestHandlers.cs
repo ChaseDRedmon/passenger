@@ -483,37 +483,48 @@ public partial class ManagedDebugger
         }
     }
 
-    /// <summary>
-    /// Set breakpoints for a source file with optional conditions
-    /// </summary>
+    /// <summary>Sets a file's breakpoints to those asked for. One asked for again just as it was (its line, column,
+    /// condition, hit count, message and whether it stops) is kept whole: its id, its binding and its hit count, so a hit
+    /// of it already on its way still stops, and a change elsewhere in the file starts no count again. Those no longer
+    /// asked for are let go, and the new ones bound.</summary>
     public List<BreakpointManager.BreakpointInfo> SetBreakpoints(string filePath, BreakpointRequest[] breakpoints)
     {
-        //System.Diagnostics.Debugger.Launch();
-        _logger?.Invoke($"SetBreakpoints: {filePath}, breakpoints: {string.Join(",", breakpoints.Select(b => $"L{b.Line} {(b.Column is not null ? $"C{b.Column}" : null)} {(b.Condition is not null ? $"[{b.Condition}]" : null)}"))}");
+        _logger?.Invoke($"SetBreakpoints: {filePath}, breakpoints: {string.Join(",", breakpoints.Select(b => $"L{b.Line} {(b.Column is not null ? $"C{b.Column}" : null)} {(b.Condition is not null ? $"[{b.Condition}]" : null)}{(b.HitCondition is not null ? $" hits {b.HitCondition}" : null)}"))}");
 
-        // Deactivate and clear existing breakpoints for this file
         List<BreakpointManager.BreakpointInfo> existingBreakpoints = _breakpointManager.GetBreakpointsForFile(filePath);
-        foreach (BreakpointManager.BreakpointInfo bp in existingBreakpoints)
+        BreakpointManager.BreakpointInfo?[] kept = new BreakpointManager.BreakpointInfo?[breakpoints.Length];
+        for (int i = 0; i < breakpoints.Length; i++)
         {
-            if (bp.CorBreakpoint is not null)
+            kept[i] = existingBreakpoints.FirstOrDefault(b => b.Request == breakpoints[i] && !kept.Contains(b));
+        }
+        foreach (BreakpointManager.BreakpointInfo gone in existingBreakpoints.Where(b => !kept.Contains(b)))
+        {
+            if (gone.CorBreakpoint is not null)
             {
                 try
                 {
-                    bp.CorBreakpoint.Activate(false);
+                    gone.CorBreakpoint.Activate(false);
                 }
                 catch (Exception ex)
                 {
                     _logger?.Invoke($"Error deactivating breakpoint: {ex.Message}");
                 }
             }
+            _breakpointManager.RemoveBreakpoint(gone.Id);
         }
-        _breakpointManager.ClearBreakpointsForFile(filePath);
 
-        // Create new breakpoints
         List<BreakpointManager.BreakpointInfo> result = new List<BreakpointManager.BreakpointInfo>();
-        foreach (BreakpointRequest request in breakpoints)
+        for (int i = 0; i < breakpoints.Length; i++)
         {
+            if (kept[i] is { } same)
+            {
+                _logger?.Invoke($"Breakpoint {same.Id} at {filePath}:{breakpoints[i].Line} kept as it was, {same.HitCount} hits in");
+                result.Add(same);
+                continue;
+            }
+            BreakpointRequest request = breakpoints[i];
             BreakpointManager.BreakpointInfo bp = _breakpointManager.CreateBreakpoint(filePath, request.Line, request.Column, request.Condition, request.HitCondition, request.LogMessage, request.Suspend);
+            bp.Request = request;
             if (request.Condition is not null && SyntaxFactory.ParseExpression(request.Condition).DescendantNodesAndSelf().Any(static node => node is AnonymousFunctionExpressionSyntax))
             {
                 bp.Message = "Lambda expressions are not supported in breakpoint conditions.";

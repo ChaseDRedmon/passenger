@@ -44,6 +44,9 @@ public class BreakpointManager
 
         /// <summary>Whether a hit stops the program; a tracepoint's does not.</summary>
         public bool Suspend { get; set; } = true;
+
+        /// <summary>A source breakpoint's request as the client made it: one made again just so keeps this breakpoint.</summary>
+        public BreakpointRequest? Request { get; set; }
     }
 
     public record FunctionBreakpointBinding(
@@ -156,24 +159,6 @@ public class BreakpointManager
                 return ids.Select(id => _breakpoints[id]).ToList();
             }
             return [];
-        }
-    }
-
-    /// <summary>
-    /// Clear all breakpoints for a file
-    /// </summary>
-    public void ClearBreakpointsForFile(string filePath)
-    {
-        lock (_lock)
-        {
-            if (_breakpointsByFile.TryGetValue(filePath, out List<int>? ids))
-            {
-                foreach (int id in ids)
-                {
-                    _breakpoints.Remove(id);
-                }
-                _breakpointsByFile.Remove(filePath);
-            }
         }
     }
 

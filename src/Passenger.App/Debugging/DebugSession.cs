@@ -14,20 +14,27 @@ public enum DebugState
 
 /// <summary>One program under the debugger: the adapter's process (debugger/ beside the app), the
 /// conversation with it, and what the program is doing. A UI-thread object: every event and state change
-/// lands on the UI thread. The file's breakpoints go to the adapter whenever they change, while it runs.</summary>
+/// lands on the UI thread. A file's breakpoints go to the adapter whenever what they ask of it changes, while it
+/// runs, at their lines in the build it runs (<see cref="BuiltLines"/>).</summary>
 public sealed class DebugSession
 {
     /// <summary>How many of the adapter's last lines on standard error go to the IDE's log when it dies.</summary>
     private const int ErrorLines = 40;
 
+    /// <summary>Why a breakpoint on a line written since the build is not sent: the program has no code of it.</summary>
+    private const string NotBuilt = "The breakpoint will not currently be hit: its line was written after the program being debugged was built.";
+
     private readonly Process adapter;
     private readonly DapConnection connection;
     private readonly BreakpointStore breakpoints;
+    private readonly BuiltLines lines;
     private readonly Dictionary<string, string> sent = new(StringComparer.Ordinal);
     private readonly Dictionary<int, LineBreakpoint> byId = [];
     private readonly TaskCompletionSource initialized = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Queue<string> errors = new();
     private readonly TaskCompletionSource errorsRead = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Run to Cursor's place, at its built line, until the next stop.</summary>
     private (string Path, int Line)? runToCursor;
     private volatile bool killed;
 
@@ -37,9 +44,10 @@ public sealed class DebugSession
     /// <summary>The adapter's one disconnect, once asked: nothing more is asked of it, since it may go before answering.</summary>
     private Task? disconnected;
 
-    private DebugSession(BreakpointStore breakpoints, Action<string> log)
+    private DebugSession(BreakpointStore breakpoints, BuiltLines lines, Action<string> log)
     {
         this.breakpoints = breakpoints;
+        this.lines = lines;
         // The log is called from the adapter's error stream and the connection's own threads: each line lands on the UI's.
         log = UiThread.Marshal(log);
         string path = Path.Combine(AppContext.BaseDirectory, "debugger", "Passenger.DebugAdapter.dll");
@@ -124,7 +132,7 @@ public sealed class DebugSession
     /// <summary>Starts the adapter and launches a program under it (an apphost or a .dll run under
     /// dotnet), with the breakpoints the store has, stopping on exceptions the user's code leaves
     /// unhandled, as Rider does by default.</summary>
-    public static Task<DebugSession> LaunchAsync(DebugTarget target, BreakpointStore breakpoints, Action<string> log) =>
+    public static Task<DebugSession> LaunchAsync(DebugTarget target, BreakpointStore breakpoints, BuiltLines lines, Action<string> log) =>
         StartAsync(target.Program, "launch", new LaunchArguments
         {
             Program = target.Program,
@@ -134,17 +142,17 @@ public sealed class DebugSession
             Console = "internalConsole",
             JustMyCode = true,
             StopAtEntry = false,
-        }, breakpoints, log);
+        }, breakpoints, lines, log);
 
     /// <summary>Starts the adapter and attaches it to a running .NET process (a test host VSTest started), with the
     /// store's breakpoints, as Attach to Process does.</summary>
-    public static Task<DebugSession> AttachAsync(int processId, BreakpointStore breakpoints, Action<string> log) =>
-        StartAsync($"process {processId}", "attach", new AttachArguments { ProcessId = processId, JustMyCode = true }, breakpoints, log);
+    public static Task<DebugSession> AttachAsync(int processId, BreakpointStore breakpoints, BuiltLines lines, Action<string> log) =>
+        StartAsync($"process {processId}", "attach", new AttachArguments { ProcessId = processId, JustMyCode = true }, breakpoints, lines, log);
 
-    private static async Task<DebugSession> StartAsync(string program, string request, object arguments, BreakpointStore breakpoints, Action<string> log)
+    private static async Task<DebugSession> StartAsync(string program, string request, object arguments, BreakpointStore breakpoints, BuiltLines lines, Action<string> log)
     {
         UiThread.Check();
-        DebugSession session = new(breakpoints, log) { Program = program };
+        DebugSession session = new(breakpoints, lines, log) { Program = program };
         session.connection.Start();
         try
         {
@@ -188,7 +196,7 @@ public sealed class DebugSession
     public async Task RunToCursorAsync(string path, int line)
     {
         UiThread.Check();
-        runToCursor = (path, line);
+        runToCursor = (path, lines.ToBuilt(path, line));
         await SendBreakpointsAsync(path);
         await ContinueAsync();
     }
@@ -376,11 +384,14 @@ public sealed class DebugSession
         await connection.RequestAsync(command, new ThreadArguments(thread));
     }
 
+    /// <summary>Sends a file's breakpoints at their built lines; one on a line written since the build is refused here, as
+    /// the debugger refuses a line with no code. The adapter keeps those sent as they were, hit counts and all.</summary>
     private async Task SendBreakpointsAsync(string path)
     {
-        List<LineBreakpoint> enabled = [.. breakpoints.In(path).Where(b => b.Enabled)];
-        List<DapSourceBreakpoint> requests = [.. enabled.Select(b => new DapSourceBreakpoint(b.Line + 1, Condition: b.Condition, HitCondition: b.HitCondition, LogMessage: b.LogMessage, Suspend: b.Suspend))];
-        if (runToCursor is { } target && target.Path == path && enabled.All(b => b.Line != target.Line))
+        List<LineBreakpoint> built = [.. breakpoints.In(path).Where(b => b.Enabled && lines.IsBuilt(path, b.Line))];
+        List<LineBreakpoint> unbuilt = [.. breakpoints.In(path).Where(b => b.Enabled && !lines.IsBuilt(path, b.Line))];
+        List<DapSourceBreakpoint> requests = [.. built.Select(b => new DapSourceBreakpoint(lines.ToBuilt(path, b.Line) + 1, Condition: b.Condition, HitCondition: b.HitCondition, LogMessage: b.LogMessage, Suspend: b.Suspend))];
+        if (runToCursor is { } target && target.Path == path && requests.All(r => r.Line != target.Line + 1))
         {
             requests.Add(new DapSourceBreakpoint(target.Line + 1));
         }
@@ -391,28 +402,32 @@ public sealed class DebugSession
         {
             byId.Remove(id);
         }
-        for (int i = 0; i < Math.Min(enabled.Count, response.Breakpoints.Count); i++)
+        for (int i = 0; i < Math.Min(built.Count, response.Breakpoints.Count); i++)
         {
             if (response.Breakpoints[i].Id is int id)
             {
-                byId[id] = enabled[i];
+                byId[id] = built[i];
             }
         }
-        breakpoints.Report(path, [.. response.Breakpoints.Take(enabled.Count).Select(Status)], enabled);
+        breakpoints.Report(path,
+            [.. response.Breakpoints.Take(built.Count).Select(Status), .. unbuilt.Select(_ => (BreakpointStatus.Invalid, (string?)NotBuilt, (int?)null))],
+            [.. built.Take(response.Breakpoints.Count), .. unbuilt]);
     }
 
     private void OnBreakpointsChanged(object? sender, string path)
     {
-        // A report from the debugger raises Changed too; only the user's own changes go back to it.
+        // A report from the debugger raises Changed too, and an edit that only carries breakpoints with their code asks
+        // nothing new: only what changes the request goes back to it.
         if (State is DebugState.Running or DebugState.Paused && disconnected is null && (!sent.TryGetValue(path, out string? last) || last != Signature(path)))
         {
             _ = SendBreakpointsAsync(path);
         }
     }
 
-    /// <summary>What a file's breakpoints ask of the debugger, to tell a change worth sending.</summary>
+    /// <summary>What a file's breakpoints ask of the debugger, at their built lines, to tell a change worth sending.</summary>
     private string Signature(string path) =>
-        string.Join(';', breakpoints.In(path).Where(b => b.Enabled).Select(b => $"{b.Line}|{b.Condition}|{b.HitCondition}|{b.LogMessage}|{b.Suspend}"));
+        string.Join(';', breakpoints.In(path).Where(b => b.Enabled).Select(b =>
+            $"{(lines.IsBuilt(path, b.Line) ? $"{lines.ToBuilt(path, b.Line)}" : $"new {b.Line}")}|{b.Condition}|{b.HitCondition}|{b.LogMessage}|{b.Suspend}"));
 
     private void OnEvent(string name, JsonElementCopy body)
     {

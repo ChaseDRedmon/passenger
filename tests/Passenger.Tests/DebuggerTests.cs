@@ -158,6 +158,43 @@ public sealed class DebuggerTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void A_line_typed_above_a_bound_breakpoint_while_paused_leaves_it_stopping_at_its_statement()
+    {
+        MainWindow window = Open();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        editor.GoTo(new TextPosition(3, 4));
+        Ui.Run(window, AppActions.ToggleBreakpoint);
+        Ui.Run(window, AppActions.Debug);
+        Ui.WaitFor(() => Value(window, "i") == "1", "the first stop");
+
+        // A line broken at the top while paused: the breakpoint, the arrow and the values go down a line with their code.
+        editor.GoTo(new TextPosition(0, 0));
+        editor.Focus();
+        Ui.Press(window, "Enter");
+        Assert.Contains(new LineMark(4, LineMarkKind.BreakpointBound), editor.LineMarks);
+        Assert.Contains(new LineMark(4, LineMarkKind.ExecutionPoint), editor.LineMarks);
+        Assert.Contains(new LineAnnotation(2, "i: 1", LineAnnotationKind.InlineValue), editor.LineAnnotations);
+
+        // The new line has no code in the program being debugged: a breakpoint there is refused, not bound to the next.
+        editor.GoTo(new TextPosition(0, 0));
+        Ui.Run(window, AppActions.ToggleBreakpoint);
+        Ui.WaitFor(() => editor.LineMarks.Contains(new LineMark(0, LineMarkKind.BreakpointInvalid)), "the new line's breakpoint refused");
+        Assert.Contains("written after the program being debugged was built", window.Debugger.Breakpoints.In(program)[0].Message, StringComparison.Ordinal);
+
+        // Resumed, the program stops on the loop's next turn at the statement the breakpoint was bound to, shown where it now is.
+        Ui.Run(window, AppActions.Resume);
+        Ui.WaitFor(() => editor.LineMarks.Any(m => m.Kind == LineMarkKind.ExecutionPoint), "the next stop");
+        Ui.WaitFor(() => Value(window, "i") == "2", "the loop's next turn at the breakpoint's statement, not the line after it");
+        Assert.Equal(4, window.BottomPanel.Debug.Frames[0].Line);
+        Assert.Contains(new LineMark(4, LineMarkKind.ExecutionPoint), editor.LineMarks);
+        Assert.Contains(new LineMark(4, LineMarkKind.BreakpointBound), editor.LineMarks);
+        Assert.Contains(new LineAnnotation(2, "i: 2", LineAnnotationKind.InlineValue), editor.LineAnnotations);
+        Ui.Run(window, AppActions.Stop);
+        Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void A_launch_profile_debugs_with_its_arguments_environment_and_the_projects_folder()
     {
         Write("Program.cs", "string greeting = Environment.GetEnvironmentVariable(\"GREETING\") ?? \"none\";\nstring here = Environment.CurrentDirectory;\nConsole.WriteLine($\"{greeting} {args.Length} {here}\");\n");
