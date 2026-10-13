@@ -156,7 +156,8 @@ public partial class MainWindow
         Editors.CodeEditor.TryExecute(action);
     }
 
-    /// <summary>Build, Run and Debug: the solution's or the chosen projects' builds, and the run configuration's run.</summary>
+    /// <summary>Build, Run and Debug: the solution's or the chosen projects' builds, the run configuration's run, and Edit
+    /// Configurations.</summary>
     private void AddBuilding()
     {
         Add(A.Build, "Build Solution", "Run", _ => BuildSolution(), Unbuildable, ("Build", 0, 0));
@@ -168,6 +169,8 @@ public partial class MainWindow
 
         Add(A.RunProgram, "Run", "Run", _ => RunSelected(), _ => Unconfigured("run"), ("Run", 0, 0));
         Add(A.Debug, "Debug", "Run", _ => DebugSelected(), _ => Unconfigured("debug"), ("Run", 0, 1));
+        // Rider's Run menu has it after Run and Debug, with no key in its Visual Studio keymaps.
+        Add(A.EditConfigurations, "Edit Configurations...", "Run", _ => ShowRunConfigurations(), NeedsFolder, ("Run", 0, 3));
         // Rerun runs the last session again, under the debugger when that is how it runs.
         Add(A.Rerun, "Rerun", "Run", _ =>
         {

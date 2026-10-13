@@ -33,6 +33,9 @@ public partial class MainWindow
     /// <summary>The configuration chosen in the toolbar, which Run, Debug and Profile launch.</summary>
     public RunConfiguration? Configuration => configuration;
 
+    /// <summary>The run configurations dialog open over the window, or null.</summary>
+    public RunConfigurationsDialog? RunConfigurationsDialog { get; private set; }
+
     /// <summary>How a run that ended is named, in the status bar and to an agent.</summary>
     public static string RunEnded(string name, int code) => $"{name} exited with code {code}";
 
@@ -99,6 +102,23 @@ public partial class MainWindow
         : kept;
 
     private RunConfiguration FromStore(RunConfiguration kept) => folder is null ? kept : kept with { Project = PathNames.Canonical(Path.Combine(folder, kept.Project)) };
+
+    /// <summary>Run's Edit Configurations: the dialog over the window, its changes the folder's once applied.</summary>
+    public RunConfigurationsDialog ShowRunConfigurations()
+    {
+        RunConfigurationsDialog dialog = new([.. configurations.Where(c => c.Generated)], own, [.. Projects.Where(p => p.Exists && p.IsRunnable)],
+            configuration?.Name, SetConfigurations);
+        RunConfigurationsDialog = dialog;
+        dialog.Closed += (_, _) =>
+        {
+            if (RunConfigurationsDialog == dialog)
+            {
+                RunConfigurationsDialog = null;
+            }
+        };
+        _ = dialog.ShowDialog(this);
+        return dialog;
+    }
 
     /// <summary>A configuration's plan, with these arguments in place of its own if given, or why it has none.</summary>
     private async Task<(LaunchPlan? Plan, string? Problem)> ResolvePlanAsync(RunConfiguration chosen, string? arguments)
@@ -250,7 +270,8 @@ public partial class MainWindow
         }
     }
 
-    /// <summary>The run configurations to choose from, as a menu under the toolbar widget.</summary>
+    /// <summary>The run configurations to choose from, as a menu under the toolbar widget, and Edit Configurations below
+    /// them, as Rider's run widget lists them.</summary>
     private void OnRunConfigClicked(object? sender, RoutedEventArgs e)
     {
         ContextMenu menu = new();
@@ -265,6 +286,10 @@ public partial class MainWindow
         {
             menu.Items.Add(new MenuItem { Header = "No executable projects", IsEnabled = false });
         }
+        menu.Items.Add(new Separator());
+        MenuItem edit = new() { Header = "Edit Configurations..." };
+        edit.Click += (_, _) => Request(AppActions.EditConfigurations);
+        menu.Items.Add(edit);
         Open(menu, RunConfigButton);
     }
 }

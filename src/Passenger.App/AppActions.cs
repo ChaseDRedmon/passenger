@@ -51,6 +51,7 @@ public static class AppActions
     public const string Debug = "app.debug";
     public const string Stop = "app.stop";
     public const string Rerun = "app.rerun";
+    public const string EditConfigurations = "app.editConfigurations";
     public const string ShowBuild = "app.showBuild";
     public const string ShowRun = "app.showRun";
     public const string ShowProblems = "app.showProblems";
