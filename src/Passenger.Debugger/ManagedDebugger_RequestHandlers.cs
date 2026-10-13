@@ -312,7 +312,8 @@ public partial class ManagedDebugger
     }
 
     /// <summary>A pause asked for while the process was held for the runtime's own event, taken instead of letting it go
-    /// on once a thread runs managed code; true when it was.</summary>
+    /// on once a thread runs managed code; true when it was. It ends a step under way, as a pause of a running one does,
+    /// so the next step is not refused as one already in progress.</summary>
     private bool TakePendingPause()
     {
         if (!_pauseRequested || PausedThread() is not { } thread)
@@ -320,6 +321,7 @@ public partial class ManagedDebugger
             return false;
         }
         _pauseRequested = false;
+        EndStepForStop();
         OnStopped?.Invoke(thread, "pause");
         return true;
     }
@@ -365,122 +367,47 @@ public partial class ManagedDebugger
         return true;
     }
 
-    /// <summary>
-    /// Step to the next line
-    /// </summary>
-    public async Task StepNext(int threadId)
+    public Task StepNext(int threadId) => Step(threadId, AsyncStepper.StepType.StepOver);
+
+    public Task StepIn(int threadId) => Step(threadId, AsyncStepper.StepType.StepIn);
+
+    public Task StepOut(int threadId) => Step(threadId, AsyncStepper.StepType.StepOut);
+
+    /// <summary>Steps a thread on, or refuses saying why: a step answered as taken that never set the program going would
+    /// leave the IDE waiting for a stop that never comes. An async method's step over an await is the async stepper's.</summary>
+    private async Task Step(int threadId, AsyncStepper.StepType type)
     {
-        _logger?.Invoke($"StepNext on thread {threadId}");
-        if (_threads.TryGetValue(threadId, out ThreadInfo? threadInfo))
+        _logger?.Invoke($"{type} on thread {threadId}");
+        ArgumentNullException.ThrowIfNull(_process);
+        if (!_threads.TryGetValue(threadId, out ThreadInfo? threadInfo))
         {
-            ICorDebugThread thread = threadInfo.Thread;
-            if (StepOutToManagedCode(thread))
-            {
-                return;
-            }
-            ICorDebugFrame frame = thread.ActiveFrame;
-            if (frame is not ICorDebugILFrame ilFrame)
-            {
-                throw new InvalidOperationException("Active frame is not an IL frame");
-            }
-
-            if (_stepper is not null)
-            {
-                throw new InvalidOperationException("A step operation is already in progress");
-            }
-
-            // Try async stepping first
-            if (_asyncStepper is not null)
-            {
-                (bool handledByAsyncStepper, bool? useSimpleStepper) = await _asyncStepper.TrySetupAsyncStep(thread, AsyncStepper.StepType.StepOver);
-                if (handledByAsyncStepper)
-                {
-                    if (useSimpleStepper is false)
-                    {
-                        ContinueWithVariableClear();
-                        return;
-                    }
-                }
-            }
-
-            ICorDebugStepper stepper = SetupStepper(thread, AsyncStepper.StepType.StepOver);
-            ContinueWithVariableClear();
+            throw new InvalidOperationException($"The program has no thread {threadId} to step: it has ended");
         }
-    }
-
-    /// <summary>
-    /// Step into
-    /// </summary>
-    public async Task StepIn(int threadId)
-    {
-        _logger?.Invoke($"StepIn on thread {threadId}");
-        if (_threads.TryGetValue(threadId, out ThreadInfo? threadInfo))
+        // Running while the IDE shows a stop only after an evaluation that could not be stopped (RunEvalAsync).
+        if (_process.TryIsRunning(out bool running) is Cor.S_OK && running)
         {
-            ICorDebugThread thread = threadInfo.Thread;
-            if (StepOutToManagedCode(thread))
+            throw new InvalidOperationException("The program is running, so it cannot step");
+        }
+        ICorDebugThread thread = threadInfo.Thread;
+        if (StepOutToManagedCode(thread))
+        {
+            return;
+        }
+        if (_stepper is not null)
+        {
+            throw new InvalidOperationException("A step operation is already in progress");
+        }
+        if (_asyncStepper is not null)
+        {
+            (bool handledByAsyncStepper, bool? useSimpleStepper) = await _asyncStepper.TrySetupAsyncStep(thread, type);
+            if (handledByAsyncStepper && useSimpleStepper is false)
             {
-                return;
-            }
-            ICorDebugFrame? frame = thread.ActiveFrame;
-            if (frame is not null)
-            {
-                // Try async stepping first
-                if (_asyncStepper is not null)
-                {
-                    (bool handledByAsyncStepper, bool? useSimpleStepper) = await _asyncStepper.TrySetupAsyncStep(thread, AsyncStepper.StepType.StepIn);
-                    if (handledByAsyncStepper)
-                    {
-                        if (useSimpleStepper is false)
-                        {
-                            ContinueWithVariableClear();
-                            return;
-                        }
-                    }
-                }
-
-                ICorDebugStepper stepper = SetupStepper(thread, AsyncStepper.StepType.StepIn);
                 ContinueWithVariableClear();
-            }
-        }
-    }
-
-    /// <summary>
-    /// Step out
-    /// </summary>
-    public async Task StepOut(int threadId)
-    {
-        _logger?.Invoke($"StepOut on thread {threadId}");
-        if (_threads.TryGetValue(threadId, out ThreadInfo? threadInfo))
-        {
-            ICorDebugThread thread = threadInfo.Thread;
-            if (StepOutToManagedCode(thread))
-            {
                 return;
             }
-            ICorDebugFrame? frame = thread.ActiveFrame;
-            if (frame is not null)
-            {
-                // Try async stepping first
-                if (_asyncStepper is not null)
-                {
-                    (bool handledByAsyncStepper, bool? useSimpleStepper) = await _asyncStepper.TrySetupAsyncStep(thread, AsyncStepper.StepType.StepOut);
-                    if (handledByAsyncStepper)
-                    {
-                        if (useSimpleStepper is false)
-                        {
-                            ContinueWithVariableClear();
-                            return;
-                        }
-                    }
-                }
-
-                ICorDebugStepper? stepper = SetupStepper(thread, AsyncStepper.StepType.StepOut);
-                if (stepper is not null)
-                {
-                    ContinueWithVariableClear();
-                }
-            }
         }
+        SetupStepper(thread, type);
+        ContinueWithVariableClear();
     }
 
     /// <summary>Sets a file's breakpoints to those asked for. One asked for again just as it was (its line, column,

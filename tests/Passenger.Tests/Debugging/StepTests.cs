@@ -211,6 +211,31 @@ public class StepTests(ITestOutputHelper testOutputHelper)
         AssertStepEnded(await host.WaitForStoppedEvent(), "the await's step ends here");
     }
 
+    [Fact]
+    public async Task A_step_of_a_thread_the_program_does_not_have_is_refused_rather_than_answered_as_taken()
+    {
+        using DebugSession host = await AttachToBreakpoint(20);
+        StoppedEvent stopped = await host.WaitForStoppedEvent();
+
+        DapException refused = Assert.Throws<DapException>(() => host.WithStepOverRequest(999_999));
+        Assert.Contains("no thread 999999", refused.Reason, StringComparison.Ordinal);
+        DapException refusedOut = Assert.Throws<DapException>(() => host.WithStepOutRequest(999_999));
+        Assert.Contains("no thread 999999", refusedOut.Reason, StringComparison.Ordinal);
+
+        // Nothing went: the thread that stopped steps on from where it was.
+        StoppedEvent stepped = await host.WithStepOverRequest(stopped.ThreadId!.Value).WaitForStoppedEvent();
+        Assert.Equal(("step", 21), (stepped.Reason, stepped.Line));
+    }
+
+    /// <summary>DebuggableConsoleApp attached to as it starts, with a breakpoint on a line of MyClass.cs.</summary>
+    private async Task<DebugSession> AttachToBreakpoint(int line)
+    {
+        DebugSession host = DebugSession.ForAttach(testOutputHelper, startSuspended: true, out Process program);
+        await host.WithInitializeRequest().WithAttachRequest(program.Id).WaitForInitializedEvent();
+        host.WithBreakpointsRequest(line).WithConfigurationDoneRequest().WithOptionalResumeRuntime(program.Id, startSuspended: true);
+        return host;
+    }
+
     /// <summary>LoopingConsoleApp launched in a mode where its first thread waits for a second to pass a line, stopped on
     /// the line that waits and stepping over it, with the other breakpoint given and one where a step lost runs on to.</summary>
     private static async Task StepOverWhileAnotherThreadPasses(DebugSession host, string mode, string from, string runsOnTo, DapSourceBreakpoint other)

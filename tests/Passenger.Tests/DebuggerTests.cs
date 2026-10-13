@@ -371,6 +371,59 @@ public sealed class DebuggerTests : IDisposable
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void A_step_the_debugger_refuses_leaves_the_program_paused_where_it_was_saying_why()
+    {
+        // A getter that reads input the program is never given: an evaluation of it cannot be stopped, and runs on.
+        Write("Program.cs", "int total = 0;\nfor (int i = 1; i <= 3; i++)\n{\n    total += i;\n}\nConsole.WriteLine($\"total {total}\");\n\n"
+            + "static class Waits\n{\n    public static string Input => Console.ReadLine() ?? \"none\";\n}\n");
+        MainWindow window = Open();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        editor.GoTo(new TextPosition(3, 4));
+        Ui.Run(window, AppActions.ToggleBreakpoint);
+        Ui.Run(window, AppActions.Debug);
+        Ui.WaitFor(() => Value(window, "i") == "1", "the stop in the loop");
+        Passenger.App.ToolWindows.DebugView view = window.BottomPanel.Debug;
+
+        Ui.Run(window, AppActions.Evaluate);
+        window.KeyTextInput("Waits.Input");
+        Ui.Press(window, "Enter");
+        Ui.WaitFor(() => view.Tree.Rows.Any(r => r.Name == "Waits.Input" && r.Value.Contains("took longer than", StringComparison.Ordinal)),
+            "the debugger to give up on the evaluation");
+
+        Ui.Run(window, AppActions.StepOver);
+        Ui.WaitFor(() => window.Status?.StartsWith("Could not step over", StringComparison.Ordinal) == true || window.Debugger.Session?.State != DebugState.Paused,
+            "the step to be refused or taken");
+        Assert.True(window.Debugger.Session?.State == DebugState.Paused, "The IDE said the program ran on after the debugger refused to step it, leaving only Stop");
+        Assert.StartsWith("Could not step over: The program is running", window.Status, StringComparison.Ordinal);
+        Assert.Contains(new LineMark(3, LineMarkKind.ExecutionPoint), editor.LineMarks);
+        Assert.NotEmpty(view.Frames);
+        Assert.Contains(view.Tree.Rows, r => r.Name == "Waits.Input" && r.Value.Contains("could not be stopped", StringComparison.Ordinal));
+        Ui.Run(window, AppActions.Stop);
+        Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void An_exception_the_debugger_cannot_describe_still_shows_where_the_program_stopped()
+    {
+        // Its Source takes longer than the debugger waits for code it runs, so the description of it, which reads Source, is
+        // given up; the program is stopped again once Source returns, its frames there to read.
+        Write("Program.cs", "int index = 5;\nthrow new Slow();\n\nsealed class Slow : Exception\n{\n"
+            + "    public override string? Source { get { Thread.Sleep(8000); return \"late\"; } set { } }\n}\n");
+        MainWindow window = Open();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Ui.Run(window, AppActions.Debug);
+        Ui.WaitFor(() => window.BottomPanel.Debug.Frames.Count > 0, "the stop's frames, though its exception is not described");
+        Assert.Equal(2, window.BottomPanel.Debug.Frames[0].Line);
+        Assert.Contains(new LineMark(1, LineMarkKind.ExecutionPoint), editor.LineMarks);
+        Ui.WaitFor(() => Value(window, "index") == "5", "the stop's locals");
+        Ui.WaitFor(() => window.Status?.Contains("could not describe", StringComparison.Ordinal) == true, "why the exception is not named in the status bar");
+        Ui.Run(window, AppActions.Stop);
+        Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
+        window.Close();
+    }
+
     /// <summary>The middle of a line's number in the gutter, in the window's coordinates.</summary>
     private static Point Gutter(MainWindow window, CodeEditor editor, int line)
     {

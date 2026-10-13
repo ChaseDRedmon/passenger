@@ -30,6 +30,9 @@ public sealed class DebugController
     /// <summary>The exception the program stopped on, and the frame it was thrown in, shown at that frame's line.</summary>
     private (string Text, int FrameId)? stopException;
 
+    /// <summary>Why the exception the program stopped on could not be described, when it could not.</summary>
+    private string? undescribed;
+
     public DebugController(EditorArea editors, DebugView view)
     {
         this.editors = editors;
@@ -95,6 +98,8 @@ public sealed class DebugController
         view.Clear();
         executionPoint = null;
         frame = null;
+        stopException = null;
+        undescribed = null;
         lastResult = null;
         BuiltLines built = new();
         lines = built;
@@ -150,22 +155,22 @@ public sealed class DebugController
                 Breakpoints.ToggleEnabled(active.Path, caretLine);
                 break;
             case AppActions.Resume:
-                _ = Session?.ContinueAsync();
+                _ = ResumeAsync(session => session.ContinueAsync(), "resume");
                 break;
             case AppActions.Pause:
                 _ = Session?.PauseAsync();
                 break;
             case AppActions.StepOver:
-                _ = Session?.StepOverAsync();
+                _ = ResumeAsync(session => session.StepOverAsync(), "step over");
                 break;
             case AppActions.StepInto:
-                _ = Session?.StepIntoAsync();
+                _ = ResumeAsync(session => session.StepIntoAsync(), "step into");
                 break;
             case AppActions.StepOut:
-                _ = Session?.StepOutAsync();
+                _ = ResumeAsync(session => session.StepOutAsync(), "step out");
                 break;
-            case AppActions.RunToCursor when active is not null && Session is { State: DebugState.Paused } session:
-                _ = session.RunToCursorAsync(active.Path, caretLine);
+            case AppActions.RunToCursor when active is not null && Session is { State: DebugState.Paused }:
+                _ = ResumeAsync(session => session.RunToCursorAsync(active.Path, caretLine), "run to the cursor");
                 break;
             case AppActions.SetNextStatement when active is not null && Session is { State: DebugState.Paused } session:
                 _ = SetNextStatementAsync(session, active.Path, caretLine);
@@ -179,6 +184,28 @@ public sealed class DebugController
             case AppActions.Evaluate when Session is { State: DebugState.Paused }:
                 view.FocusEvaluate(SelectedOrWord());
                 break;
+        }
+    }
+
+    /// <summary>Sets the paused program going as an action asks. One the debugger refuses leaves it paused where it was,
+    /// the Debug window as it was, and the reason in the status bar.</summary>
+    private async Task ResumeAsync(Func<DebugSession, Task> resume, string action)
+    {
+        if (Session is not { } session)
+        {
+            return;
+        }
+        try
+        {
+            await resume(session);
+        }
+        catch (DapException error) when (session == Session && session.State != DebugState.Ended)
+        {
+            Message?.Invoke(this, $"Could not {action}: {error.Reason}");
+        }
+        catch (DapException)
+        {
+            // The session ended meanwhile, which says why itself.
         }
     }
 
@@ -315,8 +342,8 @@ public sealed class DebugController
         {
             case DebugState.Paused:
                 await ShowStop(session);
-                Message?.Invoke(this, stopException is { } thrown
-                    ? $"{name}: paused on {thrown.Text}"
+                Message?.Invoke(this, stopException is { } thrown ? $"{name}: paused on {thrown.Text}"
+                    : undescribed is { } why ? $"{name}: paused on an exception the debugger could not describe ({why})"
                     : $"{name}: paused ({session.StopReason})");
                 break;
             case DebugState.Running:
@@ -342,6 +369,8 @@ public sealed class DebugController
         StateChanged?.Invoke(this, EventArgs.Empty);
     }
 
+    /// <summary>Shows a stop: its exception described, then its thread's frames and the top one's values. An exception the
+    /// debugger cannot describe (a getter of its own that never returns) still shows where the program stopped.</summary>
     private async Task ShowStop(DebugSession session)
     {
         if (session.StoppedThread is not int thread)
@@ -349,15 +378,23 @@ public sealed class DebugController
             return;
         }
         stopException = null;
-        try
+        undescribed = null;
+        if (session.StopReason == "exception")
         {
-            if (session.StopReason == "exception")
+            try
             {
                 ExceptionInfoResponse info = await session.ExceptionInfoAsync(thread);
                 IReadOnlyList<DapStackFrame> stack = await session.StackTraceAsync(thread);
                 DapStackFrame? thrown = stack.FirstOrDefault(f => f.Source?.Path is not null);
                 stopException = (Describe(info), thrown?.Id ?? -1);
             }
+            catch (DapException error)
+            {
+                undescribed = error.Reason;
+            }
+        }
+        try
+        {
             await ChooseThread(thread);
         }
         catch (DapException error)

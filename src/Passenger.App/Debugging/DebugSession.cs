@@ -36,6 +36,12 @@ public sealed class DebugSession
 
     /// <summary>Run to Cursor's place, at its built line, until the next stop.</summary>
     private (string Path, int Line)? runToCursor;
+
+    /// <summary>How many stops the adapter has told of, so a resume's answer that comes after the next stop leaves it be.</summary>
+    private int stops;
+
+    /// <summary>A continue or step was asked and its answer is awaited.</summary>
+    private bool resuming;
     private volatile bool killed;
 
     /// <summary>The adapter said the program ended: with its exit code, or (attached, where none can be known) without.</summary>
@@ -198,7 +204,17 @@ public sealed class DebugSession
         UiThread.Check();
         runToCursor = (path, lines.ToBuilt(path, line));
         await SendBreakpointsAsync(path);
-        await ContinueAsync();
+        try
+        {
+            await ContinueAsync();
+        }
+        catch (DapException)
+        {
+            // Refused, the program never went: the place is let go, so no later run stops at a breakpoint no one set.
+            runToCursor = null;
+            await SendBreakpointsAsync(path);
+            throw;
+        }
     }
 
     /// <summary>Text for the program's standard input.</summary>
@@ -378,15 +394,30 @@ public sealed class DebugSession
     public Task<EvaluateResponse> EvaluateAsync(string expression, int? frameId, string context) =>
         connection.RequestAsync<EvaluateResponse>("evaluate", new EvaluateArguments(expression, frameId, context));
 
+    /// <summary>Sets the paused program going (a continue or a step), saying it runs only once the adapter has: a request it
+    /// refuses throws its reason with the program still paused where it was. A stop that came before the answer (a step
+    /// that ends at once) stands. One asked while another's answer is awaited is let go, as a press while running is.</summary>
     private async Task Resume(string command)
     {
         UiThread.Check();
-        if (State != DebugState.Paused || disconnected is not null || StoppedThread is not int thread)
+        if (State != DebugState.Paused || resuming || disconnected is not null || StoppedThread is not int thread)
         {
             return;
         }
-        SetState(DebugState.Running);
-        await connection.RequestAsync(command, new ThreadArguments(thread));
+        int stop = stops;
+        resuming = true;
+        try
+        {
+            await connection.RequestAsync(command, new ThreadArguments(thread));
+        }
+        finally
+        {
+            resuming = false;
+        }
+        if (stops == stop)
+        {
+            SetState(DebugState.Running);
+        }
     }
 
     /// <summary>Sends a file's breakpoints at their built lines; one on a line written since the build is refused here, as
@@ -443,6 +474,7 @@ public sealed class DebugSession
                 break;
             case "stopped" when disconnected is null:
                 StoppedEvent stopped = body.Read<StoppedEvent>();
+                stops++;
                 StoppedThread = stopped.ThreadId;
                 StopReason = stopped.Reason;
                 if (runToCursor is { } target)

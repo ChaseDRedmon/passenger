@@ -241,11 +241,15 @@ public static class Extensions
                 {
                     rude.TryRudeAbort();
                 }
-                if (await Task.WhenAny(waiting, Task.Delay(TimeSpan.FromSeconds(5))) == waiting && eval.TryGetResult(out ICorDebugValue? partial) is Cor.S_OK && partial is ICorDebugHandleValue handle)
+                bool stopped = await Task.WhenAny(waiting, Task.Delay(TimeSpan.FromSeconds(5))) == waiting;
+                if (stopped && eval.TryGetResult(out ICorDebugValue? partial) is Cor.S_OK && partial is ICorDebugHandleValue handle)
                 {
                     handle.TryDispose();
                 }
-                throw new ManagedDebugger.EvalException($"The evaluation took longer than {EvaluationTimeout.TotalSeconds:0} s and was stopped: it may wait on another thread, which stays paused while it runs");
+                // Code blocked outside the runtime (a read of input) cannot be stopped, and runs on with the program let go.
+                throw new ManagedDebugger.EvalException(stopped
+                    ? $"The evaluation took longer than {EvaluationTimeout.TotalSeconds:0} s and was stopped: it may wait on another thread, which stays paused while it runs"
+                    : $"The evaluation took longer than {EvaluationTimeout.TotalSeconds:0} s and could not be stopped: it is still running in the program, which cannot step until it returns");
             }
             CorDebugManagedCallbackEventArgs evalEvent = await waiting;
             if (evalEvent is EvalCompleteCorDebugManagedCallbackEventArgs completeEvent)
