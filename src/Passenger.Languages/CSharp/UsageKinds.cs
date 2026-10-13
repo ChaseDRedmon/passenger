@@ -68,6 +68,21 @@ public static class UsageKinds
         };
     }
 
+    /// <summary>Whether the name at an offset is declared with its value there: a variable or field with an initializer, a
+    /// foreach variable, a pattern's or an out argument's designation. Rider highlights such a declaration as a write of
+    /// the symbol, where the language server calls every declaration a plain use.</summary>
+    public static bool DeclaresWithValue(SyntaxNode root, int offset)
+    {
+        SyntaxToken token = root.FindToken(Math.Clamp(offset, 0, Math.Max(0, root.FullSpan.End - 1)));
+        return token.SpanStart == offset && token.Parent switch
+        {
+            VariableDeclaratorSyntax variable => variable.Identifier == token && variable.Initializer is not null,
+            ForEachStatementSyntax loop => loop.Identifier == token,
+            SingleVariableDesignationSyntax designation => designation.Identifier == token,
+            _ => false,
+        };
+    }
+
     /// <summary>Whether the token is the name a declaration gives (a type's, a member's, a local's, a parameter's).</summary>
     private static bool IsDeclaredName(SyntaxNode parent, SyntaxToken token) => parent switch
     {

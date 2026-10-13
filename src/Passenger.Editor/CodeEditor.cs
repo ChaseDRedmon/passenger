@@ -342,6 +342,8 @@ public sealed partial class CodeEditor : Control
             // A template's places, a composition and a GoTo waiting for layout are offsets in the text left behind.
             snippet = null;
             pendingGoTo = null;
+            UsageHighlights = [];
+            UsagesKept = false;
             EndComposition();
             selections = SelectionSet.Single(0);
             leaning = [];
@@ -448,6 +450,7 @@ public sealed partial class CodeEditor : Control
         SetInlayHints([]);
         SetFoldRegions([]);
         SetHighlights([], -1);
+        SetUsageHighlights([]);
         foldLines = null;
         stripeBuild = null;
         stripeDrawn = default;
@@ -644,6 +647,7 @@ public sealed partial class CodeEditor : Control
     private void OnDocumentChanged(object? sender, DocumentChangedEventArgs e)
     {
         FollowSnippet(e.Edits);
+        FollowUsages(e.Edits);
         if (!editing)
         {
             leaning = [];
@@ -659,9 +663,14 @@ public sealed partial class CodeEditor : Control
     private void OnHighlighterChanged(object? sender, EventArgs e) => Dispatcher.UIThread.Post(Recolour);
 
     /// <summary>New colours for the same text: the lines are formatted again, each found again if its colours stayed. When
-    /// the lines drawn keep every colour they have (a parse that finds what a key carried them to), nothing is drawn again.</summary>
+    /// the lines drawn keep every colour they have (a parse that finds what a key carried them to), nothing is drawn again
+    /// but a bracket pair the parse told anew.</summary>
     private void Recolour()
     {
+        if (BracesChanged())
+        {
+            InvalidateVisual();
+        }
         if (views.Keep(document.Snapshot, Colours))
         {
             return;

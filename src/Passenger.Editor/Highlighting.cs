@@ -73,3 +73,19 @@ public interface IHighlighter
     /// A highlighter still working on an older version answers with its best mapping of what it had.</summary>
     IReadOnlyList<SyntaxSpan> GetSpans(TextSnapshot text, int start, int length);
 }
+
+/// <summary>A highlighter that knows its language's brackets, which the editor highlights in pairs at the caret and Move
+/// Caret to Matching Brace goes between: only it can tell a bracket of the code from one in a string or a comparison.</summary>
+public interface IBraceMatcher
+{
+    /// <summary>The bracket covering the character at <paramref name="offset"/> and the one it pairs with; null when that
+    /// is no bracket of the code, one with no pair, or <paramref name="text"/> is not the text this matcher reads.</summary>
+    BracePair? PairAt(TextSnapshot text, int offset);
+}
+
+/// <summary>A bracket and the one it pairs with, each as its range in the text.</summary>
+public readonly record struct BracePair(TextRange Touched, TextRange Matching);
+
+/// <summary>A use of the symbol at the caret, as the language service highlights it: a write (an assignment, a
+/// declaration with its value) apart from a read.</summary>
+public readonly record struct UsageHighlight(TextRange Range, bool IsWrite);

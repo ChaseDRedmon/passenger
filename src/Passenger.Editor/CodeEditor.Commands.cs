@@ -112,7 +112,15 @@ public sealed partial class CodeEditor
                     SetSelections(SelectionSet.Single(selections.Primary.Caret), reveal: true);
                     return true;
                 }
+                if (UsagesKept)
+                {
+                    SetUsageHighlights([]);
+                    return true;
+                }
                 return false;
+            case EditorActions.MatchBrace:
+                MatchBrace();
+                return true;
             case EditorActions.Copy:
                 CopyToClipboard();
                 return true;

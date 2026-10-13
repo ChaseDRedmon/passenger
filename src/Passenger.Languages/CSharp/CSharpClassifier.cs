@@ -170,7 +170,7 @@ internal static class CSharpClassifier
 
     /// <summary>1 for an opening bracket, -1 for a closing one, 0 for anything else: parentheses, square brackets,
     /// braces, and the angle brackets of type arguments and parameters (not a comparison's).</summary>
-    private static int Bracket(SyntaxToken token) => token.Kind() switch
+    internal static int Bracket(SyntaxToken token) => token.Kind() switch
     {
         SyntaxKind.OpenParenToken or SyntaxKind.OpenBracketToken or SyntaxKind.OpenBraceToken => token.IsMissing ? 0 : 1,
         SyntaxKind.CloseParenToken or SyntaxKind.CloseBracketToken or SyntaxKind.CloseBraceToken => token.IsMissing ? 0 : -1,

@@ -56,6 +56,7 @@ public static class EditorActions
     public const string Unfold = "editor.unfold";
     public const string FoldAll = "editor.foldAll";
     public const string UnfoldAll = "editor.unfoldAll";
+    public const string MatchBrace = "editor.matchBrace";
 
     /// <summary>Every editor action and its name for people (Rider's where it has one), which the IDE lists and runs.</summary>
     public static IReadOnlyList<(string Id, string Title)> All { get; } =
@@ -72,6 +73,7 @@ public static class EditorActions
         (UnselectOccurrence, "Unselect Occurrence"), (SelectAllOccurrences, "Select All Occurrences"), (CaretPerLine, "Caret Per Line"),
         (CloneCaretAbove, "Clone Caret Above"), (CloneCaretBelow, "Clone Caret Below"), (Escape, "Escape"),
         (ToggleFold, "Expand/Collapse"), (Fold, "Collapse"), (Unfold, "Expand"), (FoldAll, "Collapse All"), (UnfoldAll, "Expand All"),
+        (MatchBrace, "Move Caret to Matching Brace"),
     ];
 
     private static readonly HashSet<string> Movements =
@@ -136,6 +138,7 @@ public static class DefaultKeymaps
         .Bind(EditorActions.Unfold, "control M , E", "control M , control E")
         .Bind(EditorActions.FoldAll, "control M , A", "control M , control A")
         .Bind(EditorActions.UnfoldAll, "control M , X", "control M , control X")
+        .Bind(EditorActions.MatchBrace, "meta CLOSE_BRACKET")
         .Bind(EditorActions.Escape, "ESCAPE");
 
     public static Keymap VisualStudio() => new Keymap("Visual Studio")
@@ -188,5 +191,6 @@ public static class DefaultKeymaps
         .Bind(EditorActions.Unfold, "control M , E", "control M , control E")
         .Bind(EditorActions.FoldAll, "control M , A", "control M , control A")
         .Bind(EditorActions.UnfoldAll, "control M , X", "control M , control X")
+        .Bind(EditorActions.MatchBrace, "control CLOSE_BRACKET")
         .Bind(EditorActions.Escape, "ESCAPE");
 }

@@ -11,7 +11,7 @@ namespace Passenger.Languages.CSharp;
 /// file in about a second), then the whole file once typing has stopped (<see cref="Idle"/>). Each answer is decoded off
 /// the UI thread against the snapshot it was asked for and carried through the edits made since, so colours never lag a
 /// keystroke behind the text nor jump when an answer lands.</summary>
-public sealed class SemanticHighlighter : IHighlighter, IDisposable
+public sealed class SemanticHighlighter : IHighlighter, IBraceMatcher, IDisposable
 {
     /// <summary>How long typing must pause before new tokens are asked for.</summary>
     private static readonly TimeSpan Settle = TimeSpan.FromMilliseconds(300);
@@ -92,6 +92,9 @@ public sealed class SemanticHighlighter : IHighlighter, IDisposable
 
     /// <summary>The parser's colours this layers over, which stand alone again once the server is gone.</summary>
     public IHighlighter Syntax => syntax;
+
+    /// <summary>The syntax's pair: brackets are the parser's to tell, never the server's.</summary>
+    public BracePair? PairAt(TextSnapshot snapshot, int offset) => (syntax as IBraceMatcher)?.PairAt(snapshot, offset);
 
     public void Dispose()
     {

@@ -14,7 +14,7 @@ namespace Passenger.Languages.CSharp;
 /// was parsed are mapped back to find the tree's text and forward again to place its colours, so a
 /// word being typed keeps its colour and typing never flashes plain. A keystroke costs the lines on
 /// screen, whatever the size of the file.</summary>
-public sealed class CSharpHighlighter : IHighlighter, IDisposable
+public sealed class CSharpHighlighter : IHighlighter, IBraceMatcher, IDisposable
 {
     /// <summary>The symbols a Debug build defines, so <c>#if DEBUG</c> code is coloured as code until
     /// the project system says which configuration is active.</summary>
@@ -140,6 +140,11 @@ public sealed class CSharpHighlighter : IHighlighter, IDisposable
         cached[(start, length)] = result;
         return result;
     }
+
+    /// <summary>A bracket and its pair (<see cref="BracePairs"/>), read from <see cref="Current"/> once the first parse has
+    /// landed, so a frame never waits for one.</summary>
+    public BracePair? PairAt(TextSnapshot snapshot, int offset) =>
+        tree is not null && ReferenceEquals(snapshot, document.Snapshot) ? BracePairs.At(Current.Root, offset) : null;
 
     public void Dispose()
     {

@@ -80,6 +80,7 @@ public static class AppActions
     public const string GoToDeclaration = "app.code.goToDeclaration";
     public const string GoToImplementation = "app.code.goToImplementation";
     public const string FindUsages = "app.code.findUsages";
+    public const string HighlightUsages = "app.code.highlightUsages";
     public const string Reformat = "app.code.reformat";
     public const string CodeCleanup = "app.code.cleanup";
     public const string RefactorThis = "app.code.refactorThis";
@@ -312,6 +313,7 @@ public static class AppActions
                 .Bind(GoToDeclaration, "F12")
                 .Bind(GoToImplementation, "alt END")
                 .Bind(FindUsages, "shift F12")
+                .Bind(HighlightUsages, "shift alt F11")
                 .Bind(Reformat, "meta alt ENTER", "meta K , F", "meta K , meta F", "meta K , D", "meta K , meta D")
                 .Bind(ParameterInfo, "control P")
                 .Bind(CodeCleanup, "meta E , C", "meta E , meta C", "meta E , F", "meta E , meta F")
@@ -406,6 +408,7 @@ public static class AppActions
             .Bind(GoToDeclaration, "F12")
             .Bind(GoToImplementation, "alt END")
             .Bind(FindUsages, "shift F12")
+            .Bind(HighlightUsages, "shift alt F11")
             .Bind(Reformat, "control alt ENTER", "control K , F", "control K , control F", "control K , D", "control K , control D")
             .Bind(ParameterInfo, "shift control SPACE")
             .Bind(CodeCleanup, "control E , C", "control E , control C", "control E , F", "control E , control F")

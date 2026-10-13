@@ -35,6 +35,7 @@ public partial class MainWindow : Window
     private readonly FileIndex index = new();
     private CSharpService? csharp;
     private readonly CodeAssist assist;
+    private readonly UsageHighlighting usages;
     private readonly Navigation.NavigationHistory history = new();
     private readonly ProcessRunner builder;
     private readonly ProcessRunner runner;
@@ -186,6 +187,8 @@ public partial class MainWindow : Window
         assist = new CodeAssist(Editors, Editors.AssistLayer, () => csharp);
         assist.Navigate += (_, target) => NavigateTo(target.Path, target.Position);
         assist.Message += (_, message) => StatusText.Text = message;
+        usages = new UsageHighlighting(Editors, () => csharp);
+        usages.Message += (_, message) => StatusText.Text = message;
         builder = new ProcessRunner(Bottom.Build);
         builder.Line += (_, line) =>
         {
@@ -238,6 +241,7 @@ public partial class MainWindow : Window
         debug.StateChanged += (_, _) => OnDebugStateChanged();
         assist.DebuggerValue = debug.ValueAt;
         assist.AddActions(actions!);
+        usages.AddActions(actions!);
         debug.AddActions(actions!);
         AddFind();
         AddProblems();

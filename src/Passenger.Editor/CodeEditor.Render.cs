@@ -51,6 +51,7 @@ public sealed partial class CodeEditor
             }
         }
         bool focused = IsFocused;
+        BracePair? braced = MatchedBraces;
         double widest = 0;
 
         using (context.PushClip(new Rect(gutter, 0, Math.Max(0, size.Width - gutter), size.Height)))
@@ -74,6 +75,11 @@ public sealed partial class CodeEditor
                 if (LineTint(marks, line) is { } tint)
                 {
                     context.FillRectangle(tint, new Rect(gutter, y, size.Width - gutter, lineHeight));
+                }
+                DrawUsages(context, view, gaps, left, y);
+                if (braced is { } pair)
+                {
+                    DrawBraces(context, view, gaps, left, y, pair);
                 }
                 DrawSelections(context, view, gaps, left, y, size.Width, focused);
                 DrawHighlights(context, view, gaps, left, y);
@@ -761,6 +767,11 @@ public sealed partial class CodeEditor
         public IBrush ExceptionBack { get; private init; } = Brush("#4A2629");
         public IBrush InlayHint { get; private init; } = Brush("#8F9298");
         public IBrush InlayHintBack { get; private init; } = Brush("#2B2D30");
+        public IBrush UsageRead { get; private init; } = Brush("#373B39");
+        public IBrush UsageWrite { get; private init; } = Brush("#402F33");
+        public IBrush UsageReadMark { get; private init; } = Brush("#5B786A");
+        public IBrush UsageWriteMark { get; private init; } = Brush("#BA6387");
+        public IBrush MatchedBrace { get; private init; } = Brush("#43454A");
         public Geometry? ErrorIcon { get; private init; }
         public Geometry? WarningIcon { get; private init; }
         public Geometry? PassedIcon { get; private init; }
@@ -806,6 +817,11 @@ public sealed partial class CodeEditor
                 ExceptionBack = Find(control, "Passenger.Editor.ExceptionBack") ?? defaults.ExceptionBack,
                 InlayHint = Find(control, "Passenger.Editor.InlayHint") ?? defaults.InlayHint,
                 InlayHintBack = Find(control, "Passenger.Editor.InlayHintBack") ?? defaults.InlayHintBack,
+                UsageRead = Find(control, "Passenger.Editor.UsageRead") ?? defaults.UsageRead,
+                UsageWrite = Find(control, "Passenger.Editor.UsageWrite") ?? defaults.UsageWrite,
+                UsageReadMark = Find(control, "Passenger.Editor.UsageReadMark") ?? defaults.UsageReadMark,
+                UsageWriteMark = Find(control, "Passenger.Editor.UsageWriteMark") ?? defaults.UsageWriteMark,
+                MatchedBrace = Find(control, "Passenger.Editor.MatchedBrace") ?? defaults.MatchedBrace,
                 ErrorIcon = Icon(control, "Icon.Error"),
                 WarningIcon = Icon(control, "Icon.Problems"),
                 PassedIcon = Icon(control, "Icon.Check"),

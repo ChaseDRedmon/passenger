@@ -12,7 +12,8 @@ using Passenger.Text;
 namespace Passenger.Editor;
 
 /// <summary>Rider's error stripe: the vertical scrollbar's track stays and carries a mark for each problem (errors over
-/// warnings over the rest), changed lines, search matches, bookmarks and the caret, each where its line is in the file
+/// warnings over the rest), changed lines, search matches, the uses of the symbol at the caret, bookmarks and the caret,
+/// each where its line is in the file
 /// (a folded one at its fold). A mark says what it is on hover and takes the caret there on a click. Over the stripe's
 /// top, the file's counts of errors and warnings, or a green tick: a click goes to the next problem and asks the host
 /// for Problems.</summary>
@@ -43,7 +44,8 @@ public sealed partial class CodeEditor
     public IReadOnlyList<StripeMark> StripeMarks => showErrorStripe ? [.. BuiltMarks().Marks, CaretMark()] : [];
 
     /// <summary>How many times the stripe's marks have been worked out: once for each change to the text, the markers,
-    /// the search's matches, the folds, the bookmarks or the changed lines, never for a frame or a pointer move.</summary>
+    /// the search's matches, the uses highlighted, the folds, the bookmarks or the changed lines, never for a frame or a
+    /// pointer move.</summary>
     public int StripeMarksBuilt { get; private set; }
 
     /// <summary>The counts' errors and warnings, as their widget shows them, counted when the markers are set.</summary>
@@ -86,7 +88,7 @@ public sealed partial class CodeEditor
     private StripeBuild BuiltMarks()
     {
         TextSnapshot text = document.Snapshot;
-        if (stripeBuild is { } built && built.Shows(text, Markers, Highlights, folds, Bookmarks, ChangeMarks))
+        if (stripeBuild is { } built && built.Shows(text, Markers, Highlights, UsageHighlights, folds, Bookmarks, ChangeMarks))
         {
             return built;
         }
@@ -106,6 +108,11 @@ public sealed partial class CodeEditor
         {
             marks.Add(new StripeMark(StripeMarkKind.SearchMatch, RowOf(text.GetLineFromOffset(Math.Min(match.Start, text.Length))), 1, match.Start, "Search result"));
         }
+        foreach (UsageHighlight use in UsageHighlights)
+        {
+            marks.Add(new StripeMark(use.IsWrite ? StripeMarkKind.WriteUsage : StripeMarkKind.Usage, RowOf(text.GetLineFromOffset(Math.Min(use.Range.Start, text.Length))), 1,
+                use.Range.Start, use.IsWrite ? "Write usage" : "Read usage"));
+        }
         // The worst last, so it is drawn over the rest; one mark a line and kind, its messages together.
         foreach (MarkerKind kind in new[] { MarkerKind.Info, MarkerKind.Warning, MarkerKind.Error })
         {
@@ -116,7 +123,7 @@ public sealed partial class CodeEditor
             }
         }
         StripeMarksBuilt++;
-        stripeBuild = new StripeBuild(text, Markers, Highlights, folds, Bookmarks, ChangeMarks, [.. marks], RowCount);
+        stripeBuild = new StripeBuild(text, Markers, Highlights, UsageHighlights, folds, Bookmarks, ChangeMarks, [.. marks], RowCount);
         return stripeBuild;
     }
 
@@ -185,11 +192,12 @@ public sealed partial class CodeEditor
     /// <summary>The stripe's marks as worked out from one text and the lists it shows, each kept by reference: a snapshot
     /// never changes, and the editor's lists are replaced, never changed in place.</summary>
     private sealed record StripeBuild(TextSnapshot Text, IReadOnlyList<Marker> Markers, IReadOnlyList<TextRange> Highlights,
-        IReadOnlyList<FoldRegion> Folds, IReadOnlyList<int> Bookmarks, IReadOnlyList<ChangeMark> Changes, StripeMark[] Marks, int RowCount)
+        IReadOnlyList<UsageHighlight> Usages, IReadOnlyList<FoldRegion> Folds, IReadOnlyList<int> Bookmarks, IReadOnlyList<ChangeMark> Changes,
+        StripeMark[] Marks, int RowCount)
     {
-        public bool Shows(TextSnapshot text, IReadOnlyList<Marker> markers, IReadOnlyList<TextRange> highlights,
+        public bool Shows(TextSnapshot text, IReadOnlyList<Marker> markers, IReadOnlyList<TextRange> highlights, IReadOnlyList<UsageHighlight> usages,
             IReadOnlyList<FoldRegion> folds, IReadOnlyList<int> bookmarks, IReadOnlyList<ChangeMark> changes) =>
-            ReferenceEquals(Text, text) && ReferenceEquals(Markers, markers) && ReferenceEquals(Highlights, highlights)
+            ReferenceEquals(Text, text) && ReferenceEquals(Markers, markers) && ReferenceEquals(Highlights, highlights) && ReferenceEquals(Usages, usages)
             && ReferenceEquals(Folds, folds) && ReferenceEquals(Bookmarks, bookmarks) && ReferenceEquals(Changes, changes);
     }
 
@@ -236,6 +244,8 @@ public sealed partial class CodeEditor
                 StripeMarkKind.Warning => (palette.Warning, 2.0, track.Width - 4),
                 StripeMarkKind.Info => (palette.Info, 5.0, track.Width - 10),
                 StripeMarkKind.SearchMatch => (palette.SearchCurrent, 3.0, track.Width - 6),
+                StripeMarkKind.Usage => (palette.UsageReadMark, 3.0, track.Width - 6),
+                StripeMarkKind.WriteUsage => (palette.UsageWriteMark, 3.0, track.Width - 6),
                 StripeMarkKind.Bookmark => (palette.Bookmark, track.Width - 4, 3.0),
                 StripeMarkKind.Change => (mark.Change switch { ChangeMarkKind.Added => palette.ChangeAdded, ChangeMarkKind.Deleted => palette.ChangeDeleted, _ => palette.ChangeModified }, 0.0, 2.0),
                 _ => (palette.LineNumberCurrent, 1.0, track.Width - 2),
@@ -387,6 +397,8 @@ public enum StripeMarkKind
     Change,
     Bookmark,
     SearchMatch,
+    Usage,
+    WriteUsage,
     Info,
     Warning,
     Error,

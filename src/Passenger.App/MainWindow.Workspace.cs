@@ -122,6 +122,7 @@ public partial class MainWindow
         {
             csharp = new CSharpService();
             csharp.StateChanged += (_, _) => LanguageText.Text = LanguageLabel();
+            csharp.StateChanged += (_, _) => usages.Refresh();
             csharp.Stopped += (_, message) => StatusText.Text = message;
             csharp.Said += (_, message) => StatusText.Text = message;
             WatchProblems(csharp);
