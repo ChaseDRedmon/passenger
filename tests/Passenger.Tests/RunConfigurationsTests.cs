@@ -182,6 +182,54 @@ public sealed class RunConfigurationsTests : IDisposable
         }
     }
 
+    /// <summary>Rider's Open browser, After launch: a launch profile's launchBrowser shows ticked with the URL its launchUrl
+    /// and applicationUrl make, and opens that URL once the program listens; turned off in a copy, the copy opens none.</summary>
+    [AvaloniaFact]
+    public void A_launch_profiles_browser_shows_under_open_browser_and_a_copy_with_it_turned_off_opens_none()
+    {
+        System.Net.Sockets.TcpListener probe = new(System.Net.IPAddress.Loopback, 0);
+        probe.Start();
+        int port = ((System.Net.IPEndPoint)probe.LocalEndpoint).Port;
+        probe.Stop();
+        Write("Hello/Program.cs", "using System.Net;\nusing System.Net.Sockets;\n\n"
+            + "TcpListener listener = new(IPAddress.Loopback, int.Parse(Environment.GetEnvironmentVariable(\"PORT\")!));\n"
+            + "listener.Start();\nConsole.WriteLine(\"Listening\");\nThread.Sleep(4000);\n");
+        Write("Hello/Properties/launchSettings.json", "{ \"profiles\": { \"Serve\": { \"commandName\": \"Project\", \"launchBrowser\": true, \"launchUrl\": \"status\", "
+            + $"\"applicationUrl\": \"http://127.0.0.1:{port}\", \"environmentVariables\": {{ \"PORT\": \"{port}\" }} }} }} }}");
+        MainWindow window = Keeping();
+        try
+        {
+            RunConfigurationsDialog dialog = window.ShowRunConfigurations();
+            Assert.Equal("Hello: Serve", dialog.Chosen?.Name);
+            Assert.True(dialog.BrowserBox.IsChecked == true, "The launch profile's launchBrowser does not show as Open browser after launch");
+            Assert.Equal($"http://127.0.0.1:{port}/status", dialog.BrowserUrlBox.Text);
+            Assert.False(dialog.BrowserBox.IsEnabled, "A generated configuration's browser can be changed in place, though its launch profile makes it");
+            Click(dialog.CopyButton);
+            Assert.True(dialog.BrowserBox.IsEnabled, "The copy of a generated configuration cannot turn its browser off");
+            dialog.BrowserBox.IsChecked = false;
+            Ui.Settle();
+            Click(dialog.OkButton);
+            Ui.Settle();
+            Assert.Equal("Hello: Serve (1)", window.Configuration?.Name);
+            Assert.False(window.Configuration!.LaunchBrowser);
+
+            Assert.Null(Ui.Await(window.RunAsync(), "the copy's run to start", TimeSpan.FromMinutes(2)));
+            Ui.WaitFor(() => window.Runner.Ended.IsCompleted, "the copy's run to end");
+            Assert.Contains("Listening", window.BottomPanel.Run.Document.Snapshot.ToString(), StringComparison.Ordinal);
+            Assert.Empty(window.Browsed);
+
+            Assert.True(window.SelectConfiguration("Hello: Serve"));
+            Assert.Null(Ui.Await(window.RunAsync(), "the profile's run to start", TimeSpan.FromMinutes(2)));
+            Ui.WaitFor(() => window.Browsed.Count > 0, "the browser to open once the program listens", TimeSpan.FromSeconds(60));
+            Assert.Equal([$"http://127.0.0.1:{port}/status"], window.Browsed.Select(u => u.AbsoluteUri));
+            Ui.WaitFor(() => window.Runner.Ended.IsCompleted, "the profile's run to end");
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
     [AvaloniaFact]
     public void A_configuration_removed_in_the_dialog_is_gone_from_the_toolbar_and_the_folder()
     {

@@ -5,7 +5,9 @@ using Avalonia.Headless.XUnit;
 using Passenger.App;
 using Passenger.App.Explorer;
 using Passenger.App.Run;
+using Passenger.App.ToolWindows;
 using Passenger.Core;
+using Passenger.Editor;
 using Passenger.Text;
 
 namespace Passenger.Tests;
@@ -576,6 +578,165 @@ public sealed class BuildRunTests : IDisposable
             Ui.WaitFor(() => !window.Runner.IsRunning, "the site to stop");
             window.Close();
         }
+    }
+
+    [AvaloniaFact]
+    public void A_program_that_throws_shows_its_stack_trace_in_run_and_a_click_on_a_frame_opens_its_file_at_that_line()
+    {
+        Write("src/Hello/Program.cs", "Console.WriteLine(\"Reading the orders\");\nOrders.Load(\"orders.json\");\n\nstatic class Orders\n{\n"
+            + "    public static void Load(string file)\n    {\n        Parse(file);\n    }\n\n"
+            + "    private static void Parse(string file) =>\n        throw new InvalidOperationException($\"No orders in {file}\");\n}\n");
+        MainWindow window = Open();
+        string output = RunToEnd(window);
+        OutputView run = window.BottomPanel.Run;
+        string frame = output.Split('\n').FirstOrDefault(l => l.Contains("at Orders.Load(", StringComparison.Ordinal)) ?? string.Empty;
+        Assert.True(frame.EndsWith("Program.cs:line 8", StringComparison.Ordinal), $"The run's output has no frame of Load at its line:\n{output}");
+        int start = output.IndexOf(frame, StringComparison.Ordinal);
+        string place = frame[(frame.IndexOf(" in ", StringComparison.Ordinal) + 4)..];
+        int link = start + frame.Length - place.Length;
+
+        // The frame's method is no link; its file and line are, drawn in the link colour though the trace is in the error's.
+        Rest(window, run.Editor, start + frame.IndexOf("Orders.Load", StringComparison.Ordinal));
+        Assert.Null(run.Editor.HoveredLink);
+        Rest(window, run.Editor, link + 3);
+        TextLink hovered = run.Editor.HoveredLink ?? throw new Xunit.Sdk.XunitException($"The pointer rests on the frame's file but nothing is underlined:\n{frame}");
+        Assert.Equal(place, run.Document.Snapshot.GetText(hovered.Range.Start, hovered.Range.Length));
+        Assert.Contains(run.Editor.Highlighter!.GetSpans(run.Document.Snapshot, start, frame.Length), span => span.Kind == TokenKind.Link && span.Start == link && span.Length == place.Length);
+
+        Click(window, run.Editor, link + 3);
+        Assert.Equal(PathNames.Canonical(Path.Combine(folder, "src", "Hello", "Program.cs")), window.EditorArea.Active?.Path);
+        Assert.Equal(new TextPosition(7, 0), window.EditorArea.CodeEditor.CaretPosition);
+        Assert.True(window.EditorArea.CodeEditor.IsFocused, "The frame's file opened, but the keys stayed in the Run window");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_build_error_in_the_build_window_is_a_link_to_its_file_line_and_column()
+    {
+        Write("src/Hello/Program.cs", "Console.WriteLine(\"Hello\");\nint count = \"three\";\n");
+        MainWindow window = Open();
+        window.Perform(AppActions.Build);
+        Ui.WaitFor(() => !window.IsBuilding, "the build", TimeSpan.FromMinutes(2));
+        window.ShowToolWindow("build");
+        Ui.Settle();
+        OutputView build = window.BottomPanel.Build;
+        string output = build.Document.Snapshot.ToString();
+        int error = output.IndexOf("Program.cs(2,13): error CS0029", StringComparison.Ordinal);
+        Assert.True(error >= 0, $"The build window has no error at its place:\n{output}");
+        Click(window, build.Editor, error);
+        Assert.Equal(PathNames.Canonical(Path.Combine(folder, "src", "Hello", "Program.cs")), window.EditorArea.Active?.Path);
+        Assert.Equal(new TextPosition(1, 12), window.EditorArea.CodeEditor.CaretPosition);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void An_address_a_program_prints_opens_in_the_browser_and_a_message_naming_a_file_of_its_project_opens_the_file()
+    {
+        // The run's working folder is the project's output folder: a relative path is the project's all the same.
+        Write("src/Hello/Program.cs", "Console.WriteLine(\"The orders are documented at https://example.com/orders/help?topic=load.\");\n"
+            + "Console.WriteLine(\"Program.cs(2,9): warning ORD001: the orders were checked by the program\");\n");
+        MainWindow window = Open();
+        string output = RunToEnd(window);
+        OutputView run = window.BottomPanel.Run;
+        Click(window, run.Editor, output.IndexOf("example.com", StringComparison.Ordinal));
+        Assert.Equal(["https://example.com/orders/help?topic=load"], window.Browsed.Select(u => u.AbsoluteUri));
+        Assert.Null(window.EditorArea.Active);
+
+        Click(window, run.Editor, output.IndexOf("Program.cs(2,9)", StringComparison.Ordinal) + 2);
+        Assert.Equal(PathNames.Canonical(Path.Combine(folder, "src", "Hello", "Program.cs")), window.EditorArea.Active?.Path);
+        Assert.Equal(new TextPosition(1, 8), window.EditorArea.CodeEditor.CaretPosition);
+        Assert.Single(window.Browsed);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_web_project_whose_profile_launches_the_browser_opens_its_launch_url_once_it_listens_and_not_before()
+    {
+        int port = FreePort();
+        Write("Sample.slnx", "<Solution>\n  <Project Path=\"src/Hello/Hello.csproj\" />\n  <Project Path=\"src/Site/Site.csproj\" />\n</Solution>\n");
+        Write("src/Site/Site.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Web\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
+        // A start slow enough to tell opening once it listens from opening once it started.
+        Write("src/Site/Program.cs", "Console.WriteLine(\"Warming up\");\nThread.Sleep(4000);\nWebApplication app = WebApplication.Create(args);\n"
+            + "app.MapGet(\"/orders\", () => \"Orders\");\napp.Run();\n");
+        Write("src/Site/Properties/launchSettings.json", "{\n  \"profiles\": {\n"
+            + $"    \"Browse\": {{ \"commandName\": \"Project\", \"launchBrowser\": true, \"launchUrl\": \"orders\", \"applicationUrl\": \"http://127.0.0.1:{port}\" }},\n"
+            + $"    \"Quiet\": {{ \"commandName\": \"Project\", \"applicationUrl\": \"http://127.0.0.1:{port}\" }}\n  }}\n}}\n");
+        Restore.Run(Path.Combine(folder, "src", "Site"));
+        MainWindow window = Open();
+        try
+        {
+            Assert.True(window.SelectConfiguration("Site: Browse"));
+            Assert.Null(Ui.Await(window.RunAsync(), "the site to start", TimeSpan.FromMinutes(2)));
+            Ui.WaitFor(() => Output(window).Contains("Warming up", StringComparison.Ordinal), "the site to start", TimeSpan.FromMinutes(2));
+            DateTime warming = DateTime.UtcNow.AddSeconds(2.5);
+            Ui.WaitFor(() => window.Browsed.Count > 0 || DateTime.UtcNow > warming, "the site to warm up");
+            Assert.True(window.Browsed.Count == 0, $"The browser opened {window.Browsed.FirstOrDefault()} before the site listened");
+
+            Ui.WaitFor(() => window.Browsed.Count > 0, "the browser to open once the site listens", TimeSpan.FromSeconds(60));
+            Uri opened = Assert.Single(window.Browsed);
+            Assert.Equal($"http://127.0.0.1:{port}/orders", opened.AbsoluteUri);
+            using (System.Net.Http.HttpClient client = new())
+            {
+                Assert.Equal("Orders", client.GetStringAsync(opened).GetAwaiter().GetResult());
+            }
+            window.Perform(AppActions.Stop);
+            Ui.WaitFor(() => !window.Runner.IsRunning, "the site to stop");
+
+            // A profile that does not ask for the browser opens none.
+            Assert.True(window.SelectConfiguration("Site: Quiet"));
+            Assert.Null(Ui.Await(window.RunAsync(), "the quiet site to start", TimeSpan.FromMinutes(2)));
+            Ui.WaitFor(() => Output(window).Contains("Now listening on:", StringComparison.Ordinal), "the quiet site to listen", TimeSpan.FromMinutes(2));
+            DateTime listening = DateTime.UtcNow.AddSeconds(1.5);
+            Ui.WaitFor(() => DateTime.UtcNow > listening, "the quiet site to run a while");
+            Assert.Single(window.Browsed);
+        }
+        finally
+        {
+            window.Perform(AppActions.Stop);
+            Ui.WaitFor(() => !window.Runner.IsRunning, "the site to stop");
+            window.Close();
+        }
+    }
+
+    /// <summary>A port nothing listens on now, for a site of the test's own.</summary>
+    private static int FreePort()
+    {
+        System.Net.Sockets.TcpListener listener = new(System.Net.IPAddress.Loopback, 0);
+        listener.Start();
+        int port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+        return port;
+    }
+
+    /// <summary>The pointer brought to rest on a character of a console.</summary>
+    private static void Rest(MainWindow window, CodeEditor editor, int offset)
+    {
+        window.MouseMove(At(window, editor, offset));
+        Ui.Settle();
+    }
+
+    /// <summary>A click on a character of a console, as a person clicks a link there.</summary>
+    private static void Click(MainWindow window, CodeEditor editor, int offset)
+    {
+        Point at = At(window, editor, offset);
+        window.MouseMove(at);
+        window.MouseDown(at, Avalonia.Input.MouseButton.Left);
+        window.MouseUp(at, Avalonia.Input.MouseButton.Left);
+        Ui.Settle();
+    }
+
+    /// <summary>Over a character's left half, in the window, its line scrolled into view first.</summary>
+    private static Point At(MainWindow window, CodeEditor editor, int offset)
+    {
+        int line = editor.Document.Snapshot.GetLineFromOffset(offset);
+        Point top = editor.PointOf(offset);
+        if (top.Y < 0 || top.Y + editor.LineHeight > editor.Bounds.Height - 20)
+        {
+            editor.ScrollTo(new Vector(0, Math.Max(0, (line * editor.LineHeight) - (editor.Bounds.Height / 3))));
+            Ui.Settle();
+            top = editor.PointOf(offset);
+        }
+        return editor.TranslatePoint(top + new Vector(2, editor.LineHeight / 2), window)!.Value;
     }
 
     [AvaloniaFact]

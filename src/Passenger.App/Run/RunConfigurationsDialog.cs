@@ -72,6 +72,9 @@ public sealed class RunConfigurationsDialog : Window
         BuildBox = new CheckBox { Content = "Build the project first" };
         ConsoleBox = new CheckBox { Content = "Use external console" };
         ToolTip.SetTip(ConsoleBox, "Runs and debugs the program in a tab of the Terminal window, a real terminal it reads keys from and draws on, rather than in the Run and Debug windows' consoles");
+        BrowserBox = new CheckBox { Content = "After launch" };
+        ToolTip.SetTip(BrowserBox, "Opens the URL in the browser once the program listens there");
+        BrowserUrlBox = Field();
         AddVariableButton = new Button
         {
             Content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Children = { Glyph("Icon.Add"), new TextBlock { Text = "Add variable" } } },
@@ -86,6 +89,8 @@ public sealed class RunConfigurationsDialog : Window
         WorkingDirectoryBox.TextChanged += (_, _) => Edit(c => c with { WorkingDirectory = WorkingDirectoryBox.Text?.Trim() ?? string.Empty });
         BuildBox.IsCheckedChanged += (_, _) => Edit(c => c with { BuildBeforeLaunch = BuildBox.IsChecked == true });
         ConsoleBox.IsCheckedChanged += (_, _) => Edit(c => c with { Console = ConsoleBox.IsChecked == true ? ConsoleKind.Terminal : ConsoleKind.Internal });
+        BrowserBox.IsCheckedChanged += (_, _) => Edit(c => c with { LaunchBrowser = BrowserBox.IsChecked == true });
+        BrowserUrlBox.TextChanged += (_, _) => Edit(c => c with { BrowserUrl = BrowserUrlBox.Text?.Trim() ?? string.Empty });
         AddVariableButton.Click += (_, _) => AddVariable(string.Empty, string.Empty, focus: true);
 
         OkButton = new Button { Content = "OK", IsDefault = true, Classes = { "primary" }, MinWidth = 80 };
@@ -119,6 +124,8 @@ public sealed class RunConfigurationsDialog : Window
                 Row("Working directory", WorkingDirectoryBox),
                 Row("Environment variables", new StackPanel { Spacing = 6, Children = { VariablesHeader(), variables, AddVariableButton } }, top: true),
                 Row(string.Empty, ConsoleBox),
+                Row("Open browser", BrowserBox),
+                Row("URL", BrowserUrlBox),
                 Row("Before launch", BuildBox),
             },
         };
@@ -178,6 +185,11 @@ public sealed class RunConfigurationsDialog : Window
 
     /// <summary>Rider's Use external console: the program runs in a tab of the Terminal window.</summary>
     public CheckBox ConsoleBox { get; }
+
+    /// <summary>Rider's Open browser, After launch: the browser opens at the URL once the program listens.</summary>
+    public CheckBox BrowserBox { get; }
+
+    public TextBox BrowserUrlBox { get; }
 
     /// <summary>Every configuration listed: the generated ones, then the folder's own as they stand in the dialog.</summary>
     public IReadOnlyList<RunConfiguration> Rows => [.. Entries.Select(e => e.Configuration)];
@@ -386,6 +398,8 @@ public sealed class RunConfigurationsDialog : Window
             WorkingDirectoryBox.Text = shown.WorkingDirectory;
             BuildBox.IsChecked = shown.BuildBeforeLaunch;
             ConsoleBox.IsChecked = shown.Console == ConsoleKind.Terminal;
+            BrowserBox.IsChecked = shown.LaunchBrowser;
+            BrowserUrlBox.Text = shown.BrowserUrl;
             variables.Children.Clear();
             foreach ((string name, string value) in shown.Environment)
             {
@@ -394,7 +408,7 @@ public sealed class RunConfigurationsDialog : Window
             note.Text = Note(shown, project);
             note.IsVisible = note.Text.Length > 0;
             bool editable = !shown.Generated;
-            foreach (Control field in (Control[])[NameBox, ProjectBox, FrameworkBox, ProfileBox, ProgramBox, ArgumentsBox, WorkingDirectoryBox, ConsoleBox, BuildBox, AddVariableButton, variables])
+            foreach (Control field in (Control[])[NameBox, ProjectBox, FrameworkBox, ProfileBox, ProgramBox, ArgumentsBox, WorkingDirectoryBox, ConsoleBox, BrowserBox, BrowserUrlBox, BuildBox, AddVariableButton, variables])
             {
                 field.IsEnabled = editable;
             }

@@ -42,6 +42,9 @@ public enum TokenKind
     /// <summary>What a person typed into a console for the program's input, in italics as Rider draws it.</summary>
     UserInput,
 
+    /// <summary>A link in a console (a file's location, a web address), in Rider's hyperlink colour.</summary>
+    Link,
+
     /// <summary>A bracket at a nesting depth, the three colours taking turns: Rider's rainbow braces.</summary>
     Brace1,
     Brace2,

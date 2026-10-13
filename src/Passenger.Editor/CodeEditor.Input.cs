@@ -103,6 +103,7 @@ public sealed partial class CodeEditor
             e.Handled = true;
             return;
         }
+        PressLink(point.Position, e.KeyModifiers, e.ClickCount);
         document.BreakUndoGroup();
         TextSnapshot text = document.Snapshot;
         int offset = OffsetAt(point.Position, out bool beforeWrap);
@@ -194,6 +195,7 @@ public sealed partial class CodeEditor
         Point position = e.GetPosition(this);
         RestartHover(position);
         Cursor = position.X < GutterWidth || drag.Mode == DragMode.ExecutionPoint ? Cursor.Default : new Cursor(StandardCursorType.Ibeam);
+        FollowLinks(position, drag.Mode != DragMode.None && e.GetCurrentPoint(this).Properties.IsLeftButtonPressed);
         bool inGutter = position.X < GutterWidth;
         if (inGutter != overGutter)
         {
@@ -255,6 +257,7 @@ public sealed partial class CodeEditor
                 GutterClicked?.Invoke(this, new GutterClick(from, e.KeyModifiers, e.GetPosition(this), Context: false));
             }
         }
+        ReleaseLink(e.GetPosition(this));
         drag = default;
         e.Pointer.Capture(null);
     }
@@ -269,6 +272,7 @@ public sealed partial class CodeEditor
         }
         hoverTimer.Stop();
         EndHover();
+        HoveredLink = null;
     }
 
     /// <summary>Whether Ctrl+wheel (Cmd+wheel on macOS) asks for a bigger or smaller font (Rider's "Change font size with

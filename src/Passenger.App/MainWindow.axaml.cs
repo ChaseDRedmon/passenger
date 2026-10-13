@@ -228,6 +228,7 @@ public partial class MainWindow : Window
         tests = new Testing.TestController(Bottom.TestTree, BuildAsync, () => Projects, line => Bottom.Build.Append($"{line}\n"));
         testGutter = new Testing.TestGutter(Bottom.TestTree);
         AddUnitTests();
+        AddLinks();
         Bottom.Problems.FixRequested += (_, problem) =>
         {
             NavigateTo(problem.Path!, problem.Position);

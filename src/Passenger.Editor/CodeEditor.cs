@@ -348,6 +348,8 @@ public sealed partial class CodeEditor : Control
             pendingGoTo = null;
             UsageHighlights = [];
             UsagesKept = false;
+            HoveredLink = null;
+            pressedLink = null;
             EndComposition();
             selections = SelectionSet.Single(0);
             leaning = [];
@@ -668,6 +670,7 @@ public sealed partial class CodeEditor : Control
         FollowWraps(e);
         FollowSnippet(e.Edits);
         FollowUsages(e.Edits);
+        FollowLinkEdits(e.Edits);
         if (!editing)
         {
             leaning = [];

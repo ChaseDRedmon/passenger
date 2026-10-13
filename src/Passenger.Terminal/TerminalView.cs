@@ -13,7 +13,9 @@ namespace Passenger.Terminal;
 /// terminal does: xterm's encodings for every key (the arrows' application forms when a program asks), the clipboard
 /// on Cmd+C and Cmd+V (Ctrl+Shift+C and V, or Ctrl+C with a selection, elsewhere), a drag to select and a double-click
 /// for a word, the wheel through the scrollback (or to the program, when it asked for the mouse). The size follows the
-/// control's, in whole cells.</summary>
+/// control's, in whole cells. Its links are Rider's terminal's: web addresses and stack frames drawn as links, opened by a
+/// click (one that drags selects instead); file paths drawn as text, underlined faintly under the pointer and as links
+/// while Cmd (Ctrl elsewhere) is held. Cmd+click (Ctrl+click) opens either.</summary>
 public sealed class TerminalView : Control
 {
     public static readonly StyledProperty<double> FontSizeProperty =
@@ -37,6 +39,17 @@ public sealed class TerminalView : Control
     private IBrush background = Brushes.Black;
     private IBrush cursor = Brushes.White;
     private IBrush selection = Brushes.SteelBlue;
+    private IBrush link = Brushes.CornflowerBlue;
+    private IBrush linkUnderline = Brushes.SteelBlue;
+
+    /// <summary>Where the pointer is over the view, for a link to underline as Cmd or Ctrl goes down; null when it is not.</summary>
+    private Point? pointer;
+
+    /// <summary>The keys held at the pointer's last move or key, for the link under it found again as output moves it.</summary>
+    private KeyModifiers held;
+
+    /// <summary>The link a plain press began on, which its release opens if nothing was dragged.</summary>
+    private TerminalLink? pressedLink;
 
     public TerminalView()
     {
@@ -63,6 +76,20 @@ public sealed class TerminalView : Control
         menu.Opening += (_, _) => copy.IsEnabled = SelectedText.Length > 0;
         return menu;
     }
+
+    /// <summary>Finds the links in a line's text (the rows a wrapped line takes, joined): where each starts in it, how
+    /// long it is, what it opens (which only the host reads), and whether it is hidden until Cmd or Ctrl is held. Null for
+    /// a terminal with none.</summary>
+    public Func<string, IReadOnlyList<(int Start, int Length, object Target, bool Hidden)>>? Links { get; set; }
+
+    /// <summary>The link under the pointer; null when there is none.</summary>
+    public TerminalLink? HoveredLink { get; private set; }
+
+    /// <summary>A link was clicked, or Cmd-clicked (Ctrl-clicked elsewhere): the host opens what it names.</summary>
+    public event EventHandler<object>? LinkClicked;
+
+    /// <summary>The key that opens a link with a click: Cmd on the Mac, Ctrl elsewhere.</summary>
+    private static KeyModifiers LinkKey => OperatingSystem.IsMacOS() ? KeyModifiers.Meta : KeyModifiers.Control;
 
     /// <summary>Clears the scrollback and the screen but for the prompt, as Rider's Clear Buffer does.</summary>
     public void ClearBuffer()
@@ -222,6 +249,8 @@ public sealed class TerminalView : Control
         background = Find("Passenger.Terminal.Background") ?? Brushes.Black;
         cursor = Find("Passenger.Terminal.Cursor") ?? foreground;
         selection = Find("Passenger.Terminal.Selection") ?? Brushes.SteelBlue;
+        link = Find("Passenger.Syntax.Link") ?? Brushes.CornflowerBlue;
+        linkUnderline = Find("Passenger.Editor.LinkUnderline") ?? link;
         Measure();
         FitSize();
         InvalidateVisual();
@@ -266,6 +295,10 @@ public sealed class TerminalView : Control
         {
             heldTop = null;
         }
+        if (HoveredLink is not null)
+        {
+            HoverLink(held);
+        }
         InvalidateVisual();
     }
 
@@ -280,6 +313,7 @@ public sealed class TerminalView : Control
         Typeface plain = new(FontFamily);
         long first = TopLine;
         var range = Ordered();
+        List<TerminalLink> shown = ShownLinks(screen, first);
         for (int row = 0; row < screen.Rows; row++)
         {
             long line = first + row;
@@ -287,7 +321,8 @@ public sealed class TerminalView : Control
             {
                 break;
             }
-            DrawLine(context, screen.LineAt(line), line, Pad + (row * cellHeight), plain, range);
+            DrawLine(context, screen.LineAt(line), line, Pad + (row * cellHeight), plain, range, LinkedOn(shown, line, screen.Columns));
+            DrawHiddenLink(context, line, Pad + (row * cellHeight), screen.Columns);
         }
         if (first == screen.ScreenTop && screen.CursorVisible)
         {
@@ -295,7 +330,8 @@ public sealed class TerminalView : Control
         }
     }
 
-    private void DrawLine(DrawingContext context, TerminalLine line, long index, double y, Typeface plain, ((long Line, int Column), (long Line, int Column))? range)
+    private void DrawLine(DrawingContext context, TerminalLine line, long index, double y, Typeface plain, ((long Line, int Column), (long Line, int Column))? range,
+        List<(int From, int To)>? linked)
     {
         Cell[] cells = line.Cells;
         int column = 0;
@@ -303,12 +339,13 @@ public sealed class TerminalView : Control
         {
             Cell head = cells[column];
             bool chosen = Within(range, index, column);
+            bool isLink = Linked(linked, column);
             int end = column + 1;
             bool alone = !InRun(head);
             if (!alone)
             {
                 // A run is cells drawn alike in the terminal's font, every glyph of which is a column wide, so it stays on the grid.
-                while (end < cells.Length && InRun(cells[end]) && cells[end].Style == head.Style && Within(range, index, end) == chosen)
+                while (end < cells.Length && InRun(cells[end]) && cells[end].Style == head.Style && Within(range, index, end) == chosen && Linked(linked, end) == isLink)
                 {
                     end++;
                 }
@@ -326,21 +363,37 @@ public sealed class TerminalView : Control
                     end++;
                 }
             }
-            DrawRun(context, line, column, end, y, plain, chosen, alone);
+            DrawRun(context, line, column, end, y, plain, chosen, alone, isLink);
             column = end;
         }
+    }
+
+    private static bool Linked(List<(int From, int To)>? linked, int column)
+    {
+        if (linked is null)
+        {
+            return false;
+        }
+        foreach ((int from, int to) in linked)
+        {
+            if (from <= column && column <= to)
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     /// <summary>Whether a cell is drawn in a run with its neighbours: one code point a column wide that the terminal's
     /// font has. A wide character, a letter with its marks or one another font draws is drawn alone, fitted to its cells.</summary>
     private bool InRun(Cell cell) => cell.Width == 1 && !cell.IsJoined && (cell.Rune < 0x7f || glyphs?.ContainsGlyph(cell.Rune) == true);
 
-    private void DrawRun(DrawingContext context, TerminalLine line, int from, int to, double y, Typeface plain, bool chosen, bool alone)
+    private void DrawRun(DrawingContext context, TerminalLine line, int from, int to, double y, Typeface plain, bool chosen, bool alone, bool isLink)
     {
         Cell[] cells = line.Cells;
         CellStyle style = cells[from].Style;
         bool inverse = style.Flags.HasFlag(CellFlags.Inverse);
-        IBrush fore = Colour(style.Fore, foreground);
+        IBrush fore = isLink && !inverse ? link : Colour(style.Fore, foreground);
         IBrush back = Colour(style.Back, background);
         if (inverse)
         {
@@ -383,7 +436,11 @@ public sealed class TerminalView : Control
                 FormattedText formatted = new(shown, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, face, FontSize, fore);
                 context.DrawText(formatted, new Point(x, y + ((cellHeight - formatted.Height) / 2)));
             }
-            if (style.Flags.HasFlag(CellFlags.Underline))
+            if (isLink)
+            {
+                context.DrawLine(new Pen(linkUnderline, 1), new Point(x, y + cellHeight - 2.5), new Point(area.Right, y + cellHeight - 2.5));
+            }
+            else if (style.Flags.HasFlag(CellFlags.Underline))
             {
                 context.DrawLine(new Pen(fore, 1), new Point(x, y + cellHeight - 2), new Point(area.Right, y + cellHeight - 2));
             }
@@ -392,6 +449,160 @@ public sealed class TerminalView : Control
                 context.DrawLine(new Pen(fore, 1), new Point(x, y + (cellHeight / 2)), new Point(area.Right, y + (cellHeight / 2)));
             }
         }
+    }
+
+    /// <summary>The links drawn as links on the rows shown: every one not hidden, and the hidden one under the pointer while
+    /// Cmd or Ctrl is held.</summary>
+    private List<TerminalLink> ShownLinks(TerminalScreen screen, long first)
+    {
+        List<TerminalLink> shown = [];
+        if (Links is null)
+        {
+            return shown;
+        }
+        long last = Math.Min(first + screen.Rows, screen.ScreenTop + screen.Rows) - 1;
+        for (long line = first; line <= last; line++)
+        {
+            List<TerminalLink> around = LinksAround(screen, line, out long end);
+            foreach (TerminalLink found in around)
+            {
+                if (!found.Hidden || (found == HoveredLink && held.HasFlag(LinkKey)))
+                {
+                    shown.Add(found);
+                }
+            }
+            line = end;
+        }
+        return shown;
+    }
+
+    /// <summary>The columns of a row that links cover.</summary>
+    private static List<(int From, int To)>? LinkedOn(List<TerminalLink> links, long line, int columns)
+    {
+        List<(int From, int To)>? linked = null;
+        foreach (TerminalLink each in links)
+        {
+            if (line >= each.FromLine && line <= each.ToLine)
+            {
+                (linked ??= []).Add((line == each.FromLine ? each.FromColumn : 0, line == each.ToLine ? each.ToColumn : columns - 1));
+            }
+        }
+        return linked;
+    }
+
+    /// <summary>A hidden link under the pointer with no key held: underlined faintly in the text's colour, as Rider's
+    /// terminal shows a file path a Cmd+click opens.</summary>
+    private void DrawHiddenLink(DrawingContext context, long line, double y, int columns)
+    {
+        if (HoveredLink is not { Hidden: true } hovered || held.HasFlag(LinkKey) || line < hovered.FromLine || line > hovered.ToLine)
+        {
+            return;
+        }
+        int from = line == hovered.FromLine ? hovered.FromColumn : 0;
+        int to = line == hovered.ToLine ? hovered.ToColumn : columns - 1;
+        double under = y + cellHeight - 2.5;
+        using (context.PushOpacity(ActualThemeVariant == Avalonia.Styling.ThemeVariant.Light ? 0.4 : 0.5))
+        {
+            context.DrawLine(new Pen(foreground, 1), new Point(Pad + (from * cellWidth), under), new Point(Pad + ((to + 1) * cellWidth), under));
+        }
+    }
+
+    /// <summary>The link holding the cell under a point, if any.</summary>
+    private TerminalLink? LinkAt(Point at)
+    {
+        if (Links is null || session is null)
+        {
+            return null;
+        }
+        TerminalScreen screen = session.Screen;
+        int row = (int)Math.Floor((at.Y - Pad) / cellHeight);
+        int column = (int)Math.Floor((at.X - Pad) / cellWidth);
+        long line = TopLine + row;
+        if (row < 0 || row >= screen.Rows || column < 0 || column >= screen.Columns || line >= screen.ScreenTop + screen.Rows)
+        {
+            return null;
+        }
+        foreach (TerminalLink found in LinksAround(screen, line, out _))
+        {
+            bool afterStart = line > found.FromLine || (line == found.FromLine && column >= found.FromColumn);
+            bool beforeEnd = line < found.ToLine || (line == found.ToLine && column <= found.ToColumn);
+            if (afterStart && beforeEnd)
+            {
+                return found;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>The links on the line a row is part of: its text is read with the rows it wrapped from and onto (sixteen
+    /// at most each way), so a long address wrapped across them is one link. <paramref name="end"/> is that line's last row.</summary>
+    private List<TerminalLink> LinksAround(TerminalScreen screen, long line, out long end)
+    {
+        const int Rows = 16;
+        long last = screen.ScreenTop + screen.Rows - 1;
+        long first = line;
+        while (first > screen.FirstLine && line - first < Rows && screen.LineAt(first - 1).Wrapped)
+        {
+            first--;
+        }
+        end = line;
+        while (end < last && end - line < Rows && screen.LineAt(end).Wrapped)
+        {
+            end++;
+        }
+        StringBuilder text = new();
+        List<(long Line, int From, int To)> cells = [];
+        for (long each = first; each <= end; each++)
+        {
+            TerminalLine shown = screen.LineAt(each);
+            int length = each == end ? shown.Length : shown.Cells.Length;
+            for (int c = 0; c < length; c++)
+            {
+                Cell cell = shown.Cells[c];
+                if (cell.Width == 0)
+                {
+                    continue;
+                }
+                int to = Math.Min(c + cell.Width - 1, shown.Cells.Length - 1);
+                foreach (char unit in shown.TextOf(c))
+                {
+                    text.Append(unit);
+                    cells.Add((each, c, to));
+                }
+            }
+        }
+        List<TerminalLink> links = [];
+        if (text.Length == 0)
+        {
+            return links;
+        }
+        foreach ((int start, int count, object target, bool hidden) in Links!(text.ToString()))
+        {
+            if (count > 0 && start + count <= cells.Count)
+            {
+                (long fromLine, int fromColumn, _) = cells[start];
+                (long toLine, _, int toColumn) = cells[start + count - 1];
+                links.Add(new TerminalLink(fromLine, fromColumn, toLine, toColumn, target, hidden));
+            }
+        }
+        return links;
+    }
+
+    /// <summary>The link under the pointer takes the hand when a click opens it: always for one drawn as a link, for a
+    /// hidden one while Cmd or Ctrl is held.</summary>
+    private void HoverLink(KeyModifiers modifiers)
+    {
+        bool keyed = modifiers.HasFlag(LinkKey) != held.HasFlag(LinkKey);
+        held = modifiers;
+        TerminalLink? over = pointer is { } at && !selecting ? LinkAt(at) : null;
+        if (over == HoveredLink && !(keyed && over is { Hidden: true }))
+        {
+            return;
+        }
+        bool hand = over is not null && (!over.Hidden || modifiers.HasFlag(LinkKey));
+        Cursor = new Cursor(hand ? StandardCursorType.Hand : StandardCursorType.Ibeam);
+        HoveredLink = over;
+        InvalidateVisual();
     }
 
     /// <summary>A grapheme drawn within its cells: another font's glyph (an emoji's, a Devanagari letter's) is made smaller
@@ -508,6 +719,15 @@ public sealed class TerminalView : Control
             return;
         }
         PointerPointProperties pressed = e.GetCurrentPoint(this).Properties;
+        if (pressed.IsLeftButtonPressed && e.KeyModifiers.HasFlag(LinkKey) && LinkAt(e.GetPosition(this)) is { } clicked)
+        {
+            LinkClicked?.Invoke(this, clicked.Target);
+            e.Handled = true;
+            return;
+        }
+        pressedLink = pressed.IsLeftButtonPressed && e.KeyModifiers == KeyModifiers.None && e.ClickCount == 1 && session.Screen.MouseTracking == MouseTracking.None
+            ? LinkAt(e.GetPosition(this)) is { Hidden: false } plain ? plain : null
+            : null;
         if (session.Screen.MouseTracking != MouseTracking.None && !e.KeyModifiers.HasFlag(KeyModifiers.Shift))
         {
             SendMouse(e.GetPosition(this), pressed.IsRightButtonPressed ? 2 : pressed.IsMiddleButtonPressed ? 1 : 0, release: false);
@@ -536,11 +756,26 @@ public sealed class TerminalView : Control
     protected override void OnPointerMoved(PointerEventArgs e)
     {
         base.OnPointerMoved(e);
+        pointer = e.GetPosition(this);
         if (selecting && session is not null)
         {
             active = CellAt(e.GetPosition(this));
             InvalidateVisual();
         }
+        HoverLink(e.KeyModifiers);
+    }
+
+    protected override void OnPointerExited(PointerEventArgs e)
+    {
+        base.OnPointerExited(e);
+        pointer = null;
+        HoverLink(KeyModifiers.None);
+    }
+
+    protected override void OnKeyUp(KeyEventArgs e)
+    {
+        base.OnKeyUp(e);
+        HoverLink(e.KeyModifiers);
     }
 
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
@@ -552,6 +787,12 @@ public sealed class TerminalView : Control
         }
         selecting = false;
         e.Pointer.Capture(null);
+        if (pressedLink is { } link && anchor == active && LinkAt(e.GetPosition(this)) == link)
+        {
+            ClearSelection();
+            LinkClicked?.Invoke(this, link.Target);
+        }
+        pressedLink = null;
     }
 
     protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
@@ -643,6 +884,11 @@ public sealed class TerminalView : Control
         if (session is null)
         {
             return;
+        }
+        if (e.Key is Key.LWin or Key.RWin or Key.LeftCtrl or Key.RightCtrl)
+        {
+            // Cmd or Ctrl going down over a link underlines it, as moving the pointer with it held does.
+            HoverLink(e.KeyModifiers);
         }
         KeyModifiers mods = e.KeyModifiers;
         bool mac = OperatingSystem.IsMacOS();
@@ -798,3 +1044,7 @@ public sealed class TerminalView : Control
         }
     }
 }
+
+/// <summary>A link on the terminal's lines, from its first cell to its last by line number (<see cref="TerminalScreen.LineAt"/>)
+/// and column, what it opens, and whether it is drawn as text until Cmd or Ctrl is held (a file path's).</summary>
+public sealed record TerminalLink(long FromLine, int FromColumn, long ToLine, int ToColumn, object Target, bool Hidden);

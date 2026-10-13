@@ -13,7 +13,7 @@ namespace Passenger.App.ToolWindows;
 /// Rider's run toolbar down its left side (rerun, stop, clear). Output comes through its <see cref="Sink"/> from any
 /// thread; standard error is drawn in the error colour, and what a person types goes to the program's <see cref="Input"/>
 /// a line at a time, in the input colour, as Rider's console takes it. It keeps Rider's console cycle buffer of text,
-/// the oldest lines dropped past it.</summary>
+/// the oldest lines dropped past it. Its file locations and web addresses are links (<see cref="Links"/>).</summary>
 public sealed class OutputView : DockPanel
 {
     /// <summary>Rider's console cycle buffer, <c>idea.cycle.buffer.size</c>: 1024 KB of text.</summary>
@@ -45,6 +45,9 @@ public sealed class OutputView : DockPanel
             FontSize = 12.5,
             Highlighter = colours,
         };
+        colours.Links = Links;
+        Editor.Links = Links.On;
+        Editor.LinkClicked += (_, link) => LinkClicked?.Invoke(this, (LinkTarget)link.Target);
         rerun = Tool("Icon.Rerun", "Rerun");
         stop = Tool("Icon.Stop", "Stop");
         Button clear = Tool("Icon.Clear", "Clear");
@@ -80,6 +83,13 @@ public sealed class OutputView : DockPanel
             Editor.ScrollToEnd();
         };
     }
+
+    /// <summary>A link in the output was clicked: a file's place to open, or an address for the browser.</summary>
+    public event EventHandler<LinkTarget>? LinkClicked;
+
+    /// <summary>The output's file locations and web addresses, found as it is drawn; its folders are where a relative path
+    /// is looked for.</summary>
+    public ConsoleLinks Links { get; } = new();
 
     public event EventHandler? RerunClicked;
     public event EventHandler? StopClicked;
@@ -178,6 +188,7 @@ public sealed class OutputView : DockPanel
         UiThread.Check();
         Sink.Drop();
         Document.Clear();
+        Links.Forget();
     }
 
     /// <summary>Takes in what waits in the sink now, rather than at the next frame: before the IDE says a program
@@ -392,11 +403,25 @@ public sealed class OutputView : DockPanel
     private sealed class ConsoleColours : IHighlighter
     {
         private readonly List<SyntaxSpan> spans = [];
+        private ConsoleLinks? links;
 
         /// <summary>How much text has been dropped from the start since the console was cleared.</summary>
         private int dropped;
 
         public event EventHandler? Changed;
+
+        /// <summary>The console's links, drawn over the streams' colours (a stack trace's frames in standard error too).</summary>
+        public ConsoleLinks? Links
+        {
+            set
+            {
+                links = value;
+                if (value is not null)
+                {
+                    value.Changed += (_, _) => Changed?.Invoke(this, EventArgs.Empty);
+                }
+            }
+        }
 
         /// <summary>Text put in at an offset: the stretches from there on move after it, and those given are coloured.</summary>
         public void Insert(int at, int length, IEnumerable<(int Start, int Length)> coloured, TokenKind kind = TokenKind.ErrorOutput)
@@ -467,7 +492,40 @@ public sealed class OutputView : DockPanel
             {
                 found.Add(spans[i] with { Start = spans[i].Start - dropped });
             }
-            return found;
+            IReadOnlyList<SyntaxSpan> linked = links?.GetSpans(text, start, length) ?? [];
+            return linked.Count == 0 ? found : Under(found, linked);
+        }
+
+        /// <summary>The streams' colours with the links laid over them: a stretch a link covers is the link's alone.</summary>
+        private static List<SyntaxSpan> Under(List<SyntaxSpan> coloured, IReadOnlyList<SyntaxSpan> linked)
+        {
+            List<SyntaxSpan> merged = [.. linked];
+            foreach (SyntaxSpan span in coloured)
+            {
+                int from = span.Start;
+                foreach (SyntaxSpan link in linked)
+                {
+                    if (link.End <= from)
+                    {
+                        continue;
+                    }
+                    if (link.Start >= span.End)
+                    {
+                        break;
+                    }
+                    if (link.Start > from)
+                    {
+                        merged.Add(span with { Start = from, Length = link.Start - from });
+                    }
+                    from = link.End;
+                }
+                if (from < span.End)
+                {
+                    merged.Add(span with { Start = from, Length = span.End - from });
+                }
+            }
+            merged.Sort((a, b) => a.Start.CompareTo(b.Start));
+            return merged;
         }
 
         /// <summary>The first stretch reaching past an offset, found by halving: they are in order and apart.</summary>

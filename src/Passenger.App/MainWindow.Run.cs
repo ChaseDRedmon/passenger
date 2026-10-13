@@ -196,22 +196,33 @@ public partial class MainWindow
                 return Said(why);
             }
             ran = chosen.Name;
+            runProject = Path.GetDirectoryName(plan.Project);
             string running = hotReload ? $"Running {chosen.Name} with Hot Reload: a save applies its changes" : $"Running {chosen.Name}";
             Dictionary<string, string> variables = hotReload
                 ? new Dictionary<string, string>(plan.Environment) { ["DOTNET_WATCH_SUPPRESS_EMOJIS"] = "1", ["DOTNET_WATCH_RESTART_ON_RUDE_EDIT"] = "true" }
                 : new Dictionary<string, string>(plan.Environment);
             if (plan.Console == ConsoleKind.Terminal)
             {
-                return await RunInTerminalAsync(chosen.Name, hotReload ? DotnetStart(Watch(plan), plan.WorkingDirectory) : ChildProcesses.Command(plan.Program, plan.Arguments, plan.WorkingDirectory), variables, running);
+                string? refused = await RunInTerminalAsync(chosen.Name, hotReload ? DotnetStart(Watch(plan), plan.WorkingDirectory) : ChildProcesses.Command(plan.Program, plan.Arguments, plan.WorkingDirectory), variables, running);
+                if (refused is null && terminalRun is { } inTerminal)
+                {
+                    OpenBrowserOnceListening(plan, inTerminal.Ended);
+                }
+                return refused;
             }
             terminalRun = null;
             Bottom.Run.SetRunning(true);
             StopButton.IsVisible = true;
             ShowToolWindow("run");
             StatusText.Text = running;
-            return Started(hotReload
+            string? notStarted = Started(hotReload
                 ? runner.StartDotnet(Watch(plan), plan.WorkingDirectory, variables)
                 : runner.Start(plan.Program, plan.Arguments, plan.WorkingDirectory, variables));
+            if (notStarted is null)
+            {
+                OpenBrowserOnceListening(plan, runner.Ended);
+            }
+            return notStarted;
         }
         finally
         {
@@ -351,7 +362,32 @@ public partial class MainWindow
         }
         ShowToolWindow("debug");
         Bottom.Debug.ShowTab(console: true);
-        return await debug.StartAsync(plan);
+        // Before the session clears the Debug window's console, which forgets the links the last one's output had.
+        debugProject = Path.GetDirectoryName(plan.Project);
+        string? refused = await debug.StartAsync(plan);
+        if (refused is null)
+        {
+            OpenBrowserOnceListening(plan, DebugEnded());
+        }
+        return refused;
+    }
+
+    /// <summary>The end of the session being debugged; done already when there is none.</summary>
+    private Task DebugEnded()
+    {
+        if (debug.Session is not { State: not Debugging.DebugState.Ended } session)
+        {
+            return Task.CompletedTask;
+        }
+        TaskCompletionSource ended = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        session.StateChanged += (_, _) =>
+        {
+            if (session.State == Debugging.DebugState.Ended)
+            {
+                ended.TrySetResult();
+            }
+        };
+        return ended.Task;
     }
 
     /// <summary>Debug, from its key or the toolbar: what stopped it, if anything, goes to the status bar.</summary>

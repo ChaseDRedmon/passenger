@@ -654,6 +654,77 @@ public sealed class TerminalTests
         window.Close();
     }
 
+    /// <summary>The terminal's links as Rider's terminal has them: an address is a link a click opens (a drag from it
+    /// selects instead) and so does Cmd+click (Ctrl+click elsewhere), wrapped across rows or not; a file's path is text
+    /// until Cmd or Ctrl is held over it, and Cmd+click opens it at its line.</summary>
+    [AvaloniaFact]
+    public void An_address_in_the_terminal_opens_with_a_click_or_cmd_click_and_a_files_path_with_cmd_click()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            // sh's echo writes the lines.
+            return;
+        }
+        string folder = TestFolders.Create("terminal-");
+        File.WriteAllText(Path.Combine(folder, "notes.txt"), "first\nsecond\nthird\n");
+        (MainWindow window, TerminalSession shell) = Open(folder, "/bin/sh");
+        TerminalView view = window.TerminalPanel.View;
+        RawInputModifiers command = OperatingSystem.IsMacOS() ? RawInputModifiers.Meta : RawInputModifiers.Control;
+        Run(window, "echo see https://example.com/terminal/docs. now");
+        long line = WaitForLine(shell, "see https://example.com/terminal/docs. now", "the address");
+        Point at = view.TranslatePoint(view.PointOf(line, 10), window)!.Value;
+        window.MouseMove(at);
+        Ui.Settle();
+        Assert.Equal((line, 4, line, 36, false), view.HoveredLink is { } link ? (link.FromLine, link.FromColumn, link.ToLine, link.ToColumn, link.Hidden) : default);
+
+        // A drag that begins on it selects, and opens nothing.
+        Drag(window, line, 12, line, 22);
+        Assert.Equal("example.com", view.SelectedText);
+        Assert.Empty(window.Browsed);
+        window.MouseMove(at);
+        window.MouseDown(at, MouseButton.Left);
+        window.MouseUp(at, MouseButton.Left);
+        Ui.Settle();
+        Assert.Equal(["https://example.com/terminal/docs"], window.Browsed.Select(u => u.AbsoluteUri));
+        window.MouseDown(at, MouseButton.Left, command);
+        window.MouseUp(at, MouseButton.Left, command);
+        Ui.Settle();
+        Assert.Equal(2, window.Browsed.Count);
+
+        // An address wrapped onto the next row is one link from either row.
+        string longer = "https://example.com/" + new string('w', shell.Screen.Columns);
+        Run(window, $"echo {longer}");
+        long first = WaitForLine(shell, longer[..shell.Screen.Columns], "the long address's first row");
+        Point wrapped = view.TranslatePoint(view.PointOf(first + 1, 3), window)!.Value;
+        window.MouseMove(wrapped, command);
+        Ui.Settle();
+        Assert.Equal((first, 0, first + 1, 19), view.HoveredLink is { } both ? (both.FromLine, both.FromColumn, both.ToLine, both.ToColumn) : default);
+        window.MouseDown(wrapped, MouseButton.Left, command);
+        window.MouseUp(wrapped, MouseButton.Left, command);
+        Ui.Settle();
+        Assert.Equal(longer, window.Browsed[^1].AbsoluteUri);
+
+        // A file of the folder named with its line: a click alone does not open it, Cmd+click does, at that line.
+        Run(window, "echo written to notes.txt:2 just now");
+        long named = WaitForLine(shell, "written to notes.txt:2 just now", "the file's name");
+        Point file = view.TranslatePoint(view.PointOf(named, 13), window)!.Value;
+        window.MouseMove(file);
+        Ui.Settle();
+        Assert.Equal((named, 11, named, 21, true), view.HoveredLink is { } path ? (path.FromLine, path.FromColumn, path.ToLine, path.ToColumn, path.Hidden) : default);
+        window.MouseDown(file, MouseButton.Left);
+        window.MouseUp(file, MouseButton.Left);
+        Ui.Settle();
+        Assert.Null(window.EditorArea.Active);
+        window.MouseMove(file, command);
+        window.MouseDown(file, MouseButton.Left, command);
+        window.MouseUp(file, MouseButton.Left, command);
+        Ui.Settle();
+        Assert.Equal(PathNames.Canonical(Path.Combine(folder, "notes.txt")), window.EditorArea.Active?.Path);
+        Assert.Equal(1, window.EditorArea.CodeEditor.CaretPosition.Line);
+        Assert.Equal(3, window.Browsed.Count);
+        window.Close();
+    }
+
     /// <summary>A window over a folder of its own holding TerminalConsoleApp, restored, its configuration Keys running the
     /// program in the terminal with these arguments.</summary>
     private static MainWindow RunWindow(string folder, string arguments)

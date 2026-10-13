@@ -96,6 +96,36 @@ public sealed class UnitTestsTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void A_failed_tests_stack_trace_in_its_details_links_to_the_line_that_failed()
+    {
+        MainWindow window = Open();
+        window.EditorArea.CodeEditor.GoTo(new TextPosition(16, 8));
+        Ui.Run(window, AppActions.RunTests);
+        Ui.WaitFor(() => !window.Tests.IsBusy && Method(window, "Two_and_two_make_five")?.State == TestState.Failed, "the failing test's run", TimeSpan.FromSeconds(120));
+        ListBox tree = Tree(window);
+        tree.SelectedItem = Method(window, "Two_and_two_make_five");
+        Ui.Settle();
+        CodeEditor details = Details(window);
+        string shown = Text(details);
+        Assert.True(shown.Contains("SumTests.cs:line 17", StringComparison.Ordinal), $"The failed test's details have no frame at its line:\n{shown}");
+        // The path's start, which the pane shows however long the path is.
+        int frame = shown.IndexOf("Two_and_two_make_five() in ", StringComparison.Ordinal) + "Two_and_two_make_five() in ".Length + 1;
+
+        // Away from the file first, so the click is what brings it back at the line.
+        window.EditorArea.CodeEditor.GoTo(new TextPosition(0, 0));
+        Avalonia.Point at = details.TranslatePoint(details.PointOf(frame) + new Avalonia.Vector(2, details.LineHeight / 2), window)!.Value;
+        window.MouseMove(at);
+        Ui.Settle();
+        Assert.True(details.HoveredLink is not null, $"The pointer rests on the frame's file in the details, but it is no link:\n{shown}");
+        window.MouseDown(at, Avalonia.Input.MouseButton.Left);
+        window.MouseUp(at, Avalonia.Input.MouseButton.Left);
+        Ui.Settle();
+        Assert.Equal(PathNames.Canonical(source), window.EditorArea.Active?.Path);
+        Assert.Equal(new TextPosition(16, 0), window.EditorArea.CodeEditor.CaretPosition);
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Below_a_comment_holding_line_breaks_only_roslyn_counts_each_tests_icon_and_menu_stay_on_its_line()
     {
         // Roslyn counts four more lines in the comment than the editor does.
@@ -238,7 +268,7 @@ public sealed class UnitTestsTests : IDisposable
         Ui.WaitFor(() => !window.Tests.IsBusy && Method(window, "Case_2999")?.State == TestState.Passed, "the first run of every test", TimeSpan.FromSeconds(180));
         Assert.Equal(3002, window.Tests.Tree.Roots.SelectMany(r => r.Methods).Count(m => m.State is TestState.Passed or TestState.Failed));
         ListBox tree = Tree(window);
-        TextBox details = Details(window);
+        CodeEditor details = Details(window);
 
         // Few.Tests closed, Many.Tests chosen with its failures shown beside it, and its tests run again from its menu.
         window.Tests.Tree.Toggle(window.Tests.Tree.Roots.Single(r => r.Name == "Few.Tests"));
@@ -246,9 +276,9 @@ public sealed class UnitTestsTests : IDisposable
         TestNode project = window.Tests.Tree.Roots.Single(r => r.Name == "Many.Tests");
         tree.SelectedItem = project;
         Ui.Settle();
-        Assert.Contains("case 7 failed", details.Text, StringComparison.Ordinal);
+        Assert.Contains("case 7 failed", Text(details), StringComparison.Ordinal);
         int rewrites = 0;
-        details.PropertyChanged += (_, e) => rewrites += e.Property == TextBox.TextProperty ? 1 : 0;
+        details.Document.Changed += (_, _) => rewrites++;
         tree.RaiseEvent(new Avalonia.Input.ContextRequestedEventArgs());
         Ui.Settle();
         ContextMenu menu = tree.ContextMenu!;
@@ -292,7 +322,7 @@ public sealed class UnitTestsTests : IDisposable
         TestNode failing = Method(window, "Case_0107")!;
         tree.SelectedItem = failing;
         Ui.Settle();
-        Assert.Contains("case 107 failed", details.Text, StringComparison.Ordinal);
+        Assert.Contains("case 107 failed", Text(details), StringComparison.Ordinal);
         TestNode above = window.Tests.Tree.Rows.Single(r => r.Name == "Batch00");
         foreach (bool open in new[] { false, true })
         {
@@ -300,7 +330,7 @@ public sealed class UnitTestsTests : IDisposable
             Ui.Settle();
             Assert.Equal(open, window.Tests.Tree.Rows.Any(r => r.Name == "Case_0000"));
             Assert.Same(failing, tree.SelectedItem);
-            Assert.Contains("case 107 failed", details.Text, StringComparison.Ordinal);
+            Assert.Contains("case 107 failed", Text(details), StringComparison.Ordinal);
         }
 
         // Run All with nothing changed: Few.Tests stays closed, the chosen test stays chosen with its new result shown, and
@@ -312,7 +342,7 @@ public sealed class UnitTestsTests : IDisposable
         Assert.False(window.Tests.Tree.Roots.Single(r => r.Name == "Few.Tests").IsExpanded, "Run All opened the project that was closed");
         Assert.DoesNotContain(window.Tests.Tree.Rows, r => r.Name == "FewTests");
         Assert.Equal("Case_0107", (tree.SelectedItem as TestNode)?.Name);
-        Assert.Contains("case 107 failed", details.Text, StringComparison.Ordinal);
+        Assert.Contains("case 107 failed", Text(details), StringComparison.Ordinal);
         Assert.Same(found, Method(window, "Case_0107")!.Items[0]);
         window.Close();
     }
@@ -574,7 +604,7 @@ public sealed class UnitTestsTests : IDisposable
         Assert.Equal(window.Tests.Tree.Rows.IndexOf(doubles) + 1, window.Tests.Tree.Rows.IndexOf(row));
         tree.SelectedItem = row;
         Ui.Settle();
-        Assert.Equal("Passed", Details(window).Text);
+        Assert.Equal("Passed", Text(Details(window)));
         window.Close();
     }
 
@@ -667,8 +697,9 @@ public sealed class UnitTestsTests : IDisposable
         return window.BottomPanel.Tests.GetVisualDescendants().OfType<ListBox>().First(l => ReferenceEquals(l.ItemsSource, window.Tests.Tree.Rows));
     }
 
-    private static TextBox Details(MainWindow window) =>
-        window.BottomPanel.Tests.GetVisualDescendants().OfType<TextBox>().First(t => t.IsReadOnly);
+    /// <summary>The Unit Tests window's details of the chosen row, beside the tree.</summary>
+    private static CodeEditor Details(MainWindow window) =>
+        window.BottomPanel.Tests.GetVisualDescendants().OfType<CodeEditor>().First(e => e.IsReadOnly);
 
     private static TestNode? Method(MainWindow window, string name) =>
         window.Tests.Tree.Roots.SelectMany(r => r.Methods).FirstOrDefault(m => m.Name == name);

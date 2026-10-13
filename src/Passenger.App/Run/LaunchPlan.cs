@@ -43,7 +43,7 @@ public sealed partial record LaunchPlan
 
     public ConsoleKind Console { get; init; }
 
-    /// <summary>Where the browser opens once the program listens, or null (#51).</summary>
+    /// <summary>Where the browser opens once the program listens, or null when the configuration opens none.</summary>
     public string? BrowserUrl { get; init; }
 
     /// <summary>The program as its messages name it: the project's assembly, else the executable, without its extension.</summary>

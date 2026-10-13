@@ -7,19 +7,22 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
 using Passenger.App.Testing;
+using Passenger.Editor;
+using Passenger.Text;
 
 namespace Passenger.App.ToolWindows;
 
 /// <summary>Rider's Unit Tests window: the tests by project, namespace, class and method, a theory's data rows under
 /// it, each marked with how it last ran and how long it took; the chosen one's message, stack trace and output beside the
-/// tree; the run's tally above; and while there are none, why. Double-click or F4 goes to a test's source.</summary>
+/// tree, its stack trace's frames links to their lines, as Rider's output pane has them; the run's tally above; and while
+/// there are none, why. Double-click or F4 goes to a test's source.</summary>
 public sealed class TestsView : DockPanel
 {
     /// <summary>The most failed tests a group's details show, so choosing a project of thousands shows at once.</summary>
     private const int GroupDetailsLimit = 100;
 
     private readonly ListBox tree;
-    private readonly TextBox details;
+    private readonly CodeEditor details;
     private readonly TextBlock status;
     private readonly TextBlock placeholder;
     private bool detailsQueued;
@@ -58,17 +61,19 @@ public sealed class TestsView : DockPanel
             new Separator(),
             ListMenus.Item("Go to Source", "F4", () => GoToRequested?.Invoke(this, chosen), chosen.Path is not null),
         ]);
-        details = new TextBox
+        details = new CodeEditor
         {
+            Document = new TextDocument(),
             IsReadOnly = true,
-            AcceptsReturn = true,
-            TextWrapping = TextWrapping.NoWrap,
-            FontFamily = CSharp.Fonts.Mono,
+            LineCommentPrefix = null,
+            ShowLineNumbers = false,
+            ShowErrorStripe = false,
             FontSize = 12,
-            BorderThickness = new Thickness(0),
-            Background = Brushes.Transparent,
-            Padding = new Thickness(10, 8),
+            Highlighter = Links,
+            Links = Links.On,
+            Margin = new Thickness(6, 4, 0, 0),
         };
+        details.LinkClicked += (_, link) => LinkClicked?.Invoke(this, (LinkTarget)link.Target);
         // Results come by the thousand: the chosen row's details are written again once they have, not once each.
         model.ResultApplied += (_, _) => QueueDetails();
         model.Updated += (_, _) => QueueDetails();
@@ -116,6 +121,15 @@ public sealed class TestsView : DockPanel
 
     public TestTree Model { get; }
 
+    /// <summary>The chosen row's results: its message, stack trace and output.</summary>
+    public CodeEditor Details => details;
+
+    /// <summary>The details' file locations and web addresses; its folders are where a relative path is looked for.</summary>
+    public ConsoleLinks Links { get; } = new();
+
+    /// <summary>A link in the details was clicked: a frame's file and line to open, or an address for the browser.</summary>
+    public event EventHandler<LinkTarget>? LinkClicked;
+
     /// <summary>A toolbar button pressed: the app action it runs.</summary>
     public event EventHandler<string>? ActionRequested;
 
@@ -155,12 +169,12 @@ public sealed class TestsView : DockPanel
     {
         if (tree.SelectedItem is not TestNode node)
         {
-            details.Text = string.Empty;
+            Show(string.Empty);
             return;
         }
         if (node.Kind is TestNodeKind.Method or TestNodeKind.Row)
         {
-            details.Text = node.Details;
+            Show(node.Details);
             return;
         }
         List<TestNode> failed = [.. node.Methods.Where(m => m.State == TestState.Failed).Take(GroupDetailsLimit + 1)];
@@ -170,7 +184,20 @@ public sealed class TestsView : DockPanel
             int more = node.Methods.Count(m => m.State == TestState.Failed) - GroupDetailsLimit;
             shown += $"\n\n…and {more} more failed";
         }
-        details.Text = shown;
+        Show(shown);
+    }
+
+    /// <summary>The details' text, written only when it changed, from its top.</summary>
+    private void Show(string text)
+    {
+        TextDocument document = details.Document;
+        if (document.Snapshot.Length == text.Length && document.Snapshot.ToString() == text)
+        {
+            return;
+        }
+        document.Rewrite(0, document.Snapshot.Length, text);
+        details.Selections = SelectionSet.Single(0);
+        details.ScrollTo(default);
     }
 
     private void QueueDetails()

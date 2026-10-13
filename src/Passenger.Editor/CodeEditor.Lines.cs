@@ -266,6 +266,8 @@ public sealed partial class CodeEditor
 
         public double Height => Text!.Line.Height;
 
+        public double Baseline => Text!.Line.Baseline;
+
         public bool Covers(int from, int to) => Text is not null && From <= from && To >= to;
 
         public void Window(int from, int to, double x, Formatted text)

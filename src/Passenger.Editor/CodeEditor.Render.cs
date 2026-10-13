@@ -110,6 +110,7 @@ public sealed partial class CodeEditor
                 {
                     DrawWithHints(context, view, gaps, from, y);
                 }
+                DrawLinks(context, text, view, gaps, from, y);
                 DrawMarkers(context, view, gaps, from, y, gutter, size.Width);
                 if (!span.IsLast)
                 {
@@ -883,6 +884,7 @@ public sealed partial class CodeEditor
         public IBrush MatchedBrace { get; private init; } = Brush("#43454A");
         public IBrush Whitespace { get; private init; } = Brush("#686868");
         public IBrush SoftWrapSign { get; private init; } = Brush("#787878");
+        public IBrush LinkUnderline { get; private init; } = Brush("#406AC2");
         public Geometry? ErrorIcon { get; private init; }
         public Geometry? WarningIcon { get; private init; }
         public Geometry? PassedIcon { get; private init; }
@@ -937,6 +939,7 @@ public sealed partial class CodeEditor
                 MatchedBrace = Find(control, "Passenger.Editor.MatchedBrace") ?? defaults.MatchedBrace,
                 Whitespace = Find(control, "Passenger.Editor.Whitespace") ?? defaults.Whitespace,
                 SoftWrapSign = Find(control, "Passenger.Editor.SoftWrapSign") ?? defaults.SoftWrapSign,
+                LinkUnderline = Find(control, "Passenger.Editor.LinkUnderline") ?? defaults.LinkUnderline,
                 ErrorIcon = Icon(control, "Icon.Error"),
                 WarningIcon = Icon(control, "Icon.Problems"),
                 PassedIcon = Icon(control, "Icon.Check"),

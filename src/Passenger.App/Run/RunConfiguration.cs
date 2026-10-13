@@ -48,9 +48,11 @@ public sealed record RunConfiguration
 
     public ConsoleKind Console { get; init; }
 
-    /// <summary>Whether the browser opens at <see cref="BrowserUrl"/> once the program listens (#51's; kept, not yet acted on).</summary>
+    /// <summary>Rider's Open browser, After launch: whether the browser opens at <see cref="BrowserUrl"/> once the program
+    /// listens there, as a launch profile's <c>launchBrowser</c> asks.</summary>
     public bool LaunchBrowser { get; init; }
 
+    /// <summary>Where the browser opens: a profile's <c>launchUrl</c> against its first <c>applicationUrl</c>.</summary>
     public string BrowserUrl { get; init; } = string.Empty;
 
     /// <summary>Made from the folder's projects rather than by the person, and so changed only by copying it.</summary>
