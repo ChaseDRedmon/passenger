@@ -559,14 +559,20 @@ public sealed partial class PassengerTools(MainWindow window)
 
     [McpServerTool(Name = "ide_action", Title = "Run an IDE action", Destructive = true), Description(
         "Runs one of the IDE's actions by its id, as its shortcut would: app.* (app.build, app.debug.stepOver, app.code.rename and the rest) " +
-        "or an editor action on the active editor. ide_actions lists them.")]
-    public Task<string> IdeAction(string action, CancellationToken cancel = default) => OnUi(cancel, () => Task.FromResult(window.Perform(action) ? $"Ran {action}" : $"{action} did nothing here"));
+        "or an editor action where the keys are. ide_actions lists them. An id no action has, or one that cannot run here, is an error saying why.")]
+    public Task<string> IdeAction(string action, CancellationToken cancel = default) => OnUi(cancel, () =>
+        Task.FromResult(window.Actions.Run(action) is { } why ? throw new InvalidOperationException($"{action} did not run: {why}") : $"Ran {action}"));
 
     [McpServerTool(Name = "ide_actions", Title = "The IDE's actions", ReadOnly = true), Description(
-        "Every action ide_action runs (those with no shortcut too), as id: name [group] (shortcut on this platform).")]
+        "Every action ide_action runs (those with no shortcut too), as id: name [group] (shortcut on this platform), " +
+        "and why one cannot run here now.")]
     public Task<IReadOnlyList<string>> IdeActions(CancellationToken cancel = default) => OnUi(cancel, () =>
-        Task.FromResult((IReadOnlyList<string>)[.. ActionCatalog.All(AppActions.Keymap()).Select(a =>
-            a.Shortcut is { } keys ? $"{a.Id}: {a.Title} [{a.Group}] ({keys})" : $"{a.Id}: {a.Title} [{a.Group}]")]));
+    {
+        ActionRegistry actions = window.Actions;
+        ActionContext context = actions.Context();
+        return Task.FromResult((IReadOnlyList<string>)[.. actions.All.Select(a =>
+            $"{a.Id}: {a.Title} [{a.Group}]{(actions.Shortcut(a.Id) is { } keys ? $" ({keys})" : string.Empty)}{(a.WhyNot(context) is { } why ? $" - cannot run: {why}" : string.Empty)}")]);
+    });
 
     [McpServerTool(Name = "type", Title = "Type into the editor", Destructive = true), Description(
         "Types text into the active editor at its caret, as the keyboard would (typing a closing bracket over one already there, and so on).")]

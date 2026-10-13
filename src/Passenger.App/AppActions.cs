@@ -2,8 +2,9 @@ using Passenger.Editor;
 
 namespace Passenger.App;
 
-/// <summary>The IDE's own actions, beside the editor's (<see cref="EditorActions"/>), and the one
-/// keymap that binds both: Rider's Visual Studio keymaps for these too.</summary>
+/// <summary>The ids of the IDE's own actions, beside the editor's (<see cref="EditorActions"/>), and the keymap of each
+/// platform that binds both by id: Rider's Visual Studio keymaps for these too. Each action is declared by its feature
+/// (<see cref="IdeAction"/>, in the window's <see cref="ActionRegistry"/>).</summary>
 public static class AppActions
 {
     public const string Open = "app.open";
@@ -139,8 +140,6 @@ public static class AppActions
     public const string Fetch = "app.vcs.fetch";
     public const string Stash = "app.vcs.stash";
     public const string Unstash = "app.vcs.unstash";
-
-    public static bool IsApp(string action) => action.StartsWith("app.", StringComparison.Ordinal);
 
     /// <summary>The person's own shortcuts over the Visual Studio keymap's, by action (an empty list unbinds it), as
     /// Settings keeps them.</summary>

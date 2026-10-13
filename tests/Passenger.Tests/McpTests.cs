@@ -225,6 +225,39 @@ public sealed class McpTests : IDisposable
         }
     }
 
+    [AvaloniaFact]
+    public void An_agents_action_no_action_has_or_one_that_cannot_run_here_is_an_error_saying_why()
+    {
+        MainWindow window = AgentsWindow(folder);
+        McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
+        try
+        {
+            // A misspelt id, asked about first as any action an agent runs on the person's window is.
+            Task<CallToolResult> misspelt = Task.Run(() => Result(client, "ide_action", new() { ["action"] = "app.biuld" }));
+            Press(Question(window, "the question for the agent's action"), "Allow");
+            CallToolResult unknown = Await(misspelt, "the misspelt action");
+            string said = string.Concat(unknown.Content.OfType<TextContentBlock>().Select(t => t.Text));
+            Assert.True(unknown.IsError == true, $"An action no action has was answered as run: {said}");
+            Assert.Contains("No action is called app.biuld", said, StringComparison.Ordinal);
+
+            // Commit, in a folder in no repository, says that is why; the Commit window stays as it was.
+            CallToolResult commit = Await(Task.Run(() => Result(client, "ide_action", new() { ["action"] = AppActions.Commit })), "the commit with no repository");
+            said = string.Concat(commit.Content.OfType<TextContentBlock>().Select(t => t.Text));
+            Assert.True(commit.IsError == true, $"Commit in a folder with no repository was answered as run: {said}");
+            Assert.Contains("not in a Git repository", said, StringComparison.Ordinal);
+            Assert.False(window.DockHost.IsShown("commit"), "Commit, refused for want of a repository, opened the Commit window anyway");
+        }
+        finally
+        {
+            Await(Task.Run(async () =>
+            {
+                await client.DisposeAsync();
+                return true;
+            }), "the agent going");
+            window.Close();
+        }
+    }
+
     /// <summary>Passenger killed outright (SIGKILL, TerminateProcess), as a crash ends it, while it runs, profiles, debugs
     /// and builds a program and its language server loads the project. Each program writes its id to a file named for how
     /// it was started and runs until it is ended; the load (the BuildHost's design-time build) and, once the folder has a

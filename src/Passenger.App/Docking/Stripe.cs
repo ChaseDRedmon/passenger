@@ -52,7 +52,7 @@ internal sealed class Stripe : Border
     /// in order is left as it is.</summary>
     public void Fill(IReadOnlyList<ToolWindow> windows)
     {
-        Keymap keymap = AppActions.Keymap();
+        Keymap keymap = host.Actions?.Keymap ?? AppActions.Keymap();
         bool keysChanged = !ReferenceEquals(keymap, tipsFrom);
         tipsFrom = keymap;
         Dictionary<ToolAnchor, List<ToggleButton>> wanted = groups.Keys.ToDictionary(anchor => anchor, anchor =>

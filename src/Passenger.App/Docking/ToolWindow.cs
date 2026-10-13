@@ -49,8 +49,27 @@ public sealed class ToolWindow(string id, string title, string icon, Control con
     /// <summary>Controls of its own for its header, after its title (the Explorer's view switch).</summary>
     public Control? HeaderTools { get; init; }
 
-    /// <summary>The action that shows it (its shortcut is the button's tip), if there is one.</summary>
+    /// <summary>The id of the action that shows it, if there is one (its shortcut is the button's tip): the dock adds it
+    /// to the window's actions, to run from anywhere, the terminal too.</summary>
     public string? Action { get; init; }
+
+    /// <summary>Its action's name in Find Action, where the window's own would be another action's ("Run Tool Window").</summary>
+    public string? ActionTitle { get; init; }
+
+    /// <summary>Where the menus list its action, besides View's Tool Windows.</summary>
+    public IReadOnlyList<MenuPlace> Menus { get; init; } = [];
+
+    /// <summary>What its action does in place of showing it (the Explorer's gives its rows the keys, the terminal's
+    /// leaves it again from inside).</summary>
+    public Action? Activate { get; init; }
+
+    /// <summary>What is chosen in it (its rows), for actions that run on them while it has the keys.</summary>
+    public Func<object?>? Chosen { get; init; }
+
+    /// <summary>The action that shows it, as the dock adds it.</summary>
+    internal IdeAction? ShowAction(DockHost dock) => Action is { } id
+        ? new IdeAction(id, ActionTitle ?? Title, "Tool Windows", _ => (Activate ?? (() => dock.Show(Id)))()) { Menus = Menus, FromTerminal = true }
+        : null;
 
     public ToolAnchor Anchor
     {

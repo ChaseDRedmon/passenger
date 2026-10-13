@@ -186,6 +186,32 @@ public sealed class TerminalTests
     }
 
     [AvaloniaFact]
+    public void Every_tool_windows_shortcut_opens_it_while_the_terminal_has_the_keys()
+    {
+        string folder = TestFolders.Create("terminal-");
+        try
+        {
+            (MainWindow window, TerminalSession _) = Open(folder, OperatingSystem.IsWindows() ? "cmd.exe" : "/bin/sh");
+            // Run, Git and Bookmarks by their one-key shortcuts: Alt+4, Alt+9 and Ctrl+` in Visual Studio's keymap, Cmd+4,
+            // Cmd+9 and Ctrl+` in its macOS one. Rider's terminal lets every tool window's shortcut through.
+            foreach ((string action, string shown) in new[] { (AppActions.ShowRun, "run"), (AppActions.ShowGit, "git"), (AppActions.ShowBookmarks, "bookmarks") })
+            {
+                window.ShowToolWindow("terminal");
+                window.TerminalPanel.FocusView();
+                Ui.WaitFor(() => window.TerminalPanel.View.IsFocused, "the keys to go to the terminal");
+                Passenger.Editor.Keystroke keys = window.Actions.Keymap.ShortcutsFor(action).First(s => s.Second is null).First;
+                Ui.Press(window, keys.Notation());
+                Assert.True(window.DockHost.IsShown(shown), $"{keys.Display()}, pressed in the terminal, went to the shell rather than opening the {shown} window");
+            }
+            window.Close();
+        }
+        finally
+        {
+            TestFolders.Delete(folder);
+        }
+    }
+
+    [AvaloniaFact]
     public void A_flood_of_output_leaves_the_window_taking_keys_and_Ctrl_C_stops_it()
     {
         if (OperatingSystem.IsWindows())

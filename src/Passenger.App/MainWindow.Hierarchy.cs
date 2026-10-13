@@ -19,6 +19,17 @@ public partial class MainWindow
         hierarchy.GoToRequested += (_, node) => NavigateTo(node.Path, node.Where);
         hierarchy.Failed += (_, why) => StatusText.Text = why;
         Dock.Add(new Docking.ToolWindow("hierarchy", "Hierarchy", "Icon.Hierarchy", hierarchy, Docking.ToolAnchor.RightTop));
+        // What the server finds at the caret, or why it found nothing, the status bar says as it answers.
+        actions!.Add(new IdeAction(AppActions.CallHierarchy, "Call Hierarchy", "IDE", context => _ = ShowCallHierarchyAsync())
+        {
+            WhyNot = NeedsFile,
+            Menus = [new MenuPlace("Navigate", 2, 3)],
+        });
+        actions.Add(new IdeAction(AppActions.TypeHierarchy, "Type Hierarchy", "IDE", context => _ = ShowTypeHierarchyAsync())
+        {
+            WhyNot = NeedsFile,
+            Menus = [new MenuPlace("Navigate", 2, 4)],
+        });
     }
 
     /// <summary>Call Hierarchy: who calls the symbol at the caret, and whom it calls; null when shown, else why not.</summary>

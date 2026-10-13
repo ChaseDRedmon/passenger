@@ -19,6 +19,8 @@ public partial class MainWindow
         {
             Action = AppActions.ShowTerminal,
             HeaderTools = terminal.HeaderTools,
+            Menus = [new MenuPlace("Tools", 0, 2)],
+            Activate = ToggleTerminal,
         });
         terminal.Emptied += (_, _) =>
         {
@@ -47,8 +49,8 @@ public partial class MainWindow
     }
 
     /// <summary>Whether a key goes to the focused terminal rather than the IDE: everything but Cmd's keys on the Mac (save
-    /// Cmd+K, its Clear Buffer), the second key of a chord already begun, and the shortcuts that move between tool
-    /// windows.</summary>
+    /// Cmd+K, its Clear Buffer), the second key of a chord already begun, and the shortcuts of the actions that run from
+    /// the terminal (<see cref="IdeAction.FromTerminal"/>: the tool windows' and their frame's).</summary>
     private bool TerminalTakes(KeyEventArgs e)
     {
         if (FocusManager?.GetFocusedElement() is not Terminal.TerminalView || keys.IsPending)
@@ -60,10 +62,6 @@ public partial class MainWindow
             // Cmd's keys are the IDE's, but for Cmd+K, the terminal's Clear Buffer (the editor's chords begin with it).
             return e.KeyModifiers == KeyModifiers.Meta && e.Key == Key.K;
         }
-        string? action = keys.Keymap.ActionFor(new Shortcut(Keystroke.From(e)));
-        bool ides = action is AppActions.ShowTerminal or AppActions.HideToolWindow or AppActions.HideAllToolWindows
-            or AppActions.MaximizeToolWindow or AppActions.FocusExplorer
-            || (action?.StartsWith("app.show", StringComparison.Ordinal) ?? false);
-        return !ides;
+        return keys.Keymap.ActionFor(new Shortcut(Keystroke.From(e))) is not { } action || actions![action] is not { FromTerminal: true };
     }
 }

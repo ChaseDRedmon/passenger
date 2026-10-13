@@ -181,69 +181,47 @@ public sealed class CodeAssist
         return false;
     }
 
-    /// <summary>Runs one of the code actions (<see cref="AppActions"/>' code.* names), or returns false
-    /// for one that is not this.</summary>
-    public bool Run(string action)
+    /// <summary>The code actions, on the active editor's caret: those that ask the language server need a C# file of a
+    /// folder it runs for; the error steps and Quick Documentation (the problems there, a paused program's values) only a
+    /// file.</summary>
+    public void AddActions(ActionRegistry actions)
     {
-        int caret = Editor.Selections.Primary.Caret;
-        switch (action)
-        {
-            case AppActions.Complete:
-                _ = StartCompletion(null);
-                return true;
-            case AppActions.QuickFix:
-                _ = ShowFixes();
-                return true;
-            case AppActions.Generate:
-                // Rider's Generate: the server's actions that write code for the type (constructors, equality,
-                // interface members, overrides).
-                _ = ShowFixes(a => GenerateWords.Any(w => a.Title.StartsWith(w, StringComparison.Ordinal)), "Generate");
-                return true;
-            case AppActions.RefactorThis:
-                _ = ShowFixes(a => a.Kind?.StartsWith("refactor", StringComparison.Ordinal) == true, "Refactor This");
-                return true;
-            case AppActions.ExtractMethod:
-                _ = Refactor(a => a.Title == "Extract method", "Extract Method", renameMethod: true);
-                return true;
-            case AppActions.IntroduceVariable:
-                _ = Refactor(a => a.Title.StartsWith("Introduce local", StringComparison.Ordinal), "Introduce Variable", renameMethod: false);
-                return true;
-            case AppActions.Inline:
-                _ = Refactor(a => a.Kind == "refactor.inline" || a.Title.StartsWith("Inline", StringComparison.Ordinal), "Inline", renameMethod: false);
-                return true;
-            case AppActions.Rename:
-                ShowRename();
-                return true;
-            case AppActions.GoToDeclaration:
-                _ = GoToDefinition(caret);
-                return true;
-            case AppActions.GoToImplementation:
-                _ = GoToImplementation(caret);
-                return true;
-            case AppActions.FindUsages:
-                _ = FindUsages(caret);
-                return true;
-            case AppActions.Reformat:
-                _ = Reformat();
-                return true;
-            case AppActions.CodeCleanup:
-                _ = Cleanup();
-                return true;
-            case AppActions.ParameterInfo:
-                _ = ShowSignature();
-                return true;
-            case AppActions.QuickDocumentation:
-                _ = ShowHover(caret, Editor.PointOf(caret));
-                return true;
-            case AppActions.NextError:
-                StepToMarker(forward: true);
-                return true;
-            case AppActions.PreviousError:
-                StepToMarker(forward: false);
-                return true;
-        }
-        return false;
+        Code(AppActions.Complete, "Basic Completion", context => _ = StartCompletion(null), new("Code", 0, 0));
+        Code(AppActions.QuickFix, "Show Context Actions", context => _ = ShowFixes(), new("Code", 0, 1));
+        // Rider's Generate: the server's actions that write code for the type (constructors, equality, interface members,
+        // overrides).
+        Code(AppActions.Generate, "Generate...", context => _ = ShowFixes(a => GenerateWords.Any(w => a.Title.StartsWith(w, StringComparison.Ordinal)), "Generate"),
+            new("Code", 0, 2));
+        Code(AppActions.Reformat, "Reformat Code", context => _ = Reformat(), new("Code", 1, 0));
+        Code(AppActions.CodeCleanup, "Code Cleanup", context => _ = Cleanup(), new("Code", 1, 1));
+        Code(AppActions.RefactorThis, "Refactor This...", context => _ = ShowFixes(a => a.Kind?.StartsWith("refactor", StringComparison.Ordinal) == true, "Refactor This"),
+            new("Refactor", 0, 0));
+        Code(AppActions.Rename, "Rename...", _ => ShowRename(), new("Refactor", 1, 0));
+        Code(AppActions.ExtractMethod, "Extract Method...", context => _ = Refactor(a => a.Title == "Extract method", "Extract Method", renameMethod: true),
+            new("Refactor", 1, 1));
+        Code(AppActions.IntroduceVariable, "Introduce Variable...",
+            context => _ = Refactor(a => a.Title.StartsWith("Introduce local", StringComparison.Ordinal), "Introduce Variable", renameMethod: false), new("Refactor", 1, 2));
+        Code(AppActions.Inline, "Inline...",
+            context => _ = Refactor(a => a.Kind == "refactor.inline" || a.Title.StartsWith("Inline", StringComparison.Ordinal), "Inline", renameMethod: false), new("Refactor", 1, 3));
+        Code(AppActions.GoToDeclaration, "Go to Declaration", context => _ = GoToDefinition(Caret), new("Navigate", 2, 0));
+        Code(AppActions.GoToImplementation, "Go to Implementation", context => _ = GoToImplementation(Caret), new("Navigate", 2, 1));
+        Code(AppActions.FindUsages, "Find Usages", context => _ = FindUsages(Caret), new("Navigate", 2, 2));
+        Code(AppActions.ParameterInfo, "Parameter Info", context => _ = ShowSignature(), new("View", 1, 2));
+        Code(AppActions.NextError, "Next Highlighted Error", _ => StepToMarker(forward: true), new("Navigate", 3, 0), server: false);
+        Code(AppActions.PreviousError, "Previous Highlighted Error", _ => StepToMarker(forward: false), new("Navigate", 3, 1), server: false);
+        Code(AppActions.QuickDocumentation, "Quick Documentation", context => _ = ShowHover(Caret, Editor.PointOf(Caret)), new("View", 1, 1), server: false);
+
+        void Code(string id, string title, Action<ActionContext> run, MenuPlace menu, bool server = true) =>
+            actions.Add(new IdeAction(id, title, "Code", run) { WhyNot = context => WhyNot(context, server), Menus = [menu] });
     }
+
+    private int Caret => Editor.Selections.Primary.Caret;
+
+    private string? WhyNot(ActionContext context, bool server) =>
+        context.File is null ? "No file is open"
+        : !server || Current is not null ? null
+        : service() is null ? "No C# language server runs for this folder"
+        : "The file is not C#";
 
     private static readonly string[] GenerateWords = ["Generate", "Implement", "Override", "Add parameter", "Add null check", "Create and assign"];
 

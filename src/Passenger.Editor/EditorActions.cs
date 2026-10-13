@@ -57,6 +57,23 @@ public static class EditorActions
     public const string FoldAll = "editor.foldAll";
     public const string UnfoldAll = "editor.unfoldAll";
 
+    /// <summary>Every editor action and its name for people (Rider's where it has one), which the IDE lists and runs.</summary>
+    public static IReadOnlyList<(string Id, string Title)> All { get; } =
+    [
+        (Left, "Left"), (Right, "Right"), (Up, "Up"), (Down, "Down"), (WordLeft, "Word Left"), (WordRight, "Word Right"),
+        (LineStart, "Line Start"), (LineEnd, "Line End"), (TextStart, "Text Start"), (TextEnd, "Text End"), (PageUp, "Page Up"),
+        (PageDown, "Page Down"), (ScrollUp, "Scroll Up"), (ScrollDown, "Scroll Down"), (Backspace, "Backspace"), (Delete, "Delete"),
+        (DeleteWordLeft, "Delete Word Left"), (DeleteWordRight, "Delete Word Right"), (NewLine, "New Line"),
+        (StartNewLine, "Start New Line"), (StartNewLineBefore, "Start New Line Before"), (Indent, "Indent"), (Outdent, "Outdent"),
+        (Duplicate, "Duplicate"), (DeleteLine, "Delete Line"), (MoveLineUp, "Move Line Up"), (MoveLineDown, "Move Line Down"),
+        (ToggleLineComment, "Comment with Line Comment"), (Comment, "Comment"), (Uncomment, "Uncomment"), (JoinLines, "Join Lines"),
+        (ToggleCase, "Toggle Case"), (CutToLineEnd, "Cut to Line End"), (Undo, "Undo"), (Redo, "Redo"), (Cut, "Cut"), (Copy, "Copy"),
+        (Paste, "Paste"), (SelectAll, "Select All"), (SelectNextOccurrence, "Select Next Occurrence"),
+        (UnselectOccurrence, "Unselect Occurrence"), (SelectAllOccurrences, "Select All Occurrences"), (CaretPerLine, "Caret Per Line"),
+        (CloneCaretAbove, "Clone Caret Above"), (CloneCaretBelow, "Clone Caret Below"), (Escape, "Escape"),
+        (ToggleFold, "Expand/Collapse"), (Fold, "Collapse"), (Unfold, "Expand"), (FoldAll, "Collapse All"), (UnfoldAll, "Expand All"),
+    ];
+
     private static readonly HashSet<string> Movements =
         [Left, Right, Up, Down, WordLeft, WordRight, LineStart, LineEnd, TextStart, TextEnd, PageUp, PageDown];
 

@@ -46,9 +46,15 @@ public partial class MainWindow
     private void AddVcs()
     {
         commitView = new ToolWindows.CommitView(vcs);
-        Dock.Add(new Docking.ToolWindow("commit", "Commit", "Icon.Commit", commitView, Docking.ToolAnchor.LeftTop) { Action = AppActions.ShowCommit });
+        Dock.Add(new Docking.ToolWindow("commit", "Commit", "Icon.Commit", commitView, Docking.ToolAnchor.LeftTop)
+        {
+            Action = AppActions.ShowCommit,
+            ActionTitle = "Commit Tool Window",
+            Menus = [new MenuPlace("Git", 3, 0)],
+        });
         gitLog = new ToolWindows.GitLogView(vcs);
-        Dock.Add(new Docking.ToolWindow("git", "Git", "Icon.Branch", gitLog, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowGit });
+        Dock.Add(new Docking.ToolWindow("git", "Git", "Icon.Branch", gitLog, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowGit, Menus = [new MenuPlace("Git", 3, 1)] });
+        AddVcsActions();
         gitLog.DiffRequested += (_, chosen) => _ = ShowCommitDiffAsync(chosen.Commit, chosen.File);
         commitView.OpenRequested += (_, path) => OpenFile(path);
         commitView.DiffRequested += (_, path) => _ = ShowDiffAsync(path);
@@ -102,14 +108,21 @@ public partial class MainWindow
     private async Task ShowBranchesAsync()
     {
         ContextMenu menu = new();
-        MenuItem Item(string header, Action run, string? action = null)
+        MenuItem Item(string header, Action run)
         {
             MenuItem item = new() { Header = header };
-            if (action is not null && AppActions.Keymap().ShortcutsFor(action).FirstOrDefault() is { } keys)
-            {
-                item.Header = $"{header}    {keys.Display()}";
-            }
             item.Click += (_, _) => run();
+            return item;
+        }
+        // One of the window's actions, by its title, with its shortcut in the window's keymap.
+        ActionContext context = actions!.Context();
+        MenuItem Action(string id)
+        {
+            MenuItem item = Item(actions[id]!.Title, () => Request(id, context));
+            if (actions.Shortcut(id) is { } keys)
+            {
+                item.Header = $"{item.Header}    {keys}";
+            }
             return item;
         }
         if (vcs.Repository is null)
@@ -122,16 +135,16 @@ public partial class MainWindow
             {
                 menu.Items.Add(new MenuItem { Header = "No folder is open", IsEnabled = false });
             }
-            menu.Open(BranchButton);
+            Open(menu, BranchButton);
             return;
         }
-        menu.Items.Add(Item("Update Project...", () => RunAppAction(AppActions.UpdateProject), AppActions.UpdateProject));
-        menu.Items.Add(Item("Fetch", () => RunAppAction(AppActions.Fetch)));
+        menu.Items.Add(Action(AppActions.UpdateProject));
+        menu.Items.Add(Action(AppActions.Fetch));
         menu.Items.Add(Item("New Branch...", ShowNewBranch));
-        menu.Items.Add(Item("Commit...", () => RunAppAction(AppActions.Commit), AppActions.Commit));
-        menu.Items.Add(Item("Push...", () => RunAppAction(AppActions.Push), AppActions.Push));
-        menu.Items.Add(Item("Stash Changes...", () => ShowStash()));
-        menu.Items.Add(Item("Unstash Changes...", () => _ = ShowUnstashAsync()));
+        menu.Items.Add(Action(AppActions.Commit));
+        menu.Items.Add(Action(AppActions.Push));
+        menu.Items.Add(Action(AppActions.Stash));
+        menu.Items.Add(Action(AppActions.Unstash));
         menu.Items.Add(new Separator());
         menu.Items.Add(new MenuItem { Header = "Local", IsEnabled = false });
         foreach (string branch in await vcs.Repository.BranchesAsync())
@@ -141,7 +154,7 @@ public partial class MainWindow
             item.IsEnabled = branch != vcs.Branch;
             menu.Items.Add(item);
         }
-        menu.Open(BranchButton);
+        Open(menu, BranchButton);
     }
 
     /// <summary>Stash Changes: what is open saved first, then every change put away under the message given.</summary>
@@ -366,59 +379,39 @@ public partial class MainWindow
         menu.Open(editor);
     }
 
-    /// <summary>The window's version control actions, from the keymap or the branch menu; false for one that does nothing
-    /// here.</summary>
-    private bool RunVcsAction(string action)
+    /// <summary>Rider's version control actions over the folder's working tree, each needing a repository, and those on a
+    /// file the file shown.</summary>
+    private void AddVcsActions()
     {
-        switch (action)
+        Add(AppActions.Commit, "Commit...", context =>
         {
-            case AppActions.ShowCommit:
-                ShowToolWindow("commit");
-                return true;
-            case AppActions.Commit:
-                // Rider saves every file before a commit, so the window lists what the editors show.
-                Editors.SaveAll();
-                ShowToolWindow("commit");
-                _ = vcs.RefreshAsync();
-                commitView!.FocusMessage();
-                return true;
-            case AppActions.Push:
-                _ = vcs.PushAsync();
-                return true;
-            case AppActions.Branches:
-                ShowBranches();
-                return true;
-            case AppActions.Stash:
-                ShowStash();
-                return true;
-            case AppActions.Unstash:
-                _ = ShowUnstashAsync();
-                return true;
-            case AppActions.NextChange or AppActions.PreviousChange:
-                GoToChange(action == AppActions.NextChange ? 1 : -1);
-                return true;
-            case AppActions.RollbackLines:
-                _ = RollbackLinesAsync();
-                return true;
-            case AppActions.ShowGit:
-                ShowToolWindow("git");
-                return true;
-            case AppActions.Annotate when Editors.Active is { } annotated:
-                _ = ToggleAnnotationsAsync(annotated);
-                return true;
-            case AppActions.UpdateProject:
-                _ = vcs.UpdateAsync();
-                return true;
-            case AppActions.Fetch:
-                _ = vcs.FetchAsync();
-                return true;
-            case AppActions.ShowDiff when Editors.Active is { } shown:
-                _ = ShowDiffAsync(shown.Path);
-                return true;
-            default:
-                return false;
-        }
+            // Rider saves every file before a commit, so the window lists what the editors show.
+            Editors.SaveAll();
+            ShowToolWindow("commit");
+            _ = vcs.RefreshAsync();
+            commitView!.FocusMessage();
+        }, new("Git", 0, 0));
+        Add(AppActions.Push, "Push...", context => _ = vcs.PushAsync(), new("Git", 0, 1));
+        Add(AppActions.UpdateProject, "Update Project...", context => _ = vcs.UpdateAsync(), new("Git", 0, 2));
+        Add(AppActions.Fetch, "Fetch", context => _ = vcs.FetchAsync(), new("Git", 0, 3));
+        Add(AppActions.Branches, "Branches...", _ => ShowBranches(), new("Git", 0, 4));
+        Add(AppActions.Stash, "Stash Changes...", _ => ShowStash(), new("Git", 1, 0));
+        Add(AppActions.Unstash, "Unstash Changes...", context => _ = ShowUnstashAsync(), new("Git", 1, 1));
+        Add(AppActions.ShowDiff, "Show Diff", context => _ = ShowDiffAsync(context.File!.Path), new("Git", 2, 0), onFile: true);
+        Add(AppActions.Annotate, "Annotate with Git Blame", context => _ = ToggleAnnotationsAsync(context.File!), new("Git", 2, 1), onFile: true);
+        Add(AppActions.RollbackLines, "Rollback Lines", context => _ = RollbackLinesAsync(), new("Git", 2, 2), onFile: true);
+        Add(AppActions.NextChange, "Next Change", _ => GoToChange(1), new("Navigate", 3, 2), onFile: true);
+        Add(AppActions.PreviousChange, "Previous Change", _ => GoToChange(-1), new("Navigate", 3, 3), onFile: true);
+
+        void Add(string id, string title, Action<ActionContext> run, MenuPlace menu, bool onFile = false) =>
+            actions!.Add(new IdeAction(id, title, "Git", run)
+            {
+                WhyNot = context => NeedsFolder(context) ?? (vcs.Repository is null ? NoRepository : onFile ? NeedsFile(context) : null),
+                Menus = [menu],
+            });
     }
+
+    private const string NoRepository = "The open folder is not in a Git repository";
 
     private async Task RollbackAsync(IReadOnlyList<FileChange> changes)
     {

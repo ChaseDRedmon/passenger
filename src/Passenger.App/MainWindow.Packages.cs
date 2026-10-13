@@ -12,7 +12,11 @@ public partial class MainWindow
     private void AddPackages()
     {
         nuget = new ToolWindows.NuGetView(() => Projects);
-        Dock.Add(new Docking.ToolWindow("nuget", "NuGet", "Icon.Package", nuget, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowNuGet });
+        Dock.Add(new Docking.ToolWindow("nuget", "NuGet", "Icon.Package", nuget, Docking.ToolAnchor.BottomLeft)
+        {
+            Action = AppActions.ShowNuGet,
+            Menus = [new MenuPlace("Tools", 0, 0)],
+        });
         nuget.Changed += (_, _) => ReloadSolution();
     }
 }

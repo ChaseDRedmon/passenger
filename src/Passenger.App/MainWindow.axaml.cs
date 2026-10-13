@@ -70,6 +70,7 @@ public partial class MainWindow : Window
         // One keymap for the whole window, seen before any control: IDE actions run from anywhere,
         // editor actions go to the editor when it has the focus.
         AddHandler(KeyDownEvent, OnKeyDownFirst, RoutingStrategies.Tunnel);
+        AddActions();
         AddChords();
         AddToolWindows();
         AddVcs();
@@ -240,7 +241,7 @@ public partial class MainWindow : Window
             await debug.StopAsync();
             return false;
         };
-        Bottom.Tests.ActionRequested += (_, action) => RunAppAction(action);
+        Bottom.Tests.ActionRequested += (_, action) => Request(action);
         Bottom.Tests.RunRequested += (_, debugging) =>
         {
             IReadOnlyList<Testing.TestNode> chosen = Bottom.Tests.Selected;
@@ -250,12 +251,12 @@ public partial class MainWindow : Window
         Bottom.Problems.FixRequested += (_, problem) =>
         {
             NavigateTo(problem.Path!, problem.Position);
-            assist.Run(AppActions.QuickFix);
+            Request(AppActions.QuickFix);
         };
         Structure.UsagesRequested += (_, row) =>
         {
             NavigateTo(row.Path, row.Position);
-            assist.Run(AppActions.FindUsages);
+            Request(AppActions.FindUsages);
         };
         Bottom.Tests.GoToRequested += (_, node) =>
         {
@@ -264,15 +265,17 @@ public partial class MainWindow : Window
                 NavigateTo(PathNames.Canonical(path), new TextPosition(Math.Max(0, node.Line - 1), 0));
             }
         };
-        debug.ActionRequested += (_, action) => RunAppAction(action);
+        debug.ActionRequested += (_, action) => Request(action);
         debug.Message += (_, message) => StatusText.Text = message;
         debug.Navigate += (_, target) => ShowStop(target.Path, target.Position);
         debug.StateChanged += (_, _) => OnDebugStateChanged();
         assist.DebuggerValue = debug.ValueAt;
+        assist.AddActions(actions!);
+        debug.AddActions(actions!);
         AddFind();
         AddProblems();
-        AddMainMenu();
         AddContextMenus();
+        AddMainMenu();
         UpdateStatus();
     }
 
@@ -442,11 +445,11 @@ public partial class MainWindow : Window
             e.Handled |= consumed;
             return;
         }
-        if (AppActions.IsApp(action))
+        if (actions![action] is { InEditor: false })
         {
             if (!shifted)
             {
-                RunAppAction(action);
+                Request(action);
                 e.Handled = true;
             }
             return;
@@ -465,251 +468,6 @@ public partial class MainWindow : Window
             // Escape with nothing of the editor's own to undo closes what sits over it, as in Rider.
             Editors.FindBar.Close();
             e.Handled = true;
-        }
-    }
-
-    /// <summary>Runs one of the IDE's own actions; false for one that does nothing here (no file open for a code action,
-    /// nothing being debugged for a step).</summary>
-    private bool RunAppAction(string action)
-    {
-        if (action.StartsWith("app.code.", StringComparison.Ordinal))
-        {
-            return Editors.Active is not null && assist.Run(action);
-        }
-        if (action.StartsWith("app.vcs.", StringComparison.Ordinal))
-        {
-            return RunVcsAction(action);
-        }
-        if (action.StartsWith("app.bookmarks.", StringComparison.Ordinal))
-        {
-            return RunBookmarkAction(action);
-        }
-        switch (action)
-        {
-            case AppActions.ExtendSelection:
-                ExtendSelection();
-                return true;
-            case AppActions.CallHierarchy:
-                _ = ShowCallHierarchyAsync();
-                return true;
-            case AppActions.TypeHierarchy:
-                _ = ShowTypeHierarchyAsync();
-                return true;
-            case AppActions.ShrinkSelection:
-                ShrinkSelection();
-                return true;
-            case AppActions.Build:
-                BuildSolution();
-                return true;
-            case AppActions.RebuildSolution:
-                Build(BuildKind.Rebuild);
-                return true;
-            case AppActions.CleanSolution:
-                Build(BuildKind.Clean);
-                return true;
-            case AppActions.BuildSelected:
-                BuildSelected(BuildKind.Build);
-                return true;
-            case AppActions.RebuildSelected:
-                BuildSelected(BuildKind.Rebuild);
-                return true;
-            case AppActions.CleanSelected:
-                BuildSelected(BuildKind.Clean);
-                return true;
-            case AppActions.RunProgram:
-                RunSelected();
-                return true;
-            case AppActions.Rerun when debug.IsDebugging:
-                DebugSelected();
-                return true;
-            case AppActions.Rerun:
-                RunSelected();
-                return true;
-            case AppActions.Debug:
-                DebugSelected();
-                return true;
-            case AppActions.Resume when !debug.IsDebugging:
-                // F5 starts debugging when nothing is being debugged, as in Visual Studio.
-                DebugSelected();
-                return true;
-            case AppActions.Stop:
-                _ = debug.StopAsync();
-                runner.Stop();
-                builder.Stop();
-                return true;
-            case AppActions.ShowDebug:
-                ShowToolWindow("debug");
-                return true;
-            case { } debugging when debugging.StartsWith("app.debug.", StringComparison.Ordinal):
-                return debug.Run(debugging);
-            case AppActions.EditBreakpoint when Editors.Active is { } file:
-                int caretLine = Editors.CodeEditor.CaretPosition.Line;
-                if (debug.Breakpoints.In(file.Path).FirstOrDefault(b => b.Line == caretLine) is not { } editing)
-                {
-                    // Alt+F9 on a line with none sets one to edit, as Rider's Edit Breakpoint does.
-                    debug.Breakpoints.Toggle(file.Path, caretLine);
-                    editing = debug.Breakpoints.In(file.Path).First(b => b.Line == caretLine);
-                }
-                ShowBreakpointPopup(editing);
-                return true;
-            case AppActions.ViewBreakpoints:
-                ShowBreakpoints(null);
-                return true;
-            case AppActions.ShowTests:
-                ShowToolWindow("tests");
-                return true;
-            case AppActions.ShowTerminal:
-                ToggleTerminal();
-                return true;
-            case AppActions.FindAction:
-                ShowFindAction();
-                return true;
-            case AppActions.RecentFiles:
-                ShowRecentFiles();
-                return true;
-            case AppActions.FindInFiles or AppActions.ReplaceInFiles:
-                ShowFindInFiles(replace: action == AppActions.ReplaceInFiles);
-                return true;
-            case AppActions.ShowSettings:
-                ShowSettings();
-                return true;
-            case AppActions.ShowLog:
-                ErrorsPopup.ShowLog();
-                return true;
-            case AppActions.ShowNuGet:
-                ShowToolWindow("nuget");
-                return true;
-            case AppActions.ShowProfiler:
-                ShowToolWindow("profiler");
-                return true;
-            case AppActions.Profile:
-                _ = ProfileReportingAsync();
-                return true;
-            case AppActions.ShowStructure:
-                ShowToolWindow("structure");
-                _ = Structure.Refresh();
-                return true;
-            case AppActions.SplitRight when Editors.Active is { } splitting:
-                Editors.Split(Editors.ActiveGroup, splitting, Avalonia.Layout.Orientation.Horizontal, move: false);
-                return true;
-            case AppActions.SplitDown when Editors.Active is { } splitting:
-                Editors.Split(Editors.ActiveGroup, splitting, Avalonia.Layout.Orientation.Vertical, move: false);
-                return true;
-            case AppActions.MoveToOppositeGroup when Editors.Active is { } moving:
-                Editors.MoveToOpposite(Editors.ActiveGroup, moving);
-                return true;
-            case AppActions.MaximizeToolWindow:
-                Dock.ToggleMaximize();
-                return true;
-            case AppActions.HideAllToolWindows:
-                Dock.ToggleHideAll();
-                return true;
-            case AppActions.RunAllTests:
-                RunTests(() => tests.RunAsync(folder!));
-                return true;
-            case AppActions.RunTests or AppActions.DebugTests:
-                RunTestsInContext(debug: action == AppActions.DebugTests);
-                return true;
-            case AppActions.RunTestsUntilFailure:
-                RunTestsInContext(debug: false, untilFailure: true);
-                return true;
-            case AppActions.RerunTests:
-                RunTests(() => tests.RerunAsync(folder!));
-                return true;
-            case AppActions.RerunFailedTests:
-                RunTests(() => tests.RerunFailedAsync(folder!));
-                return true;
-            case AppActions.StopTests:
-                tests.Stop();
-                return true;
-            case AppActions.ShowBuild:
-                ShowToolWindow("build");
-                return true;
-            case AppActions.ShowRun:
-                ShowToolWindow("run");
-                return true;
-            case AppActions.ShowProblems:
-                ShowToolWindow("problems");
-                return true;
-            case AppActions.ShowFind:
-                ShowToolWindow("find");
-                return true;
-            case AppActions.ToggleSolutionAnalysis:
-                ToggleSolutionAnalysis();
-                return true;
-            case AppActions.HideToolWindow:
-                HideToolWindow();
-                return true;
-            case AppActions.FocusEditor:
-                FocusEditor();
-                return true;
-            case AppActions.Back:
-                StepHistory(-1);
-                return true;
-            case AppActions.Forward:
-                StepHistory(1);
-                return true;
-            case AppActions.Open:
-                _ = PickFolder();
-                return true;
-            case AppActions.Exit:
-                Close();
-                return true;
-            case AppActions.ShowContextMenu:
-                ShowFocusedContextMenu();
-                return true;
-            case AppActions.Save:
-                Editors.SaveActive();
-                return true;
-            case AppActions.SaveAll:
-                Editors.SaveAll();
-                return true;
-            case AppActions.CloseTab:
-                // The split worked in loses its tab, as Rider's Close does; the file stays open in any other.
-                if (Editors.Active is { } active)
-                {
-                    Editors.CloseTab(Editors.ActiveGroup, active);
-                }
-                return true;
-            case AppActions.NextTab:
-                Editors.Cycle(1);
-                return true;
-            case AppActions.PreviousTab:
-                Editors.Cycle(-1);
-                return true;
-            case AppActions.FocusExplorer:
-                Dock.Show("explorer");
-                Explorer.FocusRows();
-                return true;
-            case AppActions.GoToFile:
-                ShowGoToFile();
-                return true;
-            case AppActions.GoToLine:
-                ShowGoToLine();
-                return true;
-            case AppActions.GoToSymbol:
-                ShowSymbols("Go to Symbol", "A type or member, by name or CamelHumps", SearchSymbols);
-                return true;
-            case AppActions.GoToEverything:
-                ShowSymbols("Go to Everything", "A type, member or file", SearchEverything);
-                return true;
-            case AppActions.FileStructure:
-                ShowFileStructure();
-                return true;
-            case AppActions.Find:
-                Editors.ShowFind(replace: false);
-                return true;
-            case AppActions.Replace:
-                Editors.ShowFind(replace: true);
-                return true;
-            case AppActions.FindNext:
-                Editors.FindBar.Next();
-                return true;
-            case AppActions.FindPrevious:
-                Editors.FindBar.Previous();
-                return true;
-            default:
-                return false;
         }
     }
 
@@ -801,12 +559,6 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>Runs an action by id, as its shortcut would: the IDE's own (app.*) wherever the focus is,
-    /// an editor's on the active editor. False for one that does nothing here.</summary>
-    public bool Perform(string action) => AppActions.IsApp(action)
-        ? RunAppAction(action)
-        : Editors.Active is not null && Editors.CodeEditor.TryExecute(action);
-
     /// <summary>The status bar's text, which says what the last action came to, for the person. What an operation came to
     /// is its own answer (a build's outcome, a commit's), never this, which anything may have replaced since.</summary>
     public string? Status => StatusText.Text;
@@ -881,18 +633,6 @@ public partial class MainWindow : Window
             chosen.Add(owner.Path);
         }
         return chosen;
-    }
-
-    private void BuildSelected(BuildKind kind)
-    {
-        if (SelectedProjects() is { Count: > 0 } chosen)
-        {
-            Build(kind, chosen);
-        }
-        else
-        {
-            StatusText.Text = "No project is chosen in the Explorer or open in the editor";
-        }
     }
 
     /// <summary>Runs the chosen configuration with <c>dotnet run</c>, its output in the Run window, with these
@@ -1041,13 +781,31 @@ public partial class MainWindow : Window
         {
             Action = AppActions.FocusExplorer,
             HeaderTools = Explorer.TakeHeaderTools(),
+            Activate = () =>
+            {
+                Dock.Show("explorer");
+                Explorer.FocusRows();
+            },
         });
-        Dock.Add(new Docking.ToolWindow("structure", "Structure", "Icon.Structure", Structure, Docking.ToolAnchor.LeftBottom) { Action = AppActions.ShowStructure });
-        Dock.Add(new Docking.ToolWindow("run", "Run", "Icon.RunOutline", Bottom.Run, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowRun });
-        Dock.Add(new Docking.ToolWindow("debug", "Debug", "Icon.Debug", Bottom.Debug, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowDebug });
-        Dock.Add(new Docking.ToolWindow("tests", "Unit Tests", "Icon.Tests", Bottom.Tests, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowTests });
-        Dock.Add(new Docking.ToolWindow("build", "Build", "Icon.Build", Bottom.Build, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowBuild });
-        Dock.Add(new Docking.ToolWindow("problems", "Problems", "Icon.Problems", Bottom.Problems, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowProblems });
+        Dock.Add(new Docking.ToolWindow("structure", "Structure", "Icon.Structure", Structure, Docking.ToolAnchor.LeftBottom)
+        {
+            Action = AppActions.ShowStructure,
+            Activate = () =>
+            {
+                ShowToolWindow("structure");
+                _ = Structure.Refresh();
+            },
+        });
+        Dock.Add(new Docking.ToolWindow("run", "Run", "Icon.RunOutline", Bottom.Run, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowRun, ActionTitle = "Run Tool Window" });
+        Dock.Add(new Docking.ToolWindow("debug", "Debug", "Icon.Debug", Bottom.Debug, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowDebug, ActionTitle = "Debug Tool Window" });
+        Dock.Add(new Docking.ToolWindow("tests", "Unit Tests", "Icon.Tests", Bottom.Tests, Docking.ToolAnchor.BottomLeft)
+        {
+            Action = AppActions.ShowTests,
+            Menus = [new MenuPlace("Tests", 2, 0)],
+            Chosen = () => Bottom.Tests.Selected,
+        });
+        Dock.Add(new Docking.ToolWindow("build", "Build", "Icon.Build", Bottom.Build, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowBuild, ActionTitle = "Build Tool Window" });
+        Dock.Add(new Docking.ToolWindow("problems", "Problems", "Icon.Problems", Bottom.Problems, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowProblems, ActionTitle = "Problems" });
         Dock.Show("explorer");
     }
 
@@ -1162,9 +920,9 @@ public partial class MainWindow : Window
 
     private void OnRunClicked(object? sender, RoutedEventArgs e) => RunSelected();
 
-    private void OnDebugClicked(object? sender, RoutedEventArgs e) => RunAppAction(AppActions.Debug);
+    private void OnDebugClicked(object? sender, RoutedEventArgs e) => Request(AppActions.Debug);
 
-    private void OnStopClicked(object? sender, RoutedEventArgs e) => RunAppAction(AppActions.Stop);
+    private void OnStopClicked(object? sender, RoutedEventArgs e) => Request(AppActions.Stop);
 
     /// <summary>The run configurations to choose from, as a menu under the toolbar widget.</summary>
     private void OnRunConfigClicked(object? sender, RoutedEventArgs e)
@@ -1256,14 +1014,16 @@ public partial class MainWindow : Window
     /// <summary>The actions run from Find Action, the latest first, which it lists before anything is typed.</summary>
     private readonly List<string> recentActions = [];
 
-    /// <summary>Find Action: every action by name, run as its shortcut would run it.</summary>
+    /// <summary>Find Action: every action by name, those that cannot run where it was opened greyed; the one chosen runs
+    /// there as its shortcut would, or says why it cannot.</summary>
     public void ShowFindAction()
     {
-        Navigation.ActionPopup popup = new(keys.Keymap, recentActions);
+        ActionContext context = actions!.Context();
+        Navigation.ActionPopup popup = new(actions, context, recentActions);
         popup.Done += (_, chosen) =>
         {
             ClosePopup();
-            if (chosen is null)
+            if (chosen is null || chosen.Id == AppActions.FindAction || !Request(chosen.Id, context))
             {
                 return;
             }
@@ -1272,14 +1032,6 @@ public partial class MainWindow : Window
             if (recentActions.Count > 10)
             {
                 recentActions.RemoveAt(recentActions.Count - 1);
-            }
-            if (chosen.Id == AppActions.FindAction)
-            {
-                return;
-            }
-            if (!Perform(chosen.Id))
-            {
-                StatusText.Text = $"{chosen.Title} does nothing here";
             }
         };
         ShowPopup(popup);
@@ -1582,30 +1334,23 @@ public partial class MainWindow : Window
     }
 
     /// <summary>Rider's Run (or Debug) Unit Tests in context: the Unit Tests window's chosen rows when it has the
-    /// focus, else the test method or class at the editor's caret, found once the tests have been.</summary>
-    private void RunTestsInContext(bool debug, bool untilFailure = false)
+    /// keys, else the test method or class at the editor's caret, found once the tests have been.</summary>
+    private void RunTestsInContext(ActionContext context, bool debug, bool untilFailure = false)
     {
-        if (folder is null)
+        if (ChosenTests(context) is { } chosen)
         {
-            return;
-        }
-        if (Bottom.Tests.HasFocus && Bottom.Tests.Selected.Count > 0)
-        {
-            IReadOnlyList<Testing.TestNode> chosen = Bottom.Tests.Selected;
             if (untilFailure)
             {
                 RunUntilFailure(chosen);
                 return;
             }
-            RunTests(() => tests.RunAsync(folder, chosen, debug));
+            RunTests(() => tests.RunAsync(folder!, chosen, debug));
             return;
         }
-        if (Editors.Active?.Syntax is not { } syntax || Testing.TestsAtCaret.At(syntax.Current, Editors.CodeEditor.CaretPosition.Line) is not { } context)
+        if (TestAtCaret(context) is { } test)
         {
-            StatusText.Text = "No test is at the caret";
-            return;
+            RunTestsAt(test.Type, test.Method, debug, untilFailure);
         }
-        RunTestsAt(context.Type, context.Method, debug, untilFailure);
     }
 
     /// <summary>Runs tests until one fails, as Rider's Run Until Failure, and shows the failed one's output.</summary>
@@ -1685,7 +1430,7 @@ public partial class MainWindow : Window
     {
         CodeEditor editor = Editors.CodeEditor;
         Point at = editor.TranslatePoint(editor.GutterPoint(breakpoint.Line), this) ?? new Point(100, 100);
-        Debugging.BreakpointPopup popup = new(breakpoint, debug.Breakpoints, AppActions.Keymap().ShortcutsFor(AppActions.ViewBreakpoints) is { Count: > 0 } keys ? keys[0].Display() : null);
+        Debugging.BreakpointPopup popup = new(breakpoint, debug.Breakpoints, actions!.Shortcut(AppActions.ViewBreakpoints));
         popup.Closed += (_, more) =>
         {
             ClosePopup();

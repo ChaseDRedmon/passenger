@@ -24,6 +24,9 @@ public sealed class SettingsDialog : Window
     private static readonly string[] Order = [Appearance, SystemPage, EditorPage, RunPage, TerminalPage, McpPage, DiagnosticsPage, KeymapPage];
 
     private readonly Action<AppSettings> apply;
+
+    /// <summary>The window's actions, which the keymap page lists.</summary>
+    private readonly ActionRegistry actions;
     private readonly List<Option> options = [];
     private readonly TextBox search;
     private readonly ListBox pages;
@@ -34,9 +37,10 @@ public sealed class SettingsDialog : Window
     private TextBlock? keymapNote;
     private string? capturing;
 
-    public SettingsDialog(AppSettings current, Keymap keymap, Action<AppSettings> apply)
+    public SettingsDialog(AppSettings current, ActionRegistry actions, Action<AppSettings> apply)
     {
         this.apply = apply;
+        this.actions = actions;
         Working = current;
         Title = "Settings";
         Width = 860;
@@ -46,7 +50,7 @@ public sealed class SettingsDialog : Window
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Chrome"));
 
-        AddOptions(keymap);
+        AddOptions(actions.Keymap);
         search = new TextBox { Classes = { "search" }, PlaceholderText = "Search settings", Margin = new Thickness(10, 10, 10, 6) };
         search.TextChanged += (_, _) => Filter();
         pages = new ListBox { Classes = { "tree" } };
@@ -211,7 +215,7 @@ public sealed class SettingsDialog : Window
         keymapNote = new TextBlock { TextWrapping = TextWrapping.Wrap, IsVisible = false };
         keymapNote.Bind(TextBlock.ForegroundProperty, keymapNote.GetResourceObservable("Passenger.TextMuted"));
         Add(KeymapPage, $"{keymap.Name} keymap", keymapNote, "keymap shortcut binding keys");
-        foreach (ActionInfo action in ActionCatalog.All(keymap).OrderBy(a => a.Title, StringComparer.Ordinal))
+        foreach (IdeAction action in actions.All.OrderBy(a => a.Title, StringComparer.Ordinal))
         {
             TextBlock keys = new() { VerticalAlignment = VerticalAlignment.Center, Width = 200, TextTrimming = TextTrimming.CharacterEllipsis };
             keys.Bind(TextBlock.ForegroundProperty, keys.GetResourceObservable("Passenger.TextMuted"));
@@ -223,7 +227,7 @@ public sealed class SettingsDialog : Window
             Button reset = new() { Content = "Reset", Padding = new Thickness(8, 2) };
             reset.Click += (_, _) => ResetShortcuts(action.Id);
             StackPanel editor = new() { Orientation = Orientation.Horizontal, Spacing = 6, Children = { keys, add, remove, reset } };
-            Add(KeymapPage, action.Title, editor, $"{action.Group} {action.Shortcut} keymap shortcut");
+            Add(KeymapPage, action.Title, editor, $"{action.Group} {actions.Shortcut(action.Id)} keymap shortcut");
         }
         ShowShortcuts();
     }
@@ -238,7 +242,7 @@ public sealed class SettingsDialog : Window
         {
             if (before.ActionFor(Shortcut.Parse(text)) is { } other && other != action)
             {
-                taken.Add($"{Shortcut.Parse(text).Display()} was {ActionCatalog.Title(other)}'s");
+                taken.Add($"{Shortcut.Parse(text).Display()} was {actions[other]?.Title ?? other}'s");
                 // The other action keeps its remaining shortcuts as its own.
                 Working = Working with { Shortcuts = new(Working.Shortcuts) { [other] = [.. before.ShortcutsFor(other).Where(s => s != Shortcut.Parse(text)).Select(s => s.Notation())] } };
             }

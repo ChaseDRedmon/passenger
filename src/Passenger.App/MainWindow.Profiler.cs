@@ -32,7 +32,16 @@ public partial class MainWindow
     private void AddProfiler()
     {
         profilerView = new Profiling.ProfilerView();
-        Dock.Add(new Docking.ToolWindow("profiler", "Performance Profiler", "Icon.Profile", profilerView, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowProfiler });
+        Dock.Add(new Docking.ToolWindow("profiler", "Performance Profiler", "Icon.Profile", profilerView, Docking.ToolAnchor.BottomLeft)
+        {
+            Action = AppActions.ShowProfiler,
+            Menus = [new MenuPlace("Tools", 0, 1)],
+        });
+        actions!.Add(new IdeAction(AppActions.Profile, "Profile", "Run", context => _ = ProfileReportingAsync())
+        {
+            WhyNot = _ => profiling is not null ? "A run is already being profiled" : configuration is null ? "Nothing to profile: no executable project" : null,
+            Menus = [new MenuPlace("Run", 0, 2)],
+        });
         profilerView.StopRequested += (_, _) => _ = SnapshotAsync();
         profilerView.KillRequested += (_, _) => profiling?.Kill();
         profilerView.OpenRequested += (_, method) => _ = OpenMethodAsync(method);
@@ -230,7 +239,7 @@ public partial class MainWindow
         }
     }
 
-    private void OnProfileClicked(object? sender, RoutedEventArgs e) => RunAppAction(AppActions.Profile);
+    private void OnProfileClicked(object? sender, RoutedEventArgs e) => Request(AppActions.Profile);
 
     /// <summary>A method the profiler names, found in the source by Roslyn's symbol search: its name, in its type.</summary>
     private async Task OpenMethodAsync(string method)

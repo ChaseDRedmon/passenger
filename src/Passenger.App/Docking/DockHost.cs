@@ -109,10 +109,18 @@ public sealed class DockHost : Grid
 
     public ToolWindow? this[string id] => windows.FirstOrDefault(w => w.Id == id);
 
+    /// <summary>The window's actions, which each tool window's show action joins as it is added, and whose keymap gives
+    /// the stripe buttons' tips.</summary>
+    public ActionRegistry? Actions { get; set; }
+
     public void Add(ToolWindow window)
     {
         window.Order = windows.Count(w => w.Anchor == window.Anchor);
         windows.Add(window);
+        if (window.ShowAction(this) is { } shows)
+        {
+            Actions?.Add(shows);
+        }
         Layout();
     }
 

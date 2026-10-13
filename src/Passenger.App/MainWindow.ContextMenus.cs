@@ -9,14 +9,18 @@ using A = Passenger.App.AppActions;
 namespace Passenger.App;
 
 /// <summary>Right-click menus as Rider's: the editor's for what is under the click (the caret goes there first, unless the
-/// click is in the selection), built from the action catalog with the keymap's shortcuts, items that cannot run
+/// click is in the selection), built from the window's actions with the keymap's shortcuts, items that cannot run
 /// disabled; and the menu key (Shift+F10) opening the focused place's menu at its caret or chosen row.</summary>
 public partial class MainWindow
 {
     /// <summary>The context menu open now, if any.</summary>
     public ContextMenu? OpenContextMenu { get; private set; }
 
-    private void AddContextMenus() => Editors.ForEachEditor(editor => editor.ContextMenuRequested += (_, at) => ShowEditorMenu(editor, at));
+    private void AddContextMenus()
+    {
+        Editors.ForEachEditor(editor => editor.ContextMenuRequested += (_, at) => ShowEditorMenu(editor, at));
+        actions!.Add(new IdeAction(A.ShowContextMenu, "Show Context Menu", "IDE", _ => ShowFocusedContextMenu()));
+    }
 
     /// <summary>Rider's editor menu: context actions and the clipboard, Find Usages, Refactor, Go To, Generate and
     /// Folding, Reformat and Cleanup, the test at the caret, the paused program's actions, breakpoints, and Git.</summary>
@@ -30,8 +34,10 @@ public partial class MainWindow
         {
             return;
         }
+        // The items read what can run from where the menu opened, before it takes the keys.
+        ActionContext context = actions!.Context();
         List<Control> items = [];
-        void Add(params MenuEntry[] entries) => items.AddRange(entries.Select(FlyoutEntry));
+        void Add(params MenuEntry[] entries) => items.AddRange(entries.Select(entry => FlyoutEntry(entry, context)));
         MenuEntry separator = new(null);
         Add(Item(A.QuickFix), separator, Item(E.Cut), Item(E.Copy), Item(E.Paste), separator,
             Item(A.FindUsages),
@@ -102,7 +108,7 @@ public partial class MainWindow
         menu.Open(target);
     }
 
-    /// <summary>A menu item that runs something other than an action of the catalog (a test by name).</summary>
+    /// <summary>A menu item that runs something other than one of the window's actions (a test by name).</summary>
     private static MenuItem Command(string header, Action run)
     {
         MenuItem item = new() { Header = header };

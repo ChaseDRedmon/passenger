@@ -193,56 +193,50 @@ public sealed class DebugController
         return Session?.CloseAsync() ?? Task.CompletedTask;
     }
 
-    /// <summary>Runs one of the debugger's actions (<c>app.debug.*</c>) on the active editor and the
-    /// session. Resume without a session is the caller's Debug, as F5 is in Visual Studio's keymap. False for one that
-    /// does nothing here (a step with nothing being debugged).</summary>
-    public bool Run(string action)
+    /// <summary>The debugger's actions, on the active editor's caret and the session. Resume with nothing being debugged
+    /// is the window's Debug, as F5 is in Visual Studio's keymap.</summary>
+    public void AddActions(ActionRegistry actions)
     {
         UiThread.Check();
-        OpenDocument? active = editors.Active;
-        int caretLine = active is null ? 0 : editors.CodeEditor.CaretPosition.Line;
-        switch (action)
+        Add(AppActions.ToggleBreakpoint, "Toggle Breakpoint", c => Breakpoints.Toggle(c.File!.Path, c.Caret.Line), NeedsFile, new("Run", 2, 0));
+        Add(AppActions.ToggleBreakpointEnabled, "Toggle Breakpoint Enabled", c => Breakpoints.ToggleEnabled(c.File!.Path, c.Caret.Line), NeedsFile, new("Run", 2, 1));
+        Add(AppActions.Resume, "Resume Program", c =>
         {
-            case AppActions.ToggleBreakpoint when active is not null:
-                Breakpoints.Toggle(active.Path, caretLine);
-                return true;
-            case AppActions.ToggleBreakpointEnabled when active is not null:
-                Breakpoints.ToggleEnabled(active.Path, caretLine);
-                return true;
-            case AppActions.Resume when Session is not null:
-                _ = ResumeAsync(session => session.ContinueAsync(), "resume");
-                return true;
-            case AppActions.Pause when Session is { } session:
-                _ = session.PauseAsync();
-                return true;
-            case AppActions.StepOver when Session is not null:
-                _ = ResumeAsync(session => session.StepOverAsync(), "step over");
-                return true;
-            case AppActions.StepInto when Session is not null:
-                _ = ResumeAsync(session => session.StepIntoAsync(), "step into");
-                return true;
-            case AppActions.StepOut when Session is not null:
-                _ = ResumeAsync(session => session.StepOutAsync(), "step out");
-                return true;
-            case AppActions.RunToCursor when active is not null && Session is { State: DebugState.Paused }:
-                _ = ResumeAsync(session => session.RunToCursorAsync(active.Path, caretLine), "run to the cursor");
-                return true;
-            case AppActions.SetNextStatement when active is not null && Session is { State: DebugState.Paused } session:
-                _ = SetNextStatementAsync(session, active.Path, caretLine);
-                return true;
-            case AppActions.ShowExecutionPoint when executionPoint is { } point:
-                Navigate?.Invoke(this, (point.Path, new TextPosition(Current(point.Path, point.Line), 0)));
-                return true;
-            case AppActions.AddToWatches when Session is { State: DebugState.Paused } && SelectedOrWord() is { Length: > 0 } watched:
-                _ = Evaluate(watched, watch: true);
-                return true;
-            case AppActions.Evaluate when Session is { State: DebugState.Paused }:
-                view.FocusEvaluate(SelectedOrWord());
-                return true;
-            default:
-                return false;
-        }
+            if (!IsDebugging)
+            {
+                actions.Run(AppActions.Debug, c);
+                return;
+            }
+            _ = ResumeAsync(session => session.ContinueAsync(), "resume");
+        }, c => IsDebugging ? NotPaused() : actions.WhyNot(AppActions.Debug, c), new("Run", 1, 0));
+        Add(AppActions.Pause, "Pause Program", context => _ = Session!.PauseAsync(),
+            _ => !IsDebugging ? NothingDebugged : Session!.State == DebugState.Paused ? "The program is paused already" : null, new("Run", 1, 1));
+        Add(AppActions.StepOver, "Step Over", context => _ = ResumeAsync(session => session.StepOverAsync(), "step over"), _ => NotPaused(), new("Run", 1, 2));
+        Add(AppActions.StepInto, "Step Into", context => _ = ResumeAsync(session => session.StepIntoAsync(), "step into"), _ => NotPaused(), new("Run", 1, 3));
+        Add(AppActions.StepOut, "Step Out", context => _ = ResumeAsync(session => session.StepOutAsync(), "step out"), _ => NotPaused(), new("Run", 1, 4));
+        Add(AppActions.RunToCursor, "Run to Cursor", c => _ = ResumeAsync(session => session.RunToCursorAsync(c.File!.Path, c.Caret.Line), "run to the cursor"),
+            c => NeedsFile(c) ?? NotPaused(), new("Run", 1, 5));
+        Add(AppActions.SetNextStatement, "Set Next Statement", c => _ = SetNextStatementAsync(Session!, c.File!.Path, c.Caret.Line),
+            c => NeedsFile(c) ?? NotPaused(), new("Run", 1, 6));
+        Add(AppActions.ShowExecutionPoint, "Show Execution Point", _ =>
+        {
+            (string path, int line) = executionPoint!.Value;
+            Navigate?.Invoke(this, (path, new TextPosition(Current(path, line), 0)));
+        }, _ => NotPaused() ?? (executionPoint is null ? "Where the program is paused has no source" : null), new("Run", 1, 7));
+        Add(AppActions.Evaluate, "Evaluate Expression...", c => view.FocusEvaluate(c.Symbol ?? string.Empty), _ => NotPaused(), new("Run", 1, 8));
+        Add(AppActions.AddToWatches, "Add to Watches", c => _ = Evaluate(c.Symbol!, watch: true),
+            c => NotPaused() ?? (c.Symbol is { Length: > 0 } ? null : "No expression is at the caret"), null);
+
+        void Add(string id, string title, Action<ActionContext> run, Func<ActionContext, string?> whyNot, MenuPlace? menu) =>
+            actions.Add(new IdeAction(id, title, "Debug", run) { WhyNot = whyNot, Menus = menu is null ? [] : [menu] });
     }
+
+    private const string NothingDebugged = "Nothing is being debugged";
+
+    private static string? NeedsFile(ActionContext context) => context.File is null ? "No file is open" : null;
+
+    /// <summary>Why a step cannot go now: nothing is being debugged, or the program runs.</summary>
+    private string? NotPaused() => !IsDebugging ? NothingDebugged : Session!.State != DebugState.Paused ? "The program is not paused" : null;
 
     /// <summary>Sets the paused program going as an action asks. One the debugger refuses leaves it paused where it was,
     /// the Debug window as it was, and the reason in the status bar.</summary>
@@ -672,14 +666,6 @@ public sealed class DebugController
             lastResult = (expression, string.Empty);
         }
         await ShowVariables();
-    }
-
-    private string SelectedOrWord()
-    {
-        CodeEditor editor = editors.CodeEditor;
-        Selection primary = editor.Selections.Primary;
-        TextSnapshot text = editor.Document.Snapshot;
-        return !primary.IsEmpty ? text.GetText(primary.Start, primary.Length) : ExpressionAt(text, primary.Caret) ?? string.Empty;
     }
 
     private void UpdateAllMarks()

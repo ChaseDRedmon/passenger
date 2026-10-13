@@ -15,7 +15,15 @@ public partial class MainWindow
     /// <summary>The settings in force.</summary>
     public AppSettings Settings => settings;
 
-    private void AddSettings() => Editors.ForEachEditor(editor => ApplyTo(editor, settings));
+    private void AddSettings()
+    {
+        Editors.ForEachEditor(editor => ApplyTo(editor, settings));
+        // macOS has Settings in the application menu, as Rider's there.
+        actions!.Add(new IdeAction(AppActions.ShowSettings, "Settings...", "IDE", _ => ShowSettings())
+        {
+            Menus = OperatingSystem.IsMacOS() ? [] : [new MenuPlace("File", 2, 0)],
+        });
+    }
 
     /// <summary>The window a person uses opens on the settings they left (in its <see cref="StateFolder"/>) and keeps
     /// each change; headless ones keep the defaults.</summary>
@@ -80,7 +88,7 @@ public partial class MainWindow
     /// <summary>Settings (Ctrl+Alt+S, Cmd+, on the Mac), over this window until OK or Cancel.</summary>
     public SettingsDialog ShowSettings()
     {
-        SettingsDialog dialog = new(settings, keys.Keymap, ApplySettings);
+        SettingsDialog dialog = new(settings, actions!, ApplySettings);
         _ = dialog.ShowDialog(this);
         return dialog;
     }
@@ -88,7 +96,7 @@ public partial class MainWindow
     private void OnSettingsClicked(object? sender, RoutedEventArgs e) => ShowSettings();
 
     /// <summary>The toolbar's magnifier: Search Everywhere, as its shortcut opens it.</summary>
-    private void OnSearchClicked(object? sender, RoutedEventArgs e) => RunAppAction(AppActions.GoToEverything);
+    private void OnSearchClicked(object? sender, RoutedEventArgs e) => Request(AppActions.GoToEverything);
 
     private static void ApplyTo(CodeEditor editor, AppSettings with)
     {

@@ -6,23 +6,25 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
-using Passenger.Editor;
 
 namespace Passenger.App.Navigation;
 
 /// <summary>Rider's Find Action: every action by name, the recently run ones first, narrowed as words are typed, each
-/// with its group and shortcut; Enter or a double-click runs the chosen one, Escape gives up.</summary>
+/// with its group and shortcut and greyed where it cannot run; Enter or a double-click runs the chosen one, Escape gives
+/// up.</summary>
 public sealed class ActionPopup : UserControl
 {
-    private readonly Keymap keymap;
+    private readonly ActionRegistry actions;
+    private readonly ActionContext context;
     private readonly IReadOnlyList<string> recent;
     private readonly TextBox query;
     private readonly ListBox results;
     private readonly TextBlock empty;
 
-    public ActionPopup(Keymap keymap, IReadOnlyList<string> recent, string? initialQuery = null)
+    public ActionPopup(ActionRegistry actions, ActionContext context, IReadOnlyList<string> recent, string? initialQuery = null)
     {
-        this.keymap = keymap;
+        this.actions = actions;
+        this.context = context;
         this.recent = recent;
         Width = 560;
         query = new TextBox { Classes = { "search" }, PlaceholderText = "Type an action's name", Text = initialQuery ?? string.Empty };
@@ -31,7 +33,7 @@ public sealed class ActionPopup : UserControl
             Classes = { "tree" },
             MaxHeight = 26 * 15,
             Margin = new Thickness(0, 0, 0, 8),
-            ItemTemplate = new FuncDataTemplate<ActionInfo>((action, _) => action is null ? new TextBlock() : Row(action), supportsRecycling: false),
+            ItemTemplate = new FuncDataTemplate<IdeAction>((action, _) => action is null ? new TextBlock() : Row(action), supportsRecycling: false),
         };
         empty = new TextBlock { Classes = { "muted" }, Text = "No actions match", Margin = new Thickness(12, 0, 12, 12), IsVisible = false };
         results.DoubleTapped += (_, _) => Choose();
@@ -60,10 +62,10 @@ public sealed class ActionPopup : UserControl
     }
 
     /// <summary>The action to run, or null when dismissed.</summary>
-    public event EventHandler<ActionInfo?>? Done;
+    public event EventHandler<IdeAction?>? Done;
 
     /// <summary>The actions listed now.</summary>
-    public IReadOnlyList<ActionInfo> Rows => results.ItemsSource as IReadOnlyList<ActionInfo> ?? [];
+    public IReadOnlyList<IdeAction> Rows => results.ItemsSource as IReadOnlyList<IdeAction> ?? [];
 
     public string Query
     {
@@ -73,11 +75,11 @@ public sealed class ActionPopup : UserControl
 
     private void Refresh()
     {
-        IReadOnlyList<ActionInfo> found = ActionCatalog.Find(Query, keymap);
+        IReadOnlyList<IdeAction> found = actions.Find(Query);
         if (Query.Trim().Length == 0)
         {
             // Before anything is typed, what was run last comes first, as Rider lists it.
-            found = [.. recent.Select(id => found.FirstOrDefault(a => a.Id == id)).OfType<ActionInfo>(), .. found.Where(a => !recent.Contains(a.Id))];
+            found = [.. recent.Select(id => found.FirstOrDefault(a => a.Id == id)).OfType<IdeAction>(), .. found.Where(a => !recent.Contains(a.Id))];
         }
         results.ItemsSource = found;
         results.SelectedIndex = found.Count > 0 ? 0 : -1;
@@ -107,17 +109,23 @@ public sealed class ActionPopup : UserControl
 
     private void Choose()
     {
-        if (results.SelectedItem is ActionInfo action)
+        if (results.SelectedItem is IdeAction action)
         {
             Done?.Invoke(this, action);
         }
     }
 
-    private static Control Row(ActionInfo action)
+    private Control Row(IdeAction action)
     {
+        TextBlock title = new() { Text = action.Title, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
+        if (!action.CanRun(context))
+        {
+            // Listed, so it can be found, but greyed as Rider greys an action that cannot run where it is asked for.
+            title.Bind(TextBlock.ForegroundProperty, title.GetResourceObservable("Passenger.TextMuted"));
+        }
         TextBlock group = new() { Text = action.Group, FontSize = 12, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 0, 0) };
         group.Bind(TextBlock.ForegroundProperty, group.GetResourceObservable("Passenger.TextMuted"));
-        TextBlock keys = new() { Text = action.Shortcut ?? string.Empty, FontSize = 12, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 4, 0) };
+        TextBlock keys = new() { Text = actions.Shortcut(action.Id) ?? string.Empty, FontSize = 12, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 4, 0) };
         keys.Bind(TextBlock.ForegroundProperty, keys.GetResourceObservable("Passenger.TextMuted"));
         DockPanel row = new() { Height = 26, Margin = new Thickness(4, 0) };
         DockPanel.SetDock(keys, Dock.Right);
@@ -125,7 +133,7 @@ public sealed class ActionPopup : UserControl
         row.Children.Add(new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Children = { new TextBlock { Text = action.Title, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis }, group },
+            Children = { title, group },
         });
         return row;
     }

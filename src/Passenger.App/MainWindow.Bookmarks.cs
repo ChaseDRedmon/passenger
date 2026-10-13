@@ -17,7 +17,12 @@ public partial class MainWindow
         ToolWindows.BookmarksView view = new(bookmarks, (path, line) =>
             Editors.Documents.FirstOrDefault(d => d.Path == path) is { } open && line < open.Text.Snapshot.LineCount ? open.Text.Snapshot.GetLineText(line) : string.Empty);
         view.GoToRequested += (_, bookmark) => NavigateTo(bookmark.Path, new TextPosition(bookmark.Line, 0));
-        Dock.Add(new Docking.ToolWindow("bookmarks", "Bookmarks", "Icon.Bookmark", view, Docking.ToolAnchor.LeftBottom) { Action = AppActions.ShowBookmarks });
+        Dock.Add(new Docking.ToolWindow("bookmarks", "Bookmarks", "Icon.Bookmark", view, Docking.ToolAnchor.LeftBottom)
+        {
+            Action = AppActions.ShowBookmarks,
+            Menus = [new MenuPlace("Navigate/Bookmarks", 0, 3)],
+        });
+        AddBookmarkActions();
         Editors.Opened += (_, document) =>
         {
             document.Bookmarks = bookmarks.LinesIn(document.Path);
@@ -32,29 +37,25 @@ public partial class MainWindow
         };
     }
 
-    /// <summary>A bookmark action; false for one that does nothing here.</summary>
-    private bool RunBookmarkAction(string action)
+    /// <summary>Toggle Bookmark on the caret's line, and Next and Previous Bookmark from it through every file.</summary>
+    private void AddBookmarkActions()
     {
-        switch (action)
+        actions!.Add(new IdeAction(AppActions.ToggleBookmark, "Toggle Bookmark", "Bookmarks", context => bookmarks.Toggle(context.File!.Path, context.Caret.Line))
         {
-            case AppActions.ToggleBookmark when Editors.Active is { } active:
-                bookmarks.Toggle(active.Path, Editors.CodeEditor.CaretPosition.Line);
-                return true;
-            case AppActions.NextBookmark or AppActions.PreviousBookmark:
-                if (bookmarks.Next(Editors.Active?.Path, Editors.Active is null ? -1 : Editors.CodeEditor.CaretPosition.Line, action == AppActions.NextBookmark ? 1 : -1) is { } next)
-                {
-                    NavigateTo(next.Path, new TextPosition(next.Line, 0));
-                }
-                else
-                {
-                    StatusText.Text = "No bookmarks";
-                }
-                return true;
-            case AppActions.ShowBookmarks:
-                ShowToolWindow("bookmarks");
-                return true;
-            default:
-                return false;
-        }
+            WhyNot = NeedsFile,
+            Menus = [new MenuPlace("Navigate/Bookmarks", 0, 0)],
+        });
+        Step(AppActions.NextBookmark, "Next Bookmark", 1);
+        Step(AppActions.PreviousBookmark, "Previous Bookmark", -1);
+
+        void Step(string id, string title, int step) => actions.Add(new IdeAction(id, title, "Bookmarks", context =>
+        {
+            Bookmark next = bookmarks.Next(context.File?.Path, context.File is null ? -1 : context.Caret.Line, step)!;
+            NavigateTo(next.Path, new TextPosition(next.Line, 0));
+        })
+        {
+            WhyNot = _ => bookmarks.All.Count == 0 ? "No bookmarks" : null,
+            Menus = [new MenuPlace("Navigate/Bookmarks", 0, step > 0 ? 1 : 2)],
+        });
     }
 }

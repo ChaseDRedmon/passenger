@@ -2,15 +2,15 @@ using System.Windows.Input;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
-using Passenger.App.Debugging;
 using Passenger.Editor;
 
 namespace Passenger.App;
 
-/// <summary>The main menu: macOS's menu bar, or the toolbar's menu button elsewhere, built from <see cref="MainMenu"/>.
-/// Each item shows the shortcut the keymap gives its action now and is disabled where the action cannot run. On macOS
-/// a menu item's shortcut reaches the menu before the window, so an item chosen runs where its keys would have gone:
-/// a key the terminal takes back to the terminal, an editing action to the text box or editor with the focus.</summary>
+/// <summary>The main menu: macOS's menu bar, or the toolbar's menu button elsewhere, built from the actions' places
+/// (<see cref="MainMenu"/>). Each item shows the shortcut the keymap gives its action now and is disabled where the action
+/// cannot run. On macOS a menu item's shortcut reaches the menu before the window, so an item chosen runs where its keys
+/// would have gone: a key the terminal takes back to the terminal, an editing action to the text box or editor with the
+/// focus.</summary>
 public partial class MainWindow
 {
     private NativeMenu? menuBar;
@@ -28,14 +28,15 @@ public partial class MainWindow
     private void BuildMenuBar()
     {
         menuBar = new NativeMenu();
-        foreach (MenuEntry menu in MainMenu.Menus)
+        ActionContext context = actions!.Context();
+        foreach (MenuEntry menu in MainMenu.Build(actions.All))
         {
-            menuBar.Items.Add(NativeEntry(menu));
+            menuBar.Items.Add(NativeEntry(menu, context));
         }
         NativeMenu.SetMenu(this, menuBar);
     }
 
-    private NativeMenuItemBase NativeEntry(MenuEntry entry)
+    private NativeMenuItemBase NativeEntry(MenuEntry entry, ActionContext context)
     {
         if (entry.IsSeparator)
         {
@@ -60,25 +61,26 @@ public partial class MainWindow
             NativeMenu menu = new();
             foreach (MenuEntry item in items)
             {
-                menu.Items.Add(NativeEntry(item));
+                menu.Items.Add(NativeEntry(item, context));
             }
             menu.NeedsUpdate += (_, _) =>
             {
+                ActionContext now = actions!.Context();
                 foreach (NativeMenuItem item in menu.Items.OfType<NativeMenuItem>().Where(i => i.CommandParameter is string))
                 {
-                    item.IsEnabled = CanRun((string)item.CommandParameter!);
+                    item.IsEnabled = actions[(string)item.CommandParameter!]!.CanRun(now);
                 }
             };
             return new NativeMenuItem(entry.Title!) { Menu = menu };
         }
-        string action = entry.Action!;
-        NativeMenuItem actionItem = new(ActionCatalog.Title(action))
+        IdeAction action = actions![entry.Action!]!;
+        NativeMenuItem actionItem = new(action.Title)
         {
-            Command = new MenuCommand(() => RunFromMenu(action)),
-            CommandParameter = action,
-            IsEnabled = CanRun(action),
+            Command = new MenuCommand(() => RunFromMenu(action.Id)),
+            CommandParameter = action.Id,
+            IsEnabled = action.CanRun(context),
         };
-        if (Gesture(action) is { } gesture)
+        if (actions.Gesture(action.Id) is { } gesture)
         {
             actionItem.Gesture = gesture;
         }
@@ -88,15 +90,18 @@ public partial class MainWindow
     /// <summary>The menu button's menu (Windows, Linux), the same menus as macOS's bar, built as it opens.</summary>
     private void OnMenuClicked(object? sender, RoutedEventArgs e)
     {
+        ActionContext context = actions!.Context();
         MenuFlyout flyout = new();
-        foreach (MenuEntry menu in MainMenu.Menus)
+        foreach (MenuEntry menu in MainMenu.Build(actions.All))
         {
-            flyout.Items.Add(FlyoutEntry(menu));
+            flyout.Items.Add(FlyoutEntry(menu, context));
         }
         flyout.ShowAt(MenuButton);
     }
 
-    private Control FlyoutEntry(MenuEntry entry)
+    /// <summary>An entry of a menu in the window (the menu button's, a context menu): its action's title and one-key
+    /// shortcut, disabled where it cannot run in the context the menu opened in, and run there when chosen.</summary>
+    private Control FlyoutEntry(MenuEntry entry, ActionContext context)
     {
         if (entry.IsSeparator)
         {
@@ -119,52 +124,31 @@ public partial class MainWindow
             MenuItem menu = new() { Header = entry.Title };
             foreach (MenuEntry item in items)
             {
-                menu.Items.Add(FlyoutEntry(item));
+                menu.Items.Add(FlyoutEntry(item, context));
             }
             return menu;
         }
-        string action = entry.Action!;
+        IdeAction action = actions![entry.Action!]!;
         // The gesture is shown, not bound: the window's keymap runs the keys.
-        MenuItem actionItem = new() { Header = ActionCatalog.Title(action), InputGesture = Gesture(action), IsEnabled = CanRun(action) };
-        actionItem.Click += (_, _) => RunFromMenu(action);
+        MenuItem actionItem = new() { Header = action.Title, InputGesture = actions.Gesture(action.Id), IsEnabled = action.CanRun(context) };
+        actionItem.Click += (_, _) => RunFromMenu(action.Id, context);
         return actionItem;
     }
 
-    /// <summary>An action's one-keystroke shortcut as a menu shows it; none for a chord, which a menu cannot show.</summary>
-    private KeyGesture? Gesture(string action) =>
-        keys.Keymap.ShortcutsFor(action).FirstOrDefault(s => s.Second is null) is { } shortcut
-            ? new KeyGesture(shortcut.First.Key, shortcut.First.Modifiers)
-            : null;
-
-    /// <summary>A menu item chosen: its action run where its keys would have gone. False when it does nothing here.</summary>
-    public bool RunFromMenu(string action)
+    /// <summary>A menu item chosen: its action run where its keys would have gone, in the context its menu opened in when
+    /// that is known. False when it cannot run there, which the status bar says.</summary>
+    public bool RunFromMenu(string action, ActionContext? context = null)
     {
-        Window front = OwnedWindows.LastOrDefault(w => w.IsActive) ?? this;
-        object? focused = front.FocusManager?.GetFocusedElement();
-        if (focused is Terminal.TerminalView terminal && Gesture(action) is { } keys
-            && (!keys.KeyModifiers.HasFlag(KeyModifiers.Meta) || !AppActions.IsApp(action)))
+        context ??= actions!.Context();
+        if (context.Focused is Terminal.TerminalView terminal && actions!.Gesture(action) is { } keys
+            && (!keys.KeyModifiers.HasFlag(KeyModifiers.Meta) || actions[action] is { InEditor: true }))
         {
             // The terminal takes every key but the IDE's Cmd ones (its own copy and paste included): the menu only caught
             // it on its way there.
             terminal.RaiseEvent(new KeyEventArgs { RoutedEvent = KeyDownEvent, Key = keys.Key, KeyModifiers = keys.KeyModifiers, Source = terminal });
             return true;
         }
-        if (!AppActions.IsApp(action))
-        {
-            switch (focused)
-            {
-                case TextBox box when Edit(box, action):
-                    return true;
-                case CodeEditor editor when editor != Editors.CodeEditor:
-                    return editor.TryExecute(action);
-            }
-        }
-        if (Perform(action))
-        {
-            return true;
-        }
-        StatusText.Text = $"{ActionCatalog.Title(action)} does nothing here";
-        return false;
+        return Request(action, context);
     }
 
     /// <summary>An editing action on a text box (a search field, a dialog's), as a native Edit menu sends it there.</summary>
@@ -193,39 +177,6 @@ public partial class MainWindow
             default:
                 return false;
         }
-    }
-
-    /// <summary>Whether an action can run now, for its menu item: an editing action needs a file open, a step a paused
-    /// program, a Git action a repository, and so on.</summary>
-    public bool CanRun(string action)
-    {
-        bool file = Editors.Active is not null;
-        bool paused = debug.Session is { State: DebugState.Paused };
-        return action switch
-        {
-            AppActions.Open or AppActions.FindAction or AppActions.ShowSettings or AppActions.ShowLog or AppActions.Exit => true,
-            AppActions.Build or AppActions.RebuildSolution or AppActions.CleanSolution => folder is not null && !IsBuilding,
-            AppActions.BuildSelected or AppActions.RebuildSelected or AppActions.CleanSelected => folder is not null && !IsBuilding && SelectedProjects().Count > 0,
-            AppActions.RunProgram or AppActions.Debug or AppActions.Profile or AppActions.Rerun => configuration is not null,
-            AppActions.Stop => debug.IsDebugging || runner.IsRunning || builder.IsRunning,
-            AppActions.Resume => paused || (!debug.IsDebugging && configuration is not null),
-            AppActions.Pause => debug.Session is { State: DebugState.Running },
-            AppActions.StepOver or AppActions.StepInto or AppActions.StepOut or AppActions.RunToCursor or AppActions.SetNextStatement
-                or AppActions.ShowExecutionPoint or AppActions.Evaluate or AppActions.AddToWatches => paused,
-            AppActions.ToggleSolutionAnalysis => csharp is not null,
-            _ when action.StartsWith("app.vcs.", StringComparison.Ordinal) => vcs.Repository is not null,
-            _ when action.StartsWith("app.tests.", StringComparison.Ordinal) => folder is not null,
-            _ when action.StartsWith("app.code.", StringComparison.Ordinal) => file && Editors.Active is { } active && csharp?.For(active) is not null,
-            _ when action.StartsWith("app.debug.", StringComparison.Ordinal) || action.StartsWith("app.breakpoints.", StringComparison.Ordinal) => file || action == AppActions.ViewBreakpoints,
-            AppActions.Save or AppActions.CloseTab or AppActions.NextTab or AppActions.PreviousTab or AppActions.SplitRight or AppActions.SplitDown
-                or AppActions.MoveToOppositeGroup or AppActions.Find or AppActions.Replace or AppActions.FindNext or AppActions.FindPrevious
-                or AppActions.GoToLine or AppActions.FileStructure or AppActions.ExtendSelection or AppActions.ShrinkSelection
-                or AppActions.CallHierarchy or AppActions.TypeHierarchy or AppActions.ToggleBookmark => file,
-            AppActions.SaveAll => Editors.Documents.Any(d => d.IsModified),
-            AppActions.GoToFile or AppActions.GoToSymbol or AppActions.GoToEverything or AppActions.FindInFiles or AppActions.ReplaceInFiles => folder is not null,
-            _ when !AppActions.IsApp(action) => file || FocusManager?.GetFocusedElement() is TextBox,
-            _ => true,
-        };
     }
 
     /// <summary>A menu item's command: runs its action; whether it can is the item's IsEnabled, set as its menu opens.</summary>
