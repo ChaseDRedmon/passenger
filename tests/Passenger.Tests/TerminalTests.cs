@@ -195,37 +195,38 @@ public sealed class TerminalTests
     {
         if (OperatingSystem.IsWindows())
         {
-            // sh, cat and a terminal's own Ctrl+C are Unix's.
+            // sh, seq and a terminal's own Ctrl+C are Unix's.
             return;
         }
         string folder = Directory.CreateTempSubdirectory("passenger-terminal-").FullName;
+        MainWindow? window = null;
         try
         {
-            // 50 MB of lines, the last one saying so.
-            using (StreamWriter big = new(Path.Combine(folder, "big.txt")))
-            {
-                string filler = new('x', 86);
-                for (int i = 0; i < 500_000; i++)
-                {
-                    big.Write($"line {i.ToString("D7", CultureInfo.InvariantCulture)} {filler}\n");
-                }
-                big.Write("the end of big.txt\n");
-            }
-            (MainWindow window, TerminalSession shell) = Open(folder, "/bin/sh");
-            // The file's glyphs drawn once first, as in a terminal already in use: the first frame of them lays them out,
+            // Numbered lines of a hundred bytes, made as they are read: 500 MB of them, many times the 7 to 35 MB the window
+            // takes before Ctrl+C, yet an end that a terminal reading without waiting comes to.
+            string lines = $"seq -f 'line %07.0f {new string('x', 86)}'";
+            (window, TerminalSession shell) = Open(folder, "/bin/sh");
+            // The lines' glyphs drawn once first, as in a terminal already in use: the first frame of them lays them out,
             // which on a slow machine holds the window for a second whatever the terminal does.
-            window.KeyTextInput("head -n 3 big.txt");
+            window.KeyTextInput($"{lines} 0 2");
             Ui.Press(window, "ENTER");
-            Ui.WaitFor(() => shell.Screen.ScreenText().Contains("line 0000002", StringComparison.Ordinal), "the file's first lines on the screen");
+            Ui.WaitFor(() => shell.Screen.ScreenText().Contains("line 0000002", StringComparison.Ordinal), "the first lines on the screen");
             Screenshot.Pump(TimeSpan.FromMilliseconds(100));
             window.KeyTextInput("clear");
             Ui.Press(window, "ENTER");
             Ui.WaitFor(() => !shell.Screen.ScreenText().Contains("xxxxxxxx", StringComparison.Ordinal), "the screen cleared");
-            window.KeyTextInput("cat big.txt");
+            window.KeyTextInput($"{lines} 0 4999999");
             using (InputWait waits = new())
             {
-                Ui.Press(window, "ENTER");
-                Ui.WaitFor(() => shell.Screen.ScreenText().Contains("xxxxxxxx", StringComparison.Ordinal), "the file pouring onto the screen");
+                // Pressed and waited for without settling, which waits for all the IDE's background work, seq pouring on.
+                window.KeyPress(Key.Enter, RawInputModifiers.None, PhysicalKey.None, null);
+                window.KeyRelease(Key.Enter, RawInputModifiers.None, PhysicalKey.None, null);
+                Stopwatch starting = Stopwatch.StartNew();
+                while (!shell.Screen.ScreenText().Contains("xxxxxxxx", StringComparison.Ordinal))
+                {
+                    Assert.True(starting.Elapsed < TimeSpan.FromSeconds(90), $"seq's lines never came onto the screen:\n{shell.Screen.ScreenText()}");
+                    Screenshot.Pump(TimeSpan.FromMilliseconds(20));
+                }
                 // A second more of the flood, the window running as it does on a desktop, and on a machine slow to draw as
                 // long as it takes the window to answer enough looks to say how long a key waits.
                 Stopwatch flooding = Stopwatch.StartNew();
@@ -235,24 +236,37 @@ public sealed class TerminalTests
                 }
                 waits.Stop();
                 Assert.True(waits.Answered >= 20,
-                    $"the window answered {waits.Answered} of {waits.Posted} looks at its thread in {flooding.Elapsed.TotalSeconds:F1} s of cat's output");
+                    $"the window answered {waits.Answered} of {waits.Posted} looks at its thread in {flooding.Elapsed.TotalSeconds:F1} s of seq's output");
                 Assert.True(waits.Longest < TimeSpan.FromMilliseconds(250),
-                    $"a key waited {waits.Longest.TotalMilliseconds:F0} ms for the window while cat's output poured in");
+                    $"a key waited {waits.Longest.TotalMilliseconds:F0} ms for the window while seq's output poured in");
             }
 
-            // The window falls behind for a moment, as it would drawing a heavy frame: cat waits for it, its output not
-            // read into memory meanwhile, so Ctrl+C still finds it running.
+            // The window falls behind for a moment, as it would drawing a heavy frame: seq waits for it, its output not read
+            // into memory meanwhile, so Ctrl+C finds it running and only what the terminal had already read comes after.
+            long atCtrlC = -1;
+            window.AddHandler(InputElement.KeyDownEvent, (_, e) =>
+            {
+                if (e.Key == Key.C && e.KeyModifiers == KeyModifiers.Control)
+                {
+                    atCtrlC = LastLine(shell);
+                }
+            }, Avalonia.Interactivity.RoutingStrategies.Tunnel, handledEventsToo: true);
             Thread.Sleep(2000);
             Ui.Press(window, "control C");
             window.KeyTextInput("echo after-$((6*7))");
             Ui.Press(window, "ENTER");
-            Ui.WaitFor(() => shell.Screen.ScreenText().Contains("after-42", StringComparison.Ordinal), $"the shell's answer after Ctrl+C:\n{shell.Screen.ScreenText()}", TimeSpan.FromSeconds(30));
-            Assert.False(Screen(shell).Contains("the end of big.txt", StringComparison.Ordinal),
-                "cat ran to the end of its 50 MB: Ctrl+C never reached it while the window took the output");
-            window.Close();
+            Ui.WaitFor(() => shell.Screen.ScreenText().Contains("after-42", StringComparison.Ordinal),
+                $"the shell's answer after Ctrl+C:\n{shell.Screen.ScreenText()}", TimeSpan.FromSeconds(30));
+            long last = LastLine(shell);
+            Assert.True(last < 4_999_999,
+                $"seq ran to the end of its 500 MB, line {atCtrlC} on the screen when Ctrl+C was pressed: Ctrl+C never stopped it");
+            Assert.True(last - atCtrlC < 40_000,
+                $"{(last - atCtrlC) / 10_000.0:F1} MB of seq's output came after Ctrl+C: it was read into memory while the window was behind");
         }
         finally
         {
+            // seq's lines outlast a test failing part-way, and end with the window's shells.
+            window?.Close();
             TestFolders.Delete(folder);
         }
     }
@@ -350,6 +364,21 @@ public sealed class TerminalTests
         {
             Ui.Settle();
         }
+    }
+
+    /// <summary>The number of the last of seq's lines in the terminal, its scrollback included; -1 before the first.</summary>
+    private static long LastLine(TerminalSession session)
+    {
+        long last = -1;
+        foreach (string line in Screen(session).Split('\n'))
+        {
+            string[] words = line.Split(' ', 3);
+            if (words.Length == 3 && words[0] == "line" && long.TryParse(words[1], NumberStyles.None, CultureInfo.InvariantCulture, out long number))
+            {
+                last = Math.Max(last, number);
+            }
+        }
+        return last;
     }
 
     private static string Screen(TerminalSession session) =>
