@@ -1,0 +1,210 @@
+using System.Globalization;
+using System.Text;
+using Passenger.Editor;
+using TextMateSharp.Grammars;
+using TextMateSharp.Internal.Grammars.Reader;
+using TextMateSharp.Internal.Themes.Reader;
+using TextMateSharp.Internal.Types;
+using TextMateSharp.Registry;
+using TextMateSharp.Themes;
+
+namespace Passenger.Languages.TextMate;
+
+/// <summary>A language's TextMate grammar (VS Code's, carried in this assembly under <c>TextMate/Grammars</c>) with the
+/// grammars it embeds, in a registry of its own: TextMateSharp compiles rules as it meets them and keeps no lock, so
+/// everything done with one language's rules holds <see cref="Gate"/>, and two languages never share any.</summary>
+internal sealed class Grammar
+{
+    /// <summary>Each scope a grammar here names, by its file.</summary>
+    private static readonly Dictionary<string, string> Files = new(StringComparer.Ordinal)
+    {
+        ["text.xml"] = "xml.tmLanguage.json",
+        ["source.json"] = "JSON.tmLanguage.json",
+        ["source.yaml"] = "yaml.tmLanguage.json",
+        ["text.html.markdown"] = "markdown.tmLanguage.json",
+        ["text.html.basic"] = "html.tmLanguage.json",
+        ["source.css"] = "css.tmLanguage.json",
+        ["source.js"] = "JavaScript.tmLanguage.json",
+        ["source.ts"] = "TypeScript.tmLanguage.json",
+        ["source.shell"] = "shell-unix-bash.tmLanguage.json",
+        ["source.dockerfile"] = "docker.tmLanguage.json",
+    };
+
+    /// <summary>The grammar each language the IDE names is coloured by, and whether its tags pair.</summary>
+    private static readonly Dictionary<string, (string Scope, Tags Tags)> Languages = new(StringComparer.Ordinal)
+    {
+        ["XML"] = ("text.xml", Tags.Xml),
+        ["JSON"] = ("source.json", Tags.None),
+        ["YAML"] = ("source.yaml", Tags.None),
+        ["Markdown"] = ("text.html.markdown", Tags.None),
+        ["HTML"] = ("text.html.basic", Tags.Html),
+        ["CSS"] = ("source.css", Tags.None),
+        ["JavaScript"] = ("source.js", Tags.None),
+        ["TypeScript"] = ("source.ts", Tags.None),
+        ["Shell"] = ("source.shell", Tags.None),
+        ["Dockerfile"] = ("source.dockerfile", Tags.None),
+    };
+
+    private static readonly Dictionary<string, Lazy<Grammar>> Loaded = [];
+
+    /// <summary>The theme every registry shares: each rule's foreground is the kind it colours, as #0000NN.</summary>
+    private static readonly string Theme = ThemeText();
+
+    private readonly Lazy<IGrammar> rules;
+    private TokenKind[] kinds = [];
+
+    private Grammar(string scope, Tags tags)
+    {
+        Tags = tags;
+        rules = new Lazy<IGrammar>(() => Load(scope), LazyThreadSafetyMode.ExecutionAndPublication);
+    }
+
+    /// <summary>The language's grammar, made once and shared by every file in it; null for a language with none.</summary>
+    public static Grammar? For(string language)
+    {
+        if (!Languages.TryGetValue(language, out (string Scope, Tags Tags) named))
+        {
+            return null;
+        }
+        lock (Loaded)
+        {
+            if (!Loaded.TryGetValue(language, out Lazy<Grammar>? grammar))
+            {
+                Loaded[language] = grammar = new Lazy<Grammar>(() => new Grammar(named.Scope, named.Tags));
+            }
+            return grammar.Value;
+        }
+    }
+
+    /// <summary>Held around everything done with <see cref="Rules"/>.</summary>
+    public object Gate { get; } = new();
+
+    public Tags Tags { get; }
+
+    /// <summary>The compiled rules, loaded on first use (off the UI thread: a grammar is read and its includes with it).</summary>
+    public IGrammar Rules => rules.Value;
+
+    /// <summary>The kind a token's foreground colour id stands for.</summary>
+    public TokenKind KindOf(int foreground) => foreground < kinds.Length ? kinds[foreground] : TokenKind.Text;
+
+    private IGrammar Load(string scope)
+    {
+        Registry registry = new(new Locator());
+        Theme theme = registry.GetTheme();
+        // Colour ids count from 1; 0 is none.
+        List<TokenKind> byId = [TokenKind.Text];
+        for (int id = 1; theme.GetColor(id) is { } colour; id++)
+        {
+            int value = int.Parse(colour.AsSpan(1), NumberStyles.HexNumber, CultureInfo.InvariantCulture);
+            byId.Add(Enum.IsDefined((TokenKind)value) ? (TokenKind)value : TokenKind.Text);
+        }
+        kinds = [.. byId];
+        return registry.LoadGrammar(scope) ?? throw new InvalidOperationException($"The {scope} grammar did not load");
+    }
+
+    private static string ThemeText()
+    {
+        StringBuilder json = new("{\"name\":\"Passenger\",\"settings\":[{\"settings\":{\"foreground\":\"#000000\"}}");
+        foreach ((string selector, TokenKind kind) in ScopeColours.Rules)
+        {
+            json.Append(CultureInfo.InvariantCulture, $",{{\"scope\":\"{selector}\",\"settings\":{{\"foreground\":\"#{(int)kind:X6}\"}}}}");
+        }
+        return json.Append("]}").ToString();
+    }
+
+    private static Stream Resource(string file) =>
+        typeof(Grammar).Assembly.GetManifestResourceStream($"Grammars/{file}") ?? throw new InvalidOperationException($"No grammar {file} in {typeof(Grammar).Assembly.GetName().Name}");
+
+    /// <summary>Where TextMateSharp finds a grammar by scope: this assembly's, none for a scope it does not carry (a
+    /// Markdown fence in a language without one, which then stays code).</summary>
+    private sealed class Locator : IRegistryOptions
+    {
+        public IRawTheme GetTheme(string scopeName) => null!;
+
+        public IRawTheme GetDefaultTheme()
+        {
+            using StreamReader reader = new(new MemoryStream(Encoding.UTF8.GetBytes(Theme)));
+            return ThemeReader.ReadThemeSync(reader);
+        }
+
+        public IRawGrammar GetGrammar(string scopeName)
+        {
+            if (!Files.TryGetValue(scopeName, out string? file))
+            {
+                return null!;
+            }
+            using StreamReader reader = new(Resource(file));
+            IRawGrammar grammar = GrammarReader.ReadGrammarSync(reader);
+            Tidy(grammar);
+            if (scopeName == "source.yaml")
+            {
+                KeysAreKeys((IDictionary<string, object>)grammar);
+            }
+            return grammar;
+        }
+
+        /// <summary>A YAML key that reads as a boolean, a number or null (<c>on:</c>, a GitHub workflow's first key) is a
+        /// key as Rider colours it: the grammar's rule for a block mapping's key stops trying a key as a typed scalar.</summary>
+        private static void KeysAreKeys(IDictionary<string, object> grammar)
+        {
+            if (grammar.TryGetValue("repository", out object? found) && found is IDictionary<string, object> repository
+                && repository.TryGetValue("block-pair", out object? pair) && pair is IDictionary<string, object> blockPair
+                && blockPair.TryGetValue("patterns", out object? patterns) && patterns is IList<object> rules)
+            {
+                foreach (IDictionary<string, object> rule in rules.OfType<IDictionary<string, object>>())
+                {
+                    if (rule.TryGetValue("patterns", out object? inner) && inner is IList<object> keyRules)
+                    {
+                        foreach (object typed in keyRules.Where(r => r is IDictionary<string, object> include
+                            && include.TryGetValue("include", out object? name) && name is "#flow-scalar-plain-out-implicit-type").ToList())
+                        {
+                            keyRules.Remove(typed);
+                        }
+                    }
+                }
+            }
+        }
+
+        public ICollection<string> GetInjections(string scopeName) => null!;
+
+        /// <summary>Reads what VS Code's reader reads and TextMateSharp's fails on as VS Code does: a capture that is not a
+        /// rule is left out (XML's comments name their own end and scope among their captures, YAML's tag handles a
+        /// comment), and a rule that begins with no end or while never ends, as with VS Code's end of U+FFFF.</summary>
+        private static void Tidy(object node)
+        {
+            if (node is IDictionary<string, object> rule)
+            {
+                if (rule.ContainsKey("begin") && !rule.ContainsKey("end") && !rule.ContainsKey("while"))
+                {
+                    rule["end"] = "\uFFFF";
+                }
+                foreach ((string key, object value) in rule)
+                {
+                    if (key is "captures" or "beginCaptures" or "endCaptures" or "whileCaptures" && value is IDictionary<string, object> captures)
+                    {
+                        foreach (string capture in captures.Where(c => c.Value is not IDictionary<string, object>).Select(c => c.Key).ToList())
+                        {
+                            captures.Remove(capture);
+                        }
+                    }
+                    Tidy(value);
+                }
+            }
+            else if (node is IList<object> list)
+            {
+                foreach (object item in list)
+                {
+                    Tidy(item);
+                }
+            }
+        }
+    }
+}
+
+/// <summary>Whether a language's tags pair, and how: HTML's void elements (<c>br</c>, <c>img</c>) never close.</summary>
+internal enum Tags
+{
+    None,
+    Xml,
+    Html,
+}

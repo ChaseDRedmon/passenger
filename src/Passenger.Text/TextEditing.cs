@@ -376,8 +376,11 @@ public static class TextEditing
     }
 
     /// <summary>Comments every touched line with <paramref name="prefix"/> at their shallowest
-    /// indentation, or uncomments them if every non-blank one is already commented.</summary>
-    public static EditPlan? ToggleLineComment(TextSnapshot text, SelectionSet selections, string prefix)
+    /// indentation, or uncomments them if every non-blank one is already commented. With a
+    /// <paramref name="suffix"/> (a block comment's end, for a language with no line comment, as
+    /// IntelliJ's <c>&lt;!--</c> and <c>--&gt;</c> in XML) each line is wrapped in the two. Given
+    /// <paramref name="add"/>, only ever comments (true) or only ever uncomments (false).</summary>
+    public static EditPlan? ToggleLineComment(TextSnapshot text, SelectionSet selections, string prefix, string? suffix = null, bool? add = null)
     {
         List<(LineSpan Line, string Content, int Indent)> filled = [];
         foreach (int lineNumber in TouchedLines(text, selections))
@@ -393,7 +396,12 @@ public static class TextEditing
         {
             return null;
         }
-        bool commented = filled.All(x => x.Content.AsSpan(x.Indent).StartsWith(prefix, StringComparison.Ordinal));
+        bool commented = filled.All(x => x.Content.AsSpan(x.Indent).StartsWith(prefix, StringComparison.Ordinal)
+            && (suffix is null || x.Content.AsSpan(x.Indent + prefix.Length).TrimEnd().EndsWith(suffix, StringComparison.Ordinal)));
+        if (add == commented)
+        {
+            return null;
+        }
         List<TextEdit> edits = [];
         if (commented)
         {
@@ -405,17 +413,99 @@ public static class TextEditing
                     length++;
                 }
                 edits.Add(new TextEdit(line.Start + lineIndent, length, string.Empty));
+                if (suffix is not null)
+                {
+                    int end = content.AsSpan().TrimEnd().Length - suffix.Length;
+                    int from = end > lineIndent + length && content[end - 1] == ' ' ? end - 1 : end;
+                    edits.Add(new TextEdit(line.Start + from, end + suffix.Length - from, string.Empty));
+                }
             }
         }
         else
         {
             int column = filled.Min(x => x.Indent);
-            foreach ((LineSpan line, _, _) in filled)
+            foreach ((LineSpan line, string content, _) in filled)
             {
-                edits.Add(new TextEdit(line.Start + column, 0, prefix + " "));
+                edits.Add(new TextEdit(line.Start + column, 0, suffix is null ? prefix + " " : prefix));
+                if (suffix is not null)
+                {
+                    edits.Add(new TextEdit(line.Start + content.AsSpan().TrimEnd().Length, 0, suffix));
+                }
             }
         }
         return Mapped(edits, selections, EditKind.Other);
+    }
+
+    /// <summary>IntelliJ's Comment with Block Comment: each selection wrapped in <paramref name="start"/> and
+    /// <paramref name="end"/>, or, where it is a block comment already or lies in one, that comment's ends taken off; a
+    /// caret with nothing selected takes off the comment it is in, or elsewhere gets an empty one with the caret inside.</summary>
+    public static EditPlan? ToggleBlockComment(TextSnapshot text, SelectionSet selections, string start, string end)
+    {
+        string all = text.ToString();
+        List<TextEdit> edits = [];
+        HashSet<int> emptied = [];
+        HashSet<int> uncommented = [];
+        foreach (Selection s in selections.Items)
+        {
+            if (Enclosing(all, s, start, end) is { } comment)
+            {
+                if (uncommented.Add(comment.Start))
+                {
+                    int opened = comment.Start + start.Length;
+                    int closed = comment.End - end.Length;
+                    int afterStart = opened < closed && all[opened] == ' ' ? 1 : 0;
+                    int beforeEnd = closed - 1 > opened && all[closed - 1] == ' ' ? 1 : 0;
+                    edits.Add(new TextEdit(comment.Start, start.Length + afterStart, string.Empty));
+                    edits.Add(new TextEdit(closed - beforeEnd, end.Length + beforeEnd, string.Empty));
+                }
+            }
+            else if (s.IsEmpty)
+            {
+                if (emptied.Add(s.Caret))
+                {
+                    edits.Add(new TextEdit(s.Caret, 0, start + end));
+                }
+            }
+            else
+            {
+                edits.Add(new TextEdit(s.Start, 0, start));
+                edits.Add(new TextEdit(s.End, 0, end));
+            }
+        }
+        if (edits.Count == 0)
+        {
+            return null;
+        }
+        List<TextEdit> sorted = [.. edits.OrderBy(e => e.Start)];
+        // A caret given an empty comment stands inside it; every other is carried as a whole-line edit carries it.
+        return new EditPlan(sorted, selections.With(s => s.IsEmpty && emptied.Contains(s.Caret)
+            ? Selection.At(Map(sorted, s.Caret, true) - end.Length)
+            : Carried(sorted, s)), EditKind.Other);
+    }
+
+    /// <summary>The block comment a selection is, or lies in: the nearest start at or before it with no end between, and
+    /// the first end at or after it.</summary>
+    private static TextRange? Enclosing(string text, Selection s, string start, string end)
+    {
+        if (text.Length == 0)
+        {
+            return null;
+        }
+        ReadOnlySpan<char> selected = text.AsSpan(s.Start, s.Length);
+        int from = s.Start + (selected.Length - selected.TrimStart().Length);
+        int to = Math.Max(from, s.End - (selected.Length - selected.TrimEnd().Length));
+        int opened = text.LastIndexOf(start, Math.Min(text.Length - 1, from + start.Length - 1), StringComparison.Ordinal);
+        if (opened < 0)
+        {
+            return null;
+        }
+        int ended = text.IndexOf(end, opened + start.Length, StringComparison.Ordinal);
+        if (ended < 0 || ended + end.Length <= from)
+        {
+            return null;
+        }
+        int closed = text.IndexOf(end, Math.Max(opened + start.Length, to - end.Length), StringComparison.Ordinal);
+        return closed < 0 || closed + end.Length < to ? null : TextRange.FromBounds(opened, closed + end.Length);
     }
 
     /// <summary>What Copy puts on the clipboard: the selections' text, or with nothing selected the
@@ -799,16 +889,19 @@ public static class TextEditing
     private static EditPlan Mapped(List<TextEdit> edits, SelectionSet selections, EditKind kind)
     {
         List<TextEdit> sorted = edits.OrderBy(e => e.Start).ToList();
-        return new EditPlan(sorted, selections.With(s =>
+        return new EditPlan(sorted, selections.With(s => Carried(sorted, s)), kind);
+    }
+
+    /// <summary>A caret or selection carried through whole-line edits, as <see cref="Mapped"/> carries it.</summary>
+    private static Selection Carried(List<TextEdit> sorted, Selection s)
+    {
+        if (s.IsEmpty)
         {
-            if (s.IsEmpty)
-            {
-                return Selection.At(Map(sorted, s.Caret, true));
-            }
-            int start = Map(sorted, s.Start, false);
-            int end = Map(sorted, s.End, true);
-            return s.Caret >= s.Anchor ? new Selection(start, end) : new Selection(end, start);
-        }), kind);
+            return Selection.At(Map(sorted, s.Caret, true));
+        }
+        int start = Map(sorted, s.Start, false);
+        int end = Map(sorted, s.End, true);
+        return s.Caret >= s.Anchor ? new Selection(start, end) : new Selection(end, start);
     }
 
     /// <summary>An offset in the text after <paramref name="edits"/> (sorted, in the old text's

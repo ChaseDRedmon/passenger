@@ -155,6 +155,20 @@
             <SolidColorBrush x:Key="Passenger.Syntax.Brace1" Color="#E8BA36" />
             <SolidColorBrush x:Key="Passenger.Syntax.Brace2" Color="#D670D6" />
             <SolidColorBrush x:Key="Passenger.Syntax.Brace3" Color="#3D9EF5" />
+            <!-- The files beside the C#, as Rider Dark colours them: XML_TAG, XML_ATTRIBUTE_NAME and _VALUE,
+                 XML_ENTITY_REFERENCE, JSON.PROPERTY_KEY, YAML_SCALAR_KEY, MARKDOWN_HEADER_LEVEL_1 (the constant's
+                 colour, bold), MARKDOWN_CODE_SPAN, MARKDOWN_BLOCK_QUOTE and MARKDOWN_LINK_DESTINATION. Markdown's bold
+                 and italic text keep the text's colour. -->
+            <SolidColorBrush x:Key="Passenger.Syntax.Tag" Color="#C191FF" />
+            <SolidColorBrush x:Key="Passenger.Syntax.AttributeName" Color="#85C46C" />
+            <SolidColorBrush x:Key="Passenger.Syntax.AttributeValue" Color="#C9A26D" />
+            <SolidColorBrush x:Key="Passenger.Syntax.Entity" Color="#FFD49E" />
+            <SolidColorBrush x:Key="Passenger.Syntax.JsonKey" Color="#66C3CC" />
+            <SolidColorBrush x:Key="Passenger.Syntax.YamlKey" Color="#C191FF" />
+            <SolidColorBrush x:Key="Passenger.Syntax.Heading" Color="#66C3CC" />
+            <SolidColorBrush x:Key="Passenger.Syntax.Code" Color="#85C46C" />
+            <SolidColorBrush x:Key="Passenger.Syntax.Quote" Color="#C9A26D" />
+            <SolidColorBrush x:Key="Passenger.Syntax.LinkDestination" Color="#39CC9B" />
         </ResourceDictionary>
         <ResourceDictionary x:Key="Light">
             <SolidColorBrush x:Key="Passenger.Chrome" Color="#F7F8FA" />
@@ -303,6 +317,16 @@
             <SolidColorBrush x:Key="Passenger.Syntax.Brace1" Color="#A87700" />
             <SolidColorBrush x:Key="Passenger.Syntax.Brace2" Color="#A3279F" />
             <SolidColorBrush x:Key="Passenger.Syntax.Brace3" Color="#0B6BCB" />
+            <SolidColorBrush x:Key="Passenger.Syntax.Tag" Color="#7A3CC9" />
+            <SolidColorBrush x:Key="Passenger.Syntax.AttributeName" Color="#3C7A2E" />
+            <SolidColorBrush x:Key="Passenger.Syntax.AttributeValue" Color="#9A5B0E" />
+            <SolidColorBrush x:Key="Passenger.Syntax.Entity" Color="#635237" />
+            <SolidColorBrush x:Key="Passenger.Syntax.JsonKey" Color="#1C7F8C" />
+            <SolidColorBrush x:Key="Passenger.Syntax.YamlKey" Color="#7A3CC9" />
+            <SolidColorBrush x:Key="Passenger.Syntax.Heading" Color="#1C7F8C" />
+            <SolidColorBrush x:Key="Passenger.Syntax.Code" Color="#3C7A2E" />
+            <SolidColorBrush x:Key="Passenger.Syntax.Quote" Color="#9A5B0E" />
+            <SolidColorBrush x:Key="Passenger.Syntax.LinkDestination" Color="#00785A" />
         </ResourceDictionary>
     </ResourceDictionary.ThemeDictionaries>
 </ResourceDictionary>

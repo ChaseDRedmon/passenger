@@ -7,8 +7,14 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
+    <PackageReference Include="TextMateSharp" />
     <ProjectReference Include="../Passenger.Editor/Passenger.Editor.csproj" />
     <ProjectReference Include="../Passenger.Lsp/Passenger.Lsp.csproj" />
     <ProjectReference Include="../Passenger.Text/Passenger.Text.csproj" />
+  </ItemGroup>
+
+  <!-- VS Code's TextMate grammars, unchanged (THIRD_PARTY_NOTICES.md says where each came from), read by their file name. -->
+  <ItemGroup>
+    <EmbeddedResource Include="TextMate/Grammars/*.json" LogicalName="Grammars/%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>

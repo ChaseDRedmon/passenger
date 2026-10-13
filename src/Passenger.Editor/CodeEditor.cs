@@ -327,6 +327,10 @@ public sealed partial class CodeEditor : Control
     /// <summary>What a line comment starts with in this document's language, or null for none.</summary>
     public string? LineCommentPrefix { get; set; } = "//";
 
+    /// <summary>What a block comment starts and ends with in this document's language, or null for none. A language with
+    /// no line comment comments a line with it.</summary>
+    public (string Start, string End)? BlockComment { get; set; } = ("/*", "*/");
+
     public bool IsReadOnly { get; set; }
 
     /// <summary>Whether the gutter shows line numbers; a console's output goes without.</summary>

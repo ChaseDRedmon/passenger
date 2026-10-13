@@ -132,6 +132,7 @@ public partial class MainWindow
             [E.SelectNextOccurrence] = [new("Edit", 2, 3)],
             [E.SelectAllOccurrences] = [new("Edit", 2, 4)],
             [E.ToggleLineComment] = [new("Edit", 4, 0), new("Code", 2, 0)],
+            [E.ToggleBlockComment] = [new("Code", 2, 1)],
             [E.MoveLineUp] = [new("Edit", 4, 1)],
             [E.MoveLineDown] = [new("Edit", 4, 2)],
             // Rider's Folding, in its order: expanding, collapsing, the doc comments, the toggle.

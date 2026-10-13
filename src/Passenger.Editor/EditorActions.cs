@@ -33,6 +33,7 @@ public static class EditorActions
     public const string MoveLineUp = "editor.moveLineUp";
     public const string MoveLineDown = "editor.moveLineDown";
     public const string ToggleLineComment = "editor.toggleLineComment";
+    public const string ToggleBlockComment = "editor.toggleBlockComment";
     public const string Comment = "editor.comment";
     public const string Uncomment = "editor.uncomment";
     public const string JoinLines = "editor.joinLines";
@@ -70,7 +71,7 @@ public static class EditorActions
         (DeleteWordLeft, "Delete Word Left"), (DeleteWordRight, "Delete Word Right"), (NewLine, "New Line"),
         (StartNewLine, "Start New Line"), (StartNewLineBefore, "Start New Line Before"), (Indent, "Indent"), (Outdent, "Outdent"),
         (Duplicate, "Duplicate"), (DeleteLine, "Delete Line"), (MoveLineUp, "Move Line Up"), (MoveLineDown, "Move Line Down"),
-        (ToggleLineComment, "Comment with Line Comment"), (Comment, "Comment"), (Uncomment, "Uncomment"), (JoinLines, "Join Lines"),
+        (ToggleLineComment, "Comment with Line Comment"), (ToggleBlockComment, "Comment with Block Comment"), (Comment, "Comment"), (Uncomment, "Uncomment"), (JoinLines, "Join Lines"),
         (ToggleCase, "Toggle Case"), (CutToLineEnd, "Cut to Line End"), (Undo, "Undo"), (Redo, "Redo"), (Cut, "Cut"), (Copy, "Copy"),
         (Paste, "Paste"), (SelectAll, "Select All"), (SelectNextOccurrence, "Select Next Occurrence"),
         (UnselectOccurrence, "Unselect Occurrence"), (SelectAllOccurrences, "Select All Occurrences"), (CaretPerLine, "Caret Per Line"),
@@ -120,6 +121,7 @@ public static class DefaultKeymaps
         .Bind(EditorActions.MoveLineUp, "alt UP")
         .Bind(EditorActions.MoveLineDown, "alt DOWN")
         .Bind(EditorActions.ToggleLineComment, "meta SLASH", "meta alt SLASH", "meta K , meta SLASH")
+        .Bind(EditorActions.ToggleBlockComment, "control meta SLASH")
         .Bind(EditorActions.Comment, "meta K , C", "meta K , meta C")
         .Bind(EditorActions.Uncomment, "meta K , U", "meta K , meta U")
         .Bind(EditorActions.JoinLines, "control shift J")
@@ -175,6 +177,7 @@ public static class DefaultKeymaps
         .Bind(EditorActions.MoveLineUp, "alt UP")
         .Bind(EditorActions.MoveLineDown, "alt DOWN")
         .Bind(EditorActions.ToggleLineComment, "control SLASH", "control alt SLASH", "control K , control SLASH")
+        .Bind(EditorActions.ToggleBlockComment, "control shift SLASH")
         .Bind(EditorActions.Comment, "control K , C", "control K , control C")
         .Bind(EditorActions.Uncomment, "control K , U", "control K , control U")
         .Bind(EditorActions.JoinLines, "control shift J")

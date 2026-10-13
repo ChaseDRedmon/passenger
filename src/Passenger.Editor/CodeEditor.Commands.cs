@@ -185,10 +185,13 @@ public sealed partial class CodeEditor
                 Apply(TextEditing.MoveLines(text, selections, eol, up: false));
                 return true;
             case EditorActions.ToggleLineComment:
-                Apply(LineCommentPrefix is { } prefix ? TextEditing.ToggleLineComment(text, selections, prefix) : null);
+                Apply(LineComments(text, add: null));
+                return true;
+            case EditorActions.ToggleBlockComment:
+                Apply(BlockComment is { } block ? TextEditing.ToggleBlockComment(text, selections, block.Start, block.End) : null);
                 return true;
             case EditorActions.Comment or EditorActions.Uncomment:
-                Comment(text, action == EditorActions.Comment);
+                Apply(LineComments(text, add: action == EditorActions.Comment));
                 return true;
             case EditorActions.JoinLines:
                 Apply(TextEditing.JoinLines(text, selections));
@@ -323,23 +326,13 @@ public sealed partial class CodeEditor
         SetSelections(selections.Add(Selection.At(offset) with { PreferredX = x }), reveal: true);
     }
 
-    /// <summary>Visual Studio's separate Comment and Uncomment chords: each only ever adds or only
-    /// ever removes, unlike the toggle.</summary>
-    private void Comment(TextSnapshot text, bool add)
-    {
-        if (LineCommentPrefix is not { } prefix)
-        {
-            return;
-        }
-        bool allCommented = TextEditing.TouchedLines(text, selections)
-            .Select(text.GetLineText)
-            .Where(l => l.Trim().Length > 0)
-            .All(l => l.TrimStart().StartsWith(prefix, StringComparison.Ordinal));
-        if (add != allCommented)
-        {
-            Apply(TextEditing.ToggleLineComment(text, selections, prefix));
-        }
-    }
+    /// <summary>The touched lines commented or uncommented with the language's line comment, or wrapped in its block
+    /// comment where it has none; Visual Studio's separate Comment and Uncomment chords (<paramref name="add"/> given)
+    /// only ever add or only ever remove, unlike the toggle.</summary>
+    private EditPlan? LineComments(TextSnapshot text, bool? add) =>
+        LineCommentPrefix is { } prefix ? TextEditing.ToggleLineComment(text, selections, prefix, add: add)
+        : BlockComment is { } block ? TextEditing.ToggleLineComment(text, selections, block.Start, block.End, add)
+        : null;
 
     private void CopyToClipboard()
     {

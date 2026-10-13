@@ -18,6 +18,9 @@
     <PackageVersion Include="ModelContextProtocol.Core" Version="2.2.0" />
     <PackageVersion Include="StreamJsonRpc" Version="2.25.29" />
     <PackageVersion Include="Porta.Pty" Version="2.2.2" />
+    <!-- TextMate grammars' tokenizer, with Oniguruma's regular expressions (Onigwrap, a native per system): colour for
+         the files beside the C#. -->
+    <PackageVersion Include="TextMateSharp" Version="2.0.4" />
     <!-- VSTest's own client for the vstest.console the SDK ships: discovery, runs and debugging of tests. -->
     <PackageVersion Include="Microsoft.TestPlatform.TranslationLayer" Version="18.10.1" />
     <!-- The Windows install's hooks (Installation.cs), at the version of the vpk tool that packs it (dotnet-tools.json). -->

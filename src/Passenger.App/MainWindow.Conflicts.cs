@@ -86,13 +86,16 @@ public partial class MainWindow
         }
         MergeView view = new(texts, Path.GetFileName(path));
         List<IDisposable> colours = [];
-        if (Workspace.Language.ForPath(path).Name == "C#")
+        string language = Workspace.Language.ForPath(path).Name;
+        foreach (CodeEditor side in new[] { view.Left, view.Result, view.Right })
         {
-            foreach (CodeEditor side in new[] { view.Left, view.Result, view.Right })
+            if (Languages.Highlighters.For(language, side.Document) is { } highlighter)
             {
-                Languages.CSharp.CSharpHighlighter highlighter = new(side.Document);
                 side.Highlighter = highlighter;
-                colours.Add(highlighter);
+                if (highlighter is IDisposable owned)
+                {
+                    colours.Add(owned);
+                }
             }
         }
         MergeWindow window = null!;

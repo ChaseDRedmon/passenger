@@ -1,0 +1,138 @@
+using Passenger.Editor;
+
+namespace Passenger.Languages.TextMate;
+
+/// <summary>Rider's colour scheme by TextMate scope: which kind of token each grammar's scopes are, as Rider Dark and Rider
+/// Light colour the same constructs (XML_TAG, JSON.PROPERTY_KEY, YAML_SCALAR_KEY, MARKDOWN_HEADER_LEVEL_1 and so on). A
+/// selector names a scope and every scope under it ("string" is "string.quoted.double.json" too), the longest that names
+/// a token's innermost scope wins, and a scope no rule names takes its parent's kind. A selector never names a scope's
+/// ancestors (TextMateSharp's theme never matches those), so a language's exceptions name its own scopes in full.</summary>
+internal static class ScopeColours
+{
+    public static readonly IReadOnlyList<(string Selector, TokenKind Kind)> Rules =
+    [
+        ("comment", TokenKind.Comment),
+        ("string", TokenKind.String),
+        ("constant.numeric", TokenKind.Number),
+        ("constant.language", TokenKind.Keyword),
+        ("constant.character.escape", TokenKind.StringEscape),
+        ("keyword", TokenKind.Keyword),
+        ("keyword.operator", TokenKind.Text),
+        ("keyword.operator.new", TokenKind.Keyword),
+        ("keyword.operator.expression", TokenKind.Keyword),
+        ("storage", TokenKind.Keyword),
+        ("variable.language", TokenKind.Keyword),
+        ("entity.name.function", TokenKind.Method),
+        ("support.function", TokenKind.Method),
+        ("entity.name.type", TokenKind.Class),
+        ("entity.name.class", TokenKind.Class),
+        ("entity.other.inherited-class", TokenKind.Class),
+        ("support.class", TokenKind.Class),
+        ("support.type.primitive", TokenKind.Keyword),
+        ("variable.other.property", TokenKind.Field),
+        ("variable.other.object.property", TokenKind.Field),
+        ("meta.object-literal.key", TokenKind.Field),
+        ("invalid", TokenKind.Text),
+
+        // JavaScript and TypeScript: a template's expressions are code; a regular expression is a string throughout.
+        ("meta.template.expression", TokenKind.Text),
+        ("keyword.operator.quantifier.regexp", TokenKind.String),
+        ("keyword.operator.or.regexp", TokenKind.String),
+        ("keyword.control.anchor.regexp", TokenKind.String),
+        ("keyword.other.back-reference.regexp", TokenKind.String),
+        ("constant.other.character-class", TokenKind.String),
+        ("constant.character.character-class.regexp", TokenKind.String),
+
+        // XML and HTML: the whole tag in the tag's colour (its brackets, its =), its attributes' names and values in theirs.
+        ("meta.tag", TokenKind.Tag),
+        ("entity.name.tag", TokenKind.Tag),
+        ("punctuation.definition.tag", TokenKind.Tag),
+        ("entity.other.attribute-name", TokenKind.AttributeName),
+        ("string.quoted.double.xml", TokenKind.AttributeValue),
+        ("string.quoted.single.xml", TokenKind.AttributeValue),
+        ("string.quoted.double.html", TokenKind.AttributeValue),
+        ("string.quoted.single.html", TokenKind.AttributeValue),
+        ("string.unquoted.html", TokenKind.AttributeValue),
+        ("constant.character.entity", TokenKind.Entity),
+        ("string.unquoted.cdata", TokenKind.Text),
+
+        // JSON: keys apart from values.
+        ("support.type.property-name.json", TokenKind.JsonKey),
+
+        // YAML: keys in their colour, every unquoted scalar (numbers, booleans, a block's lines) plain, as Rider's lexer.
+        ("entity.name.tag.yaml", TokenKind.YamlKey),
+        ("string.unquoted.plain", TokenKind.Text),
+        ("string.unquoted.block.yaml", TokenKind.Text),
+        ("constant.language.boolean.yaml", TokenKind.Text),
+        ("constant.language.null.yaml", TokenKind.Text),
+        ("constant.language.value.yaml", TokenKind.Text),
+        ("constant.language.merge.yaml", TokenKind.Text),
+        ("constant.numeric.float.yaml", TokenKind.Text),
+        ("constant.numeric.integer.yaml", TokenKind.Text),
+        ("constant.other.timestamp.yaml", TokenKind.Text),
+        ("keyword.control.flow.alias.yaml", TokenKind.Text),
+        ("keyword.control.property.anchor.yaml", TokenKind.Text),
+        ("keyword.control.flow.block-scalar.folded.yaml", TokenKind.Text),
+        ("keyword.control.flow.block-scalar.literal.yaml", TokenKind.Text),
+        ("entity.name.type.anchor.yaml", TokenKind.Text),
+
+        // Markdown: headings bold in the constant's colour, markers in the keyword's, code in Rider's green.
+        ("markup.heading", TokenKind.Heading),
+        ("punctuation.definition.heading.markdown", TokenKind.Keyword),
+        ("markup.bold", TokenKind.Bold),
+        ("punctuation.definition.bold.markdown", TokenKind.Keyword),
+        ("markup.italic", TokenKind.Italic),
+        ("punctuation.definition.italic.markdown", TokenKind.Keyword),
+        ("markup.strikethrough", TokenKind.Text),
+        ("markup.inline.raw", TokenKind.Code),
+        ("markup.fenced_code", TokenKind.Code),
+        ("markup.raw", TokenKind.Code),
+        ("meta.separator.markdown", TokenKind.Code),
+        ("punctuation.definition.table.markdown", TokenKind.Code),
+        ("punctuation.separator.table.markdown", TokenKind.Code),
+        ("markup.quote", TokenKind.Quote),
+        ("punctuation.definition.quote.begin.markdown", TokenKind.Keyword),
+        ("punctuation.definition.list.begin.markdown", TokenKind.Keyword),
+        ("string.other.link.title.markdown", TokenKind.Link),
+        ("string.other.link.description.markdown", TokenKind.Link),
+        ("markup.underline.link", TokenKind.LinkDestination),
+        ("constant.other.reference.link.markdown", TokenKind.LinkDestination),
+        ("constant.character.escape.markdown", TokenKind.Text),
+
+        // A fenced block in a language with a grammar here is that language from plain text up; another stays code.
+        ("meta.embedded.block.css", TokenKind.Text),
+        ("meta.embedded.block.dockerfile", TokenKind.Text),
+        ("meta.embedded.block.html", TokenKind.Text),
+        ("meta.embedded.block.javascript", TokenKind.Text),
+        ("meta.embedded.block.json", TokenKind.Text),
+        ("meta.embedded.block.jsonc", TokenKind.Text),
+        ("meta.embedded.block.shellscript", TokenKind.Text),
+        ("meta.embedded.block.typescript", TokenKind.Text),
+        ("meta.embedded.block.xml", TokenKind.Text),
+        ("meta.embedded.block.yaml", TokenKind.Text),
+
+        // CSS: selectors in the tag's colour, property names in the keyword's, values plain, units with their numbers.
+        ("entity.other.attribute-name.class.css", TokenKind.Tag),
+        ("entity.other.attribute-name.id.css", TokenKind.Tag),
+        ("entity.other.attribute-name.pseudo-class.css", TokenKind.Tag),
+        ("entity.other.attribute-name.pseudo-element.css", TokenKind.Tag),
+        ("support.type.property-name.css", TokenKind.Keyword),
+        ("support.constant.property-value", TokenKind.Text),
+        ("keyword.other.unit", TokenKind.Number),
+        ("constant.other.color", TokenKind.Number),
+        ("variable.css", TokenKind.Text),
+        ("variable.argument.css", TokenKind.Text),
+
+        // Shell: commands, their arguments and variables plain, as Rider's are.
+        ("string.unquoted.argument", TokenKind.Text),
+        ("string.unquoted.shell", TokenKind.Text),
+        ("string.unquoted.pattern", TokenKind.Text),
+        ("constant.other.option", TokenKind.Text),
+        ("entity.name.command", TokenKind.Text),
+        ("entity.name.function.call.shell", TokenKind.Text),
+        ("entity.other.attribute-name.shell", TokenKind.Text),
+        ("entity.other.attribute-name.bracket.shell", TokenKind.Text),
+        ("variable.language.special", TokenKind.Text),
+        ("support.function.builtin.shell", TokenKind.Text),
+    ];
+}

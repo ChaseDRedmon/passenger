@@ -457,12 +457,18 @@ public sealed class OpenDocument : Observable
         }
     }
 
-    /// <summary>The in-process parser's colours and folds for the file's language; null for a language with none.</summary>
+    /// <summary>The in-process parser's colours and folds for the file's language (C#'s parse, another language's TextMate
+    /// grammar); null for a language with neither.</summary>
     private IHighlighter? Parser()
     {
         if (Language.Name != "C#")
         {
-            return null;
+            IHighlighter? colours = Languages.Highlighters.For(Language.Name, Text);
+            if (colours is Languages.TextMate.TextMateHighlighter grammar)
+            {
+                grammar.Failed += (_, error) => IdeErrors.Report(error);
+            }
+            return colours;
         }
         CSharpHighlighter csharp = new(Text);
         csharp.Parsed += (_, parsed) => Parsed?.Invoke(this, parsed);
@@ -720,28 +726,49 @@ public sealed class OpenDocument : Observable
     }
 }
 
-/// <summary>What the editor needs to know about a file's language before any language server
-/// answers: its name, its line comment and how it indents.</summary>
-public sealed record Language(string Name, string? LineComment, int IndentSize = 4)
+/// <summary>What the editor needs to know about a file's language before any language server answers: its name (which
+/// <see cref="Languages.Highlighters"/> colours it by), its comments and how it indents. A language with no line comment
+/// of its own comments a line with its block comment, as IntelliJ's do (<c>&lt;!-- --&gt;</c> in XML).</summary>
+public sealed record Language(string Name, string? LineComment, int IndentSize = 4, string? BlockStart = null, string? BlockEnd = null)
 {
     public static readonly Language PlainText = new("Text", null);
 
     /// <summary>How a file of the language indents when neither an .editorconfig nor its own lines say.</summary>
     public IndentOptions Indent => new(IndentSize);
 
+    /// <summary>The block comment's two ends, or null for a language with none.</summary>
+    public (string Start, string End)? BlockComment => BlockStart is { } start && BlockEnd is { } end ? (start, end) : null;
+
     /// <summary>Whether a pasted block takes the file's indentation: not where indentation is the text's own (Markdown's
     /// code blocks, plain text).</summary>
     public bool ReindentsPaste => Name is not ("Text" or "Markdown");
 
-    public static Language ForPath(string path) => System.IO.Path.GetExtension(path).ToLowerInvariant() switch
+    private static readonly Language Xml = new("XML", null, 2, "<!--", "-->");
+
+    public static Language ForPath(string path)
     {
-        ".cs" or ".csx" => new Language("C#", "//"),
-        ".csproj" or ".props" or ".targets" or ".xml" or ".axaml" or ".xaml" or ".slnx" or ".resx" or ".config" => new Language("XML", null, 2),
-        ".json" => new Language("JSON", null, 2),
-        ".js" or ".ts" or ".tsx" or ".jsx" or ".mjs" or ".css" or ".rs" or ".go" or ".java" or ".kt" or ".swift" or ".c" or ".h" or ".cpp" => new Language("Code", "//"),
-        ".py" or ".sh" or ".yml" or ".yaml" or ".toml" or ".ps1" or ".rb" => new Language("Script", "#"),
-        ".md" => new Language("Markdown", null, 2),
-        _ when System.IO.Path.GetFileName(path).Equals("justfile", StringComparison.OrdinalIgnoreCase) => new Language("Script", "#"),
-        _ => PlainText,
-    };
+        string name = System.IO.Path.GetFileName(path);
+        return System.IO.Path.GetExtension(path).ToLowerInvariant() switch
+        {
+            ".cs" or ".csx" => new Language("C#", "//", 4, "/*", "*/"),
+            ".csproj" or ".fsproj" or ".vbproj" or ".proj" or ".props" or ".targets" or ".xml" or ".axaml" or ".xaml" or ".slnx"
+                or ".resx" or ".config" or ".nuspec" or ".manifest" or ".runsettings" or ".xsd" or ".xslt" or ".xsl" or ".svg"
+                or ".plist" or ".storyboard" => Xml,
+            ".json" or ".jsonc" => new Language("JSON", "//", 2, "/*", "*/"),
+            ".yml" or ".yaml" => new Language("YAML", "#", 2),
+            ".md" or ".markdown" => new Language("Markdown", null, 2, "<!--", "-->"),
+            ".html" or ".htm" => new Language("HTML", null, 4, "<!--", "-->"),
+            ".css" => new Language("CSS", null, 4, "/*", "*/"),
+            ".js" or ".mjs" or ".cjs" or ".jsx" => new Language("JavaScript", "//", 4, "/*", "*/"),
+            ".ts" or ".mts" or ".cts" or ".tsx" => new Language("TypeScript", "//", 4, "/*", "*/"),
+            ".sh" or ".bash" or ".zsh" => new Language("Shell", "#"),
+            ".dockerfile" => new Language("Dockerfile", "#"),
+            ".scss" or ".less" or ".rs" or ".go" or ".java" or ".kt" or ".swift" or ".c" or ".h" or ".cpp" => new Language("Code", "//", 4, "/*", "*/"),
+            ".py" or ".toml" or ".ps1" or ".rb" => new Language("Script", "#"),
+            _ when name.Equals("Dockerfile", StringComparison.OrdinalIgnoreCase) || name.StartsWith("Dockerfile.", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("Containerfile", StringComparison.OrdinalIgnoreCase) => new Language("Dockerfile", "#"),
+            _ when name.Equals("justfile", StringComparison.OrdinalIgnoreCase) => new Language("Script", "#"),
+            _ => PlainText,
+        };
+    }
 }

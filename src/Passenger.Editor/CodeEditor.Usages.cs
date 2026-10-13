@@ -49,7 +49,8 @@ public sealed partial class CodeEditor
     }
 
     /// <summary>The bracket a caret touches and its pair. Of two brackets it stands between, the one it is outside of (after
-    /// a closer, before an opener), as IntelliJ prefers; the syntax is read only beside a bracket's character.</summary>
+    /// a closer, before an opener), as IntelliJ prefers; the syntax is read only beside a bracket's character. Away from a
+    /// bracket, the name of the tag the caret is in and its pair's.</summary>
     private BracePair? BracesAt(TextSnapshot text, int caret)
     {
         if (highlighter is not IBraceMatcher matcher)
@@ -63,7 +64,7 @@ public sealed partial class CodeEditor
                 return pair;
             }
         }
-        return null;
+        return matcher.TagPairAt(text, caret);
     }
 
     private static bool IsBracket(char c, bool opener) => opener ? c is '(' or '[' or '{' or '<' : c is ')' or ']' or '}' or '>';
@@ -89,14 +90,15 @@ public sealed partial class CodeEditor
     }
 
     /// <summary>Move Caret to Matching Brace, as IntelliJ's: each caret at a bracket (the one after it, else the one before)
-    /// goes before its pair, so going again comes back.</summary>
+    /// goes before its pair, so going again comes back; one in a tag's name goes to its pair's name.</summary>
     private void MatchBrace()
     {
         TextSnapshot text = document.Snapshot;
         IBraceMatcher? matcher = highlighter as IBraceMatcher;
         BracePair? PairBeside(int caret) =>
             (caret < text.Length && IsBracket(text[caret]) ? matcher?.PairAt(text, caret) : null)
-            ?? (caret > 0 && IsBracket(text[caret - 1]) ? matcher?.PairAt(text, caret - 1) : null);
+            ?? (caret > 0 && IsBracket(text[caret - 1]) ? matcher?.PairAt(text, caret - 1) : null)
+            ?? matcher?.TagPairAt(text, caret);
         document.BreakUndoGroup();
         SetSelections(selections.With(s => PairBeside(s.Caret) is { } pair ? Selection.At(pair.Matching.Start) : s), reveal: true);
     }

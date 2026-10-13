@@ -861,7 +861,12 @@ public sealed partial class CodeEditor
         }
         if (!runProperties.TryGetValue(kind, out TextRunProperties? props))
         {
-            runProperties[kind] = props = kind == TokenKind.UserInput ? ItalicRunWith(palette.Syntax(kind)) : RunWith(palette.Syntax(kind));
+            runProperties[kind] = props = kind switch
+            {
+                TokenKind.UserInput or TokenKind.Italic => ItalicRunWith(palette.Syntax(kind)),
+                TokenKind.Heading or TokenKind.Bold => BoldRunWith(palette.Syntax(kind)),
+                _ => RunWith(palette.Syntax(kind)),
+            };
         }
         return props;
     }
@@ -874,6 +879,9 @@ public sealed partial class CodeEditor
 
     private GenericTextRunProperties ItalicRunWith(IBrush brush) =>
         new(new Typeface(FontFamily, FontStyle.Italic), FontSize, foregroundBrush: brush, fontFeatures: ligatures ? null : NoLigatures);
+
+    private GenericTextRunProperties BoldRunWith(IBrush brush) =>
+        new(new Typeface(FontFamily, FontStyle.Normal, FontWeight.Bold), FontSize, foregroundBrush: brush, fontFeatures: ligatures ? null : NoLigatures);
 
 
     /// <summary>Every brush the editor paints with, from the theme's <c>Passenger.Editor.*</c> and

@@ -49,6 +49,38 @@ public enum TokenKind
     Brace1,
     Brace2,
     Brace3,
+
+    /// <summary>An XML or HTML tag: its brackets and name (Rider's XML_TAG and XML_TAG_NAME).</summary>
+    Tag,
+    AttributeName,
+    AttributeValue,
+
+    /// <summary>A character or entity reference: <c>&amp;amp;</c>.</summary>
+    Entity,
+
+    /// <summary>A JSON object's property name (Rider's JSON.PROPERTY_KEY).</summary>
+    JsonKey,
+
+    /// <summary>A YAML mapping's key (Rider's YAML_SCALAR_KEY).</summary>
+    YamlKey,
+
+    /// <summary>A Markdown heading's text, drawn bold.</summary>
+    Heading,
+
+    /// <summary>Markdown's strong emphasis, in the text's colour, bold.</summary>
+    Bold,
+
+    /// <summary>Markdown's emphasis, in the text's colour, italic.</summary>
+    Italic,
+
+    /// <summary>Markdown's code: a span, a fenced or indented block.</summary>
+    Code,
+
+    /// <summary>A Markdown block quote.</summary>
+    Quote,
+
+    /// <summary>Where a Markdown link goes: its URL or reference.</summary>
+    LinkDestination,
 }
 
 /// <summary>Where the pointer rested: the offset under it and the point, in the editor's coordinates, and the inlay
@@ -84,6 +116,11 @@ public interface IBraceMatcher
     /// <summary>The bracket covering the character at <paramref name="offset"/> and the one it pairs with; null when that
     /// is no bracket of the code, one with no pair, or <paramref name="text"/> is not the text this matcher reads.</summary>
     BracePair? PairAt(TextSnapshot text, int offset);
+
+    /// <summary>The name of the XML or HTML tag a caret is in or at the end of, and the name of the tag it pairs with (a
+    /// start tag's end tag, an end tag's start tag), as IntelliJ highlights them; null outside a tag's name, for a tag
+    /// with no pair, or in a language without tags.</summary>
+    BracePair? TagPairAt(TextSnapshot text, int caret) => null;
 }
 
 /// <summary>A bracket and the one it pairs with, each as its range in the text.</summary>

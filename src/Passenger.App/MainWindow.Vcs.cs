@@ -262,10 +262,9 @@ public partial class MainWindow
         string title = other is null ? $"{Path.GetFileName(path)}: {version} and your version" : $"{Path.GetFileName(other)} vs {Path.GetFileName(path)}";
         DiffView view = Highlighted(new(other is null ? Path.GetFileName(path) : title, diff, mine, editable: open is not null, rightColours: open?.Highlighter,
             titles: (version, open is not null ? mineTitle : $"{mineTitle} (read-only)"), highlighting: settings.DiffHighlighting));
-        IHighlighter? left = null;
-        if (Workspace.Language.ForPath(other ?? path).Name == "C#")
+        IHighlighter? left = Languages.Highlighters.For(Workspace.Language.ForPath(other ?? path).Name, view.Left.Document);
+        if (left is not null)
         {
-            left = new Languages.CSharp.CSharpHighlighter(view.Left.Document);
             view.Left.Highlighter = left;
         }
         DiffWindow window = new(title, view);
@@ -325,13 +324,12 @@ public partial class MainWindow
         FileDiff diff = await BackgroundWork.Run(() => FileDiff.Compare(before, text));
         DiffView view = Highlighted(new(file.Name, diff, mine, editable: false, titles: (leftTitle, commit.Short), highlighting: settings.DiffHighlighting));
         List<IDisposable> colours = [];
-        if (Workspace.Language.ForPath(file.Path).Name == "C#")
+        string language = Workspace.Language.ForPath(file.Path).Name;
+        if (Languages.Highlighters.For(language, view.Left.Document) is { } left && Languages.Highlighters.For(language, view.Right.Document) is { } right)
         {
-            Languages.CSharp.CSharpHighlighter left = new(view.Left.Document);
-            Languages.CSharp.CSharpHighlighter right = new(view.Right.Document);
             view.Left.Highlighter = left;
             view.Right.Highlighter = right;
-            colours.AddRange([left, right]);
+            colours.AddRange([.. new[] { left, right }.OfType<IDisposable>()]);
         }
         DiffWindow window = new($"{file.Name}: {commit.Short} {commit.Subject}", view);
         window.Closed += (_, _) => colours.ForEach(c => c.Dispose());
