@@ -373,7 +373,8 @@ public sealed class DebuggerTests : IDisposable
 
         Ui.Run(window, AppActions.ViewBreakpoints);
         BreakpointsWindow breakpoints = Assert.IsType<BreakpointsWindow>(window.Popup);
-        Assert.Equal(["Program.cs:4", "Program.cs:6"], breakpoints.Listed.Select(b => b.Location));
+        // The line breakpoints, then Rider's "Any exception", which every folder has.
+        Assert.Equal(["Program.cs:4", "Program.cs:6", ExceptionBreakpoint.AnyException], breakpoints.Listed.Select(b => b.Location));
         CheckBox first = breakpoints.GetVisualDescendants().OfType<CheckBox>().First(c => c.Content is null);
         first.IsChecked = false;
         Assert.False(window.Debugger.Breakpoints.In(program)[0].Enabled);
@@ -382,6 +383,243 @@ public sealed class DebuggerTests : IDisposable
         Assert.Null(window.Popup);
         window.Close();
     }
+
+    [AvaloniaFact]
+    public void An_exception_breakpoint_added_by_its_type_stops_where_that_type_is_thrown_as_its_condition_allows_and_at_no_other_type()
+    {
+        Write("Program.cs", "for (int turn = 1; turn <= 3; turn++)\n{\n    try\n    {\n        throw new ArgumentException($\"argument {turn}\");\n    }\n"
+            + "    catch (ArgumentException)\n    {\n    }\n    try\n    {\n        throw new InvalidOperationException($\"operation {turn}\");\n    }\n"
+            + "    catch (InvalidOperationException)\n    {\n    }\n}\nConsole.WriteLine(\"done\");\n");
+        MainWindow window = Open();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        BreakpointsWindow breakpoints = OpenBreakpoints(window);
+        ExceptionBreakpoint operation = AddException(window, breakpoints, "InvalidOperationEx", "System.InvalidOperationException");
+        // Rider's new breakpoint on a type stops wherever it is thrown, however it is handled.
+        Assert.Equal(ExceptionScenarios.All, operation.Scenarios);
+        Click(window, breakpoints.GetVisualDescendants().OfType<TextBox>().First(t => t.PlaceholderText?.StartsWith("A C# condition", StringComparison.Ordinal) == true));
+        window.KeyTextInput("turn == 2");
+        Click(window, Button(breakpoints, "Done"));
+        Assert.Null(window.Popup);
+        Assert.Equal("turn == 2", operation.Condition);
+
+        // The argument exceptions and the first turn's pass: the stop is the second turn's, at the line that threw it.
+        Ui.Run(window, AppActions.Debug);
+        Ui.WaitFor(() => editor.LineAnnotations.Any(a => a.Kind == LineAnnotationKind.Exception), "the stop at the exception breakpoint");
+        LineAnnotation thrown = Assert.Single(editor.LineAnnotations, a => a.Kind == LineAnnotationKind.Exception);
+        Assert.Equal((11, "InvalidOperationException: operation 2"), (thrown.Line, thrown.Text));
+        Assert.Equal("2", Value(window, "turn"));
+
+        // Resumed, nothing else stops it: not the third turn's, which the condition rules out, nor any argument exception.
+        Ui.Run(window, AppActions.Resume);
+        Ui.WaitFor(() => window.Debugger.Session?.State == DebugState.Ended, "the program to run to its end");
+        Assert.Contains("done", window.BottomPanel.Debug.Console.Document.Snapshot.ToString(), StringComparison.Ordinal);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void An_exception_breakpoints_handler_options_stop_it_where_the_users_code_leaves_the_exception_or_where_it_handles_it()
+    {
+        // The first is handled where it is thrown; List.Sort catches the comparer's and throws its own, which the program handles.
+        Write("Program.cs", "try\n{\n    throw new InvalidOperationException(\"caught by the program\");\n}\ncatch (InvalidOperationException)\n{\n}\n"
+            + "List<int> numbers = [3, 1, 2];\ntry\n{\n    numbers.Sort((_, _) => throw new InvalidOperationException(\"left to List.Sort\"));\n}\n"
+            + "catch (InvalidOperationException)\n{\n}\nConsole.WriteLine(\"done\");\n");
+        MainWindow window = Open();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        BreakpointsWindow breakpoints = OpenBreakpoints(window);
+        // "Any exception" off, so only the breakpoint on the type stops the program.
+        Click(window, Row(breakpoints, ExceptionBreakpoint.AnyException).GetVisualDescendants().OfType<CheckBox>().First());
+        Assert.False(window.Debugger.Breakpoints.Exceptions[0].Enabled);
+        ExceptionBreakpoint operation = AddException(window, breakpoints, "InvalidOperationEx", "System.InvalidOperationException");
+        // Rider's user-unhandled: handled outside the user's code, or not at all.
+        Click(window, Scenario(breakpoints, "Exception handler:", "User code"));
+        Click(window, Button(breakpoints, "Done"));
+        Assert.Equal(ExceptionScenarios.Thrown | ExceptionScenarios.HandledInExternalCode | ExceptionScenarios.Unhandled, operation.Scenarios);
+
+        Ui.Run(window, AppActions.Debug);
+        Ui.WaitFor(() => editor.LineAnnotations.Any(a => a.Kind == LineAnnotationKind.Exception) || window.Debugger.Session?.State == DebugState.Ended,
+            "the stop where List.Sort catches the comparer's exception");
+        Assert.Equal((10, "InvalidOperationException: left to List.Sort"), Thrown(editor));
+        Ui.Run(window, AppActions.Resume);
+        Ui.WaitFor(() => window.Debugger.Session?.State == DebugState.Ended, "the program to run to its end past the exceptions it handles");
+
+        // Handled in the user's code only: the program's own catches stop it, the comparer's exception does not.
+        breakpoints = OpenBreakpoints(window);
+        Click(window, Row(breakpoints, "System.InvalidOperationException"));
+        Click(window, Scenario(breakpoints, "Exception handler:", "User code"));
+        Click(window, Scenario(breakpoints, "Exception handler:", "External code"));
+        Click(window, Scenario(breakpoints, "Exception handler:", "Unhandled"));
+        Click(window, Button(breakpoints, "Done"));
+        Assert.Equal(ExceptionScenarios.Thrown | ExceptionScenarios.HandledInUserCode, operation.Scenarios);
+        Ui.Run(window, AppActions.Debug);
+        Ui.WaitFor(() => editor.LineAnnotations.Any(a => a.Kind == LineAnnotationKind.Exception) || window.Debugger.Session?.State == DebugState.Ended,
+            "the stop at the exception the program catches");
+        Assert.Equal((2, "InvalidOperationException: caught by the program"), Thrown(editor));
+        Ui.Run(window, AppActions.Resume);
+        // List.Sort's own, thrown outside the user's code and caught by the program, shown where the program called it.
+        Ui.WaitFor(() => Thrown(editor) is (10, string text) && text.Contains("Failed to compare", StringComparison.Ordinal) || window.Debugger.Session?.State == DebugState.Ended,
+            "the stop at List.Sort's exception the program catches");
+        Assert.True(Thrown(editor) is (10, string said) && said.StartsWith("InvalidOperationException: Failed to compare", StringComparison.Ordinal),
+            $"The second stop was not at List.Sort's own exception but {Thrown(editor)}, the session {window.Debugger.Session?.State}");
+        Ui.Run(window, AppActions.Resume);
+        Ui.WaitFor(() => window.Debugger.Session?.State == DebugState.Ended, "the program to run to its end");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Mute_breakpoints_lets_a_run_pass_a_line_breakpoint_and_an_exception_breakpoint_and_unmuting_stops_it_again()
+    {
+        Write("Program.cs", "for (int turn = 1; turn <= 2; turn++)\n{\n    Console.WriteLine($\"turn {turn}\");\n    try\n    {\n"
+            + "        throw new InvalidOperationException($\"turn {turn}\");\n    }\n    catch (InvalidOperationException)\n    {\n    }\n"
+            + "    Console.WriteLine($\"passed {turn}\");\n    Console.ReadLine();\n}\n");
+        MainWindow window = Open();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        editor.GoTo(new TextPosition(2, 4));
+        Ui.Run(window, AppActions.ToggleBreakpoint);
+        BreakpointsWindow breakpoints = OpenBreakpoints(window);
+        AddException(window, breakpoints, "InvalidOperationEx", "System.InvalidOperationException");
+        Click(window, Button(breakpoints, "Done"));
+
+        // Run > Mute Breakpoints: each stays, grey in the gutter as Rider draws muted ones, the menu item checked and the Debug
+        // window's toggle pressed.
+        Assert.False(MuteItem(window).IsChecked);
+        MuteItem(window).Command!.Execute(null);
+        Ui.Settle();
+        Assert.True(window.Debugger.Breakpoints.Muted);
+        Assert.True(MuteItem(window).IsChecked, "Run > Mute Breakpoints shows no check while the breakpoints are muted");
+        Assert.Contains(new LineMark(2, LineMarkKind.Breakpoint, Muted: true), editor.LineMarks);
+        Assert.True(window.BottomPanel.Debug.ShowsMuted, "The Debug window's Mute Breakpoints does not show pressed while they are muted");
+        Assert.Single(window.Debugger.Breakpoints.In(program));
+        Assert.Equal(2, window.Debugger.Breakpoints.Exceptions.Count);
+
+        Ui.Run(window, AppActions.Debug);
+        Passenger.App.ToolWindows.OutputView console = window.BottomPanel.Debug.Console;
+        Ui.WaitFor(() => console.Document.Snapshot.ToString().Contains("passed 1", StringComparison.Ordinal) || window.Debugger.Session?.State is DebugState.Paused or DebugState.Ended,
+            "the first turn to run past both breakpoints");
+        Assert.True(window.Debugger.Session?.State == DebugState.Running, $"Muted, the program still stopped: {window.Status}");
+
+        // Unmuted while it waits for a line: the next turn stops at the line, then at the exception.
+        Ui.Run(window, AppActions.MuteBreakpoints);
+        Assert.False(window.BottomPanel.Debug.ShowsMuted);
+        Ui.WaitFor(() => editor.LineMarks.Contains(new LineMark(2, LineMarkKind.BreakpointBound)), "the breakpoint bound again once unmuted");
+        _ = window.Debugger.Session!.InputAsync("\n");
+        Ui.WaitFor(() => window.Debugger.Session?.State == DebugState.Paused && Value(window, "turn") is not null, "the stop at the line breakpoint");
+        Assert.Equal("2", Value(window, "turn"));
+        Assert.Contains(new LineMark(2, LineMarkKind.ExecutionPoint), editor.LineMarks);
+        Ui.Run(window, AppActions.Resume);
+        Ui.WaitFor(() => editor.LineAnnotations.Any(a => a.Kind == LineAnnotationKind.Exception), "the stop at the exception breakpoint");
+        Assert.Equal((5, "InvalidOperationException: turn 2"), Thrown(editor));
+        Ui.Run(window, AppActions.Stop);
+        Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void The_breakpoints_window_adds_and_removes_exception_breakpoints_and_the_folder_keeps_them()
+    {
+        string settings = TestFolders.Create("settings-");
+        try
+        {
+            MainWindow first = Keeping(settings);
+            BreakpointsWindow breakpoints = OpenBreakpoints(first);
+            AddException(first, breakpoints, "InvalidOperationEx", "System.InvalidOperationException");
+            Click(first, Scenario(breakpoints, "Exception handler:", "User code"));
+            AddException(first, breakpoints, "ArgumentNull", "System.ArgumentNullException");
+            Click(first, Row(breakpoints, ExceptionBreakpoint.AnyException).GetVisualDescendants().OfType<CheckBox>().First());
+            Assert.Equal([ExceptionBreakpoint.AnyException, "System.InvalidOperationException", "System.ArgumentNullException"], breakpoints.Listed.Select(b => b.Location));
+            Click(first, Button(breakpoints, "Done"));
+            first.Close();
+
+            // Another window on the folder has them as they were left.
+            MainWindow second = Keeping(settings);
+            IReadOnlyList<ExceptionBreakpoint> kept = second.Debugger.Breakpoints.Exceptions;
+            Assert.Equal([null, "System.InvalidOperationException", "System.ArgumentNullException"], kept.Select(e => e.Type));
+            Assert.False(kept[0].Enabled);
+            Assert.Equal(ExceptionScenarios.Thrown | ExceptionScenarios.HandledInExternalCode | ExceptionScenarios.Unhandled, kept[1].Scenarios);
+            Assert.Equal(ExceptionScenarios.All, kept[2].Scenarios);
+
+            // Delete removes the one chosen, but never "Any exception", whose box turns it off instead.
+            breakpoints = OpenBreakpoints(second);
+            Click(second, Row(breakpoints, "System.ArgumentNullException"));
+            Ui.Press(second, "Delete");
+            Click(second, Row(breakpoints, ExceptionBreakpoint.AnyException));
+            Ui.Press(second, "Delete");
+            Assert.Equal([ExceptionBreakpoint.AnyException, "System.InvalidOperationException"], breakpoints.Listed.Select(b => b.Location));
+            Ui.Press(second, "Escape");
+            second.Close();
+
+            MainWindow third = Keeping(settings);
+            Assert.Equal([null, "System.InvalidOperationException"], third.Debugger.Breakpoints.Exceptions.Select(e => e.Type));
+            third.Close();
+        }
+        finally
+        {
+            TestFolders.Delete(settings);
+        }
+    }
+
+    /// <summary>The window a person uses, keeping its folders' state in a store of its own, over the folder.</summary>
+    private MainWindow Keeping(string settings)
+    {
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings };
+        window.Show();
+        window.KeepLayout();
+        window.OpenFolder(folder);
+        window.OpenFile(program);
+        Ui.Settle();
+        return window;
+    }
+
+    /// <summary>Run > Mute Breakpoints as the menu bar has it when it opens.</summary>
+    private static NativeMenuItem MuteItem(MainWindow window) =>
+        Ui.Submenu(window.MenuBar, "Run").Items.OfType<NativeMenuItem>().First(i => i.Header == "Mute Breakpoints");
+
+    private static BreakpointsWindow OpenBreakpoints(MainWindow window)
+    {
+        Ui.Run(window, AppActions.ViewBreakpoints);
+        return Assert.IsType<BreakpointsWindow>(window.Popup);
+    }
+
+    /// <summary>Adds an exception breakpoint as a person does: + in the Breakpoints window, part of the type's name typed, and
+    /// Enter on the type it offers first, which is then the one chosen.</summary>
+    private static ExceptionBreakpoint AddException(MainWindow window, BreakpointsWindow breakpoints, string typed, string type)
+    {
+        Click(window, breakpoints.GetVisualDescendants().OfType<Button>().First(b => ToolTip.GetTip(b) as string == "Add CLR Exception Breakpoints"));
+        window.KeyTextInput(typed);
+        Ui.WaitFor(() => breakpoints.Offered.FirstOrDefault() == type, $"{type} offered first for \"{typed}\", not [{string.Join(", ", breakpoints.Offered.Take(5))}]");
+        Ui.Press(window, "Enter");
+        ExceptionBreakpoint added = Assert.IsType<ExceptionBreakpoint>(breakpoints.Chosen);
+        Assert.Equal(type, added.Type);
+        return added;
+    }
+
+    /// <summary>A breakpoint's row in the Breakpoints window, by how it is named there.</summary>
+    private static ListBoxItem Row(BreakpointsWindow breakpoints, string location) =>
+        breakpoints.GetVisualDescendants().OfType<ListBoxItem>().First(i => (i.Tag as Breakpoint)?.Location == location);
+
+    /// <summary>One of Rider's "Suspend If" boxes for the chosen exception breakpoint: its row's label and its own.</summary>
+    private static CheckBox Scenario(BreakpointsWindow breakpoints, string row, string box)
+    {
+        TextBlock label = breakpoints.GetVisualDescendants().OfType<TextBlock>().First(t => t.Text == row && t.IsEffectivelyVisible);
+        Grid grid = (Grid)label.Parent!;
+        StackPanel boxes = grid.Children.OfType<StackPanel>().First(p => Grid.GetRow(p) == Grid.GetRow(label));
+        return boxes.Children.OfType<CheckBox>().First(c => (string?)c.Content == box);
+    }
+
+    private static Button Button(Control within, string content) =>
+        within.GetVisualDescendants().OfType<Button>().First(b => (b.Content as string) == content && b.IsEffectivelyVisible);
+
+    private static void Click(MainWindow window, Control control)
+    {
+        Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)
+            ?? throw new InvalidOperationException("The control is not in the window");
+        window.MouseDown(at, MouseButton.Left);
+        window.MouseUp(at, MouseButton.Left);
+        Ui.Settle();
+    }
+
+    /// <summary>The exception the stop shown names, and the line it shows it at.</summary>
+    private static (int Line, string Text)? Thrown(CodeEditor editor) =>
+        editor.LineAnnotations.FirstOrDefault(a => a.Kind == LineAnnotationKind.Exception) is { Text: not null } thrown ? (thrown.Line, thrown.Text) : null;
 
     [AvaloniaFact]
     public void A_value_set_in_the_variables_view_is_the_one_the_program_goes_on_with()

@@ -218,7 +218,7 @@ public partial class MainWindow
             }
             ShowBreakpointPopup(editing);
         }, NeedsFile, ("Run", 2, 2));
-        Add(A.ViewBreakpoints, "View Breakpoints...", "Debug", _ => ShowBreakpoints(null), menu: ("Run", 2, 3));
+        Add(A.ViewBreakpoints, "View Breakpoints and Exceptions...", "Debug", _ => ShowBreakpoints(null), menu: ("Run", 2, 3));
 
         string? Unbuildable(ActionContext _) => folder is null ? "Nothing to build: no folder is open" : IsBuilding ? "Another build is running" : null;
 

@@ -30,6 +30,10 @@ public sealed class DebugSession
     private readonly BreakpointStore breakpoints;
     private readonly BuiltLines lines;
     private readonly Dictionary<string, string> sent = new(StringComparer.Ordinal);
+
+    /// <summary>The exception breakpoints as last sent.</summary>
+    private string? exceptionsSent;
+
     private readonly Dictionary<int, LineBreakpoint> byId = [];
     private readonly TaskCompletionSource initialized = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Queue<string> errors = new();
@@ -119,6 +123,7 @@ public sealed class DebugSession
             UiThread.Post(() => OnEvent(name, copy));
         };
         breakpoints.Changed += OnBreakpointsChanged;
+        breakpoints.ExceptionsChanged += OnExceptionsChanged;
     }
 
     public event EventHandler? StateChanged;
@@ -155,8 +160,8 @@ public sealed class DebugSession
     public int AdapterProcessId => adapter.Id;
 
     /// <summary>Starts the adapter and launches a plan's program under it (a .dll under dotnet, or an
-    /// executable), with the breakpoints the store has, stopping on exceptions the user's code leaves
-    /// unhandled, as Rider does by default. What the program writes, and the debugger's own words ("console"), go to
+    /// executable), with the breakpoints the store has, its exception breakpoints among them (Rider's "Any exception" stops
+    /// on what the user's code leaves unhandled). What the program writes, and the debugger's own words ("console"), go to
     /// <paramref name="output"/> on the connection's thread, in order. With <paramref name="runInTerminal"/> the program
     /// runs in the terminal it starts, which the adapter asks for (runInTerminal), and its output goes there.</summary>
     public static Task<DebugSession> LaunchAsync(Run.LaunchPlan plan, BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output,
@@ -213,7 +218,7 @@ public sealed class DebugSession
             {
                 await session.SendBreakpointsAsync(path);
             }
-            await session.connection.RequestAsync("setExceptionBreakpoints", new SetExceptionBreakpointsArguments(["user-unhandled"]));
+            await session.SendExceptionBreakpointsAsync();
             await session.connection.RequestAsync("configurationDone", new DapEmpty());
             session.SetState(DebugState.Running);
             return session;
@@ -516,8 +521,10 @@ public sealed class DebugSession
     /// the debugger refuses a line with no code. The adapter keeps those sent as they were, hit counts and all.</summary>
     private async Task SendBreakpointsAsync(string path)
     {
-        List<LineBreakpoint> built = [.. breakpoints.In(path).Where(b => b.Enabled && lines.IsBuilt(path, b.Line))];
-        List<LineBreakpoint> unbuilt = [.. breakpoints.In(path).Where(b => b.Enabled && !lines.IsBuilt(path, b.Line))];
+        // Muted, none is sent and each is as no debugger has said, though Run to Cursor's place still is.
+        IEnumerable<LineBreakpoint> sending = breakpoints.Muted ? [] : breakpoints.In(path).Where(b => b.Enabled);
+        List<LineBreakpoint> built = [.. sending.Where(b => lines.IsBuilt(path, b.Line))];
+        List<LineBreakpoint> unbuilt = [.. sending.Where(b => !lines.IsBuilt(path, b.Line))];
         List<DapSourceBreakpoint> requests = [.. built.Select(b => new DapSourceBreakpoint(lines.ToBuilt(path, b.Line) + 1, Condition: b.Condition, HitCondition: b.HitCondition, LogMessage: b.LogMessage, Suspend: b.Suspend))];
         if (runToCursor is { } target && target.Path == path && requests.All(r => r.Line != target.Line + 1))
         {
@@ -537,6 +544,11 @@ public sealed class DebugSession
                 byId[id] = built[i];
             }
         }
+        if (breakpoints.Muted)
+        {
+            breakpoints.Report(path, [.. breakpoints.In(path).Select(_ => (BreakpointStatus.Unknown, (string?)null, (int?)null))], breakpoints.In(path));
+            return;
+        }
         breakpoints.Report(path,
             [.. response.Breakpoints.Take(built.Count).Select(Status), .. unbuilt.Select(_ => (BreakpointStatus.Invalid, (string?)NotBuilt, (int?)null))],
             [.. built.Take(response.Breakpoints.Count), .. unbuilt]);
@@ -553,9 +565,46 @@ public sealed class DebugSession
     }
 
     /// <summary>What a file's breakpoints ask of the debugger, at their built lines, to tell a change worth sending.</summary>
-    private string Signature(string path) =>
+    private string Signature(string path) => breakpoints.Muted ? "muted" :
         string.Join(';', breakpoints.In(path).Where(b => b.Enabled).Select(b =>
             $"{(lines.IsBuilt(path, b.Line) ? $"{lines.ToBuilt(path, b.Line)}" : $"new {b.Line}")}|{b.Condition}|{b.HitCondition}|{b.LogMessage}|{b.Suspend}"));
+
+    /// <summary>The exception breakpoints that are on, as the protocol's exception options; none while muted, so no exception
+    /// stops the program, not even one left unhandled.</summary>
+    private List<(ExceptionBreakpoint Breakpoint, DapExceptionOptions Option)> ExceptionOptions() => breakpoints.Muted ? [] :
+        [.. breakpoints.Exceptions.Where(e => e.Enabled).Select(e => (e, new DapExceptionOptions(
+            e.Type is { } type ? [new DapExceptionPathSegment(["CLR"]), new DapExceptionPathSegment([type])] : [new DapExceptionPathSegment(["CLR"])],
+            e.Scenarios.HasFlag(ExceptionScenarios.HandledInUserCode) ? "always" : e.Scenarios.HasFlag(ExceptionScenarios.HandledInExternalCode) ? "userUnhandled" : "unhandled")
+        {
+            Scenarios = ExceptionScenarioNames.Of(e.Scenarios),
+            Condition = e.Condition,
+            HitCondition = e.HitCondition,
+            LogMessage = e.LogMessage,
+            Suspend = e.Suspend,
+        }))];
+
+    /// <summary>Sends the exception breakpoints, and records what the debugger made of each.</summary>
+    private async Task SendExceptionBreakpointsAsync()
+    {
+        List<(ExceptionBreakpoint Breakpoint, DapExceptionOptions Option)> sending = ExceptionOptions();
+        exceptionsSent = ExceptionSignature();
+        SetExceptionBreakpointsResponse response = await connection.RequestAsync<SetExceptionBreakpointsResponse>(
+            "setExceptionBreakpoints", new SetExceptionBreakpointsArguments([], [], [.. sending.Select(s => s.Option)]));
+        IReadOnlyList<DapBreakpoint> said = response.Breakpoints ?? [];
+        breakpoints.ReportExceptions([.. said.Select(b => (b.Verified ? BreakpointStatus.Bound : BreakpointStatus.Invalid, b.Message))], [.. sending.Select(s => s.Breakpoint)]);
+    }
+
+    private void OnExceptionsChanged(object? sender, EventArgs e)
+    {
+        // A report from the debugger raises it too: only what changes the request goes back to it.
+        if (State is DebugState.Running or DebugState.Paused && disconnected is null && exceptionsSent != ExceptionSignature())
+        {
+            _ = SendExceptionBreakpointsAsync();
+        }
+    }
+
+    private string ExceptionSignature() => string.Join(';', ExceptionOptions().Select(s =>
+        $"{s.Breakpoint.Type}|{string.Join(',', s.Option.Scenarios ?? [])}|{s.Option.Condition}|{s.Option.HitCondition}|{s.Option.LogMessage}|{s.Option.Suspend}"));
 
     private void OnEvent(string name, JsonElementCopy body)
     {
@@ -635,6 +684,7 @@ public sealed class DebugSession
         ExitCode = exitCode ?? ExitCode ?? (Terminal?.Ended is { IsCompletedSuccessfully: true } inTerminal ? inTerminal.Result : null);
         IdeLog.Write(IdeLog.Debugger, $"[{connection.Name}] Ended debugging {Program}{(ExitCode is { } code ? $": exit code {code}" : string.Empty)}{(Failure is { } failed ? $": {failed}" : string.Empty)}");
         breakpoints.Changed -= OnBreakpointsChanged;
+        breakpoints.ExceptionsChanged -= OnExceptionsChanged;
         breakpoints.ResetStatus();
         SetState(DebugState.Ended);
         _ = connection.DisposeAsync();

@@ -15,7 +15,7 @@ using Passenger.Editor;
 namespace Passenger.App.ToolWindows;
 
 /// <summary>The Debug tool window, laid out as Rider's: a toolbar down the left (rerun, resume,
-/// pause, stop), the stepping actions across the top beside the Debugger and Console tabs, and under
+/// pause, stop, then View Breakpoints and Mute Breakpoints), the stepping actions across the top beside the Debugger and Console tabs, and under
 /// Debugger the frames of the chosen thread on the left with the variables of the chosen frame on the
 /// right, an expression to evaluate or watch above them.</summary>
 public sealed class DebugView : DockPanel
@@ -28,6 +28,7 @@ public sealed class DebugView : DockPanel
     private readonly ToggleButton debuggerTab;
     private readonly ToggleButton consoleTab;
     private readonly Dictionary<string, Button> tools = [];
+    private readonly ToggleButton mute;
     private readonly TextBlock placeholder;
     private readonly DockPanel consolePane;
     private bool showingFrames;
@@ -141,6 +142,13 @@ public sealed class DebugView : DockPanel
         Border topBar = new() { [DockProperty] = Dock.Top, Height = 32, BorderThickness = new Thickness(0, 0, 0, 1), Child = top };
         topBar.Bind(Border.BorderBrushProperty, topBar.GetResourceObservable("Passenger.Divider"));
 
+        // Rider's toggle under the program's own buttons: pressed while every breakpoint is muted.
+        mute = new ToggleButton { Classes = { "tool" }, Content = new PathIcon() };
+        string? muteKeys = AppActions.Keymap().ShortcutsFor(AppActions.MuteBreakpoints).FirstOrDefault()?.Display();
+        ToolTip.SetTip(mute, muteKeys is null ? "Mute Breakpoints" : $"Mute Breakpoints ({muteKeys})");
+        ((PathIcon)mute.Content).Bind(PathIcon.DataProperty, mute.GetResourceObservable("Icon.MuteBreakpoints"));
+        mute.Click += (_, _) => ActionRequested?.Invoke(this, AppActions.MuteBreakpoints);
+
         StackPanel left = new()
         {
             Spacing = 2,
@@ -152,6 +160,9 @@ public sealed class DebugView : DockPanel
                 Tool(AppActions.Resume, "Icon.Resume", "Resume Program"),
                 Tool(AppActions.Pause, "Icon.Pause", "Pause Program"),
                 Tool(AppActions.Stop, "Icon.Stop", "Stop"),
+                new Border { Height = 8 },
+                Tool(AppActions.ViewBreakpoints, "Icon.Breakpoints", "View Breakpoints and Exceptions"),
+                mute,
             },
         };
         Border leftBar = new() { [DockProperty] = Dock.Left, Width = 36, BorderThickness = new Thickness(0, 0, 1, 0), Child = left };
@@ -246,6 +257,12 @@ public sealed class DebugView : DockPanel
         evaluate.IsEnabled = paused;
         placeholder.IsVisible = state == DebugState.Ended && Frames.Count == 0;
     }
+
+    /// <summary>Shows Mute Breakpoints pressed while the breakpoints are muted.</summary>
+    public void ShowMuted(bool muted) => mute.IsChecked = muted;
+
+    /// <summary>Whether Mute Breakpoints shows pressed.</summary>
+    public bool ShowsMuted => mute.IsChecked == true;
 
     /// <summary>Clears what the last session left, when a new one starts.</summary>
     public void Clear()

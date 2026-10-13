@@ -409,41 +409,73 @@ public sealed partial class PassengerTools(MainWindow window)
     // The debugger
 
     [McpServerTool(Name = "breakpoint_set", Title = "Set a breakpoint", Destructive = false), Description(
-        "Sets a line breakpoint, with a condition (a C# bool expression) or a hit condition (\"==3\", \">=2\", \"%2\") if given, or changes " +
-        "those of the one already there. A logMessage (\"count is {count}\") is written to the program's output on each hit; with " +
-        "suspend false the breakpoint is a tracepoint and the program runs on. Bound at once while debugging.")]
+        "Sets a line breakpoint at a path and line, or a CLR exception breakpoint on an exception type (its full name, as " +
+        "System.InvalidOperationException, or \"Any exception\"), with a condition (a C# bool expression) or a hit condition " +
+        "(\"==3\", \">=2\", \"%2\") if given, or changes those of the one already there. A logMessage (\"count is {count}\") is written to " +
+        "the program's output on each hit; with suspend false the breakpoint is a tracepoint and the program runs on. An exception " +
+        "breakpoint stops in the scenarios given, Rider's Suspend If: thrownInUserCode, thrownInExternalCode, handledInUserCode, " +
+        "handledInExternalCode, unhandled (a new one on a type in all of them, as Rider sets it). Bound at once while debugging.")]
     public Task<IReadOnlyList<BreakpointInfo>> SetBreakpoint(
-        string path,
-        int line,
+        string? path = null,
+        int? line = null,
+        [Description("An exception type's full name, or \"Any exception\", for an exception breakpoint in place of a path and line")] string? exception = null,
         string? condition = null,
         string? hitCondition = null,
         [Description("Written on each hit, its {expressions} evaluated there")] string? logMessage = null,
-        [Description("Whether a hit stops the program")] bool suspend = true, CancellationToken cancel = default) => OnUi(cancel, () =>
+        [Description("Whether a hit stops the program")] bool suspend = true,
+        [Description("An exception breakpoint's scenarios: where the exception was thrown (thrownInUserCode, thrownInExternalCode) and how " +
+            "it is handled (handledInUserCode, handledInExternalCode, unhandled); it stops when one of each holds")] IReadOnlyList<string>? scenarios = null,
+        CancellationToken cancel = default) => OnUi(cancel, () =>
     {
-        string full = Resolve(path);
         BreakpointStore store = window.Debugger.Breakpoints;
-        if (store.In(full).FirstOrDefault(b => b.Line == line - 1) is not { } breakpoint)
+        if (exception is { Length: > 0 })
         {
-            store.Toggle(full, line - 1);
-            breakpoint = store.In(full).First(b => b.Line == line - 1);
+            ExceptionBreakpoint breakpoint = store.FindException(exception) ?? store.AddException(exception);
+            if (scenarios is not null)
+            {
+                store.SetScenarios(breakpoint, ExceptionScenarioNames.Parse(scenarios));
+            }
+            store.Update(breakpoint, enabled: true, suspend, condition, hitCondition, logMessage);
+            return Task.FromResult(ExceptionBreakpoints());
         }
-        store.Update(breakpoint, enabled: true, suspend, condition, hitCondition, logMessage);
+        (string full, int at) = LinePlace(path, line);
+        if (store.In(full).FirstOrDefault(b => b.Line == at) is not { } set)
+        {
+            store.Toggle(full, at);
+            set = store.In(full).First(b => b.Line == at);
+        }
+        store.Update(set, enabled: true, suspend, condition, hitCondition, logMessage);
         return Task.FromResult(Breakpoints(full));
     });
 
-    [McpServerTool(Name = "breakpoint_remove", Title = "Remove a breakpoint", Destructive = false), Description("Removes the breakpoint on a line.")]
-    public Task<IReadOnlyList<BreakpointInfo>> RemoveBreakpoint(string path, int line, CancellationToken cancel = default) => OnUi(cancel, () =>
+    [McpServerTool(Name = "breakpoint_remove", Title = "Remove a breakpoint", Destructive = false), Description(
+        "Removes the breakpoint on a line, or the exception breakpoint on an exception type (\"Any exception\" is never removed: " +
+        "breakpoint_set turns it off with its scenarios, or the person's Breakpoints window).")]
+    public Task<IReadOnlyList<BreakpointInfo>> RemoveBreakpoint(string? path = null, int? line = null,
+        [Description("An exception type's full name, in place of a path and line")] string? exception = null, CancellationToken cancel = default) => OnUi(cancel, () =>
     {
-        string full = Resolve(path);
-        if (window.Debugger.Breakpoints.In(full).FirstOrDefault(b => b.Line == line - 1) is { } breakpoint)
+        BreakpointStore store = window.Debugger.Breakpoints;
+        if (exception is { Length: > 0 })
         {
-            window.Debugger.Breakpoints.Remove(breakpoint);
+            if (store.FindException(exception) is { IsAny: false } breakpoint)
+            {
+                store.Remove(breakpoint);
+            }
+            return Task.FromResult(ExceptionBreakpoints());
+        }
+        (string full, int at) = LinePlace(path, line);
+        if (store.In(full).FirstOrDefault(b => b.Line == at) is { } set)
+        {
+            store.Remove(set);
         }
         return Task.FromResult(Breakpoints(full));
     });
 
-    [McpServerTool(Name = "breakpoints", Title = "Every breakpoint", ReadOnly = true), Description("Every breakpoint, and whether the running debugger bound it.")]
-    public Task<IReadOnlyList<BreakpointInfo>> ListBreakpoints(CancellationToken cancel = default) => OnUi(cancel, () => Task.FromResult(Breakpoints(null)));
+    [McpServerTool(Name = "breakpoints", Title = "Every breakpoint", ReadOnly = true), Description(
+        "Every breakpoint: the line breakpoints, then the CLR exception breakpoints (\"Any exception\" among them) with their scenarios, " +
+        "each with whether the running debugger took it. While Mute Breakpoints (ide_action app.debug.muteBreakpoints) is on, none stops.")]
+    public Task<IReadOnlyList<BreakpointInfo>> ListBreakpoints(CancellationToken cancel = default) =>
+        OnUi(cancel, () => Task.FromResult<IReadOnlyList<BreakpointInfo>>([.. Breakpoints(null), .. ExceptionBreakpoints()]));
 
     [McpServerTool(Name = "debug_start", Title = "Debug a configuration", Destructive = true), Description(
         "Builds and launches a run configuration (the chosen one if none is named) under the debugger, as Debug (Alt+F5) does, then " +
@@ -716,6 +748,15 @@ public sealed partial class PassengerTools(MainWindow window)
         [.. (path is null ? window.Debugger.Breakpoints.All : window.Debugger.Breakpoints.In(path))
             .Select(b => new BreakpointInfo(Relative(b.Path), b.Line + 1, b.Enabled, b.Status.ToString().ToLowerInvariant(), b.Condition, b.HitCondition, b.LogMessage, b.Suspend, b.Message))];
 
+    private IReadOnlyList<BreakpointInfo> ExceptionBreakpoints() =>
+        [.. window.Debugger.Breakpoints.Exceptions.Select(b => new BreakpointInfo(null, null, b.Enabled, b.Status.ToString().ToLowerInvariant(), b.Condition, b.HitCondition,
+            b.LogMessage, b.Suspend, b.Message, b.Location, ExceptionScenarioNames.Of(b.Scenarios)))];
+
+    /// <summary>A line breakpoint's file and line from zero, as an agent names them.</summary>
+    private (string Path, int Line) LinePlace(string? path, int? line) => path is { Length: > 0 } && line is int at
+        ? (Resolve(path), at - 1)
+        : throw new InvalidOperationException("Name a path and a line for a line breakpoint, or an exception type for an exception breakpoint");
+
     private async Task<(LspDocument Lsp, IReadOnlyList<CodeAction> Actions)> Actions(string path, int line, int column, int? endLine, int? endColumn, CancellationToken cancel)
     {
         (OpenDocument document, LspDocument lsp) = await Code(path, cancel);
@@ -930,7 +971,9 @@ public sealed record BuildResult(bool Succeeded, string Outcome, int Errors, int
 
 public sealed record RunResult(bool StillRunning, int? ExitCode, string Status, string Output);
 
-public sealed record BreakpointInfo(string Path, int Line, bool Enabled, string Status, string? Condition, string? HitCondition, string? LogMessage, bool Suspend, string? Message);
+/// <summary>A breakpoint as an agent reads it: a line breakpoint's path and line, or an exception breakpoint's type and scenarios.</summary>
+public sealed record BreakpointInfo(string? Path, int? Line, bool Enabled, string Status, string? Condition, string? HitCondition, string? LogMessage, bool Suspend,
+    string? Message, string? Exception = null, IReadOnlyList<string>? Scenarios = null);
 
 public sealed record VariableInfo(string Name, string Value, string? Type, int Reference);
 

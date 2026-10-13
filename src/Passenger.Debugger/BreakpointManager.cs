@@ -102,6 +102,15 @@ public class BreakpointManager
         }
     }
 
+    /// <summary>An id for a breakpoint kept elsewhere (an exception breakpoint), never one a line or function breakpoint has.</summary>
+    public int NextId()
+    {
+        lock (_lock)
+        {
+            return _nextBreakpointId++;
+        }
+    }
+
     public BreakpointInfo CreateFunctionBreakpoint(string functionName, string? condition = null, string? hitCondition = null, string? logMessage = null)
     {
         lock (_lock)

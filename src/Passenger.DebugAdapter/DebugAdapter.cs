@@ -76,7 +76,7 @@ public sealed class DebugAdapter
         connection.Handle<DapEmpty>("configurationDone", _ => Locked(() => debugger.ConfigurationDone()));
         connection.Handle<SetBreakpointsArguments, SetBreakpointsResponse>("setBreakpoints", SetBreakpoints);
         connection.Handle<SetFunctionBreakpointsArguments, SetBreakpointsResponse>("setFunctionBreakpoints", SetFunctionBreakpoints);
-        connection.Handle<SetExceptionBreakpointsArguments>("setExceptionBreakpoints", SetExceptionBreakpoints);
+        connection.Handle<SetExceptionBreakpointsArguments, SetExceptionBreakpointsResponse>("setExceptionBreakpoints", SetExceptionBreakpoints);
         connection.Handle<DapEmpty, ThreadsResponse>("threads", async _ =>
         {
             List<(int id, string name)> threads = await Locked(() => debugger.GetThreads());
@@ -230,6 +230,7 @@ public sealed class DebugAdapter
             SupportsTerminateRequest = true,
             SupportsExceptionInfoRequest = true,
             SupportsExceptionFilterOptions = true,
+            SupportsExceptionOptions = true,
             SupportsStepInTargetsRequest = false,
             SupportsGotoTargetsRequest = true,
             ExceptionBreakpointFilters =
@@ -315,7 +316,7 @@ public sealed class DebugAdapter
         return new SetBreakpointsResponse([.. breakpoints.Select(b => new DapBreakpoint { Id = b.Id, Verified = b.Verified, Message = b.Message, Reason = b.Refused ? "failed" : null })]);
     }
 
-    private async Task SetExceptionBreakpoints(SetExceptionBreakpointsArguments arguments)
+    private async Task<SetExceptionBreakpointsResponse> SetExceptionBreakpoints(SetExceptionBreakpointsArguments arguments)
     {
         List<ExceptionBreakpointRequest> requests = [];
         foreach (string filter in arguments.Filters ?? [])
@@ -326,8 +327,14 @@ public sealed class DebugAdapter
         {
             requests.Add(new ExceptionBreakpointRequest(ExceptionFilter(option.FilterId), option.Condition));
         }
-        log?.Invoke($"Exception breakpoints: {string.Join(", ", requests)}");
-        await Locked(() => debugger.SetExceptionBreakpoints(requests));
+        List<ExceptionRuleRequest>? rules = arguments.ExceptionOptions?.Select(Rule).ToList();
+        log?.Invoke($"Exception breakpoints: {string.Join(", ", requests)}{(rules is null ? string.Empty : $"; {string.Join(", ", rules)}")}");
+        IReadOnlyList<ExceptionRule> made = await Locked(() => debugger.SetExceptionBreakpoints(requests, rules));
+        return new SetExceptionBreakpointsResponse(
+        [
+            .. requests.Select(_ => new DapBreakpoint { Verified = true }),
+            .. made.Select(rule => new DapBreakpoint { Id = rule.Id, Verified = rule.Refused is null, Message = rule.Refused, Reason = rule.Refused is null ? null : "failed" }),
+        ]);
 
         static ExceptionBreakpointFilter ExceptionFilter(string filter) => filter switch
         {
@@ -335,6 +342,25 @@ public sealed class DebugAdapter
             "user-unhandled" => ExceptionBreakpointFilter.UserUnhandled,
             _ => throw new InvalidOperationException($"Unknown exception breakpoint filter: '{filter}'"),
         };
+
+        // The path is CLR, then the types (none: every exception); Rider's scenarios, when given, stand for the break mode.
+        static ExceptionRuleRequest Rule(DapExceptionOptions option)
+        {
+            IReadOnlyList<DapExceptionPathSegment> path = option.Path ?? [];
+            if (path.Count > 0 && !path[0].Names.Contains("CLR"))
+            {
+                throw new InvalidOperationException($"Exception options are for CLR exceptions, not {string.Join(", ", path[0].Names)}");
+            }
+            DapExceptionPathSegment? types = path.Count > 1 ? path[1] : null;
+            Passenger.Dap.ExceptionScenarios scenarios = option.Scenarios is { } named
+                ? ExceptionScenarioNames.Parse(named)
+                : ExceptionScenarioNames.OfBreakMode(option.BreakMode);
+            return new ExceptionRuleRequest([.. types?.Names ?? []], types?.Negate ?? false, scenarios,
+                string.IsNullOrWhiteSpace(option.Condition) ? null : option.Condition,
+                string.IsNullOrWhiteSpace(option.HitCondition) ? null : option.HitCondition,
+                string.IsNullOrEmpty(option.LogMessage) ? null : option.LogMessage,
+                option.Suspend ?? string.IsNullOrEmpty(option.LogMessage));
+        }
     }
 
     private async Task<ExceptionInfoResponse> ExceptionInfo(ThreadArguments arguments)

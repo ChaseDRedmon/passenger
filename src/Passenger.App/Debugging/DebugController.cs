@@ -62,6 +62,7 @@ public sealed class DebugController
             }
         };
         Breakpoints.Changed += (_, path) => UpdateMarks(path);
+        Breakpoints.ExceptionsChanged += (_, _) => view.ShowMuted(Breakpoints.Muted);
         view.ActionRequested += (_, action) => ActionRequested?.Invoke(this, action);
         view.FrameChosen += (_, chosen) => _ = ChooseFrame(chosen, navigate: true);
         view.ThreadChosen += (_, thread) => _ = ChooseThread(thread.Id);
@@ -241,6 +242,12 @@ public sealed class DebugController
         Add(AppActions.Evaluate, "Evaluate Expression...", c => view.FocusEvaluate(c.Symbol ?? string.Empty), _ => NotPaused(), new("Run", 1, 8));
         Add(AppActions.AddToWatches, "Add to Watches", c => _ = Evaluate(c.Symbol!, watch: true),
             c => NotPaused() ?? (c.Symbol is { Length: > 0 } ? null : "No expression is at the caret"), null);
+        // Rider's toggle: every breakpoint stays as it is, and none stops the program until it is chosen again.
+        actions.Add(new IdeAction(AppActions.MuteBreakpoints, "Mute Breakpoints", "Debug", _ => Breakpoints.SetMuted(!Breakpoints.Muted))
+        {
+            Menus = [new("Run", 2, 4)],
+            IsChecked = _ => Breakpoints.Muted,
+        });
 
         void Add(string id, string title, Action<ActionContext> run, Func<ActionContext, string?> whyNot, MenuPlace? menu) =>
             actions.Add(new IdeAction(id, title, "Debug", run) { WhyNot = whyNot, Menus = menu is null ? [] : [menu] });
@@ -702,13 +709,16 @@ public sealed class DebugController
     private void UpdateMarks(OpenDocument document)
     {
         bool debugging = IsDebugging;
+        // Muted, a breakpoint shows as Rider's muted ones do, grey whatever the debugger said of it.
+        bool muted = Breakpoints.Muted;
         List<LineMark> marks = [.. Breakpoints.In(document.Path).Select(b => new LineMark(b.Line, b switch
         {
             { Enabled: false } => LineMarkKind.BreakpointDisabled,
+            _ when muted => LineMarkKind.Breakpoint,
             { Status: BreakpointStatus.Bound } when debugging => LineMarkKind.BreakpointBound,
             { Status: BreakpointStatus.Invalid } when debugging => LineMarkKind.BreakpointInvalid,
             _ => LineMarkKind.Breakpoint,
-        }, Conditional: b.Condition is not null || b.HitCondition is not null, Tracepoint: !b.Suspend))];
+        }, Conditional: b.Condition is not null || b.HitCondition is not null, Tracepoint: !b.Suspend, Muted: muted))];
         if (executionPoint is { } point && point.Path == document.Path)
         {
             marks.Add(new LineMark(Current(point.Path, point.Line), LineMarkKind.ExecutionPoint));

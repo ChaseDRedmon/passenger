@@ -110,6 +110,33 @@ public sealed class McpTests : IDisposable
     }
 
     [Fact]
+    public async Task An_agent_sets_an_exception_breakpoint_on_a_type_and_the_program_stops_where_that_type_is_thrown()
+    {
+        Write("Program.cs", "for (int turn = 1; turn <= 2; turn++)\n{\n    try { throw new ArgumentException(\"argument\"); } catch (ArgumentException) { }\n"
+            + "    try { throw new InvalidOperationException($\"operation {turn}\"); } catch (InvalidOperationException) { }\n}\nConsole.WriteLine(\"done\");\n");
+        await using McpClient client = await Start(["--mcp", folder]);
+        await Call(client, "breakpoint_set", new() { ["exception"] = "System.InvalidOperationException" });
+        // Listed with Rider's "Any exception", the new one in every scenario as Rider sets one on a type.
+        JsonElement[] exceptions = [.. (await Call(client, "breakpoints")).EnumerateArray()
+            .Where(b => b.TryGetProperty("exception", out JsonElement type) && type.ValueKind == JsonValueKind.String)];
+        Assert.Equal(["Any exception", "System.InvalidOperationException"], exceptions.Select(b => b.GetProperty("exception").GetString()));
+        Assert.Equal(["thrownInUserCode", "thrownInExternalCode", "handledInUserCode", "handledInExternalCode", "unhandled"],
+            exceptions[1].GetProperty("scenarios").EnumerateArray().Select(s => s.GetString()));
+
+        // The argument exception passes; the stop is the first turn's, at the line that throws the type named.
+        JsonElement stop = await Call(client, "debug_start");
+        Assert.Equal("exception", stop.GetProperty("reason").GetString());
+        Assert.StartsWith("System.InvalidOperationException: operation 1", stop.GetProperty("exception").GetString(), StringComparison.Ordinal);
+        Assert.StartsWith("Program.cs:4:", stop.GetProperty("location").GetString(), StringComparison.Ordinal);
+
+        // Removed while paused, it lets the second turn's pass: the program runs to its end.
+        await Call(client, "breakpoint_remove", new() { ["exception"] = "System.InvalidOperationException" });
+        stop = await Call(client, "debug_continue");
+        Assert.Equal("not debugging", stop.GetProperty("state").GetString());
+        Assert.Contains("done", (await Call(client, "debug_output")).GetString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task An_agent_reads_and_commits_changes_and_runs_a_command_in_the_ides_terminal()
     {
         string repository = TestFolders.Create("mcp-git-");

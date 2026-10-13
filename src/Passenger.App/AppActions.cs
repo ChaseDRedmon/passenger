@@ -130,6 +130,7 @@ public static class AppActions
     // The debugger's: run by the Debugger on the active editor and the session.
     public const string ToggleBreakpoint = "app.debug.toggleBreakpoint";
     public const string ToggleBreakpointEnabled = "app.debug.toggleBreakpointEnabled";
+    public const string MuteBreakpoints = "app.debug.muteBreakpoints";
     public const string Resume = "app.debug.resume";
     public const string Pause = "app.debug.pause";
     public const string StepOver = "app.debug.stepOver";
@@ -339,6 +340,7 @@ public static class AppActions
                 .Bind(ShowContextMenu, "shift F10")
                 .Bind(EditBreakpoint, "alt F9")
                 .Bind(ViewBreakpoints, "meta alt B")
+                .Bind(MuteBreakpoints, "meta alt shift F10")
                 .Bind(RunTests, "meta U , R", "meta U , meta R")
                 .Bind(DebugTests, "meta U , D", "meta U , meta D")
                 .Bind(RerunTests, "meta U , U", "meta U , meta U")
@@ -451,6 +453,7 @@ public static class AppActions
             .Bind(ShowContextMenu, "shift F10", "CONTEXT_MENU")
             .Bind(EditBreakpoint, "alt F9")
             .Bind(ViewBreakpoints, "control alt B")
+            .Bind(MuteBreakpoints, "control alt shift F10")
             .Bind(RunTests, "control U , R", "control U , control R")
             .Bind(DebugTests, "control U , D", "control U , control D")
             .Bind(RerunTests, "control U , U", "control U , control U")

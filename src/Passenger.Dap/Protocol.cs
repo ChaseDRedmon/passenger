@@ -34,6 +34,7 @@ public sealed record DapCapabilities
     public bool? SupportsTerminateRequest { get; init; }
     public bool? SupportsExceptionInfoRequest { get; init; }
     public bool? SupportsExceptionFilterOptions { get; init; }
+    public bool? SupportsExceptionOptions { get; init; }
     public bool? SupportsStepInTargetsRequest { get; init; }
     public bool? SupportsGotoTargetsRequest { get; init; }
     public IReadOnlyList<DapExceptionFilter>? ExceptionBreakpointFilters { get; init; }
@@ -99,9 +100,91 @@ public sealed record DapFunctionBreakpoint(string Name, string? Condition = null
 
 public sealed record SetFunctionBreakpointsArguments(IReadOnlyList<DapFunctionBreakpoint>? Breakpoints);
 
-public sealed record SetExceptionBreakpointsArguments(IReadOnlyList<string>? Filters, IReadOnlyList<DapExceptionFilterOptions>? FilterOptions = null);
+/// <summary>The exception breakpoints: filters, filters with a condition (a list of types, ! before it for every type but
+/// those), and exception options, one for each of Rider's CLR exception breakpoints. A client that sends exception options,
+/// even none, has an unhandled exception stop only where one of them says so; without, every unhandled exception stops.</summary>
+public sealed record SetExceptionBreakpointsArguments(
+    IReadOnlyList<string>? Filters, IReadOnlyList<DapExceptionFilterOptions>? FilterOptions = null, IReadOnlyList<DapExceptionOptions>? ExceptionOptions = null);
 
 public sealed record DapExceptionFilterOptions(string FilterId, string? Condition = null);
+
+/// <summary>Exceptions by their path ("CLR", then the types' full names; "CLR" alone is every exception) and when to stop
+/// (never, always, unhandled or userUnhandled). The rest is Passenger's own: Rider's scenarios in place of the break mode,
+/// and a condition, hit count and log message as a line breakpoint has.</summary>
+public sealed record DapExceptionOptions(IReadOnlyList<DapExceptionPathSegment>? Path, string BreakMode)
+{
+    /// <summary>Where the exception was thrown and where it is handled, by <see cref="ExceptionScenarioNames"/>.</summary>
+    public IReadOnlyList<string>? Scenarios { get; init; }
+
+    public string? Condition { get; init; }
+    public string? HitCondition { get; init; }
+    public string? LogMessage { get; init; }
+
+    /// <summary>Whether a hit stops the program, as a line breakpoint's <c>suspend</c>.</summary>
+    public bool? Suspend { get; init; }
+}
+
+public sealed record DapExceptionPathSegment(IReadOnlyList<string> Names, bool? Negate = null);
+
+/// <summary>What the debugger made of each filter, filter option and exception option, in that order.</summary>
+public sealed record SetExceptionBreakpointsResponse(IReadOnlyList<DapBreakpoint>? Breakpoints = null);
+
+/// <summary>Rider's "Suspend If" for a CLR exception breakpoint: where the exception was thrown (the user's code or code
+/// outside it) and where it is handled (the user's code, code outside it, or nowhere). A breakpoint stops when one of
+/// each holds.</summary>
+[Flags]
+public enum ExceptionScenarios
+{
+    None = 0,
+    ThrownInUserCode = 1,
+    ThrownInExternalCode = 2,
+    HandledInUserCode = 4,
+    HandledInExternalCode = 8,
+    Unhandled = 16,
+    Thrown = ThrownInUserCode | ThrownInExternalCode,
+    All = Thrown | HandledInUserCode | HandledInExternalCode | Unhandled,
+}
+
+/// <summary>The scenarios as the protocol and an agent name them.</summary>
+public static class ExceptionScenarioNames
+{
+    private static readonly (ExceptionScenarios Scenario, string Name)[] Names =
+    [
+        (ExceptionScenarios.ThrownInUserCode, "thrownInUserCode"),
+        (ExceptionScenarios.ThrownInExternalCode, "thrownInExternalCode"),
+        (ExceptionScenarios.HandledInUserCode, "handledInUserCode"),
+        (ExceptionScenarios.HandledInExternalCode, "handledInExternalCode"),
+        (ExceptionScenarios.Unhandled, "unhandled"),
+    ];
+
+    public static IReadOnlyList<string> All { get; } = [.. Names.Select(n => n.Name)];
+
+    public static IReadOnlyList<string> Of(ExceptionScenarios scenarios) => [.. Names.Where(n => scenarios.HasFlag(n.Scenario)).Select(n => n.Name)];
+
+    /// <summary>The scenarios named, or the name that is none of them.</summary>
+    public static ExceptionScenarios Parse(IEnumerable<string> names)
+    {
+        ExceptionScenarios scenarios = ExceptionScenarios.None;
+        foreach (string name in names)
+        {
+            scenarios |= Names.FirstOrDefault(n => string.Equals(n.Name, name, StringComparison.OrdinalIgnoreCase)) is { Name: not null } known
+                ? known.Scenario
+                : throw new ArgumentException($"No exception scenario '{name}': they are {string.Join(", ", All)}");
+        }
+        return scenarios;
+    }
+
+    /// <summary>A break mode's scenarios: always is every one, userUnhandled Visual Studio's (handled outside the user's
+    /// code, or not at all), unhandled only that.</summary>
+    public static ExceptionScenarios OfBreakMode(string breakMode) => breakMode switch
+    {
+        "always" => ExceptionScenarios.All,
+        "userUnhandled" => ExceptionScenarios.Thrown | ExceptionScenarios.HandledInExternalCode | ExceptionScenarios.Unhandled,
+        "unhandled" => ExceptionScenarios.Thrown | ExceptionScenarios.Unhandled,
+        "never" => ExceptionScenarios.None,
+        _ => throw new ArgumentException($"No exception break mode '{breakMode}': it is never, always, unhandled or userUnhandled"),
+    };
+}
 
 public sealed record ThreadsResponse(IReadOnlyList<DapThread> Threads);
 

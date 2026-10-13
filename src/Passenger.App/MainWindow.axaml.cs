@@ -719,6 +719,7 @@ public partial class MainWindow : Window
         }
         Dock.LayoutChanged += (_, _) => KeepDock();
         debug.Breakpoints.Changed += (_, _) => folderState?.Breakpoints.Set(debug.Breakpoints.Capture());
+        debug.Breakpoints.ExceptionsChanged += (_, _) => folderState?.Breakpoints.Set(debug.Breakpoints.Capture());
         bookmarks.Changed += (_, _) => folderState?.Bookmarks.Set(bookmarks.Capture());
         findSettings = store.Find.Value;
         assist.RenameSettings = store.Refactorings.Value;
@@ -1193,9 +1194,9 @@ public partial class MainWindow : Window
     }
 
     /// <summary>The Breakpoints window, a breakpoint chosen in it.</summary>
-    public void ShowBreakpoints(Debugging.LineBreakpoint? chosen)
+    public void ShowBreakpoints(Debugging.Breakpoint? chosen)
     {
-        Debugging.BreakpointsWindow window = new(debug.Breakpoints, chosen);
+        Debugging.BreakpointsWindow window = new(debug.Breakpoints, chosen, ExceptionTypesAsync);
         window.Closed += (_, show) =>
         {
             ClosePopup();
@@ -1205,6 +1206,26 @@ public partial class MainWindow : Window
             }
         };
         ShowPopup(window);
+    }
+
+    /// <summary>The exception types Add CLR Exception Breakpoints offers: the solution's own, as the language server finds
+    /// them, then the runtime's.</summary>
+    private async Task<IReadOnlyList<string>> ExceptionTypesAsync()
+    {
+        IReadOnlyList<string> runtime = await BackgroundWork.Run(Debugging.ExceptionTypes.Runtime);
+        IReadOnlyList<string> solution = [];
+        if (csharp?.Session is { IsLoaded: true } session)
+        {
+            try
+            {
+                solution = Debugging.ExceptionTypes.FromSymbols(await session.SymbolsAsync("Exception"));
+            }
+            catch (Lsp.LanguageServerFailed)
+            {
+                // The runtime's still are.
+            }
+        }
+        return [.. solution.Concat(runtime).Distinct(StringComparer.Ordinal)];
     }
 
     private void UpdateStatus()

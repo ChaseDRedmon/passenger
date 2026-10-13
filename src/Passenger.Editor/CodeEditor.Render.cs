@@ -571,7 +571,7 @@ public sealed partial class CodeEditor
     /// that is off or cannot bind.</summary>
     private IBrush? LineTint(VisibleMarks marks, int line) =>
         marks.Executing.Contains(line) ? palette.ExecutionLine
-        : marks.Breakpoints.TryGetValue(line, out LineMark mark) && !mark.Tracepoint && mark.Kind is LineMarkKind.Breakpoint or LineMarkKind.BreakpointBound ? palette.BreakpointLine
+        : marks.Breakpoints.TryGetValue(line, out LineMark mark) && !mark.Tracepoint && !mark.Muted && mark.Kind is LineMarkKind.Breakpoint or LineMarkKind.BreakpointBound ? palette.BreakpointLine
         : null;
 
     /// <summary>The marks on the lines a frame draws, looked up once per frame.</summary>
@@ -602,12 +602,17 @@ public sealed partial class CodeEditor
     }
 
     /// <summary>A breakpoint's dot, centred at a point: filled when set, with a tick once bound, a
-    /// ring when it cannot bind or is off; a question mark on it for a condition, amber for a tracepoint.</summary>
+    /// ring when it cannot bind or is off; a question mark on it for a condition, amber for a tracepoint, grey muted.</summary>
     private void DrawBreakpoint(DrawingContext context, LineMark mark, double x, double y)
     {
         double radius = Math.Min(metrics.LineHeight - 6, 14) / 2;
         Point centre = new(x, y);
-        IBrush fill = mark.Tracepoint ? palette.Tracepoint : palette.Breakpoint;
+        IBrush fill = mark.Muted ? palette.BreakpointMuted : mark.Tracepoint ? palette.Tracepoint : palette.Breakpoint;
+        if (mark.Muted && mark.Kind == LineMarkKind.BreakpointDisabled)
+        {
+            context.DrawEllipse(null, new Pen(fill, 1.5), centre, radius - 0.75, radius - 0.75);
+            return;
+        }
         if (mark.Conditional && mark.Kind is LineMarkKind.Breakpoint or LineMarkKind.BreakpointBound)
         {
             context.DrawEllipse(fill, null, centre, radius, radius);
@@ -863,6 +868,7 @@ public sealed partial class CodeEditor
         public IBrush ExecutionPoint { get; private init; } = Brush("#5E9CF0");
         public IBrush InlineValue { get; private init; } = Brush("#868A91");
         public IBrush Tracepoint { get; private init; } = Brush("#E5A336");
+        public IBrush BreakpointMuted { get; private init; } = Brush("#CED0D6");
         public IBrush TestPassed { get; private init; } = Brush("#5FAD65");
         public IBrush Bookmark { get; private init; } = Brush("#548AF7");
         public IBrush DiffAdded { get; private init; } = Brush("#2B4234");
@@ -918,6 +924,7 @@ public sealed partial class CodeEditor
                 ExecutionPoint = Find(control, "Passenger.Editor.ExecutionPoint") ?? defaults.ExecutionPoint,
                 InlineValue = Find(control, "Passenger.Editor.InlineValue") ?? defaults.InlineValue,
                 Tracepoint = Find(control, "Passenger.Editor.Tracepoint") ?? defaults.Tracepoint,
+                BreakpointMuted = Find(control, "Passenger.Editor.BreakpointMuted") ?? defaults.BreakpointMuted,
                 TestPassed = Find(control, "Passenger.Test.Passed") ?? defaults.TestPassed,
                 Bookmark = Find(control, "Passenger.Editor.Bookmark") ?? defaults.Bookmark,
                 DiffAdded = Find(control, "Passenger.Diff.Added") ?? defaults.DiffAdded,

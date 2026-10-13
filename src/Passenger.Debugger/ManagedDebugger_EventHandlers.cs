@@ -534,7 +534,7 @@ public partial class ManagedDebugger
         Continue(clearVariables: false);
     }
 
-    private void HandleException2(object? sender, Exception2CorDebugManagedCallbackEventArgs exceptionEventArgs)
+    private async Task HandleException2(object? sender, Exception2CorDebugManagedCallbackEventArgs exceptionEventArgs)
     {
         ICorDebugThread corThread = exceptionEventArgs.Thread;
         if (EvalStatus.ThreadId == corThread.Id || EvalStatus.Abandoned.ContainsKey(corThread.Id))
@@ -549,15 +549,21 @@ public partial class ManagedDebugger
         bool shouldStop = false;
         ExceptionBreakMode breakMode = ExceptionBreakMode.Unknown;
         StackRange? handler = null;
+        // The exception breakpoints whose type and scenario this is, their hit counts and conditions yet to be tried.
+        List<ExceptionRule> rules = [];
+        // A handler outside the user's code that a step under way is to step past, unless the exception stops.
+        ICorDebugFrame? stepPast = null;
 
         switch (exceptionEventArgs.DwEventType)
         {
             case CorDebugExceptionCallbackType.DEBUG_EXCEPTION_FIRST_CHANCE:
                 {
+                    bool inUserCode = IsUserCodeFrame(exceptionEventArgs.Frame);
                     ExceptionPropagationState state = new ExceptionPropagationState
                     {
-                        HasReachedUserCode = IsUserCodeFrame(exceptionEventArgs.Frame),
-                        AlwaysStopReported = false
+                        HasReachedUserCode = inUserCode,
+                        AlwaysStopReported = false,
+                        ThrownInUserCode = !_justMyCode || inUserCode,
                     };
                     _exceptionStates[threadId] = state;
                     shouldStop = MatchesExceptionBreakpoint(ExceptionBreakpointFilter.All, exceptionType);
@@ -569,10 +575,12 @@ public partial class ManagedDebugger
                 {
                     if (_exceptionStates.TryGetValue(threadId, out ExceptionPropagationState? state) is false)
                     {
+                        // Just My Code tells no first chance outside the user's code: this one was thrown there.
                         state = new ExceptionPropagationState
                         {
                             HasReachedUserCode = false,
-                            AlwaysStopReported = false
+                            AlwaysStopReported = false,
+                            ThrownInUserCode = false,
                         };
                         _exceptionStates[threadId] = state;
                     }
@@ -585,52 +593,134 @@ public partial class ManagedDebugger
             case CorDebugExceptionCallbackType.DEBUG_EXCEPTION_CATCH_HANDLER_FOUND:
                 {
                     bool handlerIsUserCode = IsUserCodeFrame(exceptionEventArgs.Frame);
-                    shouldStop = _justMyCode && handlerIsUserCode is false && _exceptionStates.TryGetValue(threadId, out ExceptionPropagationState? state) && state.HasReachedUserCode && MatchesExceptionBreakpoint(ExceptionBreakpointFilter.UserUnhandled, exceptionType);
+                    bool seen = _exceptionStates.TryGetValue(threadId, out ExceptionPropagationState? state);
+                    shouldStop = _justMyCode && handlerIsUserCode is false && seen && state!.HasReachedUserCode && MatchesExceptionBreakpoint(ExceptionBreakpointFilter.UserUnhandled, exceptionType);
+                    // Without Just My Code every frame is the user's, so an exception is handled in user code or not at all.
+                    bool handledInUserCode = !_justMyCode || handlerIsUserCode;
+                    if (seen || !_justMyCode)
+                    {
+                        rules = MatchingRules(exceptionType, state?.ThrownInUserCode ?? true,
+                            handledInUserCode ? Passenger.Dap.ExceptionScenarios.HandledInUserCode : Passenger.Dap.ExceptionScenarios.HandledInExternalCode);
+                    }
                     _exceptionStates.Remove(threadId);
-                    breakMode = ExceptionBreakMode.UserUnhandled;
-                    if (shouldStop)
+                    breakMode = shouldStop || !handledInUserCode ? ExceptionBreakMode.UserUnhandled : ExceptionBreakMode.Always;
+                    if (_justMyCode && !handlerIsUserCode)
                     {
                         handler = RangeOf(exceptionEventArgs.Frame);
+                        stepPast = shouldStop || EvalStatus.IsRunning ? null : exceptionEventArgs.Frame;
                     }
-                    else if (_justMyCode && !handlerIsUserCode && !EvalStatus.IsRunning)
+                    if (stepPast is not null && rules.Count == 0)
                     {
-                        StepPastHandler(corThread, exceptionEventArgs.Frame);
+                        StepPastHandler(corThread, stepPast);
+                        stepPast = null;
                     }
                     break;
                 }
             case CorDebugExceptionCallbackType.DEBUG_EXCEPTION_UNHANDLED:
-                _exceptionStates.Remove(threadId);
-                shouldStop = true;
-                breakMode = ExceptionBreakMode.Unhandled;
-                break;
+                {
+                    bool seen = _exceptionStates.Remove(threadId, out ExceptionPropagationState? state);
+                    // A client that gives no exception breakpoints has every unhandled exception stop; one that does, where they say.
+                    shouldStop = _exceptionRules is null;
+                    rules = MatchingRules(exceptionType, seen ? state!.ThrownInUserCode : !_justMyCode || IsUserCodeFrame(exceptionEventArgs.Frame),
+                        Passenger.Dap.ExceptionScenarios.Unhandled);
+                    breakMode = ExceptionBreakMode.Unhandled;
+                    break;
+                }
         }
 
         if (EvalStatus.IsRunning || _stopShown)
         {
             // Another thread's, queued with the evaluation's own event or on its way as a pause stopped the program:
-            // decided while its frame is good, its stop put off.
-            if (shouldStop)
+            // decided while its frame is good, its stop put off, and its breakpoints tried when it is taken.
+            if (shouldStop || rules.Count > 0)
             {
                 _logger?.Invoke($"Put off: a stop at an exception on thread {corThread.Id}, during an evaluation on thread {EvalStatus.ThreadId} or a stop shown");
-                _deferredEvents.Enqueue(new DeferredExceptionStop(corThread, breakMode, handler));
+                _deferredEvents.Enqueue(new DeferredExceptionStop(corThread, breakMode, handler, exceptionType, shouldStop, rules, stepPast));
             }
             _process!.Continue(false);
             return;
         }
-        if (shouldStop is false)
+        await StopAtExceptionIfHit(new DeferredExceptionStop(corThread, breakMode, handler, exceptionType, shouldStop, rules, stepPast));
+    }
+
+    /// <summary>Stops at an exception a filter stops at, or one of its exception breakpoints whose hit count and condition
+    /// allow; else lets the program go on, past a handler outside the user's code a step under way would stop in.</summary>
+    private async Task StopAtExceptionIfHit(DeferredExceptionStop exception)
+    {
+        IReadOnlyList<int> hit = exception.Rules.Count == 0 ? [] : await TryExceptionRules(exception.Thread, exception.ExceptionType, exception.Rules);
+        if (!exception.Stops && hit.Count == 0)
         {
+            if (exception.StepPast is { } handlerFrame && !EvalStatus.IsRunning)
+            {
+                StepPastHandler(exception.Thread, handlerFrame);
+            }
             Continue(clearVariables: true);
             return;
         }
-        StopAtException(corThread, breakMode, handler);
+        StopAtException(exception.Thread, exception.BreakMode, exception.Handler, hit);
     }
 
-    private void StopAtException(ICorDebugThread corThread, ExceptionBreakMode breakMode, StackRange? handler = null)
+    private void StopAtException(ICorDebugThread corThread, ExceptionBreakMode breakMode, StackRange? handler = null, IReadOnlyList<int>? hit = null)
     {
         EndStepForStop();
         _exceptionBreakModes[new ThreadId(corThread.Id)] = breakMode;
         _unhandledByUser = breakMode is ExceptionBreakMode.UserUnhandled && handler is { } range ? (corThread.Id, range) : null;
-        ReportStop(corThread.Id, "exception");
+        ReportStop(corThread.Id, "exception", hitBreakpointIds: hit is { Count: > 0 } ? hit : null);
+    }
+
+    /// <summary>The exception breakpoints for an exception of this type thrown where it was and handled as it is (or not).</summary>
+    private List<ExceptionRule> MatchingRules(string exceptionType, bool thrownInUserCode, Passenger.Dap.ExceptionScenarios handled)
+    {
+        if (_exceptionRules is not { Count: > 0 } rules)
+        {
+            return [];
+        }
+        Passenger.Dap.ExceptionScenarios thrown = thrownInUserCode ? Passenger.Dap.ExceptionScenarios.ThrownInUserCode : Passenger.Dap.ExceptionScenarios.ThrownInExternalCode;
+        return [.. rules.Where(rule => rule.Refused is null && rule.Request.Scenarios.HasFlag(thrown) && rule.Request.Scenarios.HasFlag(handled) && rule.IsFor(exceptionType))];
+    }
+
+    /// <summary>Tries the exception breakpoints an exception matched as a line breakpoint is tried: its hit count, then its
+    /// condition (one that does not evaluate stops, saying why), then its message logged. The ids of those that stop.</summary>
+    private async Task<IReadOnlyList<int>> TryExceptionRules(ICorDebugThread thread, string exceptionType, IReadOnlyList<ExceptionRule> rules)
+    {
+        List<int> stopping = [];
+        foreach (ExceptionRule rule in rules)
+        {
+            ExceptionRuleRequest request = rule.Request;
+            rule.HitCount++;
+            if (request.HitCondition is { } hits && !EvaluateHitCondition(rule.HitCount, hits))
+            {
+                _logger?.Invoke($"Exception breakpoint {rule.Id}: hit count not met: count={rule.HitCount}, condition={hits}");
+                continue;
+            }
+            if (request.Condition is { } condition)
+            {
+                (bool holds, string? error) = await EvaluateBreakpointCondition(thread, condition);
+                if (error is not null)
+                {
+                    OnConsole?.Invoke($"The condition '{condition}' could not be evaluated, so the breakpoint on {exceptionType} stopped: {error}\n");
+                }
+                else if (!holds)
+                {
+                    _logger?.Invoke($"Exception breakpoint {rule.Id}: condition not met: {condition}");
+                    continue;
+                }
+            }
+            if (request.LogMessage is { } logMessage)
+            {
+                (string text, _) = await RenderDebuggerDisplayAsync(logMessage, null, new ThreadId(thread.Id), new FrameStackDepth(0), 0);
+                OnConsole?.Invoke($"{text}\n");
+            }
+            else if (!request.Suspend)
+            {
+                OnConsole?.Invoke($"Exception breakpoint reached: {exceptionType}\n");
+            }
+            if (request.Suspend)
+            {
+                stopping.Add(rule.Id);
+            }
+        }
+        return stopping;
     }
 
     private static string GetCurrentExceptionType(ICorDebugThread thread)

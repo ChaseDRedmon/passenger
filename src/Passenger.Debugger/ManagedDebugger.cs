@@ -52,6 +52,8 @@ public partial class ManagedDebugger
 
     // The active exception filters and optional type conditions supplied by the DAP client.
     private IReadOnlyList<ExceptionBreakpointRequest> _exceptionBreakpoints = [];
+    // The client's CLR exception breakpoints, or null when it has given none (and every unhandled exception stops).
+    private IReadOnlyList<ExceptionRule>? _exceptionRules;
     // Per-thread state retained between callbacks for the same exception propagation sequence.
     private readonly Dictionary<ThreadId, ExceptionPropagationState> _exceptionStates = [];
     // The mode that caused each thread's latest exception stop, used by the exceptionInfo response.
@@ -310,8 +312,8 @@ public partial class ManagedDebugger
                 case StepCompleteCorDebugManagedCallbackEventArgs a: HandleStepComplete(sender, a); break;
                 case BreakCorDebugManagedCallbackEventArgs a: HandleBreak(sender, a); break;
                 case ExceptionCorDebugManagedCallbackEventArgs a: HandleException(sender, a); break;
-                case Exception2CorDebugManagedCallbackEventArgs a: HandleException2(sender, a); break;
-                case DeferredExceptionStop a: StopAtException(a.Thread, a.BreakMode, a.Handler); break;
+                case Exception2CorDebugManagedCallbackEventArgs a: await HandleException2(sender, a).ConfigureAwait(false); break;
+                case DeferredExceptionStop a: await StopAtExceptionIfHit(a).ConfigureAwait(false); break;
                 case EvalCompleteCorDebugManagedCallbackEventArgs or EvalExceptionCorDebugManagedCallbackEventArgs when IsAbandonedEvaluationsEnd(e): LetGoAbandonedEvaluation(e); break;
                 case EvalCompleteCorDebugManagedCallbackEventArgs or EvalExceptionCorDebugManagedCallbackEventArgs: break; // don't continue on these, as they are being used for expression evaluation
                 default:
@@ -461,12 +463,20 @@ public partial class ManagedDebugger
     /// evaluation can run: their threads stay suspended where they were until each is handled, in order.</summary>
     private readonly Queue<CorDebugManagedCallbackEventArgs> _deferredEvents = new();
 
-    /// <summary>An exception on another thread that stops the program, found while an evaluation ran.</summary>
-    private sealed class DeferredExceptionStop(ICorDebugThread thread, ExceptionBreakMode breakMode, StackRange? handler) : CorDebugManagedCallbackEventArgs
+    /// <summary>An exception that may stop the program: a filter's stop (<see cref="Stops"/>), or its exception breakpoints'
+    /// once their hit counts and conditions are tried. Put off as one on another thread when found while an evaluation ran.</summary>
+    private sealed class DeferredExceptionStop(ICorDebugThread thread, ExceptionBreakMode breakMode, StackRange? handler, string exceptionType, bool stops,
+        IReadOnlyList<ExceptionRule> rules, ICorDebugFrame? stepPast) : CorDebugManagedCallbackEventArgs
     {
         public ICorDebugThread Thread { get; } = thread;
         public ExceptionBreakMode BreakMode { get; } = breakMode;
         public StackRange? Handler { get; } = handler;
+        public string ExceptionType { get; } = exceptionType;
+        public bool Stops { get; } = stops;
+        public IReadOnlyList<ExceptionRule> Rules { get; } = rules;
+
+        /// <summary>A handler outside the user's code that a step under way steps past if the exception does not stop.</summary>
+        public ICorDebugFrame? StepPast { get; } = stepPast;
     }
 
     private void ConfigureExceptionCallbacks()
@@ -982,6 +992,9 @@ public partial class ManagedDebugger
         // Prevents the first-chance and user-first-chance callbacks for the same exception from producing
         // duplicate "all exceptions" stops.
         public required bool AlwaysStopReported { get; set; }
+
+        // Where it was thrown, for the exception breakpoints' "Exception thrown in": every frame is the user's without Just My Code.
+        public required bool ThrownInUserCode { get; init; }
     }
 }
 

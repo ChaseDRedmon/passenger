@@ -9,8 +9,9 @@ using Passenger.Dap;
 namespace Passenger.App.Debugging;
 
 /// <summary>What a breakpoint does, as Rider's breakpoint popup and Breakpoints dialog edit it: on or off,
-/// whether it stops, its condition and hit count, and a message to log. Enter submits, Escape gives up. A hit count the
-/// debugger cannot read is said under its field as it is typed; the debugger refuses it in the same words.</summary>
+/// whether it stops, its condition and hit count, and a message to log; for an exception breakpoint, Rider's "Suspend If",
+/// where the exception was thrown and where it is handled. Enter submits, Escape gives up. A hit count the debugger
+/// cannot read is said under its field as it is typed; the debugger refuses it in the same words.</summary>
 public sealed class BreakpointProperties : UserControl
 {
     private readonly CheckBox enabled = new() { Content = "Enabled" };
@@ -19,6 +20,13 @@ public sealed class BreakpointProperties : UserControl
     private readonly TextBox hitCount = Field("Stop on hits: ==3, >=2, %2");
     private readonly TextBlock hitCountProblem = new() { TextWrapping = TextWrapping.Wrap, IsVisible = false };
     private readonly TextBox log = Field("Logged on each hit: count is {count}");
+    private readonly CheckBox thrownInUserCode = new() { Content = "User code" };
+    private readonly CheckBox thrownInExternalCode = new() { Content = "External code" };
+    private readonly CheckBox handledInUserCode = new() { Content = "User code" };
+    private readonly CheckBox handledInExternalCode = new() { Content = "External code" };
+    private readonly CheckBox unhandled = new() { Content = "Unhandled" };
+    private readonly TextBlock inactive = new() { TextWrapping = TextWrapping.Wrap, IsVisible = false };
+    private readonly StackPanel suspendIf;
 
     public BreakpointProperties()
     {
@@ -30,11 +38,27 @@ public sealed class BreakpointProperties : UserControl
         fields.Children.Add(hitCountProblem);
         AddRow(fields, 3, "Log message:", log);
         hitCountProblem.Bind(TextBlock.ForegroundProperty, hitCountProblem.GetResourceObservable("Passenger.Editor.Error"));
+        inactive.Bind(TextBlock.ForegroundProperty, inactive.GetResourceObservable("Passenger.Editor.Error"));
         hitCount.TextChanged += (_, _) => CheckHitCount();
+
+        // Rider's "Suspend If" panel, in its words: the exception breakpoint stops when one of each row holds.
+        Grid scenarios = new() { ColumnDefinitions = new ColumnDefinitions("Auto,*"), RowDefinitions = new RowDefinitions("Auto,Auto"), RowSpacing = 4, ColumnSpacing = 10 };
+        AddRow(scenarios, 0, "Exception thrown in:", Row(thrownInUserCode, thrownInExternalCode));
+        AddRow(scenarios, 1, "Exception handler:", Row(handledInUserCode, handledInExternalCode, unhandled));
+        foreach (CheckBox box in Scenarios)
+        {
+            box.IsCheckedChanged += (_, _) => CheckScenarios();
+        }
+        suspendIf = new StackPanel
+        {
+            Spacing = 6,
+            IsVisible = false,
+            Children = { new TextBlock { Text = "Suspend If", FontWeight = FontWeight.SemiBold }, scenarios, inactive },
+        };
         Content = new StackPanel
         {
             Spacing = 8,
-            Children = { new StackPanel { Orientation = Orientation.Horizontal, Spacing = 16, Children = { enabled, suspend } }, fields },
+            Children = { Row(enabled, suspend), fields, suspendIf },
         };
         foreach (TextBox box in new[] { condition, hitCount, log })
         {
@@ -42,7 +66,7 @@ public sealed class BreakpointProperties : UserControl
         }
     }
 
-    public LineBreakpoint? Breakpoint { get; private set; }
+    public Breakpoint? Breakpoint { get; private set; }
 
     /// <summary>Enter in one of the fields: the changes are to stand.</summary>
     public event EventHandler? Submitted;
@@ -50,7 +74,9 @@ public sealed class BreakpointProperties : UserControl
     /// <summary>Escape: the editing is over, the changes as they are.</summary>
     public event EventHandler? Dismissed;
 
-    public void Show(LineBreakpoint breakpoint)
+    private CheckBox[] Scenarios => [thrownInUserCode, thrownInExternalCode, handledInUserCode, handledInExternalCode, unhandled];
+
+    public void Show(Breakpoint breakpoint)
     {
         Breakpoint = breakpoint;
         enabled.IsChecked = breakpoint.Enabled;
@@ -58,6 +84,16 @@ public sealed class BreakpointProperties : UserControl
         condition.Text = breakpoint.Condition ?? string.Empty;
         hitCount.Text = breakpoint.HitCondition ?? string.Empty;
         log.Text = breakpoint.LogMessage ?? string.Empty;
+        suspendIf.IsVisible = breakpoint is ExceptionBreakpoint;
+        if (breakpoint is ExceptionBreakpoint exception)
+        {
+            thrownInUserCode.IsChecked = exception.Scenarios.HasFlag(ExceptionScenarios.ThrownInUserCode);
+            thrownInExternalCode.IsChecked = exception.Scenarios.HasFlag(ExceptionScenarios.ThrownInExternalCode);
+            handledInUserCode.IsChecked = exception.Scenarios.HasFlag(ExceptionScenarios.HandledInUserCode);
+            handledInExternalCode.IsChecked = exception.Scenarios.HasFlag(ExceptionScenarios.HandledInExternalCode);
+            unhandled.IsChecked = exception.Scenarios.HasFlag(ExceptionScenarios.Unhandled);
+        }
+        CheckScenarios();
     }
 
     /// <summary>Writes the fields to the breakpoint, if they change anything.</summary>
@@ -75,9 +111,33 @@ public sealed class BreakpointProperties : UserControl
         {
             store.Update(breakpoint, on, stops, condition.Text, hitCount.Text, log.Text);
         }
+        if (breakpoint is ExceptionBreakpoint exception)
+        {
+            store.SetScenarios(exception, Chosen());
+        }
     }
 
     public void FocusCondition() => condition.Focus();
+
+    /// <summary>The scenarios as their boxes are checked.</summary>
+    private ExceptionScenarios Chosen() =>
+        (thrownInUserCode.IsChecked == true ? ExceptionScenarios.ThrownInUserCode : 0)
+        | (thrownInExternalCode.IsChecked == true ? ExceptionScenarios.ThrownInExternalCode : 0)
+        | (handledInUserCode.IsChecked == true ? ExceptionScenarios.HandledInUserCode : 0)
+        | (handledInExternalCode.IsChecked == true ? ExceptionScenarios.HandledInExternalCode : 0)
+        | (unhandled.IsChecked == true ? ExceptionScenarios.Unhandled : 0);
+
+    /// <summary>Says, in Rider's words, that an exception breakpoint with no box of a row checked never stops.</summary>
+    private void CheckScenarios()
+    {
+        ExceptionScenarios chosen = Chosen();
+        inactive.Text = (chosen & ExceptionScenarios.Thrown) == 0
+            ? "Exception breakpoint is currently inactive because all 'Exception thrown in' options are disabled"
+            : (chosen & (ExceptionScenarios.HandledInUserCode | ExceptionScenarios.HandledInExternalCode | ExceptionScenarios.Unhandled)) == 0
+                ? "Exception breakpoint is currently inactive because all 'Exception handler' options are disabled"
+                : null;
+        inactive.IsVisible = inactive.Text is not null;
+    }
 
     private void CheckHitCount()
     {
@@ -102,6 +162,13 @@ public sealed class BreakpointProperties : UserControl
     }
 
     private static TextBox Field(string watermark) => new() { Classes = { "search" }, PlaceholderText = watermark, MinWidth = 280 };
+
+    private static StackPanel Row(params Control[] controls)
+    {
+        StackPanel row = new() { Orientation = Orientation.Horizontal, Spacing = 16 };
+        row.Children.AddRange(controls);
+        return row;
+    }
 
     private static void AddRow(Grid grid, int row, string label, Control field)
     {
@@ -177,59 +244,54 @@ public sealed class BreakpointPopup : UserControl
     }
 }
 
-/// <summary>Rider's Breakpoints window: every line breakpoint, each turned on or off by its box, and the chosen
-/// one's properties beside the list. Double-click (or Go to Source) shows its line.</summary>
+/// <summary>Rider's Breakpoints window: the line breakpoints under ".NET Line Breakpoints" and the exception breakpoints
+/// under "CLR Exception Breakpoints" ("Any exception" first), each turned on or off by its box, and the chosen one's
+/// properties beside the list. + adds an exception breakpoint by its type, offering the exception types that match what
+/// is typed (Rider's Add CLR Exception Breakpoints); − removes the chosen one. Double-click (or Go to Source) shows a
+/// line breakpoint's line.</summary>
 public sealed class BreakpointsWindow : UserControl
 {
     private readonly BreakpointStore store;
+    private readonly Func<Task<IReadOnlyList<string>>> exceptionTypes;
     private readonly ListBox list = new() { Classes = { "tree" } };
     private readonly BreakpointProperties properties = new();
-    private readonly TextBlock empty = new() { Text = "No breakpoints. F9 sets one on the caret's line.", Classes = { "muted" }, Margin = new Thickness(4) };
+    private readonly TextBlock title = new() { Classes = { "paneTitle" } };
+    private readonly Button remove = new() { Content = "Remove" };
+    private readonly Button goTo = new() { Content = "Go to Source" };
+    private readonly Button removeTool = Tool("Icon.Minimize", "Remove");
+    private readonly StackPanel chosenPane;
+    private readonly StackPanel addPane;
+    private readonly TextBox typed = new() { Classes = { "search" }, PlaceholderText = "An exception type: InvalidOperationException" };
+    private readonly ListBox found = new() { Classes = { "tree" }, Height = 210 };
+    private IReadOnlyList<string> known = [];
 
-    public BreakpointsWindow(BreakpointStore store, LineBreakpoint? chosen)
+    public BreakpointsWindow(BreakpointStore store, Breakpoint? chosen, Func<Task<IReadOnlyList<string>>> exceptionTypes)
     {
         this.store = store;
-        Button remove = new() { Content = "Remove" };
-        Button goTo = new() { Content = "Go to Source" };
+        this.exceptionTypes = exceptionTypes;
+        Button add = Tool("Icon.Add", "Add CLR Exception Breakpoints");
         Button done = new() { Content = "Done", Classes = { "primary" } };
-        remove.Click += (_, _) =>
-        {
-            if (Chosen is { } breakpoint)
-            {
-                store.Remove(breakpoint);
-                Fill(null);
-            }
-        };
+        add.Click += (_, _) => ShowAdd();
+        removeTool.Click += (_, _) => RemoveChosen();
+        remove.Click += (_, _) => RemoveChosen();
         goTo.Click += (_, _) => GoTo();
         done.Click += (_, _) => Close();
         list.SelectionChanged += (_, _) =>
         {
             properties.Apply(store);
-            if (Chosen is { } breakpoint)
-            {
-                properties.Show(breakpoint);
-                properties.IsVisible = true;
-            }
-            else
-            {
-                properties.IsVisible = false;
-            }
+            ShowChosen();
         };
         list.DoubleTapped += (_, _) => GoTo();
         list.AddHandler(KeyDownEvent, OnListKeyDown, RoutingStrategies.Tunnel);
         ToolWindows.ListMenus.Attach(list, () => Chosen is not { } breakpoint ? [] :
         [
-            ToolWindows.ListMenus.Item("Go to Source", "F4", GoTo),
+            ToolWindows.ListMenus.Item("Go to Source", "F4", GoTo, enabled: breakpoint is LineBreakpoint),
             ToolWindows.ListMenus.Item(breakpoint.Enabled ? "Disable" : "Enable", null, () =>
             {
                 store.Update(breakpoint, !breakpoint.Enabled, breakpoint.Suspend, breakpoint.Condition, breakpoint.HitCondition, breakpoint.LogMessage);
                 Fill(breakpoint);
             }),
-            ToolWindows.ListMenus.Item("Remove", "Delete", () =>
-            {
-                store.Remove(breakpoint);
-                Fill(null);
-            }),
+            ToolWindows.ListMenus.Item("Remove", "Delete", RemoveChosen, enabled: breakpoint is not ExceptionBreakpoint { IsAny: true }),
         ]);
         // Escape closes it wherever the focus is in it, as a dialog's does.
         AddHandler(KeyDownEvent, (_, e) =>
@@ -244,12 +306,42 @@ public sealed class BreakpointsWindow : UserControl
         properties.Submitted += (_, _) => properties.Apply(store);
         properties.Dismissed += (_, _) => Close();
 
-        Grid body = new() { ColumnDefinitions = new ColumnDefinitions("260,*"), ColumnSpacing = 14, Height = 300 };
-        Border listFrame = new() { BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4), Child = new Panel { Children = { list, empty } } };
-        listFrame.Bind(Border.BorderBrushProperty, listFrame.GetResourceObservable("Passenger.Divider"));
-        Grid.SetColumn(properties, 1);
-        body.Children.Add(listFrame);
-        body.Children.Add(properties);
+        // Rider's Add CLR Exception Breakpoints, in the window: the types that match what is typed, Enter adds the one chosen.
+        typed.TextChanged += (_, _) => ShowFound();
+        typed.AddHandler(KeyDownEvent, OnTypedKeyDown, RoutingStrategies.Tunnel);
+        found.DoubleTapped += (_, _) => AddChosenType();
+        Button addType = new() { Content = "Add", Classes = { "primary" } };
+        Button cancel = new() { Content = "Cancel" };
+        addType.Click += (_, _) => AddChosenType();
+        cancel.Click += (_, _) => ShowChosen();
+        addPane = new StackPanel
+        {
+            Spacing = 8,
+            IsVisible = false,
+            Children =
+            {
+                new TextBlock { Text = "Add CLR Exception Breakpoints", FontWeight = FontWeight.SemiBold },
+                typed,
+                Framed(found),
+                new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right, Children = { cancel, addType } },
+            },
+        };
+        chosenPane = new StackPanel { Spacing = 10, Children = { title, properties } };
+
+        Grid body = new() { ColumnDefinitions = new ColumnDefinitions("310,*"), ColumnSpacing = 14, Height = 340 };
+        DockPanel listSide = new()
+        {
+            Children =
+            {
+                Docked(new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, Margin = new Thickness(0, 0, 0, 4), Children = { add, removeTool } }, Dock.Top),
+                Framed(list),
+            },
+        };
+        Grid.SetColumn(chosenPane, 1);
+        Grid.SetColumn(addPane, 1);
+        body.Children.Add(listSide);
+        body.Children.Add(chosenPane);
+        body.Children.Add(addPane);
         Content = new Border
         {
             Classes = { "popup" },
@@ -272,16 +364,20 @@ public sealed class BreakpointsWindow : UserControl
                 },
             },
         };
-        Width = 820;
+        Width = 910;
         Fill(chosen);
     }
 
     /// <summary>The window is done with: closed, or a breakpoint's line to show.</summary>
     public event EventHandler<LineBreakpoint?>? Closed;
 
-    public LineBreakpoint? Chosen => (list.SelectedItem as ListBoxItem)?.Tag as LineBreakpoint;
+    public Breakpoint? Chosen => (list.SelectedItem as ListBoxItem)?.Tag as Breakpoint;
 
-    public IReadOnlyList<LineBreakpoint> Listed => [.. list.Items.OfType<ListBoxItem>().Select(i => (LineBreakpoint)i.Tag!)];
+    /// <summary>The breakpoints as listed, line breakpoints first.</summary>
+    public IReadOnlyList<Breakpoint> Listed => [.. list.Items.OfType<ListBoxItem>().Select(i => i.Tag).OfType<Breakpoint>()];
+
+    /// <summary>The exception types Add CLR Exception Breakpoints offers for what is typed, while it is open.</summary>
+    public IReadOnlyList<string> Offered => [.. found.Items.OfType<ListBoxItem>().Select(i => (string)i.Tag!)];
 
     /// <summary>Applies the chosen breakpoint's fields and closes.</summary>
     public void Close()
@@ -290,42 +386,194 @@ public sealed class BreakpointsWindow : UserControl
         Closed?.Invoke(this, null);
     }
 
-    private void GoTo()
+    /// <summary>Opens Add CLR Exception Breakpoints, the exception types read as it opens.</summary>
+    private void ShowAdd()
     {
-        if (Chosen is { } breakpoint)
+        properties.Apply(store);
+        chosenPane.IsVisible = false;
+        addPane.IsVisible = true;
+        typed.Text = string.Empty;
+        ShowFound();
+        _ = LoadTypes();
+        Avalonia.Threading.Dispatcher.UIThread.Post(() => typed.Focus(), Avalonia.Threading.DispatcherPriority.Loaded);
+    }
+
+    private async Task LoadTypes()
+    {
+        // Held until the list shows them, so a screenshot taken as it opens shows them too.
+        using IDisposable held = Editor.BackgroundWork.Scope();
+        known = await exceptionTypes();
+        if (addPane.IsVisible)
         {
-            properties.Apply(store);
-            Closed?.Invoke(this, breakpoint);
+            ShowFound();
         }
     }
 
-    private void Fill(LineBreakpoint? chosen)
+    private void ShowFound()
     {
-        list.Items.Clear();
-        foreach (LineBreakpoint breakpoint in store.All.OrderBy(b => Path.GetFileName(b.Path), StringComparer.OrdinalIgnoreCase).ThenBy(b => b.Line))
+        found.Items.Clear();
+        foreach (string type in ExceptionTypes.Matching(known, typed.Text ?? string.Empty).Take(200))
         {
-            CheckBox on = new() { IsChecked = breakpoint.Enabled, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 4, 0) };
-            on.IsCheckedChanged += (_, _) => store.Update(breakpoint, on.IsChecked == true, breakpoint.Suspend, breakpoint.Condition, breakpoint.HitCondition, breakpoint.LogMessage);
-            string what = breakpoint.LogMessage is { } message ? $"logs {message}" : breakpoint.Condition is { } condition ? $"when {condition}" : breakpoint.Suspend ? string.Empty : "does not stop";
-            list.Items.Add(new ListBoxItem
+            string name = type[(type.LastIndexOf('.') + 1)..];
+            string space = type.Length > name.Length ? type[..(type.Length - name.Length - 1)] : string.Empty;
+            found.Items.Add(new ListBoxItem
             {
-                Tag = breakpoint,
+                Tag = type,
                 Content = new StackPanel
                 {
                     Orientation = Orientation.Horizontal,
                     Spacing = 6,
                     Children =
                     {
-                        on,
-                        new TextBlock { Text = breakpoint.Location, VerticalAlignment = VerticalAlignment.Center },
-                        new TextBlock { Text = what, Classes = { "muted" }, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 120 },
+                        new TextBlock { Text = name, VerticalAlignment = VerticalAlignment.Center },
+                        new TextBlock { Text = space, Classes = { "muted" }, VerticalAlignment = VerticalAlignment.Center },
                     },
                 },
             });
         }
-        empty.IsVisible = list.Items.Count == 0;
-        properties.IsVisible = false;
-        list.SelectedItem = list.Items.OfType<ListBoxItem>().FirstOrDefault(i => i.Tag == chosen) ?? list.Items.OfType<ListBoxItem>().FirstOrDefault();
+        found.SelectedIndex = found.Items.Count > 0 ? 0 : -1;
+    }
+
+    /// <summary>Adds the type chosen in the list, or, with none there, the name as typed, and shows its properties.</summary>
+    private void AddChosenType()
+    {
+        string? type = (found.SelectedItem as ListBoxItem)?.Tag as string ?? (typed.Text is { } text && text.Trim().Length > 0 ? text.Trim() : null);
+        if (type is null)
+        {
+            return;
+        }
+        ExceptionBreakpoint added = store.AddException(type);
+        addPane.IsVisible = false;
+        Fill(added);
+        list.Focus();
+    }
+
+    private void OnTypedKeyDown(object? sender, KeyEventArgs e)
+    {
+        switch (e.Key)
+        {
+            case Key.Enter:
+                AddChosenType();
+                e.Handled = true;
+                break;
+            case Key.Escape:
+                ShowChosen();
+                list.Focus();
+                e.Handled = true;
+                break;
+            case Key.Down when found.Items.Count > 0:
+                found.SelectedIndex = Math.Min(found.Items.Count - 1, found.SelectedIndex + 1);
+                found.ScrollIntoView(found.SelectedIndex);
+                e.Handled = true;
+                break;
+            case Key.Up when found.Items.Count > 0:
+                found.SelectedIndex = Math.Max(0, found.SelectedIndex - 1);
+                found.ScrollIntoView(found.SelectedIndex);
+                e.Handled = true;
+                break;
+        }
+    }
+
+    /// <summary>The chosen breakpoint's place and properties, or nothing with none chosen.</summary>
+    private void ShowChosen()
+    {
+        addPane.IsVisible = false;
+        chosenPane.IsVisible = true;
+        if (Chosen is { } breakpoint)
+        {
+            title.Text = breakpoint.Location;
+            properties.Show(breakpoint);
+            properties.IsVisible = true;
+        }
+        else
+        {
+            title.Text = string.Empty;
+            properties.IsVisible = false;
+        }
+        bool removable = Chosen is not null and not ExceptionBreakpoint { IsAny: true };
+        remove.IsEnabled = removable;
+        removeTool.IsEnabled = removable;
+        goTo.IsEnabled = Chosen is LineBreakpoint;
+    }
+
+    private void RemoveChosen()
+    {
+        if (Chosen is { } breakpoint and not ExceptionBreakpoint { IsAny: true })
+        {
+            store.Remove(breakpoint);
+            Fill(null);
+        }
+    }
+
+    private void GoTo()
+    {
+        if (Chosen is LineBreakpoint breakpoint)
+        {
+            properties.Apply(store);
+            Closed?.Invoke(this, breakpoint);
+        }
+    }
+
+    private void Fill(Breakpoint? chosen)
+    {
+        list.Items.Clear();
+        List<LineBreakpoint> lines = [.. store.All.OrderBy(b => Path.GetFileName(b.Path), StringComparer.OrdinalIgnoreCase).ThenBy(b => b.Line)];
+        if (lines.Count > 0)
+        {
+            list.Items.Add(Group(".NET Line Breakpoints"));
+            foreach (LineBreakpoint breakpoint in lines)
+            {
+                list.Items.Add(Item(breakpoint));
+            }
+        }
+        list.Items.Add(Group("CLR Exception Breakpoints"));
+        foreach (ExceptionBreakpoint breakpoint in store.Exceptions)
+        {
+            list.Items.Add(Item(breakpoint));
+        }
+        list.SelectedItem = list.Items.OfType<ListBoxItem>().FirstOrDefault(i => chosen is not null && i.Tag == chosen) ?? list.Items.OfType<ListBoxItem>().FirstOrDefault(i => i.Tag is Breakpoint);
+        ShowChosen();
+    }
+
+    /// <summary>A group's heading, as Rider's tree has one for each kind of breakpoint; it is never chosen.</summary>
+    private static ListBoxItem Group(string name)
+    {
+        TextBlock text = new() { Text = name, FontWeight = FontWeight.SemiBold, Margin = new Thickness(0, 4, 0, 0) };
+        // Disabled, so neither a click nor the arrow keys choose it, but in the list's own colour rather than greyed.
+        text.Bind(TextBlock.ForegroundProperty, text.GetResourceObservable("Passenger.Text"));
+        return new ListBoxItem { IsEnabled = false, Content = text };
+    }
+
+    private ListBoxItem Item(Breakpoint breakpoint)
+    {
+        CheckBox on = new() { IsChecked = breakpoint.Enabled, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 4, 0) };
+        on.IsCheckedChanged += (_, _) =>
+        {
+            if (on.IsChecked != breakpoint.Enabled)
+            {
+                store.Update(breakpoint, on.IsChecked == true, breakpoint.Suspend, breakpoint.Condition, breakpoint.HitCondition, breakpoint.LogMessage);
+                if (Chosen == breakpoint)
+                {
+                    properties.Show(breakpoint);
+                }
+            }
+        };
+        string what = breakpoint.LogMessage is { } message ? $"logs {message}" : breakpoint.Condition is { } condition ? $"when {condition}" : breakpoint.Suspend ? string.Empty : "does not stop";
+        return new ListBoxItem
+        {
+            Tag = breakpoint,
+            Content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 6,
+                Children =
+                {
+                    on,
+                    new TextBlock { Text = breakpoint.Location, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 240 },
+                    new TextBlock { Text = what, Classes = { "muted" }, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 100 },
+                },
+            },
+        };
     }
 
     private void OnListKeyDown(object? sender, KeyEventArgs e)
@@ -340,12 +588,26 @@ public sealed class BreakpointsWindow : UserControl
             GoTo();
             e.Handled = true;
         }
-        else if (e.Key is Key.Delete or Key.Back && Chosen is { } breakpoint)
+        else if (e.Key is Key.Delete or Key.Back && Chosen is not null)
         {
-            store.Remove(breakpoint);
-            Fill(null);
+            RemoveChosen();
             e.Handled = true;
         }
+    }
+
+    private static Button Tool(string icon, string tip)
+    {
+        Button button = new() { Classes = { "tool" }, Content = new PathIcon() };
+        ToolTip.SetTip(button, tip);
+        ((PathIcon)button.Content).Bind(PathIcon.DataProperty, button.GetResourceObservable(icon));
+        return button;
+    }
+
+    private static Border Framed(Control content)
+    {
+        Border frame = new() { BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4), Child = content };
+        frame.Bind(Border.BorderBrushProperty, frame.GetResourceObservable("Passenger.Divider"));
+        return frame;
     }
 
     private static Control Docked(Control control, Dock dock)

@@ -19,6 +19,40 @@ public record FunctionBreakpointRequest(string Name, string? Condition = null, s
 public record ExceptionBreakpointRequest(ExceptionBreakpointFilter Filter, string? Condition = null);
 public enum ExceptionBreakpointFilter { All, UserUnhandled }
 
+/// <summary>A CLR exception breakpoint as Rider's: the exception types it is for (none: every exception; with
+/// <paramref name="Excluded"/>, every one but those), the scenarios it stops in, and a condition, hit count and log message
+/// as a line breakpoint has. A type given without a namespace is any type of that name.</summary>
+public sealed record ExceptionRuleRequest(
+    IReadOnlyList<string> Types, bool Excluded, Passenger.Dap.ExceptionScenarios Scenarios, string? Condition = null, string? HitCondition = null, string? LogMessage = null, bool Suspend = true)
+{
+    public bool Equals(ExceptionRuleRequest? other) => other is not null && Types.SequenceEqual(other.Types) && Excluded == other.Excluded && Scenarios == other.Scenarios
+        && Condition == other.Condition && HitCondition == other.HitCondition && LogMessage == other.LogMessage && Suspend == other.Suspend;
+
+    public override int GetHashCode() => HashCode.Combine(string.Join(',', Types), Excluded, Scenarios, Condition, HitCondition, LogMessage, Suspend);
+}
+
+/// <summary>An exception breakpoint as the engine keeps it: its request, its id, its hits, and whether it was refused.</summary>
+public sealed class ExceptionRule(int id, ExceptionRuleRequest request)
+{
+    public int Id { get; } = id;
+    public ExceptionRuleRequest Request { get; } = request;
+    public int HitCount { get; set; }
+
+    /// <summary>Why the debugger will not take it as it is (a hit count or condition it cannot read); it never stops.</summary>
+    public string? Refused { get; init; }
+
+    public bool IsFor(string exceptionType)
+    {
+        if (Request.Types.Count == 0)
+        {
+            return !Request.Excluded;
+        }
+        string simple = exceptionType[(exceptionType.LastIndexOf('.') + 1)..];
+        bool named = Request.Types.Any(type => type == exceptionType || (!type.Contains('.') && type == simple));
+        return named != Request.Excluded;
+    }
+}
+
 public partial class ManagedDebugger
 {
     private LaunchInfo? _pendingLaunchInfo;
@@ -1166,8 +1200,40 @@ public partial class ManagedDebugger
         }
     }
 
-    public void SetExceptionBreakpoints(IReadOnlyList<ExceptionBreakpointRequest> breakpoints)
+    /// <summary>The client's exception filters, and its CLR exception breakpoints when it gives them (null when it gives none,
+    /// so every unhandled exception stops). One asked for again just as it was keeps its hits, as a line breakpoint does.</summary>
+    public IReadOnlyList<ExceptionRule> SetExceptionBreakpoints(IReadOnlyList<ExceptionBreakpointRequest> filters, IReadOnlyList<ExceptionRuleRequest>? rules = null)
     {
-        _exceptionBreakpoints = breakpoints.ToArray();
+        _exceptionBreakpoints = filters.ToArray();
+        if (rules is null)
+        {
+            _exceptionRules = null;
+            return [];
+        }
+        List<ExceptionRule> before = [.. _exceptionRules ?? []];
+        List<ExceptionRule> now = [];
+        foreach (ExceptionRuleRequest request in rules)
+        {
+            int same = before.FindIndex(rule => rule.Request.Equals(request));
+            if (same >= 0)
+            {
+                now.Add(before[same]);
+                before.RemoveAt(same);
+                continue;
+            }
+            now.Add(new ExceptionRule(_breakpointManager.NextId(), request) { Refused = Unreadable(request.Condition, request.HitCondition) });
+        }
+        _exceptionRules = now;
+        return now;
+    }
+
+    /// <summary>Why the debugger will not take a breakpoint's condition or hit count as it is, if it will not.</summary>
+    private static string? Unreadable(string? condition, string? hitCondition)
+    {
+        if (condition is not null && SyntaxFactory.ParseExpression(condition).DescendantNodesAndSelf().Any(static node => node is AnonymousFunctionExpressionSyntax))
+        {
+            return "Lambda expressions are not supported in breakpoint conditions.";
+        }
+        return hitCondition is { } hits && !Passenger.Dap.HitCondition.TryParse(hits, out _, out string? problem) ? problem : null;
     }
 }
