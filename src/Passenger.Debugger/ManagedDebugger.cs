@@ -96,8 +96,7 @@ public partial class ManagedDebugger
     public event Action<string>? OnConsole;
     public event Action<int, string>? OnProcessStarted;
 
-    /// <summary>The debugger has hold of a process it attached to: the attach completes after the request does, since
-    /// a process started suspended has no runtime to attach to until its client lets it go.</summary>
+    /// <summary>The debugger has hold of a process it attached to, told before configurationDone answers.</summary>
     public event Action<int>? OnAttached;
     public event Action<BreakpointManager.BreakpointInfo>? OnBreakpointChanged;
     public event Func<LaunchInfo, int> SendRunInTerminalRequest = null!;
@@ -240,40 +239,58 @@ public partial class ManagedDebugger
         Continue();
     }
 
-    /// <summary>
-    /// Actually attach to an existing process
-    /// </summary>
-    private void PerformAttach(int processId)
+    /// <summary>Takes hold of a process before configurationDone answers, under the engine's lock: a running one where it is,
+    /// one held at its start once the debugger is registered for its runtime and has let it go (<paramref name="resume"/>),
+    /// so a client that lets it go itself once answered finds the debugger there, and none of its events is handled before
+    /// the process is the engine's. A failure answers the request with its reason.</summary>
+    private async Task PerformAttach(int processId, Func<Process, Task, Task> resume)
     {
         _logger?.Invoke($"Attaching to process: {processId}");
-
-        // Not awaited: a process held at its diagnostic port has no runtime to attach to until the client lets it go.
-        _ = Task.Run(async () =>
+        Process process;
+        try
         {
+            process = Process.GetProcessById(processId);
+        }
+        catch (ArgumentException)
+        {
+            throw new InvalidOperationException($"There is no process {processId} to attach to");
+        }
+        try
+        {
+            _exited.Reset();
+            (_corDebug, _process) = await ClrDebugExtensions.Automatic(processId, answered => resume(process, answered), TakeHold, _logger);
+        }
+        catch (Exception error)
+        {
+            _logger?.Invoke($"Attaching to process {processId} failed: {error}");
+            throw new InvalidOperationException($"Could not attach to process {processId}: {error.Message}", error);
+        }
+        finally
+        {
+            process.Dispose();
+        }
+        _isAttached = true;
+        ConfigureExceptionCallbacks();
+
+        _logger?.Invoke($"Attached to process: {processId}");
+        OnAttached?.Invoke(processId);
+        SendAllBreakpointEvents();
+
+        ICorDebugProcess TakeHold(ICorDebug corDebug)
+        {
+            corDebug.Initialize();
+            corDebug.SetManagedHandler(_callbacks);
+            _logger?.Invoke($"Taking hold of process {processId}");
             try
             {
-                _exited.Reset();
-                _corDebug = await ClrDebugExtensions.Automatic(processId, resume: null, _logger);
-                _corDebug.Initialize();
-                _corDebug.SetManagedHandler(_callbacks);
-
-                _logger?.Invoke($"Taking hold of process {processId}");
-                _process = _corDebug.DebugActiveProcess(processId, false);
-                _isAttached = true;
-                ConfigureExceptionCallbacks();
-
-                _logger?.Invoke($"Attached to process: {processId}");
-                OnAttached?.Invoke(processId);
-                SendAllBreakpointEvents();
+                return corDebug.DebugActiveProcess(processId, false);
             }
-            catch (Exception error)
+            catch
             {
-                // Otherwise lost with the task, and the client would wait for a stop that can never come.
-                _logger?.Invoke($"Attaching to process {processId} failed: {error}");
-                OnConsole?.Invoke($"Could not attach to process {processId}: {error.Message}\n");
-                OnTerminated?.Invoke();
+                corDebug.TryTerminate();
+                throw;
             }
-        });
+        }
     }
 
     private void PerformRemoteAttach(RemoteAttachInfo remoteAttachInfo)

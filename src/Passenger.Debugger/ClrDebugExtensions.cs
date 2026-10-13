@@ -10,13 +10,28 @@ namespace Passenger.Debugger;
 // Originally based on https://github.com/lordmilko/ClrDebug/blob/5f46218f4b840ab8a94920623dc263b5f2334138/Samples/NetCore/Program.cs
 public static class ClrDebugExtensions
 {
+    /// <summary>dbgshim's word that a runtime has started (or was running already), on dbgshim's own thread. A starting
+    /// runtime waits for this to return, so it returns only once the debugger has taken hold of the process.</summary>
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     public static unsafe void OnRuntimeStartup(void* pCorDebug, void* parameter, int hr)
     {
         ICorDebug? corDebug = ComInterfaceMarshaller<ICorDebug>.ConvertToManaged(pCorDebug);
-        TaskCompletionSource<(ICorDebug? CorDebug, int Hr)>? runtimeStartupTcs = GCHandle.FromIntPtr((IntPtr)parameter).Target as TaskCompletionSource<(ICorDebug? CorDebug, int Hr)>;
-        ArgumentNullException.ThrowIfNull(runtimeStartupTcs);
-        runtimeStartupTcs.SetResult((corDebug, hr));
+        if (GCHandle.FromIntPtr((IntPtr)parameter).Target is RuntimeStartup startup)
+        {
+            startup.Answered.TrySetResult((corDebug, hr));
+            // Bounded, so an attach that never returns cannot hold the program at its start for good.
+            startup.LetGo.Wait(TimeSpan.FromSeconds(30));
+        }
+    }
+
+    /// <summary>What dbgshim's callback hands over, and what holds a starting runtime in it until the debugger has hold.</summary>
+    private sealed class RuntimeStartup
+    {
+        public TaskCompletionSource<(ICorDebug? CorDebug, int Hr)> Answered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>Set once the debugger has taken hold of the process, or given up on it; never disposed, since dbgshim's
+        /// thread may still be waiting on it after the attach has failed.</summary>
+        public ManualResetEventSlim LetGo { get; } = new();
     }
 
     public static ICorDebug Mobile(RemoteAttachInfo remoteAttachInfo)
@@ -34,78 +49,55 @@ public static class ClrDebugExtensions
         return corDebug;
     }
 
-    /// pass resumeDiagnosticSuspension true if the process was launched with the DOTNET_DefaultDiagnosticPortSuspend environment variable, and you wish for it to be resumed after RegisterForRuntimeStartup
-    /// <summary>ICorDebug for a process's runtime as it starts: registered for, then the held process let go
-    /// (<paramref name="resume"/>), or for a runtime already running when there is nothing to let go.</summary>
-    public static async Task<ICorDebug> Automatic(int pid, Func<Task>? resume, Action<string>? log = null)
+    /// <summary>A process taken hold of as its runtime starts: registered for, then let go (<paramref name="resume"/>, handed
+    /// the runtime's answer so it can stop waiting on a port once the runtime has answered), then <paramref name="attach"/>
+    /// run while the starting runtime waits in dbgshim's callback, so none of the program runs before the debugger has it.
+    /// A runtime already running answers at once, and is taken hold of where it is.</summary>
+    public static async Task<(ICorDebug CorDebug, ICorDebugProcess Process)> Automatic(int pid, Func<Task, Task>? resume, Func<ICorDebug, ICorDebugProcess> attach, Action<string>? log = null)
     {
         IntPtr unregisterToken = IntPtr.Zero;
-        GCHandle runtimeStartupTcsHandle = default;
-
-        ICorDebug? cordebug = null;
-        int hr = Cor.COR_E_FAILFAST;
-
+        RuntimeStartup startup = new();
+        GCHandle startupHandle = GCHandle.Alloc(startup);
         try
         {
-            /* If the process starts before GetStartupNotificationEvent inside RegisterForRuntimeStartup is called (e.g. because you were playing
-			 * in the debugger between launching the process and reaching this line of code) then WaitForSingleObject inside RegisterForRuntimeStartup
-			 * will hang indefinitely. You can prevent this by starting the process suspended.  In the Manual example, we call GetStartupNotificationEvent
-			 * ourselves, however in the Automatic example, RegisterForRuntimeStartup calls GetStartupNotificationEvent itself internally. In the latter scenario,
-			 * technically speaking there is the possibility of a race occurring even without us stepping in the debugger, but that's the risk you take when
-			 * you use RegisterForRuntimeStartup */
-
-            TaskCompletionSource<(ICorDebug? CorDebug, int Hr)> runtimeStartupTcs = new TaskCompletionSource<(ICorDebug? CorDebug, int Hr)>(TaskCreationOptions.RunContinuationsAsynchronously);
-            runtimeStartupTcsHandle = GCHandle.Alloc(runtimeStartupTcs);
             unsafe
             {
-                int registerHr = DbgShim.RegisterForRuntimeStartup(checked((uint)pid), &OnRuntimeStartup, GCHandle.ToIntPtr(runtimeStartupTcsHandle), out unregisterToken);
+                int registerHr = DbgShim.RegisterForRuntimeStartup(checked((uint)pid), &OnRuntimeStartup, GCHandle.ToIntPtr(startupHandle), out unregisterToken);
                 Marshal.ThrowExceptionForHR(registerHr);
             }
             log?.Invoke($"Registered for the runtime's start in process {pid}");
 
             if (resume is not null)
             {
-                await resume();
+                await resume(startup.Answered.Task);
             }
 
             (ICorDebug? CorDebug, int Hr) result;
             try
             {
-                result = await runtimeStartupTcs.Task.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+                result = await startup.Answered.Task.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
             }
             catch (TimeoutException)
             {
                 throw new TimeoutException($"Process {pid}'s runtime never told the debugger it had started (dbgshim's handshake) within 5 s");
             }
-            cordebug = result.CorDebug;
-            hr = result.Hr;
-            log?.Invoke($"The runtime in process {pid} answered the handshake: 0x{hr:X8}");
+            log?.Invoke($"The runtime in process {pid} answered the handshake: 0x{result.Hr:X8}");
+            if (result.CorDebug is not { } corDebug)
+            {
+                throw new InvalidOperationException($"dbgshim could not take hold of process {pid}'s runtime: 0x{result.Hr:X8}");
+            }
+            return (corDebug, attach(corDebug));
         }
         finally
         {
+            // Before unregistering, which waits for dbgshim's thread, the one waiting on this.
+            startup.LetGo.Set();
             if (unregisterToken != IntPtr.Zero)
             {
                 DbgShim.UnregisterForRuntimeStartup(unregisterToken);
             }
-
-            if (runtimeStartupTcsHandle.IsAllocated)
-            {
-                runtimeStartupTcsHandle.Free();
-            }
+            startupHandle.Free();
         }
-
-        //if callbackHR was not S_OK, an error occurred while attempting to register for runtime startup
-        if (cordebug is null)
-        {
-            throw new InvalidOperationException($"dbgshim could not take hold of process {pid}'s runtime: 0x{hr:X8}");
-        }
-
-        return cordebug;
-
-        //Initialize ICorDebug, setup our managed callback and attach to the existing process
-        //InitCorDebug(cordebug, pid);
-
-        //while (true) Thread.Sleep(1);
     }
 
     // public static ICorDebug Manual(int pid)

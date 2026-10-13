@@ -154,10 +154,12 @@ public partial class ManagedDebugger
         _exited.Reset();
         try
         {
-            _corDebug = await ClrDebugExtensions.Automatic(processId, resume, _logger);
-            _corDebug.Initialize();
-            _corDebug.SetManagedHandler(_callbacks);
-            _process = _corDebug.DebugActiveProcess(processId, false);
+            (_corDebug, _process) = await ClrDebugExtensions.Automatic(processId, _ => resume(), corDebug =>
+            {
+                corDebug.Initialize();
+                corDebug.SetManagedHandler(_callbacks);
+                return corDebug.DebugActiveProcess(processId, false);
+            }, _logger);
         }
         catch
         {
@@ -228,9 +230,7 @@ public partial class ManagedDebugger
         return _breakpointManager.RemoveBreakpoint(id);
     }
 
-    /// <summary>
-    /// Store process ID for later attach (actual attach happens in ConfigurationDone)
-    /// </summary>
+    /// <summary>The process to attach to, taken hold of by configurationDone once the client's breakpoints are set.</summary>
     public void Attach(int processId, bool justMyCode)
     {
         EnsureNoProcessBeingDebugged();
@@ -261,8 +261,8 @@ public partial class ManagedDebugger
         {
             int launchedProcessId = await Task.Run(() => SendRunInTerminalRequest.Invoke(_pendingLaunchInfo)); // get off the dispatcher thread
             _pendingLaunchInfo = null;
-            PerformAttach(launchedProcessId);
-            await DiagnosticClientHelper.DiagnosticClientResumeRuntime(launchedProcessId);
+            // Held at its diagnostic port for the debugger, which lets it go only once registered for its runtime.
+            await PerformAttach(launchedProcessId, (_, _) => DiagnosticClientHelper.DiagnosticClientResumeRuntime(launchedProcessId));
         }
         else if (_pendingLaunchInfo is not null) // If we have a pending launch, perform it
         {
@@ -273,11 +273,10 @@ public partial class ManagedDebugger
             PerformRemoteAttach(_pendingRemoteAttachInfo);
             _pendingRemoteAttachInfo = null;
         }
-        // Otherwise check for pending attach
-        else if (_pendingAttachProcessId.HasValue)
+        else if (_pendingAttachProcessId is int processId)
         {
-            PerformAttach(_pendingAttachProcessId.Value);
             _pendingAttachProcessId = null;
+            await PerformAttach(processId, DiagnosticClientHelper.LetGoIfHeld);
         }
     }
 

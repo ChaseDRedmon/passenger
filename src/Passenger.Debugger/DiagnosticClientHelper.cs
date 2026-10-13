@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Diagnostics.NETCore.Client;
 
 namespace Passenger.Debugger;
@@ -31,6 +32,40 @@ public static class DiagnosticClientHelper
             }
         }
         Release(diagnosticsClient);
+    }
+
+    /// <summary>Lets go a process held at its start by its diagnostic port, as an attach does once the debugger is registered
+    /// for its runtime; one already running is let be, its runtime's answer (<paramref name="answered"/>) ending the wait
+    /// for a port. Fails when the process ends first, or 5 s pass with neither: no .NET in it, or none the debugger reaches.</summary>
+    public static async Task LetGoIfHeld(Process process, Task answered)
+    {
+        DateTime until = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (!answered.IsCompleted)
+        {
+            if (process.HasExited)
+            {
+                throw new InvalidOperationException("it ended before the debugger could take hold of it");
+            }
+            // Looked for first: on Windows a client waits 30 s on a pipe that does not exist before it gives up.
+            if (DiagnosticsClient.GetPublishedProcesses().Contains(process.Id))
+            {
+                try
+                {
+                    new DiagnosticsClient(process.Id).ResumeRuntime();
+                    return;
+                }
+                catch (ServerNotAvailableException)
+                {
+                    // Its port was closing, or not yet listening.
+                }
+            }
+            if (DateTime.UtcNow >= until)
+            {
+                throw new InvalidOperationException("it is not a .NET program the debugger can reach: no runtime in it answered, and it opened no diagnostic port within 5 s");
+            }
+            // A program only just started opens its port a moment after it starts.
+            await Task.WhenAny(answered, Task.Delay(50));
+        }
     }
 
     private static void Release(DiagnosticsClient client)

@@ -83,7 +83,7 @@ public sealed class DebugSession : IDisposable
     public DapConnection Connection { get; }
 
     /// <summary>The adapter with DebuggableConsoleApp started for it to attach to; suspended, the
-    /// program waits at startup until <see cref="WithOptionalResumeRuntime"/>.</summary>
+    /// program waits at startup until the attach lets it go, in configurationDone.</summary>
     public static DebugSession ForAttach(ITestOutputHelper output, bool startSuspended, out Process debuggee)
     {
         debuggee = StartDebuggee(startSuspended);
@@ -196,8 +196,8 @@ public sealed class DebugSession : IDisposable
         return this;
     }
 
-    /// <summary>Lets a program started suspended go on; it waits at startup for a diagnostics client,
-    /// whose socket a program only just started may not have opened yet, as the engine also allows.</summary>
+    /// <summary>Lets a program started suspended go on, as a client that held it does once configurationDone has answered.
+    /// The attach has let it go already, having taken hold of it first, so a breakpoint set before sees its every pass.</summary>
     public DebugSession WithOptionalResumeRuntime(int processId, bool startSuspended)
     {
         if (!startSuspended)
