@@ -47,6 +47,8 @@ public sealed class TestRun : IDisposable
     [System.Runtime.CompilerServices.ModuleInitializer]
     internal static void Begin()
     {
+        // Before anything is started, which inherits it.
+        Nice.Normal();
         foreach (string left in Directory.EnumerateDirectories(Path.GetTempPath(), Prefix + "*"))
         {
             // A run still going has its process; one killed has none, and only an id reused since keeps its folder.
@@ -91,6 +93,58 @@ public sealed class TestRun : IDisposable
             Console.Error.WriteLine($"The tests' folder {Root} could not be removed: {held.Message}");
         }
     }
+}
+
+/// <summary>The run's nice value on macOS and Linux. MSBuild keeps no idle node for the next build at any nice value but 0,
+/// and GitHub's macOS runner starts everything at -10: the run is brought to 0 as it begins, which lowers its priority and
+/// so needs no privilege, and what it starts inherits that. A run started above 0 (by zsh's &amp;, at 5) could come down
+/// only with privilege, so a test that needs a node kept skips there, saying why.</summary>
+public static partial class Nice
+{
+    private const int PrioProcess = 0;
+
+    /// <summary>The run's nice value now; 0 on Windows, which has none.</summary>
+    public static int Value
+    {
+        get
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                return 0;
+            }
+            // -1 is a nice value as well as the failure: only errno tells them apart.
+            System.Runtime.InteropServices.Marshal.SetLastPInvokeError(0);
+            int nice = GetPriority(PrioProcess, 0);
+            return nice == -1 && System.Runtime.InteropServices.Marshal.GetLastPInvokeError() != 0 ? 0 : nice;
+        }
+    }
+
+    /// <summary>Brings the run up to 0 from below. On Linux a nice value is each thread's, so each thread there is now.</summary>
+    internal static void Normal()
+    {
+        if (OperatingSystem.IsWindows() || Value >= 0)
+        {
+            return;
+        }
+        IEnumerable<int> threads = OperatingSystem.IsLinux() && Directory.Exists("/proc/self/task")
+            ? Directory.EnumerateDirectories("/proc/self/task").Select(task => int.Parse(Path.GetFileName(task), System.Globalization.CultureInfo.InvariantCulture))
+            : [0];
+        foreach (int thread in threads)
+        {
+            SetPriority(PrioProcess, thread, 0);
+        }
+    }
+
+    /// <summary>Skips a test that needs MSBuild to keep a node for the next build, when the run is at a nice value at which
+    /// it keeps none.</summary>
+    public static void SkipUnlessMSBuildKeepsNodes() => Assert.SkipWhen(Value != 0,
+        $"The tests run at nice {Value}, at which MSBuild keeps no idle node for the next build, and only a privileged process could bring them to 0");
+
+    [System.Runtime.InteropServices.LibraryImport("libc", EntryPoint = "getpriority", SetLastError = true)]
+    private static partial int GetPriority(int which, int who);
+
+    [System.Runtime.InteropServices.LibraryImport("libc", EntryPoint = "setpriority", SetLastError = true)]
+    private static partial int SetPriority(int which, int who, int priority);
 }
 
 /// <summary>A test leaves nothing behind for the next, however it ends. A window test starts with no background work held:

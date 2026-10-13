@@ -390,6 +390,7 @@ public sealed class BuildRunTests : IDisposable
     [AvaloniaFact]
     public void A_build_goes_on_through_the_language_server_starting_again_while_it_runs()
     {
+        Nice.SkipUnlessMSBuildKeepsNodes();
         WriteTwoProjects();
         Write("Directory.Build.targets", """
             <Project>

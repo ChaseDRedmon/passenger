@@ -251,6 +251,7 @@ public sealed class McpTests : IDisposable
     [InlineData(true)]
     public async Task The_msbuild_nodes_a_build_leaves_for_the_next_end_with_passenger(bool killed)
     {
+        Nice.SkipUnlessMSBuildKeepsNodes();
         string two = Path.Combine(folder, "two");
         Directory.CreateDirectory(Path.Combine(two, "A"));
         Directory.CreateDirectory(Path.Combine(two, "B"));
