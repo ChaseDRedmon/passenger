@@ -218,6 +218,13 @@
     <Style Selector="Border.tab:pointerover Button.tabClose">
         <Setter Property="Opacity" Value="1" />
     </Style>
+    <!-- A tool window's tab that closes (a search's, a history's): its × on the open one and the one under the pointer. -->
+    <Style Selector="ToggleButton.panelTab:pointerover Button.tabClose">
+        <Setter Property="Opacity" Value="1" />
+    </Style>
+    <Style Selector="ToggleButton.panelTab:checked Button.tabClose">
+        <Setter Property="Opacity" Value="1" />
+    </Style>
     <Style Selector="Button.tabClose:pointerover /template/ ContentPresenter#PART_ContentPresenter">
         <Setter Property="Background" Value="{DynamicResource Passenger.Selected}" />
     </Style>

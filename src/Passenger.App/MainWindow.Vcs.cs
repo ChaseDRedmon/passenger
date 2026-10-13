@@ -15,10 +15,13 @@ public partial class MainWindow
 {
     private readonly VcsController vcs = new();
     private ToolWindows.CommitView? commitView;
-    private ToolWindows.GitLogView? gitLog;
+    private ToolWindows.GitView? gitView;
 
     /// <summary>The Git tool window's log.</summary>
-    public ToolWindows.GitLogView GitLog => gitLog!;
+    public ToolWindows.GitLogView GitLog => gitView!.Log;
+
+    /// <summary>The Git tool window: its Log and the histories Show History opened beside it.</summary>
+    public ToolWindows.GitView GitWindow => gitView!;
 
     /// <summary>The open folder's version control.</summary>
     public VcsController Vcs => vcs;
@@ -53,22 +56,29 @@ public partial class MainWindow
             ActionTitle = "Commit Tool Window",
             Menus = [new MenuPlace("Git", 3, 0)],
         });
-        gitLog = new ToolWindows.GitLogView(vcs);
-        Dock.Add(new Docking.ToolWindow("git", "Git", "Icon.Branch", gitLog, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowGit, Menus = [new MenuPlace("Git", 3, 1)] });
+        gitView = new ToolWindows.GitView(vcs);
+        Dock.Add(new Docking.ToolWindow("git", "Git", "Icon.Branch", gitView, Docking.ToolAnchor.BottomLeft)
+        {
+            Action = AppActions.ShowGit,
+            Menus = [new MenuPlace("Git", 3, 1)],
+            HeaderTools = gitView.Tabs,
+        });
         AddVcsActions();
-        gitLog.DiffRequested += (_, chosen) => _ = ShowCommitDiffAsync(chosen.Commit, chosen.File);
+        AddHistoryActions();
+        gitView.DiffRequested += (_, chosen) => _ = ShowCommitDiffAsync(chosen.Commit, chosen.File);
+        gitView.CompareRequested += (_, chosen) => _ = CompareWithAsync(chosen.Local, chosen.Commit.Hash, chosen.Commit.Short, chosen.File.Path);
         commitView.OpenRequested += (_, path) => OpenFile(path);
         commitView.DiffRequested += (_, path) => _ = ShowDiffAsync(path);
         commitView.RollbackRequested += async (_, changes) => await RollbackAsync(changes);
         commitView.DeleteRequested += async (_, path) => await DeleteAsync(path);
         commitView.IgnoreRequested += (_, path) => Ignore(path);
-        gitLog.NewBranchRequested += (_, commit) =>
+        gitView.NewBranchRequested += (_, commit) =>
         {
             NamePopup popup = new($"New Branch from {commit.Short}", string.Empty, async name => (await vcs.NewBranchAtAsync(name, commit.Hash)).Problem);
             popup.Done += (_, _) => ClosePopup();
             ShowPopup(popup);
         };
-        gitLog.ResetRequested += async (_, reset) =>
+        gitView.ResetRequested += async (_, reset) =>
         {
             if (reset.Mode == ResetMode.Hard && !await Confirm("Reset Current Branch to Here",
                 $"Move {vcs.Branch ?? "HEAD"} to {reset.Commit.Short} and drop every change since, committed or not?", "Reset"))
@@ -77,6 +87,7 @@ public partial class MainWindow
             }
             await vcs.ResetAsync(reset.Commit.Hash, reset.Mode);
         };
+        Explorer.IsVersioned = path => vcs.Repository?.IsInside(path) == true;
         vcs.SaveFirst = () => Editors.SaveAll();
         vcs.Message += (_, message) => StatusText.Text = message;
         vcs.Changed += (_, _) => OnVcsChanged();
@@ -221,19 +232,27 @@ public partial class MainWindow
             TextSnapshot text = mine.Snapshot;
             diff = await BackgroundWork.Run(() => FileDiff.Compare(head, text));
         }
+        return OpenLocalDiff(path, open, mine, diff, "HEAD");
+    }
+
+    /// <summary>A version's text (the last commit's, a branch's, a revision's) beside the file's in a window over this one,
+    /// the right side the open file's own text when it is still open.</summary>
+    private DiffWindow OpenLocalDiff(string path, OpenDocument? open, TextDocument mine, FileDiff diff, string version)
+    {
         // Closed while the differences were read, the file's text is one nothing would save: it is shown, not edited.
         if (open is not null && !Editors.Documents.Contains(open))
         {
             open = null;
         }
-        DiffView view = new(Path.GetFileName(path), diff, mine, editable: open is not null, rightColours: open?.Highlighter);
+        DiffView view = new(Path.GetFileName(path), diff, mine, editable: open is not null, rightColours: open?.Highlighter,
+            titles: (version, open is not null ? "Your version" : "Your version (read-only)"));
         IHighlighter? left = null;
         if (Workspace.Language.ForPath(path).Name == "C#")
         {
             left = new Languages.CSharp.CSharpHighlighter(view.Left.Document);
             view.Left.Highlighter = left;
         }
-        DiffWindow window = new($"{Path.GetFileName(path)}: HEAD and your version", view);
+        DiffWindow window = new($"{Path.GetFileName(path)}: {version} and your version", view);
         window.Closed += (_, _) => (left as IDisposable)?.Dispose();
         if (open is { } file)
         {
@@ -366,6 +385,7 @@ public partial class MainWindow
             return;
         }
         ShowToolWindow("git");
+        GitWindow.ShowLog();
         await GitLog.SelectHashAsync(lines[line].Hash);
         StatusText.Text = $"{lines[line].Short} {lines[line].Summary} ({lines[line].Author}, {lines[line].Time.ToLocalTime():f})";
     }

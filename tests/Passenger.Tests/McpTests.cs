@@ -632,6 +632,55 @@ public sealed class McpTests : IDisposable
         first.Close();
     }
 
+    /// <summary>vcs_log with a path is Show History's, read by the window's own code: the agent gets the commits the
+    /// person's history tab lists, a file followed through its rename, and a selection's.</summary>
+    [AvaloniaFact]
+    public void An_agents_vcs_log_with_a_path_lists_the_commits_show_history_does_renames_followed()
+    {
+        string repository = TestFolders.Create("mcp-history-");
+        const string shop = "class Shop\n{\n    int count;\n\n    void Add() { count++; }\n}\n";
+        Directory.CreateDirectory(Path.Combine(repository, "src"));
+        File.WriteAllText(Path.Combine(repository, "src", "Shop.cs"), shop);
+        TestGit.Init(repository);
+        File.WriteAllText(Path.Combine(repository, "src", "Shop.cs"), shop.Replace("count++", "count += 2", StringComparison.Ordinal));
+        TestGit.Run(repository, "commit", "-q", "-am", "Twice");
+        TestGit.Run(repository, "mv", "src/Shop.cs", "src/Store.cs");
+        TestGit.Run(repository, "commit", "-q", "-m", "Store");
+        File.WriteAllText(Path.Combine(repository, "Notes.txt"), "notes\n");
+        TestGit.Run(repository, "add", "-A");
+        TestGit.Run(repository, "commit", "-q", "-m", "Notes");
+        MainWindow window = AgentsWindow(repository);
+        string store = Path.Combine(window.Folder!, "src", "Store.cs");
+        Passenger.App.ToolWindows.GitLogView history = Await(window.ShowHistoryAsync(store), "the file's history")!;
+        Ui.Landed(() => history.Rows.Count == 3, "the file's three commits");
+        Passenger.App.ToolWindows.GitLogView lines = Await(window.ShowSelectionHistoryAsync(store, 4, 4), "line 5's history")!;
+        Ui.Landed(() => lines.Rows.Count == 2, "the two commits that changed line 5");
+        McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
+        try
+        {
+            JsonElement log = Await(Task.Run(() => Call(client, "vcs_log", new() { ["path"] = Path.Combine("src", "Store.cs") })), "the agent's vcs_log of the file");
+            Assert.Equal(history.Rows.Select(r => r.Commit.Short), log.EnumerateArray().Select(c => c.GetProperty("hash").GetString()));
+            // The rename, then the file under its old name.
+            Assert.Equal([Path.Combine("src", "Store.cs"), Path.Combine("src", "Shop.cs"), Path.Combine("src", "Shop.cs")],
+                log.EnumerateArray().Select(c => c.GetProperty("changes")[0].GetProperty("path").GetString()));
+            Assert.Equal("renamed", log[0].GetProperty("changes")[0].GetProperty("kind").GetString());
+
+            JsonElement changed = Await(Task.Run(() => Call(client, "vcs_log", new() { ["path"] = Path.Combine("src", "Store.cs"), ["startLine"] = 5, ["endLine"] = 5 })),
+                "the agent's vcs_log of line 5");
+            Assert.Equal(lines.Rows.Select(r => r.Commit.Short), changed.EnumerateArray().Select(c => c.GetProperty("hash").GetString()));
+            Assert.Equal(["Twice", "First"], changed.EnumerateArray().Select(c => c.GetProperty("subject").GetString()));
+        }
+        finally
+        {
+            Await(Task.Run(async () =>
+            {
+                await client.DisposeAsync();
+                return true;
+            }), "the agent going");
+            window.Close();
+        }
+    }
+
     /// <summary>The folder of the window an agent started in a folder reaches with <c>--mcp-attach</c>.</summary>
     private string? AttachedFolder(string workingDirectory) => Await(Task.Run(async () =>
     {

@@ -54,6 +54,9 @@ public partial class MainWindow
             case ExplorerAction.Delete when node is { IsSolutionItem: true, SolutionPath: { } holder } && path is not null:
                 await RemoveSolutionItemAsync(holder, path);
                 break;
+            case ExplorerAction.ShowHistory or ExplorerAction.CompareWithRevision or ExplorerAction.CompareWithBranch:
+                await ExplorerGitAsync(action, node);
+                break;
             case ExplorerAction.RunTests or ExplorerAction.DebugTests:
                 RunProjectTests([.. Explorer.SelectedNodes.Append(node).Distinct().SelectMany(Explorer.Tree.ProjectsOf).Distinct()], node.Name, action == ExplorerAction.DebugTests);
                 break;

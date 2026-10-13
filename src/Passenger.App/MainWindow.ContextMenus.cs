@@ -63,7 +63,8 @@ public partial class MainWindow
         Add(Item(A.ToggleBreakpoint));
         if (vcs.Repository is not null)
         {
-            Add(separator, Sub("Git", Item(A.Annotate), Item(A.ShowDiff), Item(A.RollbackLines)));
+            Add(separator, Sub("Git", Item(A.Annotate), Item(A.ShowDiff), Item(A.CompareWithRevision), Item(A.CompareWithBranch), separator,
+                Item(A.ShowHistory), Item(A.ShowHistoryForSelection), separator, Item(A.RollbackLines)));
         }
         ContextMenu menu = new() { ItemsSource = items, PlacementTarget = editor };
         if (at is null)

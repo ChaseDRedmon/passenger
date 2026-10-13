@@ -159,6 +159,13 @@ public static class AppActions
     public const string Unstash = "app.vcs.unstash";
     public const string CloneRepository = "app.vcs.clone";
 
+    // Rider's Vcs.ShowTabbedFileHistory, Vcs.ShowHistoryForBlock, Git.CompareWithBranch and Compare.Selected: no keys in
+    // its Visual Studio keymaps or their parents.
+    public const string ShowHistory = "app.vcs.showHistory";
+    public const string ShowHistoryForSelection = "app.vcs.showHistoryForSelection";
+    public const string CompareWithBranch = "app.vcs.compareWithBranch";
+    public const string CompareWithRevision = "app.vcs.compareWithRevision";
+
     /// <summary>The person's own shortcuts over the Visual Studio keymap's, by action (an empty list unbinds it), as
     /// Settings keeps them.</summary>
     public static IReadOnlyDictionary<string, string[]> UserShortcuts

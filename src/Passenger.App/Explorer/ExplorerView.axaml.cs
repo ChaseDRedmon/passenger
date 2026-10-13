@@ -26,6 +26,9 @@ public enum ExplorerAction
     AddExistingItem,
     RunTests,
     DebugTests,
+    ShowHistory,
+    CompareWithRevision,
+    CompareWithBranch,
 }
 
 public partial class ExplorerView : UserControl
@@ -57,6 +60,9 @@ public partial class ExplorerView : UserControl
 
     /// <summary>A row's menu item or key: what to do, and to which row.</summary>
     public event EventHandler<(ExplorerAction Action, ExplorerNode Node)>? ActionRequested;
+
+    /// <summary>Whether Git has a path's history (it is in the folder's working tree), for a row's Git items.</summary>
+    public Func<string, bool> IsVersioned { get; set; } = _ => false;
 
     /// <summary>The row chosen, if any.</summary>
     public ExplorerNode? Selected => Rows.SelectedItem as ExplorerNode;
@@ -210,6 +216,19 @@ public partial class ExplorerView : UserControl
             }
             menu.Items.Add(Item("Copy Path", ExplorerAction.CopyPath));
             menu.Items.Add(Item(OperatingSystem.IsMacOS() ? "Reveal in Finder" : "Show in Explorer", ExplorerAction.Reveal));
+        }
+        if (node.Kind is NodeKind.File or NodeKind.Folder or NodeKind.Project or NodeKind.Solution && node.Path is { } versioned && IsVersioned(versioned))
+        {
+            // Rider's Git submenu, last: a file's or a folder's history (a project's or the solution's folder), a file's versions.
+            MenuItem git = new() { Header = "Git" };
+            if (node.Kind == NodeKind.File)
+            {
+                git.Items.Add(Item("Compare with Revision...", ExplorerAction.CompareWithRevision));
+                git.Items.Add(Item("Compare with Branch or Tag...", ExplorerAction.CompareWithBranch));
+            }
+            git.Items.Add(Item("Show History", ExplorerAction.ShowHistory));
+            menu.Items.Add(new Separator());
+            menu.Items.Add(git);
         }
         return menu;
     }

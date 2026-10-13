@@ -12,7 +12,9 @@ namespace Passenger.App.ToolWindows;
 
 /// <summary>Rider's Git window, its Log: every branch's commits newest first beside the graph that joins them, each
 /// with its branches and tags, author and date, narrowed by text or hash; the chosen commit's files and its message
-/// beside the list. A double-click on a file shows what the commit did to it.</summary>
+/// beside the list. A double-click on a file shows what the commit did to it. Given a <see cref="HistoryScope"/> it is a
+/// Show History tab: the commits from HEAD that changed a file (under each name it had), a folder or some lines, each
+/// listing what it did there; for a file or lines, a double-click or Enter on a commit shows what it did to the file.</summary>
 public sealed class GitLogView : DockPanel
 {
     private const double LaneWidth = 12;
@@ -26,7 +28,11 @@ public sealed class GitLogView : DockPanel
     private readonly TextBox details;
     private readonly TextBox filter;
     private readonly TextBlock placeholder;
+    private readonly EventHandler onHistoryChanged;
     private IReadOnlyList<GraphRow> all = [];
+
+    /// <summary>A history's commits' changes there, by hash.</summary>
+    private Dictionary<string, IReadOnlyList<FileChange>> changes = [];
     private bool stale = true;
     private int loads;
 
@@ -34,17 +40,34 @@ public sealed class GitLogView : DockPanel
     public int Loads => loads;
     private int showing;
 
-    public GitLogView(VcsController vcs)
+    /// <param name="scope">What Show History lists the commits of, or null for the Log of every branch.</param>
+    public GitLogView(VcsController vcs, HistoryScope? scope = null)
     {
         this.vcs = vcs;
+        Scope = scope;
         list = new ListBox
         {
             Classes = { "tree" },
             ItemTemplate = new FuncDataTemplate<GraphRow>((row, _) => row is null ? new TextBlock() : Row(row), supportsRecycling: false),
         };
         list.SelectionChanged += (_, _) => _ = ShowCommitAsync();
+        list.DoubleTapped += (_, _) => RequestFileDiff();
+        // Ahead of the list's own keys, which take Enter for its selection.
+        list.AddHandler(KeyDownEvent, (_, e) =>
+        {
+            if (e.Key == Key.Enter && e.KeyModifiers == KeyModifiers.None && RequestFileDiff())
+            {
+                e.Handled = true;
+            }
+        }, Avalonia.Interactivity.RoutingStrategies.Tunnel);
         ListMenus.Attach(list, () => Selected is not { } commit ? [] :
         [
+            .. FileChangeOf(commit) is { } change ? new Control[]
+            {
+                ListMenus.Item("Show Diff", null, () => DiffRequested?.Invoke(this, (commit, change))),
+                ListMenus.Item("Compare with Local", null, () => CompareRequested?.Invoke(this, (commit, change))),
+                new Separator(),
+            } : [],
             ListMenus.Item("Copy Revision Number", null, () => _ = ListMenus.CopyAsync(this, commit.Hash)),
             new Separator(),
             ListMenus.Item("Checkout Revision", null, () => _ = vcs.CheckoutRevisionAsync(commit.Hash)),
@@ -115,15 +138,16 @@ public sealed class GitLogView : DockPanel
         Children.Add(top);
         Children.Add(split);
 
-        vcs.HistoryChanged += (_, _) =>
+        onHistoryChanged = (_, _) =>
         {
-            // Read again now when shown, else when it next is: a hidden window is out of the visual tree.
+            // Read again now when shown, else when it next is: a hidden window (or tab) is out of the visual tree.
             stale = true;
             if (VisualRoot is not null)
             {
                 _ = LoadAsync();
             }
         };
+        vcs.HistoryChanged += onHistoryChanged;
         AttachedToVisualTree += (_, _) =>
         {
             if (stale)
@@ -133,8 +157,17 @@ public sealed class GitLogView : DockPanel
         };
     }
 
+    /// <summary>What the commits are of, or null for the Log of every branch.</summary>
+    public HistoryScope? Scope { get; }
+
+    /// <summary>A history's tab closed: it stops following the history.</summary>
+    public void Close() => vcs.HistoryChanged -= onHistoryChanged;
+
     /// <summary>A file of a commit whose change to show: the commit and the file.</summary>
     public event EventHandler<(CommitInfo Commit, FileChange File)>? DiffRequested;
+
+    /// <summary>A file as a commit of its history had it, to compare with the file as it is now.</summary>
+    public event EventHandler<(CommitInfo Commit, FileChange File)>? CompareRequested;
 
     /// <summary>A branch to make at a commit, its name to be asked for.</summary>
     public event EventHandler<CommitInfo>? NewBranchRequested;
@@ -182,15 +215,56 @@ public sealed class GitLogView : DockPanel
     {
         int load = ++loads;
         stale = false;
-        IReadOnlyList<CommitInfo> commits = vcs.Repository is { } repository ? await repository.LogAsync() : [];
+        Git? repository = vcs.Repository;
+        IReadOnlyList<HistoryCommit> history = repository is null || Scope is null ? [] : await repository.HistoryAsync(Scope);
+        IReadOnlyList<CommitInfo> commits = repository is null ? [] : Scope is null ? await repository.LogAsync() : [.. history.Select(h => h.Commit)];
         if (load != loads)
         {
             return;
         }
-        all = CommitGraph.Layout(commits);
+        changes = history.ToDictionary(h => h.Commit.Hash, h => h.Changes);
+        all = Scope is null ? CommitGraph.Layout(commits) : CommitGraph.Line(commits);
         Filter();
-        placeholder.Text = vcs.Repository is null ? "The folder is not in a Git repository" : "No commits yet";
+        string name = Scope is null ? string.Empty : Path.GetFileName(Path.TrimEndingDirectorySeparator(Scope.Path));
+        placeholder.Text = repository is null ? "The folder is not in a Git repository"
+            : Scope is null ? "No commits yet"
+            : Scope.IsLines ? $"No commit changed these lines of {name}"
+            : $"Git has no history of {name}";
         placeholder.IsVisible = rows.Count == 0;
+        if (Scope is not null && list.SelectedIndex < 0 && rows.Count > 0)
+        {
+            // A history opens on its newest commit, as Rider's does.
+            list.SelectedIndex = 0;
+        }
+    }
+
+    /// <summary>Gives the commits the keys on the chosen one, as a click on it does.</summary>
+    public void FocusRows()
+    {
+        int index = Math.Max(0, list.SelectedIndex);
+        if (rows.Count == 0)
+        {
+            return;
+        }
+        list.ScrollIntoView(index);
+        list.UpdateLayout();
+        list.ContainerFromIndex(index)?.Focus();
+    }
+
+    /// <summary>The file a file's or some lines' history follows, as a commit had it; null in the Log or a folder's
+    /// history, whose commits change many.</summary>
+    private FileChange? FileChangeOf(CommitInfo commit) =>
+        Scope is { IsFolder: false } && changes.TryGetValue(commit.Hash, out IReadOnlyList<FileChange>? made) && made.Count == 1 ? made[0] : null;
+
+    /// <summary>A double-click or Enter on a commit of a file's history: what it did to the file. False elsewhere.</summary>
+    private bool RequestFileDiff()
+    {
+        if (Selected is not { } commit || FileChangeOf(commit) is not { } change)
+        {
+            return false;
+        }
+        DiffRequested?.Invoke(this, (commit, change));
+        return true;
     }
 
     /// <summary>Lists the rows the filter keeps, the chosen commit kept chosen while it is still listed.</summary>
@@ -233,7 +307,10 @@ public sealed class GitLogView : DockPanel
             details.Text = string.Empty;
             return;
         }
-        IReadOnlyList<FileChange> changed = await repository.CommitFilesAsync(commit.Hash);
+        // A history's commit lists what it did there, which the history read with it.
+        IReadOnlyList<FileChange> changed = Scope is not null && changes.TryGetValue(commit.Hash, out IReadOnlyList<FileChange>? there)
+            ? there
+            : await repository.CommitFilesAsync(commit.Hash);
         string message = await repository.MessageAsync(commit.Hash);
         if (reading != showing)
         {
@@ -268,6 +345,14 @@ public sealed class GitLogView : DockPanel
             Border tag = new() { [DockProperty] = Dock.Left, CornerRadius = new CornerRadius(3), Padding = new Thickness(5, 1), Margin = new Thickness(0, 0, 6, 0), Child = text, VerticalAlignment = VerticalAlignment.Center };
             tag.Bind(Border.BackgroundProperty, tag.GetResourceObservable("Passenger.Vcs.Ref"));
             subject.Children.Add(tag);
+        }
+        if (FileChangeOf(row.Commit) is { } change && change.Path != Scope!.Path && vcs.Repository is { } repository)
+        {
+            // Under another name then, as Rider's history names the path a commit had the file at.
+            TextBlock then = Muted(repository.Relative(change.Path));
+            then[DockProperty] = Dock.Right;
+            then.MaxWidth = 280;
+            subject.Children.Add(then);
         }
         subject.Children.Add(new TextBlock { Text = row.Commit.Subject, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis });
         TextBlock author = Muted(row.Commit.Author);
@@ -346,7 +431,7 @@ public sealed class GitLogView : DockPanel
                     context.DrawLine(PenFor(i), new Point(X(i), mid), new Point(X(j), bottom));
                 }
             }
-            foreach (string parent in row.Commit.Parents)
+            foreach (string parent in row.Joins)
             {
                 if (IndexOf(row.Below, parent) is int j and >= 0)
                 {

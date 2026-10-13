@@ -46,6 +46,38 @@ public sealed class FileDiff
         ? line == h.Value.NewStart || line == h.Value.NewStart - 1
         : line >= h.Value.NewStart && line < h.Value.NewStart + h.Value.NewCount);
 
+    /// <summary>Lines of <see cref="Text"/> (from 0) as the last commit numbers them, for Show History for Selection: each
+    /// moved by the changes above it, and a changed one taken as the whole change's lines there. Null when none of them is
+    /// in the last commit.</summary>
+    public (int First, int Last)? HeadLines(int first, int last)
+    {
+        int from = Math.Max(0, HeadLine(first, forward: true));
+        int to = Math.Min(headLines.Length - 1, HeadLine(last, forward: false));
+        return from <= to ? (from, to) : null;
+    }
+
+    /// <summary>The last commit's line for a line of the file; for one added since, the committed line after it (or before
+    /// it, going back).</summary>
+    private int HeadLine(int line, bool forward)
+    {
+        int shift = 0;
+        foreach (DiffHunk hunk in Hunks.OrderBy(h => h.NewStart))
+        {
+            if (line < hunk.NewStart)
+            {
+                break;
+            }
+            if (line < hunk.NewStart + hunk.NewCount)
+            {
+                return hunk.OldCount == 0
+                    ? (forward ? hunk.OldStart : hunk.OldStart - 1)
+                    : (forward ? hunk.OldStart : hunk.OldStart + hunk.OldCount - 1);
+            }
+            shift = hunk.OldStart + hunk.OldCount - (hunk.NewStart + hunk.NewCount);
+        }
+        return line + shift;
+    }
+
     /// <summary>The lines a change had in the last commit, each but the last ending with <paramref name="lineBreak"/>.</summary>
     public string Before(DiffHunk hunk, string lineBreak = "\n") => string.Join(lineBreak, headLines, hunk.OldStart, hunk.OldCount);
 

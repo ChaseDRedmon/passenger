@@ -70,13 +70,37 @@ public sealed partial class PassengerTools
     });
 
     [McpServerTool(Name = "vcs_log", Title = "The history", ReadOnly = true), Description(
-        "The newest commits of every branch, as the Git window's Log lists them, with their branches and tags.")]
-    public Task<IReadOnlyList<VcsCommit>> VcsLog(int count = 20, CancellationToken cancel = default) => OnUi(cancel, async () =>
+        "The newest commits of every branch, as the Git window's Log lists them, with their branches and tags. With a path, Show History's " +
+        "instead: the commits from HEAD that changed that file (followed through its renames) or folder, each with what it did there (the " +
+        "file under the path it had then); with startLine and endLine too, Show History for Selection's: the commits that changed those " +
+        "lines of the file as the editor has it.")]
+    public Task<IReadOnlyList<VcsCommit>> VcsLog(int count = 20, string? path = null,
+        [Description("The first line of the file's to follow, from 1")] int? startLine = null,
+        [Description("The last line, from 1")] int? endLine = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         await window.Vcs.Opened;
         Git repository = window.Vcs.Repository ?? throw new InvalidOperationException("The folder is not in a Git repository");
-        return (IReadOnlyList<VcsCommit>)[.. (await repository.LogAsync(Math.Clamp(count, 1, 500))).Select(c =>
-            new VcsCommit(c.Short, c.Subject, c.Author, c.Time.ToLocalTime().ToString("yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.InvariantCulture), c.Refs))];
+        int most = Math.Clamp(count, 1, 500);
+        (int, int)? lines = (startLine, endLine) switch
+        {
+            (null, null) => null,
+            (int first, int last) when path is not null && first >= 1 && last >= first => (first - 1, last - 1),
+            _ => throw new ArgumentException("startLine and endLine come together, with a path, from 1 and the last at or after the first"),
+        };
+        if (path is null)
+        {
+            return (IReadOnlyList<VcsCommit>)[.. (await repository.LogAsync(most)).Select(c => Commit(c, null))];
+        }
+        HistoryScope scope = await window.HistoryScopeAsync(Resolve(path), lines);
+        return [.. (await repository.HistoryAsync(scope, most)).Select(h => Commit(h.Commit, h.Changes))];
+
+        VcsCommit Commit(CommitInfo commit, IReadOnlyList<FileChange>? changes) => new(
+            commit.Short,
+            commit.Subject,
+            commit.Author,
+            commit.Time.ToLocalTime().ToString("yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.InvariantCulture),
+            commit.Refs,
+            changes?.Select(c => new VcsChange(Relative(c.Path), c.Kind.ToString().ToLowerInvariant(), c.From is { } from ? Relative(from) : null)).ToList());
     });
 
     [McpServerTool(Name = "vcs_checkout", Title = "Check out a branch", Destructive = true), Description(
@@ -316,7 +340,8 @@ public sealed record VcsStatus(string? Branch, IReadOnlyList<VcsChange> Changes)
 
 public sealed record VcsChange(string Path, string Kind, string? From);
 
-public sealed record VcsCommit(string Hash, string Subject, string Author, string Date, IReadOnlyList<string> Refs);
+/// <summary>A commit as vcs_log lists it; with a path, what it did there.</summary>
+public sealed record VcsCommit(string Hash, string Subject, string Author, string Date, IReadOnlyList<string> Refs, IReadOnlyList<VcsChange>? Changes = null);
 
 /// <summary>A frame of a profile: a method, the milliseconds with it on the stack, and those in it alone.</summary>
 public sealed record ProfileFrame(string Method, int TotalMs, int SelfMs);

@@ -29,6 +29,29 @@ public sealed record CommitInfo(string Hash, IReadOnlyList<string> Parents, stri
     public string Short => Hash[..Math.Min(8, Hash.Length)];
 }
 
+/// <summary>What Show History is of: a file, followed through its renames; a folder; or a file's lines, from 0 as the last
+/// commit numbers them (Show History for Selection).</summary>
+public sealed record HistoryScope(string Path, bool IsFolder = false, int FirstLine = -1, int LastLine = -1)
+{
+    public bool IsLines => FirstLine >= 0;
+}
+
+/// <summary>A commit of a history and what it did there: the files it changed in the folder, or the file under the name
+/// it had then.</summary>
+public sealed record HistoryCommit(CommitInfo Commit, IReadOnlyList<FileChange> Changes);
+
+/// <summary>What a branch or tag is, as Compare with Branch or Tag groups them.</summary>
+public enum RefKind
+{
+    Local,
+    Remote,
+    Tag,
+}
+
+/// <summary>A branch or tag: its full name (refs/heads/main), which names it to git whatever else shares its short one,
+/// and the short name it is shown by.</summary>
+public sealed record GitRef(string FullName, string Name, RefKind Kind);
+
 /// <summary>A line as Git blame has it: the commit that last changed it (all zeros for a change not committed yet),
 /// who made it and when, and its subject.</summary>
 public sealed record BlameLine(string Hash, string Author, DateTimeOffset Time, string Summary)
@@ -234,6 +257,34 @@ public sealed class Git
         return [.. lines.Where(l => l.StartsWith('*')).Select(l => l[1..]), .. lines.Where(l => !l.StartsWith('*')).Select(l => l.TrimStart(' '))];
     }
 
+    /// <summary>The local branches (the current one first), the remote ones (less each remote's HEAD) and the tags, as
+    /// Compare with Branch or Tag lists them.</summary>
+    public async Task<IReadOnlyList<GitRef>> RefNamesAsync()
+    {
+        GitResult refs = await RunAsync(Root, ["for-each-ref", "--format=%(HEAD)%(refname)", "refs/heads", "refs/remotes", "refs/tags"]);
+        if (!refs.Succeeded)
+        {
+            return [];
+        }
+        List<(bool Current, GitRef Ref)> found = [];
+        foreach (string line in refs.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            string full = line[1..];
+            GitRef? named = full switch
+            {
+                _ when full.StartsWith("refs/heads/", StringComparison.Ordinal) => new GitRef(full, full[11..], RefKind.Local),
+                _ when full.StartsWith("refs/remotes/", StringComparison.Ordinal) && !full.EndsWith("/HEAD", StringComparison.Ordinal) => new GitRef(full, full[13..], RefKind.Remote),
+                _ when full.StartsWith("refs/tags/", StringComparison.Ordinal) => new GitRef(full, full[10..], RefKind.Tag),
+                _ => null,
+            };
+            if (named is not null)
+            {
+                found.Add((line[0] == '*', named));
+            }
+        }
+        return [.. found.OrderBy(f => f.Ref.Kind).ThenBy(f => !f.Current).Select(f => f.Ref)];
+    }
+
     /// <summary>The history of every branch, remote and tag and of HEAD, newest first with a branch's commits together (as
     /// Rider's log has it), at most this many. Not --all, which takes in the stash's own commits (and notes').</summary>
     public async Task<IReadOnlyList<CommitInfo>> LogAsync(int most = 2000)
@@ -253,48 +304,75 @@ public sealed class Git
 
     private const string CommitFormat = "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s%x1e";
 
+    /// <summary>A history's commits: each begins a record, and what follows its last field is what it did there.</summary>
+    private const string HistoryFormat = "--format=%x1e%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s%x1f";
+
     private static List<CommitInfo> Commits(string output)
     {
         List<CommitInfo> commits = [];
         foreach (string record in output.Split('\x1e'))
         {
             string[] field = record.Trim('\n').Split('\x1f');
-            if (field.Length < 7)
+            if (field.Length >= 7)
             {
-                continue;
+                commits.Add(Commit(field));
             }
-            commits.Add(new CommitInfo(
-                field[0],
-                field[1].Split(' ', StringSplitOptions.RemoveEmptyEntries),
-                field[2],
-                field[3],
-                DateTimeOffset.FromUnixTimeSeconds(long.Parse(field[4], System.Globalization.CultureInfo.InvariantCulture)),
-                [.. field[5].Split(", ", StringSplitOptions.RemoveEmptyEntries).Select(r => r.StartsWith("HEAD -> ", StringComparison.Ordinal) ? r[8..] : r)],
-                field[6]));
         }
         return commits;
     }
 
-    /// <summary>A commit's whole message.</summary>
-    public async Task<string> MessageAsync(string hash)
+    private static CommitInfo Commit(string[] field) => new(
+        field[0],
+        field[1].Split(' ', StringSplitOptions.RemoveEmptyEntries),
+        field[2],
+        field[3],
+        DateTimeOffset.FromUnixTimeSeconds(long.Parse(field[4], System.Globalization.CultureInfo.InvariantCulture)),
+        [.. field[5].Split(", ", StringSplitOptions.RemoveEmptyEntries).Select(r => r.StartsWith("HEAD -> ", StringComparison.Ordinal) ? r[8..] : r)],
+        field[6]);
+
+    /// <summary>Show History's commits from HEAD, newest first, at most this many, each with what it did there: a file's
+    /// followed through its renames (--follow), a folder's, or those that changed a file's lines (-L), renames followed
+    /// too. Empty where git has none: a file it does not track, lines past the end of the last commit's.</summary>
+    public async Task<IReadOnlyList<HistoryCommit>> HistoryAsync(HistoryScope scope, int most = 2000)
     {
-        GitResult show = await RunAsync(Root, ["show", "-s", "--format=%B", "--end-of-options", hash]);
-        return show.Succeeded ? show.Output.TrimEnd() : string.Empty;
+        string relative = Relative(scope.Path);
+        string count = $"--max-count={most}";
+        if (scope.IsLines)
+        {
+            // -L takes no pathspec: its file is whatever follows the range. The prefixes are set, whatever diff.noprefix says.
+            GitResult lines = await RunAsync(Root, ["-c", "core.quotePath=false", "log", $"-L{scope.FirstLine + 1},{scope.LastLine + 1}:{relative}",
+                "--no-color", "--src-prefix=a/", "--dst-prefix=b/", HistoryFormat, count, "HEAD"]);
+            return lines.Succeeded ? Histories(lines.Output, PatchFile) : [];
+        }
+        // Literal: a name with brackets or a star is that file alone, never a pattern.
+        GitResult log = await RunAsync(Root, ["--literal-pathspecs", "log", .. scope.IsFolder ? Array.Empty<string>() : ["--follow"],
+            "--name-status", "-z", "-M", HistoryFormat, count, "HEAD", "--", relative]);
+        return log.Succeeded ? Histories(log.Output, NameStatus) : [];
     }
 
-    /// <summary>The files a commit changed against its first parent (all of them for the first commit), renames found.</summary>
-    public async Task<IReadOnlyList<FileChange>> CommitFilesAsync(string hash)
+    private static List<HistoryCommit> Histories(string output, Func<string, List<FileChange>> changes)
     {
-        GitResult files = await RunAsync(Root, ["diff-tree", "--no-commit-id", "--name-status", "-r", "-z", "-M", "--root", "--end-of-options", hash]);
-        if (!files.Succeeded)
+        List<HistoryCommit> commits = [];
+        foreach (string record in output.Split('\x1e'))
         {
-            return [];
+            string[] field = record.Split('\x1f', 8);
+            if (field.Length == 8)
+            {
+                commits.Add(new HistoryCommit(Commit(field), changes(field[7])));
+            }
         }
+        return commits;
+    }
+
+    /// <summary>Files as --name-status -z lists them: a status, then the path, or a rename's or copy's two.</summary>
+    private List<FileChange> NameStatus(string output)
+    {
         List<FileChange> changes = [];
-        string[] parts = files.Output.Split('\0');
+        string[] parts = output.Split('\0');
         for (int i = 0; i + 1 < parts.Length; i++)
         {
-            string status = parts[i];
+            // A log writes a line break between a commit and its files.
+            string status = parts[i].TrimStart('\n');
             if (status.Length == 0)
             {
                 continue;
@@ -317,6 +395,108 @@ public sealed class Git
             }
         }
         return changes;
+    }
+
+    /// <summary>The file a line history's commit changed, from its patch's head: "--- a/" the name before (or /dev/null
+    /// where the lines began) and "+++ b/" the name it has in the commit.</summary>
+    private List<FileChange> PatchFile(string patch)
+    {
+        string? before = null;
+        string? after = null;
+        foreach (string line in patch.Split('\n'))
+        {
+            if (line.StartsWith("@@", StringComparison.Ordinal))
+            {
+                break;
+            }
+            if (line.StartsWith("--- ", StringComparison.Ordinal))
+            {
+                before = line[4..];
+            }
+            else if (line.StartsWith("+++ ", StringComparison.Ordinal))
+            {
+                after = line[4..];
+            }
+        }
+        if (Unprefixed(after) is not { } path)
+        {
+            return [];
+        }
+        return
+        [
+            before == "/dev/null" ? new FileChange(Full(path), ChangeKind.Added)
+                : Unprefixed(before) is { } from && from != path ? new FileChange(Full(path), ChangeKind.Renamed, Full(from))
+                : new FileChange(Full(path), ChangeKind.Modified),
+        ];
+    }
+
+    /// <summary>A patch head's name without its "a/" or "b/": unquoted where git quoted it (a name with a quote, a backslash
+    /// or a control character), less the tab git ends a name with a space with.</summary>
+    private static string? Unprefixed(string? name)
+    {
+        if (name is null)
+        {
+            return null;
+        }
+        if (name.EndsWith('\t'))
+        {
+            name = name[..^1];
+        }
+        if (name.Length > 1 && name[0] == '"' && name[^1] == '"')
+        {
+            name = Unquoted(name[1..^1]);
+        }
+        return name.Length > 2 && name[1] == '/' ? name[2..] : null;
+    }
+
+    /// <summary>A name git quoted as C does, its octal escapes being the bytes of its UTF-8.</summary>
+    private static string Unquoted(string quoted)
+    {
+        List<byte> bytes = [];
+        for (int i = 0; i < quoted.Length; i++)
+        {
+            int escape = quoted.IndexOf('\\', i);
+            if (escape < 0 || escape + 1 == quoted.Length)
+            {
+                bytes.AddRange(Encoding.UTF8.GetBytes(quoted[i..]));
+                break;
+            }
+            bytes.AddRange(Encoding.UTF8.GetBytes(quoted[i..escape]));
+            i = escape + 1;
+            char escaped = quoted[i];
+            if (escaped is >= '0' and <= '7' && i + 2 < quoted.Length)
+            {
+                bytes.Add(Convert.ToByte(quoted.Substring(i, 3), 8));
+                i += 2;
+                continue;
+            }
+            bytes.Add(escaped switch
+            {
+                'a' => 7,
+                'b' => 8,
+                't' => 9,
+                'n' => 10,
+                'v' => 11,
+                'f' => 12,
+                'r' => 13,
+                _ => (byte)escaped,
+            });
+        }
+        return Encoding.UTF8.GetString([.. bytes]);
+    }
+
+    /// <summary>A commit's whole message.</summary>
+    public async Task<string> MessageAsync(string hash)
+    {
+        GitResult show = await RunAsync(Root, ["show", "-s", "--format=%B", "--end-of-options", hash]);
+        return show.Succeeded ? show.Output.TrimEnd() : string.Empty;
+    }
+
+    /// <summary>The files a commit changed against its first parent (all of them for the first commit), renames found.</summary>
+    public async Task<IReadOnlyList<FileChange>> CommitFilesAsync(string hash)
+    {
+        GitResult files = await RunAsync(Root, ["diff-tree", "--no-commit-id", "--name-status", "-r", "-z", "-M", "--root", "--end-of-options", hash]);
+        return files.Succeeded ? NameStatus(files.Output) : [];
     }
 
     /// <summary>Git blame for a file, line by line, over the text given (the editor's, unsaved changes and all), so a
