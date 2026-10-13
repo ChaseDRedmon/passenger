@@ -29,7 +29,12 @@ public sealed partial class CodeEditor
         get => showParameterHints;
         set
         {
-            showParameterHints = value;
+            if (showParameterHints != value)
+            {
+                showParameterHints = value;
+                // A hint takes room on its row.
+                Rewrap();
+            }
             InvalidateVisual();
         }
     }
@@ -40,7 +45,11 @@ public sealed partial class CodeEditor
         get => showTypeHints;
         set
         {
-            showTypeHints = value;
+            if (showTypeHints != value)
+            {
+                showTypeHints = value;
+                Rewrap();
+            }
             InvalidateVisual();
         }
     }
@@ -50,7 +59,9 @@ public sealed partial class CodeEditor
 
     public void SetInlayHints(IReadOnlyList<InlayHint> hints)
     {
+        IReadOnlyList<InlayHint> before = InlayHints;
         InlayHints = [.. hints.OrderBy(h => h.Offset).ThenBy(h => h.Kind == InlayHintKind.Type ? 0 : 1)];
+        FollowHints(before, InlayHints);
         InvalidateVisual();
         FollowInputMethod();
     }
@@ -62,12 +73,12 @@ public sealed partial class CodeEditor
 
     private bool Shows(InlayHint hint) => hint.Kind == InlayHintKind.Type ? showTypeHints : showParameterHints;
 
-    /// <summary>The hints on a line, in column order, and the composition where the primary caret stands among them.</summary>
-    private Gap[] GapsOn(LineSpan span)
+    /// <summary>The hints on a row, in column order, and the composition where the primary caret stands among them.</summary>
+    private Gap[] GapsOn(RowSpan span)
     {
         Gap[] hints = HintsOn(span);
         int caret = selections.Primary.Caret;
-        if (preedit.Length == 0 || caret < span.Start || caret > span.End)
+        if (preedit.Length == 0 || !IsOn(span, caret, LeansBack(caret)))
         {
             return hints;
         }
@@ -81,6 +92,11 @@ public sealed partial class CodeEditor
         }
         return [.. hints[..at], composing, .. hints[at..]];
     }
+
+    /// <summary>Whether a caret at an offset is on a row: where a row wraps, on the row after unless it leans back.</summary>
+    private static bool IsOn(RowSpan span, int offset, bool beforeWrap) =>
+        (offset > span.Start || (offset == span.Start && !(span.Row > 0 && beforeWrap)))
+        && (offset < span.End || (offset == span.End && (span.IsLast || beforeWrap)));
 
     /// <summary>The composition as it is drawn.</summary>
     private TextLine PreeditLabel() => labels.Get((preedit, -9), () => Format(preedit, [], RunWith(palette.Preedit)));
@@ -106,17 +122,19 @@ public sealed partial class CodeEditor
         return low;
     }
 
-    private Gap[] HintsOn(LineSpan span)
+    /// <summary>The hints shown on a row: those at a wrap go on the row it starts.</summary>
+    private Gap[] HintsOn(RowSpan span)
     {
         IReadOnlyList<InlayHint> hints = InlayHints;
         int low = FirstHintFrom(span.Start);
-        if (low >= hints.Count || hints[low].Offset > span.End)
+        int end = span.IsLast ? span.End : span.End - 1;
+        if (low >= hints.Count || hints[low].Offset > end)
         {
             return [];
         }
         List<Gap> gaps = [];
         double pad = metrics.CharWidth / 2;
-        for (int i = low; i < hints.Count && hints[i].Offset <= span.End; i++)
+        for (int i = low; i < hints.Count && hints[i].Offset <= end; i++)
         {
             InlayHint hint = hints[i];
             if (!Shows(hint))
@@ -155,13 +173,15 @@ public sealed partial class CodeEditor
         return leaning.Contains(offset) ? !natural : natural;
     }
 
-    /// <summary>Left or Right, as IntelliJ steps over inlays: the hints at an offset are one place of their own, so a
-    /// caret before them steps to after them (Right) and back (Left) without moving in the text, and one stepping onto
-    /// an offset with hints stands on the near side of them.</summary>
+    /// <summary>Left or Right, as IntelliJ steps over inlays and soft wraps: the hints at an offset are one place of their
+    /// own, and so is the end of a row a line wraps after, so a caret before them steps to after them (Right) and back
+    /// (Left) without moving in the text, and one stepping onto such an offset stands on the near side of them. Where a
+    /// row wraps, the end of the row before comes first, then the next row's start, then its hints.</summary>
     private void StepHorizontally(TextSnapshot text, bool forward, bool extend)
     {
         document.BreakUndoGroup();
         HashSet<int> lean = [];
+        HashSet<int> wrapLean = [];
         SelectionSet moved = selections.With(s =>
         {
             if (!extend && !s.IsEmpty)
@@ -170,18 +190,35 @@ public sealed partial class CodeEditor
             }
             int caret = s.Caret;
             bool after = StandsAfterHints(caret);
+            bool beforeWrap = LeansBack(caret);
             int to;
             bool toAfter;
-            if (HintsAt(caret).Any && after != forward)
+            if (forward && beforeWrap)
+            {
+                // From the end of the row before a wrap to the start of the next, before its hints.
+                to = caret;
+                toAfter = false;
+            }
+            else if (HintsAt(caret).Any && after != forward)
             {
                 to = caret;
                 toAfter = forward;
+            }
+            else if (!forward && !beforeWrap && IsWrapAt(text, caret))
+            {
+                to = caret;
+                toAfter = after;
+                wrapLean.Add(caret);
             }
             else
             {
                 to = forward ? TextNavigation.NextGrapheme(text, caret) : TextNavigation.PreviousGrapheme(text, caret);
                 // At either end of the text there is nowhere to go: the caret keeps its side.
                 toAfter = to == caret ? after : !forward;
+                if (forward && to != caret && IsWrapAt(text, to))
+                {
+                    wrapLean.Add(to);
+                }
             }
             if (HintsAt(to) is { Any: true, Trailing: bool trailing } && toAfter == trailing)
             {
@@ -190,7 +227,19 @@ public sealed partial class CodeEditor
             return s.MoveTo(to, extend);
         });
         nextLeaning = lean;
+        nextWrapLeaning = wrapLean;
         SetSelections(moved, reveal: true);
+    }
+
+    /// <summary>Whether a row of the offset's line starts at it, its line wrapping there.</summary>
+    private bool IsWrapAt(TextSnapshot text, int offset)
+    {
+        if (Wraps is not { } map)
+        {
+            return false;
+        }
+        int line = text.GetLineFromOffset(offset);
+        return map.Lines[line] is { } wrap && Array.BinarySearch(wrap.Starts, offset - text.GetLineStart(line)) >= 0;
     }
 
     /// <summary>Whether a point on the text is past the middle of the hints at the offset it falls at, where a click
@@ -198,12 +247,23 @@ public sealed partial class CodeEditor
     private bool PastHintsAt(Point point, int offset)
     {
         TextSnapshot text = document.Snapshot;
-        LineView view = ViewOf(text, text.GetLineFromOffset(offset));
-        Gap[] gaps = HintsOn(view.Span);
-        int column = offset - view.Span.Start;
-        double before = XWith(view, gaps, column, afterHints: false);
-        double after = XWith(view, gaps, column, afterHints: true);
+        if (RowSpanAt(text, point) is not { } span || offset < span.Start || offset > span.End)
+        {
+            return false;
+        }
+        LineView view = ViewOf(text, span);
+        Gap[] gaps = HintsOn(span);
+        int column = offset - span.Start;
+        double before = span.Indent + XWith(view, gaps, column, afterHints: false);
+        double after = span.Indent + XWith(view, gaps, column, afterHints: true);
         return after > before && point.X - TextLeft + scroll.X >= (before + after) / 2;
+    }
+
+    /// <summary>The row under a point, or null below the last.</summary>
+    private RowSpan? RowSpanAt(TextSnapshot text, Point point)
+    {
+        (int line, int row) = Rows.LineOfRow(RowAtY(point.Y));
+        return line < 0 || line >= text.LineCount ? null : RowSpanOf(text, line, row);
     }
 
     /// <summary>The carets for a click at an offset, standing on the side of the hints there that the click was nearer.</summary>
@@ -219,15 +279,14 @@ public sealed partial class CodeEditor
     private InlayHint? HintUnder(Point point)
     {
         TextSnapshot text = document.Snapshot;
-        int line = LineAtY(point.Y);
-        if (line < 0 || line >= text.LineCount)
+        if (RowSpanAt(text, point) is not { } span)
         {
             return null;
         }
-        LineView view = ViewOf(text, line);
-        double x = point.X - TextLeft + scroll.X;
+        LineView view = ViewOf(text, span);
+        double x = point.X - TextLeft + scroll.X - span.Indent;
         double shift = 0;
-        foreach (Gap gap in GapsOn(view.Span))
+        foreach (Gap gap in GapsOn(span))
         {
             double at = view.DistanceOf(gap.Column) + shift;
             if (x >= at && x < at + gap.Width && !gap.Composing)

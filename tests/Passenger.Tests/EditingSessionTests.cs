@@ -1,39 +1,64 @@
 using System.Text;
+using Avalonia;
 using Avalonia.Headless.XUnit;
 using Passenger.Editor;
 using Passenger.Text;
 
 namespace Passenger.Tests;
 
-/// <summary>A long session of random keys in a large indented file, checked after every key against a plain model
-/// of what they do: a string, a caret and a remembered column. The model knows the editor's help with spaces (Enter
-/// carries the indentation, Backspace takes a level of it, Home stops at the text) and Join Lines; no brackets or
-/// quotes are typed, where it helps more. Now and then carets are added for one Enter, Join Lines or letter, each
-/// checked. Any difference is the editor, the rope or the line index getting it wrong.</summary>
+/// <summary>A long session of random keys in a large indented file, checked after every key against a plain model of what
+/// they do: a string, a caret and a remembered column, knowing Enter's indentation, Backspace's levels, Home's stop at the
+/// text and Join Lines (no brackets or quotes are typed). Now and then carets are added for one key, each checked. With
+/// soft wrap on in a narrow editor the model, knowing no rows, checks each move by what a move among rows must do, and the
+/// rows are a fresh editor's. Any difference is the editor, the rope, the line index or the wraps getting it wrong.</summary>
 public sealed class EditingSessionTests
 {
     private const string Alphabet = "abcdefghijklmnopqrstuvwxyz0123456789.,;:+-*/=!?";
+
+    /// <summary>The narrow editor's width, about thirty-five characters of text, which wraps the longer of the session's
+    /// lines and more of them as Join Lines makes them longer.</summary>
+    private const double WrappedWidth = 380;
 
     [AvaloniaTheory]
     [InlineData(1)]
     [InlineData(2)]
     [InlineData(3)]
-    public void A_long_session_of_keys_leaves_the_text_and_caret_where_a_plain_model_says(int seed)
+    public void A_long_session_of_keys_leaves_the_text_and_caret_where_a_plain_model_says(int seed) => Session(seed, wrapped: false);
+
+    [AvaloniaTheory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    public void A_long_session_of_keys_with_soft_wrap_on_edits_as_the_model_says_moves_by_rows_and_wraps_as_a_fresh_editor_would(int seed) =>
+        Session(seed, wrapped: true);
+
+    private static void Session(int seed, bool wrapped)
     {
         Random random = new(seed);
         string initial = StartingText(random, lines: 2500);
         EditorRig rig = new(initial);
+        if (wrapped)
+        {
+            rig.Window.Width = WrappedWidth;
+            rig.Editor.SoftWrap = true;
+            Ui.Settle();
+            Assert.True(rig.Editor.RowsShown > rig.Document.Snapshot.LineCount, $"No line of the session wraps in an editor {WrappedWidth} wide (seed {seed}).");
+        }
         Model model = new(initial);
 
         for (int step = 0; step < 2500; step++)
         {
-            string key = Act(random, rig, model, $"seed {seed}, step {step}");
+            string key = Act(random, rig, model, $"seed {seed}, step {step}", wrapped);
             string where = $"seed {seed}, step {step}, after {key}";
             Assert.True(model.Text == rig.Text, $"The text differs from the model ({where}).");
             Assert.True(model.Caret == rig.Caret, $"The caret is at {rig.Caret}, the model says {model.Caret} ({where}).");
             if (step % 100 == 0)
             {
                 AssertLinesMatch(rig.Document.Snapshot, model.Text, random, where);
+                if (wrapped)
+                {
+                    AssertRowsMatchAFreshEditor(rig, random, where);
+                }
             }
         }
 
@@ -50,9 +75,13 @@ public sealed class EditingSessionTests
         Assert.True(final == rig.Text, $"Redoing everything did not give back the session's last text (seed {seed}).");
     }
 
-    private static string Act(Random random, EditorRig rig, Model model, string step)
+    private static string Act(Random random, EditorRig rig, Model model, string step, bool wrapped)
     {
         int roll = random.Next(100);
+        if (wrapped && roll is >= 62 and < 90)
+        {
+            return MoveAmongRows(rig, model, roll, step);
+        }
         switch (roll)
         {
             case < 40:
@@ -107,6 +136,94 @@ public sealed class EditingSessionTests
                 rig.PlaceCaret(offset);
                 model.Jump(offset);
                 return $"a click at {offset}";
+        }
+    }
+
+    /// <summary>A move in wrapped text, where the plain model knows no rows: it goes where a move among rows must (Left and
+    /// Right no more than a step along the text, onto the row beside at most; Up and Down to the row above or below; Home
+    /// and End along the caret's line, to the row before or after at most), and the model takes the caret from there.</summary>
+    private static string MoveAmongRows(EditorRig rig, Model model, int roll, string step)
+    {
+        (string key, string name) = roll switch
+        {
+            < 67 => ("LEFT", "Left"),
+            < 72 => ("RIGHT", "Right"),
+            < 78 => ("UP", "Up"),
+            < 84 => ("DOWN", "Down"),
+            < 87 => ("meta LEFT", "Cmd+Left"),
+            _ => ("meta RIGHT", "Cmd+Right"),
+        };
+        TextSnapshot text = rig.Document.Snapshot;
+        int before = rig.Caret;
+        int line = text.GetLineFromOffset(before);
+        double from = CaretRow(rig);
+        int rows = rig.Editor.RowsShown;
+        rig.Press(key);
+        int after = rig.Caret;
+        double to = CaretRow(rig);
+        string where = $"{step}, after {name} from {before} to {after}, row {from} to {to}";
+        switch (name)
+        {
+            // A step that stays at its offset crosses a wrap there, to the end of the row before or the start of the next.
+            case "Left":
+                Assert.True(
+                    (after == before - 1 && to - from is -1 or 0) || (after == before && (before == 0 ? to == from : to == from - 1)),
+                    $"Left went neither a character back nor across a wrap ({where}).");
+                break;
+            case "Right":
+                Assert.True(
+                    (after == before + 1 && to - from is 0 or 1) || (after == before && (before == text.Length ? to == from : to == from + 1)),
+                    $"Right went neither a character on nor across a wrap ({where}).");
+                break;
+            case "Up":
+                Assert.True(from == 0 ? after == 0 : to == from - 1, $"Up did not go to the row above ({where}).");
+                break;
+            case "Down":
+                Assert.True(from == rows - 1 ? after == text.Length : to == from + 1, $"Down did not go to the row below ({where}).");
+                break;
+            default:
+                Assert.True(text.GetLineFromOffset(after) == line, $"{name} left the caret's line ({where}).");
+                Assert.True(name == "Cmd+Left" ? to - from is -1 or 0 : to - from is 0 or 1, $"{name} went further than the row beside ({where}).");
+                break;
+        }
+        model.Jump(after);
+        return name;
+    }
+
+    /// <summary>The row the caret is drawn on.</summary>
+    private static double CaretRow(EditorRig rig) =>
+        Math.Round((rig.Editor.PointOf(rig.Caret).Y + rig.Editor.ScrollOffset.Y) / rig.Editor.LineHeight);
+
+    /// <summary>The rows a session's edits left are those a fresh editor makes of the same text at the same width: every
+    /// wrap carried through every edit as if worked out anew.</summary>
+    private static void AssertRowsMatchAFreshEditor(EditorRig rig, Random random, string where)
+    {
+        EditorRig fresh = new(rig.Text);
+        try
+        {
+            fresh.Window.Width = WrappedWidth;
+            fresh.Editor.SoftWrap = true;
+            Ui.Settle();
+            Assert.True(fresh.Editor.RowsShown == rig.Editor.RowsShown,
+                $"The session's editor shows {rig.Editor.RowsShown} rows, a fresh one {fresh.Editor.RowsShown} for the same text ({where}).");
+            for (int i = 0; i < 20; i++)
+            {
+                int offset = random.Next(rig.Document.Snapshot.Length + 1);
+                if (offset == rig.Caret)
+                {
+                    continue;
+                }
+                Point mine = rig.Editor.PointOf(offset) + rig.Editor.ScrollOffset;
+                Point theirs = fresh.Editor.PointOf(offset) + fresh.Editor.ScrollOffset;
+                Assert.True(mine == theirs, $"Offset {offset} is drawn at {mine}, where a fresh editor draws it at {theirs} ({where}).");
+            }
+        }
+        finally
+        {
+            fresh.Window.Close();
+            // The fresh editor took the keys; the session's next keys are its editor's.
+            rig.Editor.Focus();
+            Ui.Settle();
         }
     }
 

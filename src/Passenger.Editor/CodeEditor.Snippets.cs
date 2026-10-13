@@ -128,9 +128,15 @@ public sealed partial class CodeEditor
                 {
                     continue;
                 }
-                double x1 = left + XOf(text, place.Start);
-                double x2 = Math.Max(x1 + 2, left + XOf(text, place.End));
-                double y = TopOf(line) - scroll.Y;
+                (int row, double start) = Place(text, place.Start, beforeWrap: false);
+                (int endRow, double end) = Place(text, place.End, beforeWrap: true);
+                if (row != endRow)
+                {
+                    continue;
+                }
+                double x1 = left + start;
+                double x2 = Math.Max(x1 + 2, left + end);
+                double y = (row * metrics.LineHeight) - scroll.Y;
                 context.DrawRectangle(null, pen, new Rect(x1 - 1, y + 1, x2 - x1 + 2, metrics.LineHeight - 2), 2, 2);
             }
         }

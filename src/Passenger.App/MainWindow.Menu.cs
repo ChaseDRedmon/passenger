@@ -81,6 +81,7 @@ public partial class MainWindow
                     IdeAction listed = actions[(string)item.CommandParameter!]!;
                     item.IsEnabled = listed.CanRun(now);
                     item.Header = listed.TitleWhere(now);
+                    item.IsChecked = listed.IsChecked?.Invoke(now) == true;
                 }
             };
             return new NativeMenuItem(entry.Title!) { Menu = menu };
@@ -92,6 +93,11 @@ public partial class MainWindow
             CommandParameter = action.Id,
             IsEnabled = action.CanRun(context),
         };
+        if (action.IsChecked is { } isChecked)
+        {
+            actionItem.ToggleType = MenuItemToggleType.CheckBox;
+            actionItem.IsChecked = isChecked(context);
+        }
         if (actions.Gesture(action.Id) is { } gesture)
         {
             actionItem.Gesture = gesture;
@@ -151,6 +157,11 @@ public partial class MainWindow
         IdeAction action = actions![entry.Action!]!;
         // The gesture is shown, not bound: the window's keymap runs the keys.
         MenuItem actionItem = new() { Header = action.TitleWhere(context), InputGesture = actions.Gesture(action.Id), IsEnabled = action.CanRun(context) };
+        if (action.IsChecked is { } isChecked)
+        {
+            actionItem.ToggleType = MenuItemToggleType.CheckBox;
+            actionItem.IsChecked = isChecked(context);
+        }
         actionItem.Click += (_, _) => RunFromMenu(action.Id, context);
         return actionItem;
     }

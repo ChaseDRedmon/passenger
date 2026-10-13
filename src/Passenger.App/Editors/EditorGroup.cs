@@ -180,7 +180,8 @@ public sealed class EditorGroup : DockPanel
         Editor.LineCommentPrefix = document.Language.LineComment;
         Editor.Indent = document.Indentation.Options;
         Editor.ReindentsPaste = document.Language.ReindentsPaste;
-        Editor.Show(document.Text, selections, scroll);
+        Editor.ShowWhitespaces = document.ShowWhitespaces;
+        Editor.Show(document.Text, selections, scroll, document.SoftWrap);
         Editor.Highlighter = document.Highlighter;
         Editor.SetMarkers(document.Markers);
         Editor.SetFoldRegions(document.FoldRegions);
@@ -332,6 +333,12 @@ public sealed class EditorGroup : DockPanel
                 break;
             case nameof(OpenDocument.Indentation):
                 Editor.Indent = document.Indentation.Options;
+                break;
+            case nameof(OpenDocument.SoftWrap):
+                Editor.SoftWrap = document.SoftWrap;
+                break;
+            case nameof(OpenDocument.ShowWhitespaces):
+                Editor.ShowWhitespaces = document.ShowWhitespaces;
                 break;
         }
     }

@@ -167,6 +167,15 @@ public static class AppActions
     public const string Unsplit = "app.editor.unsplit";
     public const string UnsplitAll = "app.editor.unsplitAll";
 
+    // Rider's View > Active Editor: Soft-Wrap (EditorToggleUseSoftWraps) and Show Whitespaces (EditorToggleShowWhitespaces)
+    // on its Visual Studio keymaps' Ctrl+E, W and Ctrl+R, W chords (Cmd on macOS), and Increase, Decrease and Reset Font
+    // Size (EditorIncreaseFontSize, EditorDecreaseFontSize, EditorResetFontSize), which they and their parents give no keys.
+    public const string SoftWrap = "app.editor.softWrap";
+    public const string ShowWhitespaces = "app.editor.showWhitespaces";
+    public const string IncreaseFontSize = "app.editor.increaseFontSize";
+    public const string DecreaseFontSize = "app.editor.decreaseFontSize";
+    public const string ResetFontSize = "app.editor.resetFontSize";
+
     // Rider's Close Solution (CloseProject) and Restore Default Layout (RiderRestoreDefaultLayout, in Window > Layout
     // Settings): no keys there either; both Visual Studio keymaps take IntelliJ's Shift+F12 off its layout action.
     public const string CloseSolution = "app.closeSolution";
@@ -352,7 +361,9 @@ public static class AppActions
                 .Bind(QuickDocumentation, "meta K , I", "meta K , meta I", "control shift F1")
                 .Bind(NextError, "alt PAGE_DOWN")
                 .Bind(PreviousError, "alt PAGE_UP")
-                .Bind(OpenInNewWindow, "shift F4");
+                .Bind(OpenInNewWindow, "shift F4")
+                .Bind(SoftWrap, "meta E , W", "meta E , meta W")
+                .Bind(ShowWhitespaces, "meta R , W", "meta R , meta W");
         }
         return keymap
             .Bind(Open, "control O")
@@ -453,6 +464,8 @@ public static class AppActions
             .Bind(QuickDocumentation, "control K , I", "control K , control I", "control shift F1")
             .Bind(NextError, "alt PAGE_DOWN")
             .Bind(PreviousError, "alt PAGE_UP")
-            .Bind(OpenInNewWindow, "shift F4");
+            .Bind(OpenInNewWindow, "shift F4")
+            .Bind(SoftWrap, "control E , W", "control E , control W")
+            .Bind(ShowWhitespaces, "control R , W", "control R , control W");
     }
 }

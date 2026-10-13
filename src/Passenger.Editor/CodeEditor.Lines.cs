@@ -6,10 +6,10 @@ using Passenger.Text;
 
 namespace Passenger.Editor;
 
-/// <summary>Lines as the editor draws and measures them: formatted with their colours once for each text and colouring,
-/// found again by number in each frame, copying and hashing nothing; after a key only the changed line is formatted
-/// again, the rest found by what they show. Drawing, a caret's x and a click's column use that one formatted line. A line
-/// longer than <see cref="LongLineLength"/> is formatted only for the columns on screen, placed by its
+/// <summary>Rows as the editor draws and measures them (a line, or a row soft wrap made of it): formatted with their colours
+/// once for each text and colouring, found again by where they start in each frame, copying and hashing nothing; after a
+/// key only the changed row is formatted again. Drawing, a caret's x and a click's column use that one formatted row. A
+/// line longer than <see cref="LongLineLength"/> is formatted only for the columns on screen, placed by its
 /// <see cref="LongLine"/> measure, so a key on a line of a million characters costs about what one on a short line does.</summary>
 public sealed partial class CodeEditor
 {
@@ -30,9 +30,9 @@ public sealed partial class CodeEditor
     /// <summary>How many frames the editor has drawn: what a key costs to draw, for a test to count rather than time.</summary>
     public long Frames { get; private set; }
 
-    /// <summary>The views of the lines a frame shows: the ones they had while their text and colours (and a long line's
-    /// window) still serve, the rest made, their colours asked for a run of neighbouring lines at a time.</summary>
-    private LineView[] ViewsOf(TextSnapshot text, List<int> shown, double viewLeft, double viewWidth)
+    /// <summary>The views of the rows a frame shows: the ones they had while their text and colours (and a long line's
+    /// window) still serve, the rest made, their colours asked for a run of neighbouring rows at a time.</summary>
+    private LineView[] ViewsOf(TextSnapshot text, List<RowSpan> shown, double viewLeft, double viewWidth)
     {
         views.Use(text, colouring);
         LineView[] found = new LineView[shown.Count];
@@ -61,11 +61,11 @@ public sealed partial class CodeEditor
         return found;
     }
 
-    /// <summary>A line's view to measure with: the one drawn, or one made now, which the next frame draws.</summary>
-    private LineView ViewOf(TextSnapshot text, int line)
+    /// <summary>A row's view to measure with: the one drawn, or one made now, which the next frame draws.</summary>
+    private LineView ViewOf(TextSnapshot text, RowSpan row)
     {
         views.Use(text, colouring);
-        LineView view = views[line] ?? views.Add(NewView(text, line));
+        LineView view = views[row] ?? views.Add(NewView(text, row));
         if (view.Long is null && view.Text is null)
         {
             FormatWhole(text, [view]);
@@ -74,28 +74,22 @@ public sealed partial class CodeEditor
         return view;
     }
 
-    private LineView NewView(TextSnapshot text, int line)
+    private LineView NewView(TextSnapshot text, RowSpan span)
     {
-        LineSpan span = text.GetLine(line);
         if (span.Length <= LongLineLength)
         {
             return new LineView(span, null);
         }
-        double tab = metrics.CharWidth * Indent.TabWidth;
-        if (advances is null || advances.Tab != tab)
-        {
-            advances = new Advances(Measure, tab);
-        }
-        return new LineView(span, new LongLine(text, span, advances));
+        return new LineView(span, new LongLine(text, span.Start, span.Length, Measures()));
     }
 
-    /// <summary>Whole lines formatted with their colours, which are asked for once for each run of neighbouring lines.</summary>
+    /// <summary>Whole rows formatted with their colours, which are asked for once for each run of neighbouring rows.</summary>
     private void FormatWhole(TextSnapshot text, List<LineView> lines)
     {
         for (int i = 0; i < lines.Count;)
         {
             int j = i;
-            while (j + 1 < lines.Count && lines[j + 1].Span.Line == lines[j].Span.Line + 1)
+            while (j + 1 < lines.Count && lines[j + 1].Span.Start == lines[j].Span.EndIncludingBreak)
             {
                 j++;
             }
@@ -104,7 +98,7 @@ public sealed partial class CodeEditor
             int index = 0;
             for (int k = i; k <= j; k++)
             {
-                LineSpan span = lines[k].Span;
+                RowSpan span = lines[k].Span;
                 LineRun[] runs = Runs(spans, ref index, span.Start, span.End);
                 string content = text.GetText(span.Start, span.Length);
                 FormatKey key = new(content, runs);
@@ -119,7 +113,7 @@ public sealed partial class CodeEditor
     /// little scrolling keeps it, and between graphemes, so it is laid out as the whole line would be there.</summary>
     private void FormatWindow(TextSnapshot text, LineView view, int from, int to)
     {
-        LineSpan span = view.Span;
+        RowSpan span = view.Span;
         LongLine measure = view.Long!;
         int start = measure.KeptAtOrBefore(from);
         int end = measure.KeptAtOrAfter(to);
@@ -250,11 +244,11 @@ public sealed partial class CodeEditor
         }
     }
 
-    /// <summary>A line as the editor draws and measures it: formatted whole, or for a long line the window of columns
+    /// <summary>A row as the editor draws and measures it: formatted whole, or for a long line the window of columns
     /// <see cref="From"/> to <see cref="To"/> placed at <see cref="X"/> by its measure, which gives every column outside it.</summary>
-    private sealed class LineView(LineSpan span, LongLine? measure)
+    private sealed class LineView(RowSpan span, LongLine? measure)
     {
-        public LineSpan Span { get; } = span;
+        public RowSpan Span { get; } = span;
         public LongLine? Long { get; } = measure;
         public Formatted? Text { get; set; }
 
@@ -307,8 +301,8 @@ public sealed partial class CodeEditor
         public void Draw(DrawingContext context, double left, double top) => Text!.Line.Draw(context, new Point(left + X, top));
     }
 
-    /// <summary>The lines drawn or measured since the text or its colours last changed, by number, and every formatted
-    /// line alive, by what it shows. A frame disposes the formatted lines it did not use, so they never outgrow the
+    /// <summary>The rows drawn or measured since the text or its colours last changed, by where they start, and every
+    /// formatted row alive, by what it shows. A frame disposes the formatted rows it did not use, so they never outgrow the
     /// screen.</summary>
     private sealed class LineViews
     {
@@ -320,7 +314,8 @@ public sealed partial class CodeEditor
         /// <summary>The frame being drawn: what is used before it ends lives through it.</summary>
         public long Frame { get; private set; } = 1;
 
-        public LineView? this[int line] => byLine.GetValueOrDefault(line);
+        /// <summary>A row's view, while it is still that row: soft wrap at another width makes other rows start there.</summary>
+        public LineView? this[RowSpan row] => byLine.TryGetValue(row.Start, out LineView? view) && view.Span == row ? view : null;
 
         /// <summary>Starts using a text and colouring; the views of another are dropped (a long line's measure kept while
         /// its text is), their formatted lines kept for lines that show the same until the frame ends.</summary>
@@ -336,7 +331,7 @@ public sealed partial class CodeEditor
                 {
                     if (view.Long is null)
                     {
-                        byLine.Remove(view.Span.Line);
+                        byLine.Remove(view.Span.Start);
                     }
                     else
                     {
@@ -350,7 +345,7 @@ public sealed partial class CodeEditor
 
         public LineView Add(LineView view)
         {
-            byLine[view.Span.Line] = view;
+            byLine[view.Span.Start] = view;
             return view;
         }
 
@@ -375,11 +370,11 @@ public sealed partial class CodeEditor
                     shown.Add(view);
                 }
             }
-            shown.Sort((a, b) => a.Span.Line.CompareTo(b.Span.Line));
+            shown.Sort((a, b) => a.Span.Start.CompareTo(b.Span.Start));
             for (int i = 0; i < shown.Count;)
             {
                 int j = i;
-                while (j + 1 < shown.Count && shown[j + 1].Span.Line == shown[j].Span.Line + 1)
+                while (j + 1 < shown.Count && shown[j + 1].Span.Start == shown[j].Span.EndIncludingBreak)
                 {
                     j++;
                 }
@@ -439,7 +434,7 @@ public sealed partial class CodeEditor
                 {
                     if (view.Long is null)
                     {
-                        byLine.Remove(view.Span.Line);
+                        byLine.Remove(view.Span.Start);
                     }
                     else
                     {
@@ -462,6 +457,11 @@ public sealed partial class CodeEditor
         }
     }
 
+    /// <summary>The length of the grapheme at a place: one for printable ASCII that no mark follows.</summary>
+    private static int Grapheme(ReadOnlySpan<char> chars, int at) =>
+        chars[at] is >= ' ' and <= '~' && (at + 1 == chars.Length || chars[at + 1] < '\u0080') ? 1
+        : Math.Max(1, StringInfo.GetNextTextElementLength(chars[at..]));
+
     /// <summary>Where a long line's columns fall, without formatting it: each grapheme's width as the formatter lays it alone
     /// (a tab's fixed width), summed, and the first grapheme boundary from every <see cref="Step"/>-th column kept with its
     /// x, so a column's x or an x's column reads a step at most. Printable ASCII in a monospaced font keeps none: a
@@ -479,16 +479,16 @@ public sealed partial class CodeEditor
         private readonly int[]? kept;
         private readonly double[]? keptX;
 
-        public LongLine(TextSnapshot text, LineSpan span, Advances advances)
+        public LongLine(TextSnapshot text, int start, int length, Advances advances)
         {
             this.text = text;
-            start = span.Start;
-            Length = span.Length;
+            this.start = start;
+            Length = length;
             this.advances = advances;
             bool plain = !double.IsNaN(advances.Uniform);
             if (plain)
             {
-                text.VisitChunks(span.Start, span.Length, chunk => plain = plain && !chunk.Span.ContainsAnyExceptInRange(' ', '~'));
+                text.VisitChunks(start, length, chunk => plain = plain && !chunk.Span.ContainsAnyExceptInRange(' ', '~'));
             }
             if (plain)
             {
@@ -500,7 +500,7 @@ public sealed partial class CodeEditor
                 keptX = new double[kept.Length];
                 Width = Scan(kept, keptX);
             }
-            CodeWidth = XOf(CodeEnd(text, span));
+            CodeWidth = XOf(CodeEnd(text, start, length));
         }
 
         public int Length { get; }
@@ -665,21 +665,17 @@ public sealed partial class CodeEditor
             return x;
         }
 
-        private static int Grapheme(ReadOnlySpan<char> chars, int at) =>
-            chars[at] is >= ' ' and <= '~' && (at + 1 == chars.Length || chars[at + 1] < '\u0080') ? 1
-            : Math.Max(1, StringInfo.GetNextTextElementLength(chars[at..]));
-
         private double Of(ReadOnlySpan<char> grapheme) => grapheme is ['\t'] ? advances.Tab : advances.Of(grapheme);
 
         /// <summary>Where a line's code ends, before the spaces after it, read back from its end a block at a time.</summary>
-        private static int CodeEnd(TextSnapshot text, LineSpan span)
+        private static int CodeEnd(TextSnapshot text, int start, int length)
         {
             Span<char> block = stackalloc char[Step];
-            int end = span.Length;
+            int end = length;
             while (end > 0)
             {
                 int read = Math.Min(Step, end);
-                text.CopyTo(span.Start + end - read, block[..read]);
+                text.CopyTo(start + end - read, block[..read]);
                 for (int i = read - 1; i >= 0; i--, end--)
                 {
                     if (!char.IsWhiteSpace(block[i]))

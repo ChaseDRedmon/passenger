@@ -351,6 +351,10 @@ public sealed partial class CodeEditor : Control
             EndComposition();
             selections = SelectionSet.Single(0);
             leaning = [];
+            wrapLeaning = [];
+            nextWrapLeaning = null;
+            wraps = null;
+            rowMap = null;
             scroll = default;
             widestLine = 0;
             measuredWidth = 0;
@@ -416,18 +420,20 @@ public sealed partial class CodeEditor : Control
             pendingGoTo = offset;
             return;
         }
-        double y = TopOf(document.Snapshot.GetLineFromOffset(offset));
+        double y = RowOfOffset(document.Snapshot, offset, LeansBack(offset)).Row * metrics.LineHeight;
         ScrollTo(new Vector(scroll.X, y - Viewport.Height / 3));
         Reveal(offset);
     }
 
     /// <summary>Shows a document with the carets and scroll it was left at, as switching back to a
-    /// tab does.</summary>
-    public void Show(TextDocument shown, SelectionSet carets, Vector offset)
+    /// tab does, its lines wrapped or not as they were (the scroll is in its rows as they were).</summary>
+    public void Show(TextDocument shown, SelectionSet carets, Vector offset, bool wrapped = false)
     {
         Document = shown;
+        softWrap = wrapped;
         selections = carets.Clamp(shown.Snapshot.Length);
         leaning = [];
+        wrapLeaning = [];
         scroll = offset;
         UpdateScrollBars();
         InvalidateVisual();
@@ -479,19 +485,22 @@ public sealed partial class CodeEditor : Control
         SetSelections(SelectionSet.Single(new Selection(range.Start, range.End)), reveal: true);
     }
 
-    /// <summary>Where an offset's caret would stand, as the top of its line, in this control's
+    /// <summary>Where an offset's caret would stand, as the top of its row, in this control's
     /// coordinates: what a popup anchors to, and where a click lands on that offset.</summary>
     public Point PointOf(int offset)
     {
-        TextSnapshot text = document.Snapshot;
-        int line = text.GetLineFromOffset(offset);
-        return new Point(TextLeft - scroll.X + XOf(text, offset), TopOf(line) - scroll.Y);
+        (int row, double x) = Place(document.Snapshot, offset, LeansBack(offset));
+        return new Point(TextLeft - scroll.X + x, (row * metrics.LineHeight) - scroll.Y);
     }
+
+    /// <summary>How many rows the text takes on screen: its lines less the folded ones, each wrapped line counted for every
+    /// row soft wrap makes of it.</summary>
+    public int RowsShown => RowCount;
 
     public void ScrollTo(Vector offset)
     {
         double maxY = Math.Max(0, (RowCount - 1) * metrics.LineHeight);
-        double maxX = Math.Max(0, widestLine + TextPadLeft + metrics.CharWidth * 4 - Viewport.Width);
+        double maxX = MaxScrollX;
         Vector clamped = new(Math.Clamp(offset.X, 0, maxX), Math.Clamp(offset.Y, 0, maxY));
         if (clamped == scroll)
         {
@@ -542,8 +551,12 @@ public sealed partial class CodeEditor : Control
         base.OnPropertyChanged(change);
         if (change.Property == FontSizeProperty || change.Property == LineSpacingProperty || change.Property == FontFamilyProperty)
         {
-            metrics = Metrics.Measure(Typeface, FontSize, LineSpacing);
-            RefreshStyle();
+            // A zoom keeps the line at the top of the view there, as IntelliJ's does.
+            KeepTopLine(() =>
+            {
+                metrics = Metrics.Measure(Typeface, FontSize, LineSpacing);
+                RefreshStyle();
+            });
         }
     }
 
@@ -584,6 +597,8 @@ public sealed partial class CodeEditor : Control
         SelectionSet clamped = value.Clamp(document.Snapshot.Length);
         leaning = nextLeaning ?? [];
         nextLeaning = null;
+        wrapLeaning = nextWrapLeaning ?? [];
+        nextWrapLeaning = null;
         UnfoldAroundCarets(clamped);
         bool changed = !clamped.SameAs(selections) || clamped.PrimaryIndex != selections.PrimaryIndex;
         selections = clamped;
@@ -610,8 +625,8 @@ public sealed partial class CodeEditor : Control
             return;
         }
         TextSnapshot text = document.Snapshot;
-        int line = text.GetLineFromOffset(offset);
-        double top = TopOf(line);
+        (int row, double caretX) = Place(text, offset, LeansBack(offset));
+        double top = row * metrics.LineHeight;
         double y = scroll.Y;
         Size viewport = Viewport;
         double usable = viewport.Height - horizontal.DesiredSize.Height;
@@ -624,7 +639,6 @@ public sealed partial class CodeEditor : Control
             y = top + metrics.LineHeight - usable;
         }
         double x = scroll.X;
-        double caretX = XOf(text, offset);
         double room = metrics.CharWidth * 4;
         if (caretX - room < x)
         {
@@ -650,11 +664,14 @@ public sealed partial class CodeEditor : Control
 
     private void OnDocumentChanged(object? sender, DocumentChangedEventArgs e)
     {
+        // First, since what follows the change asks where its carets are drawn.
+        FollowWraps(e);
         FollowSnippet(e.Edits);
         FollowUsages(e.Edits);
         if (!editing)
         {
             leaning = [];
+            wrapLeaning = [];
             selections = TextEditing.MapThrough(selections, e.Edits).Clamp(e.After.Length);
             FollowInputMethod();
             SelectionChanged?.Invoke(this, EventArgs.Empty);
@@ -702,9 +719,10 @@ public sealed partial class CodeEditor : Control
         vertical.LargeChange = viewport.Height;
         vertical.SmallChange = metrics.LineHeight;
         vertical.Value = scroll.Y;
-        // The error stripe is its track, so it stays when there is nothing to scroll.
-        vertical.IsVisible = ShowScrollBars && (showErrorStripe || RowCount * metrics.LineHeight > viewport.Height);
-        double maxX = Math.Max(0, widestLine + TextPadLeft + metrics.CharWidth * 4 - viewport.Width);
+        // The error stripe is its track, so it stays when there is nothing to scroll; soft wrap keeps it so the width the
+        // text wraps at never depends on how many rows the wraps make.
+        vertical.IsVisible = ShowScrollBars && (showErrorStripe || softWrap || RowCount * metrics.LineHeight > viewport.Height);
+        double maxX = MaxScrollX;
         horizontal.Maximum = maxX;
         horizontal.ViewportSize = viewport.Width;
         horizontal.LargeChange = viewport.Width;
@@ -714,8 +732,14 @@ public sealed partial class CodeEditor : Control
         updatingBars = false;
     }
 
+    /// <summary>How far the view scrolls sideways: to the widest line drawn and a little more, or nowhere while the lines
+    /// wrap to the view.</summary>
+    private double MaxScrollX => softWrap && Wraps is not null ? 0 : Math.Max(0, widestLine + TextPadLeft + metrics.CharWidth * 4 - Viewport.Width);
+
     private void RefreshStyle()
     {
+        // The font and the tab are what the wraps measured with.
+        look++;
         palette = Palette.From(this);
         questionRun = null;
         hintRun = null;

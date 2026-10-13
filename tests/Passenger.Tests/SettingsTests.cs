@@ -27,7 +27,8 @@ public sealed class SettingsTests : IDisposable
         Ui.Settle();
         dialog.Query = "font";
         Ui.Settle();
-        Assert.Equal([SettingsDialog.EditorPage, SettingsDialog.TerminalPage], dialog.Pages);
+        // The Keymap page has Increase, Decrease and Reset Font Size.
+        Assert.Equal([SettingsDialog.EditorPage, SettingsDialog.TerminalPage, SettingsDialog.KeymapPage], dialog.Pages);
         Assert.Equal(SettingsDialog.EditorPage, dialog.Page);
         Assert.Contains("Font size", dialog.Shown);
         Assert.DoesNotContain("Show line numbers", dialog.Shown);

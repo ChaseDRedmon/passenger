@@ -62,6 +62,7 @@ public partial class MainWindow
         {
             ApplyTo(group.Editor, next);
         }
+        FollowViewSettings(before, next);
         terminal!.View.FontSize = next.TerminalFontSize;
         foreach (ToolWindows.OutputView console in (ToolWindows.OutputView[])[Bottom.Run, Bottom.Build, Bottom.Debug.Console])
         {
@@ -108,6 +109,8 @@ public partial class MainWindow
         editor.ShowParameterHints = with.ParameterHints;
         editor.ShowTypeHints = with.TypeHints;
         editor.RainbowBraces = with.RainbowBraces;
+        editor.WrapIndent = with.SoftWrapIndent;
+        editor.ZoomsWithWheel = with.WheelZoom;
         editor.InvalidateVisual();
     }
 }

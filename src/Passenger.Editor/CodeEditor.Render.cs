@@ -8,9 +8,10 @@ using Passenger.Text;
 
 namespace Passenger.Editor;
 
-/// <summary>A frame: the rows on screen, each line's view (<see cref="ViewsOf"/>), and what goes over and beside them.
+/// <summary>A frame: the rows on screen, each row's view (<see cref="ViewsOf"/>), and what goes over and beside them.
 /// A frame walks the rows it shows, never the lines a fold hides between them, and finds the carets, selections and
-/// markers on a line by halving rather than by looking at each.</summary>
+/// markers on a row by halving rather than by looking at each. A line's number and marks are drawn on its first row, what
+/// follows its code (a fold's placeholder, inline values) after its last.</summary>
 public sealed partial class CodeEditor
 {
     private readonly LabelCache<(string Text, int Style)> labels = new();
@@ -18,6 +19,18 @@ public sealed partial class CodeEditor
     private readonly Dictionary<TokenKind, TextRunProperties> runProperties = [];
     private (TextRunProperties Current, TextRunProperties Other) numberRuns;
     private double measuredWidth;
+    private bool showWhitespaces;
+
+    /// <summary>Whether spaces are drawn as dots and tabs as arrows (Rider's View, Active Editor, Show Whitespaces).</summary>
+    public bool ShowWhitespaces
+    {
+        get => showWhitespaces;
+        set
+        {
+            showWhitespaces = value;
+            InvalidateVisual();
+        }
+    }
 
     public override void Render(DrawingContext context)
     {
@@ -30,11 +43,11 @@ public sealed partial class CodeEditor
 
         context.FillRectangle(palette.Background, new Rect(size));
 
-        List<int> shown = LinesOnRows(Math.Max(0, (int)(scroll.Y / lineHeight)), Math.Max(0, (int)((scroll.Y + size.Height) / lineHeight)), text.LineCount);
+        int row = Math.Max(0, (int)(scroll.Y / lineHeight));
+        List<RowSpan> shown = RowsOnScreen(text, row, Math.Max(0, (int)((scroll.Y + size.Height) / lineHeight)));
         placeholders.Clear();
-        int first = shown.Count > 0 ? shown[0] : 0;
-        int last = shown.Count > 0 ? shown[^1] : -1;
-        int row = shown.Count > 0 ? RowOf(first) : 0;
+        int first = shown.Count > 0 ? shown[0].Line : 0;
+        int last = shown.Count > 0 ? shown[^1].Line : -1;
         LineView[] lineViews = ViewsOf(text, shown, scroll.X - TextPadLeft, Math.Max(0, size.Width - gutter));
         int rangeStart = shown.Count > 0 ? lineViews[0].Span.Start : 0;
         int rangeEnd = shown.Count > 0 ? lineViews[^1].Span.EndIncludingBreak : 0;
@@ -58,11 +71,13 @@ public sealed partial class CodeEditor
         {
             for (int i = 0; i < shown.Count; i++)
             {
-                int line = shown[i];
+                RowSpan span = shown[i];
+                int line = span.Line;
                 LineView view = lineViews[i];
                 double y = (row + i) * lineHeight - scroll.Y;
-                Gap[] gaps = GapsOn(view.Span);
-                widest = Math.Max(widest, view.Width + HintsWidth(gaps));
+                double from = left + span.Indent;
+                Gap[] gaps = GapsOn(span);
+                widest = Math.Max(widest, span.Indent + view.Width + HintsWidth(gaps));
 
                 if (noneSelected && caretLines.Contains(line))
                 {
@@ -76,23 +91,36 @@ public sealed partial class CodeEditor
                 {
                     context.FillRectangle(tint, new Rect(gutter, y, size.Width - gutter, lineHeight));
                 }
-                DrawUsages(context, view, gaps, left, y);
+                DrawUsages(context, view, gaps, from, y);
                 if (braced is { } pair)
                 {
-                    DrawBraces(context, view, gaps, left, y, pair);
+                    DrawBraces(context, view, gaps, from, y, pair);
                 }
-                DrawSelections(context, view, gaps, left, y, size.Width, focused);
-                DrawHighlights(context, view, gaps, left, y);
+                DrawSelections(context, view, gaps, from, y, size.Width, focused);
+                DrawHighlights(context, view, gaps, from, y);
+                if (showWhitespaces)
+                {
+                    DrawWhitespace(context, text, view, gaps, from, y);
+                }
                 if (gaps.Length == 0)
                 {
-                    view.Draw(context, left, y + (lineHeight - view.Height) / 2);
+                    view.Draw(context, from, y + (lineHeight - view.Height) / 2);
                 }
                 else
                 {
-                    DrawWithHints(context, view, gaps, left, y);
+                    DrawWithHints(context, view, gaps, from, y);
                 }
-                DrawMarkers(context, view, gaps, left, y, gutter, size.Width);
-                double end = left + view.CodeWidth + HintsWidth(gaps);
+                DrawMarkers(context, view, gaps, from, y, gutter, size.Width);
+                if (!span.IsLast)
+                {
+                    // Rider shows the sign only on the caret's line by default.
+                    if (caretLines.Contains(line))
+                    {
+                        DrawWrapSign(context, from + XWith(view, gaps, span.Length, afterHints: false), y);
+                    }
+                    continue;
+                }
+                double end = from + view.CodeWidth + HintsWidth(gaps);
                 if (FoldedAt(line) is { } fold)
                 {
                     end = DrawPlaceholder(context, line, fold, end, y);
@@ -105,7 +133,7 @@ public sealed partial class CodeEditor
 
             if (focused && caretOn)
             {
-                DrawCarets(context, text, rangeStart, rangeEnd, first, last, left);
+                DrawCarets(context, text, rangeStart, rangeEnd, row, row + shown.Count - 1, left);
             }
             DrawSnippet(context, text, left);
             if (ChangeBackgrounds)
@@ -128,28 +156,6 @@ public sealed partial class CodeEditor
             Dispatcher.UIThread.Post(UpdateScrollBars);
         }
         RefreshStripe();
-    }
-
-    /// <summary>A line's x position of an offset, measured on the line as it is drawn, on the side of the hints there
-    /// that a caret at it stands.</summary>
-    private double XOf(TextSnapshot text, int offset)
-    {
-        LineView view = ViewOf(text, text.GetLineFromOffset(offset));
-        int at = Math.Min(offset, view.Span.End);
-        return XWith(view, GapsOn(view.Span), at - view.Span.Start, StandsAfterHints(at));
-    }
-
-    /// <summary>The offset nearest to x on a line.</summary>
-    private int OffsetAtX(TextSnapshot text, int line, double x)
-    {
-        LineView view = ViewOf(text, Math.Clamp(line, 0, text.LineCount - 1));
-        LineSpan span = view.Span;
-        int column = ColumnWith(view, GapsOn(span), x, span.Length);
-        if (column > 0 && column < span.Length && char.IsLowSurrogate(text[span.Start + column]))
-        {
-            column--;
-        }
-        return span.Start + column;
     }
 
     /// <summary>The first selection that ends at or after an offset; selections never overlap, so their ends rise with
@@ -207,26 +213,25 @@ public sealed partial class CodeEditor
         return lines;
     }
 
+    /// <summary>The carets on rows <paramref name="first"/> to <paramref name="last"/>, each on the row it stands on.</summary>
     private void DrawCarets(DrawingContext context, TextSnapshot text, int start, int end, int first, int last, double left)
     {
         IReadOnlyList<Selection> items = selections.Items;
         for (int i = FirstCaretFrom(start); i < items.Count && items[i].Caret <= end; i++)
         {
-            int caret = items[i].Caret;
-            int line = text.GetLineFromOffset(caret);
-            if (line < first || line > last)
+            (int row, double x) = CaretPlace(text, items[i].Caret);
+            if (row < first || row > last)
             {
                 continue;
             }
-            double x = left + CaretXOf(text, caret);
-            double y = TopOf(line) - scroll.Y;
-            context.FillRectangle(palette.Caret, new Rect(Math.Round(x), y, 2, metrics.LineHeight));
+            double y = (row * metrics.LineHeight) - scroll.Y;
+            context.FillRectangle(palette.Caret, new Rect(Math.Round(left + x), y, 2, metrics.LineHeight));
         }
     }
 
     private void DrawSelections(DrawingContext context, LineView view, Gap[] gaps, double left, double y, double width, bool focused)
     {
-        LineSpan span = view.Span;
+        RowSpan span = view.Span;
         IBrush brush = focused ? palette.Selection : palette.SelectionInactive;
         IReadOnlyList<Selection> items = selections.Items;
         for (int i = FirstSelectionEndingFrom(span.Start); i < items.Count && items[i].Start < span.EndIncludingBreak; i++)
@@ -251,7 +256,7 @@ public sealed partial class CodeEditor
 
     private void DrawHighlights(DrawingContext context, LineView view, Gap[] gaps, double left, double y)
     {
-        LineSpan span = view.Span;
+        RowSpan span = view.Span;
         IReadOnlyList<TextRange> ranges = Highlights;
         int low = 0;
         int high = ranges.Count;
@@ -289,11 +294,99 @@ public sealed partial class CodeEditor
         }
     }
 
+    /// <summary>A row's whitespace, as Rider shows it: a dot in the middle of each space and an arrow across each tab, in
+    /// their own colour. Only the columns on screen of a long line are read.</summary>
+    private void DrawWhitespace(DrawingContext context, TextSnapshot text, LineView view, Gap[] gaps, double left, double y)
+    {
+        RowSpan span = view.Span;
+        int from = 0;
+        int to = span.Length;
+        if (view.Long is not null)
+        {
+            from = view.From;
+            to = view.To;
+        }
+        if (to <= from)
+        {
+            return;
+        }
+        char[] buffer = System.Buffers.ArrayPool<char>.Shared.Rent(to - from);
+        try
+        {
+            text.CopyTo(span.Start + from, buffer.AsSpan(0, to - from));
+            // On the pixel grid, so a dot and an arrow's shaft are drawn crisp in their colour.
+            double middle = Math.Floor(y + (metrics.LineHeight / 2));
+            double dot = Math.Max(2, Math.Round(metrics.FontSize / 7));
+            Pen? arrow = null;
+            for (int i = 0; i < to - from; i++)
+            {
+                char c = buffer[i];
+                if (c is not (' ' or '\t' or ' ' or '　'))
+                {
+                    continue;
+                }
+                int column = from + i;
+                double x1 = left + XWith(view, gaps, column);
+                double x2 = left + XWith(view, gaps, column + 1, afterHints: false);
+                if (c != '\t')
+                {
+                    context.FillRectangle(palette.Whitespace, new Rect(Math.Round(((x1 + x2) / 2) - (dot / 2)), middle - Math.Floor(dot / 2), dot, dot));
+                    continue;
+                }
+                arrow ??= new Pen(palette.Whitespace, 1);
+                double shaft = middle + 0.5;
+                double tail = x1 + (metrics.CharWidth * 0.3);
+                double head = Math.Max(tail + 2, x2 - (metrics.CharWidth * 0.3));
+                double barb = Math.Min(3, metrics.CharWidth * 0.35);
+                StreamGeometry shape = new();
+                using (StreamGeometryContext path = shape.Open())
+                {
+                    path.BeginFigure(new Point(tail, shaft), false);
+                    path.LineTo(new Point(head, shaft));
+                    path.EndFigure(false);
+                    path.BeginFigure(new Point(head - barb, shaft - barb), false);
+                    path.LineTo(new Point(head, shaft));
+                    path.LineTo(new Point(head - barb, shaft + barb));
+                    path.EndFigure(false);
+                }
+                context.DrawGeometry(null, arrow, shape);
+            }
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<char>.Shared.Return(buffer);
+        }
+    }
+
+    /// <summary>IntelliJ's soft-wrap sign after a row its line goes on from: a small return arrow, in its own colour.</summary>
+    private void DrawWrapSign(DrawingContext context, double x, double y)
+    {
+        double size = Math.Max(4, Math.Round(metrics.CharWidth * 0.7));
+        double left = x + (metrics.CharWidth * 0.4);
+        double right = left + size;
+        double top = y + ((metrics.LineHeight - size) / 2);
+        double bottom = top + size;
+        double barb = Math.Max(2, size / 3);
+        StreamGeometry sign = new();
+        using (StreamGeometryContext path = sign.Open())
+        {
+            path.BeginFigure(new Point(right, top), false);
+            path.LineTo(new Point(right, bottom));
+            path.LineTo(new Point(left, bottom));
+            path.EndFigure(false);
+            path.BeginFigure(new Point(left + barb, bottom - barb), false);
+            path.LineTo(new Point(left, bottom));
+            path.LineTo(new Point(left + barb, bottom + barb));
+            path.EndFigure(false);
+        }
+        context.DrawGeometry(null, new Pen(palette.SoftWrapSign, 1), sign);
+    }
+
     /// <summary>Squiggles under errors, warnings and suggestions; unnecessary code is faded by laying
     /// the background over it, half see-through.</summary>
     private void DrawMarkers(DrawingContext context, LineView view, Gap[] gaps, double left, double y, double clipLeft, double clipRight)
     {
-        LineSpan span = view.Span;
+        RowSpan span = view.Span;
         IReadOnlyList<Marker> markers = Markers;
         // The markers before the first that reaches this far all end before the line.
         int low = 0;
@@ -313,7 +406,8 @@ public sealed partial class CodeEditor
         for (int i = low; i < markers.Count; i++)
         {
             Marker marker = markers[i];
-            if (marker.Range.Start > span.End)
+            // One starting where a row wraps is the next row's.
+            if (marker.Range.Start > span.End || (!span.IsLast && marker.Range.Start == span.End))
             {
                 break;
             }
@@ -395,15 +489,17 @@ public sealed partial class CodeEditor
         context.DrawGeometry(null, new Pen(brush, 1), wave);
     }
 
-    private void DrawGutter(DrawingContext context, List<int> shown, int row, HashSet<int> caretLines, VisibleMarks marks, double gutter, double height)
+    /// <summary>The gutter beside the rows shown: a line's number and marks beside its first row only, as Rider's gutter
+    /// leaves a wrapped line's other rows bare.</summary>
+    private void DrawGutter(DrawingContext context, List<RowSpan> shown, int row, HashSet<int> caretLines, VisibleMarks marks, double gutter, double height)
     {
         context.FillRectangle(palette.Gutter, new Rect(0, 0, gutter, height));
         if (!ShowLineNumbers || shown.Count == 0)
         {
             return;
         }
-        int first = shown[0];
-        int last = shown[^1];
+        int first = shown[0].Line;
+        int last = shown[^1].Line;
         if (!ChangeBackgrounds)
         {
             DrawChanges(context, first, last, gutter);
@@ -431,7 +527,11 @@ public sealed partial class CodeEditor
         }
         for (int i = 0; i < shown.Count; i++)
         {
-            int line = shown[i];
+            if (shown[i].Row > 0)
+            {
+                continue;
+            }
+            int line = shown[i].Line;
             double top = (row + i) * metrics.LineHeight - scroll.Y;
             if (marks.Executing.Contains(line))
             {
@@ -560,12 +660,12 @@ public sealed partial class CodeEditor
     }
 
     /// <summary>The annotation column (Git blame): each line's text muted at the gutter's left, a rule after it.</summary>
-    private void DrawAnnotations(DrawingContext context, List<int> shown, int row)
+    private void DrawAnnotations(DrawingContext context, List<RowSpan> shown, int row)
     {
         context.FillRectangle(palette.CurrentLine, new Rect(0, 0, annotationWidth - 6, Bounds.Height));
-        for (int i = 0; i < shown.Count && shown[i] < GutterAnnotations.Count; i++)
+        for (int i = 0; i < shown.Count && shown[i].Line < GutterAnnotations.Count; i++)
         {
-            if (GutterAnnotations[shown[i]] is not { Length: > 0 } label)
+            if (shown[i].Row > 0 || GutterAnnotations[shown[i].Line] is not { Length: > 0 } label)
             {
                 continue;
             }
@@ -640,7 +740,7 @@ public sealed partial class CodeEditor
                 continue;
             }
             IBrush brush = change.Kind == ChangeMarkKind.Added ? palette.ChangeAdded : palette.ChangeModified;
-            double bottom = TopOf(change.Line + change.Count - 1) + metrics.LineHeight - scroll.Y;
+            double bottom = BottomOf(Math.Min(change.Line + change.Count - 1, document.Snapshot.LineCount - 1)) - scroll.Y;
             context.FillRectangle(brush, new Rect(x, top + 1, 3, Math.Max(1, bottom - top - 2)), 1);
         }
     }
@@ -772,6 +872,8 @@ public sealed partial class CodeEditor
         public IBrush UsageReadMark { get; private init; } = Brush("#5B786A");
         public IBrush UsageWriteMark { get; private init; } = Brush("#BA6387");
         public IBrush MatchedBrace { get; private init; } = Brush("#43454A");
+        public IBrush Whitespace { get; private init; } = Brush("#686868");
+        public IBrush SoftWrapSign { get; private init; } = Brush("#787878");
         public Geometry? ErrorIcon { get; private init; }
         public Geometry? WarningIcon { get; private init; }
         public Geometry? PassedIcon { get; private init; }
@@ -822,6 +924,8 @@ public sealed partial class CodeEditor
                 UsageReadMark = Find(control, "Passenger.Editor.UsageReadMark") ?? defaults.UsageReadMark,
                 UsageWriteMark = Find(control, "Passenger.Editor.UsageWriteMark") ?? defaults.UsageWriteMark,
                 MatchedBrace = Find(control, "Passenger.Editor.MatchedBrace") ?? defaults.MatchedBrace,
+                Whitespace = Find(control, "Passenger.Editor.Whitespace") ?? defaults.Whitespace,
+                SoftWrapSign = Find(control, "Passenger.Editor.SoftWrapSign") ?? defaults.SoftWrapSign,
                 ErrorIcon = Icon(control, "Icon.Error"),
                 WarningIcon = Icon(control, "Icon.Problems"),
                 PassedIcon = Icon(control, "Icon.Check"),

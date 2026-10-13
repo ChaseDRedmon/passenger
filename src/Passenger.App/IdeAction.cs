@@ -25,6 +25,10 @@ public sealed record IdeAction(string Id, string Title, string Group, Action<Act
     /// a pinned tab, Close on a tab's own menu); Find Action lists it by its title.</summary>
     public Func<ActionContext, string>? TitleIn { get; init; }
 
+    /// <summary>For an action that turns something on and off (Soft-Wrap), whether it is on where it would run: its menu
+    /// item shows a check then, as Rider's toggle actions do.</summary>
+    public Func<ActionContext, bool>? IsChecked { get; init; }
+
     /// <summary>Whether its keys run it while the terminal has them, as Rider's terminal lets the tool windows' own
     /// shortcuts through and keeps every other key for the shell.</summary>
     public bool FromTerminal { get; init; }

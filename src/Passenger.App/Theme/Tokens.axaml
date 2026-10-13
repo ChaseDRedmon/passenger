@@ -111,6 +111,9 @@
             <SolidColorBrush x:Key="Passenger.Editor.UsageReadMark" Color="#5B786A" />
             <SolidColorBrush x:Key="Passenger.Editor.UsageWriteMark" Color="#BA6387" />
             <SolidColorBrush x:Key="Passenger.Editor.MatchedBrace" Color="#43454A" />
+            <!-- Rider Dark's WHITESPACES and SOFT_WRAP_SIGN_COLOR. -->
+            <SolidColorBrush x:Key="Passenger.Editor.Whitespace" Color="#686868" />
+            <SolidColorBrush x:Key="Passenger.Editor.SoftWrapSign" Color="#787878" />
 
             <SolidColorBrush x:Key="Passenger.Syntax.Keyword" Color="#6C95EB" />
             <SolidColorBrush x:Key="Passenger.Syntax.ControlKeyword" Color="#6C95EB" />
@@ -245,6 +248,9 @@
             <SolidColorBrush x:Key="Passenger.Editor.UsageReadMark" Color="#D0A1FF" />
             <SolidColorBrush x:Key="Passenger.Editor.UsageWriteMark" Color="#F0A8D2" />
             <SolidColorBrush x:Key="Passenger.Editor.MatchedBrace" Color="#93D9D9" />
+            <!-- Rider Light's WHITESPACES and SOFT_WRAP_SIGN_COLOR. -->
+            <SolidColorBrush x:Key="Passenger.Editor.Whitespace" Color="#D0D0D0" />
+            <SolidColorBrush x:Key="Passenger.Editor.SoftWrapSign" Color="#949494" />
 
             <SolidColorBrush x:Key="Passenger.Syntax.Keyword" Color="#0F54D6" />
             <SolidColorBrush x:Key="Passenger.Syntax.ControlKeyword" Color="#0F54D6" />

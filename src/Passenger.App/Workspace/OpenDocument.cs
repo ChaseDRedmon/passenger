@@ -22,6 +22,8 @@ public sealed class OpenDocument : Observable
     private IReadOnlyList<string?> gutterAnnotations = [];
     private IReadOnlyList<int> bookmarks = [];
     private IReadOnlyList<FoldRegion> foldRegions = [];
+    private bool softWrap;
+    private bool showWhitespaces;
 
     /// <summary>The indentation the file's own lines show, found when its text came from disk; null when they do not tell.</summary>
     private IndentOptions? detected;
@@ -162,6 +164,22 @@ public sealed class OpenDocument : Observable
     {
         get => lineAnnotations;
         set => Set(ref lineAnnotations, value);
+    }
+
+    /// <summary>Whether the editors showing the file wrap its lines at their width: Settings' soft wrap masks decide as it
+    /// opens, View, Active Editor, Soft-Wrap after.</summary>
+    public bool SoftWrap
+    {
+        get => softWrap;
+        set => Set(ref softWrap, value);
+    }
+
+    /// <summary>Whether the editors showing the file draw its spaces and tabs: Settings' Show whitespaces as it opens, View,
+    /// Active Editor, Show Whitespaces after.</summary>
+    public bool ShowWhitespaces
+    {
+        get => showWhitespaces;
+        set => Set(ref showWhitespaces, value);
     }
 
     /// <summary>Lets go of everything the open file holds beyond its text, when its tab closes.</summary>

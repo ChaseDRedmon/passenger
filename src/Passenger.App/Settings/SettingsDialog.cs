@@ -196,6 +196,23 @@ public sealed class SettingsDialog : Window
             "errors problems whole solution analysis inspections without build");
         Add(EditorPage, "Show parameter name hints", Check(Working.ParameterHints, v => Change(s => s with { ParameterHints = v })), "inlay hints parameter names arguments");
         Add(EditorPage, "Show type name hints", Check(Working.TypeHints, v => Change(s => s with { TypeHints = v })), "inlay hints type names var lambda parameters new inferred");
+        // Rider's Editor, General: its Soft Wraps, Appearance and Font Size options, by its names.
+        TextBox masks = new() { Classes = { "search" }, Text = Working.SoftWrapFiles, PlaceholderText = "No files", Width = 260, IsEnabled = Working.SoftWrap };
+        ToolTip.SetTip(masks, "Use * and ? as wildcards and ; to separate patterns");
+        masks.TextChanged += (_, _) => Change(s => s with { SoftWrapFiles = masks.Text ?? string.Empty });
+        CheckBox wrapFiles = Check(Working.SoftWrap, v =>
+        {
+            Change(s => s with { SoftWrap = v });
+            masks.IsEnabled = v;
+        });
+        Add(EditorPage, "Soft-wrap these files", new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { wrapFiles, masks } },
+            "soft wrap wrapping long lines width markdown text files masks");
+        Add(EditorPage, "Use the original line's indent for wrapped fragments", Check(Working.SoftWrapIndent, v => Change(s => s with { SoftWrapIndent = v })),
+            "soft wrap wrapped indent indentation fragments");
+        Add(EditorPage, "Show whitespaces", Check(Working.ShowWhitespaces, v => Change(s => s with { ShowWhitespaces = v })),
+            "whitespace spaces tabs dots arrows invisible characters appearance");
+        Add(EditorPage, OperatingSystem.IsMacOS() ? "Change font size with Command+Mouse Wheel" : "Change font size with Ctrl+Mouse Wheel",
+            Check(Working.WheelZoom, v => Change(s => s with { WheelZoom = v })), "zoom font size mouse wheel scroll ctrl control command cmd");
 
         Add(RunPage, "Hot Reload on save", Check(Working.HotReload, v => Change(s => s with { HotReload = v })), "dotnet watch apply changes edit continue running");
         NumericUpDown buffer = Number(Working.ConsoleBufferKb, AppSettings.MinConsoleBufferKb, AppSettings.MaxConsoleBufferKb, 64, v => Change(s => s with { ConsoleBufferKb = (int)v }));
@@ -314,7 +331,7 @@ public sealed class SettingsDialog : Window
     /// does.</summary>
     private void Add(string page, string label, Control editor, string keywords, string? note = null)
     {
-        TextBlock name = new() { Text = label, Width = 220, VerticalAlignment = VerticalAlignment.Center };
+        TextBlock name = new() { Text = label, Width = 220, TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center };
         Control row = new StackPanel { Orientation = Orientation.Horizontal, Children = { name, editor } };
         if (note is not null)
         {

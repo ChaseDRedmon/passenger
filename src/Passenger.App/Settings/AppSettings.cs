@@ -19,6 +19,9 @@ public sealed record AppSettings : IStateDocument<AppSettings>
     public const int MinConsoleBufferKb = 16;
     public const int MaxConsoleBufferKb = 102_400;
 
+    /// <summary>Rider's own soft wrap masks.</summary>
+    public const string DefaultSoftWrapFiles = "*.md; *.txt; *.rst; *.adoc";
+
     public ThemeChoice Theme { get; init; } = ThemeChoice.System;
     public double EditorFontSize { get; init; } = 13;
     public double EditorLineSpacing { get; init; } = 1.2;
@@ -34,6 +37,25 @@ public sealed record AppSettings : IStateDocument<AppSettings>
     /// <summary>Rider's type name hints: the type of a <c>var</c>, a lambda's parameter or a target-typed <c>new</c> shown
     /// after it where the code does not say it.</summary>
     public bool TypeHints { get; init; } = true;
+
+    /// <summary>Rider's "Soft-wrap these files": a file whose name matches <see cref="SoftWrapFiles"/> opens with its lines
+    /// wrapped at the editor's width (View, Active Editor, Soft-Wrap turns it on and off for one file).</summary>
+    public bool SoftWrap { get; init; } = true;
+
+    /// <summary>The names that soft-wrap, Rider's masks: <c>*</c> and <c>?</c> as wildcards, <c>;</c> between them.</summary>
+    public string SoftWrapFiles { get; init; } = DefaultSoftWrapFiles;
+
+    /// <summary>Rider's "Use the original line's indent for wrapped fragments": a wrapped line's rows after its first start
+    /// where its text does.</summary>
+    public bool SoftWrapIndent { get; init; } = true;
+
+    /// <summary>Rider's Show whitespaces: spaces drawn as dots and tabs as arrows (View, Active Editor, Show Whitespaces
+    /// turns it on and off for one file).</summary>
+    public bool ShowWhitespaces { get; init; }
+
+    /// <summary>Rider's "Change font size with Ctrl+Mouse Wheel" (Command on macOS): off, as in Rider, so the wheel only
+    /// scrolls.</summary>
+    public bool WheelZoom { get; init; }
     public double TerminalFontSize { get; init; } = 13;
 
     /// <summary>Whether Run runs under dotnet watch, so a save applies its edits to the running program (Hot Reload),
@@ -104,6 +126,52 @@ public sealed record AppSettings : IStateDocument<AppSettings>
             ConsoleBufferKb = Math.Clamp(ConsoleBufferKb, MinConsoleBufferKb, MaxConsoleBufferKb),
             Shortcuts = (Shortcuts ?? []).Where(s => s.Value is not null).ToDictionary(s => s.Key, s => s.Value.Where(k => k is not null).ToArray()),
             TerminalShell = string.IsNullOrWhiteSpace(TerminalShell) ? null : TerminalShell,
+            SoftWrapFiles = SoftWrapFiles ?? defaults.SoftWrapFiles,
         };
+    }
+
+    /// <summary>Whether a file opens soft-wrapped: its name matches one of <see cref="SoftWrapFiles"/>, ignoring case, while
+    /// <see cref="SoftWrap"/> is on.</summary>
+    public bool WrapsFile(string path)
+    {
+        if (!SoftWrap)
+        {
+            return false;
+        }
+        string name = Path.GetFileName(path);
+        foreach (string mask in SoftWrapFiles.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (Matches(mask, name))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>Whether a name matches a mask whose <c>*</c> stands for any run of characters and <c>?</c> for one.</summary>
+    private static bool Matches(ReadOnlySpan<char> mask, ReadOnlySpan<char> name)
+    {
+        while (mask.Length > 0)
+        {
+            if (mask[0] == '*')
+            {
+                for (int skip = 0; skip <= name.Length; skip++)
+                {
+                    if (Matches(mask[1..], name[skip..]))
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            if (name.Length == 0 || (mask[0] != '?' && char.ToUpperInvariant(mask[0]) != char.ToUpperInvariant(name[0])))
+            {
+                return false;
+            }
+            mask = mask[1..];
+            name = name[1..];
+        }
+        return name.Length == 0;
     }
 }

@@ -88,7 +88,8 @@ public sealed partial class CodeEditor
     private StripeBuild BuiltMarks()
     {
         TextSnapshot text = document.Snapshot;
-        if (stripeBuild is { } built && built.Shows(text, Markers, Highlights, UsageHighlights, folds, Bookmarks, ChangeMarks))
+        RowMap rows = Rows;
+        if (stripeBuild is { } built && built.Shows(text, Markers, Highlights, UsageHighlights, rows, Bookmarks, ChangeMarks))
         {
             return built;
         }
@@ -96,21 +97,23 @@ public sealed partial class CodeEditor
         foreach (ChangeMark change in ChangeMarks)
         {
             int line = Math.Min(change.Line, text.LineCount - 1);
+            int last = Math.Min(line + Math.Max(1, change.Count) - 1, text.LineCount - 1);
             string what = change.Kind switch { ChangeMarkKind.Added => "Added lines", ChangeMarkKind.Deleted => "Deleted lines", _ => "Modified lines" };
-            marks.Add(new StripeMark(StripeMarkKind.Change, RowOf(line), Math.Max(1, RowOf(Math.Min(line + Math.Max(1, change.Count) - 1, text.LineCount - 1)) - RowOf(line) + 1),
+            marks.Add(new StripeMark(StripeMarkKind.Change, RowOf(line), Math.Max(1, RowOf(last) + rows.RowsOf(last) - RowOf(line)),
                 text.GetLineStart(line), what, change.Kind));
         }
         foreach (int line in Bookmarks.Where(l => l < text.LineCount))
         {
             marks.Add(new StripeMark(StripeMarkKind.Bookmark, RowOf(line), 1, text.GetLineStart(line), "Bookmark"));
         }
+        // A match or a use is marked at its own row of a wrapped line.
         foreach (TextRange match in Highlights)
         {
-            marks.Add(new StripeMark(StripeMarkKind.SearchMatch, RowOf(text.GetLineFromOffset(Math.Min(match.Start, text.Length))), 1, match.Start, "Search result"));
+            marks.Add(new StripeMark(StripeMarkKind.SearchMatch, RowOfOffset(text, Math.Min(match.Start, text.Length), beforeWrap: false).Row, 1, match.Start, "Search result"));
         }
         foreach (UsageHighlight use in UsageHighlights)
         {
-            marks.Add(new StripeMark(use.IsWrite ? StripeMarkKind.WriteUsage : StripeMarkKind.Usage, RowOf(text.GetLineFromOffset(Math.Min(use.Range.Start, text.Length))), 1,
+            marks.Add(new StripeMark(use.IsWrite ? StripeMarkKind.WriteUsage : StripeMarkKind.Usage, RowOfOffset(text, Math.Min(use.Range.Start, text.Length), beforeWrap: false).Row, 1,
                 use.Range.Start, use.IsWrite ? "Write usage" : "Read usage"));
         }
         // The worst last, so it is drawn over the rest; one mark a line and kind, its messages together.
@@ -123,7 +126,7 @@ public sealed partial class CodeEditor
             }
         }
         StripeMarksBuilt++;
-        stripeBuild = new StripeBuild(text, Markers, Highlights, UsageHighlights, folds, Bookmarks, ChangeMarks, [.. marks], RowCount);
+        stripeBuild = new StripeBuild(text, Markers, Highlights, UsageHighlights, rows, Bookmarks, ChangeMarks, [.. marks], rows.Count);
         return stripeBuild;
     }
 
@@ -131,7 +134,7 @@ public sealed partial class CodeEditor
     private StripeMark CaretMark()
     {
         int caret = selections.Primary.Caret;
-        return new StripeMark(StripeMarkKind.Caret, RowOf(document.Snapshot.GetLineFromOffset(caret)), 1, caret, "Caret");
+        return new StripeMark(StripeMarkKind.Caret, RowOfOffset(document.Snapshot, caret, LeansBack(caret)).Row, 1, caret, "Caret");
     }
 
     /// <summary>The scrollbar's track, where the marks go: between its arrows, in this control's coordinates.</summary>
@@ -189,16 +192,17 @@ public sealed partial class CodeEditor
     /// <summary>A mark on the stripe: what it is, the rows it covers, the offset a click goes to, and what it says.</summary>
     public readonly record struct StripeMark(StripeMarkKind Kind, int Row, int Rows, int Offset, string Message, ChangeMarkKind Change = ChangeMarkKind.Modified);
 
-    /// <summary>The stripe's marks as worked out from one text and the lists it shows, each kept by reference: a snapshot
-    /// never changes, and the editor's lists are replaced, never changed in place.</summary>
+    /// <summary>The stripe's marks as worked out from one text, its rows (the folds and the wraps) and the lists it shows,
+    /// each kept by reference: a snapshot never changes, and the editor's lists and row maps are replaced, never changed in
+    /// place.</summary>
     private sealed record StripeBuild(TextSnapshot Text, IReadOnlyList<Marker> Markers, IReadOnlyList<TextRange> Highlights,
-        IReadOnlyList<UsageHighlight> Usages, IReadOnlyList<FoldRegion> Folds, IReadOnlyList<int> Bookmarks, IReadOnlyList<ChangeMark> Changes,
+        IReadOnlyList<UsageHighlight> Usages, RowMap Rows, IReadOnlyList<int> Bookmarks, IReadOnlyList<ChangeMark> Changes,
         StripeMark[] Marks, int RowCount)
     {
         public bool Shows(TextSnapshot text, IReadOnlyList<Marker> markers, IReadOnlyList<TextRange> highlights, IReadOnlyList<UsageHighlight> usages,
-            IReadOnlyList<FoldRegion> folds, IReadOnlyList<int> bookmarks, IReadOnlyList<ChangeMark> changes) =>
+            RowMap rows, IReadOnlyList<int> bookmarks, IReadOnlyList<ChangeMark> changes) =>
             ReferenceEquals(Text, text) && ReferenceEquals(Markers, markers) && ReferenceEquals(Highlights, highlights) && ReferenceEquals(Usages, usages)
-            && ReferenceEquals(Folds, folds) && ReferenceEquals(Bookmarks, bookmarks) && ReferenceEquals(Changes, changes);
+            && ReferenceEquals(Rows, rows) && ReferenceEquals(Bookmarks, bookmarks) && ReferenceEquals(Changes, changes);
     }
 
     /// <summary>The marks drawn over the scrollbar's track; hit only where a mark is, so the thumb and the track take every

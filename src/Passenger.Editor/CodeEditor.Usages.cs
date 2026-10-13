@@ -106,7 +106,7 @@ public sealed partial class CodeEditor
     /// <summary>The uses on a line, behind its text and its selection: each the whole line high, as Rider fills them.</summary>
     private void DrawUsages(DrawingContext context, LineView view, Gap[] gaps, double left, double y)
     {
-        LineSpan span = view.Span;
+        RowSpan span = view.Span;
         IReadOnlyList<UsageHighlight> uses = UsageHighlights;
         int low = 0;
         int high = uses.Count;
@@ -142,7 +142,7 @@ public sealed partial class CodeEditor
 
     private void FillRange(DrawingContext context, LineView view, Gap[] gaps, double left, double y, TextRange range, IBrush brush)
     {
-        LineSpan span = view.Span;
+        RowSpan span = view.Span;
         int from = Math.Max(range.Start, span.Start) - span.Start;
         int to = Math.Min(range.End, span.End) - span.Start;
         double x1 = left + XWith(view, gaps, from);

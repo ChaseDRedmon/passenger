@@ -7,9 +7,9 @@ namespace Passenger.Editor;
 
 /// <summary>Code folding, as Rider's: the host names the regions that fold (a member's body, a type's, the usings),
 /// a folded one hides the lines after its first and shows its placeholder at that line's end, and the gutter's last
-/// column has its chevrons. Everything that turns a line into a height goes through rows, the lines left showing:
-/// <see cref="TopOf"/> and <see cref="LineOfRow"/>, looked up in <see cref="FoldLines"/>, made once for each text and
-/// set of regions. A caret that lands in folded lines unfolds them.</summary>
+/// column has its chevrons. Everything that turns a line into a height goes through rows (<see cref="Rows"/>): the lines
+/// left showing, looked up in <see cref="FoldLines"/>, made once for each text and set of regions, each one row or as many
+/// as soft wrap makes it. A caret that lands in folded lines unfolds them.</summary>
 public sealed partial class CodeEditor
 {
     /// <summary>The gutter's folding column, at its right edge against the code.</summary>
@@ -63,82 +63,6 @@ public sealed partial class CodeEditor
             }
             return known;
         }
-    }
-
-    /// <summary>How many rows the document shows: its lines less the folded ones.</summary>
-    private int RowCount => document.Snapshot.LineCount - Folding.HiddenCount;
-
-    /// <summary>The row a line shows on; a folded line is on its fold's first line's row.</summary>
-    private int RowOf(int line)
-    {
-        FoldLines map = Folding;
-        int k = map.RangeAtOrBefore(line);
-        if (k < 0)
-        {
-            return line;
-        }
-        return line <= map.Hidden[k].Last ? map.Hidden[k].First - 1 - map.HiddenBefore[k] : line - map.HiddenBefore[k + 1];
-    }
-
-    /// <summary>The line a row shows, past the last row the lines past the end.</summary>
-    private int LineOfRow(int row)
-    {
-        FoldLines map = Folding;
-        // A range comes before the row's line when its first line, less the lines folded before it, is at most the row.
-        int low = 0;
-        int high = map.Hidden.Length;
-        while (low < high)
-        {
-            int middle = (low + high) / 2;
-            if (map.Hidden[middle].First - map.HiddenBefore[middle] <= row)
-            {
-                low = middle + 1;
-            }
-            else
-            {
-                high = middle;
-            }
-        }
-        return row + map.HiddenBefore[low];
-    }
-
-    /// <summary>A line's top in the content, folded lines counted out.</summary>
-    private double TopOf(int line) => RowOf(line) * metrics.LineHeight;
-
-    /// <summary>The line at a height in the control (past the end, a line past the last).</summary>
-    private int LineAtY(double y) => LineOfRow((int)Math.Floor((y + scroll.Y) / metrics.LineHeight));
-
-    private bool IsHidden(int line)
-    {
-        FoldLines map = Folding;
-        int k = map.RangeAtOrBefore(line);
-        return k >= 0 && line <= map.Hidden[k].Last;
-    }
-
-    /// <summary>The lines on rows <paramref name="firstRow"/> to <paramref name="lastRow"/>, in order, stepping over folded
-    /// ones rather than visiting them.</summary>
-    private List<int> LinesOnRows(int firstRow, int lastRow, int lineCount)
-    {
-        List<int> shown = [];
-        FoldLines map = Folding;
-        int line = Math.Clamp(LineOfRow(firstRow), 0, lineCount - 1);
-        int k = map.RangeAtOrBefore(line);
-        if (k >= 0 && line <= map.Hidden[k].Last)
-        {
-            return shown;
-        }
-        k++;
-        for (int row = firstRow; row <= lastRow && line < lineCount; row++)
-        {
-            shown.Add(line);
-            line++;
-            if (k < map.Hidden.Length && map.Hidden[k].First == line)
-            {
-                line = map.Hidden[k].Last + 1;
-                k++;
-            }
-        }
-        return shown;
     }
 
     /// <summary>The folded region whose placeholder ends a line, if any.</summary>
@@ -271,7 +195,9 @@ public sealed partial class CodeEditor
         {
             return false;
         }
-        if (OutermostAt(LineAtY(at.Y), _ => true) is int index)
+        // A chevron is on a line's first row.
+        (int clicked, int row) = Rows.LineOfRow(RowAtY(at.Y));
+        if (row == 0 && OutermostAt(clicked, _ => true) is int index)
         {
             SetFolded(i => i == index ? !folds[i].Folded : folds[i].Folded);
             return true;
@@ -437,6 +363,52 @@ public sealed partial class CodeEditor
 
         /// <summary>A region's last line; none for one ending past the text.</summary>
         public static int EndLineOf(TextSnapshot text, FoldRegion region) => region.End <= text.Length ? text.GetLineFromOffset(region.End) : -1;
+
+        /// <summary>Whether a fold hides a line.</summary>
+        public bool IsHidden(int line)
+        {
+            int k = RangeAtOrBefore(line);
+            return k >= 0 && line <= Hidden[k].Last;
+        }
+
+        /// <summary>The line itself, or for one a fold hides the line its fold starts on, which shows.</summary>
+        public int Shown(int line)
+        {
+            int k = RangeAtOrBefore(line);
+            return k >= 0 && line <= Hidden[k].Last ? Hidden[k].First - 1 : line;
+        }
+
+        /// <summary>The row a line shows on among the lines left showing; a folded line is on its fold's first line's.</summary>
+        public int RowOf(int line)
+        {
+            int k = RangeAtOrBefore(line);
+            if (k < 0)
+            {
+                return line;
+            }
+            return line <= Hidden[k].Last ? Hidden[k].First - 1 - HiddenBefore[k] : line - HiddenBefore[k + 1];
+        }
+
+        /// <summary>The line a row of the lines left showing is, past the last row the lines past the end.</summary>
+        public int LineOfRow(int row)
+        {
+            // A range comes before the row's line when its first line, less the lines folded before it, is at most the row.
+            int low = 0;
+            int high = Hidden.Length;
+            while (low < high)
+            {
+                int middle = (low + high) / 2;
+                if (Hidden[middle].First - HiddenBefore[middle] <= row)
+                {
+                    low = middle + 1;
+                }
+                else
+                {
+                    high = middle;
+                }
+            }
+            return row + HiddenBefore[low];
+        }
 
         /// <summary>The last folded range starting at or before a line, or -1.</summary>
         public int RangeAtOrBefore(int line)

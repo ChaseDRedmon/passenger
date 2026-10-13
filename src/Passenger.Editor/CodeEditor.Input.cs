@@ -105,7 +105,7 @@ public sealed partial class CodeEditor
         }
         document.BreakUndoGroup();
         TextSnapshot text = document.Snapshot;
-        int offset = OffsetAt(point.Position);
+        int offset = OffsetAt(point.Position, out bool beforeWrap);
         KeyModifiers mods = e.KeyModifiers;
         KeyModifiers command = OperatingSystem.IsMacOS() ? KeyModifiers.Meta : KeyModifiers.Control;
 
@@ -181,6 +181,7 @@ public sealed partial class CodeEditor
             Selection primary = selections.Primary;
             drag = new Drag(DragMode.Characters, extend ? primary.Anchor : offset, point.Position);
             LeanFor(point.Position, offset);
+            nextWrapLeaning = beforeWrap ? [offset] : null;
             SetSelections(SelectionSet.Single(extend ? new Selection(primary.Anchor, offset) : Selection.At(offset)), reveal: false);
         }
         e.Pointer.Capture(this);
@@ -210,10 +211,11 @@ public sealed partial class CodeEditor
             ScrollTo(scroll + new Vector(0, overshoot));
         }
         TextSnapshot text = document.Snapshot;
-        int offset = OffsetAt(position);
+        int offset = OffsetAt(position, out bool beforeWrap);
         switch (drag.Mode)
         {
             case DragMode.Characters:
+                nextWrapLeaning = beforeWrap ? [offset] : null;
                 SetSelections(SelectionSet.Single(new Selection(drag.Anchor, offset)), reveal: true);
                 break;
             case DragMode.Words:
@@ -269,9 +271,33 @@ public sealed partial class CodeEditor
         EndHover();
     }
 
+    /// <summary>Whether Ctrl+wheel (Cmd+wheel on macOS) asks for a bigger or smaller font (Rider's "Change font size with
+    /// Ctrl+Mouse Wheel") rather than scrolling.</summary>
+    public bool ZoomsWithWheel { get; set; }
+
+    /// <summary>The wheel turned with Ctrl (Cmd on macOS) while <see cref="ZoomsWithWheel"/>: by how many points the host
+    /// makes the font bigger (or, below zero, smaller).</summary>
+    public event EventHandler<int>? ZoomRequested;
+
+    /// <summary>What a trackpad's small turns add up to, until they make a point of zoom.</summary>
+    private double wheelZoom;
+
     protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
     {
         base.OnPointerWheelChanged(e);
+        KeyModifiers zoom = OperatingSystem.IsMacOS() ? KeyModifiers.Meta : KeyModifiers.Control;
+        if (ZoomsWithWheel && e.KeyModifiers.HasFlag(zoom))
+        {
+            wheelZoom += e.Delta.Y;
+            int points = (int)Math.Truncate(wheelZoom);
+            if (points != 0)
+            {
+                wheelZoom -= points;
+                ZoomRequested?.Invoke(this, points);
+            }
+            e.Handled = true;
+            return;
+        }
         Vector delta = e.Delta;
         if (e.KeyModifiers.HasFlag(KeyModifiers.Shift) && delta.X == 0)
         {
@@ -289,14 +315,16 @@ public sealed partial class CodeEditor
             return;
         }
         TextSnapshot text = document.Snapshot;
-        int line = LineAtY(hoverAt.Y);
+        (int line, int row) = Rows.LineOfRow(RowAtY(hoverAt.Y));
         if (line < 0 || line >= text.LineCount)
         {
             return;
         }
         int offset = OffsetAt(hoverAt);
-        // Past the end of a line is not over any code.
-        if (hoverAt.X - TextLeft + scroll.X > XOf(text, text.GetLine(line).End) + metrics.CharWidth)
+        // Past the end of a row is not over any code.
+        RowSpan span = RowSpanOf(text, line, row);
+        LineView view = ViewOf(text, span);
+        if (hoverAt.X - TextLeft + scroll.X > span.Indent + XWith(view, GapsOn(span), span.Length, afterHints: false) + metrics.CharWidth)
         {
             return;
         }
@@ -325,24 +353,24 @@ public sealed partial class CodeEditor
         }
     }
 
-    /// <summary>The offset under a point in the control, its line clamped to the document.</summary>
-    private int OffsetAt(Point point)
+    /// <summary>The offset under a point in the control, its row clamped to the document.</summary>
+    private int OffsetAt(Point point) => OffsetAt(point, out _);
+
+    /// <summary>The offset under a point, and whether a caret there stands before a wrap: past a wrapped row's end.</summary>
+    private int OffsetAt(Point point, out bool beforeWrap)
     {
+        beforeWrap = false;
         TextSnapshot text = document.Snapshot;
         if (point.Y + scroll.Y < 0)
         {
             return 0;
         }
-        int line = LineAtY(point.Y);
-        if (line < 0)
-        {
-            return 0;
-        }
-        if (line >= text.LineCount)
+        int row = RowAtY(point.Y);
+        if (row >= RowCount)
         {
             return text.Length;
         }
-        return OffsetAtX(text, line, point.X - TextLeft + scroll.X);
+        return OffsetAtRow(text, row, point.X - TextLeft + scroll.X, out beforeWrap);
     }
 
     /// <summary>A whole-line selection from the drag's first line to the line under
@@ -359,25 +387,26 @@ public sealed partial class CodeEditor
         SetSelections(SelectionSet.Single(selection), reveal: true);
     }
 
-    /// <summary>Option-drag (Alt-drag): a selection on every line between the press and the pointer,
-    /// spanning the same columns on each; on the most lines toward the pointer an editor keeps carets on.</summary>
+    /// <summary>Option-drag (Alt-drag): a selection on every row between the press and the pointer,
+    /// spanning the same columns on each; on the most rows toward the pointer an editor keeps carets on.</summary>
     private SelectionSet ColumnSelection(TextSnapshot text, Point start, Point end)
     {
-        int firstLine = Math.Clamp(start.Y + scroll.Y < 0 ? 0 : LineAtY(start.Y), 0, text.LineCount - 1);
-        int lastLine = Math.Clamp(end.Y + scroll.Y < 0 ? 0 : LineAtY(end.Y), 0, text.LineCount - 1);
+        int count = Math.Max(1, RowCount);
+        int firstRow = Math.Clamp(start.Y + scroll.Y < 0 ? 0 : RowAtY(start.Y), 0, count - 1);
+        int lastRow = Math.Clamp(end.Y + scroll.Y < 0 ? 0 : RowAtY(end.Y), 0, count - 1);
         double fromX = start.X - TextLeft + scroll.X;
         double toX = end.X - TextLeft + scroll.X;
         List<Selection> rows = [];
-        int step = lastLine >= firstLine ? 1 : -1;
-        if (Math.Abs(lastLine - firstLine) >= SelectionSet.MaxCount)
+        int step = lastRow >= firstRow ? 1 : -1;
+        if (Math.Abs(lastRow - firstRow) >= SelectionSet.MaxCount)
         {
-            firstLine = lastLine - (step * (SelectionSet.MaxCount - 1));
+            firstRow = lastRow - (step * (SelectionSet.MaxCount - 1));
             CaretLimitReached?.Invoke(this, EventArgs.Empty);
         }
-        for (int line = firstLine; ; line += step)
+        for (int row = firstRow; ; row += step)
         {
-            rows.Add(new Selection(OffsetAtX(text, line, fromX), OffsetAtX(text, line, toX)));
-            if (line == lastLine)
+            rows.Add(new Selection(OffsetAtRow(text, row, fromX, out _), OffsetAtRow(text, row, toX, out _)));
+            if (row == lastRow)
             {
                 break;
             }
@@ -398,17 +427,17 @@ public sealed partial class CodeEditor
         inputMethod?.Discard();
     }
 
-    /// <summary>Where a caret is drawn on its line: the primary's, while a composition shows there, at the input method's
-    /// cursor in it.</summary>
-    private double CaretXOf(TextSnapshot text, int caret)
+    /// <summary>Where a caret is drawn: its row, and its x on it; the primary's, while a composition shows there, at the
+    /// input method's cursor in it.</summary>
+    private (int Row, double X) CaretPlace(TextSnapshot text, int caret)
     {
-        double x = XOf(text, caret);
+        (int row, double x) = Place(text, caret, LeansBack(caret));
         if (preedit.Length > 0 && preeditCursor is { } at && at < preedit.Length && caret == selections.Primary.Caret)
         {
             TextLine composed = PreeditLabel();
             x += composed.GetDistanceFromCharacterHit(new CharacterHit(at)) - composed.WidthIncludingTrailingWhitespace;
         }
-        return x;
+        return (row, x);
     }
 
     /// <summary>Tells a focused editor's input method what moved, as a text box does: the caret's line, the selection in
@@ -467,10 +496,9 @@ public sealed partial class CodeEditor
         {
             get
             {
-                TextSnapshot text = editor.document.Snapshot;
-                int caret = editor.selections.Primary.Caret;
-                double x = editor.TextLeft - editor.scroll.X + editor.CaretXOf(text, caret);
-                double y = editor.TopOf(text.GetLineFromOffset(caret)) - editor.scroll.Y;
+                (int row, double at) = editor.CaretPlace(editor.document.Snapshot, editor.selections.Primary.Caret);
+                double x = editor.TextLeft - editor.scroll.X + at;
+                double y = (row * editor.metrics.LineHeight) - editor.scroll.Y;
                 return new Rect(x, y, 2, editor.metrics.LineHeight);
             }
         }

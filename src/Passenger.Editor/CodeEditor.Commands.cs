@@ -36,10 +36,10 @@ public sealed partial class CodeEditor
                 Move(s => TextNavigation.NextWord(text, s.Caret, WordStop), extend);
                 return true;
             case EditorActions.LineStart:
-                Move(s => TextNavigation.SmartHome(text, s.Caret), extend);
+                MoveToRowStart(extend);
                 return true;
             case EditorActions.LineEnd:
-                Move(s => TextNavigation.LineEnd(text, s.Caret), extend);
+                MoveToRowEnd(extend);
                 return true;
             case EditorActions.TextStart:
                 Move(_ => 0, extend);
@@ -250,6 +250,8 @@ public sealed partial class CodeEditor
         {
             editing = false;
         }
+        // A caret the edit leaves where a row wraps stands after the text it typed, at the end of the row before.
+        nextWrapLeaning = CaretsAtWraps(plan.Selections);
         SetSelections(plan.Selections, reveal: true);
     }
 
@@ -259,20 +261,39 @@ public sealed partial class CodeEditor
         SetSelections(selections.With(s => s.MoveTo(to(s), extend)), reveal: true);
     }
 
-    /// <summary>Up and Down keep returning to the column a vertical run of moves started from, even
-    /// through shorter lines, the way every editor does.</summary>
-    private void MoveVertically(int lines, bool extend)
+    /// <summary>Up and Down go by rows, a wrapped line's included, and keep returning to the x a vertical run of moves
+    /// started from, even through shorter rows, the way every editor does.</summary>
+    private void MoveVertically(int rows, bool extend)
     {
         document.BreakUndoGroup();
         TextSnapshot text = document.Snapshot;
-        SetSelections(selections.With(s =>
+        HashSet<int> lean = [];
+        SelectionSet moved = selections.With(s =>
         {
-            int row = RowOf(text.GetLineFromOffset(s.Caret));
-            double x = double.IsNaN(s.PreferredX) ? XOf(text, s.Caret) : s.PreferredX;
-            int target = row + lines;
-            int offset = target < 0 ? 0 : target >= RowCount ? text.Length : OffsetAtX(text, LineOfRow(target), x);
+            (int row, double caretX) = Place(text, s.Caret, LeansBack(s.Caret));
+            double x = double.IsNaN(s.PreferredX) ? caretX : s.PreferredX;
+            int target = row + rows;
+            int offset;
+            if (target < 0)
+            {
+                offset = 0;
+            }
+            else if (target >= RowCount)
+            {
+                offset = text.Length;
+            }
+            else
+            {
+                offset = OffsetAtRow(text, target, x, out bool before);
+                if (before)
+                {
+                    lean.Add(offset);
+                }
+            }
             return s.MoveTo(offset, extend) with { PreferredX = x };
-        }), reveal: true);
+        });
+        nextWrapLeaning = lean;
+        SetSelections(moved, reveal: true);
     }
 
     private void CloneCaret(int direction)
@@ -284,14 +305,22 @@ public sealed partial class CodeEditor
             return;
         }
         Selection edge = direction < 0 ? selections.Items[0] : selections.Items[^1];
-        int row = RowOf(text.GetLineFromOffset(edge.Caret)) + direction;
+        (int at, double caretX) = Place(text, edge.Caret, LeansBack(edge.Caret));
+        int row = at + direction;
         if (row < 0 || row >= RowCount)
         {
             return;
         }
-        int line = LineOfRow(row);
-        double x = double.IsNaN(edge.PreferredX) ? XOf(text, edge.Caret) : edge.PreferredX;
-        SetSelections(selections.Add(Selection.At(OffsetAtX(text, line, x)) with { PreferredX = x }), reveal: true);
+        double x = double.IsNaN(edge.PreferredX) ? caretX : edge.PreferredX;
+        int offset = OffsetAtRow(text, row, x, out bool before);
+        // The carets there stand where they did, the new one before its wrap when it lands at a row's end.
+        HashSet<int> lean = [.. wrapLeaning];
+        if (before)
+        {
+            lean.Add(offset);
+        }
+        nextWrapLeaning = lean;
+        SetSelections(selections.Add(Selection.At(offset) with { PreferredX = x }), reveal: true);
     }
 
     /// <summary>Visual Studio's separate Comment and Uncomment chords: each only ever adds or only

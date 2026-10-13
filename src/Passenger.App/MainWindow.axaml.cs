@@ -76,6 +76,7 @@ public partial class MainWindow : Window
         AddVcs();
         AddTerminal();
         AddSettings();
+        AddActiveEditor();
         AddPackages();
         AddProfiler();
         AddBreadcrumbs();

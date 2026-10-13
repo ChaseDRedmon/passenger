@@ -29,6 +29,7 @@ public static class MainMenu
     private static readonly MenuPlace[] Submenus =
     [
         new("View/" + ToolWindows, 0, 0),
+        new("View/Active Editor", 3, 0),
         new("File/" + RecentSolutions, 0, 3),
         new("File/Line Separators", 2, 1),
         new("Edit/Find", 3, 0),
