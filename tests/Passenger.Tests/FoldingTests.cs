@@ -17,7 +17,7 @@ public sealed class FoldingTests : IDisposable
     private const string Source =
         "using System;\nusing System.Linq;\n\nclass Shapes\n{\n    int Area(int w, int h)\n    {\n        int area = w * h;\n        return area;\n    }\n\n    int Twice(int x) => x * 2;\n}\n";
 
-    private readonly string folder = Directory.CreateTempSubdirectory("passenger-fold-").FullName;
+    private readonly string folder = TestFolders.Create("fold-");
 
     public void Dispose() => TestFolders.Delete(folder);
 

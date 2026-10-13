@@ -20,7 +20,7 @@ namespace Passenger.Tests;
 [Collection(Debugging.Helpers.DebugSession.Collection)]
 public sealed class PathsTests : IDisposable
 {
-    private readonly string root = PathNames.Canonical(Directory.CreateTempSubdirectory("passenger-paths-").FullName);
+    private readonly string root = PathNames.Canonical(TestFolders.Create("paths-"));
 
     public enum Spelling
     {
@@ -41,12 +41,7 @@ public sealed class PathsTests : IDisposable
         Write(repository, "Shop.csproj",
             "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
         string program = Write(repository, "Program.cs", "int total = 0;\nfor (int i = 1; i <= 3; i++)\n{\n    total += i;\n}\nConsole.WriteLine(total);\n");
-        Git(repository, "init", "-q", "-b", "main");
-        Git(repository, "config", "user.email", "tests@passenger.invalid");
-        Git(repository, "config", "user.name", "Passenger Tests");
-        Git(repository, "config", "core.autocrlf", "false");
-        Git(repository, "add", "-A");
-        Git(repository, "commit", "-q", "-m", "First");
+        TestGit.Init(repository);
         File.WriteAllText(program, "int total = 10;\nfor (int i = 1; i <= 3; i++)\n{\n    total += i;\n}\nConsole.WriteLine(total);\n");
         Restore.Run(repository);
 
@@ -186,21 +181,7 @@ public sealed class PathsTests : IDisposable
         return path;
     }
 
-    private static string Git(string folder, params string[] arguments)
-    {
-        ProcessStartInfo start = new("git", arguments)
-        {
-            WorkingDirectory = folder,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        using Process process = Process.Start(start)!;
-        string output = process.StandardOutput.ReadToEnd();
-        string error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        Assert.True(process.ExitCode == 0, $"git {string.Join(' ', arguments)}: {error}");
-        return output;
-    }
+    private static string Git(string folder, params string[] arguments) => TestGit.Run(folder, arguments);
 
     [DllImport("kernel32.dll", EntryPoint = "GetShortPathNameW", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern uint GetShortPathName(string path, [Out] char[] shortPath, uint length);

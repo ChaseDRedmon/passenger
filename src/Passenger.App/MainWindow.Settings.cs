@@ -17,8 +17,8 @@ public partial class MainWindow
 
     private void AddSettings() => Editors.ForEachEditor(editor => ApplyTo(editor, settings));
 
-    /// <summary>The window a person uses opens on the settings they left (the store's, under PASSENGER_SETTINGS for a
-    /// test) and keeps each change; headless ones keep the defaults.</summary>
+    /// <summary>The window a person uses opens on the settings they left (in its <see cref="StateFolder"/>) and keeps
+    /// each change; headless ones keep the defaults.</summary>
     public void KeepSettings()
     {
         AppSettings kept = Store().Settings.Value;

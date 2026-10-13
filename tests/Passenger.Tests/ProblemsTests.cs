@@ -11,7 +11,7 @@ namespace Passenger.Tests;
 /// analysis on, every file's, a file nobody has open included, grouped by project and file.</summary>
 public sealed class ProblemsTests : IDisposable
 {
-    private readonly string folder = Directory.CreateTempSubdirectory("passenger-problems-").FullName;
+    private readonly string folder = TestFolders.Create("problems-");
 
     public ProblemsTests()
     {
@@ -20,7 +20,7 @@ public sealed class ProblemsTests : IDisposable
         Write("Helper.cs", "static class Helper\n{\n    public static int Twice(int value) => value * 2;\n}\n");
         Write("Caller.cs", "static class Caller\n{\n    public static int Four() => Helper.Twice(2);\n}\n");
         Write("Bad.cs", "class Bad\n{\n    public int Count = \"none\";\n}\n");
-        Restore.Run(folder);
+        TestFolders.Prepare(() => Restore.Run(folder), folder);
     }
 
     public void Dispose() => TestFolders.Delete(folder);

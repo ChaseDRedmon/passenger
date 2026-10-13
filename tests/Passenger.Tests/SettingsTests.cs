@@ -10,15 +10,11 @@ namespace Passenger.Tests;
 /// window that keeps its settings opens on them again.</summary>
 public sealed class SettingsTests : IDisposable
 {
-    private readonly string folder = Directory.CreateTempSubdirectory("passenger-folder-").FullName;
-    private readonly string settings = Directory.CreateTempSubdirectory("passenger-settings-").FullName;
-    private readonly string? before = Environment.GetEnvironmentVariable("PASSENGER_SETTINGS");
-
-    public SettingsTests() => Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", settings);
+    private readonly string folder = TestFolders.Create("folder-");
+    private readonly string settings = TestFolders.Create("settings-");
 
     public void Dispose()
     {
-        Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", before);
         TestFolders.Delete(folder);
         TestFolders.Delete(settings);
     }
@@ -114,7 +110,7 @@ public sealed class SettingsTests : IDisposable
 
     private MainWindow Open()
     {
-        MainWindow window = new() { Width = 1200, Height = 800 };
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings };
         window.Show();
         window.OpenFolder(folder);
         Ui.Settle();

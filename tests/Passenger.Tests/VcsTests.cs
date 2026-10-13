@@ -20,19 +20,13 @@ public sealed class VcsTests : IDisposable
 {
     private const string Original = "class Shop\n{\n    int count;\n\n    void Add() { count++; }\n}\n";
 
-    private readonly string folder = Directory.CreateTempSubdirectory("passenger-git-").FullName;
+    private readonly string folder = TestFolders.Create("git-");
 
-    public VcsTests()
+    public VcsTests() => TestFolders.Prepare(() =>
     {
-        Git("init", "-q", "-b", "main");
-        Git("config", "user.email", "tests@passenger.invalid");
-        Git("config", "user.name", "Passenger Tests");
-        // Files go back as they were written, not as the machine's git would convert them (Git for Windows' autocrlf).
-        Git("config", "core.autocrlf", "false");
         File.WriteAllText(Path.Combine(folder, "Shop.cs"), Original);
-        Git("add", "-A");
-        Git("commit", "-q", "-m", "First");
-    }
+        TestGit.Init(folder);
+    }, folder);
 
     public void Dispose() => TestFolders.Delete(folder);
 
@@ -533,29 +527,22 @@ public sealed class VcsTests : IDisposable
     [AvaloniaFact]
     public void Update_project_brings_in_the_upstreams_commit_and_the_open_file_shows_it()
     {
-        string clone = Directory.CreateTempSubdirectory("passenger-git-clone-").FullName;
-        try
-        {
-            Git("clone", "-q", "-c", "core.autocrlf=false", folder, clone);
-            File.WriteAllText(Path.Combine(folder, "Shop.cs"), Original.Replace("int count", "long count", StringComparison.Ordinal));
-            Git("commit", "-q", "-am", "Long");
+        string clone = TestFolders.Create("git-clone-");
+        Git("clone", "-q", "-c", "core.autocrlf=false", folder, clone);
+        File.WriteAllText(Path.Combine(folder, "Shop.cs"), Original.Replace("int count", "long count", StringComparison.Ordinal));
+        Git("commit", "-q", "-am", "Long");
 
-            MainWindow window = new() { Width = 1200, Height = 800 };
-            window.Show();
-            window.OpenFolder(clone);
-            window.OpenFile(Path.Combine(clone, "Shop.cs"));
-            Ui.Settle();
-            Assert.Equal("main", window.Vcs.Branch);
-            window.Perform(AppActions.UpdateProject);
-            Ui.Landed(() => Text(window).Contains("long count", StringComparison.Ordinal), "the upstream's change in the open file");
-            Ui.Landed(() => window.Status?.StartsWith("Updated", StringComparison.Ordinal) == true, "the update's end in the status bar");
-            Assert.False(window.EditorArea.Active!.IsModified);
-            window.Close();
-        }
-        finally
-        {
-            TestFolders.Delete(clone);
-        }
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(clone);
+        window.OpenFile(Path.Combine(clone, "Shop.cs"));
+        Ui.Settle();
+        Assert.Equal("main", window.Vcs.Branch);
+        window.Perform(AppActions.UpdateProject);
+        Ui.Landed(() => Text(window).Contains("long count", StringComparison.Ordinal), "the upstream's change in the open file");
+        Ui.Landed(() => window.Status?.StartsWith("Updated", StringComparison.Ordinal) == true, "the update's end in the status bar");
+        Assert.False(window.EditorArea.Active!.IsModified);
+        window.Close();
     }
 
     [AvaloniaFact]
@@ -573,8 +560,8 @@ public sealed class VcsTests : IDisposable
         Assert.Equal(first, blame[0].Hash);
         Assert.Equal(twice, blame[4].Hash);
         Assert.Equal("Twice", blame[4].Summary);
-        // A block is named at its first line only.
-        Assert.StartsWith(DateTime.Now.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture), shop.GutterAnnotations[0], StringComparison.Ordinal);
+        // A block is named at its first line only, by the day its commit was made where the person is.
+        Assert.StartsWith(Git("log", "-1", "--format=%ad", "--date=format-local:%Y-%m-%d", first).Trim(), shop.GutterAnnotations[0], StringComparison.Ordinal);
         Assert.Null(shop.GutterAnnotations[1]);
         Assert.NotNull(shop.GutterAnnotations[4]);
         Assert.True(window.EditorArea.CodeEditor.IsInAnnotationColumn(new Point(4, 4)));
@@ -1254,19 +1241,5 @@ public sealed class VcsTests : IDisposable
     /// <summary>What each stash says, the newest first.</summary>
     private string[] Stashes() => Git("stash", "list", "--format=%s").Split('\n', StringSplitOptions.RemoveEmptyEntries);
 
-    private string Git(params string[] arguments)
-    {
-        ProcessStartInfo start = new("git", arguments)
-        {
-            WorkingDirectory = folder,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        using Process process = Process.Start(start)!;
-        string output = process.StandardOutput.ReadToEnd();
-        string error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        Assert.True(process.ExitCode == 0, $"git {string.Join(' ', arguments)}: {error}");
-        return output;
-    }
+    private string Git(params string[] arguments) => TestGit.Run(folder, arguments);
 }

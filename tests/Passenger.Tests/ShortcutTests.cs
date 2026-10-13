@@ -14,7 +14,7 @@ namespace Passenger.Tests;
 public sealed class ShortcutTests : IDisposable
 {
     private const string Source = "class One { }\n";
-    private readonly string folder = Directory.CreateTempSubdirectory("passenger-keys-").FullName;
+    private readonly string folder = TestFolders.Create("keys-");
 
     public void Dispose() => TestFolders.Delete(folder);
 

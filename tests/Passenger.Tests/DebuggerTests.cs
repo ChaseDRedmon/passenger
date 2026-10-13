@@ -20,7 +20,7 @@ namespace Passenger.Tests;
 [Collection(Debugging.Helpers.DebugSession.Collection)]
 public sealed class DebuggerTests : IDisposable
 {
-    private readonly string folder = Directory.CreateTempSubdirectory("passenger-debug-").FullName;
+    private readonly string folder = TestFolders.Create("debug-");
     private readonly string program;
 
     public DebuggerTests()
@@ -29,7 +29,7 @@ public sealed class DebuggerTests : IDisposable
             "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
         program = Write("Program.cs",
             "int total = 0;\nfor (int i = 1; i <= 3; i++)\n{\n    total += i;\n}\nConsole.WriteLine($\"total {total}\");\n");
-        Restore.Run(folder);
+        TestFolders.Prepare(() => Restore.Run(folder), folder);
     }
 
     public void Dispose() => TestFolders.Delete(folder);
@@ -606,12 +606,9 @@ public sealed class DebuggerTests : IDisposable
     {
         // The engine's log is opened as the adapter starts, so a folder in its place kills the adapter with an unhandled
         // exception: its stack trace comes on standard error, read off the UI thread while the session starts.
-        string folderForLog = Directory.CreateTempSubdirectory("passenger-engine-log-").FullName;
-        string settings = Directory.CreateTempSubdirectory("passenger-settings-").FullName;
+        string folderForLog = TestFolders.Create("engine-log-");
         string? engineLog = Environment.GetEnvironmentVariable("PASSENGER_ENGINE_LOG");
-        string? settingsBefore = Environment.GetEnvironmentVariable("PASSENGER_SETTINGS");
         Environment.SetEnvironmentVariable("PASSENGER_ENGINE_LOG", folderForLog);
-        Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", settings);
         try
         {
             MainWindow window = Open();
@@ -634,9 +631,6 @@ public sealed class DebuggerTests : IDisposable
         finally
         {
             Environment.SetEnvironmentVariable("PASSENGER_ENGINE_LOG", engineLog);
-            Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", settingsBefore);
-            TestFolders.Delete(folderForLog);
-            TestFolders.Delete(settings);
         }
     }
 

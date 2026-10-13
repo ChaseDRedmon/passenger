@@ -1,5 +1,4 @@
 using System.Reflection;
-using Avalonia.Headless.XUnit;
 using Passenger.App;
 using Xunit.v3;
 
@@ -32,7 +31,7 @@ public sealed class FailOnIdeErrorsAttribute : BeforeAfterTestAttribute
             + string.Join("\n\n", errors.Select(e => $"{e.Kind}: {e.Message}{(e.Count > 1 ? $" (occurred {e.Count} times)" : "")}\n{FirstFrames(e.Details)}")));
     }
 
-    private static bool IsWindowTest(MethodInfo method) => method.GetCustomAttribute<AvaloniaFactAttribute>() is not null;
+    private static bool IsWindowTest(MethodInfo method) => TestsLeaveNothingBehindAttribute.IsWindowTest(method);
 
     private static string FirstFrames(string details) =>
         string.Join('\n', details.Split('\n').Where(l => l.TrimStart().StartsWith("at ", StringComparison.Ordinal)).Take(6));

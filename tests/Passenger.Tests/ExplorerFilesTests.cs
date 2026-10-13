@@ -19,8 +19,8 @@ namespace Passenger.Tests;
 /// project's leaves the solution; a name already there is refused with why.</summary>
 public sealed class ExplorerFilesTests : IDisposable
 {
-    private readonly string folder = Directory.CreateTempSubdirectory("passenger-files-").FullName;
-    private readonly string trash = Directory.CreateTempSubdirectory("passenger-trash-").FullName;
+    private readonly string folder = TestFolders.Create("files-");
+    private readonly string trash = TestFolders.Create("trash-");
 
     public ExplorerFilesTests()
     {

@@ -14,7 +14,7 @@ namespace Passenger.Tests;
 /// build's errors arrive in Problems where they point, and a run's output in the Run window.</summary>
 public sealed class BuildRunTests : IDisposable
 {
-    private readonly string folder = Directory.CreateTempSubdirectory("passenger-build-").FullName;
+    private readonly string folder = TestFolders.Create("build-");
 
     public BuildRunTests()
     {
@@ -22,7 +22,7 @@ public sealed class BuildRunTests : IDisposable
         Write("src/Hello/Hello.csproj",
             "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
         Write("src/Hello/Program.cs", "Console.WriteLine(\"Hello from the run\");\n");
-        Restore.Run(Path.Combine(folder, "Sample.slnx"));
+        TestFolders.Prepare(() => Restore.Run(Path.Combine(folder, "Sample.slnx")), folder);
     }
 
     public void Dispose() => TestFolders.Delete(folder);
@@ -313,12 +313,9 @@ public sealed class BuildRunTests : IDisposable
             window.Perform(AppActions.Build);
             int command = window.Builder.ProcessId ?? 0;
             Assert.True(Processes.Gone(command, TimeSpan.FromMinutes(2)), "The build's dotnet command never ended");
-            DateTime heard = DateTime.UtcNow.AddSeconds(10);
-            while (window.IsBuilding && DateTime.UtcNow < heard)
-            {
-                Passenger.App.Screenshot.Pump(TimeSpan.FromMilliseconds(50));
-            }
-            Assert.False(window.IsBuilding, "The build's dotnet command ended, but the Build window still says it is building: a node MSBuild started holds its output open");
+            Ui.PumpUntil(() => !window.IsBuilding,
+                "the Build window to stop saying it is building once the build's dotnet command ended (a node MSBuild started holding its output open keeps it building)",
+                TimeSpan.FromSeconds(10));
             Assert.Equal("Build succeeded", window.Status);
             Assert.EndsWith("Process finished with exit code 0.\n", window.BottomPanel.Build.Document.Snapshot.ToString(), StringComparison.Ordinal);
         }
@@ -501,14 +498,8 @@ public sealed class BuildRunTests : IDisposable
     {
         MainWindow window = Open();
         Ui.Press(window, Ui.Shortcut(AppActions.RunProgram));
-        DateTime limit = DateTime.UtcNow.AddSeconds(60);
-        string output = string.Empty;
-        while (DateTime.UtcNow < limit && !output.Contains("Process finished", StringComparison.Ordinal))
-        {
-            Ui.Settle();
-            Thread.Sleep(50);
-            output = window.BottomPanel.Run.Document.Snapshot.ToString();
-        }
+        Ui.WaitFor(() => Output(window).Contains("Process finished", StringComparison.Ordinal), "the program to run to its end", TimeSpan.FromMinutes(2));
+        string output = Output(window);
         Assert.Contains("Hello from the run", output, StringComparison.Ordinal);
         Assert.Contains("exit code 0", output, StringComparison.Ordinal);
         window.Close();

@@ -13,21 +13,17 @@ using Passenger.Text;
 
 namespace Passenger.Tests;
 
-/// <summary>The IDE's own state, in one store under PASSENGER_SETTINGS: a file that does not read is set aside and
+/// <summary>The IDE's own state, in one store in its state folder: a file that does not read is set aside and
 /// logged, never written over; a later build's values and a hand edit out of range stay in the file while the window
 /// uses what it can; two windows' changes are both kept; what a person kept before the store is there on the first
 /// run; and a folder's layout, breakpoints and bookmarks come back with it.</summary>
 public sealed class StateTests : IDisposable
 {
-    private readonly string folder = Directory.CreateTempSubdirectory("passenger-folder-").FullName;
-    private readonly string settings = Directory.CreateTempSubdirectory("passenger-settings-").FullName;
-    private readonly string? before = Environment.GetEnvironmentVariable("PASSENGER_SETTINGS");
-
-    public StateTests() => Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", settings);
+    private readonly string folder = TestFolders.Create("folder-");
+    private readonly string settings = TestFolders.Create("settings-");
 
     public void Dispose()
     {
-        Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", before);
         TestFolders.Delete(folder);
         TestFolders.Delete(settings);
     }
@@ -192,7 +188,7 @@ public sealed class StateTests : IDisposable
         Assert.Contains(new LineMark(4, LineMarkKind.BreakpointDisabled, Conditional: true, Tracepoint: true), second.EditorArea.CodeEditor.LineMarks);
 
         // Another folder has its own: none of these, and they come back with this one.
-        string other = Directory.CreateTempSubdirectory("passenger-other-").FullName;
+        string other = TestFolders.Create("other-");
         second.OpenFolder(other);
         Assert.Empty(second.Debugger.Breakpoints.All);
         Assert.Empty(second.Bookmarks.All);
@@ -200,13 +196,12 @@ public sealed class StateTests : IDisposable
         Assert.Single(second.Debugger.Breakpoints.All);
         Assert.Equal(2, second.Bookmarks.All.Count);
         second.Close();
-        TestFolders.Delete(other);
     }
 
     [AvaloniaFact]
     public void Each_folder_opens_on_its_own_layout_and_one_without_on_the_one_there_was()
     {
-        string other = Directory.CreateTempSubdirectory("passenger-other-").FullName;
+        string other = TestFolders.Create("other-");
         MainWindow first = Keeping(folder);
         first.DockHost.Move(first.DockHost["tests"]!, ToolAnchor.RightBottom);
         first.DockHost.Show("tests");
@@ -224,7 +219,6 @@ public sealed class StateTests : IDisposable
         Assert.Equal(ToolAnchor.LeftBottom, second.DockHost["tests"]!.Anchor);
         Assert.True(second.DockHost.IsShown("tests"));
         second.Close();
-        TestFolders.Delete(other);
     }
 
     [AvaloniaFact]
@@ -260,9 +254,9 @@ public sealed class StateTests : IDisposable
     }
 
     /// <summary>The window a person uses, as the app makes it: one that keeps its layout and folders.</summary>
-    private static MainWindow Keeping(string? open = null)
+    private MainWindow Keeping(string? open = null)
     {
-        MainWindow window = new() { Width = 1200, Height = 800 };
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings };
         window.Show();
         window.KeepLayout();
         if (open is not null)

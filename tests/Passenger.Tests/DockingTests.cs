@@ -94,31 +94,21 @@ public sealed class DockingTests
     [AvaloniaFact]
     public void The_persons_window_opens_on_the_layout_they_left()
     {
-        string settings = Directory.CreateTempSubdirectory("passenger-settings-").FullName;
-        string? before = Environment.GetEnvironmentVariable("PASSENGER_SETTINGS");
-        Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", settings);
-        try
-        {
-            MainWindow first = Open();
-            first.KeepLayout();
-            first.DockHost.Move(first.DockHost["tests"]!, ToolAnchor.RightBottom);
-            first.DockHost.Show("tests");
-            first.DockHost.Hide("explorer");
-            first.Close();
+        string settings = TestFolders.Create("settings-");
+        MainWindow first = Open(settings);
+        first.KeepLayout();
+        first.DockHost.Move(first.DockHost["tests"]!, ToolAnchor.RightBottom);
+        first.DockHost.Show("tests");
+        first.DockHost.Hide("explorer");
+        first.Close();
 
-            MainWindow second = Open();
-            second.KeepLayout();
-            Ui.Settle();
-            Assert.Equal(ToolAnchor.RightBottom, second.DockHost["tests"]!.Anchor);
-            Assert.True(second.DockHost.IsShown("tests"));
-            Assert.False(second.DockHost.IsShown("explorer"));
-            second.Close();
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", before);
-            TestFolders.Delete(settings);
-        }
+        MainWindow second = Open(settings);
+        second.KeepLayout();
+        Ui.Settle();
+        Assert.Equal(ToolAnchor.RightBottom, second.DockHost["tests"]!.Anchor);
+        Assert.True(second.DockHost.IsShown("tests"));
+        Assert.False(second.DockHost.IsShown("explorer"));
+        second.Close();
     }
 
     [AvaloniaFact]
@@ -178,43 +168,33 @@ public sealed class DockingTests
     [AvaloniaFact]
     public void A_tool_window_maximised_when_the_window_closes_opens_again_at_the_size_it_had_before()
     {
-        string settings = Directory.CreateTempSubdirectory("passenger-settings-").FullName;
-        string? before = Environment.GetEnvironmentVariable("PASSENGER_SETTINGS");
-        Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", settings);
-        try
-        {
-            MainWindow first = Open();
-            first.KeepLayout();
-            DockHost dock = first.DockHost;
-            dock.Show("build");
-            Ui.Settle();
-            // The person's own size, dragged above the default.
-            Control splitter = dock.Children.First(c => Grid.GetRow(c) == 1).GetVisualDescendants().OfType<GridSplitter>().Single();
-            Point grip = Middle(first, splitter);
-            Drag(first, grip, grip - new Point(0, 60));
-            double restored = dock.RowDefinitions[2].ActualHeight;
-            Assert.True(restored > 320, $"The bottom area was not dragged taller: {restored}");
-            Ui.Run(first, AppActions.MaximizeToolWindow);
-            // A window shown while it is maximised keeps the layout as well.
-            dock.Show("structure");
-            Ui.Settle();
-            Assert.True(dock.RowDefinitions[2].ActualHeight > restored + 100);
-            first.Close();
+        string settings = TestFolders.Create("settings-");
+        MainWindow first = Open(settings);
+        first.KeepLayout();
+        DockHost dock = first.DockHost;
+        dock.Show("build");
+        Ui.Settle();
+        // The person's own size, dragged above the default.
+        Control splitter = dock.Children.First(c => Grid.GetRow(c) == 1).GetVisualDescendants().OfType<GridSplitter>().Single();
+        Point grip = Middle(first, splitter);
+        Drag(first, grip, grip - new Point(0, 60));
+        double restored = dock.RowDefinitions[2].ActualHeight;
+        Assert.True(restored > 320, $"The bottom area was not dragged taller: {restored}");
+        Ui.Run(first, AppActions.MaximizeToolWindow);
+        // A window shown while it is maximised keeps the layout as well.
+        dock.Show("structure");
+        Ui.Settle();
+        Assert.True(dock.RowDefinitions[2].ActualHeight > restored + 100);
+        first.Close();
 
-            MainWindow second = Open();
-            second.KeepLayout();
-            Ui.Settle();
-            Assert.True(second.DockHost.IsShown("build"));
-            Assert.False(second.DockHost.IsMaximized);
-            Assert.True(Math.Abs(second.DockHost.RowDefinitions[2].ActualHeight - restored) < 1,
-                $"The Build window opened {second.DockHost.RowDefinitions[2].ActualHeight} tall, the maximised height kept, not the {restored} it had before");
-            second.Close();
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", before);
-            TestFolders.Delete(settings);
-        }
+        MainWindow second = Open(settings);
+        second.KeepLayout();
+        Ui.Settle();
+        Assert.True(second.DockHost.IsShown("build"));
+        Assert.False(second.DockHost.IsMaximized);
+        Assert.True(Math.Abs(second.DockHost.RowDefinitions[2].ActualHeight - restored) < 1,
+            $"The Build window opened {second.DockHost.RowDefinitions[2].ActualHeight} tall, the maximised height kept, not the {restored} it had before");
+        second.Close();
     }
 
     [AvaloniaFact]
@@ -246,50 +226,40 @@ public sealed class DockingTests
     [AvaloniaFact]
     public void Areas_kept_on_a_larger_screen_leave_the_editor_its_share_of_a_smaller_window_and_come_back_on_a_larger()
     {
-        string settings = Directory.CreateTempSubdirectory("passenger-settings-").FullName;
-        string? before = Environment.GetEnvironmentVariable("PASSENGER_SETTINGS");
-        Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", settings);
-        try
-        {
-            File.WriteAllText(Path.Combine(settings, "layout.json"), """
-                {
-                  "version": 1,
-                  "windows": {
-                    "explorer": { "anchor": "LeftTop", "order": 0, "shown": true },
-                    "tests": { "anchor": "RightTop", "order": 0, "shown": true },
-                    "build": { "anchor": "BottomLeft", "order": 0, "shown": true }
-                  },
-                  "leftWidth": 1400,
-                  "rightWidth": 900,
-                  "bottomHeight": 1100
-                }
-                """);
-            MainWindow window = Open();
-            window.KeepLayout();
-            Ui.Settle();
-            DockHost dock = window.DockHost;
-            double inner = dock.Bounds.Width - 80;
-            Assert.True(dock.ColumnDefinitions[3].ActualWidth >= inner / 4 - 1,
-                $"The editor was left {dock.ColumnDefinitions[3].ActualWidth} of {inner} between the side areas");
-            Assert.True(dock.RowDefinitions[0].ActualHeight >= dock.Bounds.Height / 4 - 1,
-                $"The editor was left {dock.RowDefinitions[0].ActualHeight} of {dock.Bounds.Height} above the bottom area");
-            // The sides keep the proportion they were kept in, and the right stripe is still in the window.
-            Assert.True(Math.Abs((dock.ColumnDefinitions[1].ActualWidth / dock.ColumnDefinitions[5].ActualWidth) - (1400.0 / 900)) < 0.01);
-            Control rightStripe = dock.Children.First(c => Grid.GetColumn(c) == 6);
-            Assert.True(rightStripe.Bounds.Right <= dock.Bounds.Width, $"The right stripe was pushed out of the window, to {rightStripe.Bounds}");
+        string settings = TestFolders.Create("settings-");
+        File.WriteAllText(Path.Combine(settings, "layout.json"), """
+            {
+              "version": 1,
+              "windows": {
+                "explorer": { "anchor": "LeftTop", "order": 0, "shown": true },
+                "tests": { "anchor": "RightTop", "order": 0, "shown": true },
+                "build": { "anchor": "BottomLeft", "order": 0, "shown": true }
+              },
+              "leftWidth": 1400,
+              "rightWidth": 900,
+              "bottomHeight": 1100
+            }
+            """);
+        MainWindow window = Open(settings);
+        window.KeepLayout();
+        Ui.Settle();
+        DockHost dock = window.DockHost;
+        double inner = dock.Bounds.Width - 80;
+        Assert.True(dock.ColumnDefinitions[3].ActualWidth >= inner / 4 - 1,
+            $"The editor was left {dock.ColumnDefinitions[3].ActualWidth} of {inner} between the side areas");
+        Assert.True(dock.RowDefinitions[0].ActualHeight >= dock.Bounds.Height / 4 - 1,
+            $"The editor was left {dock.RowDefinitions[0].ActualHeight} of {dock.Bounds.Height} above the bottom area");
+        // The sides keep the proportion they were kept in, and the right stripe is still in the window.
+        Assert.True(Math.Abs((dock.ColumnDefinitions[1].ActualWidth / dock.ColumnDefinitions[5].ActualWidth) - (1400.0 / 900)) < 0.01);
+        Control rightStripe = dock.Children.First(c => Grid.GetColumn(c) == 6);
+        Assert.True(rightStripe.Bounds.Right <= dock.Bounds.Width, $"The right stripe was pushed out of the window, to {rightStripe.Bounds}");
 
-            // On a screen as large as the one they were kept on, they are as large as they were.
-            window.Width = 3200;
-            window.Height = 2000;
-            Ui.Settle();
-            Assert.Equal((1400, 900, 1100), (dock.ColumnDefinitions[1].ActualWidth, dock.ColumnDefinitions[5].ActualWidth, dock.RowDefinitions[2].ActualHeight));
-            window.Close();
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", before);
-            TestFolders.Delete(settings);
-        }
+        // On a screen as large as the one they were kept on, they are as large as they were.
+        window.Width = 3200;
+        window.Height = 2000;
+        Ui.Settle();
+        Assert.Equal((1400, 900, 1100), (dock.ColumnDefinitions[1].ActualWidth, dock.ColumnDefinitions[5].ActualWidth, dock.RowDefinitions[2].ActualHeight));
+        window.Close();
     }
 
     [AvaloniaFact]
@@ -365,9 +335,10 @@ public sealed class DockingTests
         return weak;
     }
 
-    private static MainWindow Open()
+    /// <summary>A window, keeping its state in a folder of the test's own when it is given one.</summary>
+    private static MainWindow Open(string? state = null)
     {
-        MainWindow window = new() { Width = 1200, Height = 800 };
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = state ?? Passenger.App.State.StateStore.DefaultRoot };
         window.Show();
         Ui.Settle();
         return window;

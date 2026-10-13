@@ -12,7 +12,7 @@ namespace Passenger.Tests;
 /// is.</summary>
 public sealed class MenuTests : IDisposable
 {
-    private readonly string folder = Directory.CreateTempSubdirectory("passenger-menu-").FullName;
+    private readonly string folder = TestFolders.Create("menu-");
 
     public void Dispose() => TestFolders.Delete(folder);
 

@@ -27,7 +27,7 @@ public partial class MainWindow
     /// <summary>Where the open folder's snapshots are kept, a .nettrace file a run (which PerfView and speedscope read
     /// too): beside its state, as Rider keeps a solution's, the newest <see cref="Snapshots.Kept"/>. With no folder open,
     /// the store's own.</summary>
-    public string SnapshotFolder => Path.Combine(folder is null ? State.StateStore.DefaultRoot : State.ProjectState.FolderOf(State.StateStore.DefaultRoot, folder), "snapshots");
+    public string SnapshotFolder => Path.Combine(folder is null ? StateFolder : State.ProjectState.FolderOf(StateFolder, folder), "snapshots");
 
     private void AddProfiler()
     {

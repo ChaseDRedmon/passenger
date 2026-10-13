@@ -21,7 +21,7 @@ namespace Passenger.Tests;
 [Collection(Debugging.Helpers.DebugSession.Collection)]
 public sealed class UnitTestsTests : IDisposable
 {
-    private readonly string folder = Directory.CreateTempSubdirectory("passenger-tests-").FullName;
+    private readonly string folder = TestFolders.Create("tests-");
     private readonly string source;
 
     public UnitTestsTests()
@@ -34,7 +34,7 @@ public sealed class UnitTestsTests : IDisposable
             "using Xunit;\n\nnamespace Sums.Tests;\n\npublic class SumTests\n{\n    [Fact]\n    public void Two_and_two_make_four()\n    {\n        int sum = 2 + 2;\n        Assert.Equal(4, sum);\n    }\n\n" +
             "    [Fact]\n    public void Two_and_two_make_five()\n    {\n        Assert.Equal(5, 2 + 2);\n    }\n\n    [Theory]\n    [InlineData(1, 2)]\n    [InlineData(2, 4)]\n    public void Doubles(int value, int twice) => Assert.Equal(twice, value * 2);\n\n" +
             "    [Fact(Skip = \"later\")]\n    public void Not_yet() { }\n}\n");
-        Restore.Run(folder);
+        TestFolders.Prepare(() => Restore.Run(folder), folder);
     }
 
     private readonly List<string> folders = [];
@@ -406,7 +406,7 @@ public sealed class UnitTestsTests : IDisposable
 
     private string NewFolder()
     {
-        string made = PathNames.Canonical(Directory.CreateTempSubdirectory("passenger-tests-").FullName);
+        string made = PathNames.Canonical(TestFolders.Create("tests-"));
         folders.Add(made);
         return made;
     }

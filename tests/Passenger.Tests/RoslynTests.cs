@@ -69,7 +69,7 @@ public sealed class RoslynTests : IClassFixture<RoslynTests.ProjectSession>
     /// it and its projects loaded.</summary>
     public sealed class ProjectSession : IAsyncLifetime
     {
-        private readonly string folder = Directory.CreateTempSubdirectory("passenger-roslyn-").FullName;
+        private readonly string folder = TestFolders.Create("roslyn-");
 
         public RoslynSession Session { get; private set; } = null!;
 

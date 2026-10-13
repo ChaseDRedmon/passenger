@@ -10,7 +10,7 @@ namespace Passenger.Tests;
 /// own Save shortcut, and written back the way they were stored, or as UTF-8 when that would lose a character.</summary>
 public sealed class FileTests : IDisposable
 {
-    private readonly string folder = Directory.CreateTempSubdirectory("passenger-test-").FullName;
+    private readonly string folder = TestFolders.Create("test-");
 
     public void Dispose() => TestFolders.Delete(folder);
 
@@ -145,7 +145,7 @@ public sealed class FileTests : IDisposable
         Assert.True(window.EditorArea.Active!.IsModified, "The terminal's focus saved although Settings turned that off");
         Assert.Equal("public class One { }\n", File.ReadAllText(path));
 
-        window.OpenFolder(Directory.CreateTempSubdirectory("passenger-other-").FullName);
+        window.OpenFolder(TestFolders.Create("other-"));
         Assert.Equal("sealed public class One { }\n", File.ReadAllText(path));
         window.Close();
     }

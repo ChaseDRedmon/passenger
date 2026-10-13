@@ -1053,6 +1053,10 @@ public partial class MainWindow : Window
         RestoreWorkspace();
     }
 
+    /// <summary>The folder this window keeps its state and its folders' snapshots in: the store's own unless one is named,
+    /// as a test names a fresh one without changing the process's environment, which the programs it starts inherit.</summary>
+    public string StateFolder { get; init; } = State.StateStore.DefaultRoot;
+
     /// <summary>The store of the window a person uses, made the first time it keeps something; null in a headless one.</summary>
     private State.StateStore? state;
 
@@ -1065,7 +1069,7 @@ public partial class MainWindow : Window
     {
         if (state is null)
         {
-            state = new State.StateStore(State.StateStore.DefaultRoot);
+            state = new State.StateStore(StateFolder);
             // The last changes are written as the window closes, since the process will not wait for their timers.
             Closing += (_, _) =>
             {

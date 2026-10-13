@@ -11,7 +11,7 @@ namespace Passenger.Tests;
 /// starts runs free rather than held at the profiler's port.</summary>
 public sealed class ProfilerTests : IDisposable
 {
-    private readonly string folder = Directory.CreateTempSubdirectory("passenger-profile-").FullName;
+    private readonly string folder = TestFolders.Create("profile-");
 
     public void Dispose() => TestFolders.Delete(folder);
 
@@ -167,98 +167,88 @@ public sealed class ProfilerTests : IDisposable
                 public static void Wait(ManualResetEventSlim until) => until.Wait();
             }
             """);
-        string settings = Directory.CreateTempSubdirectory("passenger-settings-").FullName;
-        string? settingsBefore = Environment.GetEnvironmentVariable("PASSENGER_SETTINGS");
-        Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", settings);
-        try
+        string settings = TestFolders.Create("settings-");
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings };
+        window.Show();
+        window.OpenFolder(project);
+        Ui.Settle();
+        // The folder's snapshots are kept with its state, as many as the cap from earlier runs, the first the oldest.
+        string kept = window.SnapshotFolder;
+        Assert.StartsWith(Path.Combine(settings, "workspaces", "Spinner-"), kept, StringComparison.Ordinal);
+        Directory.CreateDirectory(kept);
+        for (int i = 0; i < Snapshots.Kept; i++)
         {
-            MainWindow window = new() { Width = 1200, Height = 800 };
-            window.Show();
-            window.OpenFolder(project);
-            Ui.Settle();
-            // The folder's snapshots are kept with its state, as many as the cap from earlier runs, the first the oldest.
-            string kept = window.SnapshotFolder;
-            Assert.StartsWith(Path.Combine(settings, "workspaces", "Spinner-"), kept, StringComparison.Ordinal);
-            Directory.CreateDirectory(kept);
-            for (int i = 0; i < Snapshots.Kept; i++)
-            {
-                string earlier = Path.Combine(kept, $"Spinner-earlier-{i}.nettrace");
-                File.WriteAllText(earlier, "an earlier run");
-                File.SetLastWriteTimeUtc(earlier, DateTime.UtcNow.AddHours(-Snapshots.Kept + i));
-            }
-
-            Task<string?> started = window.ProfileAsync();
-            Ui.WaitFor(() => started.IsCompleted, "the build and the start", TimeSpan.FromMinutes(3));
-            Assert.Null(started.Result);
-            Assert.True(window.DockHost.IsShown("profiler"));
-            Ui.WaitFor(() => window.ProfilerView.Snapshot is not null, "the program's end to show its snapshot", TimeSpan.FromMinutes(2));
-            Ui.Settle();
-
-            Passenger.App.Profiling.ProfilerView view = window.ProfilerView;
-            Snapshot snapshot = view.Snapshot!;
-            Assert.StartsWith("Main thread", snapshot.Threads[0].Name, StringComparison.Ordinal);
-            Assert.Equal(snapshot.Samples, view.Flame.Root!.Total);
-            // The hot path is open down the main thread: Spin is listed without a click.
-            Assert.Contains(view.Rows, r => r.Node.Name.StartsWith("Work.Spin", StringComparison.Ordinal));
-            Assert.StartsWith("Spinner-", Path.GetFileName(snapshot.TracePath), StringComparison.Ordinal);
-            Assert.Contains("spun True", window.BottomPanel.Run.Document.Snapshot.ToString(), StringComparison.Ordinal);
-
-            // What the run holds grows with where its threads were caught, not with how often: each stack is kept once,
-            // and a waiting thread's samples, all at one stack, as a handful of runs.
-            Assert.True(snapshot.Stacks * 10 < snapshot.Samples, $"{snapshot.Stacks} stacks kept for {snapshot.Samples} samples");
-            Assert.True(snapshot.Runs * 4 < snapshot.Samples, $"{snapshot.Runs} runs kept for {snapshot.Samples} samples");
-            IReadOnlyList<CallNode> waiters = [.. snapshot.Threads.Where(t => Find(t.Children, n => n.Name.StartsWith("Work.Wait", StringComparison.Ordinal)) is not null)];
-            Assert.Equal(19, waiters.Count);
-            foreach (CallNode waiter in waiters)
-            {
-                ThreadLine line = Assert.Single(snapshot.Timeline, l => l.Name == waiter.Name);
-                Assert.True(line.Runs.Count * 4 <= line.Samples, $"{waiter.Name} waited through {line.Samples} samples, kept as {line.Runs.Count} runs");
-            }
-
-            // The run is kept with the earlier ones, the oldest gone past the cap, and the status bar says where.
-            Assert.Equal(kept, Path.GetDirectoryName(snapshot.TracePath));
-            Assert.Equal(Snapshots.Kept, Directory.GetFiles(kept, "*.nettrace").Length);
-            Assert.False(File.Exists(Path.Combine(kept, "Spinner-earlier-0.nettrace")), "the oldest snapshot was kept past the cap");
-            Assert.True(File.Exists(Path.Combine(kept, "Spinner-earlier-1.nettrace")), "a snapshot within the cap was removed");
-            Assert.Contains($"kept in {kept}", window.Status, StringComparison.Ordinal);
-            Assert.Equal(snapshot.TracePath, view.Kept[0].Path);
-            Assert.Equal(Snapshots.Kept, view.Kept.Count);
-            Assert.Contains(kept, view.KeptSummary, StringComparison.Ordinal);
-
-            // A stretch chosen on the timeline is what the other views show, worked out off the UI thread: the choice
-            // takes the UI thread a sliver of what working the stretch out takes, and the stretch lands once it is done.
-            (double From, double To) half = (snapshot.StartMs, snapshot.StartMs + ((snapshot.EndMs - snapshot.StartMs) / 2));
-            long allocated = GC.GetAllocatedBytesForCurrentThread();
-            Snapshot worked = snapshot.Within(half.From, half.To);
-            long working = GC.GetAllocatedBytesForCurrentThread() - allocated;
-            allocated = GC.GetAllocatedBytesForCurrentThread();
-            view.Timeline.Select(half.From, half.To);
-            long choosing = GC.GetAllocatedBytesForCurrentThread() - allocated;
-            Assert.True(choosing * 4 < working, $"choosing a stretch made {choosing} bytes on the UI thread, working it out {working}");
-            Assert.Same(snapshot, view.Snapshot);
-            Ui.Settle();
-            Assert.NotSame(snapshot, view.Snapshot);
-            Assert.Same(snapshot, view.Snapshot!.Whole);
-            Assert.Equal(worked.Samples, view.Snapshot.Samples);
-            Assert.True(view.Snapshot.Samples < snapshot.Samples);
-            Assert.Contains("ms of", view.Status, StringComparison.Ordinal);
-
-            // Stretches chosen one after another show the last, never an earlier one landing late; a click, the whole run.
-            view.Timeline.Select(snapshot.StartMs, snapshot.EndMs - 1);
-            view.Timeline.Select(half.To, snapshot.EndMs);
-            Ui.Settle();
-            Assert.Equal(half.To, view.Snapshot.StartMs);
-            view.Timeline.Select(half.From, half.To);
-            view.Timeline.ClearSelection();
-            Ui.Settle();
-            Assert.Same(snapshot, view.Snapshot);
-            window.Close();
+            string earlier = Path.Combine(kept, $"Spinner-earlier-{i}.nettrace");
+            File.WriteAllText(earlier, "an earlier run");
+            File.SetLastWriteTimeUtc(earlier, DateTime.UtcNow.AddHours(-Snapshots.Kept + i));
         }
-        finally
+
+        Task<string?> started = window.ProfileAsync();
+        Ui.WaitFor(() => started.IsCompleted, "the build and the start", TimeSpan.FromMinutes(3));
+        Assert.Null(started.Result);
+        Assert.True(window.DockHost.IsShown("profiler"));
+        Ui.WaitFor(() => window.ProfilerView.Snapshot is not null, "the program's end to show its snapshot", TimeSpan.FromMinutes(2));
+        Ui.Settle();
+
+        Passenger.App.Profiling.ProfilerView view = window.ProfilerView;
+        Snapshot snapshot = view.Snapshot!;
+        Assert.StartsWith("Main thread", snapshot.Threads[0].Name, StringComparison.Ordinal);
+        Assert.Equal(snapshot.Samples, view.Flame.Root!.Total);
+        // The hot path is open down the main thread: Spin is listed without a click.
+        Assert.Contains(view.Rows, r => r.Node.Name.StartsWith("Work.Spin", StringComparison.Ordinal));
+        Assert.StartsWith("Spinner-", Path.GetFileName(snapshot.TracePath), StringComparison.Ordinal);
+        Assert.Contains("spun True", window.BottomPanel.Run.Document.Snapshot.ToString(), StringComparison.Ordinal);
+
+        // What the run holds grows with where its threads were caught, not with how often: each stack is kept once,
+        // and a waiting thread's samples, all at one stack, as a handful of runs.
+        Assert.True(snapshot.Stacks * 10 < snapshot.Samples, $"{snapshot.Stacks} stacks kept for {snapshot.Samples} samples");
+        Assert.True(snapshot.Runs * 4 < snapshot.Samples, $"{snapshot.Runs} runs kept for {snapshot.Samples} samples");
+        IReadOnlyList<CallNode> waiters = [.. snapshot.Threads.Where(t => Find(t.Children, n => n.Name.StartsWith("Work.Wait", StringComparison.Ordinal)) is not null)];
+        Assert.Equal(19, waiters.Count);
+        foreach (CallNode waiter in waiters)
         {
-            Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", settingsBefore);
-            TestFolders.Delete(settings);
+            ThreadLine line = Assert.Single(snapshot.Timeline, l => l.Name == waiter.Name);
+            Assert.True(line.Runs.Count * 4 <= line.Samples, $"{waiter.Name} waited through {line.Samples} samples, kept as {line.Runs.Count} runs");
         }
+
+        // The run is kept with the earlier ones, the oldest gone past the cap, and the status bar says where.
+        Assert.Equal(kept, Path.GetDirectoryName(snapshot.TracePath));
+        Assert.Equal(Snapshots.Kept, Directory.GetFiles(kept, "*.nettrace").Length);
+        Assert.False(File.Exists(Path.Combine(kept, "Spinner-earlier-0.nettrace")), "the oldest snapshot was kept past the cap");
+        Assert.True(File.Exists(Path.Combine(kept, "Spinner-earlier-1.nettrace")), "a snapshot within the cap was removed");
+        Assert.Contains($"kept in {kept}", window.Status, StringComparison.Ordinal);
+        Assert.Equal(snapshot.TracePath, view.Kept[0].Path);
+        Assert.Equal(Snapshots.Kept, view.Kept.Count);
+        Assert.Contains(kept, view.KeptSummary, StringComparison.Ordinal);
+
+        // A stretch chosen on the timeline is what the other views show, worked out off the UI thread: the choice
+        // takes the UI thread a sliver of what working the stretch out takes, and the stretch lands once it is done.
+        (double From, double To) half = (snapshot.StartMs, snapshot.StartMs + ((snapshot.EndMs - snapshot.StartMs) / 2));
+        long allocated = GC.GetAllocatedBytesForCurrentThread();
+        Snapshot worked = snapshot.Within(half.From, half.To);
+        long working = GC.GetAllocatedBytesForCurrentThread() - allocated;
+        allocated = GC.GetAllocatedBytesForCurrentThread();
+        view.Timeline.Select(half.From, half.To);
+        long choosing = GC.GetAllocatedBytesForCurrentThread() - allocated;
+        Assert.True(choosing * 4 < working, $"choosing a stretch made {choosing} bytes on the UI thread, working it out {working}");
+        Assert.Same(snapshot, view.Snapshot);
+        Ui.Settle();
+        Assert.NotSame(snapshot, view.Snapshot);
+        Assert.Same(snapshot, view.Snapshot!.Whole);
+        Assert.Equal(worked.Samples, view.Snapshot.Samples);
+        Assert.True(view.Snapshot.Samples < snapshot.Samples);
+        Assert.Contains("ms of", view.Status, StringComparison.Ordinal);
+
+        // Stretches chosen one after another show the last, never an earlier one landing late; a click, the whole run.
+        view.Timeline.Select(snapshot.StartMs, snapshot.EndMs - 1);
+        view.Timeline.Select(half.To, snapshot.EndMs);
+        Ui.Settle();
+        Assert.Equal(half.To, view.Snapshot.StartMs);
+        view.Timeline.Select(half.From, half.To);
+        view.Timeline.ClearSelection();
+        Ui.Settle();
+        Assert.Same(snapshot, view.Snapshot);
+        window.Close();
     }
 
     [AvaloniaFact]

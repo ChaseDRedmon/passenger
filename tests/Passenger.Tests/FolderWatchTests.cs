@@ -17,7 +17,7 @@ namespace Passenger.Tests;
 /// with a limit, is chosen here on any system, since only the kernel's own running out is Linux's alone.</summary>
 public sealed class FolderWatchTests : IDisposable
 {
-    private readonly string folder = PathNames.Canonical(Directory.CreateTempSubdirectory("passenger-watch-").FullName);
+    private readonly string folder = PathNames.Canonical(TestFolders.Create("watch-"));
 
     public void Dispose() => TestFolders.Delete(folder);
 
@@ -325,40 +325,29 @@ public sealed class FolderWatchTests : IDisposable
     [AvaloniaFact]
     public void Running_out_of_inotify_watches_is_one_ide_error_saying_how_to_raise_the_limit()
     {
-        string settings = Directory.CreateTempSubdirectory("passenger-settings-").FullName;
-        string? before = Environment.GetEnvironmentVariable("PASSENGER_SETTINGS");
-        Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", settings);
-        try
-        {
-            Write("One/One.cs", "class One { }\n");
-            Write("Two/Two.cs", "class Two { }\n");
-            MainWindow window = Open(FolderWatching.Inotify);
-            IReadOnlyDictionary<string, FileSystemWatcher> watches = window.FolderWatcher!.Watches;
+        Write("One/One.cs", "class One { }\n");
+        Write("Two/Two.cs", "class Two { }\n");
+        MainWindow window = Open(FolderWatching.Inotify);
+        IReadOnlyDictionary<string, FileSystemWatcher> watches = window.FolderWatcher!.Watches;
 
-            // What .NET's watcher raises on Linux when inotify_add_watch fails with ENOSPC, from each folder's own watcher.
-            RaiseError(watches[Path.Combine(folder, "One")], OutOfWatches());
-            RaiseError(watches[Path.Combine(folder, "Two")], OutOfWatches());
-            Ui.WaitFor(() => window.Status?.Contains("fs.inotify.max_user_watches", StringComparison.Ordinal) == true,
-                "the status bar to say the inotify watches ran out");
-            Ui.Settle();
-            IdeError error = Assert.Single(IdeErrors.Errors);
-            Assert.StartsWith("Changes made outside Passenger in some folders will go unseen", error.Message, StringComparison.Ordinal);
-            Assert.Contains("sudo sysctl --system", error.Message, StringComparison.Ordinal);
-            Assert.Contains("fs.inotify.max_user_watches", Ui.IdeLog(), StringComparison.Ordinal);
-            Assert.Equal(["."], Watched(window));
+        // What .NET's watcher raises on Linux when inotify_add_watch fails with ENOSPC, from each folder's own watcher.
+        RaiseError(watches[Path.Combine(folder, "One")], OutOfWatches());
+        RaiseError(watches[Path.Combine(folder, "Two")], OutOfWatches());
+        Ui.WaitFor(() => window.Status?.Contains("fs.inotify.max_user_watches", StringComparison.Ordinal) == true,
+            "the status bar to say the inotify watches ran out");
+        Ui.Settle();
+        IdeError error = Assert.Single(IdeErrors.Errors);
+        Assert.StartsWith("Changes made outside Passenger in some folders will go unseen", error.Message, StringComparison.Ordinal);
+        Assert.Contains("sudo sysctl --system", error.Message, StringComparison.Ordinal);
+        Assert.Contains("fs.inotify.max_user_watches", Ui.IdeLog(), StringComparison.Ordinal);
+        Assert.Equal(["."], Watched(window));
 
-            // The folders still watched still say what changes in them.
-            Write("Three.cs", "class Three { }\n");
-            Ui.WaitFor(() => window.FileIndex.Files.Contains("Three.cs"), "a file made in a folder still watched in Go to File");
-            // Reported on purpose: the check that fails a test over a caught error is not to see it.
-            IdeErrors.Clear();
-            window.Close();
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", before);
-            TestFolders.Delete(settings);
-        }
+        // The folders still watched still say what changes in them.
+        Write("Three.cs", "class Three { }\n");
+        Ui.WaitFor(() => window.FileIndex.Files.Contains("Three.cs"), "a file made in a folder still watched in Go to File");
+        // Reported on purpose: the check that fails a test over a caught error is not to see it.
+        IdeErrors.Clear();
+        window.Close();
     }
 
     private static IOException OutOfWatches() =>
@@ -372,19 +361,7 @@ public sealed class FolderWatchTests : IDisposable
     private string[] Watched(MainWindow window) =>
         [.. window.FolderWatcher!.Watches.Keys.Select(p => Path.GetRelativePath(folder, p).Replace('\\', '/')).Order(StringComparer.Ordinal)];
 
-    private void Git(params string[] arguments)
-    {
-        using Process process = Process.Start(new ProcessStartInfo("git", arguments)
-        {
-            WorkingDirectory = folder,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        })!;
-        process.StandardOutput.ReadToEnd();
-        string error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        Assert.True(process.ExitCode == 0, $"git {string.Join(' ', arguments)}: {error}");
-    }
+    private void Git(params string[] arguments) => TestGit.Run(folder, arguments);
 
     private static string? EncodingShown(MainWindow window) => Avalonia.Controls.ControlExtensions.FindControl<Avalonia.Controls.TextBlock>(window, "EncodingText")!.Text;
 

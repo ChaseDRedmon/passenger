@@ -12,7 +12,7 @@ namespace Passenger.Tests;
 /// it; Replace All changes an open file as an edit that undoes, and writes a closed one.</summary>
 public sealed class FindInFilesTests : IDisposable
 {
-    private readonly string folder = Directory.CreateTempSubdirectory("passenger-find-").FullName;
+    private readonly string folder = TestFolders.Create("find-");
 
     public FindInFilesTests()
     {

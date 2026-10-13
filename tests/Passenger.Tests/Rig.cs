@@ -11,7 +11,8 @@ using Passenger.Text;
 using Xunit.v3;
 
 [assembly: Avalonia.Headless.AvaloniaTestApplication(typeof(Passenger.Tests.TestApp))]
-[assembly: Passenger.Tests.WindowTestsStartIdle]
+[assembly: Passenger.Tests.TestsLeaveNothingBehind]
+[assembly: AssemblyFixture(typeof(Passenger.Tests.TestRun))]
 
 namespace Passenger.Tests;
 
@@ -26,18 +27,164 @@ public static class TestApp
         .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false });
 }
 
-/// <summary>A window test starts with no background work held. Each test has a dispatcher of its own, and work a test
-/// left running (one that failed before its window settled, or closed it mid-parse) ends on that dispatcher, which
-/// never runs again: held for ever, it would fail every window test after it on <see cref="Ui.Settle"/>'s limit.</summary>
+/// <summary>What the whole run shares, set before anything reads it and never changed: a folder of the run's own in the
+/// system's temporary folder, holding the IDE's state (<c>PASSENGER_SETTINGS</c>: its log, the language servers' logs,
+/// the agents' sockets, the profiler's snapshots), every test's folders and the shells' history, and an empty Git
+/// configuration in place of the person's and the system's, which every git the tests and the IDE run inherits. So a run
+/// never writes to the person's own state, log or history, an agent of theirs never attaches to a test's window, and a
+/// person's commit signing or hooks never reach a test's commit. The folder goes when the run ends; one a run that was
+/// killed left goes when the next begins.</summary>
+public sealed class TestRun : IDisposable
+{
+    private const string Prefix = "passenger-run-";
+
+    /// <summary>The run's folder, named for the test process.</summary>
+    public static string Root { get; } = Path.Combine(Path.GetTempPath(), Prefix + Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+    /// <summary>The IDE's state folder for the whole run.</summary>
+    public static string Settings => Path.Combine(Root, "settings");
+
+    [System.Runtime.CompilerServices.ModuleInitializer]
+    internal static void Begin()
+    {
+        foreach (string left in Directory.EnumerateDirectories(Path.GetTempPath(), Prefix + "*"))
+        {
+            // A run still going has its process; one killed has none, and only an id reused since keeps its folder.
+            if (int.TryParse(Path.GetFileName(left)[Prefix.Length..], out int id) && (id == Environment.ProcessId || !Processes.IsRunning(id)))
+            {
+                TestFolders.Delete(left);
+            }
+        }
+        Directory.CreateDirectory(Settings);
+        string gitConfig = Path.Combine(Root, "gitconfig");
+        File.WriteAllText(gitConfig, string.Empty);
+        Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", Settings);
+        Environment.SetEnvironmentVariable("GIT_CONFIG_GLOBAL", gitConfig);
+        Environment.SetEnvironmentVariable("GIT_CONFIG_NOSYSTEM", "1");
+        // Configuration given on git's command line through the environment, which would come before the file's.
+        Environment.SetEnvironmentVariable("GIT_CONFIG_PARAMETERS", null);
+        Environment.SetEnvironmentVariable("GIT_CONFIG_COUNT", null);
+        // The commands the terminals' shells run go into the run's history, not the person's: sh takes HISTFILE as given,
+        // and zsh takes its startup files, and from them its history, from ZDOTDIR.
+        Environment.SetEnvironmentVariable("HISTFILE", Path.Combine(Root, "history"));
+        Environment.SetEnvironmentVariable("ZDOTDIR", Directory.CreateDirectory(Path.Combine(Root, "zsh")).FullName);
+        // A run stopped before its end (Ctrl+C) leaves nothing either.
+        AppDomain.CurrentDomain.ProcessExit += (_, _) => End();
+    }
+
+    /// <summary>The run's end, once every test is done (xunit disposes the assembly's fixture then).</summary>
+    public void Dispose()
+    {
+        End();
+        // Once more after the log's own last flush, which it hooked after the run began, and so runs before this.
+        AppDomain.CurrentDomain.ProcessExit += (_, _) => End();
+    }
+
+    private static void End()
+    {
+        try
+        {
+            TestFolders.Delete(Root);
+        }
+        catch (Exception held) when (held is IOException or UnauthorizedAccessException)
+        {
+            Console.Error.WriteLine($"The tests' folder {Root} could not be removed: {held.Message}");
+        }
+    }
+}
+
+/// <summary>A test leaves nothing behind for the next, however it ends. A window test starts with no background work held:
+/// each test has a dispatcher of its own, and work a test left running (one that failed before its window settled, or
+/// closed it mid-parse) ends on that dispatcher, which never runs again, and held for ever would fail every window test
+/// after it on <see cref="Ui.Settle"/>'s limit. And after a window test, every window it left open is closed (one that
+/// failed before its own close) and what those windows started (a language server, a build, a debugger) is waited out,
+/// then the folders the test made as it ran are removed, the windows that used them gone first.</summary>
 [AttributeUsage(AttributeTargets.Assembly)]
-public sealed class WindowTestsStartIdleAttribute : BeforeAfterTestAttribute
+public sealed class TestsLeaveNothingBehindAttribute : BeforeAfterTestAttribute
 {
     public override void Before(MethodInfo methodUnderTest, IXunitTest test)
     {
-        if (methodUnderTest.GetCustomAttribute<AvaloniaFactAttribute>() is not null || methodUnderTest.GetCustomAttribute<AvaloniaTheoryAttribute>() is not null)
+        if (IsWindowTest(methodUnderTest))
         {
             BackgroundWork.Forget();
+            OpenWindows.Watch();
         }
+        TestFolders.Begin(test.UniqueID);
+    }
+
+    public override void After(MethodInfo methodUnderTest, IXunitTest test)
+    {
+        try
+        {
+            if (IsWindowTest(methodUnderTest) && !OpenWindows.CloseAll())
+            {
+                TestContext.Current.SendDiagnosticMessage($"{test.TestDisplayName} left {BackgroundWork.Pending} pieces of background work held after its windows closed");
+            }
+        }
+        finally
+        {
+            TestFolders.End(test.UniqueID);
+        }
+    }
+
+    public static bool IsWindowTest(MethodInfo method) =>
+        method.GetCustomAttribute<AvaloniaFactAttribute>() is not null || method.GetCustomAttribute<AvaloniaTheoryAttribute>() is not null;
+}
+
+/// <summary>The windows open now, as a test leaves them, for <see cref="TestsLeaveNothingBehindAttribute"/> to close.</summary>
+public static class OpenWindows
+{
+    private static readonly List<Window> Open = [];
+    private static bool watching;
+
+    /// <summary>The longest the work of windows closed after a test may take to land, past the end their own limit gives
+    /// what they started.</summary>
+    private static readonly TimeSpan Landing = TimeSpan.FromSeconds(30);
+
+    public static void Watch()
+    {
+        if (!watching)
+        {
+            watching = true;
+            Window.WindowOpenedEvent.AddClassHandler<Window>((window, _) => Open.Add(window));
+            Window.WindowClosedEvent.AddClassHandler<Window>((window, _) => Open.Remove(window));
+        }
+        Open.Clear();
+    }
+
+    /// <summary>Closes every window still open, the last opened first, waits for what each started to end (its own limit
+    /// kills what will not), then for their background work to land, which a dispatcher that never runs again could not
+    /// let go. Whether it all landed: work that never does, the next window test lets go of as it starts.</summary>
+    public static bool CloseAll()
+    {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            throw new InvalidOperationException("Windows left open can only be closed on their own thread");
+        }
+        List<Task> ending = [];
+        while (Open.Count > 0)
+        {
+            Window last = Open[^1];
+            Open.RemoveAt(Open.Count - 1);
+            if (last.IsVisible)
+            {
+                last.Close();
+                if (last is Passenger.App.MainWindow { Ended: { } ended })
+                {
+                    ending.Add(ended);
+                }
+            }
+        }
+        if (ending.Count == 0 && BackgroundWork.Pending == 0)
+        {
+            return true;
+        }
+        DateTime until = DateTime.UtcNow + Passenger.App.MainWindow.EndLimit + Landing;
+        while (!(ending.All(e => e.IsCompleted) && BackgroundWork.Pending == 0) && DateTime.UtcNow < until)
+        {
+            Passenger.App.Screenshot.Pump(TimeSpan.FromMilliseconds(20));
+        }
+        return BackgroundWork.Pending == 0;
     }
 }
 
@@ -85,11 +232,81 @@ public sealed class EditorRig
     public void AddCaret(int offset) => Editor.Selections = Editor.Selections.Add(Selection.At(offset));
 }
 
-/// <summary>A test's temporary folders, deleted as Windows lets them be: git writes its objects read-only, which Windows
-/// refuses to delete, and a folder a process still runs in (a git status the closed window started, a debugged program
-/// being killed) cannot go until it has ended, so both are waited out for a while. One already gone is no error.</summary>
+/// <summary>A test's temporary folders, in the run's own (<see cref="TestRun.Root"/>), deleted as Windows lets them be: git
+/// writes its objects read-only, which Windows refuses to delete, and a folder a process still runs in (a git status the
+/// closed window started, a debugged program being killed) cannot go until it has ended, so both are waited out for a
+/// while. One already gone is no error.</summary>
 public static class TestFolders
 {
+    /// <summary>The folders each test running now made as it ran, by the test's id, from its start (its class's are made
+    /// before then, and go with its class's Dispose).</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, List<string>> Made = new(StringComparer.Ordinal);
+
+    /// <summary>A new, empty folder of the test's own, its name starting with <paramref name="name"/>: one made as a test
+    /// runs is removed when it ends, however it ends, after its windows (<see cref="TestsLeaveNothingBehindAttribute"/>).</summary>
+    public static string Create(string name)
+    {
+        string path;
+        do
+        {
+            path = Path.Combine(TestRun.Root, name + Guid.NewGuid().ToString("N")[..8]);
+        }
+        while (Directory.Exists(path));
+        Directory.CreateDirectory(path);
+        if (TestContext.Current.Test?.UniqueID is { } test && Made.TryGetValue(test, out List<string>? made))
+        {
+            lock (made)
+            {
+                made.Add(path);
+            }
+        }
+        return path;
+    }
+
+    /// <summary>Gets a test class's folders ready (a restore, a repository), removing them if that fails: a class whose
+    /// constructor throws is never disposed.</summary>
+    public static void Prepare(Action prepare, params string[] paths)
+    {
+        try
+        {
+            prepare();
+        }
+        catch
+        {
+            foreach (string path in paths)
+            {
+                Delete(path);
+            }
+            throw;
+        }
+    }
+
+    public static void Begin(string test) => Made[test] = [];
+
+    public static void End(string test)
+    {
+        if (!Made.TryRemove(test, out List<string>? made))
+        {
+            return;
+        }
+        List<Exception> held = [];
+        foreach (string path in made)
+        {
+            try
+            {
+                Delete(path);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                held.Add(error);
+            }
+        }
+        if (held.Count > 0)
+        {
+            throw new IOException($"The test's folders could not all be removed, so the next run finds them: {string.Join("; ", held.Select(e => e.Message))}", held[0]);
+        }
+    }
+
     public static void Delete(string path)
     {
         // A settings folder's log lines still queued would make its logs folder again once it was gone.
@@ -422,11 +639,65 @@ public sealed class InputWait : IDisposable
 /// what MSBuild leaves of it is the tests' own and ends with them, and no variable of dotnet test's holds its output open.</summary>
 public static class Restore
 {
-    public static Task<Passenger.Core.ChildResult> RunAsync(string target) =>
-        Passenger.Core.ChildProcesses.RunAsync(Passenger.Core.ChildProcesses.DotnetCommand(["restore", target]), limit: TimeSpan.FromMinutes(5));
+    /// <summary>The longest a restore may take: nuget.org slow, a cache cold.</summary>
+    public static readonly TimeSpan Limit = TimeSpan.FromMinutes(5);
+
+    /// <summary>The restore, which fails the test at once naming what it means and quoting what dotnet said: a project
+    /// not restored (offline, nuget.org down) would show up later as C# unavailable, far from the cause.</summary>
+    public static async Task<Passenger.Core.ChildResult> RunAsync(string target)
+    {
+        Passenger.Core.ChildResult restored;
+        try
+        {
+            restored = await Passenger.Core.ChildProcesses.RunAsync(Passenger.Core.ChildProcesses.DotnetCommand(["restore", target]), limit: Limit);
+        }
+        catch (TimeoutException hung)
+        {
+            throw new TimeoutException($"The test's project did not restore, so C# cannot load it: {hung.Message}", hung);
+        }
+        Assert.True(restored.Succeeded,
+            $"The test's project did not restore, so C# cannot load it: dotnet restore {target} exited with code {restored.ExitCode}:\n{restored.Output}{restored.Error}");
+        return restored;
+    }
 
     /// <summary>The restore, waited for off the UI thread, whose continuations would otherwise wait on it.</summary>
     public static Passenger.Core.ChildResult Run(string target) => Task.Run(() => RunAsync(target)).GetAwaiter().GetResult();
+}
+
+/// <summary>Git as the tests' fixtures run it: as the IDE runs it (<see cref="Passenger.Core.ChildProcesses"/>, so none of a
+/// hook's variables points it at another repository, and with the run's empty configuration), its output read, within a
+/// limit, failing the test naming the command and what git said when it fails.</summary>
+public static class TestGit
+{
+    private static readonly TimeSpan Limit = TimeSpan.FromMinutes(1);
+
+    public static string Run(string folder, params string[] arguments)
+    {
+        Passenger.Core.ChildResult result;
+        try
+        {
+            result = Task.Run(() => Passenger.Core.ChildProcesses.RunAsync(Passenger.Core.ChildProcesses.Command("git", arguments, folder), limit: Limit)).GetAwaiter().GetResult();
+        }
+        catch (TimeoutException hung)
+        {
+            throw new TimeoutException($"The test's repository is not as it was to be made: {hung.Message}", hung);
+        }
+        Assert.True(result.Succeeded,
+            $"The test's repository is not as it was to be made: git {string.Join(' ', arguments)} in {folder} exited with code {result.ExitCode}:\n{result.Error}{result.Output}");
+        return result.Output;
+    }
+
+    /// <summary>A new repository on main, with an author of its own, its files kept as written (not as Git for Windows'
+    /// autocrlf would convert them) and its first commit of what the folder holds.</summary>
+    public static void Init(string folder)
+    {
+        Run(folder, "init", "-q", "-b", "main");
+        Run(folder, "config", "user.email", "tests@passenger.invalid");
+        Run(folder, "config", "user.name", "Passenger Tests");
+        Run(folder, "config", "core.autocrlf", "false");
+        Run(folder, "add", "-A");
+        Run(folder, "commit", "-q", "-m", "First");
+    }
 }
 
 /// <summary>Programs the IDE started for a test, by id, as a process list would show them.</summary>
@@ -696,7 +967,7 @@ public static partial class NativeStacks
         {
             return string.Empty;
         }
-        string file = Path.Combine(Path.GetTempPath(), $"passenger-sample-{Guid.NewGuid():N}.txt");
+        string file = Path.Combine(TestRun.Root, $"sample-{Guid.NewGuid():N}.txt");
         try
         {
             using System.Diagnostics.Process sample = System.Diagnostics.Process.Start(new ProcessStartInfo("/usr/bin/sample", [processId.ToString(System.Globalization.CultureInfo.InvariantCulture), "1", "-file", file])

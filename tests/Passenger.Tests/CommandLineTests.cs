@@ -10,8 +10,8 @@ public sealed class CommandLineTests : IDisposable
 {
     private static readonly string Passenger = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "Passenger.exe" : "Passenger");
 
-    private readonly string folder = Directory.CreateTempSubdirectory("passenger-command-line-").FullName;
-    private readonly string settings = Directory.CreateTempSubdirectory("passenger-settings-").FullName;
+    private readonly string folder = TestFolders.Create("command-line-");
+    private readonly string settings = TestFolders.Create("settings-");
 
     public CommandLineTests()
     {

@@ -21,11 +21,10 @@ public sealed class McpTests : IDisposable
 {
     private static readonly string Passenger = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "Passenger.exe" : "Passenger");
 
-    private readonly string folder = Directory.CreateTempSubdirectory("passenger-mcp-").FullName;
-    private readonly string settings = Directory.CreateTempSubdirectory("passenger-agents-").FullName;
+    private readonly string folder = TestFolders.Create("mcp-");
+    private readonly string settings = TestFolders.Create("agents-");
     private readonly List<string> errors = [];
     private readonly List<Process> passengers = [];
-    private string? settingsBefore;
 
     public McpTests()
     {
@@ -35,7 +34,7 @@ public sealed class McpTests : IDisposable
             "int total = 0;\nfor (int i = 1; i <= 3; i++)\n{\n    total += Helper.Twice(i);\n}\nConsole.WriteLine($\"total {total}\");\nthrow new InvalidOperationException(\"the end\");\n");
         Write("Helper.cs",
             "static class Helper\n{\n    public static int Twice(int value)\n    {\n        int unused = 1;\n        return value * 2;\n    }\n}\n");
-        Restore.Run(folder);
+        TestFolders.Prepare(() => Restore.Run(folder), folder, settings);
     }
 
     public void Dispose()
@@ -52,10 +51,6 @@ public sealed class McpTests : IDisposable
                 }
                 passenger.Dispose();
             }
-        }
-        if (settingsBefore is not null)
-        {
-            Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", settingsBefore.Length == 0 ? null : settingsBefore);
         }
         TestFolders.Delete(folder);
         TestFolders.Delete(settings);
@@ -113,22 +108,11 @@ public sealed class McpTests : IDisposable
     [Fact]
     public async Task An_agent_reads_and_commits_changes_and_runs_a_command_in_the_ides_terminal()
     {
-        string repository = Directory.CreateTempSubdirectory("passenger-mcp-git-").FullName;
+        string repository = TestFolders.Create("mcp-git-");
         try
         {
-            void Git(params string[] arguments)
-            {
-                using System.Diagnostics.Process git = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("git", arguments) { WorkingDirectory = repository, RedirectStandardOutput = true, RedirectStandardError = true })!;
-                git.WaitForExit();
-            }
-            Git("init", "-q", "-b", "main");
-            Git("config", "user.email", "tests@passenger.invalid");
-            Git("config", "user.name", "Passenger Tests");
-            // Files are as they were written, not as the machine's git would convert them (Git for Windows' autocrlf).
-            Git("config", "core.autocrlf", "false");
             File.WriteAllText(Path.Combine(repository, "Notes.txt"), "one\ntwo\nthree\n");
-            Git("add", "-A");
-            Git("commit", "-q", "-m", "First");
+            TestGit.Init(repository);
             File.WriteAllText(Path.Combine(repository, "Notes.txt"), "one\n2\nthree\n");
             File.WriteAllText(Path.Combine(repository, "New.txt"), "new\n");
 
@@ -285,8 +269,7 @@ public sealed class McpTests : IDisposable
                 </Project>
                 """);
         }
-        ChildResult restored = await Restore.RunAsync(two);
-        Assert.True(restored.Succeeded, $"The test's projects did not restore:\n{restored.Output}{restored.Error}");
+        await Restore.RunAsync(two);
         // No compiler server among what the build starts, which is the machine's to share.
         Process passenger = StartPassenger(["--mcp", two], environment: new() { ["UseSharedCompilation"] = "false" });
         List<int> left = [];
@@ -360,7 +343,6 @@ public sealed class McpTests : IDisposable
     [AvaloniaFact]
     public void An_agent_attached_to_the_window_sets_a_breakpoint_the_person_sees()
     {
-        UseSettings();
         MainWindow window = AgentsWindow(folder);
         string program = Path.Combine(window.Folder!, "Program.cs");
         window.OpenFile(program);
@@ -396,8 +378,7 @@ public sealed class McpTests : IDisposable
     [AvaloniaFact]
     public void An_agent_is_refused_until_the_person_enables_the_MCP_server_and_shut_out_when_they_turn_it_off()
     {
-        UseSettings();
-        MainWindow window = new() { Width = 1200, Height = 800 };
+        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings };
         window.Show();
         window.KeepSettings();
         window.OpenFolder(folder);
@@ -464,7 +445,6 @@ public sealed class McpTests : IDisposable
     [AvaloniaFact]
     public void An_agent_asks_before_its_first_run_and_the_window_stops_waiting_when_it_gives_up_or_goes()
     {
-        UseSettings();
         Write("Program.cs", "Console.WriteLine(\"waiting\");\nThread.Sleep(Timeout.Infinite);\n");
         MainWindow window = AgentsWindow(folder);
         McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
@@ -523,35 +503,27 @@ public sealed class McpTests : IDisposable
     [AvaloniaFact]
     public void Each_window_has_its_own_socket_and_an_agent_attaches_to_the_one_over_its_folder()
     {
-        UseSettings();
-        string other = Directory.CreateTempSubdirectory("passenger-mcp-other-").FullName;
-        try
-        {
-            File.WriteAllText(Path.Combine(other, "Notes.txt"), "notes\n");
-            Directory.CreateDirectory(Path.Combine(folder, "Inner"));
-            MainWindow first = AgentsWindow(folder);
-            MainWindow second = AgentsWindow(other);
-            string firstSocket = first.AgentSocket!;
-            string secondSocket = second.AgentSocket!;
-            Assert.NotEqual(firstSocket, secondSocket);
-            Assert.Equal(new[] { firstSocket, secondSocket }.Order(StringComparer.Ordinal), Sockets().Order(StringComparer.Ordinal));
+        string other = TestFolders.Create("mcp-other-");
+        File.WriteAllText(Path.Combine(other, "Notes.txt"), "notes\n");
+        Directory.CreateDirectory(Path.Combine(folder, "Inner"));
+        MainWindow first = AgentsWindow(folder);
+        MainWindow second = AgentsWindow(other);
+        string firstSocket = first.AgentSocket!;
+        string secondSocket = second.AgentSocket!;
+        Assert.NotEqual(firstSocket, secondSocket);
+        Assert.Equal(new[] { firstSocket, secondSocket }.Order(StringComparer.Ordinal), Sockets().Order(StringComparer.Ordinal));
 
-            // Started in the first window's folder (deep in it), the agent reaches that window though the second is newer.
-            Assert.Equal(first.Folder, AttachedFolder(Path.Combine(folder, "Inner")));
-            Assert.Equal(second.Folder, AttachedFolder(other));
+        // Started in the first window's folder (deep in it), the agent reaches that window though the second is newer.
+        Assert.Equal(first.Folder, AttachedFolder(Path.Combine(folder, "Inner")));
+        Assert.Equal(second.Folder, AttachedFolder(other));
 
-            // One window closing takes its own socket, not the other's.
-            second.Close();
-            Assert.False(File.Exists(secondSocket), "A closed window left its socket");
-            Assert.True(File.Exists(firstSocket), "Closing one window took another's socket");
-            // From a folder no window has, the agent reaches the window there is.
-            Assert.Equal(first.Folder, AttachedFolder(Path.GetTempPath()));
-            first.Close();
-        }
-        finally
-        {
-            TestFolders.Delete(other);
-        }
+        // One window closing takes its own socket, not the other's.
+        second.Close();
+        Assert.False(File.Exists(secondSocket), "A closed window left its socket");
+        Assert.True(File.Exists(firstSocket), "Closing one window took another's socket");
+        // From a folder no window has, the agent reaches the window there is.
+        Assert.Equal(first.Folder, AttachedFolder(Path.GetTempPath()));
+        first.Close();
     }
 
     /// <summary>The folder of the window an agent started in a folder reaches with <c>--mcp-attach</c>.</summary>
@@ -564,7 +536,6 @@ public sealed class McpTests : IDisposable
     [AvaloniaFact]
     public void The_window_takes_keys_while_an_attached_agent_finds_ten_thousand_usages_each_with_its_line()
     {
-        UseSettings();
         // Four files calling Helper.Twice 2,500 times each, every call under a long comment: a usage's line read from its
         // file's start every time reads each file 2,500 times over.
         for (int file = 0; file < 4; file++)
@@ -643,7 +614,7 @@ public sealed class McpTests : IDisposable
             return;
         }
         // A login profile that puts its own git first, as Homebrew's shellenv does; the git notes that it ran.
-        string home = Directory.CreateTempSubdirectory("passenger-home-").FullName;
+        string home = TestFolders.Create("home-");
         try
         {
             string tools = Path.Combine(home, "tools");
@@ -654,10 +625,7 @@ public sealed class McpTests : IDisposable
             File.SetUnixFileMode(git, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             File.WriteAllText(Path.Combine(home, ".zprofile"), $"export PATH=\"{tools}:$PATH\"\n");
             File.WriteAllText(Path.Combine(home, ".profile"), $"export PATH=\"{tools}:$PATH\"\n");
-            using (Process init = Process.Start(new ProcessStartInfo("git", ["init", "-q", folder]) { RedirectStandardOutput = true })!)
-            {
-                init.WaitForExit();
-            }
+            TestGit.Run(folder, "init", "-q");
 
             // launchd's environment: the bare PATH, no terminal, no .NET or zsh settings of the person's.
             await using McpClient client = await Start(["--mcp", folder], environment: new()
@@ -693,14 +661,14 @@ public sealed class McpTests : IDisposable
     private Task<McpClient> Start(IList<string> arguments, string? workingDirectory = null, Dictionary<string, string?>? environment = null) =>
         Connect(StartPassenger(arguments, workingDirectory, environment), arguments);
 
-    /// <summary>Passenger started as the IDE starts a child, with the tests' state folder (where windows' sockets are, and
-    /// its log), the engine's log and any other change to the environment (null takes a variable away), its standard
-    /// error kept. Not the SDK's own process transport: that ends a server with the runtime's tree kill, which can hang
+    /// <summary>Passenger started as the IDE starts a child, with a state folder of the test's own for its log (or, joining
+    /// a window, the run's, where the windows' sockets are), the engine's log and any other change to the environment
+    /// (null takes a variable away), its standard error kept. Not the SDK's own process transport: that ends a server with the runtime's tree kill, which can hang
     /// this process (ChildProcesses.Kill says why). The agent going closes its input; <see cref="Dispose"/> ends the rest.</summary>
     private Process StartPassenger(IList<string> arguments, string? workingDirectory = null, Dictionary<string, string?>? environment = null)
     {
         ProcessStartInfo start = ChildProcesses.Command(Passenger, arguments, workingDirectory);
-        start.Environment["PASSENGER_SETTINGS"] = settings;
+        start.Environment["PASSENGER_SETTINGS"] = arguments.Contains("--mcp-attach") ? TestRun.Settings : settings;
         start.Environment["PASSENGER_ENGINE_LOG"] = EngineLog;
         foreach ((string name, string? value) in environment ?? new())
         {
@@ -777,13 +745,6 @@ public sealed class McpTests : IDisposable
         }
     }
 
-    /// <summary>The window's state, its socket for agents included, in the tests' own folder rather than the person's.</summary>
-    private void UseSettings()
-    {
-        settingsBefore ??= Environment.GetEnvironmentVariable("PASSENGER_SETTINGS") ?? string.Empty;
-        Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", settings);
-    }
-
     /// <summary>A window over a folder whose person has let agents in.</summary>
     private static MainWindow AgentsWindow(string at)
     {
@@ -796,11 +757,9 @@ public sealed class McpTests : IDisposable
         return window;
     }
 
-    private string[] Sockets()
-    {
-        string sockets = Path.Combine(settings, "mcp");
-        return Directory.Exists(sockets) ? Directory.GetFiles(sockets, "*.sock") : [];
-    }
+    /// <summary>The windows' sockets for agents, in the run's state folder (<see cref="TestRun"/>), not the person's.</summary>
+    private static string[] Sockets() =>
+        Directory.Exists(global::Passenger.App.Mcp.McpHost.SocketFolder) ? Directory.GetFiles(global::Passenger.App.Mcp.McpHost.SocketFolder, "*.sock") : [];
 
     private string[] Errors()
     {

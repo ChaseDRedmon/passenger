@@ -13,7 +13,7 @@ namespace Passenger.Tests;
 /// <summary>Find and replace through the window, with the platform's own shortcuts.</summary>
 public sealed class FindTests : IDisposable
 {
-    private readonly string folder = Directory.CreateTempSubdirectory("passenger-find-").FullName;
+    private readonly string folder = TestFolders.Create("find-");
 
     public void Dispose() => TestFolders.Delete(folder);
 

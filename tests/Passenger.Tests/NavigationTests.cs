@@ -12,7 +12,7 @@ namespace Passenger.Tests;
 /// <summary>Getting to a file or a line from the keyboard, through the window.</summary>
 public sealed class NavigationTests : IDisposable
 {
-    private readonly string folder = Directory.CreateTempSubdirectory("passenger-nav-").FullName;
+    private readonly string folder = TestFolders.Create("nav-");
 
     public void Dispose() => TestFolders.Delete(folder);
 

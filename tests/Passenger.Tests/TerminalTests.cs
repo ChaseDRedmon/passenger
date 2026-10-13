@@ -153,7 +153,7 @@ public sealed class TerminalTests
     [AvaloniaFact]
     public void The_terminal_window_runs_a_shell_that_takes_typed_commands_and_hides_when_it_exits()
     {
-        string folder = Directory.CreateTempSubdirectory("passenger-terminal-").FullName;
+        string folder = TestFolders.Create("terminal-");
         try
         {
             MainWindow window = new() { Width = 1200, Height = 800 };
@@ -202,7 +202,7 @@ public sealed class TerminalTests
             // sh, seq and a terminal's own Ctrl+C are Unix's.
             return;
         }
-        string folder = Directory.CreateTempSubdirectory("passenger-terminal-").FullName;
+        string folder = TestFolders.Create("terminal-");
         MainWindow? window = null;
         try
         {
@@ -225,12 +225,7 @@ public sealed class TerminalTests
                 // Pressed and waited for without settling, which waits for all the IDE's background work, seq pouring on.
                 window.KeyPress(Key.Enter, RawInputModifiers.None, PhysicalKey.None, null);
                 window.KeyRelease(Key.Enter, RawInputModifiers.None, PhysicalKey.None, null);
-                Stopwatch starting = Stopwatch.StartNew();
-                while (!shell.Screen.ScreenText().Contains("xxxxxxxx", StringComparison.Ordinal))
-                {
-                    Assert.True(starting.Elapsed < TimeSpan.FromSeconds(90), $"seq's lines never came onto the screen:\n{shell.Screen.ScreenText()}");
-                    Screenshot.Pump(TimeSpan.FromMilliseconds(20));
-                }
+                Ui.PumpUntil(() => shell.Screen.ScreenText().Contains("xxxxxxxx", StringComparison.Ordinal), "seq's lines to come onto the screen");
                 // A second more of the flood, the window running as it does on a desktop, and on a machine slow to draw as
                 // long as it takes the window to answer enough looks to say how long a key waits.
                 Stopwatch flooding = Stopwatch.StartNew();
@@ -283,7 +278,7 @@ public sealed class TerminalTests
             // A Unix pseudo-terminal's input queue holds a kilobyte or so; past that, a write waits for the program.
             return;
         }
-        string folder = Directory.CreateTempSubdirectory("passenger-terminal-").FullName;
+        string folder = TestFolders.Create("terminal-");
         try
         {
             (MainWindow window, TerminalSession shell) = Open(folder, "/bin/sh");
@@ -318,7 +313,7 @@ public sealed class TerminalTests
             // sh is Unix's.
             return;
         }
-        string folder = Directory.CreateTempSubdirectory("passenger-terminal-").FullName;
+        string folder = TestFolders.Create("terminal-");
         using ManualResetEventSlim release = new();
         try
         {
@@ -360,7 +355,7 @@ public sealed class TerminalTests
             // zsh's line editor brackets pastes (as the Mac's own shell, it is always there on a Mac).
             return;
         }
-        string folder = Directory.CreateTempSubdirectory("passenger-terminal-").FullName;
+        string folder = TestFolders.Create("terminal-");
         try
         {
             (MainWindow window, TerminalSession shell) = Open(folder, "/bin/zsh", "-f");
@@ -393,7 +388,7 @@ public sealed class TerminalTests
             // sh's printf writes the bytes.
             return;
         }
-        string folder = Directory.CreateTempSubdirectory("passenger-terminal-").FullName;
+        string folder = TestFolders.Create("terminal-");
         try
         {
             (MainWindow window, TerminalSession shell) = Open(folder, "/bin/sh");
@@ -426,7 +421,7 @@ public sealed class TerminalTests
             // sh's printf writes the bytes.
             return;
         }
-        string folder = Directory.CreateTempSubdirectory("passenger-terminal-").FullName;
+        string folder = TestFolders.Create("terminal-");
         try
         {
             (MainWindow window, TerminalSession shell) = Open(folder, "/bin/sh");
@@ -454,7 +449,7 @@ public sealed class TerminalTests
             // sh and seq are Unix's.
             return;
         }
-        string folder = Directory.CreateTempSubdirectory("passenger-terminal-").FullName;
+        string folder = TestFolders.Create("terminal-");
         try
         {
             (MainWindow window, TerminalSession shell) = Open(folder, "/bin/sh");
@@ -501,7 +496,7 @@ public sealed class TerminalTests
             // sh and seq are Unix's.
             return;
         }
-        string folder = Directory.CreateTempSubdirectory("passenger-terminal-").FullName;
+        string folder = TestFolders.Create("terminal-");
         try
         {
             (MainWindow window, TerminalSession shell) = Open(folder, "/bin/sh");
@@ -543,7 +538,7 @@ public sealed class TerminalTests
             // sh and seq are Unix's.
             return;
         }
-        string folder = Directory.CreateTempSubdirectory("passenger-terminal-").FullName;
+        string folder = TestFolders.Create("terminal-");
         try
         {
             (MainWindow window, TerminalSession shell) = Open(folder, "/bin/sh");

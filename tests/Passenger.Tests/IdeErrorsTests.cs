@@ -12,21 +12,18 @@ namespace Passenger.Tests;
 
 /// <summary>An error inside the IDE is caught, written to the log and shown, never the end of it; a language server
 /// that ends on its own, or stops answering, is started again with the open files, as Rider restarts its backend, and one
-/// still starting when its folder closes is ended.</summary>
+/// still starting when its folder closes is ended, as is one a window test that failed left loading.</summary>
 public sealed class IdeErrorsTests : IDisposable
 {
-    private readonly string folder = Directory.CreateTempSubdirectory("passenger-errors-").FullName;
-    private readonly string settings = Directory.CreateTempSubdirectory("passenger-settings-").FullName;
-    private readonly string? before = Environment.GetEnvironmentVariable("PASSENGER_SETTINGS");
+    private readonly string folder = TestFolders.Create("errors-");
 
-    public IdeErrorsTests() => Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", settings);
+    /// <summary>The language servers' logs from before the test, in the log folder the whole run shares.</summary>
+    private readonly HashSet<string> earlierServers = [.. AllServerLogs()];
 
     public void Dispose()
     {
         IdeErrors.Clear();
-        Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", before);
         TestFolders.Delete(folder);
-        TestFolders.Delete(settings);
     }
 
     [AvaloniaFact]
@@ -204,38 +201,53 @@ public sealed class IdeErrorsTests : IDisposable
     [AvaloniaFact]
     public void Opening_another_folder_while_csharp_starts_leaves_only_the_new_folders_language_server_running()
     {
-        string other = Directory.CreateTempSubdirectory("passenger-other-").FullName;
-        try
+        string other = TestFolders.Create("other-");
+        WriteProgram(folder);
+        WriteProgram(other);
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(folder);
+        // Its server has begun once its log has, named for its process; the window's loop runs, never waiting for the load.
+        Ui.PumpUntil(() => ServerLogs().Length > 0, $"a language server to begin for the first folder ({window.CSharpService?.State})", TimeSpan.FromMinutes(1));
+        int first = ServerOf(Assert.Single(ServerLogs()));
+        Assert.True(window.CSharpService?.Session is null, "The first folder's language server answered before the second folder opened, so it was not still starting");
+
+        window.OpenFolder(other);
+        Ui.Settle();
+
+        Assert.True(window.CSharpService?.IsReady, window.CSharpService?.State);
+        int second = window.CSharpService!.Session!.Server.ProcessId;
+        Assert.True(Processes.Gone(first), $"The first folder's language server (process {first}) still runs, loading a folder no longer open");
+        int[] running = [.. ServerLogs().Select(ServerOf).Where(Processes.IsRunning)];
+        Assert.True(running.SequenceEqual([second]), $"Language servers running: {string.Join(", ", running.Select(Processes.Describe))}; only the second folder's, {second}, should be");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_window_test_that_throws_right_after_opening_a_project_leaves_no_language_server_and_no_work_for_the_next()
+    {
+        WriteProgram(folder);
+        int server = 0;
+        void FailingTest()
         {
-            WriteProgram(folder);
-            WriteProgram(other);
             MainWindow window = new() { Width = 1200, Height = 800 };
             window.Show();
             window.OpenFolder(folder);
-            // Its server has begun once its log has, named for its process; the window's loop runs, never waiting for the load.
-            DateTime until = DateTime.UtcNow.AddMinutes(1);
-            while (ServerLogs().Length == 0)
-            {
-                Assert.True(DateTime.UtcNow < until, $"No language server began for the first folder in a minute ({window.CSharpService?.State})");
-                Screenshot.Pump(TimeSpan.FromMilliseconds(10));
-            }
-            int first = ServerOf(Assert.Single(ServerLogs()));
-            Assert.True(window.CSharpService?.Session is null, "The first folder's language server answered before the second folder opened, so it was not still starting");
-
-            window.OpenFolder(other);
-            Ui.Settle();
-
-            Assert.True(window.CSharpService?.IsReady, window.CSharpService?.State);
-            int second = window.CSharpService!.Session!.Server.ProcessId;
-            Assert.True(Processes.Gone(first), $"The first folder's language server (process {first}) still runs, loading a folder no longer open");
-            int[] running = [.. ServerLogs().Select(ServerOf).Where(Processes.IsRunning)];
-            Assert.True(running.SequenceEqual([second]), $"Language servers running: {string.Join(", ", running.Select(Processes.Describe))}; only the second folder's, {second}, should be");
-            window.Close();
+            window.OpenFile("Program.cs");
+            Ui.PumpUntil(() => window.CSharpService?.Session is not null, $"the language server to start on the project ({window.CSharpService?.State})");
+            server = window.CSharpService!.Session!.Server.ProcessId;
+            throw new InvalidOperationException("The test failed with its project still loading, before its own close");
         }
-        finally
-        {
-            TestFolders.Delete(other);
-        }
+        Assert.Throws<InvalidOperationException>(FailingTest);
+        Assert.True(Processes.IsRunning(server), "The language server had ended before the test failed, so there was none for the failure to leave");
+
+        // What runs after every window test, however it ended.
+        new TestsLeaveNothingBehindAttribute().After(
+            typeof(IdeErrorsTests).GetMethod(nameof(A_window_test_that_throws_right_after_opening_a_project_leaves_no_language_server_and_no_work_for_the_next))!,
+            (Xunit.v3.IXunitTest)TestContext.Current.Test!);
+
+        Assert.True(Processes.Gone(server), $"The language server (process {server}) still runs after the window test that opened it failed, loading a folder for nobody into the next test");
+        Assert.True(Editor.BackgroundWork.Pending == 0, $"{Editor.BackgroundWork.Pending} pieces of the failed test's work were still held for the next test to wait out");
     }
 
     [AvaloniaFact]
@@ -415,7 +427,9 @@ public sealed class IdeErrorsTests : IDisposable
 
     /// <summary>The language servers' logs this test's IDE wrote, one to each server it started, where Help, Show Log finds
     /// them: in the folder of the IDE's own log.</summary>
-    private static string[] ServerLogs() =>
+    private string[] ServerLogs() => [.. AllServerLogs().Where(log => !earlierServers.Contains(log))];
+
+    private static string[] AllServerLogs() =>
         Directory.Exists(IdeErrors.LogFolder) ? Directory.GetFiles(IdeErrors.LogFolder, "server-*.log", SearchOption.AllDirectories) : [];
 
     /// <summary>The server a log is of: its process, the last part of the log's name.</summary>

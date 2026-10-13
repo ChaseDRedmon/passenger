@@ -43,7 +43,7 @@ public sealed class DebugSession : IDisposable
         // wait to quote, which on a machine no one can debug on (CI's) is all there is to go by.
         string? kept = Environment.GetEnvironmentVariable("PASSENGER_ENGINE_LOG") is { Length: > 0 } named ? named : null;
         ownLog = kept is null;
-        engineLog = kept ?? Path.Combine(Path.GetTempPath(), $"passenger-engine-{Guid.NewGuid():N}.log");
+        engineLog = kept ?? Path.Combine(TestRun.Root, $"engine-{Guid.NewGuid():N}.log");
         List<string> arguments = [path, "--interpreter=vscode", $"--engineLogging={engineLog}"];
         // Started as the IDE starts it, so a test run that is killed leaves no adapter or program behind.
         ProcessStartInfo start = ChildProcesses.DotnetCommand(arguments);
@@ -120,11 +120,36 @@ public sealed class DebugSession : IDisposable
         return variables;
     }
 
-    public T Request<T>(string command, object? arguments = null) =>
-        Connection.RequestAsync<T>(command, arguments ?? new DapEmpty(), TestContext.Current.CancellationToken).GetAwaiter().GetResult();
+    /// <summary>A request's answer, waited for no longer than <see cref="RequestLimit"/> (or the limit given): one the
+    /// adapter never answers fails the test naming the command, with what the adapter said last and where it waits.</summary>
+    public T Request<T>(string command, object? arguments = null, TimeSpan? limit = null) =>
+        Answer(command, Connection.RequestAsync<T>(command, arguments ?? new DapEmpty(), TestContext.Current.CancellationToken), limit);
 
-    public void Request(string command, object? arguments = null) =>
-        Connection.RequestAsync(command, arguments ?? new DapEmpty(), TestContext.Current.CancellationToken).GetAwaiter().GetResult();
+    public void Request(string command, object? arguments = null, TimeSpan? limit = null) =>
+        Answer(command, Answered(Connection.RequestAsync(command, arguments ?? new DapEmpty(), TestContext.Current.CancellationToken)), limit);
+
+    private static async Task<bool> Answered(Task request)
+    {
+        await request;
+        return true;
+    }
+
+    /// <summary>The longest a request may go unanswered: launch and configurationDone start the program, and an evaluation
+    /// may run a method of it.</summary>
+    public static readonly TimeSpan RequestLimit = TimeSpan.FromSeconds(60);
+
+    private T Answer<T>(string command, Task<T> answer, TimeSpan? limit)
+    {
+        TimeSpan most = limit ?? RequestLimit;
+        try
+        {
+            return answer.WaitAsync(most, TestContext.Current.CancellationToken).GetAwaiter().GetResult();
+        }
+        catch (TimeoutException)
+        {
+            throw new TimeoutException($"The adapter left {command} unanswered for {most.TotalSeconds:0} s. {Heard()}");
+        }
+    }
 
     public DebugSession WithInitializeRequest()
     {
@@ -263,6 +288,10 @@ public sealed class DebugSession : IDisposable
             catch (ServerNotAvailableException) when (DateTime.UtcNow < limit)
             {
                 Thread.Sleep(50);
+            }
+            catch (ServerNotAvailableException never)
+            {
+                throw new TimeoutException($"The program started suspended (process {processId}) opened no diagnostic port in 10 s, so it could not be let go. {Heard()}", never);
             }
         }
     }

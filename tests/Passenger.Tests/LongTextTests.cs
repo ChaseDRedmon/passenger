@@ -15,7 +15,7 @@ namespace Passenger.Tests;
 /// laid out; carets stop at IntelliJ's thousand, and say so; and the sideways scroll is as wide as what is there.</summary>
 public sealed class LongTextTests : IDisposable
 {
-    private readonly string folder = Directory.CreateTempSubdirectory("passenger-long-").FullName;
+    private readonly string folder = TestFolders.Create("long-");
 
     public void Dispose() => TestFolders.Delete(folder);
 

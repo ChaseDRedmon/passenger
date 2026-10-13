@@ -21,7 +21,7 @@ namespace Passenger.Tests;
 /// management's versions are read from Directory.Packages.props.</summary>
 public sealed class PackagesTests : IDisposable
 {
-    private readonly string folder = Directory.CreateTempSubdirectory("passenger-nuget-").FullName;
+    private readonly string folder = TestFolders.Create("nuget-");
     private readonly string feed;
     private readonly string project;
 
