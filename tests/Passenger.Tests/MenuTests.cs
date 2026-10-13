@@ -17,6 +17,28 @@ public sealed class MenuTests : IDisposable
     public void Dispose() => TestFolders.Delete(folder);
 
     [AvaloniaFact]
+    public void Settings_applied_again_keep_the_menu_bar_macOS_was_given_with_each_menu_once()
+    {
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(folder);
+        Ui.Settle();
+        NativeMenu given = NativeMenu.GetMenu(window)!;
+        int menus = given.Items.Count;
+
+        // As a start does (the window keeping its settings) and as Settings' OK does.
+        window.ApplySettings(window.Settings);
+        window.ApplySettings(window.Settings);
+        Ui.Settle();
+
+        Assert.True(ReferenceEquals(given, NativeMenu.GetMenu(window)),
+            "The window was given a second menu bar, which macOS's menu exporter refuses, ending Passenger at start");
+        Assert.Equal(menus, given.Items.Count);
+        Assert.Equal(given.Items.OfType<NativeMenuItem>().Select(i => i.Header).Distinct().Count(), given.Items.OfType<NativeMenuItem>().Count());
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void The_menus_show_each_actions_shortcut_disable_what_cannot_run_and_run_what_is_chosen()
     {
         File.WriteAllText(Path.Combine(folder, "One.cs"), "class One { }\n");

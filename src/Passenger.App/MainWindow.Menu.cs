@@ -24,16 +24,23 @@ public partial class MainWindow
         MenuButton.IsVisible = !OperatingSystem.IsMacOS();
     }
 
-    /// <summary>The menus again, with the shortcuts in force now (after Settings changed the keymap).</summary>
+    /// <summary>The menus again, with the shortcuts in force now (after Settings changed the keymap). The window keeps the
+    /// one menu bar it was first given and only its items change: macOS's menu exporter refuses a second NativeMenu for
+    /// the same window ("The menu being updated does not match") and ended Passenger at start.</summary>
     private void BuildMenuBar()
     {
-        menuBar = new NativeMenu();
+        bool first = menuBar is null;
+        menuBar ??= new NativeMenu();
+        menuBar.Items.Clear();
         ActionContext context = actions!.Context();
         foreach (MenuEntry menu in MainMenu.Build(actions.All))
         {
             menuBar.Items.Add(NativeEntry(menu, context));
         }
-        NativeMenu.SetMenu(this, menuBar);
+        if (first)
+        {
+            NativeMenu.SetMenu(this, menuBar);
+        }
     }
 
     private NativeMenuItemBase NativeEntry(MenuEntry entry, ActionContext context)
