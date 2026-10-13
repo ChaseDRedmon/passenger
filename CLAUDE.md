@@ -47,7 +47,10 @@ Headless, the dispatcher's timers (the editor's hover, a caret's blink) fire onl
 never from running its queued jobs: a wait that needs one pumps a frame (`Screenshot.Pump`, `Ui.WaitFor` in tests).
 
 Builds land under `artifacts/` (`UseArtifactsOutput`), never beside the sources. Package versions live only in
-`Directory.Packages.props`; shared properties only in `Directory.Build.props`.
+`Directory.Packages.props`; shared properties only in `Directory.Build.props`. `Directory.Build.targets` gives every
+`ProjectReference` its full path, because the .NET 11 SDK opens a solution reached through a symbolic link (anywhere
+under macOS's `/tmp`) by the link while MSBuild resolves references from the real folder, which built each referenced
+project twice at once.
 
 **Look at UI changes.** After changing anything visible, run `just screenshot` and view the PNG at `--scale 2`
 before calling it done. The capture runs on Avalonia's headless platform with real Skia drawing, so it never opens a
@@ -58,8 +61,10 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.Core`: what every part shares and no UI needs. `ChildProcesses` starts every program Passenger runs (an
   input of its own, UTF-8, none of a git hook's variables, a log line when one fails or takes a while) and ends it with
   the IDE, a crash or a kill included (`Lifeline`: the runtime's job object on Windows; on macOS and Linux a process
-  group per child, which a watchdog shell kills once Passenger's pipe to it closes). `Dotnet`, `Programs` and
-  `ShellEnvironment` find the tools as the login shell would.
+  group per child, which a watchdog shell kills once Passenger's pipe to it closes). `DotnetCommand` builds without
+  MSBuild's server (which Stop could not reach) and in nodes salted to this IDE, which end with it. `Dotnet`,
+  `Programs` and `ShellEnvironment` find the tools as the login shell would; `PathNames` makes paths canonical
+  (`realpath`, or `GetFinalPathNameByHandle` on Windows) and answers `IsUnder` for every "is this inside that folder".
 - `src/Passenger.Text`: no UI. The rope (`Rope.cs`, an immutable B-tree, so every version is a
   thread-safe snapshot), `TextDocument` (undo, change events in LSP order), carets
   (`SelectionSet`) and every editing command as a pure function to an `EditPlan`.
@@ -68,11 +73,14 @@ window or takes the focus; it shows everything but the system's own window chrom
   Studio keymaps) and the highlighting contract (`IHighlighter`), with JetBrains Mono embedded.
 - `src/Passenger.Languages`: colour before any language server answers. C# is Roslyn's parser
   in-process, incremental and off the UI thread (`CSharpHighlighter`), classified from syntax
-  alone (`CSharpClassifier`); the language server's semantic colours will layer over it.
+  alone (`CSharpClassifier`); the language server's semantic colours layer over it. `CSharpHighlighter` is also each
+  open file's one syntax service (`OpenDocument.Syntax`: the newest tree, carried through the edits since): a feature
+  that reads C# syntax (templates, postfix, test marks, selection ranges, inline values) uses it, never a fresh parse.
 - `src/Passenger.Lsp`: the Language Server Protocol client (StreamJsonRpc over stdio) and the
   Roslyn language server it runs, downloaded per platform at build and copied beside the app under
   `roslyn/`. `RoslynSession` opens the folder's solution; `LspDocument` keeps one document in step
-  and makes requests in the editor's offsets.
+  and makes requests in the editor's offsets. A server that stops, restarts or refuses a request is one exception,
+  `LanguageServerFailed`, which callers catch; StreamJsonRpc's own types never leave the project.
 - `src/Passenger.App/CSharp`: the language server in the IDE. `CSharpService` runs Roslyn for the
   folder; `CSharpDocument` gives an open file its semantic colours and diagnostics; `CodeAssist`
   is completion, hover, signature help and the code actions (`app.code.*`), its popups on a layer
@@ -86,7 +94,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   `MainWindow.AddToolWindows`.
 - `src/Passenger.App/State`: the IDE's own state, in one `StateStore` under `PASSENGER_SETTINGS` or the user's local
   application data, kept only by the person's window: the app's documents at its top (`settings.json`, `layout.json`)
-  and each folder's under `workspaces/<name>-<hash>/` (editors and recent files, layout, breakpoints, bookmarks). A
+  and each folder's under `workspaces/<name>-<hash>/` (editors and recent files, layout, breakpoints, bookmarks, the
+  profiler's `snapshots/`). A
   `StateDocument` is a record that is an `IStateDocument`: its `Upgrades` from each older version and its `Clamped` value;
   it is written debounced off the UI thread through a temporary file, merged over the file so values it does not know
   stay, and a file that does not read is set aside as `.bad` and logged. New state is a document there, never a file of
@@ -110,7 +119,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   tool window and the keys it takes ahead of the IDE's.
 - `src/Passenger.App/Run` and `ToolWindows`: build and run through the .NET command line
   (`ProcessRunner` streams a process into a document; `BuildOutput` reads MSBuild's error lines),
-  and the bottom panel's Build, Run and Problems windows. `Workspace/SolutionModel` reads
+  and the bottom panel's Build, Run and Problems windows. Every console (Run, Build, Debug, the profiler's) is written
+  through `ConsoleSink`: a frame's output at a time, colour codes stripped whole across reads, the head trimmed past
+  Rider's 1024 KB, and what is typed into it sent to the program. `Workspace/SolutionModel` reads
   solutions and projects for the Explorer's Solution view.
 - `src/Passenger.App`: the shell. One window-wide keymap (`AppActions.cs`) routes IDE actions
   itself and editor actions to the focused editor. Explorer, editor tabs, files on disk.
@@ -144,7 +155,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   and every token exists in both the Dark and Light dictionaries.
 - **A malformed flag or value is fatal**, never a silent default (`LaunchOptions.cs`).
 - **Work off the UI thread that changes what is drawn goes through `BackgroundWork`**, so a
-  screenshot waits for it instead of capturing a half-finished frame.
+  screenshot waits for it instead of capturing a half-finished frame: `BackgroundWork.Run` rather than a bare
+  `Task.Run` (one that must not hold screenshots says why in a comment), and `Debounce` rather than a
+  `DispatcherTimer` for a pause before such work, since a headless timer never fires while a screenshot settles.
 - **One threading rule.** Controls, the documents editors show, controllers and views belong to the UI thread
   (controllers call `UiThread.Check()` in their entry points, which fails at once in a Debug build). The projects
   without UI (Text, Lsp, Dap, Debugger, Profiler) never reference Avalonia, and their events and callbacks come on
@@ -167,7 +180,23 @@ platform with real Skia text): a window or an editor, real key presses by Rider'
 own; a test says what a person would see or get ("an edit saved keeps the file's line endings",
 "typing never loses a word's colour"), and its failure message names the consequence. The long
 random editing session checks every key against a plain string model, which is what keeps the rope,
-the line index and undo honest; keep it passing rather than narrowing it.
+the line index and undo honest; keep it passing rather than narrowing it. One test of something a person sees or
+gets is worth more than many that restate the code they call: a test that only checks one type or function on its own
+is deleted, and what it covered tested through the window instead. `BannedSymbols.txt` makes that a build error
+(RS0030) for the internals tests used to drive directly (the terminal's emulator, a Roslyn or profiling session started
+by hand, a lone `TextDocument`, `LineDiff`, `CommitGraph`, `Snippet.Parse`); the editor rig in `Rig.cs` is the one
+exception.
+
+A run keeps to a folder of its own (`TestRun`, set up by a module initializer before anything starts): the IDE's state
+(`PASSENGER_SETTINGS`: its log, the language servers' logs, agents' sockets, profiler snapshots), every test's
+folders (`TestFolders.Create`) and the shells' history, with an empty Git configuration in place of the person's
+(`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM`). Nothing changes those variables afterwards; a test that needs fresh
+state gives the window a folder of its own (`MainWindow.StateFolder`). So a run never touches the person's settings,
+log, history or Git signing and hooks. After every window test, pass or fail, the windows it left open are closed,
+what they started is waited out and its folders are removed (`TestsLeaveNothingBehind`), so one failure never
+cascades into the next test's waits. The run sets its own nice value to 0 when it starts below it (GitHub's macOS
+runner starts at −10), since MSBuild keeps no idle node at any other; a test that needs one skips, saying why, when
+the run is above 0 and cannot come down (`Nice`).
 
 The debugger's tests (`tests/Passenger.Tests/Debugging`) run the adapter from the tests' own `debugger/` folder, as
 the IDE does, and launch or attach to the programs in `tests/Debuggees`, whose lines and columns (tabs included) they
@@ -175,8 +204,10 @@ stop at: moving a line there means moving the tests that name it. They run one a
 tests' sessions and the IDE's alike.
 
 The MCP server's tests (`McpTests`) are agents using the SDK's own client: one starts `Passenger --mcp` and debugs a
-project through it, others attach to a window with `--mcp-attach` (its sockets under the tests' own
+project through it, others attach to a window with `--mcp-attach` (its sockets under the run's
 `PASSENGER_SETTINGS`) and change what the window shows, once it lets them in and the person answers its questions.
+An agent that gives up on a call sends the protocol's "cancelled" notification itself (`CallGivingUp`): the C# SDK's
+client can drop its own when the call's token is cancelled.
 
 ## Code style
 
