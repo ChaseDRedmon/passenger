@@ -194,7 +194,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   parsed off the UI thread, an open file's from its own parse (`TestsAtCaret.Read` is the one reading of a file's
   tests), changed ones through the folder watcher; discovery and runs merge into those rows by id.
   `MainWindow.Tests.cs` wires it.
-- Find in Files is `Navigation/FindInFilesPopup`; Rider's scopes (Solution, Project, Directory, Scope) and file mask are
+- `src/Passenger.App/Navigation`: Recent Files and the Go to popups, `NavigationHistory` (Back and Forward, the places
+  edited for Last and Next Edit Location, and those Recent Locations lists, carried through edits) and
+  `RecentLocationsPopup`; `MainWindow.Places.cs` records the places visited and edited. Base and Derived Symbols use the
+  server's type hierarchy, references and implementations, since Roslyn has no go-to-base request
+  (`CSharp/Declarations.cs`). Find in Files is `Navigation/FindInFilesPopup`; Rider's scopes (Solution, Project, Directory, Scope) and file mask are
   `Workspace/SearchScope.cs`, which `MainWindow.Search.cs` turns into files (`ScopeOf` for Solution view rows).
 - `src/Passenger.App/Workspace`: `SolutionModel` reads solutions and projects for the Explorer's Solution view, and
   `SolutionEdits` is every change to a .sln or .slnx (solution folders, the files they list, projects in and out): a
@@ -207,7 +211,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   `EditorConfig` reads the .editorconfig files over a file (its own parser and globs); `FileIndent` picks a file's
   indent (its .editorconfig, else `Indentation.Detect` on its lines, else its language) and names it in the status bar;
   `OpenDocument.Save` applies the save-time properties. Every edit from the language server goes through
-  `LineEndings.Fit`, then `Indentation.Fit`.
+  `LineEndings.Fit`, then `Indentation.Fit`. `OpenDocument` keeps how its file is stored, encoding, BOM and
+  `LineSeparator` (a CR file's breaks are held as '\n' and written as '\r'); the status bar's widgets and File > File
+  Encoding / Line Separators change them (`MainWindow.FileProperties.cs`), each one undoable step, a choice winning
+  over .editorconfig's while the file is open. `FileEncoding` lists the encodings; `EncodingChange` weighs Reload
+  against Convert as Rider's EncodingUtil does.
 - `src/Passenger.App`: the shell. Explorer, editor tabs, files on disk. Each action is an `IdeAction` (id, title,
   group, menu places, `Run`, `WhyNot`, whether its keys work while the terminal has them) that its feature adds to the
   window's `ActionRegistry`: `MainWindow.Actions.cs` for the window's own, a partial's or controller's `Add…Actions`
@@ -320,7 +328,9 @@ an update gives its window the updater of a copy installed in a test folder, and
 what they started is waited out and its folders are removed (`TestsLeaveNothingBehind`), so one failure never
 cascades into the next test's waits. The run sets its own nice value to 0 when it starts below it (GitHub's macOS
 runner starts at −10), since MSBuild keeps no idle node at any other; a test that needs one skips, saying why, when
-the run is above 0 and cannot come down (`Nice`).
+the run is above 0 and cannot come down (`Nice`). MSBuild itself sometimes keeps no node (a race as a build ends, or
+more than 1.5 nodes a processor running machine-wide): a test that needs one waits for the count
+(`Processes.MSBuildNodesCounted`), builds again, or skips saying why.
 
 The debugger's tests (`tests/Passenger.Tests/Debugging`) run the adapter from the tests' own `debugger/` folder, as
 the IDE does, and launch or attach to the programs in `tests/Debuggees`, whose lines and columns (tabs included) they
