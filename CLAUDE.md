@@ -48,7 +48,8 @@ artifacts/bin/Passenger.App/debug/Passenger . --file src/Passenger.App/App.axaml
     --screenshot out.png --size 1400x880 --scale 2 --crop 320,76,900,500 --theme light
 ```
 
-`--key` takes "cmd+shift+L" or Rider's "meta shift L"; `--drag X1,Y1,X2,Y2` drags (`--drag-hold` keeps the button down,
+A step after one that opens a dialog goes to that dialog, as a person's keys and clicks would. `--key` takes
+"cmd+shift+L" or Rider's "meta shift L"; `--drag X1,Y1,X2,Y2` drags (`--drag-hold` keeps the button down,
 to capture a tool window over its drop place); `--crop X,Y,W,H`, `--click X,Y` and `--hover X,Y` (the
 pointer left to rest, for a hover card) are in logical units; `--wait MS` gives a running program time.
 
@@ -141,11 +142,20 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.App/Settings`: `AppSettings` (the store's `settings.json`) and Rider's searchable `SettingsDialog`;
   `MainWindow.Settings.cs` applies them live. A new setting is a property, an option row in the dialog, a line in
   `ApplySettings`, and its range in `Clamped` when it has one.
-- `src/Passenger.App/Updates`: the update check. `Releases` asks GitHub's releases/latest (a GET naming Passenger and its
-  version, nothing else) and offers a release newer than `Product.Version`, never a draft or pre-release, linking this
-  system's download by the release's fixed names; `UpdatesState` (`updates.json`) keeps the version announced.
-  `MainWindow.Updates.cs` is the status bar's notice, Check for Updates (`app.checkForUpdates`) and the person's
-  window's check on start and daily while Settings' Check for updates is on.
+- `src/Passenger.App/Updates`: the update check and the update. `Releases` asks GitHub's releases/latest (a GET naming
+  Passenger and its version, nothing else) and offers a release newer than `Product.Version`, never a draft or
+  pre-release; its files download over HTTPS only (`Downloads.cs`), checked against the SHA-256 the same release gives.
+  `Updater` is how this copy installs one, only for a copy its installer or disk image put in place
+  (`Updater.OfThisCopy`): `VelopackUpdater` on Windows (the release's `releases.<rid>.json`, full packages only) and
+  `DiskImageUpdater` on macOS (the release's disk image checked against SHA256SUMS and its app by codesign, swapped in
+  as the process ends). Every other copy (`just run`, tests, `--mcp`, screenshots) only links the download.
+  `UpdatesState` (`updates.json`) keeps the version announced and the one being installed. `MainWindow.Updates.cs`
+  is the status bar's notice, Check for Updates, Restart to Update and the daily check while Settings' Check for
+  updates is on; `Program.Main` installs a ready update last.
+- `src/Passenger.App/Templates`: New Solution and Add > New Project. `ProjectTemplates` reads `dotnet new`'s installed
+  templates once per SDK from its own cache (`templatecache.json`, refreshed by `dotnet new list`) and each template's
+  `ide.host.json` for the options an IDE shows; `NewProjectDialog` is Rider's New Project dialog;
+  `MainWindow.NewProject.cs` opens a new solution through `Open` and adds a project through `SolutionEdits`.
 - `src/Passenger.Profiler`: the profiler with no UI. `ProfilingSession` starts a program held at a diagnostic port of
   its own and streams EventPipe to a .nettrace; `Snapshot` reads it (TraceEvent) into call trees and hot spots.
   `App/Profiling` is the window (`ProfilerView`, `FlameGraph`), `MainWindow.Profiler.cs` the Profile action.
@@ -227,7 +237,10 @@ window or takes the focus; it shows everything but the system's own window chrom
 - **No Avalonia Accelerate components** (TreeDataGrid and the rest need a paid licence).
 - **Every program Passenger starts goes through `ChildProcesses`** (`Command` or `DotnetCommand`, then `Start` or
   `RunAsync`; `Kill` ends it with all it started), so none outlives the IDE. Only the terminal's shell (Porta.Pty's,
-  ended by its pseudo-terminal's hangup) and vstest.console (VSTest's, which watches the IDE) start elsewhere.
+  ended by its pseudo-terminal's hangup), vstest.console (VSTest's, which watches the IDE) and, on Windows, Velopack's
+  Update.exe (started as Passenger closes with an update ready, since it must outlive Passenger to replace it) start
+  elsewhere. macOS's update runs nothing after Passenger: it swaps the app in as the process ends and starts the new
+  one through LaunchServices (`open`, through ChildProcesses).
 - **Every dependency, icon or asset** has an open-source licence and an entry in `THIRD_PARTY_NOTICES.md`, added in the
   same change that brings it in: a package by its NuGet id in backticks, with its licence and copyright as the package
   states them (`just notices`, and CI, fail on one missing), copied source by its file with the project it came from.
@@ -278,7 +291,8 @@ folders (`TestFolders.Create`) and the shells' history, with an empty Git config
 (`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM`). Nothing changes those variables afterwards; a test that needs fresh
 state gives the window a folder of its own (`MainWindow.StateFolder`). So a run never touches the person's settings,
 log, history or Git signing and hooks. No test reaches GitHub: the run points `PASSENGER_RELEASES` at a dead loopback
-address, and a test that needs releases gives its window a `Releases` feed of its own (`UpdatesTests`). After every window test, pass or fail, the windows it left open are closed,
+address, and a test that needs releases gives its window a `Releases` feed of its own (`UpdatesTests`); one that tests
+an update gives its window the updater of a copy installed in a test folder, and no other window has one. After every window test, pass or fail, the windows it left open are closed,
 what they started is waited out and its folders are removed (`TestsLeaveNothingBehind`), so one failure never
 cascades into the next test's waits. The run sets its own nice value to 0 when it starts below it (GitHub's macOS
 runner starts at −10), since MSBuild keeps no idle node at any other; a test that needs one skips, saying why, when
