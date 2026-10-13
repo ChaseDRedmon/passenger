@@ -11,8 +11,8 @@ namespace Passenger.App;
 
 /// <summary>The Explorer's file operations, as Rider's: New File, New Folder and New Class where a row holds things,
 /// Rename and Delete (to the Trash) for what is on disk, though a project's Delete takes it out of the solution, Copy
-/// Path and Reveal. The open tabs follow a rename and close with a delete, and the Explorer, the file index and Git are
-/// read again after.</summary>
+/// Path and Reveal; the solution's own folders' are in MainWindow.Solution.cs. The open tabs follow a rename and close
+/// with a delete, and the Explorer, the file index and Git are read again after.</summary>
 public partial class MainWindow
 {
     private void AddFileOperations()
@@ -33,6 +33,27 @@ public partial class MainWindow
         };
         switch (action)
         {
+            case ExplorerAction.NewSolutionFolder when node.Kind is NodeKind.Solution or NodeKind.SolutionFolder:
+                AskName("New Solution Folder", string.Empty, name => AddSolutionFolder(node.SolutionPath, name));
+                break;
+            case ExplorerAction.AddExistingProject when node.Kind is NodeKind.Solution or NodeKind.SolutionFolder:
+                await AddExistingProjectsAsync(node.SolutionPath);
+                break;
+            case ExplorerAction.AddExistingItem when node is { Kind: NodeKind.SolutionFolder, SolutionPath: { } holding }:
+                await AddExistingItemsAsync(holding);
+                break;
+            case ExplorerAction.Rename when node is { Kind: NodeKind.SolutionFolder, SolutionPath: { } renaming }:
+                AskName("Rename Solution Folder", node.Name, name => RenameSolutionFolder(renaming, name));
+                break;
+            case ExplorerAction.Delete when node is { Kind: NodeKind.SolutionFolder, SolutionPath: { } removing }:
+                await RemoveSolutionFolderAsync(removing);
+                break;
+            case ExplorerAction.Delete when node is { IsSolutionItem: true, SolutionPath: { } holder } && path is not null:
+                await RemoveSolutionItemAsync(holder, path);
+                break;
+            case ExplorerAction.RunTests or ExplorerAction.DebugTests:
+                RunProjectTests([.. Explorer.SelectedNodes.Append(node).Distinct().SelectMany(Explorer.Tree.ProjectsOf).Distinct()], node.Name, action == ExplorerAction.DebugTests);
+                break;
             case ExplorerAction.NewFile when into is not null:
                 AskName("New File", string.Empty, name => CreateFile(into, name, string.Empty));
                 break;
@@ -69,8 +90,8 @@ public partial class MainWindow
                 break;
             case ExplorerAction.Build or ExplorerAction.Rebuild or ExplorerAction.Clean:
                 BuildKind kind = action switch { ExplorerAction.Rebuild => BuildKind.Rebuild, ExplorerAction.Clean => BuildKind.Clean, _ => BuildKind.Build };
-                // A project's menu builds every project chosen with it; the solution's, the solution.
-                Build(kind, node.Kind == NodeKind.Project ? SelectedProjects() : null);
+                // A project's or solution folder's menu builds every project chosen with it; the solution's, the solution.
+                Build(kind, node.Kind is NodeKind.Project or NodeKind.SolutionFolder ? SelectedProjects() : null);
                 break;
         }
     }
@@ -205,14 +226,11 @@ public partial class MainWindow
         {
             return false;
         }
-        string? problem = await DotnetAsync(folder, ["sln", solution.Path, "remove", project]);
-        if (problem is not null)
+        if (EditSolution(file => SolutionEdits.RemoveProject(file, project), $"Removed {name} from {solution.Name}") is { } problem)
         {
             StatusText.Text = $"{name} could not be removed: {problem}";
             return false;
         }
-        ReloadSolution();
-        StatusText.Text = $"Removed {name} from {solution.Name}";
         string own = PathNames.Canonical(Path.GetDirectoryName(project)!);
         bool apart = !PathNames.Within(folder, own) && !PathNames.Within(solution.Path, own) && !Projects.Any(p => PathNames.Within(p.Path, own));
         if (apart && await Confirm("Delete Project Files", $"Also move the folder {Path.GetFileName(own)} and everything in it to the Trash?", "Move to Trash"))
@@ -221,20 +239,6 @@ public partial class MainWindow
         }
         return true;
     }
-
-    /// <summary>Runs the .NET command line to its end, off the UI thread: null when it succeeded, else what it said.</summary>
-    private static Task<string?> DotnetAsync(string folder, IReadOnlyList<string> arguments) => BackgroundWork.Run<string?>(async () =>
-    {
-        try
-        {
-            ChildResult result = await ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(arguments, folder));
-            return result.Succeeded ? null : $"{result.Error}{result.Output}".Trim();
-        }
-        catch (Exception failed) when (failed is System.ComponentModel.Win32Exception or FileNotFoundException or InvalidOperationException)
-        {
-            return failed.Message;
-        }
-    });
 
     /// <summary>Deletes a file or folder to the Trash, once asked (unless it was already); its open files close without
     /// saving once it is gone, and keep their edits when it could not go.</summary>

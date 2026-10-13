@@ -601,10 +601,11 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>The projects Build Selected Projects means: those chosen in the Explorer, else the active file's.</summary>
+    /// <summary>The projects Build Selected Projects means: those chosen in the Explorer (a solution folder's, those under
+    /// it), else the active file's.</summary>
     public IReadOnlyList<string> SelectedProjects()
     {
-        List<string> chosen = [.. Explorer.SelectedNodes.Where(n => n.Kind == Passenger.App.Explorer.NodeKind.Project && n.Path is not null).Select(n => n.Path!)];
+        List<string> chosen = [.. Explorer.SelectedNodes.SelectMany(Explorer.Tree.ProjectsOf).Distinct()];
         if (chosen.Count == 0 && Editors.Active is { } file && ProjectOf(file.Path) is { } owner)
         {
             chosen.Add(owner.Path);
@@ -698,6 +699,7 @@ public partial class MainWindow : Window
         {
             Action = AppActions.FocusExplorer,
             HeaderTools = Explorer.TakeHeaderTools(),
+            Chosen = () => Explorer.SelectedNodes,
             Activate = () =>
             {
                 Dock.Show("explorer");
@@ -1233,10 +1235,16 @@ public partial class MainWindow : Window
         menu.ShowAt(editor, showAtPointer: true);
     }
 
-    /// <summary>Rider's Run (or Debug) Unit Tests in context: the Unit Tests window's chosen rows when it has the
-    /// keys, else the test method or class at the editor's caret, found once the tests have been.</summary>
+    /// <summary>Rider's Run (or Debug) Unit Tests in context: the Unit Tests window's chosen rows when it has the keys, the
+    /// projects chosen in the Explorer (a solution folder's, those under it) when it has them, else the test method or
+    /// class at the editor's caret, found once the tests have been.</summary>
     private void RunTestsInContext(ActionContext context, bool debug, bool untilFailure = false)
     {
+        if (!untilFailure && ChosenProjects(context) is { } projects)
+        {
+            RunProjectTests(projects, Explorer.Selected?.Name ?? "the projects chosen", debug);
+            return;
+        }
         if (ChosenTests(context) is { } chosen)
         {
             if (untilFailure)

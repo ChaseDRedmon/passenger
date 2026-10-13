@@ -4,7 +4,7 @@ using Passenger.Core;
 
 namespace Passenger.App.Workspace;
 
-/// <summary>A solution as its files say it is: its folders and projects from the .slnx or .sln, and
+/// <summary>A solution as its files say it is: its folders, their files and its projects from the .slnx or .sln, and
 /// each SDK-style project's own declarations (output type, target frameworks, packages, project
 /// references) from its project file. Read directly, without MSBuild: enough for the Solution view
 /// and to know what can run. Evaluation proper (conditions, imports, globbing rules) belongs to the
@@ -62,7 +62,7 @@ public sealed record SolutionModel(string Path, string Name, IReadOnlyList<Solut
         {
             AddSlnx(element, root, entries);
         }
-        return new SolutionModel(path, System.IO.Path.GetFileNameWithoutExtension(path), entries);
+        return new SolutionModel(path, System.IO.Path.GetFileNameWithoutExtension(path), Placed(entries, "/"));
     }
 
     private static void AddSlnx(XElement element, string root, List<SolutionEntry> into)
@@ -71,56 +71,77 @@ public sealed record SolutionModel(string Path, string Name, IReadOnlyList<Solut
         {
             into.Add(ProjectModel.Load(System.IO.Path.Combine(root, relative.Replace('\\', '/'))));
         }
-        else if (element.Name.LocalName == "Folder" && element.Attribute("Name")?.Value is { } name)
+        else if (element.Name.LocalName == "File" && element.Attribute("Path")?.Value is { } file)
         {
-            List<SolutionEntry> children = [];
+            into.Add(SolutionItem.At(System.IO.Path.Combine(root, file.Replace('\\', '/'))));
+        }
+        else if (element.Name.LocalName == "Folder" && element.Attribute("Name")?.Value is { } name
+            && name.Split('/', StringSplitOptions.RemoveEmptyEntries) is { Length: > 0 } parts)
+        {
+            // A folder named "/src/tools/" is "tools" inside "src": slnx writes the whole path on each.
+            List<SolutionEntry> level = into;
+            foreach (string part in parts)
+            {
+                SolutionFolder? folder = level.OfType<SolutionFolder>().FirstOrDefault(f => f.Name == part);
+                if (folder is null)
+                {
+                    folder = new SolutionFolder(part, string.Empty, []);
+                    level.Add(folder);
+                }
+                level = folder.Children;
+            }
             foreach (XElement child in element.Elements())
             {
-                AddSlnx(child, root, children);
-            }
-            // A folder named "/src/tools/" is "tools" inside "src": slnx writes the whole path on each.
-            string[] parts = name.Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
-            List<SolutionEntry> level = into;
-            for (int i = 0; i < parts.Length - 1; i++)
-            {
-                SolutionFolder? parent = level.OfType<SolutionFolder>().FirstOrDefault(f => f.Name == parts[i]);
-                if (parent is null)
-                {
-                    parent = new SolutionFolder(parts[i], []);
-                    level.Add(parent);
-                }
-                level = parent.Children;
-            }
-            SolutionFolder? existing = level.OfType<SolutionFolder>().FirstOrDefault(f => f.Name == parts[^1]);
-            if (existing is null)
-            {
-                level.Add(new SolutionFolder(parts[^1], children));
-            }
-            else
-            {
-                existing.Children.AddRange(children);
+                AddSlnx(child, root, level);
             }
         }
     }
+
+    /// <summary>The folders given their paths in the solution ("/src/tools/"), known only once the whole file is read.</summary>
+    private static List<SolutionEntry> Placed(List<SolutionEntry> entries, string parent) =>
+        [.. entries.Select(entry => entry is SolutionFolder folder
+            ? folder with { Path = $"{parent}{folder.Name}/", Children = Placed(folder.Children, $"{parent}{folder.Name}/") }
+            : entry)];
 
     private static SolutionModel LoadSln(string path)
     {
         string root = System.IO.Path.GetDirectoryName(path)!;
         Regex project = new(@"^Project\(""\{(?<type>[^}]+)\}""\)\s*=\s*""(?<name>[^""]*)"",\s*""(?<path>[^""]*)"",\s*""\{(?<id>[^}]+)\}""");
         Regex nesting = new("""^\s*\{(?<child>[^}]+)\}\s*=\s*\{(?<parent>[^}]+)\}""");
+        Regex item = new(@"^\s*[^=]*?\s*=\s*(?<path>.+?)\s*$");
         Dictionary<string, SolutionEntry> byId = new(StringComparer.OrdinalIgnoreCase);
         Dictionary<string, string> parents = new(StringComparer.OrdinalIgnoreCase);
         List<string> order = [];
         bool inNesting = false;
+        SolutionFolder? inItems = null;
+        SolutionFolder? declaring = null;
         foreach (string line in SharedRead.Lines(path))
         {
             if (project.Match(line) is { Success: true } m)
             {
                 string id = m.Groups["id"].Value;
-                byId[id] = m.Groups["type"].Value.Equals(SolutionFolderType, StringComparison.OrdinalIgnoreCase)
-                    ? new SolutionFolder(m.Groups["name"].Value, [])
-                    : ProjectModel.Load(System.IO.Path.Combine(root, m.Groups["path"].Value.Replace('\\', '/')));
+                declaring = m.Groups["type"].Value.Equals(SolutionFolderType, StringComparison.OrdinalIgnoreCase)
+                    ? new SolutionFolder(m.Groups["name"].Value, string.Empty, [])
+                    : null;
+                byId[id] = declaring ?? (SolutionEntry)ProjectModel.Load(System.IO.Path.Combine(root, m.Groups["path"].Value.Replace('\\', '/')));
                 order.Add(id);
+            }
+            else if (declaring is not null && line.Contains("ProjectSection(SolutionItems)", StringComparison.Ordinal))
+            {
+                inItems = declaring;
+            }
+            else if (inItems is not null && line.Contains("EndProjectSection", StringComparison.Ordinal))
+            {
+                inItems = null;
+            }
+            else if (inItems is not null && item.Match(line) is { Success: true } file)
+            {
+                // Visual Studio's Solution Items: "README.md = README.md", the path relative to the solution on each side.
+                inItems.Children.Add(SolutionItem.At(System.IO.Path.Combine(root, file.Groups["path"].Value.Replace('\\', '/'))));
+            }
+            else if (line.StartsWith("EndProject", StringComparison.Ordinal) && !line.StartsWith("EndProjectSection", StringComparison.Ordinal))
+            {
+                declaring = null;
             }
             else if (line.Contains("GlobalSection(NestedProjects)", StringComparison.Ordinal))
             {
@@ -147,7 +168,7 @@ public sealed record SolutionModel(string Path, string Name, IReadOnlyList<Solut
                 top.Add(byId[id]);
             }
         }
-        return new SolutionModel(path, System.IO.Path.GetFileNameWithoutExtension(path), top);
+        return new SolutionModel(path, System.IO.Path.GetFileNameWithoutExtension(path), Placed(top, "/"));
     }
 
     private static IEnumerable<ProjectModel> Flatten(SolutionEntry entry) => entry switch
@@ -160,7 +181,19 @@ public sealed record SolutionModel(string Path, string Name, IReadOnlyList<Solut
 
 public abstract record SolutionEntry(string Name);
 
-public sealed record SolutionFolder(string Name, List<SolutionEntry> Children) : SolutionEntry(Name);
+/// <summary>A folder of the solution's own, which is in no folder on disk: its path in the solution ("/src/tools/", as a
+/// .slnx names it), which is how <see cref="SolutionEdits"/> finds it, and the projects, folders and files it holds.</summary>
+public sealed record SolutionFolder(string Name, string Path, List<SolutionEntry> Children) : SolutionEntry(Name);
+
+/// <summary>A file a solution folder holds (Visual Studio's Solution Items), by its canonical path.</summary>
+public sealed record SolutionItem(string Name, string Path) : SolutionEntry(Name)
+{
+    public static SolutionItem At(string path)
+    {
+        string full = PathNames.Canonical(path);
+        return new SolutionItem(System.IO.Path.GetFileName(full), full);
+    }
+}
 
 /// <summary>One project, from its project file's own declarations.</summary>
 public sealed record ProjectModel(

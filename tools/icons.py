@@ -44,6 +44,9 @@ ICONS = [
     ("Rerun", "Arrow Clockwise", "20_regular"),
     ("Clear", "Delete", "20_regular"),
     ("Solution", "Grid", "20_regular"),
+    # A solution folder is the solution's, in no folder on disk: the folder filled, where a disk folder's is an outline.
+    ("SolutionFolder", "Folder", "20_filled"),
+    ("SolutionFolderOpen", "Folder Open", "20_filled"),
     ("Project", "Box", "20_regular"),
     ("Package", "Box Multiple", "20_regular"),
     ("Reference", "Link", "20_regular"),

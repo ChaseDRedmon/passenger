@@ -6,12 +6,14 @@ namespace Passenger.App.Explorer;
 
 /// <summary>The icon and tint a file or folder is drawn with: a folder, a code document or a plain
 /// one, tinted by kind from the theme's <c>Passenger.File.*</c> tokens so C# reads apart from XML
-/// at a glance, as Rider's file-type icons do.</summary>
+/// at a glance, as Rider's file-type icons do. A solution folder has its own, as Rider's does, so it
+/// never passes for a folder on disk.</summary>
 public static class FileIcons
 {
     public static Geometry For(ExplorerNode node) => Find<Geometry>(node.Kind switch
     {
-        NodeKind.Folder or NodeKind.SolutionFolder => node.IsExpanded ? "Icon.FolderOpen" : "Icon.Explorer",
+        NodeKind.Folder => node.IsExpanded ? "Icon.FolderOpen" : "Icon.Explorer",
+        NodeKind.SolutionFolder => node.IsExpanded ? "Icon.SolutionFolderOpen" : "Icon.SolutionFolder",
         NodeKind.Solution => "Icon.Solution",
         NodeKind.Project or NodeKind.ProjectReference => "Icon.Project",
         NodeKind.Dependencies or NodeKind.Package => "Icon.Package",
@@ -21,7 +23,8 @@ public static class FileIcons
 
     public static IBrush BrushFor(ExplorerNode node) => Find<IBrush>(node.Kind switch
     {
-        NodeKind.Folder or NodeKind.SolutionFolder => "Passenger.File.Folder",
+        NodeKind.Folder => "Passenger.File.Folder",
+        NodeKind.SolutionFolder => "Passenger.File.SolutionFolder",
         NodeKind.Solution => "Passenger.File.Project",
         NodeKind.Project => "Passenger.File.CSharp",
         NodeKind.Dependencies or NodeKind.Package or NodeKind.Framework or NodeKind.ProjectReference => "Passenger.File.Plain",

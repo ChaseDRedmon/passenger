@@ -20,7 +20,7 @@ public enum NodeKind
     ProjectReference,
 }
 
-/// <summary>The Explorer's tree, in either of Rider's two views: the Solution (folders and projects,
+/// <summary>The Explorer's tree, in either of Rider's two views: the Solution (its folders with their files, and projects,
 /// each project's dependencies and its files) or the File System. Flattened into the rows currently
 /// visible, so a virtualizing list draws only what is on screen; a node's children are made the first
 /// time it opens.</summary>
@@ -69,7 +69,7 @@ public sealed class ExplorerTree
         this.solution = solution;
         int count = solution.Projects.Count();
         ExplorerNode root = new(NodeKind.Solution, solution.Name, solution.Path, 0, false,
-            node => solution.Entries.Select(e => Entry(e, node.Depth + 1)).ToList(),
+            node => Entries(solution.Entries, node.Depth + 1, null),
             $"{count} project{(count == 1 ? "" : "s")}");
         Show(root);
     }
@@ -203,7 +203,8 @@ public sealed class ExplorerTree
                 .FirstOrDefault(c => c.Path == full || c.Kind switch
                 {
                     NodeKind.Project => owner is not null && c.Path == owner,
-                    NodeKind.SolutionFolder => owner is not null && c.Contains(owner),
+                    // A file no project holds may be one a solution folder does.
+                    NodeKind.SolutionFolder => c.Contains(owner ?? full),
                     _ => c.Contains(full),
                 });
             if (next is null)
@@ -226,13 +227,42 @@ public sealed class ExplorerTree
     /// <summary>The projects unloaded, by path: shown dimmed, with nothing under them.</summary>
     public ISet<string> Unloaded { get; } = new HashSet<string>(StringComparer.Ordinal);
 
-    private ExplorerNode Entry(SolutionEntry entry, int depth) => entry switch
+    /// <summary>A level of the solution as Rider's Solution view sorts it, whatever order the file declares: its folders,
+    /// then its projects, then the files a folder holds, each by name.</summary>
+    private List<ExplorerNode> Entries(IEnumerable<SolutionEntry> entries, int depth, string? folder) =>
+        [.. entries
+            .OrderBy(e => e switch { SolutionFolder => 0, ProjectModel => 1, _ => 2 })
+            .ThenBy(e => e.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(e => Entry(e, depth, folder))];
+
+    private ExplorerNode Entry(SolutionEntry entry, int depth, string? parent) => entry switch
     {
         SolutionFolder folder => new ExplorerNode(NodeKind.SolutionFolder, folder.Name, null, depth, false,
-            node => folder.Children.Select(c => Entry(c, node.Depth + 1)).ToList()),
+            node => Entries(folder.Children, node.Depth + 1, folder.Path)) { SolutionPath = folder.Path },
         ProjectModel project => Project(project, depth),
+        SolutionItem item => new ExplorerNode(NodeKind.File, item.Name, item.Path, depth, !File.Exists(item.Path), null) { SolutionPath = parent },
         _ => throw new InvalidOperationException($"Unknown solution entry {entry}"),
     };
+
+    /// <summary>The projects a row stands for: a project, or the loaded ones anywhere under a solution folder.</summary>
+    public IEnumerable<string> ProjectsOf(ExplorerNode node) => node.Kind switch
+    {
+        NodeKind.Project when node.Path is { } project => [project],
+        NodeKind.SolutionFolder => (node.Children ?? []).SelectMany(ProjectsOf).Where(p => !Unloaded.Contains(p)),
+        _ => [],
+    };
+
+    /// <summary>Opens the solution folders down to one (by its path in the solution) and returns its row.</summary>
+    public ExplorerNode? RevealSolutionFolder(string path)
+    {
+        ExplorerNode? node = Root;
+        while (node is not null && node.SolutionPath != path)
+        {
+            Expand(node);
+            node = node.Children?.FirstOrDefault(c => c.Kind == NodeKind.SolutionFolder && path.StartsWith(c.SolutionPath!, StringComparison.Ordinal));
+        }
+        return node;
+    }
 
     private ExplorerNode Project(ProjectModel project, int depth) => Unloaded.Contains(project.Path)
         ? new(NodeKind.Project, project.Name, project.Path, depth, dimmed: true, null, "(unloaded)")
@@ -325,6 +355,13 @@ public sealed class ExplorerNode : Observable
 
     /// <summary>A quieter word beside the name: a package's version, a project's frameworks.</summary>
     public string? Detail { get; }
+
+    /// <summary>Where the row is among the solution's own folders: a solution folder's path in the solution ("/src/tools/"),
+    /// or for a file one holds, that folder's; null for every other row.</summary>
+    public string? SolutionPath { get; init; }
+
+    /// <summary>A file the solution lists in a solution folder (Solution Items), rather than one of a project or folder.</summary>
+    public bool IsSolutionItem => Kind == NodeKind.File && SolutionPath is not null;
 
     public bool HasChildren => load is not null;
     public bool IsDirectory => Kind == NodeKind.Folder;

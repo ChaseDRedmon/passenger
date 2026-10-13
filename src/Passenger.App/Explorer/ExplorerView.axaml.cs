@@ -20,6 +20,11 @@ public enum ExplorerAction
     EditProjectFile,
     Unload,
     Reload,
+    NewSolutionFolder,
+    AddExistingProject,
+    AddExistingItem,
+    RunTests,
+    DebugTests,
 }
 
 public partial class ExplorerView : UserControl
@@ -34,11 +39,17 @@ public partial class ExplorerView : UserControl
         {
             if (Rows.SelectedItem is ExplorerNode node && Menu(node) is { } menu)
             {
+                OpenMenu?.Close();
+                OpenMenu = menu;
+                menu.Closed += (_, _) => OpenMenu = OpenMenu == menu ? null : OpenMenu;
                 menu.Open(Rows);
                 e.Handled = true;
             }
         };
     }
+
+    /// <summary>The row's right-click menu while it is open.</summary>
+    public ContextMenu? OpenMenu { get; private set; }
 
     /// <summary>A file chosen with a double-click or Enter.</summary>
     public event EventHandler<string>? FileOpened;
@@ -65,10 +76,10 @@ public partial class ExplorerView : UserControl
     /// <summary>Reads the folder again, keeping the folders that were open open and the chosen row chosen.</summary>
     public void Refresh()
     {
-        // A row is known by its path, or (a solution folder, the dependencies) by where it is and what it is called.
-        static string Key(ExplorerNode row) => row.Path ?? $"{row.Depth}/{row.Kind}/{row.Name}";
+        // A row is known by its path, a solution folder by its path in the solution, the dependencies by where they are.
+        static string Key(ExplorerNode row) => (row.Kind == NodeKind.SolutionFolder ? row.SolutionPath : row.Path) ?? $"{row.Depth}/{row.Kind}/{row.Name}";
         List<(int Depth, string Key)> open = [.. Tree.Rows.Where(r => r.IsExpanded).Select(r => (r.Depth, Key(r)))];
-        string? chosen = Selected?.Path;
+        string? chosen = Selected is { } selected ? Key(selected) : null;
         Show(Tree.IsSolutionView);
         // Outermost first, so each opens inside one already open.
         foreach ((_, string key) in open.OrderBy(o => o.Depth))
@@ -78,36 +89,62 @@ public partial class ExplorerView : UserControl
                 Tree.Expand(row);
             }
         }
-        if (chosen is not null && Tree.Rows.FirstOrDefault(r => r.Path == chosen) is { } again)
+        if (chosen is not null && Tree.Rows.FirstOrDefault(r => Key(r) == chosen) is { } again)
         {
             Rows.SelectedItem = again;
         }
     }
 
-    /// <summary>Rider's menu for a row: Build, Rebuild and Clean for the solution or the projects chosen, a project's
-    /// packages, file and unloading, New (a file, a folder, a class) where things can go, Rename and Delete for what is on
-    /// disk, and its path.</summary>
+    /// <summary>Opens the solution folders down to one (by its path in the solution) and chooses it, or what it holds at a
+    /// path, opening it for that, or when asked to.</summary>
+    public void RevealSolutionFolder(string path, bool open = false, string? child = null)
+    {
+        if (Tree.RevealSolutionFolder(path) is not { } node)
+        {
+            return;
+        }
+        if (open || child is not null)
+        {
+            Tree.Expand(node);
+        }
+        ExplorerNode chosen = child is not null && node.Children?.FirstOrDefault(c => c.Path == child) is { } row ? row : node;
+        Rows.SelectedItem = chosen;
+        Rows.ScrollIntoView(chosen);
+    }
+
+    /// <summary>Rider's menu for a row: Build, Rebuild and Clean for the solution or the projects chosen (a solution
+    /// folder's, every one under it), their unit tests, a project's packages, file and unloading, Add where things can go
+    /// (a solution folder, an existing project or item into the solution's folders; a file, a folder or a class on disk),
+    /// Rename and Delete, which for what is the solution's own (a project, a solution folder, its files) is Remove, and the
+    /// path of what is on disk.</summary>
     private ContextMenu? Menu(ExplorerNode node)
     {
         bool onDisk = node.Kind is NodeKind.File or NodeKind.Folder or NodeKind.Project;
-        bool holds = node.Kind is NodeKind.Folder or NodeKind.Project or NodeKind.Solution or NodeKind.File;
-        if (!onDisk && !holds)
+        bool holds = (node.Kind is NodeKind.Folder or NodeKind.Project or NodeKind.Solution or NodeKind.File) && !node.IsSolutionItem;
+        bool solutionFolder = node.Kind == NodeKind.SolutionFolder;
+        if (!onDisk && !holds && !solutionFolder)
         {
             return null;
         }
         ContextMenu menu = new();
         MenuItem Item(string header, ExplorerAction action, string? keys = null)
         {
-            MenuItem item = new() { Header = keys is null ? header : $"{header}    {keys}" };
+            MenuItem item = new() { Header = header, InputGesture = keys is null ? null : KeyGesture.Parse(keys) };
             item.Click += (_, _) => ActionRequested?.Invoke(this, (action, node));
             return item;
         }
-        if (node.Kind is NodeKind.Solution or NodeKind.Project)
+        if (node.Kind is NodeKind.Solution or NodeKind.Project or NodeKind.SolutionFolder)
         {
             string what = node.Kind == NodeKind.Solution ? "Solution" : "Selected Projects";
             menu.Items.Add(Item($"Build {what}", ExplorerAction.Build));
             menu.Items.Add(Item($"Rebuild {what}", ExplorerAction.Rebuild));
             menu.Items.Add(Item($"Clean {what}", ExplorerAction.Clean));
+            menu.Items.Add(new Separator());
+        }
+        if (node.Kind is NodeKind.Project or NodeKind.SolutionFolder)
+        {
+            menu.Items.Add(Item("Run Unit Tests", ExplorerAction.RunTests));
+            menu.Items.Add(Item("Debug Unit Tests", ExplorerAction.DebugTests));
             menu.Items.Add(new Separator());
         }
         if (node.Kind == NodeKind.Project)
@@ -118,26 +155,58 @@ public partial class ExplorerView : UserControl
             menu.Items.Add(unloaded ? Item("Reload Project", ExplorerAction.Reload) : Item("Unload Project", ExplorerAction.Unload));
             menu.Items.Add(new Separator());
         }
-        if (holds)
+        if (holds || solutionFolder)
         {
             MenuItem add = new() { Header = "Add" };
-            add.Items.Add(Item("New File...", ExplorerAction.NewFile));
-            add.Items.Add(Item("New Folder...", ExplorerAction.NewFolder));
-            add.Items.Add(Item("Class...", ExplorerAction.NewClass));
+            if (node.Kind is NodeKind.Solution or NodeKind.SolutionFolder)
+            {
+                add.Items.Add(Item("New Solution Folder...", ExplorerAction.NewSolutionFolder));
+                add.Items.Add(Item("Existing Project...", ExplorerAction.AddExistingProject));
+            }
+            if (solutionFolder)
+            {
+                add.Items.Add(Item("Existing Item...", ExplorerAction.AddExistingItem));
+            }
+            if (holds)
+            {
+                if (add.Items.Count > 0)
+                {
+                    add.Items.Add(new Separator());
+                }
+                add.Items.Add(Item("New File...", ExplorerAction.NewFile));
+                add.Items.Add(Item("New Folder...", ExplorerAction.NewFolder));
+                add.Items.Add(Item("Class...", ExplorerAction.NewClass));
+            }
             menu.Items.Add(add);
             menu.Items.Add(new Separator());
         }
-        if (onDisk)
+        if (Renames(node))
         {
             menu.Items.Add(Item("Rename...", ExplorerAction.Rename, "F2"));
-            // A project's Delete only takes it out of the solution, as Rider's Remove Projects does.
-            menu.Items.Add(Item(node.Kind == NodeKind.Project ? "Remove..." : "Delete...", ExplorerAction.Delete, OperatingSystem.IsMacOS() ? "⌫" : "Delete"));
-            menu.Items.Add(new Separator());
         }
-        menu.Items.Add(Item("Copy Path", ExplorerAction.CopyPath));
-        menu.Items.Add(Item(OperatingSystem.IsMacOS() ? "Reveal in Finder" : "Show in Explorer", ExplorerAction.Reveal));
+        if (Removes(node))
+        {
+            // What is the solution's own only leaves the solution, as Rider's Remove does; its files stay on disk.
+            bool removes = node.Kind is NodeKind.Project or NodeKind.SolutionFolder || node.IsSolutionItem;
+            menu.Items.Add(Item(removes ? "Remove..." : "Delete...", ExplorerAction.Delete, OperatingSystem.IsMacOS() ? "Back" : "Delete"));
+        }
+        // A solution folder is in no folder on disk, so it has no path to copy or show.
+        if (!solutionFolder)
+        {
+            if (onDisk)
+            {
+                menu.Items.Add(new Separator());
+            }
+            menu.Items.Add(Item("Copy Path", ExplorerAction.CopyPath));
+            menu.Items.Add(Item(OperatingSystem.IsMacOS() ? "Reveal in Finder" : "Show in Explorer", ExplorerAction.Reveal));
+        }
         return menu;
     }
+
+    /// <summary>Whether F2 renames the row: what is on disk, but a file only the solution lists, and a solution folder.</summary>
+    private static bool Renames(ExplorerNode node) => node.Kind is NodeKind.Folder or NodeKind.Project or NodeKind.SolutionFolder || node.Kind == NodeKind.File && !node.IsSolutionItem;
+
+    private static bool Removes(ExplorerNode node) => node.Kind is NodeKind.File or NodeKind.Folder or NodeKind.Project or NodeKind.SolutionFolder;
 
     public ExplorerTree Tree { get; } = new();
 
@@ -276,11 +345,11 @@ public partial class ExplorerView : UserControl
                 Activate(node);
                 e.Handled = true;
                 break;
-            case Key.F2 when node.Kind is NodeKind.File or NodeKind.Folder or NodeKind.Project:
+            case Key.F2 when Renames(node):
                 ActionRequested?.Invoke(this, (ExplorerAction.Rename, node));
                 e.Handled = true;
                 break;
-            case Key.Delete or Key.Back when node.Kind is NodeKind.File or NodeKind.Folder or NodeKind.Project:
+            case Key.Delete or Key.Back when Removes(node):
                 ActionRequested?.Invoke(this, (ExplorerAction.Delete, node));
                 e.Handled = true;
                 break;

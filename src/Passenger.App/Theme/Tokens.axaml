@@ -74,6 +74,7 @@
             <SolidColorBrush x:Key="Passenger.Modified" Color="#6F9BF5" />
 
             <SolidColorBrush x:Key="Passenger.File.Folder" Color="#AEB4BF" />
+            <SolidColorBrush x:Key="Passenger.File.SolutionFolder" Color="#9F92DB" />
             <SolidColorBrush x:Key="Passenger.File.CSharp" Color="#B48BFF" />
             <SolidColorBrush x:Key="Passenger.File.Project" Color="#6FBF73" />
             <SolidColorBrush x:Key="Passenger.File.Xml" Color="#E8975A" />
@@ -202,6 +203,7 @@
             <SolidColorBrush x:Key="Passenger.Modified" Color="#3D7BF5" />
 
             <SolidColorBrush x:Key="Passenger.File.Folder" Color="#7A8091" />
+            <SolidColorBrush x:Key="Passenger.File.SolutionFolder" Color="#6656B8" />
             <SolidColorBrush x:Key="Passenger.File.CSharp" Color="#8250DF" />
             <SolidColorBrush x:Key="Passenger.File.Project" Color="#2F8F3A" />
             <SolidColorBrush x:Key="Passenger.File.Xml" Color="#C75F12" />

@@ -222,8 +222,14 @@ public partial class MainWindow
         Add(A.RerunFailedTests, "Rerun Failed Tests", "Unit Tests", _ => RunTests(() => tests.RerunFailedAsync(folder!)), NeedsFolder, ("Tests", 1, 1));
         Add(A.StopTests, "Stop Unit Tests", "Unit Tests", _ => tests.Stop(), NeedsFolder, ("Tests", 1, 2));
 
-        string? NoTestHere(ActionContext context) => NeedsFolder(context) ?? (ChosenTests(context) is null && TestAtCaret(context) is null ? "No test is at the caret" : null);
+        string? NoTestHere(ActionContext context) => NeedsFolder(context)
+            ?? (ChosenTests(context) is null && ChosenProjects(context) is null && TestAtCaret(context) is null ? "No test is at the caret" : null);
     }
+
+    /// <summary>The projects chosen in the Explorer, a solution folder's those under it, while it has the keys.</summary>
+    private IReadOnlyList<string>? ChosenProjects(ActionContext context) =>
+        context.ToolWindow?.Id == "explorer" && context.Row is IReadOnlyList<Explorer.ExplorerNode> rows
+            && rows.SelectMany(Explorer.Tree.ProjectsOf).Distinct().ToList() is { Count: > 0 } projects ? projects : null;
 
     /// <summary>The Unit Tests window's chosen rows, while it has the keys.</summary>
     private static IReadOnlyList<Testing.TestNode>? ChosenTests(ActionContext context) =>
