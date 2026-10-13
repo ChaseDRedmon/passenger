@@ -101,7 +101,13 @@ window or takes the focus; it shows everything but the system's own window chrom
   that reads C# syntax (templates, postfix, test marks, selection ranges, inline values) uses it, never a fresh parse.
   `Markup/FoldScan` finds XML's and JSON's folds in one scan of the rope off the UI thread; every fold region has a
   `FoldKind`, which Settings' Code Folding (Rider's Fold by default) and Collapse to Definitions read, and a folder keeps
-  each file's folds as it closed (`WorkspaceState.Folds`, through `FoldMemory`). `TypeHints` turns Roslyn's type hints
+  each file's folds as it closed (`WorkspaceState.Folds`, through `FoldMemory`). Every other language is coloured by VS
+  Code's TextMate grammar for it (`TextMate/Grammars`, read by TextMateSharp with Onigwrap's Oniguruma), its scopes
+  mapped to Rider's colours in `TextMate/ScopeColours` (named in full: TextMateSharp never matches parent selectors);
+  `TextMateHighlighter` re-reads only from a changed line until the grammar's state is the same, off the UI thread.
+  `Highlighters.For(language, document)` is the one place an editor's colours are chosen. A new grammar is its file,
+  its scope in `Grammar.Files`, its language in `Grammar.Languages` and `Workspace/Language.ForPath` (with its
+  comments), and its entry after THIRD_PARTY_NOTICES.md's marker line. `TypeHints` turns Roslyn's type hints
   into Rider's (after the name, left off where Rider calls the type evident).
   A key costs what it changed, not the file's size: folds (`FoldRegions`) and bracket depths come from the parse
   before through the nodes Roslyn reused, never from a walk of the whole tree, and the server's colours are asked for
@@ -170,7 +176,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   side-by-side diff and `CommitGraph` the log's lanes. `GitView` is the Git window's content: the Log and a `GitLogView`
   tab per Show History, given a `HistoryScope` (a file followed with `--follow`, a folder, or lines with `-L`), read by
   `Git.HistoryAsync`, as `vcs_log` with a path reads it. `MainWindow.History.cs` is Show History, Show History for
-  Selection, Compare with Branch or Tag and Compare with Revision. `MergeState` is what a merge, rebase, cherry-pick or
+  Selection, Compare with Branch or Tag and Compare with Revision. `WordDiff` (Passenger.Text, IntelliJ's ByWord) marks
+  changed words inside changed lines for `DiffView` (Highlighting Differences is `AppSettings.DiffHighlighting`),
+  `ChangePopup` and `MergeView`. `ToolWindows/BranchesPanel` is the Log's branches tree, its operations in
+  `VcsController` and `MainWindow.Branches.cs`; a branch filters the Log through `GitLogView.FilterBranch`, and
+  favourites are the folder's `gitBranches.json`. `MergeState` is what a merge, rebase, cherry-pick or
   revert stopped on and Rider's words for its sides (during a rebase yours is git's theirs); `ConflictsDialog` is
   Rider's Conflicts dialog and `MergeWindow`/`MergeView` the three-way merge over `ThreeWayMerge`;
   `MainWindow.Conflicts.cs` wires them with Continue Rebase and the aborts, and `vcs_status`/`vcs_resolve` give an
@@ -323,7 +333,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   states them (`just notices`, and CI, fail on one missing), copied source by its file with the project it came from.
   The one exception, decided by the owner: `Microsoft.VisualStudio.Telemetry` and
   `Microsoft.VisualStudio.Utilities.Internal`, under Visual Studio's terms, stay inside Roslyn's server (MIT on nuget.org)
-  because its built-in Razor support needs them; THIRD_PARTY_NOTICES.md says so. Nothing else under such terms ships. A new SPDX licence needs its text in
+  because its built-in Razor support needs them; THIRD_PARTY_NOTICES.md says so. Nothing else under such terms ships.
+  The second, also the owner's: the TextMate bundle licence ("Permission to copy, use, modify, sell and distribute this
+  software is granted", no SPDX identifier), which the HTML grammar carries and the XML, Markdown, CSS and JavaScript
+  grammars name as their origin, as VS Code ships them. A new SPDX licence needs its text in
   `tools/Passenger.Notices/Licenses`, a package inside Roslyn's server a row in THIRD_PARTY_NOTICES.md's roslyn/ table,
   and copied source or an asset its entry after that file's marker line, so the app carries them.
 - **Colours are tokens.** A control names a brush from `Theme/Tokens.axaml` (`Passenger.*`), never a literal colour,
