@@ -7,9 +7,9 @@ namespace Passenger.Core;
 /// <summary>Every program Passenger starts is started here, one way: no shell and no window, an input of its own (never
 /// the IDE's terminal, nor an agent's pipe), UTF-8 streams, none of a git hook's repository variables, and a line in the
 /// log when it fails or takes a while, or for every one with the debug log on (<see cref="Started"/>, <see cref="Ended"/>).
-/// None outlives the IDE, however the IDE ends
-/// (<see cref="Lifeline"/>). Not started here: the terminal's shell (Porta.Pty's; its pseudo-terminal's hangup ends it)
-/// and vstest.console (VSTest's own, which ends when the process that started it does).</summary>
+/// None outlives the IDE, however the IDE ends (<see cref="Lifeline"/>). Not started here: the terminal's shell (Porta.Pty's,
+/// ended by its pseudo-terminal's hangup), vstest.console (VSTest's, which ends with the process that started it) and on
+/// Windows Velopack's Update.exe, which installs an update once Passenger has ended and so must outlive it.</summary>
 public static class ChildProcesses
 {
     private static readonly UTF8Encoding Utf8 = new(encoderShouldEmitUTF8Identifier: false);

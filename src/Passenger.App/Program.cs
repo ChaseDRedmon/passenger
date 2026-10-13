@@ -19,10 +19,10 @@ internal static class Program
     public static int Main(string[] args)
     {
         StartedAt = Stopwatch.GetTimestamp();
-        // Before anything else, as Velopack asks: its installer's and uninstaller's runs of Passenger.exe end in Run.
+        // First, as Velopack asks; an update never installs as a second Passenger starts, which would end the first.
         if (Installation.Installed)
         {
-            Installation.Hooked(VelopackApp.Build().SetArgs(args)).Run();
+            Installation.Hooked(VelopackApp.Build().SetArgs(args).SetAutoApplyOnStartup(false)).Run();
         }
         LaunchOptions options;
         try
@@ -53,8 +53,10 @@ internal static class Program
         int code = BuildAvaloniaApp()
             .AfterSetup(builder => ApplyTheme(builder.Instance!, options.Theme))
             .StartWithClassicDesktopLifetime(args, lifetime => desktop = lifetime);
-        // The loop has stopped with the window; what it ended as it closed (the debugger, Roslyn) still has a moment.
-        (desktop?.MainWindow as MainWindow)?.Ended?.Wait();
+        // What the window ended (the debugger, Roslyn) has a moment; then an update made ready installs, last of all.
+        MainWindow? closed = desktop?.MainWindow as MainWindow;
+        closed?.Ended?.Wait();
+        closed?.InstallUpdate();
         return code;
     }
 

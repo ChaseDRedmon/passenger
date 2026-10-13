@@ -59,7 +59,8 @@ public sealed record AppSettings : IStateDocument<AppSettings>
     public bool ReopenProjectsOnStartup { get; init; } = true;
 
     /// <summary>Rider's Check IDE updates: the person's window asks GitHub for Passenger's latest release as it starts and
-    /// once a day, and says when a newer one is out. Off, nothing is asked unless Help, Check for Updates is chosen.</summary>
+    /// once a day, and an installed Passenger downloads a newer one to install as it restarts. Off, nothing is asked unless
+    /// Help, Check for Updates is chosen, and nothing is downloaded at all.</summary>
     public bool CheckForUpdates { get; init; } = true;
 
     /// <summary>Rider's console cycle buffer size (<c>idea.cycle.buffer.size</c>): how much of a Run, Build or Debug

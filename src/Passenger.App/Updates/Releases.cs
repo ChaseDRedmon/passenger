@@ -36,7 +36,20 @@ public sealed record ReleaseFeed(Uri Latest, TimeSpan Timeout)
 
 /// <summary>A release newer than the running Passenger: its version ("0.2.0"), its tag ("v0.2.0"), and what its link
 /// opens, this system's download when the release has it, else the release's page.</summary>
-public sealed record LatestRelease(string Version, string Tag, Uri Link, string? Asset);
+public sealed record LatestRelease(string Version, string Tag, Uri Link, string? Asset)
+{
+    /// <summary>The release's page on GitHub, its notes.</summary>
+    public Uri Page { get; init; } = ReleaseFeed.GitHubReleases;
+
+    /// <summary>Every file the release carries that downloads over http or https, by name: what an update downloads.</summary>
+    public IReadOnlyList<ReleaseFile> Files { get; init; } = [];
+
+    /// <summary>The file the release carries by this name, or null.</summary>
+    public ReleaseFile? File(string name) => Files.FirstOrDefault(f => f.Name == name);
+}
+
+/// <summary>A file a release carries: its name, where it downloads from, and its size as GitHub gives it.</summary>
+public sealed record ReleaseFile(string Name, Uri Url, long Size);
 
 /// <summary>What asking for the latest release came to, with a line for the IDE's log.</summary>
 public abstract record ReleaseAnswer(string Said)
@@ -152,9 +165,12 @@ public static partial class Releases
             return new ReleaseAnswer.Current($"Passenger {running} is up to date: the latest release is {tag}");
         }
         string? asset = ThisSystemsAsset();
-        Uri? download = release.Assets?.Where(a => a.Name == asset).Select(a => Web(a.BrowserDownloadUrl)).FirstOrDefault(u => u is not null);
-        Uri link = download ?? Web(release.HtmlUrl) ?? ReleaseFeed.GitHubReleases;
-        return new ReleaseAnswer.Newer(new LatestRelease(number, tag, link, download is null ? null : asset),
+        ReleaseFile[] files = [.. (release.Assets ?? []).Select(a => a.Name is { Length: > 0 } name && Web(a.BrowserDownloadUrl) is { } url
+            ? new ReleaseFile(name, url, a.Size) : null).OfType<ReleaseFile>()];
+        Uri? download = files.FirstOrDefault(f => f.Name == asset)?.Url;
+        Uri page = Web(release.HtmlUrl) ?? ReleaseFeed.GitHubReleases;
+        Uri link = download ?? page;
+        return new ReleaseAnswer.Newer(new LatestRelease(number, tag, link, download is null ? null : asset) { Page = page, Files = files },
             $"Passenger {number} is out ({tag}; this is {running}): {link}");
     }
 
@@ -170,5 +186,5 @@ public static partial class Releases
     /// its downloads by name.</summary>
     private sealed record GitHubRelease(string? TagName, string? HtmlUrl, bool Draft, bool Prerelease, GitHubAsset[]? Assets);
 
-    private sealed record GitHubAsset(string? Name, string? BrowserDownloadUrl);
+    private sealed record GitHubAsset(string? Name, string? BrowserDownloadUrl, long Size);
 }

@@ -17,7 +17,9 @@ public partial class App : Application
         // The screenshot mode has no lifetime and makes its own window.
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            MainWindow window = new() { AgentsAllowed = Program.Options.ListenForAgents };
+            // Only the person's window updates Passenger, and only a copy its installer or disk image put in place.
+            Updates.Updater? updater = Updates.Updater.OfThisCopy(State.StateStore.DefaultRoot, out string notUpdating);
+            MainWindow window = new() { AgentsAllowed = Program.Options.ListenForAgents, SelfUpdate = updater };
             // The person's own window opens on the layout and settings they left (agents let in or not); headless ones
             // keep the defaults.
             window.KeepLayout();
@@ -31,6 +33,8 @@ public partial class App : Application
                     + $"({Product.Runtime}): window shown {Stopwatch.GetElapsedTime(Program.StartedAt).TotalSeconds:0.00} s after launch");
                 window.Start(Program.Options);
                 // Only the person's window asks for the latest release on its own.
+                IdeErrors.Write(updater is null ? $"Updates: this copy only says when a newer release is out: {notUpdating}"
+                    : $"Updates: this copy installs updates, in {updater.Installed}");
                 window.WatchForUpdates();
             };
             desktop.MainWindow = window;

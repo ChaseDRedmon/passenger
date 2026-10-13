@@ -1,21 +1,28 @@
+using System.Collections.Concurrent;
+using System.IO.Compression;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
 using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
+using Avalonia.Interactivity;
 using Passenger.App;
 using Passenger.App.Settings;
 using Passenger.App.Updates;
+using Passenger.Core;
+using Velopack.Locators;
 
 namespace Passenger.Tests;
 
-/// <summary>Passenger says when a newer release is out, as Rider does: the person's window asks for the latest release as it
-/// starts, says once per version in the status bar that a newer one is out with a link to this system's download, and
-/// says nothing of the same version, an older one, a pre-release or a draft, nor of a failure, which only the log has;
-/// Help, Check for Updates asks whenever a person wants and says so when Passenger is up to date; the setting off, nothing
-/// is asked. A stand-in on a loopback port answers for GitHub, which no test reaches.</summary>
+/// <summary>Passenger says when a newer release is out, as Rider does, and installs it: an installed copy downloads it,
+/// checks its SHA-256 (refusing one that does not match, saying why), offers Restart to Update and installs it as it ends;
+/// any other copy says once per version that it is out, never of an older one, a pre-release, a draft or a failure. Check
+/// for Updates asks whenever a person wants; the setting off, nothing is asked or downloaded. A stand-in on a loopback
+/// port answers for GitHub and its downloads, which no test reaches; each installed copy is in a test folder.</summary>
 public sealed class UpdatesTests : IDisposable
 {
     /// <summary>The downloads #56's release workflow publishes with every release, by fixed names.</summary>
@@ -188,10 +195,322 @@ public sealed class UpdatesTests : IDisposable
         window.Close();
     }
 
-    /// <summary>The person's window as the app makes it, its settings kept in the test's state folder, asking the stand-in.</summary>
-    private MainWindow Started()
+    [AvaloniaFact]
+    public void An_installed_Passenger_downloads_a_newer_release_in_the_background_checks_it_and_offers_Restart_to_Update()
     {
-        MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings, Releases = new ReleaseFeed(github.Latest, TimeSpan.FromSeconds(1)) };
+        using IDisposable theme = TestsTheme();
+        InstalledCopy copy = InstalledCopy.Make(TestFolders.Create("installed-"));
+        string newer = Bumped(1, 0);
+        IReadOnlyDictionary<string, byte[]> update = copy.Update(newer);
+        github.Answer = Release($"v{newer}", files: update);
+        github.Hold(copy.Package(newer));
+        MainWindow window = Started(copy.Updater());
+        window.WatchForUpdates();
+
+        // The person sees it happen: the download's progress in the status bar, the stand-in holding it half way.
+        Ui.PumpUntil(() => Notice(window) is { } shown && shown.StartsWith($"Downloading Passenger {newer}: ", StringComparison.Ordinal) && shown != $"Downloading Passenger {newer}: 0%",
+            $"the status bar to say how far v{newer}'s download has come");
+        Assert.False(copy.Holds(newer), $"v{newer} was ready to install before its download had all come");
+        github.Let();
+
+        // Downloaded and checked, it waits for Passenger to restart: nothing is installed meanwhile.
+        Ui.WaitFor(() => Notice(window) == $"Restart to update to Passenger {newer}", $"the status bar to offer Restart to Update once v{newer} had downloaded");
+        Assert.True(copy.Holds(newer), $"The status bar offers Restart to Update, but v{newer} is not where it installs from");
+        Assert.True(window.UpdateReady?.Version == newer, $"The window offers Restart to Update with {window.UpdateReady?.Version ?? "nothing"} ready, not {newer}");
+        Assert.True(copy.InstalledVersion is null || copy.InstalledVersion == Product.Version,
+            $"The update was installed at once, as {copy.InstalledVersion}, before Passenger restarted");
+        Assert.True(window.Actions.WhyNot(AppActions.RestartToUpdate, window.Actions.Context()) is null, "Restart to Update cannot run with the update ready");
+        Assert.Contains(Ui.IdeLog().Split('\n'), line => line.Contains($"Updates: Passenger {newer} downloaded to ", StringComparison.Ordinal));
+
+        // Each of the update's files asked for once, with nothing in the request but Passenger's name and version.
+        foreach (string name in update.Keys)
+        {
+            string[] asked = github.RequestsFor(name);
+            Assert.True(asked.Length == 1, $"{name} was downloaded {asked.Length} times, not once");
+            string[] head = asked[0].Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
+            Assert.Contains($"User-Agent: Passenger/{Product.Version}", head);
+            string[] headers = [.. head.Skip(1).Select(h => h.Split(':')[0]).Order(StringComparer.OrdinalIgnoreCase)];
+            Assert.True(headers.SequenceEqual(["Host", "User-Agent"], StringComparer.OrdinalIgnoreCase),
+                $"The download of {name} sent more than the request itself: {string.Join(", ", headers)}");
+        }
+        Assert.True(github.Requests.Count == update.Count + 1,
+            $"The window made {github.Requests.Count} requests, not one for the release and one for each of the {update.Count} files of this system's update");
+        window.Close();
+
+        // Started again, as a person who closed Passenger with the update waiting: it is checked again, not downloaded again.
+        window = Started(copy.Updater());
+        window.WatchForUpdates();
+        Ui.WaitFor(() => Notice(window) == $"Restart to update to Passenger {newer}", "the window started again to offer the update made ready before");
+        Assert.True(github.RequestsFor(copy.Package(newer)).Length == 1, $"The window started again downloaded {copy.Package(newer)} once more");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_download_that_does_not_match_the_SHA_256_its_release_gives_is_refused_and_the_person_told_why()
+    {
+        using IDisposable theme = TestsTheme();
+        InstalledCopy copy = InstalledCopy.Make(TestFolders.Create("installed-"));
+        string newer = Bumped(1, 0);
+        // The package changed after its checksum was taken, as a corrupted download or a tampered release brings it.
+        Dictionary<string, byte[]> update = new(copy.Update(newer));
+        byte[] tampered = [.. update[copy.Package(newer)]];
+        tampered[tampered.Length / 2] ^= 0xFF;
+        update[copy.Package(newer)] = tampered;
+        github.Answer = Release($"v{newer}", files: update);
+        MainWindow window = Started(copy.Updater());
+        window.WatchForUpdates();
+
+        Ui.WaitFor(() => Notice(window) == $"Passenger {newer} not installed", $"the notice to say v{newer} was not installed once its download was refused");
+        string said = window.Status ?? string.Empty;
+        Assert.True(said.StartsWith($"Passenger {newer} was not installed: {copy.Package(newer)}", StringComparison.Ordinal) && said.Contains("SHA", StringComparison.Ordinal),
+            $"A package that does not match its SHA-256 was refused without the person being told why: the status bar says '{said}'");
+        Assert.Contains(said, ToolTip.GetTip(window.FindControl<Button>("UpdateButton")!) as string ?? string.Empty);
+        Assert.Contains(Ui.IdeLog().Split('\n'), line => line.Contains($"Updates: {said}", StringComparison.Ordinal));
+        string page = $"https://github.com/Zaneris/passenger/releases/tag/v{newer}";
+        Assert.True(window.UpdateShown?.Link.AbsoluteUri == page, $"After a refusal the notice opens {window.UpdateShown?.Link}, not the release's page, {page}");
+
+        // Nothing of it is kept, and nothing installs.
+        Assert.Null(window.UpdateReady);
+        Assert.False(copy.Holds(newer), $"The refused v{newer} is still there to install");
+        Assert.True(copy.Downloaded().Count == 0, $"The refused download left {string.Join(", ", copy.Downloaded())} behind");
+        Assert.Equal("No update is downloaded and ready to install", window.Actions.WhyNot(AppActions.RestartToUpdate, window.Actions.Context()));
+        window.Close();
+        window.Ended?.Wait();
+        window.InstallUpdate();
+        Assert.True(copy.InstalledVersion is null || copy.InstalledVersion == Product.Version, $"The refused update was installed, as {copy.InstalledVersion}");
+    }
+
+    [AvaloniaFact]
+    public void With_Check_for_updates_off_nothing_is_downloaded_and_turning_it_off_drops_a_download_made()
+    {
+        using IDisposable theme = TestsTheme();
+        InstalledCopy copy = InstalledCopy.Make(TestFolders.Create("installed-"));
+        string newer = Bumped(1, 0);
+        IReadOnlyDictionary<string, byte[]> update = copy.Update(newer);
+        github.Answer = Release($"v{newer}", files: update);
+        MainWindow window = Started(copy.Updater());
+        window.ApplySettings(window.Settings with { CheckForUpdates = false });
+        window.WatchForUpdates();
+        Ui.Settle();
+        Assert.True(github.Requests.Count == 0, $"With Check for updates off, the window asked GitHub {github.Requests.Count} time(s)");
+
+        // Asked for, the newer release is announced with its link, and still nothing is downloaded.
+        CheckForUpdates(window);
+        Assert.True(Notice(window) == $"Passenger {newer} available", $"Check for Updates with the setting off shows '{Notice(window)}'");
+        Ui.Settle();
+        string[] downloaded = [.. update.Keys.Where(name => github.RequestsFor(name).Length > 0)];
+        Assert.True(downloaded.Length == 0, $"With Check for updates off, the window downloaded {string.Join(", ", downloaded)}");
+        Assert.False(copy.Holds(newer), $"With Check for updates off, v{newer} is ready to install");
+
+        // On, it downloads; off again, what it downloaded is dropped, and nothing installs as Passenger closes.
+        window.ApplySettings(window.Settings with { CheckForUpdates = true });
+        Ui.WaitFor(() => Notice(window) == $"Restart to update to Passenger {newer}", "Check for updates turned on to download the newer release");
+        window.ApplySettings(window.Settings with { CheckForUpdates = false });
+        Ui.WaitFor(() => !copy.Holds(newer) && copy.Downloaded().Count == 0, "the update downloaded to be dropped as Check for updates went off");
+        Assert.True(Notice(window) == $"Passenger {newer} available", $"With the download dropped, the status bar still shows '{Notice(window)}'");
+        Assert.Null(window.UpdateReady);
+        window.Close();
+        window.Ended?.Wait();
+        window.InstallUpdate();
+        Assert.True(copy.InstalledVersion is null || copy.InstalledVersion == Product.Version,
+            $"An update dropped as the setting went off was installed, as {copy.InstalledVersion}");
+    }
+
+    [AvaloniaFact]
+    public void A_copy_its_installer_or_disk_image_did_not_put_in_place_never_downloads_an_update()
+    {
+        using IDisposable theme = TestsTheme();
+        // The tests' own Passenger, a build from source as `just run` and a Debug build are, is one.
+        Assert.True(Updater.OfThisCopy(settings, out string why) is null, "The tests' Passenger, a build from source, would update itself");
+        Assert.False(string.IsNullOrWhiteSpace(why), "A copy that cannot update itself does not say why");
+
+        string newer = Bumped(1, 0);
+        Dictionary<string, byte[]> files = new()
+        {
+            [ThisSystemsDownload()] = [1, 2, 3],
+            ["SHA256SUMS"] = Encoding.UTF8.GetBytes($"{Convert.ToHexStringLower(SHA256.HashData((byte[])[1, 2, 3]))}  {ThisSystemsDownload()}\n"),
+        };
+        github.Answer = Release($"v{newer}", files: files);
+        // As every window but the person's own: a test's, a screenshot's, an agent's.
+        MainWindow window = Started();
+        window.WatchForUpdates();
+        Ui.Settle();
+        Assert.True(Notice(window) == $"Passenger {newer} available", $"A copy that cannot update itself shows '{Notice(window)}', not the newer release's link");
+        Assert.True(github.Requests.Count == 1, $"A copy that cannot update itself made {github.Requests.Count} requests, not only the one for the latest release");
+        CheckForUpdates(window);
+        Assert.True(github.Requests.Count == 2 && files.Keys.All(name => github.RequestsFor(name).Length == 0),
+            "Check for Updates had a copy that cannot update itself download the release");
+        Assert.Equal("No update is downloaded and ready to install", window.Actions.WhyNot(AppActions.RestartToUpdate, window.Actions.Context()));
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    [SupportedOSPlatform("macos")]
+    public void Restart_to_Update_puts_the_new_version_in_place_of_the_old_and_starts_it_and_closing_installs_it_too()
+    {
+        Assert.SkipUnless(OperatingSystem.IsMacOS(),
+            "On Windows Velopack's Update.exe replaces the install once this process has ended; a test cannot end its own process");
+        using IDisposable theme = TestsTheme();
+        AppBundle copy = new(TestFolders.Create("installed-"));
+        string newer = Bumped(1, 0);
+        github.Answer = Release($"v{newer}", files: copy.Update(newer));
+        MainWindow window = Started(copy.Updater());
+        window.WatchForUpdates();
+        Ui.WaitFor(() => Notice(window) == $"Restart to update to Passenger {newer}", $"the status bar to offer Restart to Update to v{newer}");
+
+        // The person chooses it: the window closes, and as the process ends the new app takes the old one's place and starts.
+        window.FindControl<Button>("UpdateButton")!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Ui.Settle();
+        Assert.False(window.IsVisible, "Restart to Update did not close the window");
+        window.Ended?.Wait();
+        window.InstallUpdate();
+        Assert.True(copy.InstalledVersion == newer, $"Restart to Update left {copy.Bundle} at {copy.InstalledVersion}, not {newer}");
+        Assert.True(copy.SignatureHolds(), $"The app put in place at {copy.Bundle} is not whole: its signature does not hold");
+        Assert.True(Ui.Shared(copy.Started) == $"started {newer}\n", $"Restart to Update did not start the new version once: what started says '{Ui.Shared(copy.Started)}'");
+        string[] beside = [.. Directory.EnumerateFileSystemEntries(copy.Applications).Select(p => Path.GetFileName(p))];
+        Assert.True(beside.SequenceEqual(["Passenger.app"]), $"The update left {string.Join(", ", beside)} where the app is installed");
+        Assert.True(copy.Downloaded().Count == 0, $"The update installed left {string.Join(", ", copy.Downloaded())} behind");
+        Assert.Contains(Ui.IdeLog().Split('\n'), line => line.Contains($"Updates: Passenger {newer} installed in {copy.Bundle}, and started", StringComparison.Ordinal));
+
+        // A later release, made ready and left waiting, installs as Passenger closes, and nothing is started.
+        string later = Bumped(1, 1);
+        github.Answer = Release($"v{later}", files: copy.Update(later));
+        window = Started(copy.Updater());
+        window.WatchForUpdates();
+        Ui.WaitFor(() => Notice(window) == $"Restart to update to Passenger {later}", $"the status bar to offer Restart to Update to v{later}");
+        window.Close();
+        window.Ended?.Wait();
+        window.InstallUpdate();
+        Assert.True(copy.InstalledVersion == later, $"Passenger closed with v{later} ready left {copy.Bundle} at {copy.InstalledVersion}");
+        Assert.True(Ui.Shared(copy.Started) == $"started {newer}\n", "Closing Passenger started the version it installed, which only Restart to Update does");
+    }
+
+    [AvaloniaFact]
+    [SupportedOSPlatform("macos")]
+    public void An_update_that_could_not_take_the_apps_place_is_said_at_the_next_start_and_is_still_ready()
+    {
+        Assert.SkipUnless(OperatingSystem.IsMacOS(),
+            "On Windows Velopack's Update.exe replaces the install once this process has ended; a test cannot end its own process");
+        using IDisposable theme = TestsTheme();
+        AppBundle copy = new(TestFolders.Create("installed-"));
+        string newer = Bumped(1, 0);
+        github.Answer = Release($"v{newer}", files: copy.Update(newer));
+        MainWindow window = Started(copy.Updater());
+        window.WatchForUpdates();
+        Ui.WaitFor(() => Notice(window) == $"Restart to update to Passenger {newer}", $"the status bar to offer Restart to Update to v{newer}");
+
+        // The folder the app is in turned read-only meanwhile: the app cannot be replaced, and stays as it was.
+        UnixFileMode was = File.GetUnixFileMode(copy.Applications);
+        File.SetUnixFileMode(copy.Applications, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        try
+        {
+            window.Close();
+            window.Ended?.Wait();
+            window.InstallUpdate();
+        }
+        finally
+        {
+            File.SetUnixFileMode(copy.Applications, was);
+        }
+        Assert.True(copy.InstalledVersion == Product.Version, $"{copy.Bundle} is {copy.InstalledVersion} after an update that could not take its place");
+        Assert.True(copy.SignatureHolds(), $"{copy.Bundle} is not whole after an update that could not take its place");
+        Assert.Contains(Ui.IdeLog().Split('\n'), line => line.Contains($"Updates: Passenger {newer} was not installed: ", StringComparison.Ordinal)
+            && line.Contains("Permission denied", StringComparison.Ordinal));
+
+        // The next start says so, and offers it again without downloading it again.
+        window = Started(copy.Updater());
+        window.WatchForUpdates();
+        Assert.Equal($"Passenger {newer} did not install: Help, Show Log says why", window.Status);
+        Ui.WaitFor(() => Notice(window) == $"Restart to update to Passenger {newer}", "the update that did not install to be offered again");
+        Assert.True(github.RequestsFor(copy.Package(newer)).Length == 1, $"{copy.Package(newer)} was downloaded again");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    [SupportedOSPlatform("macos")]
+    public void Another_Passenger_open_from_the_same_app_holds_the_update_back_until_it_closes()
+    {
+        Assert.SkipUnless(OperatingSystem.IsMacOS(),
+            "On Windows Velopack's Update.exe replaces the install once this process has ended; a test cannot end its own process");
+        using IDisposable theme = TestsTheme();
+        AppBundle copy = new(TestFolders.Create("installed-"));
+        string newer = Bumped(1, 0);
+        github.Answer = Release($"v{newer}", files: copy.Update(newer));
+        MainWindow window = Started(copy.Updater());
+        window.WatchForUpdates();
+        Ui.WaitFor(() => Notice(window) == $"Restart to update to Passenger {newer}", $"the status bar to offer Restart to Update to v{newer}");
+
+        // Another Passenger runs from the same app, as `open -n` starts one: a program at its executable's path.
+        string executable = Path.Combine(copy.Bundle, "Contents", "MacOS", "Passenger");
+        File.Copy("/bin/sleep", executable, overwrite: true);
+        using System.Diagnostics.Process other = ChildProcesses.Start(ChildProcesses.Command(executable, ["120"]));
+        try
+        {
+            window.FindControl<Button>("UpdateButton")!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Ui.Settle();
+            Assert.True(window.IsVisible, "Restart to Update closed the window while another Passenger runs from the same app");
+            Assert.Equal($"Another Passenger is open from {copy.Bundle}: close it, then restart to update", window.Status);
+
+            // Closed anyway, it leaves the app as it is, for the other's files, and the update waits.
+            window.Close();
+            window.Ended?.Wait();
+            window.InstallUpdate();
+            Assert.True(copy.InstalledVersion == Product.Version, $"The app another Passenger runs from was replaced by {copy.InstalledVersion}");
+            Assert.True(copy.Holds(newer), $"v{newer} is no longer ready once Passenger closed without installing it");
+            Assert.Contains(Ui.IdeLog().Split('\n'), line => line.Contains($"Updates: Passenger {newer} waits to install: another Passenger runs from {copy.Bundle}", StringComparison.Ordinal));
+        }
+        finally
+        {
+            ChildProcesses.Kill(other);
+        }
+    }
+
+    [AvaloniaFact]
+    [SupportedOSPlatform("macos")]
+    public void An_app_on_another_volume_than_Passengers_state_is_updated_in_place_too()
+    {
+        Assert.SkipUnless(OperatingSystem.IsMacOS(),
+            "On Windows Velopack's Update.exe replaces the install once this process has ended; a test cannot end its own process");
+        using IDisposable theme = TestsTheme();
+        // A volume of the test's own, as an external drive would be, with Passenger installed on it.
+        string folder = TestFolders.Create("installed-");
+        string volume = Directory.CreateDirectory(Path.Combine(folder, "volume")).FullName;
+        string disk = Path.Combine(folder, "volume.dmg");
+        Tool("/usr/bin/hdiutil", "create", "-size", "20m", "-fs", "HFS+", "-volname", "Passenger Tests", "-ov", disk, "-quiet");
+        Tool("/usr/bin/hdiutil", "attach", disk, "-nobrowse", "-noautoopen", "-mountpoint", volume, "-quiet");
+        try
+        {
+            AppBundle copy = new(folder, volume);
+            string newer = Bumped(1, 0);
+            github.Answer = Release($"v{newer}", files: copy.Update(newer));
+            MainWindow window = Started(copy.Updater());
+            window.WatchForUpdates();
+            Ui.WaitFor(() => Notice(window) == $"Restart to update to Passenger {newer}", $"the status bar to offer Restart to Update to v{newer}");
+            window.Close();
+            window.Ended?.Wait();
+            window.InstallUpdate();
+            string said = string.Join('\n', Ui.IdeLog().Split('\n').Where(l => l.Contains("Updates:", StringComparison.Ordinal)).TakeLast(3));
+            Assert.True(copy.InstalledVersion == newer, $"Passenger on another volume closed with v{newer} ready, and is {copy.InstalledVersion}: {said}");
+            Assert.True(copy.SignatureHolds(), $"The app put in place on another volume, {copy.Bundle}, is not whole: its signature does not hold");
+            string[] beside = [.. Directory.EnumerateFileSystemEntries(volume).Select(p => Path.GetFileName(p))
+                .Where(name => !name.StartsWith('.') || name.StartsWith(".Passenger", StringComparison.Ordinal))];
+            Assert.True(beside.SequenceEqual(["Passenger.app"]), $"The update left {string.Join(", ", beside)} where the app is installed");
+            Assert.True(copy.Downloaded().Count == 0, $"The update installed left {string.Join(", ", copy.Downloaded())} behind");
+        }
+        finally
+        {
+            Tool("/usr/bin/hdiutil", "detach", volume, "-force", "-quiet");
+        }
+    }
+
+    /// <summary>The person's window as the app makes it, its settings kept in the test's state folder, asking the stand-in;
+    /// with the updater of a copy installed in a test folder, or, as every window but the person's own, none.</summary>
+    private MainWindow Started(Updater? updater = null)
+    {
+        MainWindow window = new()
+        {
+            Width = 1200, Height = 800, StateFolder = settings, Releases = new ReleaseFeed(github.Latest, TimeSpan.FromSeconds(1)), SelfUpdate = updater,
+        };
         window.Show();
         window.KeepSettings();
         Ui.Settle();
@@ -241,17 +560,19 @@ public sealed class UpdatesTests : IDisposable
         return $"{parts[0] + major}.{minor}.0";
     }
 
-    /// <summary>A release as GitHub's API gives it, with every download #56 publishes.</summary>
-    private static StandIn.Reply Release(string tag, bool prerelease = false, bool draft = false)
+    /// <summary>A release as GitHub's API gives it, with every download #56 publishes; the files given are the stand-in's to
+    /// serve, by their names, and the rest GitHub's, which no test downloads.</summary>
+    private StandIn.Reply Release(string tag, bool prerelease = false, bool draft = false, IReadOnlyDictionary<string, byte[]>? files = null)
     {
         JsonArray assets = [];
-        foreach (string name in Downloads)
+        foreach (string name in Downloads.Union(files?.Keys ?? []))
         {
+            byte[]? served = files?.GetValueOrDefault(name);
             assets.Add(new JsonObject
             {
                 ["name"] = name,
-                ["browser_download_url"] = $"https://github.com/Zaneris/passenger/releases/download/{tag}/{name}",
-                ["size"] = 1000,
+                ["browser_download_url"] = served is null ? $"https://github.com/Zaneris/passenger/releases/download/{tag}/{name}" : github.Serve(tag, name, served).AbsoluteUri,
+                ["size"] = served?.Length ?? 1000,
             });
         }
         JsonObject release = new()
@@ -273,26 +594,247 @@ public sealed class UpdatesTests : IDisposable
         public void Dispose() => Avalonia.Application.Current!.RequestedThemeVariant = theme;
     }
 
-    /// <summary>GitHub's releases/latest on a loopback port of its own: each request's head kept as it came, and answered
-    /// as the test says, or taken and never answered until the client gives up.</summary>
+    /// <summary>A system tool the fixtures run, as the IDE runs its own, failing the test naming it when it fails.</summary>
+    private static ChildResult Tool(string tool, params string[] arguments)
+    {
+        ChildResult result = Task.Run(() => ChildProcesses.RunAsync(ChildProcesses.Command(tool, arguments), limit: TimeSpan.FromMinutes(2))).GetAwaiter().GetResult();
+        Assert.True(result.Succeeded, $"The test's installed copy is not as it was to be made: {tool} {string.Join(' ', arguments)} exited with code {result.ExitCode}:\n{result.Error}{result.Output}");
+        return result;
+    }
+
+    /// <summary>A Passenger installed in a test folder as this system's disk image or installer puts it, at the running
+    /// version, and the files a newer release carries for its update.</summary>
+    private abstract class InstalledCopy
+    {
+        public static InstalledCopy Make(string folder)
+        {
+            Assert.SkipUnless(OperatingSystem.IsMacOS() || OperatingSystem.IsWindows(), "Passenger installs updates itself on macOS and Windows alone");
+            return OperatingSystem.IsMacOS() ? new AppBundle(folder) : new VelopackInstall(folder);
+        }
+
+        /// <summary>The copy's updater, as a start of the copy makes it.</summary>
+        public abstract Updater Updater();
+
+        /// <summary>The files of a release of this version that this copy's update downloads, by name.</summary>
+        public abstract IReadOnlyDictionary<string, byte[]> Update(string version);
+
+        /// <summary>The package itself, of those files.</summary>
+        public abstract string Package(string version);
+
+        /// <summary>Whether this version is downloaded and waiting to install.</summary>
+        public abstract bool Holds(string version);
+
+        /// <summary>What is in the folder updates download to.</summary>
+        public abstract IReadOnlyList<string> Downloaded();
+
+        /// <summary>The version installed, where a test can see it change; null where it changes only once this process has
+        /// ended (Windows).</summary>
+        public abstract string? InstalledVersion { get; }
+    }
+
+    /// <summary>Passenger.app as the disk image puts it, in a test folder's Applications: its Info.plist and an executable
+    /// that writes down that it started, signed ad hoc under the hardened runtime as tools/package-mac.sh signs it, and a
+    /// bundle identifier of its own, so nothing takes it for the person's Passenger. Restart to Update runs its executable
+    /// rather than asking LaunchServices to open it.</summary>
+    [SupportedOSPlatform("macos")]
+    private sealed class AppBundle : InstalledCopy
+    {
+        private readonly string folder;
+
+        /// <param name="folder">The test's folder, which holds Passenger's state and, unless another is given, its Applications.</param>
+        /// <param name="applications">Where the app is installed, when not in the folder's Applications.</param>
+        public AppBundle(string folder, string? applications = null)
+        {
+            this.folder = folder;
+            Applications = Directory.CreateDirectory(applications ?? Path.Combine(folder, "Applications")).FullName;
+            Bundle = Path.Combine(Applications, "Passenger.app");
+            Staging = Path.Combine(folder, "state", "updates");
+            Make(Bundle, Product.Version);
+        }
+
+        public string Applications { get; }
+
+        public string Bundle { get; }
+
+        public string Staging { get; }
+
+        /// <summary>Where each start of the app writes its version.</summary>
+        public string Started => Path.Combine(folder, "started.txt");
+
+        public override string? InstalledVersion => Version(Bundle);
+
+        public override Updater Updater() => new DiskImageUpdater(Bundle, Staging, StartAsync);
+
+        public override string Package(string version) => ThisSystemsDownload();
+
+        public override IReadOnlyDictionary<string, byte[]> Update(string version)
+        {
+            string stage = Path.Combine(folder, $"image-{version}");
+            Make(Path.Combine(stage, "Passenger.app"), version);
+            string image = Path.Combine(folder, $"image-{version}.dmg");
+            Tool("/usr/bin/hdiutil", "create", "-volname", $"Passenger {version}", "-srcfolder", stage, "-fs", "HFS+", "-format", "UDZO", "-ov", image, "-quiet");
+            byte[] bytes = File.ReadAllBytes(image);
+            string sums = $"{Convert.ToHexStringLower(SHA256.HashData(bytes))}  {Package(version)}\n"
+                + $"{Convert.ToHexStringLower(SHA256.HashData((byte[])[1, 2, 3]))}  Passenger-windows-x64.exe\n";
+            return new Dictionary<string, byte[]> { [Package(version)] = bytes, ["SHA256SUMS"] = Encoding.UTF8.GetBytes(sums) };
+        }
+
+        /// <summary>An app of this version made ready under the folder downloads go to, whatever it is named there.</summary>
+        public override bool Holds(string version) =>
+            Directory.Exists(Path.Combine(Staging, version))
+            && Directory.EnumerateDirectories(Path.Combine(Staging, version)).Any(staged => Version(staged) == version);
+        public override IReadOnlyList<string> Downloaded() =>
+            Directory.Exists(Staging) ? [.. Directory.EnumerateFileSystemEntries(Staging).Select(p => Path.GetFileName(p))] : [];
+
+        /// <summary>Whether the installed app's signature holds, as Gatekeeper checks it.</summary>
+        public bool SignatureHolds() =>
+            Task.Run(() => ChildProcesses.RunAsync(ChildProcesses.Command("/usr/bin/codesign", ["--verify", "--deep", "--strict", Bundle]))).GetAwaiter().GetResult().Succeeded;
+
+        private void Make(string bundle, string version)
+        {
+            string macOS = Directory.CreateDirectory(Path.Combine(bundle, "Contents", "MacOS")).FullName;
+            File.WriteAllText(Path.Combine(bundle, "Contents", "Info.plist"), $"""
+                <?xml version="1.0" encoding="UTF-8"?>
+                <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+                <plist version="1.0">
+                <dict>
+                    <key>CFBundleName</key><string>Passenger</string>
+                    <key>CFBundleIdentifier</key><string>io.github.zaneris.passenger.tests</string>
+                    <key>CFBundleExecutable</key><string>Passenger</string>
+                    <key>CFBundlePackageType</key><string>APPL</string>
+                    <key>CFBundleShortVersionString</key><string>{version}</string>
+                </dict>
+                </plist>
+                """);
+            string executable = Path.Combine(macOS, "Passenger");
+            File.WriteAllText(executable, $"#!/bin/sh\necho started {version} >> '{Started}'\n");
+            File.SetUnixFileMode(executable, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupRead
+                | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+            Tool("/usr/bin/codesign", "--force", "--options", "runtime", "--sign", "-", bundle);
+        }
+
+        private static string? Version(string bundle)
+        {
+            string plist = Path.Combine(bundle, "Contents", "Info.plist");
+            if (!File.Exists(plist))
+            {
+                return null;
+            }
+            System.Text.RegularExpressions.Match version = System.Text.RegularExpressions.Regex.Match(File.ReadAllText(plist),
+                @"<key>CFBundleShortVersionString</key>\s*<string>([^<]*)</string>");
+            return version.Success ? version.Groups[1].Value : null;
+        }
+
+        private static async Task StartAsync(string bundle) =>
+            await ChildProcesses.RunAsync(ChildProcesses.Command(Path.Combine(bundle, "Contents", "MacOS", "Passenger"), []), limit: TimeSpan.FromSeconds(30));
+    }
+
+    /// <summary>Passenger as its Windows installer (Velopack's) puts it, in a test folder: the install's folder with
+    /// current\ and packages\, on this processor's channel, as Velopack's own test locator describes it.</summary>
+    private sealed class VelopackInstall : InstalledCopy
+    {
+        private readonly string root;
+        private readonly string current;
+        private readonly string packages;
+        private readonly string channel = $"win-{RuntimeInformation.OSArchitecture.ToString().ToLowerInvariant()}";
+
+        public VelopackInstall(string folder)
+        {
+            root = Directory.CreateDirectory(Path.Combine(folder, "PassengerIDE")).FullName;
+            current = Directory.CreateDirectory(Path.Combine(root, "current")).FullName;
+            packages = Directory.CreateDirectory(Path.Combine(root, "packages")).FullName;
+        }
+
+        public override string? InstalledVersion => null;
+
+        public override Updater Updater() =>
+            new VelopackUpdater(new TestVelopackLocator("PassengerIDE", Product.Version, packages, current, root, Path.Combine(root, "Update.exe"), channel));
+
+        public override string Package(string version) => $"PassengerIDE-{version}-{channel}-full.nupkg";
+
+        public override IReadOnlyDictionary<string, byte[]> Update(string version)
+        {
+            byte[] package = Nupkg(version);
+            JsonObject feed = new()
+            {
+                ["Assets"] = new JsonArray(new JsonObject
+                {
+                    ["PackageId"] = "PassengerIDE",
+                    ["Version"] = version,
+                    ["Type"] = "Full",
+                    ["FileName"] = Package(version),
+                    ["SHA256"] = Convert.ToHexString(SHA256.HashData(package)),
+                    ["Size"] = package.Length,
+                }),
+            };
+            return new Dictionary<string, byte[]> { [$"releases.{channel}.json"] = Encoding.UTF8.GetBytes(feed.ToJsonString()), [Package(version)] = package };
+        }
+
+        public override bool Holds(string version) => File.Exists(Path.Combine(packages, Package(version)));
+
+        public override IReadOnlyList<string> Downloaded() =>
+            [.. Directory.EnumerateFiles(packages).Select(p => Path.GetFileName(p)).Where(name => !name.StartsWith('.'))];
+
+        /// <summary>A full package as vpk packs one, as small as can be: its manifest and the app's executable.</summary>
+        private byte[] Nupkg(string version)
+        {
+            using MemoryStream bytes = new();
+            using (ZipArchive zip = new(bytes, ZipArchiveMode.Create, leaveOpen: true))
+            {
+                using (StreamWriter manifest = new(zip.CreateEntry("PassengerIDE.nuspec").Open()))
+                {
+                    manifest.Write($"""
+                        <?xml version="1.0" encoding="utf-8"?>
+                        <package xmlns="http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd">
+                          <metadata>
+                            <id>PassengerIDE</id>
+                            <version>{version}</version>
+                            <title>Passenger</title>
+                            <authors>Passenger</authors>
+                            <description>Passenger</description>
+                            <channel>{channel}</channel>
+                            <mainExe>Passenger.exe</mainExe>
+                          </metadata>
+                        </package>
+                        """);
+                }
+                using StreamWriter executable = new(zip.CreateEntry("lib/app/Passenger.exe").Open());
+                executable.Write($"Passenger {version}");
+            }
+            return bytes.ToArray();
+        }
+    }
+
+    /// <summary>GitHub on a loopback port of its own: releases/latest, answered as the test says or taken and never answered
+    /// until the client gives up, and a release's downloads, each request's head kept as it came. A file held is sent half
+    /// way and the rest only once the test lets it go.</summary>
     private sealed class StandIn : IDisposable
     {
+        private const string DownloadPath = "/Zaneris/passenger/releases/download/";
+
         private readonly TcpListener listener = new(IPAddress.Loopback, 0);
         private readonly CancellationTokenSource end = new();
         private readonly List<string> heads = [];
+        private readonly ConcurrentDictionary<string, byte[]> files = new(StringComparer.Ordinal);
         private readonly Task accepting;
         private Reply? answer;
+        private Held? holding;
 
         public StandIn()
         {
             listener.Start();
-            Latest = new Uri($"http://127.0.0.1:{((IPEndPoint)listener.LocalEndpoint).Port}/repos/Zaneris/passenger/releases/latest");
+            string root = $"http://127.0.0.1:{((IPEndPoint)listener.LocalEndpoint).Port}";
+            Latest = new Uri($"{root}/repos/Zaneris/passenger/releases/latest");
+            Downloads = new Uri(root + DownloadPath);
             accepting = Task.Run(AcceptAsync);
         }
 
         public sealed record Reply(int Status, string Body);
 
         public Uri Latest { get; }
+
+        /// <summary>Where a release's files download from, under each release's tag.</summary>
+        public Uri Downloads { get; }
 
         /// <summary>The answer to each request from now on; null takes it and never answers.</summary>
         public Reply? Answer
@@ -312,8 +854,25 @@ public sealed class UpdatesTests : IDisposable
             }
         }
 
+        /// <summary>Serves a release's file from now on, and gives where.</summary>
+        public Uri Serve(string tag, string name, byte[] content)
+        {
+            files[$"{tag}/{name}"] = content;
+            return new Uri(Downloads, $"{tag}/{name}");
+        }
+
+        /// <summary>The requests for a file of a release, by its name.</summary>
+        public string[] RequestsFor(string name) => [.. Requests.Where(head => head.StartsWith("GET ", StringComparison.Ordinal)
+            && head.Split(' ')[1] is var path && path.StartsWith(DownloadPath, StringComparison.Ordinal) && path.EndsWith("/" + name, StringComparison.Ordinal))];
+
+        /// <summary>Holds a file half sent until <see cref="Let"/>.</summary>
+        public void Hold(string name) => Volatile.Write(ref holding, new Held(name, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)));
+
+        public void Let() => Interlocked.Exchange(ref holding, null)?.Gate.TrySetResult();
+
         public void Dispose()
         {
+            Let();
             end.Cancel();
             listener.Stop();
             accepting.Wait(TimeSpan.FromSeconds(10));
@@ -331,9 +890,9 @@ public sealed class UpdatesTests : IDisposable
                     answering.Add(Task.Run(() => AnswerAsync(client)));
                 }
             }
-            catch (Exception stopped) when (stopped is OperationCanceledException or SocketException or ObjectDisposedException)
+            catch (Exception stopped) when (stopped is OperationCanceledException or SocketException or ObjectDisposedException or InvalidOperationException)
             {
-                // Disposed.
+                // Disposed, before the loop first listened too, as a test that skips at once has it.
             }
             await Task.WhenAll(answering);
         }
@@ -356,9 +915,16 @@ public sealed class UpdatesTests : IDisposable
                         }
                         read += more;
                     }
+                    string head = Encoding.ASCII.GetString(buffer, 0, read);
                     lock (heads)
                     {
-                        heads.Add(Encoding.ASCII.GetString(buffer, 0, read));
+                        heads.Add(head);
+                    }
+                    string path = head.Split(' ')[1];
+                    if (path.StartsWith(DownloadPath, StringComparison.Ordinal))
+                    {
+                        await SendFileAsync(stream, path[DownloadPath.Length..]);
+                        return;
                     }
                     if (Answer is not { } reply)
                     {
@@ -381,5 +947,28 @@ public sealed class UpdatesTests : IDisposable
                 }
             }
         }
+
+        private async Task SendFileAsync(NetworkStream stream, string file)
+        {
+            if (!files.TryGetValue(file, out byte[]? body))
+            {
+                await stream.WriteAsync(Encoding.ASCII.GetBytes("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"), end.Token);
+                return;
+            }
+            await stream.WriteAsync(Encoding.ASCII.GetBytes(
+                $"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {body.Length}\r\nConnection: close\r\n\r\n"), end.Token);
+            Held? hold = Volatile.Read(ref holding) is { } held && file.EndsWith("/" + held.Name, StringComparison.Ordinal) ? held : null;
+            int half = hold is null ? body.Length : body.Length / 2;
+            await stream.WriteAsync(body.AsMemory(0, half), end.Token);
+            await stream.FlushAsync(end.Token);
+            if (hold is not null)
+            {
+                await hold.Gate.Task.WaitAsync(end.Token);
+                await stream.WriteAsync(body.AsMemory(half), end.Token);
+            }
+        }
+
+        /// <summary>A file held half sent, and what lets it go.</summary>
+        private sealed record Held(string Name, TaskCompletionSource Gate);
     }
 }

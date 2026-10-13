@@ -280,8 +280,8 @@ jobs:
           }
           Write-Host "Passenger.dll for $env:RID says it is $said"
 
-      # The Windows channels' update feed, as Velopack's GithubSource reads it from a release (#35):
-      # releases.<rid>.json, which names the full package and its SHA-256, beside the package.
+      # The Windows channels' update feed (#35): releases.<rid>.json, which names the full package and its SHA-256, beside
+      # the package. An installed Passenger reads the newer release's by these names, as Velopack's GithubSource would.
       - name: Gather the release's files
         run: |
           mkdir -p artifacts/release
@@ -366,6 +366,7 @@ jobs:
             }
           done
 
+      # What a Mac's update checks its disk image against (#35), as a person can check a download.
       - name: Checksums
         working-directory: release/assets
         run: |

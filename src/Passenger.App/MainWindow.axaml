@@ -91,10 +91,11 @@
                 BorderBrush="{DynamicResource Passenger.Divider}" BorderThickness="0,1,0,0">
             <DockPanel Margin="12,0">
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="18" VerticalAlignment="Center">
-                    <!-- A newer release, once per version: its link opens this system's download or the release page. -->
+                    <!-- A newer release: its download under way, Restart to Update once it is ready, or (for a copy that
+                         cannot update itself) a link to this system's download or the release page, once per version. -->
                     <Button Name="UpdateButton" Classes="statusItem" IsVisible="False" Click="OnUpdateClicked">
                         <StackPanel Orientation="Horizontal" Spacing="4">
-                            <PathIcon Data="{StaticResource Icon.ArrowDown}" Foreground="{DynamicResource Passenger.Link}" Width="12" Height="12" />
+                            <PathIcon Name="UpdateIcon" Data="{StaticResource Icon.ArrowDown}" Foreground="{DynamicResource Passenger.Link}" Width="12" Height="12" />
                             <TextBlock Name="UpdateText" Classes="status" Foreground="{DynamicResource Passenger.Link}" />
                         </StackPanel>
                     </Button>

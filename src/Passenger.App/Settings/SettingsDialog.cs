@@ -181,9 +181,11 @@ public sealed class SettingsDialog : Window
 
         // Rider's System Settings, Updates; what is sent is said under it.
         Add(UpdatesPage, "Check for updates", Check(Working.CheckForUpdates, v => Change(s => s with { CheckForUpdates = v })),
-            "updates check new version release newer download github automatic",
-            "Passenger asks GitHub for its latest release when it starts and once a day, and says in the status bar when a "
-            + "newer one is out. Nothing is sent but the request, which names Passenger and its version.");
+            "updates check new version release newer download github automatic install restart",
+            "Passenger asks GitHub for its latest release when it starts and once a day. When a newer one is out, an installed "
+            + "Passenger downloads it, checks it against the SHA-256 the release gives, and installs it when it restarts; a "
+            + "copy built from source says in the status bar that it is out. Nothing is sent but the requests, which name "
+            + "Passenger and its version.");
 
         Add(EditorPage, "Font size", Number(Working.EditorFontSize, AppSettings.MinFontSize, AppSettings.MaxFontSize, 1, v => Change(s => s with { EditorFontSize = v })), "font size text");
         Add(EditorPage, "Line spacing", Number(Working.EditorLineSpacing, AppSettings.MinLineSpacing, AppSettings.MaxLineSpacing, 0.1, v => Change(s => s with { EditorLineSpacing = v })), "font line height");
