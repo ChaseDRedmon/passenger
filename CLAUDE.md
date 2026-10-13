@@ -20,7 +20,10 @@ just publish RID           # self-contained Release build, ReadyToRun (osx-arm64
 just package-mac [RID] [--dry-run]  # artifacts/package/Passenger-macos-arm64.dmg (or -x64), checked mounted; signed
                            # with PASSENGER_SIGN_IDENTITY and notarized with PASSENGER_NOTARY_PROFILE when set, else ad hoc
 just icons                 # rewrite Theme/Icons.axaml from the list in tools/icons.py (icons from a fixed commit)
-just notices               # fail naming any package the solution or Roslyn's server carries that the notices miss
+just package-win [RID]     # artifacts/package/Passenger-windows-x64.exe (or -arm64), Velopack's per-user installer;
+                           # signed on Windows by PASSENGER_SIGNTOOL_PARAMS or PASSENGER_ARTIFACT_SIGNING_METADATA
+just notices               # fail naming any package the solution, Roslyn's server or a dotnet tool carries that the
+                           # notices miss
 just test [filter]         # every test, or those whose name matches
 just mcp [FOLDER]          # Passenger as an MCP server over a folder (this one by default), from a clone of the last build
 ```
@@ -31,7 +34,8 @@ to debug the IDE's own projects, and to look at the window (`screenshot`). It ru
 Debug build, so `just build` never changes the files under it; reconnect the server to pick a new build up. A tool's
 lines and columns count from 1 and its paths are the folder's. Anything it gets wrong is a Passenger bug to fix.
 
-The screenshot is the self-check for anything visible. It opens what the command line names, takes
+The screenshot is the self-check for anything visible (with nothing named it shows the Welcome screen, its list
+empty, since a screenshot keeps no state). It opens what the command line names, takes
 its steps in order through the window's real input, waits for background work to land, and captures
 the compositor's own frame:
 
@@ -102,12 +106,13 @@ window or takes the focus; it shows everything but the system's own window chrom
   `DockLayout`, with the folder open and as the one a folder without its own opens on. A new tool window is a view and
   one `Dock.Add` in `MainWindow.AddToolWindows`.
 - `src/Passenger.App/State`: the IDE's own state, in one `StateStore` under `PASSENGER_SETTINGS` or the user's local
-  application data, kept only by the person's window: the app's documents at its top (`settings.json`, `layout.json`)
+  application data, kept only by the person's window: the app's documents at its top (`settings.json`, `layout.json`,
+  `recentSolutions.json`)
   and each folder's under `workspaces/<name>-<hash>/` (editors and recent files, layout, breakpoints, bookmarks, the
   profiler's `snapshots/`). A
   `StateDocument` is a record that is an `IStateDocument`: its `Upgrades` from each older version and its `Clamped` value;
   it is written debounced off the UI thread through a temporary file, merged over the file so values it does not know
-  stay, and a file that does not read is set aside as `.bad` and logged. New state is a document there, never a file of
+  stay (and an entry another window removed stays removed), and a file that does not read is set aside as `.bad` and logged. New state is a document there, never a file of
   its own.
 - Logs: one folder, `logs/` under the state root, written by `IdeLog` off a queue with every file rotated by size:
   `passenger.log` (IDE errors, the language server's warnings and errors, each folder's startup phases with times),
@@ -143,6 +148,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   for the rest, and a `ToolWindow`'s `Action` for its show action. `AppActions.cs` holds the ids and each platform's
   keymap. Keys, the main menu (`MainMenu.Build`), Find Action, context menus and MCP's `ide_action` all run actions
   through the registry, so one that cannot run says why; editor actions go to the focused editor.
+- `src/Passenger.App/Welcome`: the Welcome screen (`WelcomeView`, in the editor area while nothing is open) and the
+  recent folders and solutions (`RecentSolutions`, the store's `recentSolutions.json`), read by the screen, File >
+  Recent Solutions and a start that names nothing (Settings' Reopen projects on startup); `MainWindow.Welcome.cs`
+  wires them and Clone Repository (`Vcs/CloneDialog`, `Git.CloneAsync`). `Installation.cs` is what an installed
+  Windows copy does on install, update and uninstall (Velopack's hooks): the file types it opens, under the user.
 - `src/Passenger.App/Mcp`: Passenger as an MCP server (the official C# SDK). `PassengerTools` is every tool, each
   run on the UI thread as the window's own commands are and ended by its `CancellationToken`, answering with what its
   operation returned (`VcsOutcome`, `CommitResult`, `BuildOutcome`, the debugger's `Stop`), never with what the status
