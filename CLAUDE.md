@@ -126,7 +126,9 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.App`: the shell. One window-wide keymap (`AppActions.cs`) routes IDE actions
   itself and editor actions to the focused editor. Explorer, editor tabs, files on disk.
 - `src/Passenger.App/Mcp`: Passenger as an MCP server (the official C# SDK). `PassengerTools` is every tool, each
-  run on the UI thread as the window's own commands are and ended by its `CancellationToken`; `McpHost` hosts them
+  run on the UI thread as the window's own commands are and ended by its `CancellationToken`, answering with what its
+  operation returned (`VcsOutcome`, `CommitResult`, `BuildOutcome`, the debugger's `Stop`), never with what the status
+  bar says by then; `McpHost` hosts them
   three ways: `--mcp [FOLDER]` (a headless IDE on standard input and output), a window's own socket under the state
   folder (`AgentSocket`, open only while the person's Enable MCP Server setting is on), and `--mcp-attach [PID]`
   (standard input and output joined to the window over the agent's folder). On a person's window a tool neither
