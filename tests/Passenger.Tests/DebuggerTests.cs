@@ -380,6 +380,40 @@ public sealed class DebuggerTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void A_debugger_killed_while_its_program_is_paused_takes_the_program_with_it()
+    {
+        string started = Path.Combine(folder, "program.pid");
+        Write("Program.cs", $"File.WriteAllText(@\"{started}\", Environment.ProcessId.ToString());\nConsole.WriteLine(\"stopped here\");\nThread.Sleep(Timeout.Infinite);\n");
+        MainWindow window = Open();
+        int debuggee = 0;
+        int adapter = 0;
+        try
+        {
+            window.EditorArea.CodeEditor.GoTo(new TextPosition(1, 0));
+            Ui.Run(window, AppActions.ToggleBreakpoint);
+            Ui.Run(window, AppActions.Debug);
+            Ui.WaitFor(() => window.Debugger.Session?.State == DebugState.Paused, "the program to stop at the breakpoint");
+            debuggee = Processes.WrittenId(started, "the program to run under the debugger");
+            adapter = window.Debugger.Session!.AdapterProcessId;
+
+            // The debugger alone, as a crash ends it: what it started is left to whatever ends it next.
+            using (Process debugger = Process.GetProcessById(adapter))
+            {
+                debugger.Kill();
+            }
+            Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end with its debugger");
+            Assert.True(Processes.Gone(debuggee), "The debugger died and the IDE left the program it launched running, held at its breakpoint, until the IDE closed");
+            Assert.Contains("the debugger itself stopped", window.Status, StringComparison.Ordinal);
+            window.Close();
+        }
+        finally
+        {
+            Processes.Kill(debuggee);
+            Processes.Kill(adapter);
+        }
+    }
+
+    [AvaloniaFact]
     public void Closing_the_window_while_debugging_leaves_no_program_debugger_or_language_server_running()
     {
         string started = Path.Combine(folder, "program.pid");

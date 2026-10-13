@@ -109,6 +109,10 @@ public sealed class DebugSession
 
     private readonly TaskCompletionSource<int> processStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+    /// <summary>The program the adapter launched, once it has said which it is: the adapter's child, which ends with the IDE
+    /// (its job or process group), but which only the IDE can end once the adapter itself has died.</summary>
+    private Process? launched;
+
     /// <summary>Why the session ended other than by the program ending or being stopped: the adapter crashed.</summary>
     public string? Failure { get; private set; }
 
@@ -278,7 +282,56 @@ public sealed class DebugSession
                 log($"Passenger's debugger stopped with exit code {code} after the program ended");
             }
         }
+        EndLaunched(log);
         End(null);
+    }
+
+    /// <summary>Ends a launched program the adapter left running as it went (a crash, a kill), which nothing else would end
+    /// before the IDE did: frozen at its stop or running on, holding its port and its files. Its tree on Windows; on macOS
+    /// and Linux the adapter's process group too, which holds what the program started.</summary>
+    private void EndLaunched(Action<string> log)
+    {
+        if (launched is not { } program)
+        {
+            return;
+        }
+        launched = null;
+        using (program)
+        {
+            try
+            {
+                if (program.HasExited)
+                {
+                    return;
+                }
+            }
+            catch (Exception gone) when (gone is InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+                return;
+            }
+            log($"{Path.GetFileName(Program)} (process {program.Id}) was left running by the debugger, and is ended with it");
+            ChildProcesses.Kill(program);
+            ChildProcesses.Kill(adapter);
+        }
+    }
+
+    /// <summary>A launched program's process, its handle opened at once on Windows so its id is never another's while held;
+    /// null when it has gone already.</summary>
+    private static Process? Hold(int processId)
+    {
+        try
+        {
+            Process process = Process.GetProcessById(processId);
+            if (OperatingSystem.IsWindows())
+            {
+                _ = process.SafeHandle;
+            }
+            return process;
+        }
+        catch (Exception gone) when (gone is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return null;
+        }
     }
 
     public async Task<IReadOnlyList<DapThread>> ThreadsAsync() =>
@@ -393,8 +446,13 @@ public sealed class DebugSession
                 }
                 break;
             case "process":
-                if (body.Read<ProcessEvent>().SystemProcessId is int processId)
+                ProcessEvent started = body.Read<ProcessEvent>();
+                if (started.SystemProcessId is int processId)
                 {
+                    if (started.StartMethod == "launch")
+                    {
+                        launched ??= Hold(processId);
+                    }
                     processStarted.TrySetResult(processId);
                 }
                 break;
