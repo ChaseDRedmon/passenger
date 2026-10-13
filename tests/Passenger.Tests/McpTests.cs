@@ -486,7 +486,7 @@ public sealed class McpTests : IDisposable
 
             // Asked again, and allowed: it runs, and the status bar says what the agent is doing.
             using CancellationTokenSource giveUp = CancellationTokenSource.CreateLinkedTokenSource(Cancel);
-            Task<CallToolResult> allowed = Task.Run(() => Result(client, "run", run, giveUp));
+            Task<CallToolResult> allowed = Task.Run(() => CallGivingUp(client, "run", run, giveUp.Token));
             Press(Question(window, "the question asked again"), "Allow");
             WaitFor(() => window.Runner.IsRunning && window.AgentStatus == "Agent: Run a configuration", "the agent's run in the status bar");
 
@@ -879,6 +879,31 @@ public sealed class McpTests : IDisposable
     /// on it.</summary>
     private Task<CallToolResult> Result(McpClient client, string tool, Dictionary<string, object?>? arguments = null, CancellationTokenSource? giveUp = null) =>
         Exchange($"The {tool} call", Limit(tool), cancel => client.CallToolAsync(tool, arguments, cancellationToken: cancel).AsTask(), giveUp);
+
+    /// <summary>A tool call the agent gives up on as the protocol has it: sent under an id of its own, and on giving up a
+    /// "cancelled" notification naming that id. The SDK's own call can drop that notification: it registers sending it and
+    /// then waits on the same token in a using that disposes the registration, and a token's callbacks run newest first,
+    /// so the wait's end can dispose the sending before it runs (1 in 200 under load), leaving the window waiting.</summary>
+    private static async Task<CallToolResult> CallGivingUp(McpClient client, string tool, Dictionary<string, object?> arguments, CancellationToken giveUp)
+    {
+        RequestId id = new($"given-up-{Guid.NewGuid():N}");
+        CallToolRequestParams call = new()
+        {
+            Name = tool,
+            Arguments = arguments.ToDictionary(a => a.Key, a => JsonSerializer.SerializeToElement(a.Value, ModelContextProtocol.McpJsonUtilities.DefaultOptions)),
+        };
+        Task<CallToolResult> answer = client.SendRequestAsync<CallToolRequestParams, CallToolResult>(RequestMethods.ToolsCall, call, requestId: id).AsTask();
+        try
+        {
+            return await answer.WaitAsync(giveUp);
+        }
+        catch (OperationCanceledException) when (giveUp.IsCancellationRequested)
+        {
+            // Sending it also ends the SDK's wait for the answer that will not come.
+            await client.SendNotificationAsync(NotificationMethods.CancelledNotification, new CancelledNotificationParams { RequestId = id });
+            throw;
+        }
+    }
 
     /// <summary>How long a tool may take before the test calls it hung: minutes for one that builds first; for one that asks
     /// the language server, longer than the 120 s Passenger waits for it to load the folder, so its own words come back;
