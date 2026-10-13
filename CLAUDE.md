@@ -129,9 +129,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   one `Dock.Add` in `MainWindow.AddToolWindows`.
 - `src/Passenger.App/State`: the IDE's own state, in one `StateStore` under `PASSENGER_SETTINGS` or the user's local
   application data, kept only by the person's window: the app's documents at its top (`settings.json`, `layout.json`,
-  `recentSolutions.json`, `updates.json`)
+  `recentSolutions.json`, `updates.json`, `find.json`)
   and each folder's under `workspaces/<name>-<hash>/` (editors and recent files, layout, breakpoints, bookmarks, run
-  configurations, the profiler's `snapshots/`). A
+  configurations, Find in Files' scope, the profiler's `snapshots/`). A
   `StateDocument` is a record that is an `IStateDocument`: its `Upgrades` from each older version and its `Clamped` value;
   it is written debounced off the UI thread through a temporary file, merged over the file so values it does not know
   stay (and an entry another window removed stays removed), and a file that does not read is set aside as `.bad` and logged. New state is a document there, never a file of
@@ -183,13 +183,19 @@ window or takes the focus; it shows everything but the system's own window chrom
   folder's own in `runConfigurations.json`, the rest made from the executable projects' launch profiles, those that
   cannot launch here saying why); `LaunchPlan.ResolveAsync` works one out once, in one MSBuild request, into what Run,
   Debug, Profile, Hot Reload and a debugged test host start, and `RunConfigurationsDialog` is Run > Edit
-  Configurations. A test project's first Project launch profile gives its variables to its tests.
+  Configurations. A test project's first Project launch profile gives its variables to its tests. A configuration that
+  uses the terminal (Rider's Use external console) runs in a Terminal tab of its name (`TerminalPanel.RunAsync`, a
+  `TerminalRun` with its process, exit code and Stop); Debug answers the adapter's runInTerminal the same way
+  (`DebugController.RunInTerminal`), and `debug_input`/`debug_output` use that tab. In a program's tab, Run, Debug,
+  Rerun, Stop and the debugger's keys stay with the IDE.
 - `src/Passenger.App/Testing`: unit testing works in Passenger's own `TestItem` (its id the project and full name, plus
   a data row's name) and `TestOutcome`, behind `ITestRunner`; `VsTestRunner` is the only file that knows VSTest's
   object model. `TestFinder` shows a solution's tests from code as it opens, before any build: test projects' files
   parsed off the UI thread, an open file's from its own parse (`TestsAtCaret.Read` is the one reading of a file's
   tests), changed ones through the folder watcher; discovery and runs merge into those rows by id.
   `MainWindow.Tests.cs` wires it.
+- Find in Files is `Navigation/FindInFilesPopup`; Rider's scopes (Solution, Project, Directory, Scope) and file mask are
+  `Workspace/SearchScope.cs`, which `MainWindow.Search.cs` turns into files (`ScopeOf` for Solution view rows).
 - `src/Passenger.App/Workspace`: `SolutionModel` reads solutions and projects for the Explorer's Solution view, and
   `SolutionEdits` is every change to a .sln or .slnx (solution folders, the files they list, projects in and out): a
   .sln line by line and a .slnx through XDocument with its whitespace kept, so the rest of the file stays byte for byte
@@ -256,7 +262,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   ended by its pseudo-terminal's hangup), vstest.console (VSTest's, which watches the IDE) and, on Windows, Velopack's
   Update.exe (started as Passenger closes with an update ready, since it must outlive Passenger to replace it) start
   elsewhere. macOS's update runs nothing after Passenger: it swaps the app in as the process ends and starts the new
-  one through LaunchServices (`open`, through ChildProcesses).
+  one through LaunchServices (`open`, through ChildProcesses). A program a run configuration runs in the terminal is
+  started by Porta.Pty and then `ChildProcesses.Adopt`ed: its process group goes on Lifeline's watchdog (macOS, Linux),
+  and Porta.Pty's job ends it on Windows.
 - **Every dependency, icon or asset** has an open-source licence and an entry in `THIRD_PARTY_NOTICES.md`, added in the
   same change that brings it in: a package by its NuGet id in backticks, with its licence and copyright as the package
   states them (`just notices`, and CI, fail on one missing), copied source by its file with the project it came from.
@@ -316,7 +324,8 @@ the run is above 0 and cannot come down (`Nice`).
 
 The debugger's tests (`tests/Passenger.Tests/Debugging`) run the adapter from the tests' own `debugger/` folder, as
 the IDE does, and launch or attach to the programs in `tests/Debuggees`, whose lines and columns (tabs included) they
-stop at: moving a line there means moving the tests that name it. They run one at a time (`DebugSession.Collection`). `PASSENGER_ENGINE_LOG=FILE` keeps the engine's own log, for the
+stop at: moving a line there means moving the tests that name it. `TerminalConsoleApp` there needs a real terminal;
+window tests copy it into a folder of their own (`Debuggees.CopyTo`). They run one at a time (`DebugSession.Collection`). `PASSENGER_ENGINE_LOG=FILE` keeps the engine's own log, for the
 tests' sessions and the IDE's alike.
 
 The MCP server's tests (`McpTests`) are agents using the SDK's own client: one starts `Passenger --mcp` and debugs a
