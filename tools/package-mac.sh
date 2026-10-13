@@ -1,34 +1,95 @@
 #!/bin/sh
-# A macOS app bundle of Passenger: `just package-mac [osx-arm64|osx-x64]`. The Release publish (self-contained,
-# ReadyToRun, the debugger and Roslyn's server beside it) goes into Passenger.app/Contents/MacOS with an Info.plist,
-# then the bundle is signed under the hardened runtime with the entitlements a debugger needs: by
-# PASSENGER_SIGN_IDENTITY (a Developer ID Application identity), else ad hoc, which runs on this Mac only. With
-# PASSENGER_NOTARY_PROFILE (a notarytool keychain profile) it is notarized and stapled. The zip lands in
-# artifacts/package.
+# Passenger's macOS disk image: `just package-mac [osx-arm64|osx-x64] [--dry-run]` makes
+# artifacts/package/Passenger-macos-arm64.dmg (or -x64), the names a release keeps from one to the next (#56). The
+# Release publish (self-contained, ReadyToRun, the debugger and Roslyn's server beside it) becomes Passenger.app, signed
+# under the hardened runtime with the entitlements below: by PASSENGER_SIGN_IDENTITY (a Developer ID Application
+# identity), else ad hoc, which Apple Silicon needs to run it at all and which a person opens once through System
+# Settings > Privacy & Security > Open Anyway. With PASSENGER_NOTARY_PROFILE (a notarytool keychain profile) the app is
+# notarized and stapled, then the image signed, notarized and stapled too. --dry-run writes the Developer ID's and the
+# notary's commands to a file instead of running them, and signs ad hoc. The image is then mounted read-only and checked.
 set -eu
-rid=${1:-osx-arm64}
+fail() {
+    echo "package-mac: $*" >&2
+    exit 1
+}
+rid=osx-arm64
+dry_run=
+for arg in "$@"; do
+    case $arg in
+        osx-arm64 | osx-x64) rid=$arg ;;
+        --dry-run) dry_run=1 ;;
+        *) fail "'$arg' is neither osx-arm64, osx-x64 nor --dry-run" ;;
+    esac
+done
+arch=${rid#osx-}
+# lipo's name for the processor, which every Mach-O file in the app must be built for.
+machine=arm64
+[ "$arch" = arm64 ] || machine=x86_64
+identity=${PASSENGER_SIGN_IDENTITY:-}
+profile=${PASSENGER_NOTARY_PROFILE:-}
+if [ -n "$profile" ] && [ -z "$identity" ]; then
+    fail "PASSENGER_NOTARY_PROFILE needs PASSENGER_SIGN_IDENTITY: the notary takes only what a Developer ID signed"
+fi
+if [ -n "$dry_run" ] && [ -z "$identity" ]; then
+    fail "--dry-run shows what a Developer ID would run: set PASSENGER_SIGN_IDENTITY (and PASSENGER_NOTARY_PROFILE)"
+fi
+if [ -n "$identity" ] && [ -z "$dry_run" ]; then
+    security find-identity -v -p codesigning | grep -qF "$identity" || fail "no code signing identity '$identity' in the keychains"
+fi
+
 root=$(cd "$(dirname "$0")/.." && pwd)
 out="$root/artifacts/package"
-publish="$out/publish-$rid"
-app="$out/Passenger.app"
+work="$out/$rid"
+publish="$work/publish"
+# The image's top folder: the app is built where it is packed.
+stage="$work/image"
+app="$stage/Passenger.app"
+mount="$work/mount"
+commands="$work/dry-run.txt"
+image="$out/Passenger-macos-$arch.dmg"
 # The version is a vX.Y.Z tag on this commit, else the Version every project carries (Directory.Build.props), and
 # the assemblies are built with it too, so the app says the version its bundle does. The build number counts the
 # commits, so each package's is higher than the last; a shallow clone would count only the ones it has.
 version=$(git -C "$root" describe --tags --exact-match --match 'v[0-9]*' 2>/dev/null | sed 's/^v//' || true)
 [ -n "$version" ] || version=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' "$root/Directory.Build.props" | head -n 1)
 if ! echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-    echo "package-mac: the version '$version' is not X.Y.Z in numbers (a vX.Y.Z tag on the commit, or Version in Directory.Build.props)" >&2
-    exit 1
+    fail "the version '$version' is not X.Y.Z in numbers (a vX.Y.Z tag on the commit, or Version in Directory.Build.props)"
 fi
 if [ "$(git -C "$root" rev-parse --is-shallow-repository)" = true ]; then
-    echo "package-mac: a shallow clone cannot count its commits for the build number; fetch the whole history" >&2
-    exit 1
+    fail "a shallow clone cannot count its commits for the build number; fetch the whole history"
 fi
 build=$(git -C "$root" rev-list --count HEAD)
 
-rm -rf "$publish" "$app"
+# The image is mounted under the work folder while it is made and checked, and never left mounted, a failure included.
+mounted=
+attach() {
+    mkdir -p "$mount"
+    hdiutil attach "$@" -nobrowse -noautoopen -mountpoint "$mount" -quiet
+    mounted=1
+}
+detach() {
+    # Spotlight or XProtect can hold a volume just made for a moment; the last try forces it.
+    for try in 1 2 3; do
+        if hdiutil detach "$mount" -quiet; then
+            mounted=
+            return
+        fi
+        sleep "$try"
+    done
+    hdiutil detach "$mount" -force -quiet
+    mounted=
+}
+trap '[ -z "$mounted" ] || hdiutil detach "$mount" -force -quiet' EXIT
+trap 'exit 1' HUP INT TERM
+if [ -d "$mount" ]; then
+    hdiutil detach "$mount" -force -quiet 2>/dev/null || true
+fi
+rm -rf "$work" "$image"
+mkdir -p "$work"
+
+# Only the packages the lock files pin, as CI restores; and no MSBuild node is left running once it is done.
 dotnet publish "$root/src/Passenger.App" -c Release -r "$rid" --self-contained -p:PublishReadyToRun=true -p:Version="$version" \
-    -o "$publish" -nologo -v quiet
+    -p:RestoreLockedMode=true -nodeReuse:false -o "$publish" -nologo -v quiet
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp -R "$publish/." "$app/Contents/MacOS/"
 cp "$root/src/Passenger.App/Assets/Passenger.icns" "$app/Contents/Resources/Passenger.icns"
@@ -55,7 +116,7 @@ EOF
 # A debugger attaches to and launches other processes, the JIT writes code, and the native libraries (Skia,
 # dbgshim, the pseudo-terminal's shim) are not signed by Passenger's team. Never get-task-allow, which lets anything
 # attach to Passenger itself and which Apple's notary refuses.
-entitlements="$out/entitlements.plist"
+entitlements="$work/entitlements.plist"
 cat > "$entitlements" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -69,16 +130,44 @@ cat > "$entitlements" <<EOF
 </dict>
 </plist>
 EOF
-# Ad hoc signing takes the same hardened runtime and entitlements, so a package made here runs as the shipped one
-# does; only a Developer ID signature is timestamped.
-identity=${PASSENGER_SIGN_IDENTITY:--}
-sign() {
-    if [ "$identity" = "-" ]; then
-        codesign --force --options runtime --sign - "$@"
+
+# A Developer ID's or the notary's command: run, or in a dry run written to $commands, in the order it would run.
+developer() {
+    if [ -n "$dry_run" ]; then
+        for word in "$@"; do
+            printf "'%s' " "$(printf '%s' "$word" | sed "s/'/'\\\\''/g")"
+        done >> "$commands"
+        echo >> "$commands"
     else
-        codesign --force --options runtime --timestamp --sign "$identity" "$@"
+        "$@"
     fi
 }
+# Under the hardened runtime: with the Developer ID, timestamped, else ad hoc the same way, so a package made here runs
+# as the shipped one does. A dry run also signs ad hoc, so its package runs too.
+sign() {
+    if [ -n "$identity" ]; then
+        developer codesign --force --options runtime --timestamp --sign "$identity" "$@"
+    fi
+    if [ -z "$identity" ] || [ -n "$dry_run" ]; then
+        codesign --force --options runtime --sign - "$@"
+    fi
+}
+# Sends the app (zipped) or the image to Apple's notary and waits. The submission's status, not notarytool's exit, says
+# whether the notary accepted it; its log says why not.
+notarize() {
+    if [ -n "$dry_run" ]; then
+        developer xcrun notarytool submit "$1" --keychain-profile "$profile" --wait --output-format json
+        return
+    fi
+    result=$(xcrun notarytool submit "$1" --keychain-profile "$profile" --wait --output-format json)
+    status=$(echo "$result" | plutil -extract status raw -o - -)
+    if [ "$status" != Accepted ]; then
+        echo "package-mac: notarizing $(basename "$1") came back $status" >&2
+        xcrun notarytool log "$(echo "$result" | plutil -extract id raw -o - -)" --keychain-profile "$profile" >&2
+        exit 1
+    fi
+}
+
 # Inside out, then the bundle, which signs its main executable. The bundle's seal takes everything in Contents/MacOS
 # for code, so .NET's DLLs and PDBs are signed too (their signatures kept in extended attributes); the entitlements are
 # only the executables'.
@@ -90,21 +179,85 @@ find "$app/Contents/MacOS" -type f ! -path "$app/Contents/MacOS/Passenger" | whi
 done
 sign --entitlements "$entitlements" "$app"
 codesign --verify --deep --strict "$app"
-
-zip="$out/Passenger-$version-$rid.zip"
-rm -f "$zip"
-ditto -c -k --keepParent "$app" "$zip"
-if [ -n "${PASSENGER_NOTARY_PROFILE:-}" ]; then
-    # The submission's status, not notarytool's exit, says whether the notary accepted the app; its log says why not.
-    result=$(xcrun notarytool submit "$zip" --keychain-profile "$PASSENGER_NOTARY_PROFILE" --wait --output-format json)
-    status=$(echo "$result" | plutil -extract status raw -o - -)
-    if [ "$status" != Accepted ]; then
-        echo "package-mac: notarization came back $status" >&2
-        xcrun notarytool log "$(echo "$result" | plutil -extract id raw -o - -)" --keychain-profile "$PASSENGER_NOTARY_PROFILE" >&2
-        exit 1
-    fi
-    xcrun stapler staple "$app"
-    rm -f "$zip"
-    ditto -c -k --keepParent "$app" "$zip"
+# Stapled, the app opens with no Gatekeeper warning offline too, once copied out of the image.
+if [ -n "$profile" ]; then
+    ditto -c -k --keepParent "$app" "$work/Passenger.zip"
+    notarize "$work/Passenger.zip"
+    developer xcrun stapler staple "$app"
 fi
-echo "package: $zip ($( [ "$identity" = "-" ] && echo "signed ad hoc, for this Mac" || echo "signed by $identity" ))"
+
+# Beside the app, a link to /Applications to drag it onto, Passenger's icon for the volume, and the window Finder opens
+# on it (tools/dmg-layout.py). The volume's name carries the version, as the file's name cannot.
+ln -s /Applications "$stage/Applications"
+cp "$root/src/Passenger.App/Assets/Passenger.icns" "$stage/.VolumeIcon.icns"
+python3 -I "$root/tools/dmg-layout.py" "$stage/.DS_Store"
+# fseventsd logs nothing on a volume whose .fseventsd holds no_log, so the read-write mount leaves no log in the image.
+mkdir "$stage/.fseventsd"
+touch "$stage/.fseventsd/no_log"
+hdiutil create -volname "Passenger $version" -srcfolder "$stage" -fs HFS+ -format UDRW -ov "$work/image.dmg" -quiet
+attach "$work/image.dmg" -readwrite
+# The volume's top folder says it has an icon of its own (Finder's kHasCustomIcon), which hdiutil does not copy.
+xattr -wx com.apple.FinderInfo 0000000000000000040000000000000000000000000000000000000000000000 "$mount"
+detach
+# LZMA: about a quarter smaller than zlib or LZFSE (ULFO) to download; macOS reads it from 10.15, and the app needs 13.
+hdiutil convert "$work/image.dmg" -format ULMO -o "$image" -quiet
+rm -f "$work/image.dmg"
+if [ -n "$identity" ]; then
+    developer codesign --force --timestamp --sign "$identity" "$image"
+fi
+if [ -n "$profile" ]; then
+    notarize "$image"
+    developer xcrun stapler staple "$image"
+fi
+
+# The image as a person gets it: compressed and whole, mounted read-only, Passenger.app beside the Applications link
+# under Passenger's icon, the app's signature whole and without get-task-allow, its version and the volume's the
+# package's, Roslyn's server and the debugger's adapter in it, and every Mach-O file built for the image's processor (a
+# file built only for the other would make macOS run the app through Rosetta, or not at all).
+hdiutil verify -quiet "$image"
+format=$(hdiutil imageinfo "$image" 2>/dev/null | sed -n 's/^Format: //p')
+[ "$format" = ULMO ] || fail "the image's format is '$format', not ULMO"
+attach "$image" -readonly
+shipped="$mount/Passenger.app"
+volume=$(diskutil info "$mount" | sed -n 's/^ *Volume Name: *//p')
+[ "$volume" = "Passenger $version" ] || fail "the image's volume is named '$volume', not 'Passenger $version'"
+[ "$(readlink "$mount/Applications")" = /Applications ] || fail "the image has no link to /Applications beside the app"
+xattr -px com.apple.FinderInfo "$mount" | grep -q '^00 00 00 00 00 00 00 00 04' || fail "the image's volume has no icon of its own"
+[ "$(ls -A "$mount/.fseventsd")" = no_log ] || fail "the image carries the event log of its read-write mount"
+codesign --verify --deep --strict "$shipped"
+if codesign -d --entitlements - --xml "$shipped" 2>/dev/null | grep -q get-task-allow; then
+    fail "the app's entitlements carry get-task-allow"
+fi
+plist="$shipped/Contents/Info.plist"
+said=$(plutil -extract CFBundleShortVersionString raw -o - "$plist")
+[ "$said" = "$version" ] || fail "the app's Info.plist says version $said, not $version"
+said=$(plutil -extract CFBundleVersion raw -o - "$plist")
+[ "$said" = "$build" ] || fail "the app's Info.plist says build $said, not $build"
+for part in roslyn/Microsoft.CodeAnalysis.LanguageServer.dll debugger/Passenger.DebugAdapter.dll; do
+    [ -f "$shipped/Contents/MacOS/$part" ] || fail "the app has no $part"
+done
+find "$shipped/Contents/MacOS" -type f -exec file -F '|' {} + | grep '| *Mach-O' | cut -d'|' -f1 > "$work/mach-o"
+[ -s "$work/mach-o" ] || fail "the app has no Mach-O file"
+while IFS= read -r file; do
+    lipo "$file" -verify_arch "$machine" || fail "${file#"$shipped/"} is built for $(lipo -archs "$file"), not $machine"
+done < "$work/mach-o"
+# Notarized, Gatekeeper takes both as a download: the image to open, the app to run.
+if [ -n "$profile" ]; then
+    developer xcrun stapler validate "$image"
+    developer xcrun stapler validate "$shipped"
+    developer spctl --assess --type open --context context:primary-signature --verbose "$image"
+    developer spctl --assess --type execute --verbose "$shipped"
+fi
+detach
+
+size=$(du -h "$image" | cut -f1 | tr -d ' ')
+if [ -n "$dry_run" ]; then
+    signed="signed ad hoc; what the Developer ID would run is in $commands"
+elif [ -z "$identity" ]; then
+    signed="signed ad hoc and not notarized: opened once through System Settings > Privacy & Security > Open Anyway"
+elif [ -z "$profile" ]; then
+    signed="signed by $identity, not notarized"
+else
+    signed="signed by $identity, notarized and stapled"
+fi
+echo "package: $image ($size, Passenger $version build $build for $rid, $signed)"

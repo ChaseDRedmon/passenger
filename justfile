@@ -29,10 +29,11 @@ screenshot path *args:
 publish rid:
     dotnet publish {{app}} -c Release -r {{rid}} --self-contained -p:PublishReadyToRun=true
 
-# Passenger.app for macOS, signed (PASSENGER_SIGN_IDENTITY, else ad hoc) and notarized with PASSENGER_NOTARY_PROFILE,
-# zipped into artifacts/package: just package-mac [osx-arm64|osx-x64]
-package-mac rid="osx-arm64":
-    tools/package-mac.sh {{rid}}
+# The macOS disk image, artifacts/package/Passenger-macos-arm64.dmg (or -x64): the app signed ad hoc, or with
+# PASSENGER_SIGN_IDENTITY and then, with PASSENGER_NOTARY_PROFILE, the app and the image notarized and stapled; checked
+# mounted. --dry-run writes what those two would run instead: just package-mac [osx-arm64|osx-x64] [--dry-run]
+package-mac *args:
+    tools/package-mac.sh {{args}}
 
 # Passenger's own icon (Assets/Passenger.icns and passenger.png) from Assets/passenger.svg; macOS, through QuickLook.
 app-icon:

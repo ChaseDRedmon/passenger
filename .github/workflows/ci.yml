@@ -1,7 +1,8 @@
 # Every push to main and every pull request: the solution built (warnings are errors) and every test run, on macOS
-# (arm64) and Windows, as `just build` and `just test` run them; and on Linux, the solution restored from nothing and
-# every package checked against THIRD_PARTY_NOTICES.md. Every restore is locked to the packages.lock.json files
-# (GitHub sets CI, which Directory.Build.props makes RestoreLockedMode). Actions are pinned to a release's commit.
+# (arm64) and Windows, as `just build` and `just test` run them; the macOS disk images made and checked, as
+# `just package-mac` makes them; and on Linux, the solution restored from nothing and every package checked against
+# THIRD_PARTY_NOTICES.md. Every restore is locked to the packages.lock.json files (GitHub sets CI, which
+# Directory.Build.props makes RestoreLockedMode). Actions are pinned to a release's commit.
 name: CI
 
 on:
@@ -152,6 +153,39 @@ jobs:
           name: test-results-${{ runner.os }}
           path: TestResults/
           if-no-files-found: ignore
+
+  # #36: each processor's disk image, made with no Developer ID here (the app signed ad hoc, nothing notarized), which
+  # tools/package-mac.sh mounts read-only and checks before it is done: the app's signature, its version and the volume's,
+  # Roslyn's server and the debugger's adapter in it, and every Mach-O file built for the image's processor. The x64
+  # image is cross-published on the arm64 runner. Publishing the images with a release is #56's.
+  package:
+    name: Disk image (${{ matrix.rid }})
+    strategy:
+      fail-fast: false
+      matrix:
+        rid: [osx-arm64, osx-x64]
+    runs-on: macos-latest
+    timeout-minutes: 40
+    steps:
+      # The whole history, since the build number counts the commits.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      # The test job's packages, when it has saved them; this job saves none of its own.
+      - name: Restore cached NuGet packages
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('global.json', '**/Directory.Packages.props', '**/Directory.Build.props', '**/*.csproj', '**/packages.lock.json') }}
+          restore-keys: nuget-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Make and check the disk image
+        run: tools/package-mac.sh ${{ matrix.rid }}
 
   # #57's first step: the solution restores on Linux, in locked mode, with no package cache, so every package is
   # downloaded again and its signature checked against nuget.config's trusted signers, as NuGet does on Linux (and
