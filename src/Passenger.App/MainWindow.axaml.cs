@@ -10,6 +10,7 @@ using Passenger.App.CSharp;
 using Passenger.App.Debugging;
 using Passenger.App.Editors;
 using Passenger.App.Run;
+using Passenger.App.Settings;
 using Passenger.App.Workspace;
 using Passenger.Core;
 using Passenger.Editor;
@@ -226,7 +227,7 @@ public partial class MainWindow : Window
             }
         };
         debug = new DebugController(Editors, Bottom.Debug) { RunInTerminal = RunForDebugger };
-        tests = new Testing.TestController(Bottom.TestTree, BuildAsync, () => Projects, line => Bottom.Build.Append($"{line}\n"));
+        tests = new Testing.TestController(Bottom.TestTree, cancel => BuildAsync(BuildCause.Tests, cancel), () => Projects, line => Bottom.Build.Append($"{line}\n"));
         testGutter = new Testing.TestGutter(Bottom.TestTree);
         AddUnitTests();
         AddLinks();
@@ -497,16 +498,19 @@ public partial class MainWindow : Window
     public ProcessRunner Builder => builder;
 
     /// <summary>Builds as Build does, and says how it ended once it has: built, failed, stopped, refused or unable to start.
-    /// Canceled (the Unit Tests window's Stop), the build is stopped as the Build window's Stop stops it.</summary>
-    public Task<BuildOutcome> BuildAsync(CancellationToken cancel = default)
+    /// Canceled, the build is stopped as the Build window's Stop stops it.</summary>
+    public Task<BuildOutcome> BuildAsync(CancellationToken cancel = default) => BuildAsync(BuildCause.Explicit, cancel);
+
+    /// <summary>The solution's build for what started it, which the Unit Tests window's Stop cancels.</summary>
+    private Task<BuildOutcome> BuildAsync(BuildCause cause, CancellationToken cancel)
     {
         TaskCompletionSource<BuildOutcome> built = new(TaskCreationOptions.RunContinuationsAsynchronously);
         CancellationTokenRegistration stopping = default;
-        BuildSolution(outcome =>
+        Build(BuildKind.Build, null, outcome =>
         {
             stopping.Dispose();
             built.TrySetResult(outcome);
-        });
+        }, cause: cause);
         if (!built.Task.IsCompleted)
         {
             // Canceled on the UI thread, by Stop, so the build it stops is the one begun here, still running.
@@ -524,10 +528,12 @@ public partial class MainWindow : Window
     public void BuildSolution(Action<BuildOutcome>? then = null) => Build(BuildKind.Build, null, then);
 
     /// <summary>Builds, rebuilds or cleans the solution, or the projects given one after another (stopping at the first
-    /// that fails), as Rider's Build menu and the Solution view's do: the output in the Build window, the problems of all
-    /// of them in Problems. <paramref name="then"/> always hears how it ended, a build refused or never started included. A
-    /// framework given builds the projects for it alone, as a run configuration's build before launch does.</summary>
-    public void Build(BuildKind kind, IReadOnlyList<string>? projects = null, Action<BuildOutcome>? then = null, string? framework = null)
+    /// that fails), as Rider's Build menu and the Solution view's do: the output in the Build window, which opens as it
+    /// starts as Settings says for its <paramref name="cause"/>, the problems of all of them in Problems.
+    /// <paramref name="then"/> always hears how it ended, a build refused or never started included. A framework given
+    /// builds the projects for it alone, as a run configuration's build before launch does.</summary>
+    public void Build(BuildKind kind, IReadOnlyList<string>? projects = null, Action<BuildOutcome>? then = null, string? framework = null,
+        BuildCause cause = BuildCause.Explicit)
     {
         if (folder is null || IsBuilding)
         {
@@ -558,7 +564,10 @@ public partial class MainWindow : Window
         builtLines.Clear();
         Bottom.Build.Clear();
         Bottom.Build.SetRunning(true);
-        ShowToolWindow("build");
+        if (OpensBuildWindow(cause))
+        {
+            ShowToolWindow("build");
+        }
         building = new TaskCompletionSource();
         BackgroundWork.Track(building.Task);
         BuildNext();
@@ -566,6 +575,26 @@ public partial class MainWindow : Window
 
     /// <summary>Whether a build, rebuild or clean is under way, from its start until its callers have heard how it ended.</summary>
     public bool IsBuilding => building is not null;
+
+    /// <summary>Whether a build opens the Build window as it starts, as Rider's Presentation settings have it: a test run's
+    /// never, its unit testing asking for no window; the status bar says what builds either way.</summary>
+    private bool OpensBuildWindow(BuildCause cause) => settings.OpenBuildWindowOnBuild && cause switch
+    {
+        BuildCause.Explicit => true,
+        BuildCause.BeforeLaunch => settings.OpenBuildWindowOnImplicitBuild,
+        _ => false,
+    };
+
+    /// <summary>Whether a build's end brings the Build window forward, as Rider's "Showing build results after build
+    /// completed" says: one that could not start counts as failed, and one stopped as neither failed nor warned.</summary>
+    private bool ShowsBuildResults(BuildOutcome ended) => settings.ShowBuildResults switch
+    {
+        BuildResultsMode.Always => true,
+        BuildResultsMode.ForWarningsOrErrors => ended.Status is BuildStatus.Failed or BuildStatus.NotStarted
+            || ended.Problems.Any(p => p.Severity == ProblemSeverity.Warning),
+        BuildResultsMode.ForErrors => ended.Status is BuildStatus.Failed or BuildStatus.NotStarted,
+        _ => false,
+    };
 
     private readonly Queue<string> buildQueue = new();
     private BuildKind buildKind;
@@ -641,9 +670,9 @@ public partial class MainWindow : Window
             problemsWindow.Title = problems.Count == 0 ? "Problems" : $"Problems {problems.Count}";
         }
         StatusText.Text = outcome.Message;
-        if (outcome.Status == BuildStatus.Failed && problems.Any(p => p.Severity == ProblemSeverity.Error))
+        if (ShowsBuildResults(outcome))
         {
-            ShowToolWindow("problems");
+            ShowToolWindow("build");
         }
         try
         {

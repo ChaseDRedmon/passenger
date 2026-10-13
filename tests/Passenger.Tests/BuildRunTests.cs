@@ -629,6 +629,107 @@ public sealed class BuildRunTests : IDisposable
         window.Close();
     }
 
+    /// <summary>Rider's Toolset and Build, Presentation: Build opens the Build window as it starts, unless "when build is
+    /// explicitly invoked" is off, and a build's end brings it forward as "Showing build results after build completed"
+    /// says, by default only when errors were received.</summary>
+    [AvaloniaFact]
+    public void Build_opens_the_build_window_as_it_starts_and_its_end_brings_it_forward_as_settings_say()
+    {
+        MainWindow window = Open();
+        try
+        {
+            window.ShowToolWindow("problems");
+            window.Perform(AppActions.Build);
+            Assert.True(window.IsBuilding && window.DockHost.IsShown("build"), "Build Solution started without opening the Build window, which Rider's opens by default");
+            BuildToEnd(window, "Build succeeded");
+            Assert.True(window.DockHost.IsShown("build"), "The Build window Build Solution opened went away as the build ended");
+
+            // Explicit builds not opening it, one that succeeds leaves the bottom panel as it was, and one that fails does not.
+            window.ApplySettings(window.Settings with { OpenBuildWindowOnBuild = false });
+            window.ShowToolWindow("problems");
+            window.Perform(AppActions.Build);
+            Assert.True(window.IsBuilding && window.DockHost.IsShown("problems"), "With Rider's \"when build is explicitly invoked\" off, Build Solution still opened the Build window");
+            BuildToEnd(window, "Build succeeded");
+            Assert.True(window.DockHost.IsShown("problems"), "A build that succeeded brought the Build window forward, which Rider does only for errors by default");
+            Write("src/Hello/Program.cs", "Console.WriteLine(\"Hello\");\nint count = \"three\";\n");
+            window.Perform(AppActions.Build);
+            BuildToEnd(window, "Build failed");
+            Assert.True(window.DockHost.IsShown("build"), "A build that failed left the Build window behind the Problems window, where Rider brings it forward with its errors");
+
+            window.ApplySettings(window.Settings with { ShowBuildResults = Passenger.App.Settings.BuildResultsMode.Never });
+            window.ShowToolWindow("problems");
+            window.Perform(AppActions.Build);
+            BuildToEnd(window, "Build failed");
+            Assert.True(window.DockHost.IsShown("problems"), "With build results shown never, a failed build still brought the Build window forward");
+
+            Write("src/Hello/Program.cs", "Console.WriteLine(\"Hello\");\n");
+            window.ApplySettings(window.Settings with { ShowBuildResults = Passenger.App.Settings.BuildResultsMode.Always });
+            window.ShowToolWindow("problems");
+            window.Perform(AppActions.Build);
+            BuildToEnd(window, "Build succeeded");
+            Assert.True(window.DockHost.IsShown("build"), "With build results shown always, a build that succeeded did not bring the Build window forward");
+        }
+        finally
+        {
+            window.ApplySettings(new Passenger.App.Settings.AppSettings());
+            window.Close();
+        }
+    }
+
+    /// <summary>Run's build is one Rider calls implicit: it leaves the bottom panel as it was, the status bar saying what
+    /// builds, and the program's output comes in the Run window; "even when the build is invoked implicitly" opens the
+    /// Build window for it too.</summary>
+    [AvaloniaFact]
+    public void Run_builds_without_taking_the_bottom_panel_and_shows_the_run_window()
+    {
+        MainWindow window = Open();
+        try
+        {
+            window.ShowToolWindow("problems");
+            window.Perform(AppActions.RunProgram);
+            Ui.PumpUntil(() => window.IsBuilding, "the run's build to start", TimeSpan.FromMinutes(1));
+            Assert.True(window.DockHost.IsShown("problems"), "Run's build took the bottom panel, which Rider leaves as it was for a build before a run");
+            Assert.StartsWith("Building Hello", window.Status, StringComparison.Ordinal);
+            Ui.WaitFor(() => Output(window).Contains("Process finished", StringComparison.Ordinal), "the program to finish", TimeSpan.FromMinutes(2));
+            Assert.True(window.DockHost.IsShown("run"), "The program ran, but its Run window is not in front");
+
+            window.ApplySettings(window.Settings with { OpenBuildWindowOnImplicitBuild = true });
+            window.ShowToolWindow("problems");
+            window.Perform(AppActions.RunProgram);
+            Ui.PumpUntil(() => window.IsBuilding, "the second run's build to start", TimeSpan.FromMinutes(1));
+            Assert.True(window.DockHost.IsShown("build"), "With Rider's \"even when the build is invoked implicitly\" on, Run's build did not open the Build window");
+            Ui.WaitFor(() => Output(window).Contains("Process finished", StringComparison.Ordinal), "the second program to finish", TimeSpan.FromMinutes(2));
+            Assert.True(window.DockHost.IsShown("run"), "The program ran after a build in the Build window, but its Run window is not in front");
+        }
+        finally
+        {
+            window.ApplySettings(new Passenger.App.Settings.AppSettings());
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void A_build_that_fails_before_a_run_brings_the_build_window_forward_with_its_error_and_runs_nothing()
+    {
+        Write("src/Hello/Program.cs", "Console.WriteLine(\"Hello\");\nint count = \"three\";\n");
+        MainWindow window = Open();
+        window.ShowToolWindow("problems");
+        string? refused = Ui.Await(window.RunAsync(), "the run's build", TimeSpan.FromMinutes(2));
+        Assert.StartsWith("Build failed: 1 error", refused, StringComparison.Ordinal);
+        Assert.True(window.DockHost.IsShown("build"), "The build before the run failed, but the Build window did not come forward with its error as Rider's does");
+        Assert.Contains("Program.cs(2,13): error CS0029", window.BottomPanel.Build.Document.Snapshot.ToString(), StringComparison.Ordinal);
+        Assert.False(window.Runner.IsRunning);
+        Assert.Equal(string.Empty, Output(window));
+        window.Close();
+    }
+
+    /// <summary>Waits for the build under way to end, and checks what the status bar says of it.</summary>
+    private static void BuildToEnd(MainWindow window, string said)
+    {
+        Ui.WaitFor(() => !window.IsBuilding, "the build", TimeSpan.FromMinutes(2));
+        Assert.StartsWith(said, window.Status, StringComparison.Ordinal);
+    }
+
     [AvaloniaFact]
     public void An_address_a_program_prints_opens_in_the_browser_and_a_message_naming_a_file_of_its_project_opens_the_file()
     {

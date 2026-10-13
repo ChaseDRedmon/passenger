@@ -84,6 +84,19 @@ public sealed record AppSettings : IStateDocument<AppSettings>
     /// and an edit that cannot be applied restarts it.</summary>
     public bool HotReload { get; init; }
 
+    /// <summary>Rider's "Tool Window: when build is explicitly invoked, open the build progress view in a tool window": the
+    /// Build menu's builds, rebuilds and cleans open the Build window as they start.</summary>
+    public bool OpenBuildWindowOnBuild { get; init; } = true;
+
+    /// <summary>Rider's "Tool Window: open the build progress view even when the build is invoked implicitly (i.e.
+    /// Run/Debug)": the build before Run, Debug or Profile opens it too, while the setting above is on. Off, as in Rider,
+    /// so a run's build leaves the bottom panel as it was. A test run's build never opens it, as in Rider.</summary>
+    public bool OpenBuildWindowOnImplicitBuild { get; init; }
+
+    /// <summary>Rider's "Showing build results after build completed": which builds bring the Build window forward as
+    /// they end, whatever started them.</summary>
+    public BuildResultsMode ShowBuildResults { get; init; } = BuildResultsMode.ForErrors;
+
     /// <summary>Rider's solution-wide analysis: every file's errors in Problems as code changes, without a build. Off by
     /// default, as in Rider, since it analyses the whole solution; the status bar turns it on and off.</summary>
     public bool SolutionWideAnalysis { get; init; }
@@ -141,6 +154,7 @@ public sealed record AppSettings : IStateDocument<AppSettings>
         return this with
         {
             Theme = Enum.IsDefined(Theme) ? Theme : defaults.Theme,
+            ShowBuildResults = Enum.IsDefined(ShowBuildResults) ? ShowBuildResults : defaults.ShowBuildResults,
             EditorFontSize = Math.Clamp(EditorFontSize, MinFontSize, MaxFontSize),
             EditorLineSpacing = Math.Clamp(EditorLineSpacing, MinLineSpacing, MaxLineSpacing),
             TerminalFontSize = Math.Clamp(TerminalFontSize, MinFontSize, MaxFontSize),
@@ -209,4 +223,14 @@ public sealed record AppSettings : IStateDocument<AppSettings>
         }
         return name.Length == 0;
     }
+}
+
+/// <summary>Rider's choices for "Showing build results after build completed" (its <c>ShowBuildResultsMode</c>), in the
+/// order its list gives them.</summary>
+public enum BuildResultsMode
+{
+    Always,
+    ForWarningsOrErrors,
+    ForErrors,
+    Never,
 }

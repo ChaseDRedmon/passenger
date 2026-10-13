@@ -52,6 +52,19 @@ public enum BuildKind
     Clean,
 }
 
+/// <summary>What started a build, which decides whether the Build window opens as it begins, as Rider decides.</summary>
+public enum BuildCause
+{
+    /// <summary>Asked for: the Build menu's, the Solution view's, the Build window's Rerun, an agent's.</summary>
+    Explicit,
+
+    /// <summary>A run configuration's build before Run, Debug or Profile launches it, which Rider calls implicit.</summary>
+    BeforeLaunch,
+
+    /// <summary>A test run's, which Rider's unit testing starts with no Build window whatever the settings say.</summary>
+    Tests,
+}
+
 /// <summary>Reads MSBuild's error and warning lines ("File.cs(12,5): error CS0103: ... [Project.csproj]")
 /// out of a build's output.</summary>
 public static partial class BuildOutput

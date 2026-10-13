@@ -1,5 +1,9 @@
+using Avalonia;
+using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
+using Avalonia.Input;
+using Avalonia.VisualTree;
 using Passenger.App;
 using Passenger.App.Settings;
 
@@ -109,6 +113,62 @@ public sealed class SettingsTests : IDisposable
             window.ApplySettings(new AppSettings());
             window.Close();
         }
+    }
+
+    /// <summary>Rider's Toolset and Build, Presentation, by its names and with its defaults: the Build window opens as an
+    /// explicit build starts, not an implicit one, and comes forward only for errors; the implicit build's option is for
+    /// changing only while the explicit build's is on, as in Rider. What is chosen is kept, by name.</summary>
+    [AvaloniaFact]
+    public void The_build_windows_options_are_riders_with_its_defaults_and_are_kept()
+    {
+        const string Explicitly = "Tool Window: when build is explicitly invoked, open the build progress view in a tool window";
+        const string Implicitly = "Tool Window: open the build progress view even when the build is invoked implicitly (i.e. Run/Debug)";
+        const string Results = "Showing build results after build completed";
+        MainWindow window = Open();
+        window.KeepSettings();
+        SettingsDialog dialog = window.ShowSettings();
+        Ui.Settle();
+        dialog.Query = "build progress";
+        Ui.Settle();
+        Assert.Equal([SettingsDialog.BuildPage], dialog.Pages);
+        dialog.Query = string.Empty;
+        dialog.Page = SettingsDialog.BuildPage;
+        Ui.Settle();
+        Assert.Equal([Explicitly, Implicitly, Results], dialog.Shown);
+        CheckBox explicitly = Editor<CheckBox>(dialog, Explicitly);
+        CheckBox implicitly = Editor<CheckBox>(dialog, Implicitly);
+        ComboBox results = Editor<ComboBox>(dialog, Results);
+        Assert.True(explicitly.IsChecked == true && implicitly.IsChecked == false && implicitly.IsEnabled, "The Build window's options are not at Rider's defaults");
+        Assert.Equal(["Always", "Only if errors or warnings received", "Only if errors received", "Never"], results.Items.Cast<string>());
+        Assert.Equal("Only if errors received", results.SelectedItem);
+
+        Click(dialog, explicitly);
+        Assert.False(explicitly.IsChecked, "A click did not clear the explicit build's option");
+        Assert.False(implicitly.IsEnabled, "The implicit build's option could still be changed with the explicit build's off, which Rider greys");
+        results.SelectedIndex = 3;
+        dialog.Ok();
+        Ui.Settle();
+        Assert.False(window.Settings.OpenBuildWindowOnBuild);
+        Assert.Equal(BuildResultsMode.Never, window.Settings.ShowBuildResults);
+        window.Close();
+
+        MainWindow again = Open();
+        again.KeepSettings();
+        Assert.False(again.Settings.OpenBuildWindowOnBuild);
+        Assert.Equal(BuildResultsMode.Never, again.Settings.ShowBuildResults);
+        again.Close();
+    }
+
+    /// <summary>What edits an option, beside its label in the page shown.</summary>
+    private static T Editor<T>(SettingsDialog dialog, string label) where T : Control =>
+        ((Visual)dialog.GetVisualDescendants().OfType<TextBlock>().First(t => t.Text == label).Parent!).GetVisualDescendants().OfType<T>().First();
+
+    private static void Click(Window window, Control control)
+    {
+        Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)!.Value;
+        window.MouseDown(at, MouseButton.Left);
+        window.MouseUp(at, MouseButton.Left);
+        Ui.Settle();
     }
 
     private MainWindow Open()

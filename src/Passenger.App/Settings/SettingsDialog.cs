@@ -18,12 +18,16 @@ public sealed class SettingsDialog : Window
     public const string EditorPage = "Editor";
     public const string CodeFoldingPage = "Code Folding";
     public const string TerminalPage = "Terminal";
+    public const string BuildPage = "Build";
     public const string RunPage = "Run";
     public const string KeymapPage = "Keymap";
     public const string McpPage = "MCP Server";
     public const string DiagnosticsPage = "Diagnostics";
 
-    private static readonly string[] Order = [Appearance, SystemPage, UpdatesPage, EditorPage, CodeFoldingPage, RunPage, TerminalPage, McpPage, DiagnosticsPage, KeymapPage];
+    /// <summary>Rider's names for <see cref="BuildResultsMode"/>'s choices, in its order.</summary>
+    public static readonly string[] BuildResultsChoices = ["Always", "Only if errors or warnings received", "Only if errors received", "Never"];
+
+    private static readonly string[] Order = [Appearance, SystemPage, UpdatesPage, EditorPage, CodeFoldingPage, BuildPage, RunPage, TerminalPage, McpPage, DiagnosticsPage, KeymapPage];
 
     private readonly Action<AppSettings> apply;
 
@@ -232,6 +236,23 @@ public sealed class SettingsDialog : Window
             $"{Folding} block comments .net");
         Add(CodeFoldingPage, "XML tags", Check(Working.FoldXmlTags, v => Change(s => s with { FoldXmlTags = v })),
             $"{Folding} xml elements tags project csproj props axaml xaml");
+
+        // Rider's Toolset and Build, Presentation, by its names: the implicit build's option only while the explicit's is on.
+        CheckBox implicitly = Check(Working.OpenBuildWindowOnImplicitBuild, v => Change(s => s with { OpenBuildWindowOnImplicitBuild = v }));
+        implicitly.IsEnabled = Working.OpenBuildWindowOnBuild;
+        CheckBox explicitly = Check(Working.OpenBuildWindowOnBuild, v =>
+        {
+            Change(s => s with { OpenBuildWindowOnBuild = v });
+            implicitly.IsEnabled = v;
+        });
+        Add(BuildPage, "Tool Window: when build is explicitly invoked, open the build progress view in a tool window", explicitly,
+            "build tool window open progress view start explicitly invoked solution rebuild clean toolset presentation");
+        Add(BuildPage, "Tool Window: open the build progress view even when the build is invoked implicitly (i.e. Run/Debug)", implicitly,
+            "build tool window open progress view start implicitly run debug profile before launch toolset presentation");
+        ComboBox results = new() { ItemsSource = BuildResultsChoices, SelectedIndex = (int)Working.ShowBuildResults, Width = 260 };
+        results.SelectionChanged += (_, _) => Change(s => s with { ShowBuildResults = (BuildResultsMode)Math.Max(0, results.SelectedIndex) });
+        Add(BuildPage, "Showing build results after build completed", results,
+            "build tool window results after completed finished failed errors warnings always never toolset presentation");
 
         Add(RunPage, "Hot Reload on save", Check(Working.HotReload, v => Change(s => s with { HotReload = v })), "dotnet watch apply changes edit continue running");
         NumericUpDown buffer = Number(Working.ConsoleBufferKb, AppSettings.MinConsoleBufferKb, AppSettings.MaxConsoleBufferKb, 64, v => Change(s => s with { ConsoleBufferKb = (int)v }));

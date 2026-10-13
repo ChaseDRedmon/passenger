@@ -237,6 +237,26 @@ public sealed class UnitTestsTests : IDisposable
         window.Close();
     }
 
+    /// <summary>Rider's unit testing builds with no Build window, so Run All's results stay in front; a build that fails
+    /// brings the Build window forward with its error, as Rider's does when errors are received.</summary>
+    [AvaloniaFact]
+    public void Run_all_keeps_the_unit_tests_window_in_front_through_its_build_and_a_failed_build_brings_the_build_window_forward()
+    {
+        MainWindow window = Open();
+        Assert.True(window.Perform(AppActions.RunAllTests));
+        Assert.True(window.IsBuilding && window.DockHost.IsShown("tests"), "Run All's build took the Unit Tests window's place as it started");
+        Ui.WaitFor(() => !window.Tests.IsBusy && Method(window, "Two_and_two_make_four")?.State == TestState.Passed, "the run of every test", TimeSpan.FromSeconds(120));
+        Assert.True(window.DockHost.IsShown("tests"), "After Run All the Unit Tests window was no longer in front, so its results had to be shown again");
+
+        Write("Broken.cs", "namespace Sums.Tests;\n\npublic static class Broken\n{\n    public static int Count => \"none\";\n}\n");
+        Assert.True(window.Perform(AppActions.RunAllTests));
+        Ui.WaitFor(() => !window.Tests.IsBusy, "the run to end at its build", TimeSpan.FromSeconds(120));
+        Assert.StartsWith("Build failed", window.Status, StringComparison.Ordinal);
+        Assert.True(window.DockHost.IsShown("build"), "The tests' build failed, but the Build window did not come forward with its error as Rider's does");
+        Assert.Contains("Broken.cs(5,32): error CS0029", window.BottomPanel.Build.Document.Snapshot.ToString(), StringComparison.Ordinal);
+        window.Close();
+    }
+
     [AvaloniaFact]
     public void Thousands_of_results_come_in_without_holding_up_the_window_and_what_was_closed_or_chosen_stays_so()
     {

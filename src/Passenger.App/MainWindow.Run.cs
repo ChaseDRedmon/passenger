@@ -156,11 +156,12 @@ public partial class MainWindow
         return (plan, problem);
     }
 
-    /// <summary>A plan's build before launch, in the Build window as Build Selected Projects shows it.</summary>
+    /// <summary>A plan's build before launch, in the Build window as Build Selected Projects writes it, which comes forward
+    /// only as Settings says for a build Run, Debug or Profile starts.</summary>
     private Task<BuildOutcome> BuildAsync(BuildStep step)
     {
         TaskCompletionSource<BuildOutcome> built = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        Build(BuildKind.Build, [step.Project], outcome => built.TrySetResult(outcome), step.Framework);
+        Build(BuildKind.Build, [step.Project], outcome => built.TrySetResult(outcome), step.Framework, BuildCause.BeforeLaunch);
         return built.Task;
     }
 
