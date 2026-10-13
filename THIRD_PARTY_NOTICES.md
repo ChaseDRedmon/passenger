@@ -38,6 +38,8 @@ and the browser, dbgshim's for Linux and 32-bit Windows) are left out.
 | `Newtonsoft.Json` | StreamJsonRpc's | MIT | Copyright © James Newton-King 2008 |
 | `ModelContextProtocol.Core` | the C# MCP SDK, for Passenger's MCP server | Apache-2.0 | © Model Context Protocol a Series of LF Projects, LLC. |
 | `Microsoft.Extensions.AI.Abstractions` | the MCP SDK's content types | MIT | © Microsoft Corporation. All rights reserved. |
+| `NuGet.Configuration`, `NuGet.Common`, `NuGet.Frameworks` | NuGet's own reading of the nuget.config files, as restore reads them: the NuGet window's feeds, their credentials and package source mapping | Apache-2.0 | © Microsoft Corporation. All rights reserved. |
+| `System.Security.Cryptography.ProtectedData` | NuGet.Configuration's, for a feed's password NuGet keeps encrypted on Windows | MIT | © Microsoft Corporation. All rights reserved. |
 | `Microsoft.TestPlatform.TranslationLayer`, `Microsoft.TestPlatform.ObjectModel` | VSTest's client, for finding, running and debugging tests | MIT | © Microsoft Corporation. All rights reserved. |
 | `Microsoft.Diagnostics.NETCore.Client` | the debugger's and the profiler's diagnostic port | MIT | © Microsoft Corporation. All rights reserved. |
 | `Microsoft.Diagnostics.Runtime` | ClrMD, reading the profiler's memory snapshots | MIT | © Microsoft Corporation. All rights reserved. |

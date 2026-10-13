@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Templates;
 using Avalonia.Layout;
 using Avalonia.Media;
@@ -10,24 +11,32 @@ using Passenger.Editor;
 
 namespace Passenger.App.ToolWindows;
 
-/// <summary>A package as the NuGet window lists it: what the feed says of it, and the versions the solution's projects
-/// have of it.</summary>
+/// <summary>A package as the NuGet window lists it: what the feeds say of it, the feeds that have it, and the versions
+/// the solution's projects have of it.</summary>
 public sealed record PackageRow(string Id, string Version, string Description, string Authors, long Downloads, IReadOnlyDictionary<string, string?> Installed)
 {
     public bool IsInstalled => Installed.Count > 0;
+
+    public IReadOnlyList<string> Feeds { get; init; } = [];
 }
 
-/// <summary>Rider's NuGet window: with nothing typed, the packages the solution's projects reference; with a query,
-/// what the feed finds. The chosen package's versions, description and a row per project: Install where it is not,
-/// Update where it is at another version, Remove where it is. Changes go through the .NET command line, its words in
-/// the log below.</summary>
+/// <summary>Rider's NuGet window, its Packages and Sources tabs in its header. Packages: the projects' packages with
+/// nothing typed, else what the feed chosen beside the query finds (All Feeds, or an enabled feed of the folder's
+/// nuget.config files); the chosen package's versions and a row per project to Install, Update or Remove it, through the
+/// .NET command line, whose restore takes it from those feeds with their credentials. Sources: the files and their feeds
+/// (<see cref="NuGetSourcesView"/>).</summary>
 public sealed class NuGetView : DockPanel
 {
     private static readonly TimeSpan Pause = TimeSpan.FromMilliseconds(300);
 
     private readonly Func<IReadOnlyList<ProjectModel>> projects;
+    private readonly Func<string?> root;
     private readonly PackageManager manager = new();
+    private readonly StackPanel tabs = new() { Orientation = Orientation.Horizontal, Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+    private readonly ContentControl body = new();
+    private readonly DockPanel packages = new();
     private readonly TextBox search;
+    private readonly ComboBox chooser;
     private readonly CheckBox prerelease;
     private readonly ListBox list;
     private readonly StackPanel details;
@@ -38,19 +47,36 @@ public sealed class NuGetView : DockPanel
     private CancellationTokenSource? showing;
     private IReadOnlyList<PackageRow> rows = [];
     private IReadOnlyList<string> versions = [];
+    private PackageSourceSet sources = PackageSourceSet.None;
+    private Dictionary<string, IPackageFeed> feeds = new(StringComparer.OrdinalIgnoreCase);
+    private IPackageFeed? given;
+    private Task? reading;
+    private bool choosing;
     private bool busy;
 
-    public NuGetView(Func<IReadOnlyList<ProjectModel>> projects)
+    /// <param name="projects">The workspace's projects, whose packages the window lists and changes.</param>
+    /// <param name="root">The folder NuGet's configuration is read from: the solution's, else the one open.</param>
+    public NuGetView(Func<IReadOnlyList<ProjectModel>> projects, Func<string?> root)
     {
         this.projects = projects;
-        search = new TextBox { Classes = { "search" }, PlaceholderText = "Search nuget.org", Width = 300, Margin = new Thickness(8, 0) };
+        this.root = root;
+        search = new TextBox { Classes = { "search" }, PlaceholderText = "Search packages", Width = 260, Margin = new Thickness(8, 0) };
+        chooser = new ComboBox { Classes = { "compact" }, MinWidth = 130, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0) };
+        ToolTip.SetTip(chooser, "The feeds searched");
+        chooser.SelectionChanged += (_, _) =>
+        {
+            if (!choosing)
+            {
+                _ = RefreshAsync();
+            }
+        };
         prerelease = new CheckBox { Content = "Prerelease", VerticalAlignment = VerticalAlignment.Center };
-        status = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0) };
+        status = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0), TextTrimming = TextTrimming.CharacterEllipsis };
         status.Bind(TextBlock.ForegroundProperty, status.GetResourceObservable("Passenger.TextMuted"));
         Button refresh = new() { Classes = { "tool" }, Content = new PathIcon(), Margin = new Thickness(6, 0, 0, 0) };
         ((PathIcon)refresh.Content).Bind(PathIcon.DataProperty, refresh.GetResourceObservable("Icon.Rerun"));
         ToolTip.SetTip(refresh, "Refresh");
-        refresh.Click += (_, _) => _ = RefreshAsync();
+        refresh.Click += (_, _) => _ = ReloadSourcesAsync();
         typing = new Debounce(Pause, RefreshAsync);
         search.TextChanged += (_, _) => typing.Restart();
         prerelease.IsCheckedChanged += (_, _) => _ = RefreshAsync();
@@ -59,7 +85,7 @@ public sealed class NuGetView : DockPanel
             [DockProperty] = Dock.Top,
             Height = 36,
             BorderThickness = new Thickness(0, 0, 0, 1),
-            Child = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, Children = { search, prerelease, refresh, status } },
+            Child = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, Children = { search, chooser, prerelease, refresh, status } },
         };
         top.Bind(Border.BorderBrushProperty, top.GetResourceObservable("Passenger.Divider"));
 
@@ -98,11 +124,15 @@ public sealed class NuGetView : DockPanel
         split.Children.Add(list);
         split.Children.Add(divider);
         split.Children.Add(right);
-        Children.Add(top);
-        Children.Add(split);
+        packages.Children.Add(top);
+        packages.Children.Add(split);
+
+        Sources = new NuGetSourcesView(this);
+        Children.Add(body);
+        ShowPackages();
         AttachedToVisualTree += (_, _) =>
         {
-            _ = RefreshAsync();
+            _ = Shown();
             Dispatcher.UIThread.Post(() => search.Focus(), DispatcherPriority.Loaded);
         };
     }
@@ -110,8 +140,63 @@ public sealed class NuGetView : DockPanel
     /// <summary>Raised after a project's packages changed, so the solution is read again.</summary>
     public event EventHandler? Changed;
 
-    /// <summary>Where packages are searched: nuget.org unless set (tests use a folder).</summary>
-    public IPackageFeed Feed { get; set; } = new NuGetOrgFeed(SharedHttp);
+    /// <summary>The Packages and Sources tabs, for the tool window's header.</summary>
+    public Control Tabs => tabs;
+
+    /// <summary>The Sources tab: the nuget.config files in effect and their feeds.</summary>
+    public NuGetSourcesView Sources { get; }
+
+    /// <summary>Whether the Sources tab is the one shown.</summary>
+    public bool ShowsSources => body.Content == Sources;
+
+    /// <summary>The folder's package sources as last read.</summary>
+    public PackageSourceSet PackageSources => sources;
+
+    /// <summary>What the feed chooser offers: All Feeds, then each enabled feed by name.</summary>
+    public IReadOnlyList<string> FeedChoices => [.. chooser.Items.OfType<string>()];
+
+    /// <summary>The chooser's choice: All Feeds or a feed's name.</summary>
+    public string ChosenFeed
+    {
+        get => chooser.SelectedItem as string ?? FeedSet.All;
+        set => chooser.SelectedItem = FeedChoices.FirstOrDefault(c => c.Equals(value, StringComparison.OrdinalIgnoreCase))
+            ?? throw new ArgumentException($"The NuGet window has no feed {value}; it offers {string.Join(", ", FeedChoices)}");
+    }
+
+    /// <summary>Where packages are searched: the chooser's feeds, unless a test sets a feed of its own.</summary>
+    public IPackageFeed Feed
+    {
+        get => given ?? Chosen(ChosenFeed);
+        set => given = value;
+    }
+
+    /// <summary>A feed by its name, or All Feeds when none is given, once the folder's sources are read: an agent may ask
+    /// before the window was ever shown.</summary>
+    public async Task<IPackageFeed> FeedAsync(string? name)
+    {
+        if (given is not null)
+        {
+            return given;
+        }
+        if (sources == PackageSourceSet.None || sources.Root != (root() ?? string.Empty))
+        {
+            await ReloadSourcesAsync();
+        }
+        return Chosen(name ?? FeedSet.All);
+    }
+
+    /// <summary>A feed by its name in the folder's configuration, or All Feeds.</summary>
+    public IPackageFeed Chosen(string name)
+    {
+        IPackageFeed[] enabled = [.. sources.Enabled.Select(f => feeds[f.Name])];
+        if (name.Equals(FeedSet.All, StringComparison.OrdinalIgnoreCase))
+        {
+            return new FeedSet(FeedSet.All, enabled, sources.Allows);
+        }
+        return enabled.FirstOrDefault(f => f.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) is { } one
+            ? new FeedSet(one.Name, [one], sources.Allows)
+            : throw new ArgumentException($"No enabled feed is named {name}; the folder's nuget.config files enable {string.Join(", ", enabled.Select(f => f.Name))}");
+    }
 
     public IReadOnlyList<PackageRow> Rows => rows;
 
@@ -129,11 +214,43 @@ public sealed class NuGetView : DockPanel
         set => search.Text = value;
     }
 
+    /// <summary>What the status beside the search says: what was found, or why a feed did not answer.</summary>
+    public string Status => status.Text ?? string.Empty;
+
     public string Log => log.Text ?? string.Empty;
 
     public bool IsBusy => busy;
 
-    /// <summary>Lists again: the installed packages with nothing typed, else the feed's search.</summary>
+    public void ShowPackages() => Show(packages);
+
+    /// <summary>The Sources tab, its files read again; the package list stays as it was until a feed changes.</summary>
+    public void ShowSources()
+    {
+        Show(Sources);
+        _ = ReloadSourcesAsync(list: false);
+    }
+
+    /// <summary>Reads the folder's nuget.config files again (after one changed, here or on disk), keeping the feed chosen
+    /// while it is still enabled, and lists again.</summary>
+    public async Task ReloadSourcesAsync(bool list = true)
+    {
+        string folder = root() ?? string.Empty;
+        using IDisposable held = BackgroundWork.Scope();
+        Task<PackageSourceSet> read = BackgroundWork.Run(() => folder.Length == 0 ? PackageSourceSet.None : PackageSourceSet.Load(folder));
+        reading = read;
+        PackageSourceSet loaded = await read;
+        if (reading != read)
+        {
+            return;
+        }
+        Take(loaded);
+        if (list)
+        {
+            await RefreshAsync();
+        }
+    }
+
+    /// <summary>Lists again: the installed packages with nothing typed, else the chosen feeds' search.</summary>
     public async Task RefreshAsync()
     {
         asking?.Cancel();
@@ -142,9 +259,16 @@ public sealed class NuGetView : DockPanel
         Dictionary<string, Dictionary<string, string?>> installed = Installed();
         // The feed's answer is the list shown next, so a screenshot waits for it rather than for "Searching".
         using IDisposable held = BackgroundWork.Scope();
+        if (sources.Root != (root() ?? string.Empty) && given is null)
+        {
+            await ReloadSourcesAsync();
+            return;
+        }
+        IPackageFeed feed = Feed;
         try
         {
             IReadOnlyList<PackageRow> found;
+            ToolTip.SetTip(status, null);
             if (Query.Trim().Length == 0)
             {
                 found = [.. installed.OrderBy(p => p.Key, StringComparer.OrdinalIgnoreCase)
@@ -153,11 +277,17 @@ public sealed class NuGetView : DockPanel
             }
             else
             {
-                status.Text = $"Searching {Feed.Name}...";
-                IReadOnlyList<PackageSummary> hits = await Feed.SearchAsync(Query.Trim(), prerelease.IsChecked == true, cancel.Token);
-                found = [.. hits.Select(h => new PackageRow(h.Id, h.Version, h.Description, h.Authors, h.Downloads,
-                    installed.TryGetValue(h.Id, out Dictionary<string, string?>? have) ? have : new Dictionary<string, string?>()))];
-                status.Text = found.Count == 0 ? "Nothing found" : string.Empty;
+                status.Text = $"Searching {feed.Name}...";
+                FeedSearch answer = feed is FeedSet set
+                    ? await set.SearchEachAsync(Query.Trim(), prerelease.IsChecked == true, cancel.Token)
+                    : new FeedSearch(await feed.SearchAsync(Query.Trim(), prerelease.IsChecked == true, cancel.Token), [], 0);
+                found = [.. answer.Packages.Select(h => new PackageRow(h.Id, h.Version, h.Description, h.Authors, h.Downloads,
+                    installed.TryGetValue(h.Id, out Dictionary<string, string?>? have) ? have : new Dictionary<string, string?>()) { Feeds = h.Feeds })];
+                status.Text = Said(answer, feed);
+                if (answer.Failed.Count > 0)
+                {
+                    ToolTip.SetTip(status, string.Join("\n", answer.Failed.Select(f => $"{f.Feed}: {f.Problem}")));
+                }
             }
             if (cancel.IsCancellationRequested)
             {
@@ -174,13 +304,37 @@ public sealed class NuGetView : DockPanel
                 list.SelectedIndex = 0;
             }
         }
-        catch (Exception failed) when (failed is HttpRequestException or TaskCanceledException or InvalidOperationException or System.Text.Json.JsonException)
+        catch (OperationCanceledException) when (cancel.IsCancellationRequested)
+        {
+            // A newer search took its place.
+        }
+        catch (Exception failed) when (FeedSet.IsFeedFailure(failed))
         {
             if (!cancel.IsCancellationRequested)
             {
-                status.Text = $"{Feed.Name} did not answer: {failed.Message}";
+                status.Text = $"{feed.Name} did not answer: {failed.Message}";
             }
         }
+    }
+
+    /// <summary>The status after a search: Rider's words for feeds that did not answer, else what was found.</summary>
+    private static string Said(FeedSearch answer, IPackageFeed feed)
+    {
+        List<string> said = [];
+        if (answer.Failed.Count > 0)
+        {
+            string names = string.Join(", ", answer.Failed.Select(f => f.Feed));
+            said.Add(answer.Failed.Count == 1 ? $"Unable to fetch packages: {names} is invalid ({answer.Failed[0].Problem})" : $"Unable to fetch packages: {names} are invalid");
+        }
+        else if (answer.Packages.Count == 0)
+        {
+            said.Add(feed.Name == FeedSet.All ? "Nothing found" : $"Nothing found in {feed.Name}");
+        }
+        if (answer.Unmapped > 0)
+        {
+            said.Add(answer.Unmapped == 1 ? "1 package left out by package source mapping" : $"{answer.Unmapped} packages left out by package source mapping");
+        }
+        return string.Join("; ", said);
     }
 
     /// <summary>Adds the chosen package to a project at the chosen version, or moves it there.</summary>
@@ -192,6 +346,59 @@ public sealed class NuGetView : DockPanel
 
     /// <summary>Ends a package change still under way, as the IDE closes.</summary>
     public void StopChange() => manager.Stop();
+
+    /// <summary>Reads the sources the first time the window is shown, or lists again once they are read.</summary>
+    private Task Shown() => sources == PackageSourceSet.None && given is null ? ReloadSourcesAsync() : RefreshAsync();
+
+    /// <summary>Takes sources just read: their feeds, and the chooser's choices, keeping its choice while it is still there.</summary>
+    private void Take(PackageSourceSet loaded)
+    {
+        Dictionary<string, IPackageFeed> made = new(StringComparer.OrdinalIgnoreCase);
+        foreach (FeedSource source in loaded.Feeds)
+        {
+            // A feed kept when nothing about it changed, so its service index is not asked for again.
+            made[source.Name] = feeds.TryGetValue(source.Name, out IPackageFeed? kept) && sources.Feeds.Contains(source) ? kept : PackageFeeds.For(source);
+        }
+        string was = ChosenFeed;
+        sources = loaded;
+        feeds = made;
+        choosing = true;
+        try
+        {
+            chooser.ItemsSource = new[] { FeedSet.All }.Concat(loaded.Enabled.Select(f => f.Name)).ToList();
+            chooser.SelectedItem = FeedChoices.FirstOrDefault(c => c.Equals(was, StringComparison.OrdinalIgnoreCase)) ?? FeedSet.All;
+        }
+        finally
+        {
+            choosing = false;
+        }
+        Sources.Show(loaded);
+    }
+
+    private void Show(Control content)
+    {
+        body.Content = content;
+        tabs.Children.Clear();
+        tabs.Children.Add(Tab("Packages", packages));
+        tabs.Children.Add(Tab("Sources", Sources));
+    }
+
+    private ToggleButton Tab(string title, Control content)
+    {
+        ToggleButton tab = new() { Classes = { "panelTab" }, IsChecked = body.Content == content, Content = title };
+        tab.Click += (_, _) =>
+        {
+            if (content == Sources)
+            {
+                ShowSources();
+            }
+            else
+            {
+                ShowPackages();
+            }
+        };
+        return tab;
+    }
 
     private async Task<bool> ChangeAsync(Func<Task<bool>> change)
     {
@@ -269,7 +476,7 @@ public sealed class NuGetView : DockPanel
         {
             return;
         }
-        catch (Exception failed) when (failed is HttpRequestException or TaskCanceledException or InvalidOperationException or System.Text.Json.JsonException)
+        catch (Exception failed) when (FeedSet.IsFeedFailure(failed))
         {
             found = row.Version.Length > 0 ? [row.Version] : [];
         }
@@ -279,7 +486,7 @@ public sealed class NuGetView : DockPanel
         }
         versions = found;
         ChosenVersion = versions.FirstOrDefault() ?? row.Version;
-        ComboBox picker = new() { ItemsSource = versions, SelectedItem = ChosenVersion, MinWidth = 140 };
+        ComboBox picker = new() { Name = "Versions", ItemsSource = versions, SelectedItem = ChosenVersion, MinWidth = 140 };
         picker.SelectionChanged += (_, _) =>
         {
             ChosenVersion = picker.SelectedItem as string;
@@ -300,6 +507,12 @@ public sealed class NuGetView : DockPanel
             TextBlock by = new() { Text = row.Downloads > 0 ? $"{row.Authors}, {row.Downloads:N0} downloads" : row.Authors, FontSize = 12 };
             by.Bind(TextBlock.ForegroundProperty, by.GetResourceObservable("Passenger.TextMuted"));
             details.Children.Add(by);
+        }
+        if (row.Feeds.Count > 0)
+        {
+            TextBlock from = new() { Text = $"In {string.Join(", ", row.Feeds)}", FontSize = 12 };
+            from.Bind(TextBlock.ForegroundProperty, from.GetResourceObservable("Passenger.TextMuted"));
+            details.Children.Add(from);
         }
         details.Children.Add(new StackPanel { Name = "projects", Spacing = 4, Margin = new Thickness(0, 8, 0, 0) });
         ShowProjects(row);
@@ -365,6 +578,4 @@ public sealed class NuGetView : DockPanel
         }
         return line;
     }
-
-    private static readonly HttpClient SharedHttp = new() { Timeout = TimeSpan.FromSeconds(20) };
 }

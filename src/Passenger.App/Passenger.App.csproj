@@ -27,6 +27,8 @@
     <!-- The Model Context Protocol server (Mcp/), the official SDK's core, without its ASP.NET half. -->
     <PackageReference Include="ModelContextProtocol.Core" />
     <PackageReference Include="Microsoft.TestPlatform.TranslationLayer" />
+    <!-- The folder's nuget.config files as NuGet reads them: the NuGet window's feeds, credentials and source mapping. -->
+    <PackageReference Include="NuGet.Configuration" />
     <!-- The Windows install's hooks: what its installer and uninstaller ask of Passenger.exe (Installation.cs). -->
     <PackageReference Include="Velopack" />
   </ItemGroup>

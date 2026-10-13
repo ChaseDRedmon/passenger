@@ -186,18 +186,24 @@ public sealed partial class PassengerTools
     // Packages
 
     [McpServerTool(Name = "nuget_search", Title = "Search NuGet", ReadOnly = true), Description(
-        "Packages on the NuGet window's feed (nuget.org) a query finds, with their newest versions and downloads.")]
-    public Task<IReadOnlyList<PackageSummary>> NuGetSearch(string query, bool prerelease = false, CancellationToken cancel = default) => OnUi(cancel, async () =>
-        await window.NuGet.Feed.SearchAsync(query, prerelease, cancel));
+        "Packages a query finds on the feeds of the folder's nuget.config files, as the NuGet window searches them: every enabled feed, or the " +
+        "one named, with each package's newest version, its downloads and the feeds that have it. A feed that does not answer fails the search " +
+        "only when no feed does.")]
+    public Task<IReadOnlyList<PackageSummary>> NuGetSearch(string query, bool prerelease = false,
+        [Description("A feed's name, as the NuGet window's Sources tab lists it; every enabled feed when none is given.")] string? feed = null,
+        CancellationToken cancel = default) => OnUi(cancel, async () =>
+        await (await window.NuGet.FeedAsync(feed)).SearchAsync(query, prerelease, cancel));
 
     [McpServerTool(Name = "nuget_install", Title = "Install a package", Destructive = true), Description(
-        "Adds a package to a project (its name or .csproj path) at a version (the newest when none is given), or moves it to that version, " +
-        "through dotnet add package as the NuGet window does.")]
+        "Adds a package to a project (its name or .csproj path) at a version (the newest on the folder's enabled feeds when none is given), or " +
+        "moves it to that version, through dotnet add package as the NuGet window does, its restore using the feeds and credentials of the " +
+        "folder's nuget.config files.")]
     public Task<string> NuGetInstall(string project, string id, string? version = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         ProjectModel chosen = Project(project);
-        string at = version ?? (await window.NuGet.Feed.VersionsAsync(id, prerelease: false, cancel)).FirstOrDefault()
-            ?? throw new ArgumentException($"{window.NuGet.Feed.Name} has no package {id}");
+        IPackageFeed feeds = await window.NuGet.FeedAsync(null);
+        string at = version ?? (await feeds.VersionsAsync(id, prerelease: false, cancel)).FirstOrDefault()
+            ?? throw new ArgumentException($"{feeds.Name} has no package {id}");
         PackageManager manager = new();
         List<string> said = [];
         manager.Line += (_, line) => said.Add(line);

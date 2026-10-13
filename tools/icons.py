@@ -101,6 +101,9 @@ ICONS = [
     ("StarFilled", "Star", "16_filled"),
     ("Update", "Arrow Download", "16_regular"),
     ("Locate", "Target", "16_regular"),
+    # The NuGet window's Sources tab: a feed's Edit, and the lock of one whose nuget.config holds its credentials.
+    ("Edit", "Edit", "16_regular"),
+    ("Lock", "Lock Closed", "16_regular"),
 ]
 
 

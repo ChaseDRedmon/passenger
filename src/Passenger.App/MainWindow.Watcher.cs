@@ -67,6 +67,7 @@ public partial class MainWindow
                 document.ReadConventions();
             }
         }
+        PackageSourcesChanged(changes);
         tests.Finder.FolderChanged(changes);
         foreach (OpenDocument document in Editors.Documents.Where(d => changes.Paths.Contains(d.Path)).ToList())
         {

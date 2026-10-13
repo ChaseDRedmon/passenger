@@ -118,7 +118,7 @@ public sealed class PackagesTests : IDisposable
         Ui.Landed(() => nuget.Versions.Count == 9, "the installed package's versions, prereleases too");
         Assert.Equal(["1.1.0", "1.0.0", "1.0.0-rc.1", "1.0.0-beta.10", "1.0.0-beta.2", "1.0.0-beta", "1.0.0-alpha.beta", "1.0.0-alpha.1", "1.0.0-alpha"], nuget.Versions);
 
-        ComboBox picker = Assert.Single(Descendants<ComboBox>(nuget));
+        ComboBox picker = Assert.Single(Pickers(nuget));
         picker.SelectedItem = "1.0.0-beta.10";
         Ui.Settle();
         Assert.True(Labels(nuget).Contains("Update"), $"Moving from beta.2 to beta.10 was offered as [{string.Join(", ", Labels(nuget))}]");
@@ -146,7 +146,7 @@ public sealed class PackagesTests : IDisposable
         held.Release();
         Ui.Landed(() => held.Answered == 3, "the versions of all three choices");
 
-        List<ComboBox> pickers = [.. Descendants<ComboBox>(nuget)];
+        List<ComboBox> pickers = [.. Pickers(nuget)];
         Assert.True(pickers.Count == 1, $"The details of {first.Id} were shown {pickers.Count} times");
         Assert.Equal(first.Id == "Passenger.Sample" ? ["1.1.0", "1.0.0"] : ["2.0.0"], pickers[0].Items.OfType<string>());
         window.Close();
@@ -155,7 +155,7 @@ public sealed class PackagesTests : IDisposable
     [AvaloniaFact]
     public void Versions_unlisted_on_nuget_org_are_not_offered()
     {
-        MainWindow window = Open(new NuGetOrgFeed(new HttpClient(new RecordedNuGetOrg())));
+        MainWindow window = Open(new V3Feed(new FeedClient("nuget.org", V3Feed.NuGetOrg, new HttpClient(new RecordedNuGetOrg()))));
         NuGetView nuget = window.NuGet;
         nuget.Query = "moq";
         Ui.Landed(() => nuget.Versions.Count > 0, "Moq's versions");
@@ -222,6 +222,9 @@ public sealed class PackagesTests : IDisposable
     }
 
     private static IEnumerable<T> Descendants<T>(NuGetView nuget) => nuget.GetVisualDescendants().OfType<T>();
+
+    /// <summary>The chosen package's version pickers, among its details: the feed chooser beside the search is not one.</summary>
+    private static IEnumerable<ComboBox> Pickers(NuGetView nuget) => Descendants<ComboBox>(nuget).Where(c => c.Name == "Versions");
 
     private static CheckBox Prerelease(NuGetView nuget) => Descendants<CheckBox>(nuget).Single(c => c.Content as string == "Prerelease");
 

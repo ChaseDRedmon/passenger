@@ -70,11 +70,48 @@ public sealed class TestRun : IDisposable
         // and zsh takes its startup files, and from them its history, from ZDOTDIR.
         Environment.SetEnvironmentVariable("HISTFILE", Path.Combine(Root, "history"));
         Environment.SetEnvironmentVariable("ZDOTDIR", Directory.CreateDirectory(Path.Combine(Root, "zsh")).FullName);
+        NuGetHome();
         // No test reaches GitHub: a window or a Passenger started that checks for updates without a stand-in of its own
         // asks a loopback port nothing listens on.
         Environment.SetEnvironmentVariable(Passenger.App.Updates.ReleaseFeed.Variable, "http://127.0.0.1:9/repos/Zaneris/passenger/releases/latest");
         // A run stopped before its end (Ctrl+C) leaves nothing either.
         AppDomain.CurrentDomain.ProcessExit += (_, _) => End();
+    }
+
+    /// <summary>On macOS and Linux, NuGet's home for the run, which NuGet takes from DOTNET_CLI_HOME: its user nuget.config,
+    /// its credential providers and its HTTP cache are the run's, so no test reads the person's feeds or credentials or
+    /// writes their nuget.config, nor reads the machine's. The run's nuget.config names nuget.org and the person's package
+    /// cache, as theirs did by default, so a restore downloads nothing new, and a folder's own nuget.config still says
+    /// otherwise. dotnet's first run in that home leaves the certificate store and PATH alone.</summary>
+    private static void NuGetHome()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            // NuGet reads the user's nuget.config from %APPDATA% there; each test's folder clears its feeds instead.
+            return;
+        }
+        string personal = Environment.GetEnvironmentVariable("DOTNET_CLI_HOME") is { Length: > 0 } given ? given : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        string home = Directory.CreateDirectory(Path.Combine(Root, "home")).FullName;
+        string settings = Directory.CreateDirectory(Path.Combine(home, ".nuget", "NuGet")).FullName;
+        string cache = System.Security.SecurityElement.Escape(Path.Combine(personal, ".nuget", "packages"));
+        File.WriteAllText(Path.Combine(settings, "NuGet.Config"), $"""
+            <?xml version="1.0" encoding="utf-8"?>
+            <configuration>
+              <packageSources>
+                <add key="nuget.org" value="https://api.nuget.org/v3/index.json" protocolVersion="3" />
+              </packageSources>
+              <config>
+                <add key="globalPackagesFolder" value="{cache}" />
+              </config>
+            </configuration>
+            """);
+        Environment.SetEnvironmentVariable("DOTNET_CLI_HOME", home);
+        Environment.SetEnvironmentVariable("NUGET_COMMON_APPLICATION_DATA", Directory.CreateDirectory(Path.Combine(Root, "machine")).FullName);
+        Environment.SetEnvironmentVariable("NUGET_NETCORE_PLUGIN_PATHS", null);
+        Environment.SetEnvironmentVariable("NUGET_PLUGIN_PATHS", null);
+        Environment.SetEnvironmentVariable("DOTNET_GENERATE_ASPNET_CERTIFICATE", "false");
+        Environment.SetEnvironmentVariable("DOTNET_ADD_GLOBAL_TOOLS_TO_PATH", "false");
+        Environment.SetEnvironmentVariable("DOTNET_NOLOGO", "1");
     }
 
     /// <summary>The run's end, once every test is done (xunit disposes the assembly's fixture then).</summary>
