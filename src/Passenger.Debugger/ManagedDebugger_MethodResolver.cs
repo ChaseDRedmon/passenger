@@ -107,7 +107,7 @@ public partial class ManagedDebugger
             return false;
         }
 
-        MetadataReader metadataReader = _modules[method.Class.Module.BaseAddress].MetadataReader.PeMetadataReader;
+        MetadataReader metadataReader = GetModuleInfoForModule(method.Class.Module).MetadataReader.PeMetadataReader;
         MethodDefinition methodDefinition = metadataReader.GetMethodDefinition((MethodDefinitionHandle)handle);
         ImmutableArray<CorElementType> parameterTypes = methodDefinition.DecodeSignature(CorElementTypeSignatureProvider.Instance, null).ParameterTypes;
 

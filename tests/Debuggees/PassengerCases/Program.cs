@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Reflection;
+using System.Reflection.Emit;
 
 if (args is ["child"])
 {
@@ -20,6 +22,11 @@ if (args is ["busy"])
 	Busy.Spin(TimeSpan.FromMilliseconds(800));
 	Console.WriteLine($"allocated {Busy.Allocate(60_000)}");
 	Children.Run();
+	return;
+}
+if (args is ["emitted"])
+{
+	Emitted.Run();
 	return;
 }
 if (args is ["reads"])
@@ -241,6 +248,28 @@ static class Children
 			child.Kill();
 		}
 		Console.WriteLine($"child said: {said}");
+	}
+}
+
+// Code the program makes as it runs (System.Reflection.Emit), in a module with no file, calling back into the user's.
+public static class Emitted
+{
+	public static void Run()
+	{
+		AssemblyBuilder assembly = AssemblyBuilder.DefineDynamicAssembly(new AssemblyName("EmittedAtRunTime"), AssemblyBuilderAccess.Run);
+		TypeBuilder type = assembly.DefineDynamicModule("EmittedAtRunTime").DefineType("EmittedCaller", TypeAttributes.Public | TypeAttributes.Abstract | TypeAttributes.Sealed);
+		MethodBuilder call = type.DefineMethod("CallBack", MethodAttributes.Public | MethodAttributes.Static, typeof(void), [typeof(int)]);
+		ILGenerator il = call.GetILGenerator();
+		il.Emit(OpCodes.Ldarg_0);
+		il.Emit(OpCodes.Call, typeof(Emitted).GetMethod(nameof(CalledBack))!);
+		il.Emit(OpCodes.Ret);
+		Action<int> callBack = type.CreateType().GetMethod("CallBack")!.CreateDelegate<Action<int>>();
+		callBack(7);
+	}
+
+	public static void CalledBack(int value)
+	{
+		Console.WriteLine($"called back with {value}");
 	}
 }
 

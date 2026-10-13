@@ -12,7 +12,9 @@ namespace Passenger.Debugger;
 /// </summary>
 public partial class ModuleMetadataReader : IDisposable
 {
-    private readonly PEReader _peReader;
+    /// <summary>The module's image; none for one made as the program runs (System.Reflection.Emit), read from its metadata alone.</summary>
+    private readonly PEReader? _peReader;
+    private readonly MetadataReaderProvider? _metadataProvider;
     private readonly MetadataReader _peMetadataReader;
     private MetadataReaderProvider? _pdbProvider;
     private MetadataReader? _pdbMetadataReader;
@@ -23,7 +25,7 @@ public partial class ModuleMetadataReader : IDisposable
     public bool HasSymbols => _pdbMetadataReader is not null;
 
     /// <summary>The pointer size the module is built for: CoreLib's is its runtime's.</summary>
-    internal int PointerSize => _peReader.PEHeaders.PEHeader?.Magic == PEMagic.PE32Plus ? 8 : 4;
+    internal int PointerSize => _peReader?.PEHeaders.PEHeader?.Magic == PEMagic.PE32Plus ? 8 : 4;
 
     /// <summary>The methods a module's own code says are not the user's: marked [DebuggerNonUserCode],
     /// [DebuggerStepThrough] or [DebuggerHidden], or declared in a type (or a type nested in one) marked
@@ -102,7 +104,7 @@ public partial class ModuleMetadataReader : IDisposable
 
     internal (int MethodToken, int ILOffset)? ResolveManagedEntryPoint()
     {
-        CorHeader? corHeader = _peReader.PEHeaders.CorHeader;
+        CorHeader? corHeader = _peReader?.PEHeaders.CorHeader;
         if (corHeader is null || (corHeader.Flags & CorFlags.NativeEntryPoint) != 0)
         {
             return null;
@@ -158,6 +160,29 @@ public partial class ModuleMetadataReader : IDisposable
     {
         _peReader = peReader;
         _peMetadataReader = peReader.GetMetadataReader(MetadataReaderOptions.None);
+    }
+
+    private ModuleMetadataReader(MetadataReaderProvider metadataProvider)
+    {
+        _metadataProvider = metadataProvider;
+        _peMetadataReader = metadataProvider.GetMetadataReader(MetadataReaderOptions.None);
+    }
+
+    /// <summary>A module known by its metadata alone, a copy of the runtime's (a module emitted as the program runs), with
+    /// no symbols; null when the bytes are not metadata.</summary>
+    public static ModuleMetadataReader? TryLoadFromMetadata(byte[] metadata)
+    {
+        MetadataReaderProvider? provider = null;
+        try
+        {
+            provider = MetadataReaderProvider.FromMetadataImage(ImmutableArray.Create(metadata));
+            return new ModuleMetadataReader(provider);
+        }
+        catch
+        {
+            provider?.Dispose();
+            return null;
+        }
     }
 
     /// <summary>
@@ -269,7 +294,7 @@ public partial class ModuleMetadataReader : IDisposable
         MetadataReaderProvider? provider = null;
         try
         {
-            CodeViewDebugDirectoryData codeViewData = _peReader.ReadCodeViewDebugDirectoryData(codeViewEntry);
+            CodeViewDebugDirectoryData codeViewData = _peReader!.ReadCodeViewDebugDirectoryData(codeViewEntry);
             string pdbPath = codeViewData.Path;
 
             // Try PDB in same directory as assembly
@@ -315,7 +340,7 @@ public partial class ModuleMetadataReader : IDisposable
     {
         try
         {
-            SetPdbProvider(_peReader.ReadEmbeddedPortablePdbDebugDirectoryData(embeddedPdbEntry));
+            SetPdbProvider(_peReader!.ReadEmbeddedPortablePdbDebugDirectoryData(embeddedPdbEntry));
             return true;
         }
         catch
@@ -740,6 +765,7 @@ public partial class ModuleMetadataReader : IDisposable
     public void Dispose()
     {
         _pdbProvider?.Dispose();
-        _peReader.Dispose();
+        _peReader?.Dispose();
+        _metadataProvider?.Dispose();
     }
 }

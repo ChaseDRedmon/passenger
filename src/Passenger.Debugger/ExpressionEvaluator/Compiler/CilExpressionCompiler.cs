@@ -291,7 +291,8 @@ internal sealed class CilExpressionCompiler(ManagedDebugger debugger)
     private List<ModuleInfo> GetMetadataModulesPreferringModule(ICorDebugModule preferredModule)
     {
         Dictionary<string, List<ModuleInfo>> modulesByKey = new Dictionary<string, List<ModuleInfo>>(StringComparer.Ordinal);
-        foreach (ModuleInfo moduleInfo in debugger.AllModules)
+        // An emitted module's metadata is the runtime's own, moved as types are emitted into it, so no compilation holds it.
+        foreach (ModuleInfo moduleInfo in debugger.AllModules.Where(module => !module.IsDynamic))
         {
             string key = GetAssemblyIdentityKey(moduleInfo);
             if (!modulesByKey.TryGetValue(key, out List<ModuleInfo>? list))

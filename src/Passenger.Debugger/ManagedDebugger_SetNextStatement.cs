@@ -16,7 +16,7 @@ public partial class ManagedDebugger
             return null;
         }
         ICorDebugFunction function = frame.Function;
-        if (!_modules.TryGetValue(function.Module.BaseAddress, out ModuleInfo? module) || module is null
+        if (FindModule(function.Module) is not { } module
             || module.MetadataReader.ResolveBreakpoint(filePath, line) is not { } target
             || target.MethodToken != function.Token)
         {

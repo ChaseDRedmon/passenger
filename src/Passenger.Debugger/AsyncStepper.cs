@@ -205,7 +205,7 @@ public class AsyncStepper
             int methodVersion = ilCode.VersionNumber;
 
             // Check if module has symbols
-            if (!_modules.TryGetValue(moduleAddress, out ModuleInfo? moduleInfo) || moduleInfo.MetadataReader.HasSymbols is false)
+            if (_debugger.FindModule(function.Module) is not { } moduleInfo || moduleInfo.MetadataReader.HasSymbols is false)
             {
                 return (false, null);
             }

@@ -18,7 +18,7 @@ public partial class ManagedDebugger
 
     private IEnumerable<SyntheticAsyncCallerFrame> GetSyntheticAsyncCallerFrames(ICorDebugILFrame physicalFrame)
     {
-        if (!_modules.TryGetValue(physicalFrame.Function.Module.BaseAddress, out ModuleInfo? physicalModule) ||
+        if (FindModule(physicalFrame.Function.Module) is not { } physicalModule ||
             physicalModule.MetadataReader.GetStateMachineKickoffMethodToken(physicalFrame.Function.Token) is null)
         {
             yield break;
@@ -145,7 +145,7 @@ public partial class ManagedDebugger
     private SyntheticAsyncCallerFrame? CreateSyntheticAsyncCallerFrame(ICorDebugValue stateMachine)
     {
         ICorDebugObjectValue? objectValue = stateMachine.UnwrapDebugValueToObjectOrNull();
-        if (objectValue is null || !_modules.TryGetValue(objectValue.Class.Module.BaseAddress, out ModuleInfo? module))
+        if (objectValue is null || FindModule(objectValue.Class.Module) is not { } module)
         {
             return null;
         }

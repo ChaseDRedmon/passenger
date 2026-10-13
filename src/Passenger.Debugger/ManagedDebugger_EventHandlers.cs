@@ -68,9 +68,14 @@ public partial class ManagedDebugger
         _logger?.Invoke($"Module loaded: {modulePath} at 0x{(long)baseAddress:X}");
 
         ModuleMetadataReader? metadataReader = null;
+        bool emitted = corModule.IsDynamic;
         try
         {
-            if (corModule.IsInMemory)
+            if (emitted)
+            {
+                metadataReader = ReadEmittedMetadata(corModule);
+            }
+            else if (corModule.IsInMemory)
             {
                 int size = corModule.Size;
                 CORDB_ADDRESS baseAddress2 = corModule.BaseAddress;
@@ -108,7 +113,8 @@ public partial class ManagedDebugger
         }
 
         // EnC is enabled for assemblies/projects that are authored by the user, so we can use it as a heuristic to determine if this is user code or system code.
-        bool isUserCode = corModule.JITCompilerFlags is CorDebugJITCompilerFlags.CORDEBUG_JIT_DISABLE_OPTIMIZATION or CorDebugJITCompilerFlags.CORDEBUG_JIT_ENABLE_ENC;
+        // Emitted code is never the user's: it has no source to stop in.
+        bool isUserCode = !emitted && corModule.JITCompilerFlags is CorDebugJITCompilerFlags.CORDEBUG_JIT_DISABLE_OPTIMIZATION or CorDebugJITCompilerFlags.CORDEBUG_JIT_ENABLE_ENC;
         if (_justMyCode && isUserCode && metadataReader.HasSymbols)
         {
             // JMC Status starts as false. The module is the user's, but not the methods its own code says are
@@ -123,8 +129,8 @@ public partial class ManagedDebugger
             }
         }
 
-        ModuleInfo moduleInfo = new ModuleInfo(corModule, modulePath, metadataReader, isUserCode);
-        _modules[baseAddress] = moduleInfo;
+        ModuleInfo moduleInfo = new ModuleInfo(corModule, modulePath, metadataReader, isUserCode, emitted ? new CORDB_ADDRESS(_lastEmittedModuleKey--) : null);
+        _modules[moduleInfo.BaseAddress] = moduleInfo;
         ModuleSet_Version++;
         TryBindEntryBreakpoint(moduleInfo);
 
@@ -158,15 +164,34 @@ public partial class ManagedDebugger
         Continue();
     }
 
+    /// <summary>A type loaded: one emitted into a module made as the program runs adds to that module's metadata, which is
+    /// read again when next needed.</summary>
+    private void HandleClassLoaded(LoadClassCorDebugManagedCallbackEventArgs classLoaded)
+    {
+        try
+        {
+            if (FindModule(classLoaded.C.Module, reread: false) is { IsDynamic: true } module)
+            {
+                module.Stale = true;
+            }
+        }
+        catch (System.Runtime.InteropServices.COMException error)
+        {
+            _logger?.Invoke($"A loaded class's module could not be told: {error.Message}");
+        }
+        Continue();
+    }
+
     private void HandleModuleUnloaded(object? sender, UnloadModuleCorDebugManagedCallbackEventArgs unloadModuleEvent)
     {
         ICorDebugModule corModule = unloadModuleEvent.Module;
-        CORDB_ADDRESS baseAddress = corModule.BaseAddress;
-        if (_modules.Remove(baseAddress, out ModuleInfo? moduleInfo) is false)
+        if (FindModule(corModule, reread: false) is not { } moduleInfo)
         {
             Continue();
             return;
         }
+        CORDB_ADDRESS baseAddress = moduleInfo.BaseAddress;
+        _modules.Remove(baseAddress);
 
         _logger?.Invoke($"Module unloaded: {moduleInfo.ModulePath} from 0x{(long)baseAddress:X}");
         moduleInfo.Dispose();
@@ -407,8 +432,8 @@ public partial class ManagedDebugger
         ICorDebugStepper stepper = _stepper ?? throw new InvalidOperationException("No stepper found for step complete");
         stepper.Deactivate(); // I really don't know if its necessary to deactivate the steppers once done
         _stepper = null;
-        ModuleInfo module = _modules[ilFrame.Function.Module.BaseAddress];
-        if (module.MetadataReader.IsCurrentSequencePointHidden(ilFrame.Function.Token, ilFrame.IP.pnOffset))
+        ModuleInfo? module = FindModule(ilFrame.Function.Module);
+        if (module is not null && module.MetadataReader.IsCurrentSequencePointHidden(ilFrame.Function.Token, ilFrame.IP.pnOffset))
         {
             // Skip hidden sequence points so source lookup does not report
             // the preceding visible line as the step destination.
@@ -416,8 +441,8 @@ public partial class ManagedDebugger
             ContinueWithVariableClear();
             return;
         }
-        SourceInfo? sourceInfo = GetSourceInfoAtFrame(ilFrame, _justMyCode is false);
-        if (sourceInfo is null)
+        SourceInfo? sourceInfo = module is null ? null : GetSourceInfoAtFrame(ilFrame, _justMyCode is false);
+        if (module is null || sourceInfo is null)
         {
             // sourceInfo will be null if we could not find a PDB for the module
             // Bottom line - if we have no PDB, we have no source info, and there is no possible way for the user to map the stop location to a source file/line
@@ -619,7 +644,7 @@ public partial class ManagedDebugger
 
         try
         {
-            return frame is not null && _modules.TryGetValue(frame.Function.Module.BaseAddress, out ModuleInfo? module) && module.IsUserCode
+            return frame is not null && FindModule(frame.Function.Module) is { IsUserCode: true }
                 && (frame.Function is not ICorDebugFunction2 function || function.TryGetJMCStatus(out bool isJustMyCode) is not Cor.S_OK || isJustMyCode);
         }
         catch

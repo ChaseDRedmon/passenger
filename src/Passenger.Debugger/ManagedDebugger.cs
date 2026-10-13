@@ -306,6 +306,7 @@ public partial class ManagedDebugger
                 case CreateThreadCorDebugManagedCallbackEventArgs a: HandleThreadCreated(sender, a); break;
                 case ExitThreadCorDebugManagedCallbackEventArgs a: HandleThreadExited(sender, a); break;
                 case LoadModuleCorDebugManagedCallbackEventArgs a: HandleModuleLoaded(sender, a); break;
+                case LoadClassCorDebugManagedCallbackEventArgs a: HandleClassLoaded(a); break;
                 case UnloadModuleCorDebugManagedCallbackEventArgs a: HandleModuleUnloaded(sender, a); break;
                 case BreakpointCorDebugManagedCallbackEventArgs a: await HandleBreakpoint(sender, a).ConfigureAwait(false); break;
                 case StepCompleteCorDebugManagedCallbackEventArgs a: HandleStepComplete(sender, a); break;
@@ -513,10 +514,9 @@ public partial class ManagedDebugger
         }
         else // StepIn or StepOver
         {
-            ModuleMetadataReader metadataReader = _modules[frame.Function.Module.BaseAddress].MetadataReader;
-
             int currentIlOffset = ilFrame.IP.pnOffset;
-            (int ilStartOffset, int ilEndOffset)? nullableResult = metadataReader.GetStartAndEndSequencePointIlOffsetsForIlOffset(frame.Function.Token, currentIlOffset);
+            // A module the debugger could not read has no lines: the step is the runtime's own, an instruction's.
+            (int ilStartOffset, int ilEndOffset)? nullableResult = FindModule(frame.Function.Module)?.MetadataReader.GetStartAndEndSequencePointIlOffsetsForIlOffset(frame.Function.Token, currentIlOffset);
             if (nullableResult is var (startIlOffset, endIlOffset))
             {
                 if (startIlOffset == endIlOffset)
@@ -746,7 +746,54 @@ public partial class ManagedDebugger
     }
 
     internal IReadOnlyCollection<ModuleInfo> AllModules => _modules.Values;
-    internal ModuleInfo GetModuleInfoForModule(ICorDebugModule module) => _modules[module.BaseAddress];
+    internal ModuleInfo GetModuleInfoForModule(ICorDebugModule module) => FindModule(module) ?? throw new InvalidOperationException(ModuleWithoutMetadata);
+
+    private const string ModuleWithoutMetadata = "The code is in a module whose metadata the debugger could not read";
+
+    /// <summary>Keys of modules emitted as the program runs, which have no image and so all have base address 0.</summary>
+    private ulong _lastEmittedModuleKey = ulong.MaxValue;
+
+    /// <summary>The module tracked for one the runtime names, null if the debugger could not read it: by its base address,
+    /// or, for one emitted as the program runs, by itself, its metadata read again if the runtime has added to it.</summary>
+    internal ModuleInfo? FindModule(ICorDebugModule module, bool reread = true)
+    {
+        CORDB_ADDRESS address = module.BaseAddress;
+        if (address.Value != 0)
+        {
+            return _modules.GetValueOrDefault(address);
+        }
+        List<ModuleInfo> emitted = [.. _modules.Values.Where(info => info.IsDynamic)];
+        ModuleInfo? found = emitted.Find(info => ReferenceEquals(info.Module, module));
+        if (found is null && emitted.Count > 0 && module.TryGetMetaDataInterface(out IMetaDataImport? metadata) is Cor.S_OK && metadata is not null)
+        {
+            Guid mvid = metadata.ScopeProps.pmvid;
+            found = emitted.Find(info => info.MetadataReader.Mvid == mvid);
+        }
+        if (reread && found is { Stale: true } && ReadEmittedMetadata(found.Module) is { } current)
+        {
+            found.Reload(current);
+            ModuleSet_Version++;
+        }
+        return found;
+    }
+
+    /// <summary>A module emitted as the program runs (System.Reflection.Emit), which has no image on disk or in memory:
+    /// a copy of its metadata as the runtime holds it; null when it cannot be read.</summary>
+    private ModuleMetadataReader? ReadEmittedMetadata(ICorDebugModule module)
+    {
+        try
+        {
+            (nint pointer, int size) = module.GetMetaDataInterface<IMetaDataTables2>().MetaDataStorage;
+            byte[] metadata = new byte[size];
+            System.Runtime.InteropServices.Marshal.Copy(pointer, metadata, 0, size);
+            return ModuleMetadataReader.TryLoadFromMetadata(metadata);
+        }
+        catch (Exception error) when (error is System.Runtime.InteropServices.COMException or InvalidCastException)
+        {
+            _logger?.Invoke($"  The emitted module's metadata could not be read: {error.Message}");
+            return null;
+        }
+    }
 
     internal ICorDebugValue? GetCurrentException(ThreadId threadId)
     {

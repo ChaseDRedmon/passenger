@@ -613,7 +613,7 @@ public partial class ManagedDebugger
                 if (index >= startFrame)
                 {
                     int frameId = _frameReferenceManager.GetOrCreateFrameId(threadId, new FrameStackDepth(physicalDepth));
-                    result.Add(CreateStackFrameInfo(frameId, frame, false));
+                    result.Add(DescribeFrame(frameId, frame));
                 }
                 if (frame is ICorDebugILFrame ilFrame)
                 {
@@ -671,6 +671,35 @@ public partial class ManagedDebugger
         return CreateStackFrameInfo(frameId, frame, true);
     }
 
+    /// <summary>Rider's name for a frame whose method the debugger cannot read.</summary>
+    private const string UnknownMethod = "[Unknown method]";
+
+    /// <summary>A frame as the stack shows it; one that cannot be read is named as Rider names it, and the walk goes on.</summary>
+    private StackFrameInfo DescribeFrame(int frameId, ICorDebugFrame frame)
+    {
+        try
+        {
+            return CreateStackFrameInfo(frameId, frame, false);
+        }
+        catch (Exception error) when (error is COMException or InvalidOperationException or ArgumentException or BadImageFormatException)
+        {
+            _logger?.Invoke($"Frame {frameId} could not be read: {error.Message}");
+            return new StackFrameInfo
+            {
+                Id = frameId,
+                Name = UnknownMethod,
+                Line = 0,
+                EndLine = null,
+                Column = 0,
+                EndColumn = null,
+                Source = null,
+                IsUserCode = false,
+                IsResolved = false,
+                DecompiledSourceInfo = null
+            };
+        }
+    }
+
     private StackFrameInfo CreateStackFrameInfo(int frameId, ICorDebugFrame frame, bool decompileIfNeeded)
     {
         StackFrameInfo stackFrameInfo = new StackFrameInfo
@@ -690,7 +719,13 @@ public partial class ManagedDebugger
         if (frame is ICorDebugILFrame ilFrame)
         {
             ICorDebugFunction function = ilFrame.Function;
-            ModuleInfo module = _modules[function.Module.BaseAddress];
+            if (FindModule(function.Module) is not { } module)
+            {
+                // Rider's name for a method it cannot read; the frames below it are walked all the same.
+                stackFrameInfo.Name = UnknownMethod;
+                stackFrameInfo.IsResolved = false;
+                return stackFrameInfo;
+            }
             // returns null if the function is not a state machine method
             int? kickoffMethodToken = module.MetadataReader.GetStateMachineKickoffMethodToken(function.Token);
             stackFrameInfo.Name = GetMethodFormattedName(module, kickoffMethodToken ?? function.Token, ilFrame.TypeParameters);
@@ -810,7 +845,7 @@ public partial class ManagedDebugger
             {
                 ICorDebugILFrame ilFrame = GetIlFrameForThreadIdAndStackDepth(variablesReference.ThreadId, variablesReference.FrameStackDepth);
                 ICorDebugFunction corDebugFunction = ilFrame.Function;
-                ModuleInfo module = _modules[corDebugFunction.Module.BaseAddress];
+                ModuleInfo module = GetModuleInfoForModule(corDebugFunction.Module);
                 await AddCurrentException(result, variablesReference.ThreadId, variablesReference.FrameStackDepth);
                 ICorDebugValue? classContainingHoistedLocalsValue = await AddArguments(module, corDebugFunction, result, variablesReference.ThreadId, variablesReference.FrameStackDepth);
                 await AddLocalVariables(module, corDebugFunction, result, variablesReference.ThreadId, variablesReference.FrameStackDepth, classContainingHoistedLocalsValue);

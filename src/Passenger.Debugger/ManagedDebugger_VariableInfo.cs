@@ -170,9 +170,10 @@ public partial class ManagedDebugger
         {
             // index 0 is the return value, so we add 1 to get to the arguments
             // GetParamForMethodIndex does not include the instance 'this' parameter
-            mdParamDef paramDef = metadataImport!.GetParamForMethodIndex(corDebugFunction.Token, index + 1);
-            (string szName, mdMethodDef pmd, int pulSequence, CorParamAttr pdwAttr, CorElementType pdwCPlusTypeFlag, nint ppValue, int pcchValue) paramProps = metadataImport.GetParamProps(paramDef);
-            string? argumentName = paramProps.szName;
+            // A parameter with no row of its own (code emitted without names) is named by its place, as Rider names a local.
+            string? argumentName = metadataImport!.TryGetParamForMethodIndex(corDebugFunction.Token, checked((uint)(index + 1)), out mdParamDef paramDef) is Cor.S_OK
+                ? metadataImport.GetParamProps(paramDef).szName
+                : $"arg_{index}";
             if (argumentName is null)
             {
                 continue;
@@ -325,7 +326,7 @@ public partial class ManagedDebugger
             {
                 mdToken interfaceToken = metadataReader.GetInterfaceImplProps(interfaceImpl).ptkIface;
                 Handle interfaceHandle = MetadataTokens.Handle(checked((int)interfaceToken.Value));
-                MetadataReader peMetadataReader = _modules[currentType.Class.Module.BaseAddress].MetadataReader.PeMetadataReader;
+                MetadataReader peMetadataReader = GetModuleInfoForModule(currentType.Class.Module).MetadataReader.PeMetadataReader;
                 string? interfaceName = interfaceHandle.Kind switch
                 {
                     HandleKind.TypeDefinition => FunctionBreakpointSignatureTypeProvider.GetTypeName(peMetadataReader, (TypeDefinitionHandle)interfaceHandle),
@@ -539,7 +540,7 @@ public partial class ManagedDebugger
 
     private (string FriendlyName, ModuleInfo Module, EntityHandle Handle)? GetFieldType(ICorDebugClass corDebugClass, mdFieldDef mdFieldDef)
     {
-        if (_modules.TryGetValue(corDebugClass.Module.BaseAddress, out ModuleInfo? moduleInfo) is false)
+        if (FindModule(corDebugClass.Module) is not { } moduleInfo)
         {
             return null;
         }

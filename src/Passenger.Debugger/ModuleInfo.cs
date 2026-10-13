@@ -25,23 +25,42 @@ public class ModuleInfo : IDisposable
     /// <summary>
     /// Symbol reader for this module (null if no PDB available)
     /// </summary>
-    public ModuleMetadataReader MetadataReader { get; }
+    public ModuleMetadataReader MetadataReader { get; private set; }
     public bool SymbolsFromDecompiled { get; set; }
 
     /// <summary>
-    /// Base address of the module in memory
+    /// Base address of the module in memory, which keys it; one emitted as the program runs has none, and a key of its own.
     /// </summary>
     public CORDB_ADDRESS BaseAddress { get; }
     public bool IsUserCode { get; }
 
-    public ModuleInfo(ICorDebugModule module, string modulePath, ModuleMetadataReader metadataReader, bool isUserCode)
+    /// <summary>Made as the program runs (System.Reflection.Emit): no file, no image, its metadata the runtime's own.</summary>
+    public bool IsDynamic { get; }
+
+    public ModuleInfo(ICorDebugModule module, string modulePath, ModuleMetadataReader metadataReader, bool isUserCode, CORDB_ADDRESS? emittedKey = null)
     {
         Module = module;
         ModulePath = modulePath;
         IsUserCode = isUserCode;
         ModuleName = Path.GetFileName(modulePath);
         MetadataReader = metadataReader;
-        BaseAddress = module.BaseAddress;
+        IsDynamic = emittedKey is not null;
+        BaseAddress = emittedKey ?? module.BaseAddress;
+    }
+
+    /// <summary>An emitted module the runtime has added to (a type emitted) since its metadata was read.</summary>
+    internal bool Stale { get; set; }
+
+    /// <summary>Copies of an emitted module's metadata read before the current one, kept with the module, as a request may
+    /// still be reading one.</summary>
+    private readonly List<ModuleMetadataReader> _superseded = [];
+
+    /// <summary>An emitted module's metadata read again, once the runtime has added to it.</summary>
+    internal void Reload(ModuleMetadataReader metadataReader)
+    {
+        _superseded.Add(MetadataReader);
+        MetadataReader = metadataReader;
+        Stale = false;
     }
 
     /// <summary>
@@ -81,5 +100,9 @@ public class ModuleInfo : IDisposable
     public void Dispose()
     {
         MetadataReader.Dispose();
+        foreach (ModuleMetadataReader superseded in _superseded)
+        {
+            superseded.Dispose();
+        }
     }
 }

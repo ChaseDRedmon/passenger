@@ -29,8 +29,11 @@ public partial class ManagedDebugger
         }
 
         ICorDebugFunction function = ilFrame.Function;
-        ModuleInfo module = _modules[function.Module.BaseAddress];
-        if (module.MetadataReader.HasSymbols is false && decompileIfNeeded)
+        if (FindModule(function.Module) is not { } module)
+        {
+            return null;
+        }
+        if (module.MetadataReader.HasSymbols is false && decompileIfNeeded && !module.IsDynamic)
         {
             // No PDB on disk — generate one via decompilation and update the module entry
             if (GetCachedOrGeneratePdb(module))
@@ -70,8 +73,7 @@ public partial class ManagedDebugger
                 continue;
             }
 
-            ModuleInfo callerModule = _modules[ilFrame.Function.Module.BaseAddress];
-            if (callerModule.IsUserCode)
+            if (FindModule(ilFrame.Function.Module) is { IsUserCode: true } callerModule)
             {
                 return callerModule.ModulePath;
             }

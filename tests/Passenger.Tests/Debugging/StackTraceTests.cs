@@ -159,4 +159,34 @@ public class StackTraceTests(ITestOutputHelper testOutputHelper)
         Assert.EndsWith("System.Linq.dll", decompiledSourceInfo.Assembly.AssemblyPath);
         Assert.EndsWith("DebuggableConsoleApp.dll", decompiledSourceInfo.CallingUserCodeAssemblyPath);
     }
+
+    [Fact]
+    public async Task A_stop_in_a_method_emitted_code_calls_has_its_stack_down_to_Main_through_the_emitted_frame()
+    {
+        // System.Reflection.Emit's module has no file and no image in memory: its metadata is the runtime's own.
+        int calledBack = Debuggees.Line("PassengerCases", "Console.WriteLine($\"called back with {value}\");");
+        using DebugSession host = DebugSession.ForLaunch(testOutputHelper);
+        await host
+            .WithInitializeRequest()
+            .WithLaunchRequest(Debuggees.Program("PassengerCases"), stopAtEntry: false, justMyCode: true, arguments: ["emitted"])
+            .WaitForInitializedEvent();
+        host.WithBreakpointsRequest(calledBack, Debuggees.Source("PassengerCases", "Program.cs")).WithConfigurationDoneRequest();
+
+        StoppedEvent stop = await host.WaitForStoppedEvent();
+        int thread = stop.ThreadId!.Value;
+        host.WithStackTraceRequest(thread, out StackTraceResponse stack, levels: null);
+        List<string> names = [.. stack.StackFrames.Select(frame => frame.Name)];
+        Assert.True(names.Contains("PassengerCases.dll!Program.<Main>$(string[] args)"), $"The stack ended before Main: {string.Join(" < ", names)}");
+        Assert.Equal("PassengerCases.dll!Emitted.CalledBack(int value)", names[0]);
+        Assert.EndsWith("!EmittedCaller.CallBack(int)", names[1], StringComparison.Ordinal);
+        Assert.Equal("PassengerCases.dll!Emitted.Run()", names[2]);
+
+        // The emitted frame is one like any other: its argument, emitted without a name, is there by its place, and a step
+        // out of the method it called passes over it.
+        host.WithScopesRequest(stack.StackFrames[1].Id, out ScopesResponse scopes);
+        host.WithVariablesRequest(Assert.Single(scopes.Scopes).VariablesReference, out List<DapVariable> arguments);
+        Assert.Equal(("arg_0", "7"), (Assert.Single(arguments).Name, arguments[0].Value));
+        StoppedEvent stepped = await host.WithStepOutRequest(thread).WaitForStoppedEvent();
+        Assert.Equal(("step", Debuggees.Line("PassengerCases", "callBack(7);")), (stepped.Reason, stepped.ReadStopInfo().line));
+    }
 }
