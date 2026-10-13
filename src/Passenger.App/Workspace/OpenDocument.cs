@@ -40,11 +40,17 @@ public sealed class OpenDocument : Observable
             Selections = TextEditing.MapThrough(Selections, change.Edits).Clamp(change.After.Length);
             if (foldRegions.Count > 0)
             {
-                FoldRegions = [.. foldRegions.Select(r => r with
+                FoldRegion[] moved = new FoldRegion[foldRegions.Count];
+                for (int i = 0; i < moved.Length; i++)
                 {
-                    Start = TextEditing.MapOffset(r.Start, change.Edits, afterInsertions: true),
-                    End = TextEditing.MapOffset(r.End, change.Edits, afterInsertions: true),
-                })];
+                    FoldRegion region = foldRegions[i];
+                    moved[i] = region with
+                    {
+                        Start = TextEditing.MapOffset(region.Start, change.Edits, afterInsertions: true),
+                        End = TextEditing.MapOffset(region.End, change.Edits, afterInsertions: true),
+                    };
+                }
+                FoldRegions = moved;
             }
             Raise(nameof(IsModified));
         };
@@ -169,14 +175,56 @@ public sealed class OpenDocument : Observable
             return null;
         }
         CSharpHighlighter csharp = new(Text);
-        // Each parse's regions keep the folds of the ones they replace, matched by where they start.
+        // Each parse's regions keep the folds of the ones they replace, matched by where they start. The regions carried
+        // through the keys are usually the parse's already, and stay; with none folded the parse's own are taken.
         csharp.FoldsChanged += (_, _) =>
         {
-            HashSet<int> folded = [.. foldRegions.Where(r => r.Folded).Select(r => r.Start)];
-            FoldRegions = [.. csharp.Folds.Select(r => r with { Folded = folded.Contains(r.Start) })];
+            if (Same(foldRegions, csharp.Folds))
+            {
+                return;
+            }
+            HashSet<int>? folded = null;
+            for (int i = 0; i < foldRegions.Count; i++)
+            {
+                if (foldRegions[i].Folded)
+                {
+                    (folded ??= []).Add(foldRegions[i].Start);
+                }
+            }
+            IReadOnlyList<FoldRegion> found = csharp.Folds;
+            if (folded is null)
+            {
+                FoldRegions = found;
+            }
+            else
+            {
+                FoldRegion[] kept = new FoldRegion[found.Count];
+                for (int i = 0; i < kept.Length; i++)
+                {
+                    kept[i] = found[i] with { Folded = folded.Contains(found[i].Start) };
+                }
+                FoldRegions = kept;
+            }
         };
         csharp.Parsed += (_, parsed) => Parsed?.Invoke(this, parsed);
         return csharp;
+    }
+
+    /// <summary>Whether two lists of regions fold the same text, whatever is folded.</summary>
+    private static bool Same(IReadOnlyList<FoldRegion> kept, IReadOnlyList<FoldRegion> found)
+    {
+        if (kept.Count != found.Count)
+        {
+            return false;
+        }
+        for (int i = 0; i < kept.Count; i++)
+        {
+            if (kept[i].Start != found[i].Start || kept[i].End != found[i].End || kept[i].Placeholder != found[i].Placeholder)
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     /// <summary>Whether the language server made this file from an assembly's metadata (Go to Declaration on a

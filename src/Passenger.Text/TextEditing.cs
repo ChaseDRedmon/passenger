@@ -782,8 +782,10 @@ public static class TextEditing
     private static int Map(IReadOnlyList<TextEdit> edits, int offset, bool afterInsertions)
     {
         int shift = 0;
-        foreach (TextEdit e in edits)
+        // By index: an enumerator of the list would be made for every offset carried, every fold and marker every key.
+        for (int i = 0; i < edits.Count; i++)
         {
+            TextEdit e = edits[i];
             bool before = e.End < offset || (e.End == offset && (e.Length > 0 || afterInsertions));
             if (before)
             {

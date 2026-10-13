@@ -238,6 +238,72 @@ public sealed class FoldingTests : IDisposable
         window.Close();
     }
 
+    /// <summary>Every key moves the regions below it, and the parse it makes brings them again: the window keeps one moved
+    /// copy of the list a key (24 bytes a region) and takes the parse's own when nothing is folded. A key typed above 2,000
+    /// doc comments allocates on the UI thread under 48 bytes for each more than above the same lines as plain comments,
+    /// where the regions were mapped, sorted and copied again by the editor, and copied twice more when each parse landed.
+    /// A region folded below keeps its fold through the keys.</summary>
+    [AvaloniaFact]
+    public void Typing_above_two_thousand_regions_moves_them_on_the_UI_thread_without_copying_each_again_and_again()
+    {
+        (long plain, int plainRegions) = UiBytesPerKey(doc: false);
+        (long folding, int regions) = UiBytesPerKey(doc: true);
+        int more = regions - plainRegions;
+        Assert.True(more >= 2000, $"The doc comments made {more} regions more than the plain comments");
+        long each = (folding - plain) / more;
+        Assert.True(each < 48,
+            $"A key allocated {folding / 1024:N0} KB on the UI thread above {regions} regions, {plain / 1024:N0} KB above {plainRegions}: {each} bytes for each region, which the window copied again and again");
+    }
+
+    /// <summary>What a key typed in a method at the top of a file allocates on the UI thread, its parse landing included,
+    /// with 2,000 members below it under doc comments or plain ones, the last of them folded; and the file's regions.</summary>
+    private (long Bytes, int Regions) UiBytesPerKey(bool doc)
+    {
+        string comment = doc ? "///" : "// ";
+        StringBuilder text = new("class Many\n{\n    int Typed()\n    {\n        int value = 1;\n        return value;\n    }\n\n");
+        for (int i = 0; i < 2000; i++)
+        {
+            text.Append(System.Globalization.CultureInfo.InvariantCulture,
+                $"    {comment} <summary>\n    {comment} Member {i}.\n    {comment} </summary>\n    int Member{i}() => {i};\n\n");
+        }
+        text.Append("    void Last()\n    {\n        int last = 0;\n    }\n}\n");
+        string source = text.ToString();
+        string path = Path.Combine(folder, doc ? "Doc.cs" : "Plain.cs");
+        File.WriteAllText(path, source);
+        MainWindow window = new() { Width = 1000, Height = 700 };
+        window.Show();
+        window.OpenFolder(folder);
+        window.OpenFile(path);
+        Ui.Settle();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Passenger.App.Workspace.OpenDocument document = window.EditorArea.Active!;
+        Ui.WaitFor(() => document.FoldRegions.Count > 2, "the file's regions");
+        // The last method folded, far below the screen.
+        editor.GoTo(new TextPosition(source.Count(c => c == '\n') - 3, 8));
+        editor.Focus();
+        Ui.Press(window, "control M");
+        Ui.Press(window, "control S");
+        int last = source.IndexOf("void Last()", StringComparison.Ordinal) + "void Last()".Length;
+        Assert.Equal(last, Assert.Single(document.FoldRegions, r => r.Folded).Start);
+        editor.Selections = SelectionSet.Single(source.IndexOf("= 1;", StringComparison.Ordinal) + 2);
+        editor.ScrollTo(default);
+        Ui.Settle();
+        const int Keys = 20;
+        long bytes = 0;
+        for (int i = 0; i < Keys; i++)
+        {
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            window.KeyTextInput("1");
+            Ui.Settle();
+            bytes += GC.GetAllocatedBytesForCurrentThread() - before;
+        }
+        FoldRegion folded = Assert.Single(document.FoldRegions, r => r.Folded);
+        Assert.True(folded.Start == last + Keys, $"The folded method's region starts at {folded.Start} after the keys, not on its signature's end at {last + Keys}");
+        int regions = document.FoldRegions.Count;
+        window.Close();
+        return (bytes / Keys, regions);
+    }
+
     /// <summary>Members of every kind that folds, with a doc comment each, around 120 lines a member.</summary>
     private static string Members(int count)
     {

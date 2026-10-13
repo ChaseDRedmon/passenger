@@ -33,10 +33,22 @@ public sealed partial class CodeEditor
         {
             return;
         }
-        folds = [.. regions.OrderBy(r => r.Start)];
+        folds = InOrder(regions) ? regions : [.. regions.OrderBy(r => r.Start)];
         InvalidateVisual();
         UpdateScrollBars();
         FollowInputMethod();
+    }
+
+    private static bool InOrder(IReadOnlyList<FoldRegion> regions)
+    {
+        for (int i = 1; i < regions.Count; i++)
+        {
+            if (regions[i].Start < regions[i - 1].Start)
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     /// <summary>The regions in lines for the text as it stands.</summary>
@@ -135,13 +147,13 @@ public sealed partial class CodeEditor
     /// <summary>The innermost region holding a line: its first line through its last.</summary>
     private int RegionAround(int line, Func<FoldRegion, bool> which)
     {
-        FoldLines map = Folding;
+        TextSnapshot text = document.Snapshot;
         int best = -1;
         for (int i = 0; i < folds.Count; i++)
         {
             FoldRegion region = folds[i];
-            int first = map.StartLine[i];
-            int last = map.EndLine[i];
+            int first = FoldLines.StartLineOf(text, region);
+            int last = FoldLines.EndLineOf(text, region);
             if (last < 0 || !which(region))
             {
                 continue;
@@ -239,7 +251,7 @@ public sealed partial class CodeEditor
         {
             return;
         }
-        folds = [.. folds.Select((r, i) => r.Folded && map.EndLine[i] >= 0 && lines.Any(l => l > map.StartLine[i] && l <= map.EndLine[i]) ? r with { Folded = false } : r)];
+        folds = [.. folds.Select(r => r.Folded && FoldLines.EndLineOf(text, r) is int end and >= 0 && lines.Any(l => l > FoldLines.StartLineOf(text, r) && l <= end) ? r with { Folded = false } : r)];
         UpdateScrollBars();
         FoldsToggled?.Invoke(this, folds);
     }
@@ -270,12 +282,12 @@ public sealed partial class CodeEditor
     /// <summary>The widest region of a kind that starts on a line and folds something, by its place in the list.</summary>
     private int? OutermostAt(int line, Func<FoldRegion, bool> which)
     {
-        FoldLines map = Folding;
+        TextSnapshot text = document.Snapshot;
         int? best = null;
-        for (int i = map.FirstStartingAtOrAfter(line); i < folds.Count && map.StartLine[i] == line; i++)
+        for (int i = FirstStartingOn(text, line); i < folds.Count && FoldLines.StartLineOf(text, folds[i]) == line; i++)
         {
             FoldRegion region = folds[i];
-            if (map.EndLine[i] > line && which(region) && (best is null || region.End > folds[best.Value].End))
+            if (FoldLines.EndLineOf(text, region) > line && which(region) && (best is null || region.End > folds[best.Value].End))
             {
                 best = i;
             }
@@ -289,12 +301,17 @@ public sealed partial class CodeEditor
     {
         double x = gutter - FoldWidth + 2;
         FoldLines map = Folding;
+        if (!overGutter && map.Placeholders.Count == 0)
+        {
+            return;
+        }
+        TextSnapshot text = document.Snapshot;
         HashSet<int> drawn = [];
-        for (int i = map.FirstStartingAtOrAfter(first); i < folds.Count && map.StartLine[i] <= last; i++)
+        for (int i = FirstStartingOn(text, first); i < folds.Count && FoldLines.StartLineOf(text, folds[i]) <= last; i++)
         {
             FoldRegion region = folds[i];
-            int line = map.StartLine[i];
-            if (map.EndLine[i] <= line || !(region.Folded || overGutter) || IsHidden(line) || !drawn.Add(line))
+            int line = FoldLines.StartLineOf(text, region);
+            if (FoldLines.EndLineOf(text, region) <= line || !(region.Folded || overGutter) || IsHidden(line) || !drawn.Add(line))
             {
                 continue;
             }
@@ -332,33 +349,55 @@ public sealed partial class CodeEditor
         return chip.Right;
     }
 
-    /// <summary>The regions of one text in its lines: where each region starts and ends (a region running past the text
-    /// starts past every line, or ends on none), the folded lines as ranges in order with the lines folded before each,
-    /// and the widest folded region starting on each line, whose placeholder ends it.</summary>
+    /// <summary>The first region starting on a line at or after <paramref name="line"/>, found by where they start.</summary>
+    private int FirstStartingOn(TextSnapshot text, int line)
+    {
+        int offset = line < text.LineCount ? text.GetLineStart(line) : text.Length + 1;
+        int low = 0;
+        int high = folds.Count;
+        while (low < high)
+        {
+            int middle = (low + high) / 2;
+            if (folds[middle].Start < offset)
+            {
+                low = middle + 1;
+            }
+            else
+            {
+                high = middle;
+            }
+        }
+        return low;
+    }
+
+    /// <summary>The folded regions of one text in its lines: the folded lines as ranges in order with the lines folded
+    /// before each, and the widest folded region starting on each line, whose placeholder ends it. Made for each change
+    /// to the text, so it reads only the folded regions; the others' lines are found when one is drawn or asked for.</summary>
     private sealed class FoldLines
     {
         public FoldLines(TextSnapshot text, IReadOnlyList<FoldRegion> folds)
         {
             Text = text;
             Folds = folds;
-            StartLine = new int[folds.Count];
-            EndLine = new int[folds.Count];
             List<(int First, int Last)> ranges = [];
             for (int i = 0; i < folds.Count; i++)
             {
                 FoldRegion region = folds[i];
-                StartLine[i] = region.Start <= text.Length ? text.GetLineFromOffset(region.Start) : int.MaxValue;
-                EndLine[i] = region.End <= text.Length ? text.GetLineFromOffset(region.End) : -1;
-                if (!region.Folded || StartLine[i] == int.MaxValue)
+                if (!region.Folded)
                 {
                     continue;
                 }
-                if (!Placeholders.TryGetValue(StartLine[i], out int widest) || region.End > folds[widest].End)
+                int start = StartLineOf(text, region);
+                if (start == int.MaxValue)
                 {
-                    Placeholders[StartLine[i]] = i;
+                    continue;
                 }
-                int first = StartLine[i] + 1;
-                int last = EndLine[i];
+                if (!Placeholders.TryGetValue(start, out int widest) || region.End > folds[widest].End)
+                {
+                    Placeholders[start] = i;
+                }
+                int first = start + 1;
+                int last = EndLineOf(text, region);
                 if (last < first)
                 {
                     continue;
@@ -384,11 +423,6 @@ public sealed partial class CodeEditor
 
         public IReadOnlyList<FoldRegion> Folds { get; }
 
-        /// <summary>Each region's first line, in the regions' order (and so never falling).</summary>
-        public int[] StartLine { get; }
-
-        public int[] EndLine { get; }
-
         public (int First, int Last)[] Hidden { get; }
 
         /// <summary>How many lines the ranges before each one hide; one more than the ranges, the last all of them.</summary>
@@ -397,6 +431,12 @@ public sealed partial class CodeEditor
         public int HiddenCount => HiddenBefore[^1];
 
         public Dictionary<int, int> Placeholders { get; } = [];
+
+        /// <summary>A region's first line; past every line for one starting past the text.</summary>
+        public static int StartLineOf(TextSnapshot text, FoldRegion region) => region.Start <= text.Length ? text.GetLineFromOffset(region.Start) : int.MaxValue;
+
+        /// <summary>A region's last line; none for one ending past the text.</summary>
+        public static int EndLineOf(TextSnapshot text, FoldRegion region) => region.End <= text.Length ? text.GetLineFromOffset(region.End) : -1;
 
         /// <summary>The last folded range starting at or before a line, or -1.</summary>
         public int RangeAtOrBefore(int line)
@@ -416,26 +456,6 @@ public sealed partial class CodeEditor
                 }
             }
             return low - 1;
-        }
-
-        /// <summary>The first region starting on a line at or after <paramref name="line"/>.</summary>
-        public int FirstStartingAtOrAfter(int line)
-        {
-            int low = 0;
-            int high = StartLine.Length;
-            while (low < high)
-            {
-                int middle = (low + high) / 2;
-                if (StartLine[middle] < line)
-                {
-                    low = middle + 1;
-                }
-                else
-                {
-                    high = middle;
-                }
-            }
-            return low;
         }
     }
 }
