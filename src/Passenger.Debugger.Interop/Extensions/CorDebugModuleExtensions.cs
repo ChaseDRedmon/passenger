@@ -1,3 +1,5 @@
+#nullable enable
+
 using System;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -44,23 +46,6 @@ public static class CorDebugModuleExtensions
             }
         }
 
-        /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugModule.TryCreateBreakpoint(Passenger.Debugger.Interop.ICorDebugModuleBreakpoint@)" />
-        public ICorDebugModuleBreakpoint CreateBreakpoint()
-        {
-            Marshal.ThrowExceptionForHR(instance.TryCreateBreakpoint(out ICorDebugModuleBreakpoint ppBreakpoint));
-            return ppBreakpoint;
-        }
-
-        /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugModule.TryGetAssembly(Passenger.Debugger.Interop.ICorDebugAssembly@)" />
-        public ICorDebugAssembly Assembly
-        {
-            get
-            {
-                Marshal.ThrowExceptionForHR(instance.TryGetAssembly(out ICorDebugAssembly ppAssembly));
-                return ppAssembly;
-            }
-        }
-
         /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugModule.TryGetBaseAddress(Passenger.Debugger.Interop.CORDB_ADDRESS@)" />
         public CORDB_ADDRESS BaseAddress
         {
@@ -78,52 +63,11 @@ public static class CorDebugModuleExtensions
             return ppClass;
         }
 
-        /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugModule.TryGetEditAndContinueSnapshot(Passenger.Debugger.Interop.ICorDebugEditAndContinueSnapshot@)" />
-        public ICorDebugEditAndContinueSnapshot EditAndContinueSnapshot
-        {
-            get
-            {
-                Marshal.ThrowExceptionForHR(instance.TryGetEditAndContinueSnapshot(out ICorDebugEditAndContinueSnapshot ppEditAndContinueSnapshot));
-                return ppEditAndContinueSnapshot;
-            }
-        }
-
-        /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugModule.TryGetFunctionFromRVA(Passenger.Debugger.Interop.CORDB_ADDRESS,Passenger.Debugger.Interop.ICorDebugFunction@)" />
-        public ICorDebugFunction GetFunctionFromRVA(CORDB_ADDRESS rva)
-        {
-            Marshal.ThrowExceptionForHR(instance.TryGetFunctionFromRVA(rva, out ICorDebugFunction ppFunction));
-            return ppFunction;
-        }
-
         /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugModule.TryGetFunctionFromToken(Passenger.Debugger.Interop.mdMethodDef,Passenger.Debugger.Interop.ICorDebugFunction@)" />
         public ICorDebugFunction GetFunctionFromToken(mdMethodDef methodDef)
         {
             Marshal.ThrowExceptionForHR(instance.TryGetFunctionFromToken(methodDef, out ICorDebugFunction ppFunction));
             return ppFunction;
-        }
-
-        /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugModule.TryGetGlobalVariableValue(Passenger.Debugger.Interop.mdFieldDef,Passenger.Debugger.Interop.ICorDebugValue@)" />
-        public ICorDebugValue GetGlobalVariableValue(mdFieldDef fieldDef)
-        {
-            Marshal.ThrowExceptionForHR(instance.TryGetGlobalVariableValue(fieldDef, out ICorDebugValue ppValue));
-            return ppValue;
-        }
-
-        /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugModule.TryGetMetaDataInterface(System.Guid@,System.Object@)" />
-        public object? GetMetaDataInterface(ref Guid riid)
-        {
-            Marshal.ThrowExceptionForHR(instance.TryGetMetaDataInterface(ref riid, out object? ppObj));
-            return ppObj;
-        }
-
-        /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugModule.TryGetProcess(Passenger.Debugger.Interop.ICorDebugProcess@)" />
-        public ICorDebugProcess Process
-        {
-            get
-            {
-                Marshal.ThrowExceptionForHR(instance.TryGetProcess(out ICorDebugProcess ppProcess));
-                return ppProcess;
-            }
         }
 
         /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugModule.TryGetSize(System.UInt32@)" />
@@ -133,16 +77,6 @@ public static class CorDebugModuleExtensions
             {
                 Marshal.ThrowExceptionForHR(instance.TryGetSize(out var pcBytes));
                 return checked((int)pcBytes);
-            }
-        }
-
-        /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugModule.TryGetToken(Passenger.Debugger.Interop.mdModule@)" />
-        public mdModule Token
-        {
-            get
-            {
-                Marshal.ThrowExceptionForHR(instance.TryGetToken(out var pToken));
-                return pToken;
             }
         }
 
@@ -164,18 +98,6 @@ public static class CorDebugModuleExtensions
                 Marshal.ThrowExceptionForHR(instance.TryIsInMemory(out var pInMemory));
                 return pInMemory;
             }
-        }
-
-        /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugModule.TryEnableClassLoadCallbacks(System.Boolean)" />
-        public void EnableClassLoadCallbacks(bool bClassLoadCallbacks)
-        {
-            Marshal.ThrowExceptionForHR(instance.TryEnableClassLoadCallbacks(bClassLoadCallbacks));
-        }
-
-        /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugModule.TryEnableJITDebugging(System.Boolean,System.Boolean)" />
-        public void EnableJITDebugging(bool bTrackJITInfo, bool bAllowJitOpts)
-        {
-            Marshal.ThrowExceptionForHR(instance.TryEnableJITDebugging(bTrackJITInfo, bAllowJitOpts));
         }
     }
 }

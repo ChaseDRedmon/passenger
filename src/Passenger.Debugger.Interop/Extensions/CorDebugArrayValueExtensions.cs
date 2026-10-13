@@ -1,3 +1,5 @@
+#nullable enable
+
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
@@ -45,16 +47,6 @@ public static class CorDebugArrayValueExtensions
         {
             Marshal.ThrowExceptionForHR(instance.TryGetElementAtPosition(checked((uint)nPosition), out ICorDebugValue ppValue));
             return ppValue;
-        }
-
-        /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugArrayValue.TryGetElementType(Passenger.Debugger.Interop.CorElementType@)" />
-        public CorElementType ElementType
-        {
-            get
-            {
-                Marshal.ThrowExceptionForHR(instance.TryGetElementType(out var pType));
-                return pType;
-            }
         }
 
         /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugArrayValue.TryGetRank(System.UInt32@)" />

@@ -1,3 +1,5 @@
+#nullable enable
+
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 
@@ -283,7 +285,7 @@ public partial interface ICorDebugManagedCallback
     /// <para>A pointer to an ICorDebugThread object that represents the managed thread.</para>
     /// </param>
     /// <param name="lLevel">
-    /// <para>A value of the <see cref="T:Passenger.Debugger.Interop.LoggingLevelEnum">LoggingLevelEnum</see> enumeration that indicates the severity level of the descriptive message that was written to the event log.</para>
+    /// <para>A value of the LoggingLevelEnum enumeration that indicates the severity level of the descriptive message that was written to the event log.</para>
     /// </param>
     /// <param name="pLogSwitchName">
     /// <para>A pointer to the name of the tracing switch.</para>
@@ -310,7 +312,7 @@ public partial interface ICorDebugManagedCallback
     /// <para>A value that indicates the severity level of the descriptive message that was written to the event log.</para>
     /// </param>
     /// <param name="ulReason">
-    /// <para>A value of the <see cref="T:Passenger.Debugger.Interop.LogSwitchCallReason">LogSwitchCallReason</see> enumeration that indicates the operation performed on the debugging/tracing switch.</para>
+    /// <para>A value of the LogSwitchCallReason enumeration that indicates the operation performed on the debugging/tracing switch.</para>
     /// </param>
     /// <param name="pLogSwitchName">
     /// <para>A pointer to the name of the debugging/tracing switch.</para>

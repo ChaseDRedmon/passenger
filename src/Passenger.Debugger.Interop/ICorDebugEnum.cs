@@ -1,3 +1,5 @@
+#nullable enable
+
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 
@@ -13,7 +15,7 @@ namespace Passenger.Debugger.Interop;
 /// </description></item>
 /// <item><description><para><c>ICorDebugAssemblyEnum</c></para>
 /// </description></item>
-/// <item><description><para><see cref="T:Passenger.Debugger.Interop.ICorDebugBlockingObjectEnum">ICorDebugBlockingObjectEnum</see></para>
+/// <item><description><para>ICorDebugBlockingObjectEnum</para>
 /// </description></item>
 /// <item><description><para><c>ICorDebugBreakpointEnum</c></para>
 /// </description></item>
@@ -23,17 +25,17 @@ namespace Passenger.Debugger.Interop;
 /// </description></item>
 /// <item><description><para><c>ICorDebugErrorInfoEnum</c></para>
 /// </description></item>
-/// <item><description><para><see cref="T:Passenger.Debugger.Interop.ICorDebugExceptionObjectCallStackEnum">ICorDebugExceptionObjectCallStackEnum</see></para>
+/// <item><description><para>ICorDebugExceptionObjectCallStackEnum</para>
 /// </description></item>
 /// <item><description><para><c>ICorDebugFrameEnum</c></para>
 /// </description></item>
-/// <item><description><para><see cref="T:Passenger.Debugger.Interop.ICorDebugGCReferenceEnum">ICorDebugGCReferenceEnum</see></para>
+/// <item><description><para>ICorDebugGCReferenceEnum</para>
 /// </description></item>
-/// <item><description><para><see cref="T:Passenger.Debugger.Interop.ICorDebugGuidToTypeEnum">ICorDebugGuidToTypeEnum</see></para>
+/// <item><description><para>ICorDebugGuidToTypeEnum</para>
 /// </description></item>
-/// <item><description><para><see cref="T:Passenger.Debugger.Interop.ICorDebugHeapEnum">ICorDebugHeapEnum</see></para>
+/// <item><description><para>ICorDebugHeapEnum</para>
 /// </description></item>
-/// <item><description><para><see cref="T:Passenger.Debugger.Interop.ICorDebugHeapSegmentEnum">ICorDebugHeapSegmentEnum</see></para>
+/// <item><description><para>ICorDebugHeapSegmentEnum</para>
 /// </description></item>
 /// <item><description><para><c>ICorDebugModuleEnum</c></para>
 /// </description></item>
@@ -49,7 +51,7 @@ namespace Passenger.Debugger.Interop;
 /// </description></item>
 /// <item><description><para><c>ICorDebugValueEnum</c></para>
 /// </description></item>
-/// <item><description><para><see cref="T:Passenger.Debugger.Interop.ICorDebugVariableHomeEnum">ICorDebugVariableHomeEnum</see></para>
+/// <item><description><para>ICorDebugVariableHomeEnum</para>
 /// </description></item>
 /// </list>
 /// <para><b>Note:</b> This interface does not support being called remotely, either cross-machine or cross-process.</para>

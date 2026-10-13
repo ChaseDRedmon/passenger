@@ -1,3 +1,5 @@
+#nullable enable
+
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
@@ -7,13 +9,6 @@ public static class CorDebugValueExtensions
 {
     extension(ICorDebugValue instance)
     {
-        /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugValue.TryCreateBreakpoint(Passenger.Debugger.Interop.ICorDebugValueBreakpoint@)" />
-        public ICorDebugValueBreakpoint CreateBreakpoint()
-        {
-            Marshal.ThrowExceptionForHR(instance.TryCreateBreakpoint(out ICorDebugValueBreakpoint ppBreakpoint));
-            return ppBreakpoint;
-        }
-
         /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugValue.TryGetAddress(Passenger.Debugger.Interop.CORDB_ADDRESS@)" />
         public CORDB_ADDRESS Address
         {

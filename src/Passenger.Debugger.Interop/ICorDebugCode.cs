@@ -1,3 +1,5 @@
+#nullable enable
+
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 
@@ -83,7 +85,7 @@ public partial interface ICorDebugCode
     int TryCreateBreakpoint(uint offset, out ICorDebugFunctionBreakpoint ppBreakpoint);
 
     /// <summary>
-    /// <para>Gets all the code for the specified function, formatted for disassembly. This method is deprecated. Use <see cref="M:Passenger.Debugger.Interop.ICorDebugCode2.TryGetCodeChunks(System.UInt32,System.UInt32@,Passenger.Debugger.Interop.CodeChunkInfo[])">ICorDebugCode2::GetCodeChunks</see> instead.</para>
+    /// <para>Gets all the code for the specified function, formatted for disassembly. This method is deprecated. Use ICorDebugCode2::GetCodeChunks instead.</para>
     /// </summary>
     /// <param name="startOffset">
     /// <para>The offset of the beginning of the function.</para>

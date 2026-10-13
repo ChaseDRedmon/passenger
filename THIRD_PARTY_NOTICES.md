@@ -97,10 +97,12 @@ Passenger's own from there:
 - `src/Passenger.Debugger.Interop` (the ICorDebug, IMetaDataImport and dbgshim declarations) started from ICorDebugSharp
   0.1.8, whose package declares the MIT licence. Its source is not published, so this copy was recovered from the
   package's assembly with ILSpy, keeping only what its author wrote: the source generators' output was dropped, since
-  the build generates it again. Its declarations were generated from Microsoft's MIT-licensed `cordebug.h` and
+  the build generates it again. It has since been cut to what Passenger's debugger uses: the declarations the engine
+  names, and those they name in turn. Its declarations were generated from Microsoft's MIT-licensed `cordebug.h` and
   `cor.h` (https://github.com/dotnet/runtime), and its documentation comments are adapted from the Microsoft .NET
   documentation (https://github.com/dotnet/docs), licensed under the Creative Commons Attribution 4.0 International
-  Public License (https://creativecommons.org/licenses/by/4.0/), changed from Markdown into XML documentation comments.
+  Public License (https://creativecommons.org/licenses/by/4.0/), changed from Markdown into XML documentation comments,
+  a reference to a declaration cut since left as plain text.
 
 ```
 MIT License

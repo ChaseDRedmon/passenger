@@ -1,3 +1,5 @@
+#nullable enable
+
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
@@ -12,12 +14,6 @@ public static class CorDebugClass2Extensions
         {
             Marshal.ThrowExceptionForHR(instance.TryGetParameterizedType(elementType, checked((uint)nTypeArgs), ppTypeArgs, out ICorDebugType ppType));
             return ppType;
-        }
-
-        /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugClass2.TrySetJMCStatus(System.Boolean)" />
-        public void SetJMCStatus(bool bIsJustMyCode)
-        {
-            Marshal.ThrowExceptionForHR(instance.TrySetJMCStatus(bIsJustMyCode));
         }
     }
 }

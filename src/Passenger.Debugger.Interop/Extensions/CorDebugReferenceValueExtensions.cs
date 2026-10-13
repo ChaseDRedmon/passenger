@@ -1,3 +1,5 @@
+#nullable enable
+
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
@@ -11,13 +13,6 @@ public static class CorDebugReferenceValueExtensions
         public ICorDebugValue Dereference()
         {
             Marshal.ThrowExceptionForHR(instance.TryDereference(out ICorDebugValue ppValue));
-            return ppValue;
-        }
-
-        /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugReferenceValue.TryDereferenceStrong(Passenger.Debugger.Interop.ICorDebugValue@)" />
-        public ICorDebugValue DereferenceStrong()
-        {
-            Marshal.ThrowExceptionForHR(instance.TryDereferenceStrong(out ICorDebugValue ppValue));
             return ppValue;
         }
 

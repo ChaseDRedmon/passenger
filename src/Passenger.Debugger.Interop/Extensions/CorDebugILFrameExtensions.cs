@@ -1,3 +1,5 @@
+#nullable enable
+
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -64,29 +66,6 @@ public static class CorDebugILFrameExtensions
         {
             Marshal.ThrowExceptionForHR(instance.TryGetLocalVariable(checked((uint)dwIndex), out ICorDebugValue ppValue));
             return ppValue;
-        }
-
-        /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugILFrame.TryGetStackDepth(System.UInt32@)" />
-        public int StackDepth
-        {
-            get
-            {
-                Marshal.ThrowExceptionForHR(instance.TryGetStackDepth(out var pDepth));
-                return checked((int)pDepth);
-            }
-        }
-
-        /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugILFrame.TryGetStackValue(System.UInt32,Passenger.Debugger.Interop.ICorDebugValue@)" />
-        public ICorDebugValue GetStackValue(int dwIndex)
-        {
-            Marshal.ThrowExceptionForHR(instance.TryGetStackValue(checked((uint)dwIndex), out ICorDebugValue ppValue));
-            return ppValue;
-        }
-
-        /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugILFrame.TryCanSetIP(System.UInt32)" />
-        public void CanSetIP(int nOffset)
-        {
-            Marshal.ThrowExceptionForHR(instance.TryCanSetIP(checked((uint)nOffset)));
         }
 
         /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugILFrame.TrySetIP(System.UInt32)" />

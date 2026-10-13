@@ -1,3 +1,5 @@
+#nullable enable
+
 namespace Passenger.Debugger.Interop;
 
 public enum CorEventAttr

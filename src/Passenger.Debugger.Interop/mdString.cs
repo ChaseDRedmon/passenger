@@ -1,3 +1,5 @@
+#nullable enable
+
 namespace Passenger.Debugger.Interop;
 
 public readonly record struct mdString

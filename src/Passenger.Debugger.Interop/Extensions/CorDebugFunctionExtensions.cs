@@ -1,3 +1,5 @@
+#nullable enable
+
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
@@ -7,13 +9,6 @@ public static class CorDebugFunctionExtensions
 {
     extension(ICorDebugFunction instance)
     {
-        /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugFunction.TryCreateBreakpoint(Passenger.Debugger.Interop.ICorDebugFunctionBreakpoint@)" />
-        public ICorDebugFunctionBreakpoint CreateBreakpoint()
-        {
-            Marshal.ThrowExceptionForHR(instance.TryCreateBreakpoint(out ICorDebugFunctionBreakpoint ppBreakpoint));
-            return ppBreakpoint;
-        }
-
         /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugFunction.TryGetClass(Passenger.Debugger.Interop.ICorDebugClass@)" />
         public ICorDebugClass Class
         {
@@ -21,16 +16,6 @@ public static class CorDebugFunctionExtensions
             {
                 Marshal.ThrowExceptionForHR(instance.TryGetClass(out ICorDebugClass ppClass));
                 return ppClass;
-            }
-        }
-
-        /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugFunction.TryGetCurrentVersionNumber(System.UInt32@)" />
-        public int CurrentVersionNumber
-        {
-            get
-            {
-                Marshal.ThrowExceptionForHR(instance.TryGetCurrentVersionNumber(out var pnCurrentVersion));
-                return checked((int)pnCurrentVersion);
             }
         }
 
@@ -61,16 +46,6 @@ public static class CorDebugFunctionExtensions
             {
                 Marshal.ThrowExceptionForHR(instance.TryGetModule(out ICorDebugModule ppModule));
                 return ppModule;
-            }
-        }
-
-        /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugFunction.TryGetNativeCode(Passenger.Debugger.Interop.ICorDebugCode@)" />
-        public ICorDebugCode NativeCode
-        {
-            get
-            {
-                Marshal.ThrowExceptionForHR(instance.TryGetNativeCode(out ICorDebugCode ppCode));
-                return ppCode;
             }
         }
 

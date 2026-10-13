@@ -1,3 +1,5 @@
+#nullable enable
+
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 
@@ -7,7 +9,7 @@ namespace Passenger.Debugger.Interop;
 /// <para>Represents the set of registers available on the computer that is currently executing code.</para>
 /// </summary>
 /// <remarks>
-/// <para>The <c>ICorDebugRegisterSet</c> interface supports only 32-bit registers. Use the <see cref="T:Passenger.Debugger.Interop.ICorDebugRegisterSet2">ICorDebugRegisterSet2</see> interface on platforms such as IA-64 that require additional registers.</para>
+/// <para>The <c>ICorDebugRegisterSet</c> interface supports only 32-bit registers. Use the ICorDebugRegisterSet2 interface on platforms such as IA-64 that require additional registers.</para>
 /// <para><b>Note:</b> This interface does not support being called remotely, either cross-machine or cross-process.</para>
 /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugregisterset-interface">Microsoft Learn</see>.</para>
 /// </remarks>

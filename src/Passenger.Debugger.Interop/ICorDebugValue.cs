@@ -1,3 +1,5 @@
+#nullable enable
+
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 
@@ -39,7 +41,7 @@ public partial interface ICorDebugValue
     /// </param>
     /// <remarks>
     /// <para>If the value's type is a reference type, this method returns the size of the pointer rather than the size of the object.</para>
-    /// <para>The <c>ICorDebugValue::GetSize</c> method returns <c>COR_E_OVERFLOW</c> for objects that are larger than 4 GB on 64-bit platforms. Use the <see cref="M:Passenger.Debugger.Interop.ICorDebugValue3.TryGetSize64(System.UInt64@)">ICorDebugValue3::GetSize64</see> method instead for objects that are larger than 4 GB.</para>
+    /// <para>The <c>ICorDebugValue::GetSize</c> method returns <c>COR_E_OVERFLOW</c> for objects that are larger than 4 GB on 64-bit platforms. Use the ICorDebugValue3::GetSize64 method instead for objects that are larger than 4 GB.</para>
     /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugvalue-getsize-method">Microsoft Learn</see>.</para>
     /// </remarks>
     [PreserveSig]

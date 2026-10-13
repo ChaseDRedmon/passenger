@@ -1,3 +1,5 @@
+#nullable enable
+
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
@@ -27,12 +29,6 @@ public static class CorDebugStepperExtensions
         public void SetInterceptMask(CorDebugIntercept mask)
         {
             Marshal.ThrowExceptionForHR(instance.TrySetInterceptMask(mask));
-        }
-
-        /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugStepper.TrySetRangeIL(System.Boolean)" />
-        public void SetRangeIL(bool bIL)
-        {
-            Marshal.ThrowExceptionForHR(instance.TrySetRangeIL(bIL));
         }
 
         /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugStepper.TrySetUnmappedStopMask(Passenger.Debugger.Interop.CorDebugUnmappedStop)" />

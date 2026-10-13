@@ -1,3 +1,5 @@
+#nullable enable
+
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
@@ -32,46 +34,6 @@ public static class CorDebugEvalExtensions
                 Marshal.ThrowExceptionForHR(instance.TryGetThread(out ICorDebugThread ppThread));
                 return ppThread;
             }
-        }
-
-        /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugEval.TryIsActive(System.Boolean@)" />
-        public bool IsActive
-        {
-            get
-            {
-                Marshal.ThrowExceptionForHR(instance.TryIsActive(out var pbActive));
-                return pbActive;
-            }
-        }
-
-        /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugEval.TryAbort" />
-        public void Abort()
-        {
-            Marshal.ThrowExceptionForHR(instance.TryAbort());
-        }
-
-        /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugEval.TryCallFunction(Passenger.Debugger.Interop.ICorDebugFunction,System.UInt32,Passenger.Debugger.Interop.ICorDebugValue[])" />
-        public void CallFunction(ICorDebugFunction pFunction, int nArgs, ICorDebugValue[] ppArgs)
-        {
-            Marshal.ThrowExceptionForHR(instance.TryCallFunction(pFunction, checked((uint)nArgs), ppArgs));
-        }
-
-        /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugEval.TryNewArray(Passenger.Debugger.Interop.CorElementType,Passenger.Debugger.Interop.ICorDebugClass,System.UInt32,System.UInt32[],System.UInt32[])" />
-        public void NewArray(CorElementType elementType, ICorDebugClass pElementClass, int rank, uint[] dims, uint[] lowBounds)
-        {
-            Marshal.ThrowExceptionForHR(instance.TryNewArray(elementType, pElementClass, checked((uint)rank), dims, lowBounds));
-        }
-
-        /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugEval.TryNewObject(Passenger.Debugger.Interop.ICorDebugFunction,System.UInt32,Passenger.Debugger.Interop.ICorDebugValue[])" />
-        public void NewObject(ICorDebugFunction pConstructor, int nArgs, ICorDebugValue[] ppArgs)
-        {
-            Marshal.ThrowExceptionForHR(instance.TryNewObject(pConstructor, checked((uint)nArgs), ppArgs));
-        }
-
-        /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugEval.TryNewObjectNoConstructor(Passenger.Debugger.Interop.ICorDebugClass)" />
-        public void NewObjectNoConstructor(ICorDebugClass pClass)
-        {
-            Marshal.ThrowExceptionForHR(instance.TryNewObjectNoConstructor(pClass));
         }
 
         /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugEval.TryNewString(System.String)" />

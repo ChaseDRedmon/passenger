@@ -1,3 +1,5 @@
+#nullable enable
+
 using System;
 using System.Runtime.CompilerServices;
 
@@ -8,27 +10,12 @@ public static class CorDebugStepperStepper2Extensions
     extension(ICorDebugStepper instance)
     {
         /// <inheritdoc cref="T:Passenger.Debugger.Interop.ICorDebugStepper2" />
-        public bool SupportsStepper2
-        {
-            get
-            {
-                return instance is ICorDebugStepper2;
-            }
-        }
-
-        /// <inheritdoc cref="T:Passenger.Debugger.Interop.ICorDebugStepper2" />
         public ICorDebugStepper2 Stepper2
         {
             get
             {
                 return (instance as ICorDebugStepper2) ?? throw new NotSupportedException("ICorDebugStepper does not support ICorDebugStepper2.");
             }
-        }
-
-        /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugStepper2.TrySetJMC(System.Boolean)" />
-        public int TrySetJMC(bool fIsJMCStepper)
-        {
-            return instance.Stepper2.TrySetJMC(fIsJMCStepper);
         }
 
         /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugStepper2.TrySetJMC(System.Boolean)" />

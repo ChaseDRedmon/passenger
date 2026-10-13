@@ -1,6 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- ICorDebug, IMetaDataImport and dbgshim, declared for the COM and P/Invoke source generators, which write
-       the marshalling at build. Recovered from ICorDebugSharp 0.1.8 (THIRD_PARTY_NOTICES.md). -->
+       the marshalling at build. Recovered from ICorDebugSharp 0.1.8 (THIRD_PARTY_NOTICES.md) and cut to what the engine
+       uses: the declarations it names and those they name, whole, since a COM interface's methods are its vtable. A
+       declaration the engine comes to need is restored from git history, as it was before the cut. The .editorconfig
+       marks these files generated code, so each opens with #nullable enable. -->
   <PropertyGroup>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>

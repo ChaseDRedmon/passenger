@@ -1,3 +1,5 @@
+#nullable enable
+
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 
@@ -33,7 +35,7 @@ public partial interface ICorDebugManagedCallback3
     /// </list>
     /// </returns>
     /// <remarks>
-    /// <para>A subsequent call to the <see cref="M:Passenger.Debugger.Interop.ICorDebugThread4.TryGetCurrentCustomDebuggerNotification(Passenger.Debugger.Interop.ICorDebugValue@)">ICorDebugThread4::GetCurrentCustomDebuggerNotification</see> method retrieves the thread object that was passed to the  method. The thread object's type must have been previously enabled by calling the <see cref="M:Passenger.Debugger.Interop.ICorDebugProcess3.TrySetEnableCustomNotification(Passenger.Debugger.Interop.ICorDebugClass,System.Boolean)">ICorDebugProcess3::SetEnableCustomNotification</see> method. The debugger can read type-specific parameters from the fields of the thread object, and can store responses into fields.</para>
+    /// <para>A subsequent call to the ICorDebugThread4::GetCurrentCustomDebuggerNotification method retrieves the thread object that was passed to the  method. The thread object's type must have been previously enabled by calling the ICorDebugProcess3::SetEnableCustomNotification method. The debugger can read type-specific parameters from the fields of the thread object, and can store responses into fields.</para>
     /// <para>The <see cref="T:Passenger.Debugger.Interop.ICorDebug">ICorDebug</see> interface imposes no policy on the types of notifications or their contents, and the semantics of the notifications are strictly a contract between debuggers, applications, and .NET.</para>
     /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugmanagedcallback3-customnotification-method">Microsoft Learn</see>.</para>
     /// </remarks>

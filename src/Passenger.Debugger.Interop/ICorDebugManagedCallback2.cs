@@ -1,3 +1,5 @@
+#nullable enable
+
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 
@@ -126,7 +128,7 @@ public partial interface ICorDebugManagedCallback2
     /// <para>A value of the CorDebugExceptionCallbackType enumeration that specifies the type of this exception callback.</para>
     /// </param>
     /// <param name="dwFlags">
-    /// <para>A value of the <see cref="T:Passenger.Debugger.Interop.CorDebugExceptionFlags">CorDebugExceptionFlags</see> enumeration that specifies additional information about the exception</para>
+    /// <para>A value of the CorDebugExceptionFlags enumeration that specifies additional information about the exception</para>
     /// </param>
     /// <remarks>
     /// <para>The <c>Exception</c> callback is called at various points during the search phase of the exception-handling process. That is, it can be called more than once while unwinding an exception.</para>
@@ -157,7 +159,7 @@ public partial interface ICorDebugManagedCallback2
     /// <para>A value of the CorDebugExceptionUnwindCallbackType enumeration that specifies the event that is being signaled by the callback during the unwind phase.</para>
     /// </param>
     /// <param name="dwFlags">
-    /// <para>A value of the <see cref="T:Passenger.Debugger.Interop.CorDebugExceptionFlags">CorDebugExceptionFlags</see> enumeration that specifies additional information about the exception.</para>
+    /// <para>A value of the CorDebugExceptionFlags enumeration that specifies additional information about the exception.</para>
     /// </param>
     /// <remarks>
     /// <para><c>ExceptionUnwind</c> is called at various points during the unwind phase of the exception-handling process. <c>ExceptionUnwind</c> can be called more than once while unwinding a single exception.</para>

@@ -1,3 +1,5 @@
+#nullable enable
+
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
 
@@ -45,7 +47,7 @@ public partial interface ICorDebugILFrame2
     /// <para>The list of type parameters include the class type parameters (if any) followed by the method type parameters (if any).</para>
     /// </param>
     /// <remarks>
-    /// <para>Use the <see cref="M:Passenger.Debugger.Interop.IMetaDataImport2.TryEnumGenericParams(Passenger.Debugger.Interop.HCorEnum@,Passenger.Debugger.Interop.mdToken,Passenger.Debugger.Interop.mdGenericParam@,System.UInt32,System.UInt32@)">IMetaDataImport2::EnumGenericParams</see> method to determine how many class type parameters and method type parameters this list contains.</para>
+    /// <para>Use the IMetaDataImport2::EnumGenericParams method to determine how many class type parameters and method type parameters this list contains.</para>
     /// <para>The type parameters are not always available.</para>
     /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugilframe2-enumeratetypeparameters-method">Microsoft Learn</see>.</para>
     /// </remarks>

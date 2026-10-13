@@ -1,3 +1,5 @@
+#nullable enable
+
 using System.CodeDom.Compiler;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -160,7 +162,7 @@ public partial interface ICorDebugProcess : ICorDebugController
     /// </param>
     /// <remarks>
     /// <para>The <c>ReadMemory</c> method is primarily intended to be used by interop debugging to inspect memory regions that are being used by the unmanaged portion of the debuggee. This method can also be used to read common intermediate language (CIL) code and native JIT-compiled code.</para>
-    /// <para>Any managed breakpoints will be removed from the data that is returned in the <c>buffer</c> parameter. No adjustments will be made for native breakpoints set by <see cref="M:Passenger.Debugger.Interop.ICorDebugProcess2.TrySetUnmanagedBreakpoint(Passenger.Debugger.Interop.CORDB_ADDRESS,System.UInt32,System.Byte[],System.UInt32@)">ICorDebugProcess2::SetUnmanagedBreakpoint</see>.</para>
+    /// <para>Any managed breakpoints will be removed from the data that is returned in the <c>buffer</c> parameter. No adjustments will be made for native breakpoints set by ICorDebugProcess2::SetUnmanagedBreakpoint.</para>
     /// <para>No caching of process memory is performed.</para>
     /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugprocess-readmemory-method">Microsoft Learn</see>.</para>
     /// </remarks>
@@ -183,7 +185,7 @@ public partial interface ICorDebugProcess : ICorDebugController
     /// <para>A pointer to a variable that receives the number of bytes written to the memory area in this process. If <c>written</c> is NULL, this parameter is ignored.</para>
     /// </param>
     /// <remarks>
-    /// <para>Data is automatically written behind any breakpoints. Native debuggers should not use this method to inject breakpoints into the instruction stream. Use <see cref="M:Passenger.Debugger.Interop.ICorDebugProcess2.TrySetUnmanagedBreakpoint(Passenger.Debugger.Interop.CORDB_ADDRESS,System.UInt32,System.Byte[],System.UInt32@)">ICorDebugProcess2::SetUnmanagedBreakpoint</see> instead.</para>
+    /// <para>Data is automatically written behind any breakpoints. Native debuggers should not use this method to inject breakpoints into the instruction stream. Use ICorDebugProcess2::SetUnmanagedBreakpoint instead.</para>
     /// <para>The <c>WriteMemory</c> method should be used only outside of managed code. This method can corrupt the runtime if used improperly.</para>
     /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugprocess-writememory-method">Microsoft Learn</see>.</para>
     /// </remarks>
@@ -198,7 +200,7 @@ public partial interface ICorDebugProcess : ICorDebugController
     /// </param>
     /// <remarks>
     /// <para>Call this method before calling <see cref="M:Passenger.Debugger.Interop.ICorDebugController.TryContinue(System.Boolean)">ICorDebugController::Continue</see> when a thread has reported an unmanaged exception that should be ignored by the debuggee. This will clear both the outstanding in-band (IB) and out-of-band (OOB) events on the given thread. All OOB breakpoints and single-step exceptions are automatically cleared.</para>
-    /// <para>Use <see cref="M:Passenger.Debugger.Interop.ICorDebugThread2.TryInterceptCurrentException(Passenger.Debugger.Interop.ICorDebugFrame)">ICorDebugThread2::InterceptCurrentException</see> to intercept the current managed exception on a thread.</para>
+    /// <para>Use ICorDebugThread2::InterceptCurrentException to intercept the current managed exception on a thread.</para>
     /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugprocess-clearcurrentexception-method">Microsoft Learn</see>.</para>
     /// </remarks>
     [PreserveSig]

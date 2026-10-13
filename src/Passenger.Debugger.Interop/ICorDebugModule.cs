@@ -1,3 +1,5 @@
+#nullable enable
+
 using System;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
@@ -183,7 +185,7 @@ public partial interface ICorDebugModule
     /// <para>A pointer to the <c>mdModule</c> token that references the module's metadata.</para>
     /// </param>
     /// <remarks>
-    /// <para>The token can be passed to the <see cref="T:Passenger.Debugger.Interop.IMetaDataImport">IMetaDataImport</see>, <see cref="T:Passenger.Debugger.Interop.IMetaDataImport2">IMetaDataImport2</see>, and <see cref="T:Passenger.Debugger.Interop.IMetaDataAssemblyImport">IMetaDataAssemblyImport</see> metadata import interfaces.</para>
+    /// <para>The token can be passed to the <see cref="T:Passenger.Debugger.Interop.IMetaDataImport">IMetaDataImport</see>, IMetaDataImport2, and IMetaDataAssemblyImport metadata import interfaces.</para>
     /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugmodule-gettoken-method">Microsoft Learn</see>.</para>
     /// </remarks>
     [PreserveSig]

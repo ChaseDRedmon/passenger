@@ -1,3 +1,5 @@
+#nullable enable
+
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
@@ -15,13 +17,6 @@ public static class CorDebugClassExtensions
                 Marshal.ThrowExceptionForHR(instance.TryGetModule(out ICorDebugModule pModule));
                 return pModule;
             }
-        }
-
-        /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugClass.TryGetStaticFieldValue(Passenger.Debugger.Interop.mdFieldDef,Passenger.Debugger.Interop.ICorDebugFrame,Passenger.Debugger.Interop.ICorDebugValue@)" />
-        public ICorDebugValue GetStaticFieldValue(mdFieldDef fieldDef, ICorDebugFrame pFrame)
-        {
-            Marshal.ThrowExceptionForHR(instance.TryGetStaticFieldValue(fieldDef, pFrame, out ICorDebugValue ppValue));
-            return ppValue;
         }
 
         /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugClass.TryGetToken(Passenger.Debugger.Interop.mdTypeDef@)" />

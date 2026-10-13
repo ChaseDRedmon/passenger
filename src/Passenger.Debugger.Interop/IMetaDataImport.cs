@@ -1,3 +1,5 @@
+#nullable enable
+
 using System;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.Marshalling;
@@ -992,7 +994,7 @@ public partial interface IMetaDataImport
     /// <para>A token representing the paired property and event for which to get the method's role.</para>
     /// </param>
     /// <param name="pdwSemanticsFlags">
-    /// <para>A pointer to the associated semantics flags. This value is a bitmask from the <see cref="T:Passenger.Debugger.Interop.CorMethodSemanticsAttr">CorMethodSemanticsAttr</see> enumeration.</para>
+    /// <para>A pointer to the associated semantics flags. This value is a bitmask from the CorMethodSemanticsAttr enumeration.</para>
     /// </param>
     /// <remarks>
     /// <para>The <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/metadata/interfaces/imetadataemit-defineproperty-method">IMetaDataEmit::DefineProperty</see> method sets a method's semantics flags.</para>
@@ -1056,7 +1058,7 @@ public partial interface IMetaDataImport
     /// <para>A pointer to the relative virtual address of the code object represented by the token.</para>
     /// </param>
     /// <param name="pdwImplFlags">
-    /// <para>A pointer to the implementation flags for the method. This value is a bitmask from the <see cref="T:Passenger.Debugger.Interop.CorMethodImpl">CorMethodImpl</see> enumeration. The value of <c>pdwImplFlags</c> is valid only if <c>tk</c> is a MethodDef token.</para>
+    /// <para>A pointer to the implementation flags for the method. This value is a bitmask from the CorMethodImpl enumeration. The value of <c>pdwImplFlags</c> is valid only if <c>tk</c> is a MethodDef token.</para>
     /// </param>
     /// <remarks>
     /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/metadata/interfaces/imetadataimport-getrva-method">Microsoft Learn</see>.</para>
@@ -1247,7 +1249,7 @@ public partial interface IMetaDataImport
     /// <para>A FieldDef or MethodDef token to get the PInvoke mapping metadata for.</para>
     /// </param>
     /// <param name="pdwMappingFlags">
-    /// <para>A pointer to flags used for mapping. This value is a bitmask from the <see cref="T:Passenger.Debugger.Interop.CorPinvokeMap">CorPinvokeMap</see> enumeration.</para>
+    /// <para>A pointer to flags used for mapping. This value is a bitmask from the CorPinvokeMap enumeration.</para>
     /// </param>
     /// <param name="szImportName">
     /// <para>The name of the unmanaged target DLL.</para>

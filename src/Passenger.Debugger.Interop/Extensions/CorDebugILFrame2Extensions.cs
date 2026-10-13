@@ -1,3 +1,5 @@
+#nullable enable
+
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -15,21 +17,6 @@ public static class CorDebugILFrame2Extensions
         {
             Marshal.ThrowExceptionForHR(instance.TryEnumerateTypeParameters(out ICorDebugTypeEnum ppTyParEnum));
             return EnumerateTypeParametersCore(ppTyParEnum);
-        }
-
-        /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugILFrame2.TryEnumerateTypeParameters(Passenger.Debugger.Interop.ICorDebugTypeEnum@)" />
-        public ICorDebugType[] TypeParameters
-        {
-            get
-            {
-                return instance.EnumerateTypeParameters().ToArray();
-            }
-        }
-
-        /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugILFrame2.TryRemapFunction(System.UInt32)" />
-        public void RemapFunction(int newILOffset)
-        {
-            Marshal.ThrowExceptionForHR(instance.TryRemapFunction(checked((uint)newILOffset)));
         }
     }
 

@@ -1,9 +1,0 @@
-namespace Passenger.Debugger.Interop;
-
-public enum CorUnmanagedCallingConvention
-{
-    IMAGE_CEE_UNMANAGED_CALLCONV_C = 1,
-    IMAGE_CEE_UNMANAGED_CALLCONV_STDCALL,
-    IMAGE_CEE_UNMANAGED_CALLCONV_THISCALL,
-    IMAGE_CEE_UNMANAGED_CALLCONV_FASTCALL
-}

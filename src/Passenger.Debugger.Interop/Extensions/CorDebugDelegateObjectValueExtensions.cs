@@ -1,3 +1,5 @@
+#nullable enable
+
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
@@ -7,16 +9,6 @@ public static class CorDebugDelegateObjectValueExtensions
 {
     extension(ICorDebugDelegateObjectValue instance)
     {
-        /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugDelegateObjectValue.TryGetFunction(Passenger.Debugger.Interop.ICorDebugFunction@)" />
-        public ICorDebugFunction Function
-        {
-            get
-            {
-                Marshal.ThrowExceptionForHR(instance.TryGetFunction(out ICorDebugFunction ppFunction));
-                return ppFunction;
-            }
-        }
-
         /// <inheritdoc cref="M:Passenger.Debugger.Interop.ICorDebugDelegateObjectValue.TryGetTarget(Passenger.Debugger.Interop.ICorDebugReferenceValue@)" />
         public ICorDebugReferenceValue Target
         {
