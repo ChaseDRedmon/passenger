@@ -5,11 +5,14 @@ using Passenger.App.State;
 namespace Passenger.App.Workspace;
 
 /// <summary>What a folder's window had open, kept in the folder's place in the store as Rider keeps its workspace.xml:
-/// the editors' splits, tabs and carets, the recent files and the projects unloaded, so opening the folder again
-/// brings them back. Only the window a person uses keeps it, as with the layout.</summary>
+/// the editors' splits, tabs and carets, the editor windows, the recent files and the projects unloaded, so opening the
+/// folder again brings them back. Only the window a person uses keeps it, as with the layout.</summary>
 public sealed record WorkspaceState : IStateDocument<WorkspaceState>
 {
     public EditorLayout? Editors { get; init; }
+
+    /// <summary>The editor windows (tabs taken out into windows of their own), each where it stood with its splits.</summary>
+    public List<KeptEditorWindow> EditorWindows { get; init; } = [];
 
     /// <summary>The files opened lately, the latest first, for Recent Files and Go to File.</summary>
     public List<string> RecentFiles { get; init; } = [];
@@ -19,11 +22,17 @@ public sealed record WorkspaceState : IStateDocument<WorkspaceState>
 
     public static IReadOnlyList<Action<JsonObject>> Upgrades { get; } = [StateStore.Unversioned];
 
-    /// <summary>A tab or a path without its file is left out; the editors bring the rest (a caret, a split's share)
-    /// into range as they open them.</summary>
+    /// <summary>A tab or a path without its file is left out, and a window without editors; the editors bring the rest (a
+    /// caret, a split's share, a window with no room, which opens over the IDE, or off every screen) into range as they
+    /// open them.</summary>
     public WorkspaceState Clamped() => this with
     {
         Editors = Editors is { } editors ? Clamp(editors) : null,
+        EditorWindows = [.. (EditorWindows ?? []).Where(w => w?.Editors is not null).Select(w => w with
+        {
+            Editors = Clamp(w.Editors!),
+            Bounds = w.Bounds is [_, _, > 0, > 0] ? w.Bounds : null,
+        })],
         RecentFiles = [.. (RecentFiles ?? []).Where(f => !string.IsNullOrEmpty(f))],
         UnloadedProjects = [.. (UnloadedProjects ?? []).Where(p => !string.IsNullOrEmpty(p))],
     };

@@ -23,8 +23,9 @@ public partial class MainWindow
     /// <summary>The open folder's version control.</summary>
     public VcsController Vcs => vcs;
 
-    /// <summary>The window in front: the last diff or dialog opened over this one and still open, else this.</summary>
-    public Window Frontmost => OwnedWindows.LastOrDefault(w => w.IsVisible) ?? this;
+    /// <summary>The window in front: the last diff or dialog opened over this one and still open, else the editor window
+    /// the person works in, else this.</summary>
+    public Window Frontmost => OwnedWindows.LastOrDefault(w => w.IsVisible) ?? Editors.InFront?.Window ?? this;
 
     /// <summary>The Commit tool window.</summary>
     public ToolWindows.CommitView CommitView => commitView!;
@@ -340,7 +341,7 @@ public partial class MainWindow
             }),
             diff: () => Then(() => _ = ShowDiffAsync(document.Path)));
         Avalonia.Point below = editor.GutterPoint(change.Line + Math.Max(1, change.Count) - 1);
-        ShowPopup(popup, editor.TranslatePoint(new Avalonia.Point(4, below.Y + 2), this));
+        ShowPopup(popup, PopupPoint(editor, new Avalonia.Point(4, below.Y + 2)));
     }
 
     /// <summary>Annotate with Git Blame, or Close Annotations when the file shows them or is about to.</summary>

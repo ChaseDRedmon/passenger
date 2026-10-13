@@ -39,10 +39,11 @@ public partial class MainWindow
     }
 
     /// <summary>Where an action asked for now runs: the file shown and its caret, what has the keys in the window in front
-    /// (a diff, a dialog, a floating tool window, this one) and the tool window it is in, and the debugger's state.</summary>
+    /// (an editor window, a diff, a dialog, a floating tool window, this one) and the tool window it is in, and the
+    /// debugger's state.</summary>
     private ActionContext Context()
     {
-        Window front = OwnedWindows.LastOrDefault(w => w.IsActive) ?? this;
+        Window front = Editors.InFront?.Window ?? OwnedWindows.LastOrDefault(w => w.IsActive) ?? this;
         object? focused = front.FocusManager?.GetFocusedElement();
         Docking.ToolWindow? tool = focused is Visual visual
             ? Dock.Windows.FirstOrDefault(w => w.Content == visual || w.Content.IsVisualAncestorOf(visual))
@@ -95,6 +96,7 @@ public partial class MainWindow
         Add(A.SplitRight, "Split Right", "Editor Tabs", c => Editors.Split(Editors.ActiveGroup, c.File!, Orientation.Horizontal, move: false), NeedsFile, ("Window", 1, 0));
         Add(A.SplitDown, "Split Down", "Editor Tabs", c => Editors.Split(Editors.ActiveGroup, c.File!, Orientation.Vertical, move: false), NeedsFile, ("Window", 1, 1));
         Add(A.MoveToOppositeGroup, "Move to Opposite Group", "Editor Tabs", c => Editors.MoveToOpposite(Editors.ActiveGroup, c.File!), NeedsFile, ("Window", 1, 2));
+        Add(A.OpenInNewWindow, "Open Tab in New Window", "Editor Tabs", c => Editors.OpenInNewWindow(Editors.ActiveGroup, c.File!), NeedsFile, ("Window", 1, 3));
 
         // The tool windows' frame: run from the terminal too, as the windows' own shortcuts are.
         actions.Add(new IdeAction(A.MaximizeToolWindow, "Maximize Tool Window", "Tool Windows", _ => Dock.ToggleMaximize()) { Menus = [new("View", 2, 0)], FromTerminal = true });

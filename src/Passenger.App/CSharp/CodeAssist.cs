@@ -19,7 +19,7 @@ namespace Passenger.App.CSharp;
 public sealed class CodeAssist
 {
     private readonly EditorArea editors;
-    private readonly Canvas layer;
+    private Canvas layer;
     private readonly Func<CSharpService?> service;
     private readonly InfoCard hoverCard = new();
     private readonly InfoCard signatureCard = new();
@@ -77,7 +77,11 @@ public sealed class CodeAssist
                 }
             };
         });
-        editors.ActiveChanged += (_, _) => CloseAll();
+        editors.ActiveChanged += (_, _) =>
+        {
+            CloseAll();
+            FollowLayer();
+        };
         completion.List.DoubleTapped += (_, _) => _ = Commit();
         completion.List.SelectionChanged += (_, _) => _ = DescribeSelected();
     }
@@ -1360,6 +1364,22 @@ public sealed class CodeAssist
             modal = null;
             Editor.Focus();
         }
+    }
+
+    /// <summary>The popups go to the layer over the active editor's window, an editor window's when it has the active
+    /// group, since a popup is placed in its layer's coordinates and one window's cannot reach another's.</summary>
+    private void FollowLayer()
+    {
+        if (editors.AssistLayer == layer)
+        {
+            return;
+        }
+        foreach (Control popup in new Control[] { hoverCard, signatureCard, completion, itemCard })
+        {
+            layer.Children.Remove(popup);
+            editors.AssistLayer.Children.Add(popup);
+        }
+        layer = editors.AssistLayer;
     }
 
     private void CloseAll()

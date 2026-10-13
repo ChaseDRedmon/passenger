@@ -57,7 +57,7 @@ internal sealed class DockDrag
         return stripe?.IndexAt(anchor, host.TranslatePoint(at, stripe) ?? at);
     }
 
-    private (Rect Place, string? Name)? Zone(ToolWindow window, Point at)
+    private DropZone? Zone(ToolWindow window, Point at)
     {
         if (Target(at) is not { } place)
         {
@@ -78,7 +78,7 @@ internal sealed class DockDrag
             ToolAnchor.BottomLeft => new Rect(stripe, upperHeight, width / 2, bottom),
             _ => new Rect(stripe + (width / 2), upperHeight, width / 2, bottom),
         };
-        return (zone, $"{window.Title}: {ToolWindow.Name(place)}");
+        return new DropZone(zone, $"{window.Title}: {ToolWindow.Name(place)}");
     }
 
     private void Drop(ToolWindow window, Point at)

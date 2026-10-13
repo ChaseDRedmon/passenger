@@ -13,41 +13,38 @@ namespace Passenger.App.Editors;
 
 /// <summary>The editors, as Rider's: one group of tabs, or several split right and down, one of them active (the one
 /// the person works in, whose editor <see cref="CodeEditor"/> is). A tab dragged onto a group's edge splits it there,
-/// onto its middle or its tab strip moves into it; a group whose last tab closes goes, and its neighbour takes its
-/// room. A file shows in as many groups as it is open in, over one text.</summary>
-public sealed class EditorArea : UserControl
+/// onto its middle or its tab strip moves into it, and out of the editors into a window of its own (<see
+/// cref="EditorWindow"/>), whose groups are the area's too; a group whose last tab closes goes, and its neighbour takes
+/// its room. A file shows in as many groups as it is open in, in any window, over one text.</summary>
+public sealed partial class EditorArea : UserControl
 {
     private readonly ObservableCollection<OpenDocument> documents = [];
-    private readonly ContentControl splits = new();
-    private readonly Canvas assist = new() { ClipToBounds = false };
-    private readonly DropOverlay dropOverlay = new();
     private readonly ContentControl emptyState = new() { HorizontalContentAlignment = HorizontalAlignment.Stretch, VerticalContentAlignment = VerticalAlignment.Stretch };
     private readonly StackPanel folderHint;
     private readonly TextBlock emptyTitle;
     private readonly TextBlock emptyHint;
     private readonly List<Action<CodeEditor>> editorHooks = [];
     private readonly Dictionary<OpenDocument, int> held = [];
-    private Node root;
+
+    /// <summary>The main window's editors, then each editor window's in the order they opened.</summary>
+    private readonly List<EditorFrame> frames = [];
+    private readonly EditorFrame main;
     private EditorGroup activeGroup;
 
     public EditorArea()
     {
         activeGroup = NewGroup();
         activeGroup.IsCurrent = true;
-        root = new Leaf(activeGroup);
         emptyTitle = new TextBlock { Text = "Passenger", FontSize = 28, FontWeight = FontWeight.SemiBold, HorizontalAlignment = HorizontalAlignment.Center };
         emptyTitle.Bind(TextBlock.ForegroundProperty, emptyTitle.GetResourceObservable("Passenger.Text"));
         emptyHint = new TextBlock { Classes = { "muted" }, Text = "Open a solution, project or folder to start.", HorizontalAlignment = HorizontalAlignment.Center };
         folderHint = new StackPanel { Spacing = 10, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Children = { emptyTitle, emptyHint } };
         emptyState.Content = folderHint;
-        TabDrag = new DragGesture<(EditorGroup Group, OpenDocument Document)>(this, dropOverlay,
-            (_, at) => Target(at) is { } target ? (target.Zone, null) : null, (tab, at) => Drop(tab.Group, tab.Document, at));
-        Content = new Panel { Children = { splits, emptyState, assist, dropOverlay } };
-        Rebuild();
+        main = NewFrame(new EditorFrame.Leaf(activeGroup), activeGroup, emptyState);
+        Content = main.Surface;
+        Rebuild(main);
+        AttachedToVisualTree += (_, _) => FollowHost();
     }
-
-    /// <summary>A tab dragged onto another group, or onto a group's edge to split it there.</summary>
-    internal DragGesture<(EditorGroup Group, OpenDocument Document)> TabDrag { get; }
 
     public event EventHandler? ActiveChanged;
 
@@ -73,23 +70,36 @@ public sealed class EditorArea : UserControl
     /// <summary>The file the active group shows.</summary>
     public OpenDocument? Active => activeGroup.Active;
 
+    /// <summary>The file the main window's editors show (their group last worked in), whichever window is in front.</summary>
+    public OpenDocument? ShownInMain => main.Current.Active;
+
     /// <summary>Every file open, in any group, once each.</summary>
     public IReadOnlyList<OpenDocument> Documents => documents;
 
-    public IReadOnlyList<EditorGroup> Groups => [.. root.Groups];
+    /// <summary>Every group of tabs: the main window's, then each editor window's.</summary>
+    public IReadOnlyList<EditorGroup> Groups => [.. AllGroups];
 
     public EditorGroup ActiveGroup => activeGroup;
 
     public FindBar FindBar => activeGroup.Find;
 
-    /// <summary>The layer over the editors that completion and the code actions' popups sit on.</summary>
-    public Canvas AssistLayer => assist;
+    /// <summary>The layer over the active group's window of editors that completion and the code actions' popups sit on.</summary>
+    public Canvas AssistLayer => ActiveFrame.Assist;
+
+    private IEnumerable<EditorGroup> AllGroups => frames.SelectMany(f => f.Groups);
+
+    private EditorFrame ActiveFrame => FrameOf(activeGroup) ?? main;
+
+    private EditorFrame? FrameOf(EditorGroup group) => frames.FirstOrDefault(f => f.Groups.Contains(group));
+
+    /// <summary>The drag of a group's tabs, which its frame's surface measures.</summary>
+    internal DragGesture<(EditorGroup Group, OpenDocument Document)>? TabDragOf(EditorGroup group) => FrameOf(group)?.TabDrag;
 
     /// <summary>Runs for every editor there is and every one a split makes, as wiring for its events.</summary>
     public void ForEachEditor(Action<CodeEditor> hook)
     {
         editorHooks.Add(hook);
-        foreach (EditorGroup group in root.Groups)
+        foreach (EditorGroup group in AllGroups)
         {
             hook(group.Editor);
         }
@@ -101,9 +111,11 @@ public sealed class EditorArea : UserControl
     /// <summary>The empty area's words once a folder is open: it has files now, just none showing.</summary>
     public void ShowFolderHint(string folder)
     {
-        emptyTitle.Text = Path.GetFileName(folder);
+        folderName = Path.GetFileName(folder);
+        emptyTitle.Text = folderName;
         emptyHint.Text = "Open a file from the Explorer.";
         emptyState.Content = folderHint;
+        TitleWindows();
     }
 
     /// <summary>Opens a file in a tab of the active group (or shows its tab if open), returning why not if it can't be.</summary>
@@ -136,10 +148,11 @@ public sealed class EditorArea : UserControl
         return null;
     }
 
-    /// <summary>Shows a file: in the active group if it has its tab, else in the group that does.</summary>
+    /// <summary>Shows a file in the window in front: in the active group if it has its tab, else in the group there that
+    /// does, else in a new tab of the active group, as Rider opens a file in the window it was asked for in.</summary>
     public void Activate(OpenDocument document)
     {
-        EditorGroup group = activeGroup.Has(document) ? activeGroup : root.Groups.FirstOrDefault(g => g.Has(document)) ?? activeGroup;
+        EditorGroup group = activeGroup.Has(document) ? activeGroup : ActiveFrame.Groups.FirstOrDefault(g => g.Has(document)) ?? activeGroup;
         group.Show(document);
         SetActiveGroup(group);
         Refresh();
@@ -173,7 +186,7 @@ public sealed class EditorArea : UserControl
         {
             return false;
         }
-        foreach (EditorGroup group in root.Groups.Where(g => g.Has(document)).ToList())
+        foreach (EditorGroup group in AllGroups.Where(g => g.Has(document)).ToList())
         {
             group.Remove(document);
         }
@@ -205,7 +218,7 @@ public sealed class EditorArea : UserControl
         }
         held.Remove(document);
         // A file that cannot be written now stays open, its edits shown in a tab again.
-        if (documents.Contains(document) && !root.Groups.Any(g => g.Has(document)) && !Close(document))
+        if (documents.Contains(document) && !AllGroups.Any(g => g.Has(document)) && !Close(document))
         {
             Activate(document);
         }
@@ -225,10 +238,10 @@ public sealed class EditorArea : UserControl
         }
     }
 
-    /// <summary>Closes a tab of one group: the file stays open if another group has it.</summary>
+    /// <summary>Closes a tab of one group: the file stays open if another group has it, in any window.</summary>
     public bool CloseTab(EditorGroup group, OpenDocument document)
     {
-        if (root.Groups.Count(g => g.Has(document)) > 1)
+        if (AllGroups.Count(g => g.Has(document)) > 1)
         {
             group.Remove(document);
             Collapse();
@@ -264,22 +277,23 @@ public sealed class EditorArea : UserControl
     /// Right and Split Down; with <paramref name="move"/> its tab leaves the first group.</summary>
     public void Split(EditorGroup beside, OpenDocument document, Orientation orientation, bool move, bool before = false)
     {
+        EditorFrame frame = FrameOf(beside) ?? main;
         EditorGroup created = NewGroup();
-        root = root.Replace(beside, leaf => new SplitNode(orientation, before ? new Leaf(created) : leaf, before ? leaf : new Leaf(created)));
+        frame.Root = frame.Root.Replace(beside, leaf => new EditorFrame.SplitNode(orientation, before ? new EditorFrame.Leaf(created) : leaf, before ? leaf : new EditorFrame.Leaf(created)));
         created.Add(document);
         created.Show(document);
         if (move)
         {
             beside.Remove(document);
         }
-        Rebuild();
+        Rebuild(frame);
         Collapse();
         SetActiveGroup(created);
         created.Editor.Focus();
         ActiveChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    /// <summary>Moves a tab to another group, at a place on its strip or after its active tab.</summary>
+    /// <summary>Moves a tab to another group, in this window or another, at a place on its strip or after its active tab.</summary>
     public void Move(EditorGroup from, OpenDocument document, EditorGroup to, int? index = null)
     {
         if (from == to)
@@ -299,26 +313,27 @@ public sealed class EditorArea : UserControl
         ActiveChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    /// <summary>Rider's Move to Opposite Group: the tab goes to the group beside its own, if there is one.</summary>
+    /// <summary>Rider's Move to Opposite Group: the tab goes to the group beside its own in its window, if there is one.</summary>
     public void MoveToOpposite(EditorGroup group, OpenDocument document)
     {
-        List<EditorGroup> all = [.. root.Groups];
+        List<EditorGroup> all = [.. (FrameOf(group) ?? main).Groups];
         if (all.Count > 1)
         {
             Move(group, document, all[(all.IndexOf(group) + 1) % all.Count]);
         }
     }
 
-    /// <summary>The group the person works in, from a click or the focus.</summary>
+    /// <summary>The group the person works in, from a click or the focus, and so the group last worked in in its window.</summary>
     public void SetActiveGroup(EditorGroup group)
     {
-        if (group == activeGroup || !root.Groups.Contains(group))
+        if (group == activeGroup || FrameOf(group) is not { } frame)
         {
             return;
         }
         activeGroup.Keep();
         activeGroup.IsCurrent = false;
         activeGroup = group;
+        frame.Current = group;
         group.IsCurrent = true;
         ActiveChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -399,6 +414,7 @@ public sealed class EditorArea : UserControl
             document.MoveTo(PathNames.Moved(document.Path, source, target));
         }
         Moved?.Invoke(this, new FileMove(source, target, moving));
+        TitleWindows();
         if (Active is { } shown && moving.Contains(shown))
         {
             // What names the file shown (the title, the status bar's path, the structure) reads it again.
@@ -426,26 +442,27 @@ public sealed class EditorArea : UserControl
         }
     }
 
-    /// <summary>The splits, each group's tabs with their carets and the one shown, for the folder to open on next time.</summary>
+    /// <summary>The main window's splits, each group's tabs with their carets and the one shown, for the folder to open
+    /// on next time; the editor windows' are <see cref="CaptureWindows"/>.</summary>
     public EditorLayout Capture()
     {
         activeGroup.Keep();
-        return Capture(root);
+        return Capture(main.Root, main.Current);
     }
 
-    private EditorLayout Capture(Node node)
+    private static EditorLayout Capture(EditorFrame.Node node, EditorGroup current)
     {
-        if (node is SplitNode split)
+        if (node is EditorFrame.SplitNode split)
         {
             return new EditorLayout
             {
                 Split = split.Orientation == Orientation.Horizontal ? "right" : "down",
                 Ratio = split.Ratio,
-                First = Capture(split.First),
-                Second = Capture(split.Second),
+                First = Capture(split.First, current),
+                Second = Capture(split.Second, current),
             };
         }
-        EditorGroup group = ((Leaf)node).Group;
+        EditorGroup group = ((EditorFrame.Leaf)node).Group;
         return new EditorLayout
         {
             Tabs = [.. group.Tabs.Select(t =>
@@ -454,37 +471,48 @@ public sealed class EditorArea : UserControl
                 return new KeptTab(t.Document.Path, caret.Line, caret.Column);
             })],
             Shown = group.Active is { } shown ? group.Tabs.Select(t => t.Document).ToList().IndexOf(shown) : 0,
-            Current = group == activeGroup,
+            Current = group == current,
         };
     }
 
-    /// <summary>Opens what a layout kept, into an area with nothing open: its splits, each group's tabs with their
-    /// carets and the one shown. A file gone from disk is left out, and a group left with none goes.</summary>
-    public void Restore(EditorLayout layout)
+    /// <summary>Opens what a folder kept, into an area with nothing open: the main window's splits and the editor windows
+    /// where they stood, each group's tabs with their carets and the one shown. A file gone from disk is left out, and a
+    /// group left with none goes, a window with it.</summary>
+    public void Restore(EditorLayout? layout, IReadOnlyList<KeptEditorWindow>? windows = null)
     {
-        if (documents.Count > 0 || Restore(layout, out EditorGroup? current) is not { } restored)
+        if (documents.Count > 0)
         {
             return;
         }
-        activeGroup.IsCurrent = false;
-        root = restored;
-        activeGroup = current ?? root.Groups.First();
-        activeGroup.IsCurrent = true;
-        Rebuild();
-        activeGroup.Editor.Focus();
-        ActiveChanged?.Invoke(this, EventArgs.Empty);
+        bool restored = false;
+        if (layout is not null && Restore(layout, out EditorGroup? current) is { } tree)
+        {
+            activeGroup.IsCurrent = false;
+            main.Root = tree;
+            activeGroup = current ?? main.Groups.First();
+            main.Current = activeGroup;
+            activeGroup.IsCurrent = true;
+            Rebuild(main);
+            activeGroup.Editor.Focus();
+            restored = true;
+        }
+        restored |= RestoreWindows(windows ?? []);
+        if (restored)
+        {
+            ActiveChanged?.Invoke(this, EventArgs.Empty);
+        }
     }
 
-    private Node? Restore(EditorLayout kept, out EditorGroup? current)
+    private EditorFrame.Node? Restore(EditorLayout kept, out EditorGroup? current)
     {
         current = null;
         if (kept.Split is { } direction && kept.First is { } firstKept && kept.Second is { } secondKept)
         {
-            Node? first = Restore(firstKept, out EditorGroup? inFirst);
-            Node? second = Restore(secondKept, out EditorGroup? inSecond);
+            EditorFrame.Node? first = Restore(firstKept, out EditorGroup? inFirst);
+            EditorFrame.Node? second = Restore(secondKept, out EditorGroup? inSecond);
             current = inFirst ?? inSecond;
             return first is null ? second : second is null ? first
-                : new SplitNode(direction == "down" ? Orientation.Vertical : Orientation.Horizontal, first, second) { Ratio = Math.Clamp(kept.Ratio, 0.05, 0.95) };
+                : new EditorFrame.SplitNode(direction == "down" ? Orientation.Vertical : Orientation.Horizontal, first, second) { Ratio = Math.Clamp(kept.Ratio, 0.05, 0.95) };
         }
         EditorGroup group = NewGroup();
         OpenDocument? shown = null;
@@ -510,7 +538,7 @@ public sealed class EditorArea : UserControl
         group.Show(shown);
         group.Editor.GoTo(shownAt);
         current = kept.Current ? group : null;
-        return new Leaf(group);
+        return new EditorFrame.Leaf(group);
     }
 
     /// <summary>A file's document, open already or read from disk now; null when it cannot be read as text.</summary>
@@ -538,7 +566,8 @@ public sealed class EditorArea : UserControl
         }
     }
 
-    /// <summary>Closes every file, those held too, each saved first; false when one could not be, and stays open.</summary>
+    /// <summary>Closes every file, those held too, each saved first; false when one could not be, and stays open. The
+    /// editor windows go with their last tabs.</summary>
     public bool CloseAll()
     {
         foreach (OpenDocument document in documents.ToList())
@@ -560,10 +589,15 @@ public sealed class EditorArea : UserControl
 
     // Dropping a dragged tab.
 
-    private void Drop(EditorGroup from, OpenDocument document, Point at)
+    private void Drop(EditorFrame frame, EditorGroup from, OpenDocument document, Point at)
     {
-        if (Target(at) is not { } target)
+        if (Target(frame, at) is not { } target)
         {
+            // Out of every window's editors: a window of its own where it was let go, its tab under the pointer.
+            if (TopLevel.GetTopLevel(frame.Surface) is not null)
+            {
+                Detach(from, document, frame.Surface.PointToScreen(at - TabGrip));
+            }
             return;
         }
         switch (target.Place)
@@ -590,6 +624,10 @@ public sealed class EditorArea : UserControl
                 }
                 break;
         }
+        if (target.Frame != frame)
+        {
+            Raise(target.Frame);
+        }
     }
 
     private enum DropPlace
@@ -602,13 +640,41 @@ public sealed class EditorArea : UserControl
         Bottom,
     }
 
-    /// <summary>Where a tab dropped at a point goes: onto a group's strip at a place, its middle, or one of its edges
-    /// (the outer quarter), with the rectangle that lights up for it.</summary>
-    private (EditorGroup Group, DropPlace Place, int Index, Rect Zone)? Target(Point at)
+    /// <summary>The lit place a tab dragged from a frame is over, in the overlay of the window it would drop in.</summary>
+    private DropZone? ZoneAt(EditorFrame frame, Point at) => Target(frame, at) is { } target ? new DropZone(target.Zone, Overlay: target.Frame.Drop) : null;
+
+    /// <summary>Where a tab dragged from a frame and let go at a point (in its surface's coordinates) goes: into the
+    /// editors under the point, the window it came from first, then the editor windows, then the main window, which the
+    /// others may stand over; null over none of them.</summary>
+    private (EditorFrame Frame, EditorGroup Group, DropPlace Place, int Index, Rect Zone)? Target(EditorFrame from, Point at)
     {
-        foreach (EditorGroup group in root.Groups)
+        if (TopLevel.GetTopLevel(from.Surface) is null)
         {
-            if (group.TranslatePoint(default, this) is not { } origin)
+            return null;
+        }
+        PixelPoint screen = from.Surface.PointToScreen(at);
+        foreach (EditorFrame frame in frames.OrderBy(f => f == from ? 0 : f.Window is not null ? 1 : 2).ToList())
+        {
+            if (TopLevel.GetTopLevel(frame.Surface) is not { IsVisible: true })
+            {
+                continue;
+            }
+            Point local = frame == from ? at : frame.Surface.PointToClient(screen);
+            if (TargetIn(frame, local) is { } found)
+            {
+                return (frame, found.Group, found.Place, found.Index, found.Zone);
+            }
+        }
+        return null;
+    }
+
+    /// <summary>Where in a frame a tab dropped at a point goes: onto a group's strip at a place, its middle, or one of its
+    /// edges (the outer quarter), with the rectangle that lights up for it, in the frame's surface's coordinates.</summary>
+    private static (EditorGroup Group, DropPlace Place, int Index, Rect Zone)? TargetIn(EditorFrame frame, Point at)
+    {
+        foreach (EditorGroup group in frame.Groups)
+        {
+            if (group.TranslatePoint(default, frame.Surface) is not { } origin)
             {
                 continue;
             }
@@ -620,7 +686,7 @@ public sealed class EditorArea : UserControl
             Rect strip = new(origin, new Size(group.Bounds.Width, group.TabStrip.Bounds.Height));
             if (strip.Contains(at))
             {
-                return (group, DropPlace.Strip, group.IndexAt(this.TranslatePoint(at, group.TabStrip) ?? at), strip);
+                return (group, DropPlace.Strip, group.IndexAt(frame.Surface.TranslatePoint(at, group.TabStrip) ?? at), strip);
             }
             Rect body = new(bounds.X, strip.Bottom, bounds.Width, bounds.Bottom - strip.Bottom);
             double x = (at.X - body.X) / body.Width;
@@ -634,7 +700,7 @@ public sealed class EditorArea : UserControl
         return null;
     }
 
-    // The split tree.
+    // The split trees.
 
     private EditorGroup NewGroup()
     {
@@ -653,25 +719,54 @@ public sealed class EditorArea : UserControl
         return group;
     }
 
-    /// <summary>Groups left with no tab go (all but the last), their neighbours taking their room.</summary>
+    private EditorFrame NewFrame(EditorFrame.Node root, EditorGroup current, Control? empty = null)
+    {
+        EditorFrame frame = new(root, current, ZoneAt, Drop, empty);
+        frames.Add(frame);
+        return frame;
+    }
+
+    /// <summary>Groups left with no tab go (all but the main window's last), their neighbours taking their room, and an
+    /// editor window left with none goes with them.</summary>
     private void Collapse()
     {
-        bool changed = false;
-        foreach (EditorGroup empty in root.Groups.Where(g => g.Tabs.Count == 0).ToList())
+        EditorFrame worked = ActiveFrame;
+        foreach (EditorFrame frame in frames.ToList())
         {
-            if (root.Groups.Count() > 1)
+            if (frame.Window is { } window && frame.IsEmpty)
             {
-                root = root.Without(empty) ?? root;
-                changed = true;
+                frames.Remove(frame);
+                // Closed by the person, it is closing already.
+                if (!frame.Closing)
+                {
+                    window.CloseQuietly();
+                }
+                continue;
+            }
+            bool changed = false;
+            foreach (EditorGroup empty in frame.Groups.Where(g => g.Tabs.Count == 0).ToList())
+            {
+                if (frame.Groups.Count() > 1)
+                {
+                    frame.Root = frame.Root.Without(empty) ?? frame.Root;
+                    changed = true;
+                }
+            }
+            if (changed)
+            {
+                frame.Rebuild();
+            }
+            if (!frame.Groups.Contains(frame.Current))
+            {
+                frame.Current = frame.Groups.FirstOrDefault(g => g.Active is not null) ?? frame.Groups.First();
             }
         }
-        if (changed)
+        if (FrameOf(activeGroup) is null)
         {
-            Rebuild();
-        }
-        if (!root.Groups.Contains(activeGroup))
-        {
-            activeGroup = root.Groups.FirstOrDefault(g => g.Active is not null) ?? root.Groups.First();
+            // The active group went: the one last worked in in its window takes its place, the main window's if that went too.
+            EditorFrame front = frames.Contains(worked) ? worked : main;
+            activeGroup.IsCurrent = false;
+            activeGroup = front.Current;
             activeGroup.IsCurrent = true;
             if (activeGroup.Active is not null)
             {
@@ -681,119 +776,16 @@ public sealed class EditorArea : UserControl
         Refresh();
     }
 
-    private void Rebuild()
+    private void Rebuild(EditorFrame frame)
     {
-        foreach (EditorGroup group in root.Groups)
-        {
-            (group.Parent as Panel)?.Children.Remove(group);
-        }
-        splits.Content = Build(root);
+        frame.Rebuild();
         Refresh();
     }
 
-    private void Refresh() => emptyState.IsVisible = !root.Groups.Any(g => g.Tabs.Count > 0);
-
-    private static Control Build(Node node)
+    private void Refresh()
     {
-        if (node is Leaf leaf)
-        {
-            (leaf.Group.Parent as Panel)?.Children.Remove(leaf.Group);
-            return new Panel { Children = { leaf.Group } };
-        }
-        SplitNode split = (SplitNode)node;
-        bool across = split.Orientation == Orientation.Horizontal;
-        Grid grid = across
-            ? new Grid { ColumnDefinitions = new ColumnDefinitions("*,1,*") }
-            : new Grid { RowDefinitions = new RowDefinitions("*,1,*") };
-        Control first = Build(split.First);
-        Control second = Build(split.Second);
-        // Drawn again (a group gone elsewhere), a split keeps the share it was dragged to.
-        double ratio = split.Ratio;
-        split.Built = grid;
-        if (across)
-        {
-            grid.ColumnDefinitions[0].Width = new GridLength(ratio, GridUnitType.Star);
-            grid.ColumnDefinitions[2].Width = new GridLength(1 - ratio, GridUnitType.Star);
-        }
-        else
-        {
-            grid.RowDefinitions[0].Height = new GridLength(ratio, GridUnitType.Star);
-            grid.RowDefinitions[2].Height = new GridLength(1 - ratio, GridUnitType.Star);
-        }
-        HairlineDivider divider = new(across ? GridResizeDirection.Columns : GridResizeDirection.Rows);
-        if (across)
-        {
-            Grid.SetColumn(second, 2);
-            Grid.SetColumn(divider, 1);
-        }
-        else
-        {
-            Grid.SetRow(second, 2);
-            Grid.SetRow(divider, 1);
-        }
-        grid.Children.Add(first);
-        grid.Children.Add(divider);
-        grid.Children.Add(second);
-        return grid;
-    }
-
-    private abstract class Node
-    {
-        public abstract IEnumerable<EditorGroup> Groups { get; }
-
-        /// <summary>The tree with a group's leaf replaced by what a function makes of it.</summary>
-        public abstract Node Replace(EditorGroup group, Func<Leaf, Node> with);
-
-        /// <summary>The tree without a group's leaf, its sibling in its split's place; null when it was all.</summary>
-        public abstract Node? Without(EditorGroup group);
-    }
-
-    private sealed class Leaf(EditorGroup group) : Node
-    {
-        public EditorGroup Group { get; } = group;
-        public override IEnumerable<EditorGroup> Groups => [Group];
-        public override Node Replace(EditorGroup target, Func<Leaf, Node> with) => target == Group ? with(this) : this;
-        public override Node? Without(EditorGroup target) => target == Group ? null : this;
-    }
-
-    private sealed class SplitNode(Orientation orientation, Node first, Node second) : Node
-    {
-        public Orientation Orientation { get; } = orientation;
-        public Node First { get; } = first;
-        public Node Second { get; } = second;
-
-        /// <summary>The first part's share of the room: as dragged, once its grid is laid out.</summary>
-        public double Ratio
-        {
-            get
-            {
-                if (Built is not { } grid)
-                {
-                    return ratio;
-                }
-                (double a, double b) = Orientation == Orientation.Horizontal
-                    ? (grid.ColumnDefinitions[0].ActualWidth, grid.ColumnDefinitions[2].ActualWidth)
-                    : (grid.RowDefinitions[0].ActualHeight, grid.RowDefinitions[2].ActualHeight);
-                return a + b > 0 ? a / (a + b) : ratio;
-            }
-            init => ratio = value;
-        }
-
-        private readonly double ratio = 0.5;
-
-        /// <summary>The grid this split was last drawn as.</summary>
-        public Grid? Built { get; set; }
-        public override IEnumerable<EditorGroup> Groups => First.Groups.Concat(Second.Groups);
-
-        public override Node Replace(EditorGroup target, Func<Leaf, Node> with) =>
-            new SplitNode(Orientation, First.Replace(target, with), Second.Replace(target, with)) { Ratio = Ratio };
-
-        public override Node? Without(EditorGroup target)
-        {
-            Node? first = First.Without(target);
-            Node? second = Second.Without(target);
-            return first is null ? second : second is null ? first : new SplitNode(Orientation, first, second) { Ratio = Ratio };
-        }
+        emptyState.IsVisible = main.IsEmpty;
+        TitleWindows();
     }
 }
 

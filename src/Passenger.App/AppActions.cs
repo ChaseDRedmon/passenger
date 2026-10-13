@@ -115,6 +115,9 @@ public static class AppActions
     public const string SplitDown = "app.editor.splitDown";
     public const string MoveToOppositeGroup = "app.editor.moveToOppositeGroup";
 
+    // Rider's Open Tab in New Window (EditSourceInNewWindow): Shift+F4 in both of its Visual Studio keymaps, from their parents.
+    public const string OpenInNewWindow = "app.editor.openInNewWindow";
+
     // The terminal: Rider's, a shell per tab in the open folder.
     public const string ShowTerminal = "app.showTerminal";
 
@@ -280,7 +283,8 @@ public static class AppActions
                 .Bind(Inline, "meta R , I", "meta R , meta I")
                 .Bind(QuickDocumentation, "meta K , I", "meta K , meta I", "control shift F1")
                 .Bind(NextError, "alt PAGE_DOWN")
-                .Bind(PreviousError, "alt PAGE_UP");
+                .Bind(PreviousError, "alt PAGE_UP")
+                .Bind(OpenInNewWindow, "shift F4");
         }
         return keymap
             .Bind(Open, "control O")
@@ -372,6 +376,7 @@ public static class AppActions
             .Bind(Inline, "control R , I", "control R , control I")
             .Bind(QuickDocumentation, "control K , I", "control K , control I", "control shift F1")
             .Bind(NextError, "alt PAGE_DOWN")
-            .Bind(PreviousError, "alt PAGE_UP");
+            .Bind(PreviousError, "alt PAGE_UP")
+            .Bind(OpenInNewWindow, "shift F4");
     }
 }

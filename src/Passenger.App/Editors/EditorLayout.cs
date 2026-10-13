@@ -17,3 +17,11 @@ public sealed record EditorLayout
 
 /// <summary>A tab as kept: its file and where its caret was, from 0.</summary>
 public sealed record KeptTab(string Path, int Line, int Column);
+
+/// <summary>An editor window as a folder keeps it: where it stood (its place in screen pixels, its size in its own units,
+/// as a floating tool window's) and its splits.</summary>
+public sealed record KeptEditorWindow
+{
+    public int[]? Bounds { get; init; }
+    public EditorLayout? Editors { get; init; }
+}

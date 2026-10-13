@@ -385,16 +385,16 @@ public sealed class EditorGroup : DockPanel
                 area.SetActiveGroup(this);
                 Show(document);
                 area.Activated(this);
-                area.TabDrag.Begin((this, document), e, border);
+                area.TabDragOf(this)?.Begin((this, document), e, border);
                 e.Handled = true;
             }
         };
-        border.PointerMoved += (_, e) => area.TabDrag.Continue(e);
-        border.PointerReleased += (_, e) => area.TabDrag.End(e);
+        border.PointerMoved += (_, e) => area.TabDragOf(this)?.Continue(e);
+        border.PointerReleased += (_, e) => area.TabDragOf(this)?.End(e);
         return border;
     }
 
-    /// <summary>Rider's tab menu: close it, the others or all, and split or move it.</summary>
+    /// <summary>Rider's tab menu: close it, the others or all, split or move it, and take it out into a window of its own.</summary>
     private ContextMenu TabMenu(OpenDocument document)
     {
         ContextMenu menu = new();
@@ -416,6 +416,8 @@ public sealed class EditorGroup : DockPanel
         menu.Items.Add(Item("Split Right", () => area.Split(this, document, Orientation.Horizontal, move: false), AppActions.SplitRight));
         menu.Items.Add(Item("Split Down", () => area.Split(this, document, Orientation.Vertical, move: false), AppActions.SplitDown));
         menu.Items.Add(Item("Move to Opposite Group", () => area.MoveToOpposite(this, document), AppActions.MoveToOppositeGroup));
+        menu.Items.Add(new Separator());
+        menu.Items.Add(Item("Open Tab in New Window", () => area.OpenInNewWindow(this, document), AppActions.OpenInNewWindow));
         return menu;
     }
 }

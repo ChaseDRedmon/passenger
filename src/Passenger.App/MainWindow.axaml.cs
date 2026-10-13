@@ -89,6 +89,7 @@ public partial class MainWindow : Window
         AddAbout();
         AddAgents();
         AddShutdown();
+        AddEditorWindows();
         Explorer.FileOpened += (_, path) => OpenFile(path);
         Editors.ActiveChanged += (_, _) => FollowInExplorer();
         Structure.Follow(() => Editors.Active is { } shown
@@ -423,11 +424,13 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>A key's action that throws is reported as an IDE error, never the IDE's end.</summary>
+    /// <summary>A key's action that throws is reported as an IDE error, never the IDE's end. The window it was pressed in
+    /// (this one or an editor window) is the one the person works in.</summary>
     private void OnKeyDownFirst(object? sender, KeyEventArgs e)
     {
         try
         {
+            Editors.Front(sender as TopLevel);
             OnKey(e);
         }
         catch (Exception error)
@@ -439,7 +442,7 @@ public partial class MainWindow : Window
 
     private void OnKey(KeyEventArgs e)
     {
-        if (e.Key == Key.Escape && e.KeyModifiers == KeyModifiers.None && Overlay.IsVisible)
+        if (e.Key == Key.Escape && e.KeyModifiers == KeyModifiers.None && IsPopupOpen)
         {
             // Escape closes what is over the window before anything under it hears it.
             DismissPopup();
@@ -482,10 +485,10 @@ public partial class MainWindow : Window
         }
     }
 
-    public bool IsPopupOpen => Overlay.IsVisible;
+    public bool IsPopupOpen => Popups.Layer.IsVisible;
 
     /// <summary>What the open popup is (Go to File, a breakpoint's properties, the Breakpoints window), or null.</summary>
-    public Control? Popup => Overlay.IsVisible ? OverlayHost.Content as Control : null;
+    public Control? Popup => IsPopupOpen ? Popups.Host.Content as Control : null;
 
     public CodeAssist Assist => assist;
 
@@ -876,8 +879,13 @@ public partial class MainWindow : Window
         folderState?.Layout.Set(now);
     }
 
-    private void KeepWorkspace() =>
-        folderState?.Workspace.Set(new WorkspaceState { Editors = Editors.Capture(), RecentFiles = [.. recent], UnloadedProjects = [.. Explorer.Tree.Unloaded] });
+    private void KeepWorkspace() => folderState?.Workspace.Set(new WorkspaceState
+    {
+        Editors = Editors.Capture(),
+        EditorWindows = Editors.CaptureWindows(),
+        RecentFiles = [.. recent],
+        UnloadedProjects = [.. Explorer.Tree.Unloaded],
+    });
 
     private void RestoreWorkspace()
     {
@@ -906,10 +914,7 @@ public partial class MainWindow : Window
             configuration = configurations.FirstOrDefault();
             RunConfigName.Text = configuration?.Name ?? "No configurations";
         }
-        if (kept.Editors is { } editors)
-        {
-            Editors.Restore(editors);
-        }
+        Editors.Restore(kept.Editors, kept.EditorWindows);
         foreach (string file in kept.RecentFiles.Where(File.Exists).Reverse())
         {
             recent.Remove(file);
@@ -1225,30 +1230,37 @@ public partial class MainWindow : Window
         ShowPopup(popup);
     }
 
-    /// <summary>A popup over the window: centred under the toolbar, as Go to File's is, or beside a point of the
-    /// window (a breakpoint's), kept inside it.</summary>
+    /// <summary>A popup over the window the person works in (this one or an editor window): centred under the toolbar, as
+    /// Go to File's is, or beside a point of that window (a breakpoint's, from <see cref="PopupPoint"/>), kept inside it.</summary>
     private void ShowPopup(Control popup, Point? at = null)
     {
+        (Panel layer, ContentControl host) = PopupsInFront();
+        if (Popups.Layer != layer)
+        {
+            Popups.Layer.IsVisible = false;
+            Popups.Host.Content = null;
+        }
+        popups = (layer, host);
         if (at is { } point)
         {
             popup.Measure(Size.Infinity);
             double width = popup.Width is double w && !double.IsNaN(w) ? w : popup.DesiredSize.Width;
-            OverlayHost.HorizontalAlignment = HorizontalAlignment.Left;
-            OverlayHost.Margin = new Thickness(Math.Clamp(point.X, 8, Math.Max(8, Bounds.Width - width - 8)), Math.Clamp(point.Y, 8, Math.Max(8, Bounds.Height - popup.DesiredSize.Height - 8)), 0, 0);
+            host.HorizontalAlignment = HorizontalAlignment.Left;
+            host.Margin = new Thickness(Math.Clamp(point.X, 8, Math.Max(8, layer.Bounds.Width - width - 8)), Math.Clamp(point.Y, 8, Math.Max(8, layer.Bounds.Height - popup.DesiredSize.Height - 8)), 0, 0);
         }
         else
         {
-            OverlayHost.HorizontalAlignment = HorizontalAlignment.Center;
-            OverlayHost.Margin = new Thickness(0, 84, 0, 0);
+            host.HorizontalAlignment = HorizontalAlignment.Center;
+            host.Margin = new Thickness(0, layer == Overlay ? 84 : EditorWindowPopupTop, 0, 0);
         }
-        OverlayHost.Content = popup;
-        Overlay.IsVisible = true;
+        host.Content = popup;
+        layer.IsVisible = true;
     }
 
     private void ClosePopup()
     {
-        Overlay.IsVisible = false;
-        OverlayHost.Content = null;
+        Popups.Layer.IsVisible = false;
+        Popups.Host.Content = null;
         if (Editors.Active is not null)
         {
             Editors.CodeEditor.Focus();
@@ -1257,7 +1269,7 @@ public partial class MainWindow : Window
 
     private void OnOverlayPressed(object? sender, PointerPressedEventArgs e)
     {
-        if (e.Source == Overlay)
+        if (e.Source == sender)
         {
             DismissPopup();
         }
@@ -1267,7 +1279,7 @@ public partial class MainWindow : Window
     /// was typed in it, as Rider's do.</summary>
     private void DismissPopup()
     {
-        switch (OverlayHost.Content)
+        switch (Popups.Host.Content)
         {
             case Debugging.BreakpointPopup breakpoint:
                 breakpoint.Close(debug.Breakpoints, more: false);
@@ -1441,7 +1453,7 @@ public partial class MainWindow : Window
     public void ShowBreakpointPopup(Debugging.LineBreakpoint breakpoint)
     {
         CodeEditor editor = Editors.CodeEditor;
-        Point at = editor.TranslatePoint(editor.GutterPoint(breakpoint.Line), this) ?? new Point(100, 100);
+        Point at = PopupPoint(editor, editor.GutterPoint(breakpoint.Line)) ?? new Point(100, 100);
         Debugging.BreakpointPopup popup = new(breakpoint, debug.Breakpoints, actions!.Shortcut(AppActions.ViewBreakpoints));
         popup.Closed += (_, more) =>
         {
@@ -1491,9 +1503,11 @@ public partial class MainWindow : Window
         }
         // With a file open the status bar's path names it, so the message line is left for messages.
         StatusText.Text = active is null ? where : string.Empty;
-        // Nothing open, the window is Rider's Welcome window.
-        string idle = folder is null ? "Welcome to Passenger" : where;
-        Title = active is null ? idle : $"{(folder is null ? "" : Path.GetFileName(folder) + " – ")}{active.Name}";
+        // Nothing open, the window is Rider's Welcome window; else it names the file its own editors show, an editor
+        // window in front or not.
+        OpenDocument? shown = Editors.ShownInMain;
+        string idle = folder is null ? "Welcome to Passenger" : Path.GetFileName(folder);
+        Title = shown is null ? idle : $"{(folder is null ? "" : Path.GetFileName(folder) + " – ")}{shown.Name}";
         LineEndingText.Text = active is null ? "" : active.Text.LineEnding == "\r\n" ? "CRLF" : "LF";
         EncodingText.Text = active?.EncodingName ?? "";
         IndentText.Text = active is null ? "" : $"{active.Language.IndentSize} spaces";

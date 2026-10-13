@@ -4,12 +4,16 @@ using Avalonia.Platform;
 
 namespace Passenger.App.Docking;
 
-/// <summary>A window of its own for something taken out of the IDE's (a tool window floating or windowed): it opens
-/// where it last stood, fitted to a screen there is now, else over the IDE. The IDE closes it quietly when it puts what
-/// it shows back; closed by the person, it says so.</summary>
+/// <summary>A window of its own for something taken out of the IDE's (a tool window floating or windowed, editor tabs):
+/// it opens where it last stood, fitted to a screen there is now, else over the IDE. The IDE closes it quietly when it
+/// puts what it shows back; closed by the person, it says so.</summary>
 internal sealed class FloatWindow : Window
 {
     private bool closingQuietly;
+
+    /// <summary>Asked as the person closes it (never as the IDE closes it quietly, nor as the application quits): false
+    /// keeps it open, what it shows having had something it could not finish (a file it could not save).</summary>
+    public Func<bool>? MayClose { get; init; }
 
     /// <summary>One that last stood at <paramref name="kept"/> (screen pixels for its place, its own units for its
     /// size), or that is new and opens <paramref name="size"/> large over <paramref name="ide"/>.</summary>
@@ -30,6 +34,13 @@ internal sealed class FloatWindow : Window
             Size fitted = Fitted(kept is { } placed ? new Size(placed.Width, placed.Height) : size, screen);
             (Width, Height) = (fitted.Width, fitted.Height);
         }
+        Closing += (_, e) =>
+        {
+            if (!closingQuietly && e.CloseReason != WindowCloseReason.ApplicationShutdown && MayClose?.Invoke() == false)
+            {
+                e.Cancel = true;
+            }
+        };
         Closed += (_, _) =>
         {
             if (!closingQuietly)
