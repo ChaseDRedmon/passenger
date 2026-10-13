@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Passenger's refactorings that take options (Change Signature, Extract Interface, Move Type), computed inside
+       Roslyn's language server, which loads this assembly as an extension and runs its message handlers over the solution
+       it has open. It is compiled against the very assemblies the shipped server carries, never a package of its own, so
+       it calls the API the server runs; it carries none of them, since the server's must be the ones it uses. -->
+  <PropertyGroup>
+    <!-- The server's: the extension runs in its process, on whichever runtime runs it. -->
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Passenger.Roslyn.Extension</RootNamespace>
+    <!-- Roslyn marks its extension message handlers experimental. -->
+    <NoWarn>$(NoWarn);RSEXPERIMENTAL008</NoWarn>
+  </PropertyGroup>
+
+  <Import Project="../Passenger.Lsp/RoslynServer.targets" />
+
+  <Target Name="ReferenceRoslynServer" BeforeTargets="ResolveAssemblyReferences" DependsOnTargets="FindRoslynServer">
+    <ItemGroup>
+      <RoslynServerAssembly Include="Microsoft.CodeAnalysis;Microsoft.CodeAnalysis.CSharp;Microsoft.CodeAnalysis.Workspaces;Microsoft.CodeAnalysis.CSharp.Workspaces;Microsoft.CodeAnalysis.ExternalAccess.Extensions" />
+      <Reference Include="@(RoslynServerAssembly->'$(RoslynServerFolder)%(Identity).dll')" Private="false" />
+    </ItemGroup>
+  </Target>
+</Project>

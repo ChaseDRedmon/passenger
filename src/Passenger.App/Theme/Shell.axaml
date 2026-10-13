@@ -315,6 +315,44 @@
     <Style Selector="TextBox.search:focus">
         <Setter Property="Foreground" Value="{DynamicResource Passenger.Text}" />
     </Style>
+    <!-- A table's editable cell (Change Signature's parameters): flat on the row's own colour, an accent line under it
+         while it has the keys. -->
+    <Style Selector="TextBox.cell">
+        <Setter Property="MinHeight" Value="28" />
+        <Setter Property="Padding" Value="8,4" />
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="CornerRadius" Value="0" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="TextBox.cell /template/ Border#PART_BorderElement">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+    <Style Selector="TextBox.cell:pointerover /template/ Border#PART_BorderElement">
+        <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="TextBox.cell:focus /template/ Border#PART_BorderElement">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Passenger.Accent}" />
+        <Setter Property="BorderThickness" Value="0,0,0,2" />
+    </Style>
+    <Style Selector="TextBox.cell:focus">
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.Text}" />
+    </Style>
+    <!-- A table's drop-down cell (a parameter's modifier): flat as the text cells beside it until the pointer is over it. -->
+    <Style Selector="ComboBox.cell">
+        <Setter Property="MinHeight" Value="28" />
+        <Setter Property="Height" Value="28" />
+        <Setter Property="Padding" Value="8,0,4,0" />
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="CornerRadius" Value="0" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="ComboBox.cell:pointerover /template/ Border#Background">
+        <Setter Property="Background" Value="{DynamicResource Passenger.Hover}" />
+    </Style>
     <Style Selector="ToggleButton.option">
         <Setter Property="Width" Value="24" />
         <Setter Property="Height" Value="22" />

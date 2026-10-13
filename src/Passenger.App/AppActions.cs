@@ -122,6 +122,14 @@ public static class AppActions
     public const string IntroduceField = "app.code.introduceField";
     public const string IntroduceParameter = "app.code.introduceParameter";
     public const string EncapsulateField = "app.code.encapsulateField";
+
+    // Rider's ChangeSignature, ExtractInterface, Move, MembersPullUp and MemberPushDown, the refactorings that ask their
+    // options in a dialog, computed by Passenger's extension in the language server.
+    public const string ChangeSignature = "app.code.changeSignature";
+    public const string ExtractInterface = "app.code.extractInterface";
+    public const string Move = "app.code.move";
+    public const string PullMembersUp = "app.code.pullMembersUp";
+    public const string PushMembersDown = "app.code.pushMembersDown";
     public const string QuickDocumentation = "app.code.quickDocumentation";
     public const string NextError = "app.code.nextError";
     public const string PreviousError = "app.code.previousError";
@@ -394,6 +402,8 @@ public static class AppActions
                 .Bind(IntroduceField, "meta R , F", "meta R , meta F")
                 .Bind(IntroduceParameter, "meta R , P", "meta R , meta P")
                 .Bind(EncapsulateField, "meta R , E", "meta R , meta E")
+                .Bind(ChangeSignature, "meta R , S", "meta R , meta S")
+                .Bind(Move, "meta R , O", "meta R , meta O")
                 .Bind(QuickDocumentation, "meta K , I", "meta K , meta I", "control shift F1")
                 .Bind(NextError, "alt PAGE_DOWN")
                 .Bind(PreviousError, "alt PAGE_UP")
@@ -505,6 +515,8 @@ public static class AppActions
             .Bind(IntroduceField, "control R , F", "control R , control F")
             .Bind(IntroduceParameter, "control R , P", "control R , control P")
             .Bind(EncapsulateField, "control R , E", "control R , control E")
+            .Bind(ChangeSignature, "control R , S", "control R , control S")
+            .Bind(Move, "control R , O", "control R , control O")
             .Bind(QuickDocumentation, "control K , I", "control K , control I", "control shift F1")
             .Bind(NextError, "alt PAGE_DOWN")
             .Bind(PreviousError, "alt PAGE_UP")

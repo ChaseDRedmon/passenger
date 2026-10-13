@@ -113,7 +113,7 @@ jobs:
           $root = Join-Path $env:LOCALAPPDATA 'PassengerIDE'
           $exe = Join-Path $root 'current\Passenger.exe'
           $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'Passenger.lnk'
-          foreach ($path in $exe, (Join-Path $root 'Update.exe'), (Join-Path $root 'current\roslyn'), (Join-Path $root 'current\debugger'), $shortcut) {
+          foreach ($path in $exe, (Join-Path $root 'Update.exe'), (Join-Path $root 'current\roslyn'), (Join-Path $root 'current\roslyn-extension'), (Join-Path $root 'current\debugger'), $shortcut) {
             if (-not (Test-Path $path)) { throw "The install has no $path" }
           }
           $entry = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\PassengerIDE'

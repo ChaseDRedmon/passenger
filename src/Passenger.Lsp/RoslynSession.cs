@@ -214,6 +214,18 @@ public sealed class LspDocument : IDisposable
         return action.Edit is null && action.Data is not null ? await ResolveAsync(action, cancel) ?? action : action;
     }
 
+    /// <summary>A message to Passenger's extension in the server about this document, and its answer
+    /// (<see cref="RoslynExtension"/>).</summary>
+    public Task<T> ExtensionAsync<T>(string handler, object message, CancellationToken cancel = default) =>
+        RoslynExtension.AskAsync<T>(Server, handler, message, Identifier, cancel);
+
+    /// <summary>An offset as the extension's messages give a place.</summary>
+    public Roslyn.Extension.Place PlaceOf(int offset)
+    {
+        LspPosition position = PositionOf(offset);
+        return new Roslyn.Extension.Place(position.Line, position.Character);
+    }
+
     /// <summary>The document's outline: its types, and their members under them.</summary>
     public async Task<IReadOnlyList<DocumentSymbol>> OutlineAsync(CancellationToken cancel = default) =>
         await Server.RequestAsync<List<DocumentSymbol>>("textDocument/documentSymbol", new DocumentSymbolParams(Identifier), cancel) ?? [];

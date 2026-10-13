@@ -192,6 +192,7 @@ public partial class MainWindow : Window
         assist = new CodeAssist(Editors, Editors.AssistLayer, () => csharp);
         assist.Navigate += (_, target) => NavigateTo(target.Path, target.Position);
         assist.Message += (_, message) => StatusText.Text = message;
+        assist.FilesChanged += (_, _) => FilesChanged();
         usages = new UsageHighlighting(Editors, () => csharp);
         usages.Message += (_, message) => StatusText.Text = message;
         builder = new ProcessRunner(Bottom.Build);

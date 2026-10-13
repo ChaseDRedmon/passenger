@@ -95,6 +95,9 @@ public sealed partial class CodeAssist
     /// <summary>Something to say in the status bar ("No usages found").</summary>
     public event EventHandler<string>? Message;
 
+    /// <summary>A refactoring changed files beyond the open ones, or made new ones, which the Explorer and Git then show.</summary>
+    public event EventHandler? FilesChanged;
+
     public bool IsCompletionOpen => completion.IsVisible;
 
     /// <summary>What the card beside the completion list says about the chosen item while it shows, null otherwise.</summary>
@@ -226,18 +229,24 @@ public sealed partial class CodeAssist
         Code(AppActions.OptimizeUsings, "Optimize Imports", context => _ = OptimizeUsings(), new("Code", 1, 2));
         Code(AppActions.RefactorThis, "Refactor This...", context => _ = ShowFixes(a => a.Kind?.StartsWith("refactor", StringComparison.Ordinal) == true, "Refactor This"),
             new("Refactor", 0, 0));
+        // IntelliJ's RefactoringMenu: Rename and Change Signature, the Extract and Introduce actions, Inline; Move and Safe
+        // Delete; Pull Members Up and Push Members Down, with Encapsulate Field, which Rider adds last.
         Code(AppActions.Rename, "Rename...", _ => ShowRename(), new("Refactor", 1, 0));
+        Code(AppActions.ChangeSignature, "Change Signature...", context => _ = ChangeSignature(), new("Refactor", 1, 1));
         Code(AppActions.ExtractMethod, "Extract Method...", context => _ = Refactor(a => a.Title == "Extract method", "Extract Method", renameMethod: true),
-            new("Refactor", 1, 1));
+            new("Refactor", 1, 2));
         Code(AppActions.IntroduceVariable, "Introduce Variable...",
-            context => _ = Refactor(a => a.Title.StartsWith("Introduce local", StringComparison.Ordinal), "Introduce Variable", renameMethod: false), new("Refactor", 1, 2));
-        Code(AppActions.IntroduceField, "Introduce Field...", context => _ = Refactor(IntroduceField), new("Refactor", 1, 3));
-        Code(AppActions.IntroduceParameter, "Introduce Parameter...", context => _ = Refactor(IntroduceParameter), new("Refactor", 1, 4));
+            context => _ = Refactor(a => a.Title.StartsWith("Introduce local", StringComparison.Ordinal), "Introduce Variable", renameMethod: false), new("Refactor", 1, 3));
+        Code(AppActions.IntroduceField, "Introduce Field...", context => _ = Refactor(IntroduceField), new("Refactor", 1, 4));
+        Code(AppActions.IntroduceParameter, "Introduce Parameter...", context => _ = Refactor(IntroduceParameter), new("Refactor", 1, 5));
+        Code(AppActions.ExtractInterface, "Extract Interface...", context => _ = ExtractInterface(), new("Refactor", 1, 6));
         Code(AppActions.Inline, "Inline...",
-            context => _ = Refactor(a => a.Kind == "refactor.inline" || a.Title.StartsWith("Inline", StringComparison.Ordinal), "Inline", renameMethod: false), new("Refactor", 1, 5));
-        Code(AppActions.SafeDelete, "Safe Delete...", context => _ = SafeDelete(), new("Refactor", 2, 0));
-        // Rider adds it at the end of the Refactor menu.
-        Code(AppActions.EncapsulateField, "Encapsulate Field...", context => _ = Refactor(EncapsulateField), new("Refactor", 3, 0));
+            context => _ = Refactor(a => a.Kind == "refactor.inline" || a.Title.StartsWith("Inline", StringComparison.Ordinal), "Inline", renameMethod: false), new("Refactor", 1, 7));
+        Code(AppActions.Move, "Move...", context => _ = Move(), new("Refactor", 2, 0));
+        Code(AppActions.SafeDelete, "Safe Delete...", context => _ = SafeDelete(), new("Refactor", 2, 1));
+        Code(AppActions.PullMembersUp, "Pull Members Up...", context => _ = MoveMembers(up: true), new("Refactor", 3, 0));
+        Code(AppActions.PushMembersDown, "Push Members Down...", context => _ = MoveMembers(up: false), new("Refactor", 3, 1));
+        Code(AppActions.EncapsulateField, "Encapsulate Field...", context => _ = Refactor(EncapsulateField), new("Refactor", 3, 2));
         // Rider's order in Navigate: Declaration, Derived Symbols, Implementation(s), Type Declaration, Base Symbols.
         Code(AppActions.GoToDeclaration, "Go to Declaration", context => _ = GoToDefinition(Caret), new("Navigate", 2, 0));
         Code(AppActions.DerivedSymbols, "Derived Symbols", context => _ = GoToRelated("Derived Symbols", Caret, DerivedSymbolsAsync, "No derived symbols found"),

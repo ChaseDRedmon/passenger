@@ -1,0 +1,43 @@
+<Project>
+  <!-- Microsoft's server (MIT, built in the Roslyn repo), one package per platform at RoslynServerVersion
+       (Directory.Packages.props). Only the platform being built is downloaded. The platform is the publish's, else this
+       machine's, named as the packages are: a .NET built by a Linux distribution names its own (ubuntu.24.04-x64,
+       alpine.3.22-x64), for which there is no package. Passenger.Lsp carries the server; Passenger.Roslyn.Extension is
+       compiled against the assemblies it carries, so both find it here. -->
+  <PropertyGroup>
+    <RoslynServerFor>$(RuntimeIdentifier)</RoslynServerFor>
+    <RoslynServerFor Condition="'$(RoslynServerFor)' == ''">$([System.Runtime.InteropServices.RuntimeInformation]::RuntimeIdentifier)</RoslynServerFor>
+    <RoslynServerArchitecture>$([System.Text.RegularExpressions.Regex]::Replace($(RoslynServerFor), '^.*-', ''))</RoslynServerArchitecture>
+    <RoslynServerRid Condition="$(RoslynServerFor.StartsWith('win'))">win-$(RoslynServerArchitecture)</RoslynServerRid>
+    <RoslynServerRid Condition="$(RoslynServerFor.StartsWith('osx'))">osx-$(RoslynServerArchitecture)</RoslynServerRid>
+    <RoslynServerRid Condition="'$(RoslynServerRid)' == '' And ($(RoslynServerFor.Contains('musl')) Or $(RoslynServerFor.StartsWith('alpine')))">linux-musl-$(RoslynServerArchitecture)</RoslynServerRid>
+    <RoslynServerRid Condition="'$(RoslynServerRid)' == ''">linux-$(RoslynServerArchitecture)</RoslynServerRid>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageDownload Include="roslyn-language-server.$(RoslynServerRid)" Version="[$(RoslynServerVersion)]" />
+  </ItemGroup>
+
+  <!-- The server's package and the folder in it the server runs from. -->
+  <Target Name="FindRoslynServer">
+    <PropertyGroup>
+      <RoslynServerPackage>$([MSBuild]::EnsureTrailingSlash('$(NuGetPackageRoot)'))roslyn-language-server.$(RoslynServerRid.ToLowerInvariant())/$(RoslynServerVersion.ToLowerInvariant())/</RoslynServerPackage>
+    </PropertyGroup>
+    <Error Condition="!Exists('$(RoslynServerPackage)')" Text="Roslyn's language server for $(RoslynServerRid) is not at $(RoslynServerPackage); restore first." />
+    <ItemGroup>
+      <!-- tools/<the .NET it is built for>/<rid>/, found, so a server built for a newer .NET still is. -->
+      <RoslynServerEntry Include="$(RoslynServerPackage)tools/*/$(RoslynServerRid)/Microsoft.CodeAnalysis.LanguageServer.dll" />
+    </ItemGroup>
+    <Error Condition="'@(RoslynServerEntry->Count())' != '1'"
+           Text="roslyn-language-server.$(RoslynServerRid) $(RoslynServerVersion) does not hold exactly one tools/*/$(RoslynServerRid)/Microsoft.CodeAnalysis.LanguageServer.dll (it holds '@(RoslynServerEntry)'): the package's layout has changed." />
+    <PropertyGroup>
+      <RoslynServerFolder>@(RoslynServerEntry->'%(RootDir)%(Directory)')</RoslynServerFolder>
+    </PropertyGroup>
+    <ItemGroup>
+      <!-- Under Visual Studio's terms, not open source, and loaded on no path Passenger takes: Visual Studio's ServiceHub
+           client, its debugger's and RPC contracts, and its remote settings client (THIRD_PARTY_NOTICES.md says how that
+           was found, and why Telemetry and Utilities.Internal stay). Each is left out with its satellite resources. -->
+      <RoslynServerLeftOut Include="Microsoft.ServiceHub.Client;Microsoft.VisualStudio.Debugger.Contracts;Microsoft.VisualStudio.RemoteControl;Microsoft.VisualStudio.RpcContracts" />
+    </ItemGroup>
+  </Target>
+</Project>

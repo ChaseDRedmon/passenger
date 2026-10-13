@@ -3,7 +3,7 @@
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
     <!-- Roslyn's language server, roslyn-language-server.<rid>: a package per system, downloaded rather than
-         referenced (Passenger.Lsp.csproj), so its version is a property, not a PackageVersion. -->
+         referenced (src/Passenger.Lsp/RoslynServer.targets), so its version is a property, not a PackageVersion. -->
     <RoslynServerVersion>5.11.0</RoslynServerVersion>
   </PropertyGroup>
   <ItemGroup>

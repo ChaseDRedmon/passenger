@@ -101,6 +101,10 @@ public sealed class LanguageServer : IAsyncDisposable
 
     public string LogFolder { get; }
 
+    /// <summary>Why Passenger's extension to the server (<see cref="RoslynExtension"/>) cannot be asked, or null when every
+    /// handler of it is active.</summary>
+    public string? ExtensionProblem { get; private set; } = "the C# language server has not started";
+
     public JsonElement Capabilities { get; private set; }
 
     public SemanticTokensLegend? Legend { get; private set; }
@@ -162,11 +166,17 @@ public sealed class LanguageServer : IAsyncDisposable
             throw new FileNotFoundException("The Roslyn language server is missing from the app's folder.", server);
         }
         Directory.CreateDirectory(logFolder);
-        ProcessStartInfo start = ChildProcesses.DotnetCommand(
+        List<string> arguments =
         [
             server, "--stdio", "--logLevel", "Information", "--telemetryLevel", "off",
             "--extensionLogDirectory", logFolder, "--clientProcessId", Environment.ProcessId.ToString(),
-        ]);
+        ];
+        // Passenger's refactorings that take options, which the server loads into a context of the extension's own.
+        if (File.Exists(RoslynExtension.Assembly))
+        {
+            arguments.AddRange(["--extension", RoslynExtension.Assembly]);
+        }
+        ProcessStartInfo start = ChildProcesses.DotnetCommand(arguments);
         // The dotnet restore Roslyn runs leaves its MSBuild node in the server's process group, which a restart ends: a
         // build of the IDE's that took that node up would lose it midway, so a server's nodes are its own.
         start.Environment["MSBUILDNODEHANDSHAKESALT"] += $"-server-{Interlocked.Increment(ref started)}";
@@ -216,6 +226,15 @@ public sealed class LanguageServer : IAsyncDisposable
             }
             cancel.ThrowIfCancellationRequested();
             await rpc.NotifyWithParameterObjectAsync("initialized", new { }).ConfigureAwait(false);
+            try
+            {
+                server2.ExtensionProblem = await RoslynExtension.ActivateAsync(server2, cancel).ConfigureAwait(false);
+            }
+            catch (LanguageServerFailed failed)
+            {
+                // The server runs on without it; only the refactorings that ask it say why.
+                server2.ExtensionProblem = $"the C# language server did not activate Passenger's extension: {failed.Reason}";
+            }
         }
         catch (Exception error)
         {

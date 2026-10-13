@@ -6,10 +6,11 @@ using Passenger.Text;
 
 namespace Passenger.App.Editors;
 
-/// <summary>Rider's undo of a command that changed more than one file or moved one, as a rename does: Undo where the
-/// command is the last change (an editor of one of its files, or the Solution view) takes all of it back at once, the
-/// files it moved going back and every file's text as it was, and Redo makes all of it again, each only while every file
-/// is still as the command left it. A command that changed one file's text alone is that file's own undo step.</summary>
+/// <summary>Rider's undo of a command that changed more than one file, moved one or made one, as a rename or an extracted
+/// interface does: Undo where the command is the last change (an editor of one of its files, or the Solution view) takes
+/// all of it back at once, the files it moved going back, every file's text as it was and the files it made gone, and Redo
+/// makes all of it again, each only while every file is still as the command left it. A command that changed one file's
+/// text alone is that file's own undo step.</summary>
 public sealed class CommandHistory
 {
     /// <summary>The most commands kept, the oldest going first, as IntelliJ's registry has undo.globalUndoLimit.</summary>
@@ -22,8 +23,8 @@ public sealed class CommandHistory
     internal CommandHistory(EditorArea editors) => this.editors = editors;
 
     /// <summary>Follows what a command changes from now until the recording is disposed: the open files' text, the files
-    /// not open it is told it writes (<see cref="Recording.Watch"/>) and the files moved. Kept as a command of its own
-    /// when it changed more than one file or moved one.</summary>
+    /// not open it is told it writes or makes (<see cref="Recording.Watch"/>) and the files moved. Kept as a command of its
+    /// own when it changed more than one file, moved one or made one.</summary>
     public Recording Record(string name) => new(this, editors, name);
 
     /// <summary>The command Undo takes back there: in a file's editor, the one whose change is that file's next undo
@@ -54,6 +55,17 @@ public sealed class CommandHistory
             if (Exists(free) && !string.Equals(free, there, StringComparison.OrdinalIgnoreCase))
             {
                 return $"{Path.GetFileName(free)} is already there";
+            }
+        }
+        foreach (Creation made in command.Created)
+        {
+            if (redo && Exists(made.Path))
+            {
+                return $"{Path.GetFileName(made.Path)} is already there";
+            }
+            if (!redo && Made(made) is { } changed)
+            {
+                return changed;
             }
         }
         foreach (TextChange text in command.Texts)
@@ -96,14 +108,34 @@ public sealed class CommandHistory
                 return failed;
             }
         }
+        foreach (Creation made in command.Created)
+        {
+            if (Unmake(made) is { } failed)
+            {
+                return failed;
+            }
+        }
         done.Remove(command);
         undone.Add(command);
         return null;
     }
 
-    /// <summary>Makes a command again: every file's text as it left it, then the files it moved move again.</summary>
+    /// <summary>Makes a command again: the files it made, every file's text as it left it, then the files it moved move
+    /// again.</summary>
     public string? Redo(Command command)
     {
+        foreach (Creation made in command.Created)
+        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(made.Path)!);
+                FileText.Save(made.Path, made.Text.ToString(), new UTF8Encoding(false), false, false);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                return $"{Path.GetFileName(made.Path)} could not be written: {error.Message}";
+            }
+        }
         foreach (TextChange text in command.Texts)
         {
             if (Put(text, redo: true) is { } failed)
@@ -162,6 +194,36 @@ public sealed class CommandHistory
         }
     }
 
+    /// <summary>Why a file a command made cannot be taken away: it is gone, or its text is no longer what the command
+    /// wrote; null when it can.</summary>
+    private string? Made(Creation made)
+    {
+        string? now = editors.Documents.FirstOrDefault(d => d.Path == made.Path) is { } open
+            ? open.Text.Snapshot.ToString()
+            : File.Exists(made.Path) ? FileText.Load(made.Path)?.Text : null;
+        return now is null ? $"{Path.GetFileName(made.Path)} is no longer there"
+            : now != made.Text.ToString() ? $"{Path.GetFileName(made.Path)} has been changed since"
+            : null;
+    }
+
+    /// <summary>A file a command made, deleted, its tab closed if it was opened since.</summary>
+    private string? Unmake(Creation made)
+    {
+        try
+        {
+            File.Delete(made.Path);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return $"{Path.GetFileName(made.Path)} could not be deleted: {error.Message}";
+        }
+        foreach (OpenDocument document in editors.Documents.Where(d => d.Path == made.Path).ToList())
+        {
+            editors.CloseDeleted(document);
+        }
+        return null;
+    }
+
     private bool IsOpen(OpenDocument? document) => document is not null && editors.Documents.Contains(document);
 
     private static bool Exists(string path) => File.Exists(path) || Directory.Exists(path);
@@ -181,9 +243,11 @@ public sealed class CommandHistory
     }
 
     /// <summary>What a command did: its name ("Rename Foo to Bar"), each file's text before and after it (at the path the
-    /// file had then; an open file's with the undo step that made it) and the files it moved, in order.</summary>
-    public sealed class Command(string name, IReadOnlyList<TextChange> texts, IReadOnlyList<(string From, string To)> moves)
+    /// file had then; an open file's with the undo step that made it), the files it moved, in order, and the files it made.</summary>
+    public sealed class Command(string name, IReadOnlyList<TextChange> texts, IReadOnlyList<(string From, string To)> moves, IReadOnlyList<Creation>? created = null)
     {
+        public IReadOnlyList<Creation> Created { get; } = created ?? [];
+
         public string Name { get; } = name;
 
         public IReadOnlyList<TextChange> Texts { get; } = texts;
@@ -200,6 +264,9 @@ public sealed class CommandHistory
             return path;
         }
     }
+
+    /// <summary>A file a command made, with the text it wrote there.</summary>
+    public sealed record Creation(string Path, TextSnapshot Text);
 
     /// <summary>One file's text changed by a command: the open file (null for one changed on disk) and the undo step its
     /// change is there.</summary>
@@ -226,7 +293,8 @@ public sealed class CommandHistory
             editors.Moved += OnMoved;
         }
 
-        /// <summary>A file not open the command is about to write: its text now, for the undo to put back.</summary>
+        /// <summary>A file not open the command is about to write: its text now, for the undo to put back; or one not there
+        /// yet that it is about to make, for the undo to take away.</summary>
         public void Watch(string path)
         {
             if (!editors.Documents.Any(d => d.Path == path) && !closed.ContainsKey(path))
@@ -252,17 +320,25 @@ public sealed class CommandHistory
                     texts.Add(new TextChange(document, path, text, document.Text.Snapshot, now));
                 }
             }
+            List<Creation> created = [];
             foreach ((string path, TextSnapshot? before) in closed)
             {
                 string at = made.Moved(path);
-                if (before is not null && File.Exists(at) && FileText.Load(at)?.Text is { } after && after != before.ToString())
+                if (before is null)
+                {
+                    if (File.Exists(at) && FileText.Load(at)?.Text is { } written)
+                    {
+                        created.Add(new Creation(at, TextSnapshot.From(written)));
+                    }
+                }
+                else if (File.Exists(at) && FileText.Load(at)?.Text is { } after && after != before.ToString())
                 {
                     texts.Add(new TextChange(null, path, before, TextSnapshot.From(after), null));
                 }
             }
-            if (texts.Count > 1 || moves.Count > 0)
+            if (texts.Count > 1 || moves.Count > 0 || created.Count > 0)
             {
-                history.Keep(new Command(name, texts, made.Moves));
+                history.Keep(new Command(name, texts, made.Moves, created));
             }
         }
 

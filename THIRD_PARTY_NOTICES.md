@@ -8,8 +8,9 @@ named here.
 
 ## In the app
 
-What `just publish` carries for macOS and Windows: the app, the debugger beside it under `debugger/` and Roslyn's
-language server under `roslyn/`, and on Windows what Velopack's installer adds to it (`just package-win`). Packages
+What `just publish` carries for macOS and Windows: the app, the debugger beside it under `debugger/`, Roslyn's
+language server under `roslyn/` and Passenger's own extension to it under `roslyn-extension/` (compiled against the
+server's assemblies and carrying none), and on Windows what Velopack's installer adds to it (`just package-win`). Packages
 restored with these whose files no macOS or Windows build carries (SkiaSharp's and HarfBuzzSharp's natives for Linux
 and the browser, dbgshim's for Linux and 32-bit Windows) are left out.
 
@@ -78,7 +79,7 @@ projects and solutions opened, completion, hover, signature help, pulled diagnos
 renames, code actions and fixes, formatting, inlay hints), by reading Roslyn's source at the package's commit
 (dotnet/roslyn dc1db3e7), and by running those tests without each.
 
-Left out of `roslyn/` (`RoslynServerLeftOut` in `src/Passenger.Lsp/Passenger.Lsp.csproj`, with their satellite
+Left out of `roslyn/` (`RoslynServerLeftOut` in `src/Passenger.Lsp/RoslynServer.targets`, with their satellite
 resources; the build fails if the package stops carrying one, and a test checks that none is beside the server and that
 the server never looks for one), since no path Passenger takes loads them:
 
