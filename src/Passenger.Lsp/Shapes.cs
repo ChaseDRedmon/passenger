@@ -68,7 +68,8 @@ public static class Shapes
             // A bare command has a string "command"; a code action's "command" (if any) is an object.
             if (item.TryGetProperty("command", out JsonElement command) && command.ValueKind == JsonValueKind.String)
             {
-                actions.Add(new CodeAction { Title = item.GetProperty("title").GetString() ?? string.Empty, Command = item.Clone() });
+                LspCommand bare = item.Deserialize<LspCommand>(Json.Options)!;
+                actions.Add(new CodeAction { Title = bare.Title, Command = bare });
             }
             else if (item.Deserialize<CodeAction>(Json.Options) is { } action)
             {

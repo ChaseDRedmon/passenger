@@ -176,30 +176,51 @@ public sealed partial class PassengerTools(MainWindow window)
 
     [McpServerTool(Name = "code_actions", Title = "Fixes and refactorings", ReadOnly = true), Description(
         "The fixes and refactorings the language server offers at a position (Alt+Enter), or over a selection from there to " +
-        "endLine:endColumn (where Extract Method and Introduce Variable are offered), as 'title [kind]'.")]
+        "endLine:endColumn (where Extract Method and Introduce Variable are offered), as 'title [kind]'; one that offers choices " +
+        "(the actions nested under it, the scopes a Fix All may cover) is followed by them, each one apply_code_action's choice.")]
     public Task<IReadOnlyList<string>> CodeActions(string path, int line, int column, int? endLine = null, int? endColumn = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
-        (IReadOnlyList<string>)[.. (await Actions(path, line, column, endLine, endColumn, cancel)).Actions.Select(a => a.Kind is { Length: > 0 } kind ? $"{a.Title} [{kind}]" : a.Title)]);
+        (IReadOnlyList<string>)[.. (await Actions(path, line, column, endLine, endColumn, cancel)).Actions.Select(Described)]);
 
     [McpServerTool(Name = "apply_code_action", Title = "Apply a fix or refactoring", Destructive = true), Description(
         "Applies the fix or refactoring with this title at a position (or over the selection to endLine:endColumn), as choosing it from " +
-        "Alt+Enter does, and saves the files.")]
-    public Task<string> ApplyCodeAction(string path, int line, int column, string title, int? endLine = null, int? endColumn = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
+        "Alt+Enter does, and saves the files. One that offers choices takes the one named as choice, as code_actions lists them.")]
+    public Task<string> ApplyCodeAction(string path, int line, int column, string title, int? endLine = null, int? endColumn = null,
+        [Description("For an action that offers choices, the one to take")] string? choice = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         (LspDocument lsp, IReadOnlyList<CodeAction> actions) = await Actions(path, line, column, endLine, endColumn, cancel);
         CodeAction chosen = actions.FirstOrDefault(a => a.Title == title)
             ?? throw new InvalidOperationException($"No action '{title}' here; there are: {string.Join("; ", actions.Select(a => a.Title))}");
-        if (chosen.Edit is null && chosen.Data is not null)
+        IReadOnlyList<ActionChoice> choices = ClientCommands.Choices(chosen);
+        string? scope = null;
+        if (choices.Count > 0)
         {
-            chosen = await lsp.ResolveAsync(chosen) ?? chosen;
+            ActionChoice taken = choices.FirstOrDefault(c => c.Text == choice)
+                ?? throw new InvalidOperationException($"'{title}' needs a choice{(choice is null ? "" : $", and '{choice}' is not one")}: {string.Join("; ", choices.Select(c => c.Text))}");
+            (chosen, scope) = (taken.Action, taken.Scope);
         }
+        else if (choice is not null)
+        {
+            throw new InvalidOperationException($"'{title}' offers no choices");
+        }
+        string what = choice is null ? $"'{title}'" : $"'{title}' ({choice})";
+        chosen = await lsp.ResolveChosenAsync(chosen, scope);
+        string unrun = chosen.Command is { } command ? $", but not {command.Command}, which Passenger cannot run" : string.Empty;
         if (chosen.Edit is not { } edit)
         {
-            return $"'{title}' changes nothing it can apply";
+            return $"{what} changes nothing it can apply{unrun}";
         }
         int files = WorkspaceEdits.Apply(window.EditorArea, edit);
         window.EditorArea.SaveAll();
-        return $"Applied '{title}' to {files} file{(files == 1 ? "" : "s")}";
+        return $"Applied {what} to {files} file{(files == 1 ? "" : "s")}{unrun}";
     });
+
+    /// <summary>A code action as code_actions lists it: its title, its kind, and the choices it offers.</summary>
+    private static string Described(CodeAction action)
+    {
+        string described = action.Kind is { Length: > 0 } kind ? $"{action.Title} [{kind}]" : action.Title;
+        IReadOnlyList<ActionChoice> choices = ClientCommands.Choices(action);
+        return choices.Count == 0 ? described : $"{described}, choices: {string.Join("; ", choices.Select(c => c.Text))}";
+    }
 
     [McpServerTool(Name = "format", Title = "Reformat a file", Destructive = true), Description("Reformats a file as the IDE's Reformat Code does, and saves it.")]
     public Task<string> Format(string path, CancellationToken cancel = default) => OnUi(cancel, async () =>

@@ -563,6 +563,150 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
     }
 
     [AvaloniaFact]
+    public void Choosing_an_override_from_completion_writes_the_overriding_method_with_the_caret_in_its_body()
+    {
+        MainWindow window = project.Open("Point.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "public int Y { get; }");
+        editor.Focus();
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("override ");
+        window.KeyTextInput("T");
+        Ui.Settle();
+        window.KeyTextInput("oS");
+        Ui.WaitFor(() => window.Assist.CompletionLabels.FirstOrDefault() == "ToString()", "ToString offered to override");
+
+        Ui.Press(window, "ENTER");
+        Ui.Settle();
+        string text = editor.Document.Snapshot.ToString();
+        const string written = "    public override string ToString()\n    {\n        return base.ToString();\n    }\n}";
+        Assert.True(text.Contains(written, StringComparison.Ordinal), $"Choosing ToString() did not write the overriding method:\n{text}");
+        Assert.True(text.IndexOf("return base.ToString();", StringComparison.Ordinal) + "return base.ToString();".Length == editor.Selections.Primary.Caret,
+            $"The caret is at {editor.CaretPosition}, not after the call to the base method in the new body");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Choosing_await_in_a_method_not_yet_async_makes_the_method_async_as_well()
+    {
+        MainWindow window = project.Open("Loop.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "int total = 0;");
+        editor.Focus();
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("a");
+        Ui.Settle();
+        window.KeyTextInput("wa");
+        Ui.WaitFor(() => window.Assist.CompletionLabels.FirstOrDefault() == "await", "await offered");
+
+        Ui.Press(window, "ENTER");
+        Ui.Settle();
+        string text = editor.Document.Snapshot.ToString();
+        Assert.Matches(@"public static async [\w.<>]+ Sum\(\)\n    \{\n        int total = 0;\n        await\n", text);
+        Assert.True(text.IndexOf("await", StringComparison.Ordinal) + "await".Length == editor.Selections.Primary.Caret,
+            $"The caret is at {editor.CaretPosition}, not after the await:\n{text}");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_fix_with_choices_offers_them_as_a_second_list_and_makes_the_one_chosen()
+    {
+        MainWindow window = project.Open("Program.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        OpenDocument program = window.EditorArea.Active!;
+        PlaceAfter(editor, "Helper.Twice(2);");
+        window.KeyTextInput(" Foo gadget = null;");
+        Ui.WaitFor(() => window.CSharpService!.For(program)!.Diagnostics.Any(d => d.Code?.ToString() == "CS0246"), "Foo's error");
+        PlaceAfter(editor, "Fo");
+        Ui.Run(window, AppActions.QuickFix);
+        Ui.WaitFor(() => window.Assist.Offered.Contains("Generate type 'Foo'"), "the offer to generate Foo");
+        Choose(window, "Generate type 'Foo'");
+
+        // Generating it nests a choice of where; the second list offers them, and the one chosen is made.
+        Ui.WaitFor(() => window.Assist.Offered.Contains("Generate class 'Foo'"), "the choices Generate type offers");
+        Assert.Contains("Generate nested class 'Foo'", window.Assist.Offered);
+        Choose(window, "Generate class 'Foo'");
+        Ui.WaitFor(() => editor.Document.Snapshot.ToString().Contains("class Foo", StringComparison.Ordinal), "Foo to be generated");
+        string text = editor.Document.Snapshot.ToString();
+        Assert.True(text.Contains("}\n\ninternal class Foo\n{\n}", StringComparison.Ordinal), $"Foo was not generated beside Program:\n{text}");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Fix_all_offers_its_scopes_and_fixes_every_occurrence_in_the_one_chosen()
+    {
+        MainWindow window = project.Open("Loop.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        OpenDocument loop = window.EditorArea.Active!;
+        PlaceAfter(editor, "int total = 0;");
+        window.KeyTextInput(" int one = (int)1; int two = (int)2;");
+        Ui.WaitFor(() => window.CSharpService!.For(loop)!.Diagnostics.Count(d => d.Code?.ToString() == "IDE0004") == 2, "both casts found redundant");
+        PlaceAfter(editor, "(in");
+        Ui.Run(window, AppActions.QuickFix);
+        Ui.WaitFor(() => window.Assist.Offered.Contains("Fix All: Remove Unnecessary Cast"), "the offer to remove every such cast");
+        Choose(window, "Fix All: Remove Unnecessary Cast");
+
+        Ui.WaitFor(() => window.Assist.Offered.Contains("Document"), "the scopes Fix All may cover");
+        Assert.Contains("Project", window.Assist.Offered);
+        Assert.Contains("Solution", window.Assist.Offered);
+        Choose(window, "Document");
+        Ui.WaitFor(() => editor.Document.Snapshot.ToString().Contains("int one = 1; int two = 2;", StringComparison.Ordinal), "both casts removed");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Through_mcp_an_action_with_choices_lists_them_asks_for_one_and_applies_the_one_named()
+    {
+        string source = File.ReadAllText(project.PathOf("Program.cs"));
+        MainWindow window = project.Open("Program.cs");
+        try
+        {
+            CodeEditor editor = window.EditorArea.CodeEditor;
+            OpenDocument program = window.EditorArea.Active!;
+            PlaceAfter(editor, "Helper.Twice(2);");
+            window.KeyTextInput(" Foo gadget = null;");
+            Ui.WaitFor(() => window.CSharpService!.For(program)!.Diagnostics.Any(d => d.Code?.ToString() == "CS0246"), "Foo's error");
+            Passenger.App.Mcp.PassengerTools tools = new(window);
+            int column = editor.Document.Snapshot.GetLineText(4).IndexOf("Foo", StringComparison.Ordinal) + 2;
+
+            IReadOnlyList<string> offered = Await(tools.CodeActions("Program.cs", 5, column), "the actions");
+            Assert.Contains("Generate type 'Foo' [quickfix], choices: Generate class 'Foo'; Generate nested class 'Foo'", offered);
+            Task<string> unnamed = tools.ApplyCodeAction("Program.cs", 5, column, "Generate type 'Foo'");
+            Ui.WaitFor(() => unnamed.IsCompleted, "the refusal");
+            Assert.Contains("Generate nested class 'Foo'", Assert.IsType<ModelContextProtocol.McpException>(unnamed.Exception?.InnerException).Message, StringComparison.Ordinal);
+
+            string applied = Await(tools.ApplyCodeAction("Program.cs", 5, column, "Generate type 'Foo'", choice: "Generate nested class 'Foo'"), "the action");
+            Assert.Equal("Applied 'Generate type 'Foo'' (Generate nested class 'Foo') to 1 file", applied);
+            string saved = File.ReadAllText(project.PathOf("Program.cs"));
+            Assert.True(saved.Contains("    private class Foo\n    {\n    }\n}", StringComparison.Ordinal), $"Foo was not nested in Program, and saved:\n{saved}");
+        }
+        finally
+        {
+            window.Close();
+            File.WriteAllText(project.PathOf("Program.cs"), source);
+        }
+    }
+
+    private static T Await<T>(Task<T> task, string what)
+    {
+        Ui.WaitFor(() => task.IsCompleted, what, TimeSpan.FromSeconds(30));
+        return task.Result;
+    }
+
+    /// <summary>Chooses an item of the open list of choices by its words, with the keys a person would press.</summary>
+    private static void Choose(MainWindow window, string item)
+    {
+        int at = window.Assist.Offered.ToList().IndexOf(item);
+        Assert.True(at >= 0, $"{item} is not offered: {string.Join("; ", window.Assist.Offered)}");
+        Ui.Settle();
+        for (int i = 0; i < at; i++)
+        {
+            Ui.Press(window, "DOWN");
+        }
+        Ui.Press(window, "ENTER");
+    }
+
+    [AvaloniaFact]
     public void The_status_bar_path_names_the_file_and_the_member_the_caret_is_in()
     {
         MainWindow window = project.Open("Program.cs");

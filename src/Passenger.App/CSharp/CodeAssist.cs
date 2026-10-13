@@ -447,6 +447,7 @@ public sealed class CodeAssist
         }
         TextDocument document = Editor.Document;
         using ChangeTracker asked = new(document);
+        int typed = end ?? Editor.Selections.Primary.Caret;
         try
         {
             if (item.Data is not null && item.AdditionalTextEdits is null)
@@ -462,8 +463,13 @@ public sealed class CodeAssist
         {
             return;
         }
+        if (ClientCommands.CompletionEdit(item) is { } complex)
+        {
+            CommitWhole(asked, complex, start, typed);
+            return;
+        }
         start = asked.MapOffset(start);
-        int caret = Math.Min(asked.MapOffset(end ?? Editor.Selections.Primary.Caret), Editor.Document.Snapshot.Length);
+        int caret = Math.Min(asked.MapOffset(typed), Editor.Document.Snapshot.Length);
         string insert = WorkspaceEdits.InLineEnding(item.TextEdit?.NewText ?? item.TextEditText ?? item.InsertText ?? item.Label, document.LineEnding);
         List<Passenger.Text.TextEdit> edits = [new Passenger.Text.TextEdit(start, Math.Max(0, caret - start), insert)];
         if (item.AdditionalTextEdits is { Count: > 0 } extra && asked.Map(WorkspaceEdits.Convert(asked.Snapshot, extra, document.LineEnding)) is { } placed)
@@ -471,6 +477,34 @@ public sealed class CodeAssist
             edits.AddRange(placed.Where(e => e.End <= start || e.Start >= caret));
         }
         Editor.ApplyEdits(edits);
+        if (item.Command is { } command)
+        {
+            Message?.Invoke(this, NotRun(item.Label, command));
+        }
+    }
+
+    /// <summary>A completion whose code the server writes whole (an override's body, the async an await needs in its
+    /// method): its edit in place of the name typed from <paramref name="start"/> to <paramref name="typed"/>, answered for
+    /// the text <paramref name="asked"/> began with, and the caret where the server puts it.</summary>
+    private void CommitWhole(ChangeTracker asked, ComplexEdit complex, int start, int typed)
+    {
+        ServerLines lines = ServerLines.Of(asked.Snapshot);
+        int from = lines.OffsetOf(complex.Edit.Range.Start);
+        int to = lines.OffsetOf(complex.Edit.Range.End);
+        string written = complex.Edit.NewText;
+        string text = WorkspaceEdits.InLineEnding(written, asked.Document.LineEnding);
+        // Roslyn's edit covers the name as it stood when resolved; one that meets the name takes all of what was typed.
+        (int first, int last) = from <= typed && to >= start ? (Math.Min(from, start), Math.Max(to, typed)) : (from, to);
+        if (asked.Map([new Passenger.Text.TextEdit(first, last - first, text)]) is not [Passenger.Text.TextEdit placed])
+        {
+            Message?.Invoke(this, "The completion was not inserted: the code it changes was edited meanwhile");
+            return;
+        }
+        // The server's caret is an offset in the text its edit leaves, which starts as this edit's does.
+        int into = complex.Caret is { } caret && caret - from >= 0 && caret - from <= written.Length
+            ? WorkspaceEdits.InLineEnding(written[..(caret - from)], asked.Document.LineEnding).Length
+            : text.Length;
+        Editor.ApplyEdits([placed], SelectionSet.Single(placed.Start + into));
     }
 
     /// <summary>Rider's abbreviation and Tab: the word before the caret, when a live template has it as its
@@ -771,36 +805,75 @@ public sealed class CodeAssist
             .ToList();
         try
         {
-            IReadOnlyList<CodeAction> actions = [.. (await lsp.CodeActionsAsync(primary.Range, here)).Where(a => only?.Invoke(a) ?? true)];
+            IReadOnlyList<CodeAction> actions = [.. (await lsp.CodeActionsAsync(primary.Range, here)).Where(a => a.Disabled is null && (only?.Invoke(a) ?? true))];
             if (actions.Count == 0)
             {
                 Message?.Invoke(this, only is null ? "No fixes or refactorings here" : "No refactorings here");
                 return;
             }
-            List<Choice> choices = actions
-                .Where(a => a.Disabled is null)
-                .Select(a => new Choice(a.Title, a.Kind ?? string.Empty, a))
-                .ToList();
-            ShowModal(new ChoicePopup(title, choices), primary.Caret, async choice =>
-            {
-                if (choice?.Value is not CodeAction chosen)
-                {
-                    return;
-                }
-                if (chosen.Edit is null && chosen.Data is not null)
-                {
-                    chosen = await lsp.ResolveAsync(chosen) ?? chosen;
-                }
-                if (chosen.Edit is { } edit)
-                {
-                    ApplyWorkspace(edit, null, chosen.Title);
-                }
-            });
+            List<Choice> choices = [.. actions.Select(a => new Choice(a.Title, a.Kind ?? string.Empty, a))];
+            ShowModal(new ChoicePopup(title, choices), primary.Caret, choice =>
+                choice?.Value is CodeAction chosen ? Carry(lsp, chosen, primary.Caret, chosen.Title, null) : Task.CompletedTask);
         }
         catch (Exception error) when (IsServerFailure(error))
         {
         }
     }
+
+    /// <summary>A code action chosen, carried out: one that offers choices (a fix-all's scopes, the actions nested under
+    /// it) offers them as a list at <paramref name="at"/> and applies the one chosen there; any other is applied at once.
+    /// <paramref name="applied"/> runs once its change is made.</summary>
+    private async Task Carry(LspDocument lsp, CodeAction action, int at, string what, Asked? listed, Action? applied = null)
+    {
+        IReadOnlyList<ActionChoice> choices = ClientCommands.Choices(action);
+        if (choices.Count == 0)
+        {
+            if (await Apply(lsp, action, null, what, listed))
+            {
+                applied?.Invoke();
+            }
+            return;
+        }
+        ShowModal(new ChoicePopup(action.Title, [.. choices.Select(c => new Choice(c.Text, string.Empty, c))]), at, async choice =>
+        {
+            if (choice?.Value is ActionChoice chosen && await Apply(lsp, chosen.Action, chosen.Scope, what, null))
+            {
+                applied?.Invoke();
+            }
+        });
+    }
+
+    /// <summary>A code action's change made: resolved first when the server left it for later (a fix-all's over the scope
+    /// chosen), its edit applied, and a command it still carries, which Passenger cannot run, said in the status bar.
+    /// <paramref name="listed"/> follows the files from when the actions were asked for. Whether every file took it.</summary>
+    private async Task<bool> Apply(LspDocument lsp, CodeAction action, string? scope, string what, Asked? listed)
+    {
+        // An answer resolved now is for the text as it is now, and carried through what is typed while it comes.
+        using Asked? resolving = action.Edit is null || scope is not null ? WorkspaceEdits.Track(editors) : null;
+        CodeAction chosen;
+        try
+        {
+            chosen = await lsp.ResolveChosenAsync(action, scope);
+        }
+        catch (Exception error) when (IsServerFailure(error))
+        {
+            Message?.Invoke(this, $"{what} was not applied: the language server did not answer");
+            return false;
+        }
+        bool applied = chosen.Edit is { } edit && ApplyWorkspace(edit, resolving ?? listed, what);
+        if (chosen.Command is { } command)
+        {
+            Message?.Invoke(this, NotRun(what, command));
+        }
+        else if (chosen.Edit is null)
+        {
+            Message?.Invoke(this, $"{what} changed nothing");
+        }
+        return applied;
+    }
+
+    /// <summary>What the status bar says of a command left unrun: Roslyn's own are run, and it registers no other.</summary>
+    private static string NotRun(string what, LspCommand command) => $"{what} needs {command.Command}, which Passenger cannot run";
 
     /// <summary>One of Rider's refactorings by its own key, over the selection: the language server's action of that
     /// kind applied at once, and for Extract Method its new method's name then offered to rename, as Rider asks for it.</summary>
@@ -822,25 +895,17 @@ public sealed class CodeAssist
                 Message?.Invoke(this, $"{name} is not available here{(primary.IsEmpty && renameMethod ? ": select the code first" : string.Empty)}");
                 return;
             }
-            if (action.Edit is null && action.Data is not null)
+            // Choices the server nests under the action (Introduce Variable's occurrences) are offered as a list first.
+            await Carry(lsp, action, primary.Caret, name, asked, () =>
             {
-                action = await lsp.ResolveAsync(action) ?? action;
-            }
-            if (action.Edit is not { } edit)
-            {
-                return;
-            }
-            if (!ApplyWorkspace(edit, asked, name))
-            {
-                return;
-            }
-            Message?.Invoke(this, $"{name} done");
-            // The call that replaced the selection is where the new name is typed, in the file still shown.
-            if (made is not null && made.Document == Editor.Document && made.Call() is { } call)
-            {
-                Editor.Selections = SelectionSet.Single(call);
-                ShowRename();
-            }
+                Message?.Invoke(this, $"{name} done");
+                // The call that replaced the selection is where the new name is typed, in the file still shown.
+                if (made is not null && made.Document == Editor.Document && made.Call() is { } call)
+                {
+                    Editor.Selections = SelectionSet.Single(call);
+                    ShowRename();
+                }
+            });
         }
         catch (Exception error) when (IsServerFailure(error))
         {
@@ -1136,11 +1201,7 @@ public sealed class CodeAssist
         {
             return false;
         }
-        if (action.Edit is null && action.Data is not null)
-        {
-            action = await lsp.ResolveAsync(action) ?? action;
-        }
-        return action.Edit is { } edit && ApplyWorkspace(edit, asked, title);
+        return await Apply(lsp, action, null, title, asked);
     }
 
     /// <summary>A workspace edit applied, its open files' edits carried through what was typed since the request; one

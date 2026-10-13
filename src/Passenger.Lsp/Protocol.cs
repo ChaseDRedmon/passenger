@@ -103,7 +103,7 @@ public sealed class CompletionItem
     public List<LspTextEdit>? AdditionalTextEdits { get; init; }
     public List<string>? CommitCharacters { get; init; }
     public bool? Preselect { get; init; }
-    public JsonElement? Command { get; init; }
+    public LspCommand? Command { get; init; }
     public JsonElement? Data { get; init; }
 }
 
@@ -159,10 +159,17 @@ public sealed class CodeAction
     public bool? IsPreferred { get; init; }
     public JsonElement? Disabled { get; init; }
     public JsonElement? Edit { get; init; }
-    public JsonElement? Command { get; init; }
+    public LspCommand? Command { get; init; }
     public JsonElement? Data { get; init; }
     public List<Diagnostic>? Diagnostics { get; init; }
 }
+
+/// <summary>A command a completion item or a code action carries, run once it is chosen, after its edit. Roslyn's are
+/// the client's own to run (<see cref="ClientCommands"/>).</summary>
+public sealed record LspCommand(string Title, string Command, IReadOnlyList<JsonElement>? Arguments = null);
+
+/// <summary>Roslyn's codeAction/resolveFixAll: a fix-all's data, as its code action carried it, and the scope chosen.</summary>
+public sealed record FixAllCodeActionParams(string Title, JsonElement Data, string Scope);
 
 public sealed record FormattingOptions(int TabSize, bool InsertSpaces);
 
@@ -273,10 +280,6 @@ public sealed record LspInlayHint(LspPosition Position, string Label, int? Kind,
 public sealed record Registration(string Id, string Method, JsonElement? RegisterOptions);
 
 public sealed record RegistrationParams(IReadOnlyList<Registration> Registrations);
-
-public sealed record ApplyWorkspaceEditParams(string? Label, JsonElement Edit);
-
-public sealed record ApplyWorkspaceEditResult(bool Applied, string? FailureReason = null);
 
 /// <summary>The serializer settings every message goes through: camelCase names, nulls left out.</summary>
 public static class Json

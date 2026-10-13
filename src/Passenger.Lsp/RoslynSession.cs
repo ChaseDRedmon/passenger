@@ -172,6 +172,17 @@ public sealed class LspDocument : IDisposable
     public Task<CodeAction?> ResolveAsync(CodeAction action, CancellationToken cancel = default) =>
         Server.RequestAsync<CodeAction>("codeAction/resolve", action, cancel);
 
+    /// <summary>A chosen code action with its edit: as it came when it had one, resolved when the server left it for later,
+    /// and a fix-all's resolved for the scope chosen (Roslyn's codeAction/resolveFixAll).</summary>
+    public async Task<CodeAction> ResolveChosenAsync(CodeAction action, string? scope, CancellationToken cancel = default)
+    {
+        if (scope is not null)
+        {
+            return await Server.RequestAsync<CodeAction>("codeAction/resolveFixAll", ClientCommands.FixAll(action, scope), cancel) ?? action;
+        }
+        return action.Edit is null && action.Data is not null ? await ResolveAsync(action, cancel) ?? action : action;
+    }
+
     /// <summary>The document's outline: its types, and their members under them.</summary>
     public async Task<IReadOnlyList<DocumentSymbol>> OutlineAsync(CancellationToken cancel = default) =>
         await Server.RequestAsync<List<DocumentSymbol>>("textDocument/documentSymbol", new DocumentSymbolParams(Identifier), cancel) ?? [];

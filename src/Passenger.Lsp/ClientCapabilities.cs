@@ -5,7 +5,8 @@ namespace Passenger.Lsp;
 /// <summary>What Passenger tells a server it can do. Kept as the protocol's own JSON so it reads like
 /// the specification: pull diagnostics registered per source, semantic tokens over ranges and whole
 /// files, completion with resolve, code actions with resolve, rename with prepare, and UTF-16
-/// positions, which are what the editor's columns already are.</summary>
+/// positions, which are what the editor's columns already are. Not workspace/applyEdit: Roslyn never
+/// asks it, leaving the edits its commands make to the client (<see cref="ClientCommands"/>).</summary>
 public static class ClientCapabilities
 {
     public static readonly JsonElement Value = JsonDocument.Parse("""
@@ -13,7 +14,6 @@ public static class ClientCapabilities
       "general": { "positionEncodings": ["utf-16"] },
       "window": { "workDoneProgress": true },
       "workspace": {
-        "applyEdit": true,
         "configuration": true,
         "workspaceFolders": true,
         "workspaceEdit": { "documentChanges": true, "resourceOperations": ["create", "rename", "delete"] },
