@@ -40,6 +40,8 @@ public enum ExplorerAction
     ShowHistory,
     CompareWithRevision,
     CompareWithBranch,
+    FindInFiles,
+    ReplaceInFiles,
 }
 
 /// <summary>Files and folders dragged onto a row: moved into the folder it stands for, or copied with the platform's
@@ -159,8 +161,8 @@ public partial class ExplorerView : UserControl
     /// <summary>Rider's menu for a row: Build, Rebuild and Clean for the solution or the projects chosen (a solution
     /// folder's, every one under it), their unit tests, a project's packages, file and unloading, Add where things can go
     /// (a new or existing project, a solution folder or an existing item into the solution's folders; a file, a folder, a
-    /// type or a project's reference on disk), Edit (Cut, Copy and Paste, Rename, and Delete, which for what is the
-    /// solution's own is Remove), the path of what is on disk, Open In (the file manager, a terminal), Tools' Compare and
+    /// type or a project's reference on disk), Edit (Cut, Copy, Paste, Rename, Delete or for the solution's own Remove,
+    /// Find and Replace in Files), the path of what is on disk, Open In (the file manager, a terminal), Tools' Compare and
     /// Git's history. A project's Dependencies add a reference, and a project reference is removed.</summary>
     private ContextMenu? Menu(ExplorerNode node)
     {
@@ -253,7 +255,7 @@ public partial class ExplorerView : UserControl
             menu.Items.Add(Item("Remove...", ExplorerAction.Delete, DeleteKey));
             return menu;
         }
-        // Rider's Edit submenu: the clipboard's actions, Delete and Rename.
+        // Rider's Edit submenu: the clipboard's actions, Delete and Rename, then Find and Replace in Files on the row.
         MenuItem edit = new() { Header = "Edit" };
         if (node.IsMovable)
         {
@@ -282,8 +284,11 @@ public partial class ExplorerView : UserControl
         }
         if (edit.Items.Count > 0)
         {
-            menu.Items.Add(edit);
+            edit.Items.Add(new Separator());
         }
+        edit.Items.Add(Action("Find in Files...", ExplorerAction.FindInFiles, AppActions.FindInFiles));
+        edit.Items.Add(Action("Replace in Files...", ExplorerAction.ReplaceInFiles, AppActions.ReplaceInFiles));
+        menu.Items.Add(edit);
         // A solution folder is in no folder on disk, so it has no path to copy or show.
         if (!solutionFolder)
         {

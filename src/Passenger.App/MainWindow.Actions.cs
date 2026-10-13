@@ -54,6 +54,11 @@ public partial class MainWindow
 
     private string? NeedsFolder(ActionContext _) => folder is null ? NoFolder : null;
 
+    /// <summary>The scope of the rows chosen in the Explorer while it has the keys, as Rider's Find in Files takes the
+    /// Solution view's selection; null elsewhere, for the scope kept.</summary>
+    private Workspace.SearchScope? ExplorerScope(ActionContext context) =>
+        context.ToolWindow?.Id == "explorer" && Explorer.SelectedNodes is { Count: > 0 } rows ? ScopeOf(rows) : null;
+
     /// <summary>The window's own actions; each feature's partial or controller adds its own beside them.</summary>
     private void AddActions()
     {
@@ -72,8 +77,8 @@ public partial class MainWindow
         Add(A.Replace, "Replace", "IDE", _ => Editors.ShowFind(replace: true), NeedsFile, ("Edit/Find", 0, 1));
         Add(A.FindNext, "Find Next", "IDE", _ => Editors.FindBar.Next(), NeedsFile, ("Edit/Find", 0, 2));
         Add(A.FindPrevious, "Find Previous", "IDE", _ => Editors.FindBar.Previous(), NeedsFile, ("Edit/Find", 0, 3));
-        Add(A.FindInFiles, "Find in Files...", "IDE", _ => ShowFindInFiles(replace: false), NeedsFolder, ("Edit/Find", 1, 0));
-        Add(A.ReplaceInFiles, "Replace in Files...", "IDE", _ => ShowFindInFiles(replace: true), NeedsFolder, ("Edit/Find", 1, 1));
+        Add(A.FindInFiles, "Find in Files...", "IDE", c => ShowFindInFiles(replace: false, ExplorerScope(c)), NeedsFolder, ("Edit/Find", 1, 0));
+        Add(A.ReplaceInFiles, "Replace in Files...", "IDE", c => ShowFindInFiles(replace: true, ExplorerScope(c)), NeedsFolder, ("Edit/Find", 1, 1));
         Add(A.ExtendSelection, "Extend Selection", "Editor", _ => ExtendSelection(), NeedsFile, ("Edit", 2, 1));
         Add(A.ShrinkSelection, "Shrink Selection", "Editor", _ => ShrinkSelection(), NeedsFile, ("Edit", 2, 2));
 

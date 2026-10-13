@@ -1,21 +1,42 @@
+using Passenger.App.Explorer;
 using Passenger.App.Workspace;
 using Passenger.Core;
 using Passenger.Text;
 
 namespace Passenger.App;
 
-/// <summary>The window's Find in Files and Replace in Files, over the folder's index and the open files' own text.</summary>
+/// <summary>The window's Find in Files and Replace in Files, over the folder's index and the open files' own text, in
+/// the scope and under the file mask chosen last: the solution, a project, a directory or a named scope, as Rider's
+/// popup offers them. The scope is kept with the folder and the mask for every folder, as Rider keeps them.</summary>
 public partial class MainWindow
 {
+    private const string RecentlyViewedScope = "Recently Viewed Files";
+    private const string OpenFilesScope = "Open Files";
+    private const string CurrentFileScope = "Current File";
+
+    /// <summary>Find in Files' scope as the popup left it last, this folder's.</summary>
+    private FindScopeState findScope = new();
+
+    /// <summary>Find in Files' mask and whether a directory's subdirectories are searched, every folder's.</summary>
+    private FindSettingsState findSettings = new();
+
+    /// <summary>The rows of the Solution view Find in Files was opened on last, when they are a scope of their own (a
+    /// file, a solution folder, several rows), named as Rider names it.</summary>
+    private (string Name, IReadOnlyList<string> Files, IReadOnlyList<string> Folders)? chosenScope;
+
     /// <summary>Find in Files (Ctrl+Shift+F) or, with replace, Replace in Files (Ctrl+Shift+H), seeded with the
-    /// selection's word as Rider seeds it.</summary>
-    public Navigation.FindInFilesPopup? ShowFindInFiles(bool replace)
+    /// selection's word as Rider seeds it, in the scope given (from the Solution view), else the one chosen last.</summary>
+    public Navigation.FindInFilesPopup? ShowFindInFiles(bool replace, SearchScope? on = null)
     {
         if (folder is null)
         {
             return null;
         }
-        Navigation.FindInFilesPopup popup = new(SearchFiles, TextOf, replace, SelectedWord());
+        Navigation.FindChoices choices = new(on ?? KeptScope(), Projects, findScope.RecentDirectories, ScopeNames(), findSettings.RecentFileMasks);
+        Navigation.FindInFilesPopup popup = new(SearchFiles, TextOf, replace, SelectedWord(), choices);
+        popup.ScopeChanged += (_, scope) => KeepFindScope(scope, closing: false);
+        // However it closes (a match chosen, Escape, a click outside), as Rider keeps its scope when its popup closes.
+        popup.DetachedFromVisualTree += (_, _) => KeepFindScope(popup.Scope, closing: true);
         popup.Done += (_, match) =>
         {
             ClosePopup();
@@ -42,6 +63,132 @@ public partial class MainWindow
         };
         ShowPopup(popup);
         return popup;
+    }
+
+    /// <summary>The scope Find in Files takes on rows of the Solution view, as Rider's: the solution's, a project's, a
+    /// folder's as a directory, and anything else (a file, a solution folder, several rows) a scope of its own named as
+    /// Rider names it ("Program.cs", "Program.cs and 2 more item(s)"); the rest as kept. Null for rows with no files
+    /// (a project's dependencies), which leave the scope kept.</summary>
+    public SearchScope? ScopeOf(IReadOnlyList<ExplorerNode> rows)
+    {
+        rows = [.. rows.Where(r => r.Path is not null && r.Kind is NodeKind.File or NodeKind.Folder or NodeKind.Project or NodeKind.Solution
+            || r.Kind == NodeKind.SolutionFolder)];
+        SearchScope kept = KeptScope();
+        switch (rows)
+        {
+            case []:
+                return null;
+            case [{ Kind: NodeKind.Solution }]:
+                return kept with { Kind = SearchScopeKind.Solution };
+            case [{ Kind: NodeKind.Project, Path: { } project }]:
+                return kept with { Kind = SearchScopeKind.Project, Project = project };
+            case [{ Kind: NodeKind.Folder, Path: { } directory }]:
+                return kept with { Kind = SearchScopeKind.Directory, Directory = directory };
+        }
+        List<string> files = [];
+        List<string> folders = [];
+        foreach (ExplorerNode row in rows)
+        {
+            switch (row)
+            {
+                case { Kind: NodeKind.File, Path: { } file }:
+                    files.Add(file);
+                    break;
+                case { Kind: NodeKind.Folder, Path: { } directory }:
+                    folders.Add(directory);
+                    break;
+                case { Kind: NodeKind.Project, Path: { } project }:
+                    folders.Add(Path.GetDirectoryName(project)!);
+                    break;
+                case { Kind: NodeKind.SolutionFolder }:
+                    folders.AddRange(Explorer.Tree.ProjectsOf(row).Select(p => Path.GetDirectoryName(p)!));
+                    break;
+                case { Kind: NodeKind.Solution }:
+                    return kept with { Kind = SearchScopeKind.Solution };
+            }
+        }
+        string name = rows.Count == 1 ? rows[0].Name : $"{rows[0].Name} and {rows.Count - 1} more item(s)";
+        chosenScope = (name, files, folders);
+        return kept with { Kind = SearchScopeKind.Scope, Named = name };
+    }
+
+    /// <summary>The scope kept, as Rider opens its popup on it: the project and directory chosen last when that is the
+    /// scope, else the active file's, ready for a switch to them.</summary>
+    private SearchScope KeptScope()
+    {
+        string? active = Editors.Active?.Path;
+        string? project = findScope.Scope == SearchScopeKind.Project && Projects.Any(p => p.Path == findScope.Project) ? findScope.Project
+            : (active is null ? null : ProjectOf(active)?.Path) ?? findScope.Project;
+        string? directory = findScope.Scope == SearchScopeKind.Directory && findScope.Directory is not null ? findScope.Directory
+            : (active is null ? null : Path.GetDirectoryName(active)) ?? findScope.Directory ?? folder;
+        string named = findScope.Named is { } kept && ScopeNames().Contains(kept) ? kept : OpenFilesScope;
+        return new SearchScope(findScope.Scope, project, directory, findSettings.Recursive, named, findSettings.FileMask);
+    }
+
+    /// <summary>The named scopes, in Rider's order, the Solution view's rows Find in Files was opened on last at the end.</summary>
+    private IReadOnlyList<string> ScopeNames() =>
+        [RecentlyViewedScope, OpenFilesScope, CurrentFileScope, .. chosenScope is { } chosen ? [chosen.Name] : Array.Empty<string>()];
+
+    /// <summary>Keeps what the popup shows (with the folder, and the mask for every folder, while the window keeps
+    /// state); as it closes, its directory and mask go to the top of those used lately.</summary>
+    private void KeepFindScope(SearchScope scope, bool closing)
+    {
+        string? directory = string.IsNullOrWhiteSpace(scope.Directory) ? null : scope.Directory.Trim();
+        findScope = findScope with
+        {
+            Scope = scope.Kind,
+            Project = scope.Project ?? findScope.Project,
+            Directory = directory ?? findScope.Directory,
+            Named = scope.Named ?? findScope.Named,
+        };
+        findSettings = findSettings with { FileMask = string.IsNullOrWhiteSpace(scope.Mask) ? null : scope.Mask.Trim(), Recursive = scope.Recursive };
+        if (closing && scope.Kind == SearchScopeKind.Directory && directory is not null)
+        {
+            findScope = findScope with { RecentDirectories = [.. findScope.RecentDirectories.Where(d => d != directory).Prepend(directory).Take(FindScopeState.RecentLimit)] };
+        }
+        if (closing && findSettings.FileMask is { } mask)
+        {
+            findSettings = findSettings with { RecentFileMasks = [.. findSettings.RecentFileMasks.Where(m => m != mask).Prepend(mask).Take(FindSettingsState.RecentLimit)] };
+        }
+        if (keepsWorkspace)
+        {
+            folderState?.Find.Set(findScope);
+            state?.Find.Set(findSettings);
+        }
+    }
+
+    /// <summary>The files a scope searches: the project's own (a project nested in its folder has its own), the
+    /// directory's, a named scope's, or every file of the folder; each passing the mask.</summary>
+    private SearchPlace Place(SearchScope scope)
+    {
+        FileMask? mask = FileMask.Parse(scope.Mask);
+        SearchPlace Named(IReadOnlyList<string> files) => new(false, [], true, [], files, mask);
+        switch (scope.Kind)
+        {
+            case SearchScopeKind.Project:
+                if (Projects.FirstOrDefault(p => p.Path == scope.Project) is not { } project)
+                {
+                    return Named([]);
+                }
+                string[] nested = [.. Projects.Where(p => PathNames.IsUnder(p.Folder, project.Folder)).Select(p => p.Folder)];
+                return new SearchPlace(false, [project.Folder], true, nested, [], mask);
+            case SearchScopeKind.Directory when !string.IsNullOrWhiteSpace(scope.Directory):
+                string directory = PathNames.Canonical(Path.IsPathRooted(scope.Directory) ? scope.Directory : Path.Combine(folder!, scope.Directory));
+                return new SearchPlace(false, [directory], scope.Recursive, [], [], mask);
+            case SearchScopeKind.Directory:
+                return Named([]);
+            case SearchScopeKind.Scope:
+                return scope.Named switch
+                {
+                    RecentlyViewedScope => Named([.. recent]),
+                    OpenFilesScope => Named([.. Editors.Documents.Select(d => d.Path)]),
+                    CurrentFileScope => Named(Editors.Active is { } shown ? [shown.Path] : []),
+                    { } named when chosenScope is { } chosen && chosen.Name == named => new SearchPlace(false, chosen.Folders, true, [], chosen.Files, mask),
+                    _ => Named([]),
+                };
+            default:
+                return SearchPlace.Everything(mask);
+        }
     }
 
     /// <summary>Replaces a query's matches in these files: an open one as one undoable step changing only its matches,
@@ -102,10 +249,10 @@ public partial class MainWindow
         return popup;
     }
 
-    private Task<IReadOnlyList<SearchMatch>> SearchFiles(SearchQuery query, CancellationToken cancellation)
+    private Task<IReadOnlyList<SearchMatch>> SearchFiles(SearchQuery query, SearchScope scope, CancellationToken cancellation)
     {
         Dictionary<string, TextSnapshot> open = Editors.Documents.ToDictionary(d => d.Path, d => d.Text.Snapshot);
-        return FileSearch.FindAsync(index.Root ?? folder!, index.Files, query, open, cancellation);
+        return FileSearch.FindAsync(index.Root ?? folder!, index.Files, Place(scope), query, open, cancellation);
     }
 
     /// <summary>A file's text for the preview: the editor's when it is open.</summary>

@@ -12,9 +12,9 @@ public sealed record SearchMatch(string Path, int Line, int Column, int Length, 
 }
 
 /// <summary>Find in Files over the open folder's files, matching as the editor's Find bar does (the same query and
-/// options): every text file the index has (build output and version control left out), an open file as the editor
-/// has it, unsaved changes and all; binary and very large files passed over. Replace All changes an open file as an
-/// edit (so it undoes) and writes a closed one in its own encoding.</summary>
+/// options): every text file the index has (build output and version control left out), or those a scope and a file
+/// mask leave, an open file as the editor has it, unsaved changes and all; binary and very large files passed over.
+/// Replace All changes an open file as an edit (so it undoes) and writes a closed one in its own encoding.</summary>
 public static class FileSearch
 {
     /// <summary>The most matches listed, as Rider stops at a thousand and says so.</summary>
@@ -25,8 +25,9 @@ public static class FileSearch
     /// <summary>What is wrong with a query (a regex that does not read), or null.</summary>
     public static string? Problem(SearchQuery query) => query.IsEmpty ? null : TextSearch.FindAll(TextSnapshot.Empty, query).Problem;
 
-    /// <summary>The matches, file by file in the index's order, at most <see cref="MostMatches"/>.</summary>
-    public static Task<IReadOnlyList<SearchMatch>> FindAsync(string root, IReadOnlyList<string> files, SearchQuery query,
+    /// <summary>The matches in the files of a place (every file the index has, or those a scope and a mask leave), file
+    /// by file in the index's order, at most <see cref="MostMatches"/>.</summary>
+    public static Task<IReadOnlyList<SearchMatch>> FindAsync(string root, IReadOnlyList<string> files, SearchPlace place, SearchQuery query,
         IReadOnlyDictionary<string, TextSnapshot> open, CancellationToken cancellation) => BackgroundWork.Run(() =>
     {
         List<SearchMatch> found = [];
@@ -34,10 +35,9 @@ public static class FileSearch
         {
             return (IReadOnlyList<SearchMatch>)found;
         }
-        foreach (string relative in files)
+        foreach (string path in place.Paths(root, files))
         {
             cancellation.ThrowIfCancellationRequested();
-            string path = PathNames.Canonical(Path.Combine(root, relative));
             TextSnapshot? text = open.TryGetValue(path, out TextSnapshot? snapshot) ? snapshot : Read(path) is { } read ? TextSnapshot.From(read) : null;
             if (text is null)
             {

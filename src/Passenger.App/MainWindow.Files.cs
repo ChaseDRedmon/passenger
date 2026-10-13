@@ -62,6 +62,9 @@ public partial class MainWindow
             case ExplorerAction.RunTests or ExplorerAction.DebugTests:
                 RunProjectTests([.. Explorer.SelectedNodes.Append(node).Distinct().SelectMany(Explorer.Tree.ProjectsOf).Distinct()], node.Name, action == ExplorerAction.DebugTests);
                 break;
+            case ExplorerAction.FindInFiles or ExplorerAction.ReplaceInFiles:
+                ShowFindInFiles(action == ExplorerAction.ReplaceInFiles, ScopeOf(Explorer.SelectedNodes.Contains(node) ? Explorer.SelectedNodes : [node]));
+                break;
             case ExplorerAction.NewFile when into is not null:
                 AskName("New File", string.Empty, name => CreateFile(into, name, string.Empty));
                 break;

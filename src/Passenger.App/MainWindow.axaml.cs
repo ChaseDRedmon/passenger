@@ -341,8 +341,8 @@ public partial class MainWindow : Window
     }
 
     /// <summary>What the open folder had goes, kept with it in the store first: its editors close, each saved (false, the
-    /// rest left open, when one cannot be), and its recent files, breakpoints, bookmarks and the places Back goes to,
-    /// which are a folder's own as Rider keeps them with the project.</summary>
+    /// rest left open, when one cannot be), and its recent files, breakpoints, bookmarks, the places Back goes to and
+    /// Find in Files' scope, which are a folder's own as Rider keeps them with the project.</summary>
     private bool LeaveFolder()
     {
         KeepWorkspace();
@@ -355,6 +355,8 @@ public partial class MainWindow : Window
         debug.Breakpoints.Clear();
         bookmarks.Clear();
         history.Clear();
+        findScope = new FindScopeState();
+        chosenScope = null;
         return true;
     }
 
@@ -709,6 +711,7 @@ public partial class MainWindow : Window
         Dock.LayoutChanged += (_, _) => KeepDock();
         debug.Breakpoints.Changed += (_, _) => folderState?.Breakpoints.Set(debug.Breakpoints.Capture());
         bookmarks.Changed += (_, _) => folderState?.Bookmarks.Set(bookmarks.Capture());
+        findSettings = store.Find.Value;
         keepsWorkspace = true;
         RestoreWorkspace();
         ShowRecent();
@@ -775,6 +778,7 @@ public partial class MainWindow : Window
         // Before the folder's documents are this window's, so what restoring them changes is not written back.
         debug.Breakpoints.Restore(opening.Breakpoints.Value);
         bookmarks.Restore(opening.Bookmarks.Value);
+        findScope = opening.Find.Value;
         folderState = opening;
         WorkspaceState kept = opening.Workspace.Value;
         if (kept.UnloadedProjects.Count > 0)

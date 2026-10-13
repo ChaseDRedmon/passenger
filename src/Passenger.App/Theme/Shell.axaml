@@ -294,6 +294,22 @@
         <Setter Property="Foreground" Value="{DynamicResource Passenger.AccentText}" />
     </Style>
 
+    <!-- A drop-down as tall as a search field beside it (Find in Files' scope and mask); an editable one's text centred
+         in it, where Fluent's taller text box would put it at the top. -->
+    <Style Selector="ComboBox.compact">
+        <Setter Property="MinHeight" Value="28" />
+        <Setter Property="Height" Value="28" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Padding" Value="8,0,4,0" />
+        <Setter Property="CornerRadius" Value="5" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="ComboBox.compact /template/ TextBox#PART_EditableTextBox">
+        <Setter Property="MinHeight" Value="0" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+
     <!-- A popup over the window (Go to File, Go to Line): the chrome's colour, a soft shadow. -->
     <Style Selector="Border.popup">
         <Setter Property="Background" Value="{DynamicResource Passenger.Chrome}" />

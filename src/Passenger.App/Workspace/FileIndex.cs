@@ -70,7 +70,9 @@ public sealed class FileIndex
             .ToList();
     }
 
-    private static List<string> Walk(string root)
+    /// <summary>The files under a folder, by their paths from it, left out and limited as the index's are: what Find in
+    /// Files reads of a directory outside the open folder.</summary>
+    internal static List<string> Walk(string root)
     {
         List<string> found = [];
         Stack<DirectoryInfo> folders = new([new DirectoryInfo(root)]);

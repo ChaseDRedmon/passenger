@@ -13,9 +13,9 @@ using Passenger.App.Workspace;
 namespace Passenger.App.State;
 
 /// <summary>The IDE's own state, in one folder: the app's documents at its top (the settings, the layout a folder
-/// without its own opens on, the recent solutions, the release last announced), and each folder's under
-/// <c>workspaces/&lt;name&gt;-&lt;hash&gt;/</c>, as Rider keeps a project's workspace.xml. Only the window a person uses
-/// keeps one; a headless IDE starts on the defaults.</summary>
+/// without its own opens on, the recent solutions, the release last announced, Find in Files' mask), and each
+/// folder's under <c>workspaces/&lt;name&gt;-&lt;hash&gt;/</c>, as Rider keeps a project's workspace.xml. Only the window
+/// a person uses keeps one; a headless IDE starts on the defaults.</summary>
 public sealed class StateStore
 {
     private readonly Dictionary<string, ProjectState> projects = new(StringComparer.Ordinal);
@@ -27,6 +27,7 @@ public sealed class StateStore
         Layout = new(Path.Combine(root, "layout.json"));
         Recent = new(Path.Combine(root, "recentSolutions.json"));
         Updates = new(Path.Combine(root, "updates.json"));
+        Find = new(Path.Combine(root, "find.json"));
     }
 
     /// <summary>The folder: PASSENGER_SETTINGS names it, else the user's local application data.</summary>
@@ -47,6 +48,10 @@ public sealed class StateStore
     /// <summary>The newest release the window has said is out, which it says once.</summary>
     public StateDocument<UpdatesState> Updates { get; }
 
+    /// <summary>Find in Files' file mask, the masks used lately and whether directories are searched recursively, which
+    /// every folder shares as Rider's find settings are the application's.</summary>
+    public StateDocument<FindSettingsState> Find { get; }
+
     /// <summary>A folder's own documents.</summary>
     public ProjectState Project(string folder)
     {
@@ -65,6 +70,7 @@ public sealed class StateStore
         Layout.Flush();
         Recent.Flush();
         Updates.Flush();
+        Find.Flush();
         foreach (ProjectState project in projects.Values)
         {
             project.Flush();
@@ -77,7 +83,8 @@ public sealed class StateStore
     }
 }
 
-/// <summary>A folder's documents: what its window had open, its layout, breakpoints, bookmarks and run configurations.</summary>
+/// <summary>A folder's documents: what its window had open, its layout, breakpoints, bookmarks, run configurations and
+/// Find in Files' scope.</summary>
 public sealed class ProjectState
 {
     internal ProjectState(string root, string folder)
@@ -89,6 +96,7 @@ public sealed class ProjectState
         Breakpoints = new(Path.Combine(Folder, "breakpoints.json"));
         Bookmarks = new(Path.Combine(Folder, "bookmarks.json"));
         RunConfigurations = new(Path.Combine(Folder, "runConfigurations.json"));
+        Find = new(Path.Combine(Folder, "find.json"));
     }
 
     /// <summary>The folder the documents are in.</summary>
@@ -114,6 +122,9 @@ public sealed class ProjectState
     /// <summary>The person's own run configurations and the one chosen.</summary>
     public StateDocument<RunConfigurationsState> RunConfigurations { get; }
 
+    /// <summary>Find in Files' scope: the one chosen last, and the project, directory and named scope it showed.</summary>
+    public StateDocument<FindScopeState> Find { get; }
+
     public void Flush()
     {
         Workspace.Flush();
@@ -121,5 +132,6 @@ public sealed class ProjectState
         Breakpoints.Flush();
         Bookmarks.Flush();
         RunConfigurations.Flush();
+        Find.Flush();
     }
 }
