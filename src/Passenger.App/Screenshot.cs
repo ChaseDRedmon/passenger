@@ -33,8 +33,14 @@ public static class Screenshot
         window.SetRenderScaling(options.Scale);
         bool settled = Prepare(window, launch, options.Steps);
 
-        // A diff or a dialog the steps opened is what the person would be looking at.
-        WriteableBitmap frame = window.Frontmost.CaptureRenderedFrame()
+        // A diff or a dialog the steps opened is what the person would be looking at, drawn at the window's scale.
+        Avalonia.Controls.Window front = window.Frontmost;
+        if (front != window)
+        {
+            front.SetRenderScaling(options.Scale);
+            settled &= Settle();
+        }
+        WriteableBitmap frame = front.CaptureRenderedFrame()
             ?? throw new InvalidOperationException("The headless window rendered no frame.");
         using (frame)
         {

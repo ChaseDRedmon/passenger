@@ -212,8 +212,8 @@ fi
 
 # The image as a person gets it: compressed and whole, mounted read-only, Passenger.app beside the Applications link
 # under Passenger's icon, the app's signature whole and without get-task-allow, its version and the volume's the
-# package's, Roslyn's server and the debugger's adapter in it, and every Mach-O file built for the image's processor (a
-# file built only for the other would make macOS run the app through Rosetta, or not at all).
+# package's, Roslyn's server, the debugger's adapter, the licence and the notices in it, and every Mach-O file built for
+# the image's processor (a file built only for the other would make macOS run the app through Rosetta, or not at all).
 hdiutil verify -quiet "$image"
 format=$(hdiutil imageinfo "$image" 2>/dev/null | sed -n 's/^Format: //p')
 [ "$format" = ULMO ] || fail "the image's format is '$format', not ULMO"
@@ -233,7 +233,7 @@ said=$(plutil -extract CFBundleShortVersionString raw -o - "$plist")
 [ "$said" = "$version" ] || fail "the app's Info.plist says version $said, not $version"
 said=$(plutil -extract CFBundleVersion raw -o - "$plist")
 [ "$said" = "$build" ] || fail "the app's Info.plist says build $said, not $build"
-for part in roslyn/Microsoft.CodeAnalysis.LanguageServer.dll debugger/Passenger.DebugAdapter.dll; do
+for part in roslyn/Microsoft.CodeAnalysis.LanguageServer.dll debugger/Passenger.DebugAdapter.dll LICENSE.txt THIRD-PARTY-NOTICES.txt; do
     [ -f "$shipped/Contents/MacOS/$part" ] || fail "the app has no $part"
 done
 find "$shipped/Contents/MacOS" -type f -exec file -F '|' {} + | grep '| *Mach-O' | cut -d'|' -f1 > "$work/mach-o"

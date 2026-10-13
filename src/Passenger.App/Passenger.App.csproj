@@ -54,6 +54,71 @@
     </ItemGroup>
   </Target>
 
+  <!-- LICENSE.txt and THIRD-PARTY-NOTICES.txt beside the app in every build and publish (and in every referencing project's
+       output, as debugger/ and roslyn/ come), the notices written by tools/Passenger.Notices from the packages themselves:
+       those this build copies, the runtime a self-contained app carries, the debugger's and Roslyn's server's, each with
+       its copyright, licence text and own notices, then THIRD_PARTY_NOTICES.md's copied source and assets. A package whose
+       licence it cannot write fails the build, so the notices cannot fall behind what the app carries. -->
+  <ItemGroup>
+    <ProjectReference Include="../../tools/Passenger.Notices/Passenger.Notices.csproj" ReferenceOutputAssembly="false" Private="false"
+                      GlobalPropertiesToRemove="RuntimeIdentifier;SelfContained;PublishReadyToRun" />
+    <None Include="../../LICENSE" Link="LICENSE.txt" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+
+  <Target Name="NoticeInputs" DependsOnTargets="ResolvePackageAssets;ResolveRuntimePackAssets;IncludeDebugAdapter">
+    <MSBuild Projects="../../tools/Passenger.Notices/Passenger.Notices.csproj" Targets="GetTargetPath"
+             RemoveProperties="RuntimeIdentifier;SelfContained;PublishReadyToRun" BuildInParallel="$(BuildInParallel)">
+      <Output TaskParameter="TargetOutputs" ItemName="NoticesTool" />
+    </MSBuild>
+    <MSBuild Projects="../Passenger.Lsp/Passenger.Lsp.csproj" Targets="GetRoslynServer" BuildInParallel="$(BuildInParallel)">
+      <Output TaskParameter="TargetOutputs" ItemName="NoticesServer" />
+    </MSBuild>
+    <PropertyGroup>
+      <NoticesFile>$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(IntermediateOutputPath)', 'THIRD-PARTY-NOTICES.txt'))</NoticesFile>
+      <NoticesArguments>$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(IntermediateOutputPath)', 'notices.txt'))</NoticesArguments>
+      <NoticesHost>$(DOTNET_HOST_PATH)</NoticesHost>
+      <NoticesHost Condition="'$(NoticesHost)' == ''">dotnet</NoticesHost>
+      <NoticesRepository>$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)', '..', '..'))</NoticesRepository>
+    </PropertyGroup>
+    <ItemGroup>
+      <NoticePackage Include="@(RuntimeCopyLocalItems->'%(NuGetPackageId)/%(NuGetPackageVersion)');@(NativeCopyLocalItems->'%(NuGetPackageId)/%(NuGetPackageVersion)');@(ResourceCopyLocalItems->'%(NuGetPackageId)/%(NuGetPackageVersion)');@(RuntimeTargetsCopyLocalItems->'%(NuGetPackageId)/%(NuGetPackageVersion)')" />
+      <!-- The runtime a self-contained app carries, from its runtime pack. -->
+      <NoticePackage Include="@(RuntimePackAsset->'%(NuGetPackageId)/%(NuGetPackageVersion)')" Condition="'$(SelfContained)' == 'true'" />
+      <NoticeDebuggerDeps Include="$(DebugAdapterFolder)*.deps.json" />
+      <NoticesServerPackage Include="@(NoticesServer->WithMetadataValue('Kind', 'package'))" />
+      <NoticeServerDeps Include="%(NoticesServerPackage.Folder)**/*.deps.json" />
+      <NoticeText Include="$(NoticesRepository)THIRD_PARTY_NOTICES.md;$(NoticesRepository)LICENSE;$(NoticesRepository)tools/Passenger.Notices/Licenses/*.txt;$(NoticesRepository)src/Passenger.Editor/Fonts/OFL.txt" />
+    </ItemGroup>
+    <RemoveDuplicates Inputs="@(NoticePackage)">
+      <Output TaskParameter="Filtered" ItemName="NoticePackageOnce" />
+    </RemoveDuplicates>
+    <ItemGroup>
+      <NoticeLine Include="out=$(NoticesFile)" />
+      <NoticeLine Include="license=$(NoticesRepository)LICENSE" />
+      <NoticeLine Include="notices=$(NoticesRepository)THIRD_PARTY_NOTICES.md" />
+      <NoticeLine Include="licenses=$(NoticesRepository)tools/Passenger.Notices/Licenses" />
+      <NoticeLine Include="packages=$(NuGetPackageRoot)" />
+      <NoticeLine Include="@(NoticePackageOnce->'package=%(Identity)')" />
+      <NoticeLine Include="@(NoticeDebuggerDeps->'debugger=%(FullPath)')" />
+      <NoticeLine Include="@(NoticesServerPackage->'server=%(Identity)')" />
+      <NoticeLine Include="@(NoticesServerPackage->'serverFolder=%(Folder)')" />
+      <NoticeLine Include="@(NoticesServer->WithMetadataValue('Kind', 'leftOut')->'serverLeftOut=%(Identity)')" />
+      <NoticeLine Include="text=JetBrains Mono, the editor's typeface, and Inter, the window's (in Avalonia.Fonts.Inter, Copyright (c) 2016 The Inter Project Authors, https://github.com/rsms/inter), are under the SIL Open Font License 1.1, as JetBrains Mono gives it|$(NoticesRepository)src/Passenger.Editor/Fonts/OFL.txt" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(NoticesArguments)" Lines="@(NoticeLine)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+  </Target>
+
+  <Target Name="WriteNotices" DependsOnTargets="NoticeInputs"
+          Inputs="$(NoticesArguments);@(NoticesTool);@(NoticeText);@(NoticeDebuggerDeps);@(NoticeServerDeps)" Outputs="$(NoticesFile)">
+    <Exec Command="&quot;$(NoticesHost)&quot; &quot;@(NoticesTool)&quot; &quot;$(NoticesArguments)&quot;" />
+  </Target>
+
+  <Target Name="IncludeNotices" BeforeTargets="AssignTargetPaths" DependsOnTargets="WriteNotices">
+    <ItemGroup>
+      <None Include="$(NoticesFile)" Link="THIRD-PARTY-NOTICES.txt" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    </ItemGroup>
+  </Target>
+
   <!-- The debug adapter's output becomes this project's output items under debugger/, so every project that
        references this one (the tests) gets it beside its own binaries, as the roslyn/ server comes. -->
   <Target Name="IncludeDebugAdapter" BeforeTargets="AssignTargetPaths">

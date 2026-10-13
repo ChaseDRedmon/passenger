@@ -166,8 +166,8 @@ public sealed class EditorGroup : DockPanel
         Editor.SetChangeMarks(document.ChangeMarks);
         Editor.SetGutterAnnotations(document.GutterAnnotations);
         Editor.SetBookmarks(document.Bookmarks);
-        Editor.IsReadOnly = document.IsDecompiled;
-        banner.IsVisible = document.IsDecompiled;
+        Editor.IsReadOnly = document.IsReadOnly;
+        banner.IsVisible = document.IsReadOnly;
         bannerText.Text = document.Origin;
         Find.Attach(Editor);
         Editor.IsVisible = true;

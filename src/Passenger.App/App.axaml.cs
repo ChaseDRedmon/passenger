@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Reflection;
 using System.Runtime.InteropServices;
 using Avalonia;
 using Avalonia.Controls;
@@ -28,18 +27,14 @@ public partial class App : Application
             window.Opened += (_, _) =>
             {
                 // The first of a start's phases in the log, as Rider's idea.log begins with its build and runtime.
-                string version = typeof(App).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "?";
-                IdeErrors.Write($"Passenger {version} on {RuntimeInformation.OSDescription} ({RuntimeInformation.FrameworkDescription}, "
-                    + $"{RuntimeInformation.ProcessArchitecture}): window shown {Stopwatch.GetElapsedTime(Program.StartedAt).TotalSeconds:0.00} s after launch");
+                IdeErrors.Write($"Passenger {Product.Version} ({Product.Commit ?? "no commit"}) on {RuntimeInformation.OSDescription} "
+                    + $"({Product.Runtime}): window shown {Stopwatch.GetElapsedTime(Program.StartedAt).TotalSeconds:0.00} s after launch");
                 window.Start(Program.Options);
             };
             desktop.MainWindow = window;
             if (OperatingSystem.IsMacOS())
             {
-                // The application menu's own items, as Rider's: Settings (Cmd+,) beside About and Quit.
-                NativeMenuItem settings = new("Settings...") { Gesture = new Avalonia.Input.KeyGesture(Avalonia.Input.Key.OemComma, Avalonia.Input.KeyModifiers.Meta) };
-                settings.Click += (_, _) => window.Perform(AppActions.ShowSettings);
-                NativeMenu.SetMenu(this, new NativeMenu { Items = { settings } });
+                NativeMenu.SetMenu(this, window.ApplicationMenu());
             }
         }
         base.OnFrameworkInitializationCompleted();

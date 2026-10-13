@@ -119,6 +119,15 @@ Packages the build or the tests use that no app carries.
 | `Microsoft.Bcl.AsyncInterfaces`, `Microsoft.Win32.Registry` | the test platform's | MIT | © Microsoft Corporation. All rights reserved. |
 | `vpk` | Velopack's packer, a .NET tool at the version `dotnet-tools.json` pins, which builds the Windows installer (`tools/package-win.sh`). It carries others' programs under their own terms for what Passenger's installer does not use or carry: Microsoft's signtool and Azure Artifact Signing client, which sign it only when signing is asked for (the Windows SDK's and Microsoft's terms), WiX (MS-RL) for MSI packages, and zstd (BSD-3-Clause or GPL-2.0) | MIT | Copyright © Velopack Ltd. All rights reserved. |
 
+## Licence texts
+
+`tools/Passenger.Notices/Licenses/` holds the texts of the licences packages name by SPDX identifier (`MIT.txt`,
+`Apache-2.0.txt`), from the SPDX License List 3.29.0 (https://github.com/spdx/license-list-data), unchanged; its README
+says where each came from. The app's notices, `THIRD-PARTY-NOTICES.txt` beside it, are written from them, from the
+packages themselves and from this file: Roslyn's server's table above, and everything below.
+
+<!-- The app's notices (THIRD-PARTY-NOTICES.txt) carry everything below this line as it is. -->
+
 ## SharpDbg and ICorDebugSharp
 
 Passenger's debugger began as a copy of two MIT-licensed projects by Matthew Parker (MattParkerDev), and is

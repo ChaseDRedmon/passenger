@@ -86,6 +86,7 @@ public partial class MainWindow : Window
         AddAutosave();
         AddConflicts();
         AddErrors();
+        AddAbout();
         AddAgents();
         AddShutdown();
         Explorer.FileOpened += (_, path) => OpenFile(path);

@@ -184,8 +184,13 @@ public sealed class OpenDocument : Observable
     /// own, and nothing typed there would reach the library.</summary>
     public bool IsDecompiled => Path.Contains($"{System.IO.Path.DirectorySeparatorChar}MetadataAsSource{System.IO.Path.DirectorySeparatorChar}", StringComparison.Ordinal);
 
-    /// <summary>What the bar over a decompiled file says it came from.</summary>
-    public string Origin => Path.Contains("SourceLink", StringComparison.OrdinalIgnoreCase) || Path.Contains("Embedded", StringComparison.OrdinalIgnoreCase)
+    /// <summary>Whether the editor shows it read-only, under a bar that says why: decompiled, or the licence or notices the
+    /// app carries.</summary>
+    public bool IsReadOnly => IsDecompiled || Product.Carries(Path);
+
+    /// <summary>What the bar over a read-only file says it came from.</summary>
+    public string Origin => Product.Carries(Path) ? "Passenger's own file, as the app carries it, read-only"
+        : Path.Contains("SourceLink", StringComparison.OrdinalIgnoreCase) || Path.Contains("Embedded", StringComparison.OrdinalIgnoreCase)
         ? "Source from the library's Source Link or PDB, read-only"
         : "Decompiled code: the language server made this from the assembly, so it is read-only";
     public TextDocument Text { get; }

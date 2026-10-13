@@ -29,9 +29,8 @@
     <PackageDownload Include="roslyn-language-server.$(RoslynServerRid)" Version="[$(RoslynServerVersion)]" />
   </ItemGroup>
 
-  <!-- The server's files become this project's output items, so every project that references this
-       one (the app, the tests) gets them beside its own binaries, with the package's third-party notices. -->
-  <Target Name="IncludeRoslynServer" BeforeTargets="AssignTargetPaths">
+  <!-- The server's package and the folder in it the server runs from. -->
+  <Target Name="FindRoslynServer">
     <PropertyGroup>
       <RoslynServerPackage>$([MSBuild]::EnsureTrailingSlash('$(NuGetPackageRoot)'))roslyn-language-server.$(RoslynServerRid.ToLowerInvariant())/$(RoslynServerVersion.ToLowerInvariant())/</RoslynServerPackage>
     </PropertyGroup>
@@ -39,12 +38,9 @@
     <ItemGroup>
       <!-- tools/<the .NET it is built for>/<rid>/, found, so a server built for a newer .NET still is. -->
       <RoslynServerEntry Include="$(RoslynServerPackage)tools/*/$(RoslynServerRid)/Microsoft.CodeAnalysis.LanguageServer.dll" />
-      <RoslynServerNotices Include="$(RoslynServerPackage)ThirdPartyNotices.*" />
     </ItemGroup>
     <Error Condition="'@(RoslynServerEntry->Count())' != '1'"
            Text="roslyn-language-server.$(RoslynServerRid) $(RoslynServerVersion) does not hold exactly one tools/*/$(RoslynServerRid)/Microsoft.CodeAnalysis.LanguageServer.dll (it holds '@(RoslynServerEntry)'): the package's layout has changed." />
-    <Error Condition="'@(RoslynServerNotices)' == ''"
-           Text="roslyn-language-server.$(RoslynServerRid) $(RoslynServerVersion) has no ThirdPartyNotices file at its root, which Passenger carries beside the server." />
     <PropertyGroup>
       <RoslynServerFolder>@(RoslynServerEntry->'%(RootDir)%(Directory)')</RoslynServerFolder>
     </PropertyGroup>
@@ -53,6 +49,27 @@
            client, its debugger's and RPC contracts, and its remote settings client (THIRD_PARTY_NOTICES.md says how that
            was found, and why Telemetry and Utilities.Internal stay). Each is left out with its satellite resources. -->
       <RoslynServerLeftOut Include="Microsoft.ServiceHub.Client;Microsoft.VisualStudio.Debugger.Contracts;Microsoft.VisualStudio.RemoteControl;Microsoft.VisualStudio.RpcContracts" />
+    </ItemGroup>
+  </Target>
+
+  <!-- For the app's notices of what it carries: the server's package folder (Kind package, with the folder it runs from
+       as Folder) and the packages whose assemblies are left out of roslyn/ (Kind leftOut). -->
+  <Target Name="GetRoslynServer" DependsOnTargets="FindRoslynServer" Returns="@(RoslynServerForNotices)">
+    <ItemGroup>
+      <RoslynServerForNotices Include="$(RoslynServerPackage)" Kind="package" Folder="$(RoslynServerFolder)" />
+      <RoslynServerForNotices Include="@(RoslynServerLeftOut)" Kind="leftOut" />
+    </ItemGroup>
+  </Target>
+
+  <!-- The server's files become this project's output items, so every project that references this
+       one (the app, the tests) gets them beside its own binaries, with the package's third-party notices. -->
+  <Target Name="IncludeRoslynServer" BeforeTargets="AssignTargetPaths" DependsOnTargets="FindRoslynServer">
+    <ItemGroup>
+      <RoslynServerNotices Include="$(RoslynServerPackage)ThirdPartyNotices.*" />
+    </ItemGroup>
+    <Error Condition="'@(RoslynServerNotices)' == ''"
+           Text="roslyn-language-server.$(RoslynServerRid) $(RoslynServerVersion) has no ThirdPartyNotices file at its root, which Passenger carries beside the server." />
+    <ItemGroup>
       <RoslynServerLeftOutGone Include="@(RoslynServerLeftOut)" Condition="!Exists('$(RoslynServerFolder)%(Identity).dll')" />
     </ItemGroup>
     <Error Condition="'@(RoslynServerLeftOutGone)' != ''"

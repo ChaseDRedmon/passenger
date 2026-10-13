@@ -48,7 +48,7 @@ public static class McpHost
             {
                 Name = "passenger",
                 Title = "Passenger",
-                Version = typeof(McpHost).Assembly.GetName().Version?.ToString() ?? "0",
+                Version = Product.Version,
             },
             ServerInstructions = Instructions,
             ToolCollection = collection,
