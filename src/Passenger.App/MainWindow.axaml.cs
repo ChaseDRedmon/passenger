@@ -657,9 +657,10 @@ public partial class MainWindow : Window
                 Editors.SaveAll();
                 break;
             case AppActions.CloseTab:
+                // The split worked in loses its tab, as Rider's Close does; the file stays open in any other.
                 if (Editors.Active is { } active)
                 {
-                    Editors.Close(active);
+                    Editors.CloseTab(Editors.ActiveGroup, active);
                 }
                 break;
             case AppActions.NextTab:

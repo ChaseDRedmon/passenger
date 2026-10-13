@@ -11,8 +11,8 @@ using Passenger.Text;
 namespace Passenger.Tests;
 
 /// <summary>Split editors as Rider's: Split Right shows a file twice over one text, each split with its own caret; a
-/// tab dragged to a split's edge splits there and onto another's strip moves into it; a split whose last tab goes
-/// gives its room back.</summary>
+/// tab dragged to a split's edge splits there and onto another's strip moves into it; Close takes the tab of the split
+/// worked in alone, and a split whose last tab goes gives its room back.</summary>
 public sealed class EditorSplitTests : IDisposable
 {
     private readonly string folder = Directory.CreateTempSubdirectory("passenger-splits-").FullName;
@@ -53,6 +53,31 @@ public sealed class EditorSplitTests : IDisposable
         Ui.Settle();
         Assert.Single(area.Groups);
         Assert.Single(area.Documents);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Close_takes_the_tab_from_the_split_worked_in_alone_and_the_split_goes_with_its_last_tab()
+    {
+        MainWindow window = Open("One.cs", "Two.cs");
+        EditorArea area = window.EditorArea;
+        EditorGroup left = area.ActiveGroup;
+        Assert.True(window.Perform(AppActions.SplitRight));
+        Ui.Settle();
+        EditorGroup right = area.ActiveGroup;
+        Assert.Equal(["Two.cs"], right.Tabs.Select(t => t.Document.Name));
+
+        // Cmd+W (Ctrl+F4 on Windows) in the right split: its one tab goes and the split with it, the left one as it was.
+        Ui.Run(window, AppActions.CloseTab);
+        Assert.True(left.Tabs.Count == 2, $"Close in the right split took Two.cs from the left one too, which has only [{string.Join(", ", left.Tabs.Select(t => t.Document.Name))}]");
+        Assert.Same(left, Assert.Single(area.Groups));
+        Assert.Same(left, area.ActiveGroup);
+        Assert.Equal(["One.cs", "Two.cs"], area.Documents.Select(d => d.Name));
+
+        // In the one split left, it closes the file shown.
+        Ui.Run(window, AppActions.CloseTab);
+        Assert.Equal(["One.cs"], left.Tabs.Select(t => t.Document.Name));
+        Assert.Equal(["One.cs"], area.Documents.Select(d => d.Name));
         window.Close();
     }
 
