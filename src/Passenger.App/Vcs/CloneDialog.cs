@@ -192,6 +192,11 @@ public sealed partial class CloneDialog : Window
         {
             return $"'{Url.Trim()}' names no repository to clone";
         }
+        // Git on Windows says a missing folder "does not appear to be a git repository", which hides the plain reason.
+        if (Path.IsPathFullyQualified(Url.Trim()) && !Directory.Exists(Url.Trim()) && !File.Exists(Url.Trim()))
+        {
+            return $"{Url.Trim()} does not exist";
+        }
         if (File.Exists(destination))
         {
             return $"{destination} is a file";
