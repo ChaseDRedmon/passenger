@@ -336,6 +336,79 @@ public sealed class WelcomeTests : IDisposable
         }
     }
 
+    [AvaloniaFact]
+    public void Close_Solution_saves_its_files_ends_what_it_runs_and_shows_the_Welcome_screen_with_it_first_among_the_recent_ones()
+    {
+        using IDisposable theme = TestsTheme();
+        // A step of the build that would run for ten minutes, writing its process's id.
+        string app = Path.Combine(alpha, "App");
+        Directory.CreateDirectory(app);
+        File.WriteAllText(Path.Combine(app, "App.csproj"), """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <OutputType>Exe</OutputType>
+                <TargetFramework>net10.0</TargetFramework>
+                <ImplicitUsings>enable</ImplicitUsings>
+              </PropertyGroup>
+              <Target Name="Linger" BeforeTargets="Build" Condition="'$(DesignTimeBuild)' != 'true'">
+                <Exec Condition="'$(OS)' != 'Windows_NT'" Command="echo $$ &gt; build.pid; exec sleep 600" />
+                <Exec Condition="'$(OS)' == 'Windows_NT'" Command="powershell -NoProfile -Command &quot;Set-Content -Path build.pid -Value $PID; Start-Sleep -Seconds 600&quot;" />
+              </Target>
+            </Project>
+            """);
+        string program = Path.Combine(app, "Program.cs");
+        File.WriteAllText(program, "Console.WriteLine(\"Hello\");\n");
+        string solution = PathNames.Canonical(Path.Combine(alpha, "App.slnx"));
+        File.WriteAllText(solution, "<Solution>\n  <Project Path=\"App/App.csproj\" />\n</Solution>\n");
+        MainWindow window = Started(LaunchOptions.Empty with { Workspace = solution });
+        int step = 0;
+        try
+        {
+            window.OpenFile(program);
+            Ui.Settle();
+            int server = window.CSharpService?.Session?.Server.ProcessId ?? throw new InvalidOperationException("The language server did not start");
+
+            // A build under way, and an edit made since it saved the files.
+            window.Perform(AppActions.Build);
+            step = Processes.WrittenId(Path.Combine(app, "build.pid"), "the build's step to start");
+            window.KeyTextInput("// edited ");
+            Assert.True(window.EditorArea.Active!.IsModified, "The edit typed did not reach the file");
+
+            NativeMenuItem close = Ui.Submenu(window.MenuBar, "File").Items.OfType<NativeMenuItem>().Single(i => i.Header == "Close Solution");
+            Assert.True(close.IsEnabled, "File > Close Solution cannot run with a solution open");
+            close.Command!.Execute(null);
+            Ui.Settle();
+
+            Assert.True(window.Folder is null && Shown(window), $"Close Solution left {window.Folder ?? "no folder"} open, the Welcome screen {(Shown(window) ? "shown" : "not shown")}");
+            Assert.Equal("Welcome to Passenger", window.Title);
+            Assert.Equal(solution, window.Welcome.Rows.FirstOrDefault()?.Path);
+            Assert.Empty(window.EditorArea.Documents);
+            Assert.Empty(window.ExplorerView.Tree.Rows);
+            Assert.Equal("// edited Console.WriteLine(\"Hello\");\n", File.ReadAllText(program));
+            Assert.False(window.IsBuilding, "The build still runs once its solution is closed");
+            Assert.True(Processes.Gone(step), $"The build's step went on running once its solution was closed: {Processes.Describe(step)}");
+            Assert.Null(window.CSharpService);
+            Assert.True(Processes.Gone(server), "The language server went on running once its solution was closed");
+            Assert.False(MenuItem(window, "File", "Close Solution").IsEnabled, "Close Solution can still run with nothing open");
+
+            // Opened again from the Welcome screen, it has its file back where it was.
+            File.Delete(Path.Combine(app, "build.pid"));
+            Assert.Null(window.OpenRecent(solution));
+            Ui.Settle();
+            Assert.Equal(PathNames.Canonical(alpha), window.Folder);
+            Assert.Equal("Program.cs", window.EditorArea.Active?.Name);
+            Assert.False(Shown(window), "The Welcome screen shows over the solution opened again");
+        }
+        finally
+        {
+            Processes.Kill(step);
+            window.Close();
+        }
+    }
+
+    private static NativeMenuItem MenuItem(MainWindow window, string menu, string title) =>
+        Ui.Submenu(window.MenuBar, menu).Items.OfType<NativeMenuItem>().Single(i => i.Header == title);
+
     /// <summary>The window a person starts, as the app makes it: its layout and settings kept in the test's state folder,
     /// then the command line taken.</summary>
     private MainWindow Started(LaunchOptions options)

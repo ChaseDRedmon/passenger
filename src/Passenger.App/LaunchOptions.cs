@@ -1,5 +1,6 @@
 using System.Globalization;
 using Avalonia;
+using Avalonia.Input;
 using Passenger.App.Workspace;
 using Passenger.Editor;
 using Passenger.Text;
@@ -14,10 +15,10 @@ namespace Passenger.App;
 public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, TextPosition? Caret, ThemeChoice? Theme, ScreenshotOptions? Screenshot)
 {
     /// <summary>The flags that may be given more than once: each is one more file or one more step.</summary>
-    private static readonly HashSet<string> Repeatable = ["--file", "--type", "--key", "--click", "--double-click", "--drag", "--drag-hold", "--hover", "--wait"];
+    private static readonly HashSet<string> Repeatable = ["--file", "--type", "--key", "--click", "--double-click", "--right-click", "--drag", "--drag-hold", "--hover", "--wait"];
 
     /// <summary>What only a screenshot takes: its window, its picture and the steps before it.</summary>
-    private static readonly HashSet<string> ScreenshotOnly = ["--size", "--scale", "--crop", "--type", "--key", "--click", "--double-click", "--drag", "--drag-hold", "--hover", "--wait"];
+    private static readonly HashSet<string> ScreenshotOnly = ["--size", "--scale", "--crop", "--type", "--key", "--click", "--double-click", "--right-click", "--drag", "--drag-hold", "--hover", "--wait"];
 
     /// <summary>A screenshot's longest side in pixels: a frame 16384 pixels square is already a gigabyte, and the headless
     /// window draws none at 24000.</summary>
@@ -142,11 +143,14 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
                     points.Add((flag, hoverText, new Point(at[0], at[1])));
                     steps.Add(new ScriptStep.Hover(new Point(at[0], at[1])));
                     break;
-                case "--click" or "--double-click":
+                case "--click" or "--double-click" or "--right-click":
                     string clickText = Value(args, ref i, flag);
                     double[] xy = Numbers(flag, clickText, ',', 2, "X,Y");
                     points.Add((flag, clickText, new Point(xy[0], xy[1])));
-                    steps.Add(new ScriptStep.Click(new Point(xy[0], xy[1]), flag == "--click" ? 1 : 2));
+                    steps.Add(new ScriptStep.Click(new Point(xy[0], xy[1]), flag == "--double-click" ? 2 : 1)
+                    {
+                        Button = flag == "--right-click" ? MouseButton.Right : MouseButton.Left,
+                    });
                     break;
                 case "--drag" or "--drag-hold":
                     string dragText = Value(args, ref i, flag);
@@ -373,7 +377,11 @@ public abstract record ScriptStep
 
     public sealed record Key(Keystroke Stroke) : ScriptStep;
 
-    public sealed record Click(Point At, int Count) : ScriptStep;
+    /// <summary>A click, or a double-click, of the left button, or of the right for a control's menu.</summary>
+    public sealed record Click(Point At, int Count) : ScriptStep
+    {
+        public MouseButton Button { get; init; } = MouseButton.Left;
+    }
 
     /// <summary>The left button pressed at one point and moved to another, let go there unless the capture is to show
     /// the drag itself (a tool window over its drop place).</summary>

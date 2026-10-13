@@ -78,13 +78,15 @@ public partial class MainWindow
                 ActionContext now = actions!.Context();
                 foreach (NativeMenuItem item in menu.Items.OfType<NativeMenuItem>().Where(i => i.CommandParameter is string))
                 {
-                    item.IsEnabled = actions[(string)item.CommandParameter!]!.CanRun(now);
+                    IdeAction listed = actions[(string)item.CommandParameter!]!;
+                    item.IsEnabled = listed.CanRun(now);
+                    item.Header = listed.TitleWhere(now);
                 }
             };
             return new NativeMenuItem(entry.Title!) { Menu = menu };
         }
         IdeAction action = actions![entry.Action!]!;
-        NativeMenuItem actionItem = new(action.Title)
+        NativeMenuItem actionItem = new(action.TitleWhere(context))
         {
             Command = new MenuCommand(() => RunFromMenu(action.Id)),
             CommandParameter = action.Id,
@@ -148,7 +150,7 @@ public partial class MainWindow
         }
         IdeAction action = actions![entry.Action!]!;
         // The gesture is shown, not bound: the window's keymap runs the keys.
-        MenuItem actionItem = new() { Header = action.Title, InputGesture = actions.Gesture(action.Id), IsEnabled = action.CanRun(context) };
+        MenuItem actionItem = new() { Header = action.TitleWhere(context), InputGesture = actions.Gesture(action.Id), IsEnabled = action.CanRun(context) };
         actionItem.Click += (_, _) => RunFromMenu(action.Id, context);
         return actionItem;
     }

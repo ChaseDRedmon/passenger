@@ -15,8 +15,11 @@ public sealed record EditorLayout
     public bool Current { get; init; }
 }
 
-/// <summary>A tab as kept: its file and where its caret was, from 0.</summary>
-public sealed record KeptTab(string Path, int Line, int Column);
+/// <summary>A tab as kept: its file, where its caret was (from 0), and whether it was pinned.</summary>
+public sealed record KeptTab(string Path, int Line, int Column)
+{
+    public bool Pinned { get; init; }
+}
 
 /// <summary>An editor window as a folder keeps it: where it stood (its place in screen pixels, its size in its own units,
 /// as a floating tool window's) and its splits.</summary>

@@ -224,6 +224,16 @@ public sealed class ExplorerTree
         Expand(root);
     }
 
+    /// <summary>Nothing shown, as before a folder opens and once its solution is closed.</summary>
+    public void Clear()
+    {
+        Rows.Clear();
+        Root = null;
+        solution = null;
+        IsSolutionView = false;
+        Unloaded.Clear();
+    }
+
     /// <summary>The projects unloaded, by path: shown dimmed, with nothing under them.</summary>
     public ISet<string> Unloaded { get; } = new HashSet<string>(StringComparer.Ordinal);
 

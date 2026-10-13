@@ -47,6 +47,14 @@ public sealed class FileIndex
 
     private int walks;
 
+    /// <summary>No folder's files, a walk under way dropped: the folder was closed.</summary>
+    public void Clear()
+    {
+        walks++;
+        Root = null;
+        files = [];
+    }
+
     /// <summary>The best matches for a query, best first, as relative paths.</summary>
     public IReadOnlyList<string> Search(string query, int limit = 60)
     {

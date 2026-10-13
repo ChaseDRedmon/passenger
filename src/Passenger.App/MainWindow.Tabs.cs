@@ -1,0 +1,107 @@
+using Avalonia.Controls;
+using Avalonia.Layout;
+using Passenger.App.Editors;
+using Passenger.App.Workspace;
+using A = Passenger.App.AppActions;
+
+namespace Passenger.App;
+
+/// <summary>Rider's editor tab actions, in Window > Editor Tabs and each tab's own menu: the next and previous tab, Pin Tab,
+/// the closes (the tab, the others, all, all but pinned, those to one side), Reopen Closed Tab, the splits and Unsplit, and
+/// a tab moved to the opposite group or a window of its own. From a tab's menu they act on that tab, else on the one the
+/// active group shows; Restore Default Layout is beside them, in Window > Layout Settings.</summary>
+public partial class MainWindow
+{
+    private const string Tabs = "Editor Tabs";
+    private const string TabsMenu = "Window/Editor Tabs";
+
+    /// <summary>The tab menu's items, in Rider's order.</summary>
+    private static readonly string?[] TabMenuItems =
+    [
+        A.CloseTab, A.CloseOtherTabs, A.CloseAllTabs, A.CloseUnpinned, A.CloseTabsLeft, A.CloseTabsRight, null,
+        A.SplitRight, A.SplitDown, A.MoveToOppositeGroup, A.Unsplit, A.UnsplitAll, null,
+        A.PinTab, A.OpenInNewWindow, null,
+        A.ReopenClosedTab,
+    ];
+
+    private void AddTabActions()
+    {
+        Editors.TabMenuOpening += (_, opening) => FillTabMenu(opening);
+        Tab(A.NextTab, "Next Tab", _ => Editors.Cycle(1), NeedsFile, (0, 0));
+        Tab(A.PreviousTab, "Previous Tab", _ => Editors.Cycle(-1), NeedsFile, (0, 1));
+        actions!.Add(new IdeAction(A.PinTab, "Pin Tab", Tabs, c => TabOf(c)!.Value.Group.Pin(TabOf(c)!.Value.File, !Pinned(c)))
+        {
+            WhyNot = NeedsFile,
+            Menus = [new MenuPlace(TabsMenu, 0, 2)],
+            TitleIn = c => Pinned(c) ? "Unpin Tab" : "Pin Tab",
+        });
+
+        // The split worked in loses its tab, as Rider's Close does; the file stays open in any other.
+        actions.Add(new IdeAction(A.CloseTab, "Close Tab", "IDE", c => Editors.CloseTab(TabOf(c)!.Value.Group, TabOf(c)!.Value.File))
+        {
+            WhyNot = NeedsFile,
+            Menus = [new MenuPlace("File", 1, 2), new MenuPlace(TabsMenu, 1, 0)],
+            TitleIn = c => c.Tab is null ? "Close Tab" : "Close",
+        });
+        Tab(A.CloseOtherTabs, "Close Other Tabs", c => Editors.CloseOthers(TabOf(c)!.Value.Group, TabOf(c)!.Value.File),
+            c => Closes(c, (tab, _) => tab.Document != TabOf(c)!.Value.File, "No other unpinned tab is open"), (1, 1));
+        Tab(A.CloseAllTabs, "Close All Tabs", c => Editors.CloseAllTabs(TabOf(c)!.Value.Group), c => Closes(c, (_, _) => true, "Every tab is pinned"), (1, 2));
+        Tab(A.CloseUnpinned, "Close All but Pinned", c => Editors.CloseUnpinned(c.Tab?.Group),
+            c => NeedsFile(c) ?? ((c.Tab is { } tab ? [tab.Group] : Editors.Groups).Any(g => EditorArea.Unpinned(g, (_, _) => true).Count > 0) ? null : "Every tab is pinned"), (1, 3));
+        Tab(A.CloseTabsLeft, "Close Tabs to the Left", c => Editors.CloseToSide(TabOf(c)!.Value.Group, TabOf(c)!.Value.File, left: true),
+            c => Closes(c, (_, index) => index < IndexOf(c), "No unpinned tab is to the left"), (1, 4));
+        Tab(A.CloseTabsRight, "Close Tabs to the Right", c => Editors.CloseToSide(TabOf(c)!.Value.Group, TabOf(c)!.Value.File, left: false),
+            c => Closes(c, (_, index) => index > IndexOf(c), "No unpinned tab is to the right"), (1, 5));
+
+        Tab(A.ReopenClosedTab, "Reopen Closed Tab", _ =>
+        {
+            if (Editors.ReopenClosedTab() is { } why)
+            {
+                StatusText.Text = why;
+            }
+        }, _ => Editors.CanReopen ? null : "No tab has been closed", (2, 0));
+        Tab(A.SplitRight, "Split Right", c => Editors.Split(TabOf(c)!.Value.Group, TabOf(c)!.Value.File, Orientation.Horizontal, move: false), NeedsFile, (2, 1));
+        Tab(A.SplitDown, "Split Down", c => Editors.Split(TabOf(c)!.Value.Group, TabOf(c)!.Value.File, Orientation.Vertical, move: false), NeedsFile, (2, 2));
+        Tab(A.Unsplit, "Unsplit", c => Editors.Unsplit(GroupOf(c), all: false), NotSplit, (2, 3));
+        Tab(A.UnsplitAll, "Unsplit All", c => Editors.Unsplit(GroupOf(c), all: true), NotSplit, (2, 4));
+
+        // Rider has these two on the tab's menu alone: the Window menu keeps them after its Editor Tabs.
+        Add(A.MoveToOppositeGroup, "Move to Opposite Group", Tabs, c => Editors.MoveToOpposite(TabOf(c)!.Value.Group, TabOf(c)!.Value.File), c => NeedsFile(c) ?? NotSplit(c), ("Window", 2, 0));
+        Add(A.OpenInNewWindow, "Open Tab in New Window", Tabs, c => Editors.OpenInNewWindow(TabOf(c)!.Value.Group, TabOf(c)!.Value.File), NeedsFile, ("Window", 2, 1));
+
+        actions.Add(new IdeAction(A.RestoreDefaultLayout, "Restore Default Layout", "Tool Windows", _ => Dock.RestoreDefault())
+        {
+            Menus = [new MenuPlace("Window/Layout Settings", 0, 0)],
+            FromTerminal = true,
+        });
+
+        string? Closes(ActionContext c, Func<EditorTab, int, bool> which, string none) =>
+            NeedsFile(c) ?? (EditorArea.Unpinned(TabOf(c)!.Value.Group, which).Count > 0 ? null : none);
+
+        int IndexOf(ActionContext c) => TabOf(c)!.Value.Group.Tabs.Select(t => t.Document).ToList().IndexOf(TabOf(c)!.Value.File);
+
+        string? NotSplit(ActionContext c) => Editors.IsSplit(GroupOf(c)) ? null : "The editor is not split";
+    }
+
+    /// <summary>The tab an action acts on: the one whose menu it was chosen from, else the one the active group shows.</summary>
+    private (EditorGroup Group, OpenDocument File)? TabOf(ActionContext context) =>
+        context.Tab ?? (context.File is { } file ? (Editors.ActiveGroup, file) : null);
+
+    private EditorGroup GroupOf(ActionContext context) => context.Tab?.Group ?? Editors.ActiveGroup;
+
+    private bool Pinned(ActionContext context) => TabOf(context) is { } tab && tab.Group.IsPinned(tab.File);
+
+    /// <summary>A tab action listed in Window > Editor Tabs at a place.</summary>
+    private void Tab(string id, string title, Action<ActionContext> run, Func<ActionContext, string?> whyNot, (int Group, int Order) at) =>
+        Add(id, title, Tabs, run, whyNot, (TabsMenu, at.Group, at.Order));
+
+    /// <summary>Rider's tab menu, its items run on the tab it opened on.</summary>
+    private void FillTabMenu(TabMenu opening)
+    {
+        ActionContext context = new(opening.Document, opening.Group.Editor, null, null, debug.IsDebugging ? debug.Session!.State : null)
+        {
+            Tab = (opening.Group, opening.Document),
+        };
+        opening.Menu.ItemsSource = TabMenuItems.Select(id => FlyoutEntry(new MenuEntry(id), context)).ToList();
+    }
+}

@@ -80,6 +80,7 @@ ICONS = [
     ("TestSkipped", "Subtract", "16_filled"),
     ("TestNotRun", "Circle", "16_regular"),
     ("TestRunning", "Circle", "16_filled"),
+    ("Pin", "Pin", "16_regular"),
 ]
 
 

@@ -21,6 +21,10 @@ public sealed record IdeAction(string Id, string Title, string Group, Action<Act
 
     public IReadOnlyList<MenuPlace> Menus { get; init; } = [];
 
+    /// <summary>Its title in a menu opened where it would run, when that says more than <see cref="Title"/> (Unpin Tab on
+    /// a pinned tab, Close on a tab's own menu); Find Action lists it by its title.</summary>
+    public Func<ActionContext, string>? TitleIn { get; init; }
+
     /// <summary>Whether its keys run it while the terminal has them, as Rider's terminal lets the tool windows' own
     /// shortcuts through and keeps every other key for the shell.</summary>
     public bool FromTerminal { get; init; }
@@ -30,6 +34,9 @@ public sealed record IdeAction(string Id, string Title, string Group, Action<Act
     public bool InEditor { get; init; }
 
     public bool CanRun(ActionContext context) => WhyNot(context) is null;
+
+    /// <summary>Its title in a menu opened in this context.</summary>
+    public string TitleWhere(ActionContext context) => TitleIn?.Invoke(context) ?? Title;
 }
 
 /// <summary>Where an action runs: the file the editor shows and its caret, the expression there, what has the keys (an
@@ -74,6 +81,9 @@ public sealed class ActionContext(OpenDocument? file, CodeEditor editor, object?
 
     /// <summary>The debugged program's state, or null while nothing is debugged.</summary>
     public DebugState? Debugging => debugging;
+
+    /// <summary>The tab whose own menu this is, which the tab actions act on in place of the one the active group shows.</summary>
+    public (Editors.EditorGroup Group, OpenDocument File)? Tab { get; init; }
 
     private static string? SymbolAt(CodeEditor editor)
     {

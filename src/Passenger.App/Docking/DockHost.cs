@@ -26,9 +26,18 @@ public sealed class DockHost : Grid
     private readonly HairlineDivider leftDivider;
     private readonly HairlineDivider rightDivider;
     private readonly HairlineDivider bottomDivider;
-    private double leftWidth = 280;
-    private double rightWidth = 300;
-    private double bottomHeight = 280;
+    private double leftWidth = DefaultLeft;
+    private double rightWidth = DefaultRight;
+    private double bottomHeight = DefaultBottom;
+
+    /// <summary>The areas' sizes in the layout the IDE starts with.</summary>
+    private const double DefaultLeft = 280;
+
+    private const double DefaultRight = 300;
+    private const double DefaultBottom = 280;
+
+    /// <summary>Each window's place as it was added, which Restore Default Layout puts it back in.</summary>
+    private readonly Dictionary<string, DockedWindow> firstPlaces = [];
 
     /// <summary>The sizes the areas were last given, fitted to the frame: a definition no longer its size was dragged.</summary>
     private (double Left, double Right, double Bottom) given;
@@ -117,11 +126,29 @@ public sealed class DockHost : Grid
     {
         window.Order = windows.Count(w => w.Anchor == window.Anchor);
         windows.Add(window);
+        firstPlaces[window.Id] = new DockedWindow(window.Anchor, window.Order, window.OpenAtFirst);
         if (window.ShowAction(this) is { } shows)
         {
             Actions?.Add(shows);
         }
         Layout();
+        if (window.OpenAtFirst)
+        {
+            Show(window.Id);
+        }
+    }
+
+    /// <summary>Rider's Restore Default Layout: every window back where it was added, docked, open only if it opens at
+    /// first, and the areas at their first sizes, halves shared alike.</summary>
+    public void RestoreDefault()
+    {
+        foreach (Grid area in (Grid[])[leftArea, rightArea])
+        {
+            area.RowDefinitions[0].Height = area.RowDefinitions[2].Height = new GridLength(1, GridUnitType.Star);
+        }
+        bottomArea.ColumnDefinitions[0].Width = bottomArea.ColumnDefinitions[2].Width = new GridLength(1, GridUnitType.Star);
+        Apply(new DockLayout { Windows = new(firstPlaces), LeftWidth = DefaultLeft, RightWidth = DefaultRight, BottomHeight = DefaultBottom });
+        LayoutChanged?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>Shows a window in its place, hiding the one that was there, as a stripe button does.</summary>

@@ -14,10 +14,11 @@ using Passenger.Text;
 
 namespace Passenger.App.Editors;
 
-/// <summary>A tab of an editor group: a file, and whether it is the one its group shows.</summary>
+/// <summary>A tab of an editor group: a file, whether it is the one its group shows, and whether it is pinned.</summary>
 public sealed class EditorTab(OpenDocument document) : Observable
 {
     private bool isActive;
+    private bool isPinned;
 
     public OpenDocument Document { get; } = document;
 
@@ -26,11 +27,19 @@ public sealed class EditorTab(OpenDocument document) : Observable
         get => isActive;
         set => Set(ref isActive, value);
     }
+
+    /// <summary>Rider's Pin Tab: it stands left of the unpinned tabs, and Close Others, Close All and closing by side
+    /// leave it open.</summary>
+    public bool IsPinned
+    {
+        get => isPinned;
+        set => Set(ref isPinned, value);
+    }
 }
 
-/// <summary>One editor of a split, as Rider's: its tabs, its find bar and its editor, which shows the active tab's
-/// file. A file may be open in two groups at once (Split Right on it), each with its own carets and scroll over the
-/// one text.</summary>
+/// <summary>One editor of a split, as Rider's: its tabs (the pinned ones first), its find bar and its editor, which shows
+/// the active tab's file. A file may be open in two groups at once (Split Right on it), each with its own carets and
+/// scroll over the one text.</summary>
 public sealed class EditorGroup : DockPanel
 {
     private readonly EditorArea area;
@@ -113,16 +122,31 @@ public sealed class EditorGroup : DockPanel
     /// <summary>The strip of tabs, where a dragged tab drops to go into this group at a place.</summary>
     public Control TabStrip => tabBar;
 
-    /// <summary>Adds a file's tab after the active one (or at an index), without showing it.</summary>
-    public void Add(OpenDocument document, int? index = null)
+    /// <summary>Adds a file's tab after the active one (or at an index), without showing it: among the pinned tabs if it
+    /// is pinned, else after them.</summary>
+    public void Add(OpenDocument document, int? index = null, bool pinned = false)
     {
         if (Has(document))
         {
             return;
         }
         int at = index ?? (active is null ? tabs.Count : tabs.IndexOf(active) + 1);
-        tabs.Insert(Math.Clamp(at, 0, tabs.Count), new EditorTab(document));
+        int fence = tabs.Count(t => t.IsPinned);
+        tabs.Insert(pinned ? Math.Clamp(at, 0, fence) : Math.Clamp(at, fence, tabs.Count), new EditorTab(document) { IsPinned = pinned });
         document.Text.Changed += OnTabTextChanged;
+    }
+
+    public bool IsPinned(OpenDocument document) => tabs.FirstOrDefault(t => t.Document == document)?.IsPinned == true;
+
+    /// <summary>Pins a tab, which goes to the end of the pinned ones, or unpins it, which goes to just after them.</summary>
+    public void Pin(OpenDocument document, bool pinned)
+    {
+        if (tabs.FirstOrDefault(t => t.Document == document) is not { } tab || tab.IsPinned == pinned)
+        {
+            return;
+        }
+        tab.IsPinned = pinned;
+        tabs.Move(tabs.IndexOf(tab), tabs.Count(t => t.IsPinned && t != tab));
     }
 
     /// <summary>A hidden tab's kept carets follow what changes its text meanwhile (a reload, a rename), as the shown one's do.</summary>
@@ -206,14 +230,15 @@ public sealed class EditorGroup : DockPanel
         }
     }
 
-    /// <summary>Moves a tab along the strip.</summary>
+    /// <summary>Moves a tab along the strip, a pinned one among the pinned and another after them.</summary>
     public void Reorder(OpenDocument document, int index)
     {
         if (tabs.FirstOrDefault(t => t.Document == document) is { } tab)
         {
             int from = tabs.IndexOf(tab);
             int to = Math.Clamp(index > from ? index - 1 : index, 0, tabs.Count - 1);
-            tabs.Move(from, to);
+            int fence = tabs.Count(t => t.IsPinned);
+            tabs.Move(from, tab.IsPinned ? Math.Min(to, fence - 1) : Math.Max(to, fence));
         }
     }
 
@@ -236,8 +261,12 @@ public sealed class EditorGroup : DockPanel
     public SelectionSet SelectionsOf(OpenDocument document) =>
         active?.Document == document ? Editor.Selections : views.TryGetValue(document, out var view) ? view.Selections : document.Selections;
 
-    /// <summary>Puts a tab's carets where they were kept, for when it is shown.</summary>
-    public void Remember(OpenDocument document, SelectionSet selections) => views[document] = (selections, default);
+    /// <summary>Where a tab's editor was scrolled in this group: the editor's for the one shown, else as it was left.</summary>
+    public Vector ScrollOf(OpenDocument document) =>
+        active?.Document == document ? Editor.ScrollOffset : views.TryGetValue(document, out var view) ? view.Scroll : document.Scroll;
+
+    /// <summary>Puts a tab's carets (and scroll) where they were kept, for when it is shown.</summary>
+    public void Remember(OpenDocument document, SelectionSet selections, Vector scroll = default) => views[document] = (selections, scroll);
 
     /// <summary>The carets and scroll of the file shown, kept for when its tab is shown again.</summary>
     public void Keep()
@@ -326,6 +355,16 @@ public sealed class EditorGroup : DockPanel
             area.CloseTab(this, document);
             e.Handled = true;
         };
+        // A pinned tab's pin, which unpins it, as Rider's does.
+        PathIcon pinGlyph = new() { Classes = { "small" } };
+        pinGlyph.Bind(PathIcon.DataProperty, pinGlyph.GetResourceObservable("Icon.Pin"));
+        Button pin = new() { Classes = { "tabPin" }, Content = pinGlyph };
+        ToolTip.SetTip(pin, "Unpin Tab");
+        pin.Click += (_, e) =>
+        {
+            Pin(document, false);
+            e.Handled = true;
+        };
         Border border = new()
         {
             Classes = { "tab" },
@@ -334,7 +373,7 @@ public sealed class EditorGroup : DockPanel
                 Orientation = Orientation.Horizontal,
                 Spacing = 6,
                 VerticalAlignment = VerticalAlignment.Center,
-                Children = { icon, name, new Panel { Width = 16, Height = 16, Children = { modified, close } } },
+                Children = { icon, name, pin, new Panel { Width = 16, Height = 16, Children = { modified, close } } },
             },
         };
         void Paint()
@@ -346,9 +385,14 @@ public sealed class EditorGroup : DockPanel
             modified.IsVisible = document.IsModified;
             border.Classes.Set("active", tab.IsActive);
             border.Classes.Set("elsewhere", !IsCurrent);
+            pin.IsVisible = tab.IsPinned;
         }
         void OnCurrentChanged(object? sender, EventArgs e) => border.Classes.Set("elsewhere", !IsCurrent);
-        void OnTabChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e) => border.Classes.Set("active", tab.IsActive);
+        void OnTabChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+        {
+            border.Classes.Set("active", tab.IsActive);
+            pin.IsVisible = tab.IsPinned;
+        }
         void OnFileChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
         {
             if (e.PropertyName == nameof(OpenDocument.IsModified))
@@ -375,7 +419,10 @@ public sealed class EditorGroup : DockPanel
             document.PropertyChanged -= OnFileChanged;
         };
         Paint();
-        border.ContextMenu = TabMenu(document);
+        // Rider's tab menu, which the window fills with its tab actions, run on this tab, as it opens.
+        ContextMenu menu = new();
+        menu.Opening += (_, _) => area.OpenTabMenu(this, document, menu);
+        border.ContextMenu = menu;
         border.PointerPressed += (_, e) =>
         {
             PointerPointProperties pressed = e.GetCurrentPoint(this).Properties;
@@ -396,32 +443,5 @@ public sealed class EditorGroup : DockPanel
         border.PointerMoved += (_, e) => area.TabDragOf(this)?.Continue(e);
         border.PointerReleased += (_, e) => area.TabDragOf(this)?.End(e);
         return border;
-    }
-
-    /// <summary>Rider's tab menu: close it, the others or all, split or move it, and take it out into a window of its own.</summary>
-    private ContextMenu TabMenu(OpenDocument document)
-    {
-        ContextMenu menu = new();
-        MenuItem Item(string header, Action run, string? action = null)
-        {
-            MenuItem item = new() { Header = header };
-            if (action is not null && AppActions.Keymap().ShortcutsFor(action).FirstOrDefault() is { } keys)
-            {
-                item.InputGesture = null;
-                item.Header = $"{header}    {keys.Display()}";
-            }
-            item.Click += (_, _) => run();
-            return item;
-        }
-        menu.Items.Add(Item("Close", () => area.CloseTab(this, document), AppActions.CloseTab));
-        menu.Items.Add(Item("Close Other Tabs", () => area.CloseOthers(this, document)));
-        menu.Items.Add(Item("Close All Tabs", () => area.CloseAllTabs(this)));
-        menu.Items.Add(new Separator());
-        menu.Items.Add(Item("Split Right", () => area.Split(this, document, Orientation.Horizontal, move: false), AppActions.SplitRight));
-        menu.Items.Add(Item("Split Down", () => area.Split(this, document, Orientation.Vertical, move: false), AppActions.SplitDown));
-        menu.Items.Add(Item("Move to Opposite Group", () => area.MoveToOpposite(this, document), AppActions.MoveToOppositeGroup));
-        menu.Items.Add(new Separator());
-        menu.Items.Add(Item("Open Tab in New Window", () => area.OpenInNewWindow(this, document), AppActions.OpenInNewWindow));
-        return menu;
     }
 }

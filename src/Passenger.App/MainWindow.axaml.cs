@@ -302,20 +302,10 @@ public partial class MainWindow : Window
             Read(withSolution);
             return;
         }
-        if (folder is not null && folder != opening)
+        // Another folder's files are its own: this one's are kept with it and close, saved, as Rider's do.
+        if (folder is not null && folder != opening && !LeaveFolder())
         {
-            // Another folder's files are its own: this one's are kept with it and close, saved, as Rider's do.
-            KeepWorkspace();
-            if (!Editors.CloseAll())
-            {
-                return;
-            }
-            recent.Clear();
-            // Breakpoints, bookmarks and the places Back goes to are a folder's own, as Rider keeps them with the project.
-            folderState = null;
-            debug.Breakpoints.Clear();
-            bookmarks.Clear();
-            history.Clear();
+            return;
         }
         Autosave();
         folder = opening;
@@ -344,6 +334,24 @@ public partial class MainWindow : Window
         UpdateStatus();
         Remember();
         _ = KeepSnapshotsAsync();
+    }
+
+    /// <summary>What the open folder had goes, kept with it in the store first: its editors close, each saved (false, the
+    /// rest left open, when one cannot be), and its recent files, breakpoints, bookmarks and the places Back goes to,
+    /// which are a folder's own as Rider keeps them with the project.</summary>
+    private bool LeaveFolder()
+    {
+        KeepWorkspace();
+        if (!Editors.CloseAll())
+        {
+            return false;
+        }
+        recent.Clear();
+        folderState = null;
+        debug.Breakpoints.Clear();
+        bookmarks.Clear();
+        history.Clear();
+        return true;
     }
 
     private string? followed;
@@ -662,6 +670,7 @@ public partial class MainWindow : Window
                 Dock.Show("explorer");
                 Explorer.FocusRows();
             },
+            OpenAtFirst = true,
         });
         Dock.Add(new Docking.ToolWindow("structure", "Structure", "Icon.Structure", Structure, Docking.ToolAnchor.LeftBottom)
         {
@@ -682,7 +691,6 @@ public partial class MainWindow : Window
         });
         Dock.Add(new Docking.ToolWindow("build", "Build", "Icon.Build", Bottom.Build, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowBuild, ActionTitle = "Build Tool Window" });
         Dock.Add(new Docking.ToolWindow("problems", "Problems", "Icon.Problems", Bottom.Problems, Docking.ToolAnchor.BottomLeft) { Action = AppActions.ShowProblems, ActionTitle = "Problems" });
-        Dock.Show("explorer");
     }
 
     /// <summary>The window a person uses keeps its layout: it opens on the one kept, and keeps each change; and each

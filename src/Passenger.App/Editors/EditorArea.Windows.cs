@@ -115,7 +115,7 @@ public sealed partial class EditorArea
         {
             group.Remember(document, from.SelectionsOf(document));
         }
-        group.Add(document);
+        group.Add(document, pinned: from.IsPinned(document));
         group.Show(document);
         from.Remove(document);
         OpenWindow(new EditorFrame.Leaf(group), group, new PixelRect(at.X, at.Y, (int)size.Width, (int)size.Height), activate: true);

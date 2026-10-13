@@ -321,6 +321,57 @@ public sealed class DockingTests
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void Restore_Default_Layout_puts_every_tool_window_back_where_it_first_was_docked_at_its_first_size()
+    {
+        string settings = TestFolders.Create("settings-");
+        MainWindow window = Open(settings);
+        window.KeepLayout();
+        DockHost dock = window.DockHost;
+        Dictionary<string, (ToolAnchor Anchor, int Order)> first = dock.Windows.ToDictionary(w => w.Id, w => (w.Anchor, w.Order));
+        dock.Show("build");
+        Ui.Settle();
+        double bottom = dock.RowDefinitions[2].ActualHeight;
+        dock.Hide("build");
+        dock.Show("explorer");
+
+        // Moved, floated, hidden, shown and resized.
+        Drag(window, Middle(window, Button(window, "debug")), new Point(window.Bounds.Width - 20, 120));
+        dock.Move(dock["tests"]!, ToolAnchor.LeftBottom, 0);
+        dock.Show("tests");
+        dock.Show("run");
+        dock.SetMode(dock["run"]!, ToolMode.Floating);
+        dock.Hide("explorer");
+        dock.Show("build");
+        Ui.Settle();
+        Point divider = Middle(window, Divider(dock, c => Grid.GetRow(c) == 1)) + new Point(0, 3);
+        Drag(window, divider, divider - new Point(0, 150));
+        Assert.Equal(ToolAnchor.RightTop, dock["debug"]!.Anchor);
+        Assert.Single(window.OwnedWindows);
+        Assert.True(dock.RowDefinitions[2].ActualHeight > bottom + 100, $"The bottom area dragged 150 px taller is {dock.RowDefinitions[2].ActualHeight} tall, from {bottom}");
+
+        // Window > Layout Settings > Restore Default Layout.
+        NativeMenuItem restore = Ui.Submenu(Ui.Submenu(window.MenuBar, "Window"), "Layout Settings").Items.OfType<NativeMenuItem>().Single(i => i.Header == "Restore Default Layout");
+        restore.Command!.Execute(null);
+        Ui.Settle();
+        Assert.Equal(first, dock.Windows.ToDictionary(w => w.Id, w => (w.Anchor, w.Order)));
+        Assert.All(dock.Windows, w => Assert.Equal(ToolMode.Docked, w.Mode));
+        Assert.Empty(window.OwnedWindows);
+        Assert.Equal(["explorer"], dock.Windows.Where(w => w.IsShown).Select(w => w.Id));
+        Assert.Contains(Button(window, "debug"), Stripe(window, right: false));
+        window.Close();
+
+        // The layout restored is the one kept.
+        MainWindow next = Open(settings);
+        next.KeepLayout();
+        Assert.Equal(first, next.DockHost.Windows.ToDictionary(w => w.Id, w => (w.Anchor, w.Order)));
+        Assert.Equal(["explorer"], next.DockHost.Windows.Where(w => w.IsShown).Select(w => w.Id));
+        next.DockHost.Show("build");
+        Ui.Settle();
+        Assert.Equal(bottom, next.DockHost.RowDefinitions[2].ActualHeight, 1);
+        next.Close();
+    }
+
     private static GridSplitter Divider(DockHost dock, Func<Control, bool> place) =>
         dock.Children.First(place).GetVisualDescendants().OfType<GridSplitter>().Single();
 

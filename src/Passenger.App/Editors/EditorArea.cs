@@ -48,6 +48,9 @@ public sealed partial class EditorArea : UserControl
 
     public event EventHandler? ActiveChanged;
 
+    /// <summary>A tab's menu opening, for the window to fill with its tab actions, run on that tab.</summary>
+    public event EventHandler<TabMenu>? TabMenuOpening;
+
     /// <summary>A file opened in a tab, before it is shown; and one closed, its last tab gone and nothing holding it.</summary>
     public event EventHandler<OpenDocument>? Opened;
 
@@ -105,8 +108,14 @@ public sealed partial class EditorArea : UserControl
         }
     }
 
-    /// <summary>What the area shows with no file open before a folder is: the Welcome screen.</summary>
-    public void ShowWelcome(Control welcome) => emptyState.Content = welcome;
+    /// <summary>What the area shows with no file open and no folder: the Welcome screen, before one opens and once it
+    /// closes.</summary>
+    public void ShowWelcome(Control welcome)
+    {
+        folderName = null;
+        emptyState.Content = welcome;
+        TitleWindows();
+    }
 
     /// <summary>The empty area's words once a folder is open: it has files now, just none showing.</summary>
     public void ShowFolderHint(string folder)
@@ -238,39 +247,118 @@ public sealed partial class EditorArea : UserControl
         }
     }
 
-    /// <summary>Closes a tab of one group: the file stays open if another group has it, in any window.</summary>
+    /// <summary>Closes a tab of one group: the file stays open if another group has it, in any window. Reopen Closed Tab
+    /// brings it back where it stood.</summary>
     public bool CloseTab(EditorGroup group, OpenDocument document)
     {
+        if (!group.Has(document))
+        {
+            return true;
+        }
+        ClosedTab closing = new(document.Path, new WeakReference<EditorGroup>(group), group.Tabs.Select(t => t.Document).ToList().IndexOf(document),
+            document.Text.Snapshot.GetPosition(Math.Min(group.SelectionsOf(document).Primary.Caret, document.Text.Snapshot.Length)),
+            group.ScrollOf(document), group.IsPinned(document));
         if (AllGroups.Count(g => g.Has(document)) > 1)
         {
             group.Remove(document);
             Collapse();
             ActiveChanged?.Invoke(this, EventArgs.Empty);
-            return true;
         }
-        return Close(document);
+        else if (!Close(document))
+        {
+            return false;
+        }
+        closedTabs.Add(closing);
+        if (closedTabs.Count > ClosedTabsKept)
+        {
+            closedTabs.RemoveAt(0);
+        }
+        return true;
     }
 
-    public void CloseOthers(EditorGroup group, OpenDocument keep)
+    /// <summary>Rider's Close Other Tabs: every tab of the group but this one and the pinned ones.</summary>
+    public void CloseOthers(EditorGroup group, OpenDocument keep) => CloseTabs(group, (tab, _) => tab.Document != keep);
+
+    /// <summary>Rider's Close All Tabs: every tab of the group but the pinned ones.</summary>
+    public void CloseAllTabs(EditorGroup group) => CloseTabs(group, (_, _) => true);
+
+    /// <summary>Rider's Close Tabs to the Left or to the Right of a tab, the pinned ones left open.</summary>
+    public void CloseToSide(EditorGroup group, OpenDocument of, bool left)
     {
-        foreach (OpenDocument other in group.Tabs.Select(t => t.Document).Where(d => d != keep).ToList())
+        int at = group.Tabs.Select(t => t.Document).ToList().IndexOf(of);
+        CloseTabs(group, (_, index) => left ? index < at : index > at);
+    }
+
+    /// <summary>Rider's Close All but Pinned: the group's unpinned tabs, or every group's in every window.</summary>
+    public void CloseUnpinned(EditorGroup? group)
+    {
+        foreach (EditorGroup each in group is null ? AllGroups.ToList() : [group])
         {
-            if (!CloseTab(group, other))
+            if (FrameOf(each) is not null && !CloseTabs(each, (_, _) => true))
             {
                 return;
             }
         }
     }
 
-    public void CloseAllTabs(EditorGroup group)
+    /// <summary>The unpinned tabs of a group that would close, by their place along its strip.</summary>
+    public static IReadOnlyList<OpenDocument> Unpinned(EditorGroup group, Func<EditorTab, int, bool> which) =>
+        [.. group.Tabs.Select((tab, index) => (tab, index)).Where(t => !t.tab.IsPinned && which(t.tab, t.index)).Select(t => t.tab.Document)];
+
+    /// <summary>Closes the unpinned tabs chosen, each saved first; false, the rest left open, at one that could not be.</summary>
+    private bool CloseTabs(EditorGroup group, Func<EditorTab, int, bool> which)
     {
-        foreach (OpenDocument each in group.Tabs.Select(t => t.Document).ToList())
+        foreach (OpenDocument each in Unpinned(group, which))
         {
             if (!CloseTab(group, each))
             {
-                return;
+                return false;
             }
         }
+        return true;
+    }
+
+    /// <summary>How many closed tabs Reopen Closed Tab can bring back.</summary>
+    private const int ClosedTabsKept = 50;
+
+    /// <summary>The tabs closed, the latest last: each file, the group it was in (held weakly, so a split closed since
+    /// goes), its place there, its caret and scroll, and whether it was pinned.</summary>
+    private readonly List<ClosedTab> closedTabs = [];
+
+    private sealed record ClosedTab(string Path, WeakReference<EditorGroup> Group, int Index, TextPosition Caret, Vector Scroll, bool Pinned);
+
+    /// <summary>Whether Reopen Closed Tab has a tab to bring back.</summary>
+    public bool CanReopen => closedTabs.Count > 0;
+
+    /// <summary>Rider's Reopen Closed Tab: the tab closed last opens again where it stood, in its group if that is still
+    /// there (else the active one), pinned if it was, its caret and scroll as they were. Null once one is open, else why
+    /// not: none was closed, or none of those closed can be read any more.</summary>
+    public string? ReopenClosedTab()
+    {
+        while (closedTabs.Count > 0)
+        {
+            ClosedTab closed = closedTabs[^1];
+            closedTabs.RemoveAt(closedTabs.Count - 1);
+            if (Load(closed.Path) is not { } document)
+            {
+                continue;
+            }
+            EditorGroup group = closed.Group.TryGetTarget(out EditorGroup? stood) && FrameOf(stood) is not null ? stood : activeGroup;
+            if (!group.Has(document))
+            {
+                group.Add(document, closed.Index, closed.Pinned);
+                TextSnapshot text = document.Text.Snapshot;
+                TextPosition at = new(Math.Clamp(closed.Caret.Line, 0, text.LineCount - 1), Math.Max(0, closed.Caret.Column));
+                group.Remember(document, SelectionSet.Single(text.GetOffset(at)), closed.Scroll);
+            }
+            group.Show(document);
+            SetActiveGroup(group);
+            Refresh();
+            group.Editor.Focus();
+            ActiveChanged?.Invoke(this, EventArgs.Empty);
+            return null;
+        }
+        return "No closed tab can be opened again";
     }
 
     /// <summary>Opens a file in a new group beside one (right for horizontal, below for vertical), as Rider's Split
@@ -280,7 +368,7 @@ public sealed partial class EditorArea : UserControl
         EditorFrame frame = FrameOf(beside) ?? main;
         EditorGroup created = NewGroup();
         frame.Root = frame.Root.Replace(beside, leaf => new EditorFrame.SplitNode(orientation, before ? new EditorFrame.Leaf(created) : leaf, before ? leaf : new EditorFrame.Leaf(created)));
-        created.Add(document);
+        created.Add(document, pinned: move && beside.IsPinned(document));
         created.Show(document);
         if (move)
         {
@@ -293,7 +381,8 @@ public sealed partial class EditorArea : UserControl
         ActiveChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    /// <summary>Moves a tab to another group, in this window or another, at a place on its strip or after its active tab.</summary>
+    /// <summary>Moves a tab to another group, in this window or another, at a place on its strip or after its active tab,
+    /// pinned there if it was.</summary>
     public void Move(EditorGroup from, OpenDocument document, EditorGroup to, int? index = null)
     {
         if (from == to)
@@ -304,7 +393,7 @@ public sealed partial class EditorArea : UserControl
             }
             return;
         }
-        to.Add(document, index);
+        to.Add(document, index, from.IsPinned(document));
         to.Show(document);
         from.Remove(document);
         Collapse();
@@ -337,6 +426,8 @@ public sealed partial class EditorArea : UserControl
         group.IsCurrent = true;
         ActiveChanged?.Invoke(this, EventArgs.Empty);
     }
+
+    internal void OpenTabMenu(EditorGroup group, OpenDocument document, ContextMenu menu) => TabMenuOpening?.Invoke(this, new TabMenu(group, document, menu));
 
     /// <summary>A tab of a group was shown by a click on it.</summary>
     internal void Activated(EditorGroup group)
@@ -470,7 +561,7 @@ public sealed partial class EditorArea : UserControl
             Tabs = [.. group.Tabs.Select(t =>
             {
                 TextPosition caret = t.Document.Text.Snapshot.GetPosition(Math.Min(group.SelectionsOf(t.Document).Primary.Caret, t.Document.Text.Snapshot.Length));
-                return new KeptTab(t.Document.Path, caret.Line, caret.Column);
+                return new KeptTab(t.Document.Path, caret.Line, caret.Column) { Pinned = t.IsPinned };
             })],
             Shown = group.Active is { } shown ? group.Tabs.Select(t => t.Document).ToList().IndexOf(shown) : 0,
             Current = group == current,
@@ -525,7 +616,7 @@ public sealed partial class EditorArea : UserControl
             {
                 continue;
             }
-            group.Add(document, group.Tabs.Count);
+            group.Add(document, group.Tabs.Count, tab.Pinned);
             TextPosition at = new(Math.Clamp(tab.Line, 0, document.Text.Snapshot.LineCount - 1), Math.Max(0, tab.Column));
             group.Remember(document, SelectionSet.Single(document.Text.Snapshot.GetOffset(at)));
             if (index == kept.Shown || shown is null)
@@ -569,7 +660,7 @@ public sealed partial class EditorArea : UserControl
     }
 
     /// <summary>Closes every file, those held too, each saved first; false when one could not be, and stays open. The
-    /// editor windows go with their last tabs.</summary>
+    /// editor windows go with their last tabs, and the tabs Reopen Closed Tab had, which were the folder's.</summary>
     public bool CloseAll()
     {
         foreach (OpenDocument document in documents.ToList())
@@ -579,8 +670,53 @@ public sealed partial class EditorArea : UserControl
                 return false;
             }
         }
+        closedTabs.Clear();
         return true;
     }
+
+    /// <summary>Whether a group's window of editors is split, so Unsplit has something to join.</summary>
+    public bool IsSplit(EditorGroup group) => (FrameOf(group)?.Groups.Count() ?? 0) > 1;
+
+    /// <summary>Rider's Unsplit: the split a group is in goes, the tabs of the other side joining the group's after its
+    /// own, each with its carets and pin; with <paramref name="all"/> (Unsplit All) every split of its window goes so.</summary>
+    public void Unsplit(EditorGroup group, bool all)
+    {
+        if (FrameOf(group) is not { } frame || !IsSplit(group))
+        {
+            return;
+        }
+        EditorFrame.Node joined = all ? frame.Root : Sides(frame.Root, group) ?? frame.Root;
+        foreach (EditorGroup other in joined.Groups.Where(g => g != group).ToList())
+        {
+            other.Keep();
+            foreach (EditorTab tab in other.Tabs.ToList())
+            {
+                if (!group.Has(tab.Document))
+                {
+                    group.Add(tab.Document, group.Tabs.Count, tab.IsPinned);
+                    group.Remember(tab.Document, other.SelectionsOf(tab.Document), other.ScrollOf(tab.Document));
+                }
+                other.Remove(tab.Document);
+            }
+        }
+        frame.Root = frame.Root.Replace(joined, new EditorFrame.Leaf(group));
+        frame.Current = group;
+        Rebuild(frame);
+        SetActiveGroup(group);
+        Collapse();
+        if (group.Active is not null)
+        {
+            group.Editor.Focus();
+        }
+        ActiveChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>The split whose one side holds a group's leaf: what Unsplit joins.</summary>
+    private static EditorFrame.Node? Sides(EditorFrame.Node node, EditorGroup group) => node is EditorFrame.SplitNode split
+        ? split.First is EditorFrame.Leaf first && first.Group == group || split.Second is EditorFrame.Leaf second && second.Group == group
+            ? split
+            : Sides(split.First, group) ?? Sides(split.Second, group)
+        : null;
 
     /// <summary>The next tab of the active group (or previous, for a negative step), wrapping at the ends.</summary>
     public void Cycle(int step)
@@ -793,3 +929,6 @@ public sealed partial class EditorArea : UserControl
 
 /// <summary>A file or folder that moved on disk (both paths canonical), and the open files that went with it.</summary>
 public sealed record FileMove(string From, string To, IReadOnlyList<OpenDocument> Documents);
+
+/// <summary>A tab's menu as it opens: the tab (its group and file) and the menu to fill.</summary>
+public sealed record TabMenu(EditorGroup Group, OpenDocument Document, ContextMenu Menu);

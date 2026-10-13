@@ -121,8 +121,8 @@ public static class Screenshot
             case ScriptStep.Click click:
                 for (int i = 0; i < click.Count; i++)
                 {
-                    window.MouseDown(click.At, MouseButton.Left, RawInputModifiers.None);
-                    window.MouseUp(click.At, MouseButton.Left, RawInputModifiers.None);
+                    window.MouseDown(click.At, click.Button, RawInputModifiers.None);
+                    window.MouseUp(click.At, click.Button, RawInputModifiers.None);
                 }
                 break;
         }

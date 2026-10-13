@@ -228,6 +228,21 @@
     <Style Selector="Button.tabClose:pointerover /template/ ContentPresenter#PART_ContentPresenter">
         <Setter Property="Background" Value="{DynamicResource Passenger.Selected}" />
     </Style>
+    <!-- A pinned tab's pin, always shown, which unpins it. -->
+    <Style Selector="Button.tabPin">
+        <Setter Property="Width" Value="16" />
+        <Setter Property="Height" Value="16" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="CornerRadius" Value="3" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.TextMuted}" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="Button.tabPin:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource Passenger.Selected}" />
+    </Style>
 
     <!-- A search field (the find bar, Go to File): flat, the chrome's own colour, an accent edge when
          focused, and room at its right for toggles drawn inside it. -->

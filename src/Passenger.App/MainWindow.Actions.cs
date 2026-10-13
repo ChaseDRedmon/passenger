@@ -1,6 +1,5 @@
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Layout;
 using Avalonia.VisualTree;
 using Passenger.App.Run;
 using Passenger.Editor;
@@ -10,7 +9,7 @@ using A = Passenger.App.AppActions;
 namespace Passenger.App;
 
 /// <summary>The window's actions: the registry every feature adds its own to, where each runs (<see cref="Context"/>),
-/// and the window's own (files, editing, navigation, building and running, tests, the editor's splits and the tool
+/// and the window's own (files, editing, navigation, building and running, tests, the editor tabs' and the tool
 /// windows' frame). However an action is asked for, it runs through the registry, so one that cannot run says why.</summary>
 public partial class MainWindow
 {
@@ -65,8 +64,6 @@ public partial class MainWindow
         actions.Add(new IdeAction(A.RecentFiles, "Recent Files", "IDE", _ => ShowRecentFiles()) { Menus = [new("File", 0, 4), new("View", 1, 0)] });
         Add(A.Save, "Save", "IDE", _ => Editors.SaveActive(), NeedsFile, ("File", 1, 0));
         Add(A.SaveAll, "Save All", "IDE", _ => Editors.SaveAll(), _ => Editors.Documents.Any(d => d.IsModified) ? null : "Every file is saved", ("File", 1, 1));
-        // The split worked in loses its tab, as Rider's Close does; the file stays open in any other.
-        Add(A.CloseTab, "Close Tab", "IDE", c => Editors.CloseTab(Editors.ActiveGroup, c.File!), NeedsFile, ("File", 1, 2));
         // Quit is the application menu's on macOS.
         Add(A.Exit, "Exit", "IDE", _ => Close(), menu: OperatingSystem.IsMacOS() ? null : ("File", 3, 0));
         Add(A.FindAction, "Find Action...", "IDE", _ => ShowFindAction(), menu: ("Help", 0, 0));
@@ -91,12 +88,7 @@ public partial class MainWindow
         AddBuilding();
         AddTests();
 
-        Add(A.NextTab, "Next Tab", "IDE", _ => Editors.Cycle(1), NeedsFile, ("Window", 0, 0));
-        Add(A.PreviousTab, "Previous Tab", "IDE", _ => Editors.Cycle(-1), NeedsFile, ("Window", 0, 1));
-        Add(A.SplitRight, "Split Right", "Editor Tabs", c => Editors.Split(Editors.ActiveGroup, c.File!, Orientation.Horizontal, move: false), NeedsFile, ("Window", 1, 0));
-        Add(A.SplitDown, "Split Down", "Editor Tabs", c => Editors.Split(Editors.ActiveGroup, c.File!, Orientation.Vertical, move: false), NeedsFile, ("Window", 1, 1));
-        Add(A.MoveToOppositeGroup, "Move to Opposite Group", "Editor Tabs", c => Editors.MoveToOpposite(Editors.ActiveGroup, c.File!), NeedsFile, ("Window", 1, 2));
-        Add(A.OpenInNewWindow, "Open Tab in New Window", "Editor Tabs", c => Editors.OpenInNewWindow(Editors.ActiveGroup, c.File!), NeedsFile, ("Window", 1, 3));
+        AddTabActions();
 
         // The tool windows' frame: run from the terminal too, as the windows' own shortcuts are.
         actions.Add(new IdeAction(A.MaximizeToolWindow, "Maximize Tool Window", "Tool Windows", _ => Dock.ToggleMaximize()) { Menus = [new("View", 2, 0)], FromTerminal = true });

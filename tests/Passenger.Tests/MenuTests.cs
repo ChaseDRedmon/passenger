@@ -61,8 +61,8 @@ public sealed class MenuTests : IDisposable
         Assert.False(Item(run, "Step Over").IsEnabled);
         Assert.True(Item(run, "Toggle Breakpoint").IsEnabled);
 
-        // Window, Split Right splits the editor; View, Tool Windows, Terminal shows the terminal.
-        Item(Open(bar, "Window"), "Split Right").Command!.Execute(null);
+        // Window, Editor Tabs, Split Right splits the editor; View, Tool Windows, Terminal shows the terminal.
+        Item(Open(Open(bar, "Window"), "Editor Tabs"), "Split Right").Command!.Execute(null);
         Ui.Settle();
         Assert.Equal(2, window.EditorArea.Groups.Count);
         NativeMenu toolWindows = Open(Open(bar, "View"), MainMenu.ToolWindows);

@@ -257,6 +257,18 @@ public partial class ExplorerView : UserControl
         Rows.IsVisible = true;
     }
 
+    /// <summary>Shows nothing, its hint in its place, as it did before a folder opened: the solution was closed.</summary>
+    public void Unload()
+    {
+        folder = null;
+        solution = null;
+        project = null;
+        ViewSwitch.IsVisible = false;
+        Tree.Clear();
+        Rows.IsVisible = false;
+        Hint.IsVisible = true;
+    }
+
     /// <summary>Reads again only the folders that changed on disk, the rows open and chosen kept.</summary>
     public void RefreshFolders(IEnumerable<string> folders) => Tree.RefreshFolders(folders);
 

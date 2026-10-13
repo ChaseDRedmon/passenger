@@ -117,6 +117,11 @@ internal sealed class EditorFrame
 
         /// <summary>The tree without a group's leaf, its sibling in its split's place; null when it was all.</summary>
         public abstract Node? Without(EditorGroup group);
+
+        /// <summary>The tree with another node in one of its nodes' place, as Unsplit puts a group's leaf in its split's.</summary>
+        public Node Replace(Node target, Node with) => this == target ? with
+            : this is SplitNode split ? new SplitNode(split.Orientation, split.First.Replace(target, with), split.Second.Replace(target, with)) { Ratio = split.Ratio }
+            : this;
     }
 
     internal sealed class Leaf(EditorGroup group) : Node

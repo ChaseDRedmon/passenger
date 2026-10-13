@@ -5,7 +5,7 @@ using Passenger.App.State;
 namespace Passenger.App.Workspace;
 
 /// <summary>What a folder's window had open, kept in the folder's place in the store as Rider keeps its workspace.xml:
-/// the editors' splits, tabs and carets, the editor windows, the recent files and the projects unloaded, so opening the
+/// the editors' splits, tabs (pinned or not) and carets, the editor windows, the recent files and the projects unloaded, so opening the
 /// folder again brings them back. Only the window a person uses keeps it, as with the layout.</summary>
 public sealed record WorkspaceState : IStateDocument<WorkspaceState>
 {

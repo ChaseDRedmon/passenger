@@ -131,6 +131,24 @@ public static class AppActions
     // Rider's Open Tab in New Window (EditSourceInNewWindow): Shift+F4 in both of its Visual Studio keymaps, from their parents.
     public const string OpenInNewWindow = "app.editor.openInNewWindow";
 
+    // Rider's Window > Editor Tabs (ReopenClosedTab, PinActiveEditorTab, CloseAllEditorsButActive, CloseAllEditors,
+    // CloseAllUnpinnedEditors, CloseAllToTheLeft and -Right, Unsplit, UnsplitAll): no keys in its Visual Studio keymaps
+    // or their parents.
+    public const string ReopenClosedTab = "app.editor.reopenClosedTab";
+    public const string PinTab = "app.editor.pinTab";
+    public const string CloseOtherTabs = "app.editor.closeOthers";
+    public const string CloseAllTabs = "app.editor.closeAll";
+    public const string CloseUnpinned = "app.editor.closeUnpinned";
+    public const string CloseTabsLeft = "app.editor.closeLeft";
+    public const string CloseTabsRight = "app.editor.closeRight";
+    public const string Unsplit = "app.editor.unsplit";
+    public const string UnsplitAll = "app.editor.unsplitAll";
+
+    // Rider's Close Solution (CloseProject) and Restore Default Layout (RiderRestoreDefaultLayout, in Window > Layout
+    // Settings): no keys there either; both Visual Studio keymaps take IntelliJ's Shift+F12 off its layout action.
+    public const string CloseSolution = "app.closeSolution";
+    public const string RestoreDefaultLayout = "app.window.restoreDefaultLayout";
+
     // The terminal: Rider's, a shell per tab in the open folder.
     public const string ShowTerminal = "app.showTerminal";
 

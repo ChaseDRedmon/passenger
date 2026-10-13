@@ -121,6 +121,20 @@ public sealed class VcsController
         await RefreshAsync();
     }
 
+    /// <summary>The folder closed: the window is in no working tree, as with a folder outside one, until another opens;
+    /// a lookup still under way for the folder is dropped.</summary>
+    public Task CloseAsync()
+    {
+        UiThread.Check();
+        opened++;
+        git = null;
+        heads.Clear();
+        textsOf = null;
+        textsRead = false;
+        moves.Clear();
+        return RefreshAsync();
+    }
+
     /// <summary>Makes the folder a working tree (Rider's Create Git Repository).</summary>
     public async Task<bool> InitAsync(string folder)
     {

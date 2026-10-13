@@ -66,6 +66,9 @@ public sealed class ToolWindow(string id, string title, string icon, Control con
     /// <summary>What is chosen in it (its rows), for actions that run on them while it has the keys.</summary>
     public Func<object?>? Chosen { get; init; }
 
+    /// <summary>Open in the layout the IDE starts with (the Explorer), and so after Restore Default Layout.</summary>
+    public bool OpenAtFirst { get; init; }
+
     /// <summary>The action that shows it, as the dock adds it.</summary>
     internal IdeAction? ShowAction(DockHost dock) => Action is { } id
         ? new IdeAction(id, ActionTitle ?? Title, "Tool Windows", _ => (Activate ?? (() => dock.Show(Id)))()) { Menus = Menus, FromTerminal = true }

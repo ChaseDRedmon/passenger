@@ -33,6 +33,8 @@ public static class MainMenu
         new("Edit/Find", 3, 0),
         new("Navigate/Bookmarks", 4, 0),
         new("Code/Folding", 3, 0),
+        new("Window/Layout Settings", 0, 0),
+        new("Window/Editor Tabs", 1, 0),
     ];
 
     private static readonly MenuEntry Separator = new(null);
