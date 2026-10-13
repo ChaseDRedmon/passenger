@@ -221,11 +221,22 @@ public static class Extensions
     {
         ICorDebugValue? returnValue = null;
 
+        ICorDebugThread thread = eval.Thread;
+        if (evalStatus.ImplicitOff is { } off && !evalStatus.Explicit)
+        {
+            throw new ManagedDebugger.EvalException(off);
+        }
+        if (evalStatus.Abandoned.ContainsKey(thread.Id))
+        {
+            throw new ManagedDebugger.EvalException("An evaluation that could not be stopped is still running on this thread, so no other can run on it until it returns");
+        }
+
         startEval();
 
-        ICorDebugThread thread = eval.Thread;
         ICorDebugProcess process = thread.Process;
         evalStatus.ThreadId = thread.Id;
+        using CancellationTokenSource reading = new();
+        evalStatus.Reading = reading.Token;
         try
         {
             // Only the evaluation's thread runs, as in Visual Studio: the others' values hold still and none meets a breakpoint unseen.
@@ -241,15 +252,22 @@ public static class Extensions
                 {
                     rude.TryRudeAbort();
                 }
-                bool stopped = await Task.WhenAny(waiting, Task.Delay(TimeSpan.FromSeconds(5))) == waiting;
+                bool stopped = await Task.WhenAny(waiting, Task.Delay(TimeSpan.FromSeconds(5))) == waiting || await GiveUp(waiting) is not null;
                 if (stopped && eval.TryGetResult(out ICorDebugValue? partial) is Cor.S_OK && partial is ICorDebugHandleValue handle)
                 {
                     handle.TryDispose();
                 }
-                // Code blocked outside the runtime (a read of input) cannot be stopped, and runs on with the program let go.
+                if (!stopped)
+                {
+                    // Code blocked outside the runtime (a read of input) cannot be stopped: the program is taken back, paused
+                    // as the IDE shows it, and the evaluation runs on with it, its end let go whenever it comes.
+                    process.Stop(0);
+                    evalStatus.Abandoned[thread.Id] = eval;
+                }
+                evalStatus.ImplicitOff = $"Implicit evaluation is disabled: an evaluation took longer than {EvaluationTimeout.TotalSeconds:0} s. It is enabled again once the program runs on";
                 throw new ManagedDebugger.EvalException(stopped
                     ? $"The evaluation took longer than {EvaluationTimeout.TotalSeconds:0} s and was stopped: it may wait on another thread, which stays paused while it runs"
-                    : $"The evaluation took longer than {EvaluationTimeout.TotalSeconds:0} s and could not be stopped: it is still running in the program, which cannot step until it returns");
+                    : $"The evaluation took longer than {EvaluationTimeout.TotalSeconds:0} s and could not be stopped: it runs on in the program until it returns, the program paused meanwhile");
             }
             CorDebugManagedCallbackEventArgs evalEvent = await waiting;
             if (evalEvent is EvalCompleteCorDebugManagedCallbackEventArgs completeEvent)
@@ -290,8 +308,24 @@ public static class Extensions
         finally
         {
             evalStatus.ThreadId = null;
+            evalStatus.Reading = default;
             // Taken at the next Continue; a process that ended meanwhile has no threads to set.
             process.TrySetAllThreadsDebugState(CorDebugThreadState.THREAD_RUN, thread);
+        }
+
+        // Ends the wait for the evaluation's event, which reads the runtime's events while the request holds the engine's
+        // lock and so must not outlive it; the event, if it came at the last moment.
+        async Task<CorDebugManagedCallbackEventArgs?> GiveUp(Task<CorDebugManagedCallbackEventArgs> waiting)
+        {
+            reading.Cancel();
+            try
+            {
+                return await waiting;
+            }
+            catch (OperationCanceledException)
+            {
+                return null;
+            }
         }
     }
 

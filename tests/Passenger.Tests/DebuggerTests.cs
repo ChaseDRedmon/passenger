@@ -372,9 +372,9 @@ public sealed class DebuggerTests : IDisposable
     }
 
     [AvaloniaFact]
-    public void A_step_the_debugger_refuses_leaves_the_program_paused_where_it_was_saying_why()
+    public void An_evaluation_that_could_not_be_stopped_leaves_the_program_paused_and_a_step_goes_on_once_it_returns()
     {
-        // A getter that reads input the program is never given: an evaluation of it cannot be stopped, and runs on.
+        // A getter that reads input the program has not been given: an evaluation of it cannot be stopped, and runs on.
         Write("Program.cs", "int total = 0;\nfor (int i = 1; i <= 3; i++)\n{\n    total += i;\n}\nConsole.WriteLine($\"total {total}\");\n\n"
             + "static class Waits\n{\n    public static string Input => Console.ReadLine() ?? \"none\";\n}\n");
         MainWindow window = Open();
@@ -388,17 +388,21 @@ public sealed class DebuggerTests : IDisposable
         Ui.Run(window, AppActions.Evaluate);
         window.KeyTextInput("Waits.Input");
         Ui.Press(window, "Enter");
-        Ui.WaitFor(() => view.Tree.Rows.Any(r => r.Name == "Waits.Input" && r.Value.Contains("took longer than", StringComparison.Ordinal)),
+        Ui.WaitFor(() => view.Tree.Rows.Any(r => r.Name == "Waits.Input" && r.Value.Contains("could not be stopped", StringComparison.Ordinal)),
             "the debugger to give up on the evaluation");
-
-        Ui.Run(window, AppActions.StepOver);
-        Ui.WaitFor(() => window.Status?.StartsWith("Could not step over", StringComparison.Ordinal) == true || window.Debugger.Session?.State != DebugState.Paused,
-            "the step to be refused or taken");
-        Assert.True(window.Debugger.Session?.State == DebugState.Paused, "The IDE said the program ran on after the debugger refused to step it, leaving only Stop");
-        Assert.StartsWith("Could not step over: The program is running", window.Status, StringComparison.Ordinal);
+        Assert.True(window.Debugger.Session?.State == DebugState.Paused, "The program was left running while the IDE showed it paused");
         Assert.Contains(new LineMark(3, LineMarkKind.ExecutionPoint), editor.LineMarks);
         Assert.NotEmpty(view.Frames);
-        Assert.Contains(view.Tree.Rows, r => r.Name == "Waits.Input" && r.Value.Contains("could not be stopped", StringComparison.Ordinal));
+
+        // The step is taken, and ends at the loop body's closing brace once the read the evaluation waits on has its line.
+        Ui.Run(window, AppActions.StepOver);
+        Ui.WaitFor(() => window.Debugger.Session?.State == DebugState.Running || window.Status?.StartsWith("Could not", StringComparison.Ordinal) == true,
+            "the step to be taken");
+        Assert.True(window.Debugger.Session?.State == DebugState.Running, $"The step was refused: {window.Status}");
+        _ = window.Debugger.Session!.InputAsync("typed\n");
+        Ui.WaitFor(() => window.Debugger.Session?.State == DebugState.Paused && editor.LineMarks.Contains(new LineMark(4, LineMarkKind.ExecutionPoint)),
+            "the step to end at the next line");
+        Ui.WaitFor(() => Value(window, "total") == "1", "the stop's locals");
         Ui.Run(window, AppActions.Stop);
         Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
         window.Close();

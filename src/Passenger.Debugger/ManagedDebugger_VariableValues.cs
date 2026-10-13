@@ -58,6 +58,11 @@ public partial class ManagedDebugger
         (string? friendlyTypeName, string? value, CorDebugValueFormatKind formatKind, string? debuggerProxyTypeName, DebuggerDisplay? display) = GetValueForCorDebugValue(valueToFormat, escapeStringValue);
         friendlyTypeName = resolvedValue.FriendlyTypeNameOverride ?? friendlyTypeName;
         bool resultIsError = false;
+        if (EvalStatus.ImplicitOff is not null && !EvalStatus.Explicit && formatKind is CorDebugValueFormatKind.ToString or CorDebugValueFormatKind.DebuggerDisplay)
+        {
+            // Neither its ToString nor its [DebuggerDisplay] is run while implicit evaluation is off: its type, as Visual Studio shows it.
+            return new FormattedValue(friendlyTypeName, $"{{{friendlyTypeName}}}", debuggerProxyTypeName, false);
+        }
         string? displayName = null;
         if (formatKind is CorDebugValueFormatKind.Tuple or CorDebugValueFormatKind.AnonymousType)
         {

@@ -465,6 +465,7 @@ public partial class ManagedDebugger
     private void EndStepForStop()
     {
         _asyncStepper?.Disable();
+        _stepAfterEvaluation = null;
         if (_stepper is not null)
         {
             _stepper.Deactivate();
@@ -477,6 +478,13 @@ public partial class ManagedDebugger
     /// suspended where the event found it, until the evaluation's own stop is over. True when the event was either.</summary>
     private bool PutOffDuringEvaluation(CorDebugManagedCallbackEventArgs callbackEvent, ICorDebugThread thread)
     {
+        if (EvalStatus.Abandoned.ContainsKey(thread.Id))
+        {
+            // The code of an evaluation given up, which runs on until it returns: it never stops part way either.
+            _logger?.Invoke($"Let go: {callbackEvent.GetType().Name} on thread {thread.Id}, in an evaluation given up");
+            Continue();
+            return true;
+        }
         if (EvalStatus.ThreadId is not { } evaluating)
         {
             return false;
@@ -497,13 +505,7 @@ public partial class ManagedDebugger
         {
             return;
         }
-        _asyncStepper?.Disable();
-        if (_stepper is not null)
-        {
-            _stepper.Deactivate();
-            _stepper = null;
-        }
-
+        EndStepForStop();
         OnStopped?.Invoke(corThread.Id, "pause");
     }
 
@@ -516,10 +518,10 @@ public partial class ManagedDebugger
     private void HandleException2(object? sender, Exception2CorDebugManagedCallbackEventArgs exceptionEventArgs)
     {
         ICorDebugThread corThread = exceptionEventArgs.Thread;
-        if (EvalStatus.ThreadId == corThread.Id)
+        if (EvalStatus.ThreadId == corThread.Id || EvalStatus.Abandoned.ContainsKey(corThread.Id))
         {
             // The evaluated code's own: caught inside it, or the evaluation's result.
-            _process!.Continue(false);
+            Continue();
             return;
         }
 
@@ -596,12 +598,7 @@ public partial class ManagedDebugger
 
     private void StopAtException(ICorDebugThread corThread, ExceptionBreakMode breakMode)
     {
-        _asyncStepper?.Disable();
-        if (_stepper is not null)
-        {
-            _stepper.Deactivate();
-            _stepper = null;
-        }
+        EndStepForStop();
         _exceptionBreakModes[new ThreadId(corThread.Id)] = breakMode;
         OnStopped?.Invoke(corThread.Id, "exception");
     }

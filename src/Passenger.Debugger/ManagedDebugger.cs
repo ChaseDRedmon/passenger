@@ -241,23 +241,56 @@ public partial class ManagedDebugger
         }
     }
 
+    /// <summary>Handles the runtime's events while an evaluation runs, under the request's hold of the engine's lock, until
+    /// the evaluation's end; that of one given up earlier is let go on the way. Ends when the evaluation is given up.</summary>
     internal async Task<CorDebugManagedCallbackEventArgs> ProcessRuntimeEventsUntilEvalEvent()
     {
+        CancellationToken givenUp = EvalStatus.Reading;
         ChannelReader<CorDebugManagedCallbackEventArgs> reader = _runtimeEventChannel.Reader;
-        while (await reader.WaitToReadAsync())
+        while (await reader.WaitToReadAsync(givenUp))
         {
             if (reader.TryRead(out CorDebugManagedCallbackEventArgs? callbackEvent) is false)
             {
                 throw new InvalidOperationException("Expected to read an event from the runtime event queue, but none was available");
             }
 
+            bool abandoned = IsAbandonedEvaluationsEnd(callbackEvent);
             await OnAnyEvent(this, callbackEvent).ConfigureAwait(false);
-            if (callbackEvent is EvalCompleteCorDebugManagedCallbackEventArgs or EvalExceptionCorDebugManagedCallbackEventArgs)
+            if (callbackEvent is EvalCompleteCorDebugManagedCallbackEventArgs or EvalExceptionCorDebugManagedCallbackEventArgs && !abandoned)
             {
                 return callbackEvent;
             }
         }
         throw new InvalidOperationException("Expected to read an eval event from the runtime event queue, but Channel completed unexpectedly");
+    }
+
+    private static ICorDebugThread? EvaluationThread(CorDebugManagedCallbackEventArgs callbackEvent) => callbackEvent switch
+    {
+        EvalCompleteCorDebugManagedCallbackEventArgs complete => complete.Thread,
+        EvalExceptionCorDebugManagedCallbackEventArgs exception => exception.Thread,
+        _ => null,
+    };
+
+    private bool IsAbandonedEvaluationsEnd(CorDebugManagedCallbackEventArgs callbackEvent) =>
+        EvaluationThread(callbackEvent) is { } thread && EvalStatus.Abandoned.ContainsKey(thread.Id);
+
+    /// <summary>The end of an evaluation given up because it could not be stopped, come at last: its value is let go, its
+    /// thread is free for evaluations again, and the program goes on, from the stop the evaluation began at.</summary>
+    private void LetGoAbandonedEvaluation(CorDebugManagedCallbackEventArgs callbackEvent)
+    {
+        ICorDebugThread thread = EvaluationThread(callbackEvent)!;
+        if (EvalStatus.Abandoned.Remove(thread.Id, out ICorDebugEval? eval) && eval.TryGetResult(out ICorDebugValue? value) is Cor.S_OK && value is ICorDebugHandleValue handle)
+        {
+            handle.TryDispose();
+        }
+        _logger?.Invoke($"The evaluation given up on thread {thread.Id} has returned; its end is let go");
+        if (_stepAfterEvaluation is (int stepping, AsyncStepper.StepType type) && stepping == thread.Id)
+        {
+            // The evaluation's session is over (the runtime ends it before it tells of the end), so this stepper is the stop's.
+            _stepAfterEvaluation = null;
+            SetupStepper(thread, type, EnumerateFramesForThread(thread).First());
+        }
+        Continue();
     }
 
     private async Task OnAnyEvent(object? sender, CorDebugManagedCallbackEventArgs e)
@@ -280,6 +313,7 @@ public partial class ManagedDebugger
                 case ExceptionCorDebugManagedCallbackEventArgs a: HandleException(sender, a); break;
                 case Exception2CorDebugManagedCallbackEventArgs a: HandleException2(sender, a); break;
                 case DeferredExceptionStop a: StopAtException(a.Thread, a.BreakMode); break;
+                case EvalCompleteCorDebugManagedCallbackEventArgs or EvalExceptionCorDebugManagedCallbackEventArgs when IsAbandonedEvaluationsEnd(e): LetGoAbandonedEvaluation(e); break;
                 case EvalCompleteCorDebugManagedCallbackEventArgs or EvalExceptionCorDebugManagedCallbackEventArgs: break; // don't continue on these, as they are being used for expression evaluation
                 default:
                     if (_process is not null)
@@ -446,12 +480,15 @@ public partial class ManagedDebugger
     /// <summary>A pause that came while the process was held for an event of its own, taken at the next Continue.</summary>
     private bool _pauseRequested;
 
+    /// <summary>A step asked of a thread whose evaluation was given up and runs on, begun once that evaluation returns.</summary>
+    private (int ThreadId, AsyncStepper.StepType Type)? _stepAfterEvaluation;
+
     /// <summary>
     /// Setup a stepper without continuing execution
     /// </summary>
-    internal ICorDebugStepper SetupStepper(ICorDebugThread thread, AsyncStepper.StepType stepType)
+    internal ICorDebugStepper SetupStepper(ICorDebugThread thread, AsyncStepper.StepType stepType, ICorDebugFrame? from = null)
     {
-        ICorDebugFrame frame = thread.ActiveFrame;
+        ICorDebugFrame frame = from ?? thread.ActiveFrame;
         if (frame is not ICorDebugILFrame ilFrame)
         {
             throw new InvalidOperationException("Active frame is not an IL frame");
@@ -687,9 +724,14 @@ public partial class ManagedDebugger
         return frame;
     }
 
+    /// <summary>The thread's managed frames from its stop down. An evaluation given up, still running on the thread, is a
+    /// chain of its own above the stop's (CHAIN_FUNC_EVAL, ending at its [Func Eval] frame): its frames are left out, so a
+    /// frame's depth names the same frame as before the evaluation began.</summary>
     private static IEnumerable<ICorDebugFrame> EnumerateFramesForThread(ICorDebugThread thread)
     {
-        foreach (ICorDebugChain chain in thread.EnumerateChains())
+        List<ICorDebugChain> chains = [.. thread.EnumerateChains()];
+        int stop = chains.FindLastIndex(chain => chain.Reason is CorDebugChainReason.CHAIN_FUNC_EVAL) + 1;
+        foreach (ICorDebugChain chain in chains.Skip(stop))
         {
             if (chain.IsManaged is false)
             {
@@ -764,6 +806,9 @@ public partial class ManagedDebugger
         _asyncStepper?.Dispose();
         _asyncStepper = null;
         _stepper = null!;
+        _stepAfterEvaluation = null;
+        EvalStatus.Abandoned.Clear();
+        EvalStatus.ImplicitOff = null;
         _threads.Clear();
         _deferredEvents.Clear();
         _mainThreadId = null;
@@ -793,7 +838,12 @@ public partial class ManagedDebugger
         // Detach from the process
         if (!exited)
         {
-            _process?.TryDetach();
+            if (_process?.TryDetach() is int detached and not Cor.S_OK)
+            {
+                // Refused while an evaluation that could not be stopped still runs: the program is let go rather than left held.
+                _logger?.Invoke($"Detach: 0x{detached:X8}; the program is let go");
+                _process.TryContinue(false);
+            }
         }
         else if (_corDebug is not null)
         {
@@ -845,4 +895,19 @@ public class EvalStatus
     public int? ThreadId { get; set; }
 
     public bool IsRunning => ThreadId is not null;
+
+    /// <summary>Cancelled when the running evaluation is given up, so its wait for the runtime's events ends with it and
+    /// nothing reads them outside the engine's lock.</summary>
+    internal CancellationToken Reading { get; set; }
+
+    /// <summary>Evaluations given up that could not be stopped, by their thread: each runs on in the program until it
+    /// returns, and its end, whenever it comes, is let go rather than taken for another's.</summary>
+    internal Dictionary<int, ICorDebugEval> Abandoned { get; } = [];
+
+    /// <summary>Why code the debugger would run of itself (a getter, a ToString, a proxy) is not run, until the program
+    /// next runs on, as Visual Studio and Rider stop running it once an evaluation has timed out.</summary>
+    internal string? ImplicitOff { get; set; }
+
+    /// <summary>Set while an evaluation asked for by name runs (the Evaluate window, a watch), which runs code regardless.</summary>
+    internal bool Explicit { get; set; }
 }

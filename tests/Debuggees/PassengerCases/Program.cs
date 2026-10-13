@@ -22,6 +22,11 @@ if (args is ["busy"])
 	Children.Run();
 	return;
 }
+if (args is ["reads"])
+{
+	Reads.Run();
+	return;
+}
 Wrapper.CallWithCatch(() => throw new InvalidOperationException("thrown in user code"));
 Attributed.StepThrough();
 Attributed.NonUser();
@@ -236,6 +241,27 @@ static class Children
 			child.Kill();
 		}
 		Console.WriteLine($"child said: {said}");
+	}
+}
+
+// A getter blocked in a read of input, outside the runtime: an evaluation of it cannot be stopped until the program has a
+// line. A worker passes a line of its own meanwhile.
+static class Reads
+{
+	public static string Input => Console.ReadLine() ?? "none";
+
+	public static void Run()
+	{
+		Thread worker = new(() =>
+		{
+			Thread.Sleep(1500);
+			Console.WriteLine("worker ran");
+		});
+		int before = 1;
+		worker.Start();
+		Console.WriteLine($"before {before}");
+		Console.WriteLine($"read {Input}");
+		worker.Join();
 	}
 }
 

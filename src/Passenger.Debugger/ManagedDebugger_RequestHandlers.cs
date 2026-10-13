@@ -246,6 +246,7 @@ public partial class ManagedDebugger
     {
         ArgumentNullException.ThrowIfNull(_process);
         _pauseRequested = false;
+        EvalStatus.ImplicitOff = null;
         _variableManager.ClearAndDisposeHandleValues();
         _frameReferenceManager.Clear();
         // Another thread's event put off while this stop's evaluations ran comes next, rather than lost to the continue.
@@ -267,6 +268,7 @@ public partial class ManagedDebugger
     {
         ArgumentNullException.ThrowIfNull(_process);
         _pauseRequested = false;
+        EvalStatus.ImplicitOff = null;
         _variableManager.ClearAndDisposeHandleValues();
         _frameReferenceManager.Clear();
         // As at the person's continue: a condition tested or a step begun lets nothing put off pass unseen.
@@ -294,12 +296,7 @@ public partial class ManagedDebugger
         }
 
         _process.Stop(0);
-        _asyncStepper?.Disable();
-        if (_stepper is not null)
-        {
-            _stepper.Deactivate();
-            _stepper = null;
-        }
+        EndStepForStop();
         // ICorDebug's Stop is synchronous and raises no callback of its own, so the stop is reported here.
         if (PausedThread() is { } thread)
         {
@@ -383,19 +380,27 @@ public partial class ManagedDebugger
         {
             throw new InvalidOperationException($"The program has no thread {threadId} to step: it has ended");
         }
-        // Running while the IDE shows a stop only after an evaluation that could not be stopped (RunEvalAsync).
+        // Held while the IDE shows a stop, even after an evaluation that could not be stopped (RunEvalAsync takes it back).
         if (_process.TryIsRunning(out bool running) is Cor.S_OK && running)
         {
             throw new InvalidOperationException("The program is running, so it cannot step");
         }
         ICorDebugThread thread = threadInfo.Thread;
+        if (_stepper is not null || _stepAfterEvaluation is not null)
+        {
+            throw new InvalidOperationException("A step operation is already in progress");
+        }
+        if (EvalStatus.Abandoned.ContainsKey(threadId))
+        {
+            // The thread runs an evaluation given up, above the stop: a stepper made now would be the evaluation's, and the
+            // runtime ends it with the evaluation. The step is taken from the stop once the evaluation has returned.
+            _stepAfterEvaluation = (threadId, type);
+            ContinueWithVariableClear();
+            return;
+        }
         if (StepOutToManagedCode(thread))
         {
             return;
-        }
-        if (_stepper is not null)
-        {
-            throw new InvalidOperationException("A step operation is already in progress");
         }
         if (_asyncStepper is not null)
         {
@@ -885,10 +890,22 @@ public partial class ManagedDebugger
         return result;
     }
 
-    /// <summary>
-    /// Evaluate an expression
-    /// </summary>
-    public async Task<VariableInfo> Evaluate(string expression, int? frameId)
+    /// <summary>An expression's value in a frame. One asked for by name (the Evaluate window, a watch) runs the code it needs
+    /// even once implicit evaluation is off; one the IDE asks of itself (a hover) does not.</summary>
+    public async Task<VariableInfo> Evaluate(string expression, int? frameId, bool implicitly = false)
+    {
+        EvalStatus.Explicit = !implicitly;
+        try
+        {
+            return await EvaluateInFrame(expression, frameId);
+        }
+        finally
+        {
+            EvalStatus.Explicit = false;
+        }
+    }
+
+    private async Task<VariableInfo> EvaluateInFrame(string expression, int? frameId)
     {
         _logger?.Invoke($"Evaluate: {expression}");
         if (frameId is null or 0)

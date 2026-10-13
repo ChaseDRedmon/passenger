@@ -103,7 +103,8 @@ public sealed class DebugAdapter
         });
         connection.Handle<EvaluateArguments, EvaluateResponse>("evaluate", async arguments =>
         {
-            VariableInfo value = await Locked(() => debugger.Evaluate(arguments.Expression, arguments.FrameId));
+            // A hover, or a value the client shows of itself, is evaluated as the Variables view's getters are.
+            VariableInfo value = await Locked(() => debugger.Evaluate(arguments.Expression, arguments.FrameId, implicitly: arguments.Context is "hover" or "variables"));
             return new EvaluateResponse
             {
                 Result = value.Value,
