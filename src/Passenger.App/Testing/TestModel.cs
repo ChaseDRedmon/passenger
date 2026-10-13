@@ -73,7 +73,7 @@ public sealed record TestOutcome(TestItem Test, TestState State, TimeSpan Durati
 }
 
 /// <summary>A test host a runner would start, to be started under the debugger instead.</summary>
-public sealed record TestHostStart(string FileName, string Arguments, string? WorkingDirectory, IReadOnlyDictionary<string, string> Environment);
+public sealed record TestHostStart(string FileName, IReadOnlyList<string> Arguments, string? WorkingDirectory, IReadOnlyDictionary<string, string> Environment);
 
 /// <summary>Debugging for a runner: it hands over the test host it would start, or names the one it started.</summary>
 public interface ITestDebugLauncher
@@ -85,9 +85,10 @@ public interface ITestDebugLauncher
     Task<bool> AttachAsync(int processId);
 }
 
-/// <summary>What finds and runs a folder's tests: VSTest's vstest.console (<see cref="VsTestRunner"/>), and a runner for
-/// Microsoft.Testing.Platform's own protocol in time. It works in the IDE's own tests and outcomes, so nothing above it
-/// knows which. Each call is canceled by its token: a discovery stops looking, a run stops after what has run.</summary>
+/// <summary>What finds and runs a folder's tests: VSTest's vstest.console (<see cref="VsTestRunner"/>), Microsoft.Testing.Platform's
+/// own protocol (<see cref="TestingPlatformRunner"/>), or both behind one (<see cref="TestRunners"/>). It works in the IDE's
+/// own tests and outcomes, so nothing above it knows which. Each call is canceled by its token: a discovery stops looking,
+/// a run stops after what has run.</summary>
 public interface ITestRunner : IDisposable
 {
     /// <summary>Whether it can be asked again: not once a canceled discovery never said it had stopped.</summary>
@@ -107,4 +108,10 @@ public sealed record RunSummary(TimeSpan Elapsed, bool Canceled, bool Aborted, s
 {
     /// <summary>Every outcome of the run, which the run's end holds to whatever order they were told in.</summary>
     public IReadOnlyList<TestOutcome> Outcomes { get; init; } = [];
+
+    /// <summary>This run and the next as one: their times added, stopped or broken off if either was, every outcome.</summary>
+    public RunSummary And(RunSummary next) => new(Elapsed + next.Elapsed, Canceled || next.Canceled, Aborted || next.Aborted, Error ?? next.Error)
+    {
+        Outcomes = [.. Outcomes, .. next.Outcomes],
+    };
 }

@@ -355,7 +355,7 @@ public sealed class VsTestRunner : ITestRunner
         public int LaunchTestHost(TestProcessStartInfo defaultTestHostStartInfo, CancellationToken cancellationToken) =>
             debugger.LaunchAsync(new TestHostStart(
                 defaultTestHostStartInfo.FileName ?? throw new InvalidOperationException("VSTest gave no test host"),
-                defaultTestHostStartInfo.Arguments ?? string.Empty,
+                Passenger.App.Run.CommandLine.Split(defaultTestHostStartInfo.Arguments),
                 defaultTestHostStartInfo.WorkingDirectory,
                 defaultTestHostStartInfo.EnvironmentVariables?.Where(v => v.Value is not null).ToDictionary(v => v.Key, v => v.Value!) ?? []))
             .GetAwaiter().GetResult();

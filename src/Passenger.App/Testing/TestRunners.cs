@@ -1,0 +1,74 @@
+using Passenger.Editor;
+
+namespace Passenger.App.Testing;
+
+/// <summary>A folder's test runners as one: each built test assembly is found and run by the runner its build asks for,
+/// as Visual Studio's Test Explorer takes a project with the TestingPlatformServer capability through the platform's own
+/// protocol: a Testing Platform application (xUnit v3, MSTest's runner, TUnit) through <see cref="TestingPlatformRunner"/>,
+/// every other through VSTest (<see cref="VsTestRunner"/>, started the first time one needs it). So a solution of both
+/// shows them in one tree, and Run All runs both.</summary>
+public sealed class TestRunners(string folder, Func<string, CancellationToken, Task<ITestRunner>>? startVsTest = null) : ITestRunner
+{
+    private readonly TestingPlatformRunner platform = new();
+    private readonly Func<string, CancellationToken, Task<ITestRunner>> startVsTest = startVsTest ?? VsTestRunner.StartAsync;
+    private ITestRunner? vsTest;
+
+    /// <summary>The runner that found each test, by the test's key, which runs it.</summary>
+    private readonly Dictionary<string, ITestRunner> byKey = new(StringComparer.Ordinal);
+
+    public bool IsUsable => vsTest?.IsUsable ?? true;
+
+    /// <summary>The tests in built test assemblies, each assembly asked of its runner, the two runners at once.</summary>
+    public async Task<IReadOnlyList<TestItem>> DiscoverAsync(IReadOnlyList<TestAssembly> assemblies, Action<string>? log = null, CancellationToken cancel = default)
+    {
+        bool[] onPlatform = await BackgroundWork.Run(() => assemblies.Select(a => TestingPlatformRunner.IsApplication(a.Path)).ToArray(), cancel);
+        List<TestAssembly> platformOnes = [.. assemblies.Where((_, at) => onPlatform[at])];
+        List<TestAssembly> vsTestOnes = [.. assemblies.Where((_, at) => !onPlatform[at])];
+        Task<IReadOnlyList<TestItem>> fromPlatform = platformOnes.Count > 0 ? platform.DiscoverAsync(platformOnes, log, cancel) : Task.FromResult<IReadOnlyList<TestItem>>([]);
+        Task<IReadOnlyList<TestItem>> fromVsTest = vsTestOnes.Count > 0 ? DiscoverWithVsTest(vsTestOnes, log, cancel) : Task.FromResult<IReadOnlyList<TestItem>>([]);
+        IReadOnlyList<TestItem>[] found = await Task.WhenAll(fromVsTest, fromPlatform);
+        foreach (TestItem test in found[0])
+        {
+            byKey[test.Key] = vsTest!;
+        }
+        foreach (TestItem test in found[1])
+        {
+            byKey[test.Key] = platform;
+        }
+        return [.. found[0], .. found[1]];
+    }
+
+    private async Task<IReadOnlyList<TestItem>> DiscoverWithVsTest(IReadOnlyList<TestAssembly> assemblies, Action<string>? log, CancellationToken cancel)
+    {
+        vsTest ??= await startVsTest(folder, cancel);
+        return await vsTest.DiscoverAsync(assemblies, log, cancel);
+    }
+
+    /// <summary>Runs tests, VSTest's then the platform's, each by the runner that found them; a run stopped stops there.</summary>
+    public async Task<RunSummary> RunAsync(IReadOnlyList<TestItem> tests, Action<IReadOnlyList<TestOutcome>> outcomes, Action<string>? log = null,
+        ITestDebugLauncher? debugger = null, IReadOnlyDictionary<string, string>? environment = null, CancellationToken cancel = default)
+    {
+        RunSummary? summary = null;
+        foreach (ITestRunner runner in new[] { vsTest, platform }.OfType<ITestRunner>())
+        {
+            List<TestItem> its = [.. tests.Where(t => byKey.TryGetValue(t.Key, out ITestRunner? by) && by == runner)];
+            if (its.Count == 0)
+            {
+                continue;
+            }
+            RunSummary part = await runner.RunAsync(its, outcomes, log, debugger, environment, cancel);
+            summary = summary is null ? part : summary.And(part);
+            if (part.Canceled)
+            {
+                break;
+            }
+        }
+        return summary ?? new RunSummary(TimeSpan.Zero, cancel.IsCancellationRequested, false, null);
+    }
+
+    public void Dispose()
+    {
+        vsTest?.Dispose();
+        platform.Dispose();
+    }
+}

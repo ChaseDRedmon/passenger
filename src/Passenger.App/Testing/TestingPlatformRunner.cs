@@ -1,0 +1,768 @@
+using System.Diagnostics;
+using System.Globalization;
+using System.Net;
+using System.Net.Sockets;
+using System.Reflection.Metadata;
+using System.Reflection.PortableExecutable;
+using System.Text;
+using System.Text.Json.Nodes;
+using Passenger.Core;
+using Passenger.Editor;
+using StreamJsonRpc;
+
+namespace Passenger.App.Testing;
+
+/// <summary>Tests found and run through Microsoft.Testing.Platform's own protocol, as Visual Studio and Rider run a test
+/// project that is a Testing Platform application (xUnit v3, MSTest's runner, TUnit): the built program started with
+/// <c>--server</c> and the port it connects back to, then asked over JSON-RPC to find or to run tests, one request a
+/// process, as the platform asks of a client. Its test nodes stay in here, each told as the IDE's own test and its results
+/// as outcomes. What a test host warns of or fails with is in the logs folder's vstest.log, and with Trace protocol
+/// messages on every message it sends.</summary>
+public sealed class TestingPlatformRunner : ITestRunner
+{
+    /// <summary>The assembly attribute the platform's build gives a Testing Platform application (IsTestingPlatformApplication).</summary>
+    private const string ApplicationMetadata = "Microsoft.Testing.Platform.Application";
+
+    /// <summary>How long a test host has to connect once started, before it is taken for one that never will.</summary>
+    private static readonly TimeSpan ConnectLimit = TimeSpan.FromMinutes(1);
+
+    /// <summary>How long a test host told to stop has to end what it runs, and then to exit, before it is ended.</summary>
+    private static readonly TimeSpan StopLimit = TimeSpan.FromSeconds(3);
+
+    /// <summary>How long a test host done with its request has to tell its last results and exit before it is ended.</summary>
+    private static readonly TimeSpan ExitLimit = TimeSpan.FromSeconds(10);
+
+    /// <summary>The test nodes discovered, by the key of the test each was told as, and each assembly's keys, which its
+    /// next discovery replaces. Touched only by one discovery or run at a time, as the controller asks.</summary>
+    private readonly Dictionary<string, Found> found = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, List<string>> byAssembly = new(StringComparer.Ordinal);
+
+    public bool IsUsable => true;
+
+    /// <summary>Whether a built assembly is a Testing Platform application, whose own program finds and runs its tests: the
+    /// platform's build says so in the assembly (since 1.8); one built by an older platform is a program that references it.</summary>
+    public static bool IsApplication(string assembly)
+    {
+        try
+        {
+            using FileStream file = File.OpenRead(assembly);
+            using PEReader image = new(file);
+            if (!image.HasMetadata)
+            {
+                return false;
+            }
+            MetadataReader metadata = image.GetMetadataReader();
+            foreach (CustomAttributeHandle handle in metadata.GetAssemblyDefinition().GetCustomAttributes())
+            {
+                CustomAttribute attribute = metadata.GetCustomAttribute(handle);
+                if (AttributeName(metadata, attribute) != "System.Reflection.AssemblyMetadataAttribute")
+                {
+                    continue;
+                }
+                BlobReader value = metadata.GetBlobReader(attribute.Value);
+                if (value.ReadUInt16() == 1 && value.ReadSerializedString() == ApplicationMetadata)
+                {
+                    return string.Equals(value.ReadSerializedString(), "true", StringComparison.OrdinalIgnoreCase);
+                }
+            }
+            Version? platform = metadata.AssemblyReferences.Select(r => metadata.GetAssemblyReference(r))
+                .Where(r => metadata.GetString(r.Name) == "Microsoft.Testing.Platform").Select(r => r.Version).FirstOrDefault();
+            return platform is { Major: 1, Minor: < 8 } && image.PEHeaders.CorHeader is { EntryPointTokenOrRelativeVirtualAddress: not 0 };
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or BadImageFormatException or InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>The tests in built Testing Platform applications, each asked in its own process, all at once. One whose
+    /// program fails to start or answer is said in the log and has no tests; canceled, every one is ended.</summary>
+    public async Task<IReadOnlyList<TestItem>> DiscoverAsync(IReadOnlyList<TestAssembly> assemblies, Action<string>? log = null, CancellationToken cancel = default)
+    {
+        (TestAssembly Assembly, IReadOnlyList<Node> Nodes)[] asked = await Task.WhenAll(assemblies.Select(a => DiscoverIn(a, log, cancel)));
+        cancel.ThrowIfCancellationRequested();
+        return await BackgroundWork.Run(() => Tell(asked));
+    }
+
+    private static async Task<(TestAssembly, IReadOnlyList<Node>)> DiscoverIn(TestAssembly assembly, Action<string>? log, CancellationToken cancel)
+    {
+        List<Node> nodes = [];
+        try
+        {
+            await using Host host = await Host.StartAsync(assembly, null, null, log, cancel);
+            bool asked = await host.RequestAsync("testing/discoverTests", [], changed =>
+            {
+                lock (nodes)
+                {
+                    nodes.AddRange(changed);
+                }
+            }, cancel);
+            if (!asked)
+            {
+                cancel.ThrowIfCancellationRequested();
+            }
+        }
+        catch (TestHostFailed failed) when (!cancel.IsCancellationRequested)
+        {
+            IdeLog.Write(IdeLog.Tests, $"Discovery failed: {failed.Message}");
+            log?.Invoke(failed.Message);
+            return (assembly, []);
+        }
+        lock (nodes)
+        {
+            int count = nodes.Count(n => n.IsTest);
+            IdeLog.Write(IdeLog.Tests, $"Discovery complete in {Path.GetFileName(assembly.Path)} ({assembly.Framework}): {count} test{(count == 1 ? "" : "s")} found");
+            return (assembly, [.. nodes]);
+        }
+    }
+
+    /// <summary>Runs tests it discovered, an assembly at a time, each in a test host of its own (under the debugger when a
+    /// launcher is given) with the environment given; their outcomes told a notification at a time as they come. Canceled,
+    /// the test host is asked to stop and given a moment, then ended, keeping the outcomes of what had run.</summary>
+    public async Task<RunSummary> RunAsync(IReadOnlyList<TestItem> tests, Action<IReadOnlyList<TestOutcome>> outcomes, Action<string>? log = null,
+        ITestDebugLauncher? debugger = null, IReadOnlyDictionary<string, string>? environment = null, CancellationToken cancel = default)
+    {
+        RunSummary summary = new(TimeSpan.Zero, false, false, null);
+        foreach (IGrouping<string, (TestItem Test, Found Node)> assembly in tests
+            .Select(t => (Test: t, Node: found.GetValueOrDefault(t.Key)!))
+            .Where(t => t.Node is not null)
+            .GroupBy(t => t.Node.Assembly.Path, StringComparer.Ordinal))
+        {
+            if (cancel.IsCancellationRequested)
+            {
+                summary = summary with { Canceled = true };
+                break;
+            }
+            RunSummary part = await RunIn(assembly.First().Node.Assembly, [.. assembly], outcomes, log, debugger, environment, cancel);
+            summary = summary.And(part);
+            if (part.Canceled)
+            {
+                break;
+            }
+        }
+        IdeLog.Write(IdeLog.Tests, $"Run {(summary.Canceled ? "stopped" : summary.Aborted ? "aborted" : "complete")}: {summary.Outcomes.Count} result{(summary.Outcomes.Count == 1 ? "" : "s")} in {summary.Elapsed.TotalSeconds:0.00} s"
+            + (summary.Error is { } failed ? $": {failed}" : string.Empty));
+        return summary;
+    }
+
+    private static async Task<RunSummary> RunIn(TestAssembly assembly, IReadOnlyList<(TestItem Test, Found Node)> tests, Action<IReadOnlyList<TestOutcome>> outcomes,
+        Action<string>? log, ITestDebugLauncher? debugger, IReadOnlyDictionary<string, string>? environment, CancellationToken cancel)
+    {
+        Dictionary<string, TestItem> byUid = new(StringComparer.Ordinal);
+        JsonArray chosen = [];
+        foreach ((TestItem test, Found node) in tests)
+        {
+            if (byUid.TryAdd(node.Uid, test))
+            {
+                chosen.Add(new JsonObject { ["uid"] = node.Uid, ["display-name"] = node.DisplayName });
+            }
+        }
+        List<TestOutcome> all = [];
+        long began = Stopwatch.GetTimestamp();
+        try
+        {
+            await using Host host = await Host.StartAsync(assembly, environment, debugger, log, cancel);
+            bool ran = await host.RequestAsync("testing/runTests", new JsonObject { ["tests"] = chosen }, changed =>
+            {
+                List<TestOutcome> batch = [.. changed.Select(n => byUid.TryGetValue(n.Uid, out TestItem? test) ? Outcome(test, n) : null).OfType<TestOutcome>()];
+                if (batch.Count == 0)
+                {
+                    return;
+                }
+                lock (all)
+                {
+                    all.AddRange(batch);
+                }
+                outcomes(batch);
+            }, cancel);
+            return Summary(!ran, null);
+        }
+        catch (OperationCanceledException) when (cancel.IsCancellationRequested)
+        {
+            return Summary(true, null);
+        }
+        catch (TestHostFailed failed)
+        {
+            log?.Invoke(failed.Message);
+            return Summary(cancel.IsCancellationRequested, failed.Message);
+        }
+
+        RunSummary Summary(bool canceled, string? error)
+        {
+            lock (all)
+            {
+                return new RunSummary(Stopwatch.GetElapsedTime(began), canceled, error is not null, error) { Outcomes = [.. all] };
+            }
+        }
+    }
+
+    public void Dispose()
+    {
+    }
+
+    /// <summary>The test nodes found told as the IDE's tests, each with the project and framework of its assembly, and kept
+    /// to be run by the key of the test told. Two nodes a test's id cannot tell apart are told as rows named by the order
+    /// they came in.</summary>
+    private IReadOnlyList<TestItem> Tell((TestAssembly Assembly, IReadOnlyList<Node> Nodes)[] asked)
+    {
+        Dictionary<string, string> canonical = new(StringComparer.Ordinal);
+        List<TestItem> told = [];
+        foreach ((TestAssembly assembly, IReadOnlyList<Node> nodes) in asked)
+        {
+            foreach (string key in byAssembly.GetValueOrDefault(assembly.Path) ?? [])
+            {
+                found.Remove(key);
+            }
+            List<string> keys = byAssembly[assembly.Path] = [];
+            HashSet<string> uids = new(StringComparer.Ordinal);
+            foreach (Node node in nodes.Where(n => n.IsTest && uids.Add(n.Uid)))
+            {
+                TestItem item = new(assembly.Project.Path, node.FullyQualifiedName, node.DisplayName)
+                {
+                    Framework = assembly.Framework,
+                    Row = TestItem.RowOf(node.FullyQualifiedName, node.DisplayName),
+                    Path = node.File is { Length: > 0 } file ? Canonical(file) : null,
+                    Line = node.Line,
+                    Traits = node.Traits,
+                };
+                for (int again = 2; found.ContainsKey(item.Key); again++)
+                {
+                    item = item with { Row = $"{item.Row ?? item.DisplayName} ({again})" };
+                }
+                found[item.Key] = new Found(assembly, node.Uid, node.DisplayName);
+                keys.Add(item.Key);
+                told.Add(item);
+            }
+        }
+        return told;
+
+        // The platform names a source file as the compiler was given it: the tree's are canonical.
+        string Canonical(string path)
+        {
+            if (!canonical.TryGetValue(path, out string? made))
+            {
+                canonical[path] = made = PathNames.Canonical(path);
+            }
+            return made;
+        }
+    }
+
+    /// <summary>A node's result as the IDE's outcome; null for an update that is not one (discovered, in progress, an attempt
+    /// a retry replaces, or one the stop canceled, which stays not run).</summary>
+    private static TestOutcome? Outcome(TestItem test, Node node)
+    {
+        TestState? state = node.State switch
+        {
+            "passed" => TestState.Passed,
+            "failed" or "error" or "timed-out" => TestState.Failed,
+            "skipped" => TestState.Skipped,
+            _ => null,
+        };
+        return state is { } outcome && node.IsTest && !node.Superseded
+            ? new TestOutcome(test, outcome, node.Duration)
+            {
+                DisplayName = node.DisplayName,
+                Message = node.Message,
+                StackTrace = node.StackTrace,
+                Output = node.Output,
+            }
+            : null;
+    }
+
+    /// <summary>The name of a custom attribute's type, as its constructor's owner names it.</summary>
+    private static string? AttributeName(MetadataReader metadata, CustomAttribute attribute)
+    {
+        EntityHandle owner = attribute.Constructor.Kind switch
+        {
+            HandleKind.MemberReference => metadata.GetMemberReference((MemberReferenceHandle)attribute.Constructor).Parent,
+            HandleKind.MethodDefinition => metadata.GetMethodDefinition((MethodDefinitionHandle)attribute.Constructor).GetDeclaringType(),
+            _ => default,
+        };
+        return owner.Kind switch
+        {
+            HandleKind.TypeReference when metadata.GetTypeReference((TypeReferenceHandle)owner) is var type => $"{metadata.GetString(type.Namespace)}.{metadata.GetString(type.Name)}",
+            HandleKind.TypeDefinition when metadata.GetTypeDefinition((TypeDefinitionHandle)owner) is var type => $"{metadata.GetString(type.Namespace)}.{metadata.GetString(type.Name)}",
+            _ => null,
+        };
+    }
+
+    /// <summary>What the platform said of a test host as a message for the person, in the log, and in vstest.log.</summary>
+    private static void Said(string level, string message, Action<string>? log)
+    {
+        bool notable = level is "Warning" or "Error" or "Critical";
+        if (notable || IdeLog.Traces)
+        {
+            IdeLog.Write(IdeLog.Tests, $"{level}: {message}");
+        }
+        if (notable)
+        {
+            log?.Invoke(message);
+        }
+    }
+
+    /// <summary>A test the platform discovered: the node it is run by, in the assembly it is in.</summary>
+    private sealed record Found(TestAssembly Assembly, string Uid, string DisplayName);
+
+    /// <summary>A test node as the platform tells one, read from its properties ("location.type", "execution-state", ...).</summary>
+    private sealed record Node(string Uid, string DisplayName, bool IsTest, string? State, string FullyQualifiedName)
+    {
+        public string? File { get; init; }
+
+        /// <summary>The line the framework says it is on, from one (xUnit and MSTest say their attribute's).</summary>
+        public int Line { get; init; }
+
+        public IReadOnlyList<KeyValuePair<string, string>> Traits { get; init; } = [];
+        public string? Message { get; init; }
+        public string? StackTrace { get; init; }
+        public string? Output { get; init; }
+        public TimeSpan Duration { get; init; }
+
+        /// <summary>An attempt that a retry of the same test follows, so not its result.</summary>
+        public bool Superseded { get; init; }
+
+        public static Node? Read(JsonNode? change)
+        {
+            if ((change as JsonObject)?["node"] is not JsonObject node || Text(node, "uid") is not { Length: > 0 } uid)
+            {
+                return null;
+            }
+            string display = Text(node, "display-name") ?? uid;
+            // The platform's type is the namespace's and the type's names together; before 1.9 the namespace came apart.
+            string? type = Text(node, "location.type");
+            if (Text(node, "location.namespace") is { Length: > 0 } space && type is not null && !type.StartsWith(space + ".", StringComparison.Ordinal))
+            {
+                type = $"{space}.{type}";
+            }
+            string? method = Text(node, "location.method") is { } named ? TestItem.MethodOf(named) : null;
+            string name = type is { Length: > 0 } && method is { Length: > 0 } ? $"{type}.{method}"
+                : Text(node, "vstest.TestCase.FullyQualifiedName") ?? display;
+            string? output = string.Join('\n', new[] { Text(node, "standardOutput"), Text(node, "standardError") }.Where(t => !string.IsNullOrEmpty(t)));
+            return new Node(uid, display, Text(node, "node-type") != "group", Text(node, "execution-state"), name)
+            {
+                File = Text(node, "location.file"),
+                Line = Number(node, "location.line-start") is { } line and > 0 ? (int)line : 0,
+                Traits = TraitsOf(node["traits"]),
+                Message = Text(node, "error.message"),
+                StackTrace = Text(node, "error.stacktrace"),
+                Output = output.Length > 0 ? output : null,
+                Duration = Number(node, "time.duration-ms") is { } ms and >= 0 ? TimeSpan.FromMilliseconds(ms) : TimeSpan.Zero,
+                Superseded = node["retry.is-superseded"] is JsonValue superseded && superseded.TryGetValue(out bool later) && later,
+            };
+        }
+
+        /// <summary>A node's traits: each an object of one name and its value (a category alone has none, and is a
+        /// Category), or of Key and Value.</summary>
+        private static List<KeyValuePair<string, string>> TraitsOf(JsonNode? traits)
+        {
+            List<KeyValuePair<string, string>> read = [];
+            foreach (JsonObject trait in (traits as JsonArray ?? []).OfType<JsonObject>())
+            {
+                if (trait.Count == 2 && (Text(trait, "Key") ?? Text(trait, "key")) is { } key)
+                {
+                    read.Add(new(key, Text(trait, "Value") ?? Text(trait, "value") ?? string.Empty));
+                    continue;
+                }
+                foreach ((string name, JsonNode? value) in trait)
+                {
+                    read.Add(value is JsonValue text && text.TryGetValue(out string? said) && said.Length > 0 ? new(name, said) : new("Category", name));
+                }
+            }
+            return read;
+        }
+
+        private static string? Text(JsonObject node, string name) => node[name] is JsonValue value && value.TryGetValue(out string? text) ? text : null;
+
+        private static double? Number(JsonObject node, string name) => node[name] is JsonValue value && value.TryGetValue(out double number) ? number : null;
+    }
+
+    /// <summary>A test host that could not be started or asked, in words for the person.</summary>
+    private sealed class TestHostFailed(string message) : Exception(message);
+
+    /// <summary>One test host: its program started by the runner (or by the debugger), connected back, initialized, asked
+    /// one thing, then told to exit; ended if it does not. What it writes is kept, the last of it, to say why it failed.</summary>
+    private sealed class Host : IAsyncDisposable
+    {
+        /// <summary>The most a test host's own output kept, for what it said before it failed.</summary>
+        private const int Kept = 8 * 1024;
+
+        private readonly string name;
+        private readonly Process? process;
+        private readonly int processId;
+        private readonly TcpClient client;
+        private readonly JsonRpc rpc;
+        private readonly Notifications target;
+        private readonly StringBuilder said;
+        private bool stopped;
+
+        private Host(string name, Process? process, int processId, TcpClient client, JsonRpc rpc, Notifications target, StringBuilder said)
+        {
+            this.name = name;
+            this.process = process;
+            this.processId = processId;
+            this.client = client;
+            this.rpc = rpc;
+            this.target = target;
+            this.said = said;
+        }
+
+        /// <summary>Starts an assembly's program as a server that connects to a port of the IDE's own, and initializes it.</summary>
+        public static async Task<Host> StartAsync(TestAssembly assembly, IReadOnlyDictionary<string, string>? environment, ITestDebugLauncher? debugger,
+            Action<string>? log, CancellationToken cancel)
+        {
+            string name = $"{Path.GetFileNameWithoutExtension(assembly.Path)} ({assembly.Framework})";
+            using TcpListener listener = new(IPAddress.Loopback, 0);
+            listener.Start();
+            List<string> arguments =
+            [
+                "exec", assembly.Path, "--server",
+                "--client-host", IPAddress.Loopback.ToString(),
+                "--client-port", ((IPEndPoint)listener.LocalEndpoint).Port.ToString(CultureInfo.InvariantCulture),
+            ];
+            string folder = Path.GetDirectoryName(assembly.Path)!;
+            StringBuilder said = new();
+            Process? process = null;
+            int id;
+            if (debugger is null)
+            {
+                ProcessStartInfo start = ChildProcesses.Command(Dotnet.Host(), arguments, folder);
+                foreach ((string variable, string value) in environment ?? new Dictionary<string, string>())
+                {
+                    start.Environment[variable] = value;
+                }
+                start.RedirectStandardOutput = true;
+                start.RedirectStandardError = true;
+                try
+                {
+                    process = ChildProcesses.Start(start);
+                }
+                catch (System.ComponentModel.Win32Exception failed)
+                {
+                    throw new TestHostFailed($"{name} could not start: {failed.Message}");
+                }
+                process.OutputDataReceived += (_, line) => Keep(said, line.Data);
+                process.ErrorDataReceived += (_, line) => Keep(said, line.Data);
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+                id = process.Id;
+            }
+            else
+            {
+                id = await debugger.LaunchAsync(new TestHostStart(Dotnet.Host(), arguments, folder, environment ?? new Dictionary<string, string>()));
+            }
+            TcpClient client;
+            try
+            {
+                client = await AcceptAsync(listener, process, id, name, said, cancel);
+            }
+            catch
+            {
+                End(process, id, ours: debugger is null);
+                process?.Dispose();
+                throw;
+            }
+            Notifications target = new(name, log);
+            // What the test host sends is handled in the order it came, so its run's end is told after its last result.
+            JsonRpc rpc = new(new HeaderDelimitedMessageHandler(client.GetStream(), client.GetStream(), new SystemTextJsonFormatter()))
+            {
+                SynchronizationContext = new Microsoft.VisualStudio.Threading.NonConcurrentSynchronizationContext(sticky: false),
+            };
+            rpc.AddLocalRpcTarget(target, new JsonRpcTargetOptions { UseSingleObjectParameterDeserialization = true });
+            rpc.StartListening();
+            Host host = new(name, process, id, client, rpc, target, said);
+            try
+            {
+                JsonObject initialize = new()
+                {
+                    ["processId"] = Environment.ProcessId,
+                    ["clientInfo"] = new JsonObject { ["name"] = "Passenger", ["version"] = Product.Version },
+                    // Stateful, as an IDE's test window is, which the frameworks run in their design mode for.
+                    ["capabilities"] = new JsonObject { ["testing"] = new JsonObject { ["debuggerProvider"] = false, ["isStateful"] = true } },
+                };
+                Trace("-->", "initialize", initialize);
+                JsonNode? answer = await host.Ask("initialize", initialize, cancel);
+                Trace("<--", "initialize", answer);
+            }
+            catch
+            {
+                host.stopped = true;
+                await host.DisposeAsync();
+                throw;
+            }
+            return host;
+        }
+
+        /// <summary>Asks for a discovery or a run, each test node it changes handed over a notification at a time, until the
+        /// platform says the request has told all it will. False when it was canceled first: the test host is then given a
+        /// moment to stop, what it reports meanwhile still handed over.</summary>
+        public async Task<bool> RequestAsync(string method, JsonObject parameters, Action<IReadOnlyList<Node>> changed, CancellationToken cancel)
+        {
+            Guid run = Guid.NewGuid();
+            parameters["runId"] = run.ToString();
+            Task told = target.Expect(run, changed);
+            Trace("-->", method, parameters);
+            // Canceled, the request's own token has StreamJsonRpc send the platform $/cancelRequest.
+            using CancellationTokenSource asking = new();
+            using CancellationTokenRegistration stop = cancel.Register(asking.Cancel);
+            Task<JsonNode?> answer = rpc.InvokeWithParameterObjectAsync<JsonNode?>(method, parameters, asking.Token);
+            _ = answer.ContinueWith(t => _ = t.Exception, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            try
+            {
+                Trace("<--", method, await answer.WaitAsync(cancel));
+            }
+            catch (OperationCanceledException) when (cancel.IsCancellationRequested)
+            {
+                stopped = true;
+                await Task.WhenAny(told, Task.Delay(StopLimit, CancellationToken.None));
+                return false;
+            }
+            catch (Exception error) when (error is RemoteRpcException or ObjectDisposedException or IOException)
+            {
+                throw await FailedAsync(error is RemoteInvocationException refused ? $"{name} refused {method}: {refused.Message}" : $"{name} ended before it answered {method}");
+            }
+            // The answer can overtake the notifications before it: the run's end is told after the last of them.
+            if (await Task.WhenAny(told, Task.Delay(ExitLimit, CancellationToken.None)) != told)
+            {
+                IdeLog.Write(IdeLog.Tests, $"{name} answered {method} without saying its updates had ended");
+            }
+            return true;
+        }
+
+        /// <summary>Tells the test host to exit and waits a while for it; one that does not is ended, unless the debugger
+        /// has it and it was not stopped (the person may be stopped in it).</summary>
+        public async ValueTask DisposeAsync()
+        {
+            try
+            {
+                await rpc.NotifyWithParameterObjectAsync("exit", new JsonObject());
+            }
+            catch (Exception error) when (error is RemoteRpcException or ObjectDisposedException or IOException or InvalidOperationException)
+            {
+                // Gone already.
+            }
+            TimeSpan limit = stopped ? StopLimit : ExitLimit;
+            if (!await Exited(limit) && (process is not null || stopped))
+            {
+                IdeLog.Write(IdeLog.Tests, $"{name} (process {processId}) had not exited {limit.TotalSeconds:0} s after it was told to, and is ended");
+                End(process, processId, ours: process is not null);
+            }
+            rpc.Dispose();
+            client.Dispose();
+            process?.Dispose();
+        }
+
+        private async Task<JsonNode?> Ask(string method, JsonObject parameters, CancellationToken cancel)
+        {
+            Task<JsonNode?> answer = rpc.InvokeWithParameterObjectAsync<JsonNode?>(method, parameters, CancellationToken.None);
+            _ = answer.ContinueWith(t => _ = t.Exception, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            try
+            {
+                return await answer.WaitAsync(cancel);
+            }
+            catch (Exception error) when (error is RemoteRpcException or ObjectDisposedException or IOException)
+            {
+                throw await FailedAsync(error is RemoteInvocationException refused ? $"{name} refused {method}: {refused.Message}" : $"{name} ended before it answered {method}");
+            }
+        }
+
+        private async Task<bool> Exited(TimeSpan limit)
+        {
+            long began = Stopwatch.GetTimestamp();
+            while (Alive(process, processId))
+            {
+                if (Stopwatch.GetElapsedTime(began) >= limit)
+                {
+                    return false;
+                }
+                await Task.Delay(50, CancellationToken.None);
+            }
+            return true;
+        }
+
+        /// <summary>Why the host failed, with what its program wrote last, once it has had a moment to end.</summary>
+        private async Task<TestHostFailed> FailedAsync(string why)
+        {
+            if (process is not null && await Exited(TimeSpan.FromSeconds(1)))
+            {
+                why += $" (exit code {process.ExitCode})";
+            }
+            return new TestHostFailed(Written(why, said));
+        }
+
+        /// <summary>The test host's connection, once its program makes it; failed if the program ends first or, run by the
+        /// runner, takes longer than <see cref="ConnectLimit"/> (under the debugger the person may be stopped in it).</summary>
+        private static async Task<TcpClient> AcceptAsync(TcpListener listener, Process? process, int id, string name, StringBuilder said, CancellationToken cancel)
+        {
+            using CancellationTokenSource giveUp = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+            Task<TcpClient> accepting = listener.AcceptTcpClientAsync(giveUp.Token).AsTask();
+            _ = accepting.ContinueWith(t => _ = t.Exception, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            long began = Stopwatch.GetTimestamp();
+            try
+            {
+                while (!accepting.IsCompleted)
+                {
+                    await Task.WhenAny(accepting, Task.Delay(100, CancellationToken.None));
+                    cancel.ThrowIfCancellationRequested();
+                    if (!accepting.IsCompleted && !Alive(process, id))
+                    {
+                        string exit = string.Empty;
+                        if (process is not null)
+                        {
+                            // What it wrote last is read to its end before it is quoted.
+                            await process.WaitForExitAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(1), CancellationToken.None).ConfigureAwait(ConfigureAwaitOptions.ContinueOnCapturedContext | ConfigureAwaitOptions.SuppressThrowing);
+                            exit = $" with exit code {process.ExitCode}";
+                        }
+                        throw new TestHostFailed(Written($"{name} ended{exit} before it connected", said));
+                    }
+                    if (!accepting.IsCompleted && process is not null && Stopwatch.GetElapsedTime(began) > ConnectLimit)
+                    {
+                        throw new TestHostFailed(Written($"{name} had not connected after {ConnectLimit.TotalSeconds:0} s", said));
+                    }
+                }
+                return await accepting;
+            }
+            finally
+            {
+                giveUp.Cancel();
+            }
+        }
+
+        private static bool Alive(Process? process, int id)
+        {
+            if (process is not null)
+            {
+                return !process.HasExited;
+            }
+            try
+            {
+                using Process running = Process.GetProcessById(id);
+                return !running.HasExited;
+            }
+            catch (Exception error) when (error is ArgumentException or InvalidOperationException)
+            {
+                return false;
+            }
+        }
+
+        /// <summary>Ends a test host: the runner's own with all it started, the debugger's alone, as VSTest ends a test host
+        /// the IDE started under its debugger.</summary>
+        private static void End(Process? process, int id, bool ours)
+        {
+            if (process is not null)
+            {
+                ChildProcesses.Kill(process);
+                return;
+            }
+            if (ours)
+            {
+                return;
+            }
+            try
+            {
+                using Process running = Process.GetProcessById(id);
+                running.Kill();
+            }
+            catch (Exception error) when (error is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+                // It had ended.
+            }
+        }
+
+        private static void Keep(StringBuilder said, string? line)
+        {
+            if (line is null)
+            {
+                return;
+            }
+            lock (said)
+            {
+                said.Append(line).Append('\n');
+                if (said.Length > Kept)
+                {
+                    said.Remove(0, said.Length - Kept);
+                }
+            }
+        }
+
+        private static string Written(string why, StringBuilder said)
+        {
+            lock (said)
+            {
+                string output = said.ToString().Trim();
+                return output.Length == 0 ? why : $"{why}:\n{output}";
+            }
+        }
+    }
+
+    /// <summary>A message to or from a test host, in vstest.log while protocols are traced.</summary>
+    private static void Trace(string direction, string method, JsonNode? message)
+    {
+        if (IdeLog.Traces)
+        {
+            IdeLog.Write(IdeLog.Tests, $"{direction} {method} {message?.ToJsonString() ?? "null"}");
+        }
+    }
+
+    /// <summary>What a test host sends: the test nodes a request changes, which the request under way takes, until the
+    /// platform's update with no changes ends them; what its output device says; its telemetry, which is its own.</summary>
+    private sealed class Notifications(string name, Action<string>? log)
+    {
+        private readonly Lock gate = new();
+        private (Guid Run, Action<IReadOnlyList<Node>> Changed, TaskCompletionSource Ended)? expected;
+
+        public Task Expect(Guid run, Action<IReadOnlyList<Node>> changed)
+        {
+            TaskCompletionSource ended = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            lock (gate)
+            {
+                expected = (run, changed, ended);
+            }
+            return ended.Task;
+        }
+
+        [JsonRpcMethod("testing/testUpdates/tests")]
+        public void Tests(JsonNode? update)
+        {
+            Trace("<--", "testing/testUpdates/tests", update);
+            (Guid Run, Action<IReadOnlyList<Node>> Changed, TaskCompletionSource Ended)? request;
+            lock (gate)
+            {
+                request = expected;
+            }
+            if (request is not { } asked || !Guid.TryParse(Text(update, "runId"), out Guid run) || run != asked.Run)
+            {
+                return;
+            }
+            if ((update as JsonObject)?["changes"] is not JsonArray changes)
+            {
+                asked.Ended.TrySetResult();
+                return;
+            }
+            List<Node> nodes = [.. changes.Select(Node.Read).OfType<Node>()];
+            if (nodes.Count > 0)
+            {
+                asked.Changed(nodes);
+            }
+        }
+
+        [JsonRpcMethod("client/log")]
+        public void Log(JsonNode? message)
+        {
+            if (Text(message, "message") is { Length: > 0 } text)
+            {
+                Said(Text(message, "level") ?? "Information", $"{name}: {text}", log);
+            }
+        }
+
+        private static string? Text(JsonNode? node, string property) =>
+            (node as JsonObject)?[property] is JsonValue value && value.TryGetValue(out string? text) ? text : null;
+
+        [JsonRpcMethod("client/showMessage")]
+        public void ShowMessage(JsonNode? message) => Log(message);
+
+        [JsonRpcMethod("telemetry/update")]
+        public void Telemetry(JsonNode? update) => Trace("<--", "telemetry/update", update);
+
+        [JsonRpcMethod("testing/testUpdates/attachments")]
+        public void Attachments(JsonNode? update) => Trace("<--", "testing/testUpdates/attachments", update);
+    }
+}

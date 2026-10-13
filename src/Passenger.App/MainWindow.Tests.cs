@@ -220,7 +220,7 @@ public partial class MainWindow
         {
             Name = "Tests",
             Program = start.FileName,
-            Arguments = CommandLine.Split(start.Arguments),
+            Arguments = start.Arguments,
             WorkingDirectory = start.WorkingDirectory ?? folder ?? Environment.CurrentDirectory,
             Environment = new Dictionary<string, string>(start.Environment),
         };

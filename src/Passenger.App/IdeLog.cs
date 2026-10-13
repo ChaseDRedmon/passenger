@@ -16,7 +16,8 @@ public static class IdeLog
     /// <summary>The debugger's: each session, the adapter's own words, and with <see cref="Traces"/> its messages.</summary>
     public const string Debugger = "dap";
 
-    /// <summary>The test runner's: what VSTest warned of or failed with, and with <see cref="Traces"/> its messages.</summary>
+    /// <summary>The test runners': what VSTest and Microsoft.Testing.Platform's test hosts warned of or failed with, and
+    /// with <see cref="Traces"/> their messages.</summary>
     public const string Tests = "vstest";
 
     /// <summary>The C# language servers' messages, written only with <see cref="Traces"/> on.</summary>
@@ -41,7 +42,8 @@ public static class IdeLog
     public static long Limit { get; set; } = 10_000_000;
 
     /// <summary>Settings' Trace protocol messages: every message to and from the C# language servers (lsp.log), the debug
-    /// adapter (dap.log) and VSTest (vstest.log) is written as it goes, as a client's verbose trace is.</summary>
+    /// adapter (dap.log), VSTest and the Testing Platform's test hosts (vstest.log) is written as it goes, as a client's
+    /// verbose trace is.</summary>
     public static bool Traces
     {
         get => traces;

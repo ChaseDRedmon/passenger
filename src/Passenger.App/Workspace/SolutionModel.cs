@@ -206,9 +206,13 @@ public sealed record ProjectModel(
     bool Exists,
     bool DeclaredTest = false) : SolutionEntry(Name)
 {
+    /// <summary>VSTest's test SDK and adapters, and what makes a Microsoft.Testing.Platform application: xUnit v3's packages,
+    /// TUnit's, and the platform's own build package.</summary>
     private static readonly HashSet<string> TestPackages = new(StringComparer.OrdinalIgnoreCase)
     {
         "Microsoft.NET.Test.Sdk", "xunit.runner.visualstudio", "NUnit3TestAdapter", "MSTest.TestAdapter", "MSTest",
+        "xunit.v3", "xunit.v3.mtp-v1", "xunit.v3.mtp-v2", "xunit.v3.mtp-off", "xunit.v3.core", "xunit.v3.core.mtp-v1", "xunit.v3.core.mtp-v2",
+        "xunit.v3.core.mtp-off", "TUnit", "TUnit.Engine", "Microsoft.Testing.Platform.MSBuild",
     };
 
     public string Folder => System.IO.Path.GetDirectoryName(Path)!;
@@ -219,7 +223,8 @@ public sealed record ProjectModel(
         "Microsoft.NET.Sdk.Web", "Microsoft.NET.Sdk.Worker", "Microsoft.NET.Sdk.BlazorWebAssembly",
     };
 
-    /// <summary>Whether it holds tests VSTest runs: it says so (IsTestProject, MSTest.Sdk), or references a test SDK or adapter.</summary>
+    /// <summary>Whether it holds tests VSTest or Microsoft.Testing.Platform runs: it says so (IsTestProject, MSTest.Sdk), or
+    /// references a test SDK, an adapter or a Testing Platform test framework.</summary>
     public bool IsTestProject => DeclaredTest || Packages.Any(p => TestPackages.Contains(p.Name));
 
     /// <summary>Whether it builds something that runs: an executable, not a library or a test.</summary>

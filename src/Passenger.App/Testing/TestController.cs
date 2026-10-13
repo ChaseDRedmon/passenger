@@ -7,8 +7,8 @@ namespace Passenger.App.Testing;
 /// <summary>Unit testing in the IDE, as Rider's: the solution's tests shown as their code declares them from the moment
 /// it opens, the test projects built and their tests found by a runner, runs of all of them, a chosen few or the ones
 /// that failed, results as they come, and a test debugged under Passenger's own debugger. It works in the IDE's own
-/// tests and outcomes, through <see cref="ITestRunner"/>. A UI-thread object: everything a run says crosses to the UI
-/// thread before it changes the tree.</summary>
+/// tests and outcomes, through <see cref="ITestRunner"/> (VSTest's and Microsoft.Testing.Platform's, <see cref="TestRunners"/>).
+/// A UI-thread object: everything a run says crosses to the UI thread before it changes the tree.</summary>
 public sealed class TestController : IAsyncDisposable
 {
     /// <summary>What the window says when Stop ends a run before its tests ran.</summary>
@@ -49,7 +49,7 @@ public sealed class TestController : IAsyncDisposable
         this.build = build;
         this.projects = projects;
         this.log = log;
-        this.startRunner = startRunner ?? VsTestRunner.StartAsync;
+        this.startRunner = startRunner ?? ((workspace, _) => Task.FromResult<ITestRunner>(new TestRunners(workspace)));
         Finder.Changed += (_, found) =>
         {
             code = found;
@@ -225,8 +225,7 @@ public sealed class TestController : IAsyncDisposable
                     debugger: debug ? new DebugLauncher(this) : null,
                     environment: group.First().Environment,
                     cancel: stop.Token);
-                summary = summary is null ? part : new RunSummary(summary.Elapsed + part.Elapsed, summary.Canceled || part.Canceled,
-                    summary.Aborted || part.Aborted, summary.Error ?? part.Error) { Outcomes = [.. summary.Outcomes, .. part.Outcomes] };
+                summary = summary is null ? part : summary.And(part);
             }
             // A runner may tell an outcome on another thread behind the run's end: every one is in before the end is.
             Apply(summary!.Outcomes);
