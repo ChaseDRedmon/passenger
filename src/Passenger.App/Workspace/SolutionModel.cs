@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
+using Passenger.Core;
 
 namespace Passenger.App.Workspace;
 
@@ -15,8 +16,11 @@ public sealed record SolutionModel(string Path, string Name, IReadOnlyList<Solut
 
     public IEnumerable<ProjectModel> Projects => Entries.SelectMany(Flatten);
 
+    /// <summary>Reads a solution, its own path and its projects' named as the file system names them
+    /// (<see cref="PathNames.Canonical"/>), whatever letter case or links the solution's lines use.</summary>
     public static SolutionModel? Load(string path)
     {
+        path = PathNames.Canonical(path);
         try
         {
             return System.IO.Path.GetExtension(path).Equals(".slnx", StringComparison.OrdinalIgnoreCase) ? LoadSlnx(path) : LoadSln(path);
@@ -65,7 +69,7 @@ public sealed record SolutionModel(string Path, string Name, IReadOnlyList<Solut
     {
         if (element.Name.LocalName == "Project" && element.Attribute("Path")?.Value is { } relative)
         {
-            into.Add(ProjectModel.Load(System.IO.Path.GetFullPath(System.IO.Path.Combine(root, relative.Replace('\\', '/')))));
+            into.Add(ProjectModel.Load(System.IO.Path.Combine(root, relative.Replace('\\', '/'))));
         }
         else if (element.Name.LocalName == "Folder" && element.Attribute("Name")?.Value is { } name)
         {
@@ -115,7 +119,7 @@ public sealed record SolutionModel(string Path, string Name, IReadOnlyList<Solut
                 string id = m.Groups["id"].Value;
                 byId[id] = m.Groups["type"].Value.Equals(SolutionFolderType, StringComparison.OrdinalIgnoreCase)
                     ? new SolutionFolder(m.Groups["name"].Value, [])
-                    : ProjectModel.Load(System.IO.Path.GetFullPath(System.IO.Path.Combine(root, m.Groups["path"].Value.Replace('\\', '/'))));
+                    : ProjectModel.Load(System.IO.Path.Combine(root, m.Groups["path"].Value.Replace('\\', '/')));
                 order.Add(id);
             }
             else if (line.Contains("GlobalSection(NestedProjects)", StringComparison.Ordinal))
@@ -189,8 +193,15 @@ public sealed record ProjectModel(
     public bool IsRunnable => (string.Equals(OutputType, "Exe", StringComparison.OrdinalIgnoreCase)
         || string.Equals(OutputType, "WinExe", StringComparison.OrdinalIgnoreCase)) && !IsTestProject;
 
+    /// <summary>The project a file or folder belongs to: of the projects whose folders hold it, the one nearest it, as a
+    /// nested project's files are its own; null when none does. Paths are canonical, as the projects' are.</summary>
+    public static ProjectModel? Owning(IEnumerable<ProjectModel> projects, string path) =>
+        projects.Where(p => PathNames.Within(path, p.Folder)).MaxBy(p => p.Folder.Length);
+
+    /// <summary>Reads a project file, its path (and those it references) as the file system names them.</summary>
     public static ProjectModel Load(string path)
     {
+        path = PathNames.Canonical(path);
         string name = System.IO.Path.GetFileNameWithoutExtension(path);
         if (!File.Exists(path))
         {
@@ -232,7 +243,7 @@ public sealed record ProjectModel(
             .ToList();
         List<string> references = project.Descendants()
             .Where(e => e.Name.LocalName == "ProjectReference" && e.Attribute("Include") is not null)
-            .Select(e => System.IO.Path.GetFullPath(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(path)!, e.Attribute("Include")!.Value.Replace('\\', '/'))))
+            .Select(e => PathNames.Canonical(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(path)!, e.Attribute("Include")!.Value.Replace('\\', '/'))))
             .ToList();
         string? outputType = Property("OutputType") ?? (sdks.Any(ExecutableSdks.Contains) ? "Exe" : null);
         if (Property("AssemblyName") is { Length: > 0 } assembly && assembly != name)

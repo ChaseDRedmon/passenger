@@ -25,6 +25,14 @@ public partial class MainWindow
     public IReadOnlyList<ProjectModel> Projects =>
         workspace is null ? [] : [.. workspace.Projects.Where(p => !Explorer.Tree.Unloaded.Contains(p.Path))];
 
+    /// <summary>The loaded project a file or folder (a canonical path) belongs to, the nearest one holding it; null outside
+    /// them all. What Build Selected Projects builds from the editor, the namespace a new file takes and Find's grouping.</summary>
+    public ProjectModel? ProjectOf(string path) => ProjectModel.Owning(Projects, path);
+
+    /// <summary>The name of the project a file belongs to, as Find and Problems group by it; outside them all, Rider's
+    /// Miscellaneous Files.</summary>
+    private string ProjectNameOf(string path) => ProjectOf(path) is { } owner ? Path.GetFileNameWithoutExtension(owner.Path) : "Miscellaneous Files";
+
     /// <summary>Bumped by each read of the folder, so a walk for projects that lands after a later read is dropped.</summary>
     private int reads;
 

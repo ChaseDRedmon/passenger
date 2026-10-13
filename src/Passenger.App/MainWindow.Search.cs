@@ -1,4 +1,5 @@
 using Passenger.App.Workspace;
+using Passenger.Core;
 using Passenger.Text;
 
 namespace Passenger.App;
@@ -86,7 +87,7 @@ public partial class MainWindow
                 listed = listed.Where(p => FuzzyMatch.Score(query.Trim(), Path.GetFileName(p)) is not null);
             }
             return Task.FromResult<IReadOnlyList<Navigation.SymbolRow>>([.. listed.Select(p => new Navigation.SymbolRow(
-                Path.GetFileName(p), null, root.Length > 0 && p.StartsWith(root, StringComparison.Ordinal) ? Path.GetDirectoryName(Path.GetRelativePath(root, p)) : Path.GetDirectoryName(p),
+                Path.GetFileName(p), null, root.Length > 0 && PathNames.IsUnder(p, root) ? Path.GetDirectoryName(Path.GetRelativePath(root, p)) : Path.GetDirectoryName(p),
                 Navigation.SymbolRow.FileKind, p, new TextPosition(0, 0)))]);
         });
         popup.Done += (_, row) =>

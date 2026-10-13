@@ -135,8 +135,7 @@ public partial class MainWindow
     private string NamespaceFor(string into)
     {
         string full = PathNames.Canonical(into);
-        ProjectModel? project = Projects.Where(p => full == p.Folder || full.StartsWith(p.Folder + Path.DirectorySeparatorChar, StringComparison.Ordinal))
-            .OrderByDescending(p => p.Folder.Length).FirstOrDefault();
+        ProjectModel? project = ProjectOf(full);
         string root = project is null ? Path.GetFileName(folder ?? full) : Path.GetFileNameWithoutExtension(project.Path);
         string below = project is null ? string.Empty : Path.GetRelativePath(project.Folder, full);
         IEnumerable<string> parts = [root, .. below == "." ? [] : below.Split(Path.DirectorySeparatorChar)];
@@ -212,17 +211,12 @@ public partial class MainWindow
         ReloadSolution();
         StatusText.Text = $"Removed {name} from {solution.Name}";
         string own = PathNames.Canonical(Path.GetDirectoryName(project)!);
-        bool apart = !Within(folder, own) && !Within(solution.Path, own) && !Projects.Any(p => Within(p.Path, own));
+        bool apart = !PathNames.Within(folder, own) && !PathNames.Within(solution.Path, own) && !Projects.Any(p => PathNames.Within(p.Path, own));
         if (apart && await Confirm("Delete Project Files", $"Also move the folder {Path.GetFileName(own)} and everything in it to the Trash?", "Move to Trash"))
         {
             await DeleteAsync(own, asked: true);
         }
         return true;
-
-        // Case is ignored, as macOS and Windows ignore it: erring that way only keeps files.
-        static bool Within(string path, string folder) =>
-            string.Equals(path, folder, StringComparison.OrdinalIgnoreCase)
-            || path.StartsWith(folder.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>Runs the .NET command line to its end, off the UI thread: null when it succeeded, else what it said.</summary>
@@ -258,8 +252,7 @@ public partial class MainWindow
             StatusText.Text = $"{what} could not be deleted: {error.Message}";
             return false;
         }
-        foreach (OpenDocument document in Editors.Documents
-            .Where(d => d.Path == path || (isFolder && d.Path.StartsWith(path + Path.DirectorySeparatorChar, StringComparison.Ordinal))).ToList())
+        foreach (OpenDocument document in Editors.Documents.Where(d => PathNames.Within(d.Path, path)).ToList())
         {
             Editors.CloseDeleted(document);
         }

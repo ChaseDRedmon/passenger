@@ -879,8 +879,7 @@ public partial class MainWindow : Window
     public IReadOnlyList<string> SelectedProjects()
     {
         List<string> chosen = [.. Explorer.SelectedNodes.Where(n => n.Kind == Passenger.App.Explorer.NodeKind.Project && n.Path is not null).Select(n => n.Path!)];
-        if (chosen.Count == 0 && Editors.Active is { } file
-            && Projects.Where(p => file.Path.StartsWith(p.Folder + Path.DirectorySeparatorChar, StringComparison.Ordinal)).MaxBy(p => p.Folder.Length) is { } owner)
+        if (chosen.Count == 0 && Editors.Active is { } file && ProjectOf(file.Path) is { } owner)
         {
             chosen.Add(owner.Path);
         }
@@ -1341,7 +1340,7 @@ public partial class MainWindow : Window
     private Navigation.SymbolRow SymbolRowOf(Lsp.SymbolInformation symbol)
     {
         string path = Lsp.DocumentUris.ToPath(symbol.Location.Uri);
-        string where = folder is { } root && path.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal) ? Path.GetRelativePath(root, path) : Path.GetFileName(path);
+        string where = folder is { } root && PathNames.IsUnder(path, root) ? Path.GetRelativePath(root, path) : Path.GetFileName(path);
         Lsp.LspPosition start = symbol.Location.Range.Start;
         return new Navigation.SymbolRow(symbol.Name, Container(symbol.ContainerName), $"{where}:{start.Line + 1}", symbol.Kind, path, new TextPosition(start.Line, start.Character));
     }
@@ -1746,7 +1745,7 @@ public partial class MainWindow : Window
         string where = folder is null ? "No solution" : Path.GetFileName(folder);
         if (active is not null)
         {
-            where = folder is not null && active.Path.StartsWith(folder, StringComparison.Ordinal)
+            where = folder is not null && PathNames.IsUnder(active.Path, folder)
                 ? Path.GetRelativePath(folder, active.Path)
                 : active.Path;
         }

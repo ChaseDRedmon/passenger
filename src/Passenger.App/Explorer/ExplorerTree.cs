@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using Avalonia;
 using Avalonia.Media;
 using Passenger.App.Workspace;
+using Passenger.Core;
 
 namespace Passenger.App.Explorer;
 
@@ -52,15 +53,20 @@ public sealed class ExplorerTree
 
     public bool IsSolutionView { get; private set; }
 
+    /// <summary>The solution shown, whose projects say which one a file is revealed in.</summary>
+    private SolutionModel? solution;
+
     public void LoadFileSystem(string folder)
     {
         IsSolutionView = false;
-        Show(Folder(Path.GetFullPath(folder), 0, dimmed: false));
+        solution = null;
+        Show(Folder(PathNames.Canonical(folder), 0, dimmed: false));
     }
 
     public void LoadSolution(SolutionModel solution)
     {
         IsSolutionView = true;
+        this.solution = solution;
         int count = solution.Projects.Count();
         ExplorerNode root = new(NodeKind.Solution, solution.Name, solution.Path, 0, false,
             node => solution.Entries.Select(e => Entry(e, node.Depth + 1)).ToList(),
@@ -168,22 +174,29 @@ public sealed class ExplorerTree
         }
     }
 
-    /// <summary>Opens every node down to <paramref name="path"/> and returns its row, so a file can be
-    /// shown where it lives: in its folder, or in the solution, in its project.</summary>
+    /// <summary>Opens every node down to <paramref name="path"/> and returns its row, so a file can be shown where it
+    /// lives: in its folder, or in the solution, in the project it belongs to (<see cref="ProjectModel.Owning"/>), the
+    /// nearest of those whose folders hold it rather than the first listed.</summary>
     public ExplorerNode? Reveal(string path)
     {
         if (Root is null)
         {
             return null;
         }
-        string full = Path.GetFullPath(path);
+        string full = PathNames.Canonical(path);
+        string? owner = solution is null ? null : ProjectModel.Owning(solution.Projects, full)?.Path;
         ExplorerNode node = Root;
         while (node.Path != full)
         {
             Expand(node);
             ExplorerNode? next = node.Children?
                 .Where(c => c.Kind is not (NodeKind.Dependencies or NodeKind.Framework or NodeKind.Package or NodeKind.ProjectReference))
-                .FirstOrDefault(c => c.Path == full || c.Contains(full));
+                .FirstOrDefault(c => c.Path == full || c.Kind switch
+                {
+                    NodeKind.Project => owner is not null && c.Path == owner,
+                    NodeKind.SolutionFolder => owner is not null && c.Contains(owner),
+                    _ => c.Contains(full),
+                });
             if (next is null)
             {
                 return null;
@@ -381,6 +394,6 @@ public sealed class ExplorerNode : Observable
         {
             return Kind == NodeKind.SolutionFolder && (Children?.Any(c => c.Path == path || c.Contains(path)) ?? false);
         }
-        return path.StartsWith(folder + System.IO.Path.DirectorySeparatorChar, StringComparison.Ordinal);
+        return PathNames.IsUnder(path, folder);
     }
 }

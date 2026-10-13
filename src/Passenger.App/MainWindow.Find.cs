@@ -1,5 +1,6 @@
 using Passenger.App.ToolWindows;
 using Passenger.App.Workspace;
+using Passenger.Core;
 using Passenger.Languages.CSharp;
 using Passenger.Lsp;
 using Passenger.Text;
@@ -36,7 +37,7 @@ public partial class MainWindow
             IReadOnlyList<UsageKind> kinds = file.Key.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)
                 ? UsageKinds.Classify(text, offsets)
                 : [.. here.Select(_ => UsageKind.Other)];
-            string project = ProjectOf(file.Key);
+            string project = ProjectNameOf(file.Key);
             for (int i = 0; i < here.Count; i++)
             {
                 LspRange range = here[i].Range;
@@ -48,13 +49,5 @@ public partial class MainWindow
         Find.Show(title, usages);
         ShowToolWindow("find");
         StatusText.Text = $"{title}: {usages.Count} found";
-    }
-
-    /// <summary>The project a file belongs to, by its folder; outside them all, the folder's name, as Rider's
-    /// Miscellaneous Files.</summary>
-    private string ProjectOf(string path)
-    {
-        Workspace.ProjectModel? owner = Projects.Where(p => path.StartsWith(p.Folder + Path.DirectorySeparatorChar, StringComparison.Ordinal)).MaxBy(p => p.Folder.Length);
-        return owner is not null ? Path.GetFileNameWithoutExtension(owner.Path) : "Miscellaneous Files";
     }
 }

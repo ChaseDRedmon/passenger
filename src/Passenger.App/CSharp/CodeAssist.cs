@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Media;
 using Passenger.App.Editors;
 using Passenger.App.Workspace;
+using Passenger.Core;
 using Passenger.Editor;
 using Passenger.Languages.CSharp;
 using Passenger.Lsp;
@@ -1088,7 +1089,7 @@ public sealed class CodeAssist
         List<Choice> choices = locations.Select(l =>
         {
             string path = DocumentUris.ToPath(l.Uri);
-            string shown = root.Length > 0 && path.StartsWith(root, StringComparison.Ordinal) ? Path.GetRelativePath(root, path) : Path.GetFileName(path);
+            string shown = root.Length > 0 && PathNames.IsUnder(path, root) ? Path.GetRelativePath(root, path) : Path.GetFileName(path);
             return new Choice($"{shown}:{l.Range.Start.Line + 1}", LinePreview(path, l.Range.Start.Line), l, DetailIsCode: true);
         }).ToList();
         ShowModal(new ChoicePopup(title, choices), offset, choice =>

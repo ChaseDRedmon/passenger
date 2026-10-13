@@ -271,11 +271,10 @@ public sealed class FolderWatcher : IDisposable
     /// or now follow it under another name; one made again in its place is watched anew after.</summary>
     private void Unwatch(string path)
     {
-        string under = path + Path.DirectorySeparatorChar;
         List<FileSystemWatcher> stopped = [];
         lock (gate)
         {
-            foreach (string watched in watches.Keys.Where(w => w == path || w.StartsWith(under, StringComparison.Ordinal)).ToList())
+            foreach (string watched in watches.Keys.Where(w => PathNames.Within(w, path)).ToList())
             {
                 stopped.Add(watches[watched]);
                 watches.Remove(watched);
@@ -316,12 +315,8 @@ public sealed class FolderWatcher : IDisposable
     }
 
     /// <summary>A path's names from the open folder down; null for the folder itself or a path outside it.</summary>
-    private string[]? Parts(string path)
-    {
-        string relative = Path.GetRelativePath(folder, path);
-        bool outside = relative == ".." || relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal) || Path.IsPathRooted(relative);
-        return relative == "." || outside ? null : relative.Split(Path.DirectorySeparatorChar);
-    }
+    private string[]? Parts(string path) =>
+        PathNames.IsUnder(path, folder) ? Path.GetRelativePath(folder, path).Split(Path.DirectorySeparatorChar) : null;
 
     private void Note(string path, bool created)
     {

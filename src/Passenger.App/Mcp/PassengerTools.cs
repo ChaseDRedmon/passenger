@@ -821,7 +821,7 @@ public sealed partial class PassengerTools(MainWindow window)
 
     private string Relative(string path) => Relative(window.Folder, path);
 
-    private static string Relative(string? folder, string path) => folder is not null && path.StartsWith(folder + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+    private static string Relative(string? folder, string path) => folder is not null && PathNames.IsUnder(path, folder)
         ? Path.GetRelativePath(folder, path)
         : path;
 

@@ -83,7 +83,7 @@ public partial class MainWindow
         {
             int start = Math.Min(marker.Range.Start, text.Length);
             problems.Add(new Problem(marker.Kind == MarkerKind.Error ? ProblemSeverity.Error : ProblemSeverity.Warning, marker.Message, null,
-                file.Path, text.GetPosition(start), ProjectOf(file.Path)));
+                file.Path, text.GetPosition(start), ProjectNameOf(file.Path)));
         }
         Bottom.Problems.ShowFile(file.Name, problems);
     }
@@ -97,7 +97,7 @@ public partial class MainWindow
             p.Diagnostic.Code?.ValueKind == System.Text.Json.JsonValueKind.String ? p.Diagnostic.Code.Value.GetString() : p.Diagnostic.Code?.ToString(),
             p.Path,
             new TextPosition(p.Diagnostic.Range.Start.Line, p.Diagnostic.Range.Start.Character),
-            ProjectOf(p.Path))).ToList());
+            ProjectNameOf(p.Path))).ToList());
         ShowAnalysis();
     }
 

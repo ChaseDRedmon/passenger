@@ -349,11 +349,7 @@ public sealed class Git
     }
 
     /// <summary>Whether a path is in the working tree, where git has a last commit's text for it.</summary>
-    public bool IsInside(string path)
-    {
-        string relative = Relative(path);
-        return !System.IO.Path.IsPathRooted(relative) && relative != ".." && !relative.StartsWith("../", StringComparison.Ordinal);
-    }
+    public bool IsInside(string path) => PathNames.Within(path, Root);
 
     /// <summary>Rider's Update Project: the branch's upstream merged in (or rebased onto, as the person's pull.rebase
     /// says).</summary>

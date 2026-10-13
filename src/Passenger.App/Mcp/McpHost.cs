@@ -207,7 +207,6 @@ public static class McpHost
         {
             return -1;
         }
-        string inside = folder.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        return here.Equals(folder, StringComparison.OrdinalIgnoreCase) || here.StartsWith(inside, StringComparison.OrdinalIgnoreCase) ? folder.Length : -1;
+        return PathNames.Within(here, folder) ? folder.Length : -1;
     }
 }

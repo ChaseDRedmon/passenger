@@ -2,6 +2,7 @@ using Microsoft.VisualStudio.TestPlatform.ObjectModel;
 using Microsoft.VisualStudio.TestPlatform.ObjectModel.Client.Interfaces;
 using Passenger.App.Debugging;
 using Passenger.App.Workspace;
+using Passenger.Core;
 using Passenger.Editor;
 
 namespace Passenger.App.Testing;
@@ -229,7 +230,7 @@ public sealed class TestController : IAsyncDisposable
         {
             try
             {
-                assemblies.Add((project, (await DebugTarget.ResolveAsync(project)).Program));
+                assemblies.Add((project, PathNames.Canonical((await DebugTarget.ResolveAsync(project)).Program)));
             }
             catch (Exception error) when (error is IOException or InvalidOperationException)
             {
@@ -243,14 +244,14 @@ public sealed class TestController : IAsyncDisposable
             folder = workspace;
         }
         IReadOnlyList<TestCase> found = await runner.DiscoverAsync([.. assemblies.Select(a => a.Assembly)], UiThread.Marshal(log));
-        Tree.Load([.. assemblies.Select(a => (DisplayName(a.Project), (IReadOnlyList<TestCase>)[.. found.Where(c => SamePath(c.Source, a.Assembly))]))]);
+        // Each test is its project's by the assembly VSTest found it in, named as the file system names it.
+        Dictionary<string, string> sources = found.Select(c => c.Source).Distinct(StringComparer.Ordinal).ToDictionary(s => s, PathNames.Canonical, StringComparer.Ordinal);
+        Tree.Load([.. assemblies.Select(a => (DisplayName(a.Project), (IReadOnlyList<TestCase>)[.. found.Where(c => PathNames.Same(sources[c.Source], a.Assembly))]))]);
         Message?.Invoke(this, $"Found {found.Count} test{(found.Count == 1 ? "" : "s")} in {assemblies.Count} project{(assemblies.Count == 1 ? "" : "s")}");
         return null;
     }
 
     private static string DisplayName(ProjectModel project) => Path.GetFileNameWithoutExtension(project.Path);
-
-    private static bool SamePath(string a, string b) => string.Equals(Path.GetFullPath(a), Path.GetFullPath(b), StringComparison.Ordinal);
 
     private static string Count(IReadOnlyList<TestNode> methods)
     {

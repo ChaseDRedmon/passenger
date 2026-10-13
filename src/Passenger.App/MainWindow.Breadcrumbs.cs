@@ -2,6 +2,7 @@ using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
+using Passenger.Core;
 using Passenger.Lsp;
 using Passenger.Text;
 
@@ -78,7 +79,7 @@ public partial class MainWindow
         {
             return;
         }
-        string relative = folder is { } root && document.Path.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+        string relative = folder is { } root && PathNames.IsUnder(document.Path, root)
             ? Path.GetRelativePath(root, document.Path)
             : Path.GetFileName(document.Path);
         string[] parts = relative.Split(Path.DirectorySeparatorChar);

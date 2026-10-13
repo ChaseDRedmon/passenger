@@ -206,10 +206,6 @@ public sealed class TestTree
         Updated?.Invoke(this, EventArgs.Empty);
     }
 
-    /// <summary>The test methods declared in a file, for the editor's gutter.</summary>
-    public IEnumerable<TestNode> MethodsIn(string path) =>
-        Roots.SelectMany(r => r.Methods).Where(m => string.Equals(m.Path, path, StringComparison.Ordinal));
-
     public void Toggle(TestNode node)
     {
         if (!node.HasChildren)
