@@ -148,6 +148,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   for the rest, and a `ToolWindow`'s `Action` for its show action. `AppActions.cs` holds the ids and each platform's
   keymap. Keys, the main menu (`MainMenu.Build`), Find Action, context menus and MCP's `ide_action` all run actions
   through the registry, so one that cannot run says why; editor actions go to the focused editor.
+  `Product` is what the build is (version, commit, runtime, the licence and notices beside it), the one place the
+  version is read; `AboutDialog` is About (the application menu on macOS, Help elsewhere).
 - `src/Passenger.App/Welcome`: the Welcome screen (`WelcomeView`, in the editor area while nothing is open) and the
   recent folders and solutions (`RecentSolutions`, the store's `recentSolutions.json`), read by the screen, File >
   Recent Solutions and a start that names nothing (Settings' Reopen projects on startup); `MainWindow.Welcome.cs`
@@ -165,6 +167,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   `src/Passenger.Debugger.Interop` (ICorDebug, IMetaDataImport and dbgshim for the COM source generator),
   `src/Passenger.Debugger` (the engine), `src/Passenger.Dap` (the Debug Adapter Protocol, both ends) and
   `src/Passenger.DebugAdapter` (the engine behind the protocol, its own process, carried under `debugger/`).
+- `tools/Passenger.Notices`: writes the app's `THIRD-PARTY-NOTICES.txt` (beside `LICENSE.txt` in every build and
+  publish, through `WriteNotices` in `Passenger.App.csproj`) from the packages the build copies, the self-contained
+  runtime pack, the debugger's and Roslyn's server's `.deps.json`, each package's licence and copyright, and the part
+  of THIRD_PARTY_NOTICES.md after its marker line; a licence it cannot write fails the build.
 - `site/`: passenger-ide.net, plain HTML and CSS, deployed to Cloudflare Pages by `.github/workflows/site.yml` on a push that
   touches it. Its downloads are the latest GitHub release's assets, by fixed names (#56); its share card,
   `images/social.png`, is drawn from `tools/social-card.html` (the command is in its first comment).
@@ -184,7 +190,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   states them (`just notices`, and CI, fail on one missing), copied source by its file with the project it came from.
   The one exception, decided by the owner: `Microsoft.VisualStudio.Telemetry` and
   `Microsoft.VisualStudio.Utilities.Internal`, under Visual Studio's terms, stay inside Roslyn's server (MIT on nuget.org)
-  because its built-in Razor support needs them; THIRD_PARTY_NOTICES.md says so. Nothing else under such terms ships.
+  because its built-in Razor support needs them; THIRD_PARTY_NOTICES.md says so. Nothing else under such terms ships. A new SPDX licence needs its text in
+  `tools/Passenger.Notices/Licenses`, a package inside Roslyn's server a row in THIRD_PARTY_NOTICES.md's roslyn/ table,
+  and copied source or an asset its entry after that file's marker line, so the app carries them.
 - **Colours are tokens.** A control names a brush from `Theme/Tokens.axaml` (`Passenger.*`), never a literal colour,
   and every token exists in both the Dark and Light dictionaries.
 - **A malformed flag or value is fatal**, never a silent default (`LaunchOptions.cs`).
