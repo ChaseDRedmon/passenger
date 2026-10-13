@@ -103,8 +103,11 @@ public sealed class CSharpDocument : IDisposable
         }
         if (document.InlayHints.Count > 0)
         {
-            // A hint keeps its place before its argument; text typed at its place goes after it.
-            document.InlayHints = [.. document.InlayHints.Select(h => h with { Offset = TextEditing.MapOffset(h.Offset, e.Edits, afterInsertions: false) })];
+            // Text typed at a parameter's name goes after it, into the argument; at a type, before it, onto the name.
+            document.InlayHints = [.. document.InlayHints.Select(h => h with
+            {
+                Offset = TextEditing.MapOffset(h.Offset, e.Edits, afterInsertions: h.Kind == InlayHintKind.Type),
+            })];
         }
         Pull(Settle);
     }
@@ -170,7 +173,7 @@ public sealed class CSharpDocument : IDisposable
             (IReadOnlyList<LspInlayHint> hints, int hinted) = await lsp.InlayHintsAsync(cancel);
             if (!cancel.IsCancellationRequested && hinted == document.Text.Version)
             {
-                document.InlayHints = [.. hints.Where(h => (h.Kind is null or 2) && !Generic.Contains(h.Label.TrimEnd())).Select(h => new InlayHint(lsp.OffsetOf(h.Position), h.Label.TrimEnd(), h.PaddingLeft, h.PaddingRight))];
+                document.InlayHints = Shown(lsp, hints);
             }
         }
         catch (OperationCanceledException)
@@ -185,6 +188,31 @@ public sealed class CSharpDocument : IDisposable
         {
             Dispatcher.UIThread.Post(BackgroundWork.End);
         }
+    }
+
+    /// <summary>The hints Rider would show of those the server gave for the text as it stands: parameter names but those
+    /// that say nothing, and types where Rider puts them (<see cref="TypeHints"/>), each kept with the server's own for
+    /// its hover card.</summary>
+    private IReadOnlyList<InlayHint> Shown(LspDocument lsp, IReadOnlyList<LspInlayHint> hints)
+    {
+        ParsedText? syntax = hints.Any(h => h.Kind == 1) ? document.Syntax?.Current : null;
+        List<InlayHint> shown = [];
+        foreach (LspInlayHint hint in hints)
+        {
+            string label = hint.Label.Trim();
+            if (hint.Kind == 1)
+            {
+                if (syntax is not null && TypeHints.Place(syntax, lsp.OffsetOf(hint.Position), label) is { } placed)
+                {
+                    shown.Add(placed with { Data = hint });
+                }
+            }
+            else if (!Generic.Contains(label))
+            {
+                shown.Add(new InlayHint(lsp.OffsetOf(hint.Position), label, hint.PaddingLeft, hint.PaddingRight, InlayHintKind.Parameter, hint));
+            }
+        }
+        return shown;
     }
 
     /// <summary>What a diagnostic draws as: errors, warnings and information squiggled; code the

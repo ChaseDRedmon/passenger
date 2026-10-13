@@ -180,6 +180,7 @@ public sealed partial class CodeEditor
             bool extend = mods.HasFlag(KeyModifiers.Shift);
             Selection primary = selections.Primary;
             drag = new Drag(DragMode.Characters, extend ? primary.Anchor : offset, point.Position);
+            LeanFor(point.Position, offset);
             SetSelections(SelectionSet.Single(extend ? new Selection(primary.Anchor, offset) : Selection.At(offset)), reveal: false);
         }
         e.Pointer.Capture(this);
@@ -300,7 +301,7 @@ public sealed partial class CodeEditor
             return;
         }
         hovering = true;
-        Hovered?.Invoke(this, new HoverEventArgs(offset, hoverAt));
+        Hovered?.Invoke(this, new HoverEventArgs(offset, hoverAt, HintUnder(hoverAt)));
     });
 
     private void RestartHover(Point position)

@@ -344,6 +344,7 @@ public sealed partial class CodeEditor : Control
             pendingGoTo = null;
             EndComposition();
             selections = SelectionSet.Single(0);
+            leaning = [];
             scroll = default;
             widestLine = 0;
             measuredWidth = 0;
@@ -420,6 +421,7 @@ public sealed partial class CodeEditor : Control
     {
         Document = shown;
         selections = carets.Clamp(shown.Snapshot.Length);
+        leaning = [];
         scroll = offset;
         UpdateScrollBars();
         InvalidateVisual();
@@ -573,6 +575,8 @@ public sealed partial class CodeEditor : Control
             CaretLimitReached?.Invoke(this, EventArgs.Empty);
         }
         SelectionSet clamped = value.Clamp(document.Snapshot.Length);
+        leaning = nextLeaning ?? [];
+        nextLeaning = null;
         UnfoldAroundCarets(clamped);
         bool changed = !clamped.SameAs(selections) || clamped.PrimaryIndex != selections.PrimaryIndex;
         selections = clamped;
@@ -642,6 +646,7 @@ public sealed partial class CodeEditor : Control
         FollowSnippet(e.Edits);
         if (!editing)
         {
+            leaning = [];
             selections = TextEditing.MapThrough(selections, e.Edits).Clamp(e.After.Length);
             FollowInputMethod();
             SelectionChanged?.Invoke(this, EventArgs.Empty);

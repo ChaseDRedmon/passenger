@@ -48,11 +48,13 @@ public enum TokenKind
     Brace3,
 }
 
-/// <summary>Where the pointer rested: the offset under it and the point, in the editor's coordinates.</summary>
-public sealed class HoverEventArgs(int offset, Avalonia.Point point) : EventArgs
+/// <summary>Where the pointer rested: the offset under it and the point, in the editor's coordinates, and the inlay
+/// hint it rests on, if any, which the card describes rather than the code.</summary>
+public sealed class HoverEventArgs(int offset, Avalonia.Point point, InlayHint? hint = null) : EventArgs
 {
     public int Offset { get; } = offset;
     public Avalonia.Point Point { get; } = point;
+    public InlayHint? Hint { get; } = hint;
 }
 
 /// <summary>A coloured stretch of a document, in its offsets.</summary>

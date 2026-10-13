@@ -433,7 +433,9 @@ public sealed class LanguageServer : IAsyncDisposable
     }
 
     /// <summary>The server's options Passenger sets: parameter name hints where Rider shows them (before a literal, a
-    /// null or an indexer's argument), and never where the argument already says the name.</summary>
+    /// null or an indexer's argument), and never where the argument already says the name; type hints where Rider has
+    /// them (a <c>var</c>, a lambda's parameter, a target-typed <c>new</c>), which <c>TypeHints</c> moves to Rider's
+    /// place and leaves off where Rider's are, and none for a collection expression, which Rider never hints.</summary>
     private static readonly Dictionary<string, object?> Settings = new(StringComparer.Ordinal)
     {
         ["dotnet_enable_inlay_hints_for_parameters"] = true,
@@ -444,7 +446,11 @@ public sealed class LanguageServer : IAsyncDisposable
         ["dotnet_suppress_inlay_hints_for_parameters_that_differ_only_by_suffix"] = true,
         ["dotnet_suppress_inlay_hints_for_parameters_that_match_method_intent"] = true,
         ["dotnet_suppress_inlay_hints_for_parameters_that_match_argument_name"] = true,
-        ["csharp_enable_inlay_hints_for_types"] = false,
+        ["csharp_enable_inlay_hints_for_types"] = true,
+        ["csharp_enable_inlay_hints_for_implicit_variable_types"] = true,
+        ["csharp_enable_inlay_hints_for_lambda_parameter_types"] = true,
+        ["csharp_enable_inlay_hints_for_implicit_object_creation"] = true,
+        ["csharp_enable_inlay_hints_for_collection_expressions"] = false,
     };
 
     /// <summary>The server's log: its standard error and the messages it logs (a project load that never ends says where

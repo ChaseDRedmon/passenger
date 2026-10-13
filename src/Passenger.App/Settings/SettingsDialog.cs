@@ -193,6 +193,7 @@ public sealed class SettingsDialog : Window
         Add(EditorPage, "Solution-wide analysis", Check(Working.SolutionWideAnalysis, v => Change(s => s with { SolutionWideAnalysis = v })),
             "errors problems whole solution analysis inspections without build");
         Add(EditorPage, "Show parameter name hints", Check(Working.ParameterHints, v => Change(s => s with { ParameterHints = v })), "inlay hints parameter names arguments");
+        Add(EditorPage, "Show type name hints", Check(Working.TypeHints, v => Change(s => s with { TypeHints = v })), "inlay hints type names var lambda parameters new inferred");
 
         Add(RunPage, "Hot Reload on save", Check(Working.HotReload, v => Change(s => s with { HotReload = v })), "dotnet watch apply changes edit continue running");
         NumericUpDown buffer = Number(Working.ConsoleBufferKb, AppSettings.MinConsoleBufferKb, AppSettings.MaxConsoleBufferKb, 64, v => Change(s => s with { ConsoleBufferKb = (int)v }));

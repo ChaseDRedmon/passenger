@@ -30,6 +30,10 @@ public sealed record AppSettings : IStateDocument<AppSettings>
 
     /// <summary>Rider's parameter name hints: an argument's parameter shown before it where the call does not say it.</summary>
     public bool ParameterHints { get; init; } = true;
+
+    /// <summary>Rider's type name hints: the type of a <c>var</c>, a lambda's parameter or a target-typed <c>new</c> shown
+    /// after it where the code does not say it.</summary>
+    public bool TypeHints { get; init; } = true;
     public double TerminalFontSize { get; init; } = 13;
 
     /// <summary>Whether Run runs under dotnet watch, so a save applies its edits to the running program (Hot Reload),

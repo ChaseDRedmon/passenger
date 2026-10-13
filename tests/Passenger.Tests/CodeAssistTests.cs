@@ -5,6 +5,7 @@ using Avalonia.Headless.XUnit;
 using Avalonia.VisualTree;
 using Passenger.App;
 using Passenger.App.Navigation;
+using Passenger.App.Settings;
 using Passenger.App.ToolWindows;
 using Passenger.App.Workspace;
 using Passenger.Core;
@@ -1129,8 +1130,132 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
         Assert.True(Step(argument - 1) > character * 4, $"{Step(argument - 1)} against a character's {character}");
 
         // Off in Settings, the line stands as typed.
-        editor.ShowInlayHints = false;
+        editor.ShowParameterHints = false;
         Assert.Equal(character, Step(argument - 1), 3);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Types_the_code_leaves_out_show_after_their_names_where_Rider_shows_them_and_a_hint_says_what_its_type_is()
+    {
+        MainWindow window = project.Open("Inferred.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        string code = editor.Document.Snapshot.ToString();
+        int After(string text) => code.IndexOf(text, StringComparison.Ordinal) + text.Length;
+        Ui.WaitFor(() => editor.InlayHints.Any(h => h.Kind == InlayHintKind.Type), "the type name hints");
+
+        // A var's type after its name, a lambda parameter's after it, a deconstruction's after each name, and a new()'s
+        // type after the new; none where the code shows the type: new List<int>(), a declared Func, a declared List.
+        Assert.Equal(
+            [
+                (":int", After("var total")),
+                (":int", After("ForEach(item")),
+                ("List<int>", After("Count(new")),
+                (":int", After("var (first")),
+                (":string", After("var (first, second")),
+            ],
+            editor.InlayHints.Where(h => h.Kind == InlayHintKind.Type).Select(h => (h.Label, h.Offset)));
+        Assert.Equal(["width:", "height:"], editor.InlayHints.Where(h => h.Kind == InlayHintKind.Parameter).Select(h => h.Label));
+
+        // The text after a hint stands its room on, the name before it where it was.
+        double Step(int offset) => editor.PointOf(offset + 1).X - editor.PointOf(offset).X;
+        double character = Step(After("var tot"));
+        Assert.True(Step(After("var total")) > character * 3, $"'total' and ' =' stand {Step(After("var total"))} apart against a character's {character}");
+
+        // Resting the pointer on a hint shows what the server says of its type.
+        Point hint = editor.PointOf(After("var total")) + new Point(character * 1.5, editor.LineHeight / 2);
+        window.MouseMove(editor.TranslatePoint(hint, window)!.Value, Avalonia.Input.RawInputModifiers.None);
+        Ui.WaitFor(() => window.Assist.HoverText is not null, "the hint's hover card");
+        Assert.Contains("Int32", window.Assist.HoverText, StringComparison.Ordinal);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void The_caret_steps_across_a_hint_as_one_place_and_typing_at_a_name_keeps_its_type_after_it()
+    {
+        MainWindow window = project.Open("Inferred.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        string code = editor.Document.Snapshot.ToString();
+        int name = code.IndexOf("var total", StringComparison.Ordinal) + "var total".Length;
+        Ui.WaitFor(() => editor.InlayHints.Any(h => h.Kind == InlayHintKind.Type && h.Offset == name), "the hint after 'total'");
+        double character = editor.PointOf(name - 1).X - editor.PointOf(name - 2).X;
+        double nameEnd = editor.PointOf(name - 1).X + character;
+        double Caret() => editor.PointOf(editor.Selections.Primary.Caret).X;
+        PlaceAfter(editor, "var tota");
+
+        // Right: to the end of the name, before its type; Right again: past the hint, the caret still at the name's end.
+        Ui.Press(window, "Right");
+        Assert.Equal(name, editor.Selections.Primary.Caret);
+        Assert.Equal(nameEnd, Caret(), 1);
+        Ui.Press(window, "Right");
+        Assert.Equal(name, editor.Selections.Primary.Caret);
+        double pastHint = Caret();
+        Assert.True(pastHint > nameEnd + 20, $"Right from before the hint left the caret at {pastHint}, the name ending at {nameEnd}");
+        Ui.Press(window, "Right");
+        Assert.Equal(name + 1, editor.Selections.Primary.Caret);
+
+        // Left comes back the same way, a place at a time.
+        Ui.Press(window, "Left");
+        Assert.Equal((name, pastHint), (editor.Selections.Primary.Caret, Caret()));
+        Ui.Press(window, "Left");
+        Assert.Equal(name, editor.Selections.Primary.Caret);
+        Assert.Equal(nameEnd, Caret(), 1);
+        Ui.Press(window, "Left");
+        Assert.Equal(name - 1, editor.Selections.Primary.Caret);
+
+        // A parameter's name before its argument is a place too: Right from the parenthesis stands before it, then after it.
+        int argument = code.IndexOf("Of(3", StringComparison.Ordinal) + "Of(".Length;
+        PlaceAfter(editor, "Area.Of");
+        double parenthesis = Caret();
+        Ui.Press(window, "Right");
+        Assert.Equal(argument, editor.Selections.Primary.Caret);
+        double beforeWidth = Caret();
+        Assert.True(beforeWidth - parenthesis < 20, $"Right past the parenthesis left the caret {beforeWidth - parenthesis} on, past 'width:'");
+        Ui.Press(window, "Right");
+        Assert.Equal(argument, editor.Selections.Primary.Caret);
+        Assert.True(Caret() - beforeWidth > 20, "Right before 'width:' did not step the caret past it");
+
+        // Typing at the end of the name, before its type, lengthens the name with the type still after it.
+        editor.Selections = SelectionSet.Single(name);
+        window.KeyTextInput("s");
+        Assert.Contains(editor.InlayHints, h => h.Kind == InlayHintKind.Type && h.Offset == name + 1 && h.Label == ":int");
+        Assert.Equal(name + 1, editor.Selections.Primary.Caret);
+        Assert.Equal(nameEnd + character, Caret(), 1);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Type_name_hints_go_when_Settings_turns_them_off_and_come_back_when_it_turns_them_on()
+    {
+        MainWindow window = project.Open("Inferred.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        string code = editor.Document.Snapshot.ToString();
+        int name = code.IndexOf("var total", StringComparison.Ordinal) + "var total".Length;
+        int argument = code.IndexOf("Of(3", StringComparison.Ordinal) + "Of(".Length;
+        Ui.WaitFor(() => editor.InlayHints.Any(h => h.Kind == InlayHintKind.Type) && editor.InlayHints.Any(h => h.Kind == InlayHintKind.Parameter), "the hints");
+        double Step(int offset) => editor.PointOf(offset + 1).X - editor.PointOf(offset).X;
+        double character = Step(name - 2);
+        Assert.True(window.Settings.TypeHints, "Type name hints are not on by default");
+        Assert.True(Step(name) > character * 3, "No room for the type after 'total' with type name hints on");
+
+        SettingsDialog dialog = window.ShowSettings();
+        Ui.Settle();
+        dialog.Query = "type name hints";
+        Ui.Settle();
+        Assert.Equal(SettingsDialog.EditorPage, dialog.Page);
+        Assert.Contains("Show type name hints", dialog.Shown);
+        dialog.Change(s => s with { TypeHints = false });
+        dialog.Ok();
+        Ui.Settle();
+        Assert.Equal(character, Step(name), 3);
+        Assert.True(Step(argument - 1) > character * 4, "Turning type name hints off took the parameter name hints too");
+
+        dialog = window.ShowSettings();
+        Ui.Settle();
+        dialog.Change(s => s with { TypeHints = true });
+        dialog.Ok();
+        Ui.Settle();
+        Assert.True(Step(name) > character * 3, "Type name hints turned on again did not come back");
         window.Close();
     }
 
@@ -1696,6 +1821,11 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
             Directory.CreateDirectory(PathOf("Detected"));
             File.WriteAllText(PathOf("Detected/TwoSpaces.cs"), "class TwoSpaces\n{\n  public int X { get; }\n\n  static void Make()\n  {\n    int made = 0;\n    if (made > 0)\n    {\n      made--;\n    }\n  }\n}\n");
             File.WriteAllText(PathOf("Detected/TabsOwn.cs"), "class TabsOwn\n{\n\tpublic int X { get; }\n\n\tstatic void Make()\n\t{\n\t\tint made = 0;\n\t}\n}\n");
+            File.WriteAllText(PathOf("Inferred.cs"), "using System;\nusing System.Collections.Generic;\n\nstatic class Inferred\n{\n    public static int Run()\n    {\n"
+                + "        var list = new List<int>();\n        var total = Area.Of(3, 4);\n        Func<int, int> square = n => n * n;\n"
+                + "        list.ForEach(item => total += square(item));\n        List<int> kept = new();\n        total += Count(new());\n"
+                + "        var (first, second) = (total, \"two\");\n        return first + second.Length + kept.Count;\n    }\n\n"
+                + "    private static int Count(List<int> values) => values.Count;\n}\n");
             File.WriteAllText(PathOf("Messy.cs"), "using System.Text;\nusing System;\nusing System.Collections.Generic;\n\nstatic class Messy\n{\n    public static int Count()\n    {\n          List<string> names = [];\n        Console.WriteLine(names.Count);\n      return names.Count;\n    }\n}\n");
             TestFolders.Prepare(() => Restore.Run(folder), folder);
         }

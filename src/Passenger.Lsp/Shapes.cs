@@ -51,7 +51,8 @@ public static class Shapes
                 text,
                 item.TryGetProperty("kind", out JsonElement kind) && kind.ValueKind == JsonValueKind.Number ? kind.GetInt32() : null,
                 item.TryGetProperty("paddingLeft", out JsonElement left) && left.ValueKind == JsonValueKind.True,
-                item.TryGetProperty("paddingRight", out JsonElement right) && right.ValueKind == JsonValueKind.True));
+                item.TryGetProperty("paddingRight", out JsonElement right) && right.ValueKind == JsonValueKind.True,
+                item.TryGetProperty("data", out JsonElement data) ? data.Clone() : null));
         }
         return hints;
     }

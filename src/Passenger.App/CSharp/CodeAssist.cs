@@ -51,7 +51,7 @@ public sealed class CodeAssist
             {
                 if (editor == Editor)
                 {
-                    _ = ShowHover(e.Offset, e.Point);
+                    _ = e.Hint is { } hint ? ShowHintHover(hint, e.Point) : ShowHover(e.Offset, e.Point);
                 }
             };
             editor.HoverEnded += (_, _) => HideHover();
@@ -748,6 +748,52 @@ public sealed class CodeAssist
         int lineStart = text.GetLineStart(text.GetLineFromOffset(Math.Min(offset, text.Length)));
         Point anchor = Editor.PointOf(lineStart);
         Place(hoverCard, new Point(point.X, anchor.Y), above: false);
+    }
+
+    /// <summary>The card for an inlay hint the pointer rests on: what the server says of it (a type's description, a
+    /// parameter's), or none when it says nothing.</summary>
+    private async Task ShowHintHover(InlayHint hint, Point point)
+    {
+        hovering?.Cancel();
+        CancellationTokenSource cancel = new();
+        hovering = cancel;
+        hoverCard.Clear();
+        if (hint.Data is not LspInlayHint server || Current?.Lsp is not { } lsp)
+        {
+            hoverCard.IsVisible = false;
+            return;
+        }
+        BackgroundWork.Begin();
+        try
+        {
+            string tooltip = await lsp.InlayHintTooltipAsync(server, cancel.Token);
+            if (cancel.IsCancellationRequested)
+            {
+                return;
+            }
+            if (tooltip.Length == 0 || completion.IsVisible)
+            {
+                hoverCard.IsVisible = false;
+                return;
+            }
+            hoverCard.AddMarkdown(tooltip);
+            hoverCard.IsVisible = true;
+            TextSnapshot text = Editor.Document.Snapshot;
+            int lineStart = text.GetLineStart(text.GetLineFromOffset(Math.Min(hint.Offset, text.Length)));
+            Place(hoverCard, new Point(point.X, Editor.PointOf(lineStart).Y), above: false);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (LanguageServerFailed)
+        {
+            // A server that no longer has the hint (the file changed since) shows no card for it.
+            hoverCard.IsVisible = false;
+        }
+        finally
+        {
+            BackgroundWork.End();
+        }
     }
 
     private void HideHover()

@@ -256,6 +256,15 @@ public sealed class LspDocument : IDisposable
         return (Shapes.InlayHints(result), version);
     }
 
+    /// <summary>What the server says of a hint it gave (a type's description, a parameter's), as markdown; empty when it
+    /// says nothing.</summary>
+    public async Task<string> InlayHintTooltipAsync(LspInlayHint hint, CancellationToken cancel = default)
+    {
+        JsonElement result = await Server.RequestAsync<JsonElement>("inlayHint/resolve",
+            new { position = hint.Position, label = hint.Label, kind = hint.Kind, data = hint.Data }, cancel);
+        return result.ValueKind == JsonValueKind.Object && result.TryGetProperty("tooltip", out JsonElement tooltip) ? Shapes.Text(tooltip) : string.Empty;
+    }
+
     /// <summary>Every diagnostic the server has for the document, pulled from each source it
     /// registered, and the version they are for.</summary>
     public async Task<(IReadOnlyList<Diagnostic> Diagnostics, int Version)> DiagnosticsAsync(CancellationToken cancel = default)

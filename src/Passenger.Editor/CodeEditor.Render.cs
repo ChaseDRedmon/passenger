@@ -124,11 +124,13 @@ public sealed partial class CodeEditor
         RefreshStripe();
     }
 
-    /// <summary>A line's x position of an offset, measured on the line as it is drawn.</summary>
+    /// <summary>A line's x position of an offset, measured on the line as it is drawn, on the side of the hints there
+    /// that a caret at it stands.</summary>
     private double XOf(TextSnapshot text, int offset)
     {
         LineView view = ViewOf(text, text.GetLineFromOffset(offset));
-        return XWith(view, GapsOn(view.Span), Math.Min(offset, view.Span.End) - view.Span.Start);
+        int at = Math.Min(offset, view.Span.End);
+        return XWith(view, GapsOn(view.Span), at - view.Span.Start, StandsAfterHints(at));
     }
 
     /// <summary>The offset nearest to x on a line.</summary>
@@ -233,7 +235,7 @@ public sealed partial class CodeEditor
             int to = Math.Min(s.End, span.End) - span.Start;
             double x1 = left + XWith(view, gaps, from);
             // A selection that runs on through the line break fills to the edge, as Rider draws it.
-            double x2 = s.End > span.End ? width : left + XWith(view, gaps, to, beforeHints: true);
+            double x2 = s.End > span.End ? width : left + XWith(view, gaps, to, afterHints: false);
             if (x2 > x1)
             {
                 context.FillRectangle(brush, new Rect(x1, y, x2 - x1, metrics.LineHeight));
@@ -264,7 +266,7 @@ public sealed partial class CodeEditor
             int from = Math.Max(ranges[i].Start, span.Start) - span.Start;
             int to = Math.Min(ranges[i].End, span.End) - span.Start;
             double x1 = left + XWith(view, gaps, from);
-            double x2 = left + XWith(view, gaps, to, beforeHints: true);
+            double x2 = left + XWith(view, gaps, to, afterHints: false);
             if (x2 > x1)
             {
                 Rect box = new(x1, y + 1, x2 - x1, metrics.LineHeight - 2);
@@ -316,7 +318,7 @@ public sealed partial class CodeEditor
             int from = Math.Max(marker.Range.Start, span.Start) - span.Start;
             int to = Math.Min(marker.Range.End, span.End) - span.Start;
             double x1 = left + XWith(view, gaps, from);
-            double x2 = left + XWith(view, gaps, to, beforeHints: true);
+            double x2 = left + XWith(view, gaps, to, afterHints: false);
             if (x2 - x1 < metrics.CharWidth / 2)
             {
                 // A zero-width diagnostic (a missing semicolon) still needs something to see.

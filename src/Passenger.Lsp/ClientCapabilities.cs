@@ -74,7 +74,7 @@ public static class ClientCapabilities
           "multilineTokenSupport": false,
           "overlappingTokenSupport": false
         },
-        "inlayHint": {},
+        "inlayHint": { "resolveSupport": { "properties": ["tooltip"] } },
         "diagnostic": { "dynamicRegistration": true, "relatedDocumentSupport": false },
         "publishDiagnostics": { "relatedInformation": false, "tagSupport": { "valueSet": [1, 2] } }
       }

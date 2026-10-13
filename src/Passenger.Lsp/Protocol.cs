@@ -350,8 +350,9 @@ public sealed record ConfigurationParams(IReadOnlyList<ConfigurationItem> Items)
 public sealed record InlayHintParams(TextDocumentIdentifier TextDocument, LspRange Range);
 
 /// <summary>A word the server would show inside a line, before the position it names: a parameter's name before its
-/// argument (kind 2), a type (kind 1); padding asks for a space on that side.</summary>
-public sealed record LspInlayHint(LspPosition Position, string Label, int? Kind, bool PaddingLeft, bool PaddingRight);
+/// argument (kind 2), a type (kind 1); padding asks for a space on that side. <see cref="Data"/> is what the server
+/// knows it by, for its tooltip (<c>inlayHint/resolve</c>).</summary>
+public sealed record LspInlayHint(LspPosition Position, string Label, int? Kind, bool PaddingLeft, bool PaddingRight, JsonElement? Data = null);
 
 public sealed record Registration(string Id, string Method, JsonElement? RegisterOptions);
 

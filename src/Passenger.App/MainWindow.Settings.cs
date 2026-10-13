@@ -105,7 +105,8 @@ public partial class MainWindow
         editor.LineSpacing = with.EditorLineSpacing;
         editor.Ligatures = with.Ligatures;
         editor.ShowLineNumbers = with.ShowLineNumbers;
-        editor.ShowInlayHints = with.ParameterHints;
+        editor.ShowParameterHints = with.ParameterHints;
+        editor.ShowTypeHints = with.TypeHints;
         editor.RainbowBraces = with.RainbowBraces;
         editor.InvalidateVisual();
     }

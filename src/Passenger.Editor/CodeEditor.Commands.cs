@@ -24,10 +24,10 @@ public sealed partial class CodeEditor
         switch (action)
         {
             case EditorActions.Left:
-                Move(s => !extend && !s.IsEmpty ? s.Start : TextNavigation.PreviousGrapheme(text, s.Caret), extend);
+                StepHorizontally(text, forward: false, extend);
                 return true;
             case EditorActions.Right:
-                Move(s => !extend && !s.IsEmpty ? s.End : TextNavigation.NextGrapheme(text, s.Caret), extend);
+                StepHorizontally(text, forward: true, extend);
                 return true;
             case EditorActions.WordLeft:
                 Move(s => TextNavigation.PreviousWord(text, s.Caret), extend);
