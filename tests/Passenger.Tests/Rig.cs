@@ -418,7 +418,6 @@ public sealed class InputWait : IDisposable
     }
 }
 
-/// <summary>Programs the IDE started for a test, by id, as a process list would show them.</summary>
 /// <summary>A test's restore, run as the IDE runs the .NET command line (<see cref="Passenger.Core.ChildProcesses.DotnetCommand"/>):
 /// what MSBuild leaves of it is the tests' own and ends with them, and no variable of dotnet test's holds its output open.</summary>
 public static class Restore
@@ -430,7 +429,8 @@ public static class Restore
     public static Passenger.Core.ChildResult Run(string target) => Task.Run(() => RunAsync(target)).GetAwaiter().GetResult();
 }
 
-public static class Processes
+/// <summary>Programs the IDE started for a test, by id, as a process list would show them.</summary>
+public static partial class Processes
 {
     /// <summary>The id a program wrote to a file once it was running, the window's loop running meanwhile (not settling,
     /// which a build under way would not let it do).</summary>
@@ -520,6 +520,66 @@ public static class Processes
             return $"{id} (gone)";
         }
     }
+
+    /// <summary>Each process now by id, as ps lists it on macOS and Linux: its id, parent, nice value and command line, for a
+    /// failure to say what ran and at what priority. Empty on Windows, which has no ps.</summary>
+    public static IReadOnlyDictionary<int, string> Listed() =>
+        OperatingSystem.IsWindows() ? new Dictionary<int, string>() : ById(Ps("-A", "-o", "pid=,ppid=,nice=,command="));
+
+    /// <summary>Each MSBuild worker node now by id, with the MSBuild variables of its environment (its handshake's salt among
+    /// them): ps shows a process's environment to its user on macOS, /proc on Linux. Empty on Windows.</summary>
+    public static IReadOnlyDictionary<int, string> MSBuildNodes()
+    {
+        Dictionary<int, string> nodes = [];
+        if (OperatingSystem.IsWindows())
+        {
+            return nodes;
+        }
+        foreach ((int id, string line) in ById(Ps(OperatingSystem.IsMacOS() ? ["-A", "-E", "-o", "pid=,command="] : ["-A", "-o", "pid=,command="])))
+        {
+            if (line.Contains("/nodemode:1", StringComparison.Ordinal))
+            {
+                nodes[id] = string.Join(' ', MSBuildVariable().Matches(OperatingSystem.IsMacOS() ? line : Environ(id)).Select(m => m.Value));
+            }
+        }
+        return nodes;
+
+        static string Environ(int id)
+        {
+            try
+            {
+                return File.ReadAllText($"/proc/{id}/environ").Replace('\0', ' ');
+            }
+            catch (Exception gone) when (gone is IOException or UnauthorizedAccessException)
+            {
+                return string.Empty;
+            }
+        }
+    }
+
+    private static string[] Ps(params string[] arguments)
+    {
+        using System.Diagnostics.Process ps = System.Diagnostics.Process.Start(new ProcessStartInfo("ps", arguments) { RedirectStandardOutput = true })!;
+        string text = ps.StandardOutput.ReadToEnd();
+        ps.WaitForExit();
+        return text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    }
+
+    private static Dictionary<int, string> ById(IEnumerable<string> lines)
+    {
+        Dictionary<int, string> found = [];
+        foreach (string line in lines)
+        {
+            if (line.Split(' ', 2) is [string first, _] && int.TryParse(first, out int id))
+            {
+                found[id] = line;
+            }
+        }
+        return found;
+    }
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\bMSBUILD[A-Z_]*=\S*")]
+    private static partial System.Text.RegularExpressions.Regex MSBuildVariable();
 
     /// <summary>Each process and its parent: ps's columns on macOS and Linux, Win32_Process's on Windows, which has no ps.</summary>
     private static IEnumerable<(int Child, int Parent)> ParentsOfAll()

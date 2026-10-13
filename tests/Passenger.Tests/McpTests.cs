@@ -259,7 +259,9 @@ public sealed class McpTests : IDisposable
 
     /// <summary>The MSBuild nodes a build of Passenger's leaves for its next build, which no other build takes up, end with
     /// Passenger, whether it ends as its agent leaves or is killed. The build's two projects build at once, each with a
-    /// step of a few seconds, so that MSBuild runs one in a node while the test looks at what the build runs in.</summary>
+    /// step of a few seconds, so that MSBuild runs one in a node while the test looks at what the build runs in. They are
+    /// restored first: opening a solution never restored, the language server restores it, and a build after that runs in
+    /// the node its restore left, by then no process's child, rather than starting one the test would see.</summary>
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -283,6 +285,8 @@ public sealed class McpTests : IDisposable
                 </Project>
                 """);
         }
+        ChildResult restored = await Restore.RunAsync(two);
+        Assert.True(restored.Succeeded, $"The test's projects did not restore:\n{restored.Output}{restored.Error}");
         // No compiler server among what the build starts, which is the machine's to share.
         Process passenger = StartPassenger(["--mcp", two], environment: new() { ["UseSharedCompilation"] = "false" });
         List<int> left = [];
@@ -294,11 +298,15 @@ public sealed class McpTests : IDisposable
             Task<JsonElement> building = Call(client, "build");
             await WrittenId("two/A/step.pid", "project A's step");
             await WrittenId("two/B/step.pid", "project B's step");
-            IReadOnlyList<int> during = Processes.Descendants(passenger.Id);
+            int[] during = [.. Processes.Descendants(passenger.Id).Where(id => !before.Contains(id))];
+            IReadOnlyDictionary<int, string> listed = Processes.Listed();
             JsonElement built = await building;
             Assert.True(built.GetProperty("succeeded").GetBoolean(), built.GetProperty("outcome").GetString());
-            left.AddRange(during.Where(id => !before.Contains(id) && Processes.IsRunning(id)));
-            Assert.True(left.Count > 0, "The build left nothing for the next build to use, so there is nothing to see end with Passenger");
+            left.AddRange(during.Where(Processes.IsRunning));
+            if (left.Count == 0)
+            {
+                Assert.Fail($"The build left nothing for the next build to use, so there is nothing to see end with Passenger.{NoNodeLeft(passenger.Id, during, listed)}");
+            }
 
             if (killed)
             {
@@ -329,6 +337,24 @@ public sealed class McpTests : IDisposable
                 }
             }
         }
+    }
+
+    /// <summary>Why a build may have left no node, for its failure to say: what the build ran (id, parent, nice value,
+    /// command) and Passenger's MSBuild nodes now, with their MSBuild variables. MSBuild keeps none at a priority other than
+    /// normal (a nice value other than 0), nor while the machine runs more than one and a half a processor of the nodes it
+    /// counts (those named MSBuild, its server's, not a dotnet build's); and an idle node a build took up, no process's
+    /// child, is not among what it ran.</summary>
+    private static string NoNodeLeft(int passenger, IReadOnlyList<int> ran, IReadOnlyDictionary<int, string> listed)
+    {
+        IReadOnlyDictionary<int, string> now = Processes.Listed();
+        IReadOnlyDictionary<int, string> nodes = Processes.MSBuildNodes();
+        string[] ours = [.. nodes.Where(n => $"{n.Value} ".Contains($"passenger-{passenger} ", StringComparison.Ordinal)).Select(n => $"{Seen(n.Key)} {n.Value}")];
+        int named = nodes.Keys.Count(id => now.TryGetValue(id, out string? line) && line.Split(' ', 5, StringSplitOptions.RemoveEmptyEntries) is [_, _, _, string program, ..] && program.EndsWith("/MSBuild", StringComparison.Ordinal));
+        return $"\nPassenger: {Seen(passenger)}\nWhat its build ran while both steps did:\n{string.Join('\n', ran.Select(Seen))}" +
+            $"\nPassenger's MSBuild nodes now:\n{string.Join('\n', ours)}" +
+            $"\nMSBuild keeps no node at a nice value other than 0, nor while more than {Environment.ProcessorCount * 3 / 2} nodes named MSBuild run: {named} of the machine's {nodes.Count} do";
+
+        string Seen(int id) => listed.TryGetValue(id, out string? line) || now.TryGetValue(id, out line) ? line : Processes.Describe(id);
     }
 
     [AvaloniaFact]
