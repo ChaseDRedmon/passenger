@@ -1,13 +1,25 @@
 using System.Buffers.Binary;
 using System.Reflection.Emit;
+using System.Reflection.Metadata;
 
 namespace Passenger.Debugger.ExpressionEvaluator.Cil;
 
-internal readonly record struct CilInstruction(int Offset, OpCode OpCode, object? Operand);
+internal readonly record struct CilInstruction(int Offset, OpCode OpCode, object? Operand)
+{
+    public ILOpCode Code => (ILOpCode)(ushort)OpCode.Value;
+
+    /// <summary>A metadata token: of a type, a field, a method or a string.</summary>
+    public int Token => (int)Operand!;
+
+    /// <summary>A branch's target, as an offset into the method's IL.</summary>
+    public int Target => (int)Operand!;
+
+    /// <summary>An argument's or a local's number.</summary>
+    public int Index => Convert.ToInt32(Operand);
+}
 
 internal readonly record struct DecodedMethod(IReadOnlyList<CilInstruction> Instructions, IReadOnlyDictionary<int, int> Offsets);
 
-// 🤖
 internal static class CilInstructionDecoder
 {
     private static readonly IReadOnlyDictionary<short, OpCode> _opCodes = typeof(OpCodes)

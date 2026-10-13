@@ -2,7 +2,6 @@ using Passenger.Debugger.Interop;
 
 namespace Passenger.Debugger.ExpressionEvaluator.Cil;
 
-// 🤖
 internal sealed class CilValue
 {
     /// <summary>The debuggee's pointer size, for native integers: its runtime's, set when CoreLib loads,
@@ -70,21 +69,13 @@ internal sealed class CilValue
         _ => AsInt32()
     };
 
-    public ulong AsUInt64() => Value switch
-    {
-        byte value => value,
-        ushort value => value,
-        uint value => value,
-        ulong value => value,
-        sbyte value => unchecked((ulong)value),
-        short value => unchecked((ulong)value),
-        int value => unchecked((uint)value),
-        long value => unchecked((ulong)value),
-        bool value => value ? 1UL : 0UL,
-        char value => value,
-        _ when TryReadValueTypeInteger(out long integer) => unchecked((ulong)integer),
-        _ => throw new InvalidOperationException($"Value '{Value?.GetType().Name ?? "null"}' is not an integer stack value")
-    };
+    /// <summary>The integer's bits read as unsigned, as wide as it is on the evaluation stack: an int32's -1 is 2^32 - 1.</summary>
+    public ulong AsUInt64() => IsInt64 ? unchecked((ulong)AsInt64()) : unchecked((uint)AsInt32());
+
+    /// <summary>Whether the value is an int64 on the evaluation stack: a long or ulong, a 64-bit program's native integer,
+    /// or an enum over one; any other integer is an int32 there.</summary>
+    private bool IsInt64 => Value is long or ulong
+        || (Value is null && CorValue?.UnwrapDebugValue() is ICorDebugGenericValue { Type: CorElementType.VALUETYPE } generic && generic.Size == 8);
 
     public bool TryGetInt64(out long value)
     {
@@ -366,31 +357,39 @@ internal sealed class SyntheticVariableLocation(ICorDebugValue arrayReference) :
     public void Write(CilValue value) => new CorDebugLocation(StorageValue).Write(value);
 }
 
+/// <summary>A stack value as the bytes of the type it is stored as. An integer keeps only the bits that fit, as a CIL
+/// store does: an int32's -1 stored in a uint is uint.MaxValue, not an overflow.</summary>
 internal static class CilValueEncoding
 {
-    public static byte[] GetBytesForSize(object value, int size) => size switch
+    public static byte[] GetBytesForSize(object value, int size)
     {
-        1 => [unchecked((byte)Convert.ToInt64(value))],
-        2 => BitConverter.GetBytes(unchecked((short)Convert.ToInt64(value))),
-        4 => BitConverter.GetBytes(unchecked((int)Convert.ToInt64(value))),
-        8 => BitConverter.GetBytes(Convert.ToInt64(value)),
-        _ => throw new NotSupportedException($"Cannot encode a primitive CIL value into a {size}-byte value type")
-    };
+        long bits = Bits(value);
+        return size switch
+        {
+            1 => [unchecked((byte)bits)],
+            2 => BitConverter.GetBytes(unchecked((short)bits)),
+            4 => BitConverter.GetBytes(unchecked((int)bits)),
+            8 => BitConverter.GetBytes(bits),
+            _ => throw new NotSupportedException($"Cannot encode a primitive CIL value into a {size}-byte value type")
+        };
+    }
 
     public static byte[] GetBytes(object value, CorElementType targetType) => targetType switch
     {
-        CorElementType.BOOLEAN => [(bool)value ? (byte)1 : (byte)0],
-        CorElementType.CHAR => BitConverter.GetBytes(Convert.ToChar(value)),
-        CorElementType.I1 => [unchecked((byte)Convert.ToSByte(value))],
-        CorElementType.U1 => [Convert.ToByte(value)],
-        CorElementType.I2 => BitConverter.GetBytes(Convert.ToInt16(value)),
-        CorElementType.U2 => BitConverter.GetBytes(Convert.ToUInt16(value)),
-        CorElementType.I4 => BitConverter.GetBytes(Convert.ToInt32(value)),
-        CorElementType.U4 => BitConverter.GetBytes(Convert.ToUInt32(value)),
-        CorElementType.I8 => BitConverter.GetBytes(Convert.ToInt64(value)),
-        CorElementType.U8 => BitConverter.GetBytes(Convert.ToUInt64(value)),
+        CorElementType.BOOLEAN => [(value is bool flag ? flag : Bits(value) != 0) ? (byte)1 : (byte)0],
+        CorElementType.I1 or CorElementType.U1 => GetBytesForSize(value, 1),
+        CorElementType.CHAR or CorElementType.I2 or CorElementType.U2 => GetBytesForSize(value, 2),
+        CorElementType.I4 or CorElementType.U4 => GetBytesForSize(value, 4),
+        CorElementType.I8 or CorElementType.U8 => GetBytesForSize(value, 8),
         CorElementType.R4 => BitConverter.GetBytes(Convert.ToSingle(value)),
         CorElementType.R8 => BitConverter.GetBytes(Convert.ToDouble(value)),
         _ => throw new NotSupportedException($"Cannot encode a primitive CIL value as '{targetType}'")
+    };
+
+    private static long Bits(object value) => value switch
+    {
+        bool flag => flag ? 1 : 0,
+        ulong large => unchecked((long)large),
+        _ => Convert.ToInt64(value),
     };
 }

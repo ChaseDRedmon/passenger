@@ -1,4 +1,4 @@
-using System.Reflection.Emit;
+using System.Diagnostics;
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 using System.Text;
@@ -9,9 +9,11 @@ namespace Passenger.Debugger.ExpressionEvaluator.Cil;
 
 internal readonly record struct CilInterpretationResult(ICorDebugValue Value, ICorDebugHandleValue? OwnedResultHandle);
 
-// 🤖
 internal sealed class CilInterpreter(ManagedDebugger debugger, RuntimeAssemblyPrimitiveTypeClasses primitiveTypes)
 {
+    /// <summary>Rider's and Visual Studio's word for an expression stopped before it finished.</summary>
+    internal const string TookTooLong = "The expression took too long to evaluate";
+
     public async Task<CilInterpretationResult> InterpretAsync(CompiledEvaluationMethod compiled, CompiledExpressionEvaluationContext context, Lazy<DelegateMaterializerAssembly> delegateMaterializer)
     {
         using EvaluationHandleScope handles = new EvaluationHandleScope();
@@ -24,13 +26,27 @@ internal sealed class CilInterpreter(ManagedDebugger debugger, RuntimeAssemblyPr
         ICilLocation[] locals = CreateLocals(compiled, frame, body.LocalSignature, context.RootValue is not null, refind);
         EvaluationMetadataResolver resolver = CreateResolver(compiled, context, frame);
         await using DebuggeeDelegateAssemblyLoader delegateAssemblyLoader = new DebuggeeDelegateAssemblyLoader(debugger, compiled, resolver, context, handles, delegateMaterializer);
-        Dictionary<string, ICilLocation> syntheticVariables = new Dictionary<string, ICilLocation>(StringComparer.Ordinal);
-        HashSet<EvaluationClosure> evaluationClosures = new HashSet<EvaluationClosure>(ReferenceEqualityComparer.Instance);
-        CilValue result = await InterpretAsync(compiled, decoded, arguments, locals, resolver, context, handles, syntheticVariables, new Dictionary<FieldDefinitionHandle, ICilLocation>(), evaluationClosures, delegateAssemblyLoader);
+        Interpretation run = new Interpretation(compiled, resolver, context, handles, delegateAssemblyLoader, Stopwatch.GetTimestamp() + (long)(Extensions.EvaluationTimeout.TotalSeconds * Stopwatch.Frequency));
+        CilValue result = await InterpretAsync(run, decoded, arguments, locals);
         ICorDebugValue value = result.Value is EvaluationDelegate
             ? await MaterializeDelegateAsync(result, compiled, resolver, delegateAssemblyLoader, context, handles)
             : await MaterializeAsync(result, context, handles, resolver.ResolveMethodReturnType(compiled.EntryMethod), resolver);
         return new CilInterpretationResult(value, handles.DetachIfOwned(value));
+    }
+
+    /// <summary>One expression's interpretation, shared by the evaluation methods it calls: what it has made, and when it
+    /// is given up (a <see cref="Stopwatch"/> timestamp), so a loop it runs never holds the engine's lock for good.</summary>
+    private sealed record Interpretation(
+        CompiledEvaluationMethod Compiled,
+        EvaluationMetadataResolver Resolver,
+        CompiledExpressionEvaluationContext Context,
+        EvaluationHandleScope Handles,
+        DebuggeeDelegateAssemblyLoader Delegates,
+        long Deadline)
+    {
+        public Dictionary<string, ICilLocation> SyntheticVariables { get; } = new(StringComparer.Ordinal);
+        public Dictionary<FieldDefinitionHandle, ICilLocation> StaticFields { get; } = [];
+        public HashSet<EvaluationClosure> Closures { get; } = new(ReferenceEqualityComparer.Instance);
     }
 
     private EvaluationMetadataResolver CreateResolver(CompiledEvaluationMethod compiled, CompiledExpressionEvaluationContext context, ICorDebugILFrame? frame)
@@ -127,674 +143,252 @@ internal sealed class CilInterpreter(ManagedDebugger debugger, RuntimeAssemblyPr
         }
     }
 
-    private async Task<CilValue> InterpretAsync(
-        CompiledEvaluationMethod compiled,
-        DecodedMethod decoded,
-        ICilLocation[] arguments,
-        ICilLocation[] locals,
-        EvaluationMetadataResolver resolver,
-        CompiledExpressionEvaluationContext context,
-        EvaluationHandleScope handles,
-        Dictionary<string, ICilLocation> syntheticVariables,
-        Dictionary<FieldDefinitionHandle, ICilLocation> evaluationStaticFields,
-        HashSet<EvaluationClosure> evaluationClosures,
-        DebuggeeDelegateAssemblyLoader delegateAssemblyLoader)
+    private async Task<CilValue> InterpretAsync(Interpretation run, DecodedMethod decoded, ICilLocation[] arguments, ICilLocation[] locals)
     {
         IReadOnlyList<CilInstruction> instructions = decoded.Instructions;
         IReadOnlyDictionary<int, int> offsets = decoded.Offsets;
+        EvaluationMetadataResolver resolver = run.Resolver;
+        CompiledExpressionEvaluationContext context = run.Context;
+        EvaluationHandleScope handles = run.Handles;
         Stack<CilValue> stack = new Stack<CilValue>();
         int index = 0;
         ResolvedCilType? constrainedType = null;
         while (index < instructions.Count)
         {
+            if (Stopwatch.GetTimestamp() > run.Deadline)
+            {
+                throw new ManagedDebugger.EvalException($"{TookTooLong}: it was stopped after {Extensions.EvaluationTimeout.TotalSeconds:0} s");
+            }
             CilInstruction instruction = instructions[index++];
             try
             {
-                OpCode op = instruction.OpCode;
-
-                if (op == OpCodes.Nop || op == OpCodes.Break)
+                switch (instruction.Code)
                 {
-                    continue;
-                }
-
-                if (op == OpCodes.Constrained)
-                {
-                    constrainedType = resolver.ResolveTypeToken((int)instruction.Operand!);
-                    continue;
-                }
-                if (op == OpCodes.Ldnull) { stack.Push(CilValue.Null()); continue; }
-                if (op == OpCodes.Ldstr) { stack.Push(CilValue.FromPrimitive(resolver.ResolveUserString((int)instruction.Operand!))); continue; }
-                if (op == OpCodes.Ldtoken) { stack.Push(CilValue.FromPrimitive(resolver.ResolveTypeToken((int)instruction.Operand!))); continue; }
-                if (op == OpCodes.Ldc_I4_M1) { stack.Push(CilValue.FromPrimitive(-1)); continue; }
-                if (op == OpCodes.Ldc_I4_0) { stack.Push(CilValue.FromPrimitive(0)); continue; }
-                if (op == OpCodes.Ldc_I4_1) { stack.Push(CilValue.FromPrimitive(1)); continue; }
-                if (op == OpCodes.Ldc_I4_2) { stack.Push(CilValue.FromPrimitive(2)); continue; }
-                if (op == OpCodes.Ldc_I4_3) { stack.Push(CilValue.FromPrimitive(3)); continue; }
-                if (op == OpCodes.Ldc_I4_4) { stack.Push(CilValue.FromPrimitive(4)); continue; }
-                if (op == OpCodes.Ldc_I4_5) { stack.Push(CilValue.FromPrimitive(5)); continue; }
-                if (op == OpCodes.Ldc_I4_6) { stack.Push(CilValue.FromPrimitive(6)); continue; }
-                if (op == OpCodes.Ldc_I4_7) { stack.Push(CilValue.FromPrimitive(7)); continue; }
-                if (op == OpCodes.Ldc_I4_8) { stack.Push(CilValue.FromPrimitive(8)); continue; }
-                if (op == OpCodes.Ldc_I4 || op == OpCodes.Ldc_I4_S) { stack.Push(CilValue.FromPrimitive(Convert.ToInt32(instruction.Operand))); continue; }
-                if (op == OpCodes.Ldc_I8) { stack.Push(CilValue.FromPrimitive((long)instruction.Operand!)); continue; }
-                if (op == OpCodes.Ldc_R4) { stack.Push(CilValue.FromPrimitive((float)instruction.Operand!)); continue; }
-                if (op == OpCodes.Ldc_R8) { stack.Push(CilValue.FromPrimitive((double)instruction.Operand!)); continue; }
-
-                if (TryGetArgumentIndex(op, instruction.Operand, out int argumentIndex))
-                {
-                    stack.Push(handles.Root(arguments[argumentIndex].Read()).WithSourceLocation(arguments[argumentIndex]));
-                    continue;
-                }
-                if (TryGetArgumentAddressIndex(op, instruction.Operand, out argumentIndex))
-                {
-                    stack.Push(CilValue.FromLocation(arguments[argumentIndex]));
-                    continue;
-                }
-                if (TryGetStoreArgumentIndex(op, instruction.Operand, out argumentIndex))
-                {
-                    arguments[argumentIndex].Write(await MaterializeForStoreAsync(stack.Pop(), context, handles));
-                    continue;
-                }
-
-                if (TryGetLocalIndex(op, instruction.Operand, out int localIndex))
-                {
-                    stack.Push(handles.Root(locals[localIndex].Read()).WithSourceLocation(locals[localIndex]));
-                    continue;
-                }
-                if (TryGetLocalAddressIndex(op, instruction.Operand, out localIndex))
-                {
-                    stack.Push(CilValue.FromLocation(locals[localIndex]));
-                    continue;
-                }
-                if (TryGetStoreLocalIndex(op, instruction.Operand, out localIndex))
-                {
-                    locals[localIndex].Write(await MaterializeForStoreAsync(stack.Pop(), context, handles));
-                    continue;
-                }
-
-                if (op == OpCodes.Dup) { stack.Push(stack.Peek()); continue; }
-                if (op == OpCodes.Pop) { stack.Pop(); continue; }
-                if (op == OpCodes.Ldftn || op == OpCodes.Ldvirtftn)
-                {
-                    if (op == OpCodes.Ldvirtftn)
-                    {
+                    case ILOpCode.Nop or ILOpCode.Break:
+                        break;
+                    case ILOpCode.Constrained:
+                        constrainedType = resolver.ResolveTypeToken(instruction.Token);
+                        break;
+                    case ILOpCode.Ldnull:
+                        stack.Push(CilValue.Null());
+                        break;
+                    case ILOpCode.Ldstr:
+                        stack.Push(CilValue.FromPrimitive(resolver.ResolveUserString(instruction.Token)));
+                        break;
+                    case ILOpCode.Ldtoken:
+                        stack.Push(CilValue.FromPrimitive(resolver.ResolveTypeToken(instruction.Token)));
+                        break;
+                    case >= ILOpCode.Ldc_i4_m1 and <= ILOpCode.Ldc_i4_8:
+                        stack.Push(CilValue.FromPrimitive((int)instruction.Code - (int)ILOpCode.Ldc_i4_0));
+                        break;
+                    case ILOpCode.Ldc_i4 or ILOpCode.Ldc_i4_s:
+                        stack.Push(CilValue.FromPrimitive(Convert.ToInt32(instruction.Operand)));
+                        break;
+                    case ILOpCode.Ldc_i8:
+                        stack.Push(CilValue.FromPrimitive((long)instruction.Operand!));
+                        break;
+                    case ILOpCode.Ldc_r4:
+                        stack.Push(CilValue.FromPrimitive((float)instruction.Operand!));
+                        break;
+                    case ILOpCode.Ldc_r8:
+                        stack.Push(CilValue.FromPrimitive((double)instruction.Operand!));
+                        break;
+                    case >= ILOpCode.Ldarg_0 and <= ILOpCode.Ldarg_3:
+                        Load(arguments[(int)instruction.Code - (int)ILOpCode.Ldarg_0]);
+                        break;
+                    case ILOpCode.Ldarg or ILOpCode.Ldarg_s:
+                        Load(arguments[instruction.Index]);
+                        break;
+                    case ILOpCode.Ldarga or ILOpCode.Ldarga_s:
+                        stack.Push(CilValue.FromLocation(arguments[instruction.Index]));
+                        break;
+                    case ILOpCode.Starg or ILOpCode.Starg_s:
+                        arguments[instruction.Index].Write(await MaterializeForStoreAsync(stack.Pop(), context, handles));
+                        break;
+                    case >= ILOpCode.Ldloc_0 and <= ILOpCode.Ldloc_3:
+                        Load(locals[(int)instruction.Code - (int)ILOpCode.Ldloc_0]);
+                        break;
+                    case ILOpCode.Ldloc or ILOpCode.Ldloc_s:
+                        Load(locals[instruction.Index]);
+                        break;
+                    case ILOpCode.Ldloca or ILOpCode.Ldloca_s:
+                        stack.Push(CilValue.FromLocation(locals[instruction.Index]));
+                        break;
+                    case >= ILOpCode.Stloc_0 and <= ILOpCode.Stloc_3:
+                        locals[(int)instruction.Code - (int)ILOpCode.Stloc_0].Write(await MaterializeForStoreAsync(stack.Pop(), context, handles));
+                        break;
+                    case ILOpCode.Stloc or ILOpCode.Stloc_s:
+                        locals[instruction.Index].Write(await MaterializeForStoreAsync(stack.Pop(), context, handles));
+                        break;
+                    case ILOpCode.Dup:
+                        stack.Push(stack.Peek());
+                        break;
+                    case ILOpCode.Pop:
                         stack.Pop();
-                    }
-
-                    int methodToken = (int)instruction.Operand!;
-                    EntityHandle methodHandle = MetadataTokens.EntityHandle(methodToken);
-                    EvaluationFunctionPointer function = methodHandle.Kind == HandleKind.MethodDefinition
-                        ? new EvaluationFunctionPointer(methodToken)
-                        : CreateRuntimeFunctionPointer(resolver.ResolveMethod(methodToken));
-                    stack.Push(CilValue.FromVirtual(function));
-                    continue;
-                }
-                if (op == OpCodes.Neg) { stack.Push(Negate(stack.Pop())); continue; }
-                if (op == OpCodes.Not)
-                {
-                    // An int32 stays one: only a 64-bit operand gives a 64-bit result.
-                    CilValue operand = stack.Pop();
-                    stack.Push(operand.Value is long or ulong ? CilValue.FromPrimitive(~operand.AsInt64()) : CilValue.FromPrimitive(~operand.AsInt32()));
-                    continue;
-                }
-
-                if (IsBinary(op))
-                {
-                    CilValue right = stack.Pop();
-                    CilValue left = stack.Pop();
-                    stack.Push(EvaluateBinary(op, left, right));
-                    continue;
-                }
-
-                if (op == OpCodes.Ceq || op == OpCodes.Cgt || op == OpCodes.Cgt_Un || op == OpCodes.Clt || op == OpCodes.Clt_Un)
-                {
-                    CilValue right = stack.Pop();
-                    CilValue left = stack.Pop();
-                    stack.Push(CilValue.FromPrimitive(Compare(op, left, right) ? 1 : 0));
-                    continue;
-                }
-
-                if (IsConversion(op))
-                {
-                    stack.Push(ConvertValue(op, stack.Pop()));
-                    continue;
-                }
-
-                if (op == OpCodes.Br || op == OpCodes.Br_S)
-                {
-                    index = GetTargetIndex(offsets, instruction);
-                    continue;
-                }
-                if (op == OpCodes.Brtrue || op == OpCodes.Brtrue_S || op == OpCodes.Brfalse || op == OpCodes.Brfalse_S)
-                {
-                    bool condition = stack.Pop().IsTrue();
-                    if ((op == OpCodes.Brtrue || op == OpCodes.Brtrue_S) == condition)
-                    {
-                        index = GetTargetIndex(offsets, instruction);
-                    }
-
-                    continue;
-                }
-                if (IsComparisonBranch(op))
-                {
-                    CilValue right = stack.Pop();
-                    CilValue left = stack.Pop();
-                    if (EvaluateBranch(op, left, right))
-                    {
-                        index = GetTargetIndex(offsets, instruction);
-                    }
-
-                    continue;
-                }
-                if (op == OpCodes.Switch)
-                {
-                    int selected = stack.Pop().AsInt32();
-                    int[] targets = (int[])instruction.Operand!;
-                    if ((uint)selected < (uint)targets.Length)
-                    {
-                        index = offsets[targets[selected]];
-                    }
-
-                    continue;
-                }
-
-                if (op == OpCodes.Ldobj || op.Name?.StartsWith("ldind.", StringComparison.Ordinal) == true) { stack.Push(handles.Root(stack.Pop().Dereference())); continue; }
-                if (op == OpCodes.Stobj || op.Name?.StartsWith("stind.", StringComparison.Ordinal) == true)
-                {
-                    CilValue value = stack.Pop();
-                    ICilLocation address = stack.Pop().Location ?? throw new InvalidOperationException("stind requires a managed location");
-                    address.Write(await MaterializeForStoreAsync(value, context, handles));
-                    continue;
-                }
-                if (op == OpCodes.Cpobj)
-                {
-                    CilValue source = stack.Pop().Dereference();
-                    ICilLocation destination = stack.Pop().Location ?? throw new InvalidOperationException("cpobj requires a managed location");
-                    destination.Write(await MaterializeForStoreAsync(source, context, handles));
-                    continue;
-                }
-                if (op == OpCodes.Initobj)
-                {
-                    ResolvedCilType type = resolver.ResolveTypeToken((int)instruction.Operand!);
-                    ICilLocation location = stack.Pop().Location ?? throw new InvalidOperationException("initobj requires a managed location");
-                    location.Write(await CreateDefaultValueAsync(type, resolver, context, handles));
-                    continue;
-                }
-                if (op == OpCodes.Newarr)
-                {
-                    uint length = checked((uint)stack.Pop().AsInt32());
-                    ResolvedCilType elementCilType = resolver.ResolveTypeToken((int)instruction.Operand!);
-                    ICorDebugType elementType = resolver.GetCorDebugType(elementCilType);
-                    ICorDebugValue? array = await CreateArrayAsync(elementCilType, elementType, length, resolver, context, handles);
-                    stack.Push(array is null ? CilValue.Null() : CilValue.FromCorValue(array));
-                    continue;
-                }
-                if (op == OpCodes.Ldlen)
-                {
-                    ICorDebugArrayValue array = GetArrayValue(stack.Pop());
-                    stack.Push(CilValue.FromPrimitive(array.Count));
-                    continue;
-                }
-                if (op == OpCodes.Ldelema)
-                {
-                    int indexValue = stack.Pop().AsInt32();
-                    ICorDebugArrayValue array = GetArrayValue(stack.Pop());
-                    stack.Push(CilValue.FromLocation(new CorDebugLocation(array.GetElementAtPosition(indexValue))));
-                    continue;
-                }
-                if (op.Name?.StartsWith("ldelem.", StringComparison.Ordinal) == true || op == OpCodes.Ldelem)
-                {
-                    int indexValue = stack.Pop().AsInt32();
-                    ICorDebugArrayValue array = GetArrayValue(stack.Pop());
-                    stack.Push(handles.Root(new CorDebugLocation(array.GetElementAtPosition(indexValue)).Read()));
-                    continue;
-                }
-                if (op.Name?.StartsWith("stelem.", StringComparison.Ordinal) == true || op == OpCodes.Stelem)
-                {
-                    CilValue elementValue = stack.Pop();
-                    int indexValue = stack.Pop().AsInt32();
-                    ICorDebugArrayValue array = GetArrayValue(stack.Pop());
-                    new CorDebugLocation(array.GetElementAtPosition(indexValue)).Write(await MaterializeForStoreAsync(elementValue, context, handles));
-                    continue;
-                }
-                if (op == OpCodes.Isinst || op == OpCodes.Castclass)
-                {
-                    CilValue source = stack.Pop();
-                    if (source.IsNull)
-                    {
-                        stack.Push(CilValue.Null());
-                        continue;
-                    }
-                    ResolvedCilType targetType = resolver.ResolveTypeToken((int)instruction.Operand!);
-                    bool isInstance = await IsInstanceOfTypeAsync(source, targetType, resolver, context, handles);
-                    if (isInstance)
-                    {
-                        stack.Push(source);
-                    }
-                    else if (op == OpCodes.Isinst)
-                    {
-                        stack.Push(CilValue.Null());
-                    }
-                    else
-                    {
-                        throw new InvalidCastException($"InvalidCastException: Cannot cast the debuggee value to '{targetType.RuntimeType?.ToString() ?? "the requested type"}'");
-                    }
-
-                    continue;
-                }
-                if (op == OpCodes.Box)
-                {
-                    ResolvedCilType targetType = resolver.ResolveTypeToken((int)instruction.Operand!);
-                    stack.Push(await BoxAsync(stack.Pop(), resolver.GetCorDebugType(targetType), context, handles));
-                    continue;
-                }
-                if (op == OpCodes.Unbox_Any)
-                {
-                    CilValue source = stack.Pop();
-                    if (source.Location is not null)
-                    {
-                        source = source.Dereference();
-                    }
-
-                    if (source.IsNull)
-                    {
-                        throw new NullReferenceException();
-                    }
-
-                    ICorDebugBoxValue? boxed = source.CorValue is ICorDebugReferenceValue reference
-                        ? reference.Dereference() as ICorDebugBoxValue
-                        : source.CorValue as ICorDebugBoxValue;
-                    if (boxed is null)
-                    {
-                        throw new InvalidCastException("The CIL value is not boxed");
-                    }
-
-                    ResolvedCilType targetType = resolver.ResolveTypeToken((int)instruction.Operand!);
-                    if (!IsUnboxCompatible(boxed.Object, targetType, resolver))
-                    {
-                        throw new InvalidCastException($"InvalidCastException: Cannot unbox the debuggee value to '{targetType.RuntimeType?.ToString() ?? "the requested type"}'");
-                    }
-                    stack.Push(CilValue.FromCorValue(boxed.Object));
-                    continue;
-                }
-                if (op == OpCodes.Unbox)
-                {
-                    CilValue source = stack.Pop();
-                    if (source.Location is not null)
-                    {
-                        source = source.Dereference();
-                    }
-
-                    if (source.IsNull)
-                    {
-                        throw new NullReferenceException();
-                    }
-
-                    ICorDebugBoxValue? boxed = source.CorValue is ICorDebugReferenceValue reference
-                        ? reference.Dereference() as ICorDebugBoxValue
-                        : source.CorValue as ICorDebugBoxValue;
-                    if (boxed is null)
-                    {
-                        throw new InvalidCastException("The CIL value is not boxed");
-                    }
-
-                    // The address of a box's value, which must be the type asked for, as unbox.any's is.
-                    ResolvedCilType unboxTarget = resolver.ResolveTypeToken((int)instruction.Operand!);
-                    if (!IsUnboxCompatible(boxed.Object, unboxTarget, resolver))
-                    {
-                        throw new InvalidCastException($"InvalidCastException: Cannot unbox the debuggee value to '{unboxTarget.RuntimeType?.ToString() ?? "the requested type"}'");
-                    }
-                    stack.Push(CilValue.FromLocation(new CorDebugLocation(boxed.Object)));
-                    continue;
-                }
-
-                if (op == OpCodes.Ldfld)
-                {
-                    if (MetadataTokens.EntityHandle((int)instruction.Operand!) is { Kind: HandleKind.FieldDefinition } evaluationField)
-                    {
-                        EvaluationClosure receiver = GetEvaluationClosure(stack.Pop());
-                        ICilLocation evaluationFieldLocation = receiver.Fields[(FieldDefinitionHandle)evaluationField];
-                        stack.Push(handles.Root(evaluationFieldLocation.Read()).WithSourceLocation(evaluationFieldLocation));
-                        continue;
-                    }
-                    ResolvedRuntimeField field = resolver.ResolveField((int)instruction.Operand!);
-                    ICorDebugObjectValue objectValue = GetFieldReceiver(stack.Pop());
-                    stack.Push(handles.Root(CilValue.FromCorValue(objectValue.GetFieldValue(field.DeclaringType.Class, field.Token))));
-                    continue;
-                }
-                if (op == OpCodes.Ldflda)
-                {
-                    if (MetadataTokens.EntityHandle((int)instruction.Operand!) is { Kind: HandleKind.FieldDefinition } evaluationField)
-                    {
-                        EvaluationClosure receiver = GetEvaluationClosure(stack.Pop());
-                        stack.Push(CilValue.FromLocation(receiver.Fields[(FieldDefinitionHandle)evaluationField]));
-                        continue;
-                    }
-                    ResolvedRuntimeField field = resolver.ResolveField((int)instruction.Operand!);
-                    ICorDebugObjectValue objectValue = GetFieldReceiver(stack.Pop());
-                    stack.Push(CilValue.FromLocation(new CorDebugLocation(objectValue.GetFieldValue(field.DeclaringType.Class, field.Token))));
-                    continue;
-                }
-                if (op == OpCodes.Stfld)
-                {
-                    CilValue value = stack.Pop();
-                    if (MetadataTokens.EntityHandle((int)instruction.Operand!) is { Kind: HandleKind.FieldDefinition } evaluationField)
-                    {
-                        EvaluationClosure receiver = GetEvaluationClosure(stack.Pop());
-                        FieldDefinitionHandle fieldHandle = (FieldDefinitionHandle)evaluationField;
-                        ICilLocation evaluationFieldLocation = receiver.Fields[fieldHandle];
-                        if (evaluationFieldLocation is TemporaryLocation && value.SourceLocation is { } sourceLocation)
+                        break;
+                    case ILOpCode.Ldftn or ILOpCode.Ldvirtftn:
+                        if (instruction.Code is ILOpCode.Ldvirtftn)
                         {
-                            receiver.FieldBindings[fieldHandle] = sourceLocation;
+                            stack.Pop();
                         }
-                        evaluationFieldLocation.Write(value);
-                        continue;
+                        stack.Push(CilValue.FromVirtual(MetadataTokens.EntityHandle(instruction.Token).Kind == HandleKind.MethodDefinition
+                            ? new EvaluationFunctionPointer(instruction.Token)
+                            : CreateRuntimeFunctionPointer(resolver.ResolveMethod(instruction.Token))));
+                        break;
+                    case ILOpCode.Neg:
+                        stack.Push(CilNumerics.Negate(stack.Pop()));
+                        break;
+                    case ILOpCode.Not:
+                        stack.Push(CilNumerics.Not(stack.Pop()));
+                        break;
+                    case ILOpCode.Add or ILOpCode.Sub or ILOpCode.Mul or ILOpCode.Div or ILOpCode.Div_un or ILOpCode.Rem or ILOpCode.Rem_un
+                        or ILOpCode.And or ILOpCode.Or or ILOpCode.Xor or ILOpCode.Shl or ILOpCode.Shr or ILOpCode.Shr_un
+                        or ILOpCode.Add_ovf or ILOpCode.Add_ovf_un or ILOpCode.Sub_ovf or ILOpCode.Sub_ovf_un or ILOpCode.Mul_ovf or ILOpCode.Mul_ovf_un:
+                    {
+                        CilValue right = stack.Pop();
+                        stack.Push(CilNumerics.Binary(instruction.Code, stack.Pop(), right));
+                        break;
                     }
-                    ResolvedRuntimeField field = resolver.ResolveField((int)instruction.Operand!);
-                    ICorDebugObjectValue objectValue = GetFieldReceiver(stack.Pop());
-                    new CorDebugLocation(objectValue.GetFieldValue(field.DeclaringType.Class, field.Token)).Write(await MaterializeForStoreAsync(value, context, handles));
-                    continue;
+                    case ILOpCode.Ceq or ILOpCode.Cgt or ILOpCode.Cgt_un or ILOpCode.Clt or ILOpCode.Clt_un:
+                    {
+                        CilValue right = stack.Pop();
+                        stack.Push(CilValue.FromPrimitive(CilNumerics.Compare(instruction.Code, stack.Pop(), right) ? 1 : 0));
+                        break;
+                    }
+                    case >= ILOpCode.Conv_i1 and <= ILOpCode.Conv_u8 or ILOpCode.Conv_r_un or >= ILOpCode.Conv_ovf_i1_un and <= ILOpCode.Conv_ovf_u_un
+                        or >= ILOpCode.Conv_ovf_i1 and <= ILOpCode.Conv_ovf_u8 or ILOpCode.Conv_u2 or ILOpCode.Conv_u1 or ILOpCode.Conv_i
+                        or ILOpCode.Conv_ovf_i or ILOpCode.Conv_ovf_u or ILOpCode.Conv_u:
+                        stack.Push(CilNumerics.Convert(instruction.Code, stack.Pop()));
+                        break;
+                    case ILOpCode.Br or ILOpCode.Br_s:
+                        index = offsets[instruction.Target];
+                        break;
+                    case ILOpCode.Brtrue or ILOpCode.Brtrue_s or ILOpCode.Brfalse or ILOpCode.Brfalse_s:
+                    {
+                        bool onTrue = instruction.Code is ILOpCode.Brtrue or ILOpCode.Brtrue_s;
+                        if (stack.Pop().IsTrue() == onTrue)
+                        {
+                            index = offsets[instruction.Target];
+                        }
+                        break;
+                    }
+                    case >= ILOpCode.Beq_s and <= ILOpCode.Blt_un_s or >= ILOpCode.Beq and <= ILOpCode.Blt_un:
+                    {
+                        CilValue right = stack.Pop();
+                        if (CilNumerics.Branch(instruction.Code, stack.Pop(), right))
+                        {
+                            index = offsets[instruction.Target];
+                        }
+                        break;
+                    }
+                    case ILOpCode.Switch:
+                    {
+                        int selected = stack.Pop().AsInt32();
+                        int[] targets = (int[])instruction.Operand!;
+                        if ((uint)selected < (uint)targets.Length)
+                        {
+                            index = offsets[targets[selected]];
+                        }
+                        break;
+                    }
+                    case ILOpCode.Ldobj or >= ILOpCode.Ldind_i1 and <= ILOpCode.Ldind_ref:
+                        stack.Push(handles.Root(stack.Pop().Dereference()));
+                        break;
+                    case ILOpCode.Stobj or >= ILOpCode.Stind_ref and <= ILOpCode.Stind_r8 or ILOpCode.Stind_i:
+                    {
+                        CilValue value = stack.Pop();
+                        ICilLocation address = stack.Pop().Location ?? throw new InvalidOperationException("stind requires a managed location");
+                        address.Write(await MaterializeForStoreAsync(value, context, handles));
+                        break;
+                    }
+                    case ILOpCode.Cpobj:
+                    {
+                        CilValue source = stack.Pop().Dereference();
+                        ICilLocation destination = stack.Pop().Location ?? throw new InvalidOperationException("cpobj requires a managed location");
+                        destination.Write(await MaterializeForStoreAsync(source, context, handles));
+                        break;
+                    }
+                    case ILOpCode.Initobj:
+                    {
+                        ResolvedCilType type = resolver.ResolveTypeToken(instruction.Token);
+                        ICilLocation location = stack.Pop().Location ?? throw new InvalidOperationException("initobj requires a managed location");
+                        location.Write(await CreateDefaultValueAsync(type, resolver, context, handles));
+                        break;
+                    }
+                    case ILOpCode.Newarr:
+                    {
+                        uint length = checked((uint)stack.Pop().AsInt32());
+                        ResolvedCilType elementCilType = resolver.ResolveTypeToken(instruction.Token);
+                        ICorDebugValue? array = await CreateArrayAsync(elementCilType, resolver.GetCorDebugType(elementCilType), length, resolver, context, handles);
+                        stack.Push(array is null ? CilValue.Null() : CilValue.FromCorValue(array));
+                        break;
+                    }
+                    case ILOpCode.Ldlen:
+                        stack.Push(CilValue.FromPrimitive(GetArrayValue(stack.Pop()).Count));
+                        break;
+                    case ILOpCode.Ldelema:
+                    {
+                        int element = stack.Pop().AsInt32();
+                        stack.Push(CilValue.FromLocation(new CorDebugLocation(GetArrayValue(stack.Pop()).GetElementAtPosition(element))));
+                        break;
+                    }
+                    case ILOpCode.Ldelem or >= ILOpCode.Ldelem_i1 and <= ILOpCode.Ldelem_ref:
+                    {
+                        int element = stack.Pop().AsInt32();
+                        stack.Push(handles.Root(new CorDebugLocation(GetArrayValue(stack.Pop()).GetElementAtPosition(element)).Read()));
+                        break;
+                    }
+                    case ILOpCode.Stelem or >= ILOpCode.Stelem_i and <= ILOpCode.Stelem_ref:
+                    {
+                        CilValue value = stack.Pop();
+                        int element = stack.Pop().AsInt32();
+                        ICorDebugArrayValue array = GetArrayValue(stack.Pop());
+                        new CorDebugLocation(array.GetElementAtPosition(element)).Write(await MaterializeForStoreAsync(value, context, handles));
+                        break;
+                    }
+                    case ILOpCode.Isinst or ILOpCode.Castclass:
+                        stack.Push(await CastAsync(instruction, stack.Pop(), run));
+                        break;
+                    case ILOpCode.Box:
+                        stack.Push(await BoxAsync(stack.Pop(), resolver.GetCorDebugType(resolver.ResolveTypeToken(instruction.Token)), context, handles));
+                        break;
+                    case ILOpCode.Unbox_any:
+                    {
+                        ICorDebugBoxValue boxed = Unbox(stack.Pop(), resolver.ResolveTypeToken(instruction.Token), resolver);
+                        stack.Push(CilValue.FromCorValue(boxed.Object));
+                        break;
+                    }
+                    case ILOpCode.Unbox:
+                    {
+                        // The address of a box's value, which must be the type asked for, as unbox.any's is.
+                        ICorDebugBoxValue boxed = Unbox(stack.Pop(), resolver.ResolveTypeToken(instruction.Token), resolver);
+                        stack.Push(CilValue.FromLocation(new CorDebugLocation(boxed.Object)));
+                        break;
+                    }
+                    case ILOpCode.Ldfld or ILOpCode.Ldflda or ILOpCode.Stfld or ILOpCode.Ldsfld or ILOpCode.Ldsflda or ILOpCode.Stsfld:
+                        await FieldAsync(instruction, stack, run);
+                        break;
+                    case ILOpCode.Newobj:
+                        stack.Push(await NewObjectAsync(instruction, stack, run));
+                        break;
+                    case ILOpCode.Call or ILOpCode.Callvirt:
+                    {
+                        ResolvedCilType? callConstrainedType = constrainedType;
+                        constrainedType = null;
+                        await CallAsync(instruction, stack, callConstrainedType, run);
+                        break;
+                    }
+                    case ILOpCode.Ret:
+                        return stack.Count == 0 ? CilValue.Null() : stack.Pop();
+                    default:
+                        throw new NotSupportedException($"CIL opcode '{instruction.OpCode.Name}' at IL_{instruction.Offset:X4} is not supported yet");
                 }
-                if (op == OpCodes.Ldsfld)
-                {
-                    if (MetadataTokens.EntityHandle((int)instruction.Operand!) is { Kind: HandleKind.FieldDefinition } evaluationField)
-                    {
-                        stack.Push(GetEvaluationStaticField(evaluationStaticFields, (FieldDefinitionHandle)evaluationField).Read());
-                        continue;
-                    }
-                    ResolvedRuntimeField field = resolver.ResolveField((int)instruction.Operand!);
-                    ICorDebugValue value = await GetStaticFieldValue(field, resolver, context);
-                    stack.Push(handles.Root(CilValue.FromCorValue(value)));
-                    continue;
-                }
-                if (op == OpCodes.Ldsflda)
-                {
-                    if (MetadataTokens.EntityHandle((int)instruction.Operand!) is { Kind: HandleKind.FieldDefinition } evaluationField)
-                    {
-                        stack.Push(CilValue.FromLocation(GetEvaluationStaticField(evaluationStaticFields, (FieldDefinitionHandle)evaluationField)));
-                        continue;
-                    }
-                    ResolvedRuntimeField field = resolver.ResolveField((int)instruction.Operand!);
-                    stack.Push(CilValue.FromLocation(new CorDebugLocation(await GetStaticFieldValue(field, resolver, context))));
-                    continue;
-                }
-                if (op == OpCodes.Stsfld)
-                {
-                    if (MetadataTokens.EntityHandle((int)instruction.Operand!) is { Kind: HandleKind.FieldDefinition } evaluationField)
-                    {
-                        GetEvaluationStaticField(evaluationStaticFields, (FieldDefinitionHandle)evaluationField).Write(stack.Pop());
-                        continue;
-                    }
-                    ResolvedRuntimeField field = resolver.ResolveField((int)instruction.Operand!);
-                    new CorDebugLocation(await GetStaticFieldValue(field, resolver, context)).Write(await MaterializeForStoreAsync(stack.Pop(), context, handles));
-                    continue;
-                }
-
-                if (op == OpCodes.Newobj)
-                {
-                    if (MetadataTokens.EntityHandle((int)instruction.Operand!) is { Kind: HandleKind.MethodDefinition } evaluationConstructor)
-                    {
-                        MethodDefinitionHandle constructorHandle = (MethodDefinitionHandle)evaluationConstructor;
-                        MethodSignature<string> signature = resolver.ResolveEvaluationMethodSignature(constructorHandle);
-                        if (signature.ParameterTypes.Length != 0)
-                        {
-                            throw new NotSupportedException("Generated evaluation constructors with parameters are not supported");
-                        }
-
-                        EvaluationClosure evaluationClosure = new EvaluationClosure(resolver.GetEvaluationMethodDeclaringType(constructorHandle), constructorHandle);
-                        foreach (FieldDefinitionHandle field in resolver.GetEvaluationInstanceFields(evaluationClosure.Type))
-                        {
-                            evaluationClosure.Fields[field] = new TemporaryLocation(CilValue.Null());
-                        }
-                        evaluationClosures.Add(evaluationClosure);
-                        stack.Push(CilValue.FromVirtual(evaluationClosure));
-                        continue;
-                    }
-                    ResolvedRuntimeMethod constructor = resolver.ResolveMethod((int)instruction.Operand!);
-                    CilValue[] constructorArguments = new CilValue[constructor.Signature.ParameterTypes.Length];
-                    for (int argument = constructorArguments.Length - 1; argument >= 0; argument--)
-                    {
-                        constructorArguments[argument] = stack.Pop();
-                    }
-
-                    if (constructorArguments is [var delegateTarget, { Value: EvaluationFunctionPointer function }])
-                    {
-                        stack.Push(CilValue.FromVirtual(new EvaluationDelegate(function, delegateTarget, constructor.DeclaringType)));
-                        continue;
-                    }
-                    ICorDebugValue[] argumentValues = new ICorDebugValue[constructorArguments.Length];
-                    List<(ICilLocation Location, ICorDebugValue Value)> temporaryByRefArguments = new List<(ICilLocation Location, ICorDebugValue Value)>();
-                    for (int argument = 0; argument < argumentValues.Length; argument++)
-                    {
-                        argumentValues[argument] = constructor.Signature.ParameterTypes[argument].EndsWith('&')
-                            ? await MaterializeByRefArgumentAsync(constructorArguments[argument], context, handles, temporaryByRefArguments)
-                            : await MaterializeForCallAsync(constructorArguments[argument], context, handles);
-                    }
-                    ICorDebugType[] typeArguments = constructor.DeclaringType.TypeArguments.IsDefaultOrEmpty
-                        ? []
-                        : constructor.DeclaringType.TypeArguments.Select(resolver.GetCorDebugType).ToArray();
-                    ICorDebugEval eval = context.Thread.CreateEval();
-                    ICorDebugValue? newValue;
-                    try
-                    {
-                        newValue = handles.Track(await eval.NewParameterizedObjectAsync(
-                            debugger.ProcessRuntimeEventsUntilEvalEvent,
-                            debugger.EvalStatus,
-                            constructor.Function,
-                            typeArguments.Length,
-                            typeArguments.Length == 0 ? null : typeArguments,
-                            argumentValues.Length,
-                            argumentValues,
-                            throwOnException: true));
-                    }
-                    finally
-                    {
-                        WriteBackTemporaryByRefArguments(temporaryByRefArguments, handles);
-                    }
-                    stack.Push(newValue is null ? CilValue.Null() : CilValue.FromCorValue(newValue));
-                    continue;
-                }
-
-                if (op == OpCodes.Call || op == OpCodes.Callvirt)
-                {
-                    ResolvedCilType? callConstrainedType = constrainedType;
-                    constrainedType = null;
-                    if (resolver.TryResolveDebuggerIntrinsic((int)instruction.Operand!, out string? debuggerIntrinsic))
-                    {
-                        if (debuggerIntrinsic == "CreateVariable")
-                        {
-                            stack.Pop(); // Custom type payload.
-                            stack.Pop(); // Custom type payload ID.
-                            string name = stack.Pop().Value as string ?? throw new InvalidOperationException("Synthetic variable name is unavailable");
-                            ResolvedCilType type = stack.Pop().Value as ResolvedCilType ?? throw new InvalidOperationException("Synthetic variable type is unavailable");
-                            syntheticVariables[name] = await CreateSyntheticVariableLocationAsync(type, resolver, context, handles);
-                        }
-                        else if (debuggerIntrinsic == "GetVariableAddress")
-                        {
-                            string name = stack.Pop().Value as string ?? throw new InvalidOperationException("Synthetic variable name is unavailable");
-                            if (!syntheticVariables.TryGetValue(name, out ICilLocation? location))
-                            {
-                                throw new InvalidOperationException($"Synthetic variable '{name}' is unavailable");
-                            }
-
-                            stack.Push(CilValue.FromLocation(location));
-                        }
-                        else if (debuggerIntrinsic == "GetObjectByAlias")
-                        {
-                            string name = stack.Pop().Value as string ?? throw new InvalidOperationException("Synthetic variable name is unavailable");
-                            if (!syntheticVariables.TryGetValue(name, out ICilLocation? location))
-                            {
-                                throw new InvalidOperationException($"Synthetic variable '{name}' is unavailable");
-                            }
-
-                            stack.Push(handles.Root(location.Read()));
-                        }
-                        else if (debuggerIntrinsic == "GetException")
-                        {
-                            ICorDebugValue exception = debugger.GetCurrentException(context.ThreadId)
-                                            ?? throw new InvalidOperationException("No current exception is available");
-                            stack.Push(handles.Root(CilValue.FromCorValue(exception)));
-                        }
-                        else
-                        {
-                            throw new NotSupportedException($"Debugger intrinsic '{debuggerIntrinsic}' is not supported");
-                        }
-                        continue;
-                    }
-                    if (resolver.TryResolveEvaluationMethod((int)instruction.Operand!, out ResolvedEvaluationMethod evaluationMethod))
-                    {
-                        CilValue[] methodArguments = new CilValue[evaluationMethod.Signature.ParameterTypes.Length + (evaluationMethod.IsStatic ? 0 : 1)];
-                        for (int argument = methodArguments.Length - 1; argument >= 0; argument--)
-                        {
-                            methodArguments[argument] = stack.Pop();
-                        }
-
-                        CilValue methodResult = await InterpretAsync(
-                            compiled,
-                            compiled.GetDecodedMethod(evaluationMethod.Handle),
-                            methodArguments.Select(value => (ICilLocation)new TemporaryLocation(value)).ToArray(),
-                            CreateTemporaryLocals(resolver, resolver.GetEvaluationMethodBody(evaluationMethod.Handle).LocalSignature),
-                            resolver,
-                            context,
-                            handles,
-                            syntheticVariables,
-                            evaluationStaticFields,
-                            evaluationClosures,
-                            delegateAssemblyLoader);
-                        if (evaluationMethod.Signature.ReturnType != PrimitiveTypeCode.Void.ToString())
-                        {
-                            stack.Push(methodResult);
-                        }
-
-                        continue;
-                    }
-                    ResolvedRuntimeMethod method = resolver.ResolveMethod((int)instruction.Operand!);
-                    CilValue[] argumentValues = new CilValue[method.Signature.ParameterTypes.Length];
-                    for (int argument = argumentValues.Length - 1; argument >= 0; argument--)
-                    {
-                        argumentValues[argument] = stack.Pop();
-                    }
-
-                    CilValue? receiverValue = null;
-                    if (!method.IsStatic)
-                    {
-                        receiverValue = stack.Pop();
-                    }
-
-                    if (resolver.GetRuntimeTypeName(method.DeclaringType) == "System.Type" && method.Name == "GetTypeFromHandle")
-                    {
-                        ResolvedCilType tokenType = argumentValues[0].Value as ResolvedCilType
-                                        ?? throw new InvalidOperationException("GetTypeFromHandle requires a type token");
-                        ICorDebugValue? typeValue = await GetSystemTypeAsync(tokenType, resolver, context, handles);
-                        stack.Push(typeValue is null ? CilValue.Null() : CilValue.FromTypeToken(tokenType, typeValue));
-                        continue;
-                    }
-                    (bool Handled, CilValue? Result) intrinsic = await TryExecuteIntrinsicCallAsync(method, receiverValue, argumentValues, resolver, context, handles);
-                    if (intrinsic.Handled)
-                    {
-                        if (intrinsic.Result is not null)
-                        {
-                            stack.Push(intrinsic.Result);
-                        }
-
-                        continue;
-                    }
-                    if (receiverValue?.Value is StringBuilder || receiverValue?.Location?.Read().Value is StringBuilder || argumentValues.Any(a => a.Value is StringBuilder))
-                    {
-                        throw new InvalidOperationException($"Unhandled interpolated-string call '{resolver.GetRuntimeTypeName(method.DeclaringType)}.{method.Name}'");
-                    }
-
-                    ICorDebugValue[] callArguments = new ICorDebugValue[method.Signature.ParameterTypes.Length + (method.IsStatic ? 0 : 1)];
-                    List<(ICilLocation Location, ICorDebugValue Value)> temporaryByRefArguments = new List<(ICilLocation Location, ICorDebugValue Value)>();
-                    (ICilLocation Home, ICorDebugValue Box)? constrainedCopyBack = null;
-                    for (int argument = 0; argument < argumentValues.Length; argument++)
-                    {
-                        callArguments[argument + (method.IsStatic ? 0 : 1)] = method.Signature.ParameterTypes[argument].EndsWith('&')
-                            ? await MaterializeByRefArgumentAsync(argumentValues[argument], context, handles, temporaryByRefArguments)
-                            : await MaterializeForCallAsync(argumentValues[argument], compiled, resolver, delegateAssemblyLoader, context, handles);
-                    }
-                    if (!method.IsStatic)
-                    {
-                        CilValue receiver = receiverValue!;
-                        if (receiver.Location is not null)
-                        {
-                            receiver = receiver.Dereference();
-                        }
-
-                        if (receiver.IsNull)
-                        {
-                            throw new NullReferenceException();
-                        }
-
-                        callArguments[0] = receiver.Value is EvaluationDelegate or EvaluationClosure
-                            ? await MaterializeForCallAsync(receiver, compiled, resolver, delegateAssemblyLoader, context, handles)
-                            : await MaterializeReceiverAsync(receiver, context, callConstrainedType, resolver, handles);
-                        // A constrained call on a struct runs on a boxed copy; what it changes goes back where
-                        // the struct lives, as the call on the struct's own address would have (upstream #30).
-                        if (callConstrainedType is not null && receiverValue!.Location is { } receiverHome
-                            && callArguments[0] != receiver.CorValue && callArguments[0].UnwrapDebugValue() is ICorDebugGenericValue)
-                        {
-                            constrainedCopyBack = (receiverHome, callArguments[0]);
-                        }
-                    }
-
-                    int declaringTypeArity = resolver.GetRuntimeTypeGenericArity(method.DeclaringType);
-                    ICorDebugType[] declaringTypeArguments = !method.IsStatic && declaringTypeArity > 0 && callArguments[0].ExactType is { } receiverType
-                        ? receiverType.TypeParameters.Take(declaringTypeArity).ToArray()
-                        : method.DeclaringType.TypeArguments.IsDefaultOrEmpty
-                            ? []
-                            : method.DeclaringType.TypeArguments.Select(resolver.GetCorDebugType).ToArray();
-                    ICorDebugType[] methodTypeArguments = method.MethodTypeArguments.IsDefaultOrEmpty
-                        ? []
-                        : method.MethodTypeArguments.Select(resolver.GetCorDebugType).ToArray();
-                    ICorDebugType[] typeArguments = [.. declaringTypeArguments, .. methodTypeArguments];
-                    ICorDebugEval eval = context.Thread.CreateEval();
-                    ICorDebugValue? callResult;
-                    try
-                    {
-                        callResult = handles.Track(await eval.CallParameterizedFunctionAsync(
-                            debugger.ProcessRuntimeEventsUntilEvalEvent,
-                            debugger.EvalStatus,
-                            method.Function,
-                            typeArguments.Length,
-                            typeArguments.Length == 0 ? null : typeArguments,
-                            callArguments.Length,
-                            callArguments,
-                            throwOnException: true));
-                    }
-                    finally
-                    {
-                        WriteBackTemporaryByRefArguments(temporaryByRefArguments, handles);
-                        SynchronizeEvaluationClosures(evaluationClosures.Select(CilValue.FromVirtual), handles);
-                        if (constrainedCopyBack is { } copy)
-                        {
-                            copy.Home.Write(CilValue.FromDebuggeeValue(copy.Box.UnwrapDebugValue()));
-                        }
-                    }
-                    if (method.Signature.ReturnType != PrimitiveTypeCode.Void.ToString())
-                    {
-                        if (callResult is null)
-                        {
-                            stack.Push(CilValue.Null());
-                        }
-                        else if (method.Signature.ReturnType.EndsWith('&'))
-                        {
-                            stack.Push(CilValue.FromLocation(new CorDebugLocation(callResult)));
-                        }
-                        else
-                        {
-                            stack.Push(CilValue.FromCorValue(callResult));
-                        }
-                    }
-                    continue;
-                }
-
-                if (op == OpCodes.Ret)
-                {
-                    return stack.Count == 0 ? CilValue.Null() : stack.Pop();
-                }
-
-                throw new NotSupportedException($"CIL opcode '{op.Name}' at IL_{instruction.Offset:X4} is not supported yet");
+            }
+            catch (ArithmeticException thrown)
+            {
+                // What the program would throw running the instruction itself (an overflow, a division by zero), told as
+                // one that code the debugger runs in the program throws.
+                throw new ManagedDebugger.EvalException($"Evaluation threw {thrown.GetType().FullName}: {thrown.Message}");
             }
             catch (Exception ex) when (ex is not NotSupportedException and not ManagedDebugger.EvalException)
             {
@@ -803,6 +397,353 @@ internal sealed class CilInterpreter(ManagedDebugger debugger, RuntimeAssemblyPr
         }
 
         throw new InvalidOperationException("Generated evaluation method ended without ret");
+
+        void Load(ICilLocation location) => stack.Push(handles.Root(location.Read()).WithSourceLocation(location));
+    }
+
+    private async Task<CilValue> CastAsync(CilInstruction instruction, CilValue source, Interpretation run)
+    {
+        if (source.IsNull)
+        {
+            return CilValue.Null();
+        }
+        ResolvedCilType targetType = run.Resolver.ResolveTypeToken(instruction.Token);
+        if (await IsInstanceOfTypeAsync(source, targetType, run.Resolver, run.Context, run.Handles))
+        {
+            return source;
+        }
+        return instruction.Code is ILOpCode.Isinst
+            ? CilValue.Null()
+            : throw new InvalidCastException($"InvalidCastException: Cannot cast the debuggee value to '{targetType.RuntimeType?.ToString() ?? "the requested type"}'");
+    }
+
+    /// <summary>The box unbox and unbox.any take apart, which must hold the very type they name.</summary>
+    private static ICorDebugBoxValue Unbox(CilValue source, ResolvedCilType targetType, EvaluationMetadataResolver resolver)
+    {
+        if (source.Location is not null)
+        {
+            source = source.Dereference();
+        }
+        if (source.IsNull)
+        {
+            throw new NullReferenceException();
+        }
+        ICorDebugBoxValue boxed = (source.CorValue is ICorDebugReferenceValue reference ? reference.Dereference() as ICorDebugBoxValue : source.CorValue as ICorDebugBoxValue)
+            ?? throw new InvalidCastException("The CIL value is not boxed");
+        if (!IsUnboxCompatible(boxed.Object, targetType, resolver))
+        {
+            throw new InvalidCastException($"InvalidCastException: Cannot unbox the debuggee value to '{targetType.RuntimeType?.ToString() ?? "the requested type"}'");
+        }
+        return boxed;
+    }
+
+    /// <summary>ldfld, ldflda, stfld and their static forms, of a field of the program's or of one the expression's
+    /// compilation made (a closure's).</summary>
+    private async Task FieldAsync(CilInstruction instruction, Stack<CilValue> stack, Interpretation run)
+    {
+        EvaluationMetadataResolver resolver = run.Resolver;
+        if (MetadataTokens.EntityHandle(instruction.Token) is { Kind: HandleKind.FieldDefinition } evaluationField)
+        {
+            FieldDefinitionHandle handle = (FieldDefinitionHandle)evaluationField;
+            switch (instruction.Code)
+            {
+                case ILOpCode.Ldfld:
+                {
+                    ICilLocation location = GetEvaluationClosure(stack.Pop()).Fields[handle];
+                    stack.Push(run.Handles.Root(location.Read()).WithSourceLocation(location));
+                    break;
+                }
+                case ILOpCode.Ldflda:
+                    stack.Push(CilValue.FromLocation(GetEvaluationClosure(stack.Pop()).Fields[handle]));
+                    break;
+                case ILOpCode.Stfld:
+                {
+                    CilValue value = stack.Pop();
+                    EvaluationClosure receiver = GetEvaluationClosure(stack.Pop());
+                    ICilLocation location = receiver.Fields[handle];
+                    if (location is TemporaryLocation && value.SourceLocation is { } sourceLocation)
+                    {
+                        receiver.FieldBindings[handle] = sourceLocation;
+                    }
+                    location.Write(value);
+                    break;
+                }
+                case ILOpCode.Ldsfld:
+                    stack.Push(GetEvaluationStaticField(run.StaticFields, handle).Read());
+                    break;
+                case ILOpCode.Ldsflda:
+                    stack.Push(CilValue.FromLocation(GetEvaluationStaticField(run.StaticFields, handle)));
+                    break;
+                default:
+                    GetEvaluationStaticField(run.StaticFields, handle).Write(stack.Pop());
+                    break;
+            }
+            return;
+        }
+        ResolvedRuntimeField field = resolver.ResolveField(instruction.Token);
+        switch (instruction.Code)
+        {
+            case ILOpCode.Ldfld:
+                stack.Push(run.Handles.Root(CilValue.FromCorValue(GetFieldReceiver(stack.Pop()).GetFieldValue(field.DeclaringType.Class, field.Token))));
+                break;
+            case ILOpCode.Ldflda:
+                stack.Push(CilValue.FromLocation(new CorDebugLocation(GetFieldReceiver(stack.Pop()).GetFieldValue(field.DeclaringType.Class, field.Token))));
+                break;
+            case ILOpCode.Stfld:
+            {
+                CilValue value = stack.Pop();
+                ICorDebugObjectValue receiver = GetFieldReceiver(stack.Pop());
+                new CorDebugLocation(receiver.GetFieldValue(field.DeclaringType.Class, field.Token)).Write(await MaterializeForStoreAsync(value, run.Context, run.Handles));
+                break;
+            }
+            case ILOpCode.Ldsfld:
+                stack.Push(run.Handles.Root(CilValue.FromCorValue(await GetStaticFieldValue(field, resolver, run.Context))));
+                break;
+            case ILOpCode.Ldsflda:
+                stack.Push(CilValue.FromLocation(new CorDebugLocation(await GetStaticFieldValue(field, resolver, run.Context))));
+                break;
+            default:
+                new CorDebugLocation(await GetStaticFieldValue(field, resolver, run.Context)).Write(await MaterializeForStoreAsync(stack.Pop(), run.Context, run.Handles));
+                break;
+        }
+    }
+
+    private async Task<CilValue> NewObjectAsync(CilInstruction instruction, Stack<CilValue> stack, Interpretation run)
+    {
+        EvaluationMetadataResolver resolver = run.Resolver;
+        EvaluationHandleScope handles = run.Handles;
+        if (MetadataTokens.EntityHandle(instruction.Token) is { Kind: HandleKind.MethodDefinition } evaluationConstructor)
+        {
+            MethodDefinitionHandle constructorHandle = (MethodDefinitionHandle)evaluationConstructor;
+            MethodSignature<string> signature = resolver.ResolveEvaluationMethodSignature(constructorHandle);
+            if (signature.ParameterTypes.Length != 0)
+            {
+                throw new NotSupportedException("Generated evaluation constructors with parameters are not supported");
+            }
+
+            EvaluationClosure evaluationClosure = new EvaluationClosure(resolver.GetEvaluationMethodDeclaringType(constructorHandle), constructorHandle);
+            foreach (FieldDefinitionHandle field in resolver.GetEvaluationInstanceFields(evaluationClosure.Type))
+            {
+                evaluationClosure.Fields[field] = new TemporaryLocation(CilValue.Null());
+            }
+            run.Closures.Add(evaluationClosure);
+            return CilValue.FromVirtual(evaluationClosure);
+        }
+        ResolvedRuntimeMethod constructor = resolver.ResolveMethod(instruction.Token);
+        CilValue[] constructorArguments = Pop(stack, constructor.Signature.ParameterTypes.Length);
+        if (constructorArguments is [var delegateTarget, { Value: EvaluationFunctionPointer function }])
+        {
+            return CilValue.FromVirtual(new EvaluationDelegate(function, delegateTarget, constructor.DeclaringType));
+        }
+        ICorDebugValue[] argumentValues = new ICorDebugValue[constructorArguments.Length];
+        List<(ICilLocation Location, ICorDebugValue Value)> temporaryByRefArguments = new List<(ICilLocation Location, ICorDebugValue Value)>();
+        for (int argument = 0; argument < argumentValues.Length; argument++)
+        {
+            argumentValues[argument] = constructor.Signature.ParameterTypes[argument].EndsWith('&')
+                ? await MaterializeByRefArgumentAsync(constructorArguments[argument], run.Context, handles, temporaryByRefArguments)
+                : await MaterializeForCallAsync(constructorArguments[argument], run.Context, handles);
+        }
+        ICorDebugType[] typeArguments = constructor.DeclaringType.TypeArguments.IsDefaultOrEmpty
+            ? []
+            : constructor.DeclaringType.TypeArguments.Select(resolver.GetCorDebugType).ToArray();
+        ICorDebugEval eval = run.Context.Thread.CreateEval();
+        ICorDebugValue? newValue;
+        try
+        {
+            newValue = handles.Track(await eval.NewParameterizedObjectAsync(
+                debugger.ProcessRuntimeEventsUntilEvalEvent,
+                debugger.EvalStatus,
+                constructor.Function,
+                typeArguments.Length,
+                typeArguments.Length == 0 ? null : typeArguments,
+                argumentValues.Length,
+                argumentValues,
+                throwOnException: true));
+        }
+        finally
+        {
+            WriteBackTemporaryByRefArguments(temporaryByRefArguments, handles);
+        }
+        return newValue is null ? CilValue.Null() : CilValue.FromCorValue(newValue);
+    }
+
+    private static CilValue[] Pop(Stack<CilValue> stack, int count)
+    {
+        CilValue[] values = new CilValue[count];
+        for (int i = count - 1; i >= 0; i--)
+        {
+            values[i] = stack.Pop();
+        }
+        return values;
+    }
+
+    /// <summary>call or callvirt: of one of the debugger's intrinsics, of a method the expression's compilation made (run
+    /// here), of one the interpreter does itself, or of the program's, run in it.</summary>
+    private async Task CallAsync(CilInstruction instruction, Stack<CilValue> stack, ResolvedCilType? constrainedType, Interpretation run)
+    {
+        EvaluationMetadataResolver resolver = run.Resolver;
+        CompiledExpressionEvaluationContext context = run.Context;
+        EvaluationHandleScope handles = run.Handles;
+        if (resolver.TryResolveDebuggerIntrinsic(instruction.Token, out string? debuggerIntrinsic))
+        {
+            await DebuggerIntrinsicAsync(debuggerIntrinsic, stack, run);
+            return;
+        }
+        if (resolver.TryResolveEvaluationMethod(instruction.Token, out ResolvedEvaluationMethod evaluationMethod))
+        {
+            CilValue[] methodArguments = Pop(stack, evaluationMethod.Signature.ParameterTypes.Length + (evaluationMethod.IsStatic ? 0 : 1));
+            CilValue methodResult = await InterpretAsync(
+                run,
+                run.Compiled.GetDecodedMethod(evaluationMethod.Handle),
+                methodArguments.Select(value => (ICilLocation)new TemporaryLocation(value)).ToArray(),
+                CreateTemporaryLocals(resolver, resolver.GetEvaluationMethodBody(evaluationMethod.Handle).LocalSignature));
+            if (evaluationMethod.Signature.ReturnType != PrimitiveTypeCode.Void.ToString())
+            {
+                stack.Push(methodResult);
+            }
+            return;
+        }
+        ResolvedRuntimeMethod method = resolver.ResolveMethod(instruction.Token);
+        CilValue[] argumentValues = Pop(stack, method.Signature.ParameterTypes.Length);
+        CilValue? receiverValue = method.IsStatic ? null : stack.Pop();
+
+        if (resolver.GetRuntimeTypeName(method.DeclaringType) == "System.Type" && method.Name == "GetTypeFromHandle")
+        {
+            ResolvedCilType tokenType = argumentValues[0].Value as ResolvedCilType
+                ?? throw new InvalidOperationException("GetTypeFromHandle requires a type token");
+            ICorDebugValue? typeValue = await GetSystemTypeAsync(tokenType, resolver, context, handles);
+            stack.Push(typeValue is null ? CilValue.Null() : CilValue.FromTypeToken(tokenType, typeValue));
+            return;
+        }
+        (bool Handled, CilValue? Result) intrinsic = await TryExecuteIntrinsicCallAsync(method, receiverValue, argumentValues, resolver, context, handles);
+        if (intrinsic.Handled)
+        {
+            if (intrinsic.Result is not null)
+            {
+                stack.Push(intrinsic.Result);
+            }
+            return;
+        }
+        if (receiverValue?.Value is StringBuilder || receiverValue?.Location?.Read().Value is StringBuilder || argumentValues.Any(a => a.Value is StringBuilder))
+        {
+            throw new InvalidOperationException($"Unhandled interpolated-string call '{resolver.GetRuntimeTypeName(method.DeclaringType)}.{method.Name}'");
+        }
+
+        ICorDebugValue[] callArguments = new ICorDebugValue[method.Signature.ParameterTypes.Length + (method.IsStatic ? 0 : 1)];
+        List<(ICilLocation Location, ICorDebugValue Value)> temporaryByRefArguments = new List<(ICilLocation Location, ICorDebugValue Value)>();
+        (ICilLocation Home, ICorDebugValue Box)? constrainedCopyBack = null;
+        for (int argument = 0; argument < argumentValues.Length; argument++)
+        {
+            callArguments[argument + (method.IsStatic ? 0 : 1)] = method.Signature.ParameterTypes[argument].EndsWith('&')
+                ? await MaterializeByRefArgumentAsync(argumentValues[argument], context, handles, temporaryByRefArguments)
+                : await MaterializeForCallAsync(argumentValues[argument], run.Compiled, resolver, run.Delegates, context, handles);
+        }
+        if (receiverValue is not null)
+        {
+            CilValue receiver = receiverValue;
+            if (receiver.Location is not null)
+            {
+                receiver = receiver.Dereference();
+            }
+
+            if (receiver.IsNull)
+            {
+                throw new NullReferenceException();
+            }
+
+            callArguments[0] = receiver.Value is EvaluationDelegate or EvaluationClosure
+                ? await MaterializeForCallAsync(receiver, run.Compiled, resolver, run.Delegates, context, handles)
+                : await MaterializeReceiverAsync(receiver, context, constrainedType, resolver, handles);
+            // A constrained call on a struct runs on a boxed copy; what it changes goes back where
+            // the struct lives, as the call on the struct's own address would have (upstream #30).
+            if (constrainedType is not null && receiverValue.Location is { } receiverHome
+                && callArguments[0] != receiver.CorValue && callArguments[0].UnwrapDebugValue() is ICorDebugGenericValue)
+            {
+                constrainedCopyBack = (receiverHome, callArguments[0]);
+            }
+        }
+
+        int declaringTypeArity = resolver.GetRuntimeTypeGenericArity(method.DeclaringType);
+        ICorDebugType[] declaringTypeArguments = !method.IsStatic && declaringTypeArity > 0 && callArguments[0].ExactType is { } receiverType
+            ? receiverType.TypeParameters.Take(declaringTypeArity).ToArray()
+            : method.DeclaringType.TypeArguments.IsDefaultOrEmpty
+                ? []
+                : method.DeclaringType.TypeArguments.Select(resolver.GetCorDebugType).ToArray();
+        ICorDebugType[] methodTypeArguments = method.MethodTypeArguments.IsDefaultOrEmpty
+            ? []
+            : method.MethodTypeArguments.Select(resolver.GetCorDebugType).ToArray();
+        ICorDebugType[] typeArguments = [.. declaringTypeArguments, .. methodTypeArguments];
+        ICorDebugEval eval = context.Thread.CreateEval();
+        ICorDebugValue? callResult;
+        try
+        {
+            callResult = handles.Track(await eval.CallParameterizedFunctionAsync(
+                debugger.ProcessRuntimeEventsUntilEvalEvent,
+                debugger.EvalStatus,
+                method.Function,
+                typeArguments.Length,
+                typeArguments.Length == 0 ? null : typeArguments,
+                callArguments.Length,
+                callArguments,
+                throwOnException: true));
+        }
+        finally
+        {
+            WriteBackTemporaryByRefArguments(temporaryByRefArguments, handles);
+            SynchronizeEvaluationClosures(run.Closures.Select(CilValue.FromVirtual), handles);
+            if (constrainedCopyBack is { } copy)
+            {
+                copy.Home.Write(CilValue.FromDebuggeeValue(copy.Box.UnwrapDebugValue()));
+            }
+        }
+        if (method.Signature.ReturnType != PrimitiveTypeCode.Void.ToString())
+        {
+            stack.Push(callResult is null
+                ? CilValue.Null()
+                : method.Signature.ReturnType.EndsWith('&') ? CilValue.FromLocation(new CorDebugLocation(callResult)) : CilValue.FromCorValue(callResult));
+        }
+    }
+
+    /// <summary>A call the expression compiler makes to the debugger itself: a variable the expression declares, its
+    /// address or value, or the exception the thread is stopped at.</summary>
+    private async Task DebuggerIntrinsicAsync(string intrinsic, Stack<CilValue> stack, Interpretation run)
+    {
+        switch (intrinsic)
+        {
+            case "CreateVariable":
+            {
+                // The custom type's payload and its id, which the debugger's variables need not.
+                stack.Pop();
+                stack.Pop();
+                string name = stack.Pop().Value as string ?? throw new InvalidOperationException("Synthetic variable name is unavailable");
+                ResolvedCilType type = stack.Pop().Value as ResolvedCilType ?? throw new InvalidOperationException("Synthetic variable type is unavailable");
+                run.SyntheticVariables[name] = await CreateSyntheticVariableLocationAsync(type, run.Resolver, run.Context, run.Handles);
+                break;
+            }
+            case "GetVariableAddress":
+                stack.Push(CilValue.FromLocation(SyntheticVariable(stack.Pop())));
+                break;
+            case "GetObjectByAlias":
+                stack.Push(run.Handles.Root(SyntheticVariable(stack.Pop()).Read()));
+                break;
+            case "GetException":
+            {
+                ICorDebugValue exception = debugger.GetCurrentException(run.Context.ThreadId)
+                    ?? throw new InvalidOperationException("No current exception is available");
+                stack.Push(run.Handles.Root(CilValue.FromCorValue(exception)));
+                break;
+            }
+            default:
+                throw new NotSupportedException($"Debugger intrinsic '{intrinsic}' is not supported");
+        }
+
+        ICilLocation SyntheticVariable(CilValue nameValue)
+        {
+            string name = nameValue.Value as string ?? throw new InvalidOperationException("Synthetic variable name is unavailable");
+            return run.SyntheticVariables.TryGetValue(name, out ICilLocation? location)
+                ? location
+                : throw new InvalidOperationException($"Synthetic variable '{name}' is unavailable");
+        }
     }
 
     private static EvaluationFunctionPointer CreateRuntimeFunctionPointer(ResolvedRuntimeMethod method) =>
@@ -1606,394 +1547,4 @@ internal sealed class CilInterpreter(ManagedDebugger debugger, RuntimeAssemblyPr
             throwOnException: true));
         return result?.UnwrapDebugValue() is ICorDebugStringValue stringValue ? stringValue.String : string.Empty;
     }
-
-    private static bool TryGetArgumentIndex(OpCode op, object? operand, out int index)
-    {
-        index = op.Value switch
-        {
-            var value when value == OpCodes.Ldarg_0.Value => 0,
-            var value when value == OpCodes.Ldarg_1.Value => 1,
-            var value when value == OpCodes.Ldarg_2.Value => 2,
-            var value when value == OpCodes.Ldarg_3.Value => 3,
-            var value when value == OpCodes.Ldarg.Value || value == OpCodes.Ldarg_S.Value => Convert.ToInt32(operand),
-            _ => -1
-        };
-        return index >= 0;
-    }
-
-    private static bool TryGetArgumentAddressIndex(OpCode op, object? operand, out int index)
-    {
-        index = op == OpCodes.Ldarga || op == OpCodes.Ldarga_S ? Convert.ToInt32(operand) : -1;
-        return index >= 0;
-    }
-
-    private static bool TryGetStoreArgumentIndex(OpCode op, object? operand, out int index)
-    {
-        index = op == OpCodes.Starg || op == OpCodes.Starg_S ? Convert.ToInt32(operand) : -1;
-        return index >= 0;
-    }
-
-    private static bool TryGetLocalIndex(OpCode op, object? operand, out int index)
-    {
-        index = op.Value switch
-        {
-            var value when value == OpCodes.Ldloc_0.Value => 0,
-            var value when value == OpCodes.Ldloc_1.Value => 1,
-            var value when value == OpCodes.Ldloc_2.Value => 2,
-            var value when value == OpCodes.Ldloc_3.Value => 3,
-            var value when value == OpCodes.Ldloc.Value || value == OpCodes.Ldloc_S.Value => Convert.ToInt32(operand),
-            _ => -1
-        };
-        return index >= 0;
-    }
-
-    private static bool TryGetLocalAddressIndex(OpCode op, object? operand, out int index)
-    {
-        index = op == OpCodes.Ldloca || op == OpCodes.Ldloca_S ? Convert.ToInt32(operand) : -1;
-        return index >= 0;
-    }
-
-    private static bool TryGetStoreLocalIndex(OpCode op, object? operand, out int index)
-    {
-        index = op.Value switch
-        {
-            var value when value == OpCodes.Stloc_0.Value => 0,
-            var value when value == OpCodes.Stloc_1.Value => 1,
-            var value when value == OpCodes.Stloc_2.Value => 2,
-            var value when value == OpCodes.Stloc_3.Value => 3,
-            var value when value == OpCodes.Stloc.Value || value == OpCodes.Stloc_S.Value => Convert.ToInt32(operand),
-            _ => -1
-        };
-        return index >= 0;
-    }
-
-    private static bool IsBinary(OpCode op) => op == OpCodes.Add || op == OpCodes.Sub || op == OpCodes.Mul ||
-        op == OpCodes.Add_Ovf || op == OpCodes.Add_Ovf_Un || op == OpCodes.Sub_Ovf || op == OpCodes.Sub_Ovf_Un ||
-        op == OpCodes.Mul_Ovf || op == OpCodes.Mul_Ovf_Un ||
-        op == OpCodes.Div || op == OpCodes.Div_Un || op == OpCodes.Rem || op == OpCodes.Rem_Un ||
-        op == OpCodes.And || op == OpCodes.Or || op == OpCodes.Xor || op == OpCodes.Shl || op == OpCodes.Shr || op == OpCodes.Shr_Un;
-
-    private static CilValue EvaluateBinary(OpCode op, CilValue left, CilValue right)
-    {
-        if (left.Value is float or double || right.Value is float or double)
-        {
-            double a = left.AsFloat();
-            double b = right.AsFloat();
-            double result = op.Value switch
-            {
-                var value when value == OpCodes.Add.Value => a + b,
-                var value when value == OpCodes.Sub.Value => a - b,
-                var value when value == OpCodes.Mul.Value => a * b,
-                var value when value == OpCodes.Div.Value => a / b,
-                var value when value == OpCodes.Rem.Value => a % b,
-                _ => throw new NotSupportedException($"Floating-point operation '{op.Name}' is not supported")
-            };
-            if (left.Value is double || right.Value is double)
-            {
-                return CilValue.FromPrimitive(result);
-            }
-
-            return CilValue.FromPrimitive((float)result);
-        }
-
-        if (left.Value is long or ulong || right.Value is long or ulong)
-        {
-            long a = left.AsInt64();
-            long b = right.AsInt64();
-            if (op == OpCodes.Div_Un)
-            {
-                return CilValue.FromPrimitive(unchecked((ulong)a) / unchecked((ulong)b));
-            }
-
-            if (op == OpCodes.Rem_Un)
-            {
-                return CilValue.FromPrimitive(unchecked((ulong)a) % unchecked((ulong)b));
-            }
-
-            if (op == OpCodes.Shr_Un)
-            {
-                return CilValue.FromPrimitive(unchecked((long)(unchecked((ulong)a) >> ((int)b & 0x3f))));
-            }
-
-            if (op == OpCodes.Add_Ovf)
-            {
-                return CilValue.FromPrimitive(checked(a + b));
-            }
-
-            if (op == OpCodes.Sub_Ovf)
-            {
-                return CilValue.FromPrimitive(checked(a - b));
-            }
-
-            if (op == OpCodes.Mul_Ovf)
-            {
-                return CilValue.FromPrimitive(checked(a * b));
-            }
-
-            if (op == OpCodes.Add_Ovf_Un)
-            {
-                return CilValue.FromPrimitive(checked(unchecked((ulong)a) + unchecked((ulong)b)));
-            }
-
-            if (op == OpCodes.Sub_Ovf_Un)
-            {
-                return CilValue.FromPrimitive(checked(unchecked((ulong)a) - unchecked((ulong)b)));
-            }
-
-            if (op == OpCodes.Mul_Ovf_Un)
-            {
-                return CilValue.FromPrimitive(checked(unchecked((ulong)a) * unchecked((ulong)b)));
-            }
-
-            return CilValue.FromPrimitive(op.Value switch
-            {
-                var value when value == OpCodes.Add.Value => a + b,
-                var value when value == OpCodes.Sub.Value => a - b,
-                var value when value == OpCodes.Mul.Value => a * b,
-                var value when value == OpCodes.Div.Value => a / b,
-                var value when value == OpCodes.Rem.Value => a % b,
-                var value when value == OpCodes.And.Value => a & b,
-                var value when value == OpCodes.Or.Value => a | b,
-                var value when value == OpCodes.Xor.Value => a ^ b,
-                var value when value == OpCodes.Shl.Value => a << ((int)b & 0x3f),
-                var value when value == OpCodes.Shr.Value => a >> ((int)b & 0x3f),
-                _ => throw new NotSupportedException($"Integer operation '{op.Name}' is not supported")
-            });
-        }
-
-        int x = left.AsInt32();
-        int y = right.AsInt32();
-        if (op == OpCodes.Div_Un)
-        {
-            return CilValue.FromPrimitive(unchecked((uint)x) / unchecked((uint)y));
-        }
-
-        if (op == OpCodes.Rem_Un)
-        {
-            return CilValue.FromPrimitive(unchecked((uint)x) % unchecked((uint)y));
-        }
-
-        if (op == OpCodes.Shr_Un)
-        {
-            return CilValue.FromPrimitive(unchecked((int)(unchecked((uint)x) >> (y & 0x1f))));
-        }
-
-        if (op == OpCodes.Add_Ovf)
-        {
-            return CilValue.FromPrimitive(checked(x + y));
-        }
-
-        if (op == OpCodes.Sub_Ovf)
-        {
-            return CilValue.FromPrimitive(checked(x - y));
-        }
-
-        if (op == OpCodes.Mul_Ovf)
-        {
-            return CilValue.FromPrimitive(checked(x * y));
-        }
-
-        if (op == OpCodes.Add_Ovf_Un)
-        {
-            return CilValue.FromPrimitive(checked(unchecked((uint)x) + unchecked((uint)y)));
-        }
-
-        if (op == OpCodes.Sub_Ovf_Un)
-        {
-            return CilValue.FromPrimitive(checked(unchecked((uint)x) - unchecked((uint)y)));
-        }
-
-        if (op == OpCodes.Mul_Ovf_Un)
-        {
-            return CilValue.FromPrimitive(checked(unchecked((uint)x) * unchecked((uint)y)));
-        }
-
-        return CilValue.FromPrimitive(op.Value switch
-        {
-            var value when value == OpCodes.Add.Value => x + y,
-            var value when value == OpCodes.Sub.Value => x - y,
-            var value when value == OpCodes.Mul.Value => x * y,
-            var value when value == OpCodes.Div.Value => x / y,
-            var value when value == OpCodes.Rem.Value => x % y,
-            var value when value == OpCodes.And.Value => x & y,
-            var value when value == OpCodes.Or.Value => x | y,
-            var value when value == OpCodes.Xor.Value => x ^ y,
-            var value when value == OpCodes.Shl.Value => x << (y & 0x1f),
-            var value when value == OpCodes.Shr.Value => x >> (y & 0x1f),
-            _ => throw new NotSupportedException($"Integer operation '{op.Name}' is not supported")
-        });
-    }
-
-    private static CilValue Negate(CilValue value) => value.Value is float or double
-        ? CilValue.FromPrimitive(-value.AsFloat())
-        : value.Value is long or ulong
-            ? CilValue.FromPrimitive(-value.AsInt64())
-            : CilValue.FromPrimitive(-value.AsInt32());
-
-    private static bool Compare(OpCode op, CilValue left, CilValue right)
-    {
-        if (op == OpCodes.Ceq)
-        {
-            if (left.IsNull || right.IsNull)
-            {
-                return left.IsNull == right.IsNull;
-            }
-
-            if (left.CorValue is ICorDebugReferenceValue leftRef && right.CorValue is ICorDebugReferenceValue rightRef)
-            {
-                return leftRef.Value == rightRef.Value;
-            }
-
-            if (left.Value is float or double || right.Value is float or double)
-            {
-                return left.AsFloat() == right.AsFloat();
-            }
-
-            if (left.TryGetInt64(out long leftInteger) && right.TryGetInt64(out long rightInteger))
-            {
-                return leftInteger == rightInteger;
-            }
-
-            return Equals(left.Value, right.Value);
-        }
-        if (left.CorValue is ICorDebugReferenceValue || right.CorValue is ICorDebugReferenceValue || left.IsNull || right.IsNull)
-        {
-            if (op == OpCodes.Cgt_Un)
-            {
-                return !left.IsNull && right.IsNull;
-            }
-
-            if (op == OpCodes.Clt_Un)
-            {
-                return left.IsNull && !right.IsNull;
-            }
-
-            throw new InvalidOperationException($"Reference values cannot be compared with '{op.Name}'");
-        }
-        if (left.Value is float or double || right.Value is float or double)
-        {
-            double a = left.AsFloat();
-            double b = right.AsFloat();
-            return op == OpCodes.Cgt ? a > b : op == OpCodes.Clt ? a < b :
-                op == OpCodes.Cgt_Un ? double.IsNaN(a) || double.IsNaN(b) || a > b : double.IsNaN(a) || double.IsNaN(b) || a < b;
-        }
-        if (op == OpCodes.Cgt_Un)
-        {
-            return unchecked((ulong)left.AsInt64()) > unchecked((ulong)right.AsInt64());
-        }
-
-        if (op == OpCodes.Clt_Un)
-        {
-            return unchecked((ulong)left.AsInt64()) < unchecked((ulong)right.AsInt64());
-        }
-
-        return op == OpCodes.Cgt ? left.AsInt64() > right.AsInt64() : left.AsInt64() < right.AsInt64();
-    }
-
-    private static bool IsConversion(OpCode op) => op.Name?.StartsWith("conv.", StringComparison.Ordinal) == true;
-
-    private static CilValue ConvertValue(OpCode op, CilValue value)
-    {
-        bool isFloat = value.Value is float or double;
-        long signed = isFloat ? unchecked((long)value.AsFloat()) : value.AsInt64();
-        ulong unsigned = isFloat ? unchecked((ulong)value.AsFloat()) : value.AsUInt64();
-        return op.Value switch
-        {
-            var v when v == OpCodes.Conv_I1.Value => CilValue.FromPrimitive((int)(sbyte)signed),
-            var v when v == OpCodes.Conv_U1.Value => CilValue.FromPrimitive((int)(byte)signed),
-            var v when v == OpCodes.Conv_I2.Value => CilValue.FromPrimitive((int)(short)signed),
-            var v when v == OpCodes.Conv_U2.Value => CilValue.FromPrimitive((int)(ushort)signed),
-            var v when v == OpCodes.Conv_I4.Value => CilValue.FromPrimitive((int)signed),
-            var v when v == OpCodes.Conv_U4.Value => CilValue.FromPrimitive((uint)signed),
-            var v when v == OpCodes.Conv_I8.Value => CilValue.FromPrimitive(signed),
-            var v when v == OpCodes.Conv_U8.Value => CilValue.FromPrimitive(unsigned),
-            var v when v == OpCodes.Conv_R4.Value => CilValue.FromPrimitive(isFloat ? (float)value.AsFloat() : (float)signed),
-            var v when v == OpCodes.Conv_R8.Value => CilValue.FromPrimitive(isFloat ? value.AsFloat() : (double)signed),
-            var v when v == OpCodes.Conv_R_Un.Value => CilValue.FromPrimitive((double)unsigned),
-            // The debuggee's pointers, which need not be the debugger's own.
-            var v when v == OpCodes.Conv_I.Value => CilValue.FromPrimitive(CilValue.PointerSize == 8 ? signed : (int)signed),
-            var v when v == OpCodes.Conv_U.Value => CilValue.FromPrimitive(CilValue.PointerSize == 8 ? unsigned : (uint)unsigned),
-            var v when v == OpCodes.Conv_Ovf_I1.Value => CilValue.FromPrimitive((int)checked((sbyte)(isFloat ? value.AsFloat() : signed))),
-            var v when v == OpCodes.Conv_Ovf_U1.Value => CilValue.FromPrimitive((int)checked((byte)(isFloat ? value.AsFloat() : signed))),
-            var v when v == OpCodes.Conv_Ovf_I2.Value => CilValue.FromPrimitive((int)checked((short)(isFloat ? value.AsFloat() : signed))),
-            var v when v == OpCodes.Conv_Ovf_U2.Value => CilValue.FromPrimitive((int)checked((ushort)(isFloat ? value.AsFloat() : signed))),
-            var v when v == OpCodes.Conv_Ovf_I4.Value => CilValue.FromPrimitive(checked((int)(isFloat ? value.AsFloat() : signed))),
-            var v when v == OpCodes.Conv_Ovf_U4.Value => CilValue.FromPrimitive(checked((uint)(isFloat ? value.AsFloat() : signed))),
-            var v when v == OpCodes.Conv_Ovf_I8.Value => CilValue.FromPrimitive(isFloat ? checked((long)value.AsFloat()) : signed),
-            var v when v == OpCodes.Conv_Ovf_U8.Value => CilValue.FromPrimitive(isFloat ? checked((ulong)value.AsFloat()) : unsigned),
-            // The checked conversions of an unsigned source: its bits read as unsigned.
-            var v when v == OpCodes.Conv_Ovf_I1_Un.Value => CilValue.FromPrimitive((int)checked((sbyte)unsigned)),
-            var v when v == OpCodes.Conv_Ovf_U1_Un.Value => CilValue.FromPrimitive((int)checked((byte)unsigned)),
-            var v when v == OpCodes.Conv_Ovf_I2_Un.Value => CilValue.FromPrimitive((int)checked((short)unsigned)),
-            var v when v == OpCodes.Conv_Ovf_U2_Un.Value => CilValue.FromPrimitive((int)checked((ushort)unsigned)),
-            var v when v == OpCodes.Conv_Ovf_I4_Un.Value => CilValue.FromPrimitive(checked((int)unsigned)),
-            var v when v == OpCodes.Conv_Ovf_U4_Un.Value => CilValue.FromPrimitive(checked((uint)unsigned)),
-            var v when v == OpCodes.Conv_Ovf_I8_Un.Value => CilValue.FromPrimitive(checked((long)unsigned)),
-            var v when v == OpCodes.Conv_Ovf_U8_Un.Value => CilValue.FromPrimitive(unsigned),
-            var v when v == OpCodes.Conv_Ovf_I_Un.Value => CilValue.FromPrimitive(CilValue.PointerSize == 8 ? checked((long)unsigned) : checked((int)unsigned)),
-            var v when v == OpCodes.Conv_Ovf_U_Un.Value => CilValue.FromPrimitive(CilValue.PointerSize == 8 ? unsigned : checked((uint)unsigned)),
-            var v when v == OpCodes.Conv_Ovf_I.Value => CilValue.FromPrimitive(CilValue.PointerSize == 8 ? signed : checked((int)signed)),
-            var v when v == OpCodes.Conv_Ovf_U.Value => CilValue.FromPrimitive(CilValue.PointerSize == 8 ? checked((ulong)signed) : checked((uint)signed)),
-            _ => throw new NotSupportedException($"Conversion opcode '{op.Name}' is not supported yet")
-        };
-    }
-
-    private static bool IsComparisonBranch(OpCode op) => op.FlowControl == FlowControl.Cond_Branch && op != OpCodes.Brtrue && op != OpCodes.Brtrue_S && op != OpCodes.Brfalse && op != OpCodes.Brfalse_S && op != OpCodes.Switch;
-
-    private static bool EvaluateBranch(OpCode op, CilValue left, CilValue right)
-    {
-        if (op == OpCodes.Beq || op == OpCodes.Beq_S)
-        {
-            return Compare(OpCodes.Ceq, left, right);
-        }
-
-        if (op == OpCodes.Bne_Un || op == OpCodes.Bne_Un_S)
-        {
-            return !Compare(OpCodes.Ceq, left, right);
-        }
-
-        if (op == OpCodes.Bgt || op == OpCodes.Bgt_S)
-        {
-            return Compare(OpCodes.Cgt, left, right);
-        }
-
-        if (op == OpCodes.Bgt_Un || op == OpCodes.Bgt_Un_S)
-        {
-            return Compare(OpCodes.Cgt_Un, left, right);
-        }
-
-        if (op == OpCodes.Blt || op == OpCodes.Blt_S)
-        {
-            return Compare(OpCodes.Clt, left, right);
-        }
-
-        if (op == OpCodes.Blt_Un || op == OpCodes.Blt_Un_S)
-        {
-            return Compare(OpCodes.Clt_Un, left, right);
-        }
-
-        if (op == OpCodes.Bge || op == OpCodes.Bge_S)
-        {
-            return !Compare(OpCodes.Clt, left, right);
-        }
-
-        if (op == OpCodes.Bge_Un || op == OpCodes.Bge_Un_S)
-        {
-            return !Compare(OpCodes.Clt_Un, left, right);
-        }
-
-        if (op == OpCodes.Ble || op == OpCodes.Ble_S)
-        {
-            return !Compare(OpCodes.Cgt, left, right);
-        }
-
-        if (op == OpCodes.Ble_Un || op == OpCodes.Ble_Un_S)
-        {
-            return !Compare(OpCodes.Cgt_Un, left, right);
-        }
-
-        throw new NotSupportedException($"Conditional branch '{op.Name}' is not supported");
-    }
-
-    private static int GetTargetIndex(IReadOnlyDictionary<int, int> offsets, CilInstruction instruction) => offsets[(int)instruction.Operand!];
 }

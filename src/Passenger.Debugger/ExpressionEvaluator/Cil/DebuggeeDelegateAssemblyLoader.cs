@@ -5,9 +5,7 @@ using Passenger.Debugger.Interop;
 
 namespace Passenger.Debugger.ExpressionEvaluator.Cil;
 
-/// <summary>
-/// 🤖, Loads generated delegate code into a collectible assembly load context in the debuggee.
-/// </summary>
+/// <summary>Loads the code an expression's lambdas compile to into a collectible assembly load context in the program.</summary>
 internal sealed class DebuggeeDelegateAssemblyLoader(
     ManagedDebugger debugger,
     CompiledEvaluationMethod compiled,
@@ -108,11 +106,10 @@ internal sealed class DebuggeeDelegateAssemblyLoader(
             throwOnException: true)) ?? throw new InvalidOperationException("Failed to allocate generated assembly buffer");
         ICorDebugArrayValue array = arrayReference.UnwrapDebugValue() as ICorDebugArrayValue
             ?? throw new InvalidOperationException("Generated assembly buffer is not an array");
-        for (int index = 0; index < bytes.Length; index++)
+        if (bytes.Length > 0)
         {
-            ICorDebugGenericValue element = array.GetElementAtPosition(index) as ICorDebugGenericValue
-                ?? throw new InvalidOperationException("Generated assembly buffer element is unavailable");
-            SetByte(element, bytes[index]);
+            // One write at the first element, not a round trip per byte: the program is stopped, so its array stays put.
+            context.Thread.Process.WriteMemory(array.GetElementAtPosition(0).Address, bytes.Length, bytes);
         }
         return arrayReference;
     }
@@ -133,6 +130,4 @@ internal sealed class DebuggeeDelegateAssemblyLoader(
 
     private ModuleInfo? FindModule(Guid moduleVersionId) =>
         debugger.AllModules.FirstOrDefault(module => module.MetadataReader.Mvid == moduleVersionId);
-
-    private static unsafe void SetByte(ICorDebugGenericValue destination, byte value) => destination.SetValue((nint)(&value));
 }
