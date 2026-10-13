@@ -74,6 +74,9 @@ public sealed class TestController : IAsyncDisposable
     /// <summary>Something for the status bar.</summary>
     public event EventHandler<string>? Message;
 
+    /// <summary>A run of tests ended, whether every test passed: Local History's Tests Passed or Tests Failed label.</summary>
+    public event EventHandler<bool>? Ran;
+
     /// <summary>A test to debug: the debugger launches the test host the runner gives and says what process it is.</summary>
     public Func<TestHostStart, Task<int>>? LaunchUnderDebugger { get; set; }
 
@@ -230,6 +233,10 @@ public sealed class TestController : IAsyncDisposable
             Tree.End();
             Summary = prefix + Tally(methods, summary);
             Message?.Invoke(this, Summary);
+            if (!summary.Canceled)
+            {
+                Ran?.Invoke(this, FirstFailed(methods) is null);
+            }
             return null;
         }
         catch (OperationCanceledException) when (stop.IsCancellationRequested)

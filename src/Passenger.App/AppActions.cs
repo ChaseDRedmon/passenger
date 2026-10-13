@@ -235,6 +235,13 @@ public static class AppActions
     public const string CompareWithBranch = "app.vcs.compareWithBranch";
     public const string CompareWithRevision = "app.vcs.compareWithRevision";
 
+    // Rider's Local History (LocalHistory.ShowHistory, LocalHistory.ShowProjectHistory, RecentChanges and
+    // LocalHistory.PutLabel): its Visual Studio keymaps give none of them keys, and take Recent Changes' Alt+Shift+C off.
+    public const string ShowLocalHistory = "app.localHistory.show";
+    public const string ShowProjectHistory = "app.localHistory.showProject";
+    public const string RecentChanges = "app.localHistory.recentChanges";
+    public const string PutLabel = "app.localHistory.putLabel";
+
     /// <summary>The person's own shortcuts over the Visual Studio keymap's, by action (an empty list unbinds it), as
     /// Settings keeps them.</summary>
     public static IReadOnlyDictionary<string, string[]> UserShortcuts

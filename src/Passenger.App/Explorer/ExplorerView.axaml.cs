@@ -40,6 +40,7 @@ public enum ExplorerAction
     RunTests,
     DebugTests,
     ShowHistory,
+    ShowLocalHistory,
     CompareWithRevision,
     CompareWithBranch,
     FindInFiles,
@@ -310,6 +311,14 @@ public partial class ExplorerView : UserControl
             tools.Items.Add(compare);
             menu.Items.Add(tools);
         }
+        bool histories = node.Kind is NodeKind.File or NodeKind.Folder or NodeKind.Project or NodeKind.Solution && node.Path is not null && !node.IsSolutionItem;
+        if (histories)
+        {
+            // Rider's Show Local History, just before its Git submenu: a file's versions, or a folder's (a project's or the
+            // solution's folder).
+            menu.Items.Add(new Separator());
+            menu.Items.Add(Item("Show Local History", ExplorerAction.ShowLocalHistory));
+        }
         if (node.Kind is NodeKind.File or NodeKind.Folder or NodeKind.Project or NodeKind.Solution && node.Path is { } versioned && IsVersioned(versioned))
         {
             // Rider's Git submenu, last: a file's or a folder's history (a project's or the solution's folder), a file's versions.
@@ -320,7 +329,10 @@ public partial class ExplorerView : UserControl
                 git.Items.Add(Item("Compare with Branch or Tag...", ExplorerAction.CompareWithBranch));
             }
             git.Items.Add(Item("Show History", ExplorerAction.ShowHistory));
-            menu.Items.Add(new Separator());
+            if (!histories)
+            {
+                menu.Items.Add(new Separator());
+            }
             menu.Items.Add(git);
         }
         return menu;

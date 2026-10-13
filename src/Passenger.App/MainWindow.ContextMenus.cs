@@ -23,7 +23,8 @@ public partial class MainWindow
     }
 
     /// <summary>Rider's editor menu: context actions and the clipboard, Find Usages, Refactor, Go To, Generate and
-    /// Folding, Reformat and Cleanup, the test at the caret, the paused program's actions, breakpoints, and Git.</summary>
+    /// Folding, Reformat and Cleanup, the test at the caret, the paused program's actions, breakpoints, Local History and
+    /// Git.</summary>
     private void ShowEditorMenu(CodeEditor editor, Point? at)
     {
         if (Editors.Groups.FirstOrDefault(g => g.Editor == editor) is { } group)
@@ -63,9 +64,11 @@ public partial class MainWindow
             Add(Item(A.RunToCursor), Item(A.SetNextStatement), Item(A.Evaluate), Item(A.AddToWatches), separator);
         }
         Add(Item(A.ToggleBreakpoint));
+        // Rider's Local History submenu, before its Git one.
+        Add(separator, Sub("Local History", Item(A.ShowLocalHistory), separator, Item(A.ShowProjectHistory), Item(A.RecentChanges), Item(A.PutLabel)));
         if (vcs.Repository is not null)
         {
-            Add(separator, Sub("Git", Item(A.Annotate), Item(A.ShowDiff), Item(A.CompareWithRevision), Item(A.CompareWithBranch), separator,
+            Add(Sub("Git", Item(A.Annotate), Item(A.ShowDiff), Item(A.CompareWithRevision), Item(A.CompareWithBranch), separator,
                 Item(A.ShowHistory), Item(A.ShowHistoryForSelection), separator, Item(A.RollbackLines)));
         }
         ContextMenu menu = new() { ItemsSource = items, PlacementTarget = editor };

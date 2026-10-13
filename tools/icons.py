@@ -90,6 +90,9 @@ ICONS = [
     # Resolve Simple Conflicts, Rider's magic wand.
     ("ApplyNonConflicts", "Arrow Minimize Vertical", "20_regular"),
     ("Wand", "Wand", "20_regular"),
+    # Local History's tool window and its labels.
+    ("History", "History", "20_regular"),
+    ("Label", "Tag", "16_regular"),
 ]
 
 

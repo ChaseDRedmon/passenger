@@ -22,6 +22,7 @@ public static class WorkspaceEdits
     /// operation or a file not open being written.</summary>
     public static int Apply(EditorArea editors, JsonElement edit, Asked? asked = null, List<string>? dropped = null)
     {
+        using IDisposable? recording = editors.Recording?.Invoke();
         IReadOnlyList<FileEdits> changes = Shapes.WorkspaceEdit(edit);
         if (Refusal(editors, changes) is { } refused)
         {

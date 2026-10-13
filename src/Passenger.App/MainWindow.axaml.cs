@@ -231,6 +231,7 @@ public partial class MainWindow : Window
         testGutter = new Testing.TestGutter(Bottom.TestTree);
         AddUnitTests();
         AddLinks();
+        AddLocalHistory();
         Bottom.Problems.FixRequested += (_, problem) =>
         {
             NavigateTo(problem.Path!, problem.Position);
@@ -319,6 +320,7 @@ public partial class MainWindow : Window
         }
         Autosave();
         folder = opening;
+        OpenLocalHistory(opening);
         // Where the log's timing of the language server's start (MainWindow.Workspace's CSharpService) begins.
         IdeErrors.Write($"Opened {opening}{(withSolution is { } read && read.OpenedAs != opening ? $" with {Path.GetFileName(read.OpenedAs)}" : string.Empty)}");
         agentSocket?.Describe(folder);
@@ -365,6 +367,7 @@ public partial class MainWindow : Window
         Editors.Commands.Clear();
         findScope = new FindScopeState();
         chosenScope = null;
+        LeaveLocalHistory();
         return true;
     }
 

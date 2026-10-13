@@ -18,9 +18,11 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
     /// <summary>Reads a file as text, or returns null for one that looks binary. A BOM says its encoding; without one it is
     /// read in <paramref name="chosen"/> (one the person chose for it) when that reads every byte, else as UTF-8 if it
     /// decodes as UTF-8 and Latin-1 otherwise, which reads every byte.</summary>
-    public static FileText? Load(string path, Encoding? chosen = null)
+    public static FileText? Load(string path, Encoding? chosen = null) => FromBytes(Read(path), chosen);
+
+    /// <summary>A file's bytes as text, as <see cref="Load"/> reads them (Local History's versions of a file).</summary>
+    public static FileText? FromBytes(byte[] bytes, Encoding? chosen = null)
     {
-        byte[] bytes = Read(path);
         if (Bom(bytes) is { } bom)
         {
             return Decode(bytes, bom);
@@ -106,6 +108,13 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
     /// new file (a save writes a temporary file beside it and moves it over).</summary>
     public static event Action<string>? Writing;
 
+    /// <summary>A file a save wrote, once it holds the bytes written: its path as given, what it held before (null when
+    /// there was no file, or it was too large to keep or could not be read) and the bytes. Local History keeps both.</summary>
+    public static event Action<string, byte[]?, byte[]>? Wrote;
+
+    /// <summary>How large a file's content Local History keeps, and so reads before a save writes over it.</summary>
+    public const int KeptLimit = 20 * 1024 * 1024;
+
     /// <summary>The temporary file a save writes first, which nothing but the save should see.</summary>
     public const string SaveSuffix = ".passenger-save";
 
@@ -124,14 +133,29 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
         string? unheld = Unheld(encoding, text);
         FileText written = unheld is null ? new FileText(text, encoding, bom, crBreaks) : new FileText(text, new UTF8Encoding(false), false, crBreaks);
         Writing?.Invoke(path);
+        byte[] preamble = written.HasBom ? Preamble(written.Encoding) : [];
+        byte[] body = written.Encoding.GetBytes(crBreaks ? LineEndings.In(text, "\r") : text);
+        Write(path, preamble, body);
+        return (written, unheld is null ? null : $"{Path.GetFileName(path)} was saved as UTF-8: {FileEncoding.Of(encoding, bom).Name} cannot hold '{unheld}'");
+    }
+
+    /// <summary>Writes a file's bytes as they were, as a save writes: Local History's revert of a file not open, or of one
+    /// deleted since.</summary>
+    public static void Restore(string path, byte[] bytes)
+    {
+        Writing?.Invoke(path);
+        Write(path, [], bytes);
+    }
+
+    private static void Write(string path, byte[] preamble, byte[] body)
+    {
         bool there = File.Exists(path) || new FileInfo(path).LinkTarget is not null;
         string target = there ? File.ResolveLinkTarget(path, returnFinalTarget: true)?.FullName ?? path : path;
         if (!there)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
         }
-        byte[] preamble = written.HasBom ? Preamble(written.Encoding) : [];
-        byte[] body = written.Encoding.GetBytes(crBreaks ? LineEndings.In(text, "\r") : text);
+        byte[]? before = Wrote is not null && there ? Before(target) : null;
         string temporary = target + SaveSuffix;
         try
         {
@@ -153,7 +177,20 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
             File.Delete(temporary);
             throw;
         }
-        return (written, unheld is null ? null : $"{Path.GetFileName(path)} was saved as UTF-8: {FileEncoding.Of(encoding, bom).Name} cannot hold '{unheld}'");
+        Wrote?.Invoke(path, before, preamble.Length == 0 ? body : [.. preamble, .. body]);
+    }
+
+    /// <summary>What a file about to be written over holds, when Local History would keep it.</summary>
+    private static byte[]? Before(string target)
+    {
+        try
+        {
+            return new FileInfo(target).Length <= KeptLimit ? Read(target) : null;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
     }
 
     /// <summary>Moves the written file over the target. Windows refuses that while another program holds the target

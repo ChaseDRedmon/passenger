@@ -1,0 +1,241 @@
+using Passenger.App.History;
+using Passenger.App.Vcs;
+using Passenger.App.Workspace;
+using Passenger.Core;
+using Passenger.Editor;
+using Passenger.Text;
+
+namespace Passenger.App;
+
+/// <summary>Rider's Local History: each version of the open folder's files saved, changed elsewhere ("External change"),
+/// deleted or moved, with labels (Put Label's, a test run's, a Git operation's, a refactoring's), in its tool window. File
+/// and the editor's menu have Local History's Show History (the file shown, or the Explorer's chosen row), Show Project
+/// History, Recent Changes and Put Label; the Explorer has Show Local History. A version shows beside the file now, an
+/// arrow putting one change back; Revert puts the whole version back as one undoable step.</summary>
+public partial class MainWindow
+{
+    private const string LocalHistoryMenu = "File/Local History";
+
+    private LocalHistory? localHistory;
+    private LocalHistoryView? localHistoryView;
+
+    /// <summary>The refactoring last asked for, which names what it writes in Local History.</summary>
+    private string? refactoring;
+
+    /// <summary>How long and how much Local History keeps, and its clock: Rider's 5 days of activity unless a test says.</summary>
+    public HistoryKeeping HistoryKeeping { get; init; } = new();
+
+    /// <summary>The open folder's Local History, or null with none open.</summary>
+    public LocalHistory? LocalHistory => localHistory;
+
+    /// <summary>The Local History tool window.</summary>
+    public LocalHistoryView LocalHistoryWindow => localHistoryView!;
+
+    private void AddLocalHistory()
+    {
+        localHistoryView = new LocalHistoryView();
+        Dock.Add(new Docking.ToolWindow("localHistory", "Local History", "Icon.History", localHistoryView, Docking.ToolAnchor.BottomLeft)
+        {
+            HeaderTools = localHistoryView.Tabs,
+        });
+        // Rider's names: the menus' own, and Find Action's (Show Local History...) beside the Git window's Show History.
+        actions!.Add(new IdeAction(AppActions.ShowLocalHistory, "Show Local History...", "Local History", context => ShowLocalHistory(Target(context, fileOnly: false)!))
+        {
+            TitleIn = _ => "Show History...",
+            WhyNot = context => NeedsFolder(context) ?? WhyNoTarget(context, fileOnly: false),
+            Menus = [new MenuPlace(LocalHistoryMenu, 0, 0)],
+        });
+        actions.Add(new IdeAction(AppActions.ShowProjectHistory, "Show Local History for Project...", "Local History", _ => ShowLocalHistory(folder!))
+        {
+            TitleIn = _ => "Show Project History...",
+            WhyNot = NeedsFolder,
+            Menus = [new MenuPlace(LocalHistoryMenu, 1, 0)],
+        });
+        actions.Add(new IdeAction(AppActions.RecentChanges, "Recent Changes", "Local History", context => _ = ShowRecentChangesAsync())
+        {
+            WhyNot = NeedsFolder,
+            Menus = [new MenuPlace(LocalHistoryMenu, 1, 1)],
+        });
+        actions.Add(new IdeAction(AppActions.PutLabel, "Put Label...", "Local History", _ => ShowPutLabel())
+        {
+            WhyNot = NeedsFolder,
+            Menus = [new MenuPlace(LocalHistoryMenu, 1, 2)],
+        });
+        Editors.Opened += (_, document) => LookAt(document);
+        Closed += (_, _) => LeaveLocalHistory();
+        // Rider's system labels and activities: a test run's end, a Git operation's changes, a refactoring's.
+        tests.Ran += (_, passed) => localHistory?.Label(passed ? "Tests Passed" : "Tests Failed", system: true);
+        vcs.Activity = name => localHistory?.During(name);
+        // Another action since (a quick fix) is not the refactoring, though it may edit files the same way.
+        actions.Running += (_, action) => refactoring = action.Menus.Any(m => m.Path == "Refactor") ? action.Title.TrimEnd('.') : null;
+        // What a refactoring writes to files not open is one change set under its name; a quick fix's is not named.
+        Editors.Recording = () =>
+        {
+            string? name = refactoring;
+            refactoring = null;
+            return name is null ? null : localHistory?.During(name);
+        };
+    }
+
+    /// <summary>The folder just opened has its history from now: what it kept before, and what happens to it next.</summary>
+    private void OpenLocalHistory(string opened)
+    {
+        LeaveLocalHistory();
+        localHistory = History.LocalHistory.Open(opened, StateFolder, HistoryKeeping);
+    }
+
+    /// <summary>The folder left: its histories' tabs close and it stops recording here.</summary>
+    private void LeaveLocalHistory()
+    {
+        localHistoryView?.CloseAll();
+        localHistory?.Release();
+        localHistory = null;
+    }
+
+    /// <summary>A file the editor opened: its content is what the history knows of it from now.</summary>
+    private void LookAt(OpenDocument document)
+    {
+        if (localHistory is not { } history || !history.Keeps(document.Path))
+        {
+            return;
+        }
+        try
+        {
+            if (new FileInfo(document.Path).Length <= FileText.KeptLimit)
+            {
+                history.Looked(document.Path, FileText.Read(document.Path));
+            }
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            // Gone or held as it opened: the history learns of it at its next save.
+        }
+    }
+
+    /// <summary>Show History: a file's or folder's versions in a tab of the Local History window (the one open for it, if
+    /// any); null, with why in the status bar, for one outside the open folder.</summary>
+    public HistoryTab? ShowLocalHistory(string path)
+    {
+        if (localHistory is not { } history || folder is null)
+        {
+            StatusText.Text = NoFolder;
+            return null;
+        }
+        string full = PathNames.Canonical(path);
+        if (!PathNames.Within(full, folder))
+        {
+            StatusText.Text = $"{Path.GetFileName(full)} is not in the open folder";
+            return null;
+        }
+        bool isFolder = Directory.Exists(full);
+        ShowToolWindow("localHistory");
+        return localHistoryView!.Show(full, Path.GetFileName(Path.TrimEndingDirectorySeparator(full)),
+            () => new HistoryTab(history, new HistoryHost(Editors, RevertAsync), full, isFolder));
+    }
+
+    /// <summary>Rider's Recent Changes: the folder's change sets, newest first; the one chosen opens in the project's history.</summary>
+    public async Task<ChoicePopup?> ShowRecentChangesAsync()
+    {
+        if (localHistory is not { } history || folder is not { } open)
+        {
+            StatusText.Text = NoFolder;
+            return null;
+        }
+        IReadOnlyList<HistoryEvent> events = history.Snapshot().Events;
+        IReadOnlyList<HistoryRow> rows = await BackgroundWork.Run(() => HistoryRows.OfFolder(events, open));
+        ChoicePopup popup = new("Recent Changes", "Search by name",
+            [.. rows.Select(r => new Choice(r.Title, ToolWindows.GitLogView.When(r.Time), r))], "There are no changes");
+        popup.Done += (_, chosen) =>
+        {
+            ClosePopup();
+            if (chosen?.Value is HistoryRow row)
+            {
+                ShowLocalHistory(open)?.SelectSet(row.Set);
+            }
+        };
+        ShowPopup(popup);
+        return popup;
+    }
+
+    /// <summary>Rider's Put Label: a name, put across the folder's history now.</summary>
+    public NamePopup? ShowPutLabel()
+    {
+        if (localHistory is not { } history)
+        {
+            StatusText.Text = NoFolder;
+            return null;
+        }
+        NamePopup popup = new("Put Label", string.Empty, name =>
+        {
+            string label = name.Trim();
+            if (label.Length == 0)
+            {
+                return Task.FromResult<string?>("A label needs a name");
+            }
+            history.Label(label);
+            StatusText.Text = $"Label {label} created";
+            return Task.FromResult<string?>(null);
+        });
+        popup.Done += (_, _) => ClosePopup();
+        ShowPopup(popup);
+        return popup;
+    }
+
+    /// <summary>Puts files back to versions, as one activity of the history: an open file's text as one undoable step over
+    /// the lines that differ, then saved, as Rider's revert writes the file; a closed one's bytes written as they were; one
+    /// that did not exist then deleted (to the Trash, and kept in the history).</summary>
+    private async Task RevertAsync(IReadOnlyList<(string Path, string? Version)> files, string activity)
+    {
+        if (localHistory is not { } history)
+        {
+            return;
+        }
+        List<string> refused = [];
+        using (history.During(activity))
+        {
+            foreach ((string path, string? version) in files)
+            {
+                if (version is null)
+                {
+                    if ((File.Exists(path) || Directory.Exists(path)) && !await DeleteAsync(path, asked: true))
+                    {
+                        refused.Add(Path.GetFileName(path));
+                    }
+                    continue;
+                }
+                byte[]? bytes = await BackgroundWork.Run(() => history.Content(version));
+                if (bytes is null)
+                {
+                    refused.Add($"{Path.GetFileName(path)} (its content is no longer kept)");
+                    continue;
+                }
+                if (Editors.Documents.FirstOrDefault(d => PathNames.Same(d.Path, path)) is { } open)
+                {
+                    string text = FileText.FromBytes(bytes, open.Encoding)?.Text ?? string.Empty;
+                    string now = open.Text.Snapshot.ToString();
+                    if (text != now)
+                    {
+                        open.Text.BreakUndoGroup();
+                        CSharp.WorkspaceEdits.ApplyTo(Editors, open, LineDiff.Edits(now, text));
+                        open.Text.BreakUndoGroup();
+                    }
+                    if (open.IsModified && !Editors.Save(open))
+                    {
+                        refused.Add(open.Name);
+                    }
+                    continue;
+                }
+                try
+                {
+                    FileText.Restore(path, bytes);
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                {
+                    refused.Add($"{Path.GetFileName(path)} ({error.Message})");
+                }
+            }
+        }
+        FilesChanged();
+        StatusText.Text = refused.Count == 0 ? activity : $"Cannot revert because {string.Join(", ", refused)} could not be written";
+    }
+}

@@ -1,0 +1,420 @@
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Headless;
+using Avalonia.Headless.XUnit;
+using Avalonia.Input;
+using Avalonia.VisualTree;
+using Passenger.App;
+using Passenger.App.Explorer;
+using Passenger.App.History;
+using Passenger.App.Vcs;
+using Passenger.Core;
+using Passenger.Editor;
+using Passenger.Text;
+
+namespace Passenger.Tests;
+
+/// <summary>Rider's Local History over real files: every save and every change made elsewhere is a version, listed newest
+/// first in the Local History window with its time and name ("External change"), the person's labels among them; a
+/// version shows beside the file as it is now, Revert puts it back as one undoable step and a diff's arrow one change of
+/// it; a folder's history lists its files' versions and brings back one deleted; a file's history follows it through a
+/// rename in the Solution view; and the store keeps Rider's 5 days of activity and no more content than its limit.</summary>
+public sealed class LocalHistoryTests : IDisposable
+{
+    private const string Original = "class Shop\n{\n    int count;\n\n    void Add()\n    {\n        count++;\n    }\n\n    int Total => count;\n}\n";
+
+    // Each save changes another line of it, so a version against now differs in as many places as saves since.
+    private static readonly string Saved1 = Original.Replace("    int count;", "    long int count;", StringComparison.Ordinal);
+    private static readonly string Saved2 = Saved1.Replace("        count++;", "        count++; count++;", StringComparison.Ordinal);
+    private static readonly string Saved3 = Saved2.Replace("    int Total", "    public int Total", StringComparison.Ordinal);
+
+    private readonly string folder = PathNames.Canonical(TestFolders.Create("local-history-"));
+    private readonly string trash = TestFolders.Create("trash-");
+    private long clock;
+
+    public LocalHistoryTests() => Trash.Folder = trash;
+
+    public void Dispose()
+    {
+        Trash.Folder = null;
+        TestFolders.Delete(folder);
+        TestFolders.Delete(trash);
+    }
+
+    [AvaloniaFact]
+    public void Three_saves_and_a_change_made_elsewhere_are_four_versions_newest_first_the_last_named_an_external_change()
+    {
+        string shop = Write("Shop.cs", Original);
+        MainWindow window = Open("Shop.cs");
+        SaveThree(window);
+
+        // Another program writes the file; the open file takes it, and the history keeps it as Rider names it.
+        string elsewhere = Saved3.Replace("class Shop", "sealed class Shop", StringComparison.Ordinal);
+        File.WriteAllText(shop, elsewhere);
+        Ui.WaitFor(() => Text(window) == elsewhere, "the open file to take the change made elsewhere");
+
+        HistoryTab history = ShowFromFileMenu(window, "Show History...");
+        Assert.True(window.DockHost.IsShown("localHistory"), "Show History left the Local History window hidden");
+        Assert.Equal(["Shop.cs"], window.LocalHistoryWindow.Titles);
+        Ui.Landed(() => history.Rows.Count == 4, "the four versions: three saves and the change made elsewhere");
+        Assert.Equal(["External change", "Change", "Change", "Change"], history.Rows.Select(r => r.Title));
+        Assert.True(history.Rows.Zip(history.Rows.Skip(1)).All(p => p.First.Time >= p.Second.Time), "The versions are not listed newest first");
+
+        // Opened, the history shows its newest row: the file before the change made elsewhere, beside the file now.
+        Assert.Same(history.Rows[0], history.Selected);
+        Ui.Landed(() => history.Diff?.Left.Document.Snapshot.ToString() == Saved3, "the file as saved last, before the external change");
+        Assert.Equal([new DiffHunk(0, 1, 0, 1)], history.Diff!.Hunks);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void An_old_versions_diff_shows_what_changed_since_beside_the_open_file()
+    {
+        Write("Shop.cs", Original);
+        MainWindow window = Open("Shop.cs");
+        SaveThree(window);
+
+        // From the editor's menu, Local History, as Rider's has it.
+        ChooseFromEditorMenu(window, "Local History", "Show History...");
+        HistoryTab history = window.LocalHistoryWindow.Shown!;
+        Ui.Landed(() => history.Rows.Count == 3, "the three saves");
+        history.Select(history.Rows[^1]);
+        Ui.Landed(() => history.Diff?.Left.Document.Snapshot.ToString() == Original, "the oldest version, the file before its first save");
+        Assert.Same(window.EditorArea.Active!.Text, history.Diff!.Right.Document);
+        Assert.Equal([new DiffHunk(2, 1, 2, 1), new DiffHunk(6, 1, 6, 1), new DiffHunk(9, 1, 9, 1)], history.Diff.Hunks);
+
+        // The version between shows only the changes made after it.
+        history.Select(history.Rows[1]);
+        Ui.Landed(() => history.Diff?.Left.Document.Snapshot.ToString() == Saved1, "the version after the first save");
+        Assert.Equal([new DiffHunk(6, 1, 6, 1), new DiffHunk(9, 1, 9, 1)], history.Diff!.Hunks);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Revert_puts_a_version_back_as_one_undoable_step_and_a_diffs_arrow_puts_back_one_change()
+    {
+        string shop = Write("Shop.cs", Original);
+        MainWindow window = Open("Shop.cs");
+        SaveThree(window);
+        HistoryTab history = ShowFromFileMenu(window, "Show History...");
+        Ui.Landed(() => history.Rows.Count == 3, "the three saves");
+
+        // The version after the first save comes back, written to the file, under Rider's name for a revert.
+        history.Select(history.Rows[1]);
+        Ui.Settle();
+        Task reverting = history.RevertAsync();
+        Ui.WaitFor(() => reverting.IsCompleted, "the revert");
+        Assert.Equal(Saved1, Text(window));
+        Assert.Equal(Saved1, File.ReadAllText(shop));
+        Assert.False(window.EditorArea.Active!.IsModified, "The revert was not written to the file");
+        Ui.Landed(() => history.Rows.Count == 4 && history.Rows[0].Title.StartsWith("Revert to ", StringComparison.Ordinal), "the revert kept as a version of its own");
+
+        // One undo takes the whole revert back.
+        window.EditorArea.CodeEditor.Focus();
+        Ui.Run(window, EditorActions.Undo);
+        Assert.Equal(Saved3, Text(window));
+
+        // Against the first version, the arrow on one change puts back that change alone.
+        history.Select(history.Rows[^1]);
+        Ui.Landed(() => history.Diff?.Left.Document.Snapshot.ToString() == Original && history.Diff.Hunks.Count == 3, "the first version's three changes");
+        history.Diff!.Revert(history.Diff.Hunks[1]);
+        Ui.Settle();
+        Assert.Equal(Saved3.Replace("count++; count++;", "count++;", StringComparison.Ordinal), Text(window));
+        Assert.Equal([new DiffHunk(2, 1, 2, 1), new DiffHunk(9, 1, 9, 1)], history.Diff.Hunks);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Put_label_puts_a_label_among_the_versions_that_shows_the_file_as_it_was_then()
+    {
+        Write("Shop.cs", Original);
+        MainWindow window = Open("Shop.cs");
+        Save(window, 2, 4, "long ");
+        ChooseFromEditorMenu(window, "Local History", "Put Label...");
+        Assert.IsType<NamePopup>(window.Popup);
+        window.KeyTextInput("Before cleanup");
+        Ui.Press(window, "ENTER");
+        Assert.False(window.IsPopupOpen, "The label's name was refused");
+        Assert.Equal("Label Before cleanup created", window.Status);
+        Save(window, 6, 8, "count++; ");
+
+        HistoryTab history = ShowFromFileMenu(window, "Show History...");
+        Ui.Landed(() => history.Rows.Count == 3, "the two saves and the label between them");
+        Assert.Equal(["Change", "Before cleanup", "Change"], history.Rows.Select(r => r.Title));
+        Assert.True(history.Rows[1].IsLabel, "The label is listed as a change, not a label");
+        history.Select(history.Rows[1]);
+        Ui.Landed(() => history.Diff?.Left.Document.Snapshot.ToString() == Saved1, "the file as it was when the label was put");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void What_a_git_checkout_changes_is_kept_under_Riders_name_for_it_not_as_an_external_change()
+    {
+        string shop = Write("Shop.cs", Original);
+        TestGit.Init(folder);
+        TestGit.Run(folder, "switch", "-q", "-c", "side");
+        File.WriteAllText(shop, Saved1);
+        TestGit.Run(folder, "commit", "-q", "-am", "Long");
+        TestGit.Run(folder, "switch", "-q", "main");
+        MainWindow window = Open("Shop.cs");
+        Ui.WaitFor(() => window.Vcs.Repository is not null, "the folder's repository");
+
+        Task<VcsOutcome> checkout = window.Vcs.CheckoutAsync("side");
+        Ui.WaitFor(() => checkout.IsCompleted && Text(window) == Saved1, "side checked out and the open file following it");
+        Assert.True(checkout.Result.Succeeded, checkout.Result.Message);
+        HistoryTab history = ShowFromFileMenu(window, "Show History...");
+        Ui.WaitFor(() => history.Rows.Count == 1, "the checkout's change to the file");
+        Assert.Equal("Git checkout", history.Rows[0].Title);
+        Ui.Landed(() => history.Diff?.Left.Document.Snapshot.ToString() == Original, "the file as main had it");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_folders_history_lists_its_files_versions_and_brings_back_a_file_deleted_in_the_explorer()
+    {
+        string a = Write("src/A.cs", "class A\n{\n}\n");
+        string b = Write("src/B.cs", "class B\n{\n}\n");
+        Write("Notes.txt", "notes\n");
+        MainWindow window = Open("src/A.cs");
+        Save(window, 0, 0, "sealed ");
+        window.OpenFile(b);
+        Save(window, 0, 0, "sealed ");
+        window.OpenFile(Path.Combine(folder, "Notes.txt"));
+        Save(window, 0, 5, " kept");
+        const string savedB = "sealed class B\n{\n}\n";
+        Assert.Equal(savedB, File.ReadAllText(b));
+
+        // Deleted from the Explorer, as a person deletes it.
+        window.Confirm = (_, _, _) => Task.FromResult(true);
+        RightClick(window, Show(window, b));
+        ChooseFromMenu(window, "Edit", "Delete...");
+        Ui.WaitFor(() => !File.Exists(b), "B.cs deleted");
+
+        // The folder's history from its row: its files' changes only, the newest first.
+        RightClick(window, Show(window, Path.Combine(folder, "src")));
+        ChooseFromMenu(window, null, "Show Local History");
+        HistoryTab history = window.LocalHistoryWindow.Shown!;
+        Assert.Equal("src", window.LocalHistoryWindow.Titles.Single());
+        Ui.Landed(() => history.Rows.Count == 3, "A.cs's save, B.cs's save and B.cs's deletion");
+        Assert.Equal(["Delete B.cs", "Modify B.cs", "Modify A.cs"], history.Rows.Select(r => r.Title));
+
+        // Before the deletion, B.cs was there as saved: its row shows it, and Revert brings it back.
+        Ui.Landed(() => history.Files.Count == 1, "the file the deletion took");
+        Assert.Equal((PathNames.Canonical(b), ChangeKind.Deleted), (history.Files[0].Path, history.Files[0].Kind));
+        Ui.Landed(() => history.Diff?.Left.Document.Snapshot.ToString() == savedB, "B.cs as it was deleted");
+        Task reverting = history.RevertAsync();
+        Ui.WaitFor(() => reverting.IsCompleted, "the revert");
+        Assert.Equal(savedB, File.ReadAllText(b));
+
+        // Before A.cs's save, both files were as they were first seen.
+        history.Select(history.Rows.First(r => r.Title == "Modify A.cs"));
+        Ui.Landed(() => history.Files.Count == 2, "A.cs and B.cs changed since");
+        Assert.Equal([(PathNames.Canonical(a), ChangeKind.Modified), (PathNames.Canonical(b), ChangeKind.Modified)], history.Files.Select(f => (f.Path, f.Kind)));
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_files_history_follows_it_through_a_rename_in_the_solution_view()
+    {
+        Write("Shop/Shop.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+        Write("Shop.slnx", "<Solution>\n  <Project Path=\"Shop/Shop.csproj\" />\n</Solution>\n");
+        string order = Write("Shop/Order.cs", Original);
+        MainWindow window = Open("Shop/Order.cs");
+        Save(window, 2, 4, "long ");
+
+        RightClick(window, Show(window, order));
+        ChooseFromMenu(window, "Edit", "Rename...");
+        NamePopup popup = Assert.IsType<NamePopup>(window.Popup);
+        popup.Text = string.Empty;
+        window.KeyTextInput("Purchase.cs");
+        Ui.Press(window, "ENTER");
+        Assert.False(window.IsPopupOpen, $"The new name was refused: {popup.Problem}");
+        string purchase = Path.Combine(folder, "Shop", "Purchase.cs");
+        Assert.True(File.Exists(purchase));
+        Save(window, 6, 8, "count++; ");
+
+        RightClick(window, Show(window, purchase));
+        ChooseFromMenu(window, null, "Show Local History");
+        HistoryTab history = window.LocalHistoryWindow.Shown!;
+        Ui.Landed(() => history.Rows.Count == 3, "the saves under both names and the rename between them");
+        Assert.Equal(["Change", "Rename Order.cs to Purchase.cs", "Change"], history.Rows.Select(r => r.Title));
+        history.Select(history.Rows[^1]);
+        Ui.Landed(() => history.Diff?.Left.Document.Snapshot.ToString() == Original, "the file as it was under its old name");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void The_store_keeps_days_of_activity_as_Riders_does_and_no_more_content_than_its_limit()
+    {
+        // Twelve saves six hours apart are three days of work: a store keeping one day keeps the last four of them, past
+        // the pruning it does as each day turns and as it opens again.
+        string kept = TestFolders.Create("history-state-");
+        Write("Shop.cs", Original);
+        Set(new DateTimeOffset(2026, 3, 2, 9, 0, 0, TimeSpan.Zero));
+        HistoryKeeping day = new(Days: 1) { Clock = Now };
+        MainWindow window = Open("Shop.cs", kept, day);
+        for (int save = 1; save <= 12; save++)
+        {
+            Set(Now() + TimeSpan.FromHours(6));
+            SaveEdit(window, new TextEdit(0, 0, $"// {save}\n"));
+        }
+        HistoryTab history = ShowFromFileMenu(window, "Show History...");
+        Ui.Landed(() => history.Rows.Count is > 0 and < 12, "the oldest saves pruned as the days turned");
+        window.Close();
+
+        MainWindow again = Open("Shop.cs", kept, day);
+        history = ShowFromFileMenu(again, "Show History...");
+        Ui.Landed(() => history.Rows.Count == 4, "the last day's four saves");
+        history.Select(history.Rows[^1]);
+        string eighth = string.Concat(Enumerable.Range(1, 8).Reverse().Select(n => $"// {n}\n")) + Original;
+        Ui.Landed(() => history.Diff?.Left.Document.Snapshot.ToString() == eighth, "the oldest kept version, the file after the eighth save");
+        Assert.Equal(4, File.ReadAllLines(Path.Combine(again.LocalHistory!.Root, "changes.log")).Length);
+        again.Close();
+
+        // Versions of too much content: the oldest go until what is left fits, the newest always kept.
+        string small = TestFolders.Create("history-state-");
+        HistoryKeeping bytes = new(Days: 5, Bytes: 16_000) { Clock = Now };
+        MainWindow third = Open("Shop.cs", small, bytes);
+        Random random = new(9);
+        for (int save = 1; save <= 8; save++)
+        {
+            // Each a day apart, so the store prunes as each day turns.
+            Set(Now() + TimeSpan.FromHours(25));
+            string noise = Convert.ToHexString(random.GetItems<byte>(Enumerable.Range(0, 256).Select(i => (byte)i).ToArray(), 3000));
+            SaveEdit(third, new TextEdit(0, third.EditorArea.CodeEditor.Document.Snapshot.Length, $"// {save}\n{noise}\n"));
+        }
+        history = ShowFromFileMenu(third, "Show History...");
+        Ui.Landed(() => history.Rows.Count is >= 1 and < 8, "the oldest versions pruned past the store's limit");
+        Assert.StartsWith("// 7\n", Version(history, 0), StringComparison.Ordinal);
+        third.Close();
+    }
+
+    private DateTimeOffset Now() => new(Interlocked.Read(ref clock), TimeSpan.Zero);
+
+    private void Set(DateTimeOffset now) => Interlocked.Exchange(ref clock, now.UtcTicks);
+
+    private static string Version(HistoryTab history, int row)
+    {
+        history.Select(history.Rows[row]);
+        Ui.Settle();
+        return history.Diff!.Left.Document.Snapshot.ToString();
+    }
+
+    /// <summary>Three saves of three edits, each to a line of its own.</summary>
+    private static void SaveThree(MainWindow window)
+    {
+        Save(window, 2, 4, "long ");
+        Save(window, 6, 8, "count++; ");
+        Save(window, 9, 4, "public ");
+        Assert.Equal(Saved3, Text(window));
+    }
+
+    /// <summary>Types at a place in the file shown and saves it with Save's keys.</summary>
+    private static void Save(MainWindow window, int line, int column, string text)
+    {
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        editor.Focus();
+        editor.GoTo(new TextPosition(line, column));
+        window.KeyTextInput(text);
+        Ui.Settle();
+        Ui.Run(window, AppActions.Save);
+        Assert.False(window.EditorArea.Active!.IsModified, "The save did not write the file");
+    }
+
+    /// <summary>An edit made in the file shown, as a paste would make it, then saved with Save's keys.</summary>
+    private static void SaveEdit(MainWindow window, TextEdit edit)
+    {
+        window.EditorArea.CodeEditor.Focus();
+        window.EditorArea.CodeEditor.ApplyEdits([edit]);
+        Ui.Settle();
+        Ui.Run(window, AppActions.Save);
+        Assert.False(window.EditorArea.Active!.IsModified, "The save did not write the file");
+    }
+
+    private MainWindow Open(string file, string? state = null, HistoryKeeping? keeping = null)
+    {
+        MainWindow window = state is null ? new() { Width = 1200, Height = 800 } : new() { Width = 1200, Height = 800, StateFolder = state, HistoryKeeping = keeping! };
+        window.Show();
+        window.OpenFolder(folder);
+        window.OpenFile(Path.Combine(folder, file));
+        window.EditorArea.CodeEditor.Focus();
+        Ui.Settle();
+        return window;
+    }
+
+    /// <summary>File, Local History, and one of its items, as the menu bar runs it.</summary>
+    private static HistoryTab ShowFromFileMenu(MainWindow window, string item)
+    {
+        NativeMenu menu = Ui.Submenu(Ui.Submenu(window.MenuBar, "File"), "Local History");
+        NativeMenuItem chosen = menu.Items.OfType<NativeMenuItem>().FirstOrDefault(i => i.Header == item)
+            ?? throw new InvalidOperationException($"File, Local History has no {item}: [{string.Join(", ", menu.Items.OfType<NativeMenuItem>().Select(i => i.Header))}]");
+        Assert.True(chosen.IsEnabled, $"File, Local History, {item} is disabled");
+        chosen.Command!.Execute(null);
+        Ui.Settle();
+        return window.LocalHistoryWindow.Shown ?? throw new InvalidOperationException($"{item} showed no history: {window.Status}");
+    }
+
+    /// <summary>Opens the editor's menu at the caret and chooses an item of a submenu, as clicks on them would.</summary>
+    private static void ChooseFromEditorMenu(MainWindow window, string submenu, string item)
+    {
+        window.EditorArea.CodeEditor.RequestContextMenu();
+        Ui.Settle();
+        ContextMenu menu = window.OpenContextMenu ?? throw new InvalidOperationException("The editor's menu did not open");
+        MenuItem parent = menu.Items.OfType<MenuItem>().FirstOrDefault(i => (string?)i.Header == submenu)
+            ?? throw new InvalidOperationException($"The menu has no {submenu}: [{string.Join(", ", menu.Items.OfType<MenuItem>().Select(i => i.Header))}]");
+        Click(menu, parent.Items.OfType<MenuItem>(), item, submenu);
+    }
+
+    private static void ChooseFromMenu(MainWindow window, string? submenu, string item)
+    {
+        ContextMenu menu = window.ExplorerView.OpenMenu ?? throw new InvalidOperationException("No menu opened on the row");
+        IEnumerable<MenuItem> items = menu.Items.OfType<MenuItem>();
+        if (submenu is not null)
+        {
+            items = (items.FirstOrDefault(i => (string?)i.Header == submenu)
+                ?? throw new InvalidOperationException($"The row's menu has no {submenu}: [{string.Join(", ", items.Select(i => i.Header))}]")).Items.OfType<MenuItem>();
+        }
+        Click(menu, items, item, submenu ?? "The row's menu");
+    }
+
+    private static void Click(ContextMenu menu, IEnumerable<MenuItem> items, string item, string where)
+    {
+        MenuItem chosen = items.FirstOrDefault(i => (string?)i.Header == item)
+            ?? throw new InvalidOperationException($"{where} has no {item}: [{string.Join(", ", items.Select(i => i.Header))}]");
+        Assert.True(chosen.IsEnabled, $"{where}, {item} is disabled");
+        chosen.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
+        menu.Close();
+        Ui.Settle();
+    }
+
+    /// <summary>Opens the Explorer's folders down to a file or folder, as a person does to get to it, and gives its row.</summary>
+    private static ExplorerNode Show(MainWindow window, string path)
+    {
+        window.ExplorerView.Reveal(PathNames.Canonical(path));
+        Ui.Settle();
+        return window.ExplorerView.Tree.Rows.FirstOrDefault(r => r.Path == PathNames.Canonical(path))
+            ?? throw new InvalidOperationException($"The Explorer does not show {path}: [{string.Join(", ", window.ExplorerView.Tree.Rows.Select(r => r.Name))}]");
+    }
+
+    private static void RightClick(MainWindow window, ExplorerNode row)
+    {
+        ListBox rows = window.ExplorerView.GetVisualDescendants().OfType<ListBox>().First(l => ReferenceEquals(l.ItemsSource, window.ExplorerView.Tree.Rows));
+        rows.ScrollIntoView(row);
+        Ui.Settle();
+        Control item = rows.ContainerFromItem(row) ?? throw new InvalidOperationException($"The Explorer does not show {row.Name}");
+        Point at = item.TranslatePoint(new Point(item.Bounds.Width / 2, item.Bounds.Height / 2), window)!.Value;
+        window.MouseDown(at, MouseButton.Right);
+        window.MouseUp(at, MouseButton.Right);
+        Ui.Settle();
+    }
+
+    private static string Text(MainWindow window) => window.EditorArea.Active!.Text.Snapshot.ToString();
+
+    private string Write(string relative, string text)
+    {
+        string path = Path.Combine(folder, relative);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, text);
+        return path;
+    }
+}

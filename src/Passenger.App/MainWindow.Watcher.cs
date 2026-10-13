@@ -46,6 +46,7 @@ public partial class MainWindow
         {
             return;
         }
+        localHistory?.Noticed(changes.Paths);
         if (changes.Projects)
         {
             ReloadSolution();

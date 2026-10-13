@@ -23,6 +23,9 @@ public sealed class ActionRegistry(Func<ActionContext> context, Func<Keymap> key
 
     public IdeAction? this[string id] => byId.GetValueOrDefault(id);
 
+    /// <summary>An action about to run, however it was asked for: Local History names what a refactoring writes by it.</summary>
+    public event EventHandler<IdeAction>? Running;
+
     /// <summary>Every action, in the order Find Action lists them before anything is typed: by group, then title.</summary>
     public IReadOnlyList<IdeAction> All => sorted ??=
         [.. byId.Values.OrderBy(a => a.Group, StringComparer.Ordinal).ThenBy(a => a.Title, StringComparer.Ordinal)];
@@ -70,6 +73,7 @@ public sealed class ActionRegistry(Func<ActionContext> context, Func<Keymap> key
         {
             return why;
         }
+        Running?.Invoke(this, byId[id]);
         byId[id].Run(context);
         return null;
     }

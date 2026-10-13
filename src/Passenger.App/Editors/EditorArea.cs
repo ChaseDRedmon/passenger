@@ -193,6 +193,15 @@ public sealed partial class EditorArea : UserControl
         return new FileHold(this, document);
     }
 
+    /// <summary>A file's document for something beside the tabs to show and edit (Local History's diff): the open one, else
+    /// one read from disk with no tab, held (<see cref="Hold"/>) until the hold is disposed. Null when it cannot be read as
+    /// text.</summary>
+    public (OpenDocument Document, IDisposable Hold)? Borrow(string path) => Load(path) is { } document ? (document, Hold(document)) : null;
+
+    /// <summary>Names a change made across files through these editors (a refactoring's), for Local History: held while
+    /// the change is made.</summary>
+    public Func<IDisposable?>? Recording { get; set; }
+
     private bool Close(OpenDocument document, bool forGood)
     {
         if (document.IsModified && !TrySave(document))

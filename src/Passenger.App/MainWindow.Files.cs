@@ -60,6 +60,9 @@ public partial class MainWindow
             case ExplorerAction.ShowHistory or ExplorerAction.CompareWithRevision or ExplorerAction.CompareWithBranch:
                 await ExplorerGitAsync(action, node);
                 break;
+            case ExplorerAction.ShowLocalHistory when Target(node, fileOnly: false) is { } shown:
+                ShowLocalHistory(shown);
+                break;
             case ExplorerAction.RunTests or ExplorerAction.DebugTests:
                 RunProjectTests([.. Explorer.SelectedNodes.Append(node).Distinct().SelectMany(Explorer.Tree.ProjectsOf).Distinct()], node.Name, action == ExplorerAction.DebugTests);
                 break;
@@ -388,6 +391,7 @@ public partial class MainWindow
         debug.Breakpoints.Move(move.From, move.To);
         history.Move(move.From, move.To);
         vcs.Moved(move.From, move.To);
+        localHistory?.Moved(move.From, move.To);
         for (int i = 0; i < recent.Count; i++)
         {
             recent[i] = PathNames.Moved(recent[i], move.From, move.To);
@@ -430,7 +434,7 @@ public partial class MainWindow
     }
 
     /// <summary>Deletes a file or folder to the Trash, once asked (unless it was already); its open files close without
-    /// saving once it is gone, and keep their edits when it could not go.</summary>
+    /// saving once it is gone, and keep their edits when it could not go. Local History keeps what it took.</summary>
     public async Task<bool> DeleteAsync(string path, bool asked = false)
     {
         string what = Path.GetFileName(path);
@@ -439,9 +443,15 @@ public partial class MainWindow
         {
             return false;
         }
+        History.LocalHistory? keeping = localHistory;
+        History.HistoryDeletion? taken = keeping is null ? null : await keeping.CaptureAsync(path);
         try
         {
             Trash.Move(path);
+            if (taken is not null)
+            {
+                keeping!.Deleted(taken);
+            }
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {

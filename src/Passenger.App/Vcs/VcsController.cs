@@ -112,6 +112,10 @@ public sealed class VcsController
     /// left behind for the next save to write over what git put there.</summary>
     public Action? SaveFirst { get; set; }
 
+    /// <summary>Names what an operation does to the files, for Local History, by Rider's activity names (Git checkout,
+    /// Rollback, Update from VCS): what it changes is kept under that name until the hold is disposed.</summary>
+    public Func<string, IDisposable?>? Activity { get; set; }
+
     /// <summary>Done once the folder last opened is known to be in a working tree or not, so a question asked straight
     /// after a folder opens (an agent's first call) waits for that rather than hearing there is none.</summary>
     public Task Opened => opening?.Task ?? Task.CompletedTask;
@@ -531,6 +535,8 @@ public sealed class VcsController
         }
         SaveFirst?.Invoke();
         Message?.Invoke(this, "Updating...");
+        // Named until Git is read again, so the folder watcher has heard of what it changed.
+        using IDisposable? named = Activity?.Invoke("Update from VCS");
         GitResult pulled = await repository.PullAsync();
         ReloadOpenFiles();
         await RefreshAsync();
@@ -581,34 +587,34 @@ public sealed class VcsController
     public async Task<string?> LastMessageAsync() => git is { } repository ? await repository.LastMessageAsync() : null;
 
     public Task<VcsOutcome> CheckoutAsync(string branch) =>
-        SwitchAsync(repository => repository.CheckoutAsync(branch), $"Checked out {branch}");
+        SwitchAsync(repository => repository.CheckoutAsync(branch), $"Checked out {branch}", "Git checkout");
 
     /// <summary>The Git log's commit actions, as Rider's: each saves first, and the open files follow what it did.</summary>
     public Task<VcsOutcome> CheckoutRevisionAsync(string hash) =>
-        SwitchAsync(repository => repository.CheckoutRevisionAsync(hash), $"Checked out {Short(hash)}");
+        SwitchAsync(repository => repository.CheckoutRevisionAsync(hash), $"Checked out {Short(hash)}", "Git checkout");
 
     public Task<VcsOutcome> NewBranchAtAsync(string name, string hash) =>
-        SwitchAsync(repository => repository.NewBranchAtAsync(name, hash), $"Created and checked out {name} at {Short(hash)}");
+        SwitchAsync(repository => repository.NewBranchAtAsync(name, hash), $"Created and checked out {name} at {Short(hash)}", "Git checkout");
 
     public Task<VcsOutcome> CherryPickAsync(string hash) =>
-        SwitchAsync(repository => repository.CherryPickAsync(hash), $"Cherry-picked {Short(hash)}", "Cherry-pick was performed with conflicts");
+        SwitchAsync(repository => repository.CherryPickAsync(hash), $"Cherry-picked {Short(hash)}", "Git cherry-pick", "Cherry-pick was performed with conflicts");
 
     public Task<VcsOutcome> RevertAsync(string hash) =>
-        SwitchAsync(repository => repository.RevertAsync(hash), $"Reverted {Short(hash)}", "Revert was performed with conflicts");
+        SwitchAsync(repository => repository.RevertAsync(hash), $"Reverted {Short(hash)}", "Git revert", "Revert was performed with conflicts");
 
     public Task<VcsOutcome> ResetAsync(string hash, ResetMode mode) =>
-        SwitchAsync(repository => repository.ResetAsync(hash, mode), $"Reset {Branch ?? "HEAD"} to {Short(hash)} ({mode.ToString().ToLowerInvariant()})");
+        SwitchAsync(repository => repository.ResetAsync(hash, mode), $"Reset {Branch ?? "HEAD"} to {Short(hash)} ({mode.ToString().ToLowerInvariant()})", "Git reset");
 
     private static string Short(string hash) => hash.Length > 8 ? hash[..8] : hash;
 
     /// <summary>Creates a branch from the head and checks it out.</summary>
     public Task<VcsOutcome> NewBranchAsync(string name) =>
-        SwitchAsync(repository => repository.NewBranchAsync(name), $"Created and checked out {name}");
+        SwitchAsync(repository => repository.NewBranchAsync(name), $"Created and checked out {name}", "Git checkout");
 
     /// <summary>Rider's Stash Changes: every uncommitted change, new files too, put away under a message; the open files
     /// take the head's text again.</summary>
     public Task<VcsOutcome> StashAsync(string message) =>
-        SwitchAsync(repository => repository.StashAsync(message.Trim()), "Stashed the changes");
+        SwitchAsync(repository => repository.StashAsync(message.Trim()), "Stashed the changes", "Git stash");
 
     public async Task<IReadOnlyList<StashInfo>> StashesAsync() => git is { } repository ? await repository.StashesAsync() : [];
 
@@ -621,11 +627,12 @@ public sealed class VcsController
         {
             unstashed = $"stash@{{{stash.Index}}}";
         }
-        return SwitchAsync(repository => repository.UnstashAsync(stash.Index, pop), pop ? $"Unstashed {stash.Message}" : $"Applied {stash.Message}", "Unstashed with conflicts");
+        return SwitchAsync(repository => repository.UnstashAsync(stash.Index, pop), pop ? $"Unstashed {stash.Message}" : $"Applied {stash.Message}", "Git unstash",
+            "Unstashed with conflicts");
     }
 
     public Task<VcsOutcome> DropStashAsync(StashInfo stash) =>
-        SwitchAsync(repository => repository.DropStashAsync(stash.Index), $"Dropped {stash.Message}");
+        SwitchAsync(repository => repository.DropStashAsync(stash.Index), $"Dropped {stash.Message}", "Git stash");
 
     /// <summary>Puts files back as the last commit has them; the open ones take their text from disk again.</summary>
     public async Task<VcsOutcome> RollbackAsync(IReadOnlyList<FileChange> changes)
@@ -641,6 +648,7 @@ public sealed class VcsController
         return await OneAtATimeAsync(async () =>
         {
             SaveFirst?.Invoke();
+            using IDisposable? named = Activity?.Invoke("Rollback");
             GitResult rolled = await repository.RollbackAsync(changes);
             ReloadOpenFiles();
             await RefreshAsync();
@@ -685,9 +693,10 @@ public sealed class VcsController
         }
     }
 
-    /// <summary>Runs a change to the working tree and its files; one that can stop for conflicts (an unstash, a
-    /// cherry-pick) says so in <paramref name="conflicted"/>'s words when it did.</summary>
-    private async Task<VcsOutcome> SwitchAsync(Func<Git, Task<GitResult>> change, string done, string? conflicted = null)
+    /// <summary>Runs a change to the working tree and its files, what it changes kept in Local History under the
+    /// <paramref name="activity"/>'s name; one that can stop for conflicts (an unstash, a cherry-pick) says so in
+    /// <paramref name="conflicted"/>'s words when it did.</summary>
+    private async Task<VcsOutcome> SwitchAsync(Func<Git, Task<GitResult>> change, string done, string activity, string? conflicted = null)
     {
         if (git is not { } repository)
         {
@@ -697,6 +706,7 @@ public sealed class VcsController
         {
             SaveFirst?.Invoke();
             bool already = Conflicts.Count > 0;
+            using IDisposable? named = Activity?.Invoke(activity);
             GitResult switched = await change(repository);
             if (switched.Succeeded)
             {
@@ -796,7 +806,7 @@ public sealed class VcsController
             MergeOperation.CherryPick => "cherry-pick",
             _ => operation.ToString().ToLowerInvariant(),
         };
-        return SwitchAsync(repository => repository.AbortAsync(operation), $"Abort {name} succeeded");
+        return SwitchAsync(repository => repository.AbortAsync(operation), $"Abort {name} succeeded", $"Git abort {name}");
     }
 
     /// <summary>Rider's Continue Rebase, once every conflict is resolved.</summary>
@@ -810,7 +820,7 @@ public sealed class VcsController
         {
             return Task.FromResult(Report(false, "Resolve conflicts in order to continue rebase"));
         }
-        return SwitchAsync(repository => repository.ContinueRebaseAsync(), "Rebase successful", "Rebase stopped due to conflicts");
+        return SwitchAsync(repository => repository.ContinueRebaseAsync(), "Rebase successful", "Git rebase", "Rebase stopped due to conflicts");
     }
 
     /// <summary>A file's text as the last commit has it, or null when it has none (new, or outside the tree). A file
