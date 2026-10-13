@@ -633,11 +633,18 @@ public sealed partial class CodeEditor : Control
         InvalidateVisual();
     }
 
-    private void OnHighlighterChanged(object? sender, EventArgs e)
+    private void OnHighlighterChanged(object? sender, EventArgs e) => Dispatcher.UIThread.Post(Recolour);
+
+    /// <summary>New colours for the same text: the lines are formatted again, each found again if its colours stayed. When
+    /// the lines drawn keep every colour they have (a parse that finds what a key carried them to), nothing is drawn again.</summary>
+    private void Recolour()
     {
-        // New colours for the same text: the lines are formatted again, each found again if its colours stayed.
-        Interlocked.Increment(ref colouring);
-        Dispatcher.UIThread.Post(InvalidateVisual);
+        if (views.Keep(document.Snapshot, Colours))
+        {
+            return;
+        }
+        colouring++;
+        InvalidateVisual();
     }
 
     private void OnScrollBarChanged(object? sender, AvaloniaPropertyChangedEventArgs e)

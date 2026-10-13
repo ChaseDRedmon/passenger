@@ -21,6 +21,7 @@ public sealed partial class CodeEditor
 
     public override void Render(DrawingContext context)
     {
+        Frames++;
         Size size = Bounds.Size;
         double gutter = GutterWidth;
         double left = TextLeft - scroll.X;
@@ -447,8 +448,11 @@ public sealed partial class CodeEditor
                 continue;
             }
             bool current = caretLines.Contains(line);
-            TextLine number = numbers.Get((line + 1, current), () =>
-                Format((line + 1).ToString(CultureInfo.InvariantCulture), [], current ? numberRuns.Current : numberRuns.Other));
+            // Found without a closure made for each number each frame.
+            if (!numbers.TryGet((line + 1, current), out TextLine? number))
+            {
+                number = numbers.Add((line + 1, current), Format((line + 1).ToString(CultureInfo.InvariantCulture), [], current ? numberRuns.Current : numberRuns.Other));
+            }
             double y = top + (metrics.LineHeight - number.Height) / 2;
             number.Draw(context, new Point(right - number.WidthIncludingTrailingWhitespace, y));
         }

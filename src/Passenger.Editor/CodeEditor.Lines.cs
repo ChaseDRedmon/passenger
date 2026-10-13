@@ -27,6 +27,9 @@ public sealed partial class CodeEditor
     /// <summary>How many characters the editor has asked its highlighter to colour.</summary>
     public long CharactersColoured { get; private set; }
 
+    /// <summary>How many frames the editor has drawn: what a key costs to draw, for a test to count rather than time.</summary>
+    public long Frames { get; private set; }
+
     /// <summary>The views of the lines a frame shows: the ones they had while their text and colours (and a long line's
     /// window) still serve, the rest made, their colours asked for a run of neighbouring lines at a time.</summary>
     private LineView[] ViewsOf(TextSnapshot text, List<int> shown, double viewLeft, double viewWidth)
@@ -104,7 +107,9 @@ public sealed partial class CodeEditor
                 LineSpan span = lines[k].Span;
                 LineRun[] runs = Runs(spans, ref index, span.Start, span.End);
                 string content = text.GetText(span.Start, span.Length);
-                lines[k].Text = views.Formatted(new FormatKey(content, runs), () => Format(content, runs, null));
+                FormatKey key = new(content, runs);
+                lines[k].Text = views.Formatted(key) ?? views.Add(key, Format(content, runs, null));
+                lines[k].Runs = runs;
             }
             i = j + 1;
         }
@@ -122,7 +127,8 @@ public sealed partial class CodeEditor
         int index = 0;
         LineRun[] runs = Runs(spans, ref index, span.Start + start, span.Start + end);
         string content = text.GetText(span.Start + start, end - start);
-        view.Window(start, end, measure.XOf(start), views.Formatted(new FormatKey(content, runs), () => Format(content, runs, null)));
+        FormatKey key = new(content, runs);
+        view.Window(start, end, measure.XOf(start), views.Formatted(key) ?? views.Add(key, Format(content, runs, null)));
     }
 
     private IReadOnlyList<SyntaxSpan> Colours(TextSnapshot text, int start, int length)
@@ -143,18 +149,32 @@ public sealed partial class CodeEditor
         {
             index++;
         }
-        List<LineRun> runs = [];
+        // Counted first, so each line's colours are one array of their size.
+        int count = 0;
         for (int i = index; i < spans.Count && spans[i].Start < end; i++)
+        {
+            if (Math.Min(spans[i].End, end) > Math.Max(spans[i].Start, start) && spans[i].Kind != TokenKind.Text)
+            {
+                count++;
+            }
+        }
+        if (count == 0)
+        {
+            return [];
+        }
+        LineRun[] runs = new LineRun[count];
+        int made = 0;
+        for (int i = index; made < count; i++)
         {
             SyntaxSpan s = spans[i];
             int from = Math.Max(s.Start, start) - start;
             int to = Math.Min(s.End, end) - start;
             if (to > from && s.Kind != TokenKind.Text)
             {
-                runs.Add(new LineRun(from, to - from, s.Kind));
+                runs[made++] = new LineRun(from, to - from, s.Kind);
             }
         }
-        return [.. runs];
+        return runs;
     }
 
     private TextLine Format(string content, LineRun[] runs, TextRunProperties? only)
@@ -237,6 +257,10 @@ public sealed partial class CodeEditor
         public LineSpan Span { get; } = span;
         public LongLine? Long { get; } = measure;
         public Formatted? Text { get; set; }
+
+        /// <summary>The colours a whole line was formatted with.</summary>
+        public LineRun[]? Runs { get; set; }
+
         public int From { get; private set; }
         public int To { get; private set; }
         public double X { get; private set; }
@@ -330,13 +354,65 @@ public sealed partial class CodeEditor
             return view;
         }
 
-        public Formatted Formatted(FormatKey key, Func<TextLine> format)
+        /// <summary>Whether the lines in view of a text would take the colours they have from their highlighter now; if so
+        /// they are kept as they are. A long line's window is never kept so.</summary>
+        public bool Keep(TextSnapshot snapshot, Func<TextSnapshot, int, int, IReadOnlyList<SyntaxSpan>> colours)
+        {
+            if (!ReferenceEquals(text, snapshot))
+            {
+                // Made again for the text in view at the next frame anyway, with the colours as they are by then.
+                return true;
+            }
+            List<LineView> shown = [];
+            foreach (LineView view in byLine.Values)
+            {
+                if (view.Long is not null && view.Text is not null)
+                {
+                    return false;
+                }
+                if (view.Runs is not null && view.Text is not null)
+                {
+                    shown.Add(view);
+                }
+            }
+            shown.Sort((a, b) => a.Span.Line.CompareTo(b.Span.Line));
+            for (int i = 0; i < shown.Count;)
+            {
+                int j = i;
+                while (j + 1 < shown.Count && shown[j + 1].Span.Line == shown[j].Span.Line + 1)
+                {
+                    j++;
+                }
+                int start = shown[i].Span.Start;
+                IReadOnlyList<SyntaxSpan> spans = colours(snapshot, start, shown[j].Span.EndIncludingBreak - start);
+                int index = 0;
+                for (int k = i; k <= j; k++)
+                {
+                    if (!Runs(spans, ref index, shown[k].Span.Start, shown[k].Span.End).AsSpan().SequenceEqual(shown[k].Runs))
+                    {
+                        return false;
+                    }
+                }
+                i = j + 1;
+            }
+            return true;
+        }
+
+        /// <summary>The line formatted to show this, kept on for this frame, if there is one.</summary>
+        public Formatted? Formatted(FormatKey key)
         {
             if (!formatted.TryGetValue(key, out Formatted? line))
             {
-                line = new Formatted(format());
-                formatted[key] = line;
+                return null;
             }
+            line.Touch(Frame);
+            return line;
+        }
+
+        public Formatted Add(FormatKey key, TextLine text)
+        {
+            Formatted line = new(text);
+            formatted[key] = line;
             line.Touch(Frame);
             return line;
         }
@@ -667,18 +743,25 @@ public sealed partial class CodeEditor
         private Dictionary<TKey, TextLine> previous = [];
         private Dictionary<TKey, TextLine> current = [];
 
-        public TextLine Get(TKey key, Func<TextLine> format)
+        public TextLine Get(TKey key, Func<TextLine> format) => TryGet(key, out TextLine? line) ? line : Add(key, format());
+
+        /// <summary>The label kept for what it shows, kept on for this frame.</summary>
+        public bool TryGet(TKey key, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out TextLine? line)
         {
-            if (current.TryGetValue(key, out TextLine? line))
+            if (current.TryGetValue(key, out line))
             {
-                return line;
+                return true;
             }
             if (previous.Remove(key, out line))
             {
                 current[key] = line;
-                return line;
+                return true;
             }
-            line = format();
+            return false;
+        }
+
+        public TextLine Add(TKey key, TextLine line)
+        {
             current[key] = line;
             return line;
         }

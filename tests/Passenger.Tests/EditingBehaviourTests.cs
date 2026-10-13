@@ -197,6 +197,45 @@ public sealed class EditingBehaviourTests
         window.Close();
     }
 
+    /// <summary>A key draws the editor once: the parse it makes lands with the colours the key carried its words to, and a
+    /// parse that changes nothing on screen draws nothing, where every parse that landed drew the whole editor again (a
+    /// key now makes one). A parse that does change a colour on screen draws it: a word typed becomes a keyword.</summary>
+    [AvaloniaFact]
+    public void A_key_draws_the_editor_once_and_a_parse_that_changes_a_colour_on_screen_draws_it()
+    {
+        StringBuilder text = new("class Numbers\n{\n");
+        for (int i = 0; i < 40; i++)
+        {
+            text.Append(System.Globalization.CultureInfo.InvariantCulture, $"    int Twice{i}(int value) => value * 2;\n");
+        }
+        string source = text.Append("    int Last()\n    {\n        int last = 1;\n    }\n}\n").ToString();
+        (Passenger.App.MainWindow window, Passenger.Editor.CodeEditor editor) = OpenCSharp(source);
+        int literal = source.IndexOf("value * 2;", StringComparison.Ordinal) + "value * 2".Length;
+        editor.Selections = SelectionSet.Single(literal);
+        Ui.Settle();
+        for (int i = 0; i < 10; i++)
+        {
+            long frames = editor.Frames;
+            window.KeyTextInput("2");
+            Ui.Settle();
+            Assert.True(editor.Frames - frames == 1, $"Key {i + 1}, a digit in a number, drew the editor {editor.Frames - frames} times");
+            Assert.Equal(Passenger.Editor.TokenKind.Number, KindAt(editor, literal + i));
+        }
+
+        // A word the parse finds to be a keyword: the line takes its new colour in a frame of its own.
+        int end = editor.Document.Snapshot.ToString().IndexOf("int last = 1;", StringComparison.Ordinal) + "int last = 1;".Length;
+        editor.Selections = SelectionSet.Single(end);
+        window.KeyTextInput(" retur");
+        Ui.Settle();
+        Assert.NotEqual(Passenger.Editor.TokenKind.ControlKeyword, KindAt(editor, end + 1));
+        long before = editor.Frames;
+        window.KeyTextInput("n");
+        Ui.Settle();
+        Assert.Equal(Passenger.Editor.TokenKind.ControlKeyword, KindAt(editor, end + 1));
+        Assert.True(editor.Frames - before == 2, $"The key that made a keyword drew the editor {editor.Frames - before} times, not once for the key and once for the keyword's colour");
+        window.Close();
+    }
+
     [AvaloniaFact]
     public void Brackets_take_turns_in_three_colours_by_how_deeply_they_nest_and_a_comparison_is_not_one()
     {

@@ -19,6 +19,9 @@ public partial class MainWindow
     private DispatcherTimer? outlineAgain;
     private int outlining;
 
+    /// <summary>What the path shows, so a caret that moves within the same member leaves its buttons as they are.</summary>
+    private List<Crumb> shownCrumbs = [];
+
     /// <summary>The path shown, part by part.</summary>
     public IReadOnlyList<string> Breadcrumbs => [.. breadcrumbs.Children.OfType<Button>().Select(b => b.Content as string ?? string.Empty)];
 
@@ -75,51 +78,66 @@ public partial class MainWindow
 
     private void ShowBreadcrumbs()
     {
-        breadcrumbs.Children.Clear();
-        if (Editors.Active is not { } document)
+        List<Crumb> wanted = [];
+        if (Editors.Active is { } document)
         {
-            return;
-        }
-        string relative = folder is { } root && PathNames.IsUnder(document.Path, root)
-            ? Path.GetRelativePath(root, document.Path)
-            : Path.GetFileName(document.Path);
-        string[] parts = relative.Split(Path.DirectorySeparatorChar);
-        // The last two folders: a deep path would push the rest of the status bar off.
-        for (int i = Math.Max(0, parts.Length - 3); i < parts.Length - 1; i++)
-        {
-            string at = Path.Combine([folder ?? string.Empty, .. parts[..(i + 1)]]);
-            Crumb(parts[i], () => Explorer.Reveal(at), muted: true);
-        }
-        Crumb(parts[^1], () => Explorer.Reveal(document.Path), muted: false);
-        if (outlined != document.Path)
-        {
-            return;
-        }
-        ServerLines lines = ServerLines.Of(document.Text.Snapshot);
-        int line = lines.PositionOf(Editors.CodeEditor.Selections.Primary.Caret).Line;
-        IReadOnlyList<DocumentSymbol> level = outline;
-        while (level.FirstOrDefault(s => s.Range.Start.Line <= line && line <= s.Range.End.Line) is { } symbol)
-        {
-            // The namespace is the file's own context; the path names what is in it.
-            if (symbol.Kind != 3)
+            string relative = folder is { } root && PathNames.IsUnder(document.Path, root)
+                ? Path.GetRelativePath(root, document.Path)
+                : Path.GetFileName(document.Path);
+            string[] parts = relative.Split(Path.DirectorySeparatorChar);
+            // The last two folders: a deep path would push the rest of the status bar off.
+            for (int i = Math.Max(0, parts.Length - 3); i < parts.Length - 1; i++)
             {
-                string name = symbol.Name.Split(" : ")[0];
-                TextPosition target = lines.Text.GetPosition(lines.OffsetOf(symbol.SelectionRange.Start));
-                Crumb(name, () => NavigateTo(document.Path, target), muted: false);
+                wanted.Add(new Crumb(parts[i], Path.Combine([folder ?? string.Empty, .. parts[..(i + 1)]]), null, Muted: true));
             }
-            level = symbol.Children ?? [];
+            wanted.Add(new Crumb(parts[^1], document.Path, null, Muted: false));
+            if (outlined == document.Path)
+            {
+                ServerLines lines = ServerLines.Of(document.Text.Snapshot);
+                int line = lines.PositionOf(Editors.CodeEditor.Selections.Primary.Caret).Line;
+                IReadOnlyList<DocumentSymbol> level = outline;
+                while (level.FirstOrDefault(s => s.Range.Start.Line <= line && line <= s.Range.End.Line) is { } symbol)
+                {
+                    // The namespace is the file's own context; the path names what is in it.
+                    if (symbol.Kind != 3)
+                    {
+                        wanted.Add(new Crumb(symbol.Name.Split(" : ")[0], document.Path, lines.Text.GetPosition(lines.OffsetOf(symbol.SelectionRange.Start)), Muted: false));
+                    }
+                    level = symbol.Children ?? [];
+                }
+            }
+        }
+        if (wanted.SequenceEqual(shownCrumbs))
+        {
+            return;
+        }
+        shownCrumbs = wanted;
+        breadcrumbs.Children.Clear();
+        for (int i = 0; i < wanted.Count; i++)
+        {
+            Crumb part = wanted[i];
+            if (i > 0)
+            {
+                TextBlock between = new() { Text = "›", Classes = { "status" }, Margin = new Avalonia.Thickness(4, 0), VerticalAlignment = VerticalAlignment.Center };
+                breadcrumbs.Children.Add(between);
+            }
+            Button crumb = new() { Content = part.Text, Classes = { "crumb" }, Opacity = part.Muted ? 0.75 : 1 };
+            crumb.Click += (_, _) =>
+            {
+                if (part.Target is { } target)
+                {
+                    NavigateTo(part.Path, target);
+                }
+                else
+                {
+                    Explorer.Reveal(part.Path);
+                }
+            };
+            breadcrumbs.Children.Add(crumb);
         }
     }
 
-    private void Crumb(string text, Action open, bool muted)
-    {
-        if (breadcrumbs.Children.Count > 0)
-        {
-            TextBlock between = new() { Text = "›", Classes = { "status" }, Margin = new Avalonia.Thickness(4, 0), VerticalAlignment = VerticalAlignment.Center };
-            breadcrumbs.Children.Add(between);
-        }
-        Button crumb = new() { Content = text, Classes = { "crumb" }, Opacity = muted ? 0.75 : 1 };
-        crumb.Click += (_, _) => open();
-        breadcrumbs.Children.Add(crumb);
-    }
+    /// <summary>A part of the path: a folder (muted) or the file, which a click shows in the Explorer, or what the caret is
+    /// in, which it goes to.</summary>
+    private readonly record struct Crumb(string Text, string Path, TextPosition? Target, bool Muted);
 }

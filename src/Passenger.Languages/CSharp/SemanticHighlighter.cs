@@ -344,14 +344,19 @@ public sealed class SemanticHighlighter : IHighlighter, IDisposable
                 high = middle;
             }
         }
-        List<SyntaxSpan> spans = [];
-        for (int i = low; i < all.Length && all[i].Start <= to; i++)
+        int last = low;
+        while (last < all.Length && all[last].Start <= to)
+        {
+            last++;
+        }
+        List<SyntaxSpan> spans = new(last - low);
+        for (int i = low; i < last; i++)
         {
             spans.Add(all[i]);
         }
         for (int i = first; i < history.Count; i++)
         {
-            spans = Forward(spans, history[i].Edits);
+            Forward(spans, history[i].Edits);
         }
         return spans;
     }
@@ -370,8 +375,9 @@ public sealed class SemanticHighlighter : IHighlighter, IDisposable
     private static int Back(IReadOnlyList<Passenger.Text.TextEdit> batch, int offset)
     {
         int shift = 0;
-        foreach (Passenger.Text.TextEdit edit in batch)
+        for (int i = 0; i < batch.Count; i++)
         {
+            Passenger.Text.TextEdit edit = batch[i];
             int start = edit.Start + shift;
             if (offset < start)
             {
@@ -387,14 +393,15 @@ public sealed class SemanticHighlighter : IHighlighter, IDisposable
     }
 
     /// <summary>A token an edit lands inside grows or shrinks with it; one an edit crosses is dropped
-    /// until fresh tokens arrive.</summary>
-    private static List<SyntaxSpan> Forward(List<SyntaxSpan> spans, IReadOnlyList<Passenger.Text.TextEdit> batch)
+    /// until fresh tokens arrive. In place: an answer is carried through every edit since it, every frame.</summary>
+    private static void Forward(List<SyntaxSpan> spans, IReadOnlyList<Passenger.Text.TextEdit> batch)
     {
-        List<SyntaxSpan> shifted = new(spans.Count);
+        int kept = 0;
         int e = 0;
         int delta = 0;
-        foreach (SyntaxSpan span in spans)
+        for (int i = 0; i < spans.Count; i++)
         {
+            SyntaxSpan span = spans[i];
             while (e < batch.Count && batch[e].End <= span.Start)
             {
                 delta += batch[e].Text.Length - batch[e].Length;
@@ -402,19 +409,31 @@ public sealed class SemanticHighlighter : IHighlighter, IDisposable
             }
             if (e >= batch.Count || batch[e].Start > span.End || (batch[e].Start == span.End && batch[e].Length > 0))
             {
-                shifted.Add(span with { Start = span.Start + delta });
+                spans[kept++] = span with { Start = span.Start + delta };
                 continue;
             }
             Passenger.Text.TextEdit edit = batch[e];
             bool alone = e + 1 >= batch.Count || batch[e + 1].Start > span.End;
-            if (alone && edit.Length == 0 && edit.Start > span.Start && edit.Text.All(c => char.IsLetterOrDigit(c) || c == '_'))
+            if (alone && edit.Length == 0 && edit.Start > span.Start && Word(edit.Text))
             {
-                shifted.Add(new SyntaxSpan(span.Start + delta, span.Length + edit.Text.Length, span.Kind));
+                spans[kept++] = new SyntaxSpan(span.Start + delta, span.Length + edit.Text.Length, span.Kind);
                 delta += edit.Text.Length;
                 e++;
             }
         }
-        return shifted;
+        spans.RemoveRange(kept, spans.Count - kept);
+    }
+
+    private static bool Word(string text)
+    {
+        foreach (char c in text)
+        {
+            if (!char.IsLetterOrDigit(c) && c != '_')
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     /// <summary>Roslyn's token types, standard and its own, as the editor's kinds; operators and

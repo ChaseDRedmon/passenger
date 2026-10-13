@@ -130,7 +130,7 @@ public sealed class CSharpHighlighter : IHighlighter, IDisposable
         List<SyntaxSpan> spans = CSharpClassifier.Classify(root, range);
         foreach ((_, IReadOnlyList<TextEdit> batch) in sinceTree)
         {
-            spans = Forward(spans, batch);
+            Forward(spans, batch);
         }
         SyntaxSpan[] result = [.. spans];
         if (cached.Count >= 256)
@@ -250,8 +250,9 @@ public sealed class CSharpHighlighter : IHighlighter, IDisposable
     private static int Back(IReadOnlyList<TextEdit> batch, int offset, bool toEnd)
     {
         int shift = 0;
-        foreach (TextEdit edit in batch)
+        for (int i = 0; i < batch.Count; i++)
         {
+            TextEdit edit = batch[i];
             int start = edit.Start + shift;
             int end = start + edit.Text.Length;
             if (offset < start)
@@ -267,16 +268,17 @@ public sealed class CSharpHighlighter : IHighlighter, IDisposable
         return offset - shift;
     }
 
-    /// <summary>Carries colours through a batch of edits (sorted, in the old text's coordinates). A
+    /// <summary>Carries colours through a batch of edits (sorted, in the old text's coordinates), in place. A
     /// span an edit lands inside grows or shrinks with it; one an edit crosses is dropped until the
     /// next parse brings it back.</summary>
-    private static List<SyntaxSpan> Forward(List<SyntaxSpan> spans, IReadOnlyList<TextEdit> batch)
+    private static void Forward(List<SyntaxSpan> spans, IReadOnlyList<TextEdit> batch)
     {
-        List<SyntaxSpan> shifted = new(spans.Count);
+        int kept = 0;
         int e = 0;
         int delta = 0;
-        foreach (SyntaxSpan span in spans)
+        for (int i = 0; i < spans.Count; i++)
         {
+            SyntaxSpan span = spans[i];
             while (e < batch.Count && batch[e].End <= span.Start)
             {
                 delta += batch[e].Text.Length - batch[e].Length;
@@ -284,14 +286,14 @@ public sealed class CSharpHighlighter : IHighlighter, IDisposable
             }
             if (e >= batch.Count || batch[e].Start > span.End || (batch[e].Start == span.End && batch[e].Length > 0))
             {
-                shifted.Add(span with { Start = span.Start + delta });
+                spans[kept++] = span with { Start = span.Start + delta };
                 continue;
             }
             TextEdit edit = batch[e];
             bool alone = e + 1 >= batch.Count || batch[e + 1].Start > span.End;
             if (alone && edit.Length == 0 && edit.Start > span.Start)
             {
-                shifted.Add(new SyntaxSpan(span.Start + delta, span.Length + edit.Text.Length, span.Kind));
+                spans[kept++] = new SyntaxSpan(span.Start + delta, span.Length + edit.Text.Length, span.Kind);
                 delta += edit.Text.Length;
                 e++;
             }
@@ -299,12 +301,12 @@ public sealed class CSharpHighlighter : IHighlighter, IDisposable
             {
                 if (span.Length > edit.Length)
                 {
-                    shifted.Add(new SyntaxSpan(span.Start + delta, span.Length - edit.Length, span.Kind));
+                    spans[kept++] = new SyntaxSpan(span.Start + delta, span.Length - edit.Length, span.Kind);
                 }
                 delta -= edit.Length;
                 e++;
             }
         }
-        return shifted;
+        spans.RemoveRange(kept, spans.Count - kept);
     }
 }
