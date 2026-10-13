@@ -171,8 +171,16 @@ h3 { margin: 0 0 8px; font-size: 19px; line-height: 1.3; font-weight: 650; }
 .agents { display: grid; gap: 32px; }
 /* A grid item grows to its widest line unless told otherwise, and a long command would widen the page. */
 .agents > *, .feature > * { min-width: 0; }
-@media (min-width: 900px) { .agents { grid-template-columns: 1fr 1.2fr; gap: 48px; align-items: start; } }
+@media (min-width: 900px) { .agents { grid-template-columns: 1fr 1.4fr; gap: 48px; align-items: start; } }
 .agents p { color: var(--muted); margin: 0 0 16px; }
+/* Each agent's setup, one open at a time as the reader chooses. */
+.client { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); margin: 0 0 12px; }
+.client summary { cursor: pointer; padding: 10px 14px; font-weight: 600; color: var(--text); }
+.client[open] summary { border-bottom: 1px solid var(--border); }
+.client > p, .client > pre { margin: 12px 14px; }
+.client pre { font-size: 0.8em; }
+/* A path in a sentence breaks where it must on a phone rather than widening the page. */
+.agents :not(pre) > code { overflow-wrap: anywhere; }
 
 /* Downloads. */
 .downloads { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-top: 28px; }

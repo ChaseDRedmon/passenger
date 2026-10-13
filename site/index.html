@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Passenger: an IDE for C# and .NET</title>
-    <meta name="description" content="A Rider-inspired IDE for C# and .NET, written in C#: its own editor over Roslyn, debugger and profiler, with tests, Git, NuGet, a terminal and an MCP server.">
+    <meta name="description" content="A Rider-inspired IDE for C# and .NET, written in C#: its own editor over Roslyn, debugger and profiler, with tests, Git, NuGet, a terminal, and all of it open to your coding agent.">
     <link rel="canonical" href="https://passenger-ide.net/">
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
@@ -14,7 +14,7 @@
     <meta property="og:locale" content="en_US">
     <meta property="og:url" content="https://passenger-ide.net/">
     <meta property="og:title" content="Passenger: an IDE for C# and .NET, written in C#">
-    <meta property="og:description" content="Its own editor over Roslyn, debugger and profiler, with unit tests, Git, NuGet, a terminal and an MCP server for agents. Open source, for Windows, macOS and Linux.">
+    <meta property="og:description" content="Its own editor over Roslyn, debugger and profiler, with unit tests, Git, NuGet and a terminal, all of it open to your coding agent. Open source, for Windows, macOS and Linux.">
     <meta property="og:image" content="https://passenger-ide.net/images/social.png">
     <meta property="og:image:type" content="image/png">
     <meta property="og:image:width" content="1200">
@@ -22,7 +22,7 @@
     <meta property="og:image:alt" content="Passenger's editor beside the words: an IDE for C# and .NET, written in C#">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="Passenger: an IDE for C# and .NET, written in C#">
-    <meta name="twitter:description" content="Its own editor over Roslyn, debugger and profiler, with unit tests, Git, NuGet, a terminal and an MCP server for agents. Open source, for Windows, macOS and Linux.">
+    <meta name="twitter:description" content="Its own editor over Roslyn, debugger and profiler, with unit tests, Git, NuGet and a terminal, all of it open to your coding agent. Open source, for Windows, macOS and Linux.">
     <meta name="twitter:image" content="https://passenger-ide.net/images/social.png">
     <meta name="twitter:image:alt" content="Passenger's editor beside the words: an IDE for C# and .NET, written in C#">
     <meta name="theme-color" content="#1E1F22" media="(prefers-color-scheme: dark)">
@@ -33,7 +33,7 @@
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
     "name": "Passenger",
-    "description": "A Rider-inspired IDE for C# and .NET, written in C#: its own editor over Roslyn, debugger and profiler, with tests, Git, NuGet, a terminal and an MCP server.",
+    "description": "A Rider-inspired IDE for C# and .NET, written in C#: its own editor over Roslyn, debugger and profiler, with tests, Git, NuGet, a terminal, and all of it open to your coding agent.",
     "url": "https://passenger-ide.net/",
     "applicationCategory": "DeveloperApplication",
     "operatingSystem": "Windows, macOS, Linux",
@@ -71,7 +71,8 @@
         <p class="eyebrow">Early development · Open source, MIT</p>
         <h1><span class="lead">An IDE for C# and .NET,</span> written in C#.</h1>
         <p class="lede">Inspired by Rider: an editor of its own over Roslyn, a debugger and a profiler of its own, unit tests,
-            Git, NuGet and a terminal. And an MCP server, so your agent works in the same IDE you do.</p>
+            Git, NuGet and a terminal. And your coding agent can use all of it too: debugging, profiling and testing in
+            the same IDE you do.</p>
         <div class="actions">
             <a class="button primary" id="primary-download" href="#download">Download</a>
             <a class="button" href="https://github.com/Zaneris/passenger">Source on GitHub</a>
@@ -176,23 +177,59 @@
     <section id="agents">
         <div class="wrap agents">
             <div>
-                <h2>Your agent, in the same IDE</h2>
-                <p>Passenger is a Model Context Protocol server. A coding agent can ask Roslyn about your code and use its fixes and
-                    renames, build and run, run tests, debug (breakpoints, stepping, evaluation, the stopped program's
-                    variables), use Git and NuGet, type into the terminal, and see the window in screenshots.</p>
-                <p>Attach it to the window you have open, and its breakpoints and stops show there as you watch. A window lets
-                    agents in only once you turn on its MCP server, on a socket only you can reach, and asks you before an
-                    agent first changes anything.</p>
+                <h2>Your coding agent, using the IDE as you do</h2>
+                <p>Connect a coding agent such as Claude Code to Passenger and it works through the IDE, not just your files.
+                    It finds where things are declared and used, reads the compiler's warnings, and renames and fixes code as
+                    the IDE does. It builds, runs and tests. It sets breakpoints, steps through the program, reads and changes
+                    its variables, and profiles a run to find what is slow. It commits, adds packages, types into the terminal,
+                    and takes a screenshot to see what you see.</p>
+                <p>Connect it to the window you have open and watch it work: its breakpoints and stops show in your editor,
+                    its runs in your Run window. Or give it a Passenger of its own with no window, for work it does alone.
+                    A window lets agents in only once you turn on Settings &rsaquo; MCP Server &rsaquo; Enable MCP Server, through a
+                    connection only you can reach, and asks you the first time an agent wants to change anything.</p>
             </div>
             <div>
-<pre><span class="comment"># a Passenger of the agent's own, with no window</span>
-claude mcp add passenger -- \
-    /path/to/Passenger --mcp /path/to/solution
-
-<span class="comment"># the Passenger window you have open</span>
-claude mcp add passenger -- \
-    /path/to/Passenger --mcp-attach</pre>
-                <p>Those are Claude Code's commands; any MCP client works the same way.</p>
+                <p>Tell your agent to start Passenger with <code>--mcp-attach</code>, and it joins the window you have open.
+                    Passenger is <code>/Applications/Passenger.app/Contents/MacOS/Passenger</code> on a Mac and
+                    <code>%LOCALAPPDATA%\PassengerIDE\current\Passenger.exe</code> on Windows. For a Passenger of the agent's own,
+                    with no window, use <code>--mcp</code> and the folder or solution instead.</p>
+                <details class="client" open>
+                    <summary>Claude Code</summary>
+<pre>claude mcp add passenger -- \
+    /Applications/Passenger.app/Contents/MacOS/Passenger \
+    --mcp-attach</pre>
+                </details>
+                <details class="client">
+                    <summary>Claude Desktop</summary>
+                    <p>In Settings &rsaquo; Developer, choose Edit Config, add Passenger, then restart Claude:</p>
+<pre>{
+  "mcpServers": {
+    "passenger": {
+      "command": "/Applications/Passenger.app/Contents/MacOS/Passenger",
+      "args": ["--mcp-attach"]
+    }
+  }
+}</pre>
+                    <p>On Windows the command is Passenger.exe's full path, each <code>\</code> written <code>\\</code>.</p>
+                </details>
+                <details class="client">
+                    <summary>Codex CLI</summary>
+<pre>codex mcp add passenger -- \
+    /Applications/Passenger.app/Contents/MacOS/Passenger \
+    --mcp-attach</pre>
+                    <p>Or in <code>~/.codex/config.toml</code>:</p>
+<pre>[mcp_servers.passenger]
+command = "/Applications/Passenger.app/Contents/MacOS/Passenger"
+args = ["--mcp-attach"]</pre>
+                </details>
+                <details class="client">
+                    <summary>Codex desktop app</summary>
+                    <p>In Settings &rsaquo; MCP servers, choose Add server, name it <code>passenger</code>, choose STDIO, give
+                        Passenger's path as the command and <code>--mcp-attach</code> as its argument, then save and choose
+                        Restart. The app and the Codex CLI share their settings, so adding it in one adds it to both.</p>
+                </details>
+                <p>Passenger connects through MCP, the standard most coding agents use to reach their tools, so any other agent
+                    that can add an MCP server connects the same way.</p>
             </div>
         </div>
     </section>
