@@ -31,6 +31,7 @@ public sealed class VcsController
     private readonly List<(string From, string To)> moves = [];
     private Git? git;
     private int opened;
+    private TaskCompletionSource? opening;
 
     /// <summary>Reads go one at a time, so an older read never lands after a newer one (a save's status after the
     /// commit's); those asked for while one runs are one read when it ends, answered together, reading the history
@@ -89,21 +90,34 @@ public sealed class VcsController
     /// left behind for the next save to write over what git put there.</summary>
     public Action? SaveFirst { get; set; }
 
+    /// <summary>Done once the folder last opened is known to be in a working tree or not, so a question asked straight
+    /// after a folder opens (an agent's first call) waits for that rather than hearing there is none.</summary>
+    public Task Opened => opening?.Task ?? Task.CompletedTask;
+
     /// <summary>Finds the folder's working tree and reads it; a folder in none leaves the window without Git.</summary>
     public async Task OpenAsync(string folder)
     {
         UiThread.Check();
         int generation = ++opened;
-        Git? found = await Git.OpenAsync(folder);
-        if (generation != opened)
+        TaskCompletionSource lookup = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        opening = lookup;
+        try
         {
-            return;
+            Git? found = await Git.OpenAsync(folder);
+            if (generation != opened)
+            {
+                return;
+            }
+            git = found;
+            heads.Clear();
+            textsOf = null;
+            textsRead = false;
+            moves.Clear();
         }
-        git = found;
-        heads.Clear();
-        textsOf = null;
-        textsRead = false;
-        moves.Clear();
+        finally
+        {
+            lookup.TrySetResult();
+        }
         await RefreshAsync();
     }
 

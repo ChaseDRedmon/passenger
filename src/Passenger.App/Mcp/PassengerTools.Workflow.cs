@@ -20,6 +20,7 @@ public sealed partial class PassengerTools
     public Task<VcsStatus> VcsStatus(CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         VcsController vcs = window.Vcs;
+        await vcs.Opened;
         await vcs.RefreshAsync();
         if (vcs.Repository is null)
         {
@@ -34,6 +35,7 @@ public sealed partial class PassengerTools
     {
         string full = Resolve(path);
         string name = Relative(full).Replace('\\', '/');
+        await window.Vcs.Opened;
         string head = await window.Vcs.HeadTextAsync(full) ?? string.Empty;
         TextSnapshot? open = window.EditorArea.Documents.FirstOrDefault(d => d.Path == full)?.Text.Snapshot;
         // Reading and comparing a large file would hold the person's window: the thread pool does both.
@@ -48,6 +50,7 @@ public sealed partial class PassengerTools
     public Task<string> VcsCommit(string message, IReadOnlyList<string>? paths = null, bool amend = false, bool push = false, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         VcsController vcs = window.Vcs;
+        await vcs.Opened;
         await vcs.RefreshAsync();
         IReadOnlyList<FileChange> chosen = paths is null
             ? [.. vcs.Changes.Where(c => c.Kind is not ChangeKind.Unversioned)]
@@ -70,6 +73,7 @@ public sealed partial class PassengerTools
         "The newest commits of every branch, as the Git window's Log lists them, with their branches and tags.")]
     public Task<IReadOnlyList<VcsCommit>> VcsLog(int count = 20, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
+        await window.Vcs.Opened;
         Git repository = window.Vcs.Repository ?? throw new InvalidOperationException("The folder is not in a Git repository");
         return (IReadOnlyList<VcsCommit>)[.. (await repository.LogAsync(Math.Clamp(count, 1, 500))).Select(c =>
             new VcsCommit(c.Short, c.Subject, c.Author, c.Time.ToLocalTime().ToString("yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.InvariantCulture), c.Refs))];
@@ -80,6 +84,7 @@ public sealed partial class PassengerTools
     public Task<string> VcsCheckout(string branch, bool create = false, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         VcsController vcs = window.Vcs;
+        await vcs.Opened;
         VcsOutcome switched = create ? await vcs.NewBranchAsync(branch) : await vcs.CheckoutAsync(branch);
         if (switched.Problem is { } failed)
         {
@@ -95,6 +100,7 @@ public sealed partial class PassengerTools
     public Task<IReadOnlyList<StashSummary>> VcsStash(string action = "list", string message = "", int index = 0, CancellationToken cancel = default) => OnUi<IReadOnlyList<StashSummary>>(cancel, async () =>
     {
         VcsController vcs = window.Vcs;
+        await vcs.Opened;
         if (action != "list")
         {
             IReadOnlyList<StashInfo> before = await vcs.StashesAsync();
