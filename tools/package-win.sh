@@ -66,7 +66,7 @@ dotnet publish "$root/src/Passenger.App" -c Release -r "$rid" --self-contained -
 # %LocalAppData% is the person's settings and state, which outlive an uninstall as Rider's do. Each system's channel is
 # its own, so one release can carry both feeds. SkiaSharp's and HarfBuzzSharp's native symbols (a hundred megabytes) stay
 # out; Passenger's own symbols stay in, for the line numbers in its log's stack traces.
-set -- --packId PassengerIDE --packVersion "$version" --packTitle Passenger --packAuthors "Ted L" \
+set -- --packId PassengerIDE --packVersion "$version" --packTitle Passenger --packAuthors Passenger \
     --packDir "$publish" --mainExe Passenger.exe --icon "$root/src/Passenger.App/Assets/Passenger.ico" \
     --runtime "$rid" --channel "$rid" --shortcuts StartMenuRoot --noPortable \
     --exclude 'lib(SkiaSharp|HarfBuzzSharp)\.pdb$' --outputDir "$release"
