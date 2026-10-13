@@ -111,7 +111,12 @@ window or takes the focus; it shows everything but the system's own window chrom
   `roslyn/`, less the four Visual Studio assemblies it never loads (`RoslynServerLeftOut`; the build fails if the
   package stops carrying one). `RoslynSession` opens the folder's solution; `LspDocument` keeps one document in step
   and makes requests in the editor's offsets. A server that stops, restarts or refuses a request is one exception,
-  `LanguageServerFailed`, which callers catch; StreamJsonRpc's own types never leave the project.
+  `LanguageServerFailed`, which callers catch; StreamJsonRpc's own types never leave the project. `RoslynExtension` is
+  Passenger's own extension to the server (`src/Passenger.Roslyn.Extension`, compiled against the server package's own
+  assemblies through `RoslynServer.targets`, carried under `roslyn-extension/` with none of them): the server loads it
+  with `--extension`, `server/_vs_activateExtension` registers its handlers, and `LspDocument.ExtensionAsync` sends a
+  message through `textDocument/_vs_dipatchExtensionMessage`. A handler reads the server's solution and answers with
+  edits, never changing its workspace.
 - `src/Passenger.App/CSharp`: the language server in the IDE. `CSharpService` runs Roslyn for the
   folder; `CSharpDocument` gives an open file its semantic colours and diagnostics; `CodeAssist`
   is completion, hover, signature help and the code actions (`app.code.*`), its popups on a layer
@@ -122,7 +127,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   (the server's definition and references, the removal from `SafeDeletion`) and the server's Introduce Field,
   Introduce Parameter and Encapsulate Field under Rider's names. `TypeRename` renames a type with the files named after
   it (their name up to the first dot), from Rename, the Solution view's Rename of a file and MCP's `rename`; Rename's
-  options are the store's `refactorings.json`. The server's colour and diagnostics refreshes are two
+  options are the store's `refactorings.json`. `CodeAssist.Dialogs.cs` is Change Signature, Extract Interface, Move,
+  Pull Members Up and Push Members Down: the extension describes what is at the caret, a `RefactoringDialog` asks the
+  options, and the answer is applied inside `EditorArea.Commands.Record`, which keeps the files a command creates so
+  Undo deletes them. The server's colour and diagnostics refreshes are two
   events, each refreshing only its own.
 - `src/Passenger.App/Editors`: `EditorArea` is a tree of splits, each an `EditorGroup` (tabs, find bar, editor); its
   `CodeEditor` and `Active` are the active group's, so code that acts on "the editor" keeps working, and wiring for every
@@ -146,7 +154,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   application data, kept only by the person's window: the app's documents at its top (`settings.json`, `layout.json`,
   `recentSolutions.json`, `updates.json`, `find.json`, `refactorings.json`)
   and each folder's under `workspaces/<name>-<hash>/` (editors and recent files, layout, breakpoints, bookmarks, run
-  configurations, Find in Files' scope, the profiler's `snapshots/`). A
+  configurations, Find in Files' scope, `localHistory/`, the profiler's `snapshots/`). A
   `StateDocument` is a record that is an `IStateDocument`: its `Upgrades` from each older version and its `Clamped` value;
   it is written debounced off the UI thread through a temporary file, merged over the file so values it does not know
   stay (and an entry another window removed stays removed), and a file that does not read is set aside as `.bad` and logged. New state is a document there, never a file of
@@ -226,6 +234,12 @@ window or takes the focus; it shows everything but the system's own window chrom
   server's type hierarchy, references and implementations, since Roslyn has no go-to-base request
   (`CSharp/Declarations.cs`). Find in Files is `Navigation/FindInFilesPopup`; Rider's scopes (Solution, Project, Directory, Scope) and file mask are
   `Workspace/SearchScope.cs`, which `MainWindow.Search.cs` turns into files (`ScopeOf` for Solution view rows).
+- `src/Passenger.App/History`: Rider's Local History. `LocalHistory` is a folder's store under
+  `workspaces/<name>-<hash>/localHistory/` (content once per hash, Brotli, in `blobs/`; a JSON line per event in
+  `changes.log`), fed by `FileText.Wrote` (every IDE write, with the bytes it replaced), the folder watcher (External
+  change, or the `VcsController.Activity` name), files opened, `EditorArea.MoveFile` and Explorer deletes, off the UI
+  thread; it prunes to Rider's 5 days of activity and a size cap (`HistoryKeeping`). `LocalHistoryView` is the tool
+  window, reusing `DiffView` on the file's document. A test that deletes through the IDE sets `Trash.Folder`.
 - `src/Passenger.App/Workspace`: `SolutionModel` reads solutions and projects for the Explorer's Solution view, and
   `SolutionEdits` is every change to a .sln or .slnx (solution folders, the files they list, projects in and out): a
   .sln line by line and a .slnx through XDocument with its whitespace kept, so the rest of the file stays byte for byte
