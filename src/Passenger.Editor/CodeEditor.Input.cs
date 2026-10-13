@@ -368,6 +368,18 @@ public sealed partial class CodeEditor
         return SelectionSet.Create(rows, rows.Count - 1);
     }
 
+    /// <summary>Drops a composition under way, the platform's input method's too, so it is never finished into a
+    /// document it was not begun in.</summary>
+    private void EndComposition()
+    {
+        if (preedit.Length == 0)
+        {
+            return;
+        }
+        preedit = string.Empty;
+        inputMethod?.Discard();
+    }
+
     private void DrawPreedit(DrawingContext context, TextSnapshot text, double left)
     {
         if (preedit.Length == 0)
@@ -448,5 +460,8 @@ public sealed partial class CodeEditor
             editor.preedit = preeditText ?? string.Empty;
             editor.InvalidateVisual();
         }
+
+        /// <summary>Asks the platform's input method to throw its composition away.</summary>
+        public void Discard() => RequestReset();
     }
 }

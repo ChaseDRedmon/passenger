@@ -749,6 +749,41 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
     }
 
     [AvaloniaFact]
+    public void A_live_template_ends_when_its_editor_shows_another_file_and_enter_there_breaks_the_line()
+    {
+        MainWindow window = project.Open("Helper.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "value * 2;");
+        string helper = editor.Document.Snapshot.ToString();
+        window.OpenFile(project.PathOf("Loop.cs"));
+        Ui.Settle();
+        PlaceAfter(editor, "int total = 0;");
+        editor.Focus();
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("for");
+        Ui.Settle();
+        Ui.Press(window, "TAB");
+        Assert.True(editor.IsInSnippet);
+        string loop = editor.Document.Snapshot.ToString();
+
+        // The group's one editor shows Helper.cs again, its caret where it was left; Enter there is a line break.
+        Ui.Run(window, AppActions.NextTab);
+        Assert.Equal(PathNames.Canonical(project.PathOf("Helper.cs")), window.EditorArea.Active?.Path);
+        Ui.Press(window, "ENTER");
+        int end = helper.IndexOf("value * 2;", StringComparison.Ordinal) + "value * 2;".Length;
+        Assert.True(editor.Document.Snapshot.ToString() == helper.Insert(end, "\n    "),
+            $"Enter in Helper.cs stepped through Loop.cs's template instead of breaking the line:\n{editor.Document.Snapshot}");
+        Assert.Equal(new TextPosition(3, 4), editor.CaretPosition);
+        Assert.False(editor.IsInSnippet, "Helper.cs is drawn with boxes at the places of Loop.cs's template");
+
+        // Back in Loop.cs the template has ended, its text as it was left.
+        Ui.Run(window, AppActions.NextTab);
+        Assert.False(editor.IsInSnippet, "Loop.cs's template took up again after its file was left");
+        Assert.Equal(loop, editor.Document.Snapshot.ToString());
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void A_postfix_template_after_an_expression_and_a_dot_wraps_it_where_it_fits()
     {
         MainWindow window = project.Open("Loop.cs");

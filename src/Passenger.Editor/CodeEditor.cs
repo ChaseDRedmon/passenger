@@ -310,6 +310,10 @@ public sealed partial class CodeEditor : Control
             document.Changed -= OnDocumentChanged;
             document = value;
             document.Changed += OnDocumentChanged;
+            // A template's places, a composition and a GoTo waiting for layout are offsets in the text left behind.
+            snippet = null;
+            pendingGoTo = null;
+            EndComposition();
             selections = SelectionSet.Single(0);
             scroll = default;
             widestLine = 0;
