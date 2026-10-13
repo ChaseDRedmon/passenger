@@ -8,6 +8,7 @@ using Avalonia.Input;
 using Avalonia.Input.Platform;
 using Passenger.App;
 using Passenger.App.Docking;
+using Passenger.App.Run;
 using Passenger.Core;
 using Passenger.Terminal;
 
@@ -17,7 +18,8 @@ namespace Passenger.Tests;
 /// alternate screen, colours, wide characters, answers to a program's questions, the scrollback), keys sent as xterm sends
 /// them, typed commands and keys taken ahead of the IDE; floods of output and stuck pastes never hold the window, pastes
 /// stay text, accents and emoji take the columns the shell counts, lines reflow as it resizes, and a place or a selection
-/// holds as output streams.</summary>
+/// holds as output streams. A run configuration that uses the terminal runs its program in a tab of its own, which reads
+/// what is typed there and draws as it likes, and which Stop ends with all it started.</summary>
 public sealed class TerminalTests
 {
     [AvaloniaFact]
@@ -588,6 +590,82 @@ public sealed class TerminalTests
         {
             TestFolders.Delete(folder);
         }
+    }
+
+    /// <summary>A run configuration that uses the terminal (Rider's Use external console) runs its program in a tab of the
+    /// Terminal window named for it, a real terminal: the program clears the screen and writes in colour where it puts the
+    /// cursor, reads a key and then a line typed into the view, and its tab, kept once it ends, says so with its exit code,
+    /// as the status bar does; the toolbar's Stop shows while it runs.</summary>
+    [AvaloniaFact]
+    public void A_program_run_in_the_terminal_reads_a_key_and_a_line_typed_there_and_draws_in_colour_where_it_puts_the_cursor()
+    {
+        MainWindow window = RunWindow(TestFolders.Create("terminal-run-"), string.Empty);
+        Assert.Null(Ui.Await(window.RunAsync(), "the run to start", TimeSpan.FromMinutes(3)));
+        TerminalRun run = Assert.IsType<TerminalRun>(window.RunInTerminal);
+        TerminalSession program = run.Session;
+        Assert.Equal("Keys", window.TerminalPanel.ActiveTab?.Name);
+        Assert.True(window.DockHost.IsShown("terminal"), "The program runs in the terminal, which is not shown");
+        Assert.Equal("Running Keys", window.Status);
+        Assert.True(window.FindControl<Button>("StopButton")!.IsVisible, "The toolbar has no Stop while the program runs in the terminal");
+
+        WaitForScreen(window, program, s => s.Lines.Any(l => l.Text() == "key?"), "the program to ask for a key");
+        TerminalScreen screen = program.Screen;
+        Assert.True(screen.Lines[2].Text() == "    red at the third row's fifth column",
+            $"The program's line is not where it put the cursor, on a cleared screen:\n{Screen(program)}");
+        Assert.True((screen.Lines[2].Cells[4].Style.Fore, screen.Lines[2].Cells[8].Style.Fore) == (9, CellStyle.Default),
+            $"\"red\" is not in bright red with the rest of the line in the terminal's own colour: {screen.Lines[2].Cells[4].Style.Fore}, {screen.Lines[2].Cells[8].Style.Fore}");
+
+        Ui.WaitFor(() => window.TerminalPanel.View.IsFocused, "the keys to go to the program");
+        window.KeyTextInput("q");
+        WaitForLine(program, "key? key q", "the key as the program read it, not echoed");
+        window.KeyTextInput("hello");
+        Ui.Press(window, "ENTER");
+        WaitForLine(program, "line hello", "the line as the program read it");
+
+        Ui.WaitFor(() => run.Ended.IsCompleted, "the program's end");
+        Assert.Equal(3, run.Ended.Result);
+        WaitForLine(program, "Process finished with exit code 3.", "its tab saying how it ended");
+        Assert.Equal("Keys exited with code 3", window.Status);
+        Assert.False(window.FindControl<Button>("StopButton")!.IsVisible, "The toolbar's Stop stayed once the program ended");
+        Assert.True(window.TerminalPanel.Tabs is [{ Name: "Keys", HasEnded: true }], "The ended program's tab was not kept to say how it ended");
+        window.Close();
+    }
+
+    /// <summary>Stop ends a program running in the terminal and the program it started, and its tab says it was ended.</summary>
+    [AvaloniaFact]
+    public void Stop_ends_a_program_running_in_the_terminal_and_what_it_started()
+    {
+        MainWindow window = RunWindow(TestFolders.Create("terminal-stop-"), "child");
+        Assert.Null(Ui.Await(window.RunAsync(), "the run to start", TimeSpan.FromMinutes(3)));
+        TerminalRun run = window.RunInTerminal!;
+        long at = WaitForLine(run.Session, l => l.StartsWith("child ", StringComparison.Ordinal), "the id of the program's child");
+        int child = int.Parse(run.Session.Screen.LineAt(at).Text()["child ".Length..], CultureInfo.InvariantCulture);
+        WaitForLine(run.Session, "key?", "the program waiting for a key");
+        Assert.True(Processes.IsRunning(child), "The program's child is not running");
+
+        Ui.Run(window, AppActions.Stop);
+        Ui.WaitFor(() => run.Ended.IsCompleted, "the program's end");
+        Assert.True(Processes.Gone(run.ProcessId), $"Stop left the program running: {Processes.Describe(run.ProcessId)}");
+        Assert.True(Processes.Gone(child), $"Stop left the program's child running: {Processes.Describe(child)}");
+        // SIGKILL's, as a shell gives it, on macOS and Linux; Windows' is what TerminateProcess was given.
+        WaitForLine(run.Session, l => OperatingSystem.IsWindows() ? l.StartsWith("Process finished with exit code ", StringComparison.Ordinal) : l == "Process finished with exit code 137.",
+            "its tab saying it was ended");
+        Assert.False(window.IsRunning || window.FindControl<Button>("StopButton")!.IsVisible, "The window says the stopped program still runs");
+        window.Close();
+    }
+
+    /// <summary>A window over a folder of its own holding TerminalConsoleApp, restored, its configuration Keys running the
+    /// program in the terminal with these arguments.</summary>
+    private static MainWindow RunWindow(string folder, string arguments)
+    {
+        string project = PathNames.Canonical(Debugging.Helpers.Debuggees.CopyTo("TerminalConsoleApp", folder));
+        Restore.Run(folder);
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(folder);
+        Ui.Settle();
+        window.SetConfigurations([new RunConfiguration { Name = "Keys", Project = project, Arguments = arguments, Console = ConsoleKind.Terminal }], "Keys");
+        return window;
     }
 
     /// <summary>Waits for the terminal's screen to show something, failing with what it shows instead, its size, its

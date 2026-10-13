@@ -57,7 +57,11 @@ internal static partial class Lifeline
     }
 
     /// <summary>Puts a child that has started, and so its group, on the watchdog's list.</summary>
-    public static void Adopt(Process process)
+    public static void Adopt(Process process) => AdoptGroup(process.Id);
+
+    /// <summary>Puts a process group that leads itself on the watchdog's list: a child's, or a program the terminal started
+    /// in its pseudo-terminal, which leads a session and group of its own as a child here does.</summary>
+    public static void AdoptGroup(int group)
     {
         if (OperatingSystem.IsWindows())
         {
@@ -65,8 +69,8 @@ internal static partial class Lifeline
         }
         lock (Gate)
         {
-            Groups.Add(process.Id);
-            Tell($"+{process.Id}");
+            Groups.Add(group);
+            Tell($"+{group}");
             pruning ??= new Timer(_ => Prune(), null, PruneEvery, PruneEvery);
         }
     }

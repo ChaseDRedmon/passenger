@@ -606,6 +606,59 @@ public sealed class McpTests : IDisposable
         }
     }
 
+    /// <summary>An agent runs and debugs a configuration that uses the terminal: run answers with what the program's tab of
+    /// the Terminal window shows, stop ends it, debug_start stops at a breakpoint on Main's first line before any of it
+    /// runs, debug_input types into its tab, and debug_output reads the tab, the program's end in it.</summary>
+    [AvaloniaFact]
+    public void An_agent_runs_and_debugs_a_configuration_that_uses_the_terminal_and_types_into_its_tab()
+    {
+        Write("Program.cs", File.ReadAllText(Debugging.Helpers.Debuggees.Source("TerminalConsoleApp", "Program.cs")));
+        MainWindow window = AgentsWindow(folder);
+        window.SetConfigurations([new global::Passenger.App.Run.RunConfiguration
+        {
+            Name = "In the terminal",
+            Project = Path.Combine(window.Folder!, "Sum.csproj"),
+            Console = global::Passenger.App.Run.ConsoleKind.Terminal,
+        }], "In the terminal");
+        McpClient client = Await(Task.Run(() => Start(["--mcp-attach", ProcessId])), "the agent attaching");
+        try
+        {
+            Task<JsonElement> running = Task.Run(() => Call(client, "run", new() { ["waitSeconds"] = 5 }));
+            Press(Question(window, "the question for the agent's run"), "Allow");
+            JsonElement ran = Await(running, "the agent's run");
+            string output = ran.GetProperty("output").GetString()!;
+            Assert.True(ran.GetProperty("stillRunning").GetBoolean() && output.Contains("red at the third row's fifth column", StringComparison.Ordinal),
+                $"The run in the terminal was answered without the program waiting for its key in its tab: {ran}");
+            Assert.Equal("Stopped", Await(Task.Run(() => Call(client, "stop")), "the agent's stop").GetString());
+            WaitFor(() => window.RunInTerminal is { IsRunning: false }, "the program in the terminal to end");
+
+            Await(Task.Run(() => Call(client, "breakpoint_set", new() { ["path"] = "Program.cs", ["line"] = 1 })), "the breakpoint");
+            Task<JsonElement> debugging = Task.Run(() => Call(client, "debug_start"));
+            Press(Question(window, "the question for the agent's debug"), "Allow");
+            JsonElement stop = Await(debugging, "the stop");
+            Assert.True(stop.GetProperty("state").GetString() == "paused" && stop.GetProperty("location").GetString()!.StartsWith("Program.cs:1:", StringComparison.Ordinal),
+                $"Debugged in the terminal, the program did not stop on Main's first line: {stop}");
+            Await(Task.Run(() => Call(client, "breakpoint_remove", new() { ["path"] = "Program.cs", ["line"] = 1 })), "the breakpoint's removal");
+            Await(Task.Run(() => Call(client, "debug_continue", new() { ["waitSeconds"] = 1 })), "the program let go");
+            WaitFor(() => window.Debugger.Session?.Terminal?.Session.Screen.Lines.Any(l => l.Text() == "key?") == true, "the program to ask for a key in its tab");
+            Await(Task.Run(() => Call(client, "debug_input", new() { ["text"] = "q", ["newline"] = false })), "the key typed");
+            Await(Task.Run(() => Call(client, "debug_input", new() { ["text"] = "hello" })), "the line typed");
+            WaitFor(() => !window.Debugger.IsDebugging && window.Debugger.Session?.Terminal?.Ended.IsCompleted == true, "the program's end");
+            string shown = Await(Task.Run(() => Call(client, "debug_output")), "the program's output").GetString()!;
+            Assert.True(shown.Contains("key? key q", StringComparison.Ordinal) && shown.Contains("line hello", StringComparison.Ordinal)
+                && shown.Contains("Process finished with exit code 3.", StringComparison.Ordinal), $"debug_output read, of the program's tab:\n{shown}");
+        }
+        finally
+        {
+            Await(Task.Run(async () =>
+            {
+                await client.DisposeAsync();
+                return true;
+            }), "the agent going");
+            window.Close();
+        }
+    }
+
     [AvaloniaFact]
     public void Each_window_has_its_own_socket_and_an_agent_attaches_to_the_one_over_its_folder()
     {

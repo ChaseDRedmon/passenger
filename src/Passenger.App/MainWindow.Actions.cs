@@ -184,8 +184,9 @@ public partial class MainWindow
         {
             _ = debug.StopAsync();
             runner.Stop();
+            terminalRun?.Stop();
             builder.Stop();
-        }, _ => debug.IsDebugging || runner.IsRunning || builder.IsRunning ? null : "Nothing is running", ("Run", 0, 5));
+        }, _ => debug.IsDebugging || IsRunning || builder.IsRunning ? null : "Nothing is running", ("Run", 0, 5));
         Add(A.EditBreakpoint, "Edit Breakpoint...", "Debug", c =>
         {
             int line = c.Caret.Line;

@@ -554,6 +554,16 @@ public static class Debuggees
 
     public static string Apphost(string name) => Path.ChangeExtension(Program(name), OperatingSystem.IsWindows() ? ".exe" : null);
 
+    /// <summary>A debuggee as a project of a test's own folder, its project file and Program.cs copied there, for the window
+    /// to build, run and debug; the project file's path. The caller restores it.</summary>
+    public static string CopyTo(string name, string folder)
+    {
+        string project = Path.Combine(folder, $"{name}.csproj");
+        File.Copy(Source(name, $"{name}.csproj"), project, overwrite: true);
+        File.Copy(Source(name, "Program.cs"), Path.Combine(folder, "Program.cs"), overwrite: true);
+        return project;
+    }
+
     /// <summary>A program with no .NET in it, running a minute unless ended first: what an attach cannot take hold of.</summary>
     public static Process NotDotnet()
     {

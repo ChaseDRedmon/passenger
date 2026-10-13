@@ -33,6 +33,17 @@ public sealed class TerminalSession : IAsyncDisposable
     private int posted;
     private volatile bool closed;
 
+    /// <summary>When output was last read (a <see cref="Stopwatch"/> timestamp), and whether reading has ended: what tells
+    /// that the shell's last output is in once it has exited.</summary>
+    private long lastRead;
+    private volatile bool readEnded;
+
+    /// <summary>How long output must have stopped, after the shell has exited, for its end to be told.</summary>
+    private static readonly TimeSpan Quiet = TimeSpan.FromMilliseconds(150);
+
+    /// <summary>The longest the end is told after the shell has exited, its output still coming.</summary>
+    private static readonly TimeSpan LastOutputLimit = TimeSpan.FromSeconds(2);
+
     public TerminalSession(int columns = 80, int rows = 24)
     {
         Screen = new TerminalScreen(columns, rows);
@@ -44,7 +55,8 @@ public sealed class TerminalSession : IAsyncDisposable
     /// <summary>Raised on the window's thread when output has been taken onto the screen.</summary>
     public event EventHandler? Output;
 
-    /// <summary>Raised on the window's thread when the shell has ended, with its exit code.</summary>
+    /// <summary>Raised on the window's thread when the shell has ended and its last output is on the screen, with its exit
+    /// code: Porta.Pty's, which is 0 for one a signal ended on macOS and Linux.</summary>
     public event EventHandler<int>? Exited;
 
     public bool IsRunning { get; private set; }
@@ -52,18 +64,20 @@ public sealed class TerminalSession : IAsyncDisposable
     /// <summary>The shell's process id, once it runs.</summary>
     public int? ProcessId => pty?.Pid;
 
-    /// <summary>Starts the shell in a folder. <paramref name="shell"/> names one other than the user's own.</summary>
-    public async Task StartAsync(string folder, string? shell = null, IReadOnlyList<string>? arguments = null)
+    /// <summary>Starts the shell in a folder. <paramref name="shell"/> names one other than the user's own, or a program
+    /// to run in the terminal in place of a shell; <paramref name="variables"/> are set over the IDE's environment, an
+    /// empty value taking one away.</summary>
+    public async Task StartAsync(string folder, string? shell = null, IReadOnlyList<string>? arguments = null, IReadOnlyDictionary<string, string>? variables = null)
     {
         (string app, string[] args) = shell is null ? DefaultShell() : (shell, [.. arguments ?? []]);
-        Dictionary<string, string> environment = new()
+        Dictionary<string, string> environment = new(variables ?? new Dictionary<string, string>())
         {
             ["TERM"] = "xterm-256color",
             ["COLORTERM"] = "truecolor",
             ["TERM_PROGRAM"] = "Passenger",
         };
         // An app opened from the Finder has no LANG, and a shell without one misreads every UTF-8 character.
-        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("LANG")) && !OperatingSystem.IsWindows())
+        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("LANG")) && !OperatingSystem.IsWindows() && !environment.ContainsKey("LANG"))
         {
             environment["LANG"] = "en_US.UTF-8";
         }
@@ -79,15 +93,19 @@ public sealed class TerminalSession : IAsyncDisposable
         };
         pty = await PtyProvider.SpawnAsync(options, CancellationToken.None);
         IsRunning = true;
-        pty.ProcessExited += (_, e) => Dispatcher.UIThread.Post(() =>
-        {
-            IsRunning = false;
-            Exited?.Invoke(this, e.ExitCode);
-        });
+        pty.ProcessExited += (_, e) => Dispatcher.UIThread.Post(() => AfterLastOutput(e.ExitCode));
         Stream reader = pty.ReaderStream;
         Stream writer = pty.WriterStream;
         new Thread(() => Read(reader)) { IsBackground = true, Name = "Terminal output" }.Start();
         new Thread(() => Send(writer)) { IsBackground = true, Name = "Terminal input" }.Start();
+    }
+
+    /// <summary>Puts the IDE's own words on the screen, as if the shell had written them: why a program did not start, or
+    /// how it ended. Window's thread.</summary>
+    public void Say(string text)
+    {
+        Screen.Feed(Encoding.UTF8.GetBytes(text));
+        Output?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>Text for the shell, as typed.</summary>
@@ -201,6 +219,69 @@ public sealed class TerminalSession : IAsyncDisposable
         return (shell, ["-l"]);
     }
 
+    /// <summary>Tells of the shell's end once what it wrote last is on the screen: when the pseudo-terminal closes, or,
+    /// where it stays open (ConPTY keeps it until it is closed, and a program the shell left behind may hold it), once
+    /// nothing more has come for a moment, two seconds at the most.</summary>
+    private void AfterLastOutput(int exitCode)
+    {
+        long exited = Stopwatch.GetTimestamp();
+        if (Done())
+        {
+            End();
+            return;
+        }
+        DispatcherTimer waiting = new(DispatcherPriority.Input) { Interval = TimeSpan.FromMilliseconds(20) };
+        waiting.Tick += (_, _) =>
+        {
+            if (Done())
+            {
+                waiting.Stop();
+                End();
+            }
+        };
+        waiting.Start();
+
+        bool Done() => closed || readEnded || Stopwatch.GetElapsedTime(exited) >= LastOutputLimit
+            || Stopwatch.GetElapsedTime(Math.Max(exited, Interlocked.Read(ref lastRead))) >= Quiet;
+
+        void End()
+        {
+            TakeAll();
+            IsRunning = false;
+            Exited?.Invoke(this, exitCode);
+        }
+    }
+
+    /// <summary>Puts all the output read so far on the screen at once, as the shell ends.</summary>
+    private void TakeAll()
+    {
+        if (closed)
+        {
+            return;
+        }
+        int taken = 0;
+        if (feeding is not null && fed < feeding.Length)
+        {
+            Screen.Feed(feeding.AsSpan(fed));
+            taken += feeding.Length - fed;
+        }
+        feeding = null;
+        fed = 0;
+        while (arrived.TryDequeue(out byte[]? piece))
+        {
+            Screen.Feed(piece);
+            taken += piece.Length;
+        }
+        if (taken > 0)
+        {
+            if (Interlocked.Add(ref held, -taken) < MostHeld && room.CurrentCount == 0)
+            {
+                room.Release();
+            }
+            Output?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
     /// <summary>Reads the shell's output as it comes and hands it to the window's thread, waiting while the screen has
     /// <see cref="MostHeld"/> still to take.</summary>
     private void Read(Stream reader)
@@ -215,6 +296,7 @@ public sealed class TerminalSession : IAsyncDisposable
                 {
                     break;
                 }
+                Interlocked.Exchange(ref lastRead, Stopwatch.GetTimestamp());
                 arrived.Enqueue(buffer[..read]);
                 Interlocked.Add(ref held, read);
                 if (Interlocked.Exchange(ref posted, 1) == 0)
@@ -230,6 +312,10 @@ public sealed class TerminalSession : IAsyncDisposable
         catch (Exception failed) when (failed is IOException or ObjectDisposedException)
         {
             // The pseudo-terminal closed with the shell.
+        }
+        finally
+        {
+            readEnded = true;
         }
     }
 

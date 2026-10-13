@@ -8,8 +8,9 @@ namespace Passenger.Core;
 /// the IDE's terminal, nor an agent's pipe), UTF-8 streams, none of a git hook's repository variables, and a line in the
 /// log when it fails or takes a while, or for every one with the debug log on (<see cref="Started"/>, <see cref="Ended"/>).
 /// None outlives the IDE, however the IDE ends (<see cref="Lifeline"/>). Not started here: the terminal's shell (Porta.Pty's,
-/// ended by its pseudo-terminal's hangup), vstest.console (VSTest's, which ends with the process that started it) and on
-/// Windows Velopack's Update.exe, which installs an update once Passenger has ended and so must outlive it.</summary>
+/// ended by its pseudo-terminal's hangup), a program run in the terminal (Porta.Pty's, then taken on: <see cref="Adopt"/>),
+/// vstest.console (VSTest's, which ends with the process that started it) and on Windows Velopack's Update.exe, which
+/// installs an update once Passenger has ended and so must outlive it.</summary>
 public static class ChildProcesses
 {
     private static readonly UTF8Encoding Utf8 = new(encoderShouldEmitUTF8Identifier: false);
@@ -106,6 +107,21 @@ public static class ChildProcesses
         }
         return process;
     }
+
+    /// <summary>Takes on a program started in the terminal's pseudo-terminal from <paramref name="start"/> (a run in the
+    /// Terminal window), which ends with the IDE and is logged as a child is: on macOS and Linux it leads a session and
+    /// process group of its own, which goes on the watchdog's list (<see cref="Lifeline"/>); on Windows it is in Porta.Pty's
+    /// job already, which the system ends once the IDE's handle to it goes. <see cref="Kill"/> then ends it with all it
+    /// started; <see cref="Exited"/> logs its end.</summary>
+    public static void Adopt(int processId, ProcessStartInfo start)
+    {
+        Lifeline.AdoptGroup(processId);
+        Started?.Invoke(null, new ChildStart(processId, Display(start), start.WorkingDirectory));
+    }
+
+    /// <summary>An adopted program's end, for the IDE's log as a child's is told.</summary>
+    public static void Exited(int processId, ProcessStartInfo start, int exitCode, TimeSpan time) =>
+        Ended?.Invoke(null, new ChildEnd(processId, Display(start), exitCode, time));
 
     /// <summary>Runs a child to its end, its output and errors read whole, <paramref name="input"/> written to it first.
     /// Canceled, or still running after <paramref name="limit"/>, it is killed with all it started, and the task is

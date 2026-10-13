@@ -247,7 +247,8 @@ public sealed partial class PassengerTools
     [McpServerTool(Name = "terminal_run", Title = "Run in the terminal", Destructive = true), Description(
         "Types a command into the IDE's Terminal window (opening it, and its shell, if need be) and presses Enter, as the person would, then waits " +
         "until the shell shows its prompt again, or the output has been quiet for two seconds (or waitSeconds), and returns what the command " +
-        "printed. The person sees it run.")]
+        "printed. The person sees it run. While the tab shown runs a program (a run configuration that uses the terminal), the line goes " +
+        "to that program, as typed.")]
     public Task<string> TerminalRun(string command, int waitSeconds = 15, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         TerminalSession shell = await Terminal(cancel);
@@ -287,7 +288,8 @@ public sealed partial class PassengerTools
     });
 
     [McpServerTool(Name = "terminal_screen", Title = "What the terminal shows", ReadOnly = true), Description(
-        "The IDE terminal's screen as it stands (a full-screen program's included), with the last lines of the scrollback above it.")]
+        "The IDE terminal's screen as it stands in the tab shown (a full-screen program's included, and a run configuration's program), " +
+        "with the last lines of the scrollback above it.")]
     public Task<string> TerminalScreen(int scrollback = 20, CancellationToken cancel = default) => OnUi(cancel, () =>
     {
         if (window.TerminalPanel.Active is not { } shell)

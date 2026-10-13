@@ -829,6 +829,101 @@ public sealed class DebuggerTests : IDisposable
         }
     }
 
+    /// <summary>A configuration that uses the terminal is debugged there: the program starts in a tab of the Terminal window
+    /// held until the debugger has hold of it, so a breakpoint on Main's first line stops it before any of it runs, debug
+    /// after debug; let go, it reads the key and the line typed into its tab, and its end is told there and in the status
+    /// bar with its exit code.</summary>
+    [AvaloniaFact]
+    public void Debugged_in_the_terminal_a_program_stops_at_a_breakpoint_on_Mains_first_line_every_time_and_reads_what_is_typed_there()
+    {
+        Write("Program.cs", File.ReadAllText(Debugging.Helpers.Debuggees.Source("TerminalConsoleApp", "Program.cs")));
+        MainWindow window = InTerminal(string.Empty);
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        editor.GoTo(new TextPosition(0, 0));
+        Ui.Run(window, AppActions.ToggleBreakpoint);
+        DebugSession? last = null;
+        for (int debugged = 1; debugged <= 3; debugged++)
+        {
+            editor.Focus();
+            Ui.Run(window, AppActions.Debug);
+            Ui.WaitFor(() => window.Debugger.Session is { State: DebugState.Paused or DebugState.Ended } session && session != last, $"debug {debugged} to stop at the breakpoint");
+            DebugSession session = window.Debugger.Session!;
+            last = session;
+            Assert.True(session.State == DebugState.Paused, $"Debug {debugged} in the terminal ended without stopping at the breakpoint on Main's first line: {window.Status}");
+            Ui.WaitFor(() => window.BottomPanel.Debug.Frames.Count > 0, "the stop's frames");
+            Assert.True(window.BottomPanel.Debug.Frames[0].Line == 1, $"Debug {debugged} stopped at line {window.BottomPanel.Debug.Frames[0].Line}, not on Main's first line");
+            Passenger.App.Run.TerminalRun run = Assert.IsType<Passenger.App.Run.TerminalRun>(session.Terminal);
+            Assert.True(run.IsRunning && window.TerminalPanel.Tabs.Any(t => t.Run == run && t.Name == "Sum in the terminal"),
+                "The program debugged is not running in a tab of the Terminal window named for its configuration");
+            Assert.DoesNotContain("started", TerminalText(run), StringComparison.Ordinal);
+            if (debugged < 3)
+            {
+                Ui.Run(window, AppActions.Stop);
+                Ui.WaitFor(() => !window.Debugger.IsDebugging && run.Ended.IsCompleted, $"debug {debugged} to stop");
+            }
+        }
+
+        // The last is let go: it reads what is typed into its tab, and ends with its own exit code.
+        DebugSession going = last!;
+        Passenger.App.Run.TerminalRun program = going.Terminal!;
+        Ui.Run(window, AppActions.Resume);
+        Ui.WaitFor(() => TerminalText(program).Contains("key?", StringComparison.Ordinal), "the program to ask for a key in its tab");
+        window.ShowToolWindow("terminal");
+        window.TerminalPanel.FocusView();
+        Ui.WaitFor(() => window.TerminalPanel.View.IsFocused && window.TerminalPanel.ActiveTab?.Run == program, "the keys to go to the program's tab");
+        window.KeyTextInput("q");
+        window.KeyTextInput("hello");
+        Ui.Press(window, "ENTER");
+        Ui.WaitFor(() => going.State == DebugState.Ended && program.Ended.IsCompleted, "the program's end");
+        string shown = TerminalText(program);
+        Assert.True(shown.Contains("key? key q", StringComparison.Ordinal) && shown.Contains("line hello", StringComparison.Ordinal)
+            && shown.Contains("Process finished with exit code 3.", StringComparison.Ordinal), $"The program's tab shows:\n{shown}");
+        Assert.Equal(3, going.ExitCode);
+        Ui.WaitFor(() => window.Status == "Debugging Sum in the terminal ended with exit code 3", $"the status bar to say how it ended, not \"{window.Status}\"");
+        window.Close();
+    }
+
+    /// <summary>Stop ends a program debugged in the terminal with what it started, and its tab says it was ended.</summary>
+    [AvaloniaFact]
+    public void Stop_ends_a_program_debugged_in_the_terminal_and_what_it_started()
+    {
+        Write("Program.cs", File.ReadAllText(Debugging.Helpers.Debuggees.Source("TerminalConsoleApp", "Program.cs")));
+        MainWindow window = InTerminal("child");
+        Ui.Run(window, AppActions.Debug);
+        Ui.WaitFor(() => window.Debugger.Session?.Terminal is { } started && TerminalText(started).Contains("key?", StringComparison.Ordinal), "the program to start its child and ask for a key");
+        Passenger.App.Run.TerminalRun run = window.Debugger.Session!.Terminal!;
+        string said = TerminalText(run).Split('\n').First(l => l.StartsWith("child ", StringComparison.Ordinal));
+        int child = int.Parse(said["child ".Length..], System.Globalization.CultureInfo.InvariantCulture);
+        Assert.True(Processes.IsRunning(child), "The program's child is not running");
+
+        Ui.Run(window, AppActions.Stop);
+        Ui.WaitFor(() => !window.Debugger.IsDebugging && run.Ended.IsCompleted, "the session to end");
+        Assert.True(Processes.Gone(run.ProcessId), $"Stop left the program running: {Processes.Describe(run.ProcessId)}");
+        Assert.True(Processes.Gone(child), $"Stop left the program's child running: {Processes.Describe(child)}");
+        Assert.Contains("Process finished with exit code ", TerminalText(run), StringComparison.Ordinal);
+        Assert.False(window.FindControl<Avalonia.Controls.Button>("StopButton")!.IsVisible, "The toolbar's Stop stayed once the session ended");
+        window.Close();
+    }
+
+    /// <summary>The window over the folder, its configuration "Sum in the terminal" debugging Sum in the terminal with these
+    /// arguments, and chosen.</summary>
+    private MainWindow InTerminal(string arguments)
+    {
+        MainWindow window = Open();
+        window.SetConfigurations([new Passenger.App.Run.RunConfiguration
+        {
+            Name = "Sum in the terminal",
+            Project = Path.Combine(PathNames.Canonical(folder), "Sum.csproj"),
+            Arguments = arguments,
+            Console = Passenger.App.Run.ConsoleKind.Terminal,
+        }], "Sum in the terminal");
+        return window;
+    }
+
+    /// <summary>A program's tab of the Terminal window as it reads, scrollback and screen.</summary>
+    private static string TerminalText(Passenger.App.Run.TerminalRun run) =>
+        string.Join('\n', run.Session.Screen.Scrollback.Select(l => l.Text()).Concat(run.Session.Screen.Lines.Select(l => l.Text())));
+
     private MainWindow Open()
     {
         MainWindow window = new() { Width = 1200, Height = 800 };

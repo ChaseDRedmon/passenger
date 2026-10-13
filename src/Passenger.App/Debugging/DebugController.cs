@@ -100,10 +100,21 @@ public sealed class DebugController
     /// <summary>The session started, stopped, ran on or ended.</summary>
     public event EventHandler? StateChanged;
 
-    /// <summary>Launches a plan's program under the debugger (after its build), its output in the Debug
-    /// window's Console. Null once the session is open (the program may have ended already), else why it could not.</summary>
-    public Task<string?> StartAsync(Run.LaunchPlan plan) =>
-        OpenAsync((built, log, output) => DebugSession.LaunchAsync(plan, Breakpoints, built, log, output), plan.Name, launched: true);
+    /// <summary>Starts a program the debugger asks for in a tab of the Terminal window named for the session (the window's
+    /// own), for a configuration that uses the terminal; without it such a program runs in the Console.</summary>
+    public Func<string, RunInTerminalArguments, Task<Run.TerminalRun>>? RunInTerminal { get; init; }
+
+    /// <summary>Launches a plan's program under the debugger (after its build), its output in the Debug window's Console,
+    /// or in a tab of the Terminal window when its configuration uses the terminal. Null once the session is open (the
+    /// program may have ended already), else why it could not.</summary>
+    public Task<string?> StartAsync(Run.LaunchPlan plan)
+    {
+        Func<RunInTerminalArguments, Task<Run.TerminalRun>>? inTerminal = plan.Console == Run.ConsoleKind.Terminal && RunInTerminal is { } run
+            ? arguments => run(plan.Name, arguments)
+            : null;
+        return OpenAsync((built, log, output) => DebugSession.LaunchAsync(plan, Breakpoints, built, log, output, inTerminal), plan.Name,
+            launched: true, inTerminal: inTerminal is not null);
+    }
 
     /// <summary>Attaches the debugger to a running .NET process, its output (if any) in the Console. Null once the session
     /// is open, else why it could not.</summary>
@@ -111,8 +122,8 @@ public sealed class DebugController
         OpenAsync((built, log, output) => DebugSession.AttachAsync(processId, Breakpoints, built, log, output), name, launched: false);
 
     /// <summary>Starts a session, its output in the Console; a program it launched reads what is typed there, as in
-    /// Rider's Debug console (one attached to has an input of its own).</summary>
-    private async Task<string?> OpenAsync(Func<BuiltLines, Action<string>, Action<OutputEvent>, Task<DebugSession>> open, string name, bool launched)
+    /// Rider's Debug console (one attached to has an input of its own, and one in the terminal reads the terminal's).</summary>
+    private async Task<string?> OpenAsync(Func<BuiltLines, Action<string>, Action<OutputEvent>, Task<DebugSession>> open, string name, bool launched, bool inTerminal = false)
     {
         UiThread.Check();
         if (IsDebugging)
@@ -133,6 +144,10 @@ public sealed class DebugController
         BuiltLines built = new();
         lines = built;
         view.SetState(DebugState.Starting);
+        if (inTerminal)
+        {
+            view.Console.Append($"{name} runs in the Terminal window, which it reads from and writes to\n");
+        }
         Message?.Invoke(this, $"Debugging {name}");
         try
         {
@@ -153,7 +168,7 @@ public sealed class DebugController
             });
             Session = session;
             view.Tree.Load = reference => session.VariablesAsync(reference);
-            if (launched)
+            if (launched && !inTerminal)
             {
                 view.Console.Input = new ConsoleInput(text => Send(session.InputAsync(text)), () => Send(session.CloseInputAsync()));
             }

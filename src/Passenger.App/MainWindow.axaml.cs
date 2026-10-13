@@ -221,7 +221,7 @@ public partial class MainWindow : Window
                 NavigateTo(path, problem.Position);
             }
         };
-        debug = new DebugController(Editors, Bottom.Debug);
+        debug = new DebugController(Editors, Bottom.Debug) { RunInTerminal = RunForDebugger };
         tests = new Testing.TestController(Bottom.TestTree, BuildAsync, () => Projects, line => Bottom.Build.Append($"{line}\n"));
         testGutter = new Testing.TestGutter(Bottom.TestTree);
         AddUnitTests();
@@ -592,7 +592,7 @@ public partial class MainWindow : Window
 
     private void OnDebugStateChanged()
     {
-        StopButton.IsVisible = debug.IsDebugging || runner.IsRunning;
+        StopButton.IsVisible = debug.IsDebugging || IsRunning;
     }
 
     private void OnBuilt(int code)

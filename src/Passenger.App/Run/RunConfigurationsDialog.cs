@@ -70,6 +70,8 @@ public sealed class RunConfigurationsDialog : Window
         ArgumentsBox = Field();
         WorkingDirectoryBox = Field("The project's output folder");
         BuildBox = new CheckBox { Content = "Build the project first" };
+        ConsoleBox = new CheckBox { Content = "Use external console" };
+        ToolTip.SetTip(ConsoleBox, "Runs and debugs the program in a tab of the Terminal window, a real terminal it reads keys from and draws on, rather than in the Run and Debug windows' consoles");
         AddVariableButton = new Button
         {
             Content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Children = { Glyph("Icon.Add"), new TextBlock { Text = "Add variable" } } },
@@ -83,6 +85,7 @@ public sealed class RunConfigurationsDialog : Window
         ArgumentsBox.TextChanged += (_, _) => Edit(c => c with { Arguments = ArgumentsBox.Text ?? string.Empty });
         WorkingDirectoryBox.TextChanged += (_, _) => Edit(c => c with { WorkingDirectory = WorkingDirectoryBox.Text?.Trim() ?? string.Empty });
         BuildBox.IsCheckedChanged += (_, _) => Edit(c => c with { BuildBeforeLaunch = BuildBox.IsChecked == true });
+        ConsoleBox.IsCheckedChanged += (_, _) => Edit(c => c with { Console = ConsoleBox.IsChecked == true ? ConsoleKind.Terminal : ConsoleKind.Internal });
         AddVariableButton.Click += (_, _) => AddVariable(string.Empty, string.Empty, focus: true);
 
         OkButton = new Button { Content = "OK", IsDefault = true, Classes = { "primary" }, MinWidth = 80 };
@@ -115,6 +118,7 @@ public sealed class RunConfigurationsDialog : Window
                 Row("Program arguments", ArgumentsBox),
                 Row("Working directory", WorkingDirectoryBox),
                 Row("Environment variables", new StackPanel { Spacing = 6, Children = { VariablesHeader(), variables, AddVariableButton } }, top: true),
+                Row(string.Empty, ConsoleBox),
                 Row("Before launch", BuildBox),
             },
         };
@@ -171,6 +175,9 @@ public sealed class RunConfigurationsDialog : Window
     public TextBox WorkingDirectoryBox { get; }
 
     public CheckBox BuildBox { get; }
+
+    /// <summary>Rider's Use external console: the program runs in a tab of the Terminal window.</summary>
+    public CheckBox ConsoleBox { get; }
 
     /// <summary>Every configuration listed: the generated ones, then the folder's own as they stand in the dialog.</summary>
     public IReadOnlyList<RunConfiguration> Rows => [.. Entries.Select(e => e.Configuration)];
@@ -378,6 +385,7 @@ public sealed class RunConfigurationsDialog : Window
             ArgumentsBox.Text = shown.Arguments;
             WorkingDirectoryBox.Text = shown.WorkingDirectory;
             BuildBox.IsChecked = shown.BuildBeforeLaunch;
+            ConsoleBox.IsChecked = shown.Console == ConsoleKind.Terminal;
             variables.Children.Clear();
             foreach ((string name, string value) in shown.Environment)
             {
@@ -386,7 +394,7 @@ public sealed class RunConfigurationsDialog : Window
             note.Text = Note(shown, project);
             note.IsVisible = note.Text.Length > 0;
             bool editable = !shown.Generated;
-            foreach (Control field in (Control[])[NameBox, ProjectBox, FrameworkBox, ProfileBox, ProgramBox, ArgumentsBox, WorkingDirectoryBox, BuildBox, AddVariableButton, variables])
+            foreach (Control field in (Control[])[NameBox, ProjectBox, FrameworkBox, ProfileBox, ProgramBox, ArgumentsBox, WorkingDirectoryBox, ConsoleBox, BuildBox, AddVariableButton, variables])
             {
                 field.IsEnabled = editable;
             }

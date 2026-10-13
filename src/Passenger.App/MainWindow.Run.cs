@@ -27,6 +27,18 @@ public partial class MainWindow
     /// <summary>The run configuration the Run window last ran.</summary>
     private string ran = string.Empty;
 
+    /// <summary>The program Run last started in the terminal, until a run in the Run window comes after it.</summary>
+    private TerminalRun? terminalRun;
+
+    /// <summary>Whether a program Run started runs, in the Run window or the terminal.</summary>
+    public bool IsRunning => runner.IsRunning || terminalRun is { IsRunning: true };
+
+    /// <summary>The program Run last started, when it runs in the terminal; null when the last ran in the Run window.</summary>
+    public TerminalRun? RunInTerminal => terminalRun;
+
+    /// <summary>The end of the program Run last started, in the Run window or the terminal, with its exit code.</summary>
+    public Task<int> RunEnd => terminalRun?.Ended ?? runner.Ended;
+
     /// <summary>Every configuration: the generated ones, then the folder's own.</summary>
     public IReadOnlyList<RunConfiguration> Configurations => configurations;
 
@@ -153,15 +165,16 @@ public partial class MainWindow
     }
 
     /// <summary>Runs the chosen configuration, with these arguments in place of its own if given: its plan's program started
-    /// after its build, its output and input in the Run window. Null once it runs (<see cref="ProcessRunner.Ended"/> is its
-    /// end), else why it could not, which the status bar says too.</summary>
+    /// after its build, its output and input in the Run window, or in a tab of the Terminal window when the configuration
+    /// uses the terminal. Null once it runs (<see cref="RunEnd"/> is its end), else why it could not, which the status bar
+    /// says too.</summary>
     public async Task<string?> RunAsync(string? arguments = null)
     {
         if (configuration is not { } chosen)
         {
             return Said("Nothing to run: no executable project");
         }
-        if (runner.IsRunning || launching)
+        if (IsRunning || launching)
         {
             return Said("Already running");
         }
@@ -182,23 +195,108 @@ public partial class MainWindow
             {
                 return Said(why);
             }
+            ran = chosen.Name;
+            string running = hotReload ? $"Running {chosen.Name} with Hot Reload: a save applies its changes" : $"Running {chosen.Name}";
+            Dictionary<string, string> variables = hotReload
+                ? new Dictionary<string, string>(plan.Environment) { ["DOTNET_WATCH_SUPPRESS_EMOJIS"] = "1", ["DOTNET_WATCH_RESTART_ON_RUDE_EDIT"] = "true" }
+                : new Dictionary<string, string>(plan.Environment);
+            if (plan.Console == ConsoleKind.Terminal)
+            {
+                return await RunInTerminalAsync(chosen.Name, hotReload ? DotnetStart(Watch(plan), plan.WorkingDirectory) : ChildProcesses.Command(plan.Program, plan.Arguments, plan.WorkingDirectory), variables, running);
+            }
+            terminalRun = null;
             Bottom.Run.SetRunning(true);
             StopButton.IsVisible = true;
             ShowToolWindow("run");
-            ran = chosen.Name;
-            if (hotReload)
-            {
-                StatusText.Text = $"Running {chosen.Name} with Hot Reload: a save applies its changes";
-                return Started(runner.StartDotnet(Watch(plan), plan.WorkingDirectory,
-                    new Dictionary<string, string>(plan.Environment) { ["DOTNET_WATCH_SUPPRESS_EMOJIS"] = "1", ["DOTNET_WATCH_RESTART_ON_RUDE_EDIT"] = "true" }));
-            }
-            StatusText.Text = $"Running {chosen.Name}";
-            return Started(runner.Start(plan.Program, plan.Arguments, plan.WorkingDirectory, plan.Environment));
+            StatusText.Text = running;
+            return Started(hotReload
+                ? runner.StartDotnet(Watch(plan), plan.WorkingDirectory, variables)
+                : runner.Start(plan.Program, plan.Arguments, plan.WorkingDirectory, variables));
         }
         finally
         {
             launching = false;
         }
+    }
+
+    /// <summary>The .NET command line as the IDE runs it, or null where there is none (which the run then says).</summary>
+    private static System.Diagnostics.ProcessStartInfo? DotnetStart(IReadOnlyList<string> arguments, string folder)
+    {
+        try
+        {
+            return ChildProcesses.DotnetCommand(arguments, folder);
+        }
+        catch (FileNotFoundException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Runs a plan's program in a tab of the Terminal window named for its configuration, the keys going to it, as
+    /// Rider's Use external console runs one in a console of its own; Stop ends it, and its end shows in the status bar as
+    /// a run's in the Run window does. Null once it runs, else why it could not.</summary>
+    private async Task<string?> RunInTerminalAsync(string name, System.Diagnostics.ProcessStartInfo? start, IReadOnlyDictionary<string, string> variables, string running)
+    {
+        if (start is null)
+        {
+            return Said("No .NET command line found: install the .NET SDK, or set DOTNET_ROOT to where it is.");
+        }
+        foreach ((string variable, string value) in variables)
+        {
+            start.Environment[variable] = value;
+        }
+        TerminalRun run;
+        try
+        {
+            run = await ShowInTerminal(name, start);
+        }
+        catch (LaunchException failed)
+        {
+            return Said(failed.Message);
+        }
+        terminalRun = run;
+        StopButton.IsVisible = true;
+        StatusText.Text = running;
+        _ = Ended();
+        return null;
+
+        async Task Ended()
+        {
+            int code = await run.Ended;
+            StopButton.IsVisible = IsRunning || debug.IsDebugging;
+            if (terminalRun == run)
+            {
+                StatusText.Text = RunEnded(name, code);
+            }
+        }
+    }
+
+    /// <summary>Starts in a tab of the Terminal window, named for the configuration being debugged, the program the debugger
+    /// asks for (its runInTerminal request): held at its start by the variables the debugger gives it until the debugger
+    /// has hold of it.</summary>
+    private Task<TerminalRun> RunForDebugger(string name, Dap.RunInTerminalArguments arguments)
+    {
+        if (arguments.Args is not [string program, ..])
+        {
+            throw new LaunchException("The debugger asked the terminal to run nothing");
+        }
+        IEnumerable<string> rest = arguments.Args.Skip(1);
+        // A program named without a folder (a .dll's "dotnet") is the one the IDE builds with, or one on the PATH.
+        System.Diagnostics.ProcessStartInfo start = ChildProcesses.Command(program is "dotnet" ? Core.Dotnet.Host() : program, rest, arguments.Cwd ?? folder);
+        foreach ((string variable, string value) in arguments.Env ?? new Dictionary<string, string>())
+        {
+            start.Environment[variable] = value;
+        }
+        return ShowInTerminal(name, start);
+    }
+
+    /// <summary>Runs a program in a tab of the Terminal window and shows the window on it: the tab first, so a window opened
+    /// for it starts no shell of its own.</summary>
+    private Task<TerminalRun> ShowInTerminal(string name, System.Diagnostics.ProcessStartInfo start)
+    {
+        Task<TerminalRun> starting = terminal!.RunAsync(name, start);
+        ShowToolWindow("terminal");
+        return starting;
     }
 
     /// <summary>dotnet watch's command line for a plan, as Rider's Hot Reload runs it: the project for its framework, no

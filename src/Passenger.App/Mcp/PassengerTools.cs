@@ -301,7 +301,8 @@ public sealed partial class PassengerTools(MainWindow window)
     [McpServerTool(Name = "run", Title = "Run a configuration", Destructive = true), Description(
         "Runs a run configuration (the chosen one if none is named) as Run does, building it first when it says so, and waits up to " +
         "waitSeconds for it to end. Returns its output so far and its exit code once it has one; a run refused (one already running, " +
-        "nothing to run, a failed build) is an error.")]
+        "nothing to run, a failed build) is an error. A configuration that uses the terminal runs in a tab of the Terminal window: " +
+        "its output is what that tab shows, and terminal_run types into it while it is the tab shown.")]
     public Task<RunResult> Run(
         string? configuration = null,
         [Description(Arguments)] string? arguments = null,
@@ -313,7 +314,7 @@ public sealed partial class PassengerTools(MainWindow window)
         {
             throw new InvalidOperationException(refused);
         }
-        Task<int> ended = window.Runner.Ended;
+        Task<int> ended = window.RunEnd;
         try
         {
             await ended.WaitAsync(TimeSpan.FromSeconds(Math.Max(0, waitSeconds)), cancel);
@@ -323,13 +324,15 @@ public sealed partial class PassengerTools(MainWindow window)
             // Still running when the wait is up: the answer says so, and the program goes on.
         }
         int? code = ended.IsCompletedSuccessfully ? ended.Result : null;
-        return new RunResult(code is null, code, code is int exit ? MainWindow.RunEnded(name, exit) : $"Running {name}", Tail(window.BottomPanel.Run, 200));
+        string output = window.RunInTerminal is { } inTerminal ? Tail(inTerminal.Session, 200) : Tail(window.BottomPanel.Run, 200);
+        return new RunResult(code is null, code, code is int exit ? MainWindow.RunEnded(name, exit) : $"Running {name}", output);
     });
 
     [McpServerTool(Name = "stop", Title = "Stop", Destructive = false), Description("Stops whatever is running or being debugged, as Stop does.")]
     public Task<string> Stop(CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         window.Runner.Stop();
+        window.RunInTerminal?.Stop();
         await window.Debugger.StopAsync();
         return "Stopped";
     });
@@ -511,10 +514,17 @@ public sealed partial class PassengerTools(MainWindow window)
     });
 
     [McpServerTool(Name = "debug_input", Title = "Type into the program's console", Destructive = false), Description(
-        "Sends a line to the debugged program's standard input, as the Debug window's console does. The program reads it when it next reads.")]
+        "Sends a line to the debugged program's standard input, as the Debug window's console does, or, for a configuration that uses the " +
+        "terminal, types it into the program's tab of the Terminal window, Enter for the newline. The program reads it when it next reads.")]
     public Task<string> DebugInput(string text, [Description("End the line with a newline")] bool newline = true, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
-        await Session().InputAsync(newline ? text + "\n" : text);
+        DebugSession session = Session();
+        if (session.Terminal is { } inTerminal)
+        {
+            inTerminal.Session.Write(newline ? text + "\r" : text);
+            return $"Typed into {inTerminal.Name}'s tab of the Terminal window";
+        }
+        await session.InputAsync(newline ? text + "\n" : text);
         return "Sent";
     });
 
@@ -549,8 +559,11 @@ public sealed partial class PassengerTools(MainWindow window)
         return (IReadOnlyList<VariableInfo>)[.. (await session.VariablesAsync(reference)).Select(v => new VariableInfo(v.Name, v.Value, v.Type, v.VariablesReference))];
     });
 
-    [McpServerTool(Name = "debug_output", Title = "The program's output", ReadOnly = true), Description("What the debugged program has written, the last lines of it.")]
-    public Task<string> DebugOutput(int lines = 200, CancellationToken cancel = default) => OnUi(cancel, () => Task.FromResult(Tail(window.BottomPanel.Debug.Console, lines)));
+    [McpServerTool(Name = "debug_output", Title = "The program's output", ReadOnly = true), Description(
+        "What the debugged program has written, the last lines of it: the Debug window's console, or, for a configuration that uses the " +
+        "terminal, its tab of the Terminal window as it shows now, scrollback and screen.")]
+    public Task<string> DebugOutput(int lines = 200, CancellationToken cancel = default) => OnUi(cancel, () => Task.FromResult(
+        window.Debugger.Session?.Terminal is { } inTerminal ? Tail(inTerminal.Session, lines) : Tail(window.BottomPanel.Debug.Console, lines)));
 
     // The IDE itself
 
@@ -867,6 +880,18 @@ public sealed partial class PassengerTools(MainWindow window)
         : path;
 
     /// <summary>A console's last lines, with what is on its way to it.</summary>
+    /// <summary>The last lines of a terminal's scrollback and screen, as a program in it left them.</summary>
+    private static string Tail(global::Passenger.Terminal.TerminalSession terminal, int lines)
+    {
+        global::Passenger.Terminal.TerminalScreen screen = terminal.Screen;
+        List<string> all = [.. screen.Scrollback.Select(l => l.Text()).Concat(screen.Lines.Select(l => l.Text()))];
+        while (all.Count > 0 && all[^1].Length == 0)
+        {
+            all.RemoveAt(all.Count - 1);
+        }
+        return string.Join('\n', all.Skip(Math.Max(0, all.Count - lines)));
+    }
+
     private static string Tail(ToolWindows.OutputView console, int lines)
     {
         console.Flush();

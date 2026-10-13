@@ -142,6 +142,10 @@ public sealed class DebugSession
     /// (its job or process group), but which only the IDE can end once the adapter itself has died.</summary>
     private Process? launched;
 
+    /// <summary>The program, when it runs in a tab of the Terminal window rather than the adapter's console: where it reads
+    /// and writes, and how it ended, which the adapter cannot tell of a program it did not start on macOS and Linux.</summary>
+    public Run.TerminalRun? Terminal { get; private set; }
+
     /// <summary>Why the session ended other than by the program ending or being stopped: the adapter crashed.</summary>
     public string? Failure { get; private set; }
 
@@ -153,29 +157,42 @@ public sealed class DebugSession
     /// <summary>Starts the adapter and launches a plan's program under it (a .dll under dotnet, or an
     /// executable), with the breakpoints the store has, stopping on exceptions the user's code leaves
     /// unhandled, as Rider does by default. What the program writes, and the debugger's own words ("console"), go to
-    /// <paramref name="output"/> on the connection's thread, in order.</summary>
-    public static Task<DebugSession> LaunchAsync(Run.LaunchPlan plan, BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output) =>
+    /// <paramref name="output"/> on the connection's thread, in order. With <paramref name="runInTerminal"/> the program
+    /// runs in the terminal it starts, which the adapter asks for (runInTerminal), and its output goes there.</summary>
+    public static Task<DebugSession> LaunchAsync(Run.LaunchPlan plan, BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output,
+        Func<RunInTerminalArguments, Task<Run.TerminalRun>>? runInTerminal = null) =>
         StartAsync(plan.Built ?? plan.Program, "launch", new LaunchArguments
         {
             Program = plan.Program,
             Args = plan.Arguments,
             Cwd = plan.WorkingDirectory,
             Env = plan.Environment,
-            Console = "internalConsole",
+            Console = runInTerminal is null ? "internalConsole" : "integratedTerminal",
             JustMyCode = true,
             StopAtEntry = false,
-        }, breakpoints, lines, log, output);
+        }, breakpoints, lines, log, output, runInTerminal);
 
     /// <summary>Starts the adapter and attaches it to a running .NET process (a test host VSTest started), with the
     /// store's breakpoints, as Attach to Process does.</summary>
     public static Task<DebugSession> AttachAsync(int processId, BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output) =>
-        StartAsync($"process {processId}", "attach", new AttachArguments { ProcessId = processId, JustMyCode = true }, breakpoints, lines, log, output);
+        StartAsync($"process {processId}", "attach", new AttachArguments { ProcessId = processId, JustMyCode = true }, breakpoints, lines, log, output, null);
 
-    private static async Task<DebugSession> StartAsync(string program, string request, object arguments, BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output)
+    private static async Task<DebugSession> StartAsync(string program, string request, object arguments, BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output,
+        Func<RunInTerminalArguments, Task<Run.TerminalRun>>? runInTerminal)
     {
         UiThread.Check();
         DebugSession session = new(breakpoints, lines, log, output) { Program = program };
         IdeLog.Write(IdeLog.Debugger, $"[{session.connection.Name}] {request} {program}");
+        if (runInTerminal is not null)
+        {
+            // Asked inside configurationDone, on the connection's thread: the terminal is the window's.
+            session.connection.Handle<RunInTerminalArguments, RunInTerminalResponse>("runInTerminal", asked => UiThread.InvokeAsync(async () =>
+            {
+                Run.TerminalRun run = await runInTerminal(asked);
+                session.Terminal = run;
+                return new RunInTerminalResponse(run.ProcessId);
+            }));
+        }
         session.connection.Start();
         try
         {
@@ -188,6 +205,7 @@ public sealed class DebugSession
                 ColumnsStartAt1 = true,
                 PathFormat = "path",
                 SupportsVariableType = true,
+                SupportsRunInTerminalRequest = runInTerminal is not null,
             });
             await session.connection.RequestAsync(request, arguments);
             await session.initialized.Task.WaitAsync(TimeSpan.FromSeconds(30));
@@ -249,7 +267,8 @@ public sealed class DebugSession
         }
     }
 
-    /// <summary>Ends the program and the adapter. A program that will not go is killed with the adapter.</summary>
+    /// <summary>Ends the program and the adapter. A program that will not go is killed with the adapter; one in the terminal
+    /// that is stopped, rather than at its own end, goes with all it started.</summary>
     public async Task StopAsync()
     {
         UiThread.Check();
@@ -257,8 +276,44 @@ public sealed class DebugSession
         {
             return;
         }
+        bool stopping = !programEnded && Terminal is { IsRunning: true };
+        if (stopping)
+        {
+            // Windows finds a tree only from its root while it runs, which the debugger's terminate would end first.
+            if (OperatingSystem.IsWindows())
+            {
+                Terminal!.Stop();
+            }
+            else
+            {
+                Terminal!.Stopping();
+            }
+        }
         await EndProcessesAsync(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(3));
+        if (Terminal is { } terminal)
+        {
+            if (stopping && !OperatingSystem.IsWindows())
+            {
+                terminal.Stop();
+            }
+            await TerminalEnd(terminal);
+        }
         End(ExitCode);
+    }
+
+    /// <summary>Takes the exit code of a program in the terminal, which its tab has once its last output is in, when the
+    /// adapter could not tell it.</summary>
+    private async Task TerminalEnd(Run.TerminalRun terminal)
+    {
+        try
+        {
+            int code = await terminal.Ended.WaitAsync(TimeSpan.FromSeconds(3));
+            ExitCode ??= code;
+        }
+        catch (TimeoutException)
+        {
+            // Still running after the debugger let it go: its tab tells its end when it comes.
+        }
     }
 
     /// <summary>Ends the program and the adapter as the IDE closes, on a worker thread, so the process can wait for it
@@ -327,6 +382,17 @@ public sealed class DebugSession
             }
         }
         EndLaunched(log);
+        _ = EndAfterTerminal();
+    }
+
+    /// <summary>Ends the session once a program in the terminal has ended too, so its exit code, which the terminal saw, is
+    /// told with the end.</summary>
+    private async Task EndAfterTerminal()
+    {
+        if (Terminal is { } terminal)
+        {
+            await TerminalEnd(terminal);
+        }
         End(null);
     }
 
@@ -335,6 +401,12 @@ public sealed class DebugSession
     /// and Linux the adapter's process group too, which holds what the program started.</summary>
     private void EndLaunched(Action<string> log)
     {
+        // Gone unasked (a crash): asked, the program has ended on its own or Stop ends it.
+        if (disconnected is null && Terminal is { IsRunning: true } terminal)
+        {
+            log($"{terminal.Name} (process {terminal.ProcessId}) was left running in the terminal by the debugger, and is ended with it");
+            terminal.Stop();
+        }
         if (launched is not { } program)
         {
             return;
@@ -560,7 +632,7 @@ public sealed class DebugSession
         {
             return;
         }
-        ExitCode = exitCode ?? ExitCode;
+        ExitCode = exitCode ?? ExitCode ?? (Terminal?.Ended is { IsCompletedSuccessfully: true } inTerminal ? inTerminal.Result : null);
         IdeLog.Write(IdeLog.Debugger, $"[{connection.Name}] Ended debugging {Program}{(ExitCode is { } code ? $": exit code {code}" : string.Empty)}{(Failure is { } failed ? $": {failed}" : string.Empty)}");
         breakpoints.Changed -= OnBreakpointsChanged;
         breakpoints.ResetStatus();

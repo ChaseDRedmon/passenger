@@ -5,8 +5,9 @@ using Passenger.App.Workspace;
 
 namespace Passenger.App.Run;
 
-/// <summary>Where a run's program reads and writes: the Run or Debug window's console, or a tab of the terminal, which
-/// gives it a real terminal (#16; the field and the plan are here, the terminal's launch is not yet).</summary>
+/// <summary>Where a run's program reads and writes: the Run or Debug window's console, or a tab of the Terminal window,
+/// which gives it a real terminal (Rider's Use external console; <see cref="TerminalRun"/>). Profile keeps to the Run
+/// window's console either way.</summary>
 public enum ConsoleKind
 {
     Internal,

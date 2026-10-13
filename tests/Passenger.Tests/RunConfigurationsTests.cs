@@ -134,6 +134,54 @@ public sealed class RunConfigurationsTests : IDisposable
         }
     }
 
+    /// <summary>Rider's Use external console, chosen in the dialog for a copy of the generated configuration (whose own stays
+    /// the Run window's), runs the program in a tab of the Terminal window named for the configuration, and is still chosen
+    /// when the folder opens again.</summary>
+    [AvaloniaFact]
+    public void Use_external_console_chosen_in_the_dialog_runs_the_program_in_the_terminal_and_is_kept_with_the_configuration()
+    {
+        MainWindow window = Keeping();
+        RunConfigurationsDialog dialog = window.ShowRunConfigurations();
+        Assert.Equal("Hello", dialog.Chosen?.Name);
+        Assert.False(dialog.ConsoleBox.IsEnabled, "A generated configuration's console can be changed in place, though its project makes it");
+        Assert.False(dialog.ConsoleBox.IsChecked == true, "A generated configuration runs in the terminal");
+        Click(dialog.CopyButton);
+        Assert.True(dialog.ConsoleBox.IsEnabled, "The copy of a generated configuration cannot choose its console");
+        Type(dialog.NameBox, "Hello in the terminal");
+        Type(dialog.ArgumentsBox, "one");
+        dialog.ConsoleBox.IsChecked = true;
+        Ui.Settle();
+        Click(dialog.OkButton);
+        Ui.Settle();
+        Assert.Equal(ConsoleKind.Internal, window.Configurations[0].Console);
+        Assert.Equal(ConsoleKind.Terminal, window.Configuration?.Console);
+
+        Assert.Null(Ui.Await(window.RunAsync(), "the run to start", TimeSpan.FromMinutes(2)));
+        TerminalRun run = Assert.IsType<TerminalRun>(window.RunInTerminal);
+        Assert.Equal("Hello in the terminal", window.TerminalPanel.ActiveTab?.Name);
+        Ui.WaitFor(() => run.Ended.IsCompleted, "the run to end");
+        // Rows the terminal wrapped joined again, as a copy of them reads.
+        string shown = string.Concat(run.Session.Screen.Scrollback.Concat(run.Session.Screen.Lines).Select(l => l.Text() + (l.Wrapped ? string.Empty : "\n")));
+        Assert.True(shown.Contains($" [one] in {project}", StringComparison.Ordinal) && shown.Contains("Process finished with exit code 0.", StringComparison.Ordinal),
+            $"The program did not run in the terminal with the configuration's arguments and folder:\n{shown}");
+        Assert.Equal("Hello in the terminal exited with code 0", window.Status);
+        window.Close();
+
+        MainWindow again = Keeping();
+        try
+        {
+            Assert.Equal(ConsoleKind.Terminal, again.Configuration?.Console);
+            RunConfigurationsDialog reopened = again.ShowRunConfigurations();
+            Assert.Equal("Hello in the terminal", reopened.Chosen?.Name);
+            Assert.True(reopened.ConsoleBox.IsChecked == true, "Use external console was not kept with the configuration");
+            reopened.Close();
+        }
+        finally
+        {
+            again.Close();
+        }
+    }
+
     [AvaloniaFact]
     public void A_configuration_removed_in_the_dialog_is_gone_from_the_toolbar_and_the_folder()
     {
