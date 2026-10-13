@@ -4,19 +4,22 @@ using Passenger.Text;
 namespace Passenger.Editor;
 
 /// <summary>A live template made ready to insert: its text, each variable's places in it in the order Tab visits
-/// them, and where the caret ends up.</summary>
-public sealed record Snippet(string Text, IReadOnlyList<IReadOnlyList<TextRange>> Fields, int End)
+/// them, and where the caret ends up (or what is selected at the end, as Rider's try...catch selects its catch's body).</summary>
+public sealed record Snippet(string Text, IReadOnlyList<IReadOnlyList<TextRange>> Fields, TextRange End)
 {
     /// <summary>Rider's live template syntax: <c>$NAME$</c> a variable (its places one field, each filled with its
-    /// default), <c>$END$</c> where the caret goes after the last, <c>$SELECTION$</c> the text the template wraps,
-    /// <c>$$</c> a dollar. Lines after the first take the indentation of the line it goes on, a tab the indentation's
-    /// unit, so a template is written once for every style.</summary>
+    /// default), <c>$END$</c> where the caret goes after the last, <c>$SELSTART$</c> and <c>$SELEND$</c> what is selected
+    /// there instead, <c>$SELECTION$</c> the text the template wraps, <c>$$</c> a dollar. Lines after the first take the
+    /// indentation of the line it goes on, a tab the indentation's unit, so a template is written once for every style;
+    /// the wrapped text's lines after its first take the indentation of the template's line it is on.</summary>
     public static Snippet Parse(string template, IReadOnlyDictionary<string, string> defaults, string indent, string unit, string selection = "")
     {
         StringBuilder text = new();
         Dictionary<string, List<TextRange>> places = new(StringComparer.Ordinal);
         List<string> order = [];
         int end = -1;
+        int selectedFrom = -1;
+        int selectedTo = -1;
         for (int i = 0; i < template.Length; i++)
         {
             char c = template[i];
@@ -29,24 +32,30 @@ public sealed record Snippet(string Text, IReadOnlyList<IReadOnlyList<TextRange>
             else if (close > i)
             {
                 string name = template[(i + 1)..close];
-                if (name == "END")
+                switch (name)
                 {
-                    end = text.Length;
-                }
-                else if (name == "SELECTION")
-                {
-                    text.Append(selection.Replace("\n", "\n" + indent, StringComparison.Ordinal));
-                }
-                else
-                {
-                    string value = defaults.GetValueOrDefault(name, string.Empty);
-                    if (!places.TryGetValue(name, out List<TextRange>? list))
-                    {
-                        places[name] = list = [];
-                        order.Add(name);
-                    }
-                    list.Add(new TextRange(text.Length, value.Length));
-                    text.Append(value);
+                    case "END":
+                        end = text.Length;
+                        break;
+                    case "SELSTART":
+                        selectedFrom = text.Length;
+                        break;
+                    case "SELEND":
+                        selectedTo = text.Length;
+                        break;
+                    case "SELECTION":
+                        AppendWrapped(text, selection, indent);
+                        break;
+                    default:
+                        string value = defaults.GetValueOrDefault(name, string.Empty);
+                        if (!places.TryGetValue(name, out List<TextRange>? list))
+                        {
+                            places[name] = list = [];
+                            order.Add(name);
+                        }
+                        list.Add(new TextRange(text.Length, value.Length));
+                        text.Append(value);
+                        break;
                 }
                 i = close;
             }
@@ -63,6 +72,39 @@ public sealed record Snippet(string Text, IReadOnlyList<IReadOnlyList<TextRange>
                 text.Append(c);
             }
         }
-        return new Snippet(text.ToString(), [.. order.Select(n => (IReadOnlyList<TextRange>)places[n])], end < 0 ? text.Length : end);
+        TextRange last = selectedFrom >= 0 && selectedTo >= selectedFrom ? TextRange.FromBounds(selectedFrom, selectedTo)
+            : new TextRange(end < 0 ? text.Length : end, 0);
+        return new Snippet(text.ToString(), [.. order.Select(n => (IReadOnlyList<TextRange>)places[n])], last);
+    }
+
+    /// <summary>The wrapped text, its lines after the first indented as the template's line it starts on, which on the
+    /// template's first line is the indentation of the line it goes on; an empty line stays empty.</summary>
+    private static void AppendWrapped(StringBuilder text, string selection, string indent)
+    {
+        int lineStart = 0;
+        for (int i = text.Length - 1; i >= 0; i--)
+        {
+            if (text[i] == '\n')
+            {
+                lineStart = i + 1;
+                break;
+            }
+        }
+        int leading = lineStart;
+        while (leading < text.Length && text[leading] is ' ' or '\t')
+        {
+            leading++;
+        }
+        string lineIndent = (lineStart == 0 ? indent : string.Empty) + text.ToString(lineStart, leading - lineStart);
+        string[] lines = selection.Split('\n');
+        text.Append(lines[0]);
+        foreach (string line in lines.Skip(1))
+        {
+            text.Append('\n');
+            if (line.Length > 0)
+            {
+                text.Append(lineIndent).Append(line);
+            }
+        }
     }
 }

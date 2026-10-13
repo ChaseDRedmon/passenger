@@ -16,7 +16,7 @@ namespace Passenger.App.CSharp;
 /// an opening bracket or a comma, and the commands Rider binds (quick fixes, rename, go to
 /// declaration, implementation, type declaration, base and derived symbols, find usages, reformat, next error). Its popups
 /// sit on a layer over the editor, placed at the caret.</summary>
-public sealed class CodeAssist
+public sealed partial class CodeAssist
 {
     private readonly EditorArea editors;
     private Canvas layer;
@@ -190,14 +190,18 @@ public sealed class CodeAssist
     /// file.</summary>
     public void AddActions(ActionRegistry actions)
     {
-        Code(AppActions.Complete, "Basic Completion", context => _ = StartCompletion(null), new("Code", 0, 0));
+        // Rider's Code, Code Completion: Basic, then Complete Current Statement after a separator.
+        Code(AppActions.Complete, "Basic Completion", context => _ = StartCompletion(null), new("Code/Code Completion", 0, 0));
+        Code(AppActions.CompleteStatement, "Complete Current Statement", _ => CompleteStatement(), new("Code/Code Completion", 1, 0), server: false, syntax: true);
         Code(AppActions.QuickFix, "Show Context Actions", context => _ = ShowFixes(), new("Code", 0, 1));
         // Rider's Generate: the server's actions that write code for the type (constructors, equality, interface members,
         // overrides).
         Code(AppActions.Generate, "Generate...", context => _ = ShowFixes(a => GenerateWords.Any(w => a.Title.StartsWith(w, StringComparison.Ordinal)), "Generate"),
             new("Code", 0, 2));
+        Code(AppActions.SurroundWith, "Surround With...", _ => ShowSurround(), new("Code", 0, 3), server: false, syntax: true);
         Code(AppActions.Reformat, "Reformat Code", context => _ = Reformat(), new("Code", 1, 0));
         Code(AppActions.CodeCleanup, "Code Cleanup", context => _ = Cleanup(), new("Code", 1, 1));
+        Code(AppActions.OptimizeUsings, "Optimize Imports", context => _ = OptimizeUsings(), new("Code", 1, 2));
         Code(AppActions.RefactorThis, "Refactor This...", context => _ = ShowFixes(a => a.Kind?.StartsWith("refactor", StringComparison.Ordinal) == true, "Refactor This"),
             new("Refactor", 0, 0));
         Code(AppActions.Rename, "Rename...", _ => ShowRename(), new("Refactor", 1, 0));
@@ -205,8 +209,13 @@ public sealed class CodeAssist
             new("Refactor", 1, 1));
         Code(AppActions.IntroduceVariable, "Introduce Variable...",
             context => _ = Refactor(a => a.Title.StartsWith("Introduce local", StringComparison.Ordinal), "Introduce Variable", renameMethod: false), new("Refactor", 1, 2));
+        Code(AppActions.IntroduceField, "Introduce Field...", context => _ = Refactor(IntroduceField), new("Refactor", 1, 3));
+        Code(AppActions.IntroduceParameter, "Introduce Parameter...", context => _ = Refactor(IntroduceParameter), new("Refactor", 1, 4));
         Code(AppActions.Inline, "Inline...",
-            context => _ = Refactor(a => a.Kind == "refactor.inline" || a.Title.StartsWith("Inline", StringComparison.Ordinal), "Inline", renameMethod: false), new("Refactor", 1, 3));
+            context => _ = Refactor(a => a.Kind == "refactor.inline" || a.Title.StartsWith("Inline", StringComparison.Ordinal), "Inline", renameMethod: false), new("Refactor", 1, 5));
+        Code(AppActions.SafeDelete, "Safe Delete...", context => _ = SafeDelete(), new("Refactor", 2, 0));
+        // Rider adds it at the end of the Refactor menu.
+        Code(AppActions.EncapsulateField, "Encapsulate Field...", context => _ = Refactor(EncapsulateField), new("Refactor", 3, 0));
         // Rider's order in Navigate: Declaration, Derived Symbols, Implementation(s), Type Declaration, Base Symbols.
         Code(AppActions.GoToDeclaration, "Go to Declaration", context => _ = GoToDefinition(Caret), new("Navigate", 2, 0));
         Code(AppActions.DerivedSymbols, "Derived Symbols", context => _ = GoToRelated("Derived Symbols", Caret, DerivedSymbolsAsync, "No derived symbols found"),
@@ -222,14 +231,18 @@ public sealed class CodeAssist
         Code(AppActions.PreviousError, "Previous Highlighted Error", _ => StepToMarker(forward: false), new("Navigate", 3, 1), server: false);
         Code(AppActions.QuickDocumentation, "Quick Documentation", context => _ = ShowHover(Caret, Editor.PointOf(Caret)), new("View", 1, 1), server: false);
 
-        void Code(string id, string title, Action<ActionContext> run, MenuPlace menu, bool server = true) =>
-            actions.Add(new IdeAction(id, title, "Code", run) { WhyNot = context => WhyNot(context, server), Menus = [menu] });
+        void Code(string id, string title, Action<ActionContext> run, MenuPlace menu, bool server = true, bool syntax = false) =>
+            actions.Add(new IdeAction(id, title, "Code", run) { WhyNot = context => WhyNot(context, server, syntax), Menus = [menu] });
     }
 
     private int Caret => Editor.Selections.Primary.Caret;
 
-    private string? WhyNot(ActionContext context, bool server) =>
+    /// <summary>Why an action cannot run: no file; for one that asks the server, none for the file; for one that edits by
+    /// the file's syntax, a file not C# or one that cannot be edited.</summary>
+    private string? WhyNot(ActionContext context, bool server, bool syntax = false) =>
         context.File is null ? "No file is open"
+        : syntax && context.File.Syntax is null ? "The file is not C#"
+        : syntax && context.Editor.IsReadOnly ? "The file is read-only"
         : !server || Current is not null ? null
         : service() is null ? "No C# language server runs for this folder"
         : "The file is not C#";
@@ -916,14 +929,21 @@ public sealed class CodeAssist
     }
 
     /// <summary>A code action chosen, carried out: one that offers choices (a fix-all's scopes, the actions nested under
-    /// it) offers them as a list at <paramref name="at"/> and applies the one chosen there; any other is applied at once.
-    /// <paramref name="applied"/> runs once its change is made.</summary>
-    private async Task Carry(OpenDocument document, CodeAction action, int at, string what, Asked? listed, Action? applied = null)
+    /// it) offers them as a list at <paramref name="at"/> and applies the one chosen there, or the one choice
+    /// <paramref name="keep"/> leaves; any other is applied at once. <paramref name="applied"/> runs once its change is made.</summary>
+    private async Task Carry(OpenDocument document, CodeAction action, int at, string what, Asked? listed, Action? applied = null, Func<ActionChoice, bool>? keep = null)
     {
-        IReadOnlyList<ActionChoice> choices = ClientCommands.Choices(action);
-        if (choices.Count == 0)
+        IReadOnlyList<ActionChoice> offered = ClientCommands.Choices(action);
+        IReadOnlyList<ActionChoice> choices = keep is null ? offered : [.. offered.Where(keep)];
+        if (offered.Count > 0 && choices.Count == 0)
         {
-            if (await Apply(document, action, null, what, listed))
+            Message?.Invoke(this, $"{what} is not available here: the language server offers none of its kind");
+            return;
+        }
+        if (choices.Count == 0 || keep is not null && choices.Count == 1)
+        {
+            (CodeAction chosen, string? scope) = choices.Count == 1 ? (choices[0].Action, choices[0].Scope) : (action, null);
+            if (await Apply(document, chosen, scope, what, choices.Count == 1 ? null : listed))
             {
                 applied?.Invoke();
             }
@@ -1388,27 +1408,21 @@ public sealed class CodeAssist
     /// removed (IDE0005's fix), the usings sorted, then the file reformatted.</summary>
     private async Task CleanupCore()
     {
-        if (Ask("Code Cleanup") is not { } lsp || Current is not { } current || editors.Active is not { } document)
+        if (Ask("Code Cleanup") is not { } lsp || editors.Active is not { } document)
         {
             return;
         }
         List<string> done = [];
         try
         {
-            List<Diagnostic> unused = [.. current.Diagnostics.Where(d => d.Code is { ValueKind: System.Text.Json.JsonValueKind.String } code && code.GetString() == "IDE0005")];
-            if (unused.Count > 0 && await ApplyNamed(lsp, document, LineRange(Editor.Document.Snapshot.GetLineFromOffset(lsp.OffsetOf(unused[0].Range.Start))), unused, "Remove unnecessary usings"))
+            (bool removed, bool sorted) = await TidyUsings(lsp, document);
+            if (removed)
             {
                 done.Add("removed unused usings");
             }
-            TextSnapshot text = Editor.Document.Snapshot;
-            int usingLine = Enumerable.Range(0, text.LineCount).FirstOrDefault(l => text.GetLineText(l).TrimStart().StartsWith("using ", StringComparison.Ordinal) && text.GetLineText(l).TrimEnd().EndsWith(';'), -1);
-            if (usingLine >= 0)
+            if (sorted)
             {
-                string before = text.ToString();
-                if (await ApplyNamed(lsp, document, LineRange(usingLine), [], "Sort Usings") && Editor.Document.Snapshot.ToString() != before)
-                {
-                    done.Add("sorted the usings");
-                }
+                done.Add("sorted the usings");
             }
             string unformatted = document.Text.Snapshot.ToString();
             using ChangeTracker asked = new(document.Text);
@@ -1422,12 +1436,6 @@ public sealed class CodeAssist
         catch (LanguageServerFailed failed)
         {
             Failed("Code Cleanup", failed);
-        }
-
-        TextRange LineRange(int line)
-        {
-            LineSpan span = Editor.Document.Snapshot.GetLine(line);
-            return new TextRange(span.Start, span.Length);
         }
     }
 

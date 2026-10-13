@@ -34,6 +34,7 @@ public static class MainMenu
         new("File/Line Separators", 2, 1),
         new("Edit/Find", 3, 0),
         new("Navigate/Bookmarks", 4, 0),
+        new("Code/Code Completion", 0, 0),
         new("Code/Folding", 3, 0),
         new("Window/Layout Settings", 0, 0),
         new("Window/Editor Tabs", 1, 0),

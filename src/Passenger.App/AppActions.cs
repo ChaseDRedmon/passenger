@@ -111,6 +111,17 @@ public static class AppActions
     public const string IntroduceVariable = "app.code.introduceVariable";
     public const string Inline = "app.code.inline";
     public const string ParameterInfo = "app.code.parameterInfo";
+
+    // Rider's SurroundWith (its Visual Studio keymaps clear its own keys and give theirs to SurroundWithLiveTemplate, which
+    // it is here), EditorCompleteStatement, OptimizeImports (named Optimize Imports in C# too; its id says usings, which
+    // Find Action reads), SafeDelete, IntroduceField, IntroduceParameter and RiderBackendAction-EncapsulateField.
+    public const string SurroundWith = "app.code.surroundWith";
+    public const string CompleteStatement = "app.code.completeStatement";
+    public const string OptimizeUsings = "app.code.optimizeUsings";
+    public const string SafeDelete = "app.code.safeDelete";
+    public const string IntroduceField = "app.code.introduceField";
+    public const string IntroduceParameter = "app.code.introduceParameter";
+    public const string EncapsulateField = "app.code.encapsulateField";
     public const string QuickDocumentation = "app.code.quickDocumentation";
     public const string NextError = "app.code.nextError";
     public const string PreviousError = "app.code.previousError";
@@ -358,6 +369,15 @@ public static class AppActions
                 .Bind(ExtractMethod, "meta R , M", "meta R , meta M")
                 .Bind(IntroduceVariable, "meta R , V", "meta R , meta V")
                 .Bind(Inline, "meta R , I", "meta R , meta I")
+                .Bind(SurroundWith, "meta E , U", "meta E , meta U")
+                // From Mac OS X 10.5+, which takes $default's Ctrl as Cmd.
+                .Bind(CompleteStatement, "meta shift ENTER")
+                .Bind(OptimizeUsings, "control alt O")
+                // The keymap's third, Alt+Delete, is the editor's Delete to Word End there, which its parent gives it.
+                .Bind(SafeDelete, "meta R , D", "meta R , meta D")
+                .Bind(IntroduceField, "meta R , F", "meta R , meta F")
+                .Bind(IntroduceParameter, "meta R , P", "meta R , meta P")
+                .Bind(EncapsulateField, "meta R , E", "meta R , meta E")
                 .Bind(QuickDocumentation, "meta K , I", "meta K , meta I", "control shift F1")
                 .Bind(NextError, "alt PAGE_DOWN")
                 .Bind(PreviousError, "alt PAGE_UP")
@@ -461,6 +481,13 @@ public static class AppActions
             .Bind(ExtractMethod, "control R , M", "control R , control M")
             .Bind(IntroduceVariable, "control R , V", "control R , control V")
             .Bind(Inline, "control R , I", "control R , control I")
+            .Bind(SurroundWith, "control E , U", "control E , control U", "control K , S", "control K , control S")
+            .Bind(CompleteStatement, "control shift ENTER")
+            .Bind(OptimizeUsings, "control R , G", "control R , control G", "control alt O")
+            .Bind(SafeDelete, "control R , D", "control R , control D", "alt DELETE")
+            .Bind(IntroduceField, "control R , F", "control R , control F")
+            .Bind(IntroduceParameter, "control R , P", "control R , control P")
+            .Bind(EncapsulateField, "control R , E", "control R , control E")
             .Bind(QuickDocumentation, "control K , I", "control K , control I", "control shift F1")
             .Bind(NextError, "alt PAGE_DOWN")
             .Bind(PreviousError, "alt PAGE_UP")

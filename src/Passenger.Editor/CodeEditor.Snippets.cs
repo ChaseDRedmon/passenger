@@ -16,15 +16,31 @@ public sealed partial class CodeEditor
     /// <summary>Whether a template is being filled in.</summary>
     public bool IsInSnippet => snippet is not null;
 
-    /// <summary>Puts a template's text over a range and selects its first variable's places.</summary>
+    /// <summary>Puts a template's text over a range, its line breaks the document's, and selects its first variable's
+    /// places.</summary>
     public void InsertSnippet(TextRange replace, Snippet inserted)
     {
         snippet = null;
-        ApplyEdits([new TextEdit(replace.Start, replace.Length, inserted.Text)]);
+        string eol = document.LineEnding;
+        // A template is written with '\n'; in a CRLF file each such break grows by one, and every place after it moves on.
+        int Placed(int offset)
+        {
+            int grown = 0;
+            for (int i = 0; i < offset && eol != "\n"; i++)
+            {
+                if (inserted.Text[i] == '\n' && (i == 0 || inserted.Text[i - 1] != '\r'))
+                {
+                    grown += eol.Length - 1;
+                }
+            }
+            return offset + grown;
+        }
+        ApplyEdits([new TextEdit(replace.Start, replace.Length, LineEndings.In(inserted.Text, eol))]);
         int at = replace.Start;
+        TextRange end = TextRange.FromBounds(Placed(inserted.End.Start) + at, Placed(inserted.End.End) + at);
         snippet = new Session(
-            [.. inserted.Fields.Select(f => f.Select(r => new TextRange(r.Start + at, r.Length)).ToList())],
-            inserted.End + at);
+            [.. inserted.Fields.Select(f => f.Select(r => TextRange.FromBounds(Placed(r.Start) + at, Placed(r.End) + at)).ToList())],
+            end);
         StepField(1);
     }
 
@@ -61,7 +77,8 @@ public sealed partial class CodeEditor
             if (next >= session.Fields.Count)
             {
                 snippet = null;
-                SetSelections(SelectionSet.Single(Math.Min(session.End, document.Snapshot.Length)), reveal: true);
+                int length = document.Snapshot.Length;
+                SetSelections(SelectionSet.Single(new Selection(Math.Min(session.End.Start, length), Math.Min(session.End.End, length))), reveal: true);
                 return;
             }
             session.Current = next;
@@ -89,7 +106,8 @@ public sealed partial class CodeEditor
                 field[i] = TextRange.FromBounds(start, Math.Max(start, end));
             }
         }
-        session.End = TextEditing.MapOffset(session.End, edits, afterInsertions: true);
+        int endStart = TextEditing.MapOffset(session.End.Start, edits, afterInsertions: session.End.Length == 0);
+        session.End = TextRange.FromBounds(endStart, Math.Max(endStart, TextEditing.MapOffset(session.End.End, edits, afterInsertions: true)));
     }
 
     /// <summary>Ends the template when a caret goes outside the variable being filled in.</summary>
@@ -142,11 +160,11 @@ public sealed partial class CodeEditor
         }
     }
 
-    /// <summary>A template's places by variable, in Tab's order, and its end.</summary>
-    private sealed class Session(List<List<TextRange>> fields, int end)
+    /// <summary>A template's places by variable, in Tab's order, and its end: where the caret goes, or what is selected.</summary>
+    private sealed class Session(List<List<TextRange>> fields, TextRange end)
     {
         public List<List<TextRange>> Fields { get; } = fields;
-        public int End { get; set; } = end;
+        public TextRange End { get; set; } = end;
         public int Current { get; set; } = -1;
     }
 }

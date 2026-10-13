@@ -210,8 +210,8 @@ internal sealed class CompletionPopup : Border
     }
 }
 
-/// <summary>A titled list to choose from (fixes, definitions, usages): Up and Down, Enter to choose,
-/// Escape or a click away to dismiss.</summary>
+/// <summary>A titled list to choose from (fixes, definitions, usages, surround templates): Up and Down, Enter to choose,
+/// a choice's digit to choose it at once, Escape or a click away to dismiss.</summary>
 internal sealed class ChoicePopup : Border
 {
     // Styled as the Border it is, so the theme's Border.popup reaches it.
@@ -225,6 +225,7 @@ internal sealed class ChoicePopup : Border
     public ChoicePopup(string title, IReadOnlyList<Choice> choices)
     {
         Titles = [.. choices.Select(c => c.Text)];
+        bool numbered = choices.Any(c => c.Mnemonic is not null);
         Classes.Add("popup");
         MinWidth = 320;
         MaxWidth = 760;
@@ -242,6 +243,16 @@ internal sealed class ChoicePopup : Border
                 Height = 24,
                 Children =
                 {
+                    // Rider's digit before the choices that have one, a column of its own when any does.
+                    new TextBlock
+                    {
+                        Text = choice?.Mnemonic?.ToString(),
+                        Foreground = InfoCard.Brush("Passenger.TextMuted"),
+                        FontFamily = Fonts.Mono,
+                        Width = 10,
+                        IsVisible = numbered,
+                        VerticalAlignment = VerticalAlignment.Center,
+                    },
                     new TextBlock { Text = choice?.Text, VerticalAlignment = VerticalAlignment.Center },
                     new TextBlock
                     {
@@ -292,7 +303,19 @@ internal sealed class ChoicePopup : Border
             Done?.Invoke(this, null);
             e.Handled = true;
         }
+        else if (Digit(e.Key) is { } digit && list.ItemsSource is IEnumerable<Choice> choices && choices.FirstOrDefault(c => c.Mnemonic == digit) is { } marked)
+        {
+            Done?.Invoke(this, marked);
+            e.Handled = true;
+        }
     }
+
+    private static char? Digit(Key key) => key switch
+    {
+        >= Key.D0 and <= Key.D9 => (char)('0' + (key - Key.D0)),
+        >= Key.NumPad0 and <= Key.NumPad9 => (char)('0' + (key - Key.NumPad0)),
+        _ => null,
+    };
 
     private void Choose()
     {
@@ -303,8 +326,9 @@ internal sealed class ChoicePopup : Border
     }
 }
 
-/// <summary>One thing to choose: what it says, a quieter detail beside it, and what it stands for.</summary>
-internal sealed record Choice(string Text, string Detail, object Value, bool DetailIsCode = false);
+/// <summary>One thing to choose: what it says, a quieter detail beside it, what it stands for, and the digit that
+/// chooses it, if it has one.</summary>
+internal sealed record Choice(string Text, string Detail, object Value, bool DetailIsCode = false, char? Mnemonic = null);
 
 /// <summary>Rider's inline rename: the name in a box over itself, all of it selected; Enter renames,
 /// Escape leaves it.</summary>
