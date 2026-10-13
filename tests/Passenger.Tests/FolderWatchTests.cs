@@ -44,6 +44,40 @@ public sealed class FolderWatchTests : IDisposable
         window.Close();
     }
 
+    /// <summary>Git's checkout and rollback, and editors that save so, delete a file and write it anew. The changes seen,
+    /// handed over between the two, found the open file gone and closed its tab, as one rollback in 160 did on Windows.</summary>
+    [AvaloniaFact]
+    public void A_file_deleted_and_written_again_at_once_keeps_its_tab_with_the_new_text_and_one_deleted_for_good_closes()
+    {
+        string path = Path.Combine(folder, "One.cs");
+        File.WriteAllText(path, "class One { }\n");
+        MainWindow window = Open();
+        window.OpenFile("One.cs");
+        Ui.Settle();
+
+        // Written again just after the deletion is handed over, the file gone as it is looked at.
+        bool rewritten = false;
+        window.FolderWatcher!.Changed += (_, changes) =>
+        {
+            if (!rewritten && changes.Paths.Contains(PathNames.Canonical(path)) && !File.Exists(path))
+            {
+                rewritten = true;
+                File.WriteAllText(path, "class One { int back; }\n");
+            }
+        };
+        File.Delete(path);
+        Ui.WaitFor(() => rewritten, "the deletion to be seen");
+        Ui.Settle();
+        Assert.True(window.EditorArea.Documents.Any(d => d.Name == "One.cs"), "The file deleted and written again at once had its tab closed");
+        Ui.WaitFor(() => Text(window) == "class One { int back; }\n", "the file written again to show its new text", TimeSpan.FromSeconds(10));
+        Assert.False(window.EditorArea.Active!.IsModified);
+
+        File.Delete(path);
+        Ui.WaitFor(() => window.EditorArea.Documents.Count == 0, "the tab of the file deleted for good to close");
+        Assert.False(File.Exists(path), "Closing the deleted file's tab wrote it back");
+        window.Close();
+    }
+
     /// <summary>A save writes the new text beside the file and moves it over the file, which the watcher takes for no
     /// change of which files there are. The folder read again in that moment (another program's new file seen) listed the
     /// temporary file, and nothing read it again once the save was done, so it stayed offered until the next new file.</summary>

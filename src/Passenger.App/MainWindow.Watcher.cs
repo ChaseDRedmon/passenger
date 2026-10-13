@@ -1,4 +1,5 @@
 using Passenger.App.Workspace;
+using Passenger.Editor;
 
 namespace Passenger.App;
 
@@ -7,8 +8,14 @@ namespace Passenger.App;
 /// unsaved edits that changed on disk asks which to keep, as Rider's File Cache Conflict does.</summary>
 public partial class MainWindow
 {
+    /// <summary>How long an open file found gone has to come back before it is taken for deleted. Git's checkout and
+    /// rollback, and editors and formatters that save so, delete a file and write it anew, and the changes seen may be
+    /// handed over between the two: its tab closed then, once in 160 rollbacks on Windows.</summary>
+    private static readonly TimeSpan ComeBack = TimeSpan.FromMilliseconds(500);
+
     private FolderWatcher? watcher;
     private readonly HashSet<OpenDocument> conflicted = [];
+    private readonly HashSet<OpenDocument> gone = [];
 
     /// <summary>A save that found the file changed on disk asks which version to keep, as a change seen does.</summary>
     private void AddConflicts() => Editors.SaveConflicted += (_, document) =>
@@ -53,32 +60,68 @@ public partial class MainWindow
         }
         foreach (OpenDocument document in Editors.Documents.Where(d => changes.Paths.Contains(d.Path)).ToList())
         {
-            if (!File.Exists(document.Path))
+            if (File.Exists(document.Path))
             {
-                // Deleted elsewhere: its tab goes, as Rider's does, unless it holds edits that would go with it.
-                if (!document.IsModified)
-                {
-                    Editors.CloseDeleted(document);
-                }
-                continue;
+                FollowDisk(document);
             }
-            if (!document.ChangedOnDisk())
+            else
             {
-                continue;
-            }
-            if (!document.IsModified)
-            {
-                document.Reload();
-            }
-            else if (conflicted.Add(document))
-            {
-                _ = ResolveConflictAsync(document);
+                AwaitReturn(document);
             }
         }
         if (changes.Paths.Count > 0 || changes.Git)
         {
             _ = vcs.RefreshAsync();
         }
+    }
+
+    /// <summary>An open file changed on disk: its text is taken, or with unsaved edits the person is asked which to keep.</summary>
+    private void FollowDisk(OpenDocument document)
+    {
+        if (!document.ChangedOnDisk())
+        {
+            return;
+        }
+        if (!document.IsModified)
+        {
+            document.Reload();
+        }
+        else if (conflicted.Add(document))
+        {
+            _ = ResolveConflictAsync(document);
+        }
+    }
+
+    /// <summary>An open file found gone: back within a moment, it takes the new text; still gone, it was deleted elsewhere
+    /// and its tab goes, as Rider's does, unless it holds edits that would go with it.</summary>
+    private void AwaitReturn(OpenDocument document)
+    {
+        if (document.IsModified || !gone.Add(document))
+        {
+            return;
+        }
+        // Held while it waits, so a screenshot or a test finds the tab as the wait leaves it.
+        IDisposable held = BackgroundWork.Scope();
+        _ = Task.Delay(ComeBack).ContinueWith(_ =>
+        {
+            UiThread.Post(() =>
+            {
+                gone.Remove(document);
+                if (!Editors.Documents.Contains(document))
+                {
+                    return;
+                }
+                if (File.Exists(document.Path))
+                {
+                    FollowDisk(document);
+                }
+                else if (!document.IsModified)
+                {
+                    Editors.CloseDeleted(document);
+                }
+            });
+            held.Dispose();
+        }, TaskScheduler.Default);
     }
 
     /// <summary>Rider's File Cache Conflict: the disk's version, or the edits made here, written over the disk's. Until it
