@@ -58,8 +58,39 @@ public enum GutterColumn
 }
 
 /// <summary>A stretch that folds: from <see cref="Start"/>, the end of its first line's code where its placeholder
-/// stands while folded, to <see cref="End"/>; folded, the lines after the first are hidden.</summary>
-public readonly record struct FoldRegion(int Start, int End, string Placeholder, bool Folded = false);
+/// stands while folded, to <see cref="End"/>; folded, the lines after the first are hidden. Its kind says whether it
+/// starts folded and which of Rider's folding actions fold it.</summary>
+public readonly record struct FoldRegion(int Start, int End, string Placeholder, bool Folded = false, FoldKind Kind = FoldKind.Code);
+
+/// <summary>What a region folds, as Rider's Code Folding settings name them: which fold as a file opens (Fold by
+/// default), and which Collapse to Definitions and the doc comments' actions fold.</summary>
+public enum FoldKind : byte
+{
+    /// <summary>Braces that hold code (a namespace's, a type's, a lambda's), a JSON object or array.</summary>
+    Code,
+
+    /// <summary>An XML element, Rider's XML tags.</summary>
+    Tag,
+
+    /// <summary>A member's body: a method's, a local function's, an accessor's, a property's accessors. Collapse to
+    /// Definitions folds these (and the doc comments), Method bodies folds them by default.</summary>
+    Body,
+
+    /// <summary>The usings, Rider's Imports.</summary>
+    Imports,
+
+    /// <summary>The comments a file begins with, Rider's File header.</summary>
+    FileHeader,
+
+    /// <summary>A documentation comment over several lines.</summary>
+    DocComment,
+
+    /// <summary>A block comment over several lines, Rider's Line and block comments.</summary>
+    Comment,
+
+    /// <summary>#region to #endregion, Rider's Preprocessor regions.</summary>
+    Region,
+}
 
 /// <summary>A word drawn inside a line at an offset, part of no document: a parameter's name before its argument or a
 /// type after the name it types, as Rider's parameter and type name hints. Padding leaves a space on that side of its

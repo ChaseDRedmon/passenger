@@ -58,6 +58,28 @@ public sealed record AppSettings : IStateDocument<AppSettings>
     public bool WheelZoom { get; init; }
     public double TerminalFontSize { get; init; } = 13;
 
+    /// <summary>Rider's Code Folding, Fold by default: the comments a file begins with fold as it opens (a file keeps the
+    /// folds it closed with instead, once it has some).</summary>
+    public bool FoldFileHeader { get; init; } = true;
+
+    /// <summary>Fold by default: the usings.</summary>
+    public bool FoldImports { get; init; } = true;
+
+    /// <summary>Fold by default: documentation comments.</summary>
+    public bool FoldDocComments { get; init; }
+
+    /// <summary>Fold by default: the members' bodies.</summary>
+    public bool FoldMethodBodies { get; init; }
+
+    /// <summary>Fold by default: #region to #endregion, Rider's Preprocessor regions, on as in Rider.</summary>
+    public bool FoldPreprocessorRegions { get; init; } = true;
+
+    /// <summary>Fold by default: block comments over several lines.</summary>
+    public bool FoldComments { get; init; }
+
+    /// <summary>Fold by default: XML elements, in the project files too.</summary>
+    public bool FoldXmlTags { get; init; }
+
     /// <summary>Whether Run runs under dotnet watch, so a save applies its edits to the running program (Hot Reload),
     /// and an edit that cannot be applied restarts it.</summary>
     public bool HotReload { get; init; }
@@ -129,6 +151,19 @@ public sealed record AppSettings : IStateDocument<AppSettings>
             SoftWrapFiles = SoftWrapFiles ?? defaults.SoftWrapFiles,
         };
     }
+
+    /// <summary>Whether a region of a kind folds as its file opens, as Fold by default says.</summary>
+    public bool FoldsByDefault(Passenger.Editor.FoldKind kind) => kind switch
+    {
+        Passenger.Editor.FoldKind.FileHeader => FoldFileHeader,
+        Passenger.Editor.FoldKind.Imports => FoldImports,
+        Passenger.Editor.FoldKind.DocComment => FoldDocComments,
+        Passenger.Editor.FoldKind.Body => FoldMethodBodies,
+        Passenger.Editor.FoldKind.Region => FoldPreprocessorRegions,
+        Passenger.Editor.FoldKind.Comment => FoldComments,
+        Passenger.Editor.FoldKind.Tag => FoldXmlTags,
+        _ => false,
+    };
 
     /// <summary>Whether a file opens soft-wrapped: its name matches one of <see cref="SoftWrapFiles"/>, ignoring case, while
     /// <see cref="SoftWrap"/> is on.</summary>

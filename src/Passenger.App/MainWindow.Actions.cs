@@ -134,11 +134,15 @@ public partial class MainWindow
             [E.ToggleLineComment] = [new("Edit", 4, 0), new("Code", 2, 0)],
             [E.MoveLineUp] = [new("Edit", 4, 1)],
             [E.MoveLineDown] = [new("Edit", 4, 2)],
-            [E.ToggleFold] = [new("Code/Folding", 0, 0)],
-            [E.Fold] = [new("Code/Folding", 0, 1)],
-            [E.Unfold] = [new("Code/Folding", 0, 2)],
-            [E.FoldAll] = [new("Code/Folding", 0, 3)],
-            [E.UnfoldAll] = [new("Code/Folding", 0, 4)],
+            // Rider's Folding, in its order: expanding, collapsing, the doc comments, the toggle.
+            [E.Unfold] = [new("Code/Folding", 0, 0)],
+            [E.UnfoldAll] = [new("Code/Folding", 0, 1)],
+            [E.Fold] = [new("Code/Folding", 1, 0)],
+            [E.FoldToDefinitions] = [new("Code/Folding", 1, 1)],
+            [E.FoldAll] = [new("Code/Folding", 1, 2)],
+            [E.UnfoldDocComments] = [new("Code/Folding", 2, 0)],
+            [E.FoldDocComments] = [new("Code/Folding", 2, 1)],
+            [E.ToggleFold] = [new("Code/Folding", 3, 0)],
         };
         foreach ((string id, string title) in E.All)
         {

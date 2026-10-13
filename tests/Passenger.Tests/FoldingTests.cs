@@ -5,6 +5,7 @@ using Avalonia.Headless.XUnit;
 using Avalonia.Input;
 using Avalonia.Input.Platform;
 using Passenger.App;
+using Passenger.App.Settings;
 using Passenger.Editor;
 using Passenger.Languages.CSharp;
 using Passenger.Text;
@@ -33,8 +34,14 @@ public sealed class FoldingTests : IDisposable
         window.OpenFile(path);
         Ui.Settle();
         CodeEditor editor = window.EditorArea.CodeEditor;
-        // The usings, the class and the method; the expression-bodied member has nothing to fold.
+        // The usings, the class and the method; the expression-bodied member has nothing to fold. The usings open folded,
+        // as Rider's Imports fold by default; Ctrl+M, X expands everything.
         Ui.WaitFor(() => editor.FoldRegions.Count == 3, "the file's regions");
+        Assert.Equal(FoldKind.Imports, Assert.Single(editor.FoldRegions, r => r.Folded).Kind);
+        editor.Focus();
+        Ui.Press(window, "control M");
+        Ui.Press(window, "control X");
+        Assert.DoesNotContain(editor.FoldRegions, r => r.Folded);
         int twice = Source.IndexOf("int Twice", StringComparison.Ordinal);
         double before = editor.PointOf(twice).Y;
 
@@ -313,6 +320,371 @@ public sealed class FoldingTests : IDisposable
         window.Close();
         return (bytes / Keys, regions);
     }
+
+    [AvaloniaFact]
+    public void Resting_the_pointer_on_a_folded_methods_placeholder_shows_the_lines_it_hides_on_a_card()
+    {
+        string path = Path.Combine(folder, "Shapes.cs");
+        File.WriteAllText(path, Source);
+        MainWindow window = new() { Width = 1000, Height = 700 };
+        window.Show();
+        window.OpenFolder(folder);
+        window.OpenFile(path);
+        Ui.Settle();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Ui.WaitFor(() => editor.FoldRegions.Count == 3, "the file's regions");
+        editor.GoTo(new TextPosition(7, 8));
+        editor.Focus();
+        Ui.Press(window, "control M");
+        Ui.Press(window, "control S");
+        Assert.Null(editor.FoldPreviewText);
+
+        // The placeholder's chip stands a character past the signature's end.
+        TextSnapshot text = editor.Document.Snapshot;
+        int signature = text.GetLine(5).End;
+        double character = editor.PointOf(signature).X - editor.PointOf(signature - 1).X;
+        Point placeholder = editor.TranslatePoint(editor.PointOf(signature) + new Point(character * 2.5, editor.LineHeight / 2), window)!.Value;
+        window.MouseMove(placeholder, RawInputModifiers.None);
+        Ui.WaitFor(() => editor.FoldPreviewText is not null, "the card of the folded method's lines");
+        Assert.Equal("{\n    int area = w * h;\n    return area;\n}", editor.FoldPreviewText);
+        // Over the chip still, the card stays; the method stays folded.
+        window.MouseMove(placeholder + new Point(character, 0), RawInputModifiers.None);
+        Ui.Settle();
+        Assert.NotNull(editor.FoldPreviewText);
+        Assert.Single(editor.FoldRegions, r => r.Folded && r.Kind == FoldKind.Body);
+
+        // Off the placeholder the card goes, and a click on it unfolds the method.
+        window.MouseMove(placeholder + new Point(0, editor.LineHeight * 4), RawInputModifiers.None);
+        Ui.Settle();
+        Assert.Null(editor.FoldPreviewText);
+        window.MouseDown(placeholder, MouseButton.Left);
+        window.MouseUp(placeholder, MouseButton.Left);
+        Ui.Settle();
+        Assert.DoesNotContain(editor.FoldRegions, r => r.Kind == FoldKind.Body && r.Folded);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_file_opens_folded_as_it_last_closed_and_so_does_its_folder_after_a_restart()
+    {
+        string settings = TestFolders.Create("fold-settings-");
+        try
+        {
+            string path = Path.Combine(folder, "Members.cs");
+            File.WriteAllText(path, Defined);
+            MainWindow first = Keeping(settings);
+            first.OpenFile(path);
+            Ui.Settle();
+            CodeEditor editor = first.EditorArea.CodeEditor;
+            Passenger.App.Workspace.OpenDocument document = first.EditorArea.Active!;
+            Ui.WaitFor(() => document.FoldsFound, "the file's regions");
+            // As Rider opens it: the header, the usings and the #region folded.
+            Assert.Equal([FoldKind.FileHeader, FoldKind.Imports, FoldKind.Region], Folded(editor).Select(r => r.Kind));
+
+            // The usings opened, and inside the #region (which a caret going in opens) the doc comment over Area and the
+            // property's accessors folded.
+            editor.Focus();
+            editor.GoTo(new TextPosition(2, 0));
+            Ui.Press(first, "control M");
+            Ui.Press(first, "control E");
+            editor.GoTo(new TextPosition(15, 8));
+            Ui.Press(first, "control M");
+            Ui.Press(first, "control S");
+            editor.GoTo(new TextPosition(27, 8));
+            Ui.Press(first, "control M");
+            Ui.Press(first, "control S");
+            FoldRegion[] folded = Folded(editor);
+            Assert.Equal([FoldKind.FileHeader, FoldKind.DocComment, FoldKind.Body], folded.Select(r => r.Kind));
+
+            // Closed and opened again, it is folded as it was.
+            Assert.True(first.EditorArea.Close(document), "The file did not close");
+            first.OpenFile(path);
+            Ui.Settle();
+            Ui.WaitFor(() => first.EditorArea.Active!.FoldsFound, "the reopened file's regions");
+            Assert.Equal(folded, Folded(first.EditorArea.CodeEditor));
+            first.Close();
+
+            // A window that opens the folder again opens the file, folded as it was.
+            MainWindow second = Keeping(settings);
+            second.OpenFolder(folder);
+            Ui.Settle();
+            Assert.True(second.EditorArea.Active?.Path == Passenger.Core.PathNames.Canonical(path), "The folder did not open its file again");
+            Ui.WaitFor(() => second.EditorArea.Active!.FoldsFound, "the regions of the file the folder opened again");
+            Assert.Equal(folded, Folded(second.EditorArea.CodeEditor));
+            second.Close();
+        }
+        finally
+        {
+            TestFolders.Delete(settings);
+        }
+    }
+
+    [AvaloniaFact]
+    public void A_file_opens_with_its_header_usings_and_regions_folded_and_Collapse_to_Definitions_folds_every_member_and_doc_comment()
+    {
+        string path = Path.Combine(folder, "Members.cs");
+        File.WriteAllText(path, Defined);
+        MainWindow window = new() { Width = 1000, Height = 800 };
+        window.Show();
+        window.OpenFolder(folder);
+        window.OpenFile(path);
+        Ui.Settle();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Passenger.App.Workspace.OpenDocument document = window.EditorArea.Active!;
+        Ui.WaitFor(() => document.FoldsFound, "the file's regions");
+        // Every region of its kind: the namespace's, the class's and the lambda's braces are code, a member's its body.
+        Assert.Equal(
+            [(0, FoldKind.FileHeader), (2, FoldKind.Imports), (5, FoldKind.Code), (7, FoldKind.DocComment), (10, FoldKind.Code),
+                (13, FoldKind.Region), (14, FoldKind.DocComment), (17, FoldKind.Body), (19, FoldKind.Code), (26, FoldKind.Body), (28, FoldKind.Body)],
+            editor.FoldRegions.Select(r => (editor.Document.Snapshot.GetLineFromOffset(r.Start), r.Kind)));
+        Assert.Equal([FoldKind.FileHeader, FoldKind.Imports, FoldKind.Region], Folded(editor).Select(r => r.Kind));
+
+        // Ctrl+M, X expands all; Ctrl+M, O folds the members' bodies and the doc comments, and leaves the rest open.
+        editor.Focus();
+        Ui.Press(window, "control M");
+        Ui.Press(window, "control X");
+        Assert.Empty(Folded(editor));
+        Ui.Press(window, "control M");
+        Ui.Press(window, "control O");
+        Assert.All(editor.FoldRegions, r => Assert.True(r.Folded == r.Kind is FoldKind.Body or FoldKind.DocComment,
+            $"Collapse to Definitions left the {r.Kind} region at line {editor.Document.Snapshot.GetLineFromOffset(r.Start)} {(r.Folded ? "folded" : "open")}"));
+        // Each member is its signature alone, under the first line of its doc comment.
+        TextSnapshot text = editor.Document.Snapshot;
+        Assert.Equal(editor.PointOf(text.GetLineStart(14)).Y + editor.LineHeight, editor.PointOf(text.GetLineStart(17)).Y, 1);
+        Assert.Equal(editor.PointOf(text.GetLineStart(17)).Y + (2 * editor.LineHeight), editor.PointOf(text.GetLineStart(26)).Y, 1);
+
+        // Rider's Code, Folding menu has it, by its name and keys.
+        Assert.Equal("Collapse to Definitions", window.Actions[EditorActions.FoldToDefinitions]!.Title);
+        Assert.Contains("M, O", window.Actions.Shortcut(EditorActions.FoldToDefinitions), StringComparison.Ordinal);
+
+        // Settings' Fold by default changes what the next file opens folded: its doc comments and bodies, not its usings.
+        SettingsDialog dialog = window.ShowSettings();
+        Ui.Settle();
+        dialog.Query = "fold by default";
+        Ui.Settle();
+        Assert.Equal([SettingsDialog.CodeFoldingPage], dialog.Pages);
+        Assert.Equal(["File header", "Imports", "Documentation comments", "Method bodies", "Preprocessor regions", "Line and block comments", "XML tags"], dialog.Shown);
+        dialog.Change(s => s with { FoldImports = false, FoldDocComments = true, FoldMethodBodies = true });
+        dialog.Ok();
+        Ui.Settle();
+        string other = Path.Combine(folder, "Other.cs");
+        File.WriteAllText(other, Defined);
+        window.OpenFile(other);
+        Ui.Settle();
+        Ui.WaitFor(() => window.EditorArea.Active!.FoldsFound, "the other file's regions");
+        Assert.Equal([FoldKind.FileHeader, FoldKind.DocComment, FoldKind.Region, FoldKind.DocComment, FoldKind.Body, FoldKind.Body, FoldKind.Body],
+            Folded(window.EditorArea.CodeEditor).Select(r => r.Kind));
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_project_file_folds_by_its_elements_and_a_JSON_file_by_its_braces_and_typing_keeps_their_folds()
+    {
+        string project = Path.Combine(folder, "Sample.csproj");
+        File.WriteAllText(project, """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <!-- The build:
+                   an executable. -->
+              <PropertyGroup>
+                <OutputType>Exe</OutputType>
+                <Description>Shapes &amp; their "areas" > 0</Description>
+              </PropertyGroup>
+
+              <ItemGroup>
+                <PackageReference Include="Serilog"
+                                  Version="4.0.0" />
+                <Compile Include="Shapes.cs" Label="a > b" />
+              </ItemGroup>
+            </Project>
+
+            """);
+        MainWindow window = new() { Width = 1000, Height = 700 };
+        window.Show();
+        window.OpenFolder(folder);
+        window.OpenFile(project);
+        Ui.Settle();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Passenger.App.Workspace.OpenDocument document = window.EditorArea.Active!;
+        Ui.WaitFor(() => document.FoldsFound, "the project file's regions");
+        // Each element and comment over several lines folds after its first line's end, its end tag in its placeholder.
+        Assert.Equal([(0, "...</Project>"), (1, "...-->"), (3, "...</PropertyGroup>"), (8, "...</ItemGroup>"), (9, "... />")], Regions(editor));
+        Assert.All(editor.FoldRegions, r => Assert.Equal(editor.Document.Snapshot.GetLine(editor.Document.Snapshot.GetLineFromOffset(r.Start)).End, r.Start));
+
+        // The item group folded, a property typed above it: it stays folded, and the new element folds too.
+        editor.Focus();
+        editor.GoTo(new TextPosition(11, 8));
+        Ui.Press(window, "control M");
+        Ui.Press(window, "control S");
+        Assert.Equal("...</ItemGroup>", Assert.Single(editor.FoldRegions, r => r.Folded).Placeholder);
+        Assert.Equal(editor.PointOf(editor.Document.Snapshot.GetLineStart(8)).Y + editor.LineHeight, editor.PointOf(editor.Document.Snapshot.GetLineStart(13)).Y, 1);
+        editor.GoTo(new TextPosition(4, editor.Document.Snapshot.GetLine(4).Length));
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("<Nullable>");
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("enable</Nullable>");
+        Ui.Settle();
+        Assert.Contains("<Nullable>\n", editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
+        Assert.Equal([(0, "...</Project>"), (1, "...-->"), (3, "...</PropertyGroup>"), (5, "...</Nullable>"), (10, "...</ItemGroup>"), (11, "... />")], Regions(editor));
+        Assert.Equal("...</ItemGroup>", Assert.Single(editor.FoldRegions, r => r.Folded).Placeholder);
+
+        string json = Path.Combine(folder, "settings.json");
+        File.WriteAllText(json, """
+            {
+              "name": "sample",
+              "brace": "{ [ in a string \" ]",
+              "scripts": {
+                "build": "dotnet build",
+                "test": "dotnet test"
+              },
+              "files": [
+                "a.cs",
+                "b.cs"
+              ],
+              /* A comment
+                 over two lines. */
+              "inline": { "a": [1, 2] }
+            }
+
+            """);
+        window.OpenFile(json);
+        Ui.Settle();
+        Passenger.App.Workspace.OpenDocument settings = window.EditorArea.Active!;
+        Ui.WaitFor(() => settings.FoldsFound, "the JSON file's regions");
+        Assert.Equal([(0, "...}"), (3, "...}"), (7, "...]"), (11, "...*/")], Regions(editor));
+
+        // The scripts folded, a key typed above them: they stay folded, and the files' array takes the new line.
+        editor.GoTo(new TextPosition(4, 8));
+        Ui.Press(window, "control M");
+        Ui.Press(window, "control S");
+        Assert.Equal("...}", Assert.Single(editor.FoldRegions, r => r.Folded).Placeholder);
+        editor.GoTo(new TextPosition(1, editor.Document.Snapshot.GetLine(1).Length));
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("\"version\": [1,");
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("2],");
+        Ui.Settle();
+        Assert.Equal([(0, "...}"), (2, "...]"), (5, "...}"), (9, "...]"), (13, "...*/")], Regions(editor));
+        Assert.Equal(5, editor.Document.Snapshot.GetLineFromOffset(Assert.Single(editor.FoldRegions, r => r.Folded).Start));
+        window.Close();
+    }
+
+    /// <summary>XML has no parse of its own, so a key scans the whole file again, off the UI thread: in 20,000 lines each
+    /// key costs one scan, which reads the rope in place and allocates the list of the regions it finds and nothing more
+    /// (no copy of the text, no string for a tag), and after each edit the folds are those of the same text opened
+    /// afresh.</summary>
+    [AvaloniaFact]
+    public void Typing_in_twenty_thousand_lines_of_XML_scans_it_off_the_UI_thread_and_its_folds_stay_those_of_the_whole_text()
+    {
+        StringBuilder xml = new("<Project Sdk=\"Microsoft.NET.Sdk\">\n");
+        for (int i = 0; i < 1000; i++)
+        {
+            xml.Append(System.Globalization.CultureInfo.InvariantCulture, $"  <!-- Group {i}:\n       its items. -->\n  <ItemGroup Condition=\"'$(Group)' == '{i}' &gt; 0\">\n");
+            for (int j = 0; j < 10; j++)
+            {
+                xml.Append(System.Globalization.CultureInfo.InvariantCulture, $"    <Compile Include=\"File{i}_{j}.cs\" Label=\"a > b\" />\n");
+            }
+            xml.Append(System.Globalization.CultureInfo.InvariantCulture, $"    <PackageReference Include=\"Package{i}\"\n                      Version=\"1.0.{i}\" />\n");
+            xml.Append("    <None Update=\"x.json\">\n      <CopyToOutputDirectory>Always</CopyToOutputDirectory>\n    </None>\n  </ItemGroup>\n\n");
+        }
+        string source = xml.Append("</Project>\n").ToString();
+        Assert.True(source.Count(c => c == '\n') > 20_000);
+        string path = Path.Combine(folder, "Large.props");
+        File.WriteAllText(path, source);
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(folder);
+        window.OpenFile(path);
+        Ui.Settle();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Passenger.App.Workspace.OpenDocument document = window.EditorArea.Active!;
+        Passenger.Languages.Markup.FoldScan scan = (Passenger.Languages.Markup.FoldScan)document.FoldFinder!;
+        Ui.WaitFor(() => document.FoldRegions.Count == 4001, "the file's regions");
+        (long opened, int scans, TimeSpan time) = scan.Worked;
+        Assert.Equal(1, scans);
+        int fresh = 0;
+
+        void SameAsOpenedAfresh(string after)
+        {
+            string again = Path.Combine(folder, $"Fresh{++fresh}.props");
+            File.WriteAllText(again, document.Text.Snapshot.ToString());
+            window.OpenFile(again);
+            Ui.Settle();
+            Passenger.App.Workspace.OpenDocument opened = window.EditorArea.Active!;
+            Ui.WaitFor(() => opened.FoldsFound, "the file opened afresh's regions");
+            string Listed(Passenger.App.Workspace.OpenDocument of) => string.Join(", ", of.FoldRegions.Select(r => $"{r.Start}-{r.End} {r.Placeholder}"));
+            string expected = Listed(opened);
+            string actual = Listed(document);
+            Assert.True(expected == actual, $"After {after} the folds are not those of the same text opened afresh");
+            window.EditorArea.Close(opened);
+            window.EditorArea.Activate(document);
+            Ui.Settle();
+        }
+
+        // Keys in the middle of the file, each landing before the next: a scan each, of a few milliseconds.
+        int middle = source.IndexOf("File500_3.cs", StringComparison.Ordinal);
+        editor.Selections = SelectionSet.Single(middle);
+        editor.Focus();
+        const int Keys = 10;
+        for (int i = 0; i < Keys; i++)
+        {
+            window.KeyTextInput("x");
+            Ui.Settle();
+        }
+        (long typed, int typedScans, TimeSpan typedTime) = scan.Worked;
+        Assert.Equal(1 + Keys, typedScans);
+        long each = (typed - opened) / Keys;
+        int regions = document.FoldRegions.Count;
+        Assert.True(each < (regions * 32) + 16_384,
+            $"A key's scan allocated {each / 1024:N0} KB for {regions:N0} regions of 24 bytes in {source.Length / 1024:N0} K characters: more than the regions it found");
+        SameAsOpenedAfresh("keys typed in an attribute");
+
+        // An element over two lines typed in, and an end tag deleted, whose start tag then folds nothing.
+        int after = document.Text.Snapshot.ToString().IndexOf("    <None Update", middle, StringComparison.Ordinal);
+        editor.Selections = SelectionSet.Single(after);
+        window.KeyTextInput("<Content Include=\"a\">");
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("</Content>");
+        Ui.Press(window, "ENTER");
+        Ui.Settle();
+        Assert.Equal(4002, document.FoldRegions.Count);
+        SameAsOpenedAfresh("an element typed in");
+        string text = document.Text.Snapshot.ToString();
+        int end = text.IndexOf("  </ItemGroup>", after, StringComparison.Ordinal);
+        editor.Selections = SelectionSet.Single(new Selection(end, end + "  </ItemGroup>".Length));
+        Ui.Press(window, "BACK");
+        Assert.Equal(4001, document.FoldRegions.Count);
+        SameAsOpenedAfresh("an end tag deleted");
+        TestContext.Current.TestOutputHelper?.WriteLine(
+            $"Opening scan of {source.Length / 1024:N0} K characters, {source.Count(c => c == '\n'):N0} lines: {time.TotalMilliseconds:F1} ms, {opened / 1024:N0} KB; "
+            + $"a key's scan: {(typedTime - time).TotalMilliseconds / Keys:F1} ms, {each / 1024:N0} KB.");
+        window.Close();
+    }
+
+    /// <summary>A window that keeps its state in a folder of its own, over the test's folder.</summary>
+    private MainWindow Keeping(string settings)
+    {
+        MainWindow window = new() { Width = 1000, Height = 800, StateFolder = settings };
+        window.Show();
+        window.KeepLayout();
+        window.OpenFolder(folder);
+        Ui.Settle();
+        return window;
+    }
+
+    private static FoldRegion[] Folded(CodeEditor editor) => [.. editor.FoldRegions.Where(r => r.Folded)];
+
+    /// <summary>The regions by the line each starts on and its placeholder.</summary>
+    private static (int Line, string Placeholder)[] Regions(CodeEditor editor) =>
+        [.. editor.FoldRegions.Select(r => (editor.Document.Snapshot.GetLineFromOffset(r.Start), r.Placeholder))];
+
+    /// <summary>A file with every kind of C# region: a header, usings, a namespace, doc comments, a #region, a method with a
+    /// lambda's block, and a property's accessors.</summary>
+    private const string Defined =
+        "// Shapes.\n// MIT licence.\nusing System;\nusing System.Linq;\n\nnamespace Sample\n{\n    /// <summary>\n    /// Shapes.\n    /// </summary>\n"
+        + "    class Shapes\n    {\n        private int size;\n        #region Sizes\n        /// <summary>\n        /// The area.\n        /// </summary>\n"
+        + "        int Area(int w, int h)\n        {\n            Func<int, int> twice = x =>\n            {\n                return x * 2;\n            };\n"
+        + "            return twice(w * h);\n        }\n\n        int Size\n        {\n            get\n            {\n                return size;\n            }\n"
+        + "        }\n        #endregion\n    }\n}\n";
 
     /// <summary>Members of every kind that folds, with a doc comment each, around 120 lines a member.</summary>
     private static string Members(int count)

@@ -7,9 +7,9 @@ using Passenger.Text;
 
 namespace Passenger.Languages.CSharp;
 
-/// <summary>What folds in one parse of a C# file, as Rider folds it: the usings, a namespace's, a type's, a member's, an
-/// accessor's and a multi-line lambda's braces, #region to #endregion, and doc comments and block comments over several
-/// lines. A braced region starts at the end of the line before its brace when the brace stands alone, as in the usual
+/// <summary>What folds in one parse of a C# file, as Rider folds it: the comments it begins with (its header), the usings,
+/// a namespace's, a type's, a member's, an accessor's and a multi-line lambda's braces, #region to #endregion, and doc
+/// comments and block comments over several lines, each of its kind. A braced region starts at the end of the line before its brace when the brace stands alone, as in the usual
 /// layout, so folded it reads <c>void Run() {...}</c>. Lines are the editor's. Found from the parse before as well: a
 /// subtree Roslyn's incremental parse took whole from the tree before keeps the regions it had there, moved, so a key
 /// reads the nodes it changed and the lists of their neighbours, never the whole file (whose every node Roslyn would
@@ -57,17 +57,19 @@ public sealed class FoldRegions
             owned = [.. owned.OrderBy(m => m.Region.Start)];
         }
         List<FoldRegion> usings = [];
+        Header(text, root, usings);
         Usings(text, root, usings);
         List<FoldRegion> regions = Regions(text, root);
         Made[] made = [.. owned];
         FoldRegion[] comments = [.. walk.Comments];
-        // As one sort of them all in this order would order regions starting together: the file's usings, nodes, #regions, comments.
+        // As one sort of them all in this order would order regions starting together: the file's header and usings, nodes,
+        // #regions, comments.
         return new FoldRegions(root, made, comments, Merge([usings, new Unmade(made), [.. regions.OrderBy(r => r.Start)], comments]));
     }
 
     /// <summary>A pair of braces over several lines: from the end of the line before an opening brace on its own line,
     /// or the end of the brace's line, to the closing brace.</summary>
-    private static void Braced(TextSnapshot text, SyntaxToken open, SyntaxToken close, List<FoldRegion> found)
+    private static void Braced(TextSnapshot text, SyntaxToken open, SyntaxToken close, List<FoldRegion> found, FoldKind kind)
     {
         if (open.IsMissing || close.IsMissing)
         {
@@ -80,7 +82,7 @@ public sealed class FoldRegions
         {
             return;
         }
-        found.Add(new FoldRegion(text.GetLine(header).End, close.Span.End, alone ? "{...}" : "...}"));
+        found.Add(new FoldRegion(text.GetLine(header).End, close.Span.End, alone ? "{...}" : "...}", Kind: kind));
     }
 
     private static bool Blank(TextSnapshot text, int start, int end)
@@ -111,7 +113,7 @@ public sealed class FoldRegions
         int first = text.GetLineFromOffset(usings[0].SpanStart);
         if (text.GetLineFromOffset(usings[^1].Span.End) > first)
         {
-            found.Add(new FoldRegion(text.GetLine(first).End, usings[^1].Span.End, "..."));
+            found.Add(new FoldRegion(text.GetLine(first).End, usings[^1].Span.End, "...", Kind: FoldKind.Imports));
         }
     }
 
@@ -121,29 +123,29 @@ public sealed class FoldRegions
         switch (node)
         {
             case NamespaceDeclarationSyntax block:
-                Braced(text, block.OpenBraceToken, block.CloseBraceToken, found);
+                Braced(text, block.OpenBraceToken, block.CloseBraceToken, found, FoldKind.Code);
                 Usings(text, block, found);
                 break;
             case FileScopedNamespaceDeclarationSyntax space:
                 Usings(text, space, found);
                 break;
             case BaseTypeDeclarationSyntax type when !type.OpenBraceToken.IsMissing:
-                Braced(text, type.OpenBraceToken, type.CloseBraceToken, found);
+                Braced(text, type.OpenBraceToken, type.CloseBraceToken, found, FoldKind.Code);
                 break;
             case BaseMethodDeclarationSyntax { Body: { } body }:
-                Braced(text, body.OpenBraceToken, body.CloseBraceToken, found);
+                Braced(text, body.OpenBraceToken, body.CloseBraceToken, found, FoldKind.Body);
                 break;
             case LocalFunctionStatementSyntax { Body: { } body }:
-                Braced(text, body.OpenBraceToken, body.CloseBraceToken, found);
+                Braced(text, body.OpenBraceToken, body.CloseBraceToken, found, FoldKind.Body);
                 break;
             case BasePropertyDeclarationSyntax { AccessorList: { } accessors }:
-                Braced(text, accessors.OpenBraceToken, accessors.CloseBraceToken, found);
+                Braced(text, accessors.OpenBraceToken, accessors.CloseBraceToken, found, FoldKind.Body);
                 break;
             case AccessorDeclarationSyntax { Body: { } body }:
-                Braced(text, body.OpenBraceToken, body.CloseBraceToken, found);
+                Braced(text, body.OpenBraceToken, body.CloseBraceToken, found, FoldKind.Body);
                 break;
             case AnonymousFunctionExpressionSyntax { Body: BlockSyntax body }:
-                Braced(text, body.OpenBraceToken, body.CloseBraceToken, found);
+                Braced(text, body.OpenBraceToken, body.CloseBraceToken, found, FoldKind.Code);
                 break;
         }
     }
@@ -177,7 +179,32 @@ public sealed class FoldRegions
         int first = text.GetLineFromOffset(trivia.SpanStart);
         if (text.GetLineFromOffset(end) > first)
         {
-            found.Add(new FoldRegion(text.GetLine(first).End, end, "..."));
+            found.Add(new FoldRegion(text.GetLine(first).End, end, "...", Kind: trivia.IsKind(SyntaxKind.MultiLineCommentTrivia) ? FoldKind.Comment : FoldKind.DocComment));
+        }
+    }
+
+    /// <summary>The comments the file begins with over several lines, a licence's or a copyright's, folded after their first
+    /// line: read from the first token's trivia alone, so a key costs nothing here.</summary>
+    private static void Header(TextSnapshot text, SyntaxNode root, List<FoldRegion> found)
+    {
+        int start = -1;
+        int end = -1;
+        foreach (SyntaxTrivia trivia in root.GetFirstToken(includeZeroWidth: true).LeadingTrivia)
+        {
+            if (trivia.IsKind(SyntaxKind.SingleLineCommentTrivia) || trivia.IsKind(SyntaxKind.MultiLineCommentTrivia))
+            {
+                start = start < 0 ? trivia.SpanStart : start;
+                end = trivia.Span.End;
+            }
+            else if (!trivia.IsKind(SyntaxKind.WhitespaceTrivia) && !trivia.IsKind(SyntaxKind.EndOfLineTrivia))
+            {
+                break;
+            }
+        }
+        int first = start < 0 ? -1 : text.GetLineFromOffset(start);
+        if (first >= 0 && text.GetLineFromOffset(end) > first)
+        {
+            found.Add(new FoldRegion(text.GetLine(first).End, end, "...", Kind: FoldKind.FileHeader));
         }
     }
 
@@ -239,7 +266,7 @@ public sealed class FoldRegions
                     int last = text.GetLineFromOffset(end.SpanStart);
                     if (last > first)
                     {
-                        found.Add(new FoldRegion(text.GetLine(first).End, text.GetLine(last).End, "..."));
+                        found.Add(new FoldRegion(text.GetLine(first).End, text.GetLine(last).End, "...", Kind: FoldKind.Region));
                     }
                 }
             }
@@ -259,11 +286,12 @@ public sealed class FoldRegions
     }
 
     /// <summary>Lists each in order of where their regions start as one, a region of an earlier list first where two
-    /// start together.</summary>
+    /// start together; of two that fold the same text (a header that is one block comment), the earlier list's alone.</summary>
     private static FoldRegion[] Merge(IReadOnlyList<IReadOnlyList<FoldRegion>> lists)
     {
         FoldRegion[] merged = new FoldRegion[lists.Sum(l => l.Count)];
         int[] next = new int[lists.Count];
+        int count = 0;
         for (int k = 0; k < merged.Length; k++)
         {
             int best = -1;
@@ -274,9 +302,13 @@ public sealed class FoldRegions
                     best = l;
                 }
             }
-            merged[k] = lists[best][next[best]++];
+            FoldRegion region = lists[best][next[best]++];
+            if (count == 0 || merged[count - 1].Start != region.Start || merged[count - 1].End != region.End)
+            {
+                merged[count++] = region;
+            }
         }
-        return merged;
+        return count == merged.Length ? merged : merged[..count];
     }
 
     /// <summary>The first region starting at or after an offset.</summary>

@@ -143,6 +143,8 @@
             <SolidColorBrush x:Key="Passenger.Syntax.UserInput" Color="#6AAB73" />
             <SolidColorBrush x:Key="Passenger.Syntax.Link" Color="#6C95EB" />
             <SolidColorBrush x:Key="Passenger.Editor.LinkUnderline" Color="#406AC2" />
+            <!-- The edge of a card the editor draws over its code: a folded region's preview. -->
+            <SolidColorBrush x:Key="Passenger.Editor.PopupBorder" Color="#43454A" />
             <SolidColorBrush x:Key="Passenger.Syntax.Brace1" Color="#E8BA36" />
             <SolidColorBrush x:Key="Passenger.Syntax.Brace2" Color="#D670D6" />
             <SolidColorBrush x:Key="Passenger.Syntax.Brace3" Color="#3D9EF5" />
@@ -285,6 +287,7 @@
             <SolidColorBrush x:Key="Passenger.Syntax.UserInput" Color="#007F00" />
             <SolidColorBrush x:Key="Passenger.Syntax.Link" Color="#0F54D6" />
             <SolidColorBrush x:Key="Passenger.Editor.LinkUnderline" Color="#59B4FF" />
+            <SolidColorBrush x:Key="Passenger.Editor.PopupBorder" Color="#C9CCD6" />
             <SolidColorBrush x:Key="Passenger.Syntax.Brace1" Color="#A87700" />
             <SolidColorBrush x:Key="Passenger.Syntax.Brace2" Color="#A3279F" />
             <SolidColorBrush x:Key="Passenger.Syntax.Brace3" Color="#0B6BCB" />

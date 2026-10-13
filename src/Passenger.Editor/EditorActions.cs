@@ -56,6 +56,9 @@ public static class EditorActions
     public const string Unfold = "editor.unfold";
     public const string FoldAll = "editor.foldAll";
     public const string UnfoldAll = "editor.unfoldAll";
+    public const string FoldToDefinitions = "editor.foldToDefinitions";
+    public const string UnfoldDocComments = "editor.unfoldDocComments";
+    public const string FoldDocComments = "editor.foldDocComments";
     public const string MatchBrace = "editor.matchBrace";
 
     /// <summary>Every editor action and its name for people (Rider's where it has one), which the IDE lists and runs.</summary>
@@ -72,7 +75,8 @@ public static class EditorActions
         (Paste, "Paste"), (SelectAll, "Select All"), (SelectNextOccurrence, "Select Next Occurrence"),
         (UnselectOccurrence, "Unselect Occurrence"), (SelectAllOccurrences, "Select All Occurrences"), (CaretPerLine, "Caret Per Line"),
         (CloneCaretAbove, "Clone Caret Above"), (CloneCaretBelow, "Clone Caret Below"), (Escape, "Escape"),
-        (ToggleFold, "Expand/Collapse"), (Fold, "Collapse"), (Unfold, "Expand"), (FoldAll, "Collapse All"), (UnfoldAll, "Expand All"),
+        (ToggleFold, "Toggle Folding"), (Fold, "Collapse"), (Unfold, "Expand"), (FoldAll, "Collapse All"), (UnfoldAll, "Expand All"),
+        (FoldToDefinitions, "Collapse to Definitions"), (UnfoldDocComments, "Expand Doc Comments"), (FoldDocComments, "Collapse Doc Comments"),
         (MatchBrace, "Move Caret to Matching Brace"),
     ];
 
@@ -138,6 +142,7 @@ public static class DefaultKeymaps
         .Bind(EditorActions.Unfold, "control M , E", "control M , control E")
         .Bind(EditorActions.FoldAll, "control M , A", "control M , control A")
         .Bind(EditorActions.UnfoldAll, "control M , X", "control M , control X")
+        .Bind(EditorActions.FoldToDefinitions, "control M , O", "control M , control O")
         .Bind(EditorActions.MatchBrace, "meta CLOSE_BRACKET")
         .Bind(EditorActions.Escape, "ESCAPE");
 
@@ -191,6 +196,7 @@ public static class DefaultKeymaps
         .Bind(EditorActions.Unfold, "control M , E", "control M , control E")
         .Bind(EditorActions.FoldAll, "control M , A", "control M , control A")
         .Bind(EditorActions.UnfoldAll, "control M , X", "control M , control X")
+        .Bind(EditorActions.FoldToDefinitions, "control M , O", "control M , control O")
         .Bind(EditorActions.MatchBrace, "control CLOSE_BRACKET")
         .Bind(EditorActions.Escape, "ESCAPE");
 }

@@ -45,7 +45,8 @@ public partial class MainWindow
             Sub("Go To", Item(A.GoToDeclaration), Item(A.DerivedSymbols), Item(A.GoToImplementation), Item(A.GoToTypeDeclaration), Item(A.BaseSymbols),
                 separator, Item(A.CallHierarchy), Item(A.TypeHierarchy)),
             Item(A.Generate),
-            Sub("Folding", Item(E.ToggleFold), Item(E.Fold), Item(E.Unfold), Item(E.FoldAll), Item(E.UnfoldAll)),
+            Sub("Folding", Item(E.Unfold), Item(E.UnfoldAll), separator, Item(E.Fold), Item(E.FoldToDefinitions), Item(E.FoldAll), separator,
+                Item(E.UnfoldDocComments), Item(E.FoldDocComments), separator, Item(E.ToggleFold)),
             separator,
             Item(A.Reformat), Item(A.CodeCleanup));
         if (active.Syntax is { } syntax && Testing.TestsAtCaret.At(syntax.Current, editor.CaretPosition.Line) is { } test)

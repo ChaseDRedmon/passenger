@@ -9,7 +9,8 @@ namespace Passenger.Editor;
 /// a folded one hides the lines after its first and shows its placeholder at that line's end, and the gutter's last
 /// column has its chevrons. Everything that turns a line into a height goes through rows (<see cref="Rows"/>): the lines
 /// left showing, looked up in <see cref="FoldLines"/>, made once for each text and set of regions, each one row or as many
-/// as soft wrap makes it. A caret that lands in folded lines unfolds them.</summary>
+/// as soft wrap makes it. A caret that lands in folded lines unfolds them, and the pointer resting on a placeholder shows
+/// the lines it hides on a card (<see cref="FoldPreviewText"/>).</summary>
 public sealed partial class CodeEditor
 {
     /// <summary>The gutter's folding column, at its right edge against the code.</summary>
@@ -33,6 +34,7 @@ public sealed partial class CodeEditor
         {
             return;
         }
+        HideFoldPreview();
         folds = InOrder(regions) ? regions : [.. regions.OrderBy(r => r.Start)];
         InvalidateVisual();
         UpdateScrollBars();
@@ -124,6 +126,16 @@ public sealed partial class CodeEditor
             case EditorActions.UnfoldAll:
                 SetFolded(_ => false);
                 return true;
+            case EditorActions.FoldToDefinitions:
+                // Rider's: the members' bodies and the doc comments folded, the rest left as it is.
+                SetFolded(i => folds[i].Folded || folds[i].Kind is FoldKind.Body or FoldKind.DocComment);
+                return true;
+            case EditorActions.FoldDocComments:
+                SetFolded(i => folds[i].Folded || folds[i].Kind == FoldKind.DocComment);
+                return true;
+            case EditorActions.UnfoldDocComments:
+                SetFolded(i => folds[i].Folded && folds[i].Kind != FoldKind.DocComment);
+                return true;
         }
         return false;
     }
@@ -136,6 +148,7 @@ public sealed partial class CodeEditor
         {
             return;
         }
+        HideFoldPreview();
         folds = next;
         TextSnapshot text = document.Snapshot;
         if (selections.Items.Any(s => IsHidden(text.GetLineFromOffset(s.Caret))))
@@ -175,6 +188,7 @@ public sealed partial class CodeEditor
         {
             return;
         }
+        HideFoldPreview();
         folds = [.. folds.Select(r => r.Folded && FoldLines.EndLineOf(text, r) is int end and >= 0 && lines.Any(l => l > FoldLines.StartLineOf(text, r) && l <= end) ? r with { Folded = false } : r)];
         UpdateScrollBars();
         FoldsToggled?.Invoke(this, folds);
@@ -183,13 +197,10 @@ public sealed partial class CodeEditor
     /// <summary>A click in the folding column or on a placeholder: the fold there toggled. Whether it was one.</summary>
     private bool ClickFold(Point at)
     {
-        foreach ((int line, Rect box) in placeholders)
+        if (PlaceholderAt(at) is { } chip && OutermostAt(chip.Line, r => r.Folded) is int shown)
         {
-            if (box.Contains(at) && OutermostAt(line, r => r.Folded) is int shown)
-            {
-                SetFolded(i => i != shown && folds[i].Folded);
-                return true;
-            }
+            SetFolded(i => i != shown && folds[i].Folded);
+            return true;
         }
         if (!ShowLineNumbers || at.X < GutterWidth - FoldWidth || at.X >= GutterWidth)
         {
@@ -274,6 +285,126 @@ public sealed partial class CodeEditor
         placeholders[line] = chip;
         return chip.Right;
     }
+
+    /// <summary>The placeholder drawn under a point, if any: its line and its chip.</summary>
+    private (int Line, Rect Chip)? PlaceholderAt(Point at)
+    {
+        foreach ((int line, Rect box) in placeholders)
+        {
+            if (box.Contains(at))
+            {
+                return (line, box);
+            }
+        }
+        return null;
+    }
+
+    /// <summary>The lines the card over a placeholder shows, one to a line of text, or null while none shows: what the
+    /// pointer resting on a folded region's placeholder sees of the code it hides.</summary>
+    public string? FoldPreviewText => preview?.Text;
+
+    private FoldPreview? preview;
+
+    /// <summary>Rider's preview of folded code: the lines a placeholder's fold hides, coloured as the editor colours them
+    /// and less the indent they share, on a card under the placeholder (over it when there is more room there), as many
+    /// as the editor has room for.</summary>
+    private void ShowFoldPreview(int line, Rect chip)
+    {
+        if (preview is { } shown && shown.Line == line)
+        {
+            return;
+        }
+        HideFoldPreview();
+        TextSnapshot text = document.Snapshot;
+        if (FoldedAt(line) is not { } region || FoldLines.EndLineOf(text, region) is not (int end and >= 0) || end <= line)
+        {
+            return;
+        }
+        (double across, double down) = PreviewPadding;
+        double below = Bounds.Height - horizontal.DesiredSize.Height - chip.Bottom - 2;
+        double above = chip.Top - 2;
+        int room = Math.Max(1, (int)((Math.Max(below, above) - (2 * down)) / metrics.LineHeight));
+        int first = line + 1;
+        int last = Math.Min(end, first + room - 1);
+        int shared = int.MaxValue;
+        for (int i = first; i <= last; i++)
+        {
+            LineSpan span = text.GetLine(i);
+            int indent = 0;
+            while (indent < span.Length && text[span.Start + indent] is ' ' or '\t')
+            {
+                indent++;
+            }
+            if (indent < span.Length)
+            {
+                shared = Math.Min(shared, indent);
+            }
+        }
+        shared = shared == int.MaxValue ? 0 : shared;
+        int from = text.GetLineStart(first);
+        IReadOnlyList<SyntaxSpan> spans = Colours(text, from, text.GetLine(last).End - from);
+        int index = 0;
+        TextLine[] lines = new TextLine[last - first + 1];
+        string[] said = new string[lines.Length];
+        double widest = 0;
+        for (int i = first; i <= last; i++)
+        {
+            LineSpan span = text.GetLine(i);
+            int start = span.Start + Math.Min(shared, span.Length);
+            said[i - first] = text.GetText(start, span.End - start);
+            lines[i - first] = Format(said[i - first], Runs(spans, ref index, start, span.End), null);
+            widest = Math.Max(widest, lines[i - first].WidthIncludingTrailingWhitespace);
+        }
+        double height = (lines.Length * metrics.LineHeight) + (2 * down);
+        double right = Bounds.Width - vertical.DesiredSize.Width - 4;
+        double width = Math.Min(widest + (2 * across), Math.Max(metrics.CharWidth * 8, right - GutterWidth));
+        double x = Math.Max(GutterWidth, Math.Min(chip.Left, right - width));
+        double y = below >= height || below >= above ? chip.Bottom + 2 : chip.Top - 2 - height;
+        preview = new FoldPreview(line, chip, new Rect(x, y, width, height), lines, string.Join('\n', said));
+        InvalidateVisual();
+    }
+
+    /// <summary>Takes the preview card away: the pointer left its placeholder, or the folds, the text or the scroll changed.</summary>
+    private void HideFoldPreview()
+    {
+        if (preview is not { } shown)
+        {
+            return;
+        }
+        preview = null;
+        foreach (TextLine line in shown.Lines)
+        {
+            line.Dispose();
+        }
+        InvalidateVisual();
+    }
+
+    /// <summary>The preview card, over everything else the editor draws.</summary>
+    private void DrawFoldPreview(DrawingContext context)
+    {
+        if (preview is not { } shown)
+        {
+            return;
+        }
+        (double across, double down) = PreviewPadding;
+        context.DrawRectangle(palette.Background, new Pen(palette.PopupBorder, 1), shown.Card.Deflate(0.5), 4, 4);
+        using (context.PushClip(shown.Card.Deflate(1)))
+        {
+            for (int i = 0; i < shown.Lines.Length; i++)
+            {
+                TextLine line = shown.Lines[i];
+                double top = shown.Card.Top + down + (i * metrics.LineHeight) + ((metrics.LineHeight - line.Height) / 2);
+                line.Draw(context, new Point(shown.Card.Left + across, top));
+            }
+        }
+    }
+
+    /// <summary>The room the preview card leaves around its lines: a character's width either side, half that above and below.</summary>
+    private (double Across, double Down) PreviewPadding => (Math.Round(metrics.CharWidth), Math.Round(metrics.CharWidth / 2));
+
+    /// <summary>A preview card: the placeholder it is for, by its line and chip, where the card is, and its lines formatted
+    /// and as text.</summary>
+    private sealed record FoldPreview(int Line, Rect Chip, Rect Card, TextLine[] Lines, string Text);
 
     /// <summary>The first region starting on a line at or after <paramref name="line"/>, found by where they start.</summary>
     private int FirstStartingOn(TextSnapshot text, int line)

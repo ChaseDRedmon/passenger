@@ -144,6 +144,7 @@ public sealed partial class CodeEditor
         }
 
         DrawGutter(context, shown, row, caretLines, marks, gutter, size.Height);
+        DrawFoldPreview(context);
         views.EndFrame();
         labels.EndFrame();
         numbers.EndFrame();
@@ -891,6 +892,7 @@ public sealed partial class CodeEditor
         public IBrush Whitespace { get; private init; } = Brush("#686868");
         public IBrush SoftWrapSign { get; private init; } = Brush("#787878");
         public IBrush LinkUnderline { get; private init; } = Brush("#406AC2");
+        public IBrush PopupBorder { get; private init; } = Brush("#43454A");
         public Geometry? ErrorIcon { get; private init; }
         public Geometry? WarningIcon { get; private init; }
         public Geometry? PassedIcon { get; private init; }
@@ -947,6 +949,7 @@ public sealed partial class CodeEditor
                 Whitespace = Find(control, "Passenger.Editor.Whitespace") ?? defaults.Whitespace,
                 SoftWrapSign = Find(control, "Passenger.Editor.SoftWrapSign") ?? defaults.SoftWrapSign,
                 LinkUnderline = Find(control, "Passenger.Editor.LinkUnderline") ?? defaults.LinkUnderline,
+                PopupBorder = Find(control, "Passenger.Editor.PopupBorder") ?? defaults.PopupBorder,
                 ErrorIcon = Icon(control, "Icon.Error"),
                 WarningIcon = Icon(control, "Icon.Problems"),
                 PassedIcon = Icon(control, "Icon.Check"),

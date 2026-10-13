@@ -2,6 +2,7 @@ using System.Text;
 using Avalonia;
 using Passenger.Editor;
 using Passenger.Languages.CSharp;
+using Passenger.Languages.Markup;
 using Passenger.Lsp;
 using Passenger.Text;
 
@@ -22,6 +23,7 @@ public sealed class OpenDocument : Observable
     private IReadOnlyList<string?> gutterAnnotations = [];
     private IReadOnlyList<int> bookmarks = [];
     private IReadOnlyList<FoldRegion> foldRegions = [];
+    private IFoldFinder? finder;
     private bool softWrap;
     private bool showWhitespaces;
 
@@ -53,6 +55,7 @@ public sealed class OpenDocument : Observable
         FollowLineEnding(file.Text.Contains('\n', StringComparison.Ordinal));
         parser = Parser();
         highlighter = parser;
+        finder = Finder();
         Text.Changed += (_, change) =>
         {
             // Ahead of what moves with the change (the caret, then the breadcrumbs), which found afresh would read the file.
@@ -138,6 +141,16 @@ public sealed class OpenDocument : Observable
         set => Set(ref foldRegions, value);
     }
 
+    /// <summary>Which of the regions first found in the file fold as it opens (the window's: those folded as it last
+    /// closed, else those Settings folds by default); none while unset. A region that holds a caret stays open.</summary>
+    public Func<FoldRegion, bool>? FoldsAtFirst { get; set; }
+
+    /// <summary>Whether the file's regions have been found, so which of them are folded is the person's to keep.</summary>
+    public bool FoldsFound { get; private set; }
+
+    /// <summary>What finds the file's regions: its C# parse (<see cref="Syntax"/>), or XML's or JSON's scan.</summary>
+    public IFoldFinder? FoldFinder => finder;
+
     /// <summary>The bookmarked lines.</summary>
     public IReadOnlyList<int> Bookmarks
     {
@@ -183,7 +196,11 @@ public sealed class OpenDocument : Observable
     }
 
     /// <summary>Lets go of everything the open file holds beyond its text, when its tab closes.</summary>
-    public void Close() => (Highlighter as IDisposable)?.Dispose();
+    public void Close()
+    {
+        (Highlighter as IDisposable)?.Dispose();
+        (finder as FoldScan)?.Dispose();
+    }
 
     public string Path { get; private set; }
     public string Name => System.IO.Path.GetFileName(Path);
@@ -198,8 +215,11 @@ public sealed class OpenDocument : Observable
         {
             Language = language;
             (parser as IDisposable)?.Dispose();
+            (finder as FoldScan)?.Dispose();
             parser = Parser();
             FoldRegions = [];
+            FoldsFound = false;
+            finder = Finder();
             TestMarks = [];
             Highlighter = parser;
         }
@@ -445,39 +465,87 @@ public sealed class OpenDocument : Observable
             return null;
         }
         CSharpHighlighter csharp = new(Text);
-        // Each parse's regions keep the folds of the ones they replace, matched by where they start. The regions carried
-        // through the keys are usually the parse's already, and stay; with none folded the parse's own are taken.
-        csharp.FoldsChanged += (_, _) =>
-        {
-            if (Same(foldRegions, csharp.Folds))
-            {
-                return;
-            }
-            HashSet<int>? folded = null;
-            for (int i = 0; i < foldRegions.Count; i++)
-            {
-                if (foldRegions[i].Folded)
-                {
-                    (folded ??= []).Add(foldRegions[i].Start);
-                }
-            }
-            IReadOnlyList<FoldRegion> found = csharp.Folds;
-            if (folded is null)
-            {
-                FoldRegions = found;
-            }
-            else
-            {
-                FoldRegion[] kept = new FoldRegion[found.Count];
-                for (int i = 0; i < kept.Length; i++)
-                {
-                    kept[i] = found[i] with { Folded = folded.Contains(found[i].Start) };
-                }
-                FoldRegions = kept;
-            }
-        };
         csharp.Parsed += (_, parsed) => Parsed?.Invoke(this, parsed);
         return csharp;
+    }
+
+    /// <summary>What finds the file's folds: C#'s parse, XML's and JSON's scan; none for another language.</summary>
+    private IFoldFinder? Finder()
+    {
+        IFoldFinder? found = parser as IFoldFinder ?? Language.Name switch
+        {
+            "XML" => FoldScan.Xml(Text),
+            "JSON" => FoldScan.Json(Text),
+            _ => null,
+        };
+        if (found is not null)
+        {
+            found.FoldsChanged += (_, _) =>
+            {
+                if (ReferenceEquals(found, finder))
+                {
+                    TakeFolds(found.Folds);
+                }
+            };
+        }
+        return found;
+    }
+
+    /// <summary>Regions found for the text as it stands. The first fold as <see cref="FoldsAtFirst"/> says; after, they keep
+    /// the folds of the ones they replace, matched by where they start. The regions carried through the keys are usually
+    /// the finder's already, and stay; with none folded the finder's own are taken.</summary>
+    private void TakeFolds(IReadOnlyList<FoldRegion> found)
+    {
+        if (!FoldsFound)
+        {
+            FoldsFound = true;
+            FoldRegions = Opening(found);
+            return;
+        }
+        if (Same(foldRegions, found))
+        {
+            return;
+        }
+        HashSet<int>? folded = null;
+        for (int i = 0; i < foldRegions.Count; i++)
+        {
+            if (foldRegions[i].Folded)
+            {
+                (folded ??= []).Add(foldRegions[i].Start);
+            }
+        }
+        if (folded is null)
+        {
+            FoldRegions = found;
+        }
+        else
+        {
+            FoldRegion[] kept = new FoldRegion[found.Count];
+            for (int i = 0; i < kept.Length; i++)
+            {
+                kept[i] = found[i] with { Folded = folded.Contains(found[i].Start) };
+            }
+            FoldRegions = kept;
+        }
+    }
+
+    /// <summary>The first regions, folded as the file opens: as <see cref="FoldsAtFirst"/> says, but for one hiding a caret.</summary>
+    private IReadOnlyList<FoldRegion> Opening(IReadOnlyList<FoldRegion> found)
+    {
+        if (FoldsAtFirst is not { } folds || found.Count == 0)
+        {
+            return found;
+        }
+        TextSnapshot text = Text.Snapshot;
+        int[] carets = [.. Selections.Items.Select(s => text.GetLineFromOffset(Math.Min(s.Caret, text.Length)))];
+        FoldRegion[] opened = new FoldRegion[found.Count];
+        for (int i = 0; i < opened.Length; i++)
+        {
+            FoldRegion region = found[i];
+            bool hides = region.End <= text.Length && carets.Any(line => line > text.GetLineFromOffset(region.Start) && line <= text.GetLineFromOffset(region.End));
+            opened[i] = region with { Folded = !hides && folds(region) };
+        }
+        return opened;
     }
 
     /// <summary>Whether two lists of regions fold the same text, whatever is folded.</summary>
@@ -489,7 +557,7 @@ public sealed class OpenDocument : Observable
         }
         for (int i = 0; i < kept.Count; i++)
         {
-            if (kept[i].Start != found[i].Start || kept[i].End != found[i].End || kept[i].Placeholder != found[i].Placeholder)
+            if (kept[i].Start != found[i].Start || kept[i].End != found[i].End || kept[i].Placeholder != found[i].Placeholder || kept[i].Kind != found[i].Kind)
             {
                 return false;
             }

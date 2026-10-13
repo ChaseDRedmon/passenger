@@ -1,12 +1,13 @@
 using System.Text.Json.Nodes;
 using Passenger.App.Editors;
 using Passenger.App.State;
+using Passenger.Editor;
 
 namespace Passenger.App.Workspace;
 
 /// <summary>What a folder's window had open, kept in the folder's place in the store as Rider keeps its workspace.xml:
-/// the editors' splits, tabs (pinned or not) and carets, the editor windows, the recent files and the projects unloaded, so opening the
-/// folder again brings them back. Only the window a person uses keeps it, as with the layout.</summary>
+/// the editors' splits, tabs (pinned or not) and carets, the editor windows, the recent files, the projects unloaded and the
+/// files' folds, so opening the folder again brings them back. Only the window a person uses keeps it, as with the layout.</summary>
 public sealed record WorkspaceState : IStateDocument<WorkspaceState>
 {
     public EditorLayout? Editors { get; init; }
@@ -20,13 +21,20 @@ public sealed record WorkspaceState : IStateDocument<WorkspaceState>
     /// <summary>The projects unloaded in the Solution view, by path.</summary>
     public List<string> UnloadedProjects { get; init; } = [];
 
+    /// <summary>The folds of the files opened lately, each as it closed, the latest first.</summary>
+    public List<KeptFolds> Folds { get; init; } = [];
+
     public static IReadOnlyList<Action<JsonObject>> Upgrades { get; } = [StateStore.Unversioned];
 
     /// <summary>A tab or a path without its file is left out, and a window without editors; the editors bring the rest (a
     /// caret, a split's share, a window with no room, which opens over the IDE, or off every screen) into range as they
-    /// open them.</summary>
+    /// open them. A file's folds are left out without its path, and a fold that is not a start and an end in order.</summary>
     public WorkspaceState Clamped() => this with
     {
+        Folds = [.. (Folds ?? []).Where(f => f is { Path.Length: > 0 }).Take(FoldMemory.Kept).Select(f => f with
+        {
+            Folded = [.. (f.Folded ?? []).Where(r => r is [>= 0 and var start, var end] && end > start)],
+        })],
         Editors = Editors is { } editors ? Clamp(editors) : null,
         EditorWindows = [.. (EditorWindows ?? []).Where(w => w?.Editors is not null).Select(w => w with
         {
@@ -43,4 +51,67 @@ public sealed record WorkspaceState : IStateDocument<WorkspaceState>
         Second = layout.Second is { } second ? Clamp(second) : null,
         Tabs = layout.Tabs is { } tabs ? [.. tabs.Where(t => t is { Path.Length: > 0 })] : null,
     };
+}
+
+/// <summary>A file's folds as it closed: the regions folded, each its start and end in the file's text.</summary>
+public sealed record KeptFolds
+{
+    public string Path { get; init; } = string.Empty;
+
+    public List<int[]> Folded { get; init; } = [];
+}
+
+/// <summary>The folds of the files a folder's window opened, as Rider keeps them in its workspace: each file's as it last
+/// closed, the latest first, so one opened again opens folded as it was, after a restart too (the window keeps them in
+/// <see cref="WorkspaceState.Folds"/>); the oldest go past <see cref="Kept"/>.</summary>
+public sealed class FoldMemory
+{
+    public const int Kept = 200;
+
+    private readonly List<KeptFolds> files = [];
+
+    /// <summary>Which regions a file opens folded: those it closed with, by where they start and end; null for a file
+    /// it has none of.</summary>
+    public Func<FoldRegion, bool>? Of(string path)
+    {
+        if (files.FirstOrDefault(f => f.Path == path) is not { } kept)
+        {
+            return null;
+        }
+        HashSet<(int Start, int End)> folded = [.. kept.Folded.Select(f => (f[0], f[1]))];
+        return region => folded.Contains((region.Start, region.End));
+    }
+
+    /// <summary>Keeps a file's folds as they are, once its regions have been found.</summary>
+    public void Remember(OpenDocument document)
+    {
+        if (!document.FoldsFound)
+        {
+            return;
+        }
+        files.RemoveAll(f => f.Path == document.Path);
+        files.Insert(0, new KeptFolds { Path = document.Path, Folded = [.. document.FoldRegions.Where(r => r.Folded).Select(r => new[] { r.Start, r.End })] });
+        if (files.Count > Kept)
+        {
+            files.RemoveRange(Kept, files.Count - Kept);
+        }
+    }
+
+    /// <summary>Every file's folds, the open files' as they stand.</summary>
+    public List<KeptFolds> Capture(IEnumerable<OpenDocument> open)
+    {
+        foreach (OpenDocument document in open.Reverse())
+        {
+            Remember(document);
+        }
+        return [.. files];
+    }
+
+    public void Restore(IEnumerable<KeptFolds> kept)
+    {
+        files.Clear();
+        files.AddRange(kept.Take(Kept));
+    }
+
+    public void Clear() => files.Clear();
 }

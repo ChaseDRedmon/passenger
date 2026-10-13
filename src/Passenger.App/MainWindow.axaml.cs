@@ -77,6 +77,7 @@ public partial class MainWindow : Window
         AddTerminal();
         AddSettings();
         AddActiveEditor();
+        AddFolding();
         AddPackages();
         AddProfiler();
         AddBreadcrumbs();
@@ -355,6 +356,7 @@ public partial class MainWindow : Window
             return false;
         }
         recent.Clear();
+        folds.Clear();
         folderState = null;
         debug.Breakpoints.Clear();
         bookmarks.Clear();
@@ -774,6 +776,7 @@ public partial class MainWindow : Window
         EditorWindows = Editors.CaptureWindows(),
         RecentFiles = [.. recent],
         UnloadedProjects = [.. Explorer.Tree.Unloaded],
+        Folds = folds.Capture(Editors.Documents),
     });
 
     private void RestoreWorkspace()
@@ -803,6 +806,7 @@ public partial class MainWindow : Window
             Explorer.Refresh();
         }
         LoadConfigurations();
+        folds.Restore(kept.Folds);
         Editors.Restore(kept.Editors, kept.EditorWindows);
         foreach (string file in kept.RecentFiles.Where(File.Exists).Reverse())
         {

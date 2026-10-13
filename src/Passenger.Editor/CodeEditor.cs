@@ -350,6 +350,7 @@ public sealed partial class CodeEditor : Control
             UsagesKept = false;
             HoveredLink = null;
             pressedLink = null;
+            HideFoldPreview();
             EndComposition();
             selections = SelectionSet.Single(0);
             leaning = [];
@@ -509,6 +510,7 @@ public sealed partial class CodeEditor : Control
             return;
         }
         scroll = clamped;
+        HideFoldPreview();
         UpdateScrollBars();
         InvalidateVisual();
         FollowInputMethod();
@@ -671,6 +673,7 @@ public sealed partial class CodeEditor : Control
         FollowSnippet(e.Edits);
         FollowUsages(e.Edits);
         FollowLinkEdits(e.Edits);
+        HideFoldPreview();
         if (!editing)
         {
             leaning = [];

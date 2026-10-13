@@ -272,6 +272,7 @@ public sealed partial class CodeEditor
         }
         hoverTimer.Stop();
         EndHover();
+        HideFoldPreview();
         HoveredLink = null;
     }
 
@@ -318,6 +319,11 @@ public sealed partial class CodeEditor
         {
             return;
         }
+        if (PlaceholderAt(hoverAt) is { } placeholder)
+        {
+            ShowFoldPreview(placeholder.Line, placeholder.Chip);
+            return;
+        }
         TextSnapshot text = document.Snapshot;
         (int line, int row) = Rows.LineOfRow(RowAtY(hoverAt.Y));
         if (line < 0 || line >= text.LineCount)
@@ -343,6 +349,11 @@ public sealed partial class CodeEditor
             return;
         }
         hoverAt = position;
+        // The card stays while the pointer stays on its placeholder.
+        if (preview is { } shown && !shown.Chip.Contains(position))
+        {
+            HideFoldPreview();
+        }
         EndHover();
         hoverTimer.Stop();
         hoverTimer.Start();

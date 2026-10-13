@@ -16,13 +16,14 @@ public sealed class SettingsDialog : Window
     public const string SystemPage = "System Settings";
     public const string UpdatesPage = "Updates";
     public const string EditorPage = "Editor";
+    public const string CodeFoldingPage = "Code Folding";
     public const string TerminalPage = "Terminal";
     public const string RunPage = "Run";
     public const string KeymapPage = "Keymap";
     public const string McpPage = "MCP Server";
     public const string DiagnosticsPage = "Diagnostics";
 
-    private static readonly string[] Order = [Appearance, SystemPage, UpdatesPage, EditorPage, RunPage, TerminalPage, McpPage, DiagnosticsPage, KeymapPage];
+    private static readonly string[] Order = [Appearance, SystemPage, UpdatesPage, EditorPage, CodeFoldingPage, RunPage, TerminalPage, McpPage, DiagnosticsPage, KeymapPage];
 
     private readonly Action<AppSettings> apply;
 
@@ -213,6 +214,24 @@ public sealed class SettingsDialog : Window
             "whitespace spaces tabs dots arrows invisible characters appearance");
         Add(EditorPage, OperatingSystem.IsMacOS() ? "Change font size with Command+Mouse Wheel" : "Change font size with Ctrl+Mouse Wheel",
             Check(Working.WheelZoom, v => Change(s => s with { WheelZoom = v })), "zoom font size mouse wheel scroll ctrl control command cmd");
+
+        // Rider's Editor, General, Code Folding: its Fold by default switches for what Passenger folds, by its names (its
+        // General's, .NET's and XML's).
+        const string Folding = "fold by default folding collapse collapsed open opening region";
+        Add(CodeFoldingPage, "File header", Check(Working.FoldFileHeader, v => Change(s => s with { FoldFileHeader = v })),
+            $"{Folding} comments licence license copyright top",
+            "Fold by default: what folds as a file opens. A file keeps the folds it was closed with, after a restart too.");
+        Add(CodeFoldingPage, "Imports", Check(Working.FoldImports, v => Change(s => s with { FoldImports = v })), $"{Folding} usings using directives");
+        Add(CodeFoldingPage, "Documentation comments", Check(Working.FoldDocComments, v => Change(s => s with { FoldDocComments = v })),
+            $"{Folding} doc xml summary comments");
+        Add(CodeFoldingPage, "Method bodies", Check(Working.FoldMethodBodies, v => Change(s => s with { FoldMethodBodies = v })),
+            $"{Folding} members bodies accessors properties functions");
+        Add(CodeFoldingPage, "Preprocessor regions", Check(Working.FoldPreprocessorRegions, v => Change(s => s with { FoldPreprocessorRegions = v })),
+            $"{Folding} #region endregion directives .net");
+        Add(CodeFoldingPage, "Line and block comments", Check(Working.FoldComments, v => Change(s => s with { FoldComments = v })),
+            $"{Folding} block comments .net");
+        Add(CodeFoldingPage, "XML tags", Check(Working.FoldXmlTags, v => Change(s => s with { FoldXmlTags = v })),
+            $"{Folding} xml elements tags project csproj props axaml xaml");
 
         Add(RunPage, "Hot Reload on save", Check(Working.HotReload, v => Change(s => s with { HotReload = v })), "dotnet watch apply changes edit continue running");
         NumericUpDown buffer = Number(Working.ConsoleBufferKb, AppSettings.MinConsoleBufferKb, AppSettings.MaxConsoleBufferKb, 64, v => Change(s => s with { ConsoleBufferKb = (int)v }));

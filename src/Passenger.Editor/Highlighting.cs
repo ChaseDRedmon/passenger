@@ -89,6 +89,15 @@ public interface IBraceMatcher
 /// <summary>A bracket and the one it pairs with, each as its range in the text.</summary>
 public readonly record struct BracePair(TextRange Touched, TextRange Matching);
 
+/// <summary>What folds in a document's text, found off the UI thread as it changes: the regions of the newest text it
+/// read, in order of where they start, none folded, and <see cref="FoldsChanged"/> raised on the UI thread for each.</summary>
+public interface IFoldFinder
+{
+    IReadOnlyList<FoldRegion> Folds { get; }
+
+    event EventHandler? FoldsChanged;
+}
+
 /// <summary>A use of the symbol at the caret, as the language service highlights it: a write (an assignment, a
 /// declaration with its value) apart from a read.</summary>
 public readonly record struct UsageHighlight(TextRange Range, bool IsWrite);

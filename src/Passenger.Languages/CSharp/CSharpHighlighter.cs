@@ -14,7 +14,7 @@ namespace Passenger.Languages.CSharp;
 /// was parsed are mapped back to find the tree's text and forward again to place its colours, so a
 /// word being typed keeps its colour and typing never flashes plain. A keystroke costs the lines on
 /// screen, whatever the size of the file.</summary>
-public sealed class CSharpHighlighter : IHighlighter, IBraceMatcher, IDisposable
+public sealed class CSharpHighlighter : IHighlighter, IBraceMatcher, IFoldFinder, IDisposable
 {
     /// <summary>The symbols a Debug build defines, so <c>#if DEBUG</c> code is coloured as code until
     /// the project system says which configuration is active.</summary>
