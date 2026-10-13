@@ -14,8 +14,8 @@ namespace Passenger.App.CSharp;
 /// <summary>What the language server adds to the editor as you work: completion as you type, a card
 /// when the pointer rests (the diagnostics there and the symbol's description), signature help after
 /// an opening bracket or a comma, and the commands Rider binds (quick fixes, rename, go to
-/// definition and implementation, find usages, reformat, next error). Its popups sit on a layer over
-/// the editor, placed at the caret.</summary>
+/// declaration, implementation, type declaration, base and derived symbols, find usages, reformat, next error). Its popups
+/// sit on a layer over the editor, placed at the caret.</summary>
 public sealed class CodeAssist
 {
     private readonly EditorArea editors;
@@ -207,9 +207,16 @@ public sealed class CodeAssist
             context => _ = Refactor(a => a.Title.StartsWith("Introduce local", StringComparison.Ordinal), "Introduce Variable", renameMethod: false), new("Refactor", 1, 2));
         Code(AppActions.Inline, "Inline...",
             context => _ = Refactor(a => a.Kind == "refactor.inline" || a.Title.StartsWith("Inline", StringComparison.Ordinal), "Inline", renameMethod: false), new("Refactor", 1, 3));
+        // Rider's order in Navigate: Declaration, Derived Symbols, Implementation(s), Type Declaration, Base Symbols.
         Code(AppActions.GoToDeclaration, "Go to Declaration", context => _ = GoToDefinition(Caret), new("Navigate", 2, 0));
-        Code(AppActions.GoToImplementation, "Go to Implementation", context => _ = GoToImplementation(Caret), new("Navigate", 2, 1));
-        Code(AppActions.FindUsages, "Find Usages", context => _ = FindUsages(Caret), new("Navigate", 2, 2));
+        Code(AppActions.DerivedSymbols, "Derived Symbols", context => _ = GoToRelated("Derived Symbols", Caret, DerivedSymbolsAsync, "No derived symbols found"),
+            new("Navigate", 2, 1));
+        Code(AppActions.GoToImplementation, "Go to Implementation", context => _ = GoToImplementation(Caret), new("Navigate", 2, 2));
+        Code(AppActions.GoToTypeDeclaration, "Go to Type Declaration",
+            context => _ = GoToRelated("Type Declaration", Caret, async (lsp, at) => [.. (await lsp.TypeDefinitionAsync(at)).Select(l => new Target(l))],
+                "Cannot find a type declaration to go to"), new("Navigate", 2, 3));
+        Code(AppActions.BaseSymbols, "Base Symbols", context => _ = GoToRelated("Base Symbols", Caret, BaseSymbolsAsync, "No base symbols found"), new("Navigate", 2, 4));
+        Code(AppActions.FindUsages, "Find Usages", context => _ = FindUsages(Caret), new("Navigate", 2, 5));
         Code(AppActions.ParameterInfo, "Parameter Info", context => _ = ShowSignature(), new("View", 1, 2));
         Code(AppActions.NextError, "Next Highlighted Error", _ => StepToMarker(forward: true), new("Navigate", 3, 0), server: false);
         Code(AppActions.PreviousError, "Previous Highlighted Error", _ => StepToMarker(forward: false), new("Navigate", 3, 1), server: false);
@@ -1115,6 +1122,137 @@ public sealed class CodeAssist
         }
     }
 
+    /// <summary>Goes to what the server finds from the symbol at an offset (its type's declaration, its base or derived
+    /// symbols): straight there when it is one place, else the places to choose from; the status bar says when none.</summary>
+    private async Task GoToRelated(string what, int offset, Func<LspDocument, int, Task<IReadOnlyList<Target>>> find, string none)
+    {
+        BackgroundWork.Begin();
+        try
+        {
+            if (Ask(what) is { } lsp)
+            {
+                TextDocument asked = Editor.Document;
+                string name = NameAt(offset);
+                IReadOnlyList<Target> found = await find(lsp, offset);
+                // The editor shows another file now: the places were for the one it showed.
+                if (Editor.Document == asked)
+                {
+                    Go([.. found.Select(t => t.Location)], offset, name.Length > 0 ? $"{what} of {name}" : what, none, [.. found.Select(t => t.Name)]);
+                }
+            }
+        }
+        catch (LanguageServerFailed failed)
+        {
+            Failed(what, failed);
+        }
+        finally
+        {
+            BackgroundWork.End();
+        }
+    }
+
+    /// <summary>Rider's Base Symbols: a type's base types and interfaces, or the members a member overrides or implements,
+    /// the nearest first, through every level of the hierarchy that has source.</summary>
+    private async Task<IReadOnlyList<Target>> BaseSymbolsAsync(LspDocument lsp, int offset)
+    {
+        string name = NameAt(offset);
+        // An override's own keyword takes the server to the member it overrides, a library's (decompiled) too.
+        List<LspLocation> found = Syntax is { } syntax && Declarations.OverrideKeywordAt(syntax, offset) is { } keyword ? [.. await lsp.DefinitionAsync(keyword)] : [];
+        if (await lsp.PrepareTypeHierarchyAsync(offset) is not { } type)
+        {
+            return [.. found.Select(l => new Target(l))];
+        }
+        IReadOnlyList<HierarchyItem> bases = await Walk(type, (server, item) => server.SupertypesAsync(item));
+        if (IsType(type, name))
+        {
+            return [.. bases.Select(TargetOf)];
+        }
+        // A member: those of the base types by its name that it overrides or implements, which its references take in.
+        if (bases.Count == 0 || name.Length == 0 || service()?.Session is not { } session)
+        {
+            return [.. found.Select(l => new Target(l))];
+        }
+        IReadOnlyList<LspLocation> family = await lsp.ReferencesAsync(offset);
+        IReadOnlyList<SymbolInformation> named = [.. (await session.SymbolsAsync(name)).Where(s => Bare(s.Name) == name && family.Any(f => SamePlace(f, s.Location)))];
+        foreach (LspLocation place in bases.SelectMany(b => named.Where(s => Inside(s.Location, b)).Select(s => s.Location)))
+        {
+            if (!found.Any(f => SamePlace(f, place)))
+            {
+                found.Add(place);
+            }
+        }
+        return [.. found.Select(l => new Target(l))];
+    }
+
+    /// <summary>Rider's Derived Symbols: the types that derive from a type or implement an interface, through every level,
+    /// or the members that override or implement a member.</summary>
+    private async Task<IReadOnlyList<Target>> DerivedSymbolsAsync(LspDocument lsp, int offset)
+    {
+        if (await lsp.PrepareTypeHierarchyAsync(offset) is { } type && IsType(type, NameAt(offset)))
+        {
+            return [.. (await Walk(type, (server, item) => server.SubtypesAsync(item))).Select(TargetOf)];
+        }
+        // The server's implementations of a member that has a body hold the member itself, which is not derived from it.
+        // They come in no order; they are listed by file and line.
+        IReadOnlyList<LspLocation> own = await lsp.DefinitionAsync(offset);
+        return [.. (await lsp.ImplementationAsync(offset)).Where(l => !own.Any(o => SamePlace(o, l)))
+            .OrderBy(l => DocumentUris.ToPath(l.Uri), StringComparer.Ordinal).ThenBy(l => l.Range.Start.Line).ThenBy(l => l.Range.Start.Character)
+            .Select(l => new Target(l))];
+    }
+
+    /// <summary>A type hierarchy walked one way from a type, nearest first, each type once, as far as the server has
+    /// source for: at most <see cref="MostTypes"/>, so an interface the whole solution implements stays quick.</summary>
+    private async Task<IReadOnlyList<HierarchyItem>> Walk(HierarchyItem from, Func<LanguageServer, HierarchyItem, Task<IReadOnlyList<HierarchyItem>>> next)
+    {
+        List<HierarchyItem> found = [];
+        HashSet<(string, LspPosition)> seen = [(DocumentUris.ToPath(from.Uri), from.SelectionRange.Start)];
+        Queue<HierarchyItem> waiting = new([from]);
+        while (waiting.Count > 0 && found.Count < MostTypes)
+        {
+            // Asked of the server running now at each level: the one that answered the last may have been started again.
+            LanguageServer server = service()?.Session?.Server ?? throw new LanguageServerFailed("the C# language server is not running");
+            foreach (HierarchyItem type in (await next(server, waiting.Dequeue())).OrderBy(t => t.Name, StringComparer.Ordinal))
+            {
+                if (found.Count < MostTypes && seen.Add((DocumentUris.ToPath(type.Uri), type.SelectionRange.Start)))
+                {
+                    found.Add(type);
+                    waiting.Enqueue(type);
+                }
+            }
+        }
+        return found;
+    }
+
+    private const int MostTypes = 200;
+
+    /// <summary>Whether the type hierarchy's type is the symbol named at the caret rather than the type its member is in.</summary>
+    private static bool IsType(HierarchyItem type, string name) => name.Length > 0 && Bare(type.Name) == name;
+
+    /// <summary>A name without its type parameters or parameters, as the caret's word is.</summary>
+    private static string Bare(string name) => name.Split('<', '(')[0].Trim();
+
+    /// <summary>A place to go, and the name of what is there when the list to choose from should say it (a type's).</summary>
+    private sealed record Target(LspLocation Location, string? Name = null);
+
+    private static Target TargetOf(HierarchyItem item) => new(new LspLocation(item.Uri, item.SelectionRange), item.Name);
+
+    private static bool SamePlace(LspLocation one, LspLocation other) =>
+        one.Range.Start == other.Range.Start && DocumentUris.ToPath(one.Uri) == DocumentUris.ToPath(other.Uri);
+
+    /// <summary>Whether a place is in a type's declaration.</summary>
+    private static bool Inside(LspLocation place, HierarchyItem type) =>
+        DocumentUris.ToPath(place.Uri) == DocumentUris.ToPath(type.Uri) && !Before(place.Range.Start, type.Range.Start) && !Before(type.Range.End, place.Range.Start);
+
+    private static bool Before(LspPosition one, LspPosition other) => one.Line < other.Line || (one.Line == other.Line && one.Character < other.Character);
+
+    /// <summary>The name at an offset, or empty where there is none.</summary>
+    private string NameAt(int offset)
+    {
+        TextSnapshot text = Editor.Document.Snapshot;
+        TextRange word = TextNavigation.WordAt(text, Math.Min(offset, text.Length));
+        return word.Length > 0 && TextNavigation.IsWordChar(text[word.Start]) ? text.GetText(word) : string.Empty;
+    }
+
     private async Task FindUsages(int offset)
     {
         BackgroundWork.Begin();
@@ -1157,7 +1295,7 @@ public sealed class CodeAssist
         }
     }
 
-    private void Go(IReadOnlyList<LspLocation> locations, int offset, string title, string none)
+    private void Go(IReadOnlyList<LspLocation> locations, int offset, string title, string none, IReadOnlyList<string?>? names = null)
     {
         if (locations.Count == 0)
         {
@@ -1169,18 +1307,22 @@ public sealed class CodeAssist
         }
         else
         {
-            Pick(title, locations, offset);
+            Pick(title, locations, offset, names);
         }
     }
 
-    private void Pick(string title, IReadOnlyList<LspLocation> locations, int offset)
+    /// <summary>The places to choose from: a type by its name with its file and line beside it, any other place by its file
+    /// and line with its line of code beside it.</summary>
+    private void Pick(string title, IReadOnlyList<LspLocation> locations, int offset, IReadOnlyList<string?>? names = null)
     {
         string root = service()?.Session?.Folder ?? string.Empty;
-        List<Choice> choices = locations.Select(l =>
+        List<Choice> choices = locations.Select((l, i) =>
         {
             string path = DocumentUris.ToPath(l.Uri);
-            string shown = root.Length > 0 && PathNames.IsUnder(path, root) ? Path.GetRelativePath(root, path) : Path.GetFileName(path);
-            return new Choice($"{shown}:{l.Range.Start.Line + 1}", LinePreview(path, l.Range.Start.Line), l, DetailIsCode: true);
+            string shown = $"{(root.Length > 0 && PathNames.IsUnder(path, root) ? Path.GetRelativePath(root, path) : Path.GetFileName(path))}:{l.Range.Start.Line + 1}";
+            return names?[i] is { } name
+                ? new Choice(name, shown, l)
+                : new Choice(shown, LinePreview(path, l.Range.Start.Line), l, DetailIsCode: true);
         }).ToList();
         ShowModal(new ChoicePopup(title, choices), offset, title, choice =>
         {

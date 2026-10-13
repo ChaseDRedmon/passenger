@@ -66,7 +66,7 @@ public partial class MainWindow
         Dock.Actions = actions;
         AddEditing();
         Add(A.Open, "Open...", "IDE", context => _ = PickWorkspace(), menu: ("File", 0, 0));
-        actions.Add(new IdeAction(A.RecentFiles, "Recent Files", "IDE", _ => ShowRecentFiles()) { Menus = [new("File", 0, 4), new("View", 1, 0)] });
+        actions.Add(new IdeAction(A.RecentFiles, "Recent Files", "IDE", _ => ShowRecentFiles()) { Menus = [new("File", 0, 4), new("View", 2, 0)] });
         Add(A.Save, "Save", "IDE", _ => Editors.SaveActive(), NeedsFile, ("File", 1, 0));
         Add(A.SaveAll, "Save All", "IDE", _ => Editors.SaveAll(), _ => Editors.Documents.Any(d => d.IsModified) ? null : "Every file is saved", ("File", 1, 1));
         // Quit is the application menu's on macOS.
@@ -96,9 +96,9 @@ public partial class MainWindow
         AddTabActions();
 
         // The tool windows' frame: run from the terminal too, as the windows' own shortcuts are.
-        actions.Add(new IdeAction(A.MaximizeToolWindow, "Maximize Tool Window", "Tool Windows", _ => Dock.ToggleMaximize()) { Menus = [new("View", 2, 0)], FromTerminal = true });
-        actions.Add(new IdeAction(A.HideAllToolWindows, "Hide All Tool Windows", "Tool Windows", _ => Dock.ToggleHideAll()) { Menus = [new("View", 2, 1)], FromTerminal = true });
-        actions.Add(new IdeAction(A.HideToolWindow, "Hide Active Tool Window", "Tool Windows", _ => HideToolWindow()) { Menus = [new("View", 2, 2)], FromTerminal = true });
+        actions.Add(new IdeAction(A.MaximizeToolWindow, "Maximize Tool Window", "Tool Windows", _ => Dock.ToggleMaximize()) { Menus = [new("View", 3, 0)], FromTerminal = true });
+        actions.Add(new IdeAction(A.HideAllToolWindows, "Hide All Tool Windows", "Tool Windows", _ => Dock.ToggleHideAll()) { Menus = [new("View", 3, 1)], FromTerminal = true });
+        actions.Add(new IdeAction(A.HideToolWindow, "Hide Active Tool Window", "Tool Windows", _ => HideToolWindow()) { Menus = [new("View", 3, 2)], FromTerminal = true });
         Add(A.FocusEditor, "Focus Editor", "IDE", _ => FocusEditor(), NeedsFile);
         Add(A.ToggleSolutionAnalysis, "Toggle Solution-Wide Analysis", "IDE", _ => ToggleSolutionAnalysis(),
             _ => csharp is null ? "No C# language server runs for this folder" : null, ("Code", 4, 0));

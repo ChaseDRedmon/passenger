@@ -222,13 +222,15 @@ public partial class MainWindow
     }
 
     /// <summary>Recent Files (Ctrl+,): the files opened last, the latest first, narrowed as a name is typed; a file
-    /// opens where its caret was left, as Rider's does.</summary>
-    public Navigation.SymbolPopup ShowRecentFiles()
+    /// opens where its caret was left, as Rider's does. Its Show edited only lists the files edited, the latest first,
+    /// which is what Recently Changed Files opens it on.</summary>
+    public Navigation.SymbolPopup ShowRecentFiles(bool editedOnly = false)
     {
         string root = folder ?? string.Empty;
+        bool edited = editedOnly;
         Navigation.SymbolPopup popup = new("Recent Files", "A file's name", (query, _) =>
         {
-            IEnumerable<string> listed = recent.Skip(Editors.Active is null ? 0 : 1);
+            IEnumerable<string> listed = edited ? history.EditedFiles.Where(p => p != Editors.Active?.Path) : recent.Skip(Editors.Active is null ? 0 : 1);
             if (query.Trim().Length > 0)
             {
                 listed = listed.Where(p => FuzzyMatch.Score(query.Trim(), Path.GetFileName(p)) is not null);
@@ -236,7 +238,8 @@ public partial class MainWindow
             return Task.FromResult<IReadOnlyList<Navigation.SymbolRow>>([.. listed.Select(p => new Navigation.SymbolRow(
                 Path.GetFileName(p), null, root.Length > 0 && PathNames.IsUnder(p, root) ? Path.GetDirectoryName(Path.GetRelativePath(root, p)) : Path.GetDirectoryName(p),
                 Navigation.SymbolRow.FileKind, p, new TextPosition(0, 0)))]);
-        });
+        }, option: ("Show edited only", editedOnly));
+        popup.OptionChanged += (_, on) => edited = on;
         popup.Done += (_, row) =>
         {
             ClosePopup();

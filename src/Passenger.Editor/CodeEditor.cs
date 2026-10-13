@@ -310,6 +310,10 @@ public sealed partial class CodeEditor : Control
     /// <summary>Whether the gutter shows line numbers; a console's output goes without.</summary>
     public bool ShowLineNumbers { get; set; } = true;
 
+    /// <summary>Whether the scroll bars show when there is more to see; a few lines shown as a picture of a place (Recent
+    /// Locations') go without, a long line cut at the edge.</summary>
+    public bool ShowScrollBars { get; set; } = true;
+
     /// <summary>Scrolls so the last line sits at the bottom of the view, as output follows its end; not yet laid out (a
     /// console written to while its window is hidden), once it is.</summary>
     public void ScrollToEnd()
@@ -699,14 +703,14 @@ public sealed partial class CodeEditor : Control
         vertical.SmallChange = metrics.LineHeight;
         vertical.Value = scroll.Y;
         // The error stripe is its track, so it stays when there is nothing to scroll.
-        vertical.IsVisible = showErrorStripe || RowCount * metrics.LineHeight > viewport.Height;
+        vertical.IsVisible = ShowScrollBars && (showErrorStripe || RowCount * metrics.LineHeight > viewport.Height);
         double maxX = Math.Max(0, widestLine + TextPadLeft + metrics.CharWidth * 4 - viewport.Width);
         horizontal.Maximum = maxX;
         horizontal.ViewportSize = viewport.Width;
         horizontal.LargeChange = viewport.Width;
         horizontal.SmallChange = metrics.CharWidth * 4;
         horizontal.Value = scroll.X;
-        horizontal.IsVisible = maxX > 0;
+        horizontal.IsVisible = ShowScrollBars && maxX > 0;
         updatingBars = false;
     }
 

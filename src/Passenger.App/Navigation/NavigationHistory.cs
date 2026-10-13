@@ -6,10 +6,11 @@ namespace Passenger.App.Navigation;
 /// <summary>A place the caret was: its file, its offset in the text and that offset's line.</summary>
 public sealed record HistoryPlace(string Path, int Offset, int Line);
 
-/// <summary>Rider's Back and Forward. A navigation (go to definition, a usage, a bookmark) puts the place it left behind
-/// and forgets what was ahead; Back puts the caret's place ahead. The caret moved by a key or a click changes neither,
-/// so Forward still goes where Back came from. Each way keeps at most <see cref="Limit"/> places, and the places in an
-/// open file move with its text.</summary>
+/// <summary>Rider's Back and Forward, Last and Next Edit Location, and the places Recent Locations lists. A navigation
+/// (go to definition, a usage, a bookmark) puts the place it left behind and forgets what was ahead; Back puts the caret's
+/// place ahead. The caret moved by a key or a click changes neither, so Forward still goes where Back came from. An edit
+/// keeps its place among the places edited, which Last Edit Location steps back through and Next Edit Location forward.
+/// Each list keeps at most <see cref="Limit"/> places, and the places in an open file move with its text.</summary>
 public sealed class NavigationHistory
 {
     /// <summary>How many places each way, IntelliJ's own limit (editor.navigation.history.stack.size).</summary>
@@ -21,11 +22,80 @@ public sealed class NavigationHistory
     private readonly List<HistoryPlace> behind = [];
     private readonly List<HistoryPlace> ahead = [];
 
+    /// <summary>The places left, by a navigation or for another file, and those edited, the latest last: Recent Locations'.</summary>
+    private readonly List<Kept> visited = [];
+    private readonly List<Kept> edited = [];
+
+    /// <summary>Where Last and Next Edit Location stand among the places edited: past the last until they are used, and
+    /// put back there by the next edit, as IntelliJ's change places are.</summary>
+    private int editStep;
+    private long count;
+
     /// <summary>A navigation left a place: it goes behind, taking the place of the last there when near it.</summary>
     public void Left(HistoryPlace from)
     {
         PutBehind(from);
         ahead.Clear();
+        Visited(from);
+    }
+
+    /// <summary>A place left otherwise (another file shown): Recent Locations lists it, Back does not go there.</summary>
+    public void Visited(HistoryPlace place) => Merge(visited, place);
+
+    /// <summary>A place edited: Last Edit Location goes back to it from anywhere else, starting again from the latest.</summary>
+    public void Edited(HistoryPlace place)
+    {
+        Merge(edited, place);
+        editStep = edited.Count;
+    }
+
+    /// <summary>Whether Last (a step of -1) or Next Edit Location (1) has a place edited to go to.</summary>
+    public bool CanStepEdits(int step) => step < 0 ? editStep > 0 && edited.Count > 0 : editStep < edited.Count - 1;
+
+    /// <summary>The place edited before (a step of -1) or after (1) the one Last Edit Location went to last, passing over
+    /// the caret's place and those whose file is gone; null with none.</summary>
+    public HistoryPlace? StepEdits(int step, HistoryPlace? here, Func<string, bool> exists)
+    {
+        for (int i = Math.Min(editStep, edited.Count) + step; i >= 0 && i < edited.Count; i += step)
+        {
+            HistoryPlace place = edited[i].Place;
+            if ((here is null || !Near(here, place)) && exists(place.Path))
+            {
+                editStep = i;
+                return place;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>Recent Locations' places, the latest first: those left and edited, or only those edited, one for each
+    /// stretch of a file, none near the caret's place.</summary>
+    public IReadOnlyList<HistoryPlace> Recent(bool editedOnly, HistoryPlace? here)
+    {
+        List<HistoryPlace> listed = [];
+        foreach (Kept recent in (editedOnly ? edited : visited.Concat(edited)).OrderByDescending(p => p.When))
+        {
+            if ((here is null || !Near(here, recent.Place)) && listed.All(l => !Near(l, recent.Place)))
+            {
+                listed.Add(recent.Place);
+            }
+        }
+        return listed;
+    }
+
+    /// <summary>The files edited, the latest first.</summary>
+    public IReadOnlyList<string> EditedFiles => [.. edited.OrderByDescending(p => p.When).Select(p => p.Place.Path).Distinct()];
+
+    /// <summary>Forgets a place Recent Locations listed, as its Delete does, with those near it.</summary>
+    public void Forget(HistoryPlace place)
+    {
+        visited.RemoveAll(p => Near(p.Place, place));
+        int before = edited.Count;
+        edited.RemoveAll(p => Near(p.Place, place));
+        if (edited.Count != before)
+        {
+            editStep = edited.Count;
+        }
     }
 
     /// <summary>Where Back goes from the caret's place, which goes ahead; null with nothing behind. A place whose file
@@ -69,19 +139,34 @@ public sealed class NavigationHistory
     {
         Carry(behind);
         Carry(ahead);
+        CarryRecent(visited);
+        CarryRecent(edited);
 
         void Carry(List<HistoryPlace> places)
         {
             for (int i = 0; i < places.Count; i++)
             {
-                if (places[i].Path != path)
-                {
-                    continue;
-                }
-                int mapped = TextEditing.MapOffset(Math.Min(places[i].Offset, change.Before.Length), change.Edits, afterInsertions: true);
-                int offset = Math.Min(mapped, change.After.Length);
-                places[i] = places[i] with { Offset = offset, Line = change.After.GetLineFromOffset(offset) };
+                places[i] = Carried(places[i]);
             }
+        }
+
+        void CarryRecent(List<Kept> places)
+        {
+            for (int i = 0; i < places.Count; i++)
+            {
+                places[i] = places[i] with { Place = Carried(places[i].Place) };
+            }
+        }
+
+        HistoryPlace Carried(HistoryPlace place)
+        {
+            if (place.Path != path)
+            {
+                return place;
+            }
+            int mapped = TextEditing.MapOffset(Math.Min(place.Offset, change.Before.Length), change.Edits, afterInsertions: true);
+            int offset = Math.Min(mapped, change.After.Length);
+            return place with { Offset = offset, Line = change.After.GetLineFromOffset(offset) };
         }
     }
 
@@ -95,6 +180,13 @@ public sealed class NavigationHistory
                 places[i] = places[i] with { Path = PathNames.Moved(places[i].Path, from, to) };
             }
         }
+        foreach (List<Kept> places in new[] { visited, edited })
+        {
+            for (int i = 0; i < places.Count; i++)
+            {
+                places[i] = places[i] with { Place = places[i].Place with { Path = PathNames.Moved(places[i].Place.Path, from, to) } };
+            }
+        }
     }
 
     /// <summary>Forgets every place, as another folder opens: each folder's are its own.</summary>
@@ -102,6 +194,23 @@ public sealed class NavigationHistory
     {
         behind.Clear();
         ahead.Clear();
+        visited.Clear();
+        edited.Clear();
+        editStep = 0;
+    }
+
+    /// <summary>Keeps a place as the latest of its list, in place of the last when near it, as IntelliJ merges them.</summary>
+    private void Merge(List<Kept> places, HistoryPlace place)
+    {
+        if (places.Count > 0 && Near(places[^1].Place, place))
+        {
+            places.RemoveAt(places.Count - 1);
+        }
+        places.Add(new Kept(place, ++count));
+        if (places.Count > Limit)
+        {
+            places.RemoveAt(0);
+        }
     }
 
     private void PutBehind(HistoryPlace place)
@@ -137,4 +246,7 @@ public sealed class NavigationHistory
         }
         return null;
     }
+
+    /// <summary>A place Recent Locations may list, and how recently it was kept, counted over both of its lists.</summary>
+    private sealed record Kept(HistoryPlace Place, long When);
 }

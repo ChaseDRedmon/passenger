@@ -26,8 +26,9 @@ public sealed record SymbolRow(string Name, string? Detail, string? Where, int K
 }
 
 /// <summary>A query over symbols, answered as it is typed (a moment after the last key, the previous answer given
-/// up): Go to Symbol, Go to Everything and File Structure. Up and Down move, Enter goes, Escape leaves. A search the
-/// language server cannot answer fails with a <see cref="LanguageServerFailed"/>, whose message the popup shows.</summary>
+/// up): Go to Symbol, Go to Everything, File Structure and Recent Files, whose switch (Show edited only) asks again as it
+/// turns. Up and Down move, Enter goes, Escape leaves. A search the language server cannot answer fails with a
+/// <see cref="LanguageServerFailed"/>, whose message the popup shows.</summary>
 public sealed class SymbolPopup : UserControl
 {
     private static readonly TimeSpan Pause = TimeSpan.FromMilliseconds(120);
@@ -37,9 +38,11 @@ public sealed class SymbolPopup : UserControl
     private readonly ListBox results;
     private readonly TextBlock empty;
     private readonly DispatcherTimer typing;
+    private readonly CheckBox? option;
     private CancellationTokenSource? asking;
 
-    public SymbolPopup(string title, string placeholder, Func<string, CancellationToken, Task<IReadOnlyList<SymbolRow>>> search, string? initialQuery = null)
+    public SymbolPopup(string title, string placeholder, Func<string, CancellationToken, Task<IReadOnlyList<SymbolRow>>> search, string? initialQuery = null,
+        (string Label, bool Checked)? option = null)
     {
         this.search = search;
         query = new TextBox { Classes = { "search" }, PlaceholderText = placeholder, Text = initialQuery ?? string.Empty };
@@ -65,7 +68,21 @@ public sealed class SymbolPopup : UserControl
         };
         query.AddHandler(KeyDownEvent, OnQueryKeyDown, RoutingStrategies.Tunnel);
         DockPanel body = new();
-        StackPanel top = new() { Margin = new Thickness(12, 10, 12, 8), Spacing = 8, Children = { new TextBlock { Classes = { "paneTitle" }, Text = title }, query } };
+        DockPanel heading = new();
+        if (option is { } shown)
+        {
+            // Not focusable: the keys stay with the query, as they do in Rider's popups.
+            this.option = new CheckBox { Content = shown.Label, IsChecked = shown.Checked, Focusable = false, FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
+            this.option.IsCheckedChanged += (_, _) =>
+            {
+                OptionChanged?.Invoke(this, IsOptionChecked);
+                _ = Refresh();
+            };
+            DockPanel.SetDock(this.option, Dock.Right);
+            heading.Children.Add(this.option);
+        }
+        heading.Children.Add(new TextBlock { Classes = { "paneTitle" }, Text = title, VerticalAlignment = VerticalAlignment.Center });
+        StackPanel top = new() { Margin = new Thickness(12, 10, 12, 8), Spacing = 8, Children = { heading, query } };
         DockPanel.SetDock(top, Dock.Top);
         DockPanel.SetDock(empty, Dock.Top);
         body.Children.Add(top);
@@ -83,6 +100,22 @@ public sealed class SymbolPopup : UserControl
 
     /// <summary>The place chosen, or null when the popup was dismissed.</summary>
     public event EventHandler<SymbolRow?>? Done;
+
+    /// <summary>The popup's switch turned, before it asks again; its search reads what it is now.</summary>
+    public event EventHandler<bool>? OptionChanged;
+
+    /// <summary>Whether the popup's switch (Recent Files' Show edited only) is on; false for a popup without one.</summary>
+    public bool IsOptionChecked
+    {
+        get => option?.IsChecked == true;
+        set
+        {
+            if (option is not null)
+            {
+                option.IsChecked = value;
+            }
+        }
+    }
 
     public IReadOnlyList<SymbolRow> Rows => results.ItemsSource as IReadOnlyList<SymbolRow> ?? [];
 

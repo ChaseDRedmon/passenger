@@ -80,6 +80,7 @@ public partial class MainWindow : Window
         AddProfiler();
         AddBreadcrumbs();
         AddBookmarks();
+        AddPlaces();
         AddHierarchy();
         AddFileOperations();
         AddAutosave();

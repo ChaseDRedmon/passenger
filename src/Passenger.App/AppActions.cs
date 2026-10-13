@@ -33,6 +33,14 @@ public static class AppActions
     public const string FindInFiles = "app.findInFiles";
     public const string RecentFiles = "app.recentFiles";
 
+    // Rider's RecentChangedFiles (Recently Changed Files), RecentLocations, JumpToLastChange (Last Edit Location) and
+    // JumpToNextChange (Next Edit Location); the last has no keys in its Visual Studio keymaps, Recent Locations none in
+    // the macOS one.
+    public const string RecentChangedFiles = "app.recentChangedFiles";
+    public const string RecentLocations = "app.recentLocations";
+    public const string LastEditLocation = "app.lastEditLocation";
+    public const string NextEditLocation = "app.nextEditLocation";
+
     // Bookmarks: Rider's, on the Visual Studio keymaps' Ctrl+K chords.
     public const string ToggleBookmark = "app.bookmarks.toggle";
     public const string NextBookmark = "app.bookmarks.next";
@@ -79,6 +87,13 @@ public static class AppActions
     public const string Rename = "app.code.rename";
     public const string GoToDeclaration = "app.code.goToDeclaration";
     public const string GoToImplementation = "app.code.goToImplementation";
+
+    // Rider's GotoTypeDeclaration, and GotoSuperMethod and GotoImplementation, which it names Base Symbols and Derived
+    // Symbols; its Go to Implementation is ReSharperGotoImplementation.
+    public const string GoToTypeDeclaration = "app.code.goToTypeDeclaration";
+    public const string BaseSymbols = "app.code.baseSymbols";
+    public const string DerivedSymbols = "app.code.derivedSymbols";
+
     public const string FindUsages = "app.code.findUsages";
     public const string HighlightUsages = "app.code.highlightUsages";
     public const string Reformat = "app.code.reformat";
@@ -247,6 +262,8 @@ public static class AppActions
                 .Bind(FindAction, "meta shift A")
                 .Bind(FindInFiles, "meta shift F")
                 .Bind(RecentFiles, "control COMMA")
+                .Bind(RecentChangedFiles, "meta shift COMMA")
+                .Bind(LastEditLocation, "shift meta BACK_SPACE")
                 .Bind(ToggleBookmark, "meta K , K", "meta K , meta K", "meta F2")
                 .Bind(NextBookmark, "meta K , N", "meta K , meta N")
                 .Bind(PreviousBookmark, "meta K , P", "meta K , meta P")
@@ -311,7 +328,10 @@ public static class AppActions
                 .Bind(QuickFix, "alt ENTER")
                 .Bind(Rename, "meta R , R", "meta R , meta R")
                 .Bind(GoToDeclaration, "F12")
-                .Bind(GoToImplementation, "alt END")
+                .Bind(GoToImplementation, "meta F12")
+                .Bind(DerivedSymbols, "alt END")
+                .Bind(GoToTypeDeclaration, "meta shift F11")
+                .Bind(BaseSymbols, "control alt LEFT", "alt HOME")
                 .Bind(FindUsages, "shift F12")
                 .Bind(HighlightUsages, "shift alt F11")
                 .Bind(Reformat, "meta alt ENTER", "meta K , F", "meta K , meta F", "meta K , D", "meta K , meta D")
@@ -342,6 +362,9 @@ public static class AppActions
             .Bind(FindAction, "control shift A")
             .Bind(FindInFiles, "control shift F")
             .Bind(RecentFiles, "control COMMA")
+            .Bind(RecentChangedFiles, "control shift COMMA")
+            .Bind(RecentLocations, "control shift E")
+            .Bind(LastEditLocation, "shift control BACK_SPACE")
             .Bind(ToggleBookmark, "control K , K", "control K , control K")
             .Bind(NextBookmark, "control K , N", "control K , control N")
             .Bind(PreviousBookmark, "control K , P", "control K , control P")
@@ -406,7 +429,10 @@ public static class AppActions
             .Bind(QuickFix, "alt ENTER", "control PERIOD")
             .Bind(Rename, "control R , R", "control R , control R")
             .Bind(GoToDeclaration, "F12")
-            .Bind(GoToImplementation, "alt END")
+            .Bind(GoToImplementation, "control F12")
+            .Bind(DerivedSymbols, "alt END")
+            .Bind(GoToTypeDeclaration, "control shift F11")
+            .Bind(BaseSymbols, "alt HOME")
             .Bind(FindUsages, "shift F12")
             .Bind(HighlightUsages, "shift alt F11")
             .Bind(Reformat, "control alt ENTER", "control K , F", "control K , control F", "control K , D", "control K , control D")

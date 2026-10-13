@@ -173,6 +173,10 @@ public sealed class LspDocument : IDisposable
     public async Task<IReadOnlyList<LspLocation>> DefinitionAsync(int offset, CancellationToken cancel = default) =>
         Shapes.Locations(await Server.RequestAsync<JsonElement>("textDocument/definition", new TextDocumentPositionParams(Identifier, PositionOf(offset)), cancel));
 
+    /// <summary>Where the type of the symbol at an offset (a variable's, a member's, a parameter's) is declared.</summary>
+    public async Task<IReadOnlyList<LspLocation>> TypeDefinitionAsync(int offset, CancellationToken cancel = default) =>
+        Shapes.Locations(await Server.RequestAsync<JsonElement>("textDocument/typeDefinition", new TextDocumentPositionParams(Identifier, PositionOf(offset)), cancel));
+
     public async Task<IReadOnlyList<LspLocation>> ImplementationAsync(int offset, CancellationToken cancel = default) =>
         Shapes.Locations(await Server.RequestAsync<JsonElement>("textDocument/implementation", new TextDocumentPositionParams(Identifier, PositionOf(offset)), cancel));
 

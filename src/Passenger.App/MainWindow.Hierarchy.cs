@@ -23,12 +23,12 @@ public partial class MainWindow
         actions!.Add(new IdeAction(AppActions.CallHierarchy, "Call Hierarchy", "IDE", context => _ = ShowCallHierarchyAsync())
         {
             WhyNot = NeedsFile,
-            Menus = [new MenuPlace("Navigate", 2, 3)],
+            Menus = [new MenuPlace("Navigate", 2, 6)],
         });
         actions.Add(new IdeAction(AppActions.TypeHierarchy, "Type Hierarchy", "IDE", context => _ = ShowTypeHierarchyAsync())
         {
             WhyNot = NeedsFile,
-            Menus = [new MenuPlace("Navigate", 2, 4)],
+            Menus = [new MenuPlace("Navigate", 2, 7)],
         });
     }
 
