@@ -133,17 +133,26 @@ public static class ChildProcesses
         return new ChildResult(process.ExitCode, await output, await errors);
     }
 
-    /// <summary>Ends a child and everything it started, now: its tree on Windows; on macOS and Linux its process group,
-    /// which holds what it started and what it left behind, whether or not it has ended itself. Never the runtime's tree
-    /// kill there: it stops each process before killing it, and .NET 11 on macOS handles a child's end in a loop that
-    /// never ends while another child is stopped, holding the lock that the tree kill then waits on.</summary>
+    /// <summary>Ends a child and everything it started, now, passing over what has ended: its tree on Windows, but for a
+    /// process of it Windows will not end (one ending, or not ours where a parent's id was reused); on macOS and Linux its
+    /// process group, which holds what it started and what it left behind, whether or not it has ended itself. Never the
+    /// runtime's tree kill there: it stops each process before killing it, and .NET 11 on macOS handles a child's end in a
+    /// loop that never ends while another child is stopped, holding the lock that the tree kill then waits on.</summary>
     public static void Kill(Process process)
     {
         try
         {
             if (OperatingSystem.IsWindows())
             {
-                process.Kill(entireProcessTree: true);
+                try
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+                catch (AggregateException partly) when (partly.InnerExceptions.All(e => e is Win32Exception or InvalidOperationException))
+                {
+                    // Windows refuses a process of the tree that has ended or is ending, or is not ours: the child must still go.
+                    process.Kill();
+                }
                 return;
             }
             Lifeline.KillGroup(process);

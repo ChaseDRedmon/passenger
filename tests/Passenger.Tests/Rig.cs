@@ -559,8 +559,9 @@ public static class Processes
                 left.Kill(entireProcessTree: true);
             }
         }
-        catch (Exception gone) when (gone is ArgumentException or InvalidOperationException)
+        catch (Exception gone) when (gone is ArgumentException or InvalidOperationException or AggregateException or System.ComponentModel.Win32Exception)
         {
+            // Gone, or ending: Windows refuses to end a process of the tree that is (ChildProcesses.Kill).
         }
     }
 
