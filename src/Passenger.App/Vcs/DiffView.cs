@@ -10,8 +10,9 @@ namespace Passenger.App.Vcs;
 
 /// <summary>Rider's side-by-side diff: the last commit's text on the left (read-only), the file as it is on the right
 /// (the open file's own text, so an edit there is an edit to it), each change tinted on both sides and joined by a band
-/// between them, the two kept level as either scrolls. A band's arrow puts that change back, as Rider's does; F7 and
-/// Shift+F7 go to the next and previous difference.</summary>
+/// between them, the words that changed inside its lines marked stronger, the two kept level as either scrolls. A band's
+/// arrow puts that change back, as Rider's does; F7 and Shift+F7 go to the next and previous difference; the toolbar's
+/// Settings (Ctrl+Shift+D, Cmd+Shift+D on the Mac) chooses how differences are highlighted, by words at first.</summary>
 public sealed class DiffView : DockPanel
 {
     /// <summary>How long editing pauses before the differences are worked out again.</summary>
@@ -19,9 +20,12 @@ public sealed class DiffView : DockPanel
 
     private readonly Bands bands;
     private readonly TextBlock count;
+    private readonly Button settings;
     private readonly Debounce rediff;
     private FileDiff shown;
+    private DiffHighlighting highlighting;
     private int comparing;
+    private int wording;
     private bool following;
 
     /// <param name="diff">The last commit's text (empty for a file it does not have) compared with the file's, as a
@@ -29,9 +33,12 @@ public sealed class DiffView : DockPanel
     /// <param name="mine">The file's text now: the open file's document, or a copy when it is not open.</param>
     /// <param name="editable">Whether the right side is the open file, which can be edited and have changes put back.</param>
     /// <param name="titles">What the sides are, above them: the last commit and the file by default.</param>
-    public DiffView(string name, FileDiff diff, TextDocument mine, bool editable, IHighlighter? leftColours = null, IHighlighter? rightColours = null, (string Left, string Right)? titles = null)
+    /// <param name="highlighting">How differences inside changed lines are marked: Rider's words by default.</param>
+    public DiffView(string name, FileDiff diff, TextDocument mine, bool editable, IHighlighter? leftColours = null, IHighlighter? rightColours = null,
+        (string Left, string Right)? titles = null, DiffHighlighting highlighting = DiffHighlighting.Words)
     {
         shown = diff;
+        this.highlighting = highlighting;
         IsEditable = editable;
         Left = new CodeEditor { IsReadOnly = true, ChangeBackgrounds = true, Highlighter = leftColours };
         Left.Show(new TextDocument(diff.Head), SelectionSet.Single(0), default);
@@ -53,6 +60,11 @@ public sealed class DiffView : DockPanel
 
         count = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0) };
         count.Bind(TextBlock.ForegroundProperty, count.GetResourceObservable("Passenger.TextMuted"));
+        settings = Tool("Icon.Settings", $"Settings ({(OperatingSystem.IsMacOS() ? "⌘⇧D" : "Ctrl+Shift+D")})", ShowSettings);
+        settings[DockProperty] = Dock.Right;
+        settings.Margin = new Thickness(0, 0, 6, 0);
+        settings.VerticalAlignment = VerticalAlignment.Center;
+        settings.ContextMenu = SettingsMenu();
         StackPanel tools = new()
         {
             Orientation = Orientation.Horizontal,
@@ -67,7 +79,7 @@ public sealed class DiffView : DockPanel
                 count,
             },
         };
-        Border bar = new() { [DockProperty] = Dock.Top, Height = 34, BorderThickness = new Thickness(0, 0, 0, 1), Child = tools };
+        Border bar = new() { [DockProperty] = Dock.Top, Height = 34, BorderThickness = new Thickness(0, 0, 0, 1), Child = new DockPanel { Children = { settings, tools } } };
         bar.Bind(Border.BackgroundProperty, bar.GetResourceObservable("Passenger.Chrome"));
         bar.Bind(Border.BorderBrushProperty, bar.GetResourceObservable("Passenger.Divider"));
         Children.Add(bar);
@@ -83,6 +95,7 @@ public sealed class DiffView : DockPanel
             rediff.Stop();
             mine.Changed -= OnMineChanged;
             comparing++;
+            wording++;
             Left.Detach();
             Right.Detach();
         };
@@ -91,6 +104,12 @@ public sealed class DiffView : DockPanel
             if (e.Key == Key.F7 && e.KeyModifiers is KeyModifiers.None or KeyModifiers.Shift)
             {
                 Step(e.KeyModifiers == KeyModifiers.Shift ? -1 : 1);
+                e.Handled = true;
+            }
+            else if (e.Key == Key.D && e.KeyModifiers == ((OperatingSystem.IsMacOS() ? KeyModifiers.Meta : KeyModifiers.Control) | KeyModifiers.Shift))
+            {
+                // Rider's Diff.ShowSettingsPopup.
+                ShowSettings();
                 e.Handled = true;
             }
         }, Avalonia.Interactivity.RoutingStrategies.Tunnel);
@@ -105,6 +124,32 @@ public sealed class DiffView : DockPanel
     public CodeEditor Right { get; }
 
     public bool IsEditable { get; }
+
+    /// <summary>How differences are highlighted: Rider's Highlighting Differences, Words at first.</summary>
+    public DiffHighlighting Highlighting
+    {
+        get => highlighting;
+        set
+        {
+            if (value == highlighting)
+            {
+                return;
+            }
+            highlighting = value;
+            settings.ContextMenu = SettingsMenu();
+            Show(shown);
+            HighlightingChanged?.Invoke(this, value);
+        }
+    }
+
+    /// <summary>The person chose another way to highlight differences, which the next diff opens with.</summary>
+    public event EventHandler<DiffHighlighting>? HighlightingChanged;
+
+    /// <summary>The words marked inside each side's changed lines, once worked out.</summary>
+    public InlineChanges Words => new(Left.InlineChanges, Right.InlineChanges);
+
+    /// <summary>The toolbar's Settings, whose menu is Rider's Highlighting Differences.</summary>
+    public Button SettingsButton => settings;
 
     /// <summary>The differences as they stand.</summary>
     public IReadOnlyList<DiffHunk> Hunks => shown.Hunks;
@@ -158,18 +203,63 @@ public sealed class DiffView : DockPanel
     private void Show(FileDiff diff)
     {
         shown = diff;
-        Left.SetChangeMarks([.. Hunks.Select(h => h.OldCount == 0 ? new ChangeMark(h.OldStart, 0, ChangeMarkKind.Added)
+        bool off = highlighting == DiffHighlighting.None;
+        Left.SetChangeMarks(off ? [] : [.. Hunks.Select(h => h.OldCount == 0 ? new ChangeMark(h.OldStart, 0, ChangeMarkKind.Added)
             : h.NewCount == 0 ? new ChangeMark(h.OldStart, h.OldCount, ChangeMarkKind.Deleted)
             : new ChangeMark(h.OldStart, h.OldCount, ChangeMarkKind.Modified))]);
-        Right.SetChangeMarks(diff.Marks);
-        count.Text = Hunks.Count switch
+        Right.SetChangeMarks(off ? [] : diff.Marks);
+        count.Text = off ? "Differences highlighting is off" : Hunks.Count switch
         {
             0 => "No differences",
             1 => "1 difference",
             _ => $"{Hunks.Count} differences",
         };
         bands.InvalidateVisual();
+        _ = ShowWordsAsync(diff);
     }
+
+    /// <summary>Marks the words that differ inside the changed lines, worked out off the window's thread; a newer
+    /// comparison's (or highlighting's) answer wins, and the file's side takes them only while its text is still the one
+    /// compared: an edit since moved them, and the comparison after it marks them again.</summary>
+    private async Task ShowWordsAsync(FileDiff diff)
+    {
+        int generation = ++wording;
+        DiffHighlighting how = highlighting;
+        if (how is not (DiffHighlighting.Words or DiffHighlighting.Characters))
+        {
+            Left.SetInlineChanges([]);
+            Right.SetInlineChanges([]);
+            return;
+        }
+        InlineChanges changes = await BackgroundWork.Run(() => diff.InnerChanges(how));
+        if (generation != wording)
+        {
+            return;
+        }
+        Left.SetInlineChanges(changes.Left);
+        if (ReferenceEquals(Right.Document.Snapshot, diff.Text))
+        {
+            Right.SetInlineChanges(changes.Right);
+        }
+    }
+
+    /// <summary>Rider's diff settings: Highlighting Differences, the way in use ticked. Its Split changes, which divides a
+    /// change into the lines that match up, is not offered.</summary>
+    private ContextMenu SettingsMenu()
+    {
+        List<Control> items = [new MenuItem { Header = "Highlighting Differences", IsEnabled = false }];
+        (DiffHighlighting Way, string Title)[] ways =
+            [(DiffHighlighting.Lines, "Lines"), (DiffHighlighting.Words, "Words"), (DiffHighlighting.Characters, "Characters"), (DiffHighlighting.None, "None")];
+        foreach ((DiffHighlighting way, string title) in ways)
+        {
+            MenuItem item = new() { Header = title, ToggleType = MenuItemToggleType.Radio, IsChecked = way == highlighting };
+            item.Click += (_, _) => Highlighting = way;
+            items.Add(item);
+        }
+        return new ContextMenu { ItemsSource = items, Placement = PlacementMode.BottomEdgeAlignedRight };
+    }
+
+    private void ShowSettings() => settings.ContextMenu?.Open(settings);
 
     /// <summary>Scrolls one side to stand level with the other: the line at the top of one maps through the
     /// differences above it to the other's.</summary>
@@ -235,6 +325,10 @@ public sealed class DiffView : DockPanel
         {
             context.FillRectangle(Find("Passenger.Editor.Background", Brushes.Transparent), new Rect(Bounds.Size));
             double width = Bounds.Width;
+            if (view.Highlighting == DiffHighlighting.None)
+            {
+                return;
+            }
             foreach (DiffHunk hunk in view.Hunks)
             {
                 (double leftTop, double leftBottom, double rightTop, double rightBottom) = Ends(hunk);

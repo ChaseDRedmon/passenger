@@ -1149,8 +1149,10 @@ public partial class MainWindow : Window
         {
             popup.Measure(Size.Infinity);
             double width = popup.Width is double w && !double.IsNaN(w) ? w : popup.DesiredSize.Width;
+            // A layer never shown yet was never laid out: it covers what holds it.
+            Size room = layer.Bounds.Size is { Width: > 0 } laid ? laid : (layer.Parent as Visual)?.Bounds.Size ?? default;
             host.HorizontalAlignment = HorizontalAlignment.Left;
-            host.Margin = new Thickness(Math.Clamp(point.X, 8, Math.Max(8, layer.Bounds.Width - width - 8)), Math.Clamp(point.Y, 8, Math.Max(8, layer.Bounds.Height - popup.DesiredSize.Height - 8)), 0, 0);
+            host.Margin = new Thickness(Math.Clamp(point.X, 8, Math.Max(8, room.Width - width - 8)), Math.Clamp(point.Y, 8, Math.Max(8, room.Height - popup.DesiredSize.Height - 8)), 0, 0);
         }
         else
         {

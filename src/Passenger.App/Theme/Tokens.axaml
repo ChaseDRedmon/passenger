@@ -39,6 +39,11 @@
             <SolidColorBrush x:Key="Passenger.Diff.Modified" Color="#2C3A55" />
             <SolidColorBrush x:Key="Passenger.Diff.Deleted" Color="#3B3D42" />
             <SolidColorBrush x:Key="Passenger.Diff.Conflict" Color="#482D2E" />
+            <!-- The words that changed inside a diff's changed lines, over the lines' tint. -->
+            <SolidColorBrush x:Key="Passenger.Diff.AddedWord" Color="#3D6B4A" />
+            <SolidColorBrush x:Key="Passenger.Diff.ModifiedWord" Color="#405A8C" />
+            <SolidColorBrush x:Key="Passenger.Diff.DeletedWord" Color="#55585E" />
+            <SolidColorBrush x:Key="Passenger.Diff.ConflictWord" Color="#6E3B3D" />
             <SolidColorBrush x:Key="Passenger.Graph.0" Color="#3574F0" />
             <SolidColorBrush x:Key="Passenger.Graph.1" Color="#5FAD65" />
             <SolidColorBrush x:Key="Passenger.Graph.2" Color="#E2A33F" />
@@ -183,6 +188,10 @@
             <SolidColorBrush x:Key="Passenger.Diff.Modified" Color="#DCE6FB" />
             <SolidColorBrush x:Key="Passenger.Diff.Deleted" Color="#E6E7EA" />
             <SolidColorBrush x:Key="Passenger.Diff.Conflict" Color="#FBDCD9" />
+            <SolidColorBrush x:Key="Passenger.Diff.AddedWord" Color="#AEE0A5" />
+            <SolidColorBrush x:Key="Passenger.Diff.ModifiedWord" Color="#B4C9F5" />
+            <SolidColorBrush x:Key="Passenger.Diff.DeletedWord" Color="#CBCED4" />
+            <SolidColorBrush x:Key="Passenger.Diff.ConflictWord" Color="#F4B3AC" />
             <SolidColorBrush x:Key="Passenger.Graph.0" Color="#3574F0" />
             <SolidColorBrush x:Key="Passenger.Graph.1" Color="#3F9A45" />
             <SolidColorBrush x:Key="Passenger.Graph.2" Color="#C27D10" />

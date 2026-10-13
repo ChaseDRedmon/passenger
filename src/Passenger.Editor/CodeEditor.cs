@@ -151,6 +151,28 @@ public sealed partial class CodeEditor : Control
         InvalidateVisual();
     }
 
+    /// <summary>The words that changed inside changed lines (sorted), drawn over the lines' tint in a stronger colour, as a
+    /// diff's sides and the change popup's file mark them; they move with edits until the host sets them again.</summary>
+    public IReadOnlyList<InlineChange> InlineChanges { get; private set; } = [];
+
+    public void SetInlineChanges(IReadOnlyList<InlineChange> changes)
+    {
+        if (changes.Count == 0 && InlineChanges.Count == 0)
+        {
+            return;
+        }
+        InlineChanges = [.. changes.OrderBy(c => c.Range.Start)];
+        InvalidateVisual();
+    }
+
+    private void FollowInlineChanges(IReadOnlyList<TextEdit> edits)
+    {
+        if (InlineChanges.Count > 0)
+        {
+            InlineChanges = [.. InlineChanges.Select(c => c with { Range = TextEditing.MapRange(c.Range, edits) })];
+        }
+    }
+
     /// <summary>The bookmarked lines, drawn as ribbons at the line numbers' left.</summary>
     public IReadOnlyList<int> Bookmarks { get; private set; } = [];
 
@@ -348,6 +370,7 @@ public sealed partial class CodeEditor : Control
             pendingGoTo = null;
             UsageHighlights = [];
             UsagesKept = false;
+            InlineChanges = [];
             HoveredLink = null;
             pressedLink = null;
             HideFoldPreview();
@@ -456,6 +479,7 @@ public sealed partial class CodeEditor : Control
         SetMarkers([]);
         SetLineMarks([]);
         SetChangeMarks([]);
+        SetInlineChanges([]);
         SetBookmarks([]);
         SetGutterAnnotations([]);
         SetTestMarks([]);
@@ -672,6 +696,7 @@ public sealed partial class CodeEditor : Control
         FollowWraps(e);
         FollowSnippet(e.Edits);
         FollowUsages(e.Edits);
+        FollowInlineChanges(e.Edits);
         FollowLinkEdits(e.Edits);
         HideFoldPreview();
         if (!editing)

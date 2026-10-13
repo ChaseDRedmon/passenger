@@ -93,6 +93,8 @@ ICONS = [
     # Local History's tool window and its labels.
     ("History", "History", "20_regular"),
     ("Label", "Tag", "16_regular"),
+    # A change bar's popup's Highlight Words, Rider's highlighter pen.
+    ("Highlight", "Highlight", "16_regular"),
 ]
 
 

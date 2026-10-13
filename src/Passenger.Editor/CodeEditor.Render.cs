@@ -87,6 +87,7 @@ public sealed partial class CodeEditor
                 {
                     context.FillRectangle(change, new Rect(gutter, y, size.Width - gutter, lineHeight));
                 }
+                DrawInlineChanges(context, view, gaps, from, y);
                 if (LineTint(marks, line) is { } tint)
                 {
                     context.FillRectangle(tint, new Rect(gutter, y, size.Width - gutter, lineHeight));
@@ -704,6 +705,43 @@ public sealed partial class CodeEditor
         return tints;
     }
 
+    /// <summary>The changed words on a row, over its line's tint and behind its text; changes never overlap, so their ends
+    /// rise with their starts and the first on the row is found by halving.</summary>
+    private void DrawInlineChanges(DrawingContext context, LineView view, Gap[] gaps, double left, double y)
+    {
+        IReadOnlyList<InlineChange> changes = InlineChanges;
+        if (changes.Count == 0)
+        {
+            return;
+        }
+        RowSpan span = view.Span;
+        int low = 0;
+        int high = changes.Count;
+        while (low < high)
+        {
+            int middle = (low + high) / 2;
+            if (changes[middle].Range.End <= span.Start)
+            {
+                low = middle + 1;
+            }
+            else
+            {
+                high = middle;
+            }
+        }
+        for (int i = low; i < changes.Count && changes[i].Range.Start < span.End; i++)
+        {
+            IBrush brush = changes[i].Kind switch
+            {
+                ChangeMarkKind.Added => palette.WordAdded,
+                ChangeMarkKind.Deleted => palette.WordDeleted,
+                ChangeMarkKind.Conflict => palette.WordConflict,
+                _ => palette.WordModified,
+            };
+            FillRange(context, view, gaps, left, y, changes[i].Range, brush);
+        }
+    }
+
     /// <summary>A diff side's rule where the other side has lines this one has none of.</summary>
     private void DrawChangeRules(DrawingContext context, int first, int last, double gutter, double width)
     {
@@ -876,6 +914,10 @@ public sealed partial class CodeEditor
         public IBrush DiffModified { get; private init; } = Brush("#2C3A55");
         public IBrush DiffDeleted { get; private init; } = Brush("#3B3D42");
         public IBrush DiffConflict { get; private init; } = Brush("#482D2E");
+        public IBrush WordAdded { get; private init; } = Brush("#3D6B4A");
+        public IBrush WordModified { get; private init; } = Brush("#405A8C");
+        public IBrush WordDeleted { get; private init; } = Brush("#55585E");
+        public IBrush WordConflict { get; private init; } = Brush("#6E3B3D");
         public IBrush ChangeAdded { get; private init; } = Brush("#549159");
         public IBrush ChangeModified { get; private init; } = Brush("#375FAD");
         public IBrush ChangeDeleted { get; private init; } = Brush("#868A91");
@@ -933,6 +975,10 @@ public sealed partial class CodeEditor
                 DiffModified = Find(control, "Passenger.Diff.Modified") ?? defaults.DiffModified,
                 DiffDeleted = Find(control, "Passenger.Diff.Deleted") ?? defaults.DiffDeleted,
                 DiffConflict = Find(control, "Passenger.Diff.Conflict") ?? defaults.DiffConflict,
+                WordAdded = Find(control, "Passenger.Diff.AddedWord") ?? defaults.WordAdded,
+                WordModified = Find(control, "Passenger.Diff.ModifiedWord") ?? defaults.WordModified,
+                WordDeleted = Find(control, "Passenger.Diff.DeletedWord") ?? defaults.WordDeleted,
+                WordConflict = Find(control, "Passenger.Diff.ConflictWord") ?? defaults.WordConflict,
                 ChangeAdded = Find(control, "Passenger.Vcs.Added") ?? defaults.ChangeAdded,
                 ChangeModified = Find(control, "Passenger.Vcs.Modified") ?? defaults.ChangeModified,
                 ChangeDeleted = Find(control, "Passenger.Vcs.Deleted") ?? defaults.ChangeDeleted,

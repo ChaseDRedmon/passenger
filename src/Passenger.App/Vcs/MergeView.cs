@@ -30,8 +30,12 @@ public sealed class MergeView : DockPanel
 {
     private const double StripWidth = 48;
 
+    private readonly string[] baseLines;
     private readonly string[] leftLines;
     private readonly string[] rightLines;
+
+    /// <summary>The words each side changed inside each change's lines, once worked out.</summary>
+    private ChunkWords[] words = [];
     private readonly string lineBreak;
     private readonly TextDocument result;
     private readonly TextSnapshot started;
@@ -52,10 +56,12 @@ public sealed class MergeView : DockPanel
     private readonly Button applyNonConflicting;
     private readonly Button resolveSimple;
     private bool following;
+    private bool closed;
 
     public MergeView(MergeTexts texts, string name)
     {
         string[] common = LineDiff.Lines(texts.Base);
+        baseLines = common;
         leftLines = LineDiff.Lines(texts.Left);
         rightLines = LineDiff.Lines(texts.Right);
         lineBreak = TextDocument.DetectLineEnding(texts.Base.Length > 0 ? texts.Base : texts.Left);
@@ -128,6 +134,7 @@ public sealed class MergeView : DockPanel
         // Closed, the editors let go of their documents and colours.
         DetachedFromVisualTree += (_, _) =>
         {
+            closed = true;
             result.Changed -= OnResultChanged;
             Left.Detach();
             Result.Detach();
@@ -142,6 +149,24 @@ public sealed class MergeView : DockPanel
         };
         DetachedFromVisualTree += (_, _) => keys?.RemoveHandler(KeyDownEvent, OnKeyDown);
         Show();
+        _ = MarkWordsAsync();
+    }
+
+    /// <summary>The words each side changed inside its changes' lines, worked out off the window's thread, then shown.</summary>
+    private async Task MarkWordsAsync()
+    {
+        IReadOnlyList<MergeChunk> all = chunks;
+        string[] common = baseLines;
+        string[] lefts = leftLines;
+        string[] rights = rightLines;
+        TextSnapshot leftText = Left.Document.Snapshot;
+        TextSnapshot rightText = Right.Document.Snapshot;
+        ChunkWords[] found = await BackgroundWork.Run(() => all.Select(c => ChunkWords.Of(c, common, lefts, rights, leftText, rightText)).ToArray());
+        if (!closed)
+        {
+            words = found;
+            Show();
+        }
     }
 
     /// <summary>The versions merged, and the words for their sides.</summary>
@@ -414,6 +439,7 @@ public sealed class MergeView : DockPanel
         Left.SetChangeMarks(left);
         Right.SetChangeMarks(right);
         Result.SetChangeMarks(middle);
+        ShowWords();
         int changes = UnresolvedChanges;
         int conflicts = UnresolvedConflicts;
         status.Text = changes + conflicts == 0 ? "All conflicts resolved"
@@ -429,6 +455,132 @@ public sealed class MergeView : DockPanel
             1 => $"1 {what}",
             _ => $"{count} {what}s",
         };
+    }
+
+    /// <summary>The changed words of each change not dealt with: on a side while that side's lines wait to be taken, and in
+    /// the result while it still holds the base's lines there, as Rider marks them.</summary>
+    private void ShowWords()
+    {
+        if (words.Length != chunks.Count)
+        {
+            return;
+        }
+        List<InlineChange> left = [];
+        List<InlineChange> right = [];
+        List<InlineChange> middle = [];
+        TextSnapshot text = result.Snapshot;
+        for (int i = 0; i < chunks.Count; i++)
+        {
+            MergeChunk chunk = chunks[i];
+            Resolution now = state[i];
+            if (chunk.LeftChanged && !now.Left)
+            {
+                left.AddRange(words[i].Left);
+            }
+            if (chunk.RightChanged && !now.Right)
+            {
+                right.AddRange(words[i].Right);
+            }
+            if (!Done(i) && !now.Taken && HoldsBase(text, chunk, now))
+            {
+                middle.AddRange(words[i].Base.Select(w => new InlineChange(TextRange.FromBounds(
+                    text.GetLineStart(now.Start + w.Start.Line) + w.Start.Column, text.GetLineStart(now.Start + w.End.Line) + w.End.Column), w.Kind)));
+            }
+        }
+        Left.SetInlineChanges(left);
+        Right.SetInlineChanges(right);
+        Result.SetInlineChanges(Union(middle));
+    }
+
+    /// <summary>Whether the result has a change's lines as the base has them, where its words can be marked.</summary>
+    private bool HoldsBase(TextSnapshot text, MergeChunk chunk, Resolution now)
+    {
+        if (now.End - now.Start != chunk.BaseEnd - chunk.BaseStart || now.End > text.LineCount)
+        {
+            return false;
+        }
+        for (int line = now.Start; line < now.End; line++)
+        {
+            if (text.GetLineText(line) != baseLines[chunk.BaseStart + line - now.Start])
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /// <summary>The result's marks from both sides, those that overlap (a conflict's words both changed) made one.</summary>
+    private static List<InlineChange> Union(List<InlineChange> marks)
+    {
+        List<InlineChange> joined = [];
+        foreach (InlineChange mark in marks.OrderBy(m => m.Range.Start))
+        {
+            if (joined.Count > 0 && joined[^1].Range.End > mark.Range.Start)
+            {
+                InlineChange last = joined[^1];
+                joined[^1] = last with { Range = TextRange.FromBounds(last.Range.Start, Math.Max(last.Range.End, mark.Range.End)) };
+                continue;
+            }
+            joined.Add(mark);
+        }
+        return joined;
+    }
+
+    /// <summary>The words each side changed inside a change's lines against the base: on each side as offsets into its
+    /// text, on the base as lines and columns from the change's first line, a conflict's all in its red.</summary>
+    private sealed record ChunkWords(IReadOnlyList<InlineChange> Left, IReadOnlyList<InlineChange> Right,
+        IReadOnlyList<(TextPosition Start, TextPosition End, ChangeMarkKind Kind)> Base)
+    {
+        public static ChunkWords Of(MergeChunk chunk, string[] common, string[] left, string[] right, TextSnapshot leftText, TextSnapshot rightText)
+        {
+            List<InlineChange> lefts = [];
+            List<InlineChange> rights = [];
+            List<(TextPosition, TextPosition, ChangeMarkKind)> bases = [];
+            string[] before = common[chunk.BaseStart..chunk.BaseEnd];
+            if (chunk.LeftChanged)
+            {
+                Side(chunk, before, left[chunk.LeftStart..chunk.LeftEnd], chunk.LeftStart, leftText, lefts, bases);
+            }
+            if (chunk.RightChanged)
+            {
+                Side(chunk, before, right[chunk.RightStart..chunk.RightEnd], chunk.RightStart, rightText, rights, bases);
+            }
+            return new ChunkWords(lefts, rights, bases);
+        }
+
+        private static void Side(MergeChunk chunk, string[] before, string[] after, int first, TextSnapshot text, List<InlineChange> side,
+            List<(TextPosition, TextPosition, ChangeMarkKind)> bases)
+        {
+            if (before.Length == 0 || after.Length == 0 || WordDiff.Words(string.Join('\n', before), string.Join('\n', after)) is not { } found)
+            {
+                return;
+            }
+            foreach (InlineDiff change in found)
+            {
+                ChangeMarkKind kind = chunk.IsConflict ? ChangeMarkKind.Conflict
+                    : change.IsInsertion ? ChangeMarkKind.Added : change.IsDeletion ? ChangeMarkKind.Deleted : ChangeMarkKind.Modified;
+                if (!change.IsDeletion)
+                {
+                    side.Add(new InlineChange(TextRange.FromBounds(Offset(after, first, change.NewStart), Offset(after, first, change.NewEnd)), kind));
+                }
+                if (!change.IsInsertion)
+                {
+                    bases.Add((Position(before, change.OldStart), Position(before, change.OldEnd), kind));
+                }
+            }
+
+            int Offset(string[] lines, int line, int offset)
+            {
+                TextPosition at = Position(lines, offset);
+                return text.GetLineStart(line + at.Line) + at.Column;
+            }
+        }
+
+        private static TextPosition Position(string[] lines, int offset)
+        {
+            (int line, int column) = FileDiff.Place(lines, offset);
+            return new TextPosition(line, column);
+        }
     }
 
     /// <summary>A change's colour on a side: a conflict's red, else lines added, taken away or changed against the base.</summary>

@@ -144,6 +144,14 @@ public sealed record AppSettings : IStateDocument<AppSettings>
     /// time, not only those that fail or take a while (<see cref="IdeLog.Programs"/>).</summary>
     public bool LogEveryProgram { get; init; }
 
+    /// <summary>Rider's diff Highlighting Differences: the words that changed inside changed lines marked, at first; the
+    /// diff's Settings changes it for every diff after.</summary>
+    public Vcs.DiffHighlighting DiffHighlighting { get; init; } = Vcs.DiffHighlighting.Words;
+
+    /// <summary>Rider's Highlight Words in a change bar's popup: the words that changed marked in what the lines were and
+    /// in the file while the popup is open; the popup's toggle changes it.</summary>
+    public bool ChangePopupWords { get; init; } = true;
+
     public static IReadOnlyList<Action<JsonObject>> Upgrades { get; } = [StateStore.Unversioned];
 
     /// <summary>A hand-edited or later build's value this build cannot use is brought into range, or back to its default;
@@ -155,6 +163,7 @@ public sealed record AppSettings : IStateDocument<AppSettings>
         {
             Theme = Enum.IsDefined(Theme) ? Theme : defaults.Theme,
             ShowBuildResults = Enum.IsDefined(ShowBuildResults) ? ShowBuildResults : defaults.ShowBuildResults,
+            DiffHighlighting = Enum.IsDefined(DiffHighlighting) ? DiffHighlighting : defaults.DiffHighlighting,
             EditorFontSize = Math.Clamp(EditorFontSize, MinFontSize, MaxFontSize),
             EditorLineSpacing = Math.Clamp(EditorLineSpacing, MinLineSpacing, MaxLineSpacing),
             TerminalFontSize = Math.Clamp(TerminalFontSize, MinFontSize, MaxFontSize),

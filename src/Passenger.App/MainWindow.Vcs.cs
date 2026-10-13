@@ -259,8 +259,8 @@ public partial class MainWindow
         }
         string mineTitle = other is null ? "Your version" : InFolder(path);
         string title = other is null ? $"{Path.GetFileName(path)}: {version} and your version" : $"{Path.GetFileName(other)} vs {Path.GetFileName(path)}";
-        DiffView view = new(other is null ? Path.GetFileName(path) : title, diff, mine, editable: open is not null, rightColours: open?.Highlighter,
-            titles: (version, open is not null ? mineTitle : $"{mineTitle} (read-only)"));
+        DiffView view = Highlighted(new(other is null ? Path.GetFileName(path) : title, diff, mine, editable: open is not null, rightColours: open?.Highlighter,
+            titles: (version, open is not null ? mineTitle : $"{mineTitle} (read-only)"), highlighting: settings.DiffHighlighting));
         IHighlighter? left = null;
         if (Workspace.Language.ForPath(other ?? path).Name == "C#")
         {
@@ -301,6 +301,13 @@ public partial class MainWindow
         return window;
     }
 
+    /// <summary>A diff whose Highlighting Differences, once changed, is the one every diff after opens with.</summary>
+    private DiffView Highlighted(DiffView view)
+    {
+        view.HighlightingChanged += (_, chosen) => ApplySettings(settings with { DiffHighlighting = chosen });
+        return view;
+    }
+
     /// <summary>What a commit did to a file: its first parent's text beside its own, both read-only.</summary>
     public async Task<DiffWindow?> ShowCommitDiffAsync(CommitInfo commit, FileChange file)
     {
@@ -315,7 +322,7 @@ public partial class MainWindow
         TextDocument mine = new(after);
         TextSnapshot text = mine.Snapshot;
         FileDiff diff = await BackgroundWork.Run(() => FileDiff.Compare(before, text));
-        DiffView view = new(file.Name, diff, mine, editable: false, titles: (leftTitle, commit.Short));
+        DiffView view = Highlighted(new(file.Name, diff, mine, editable: false, titles: (leftTitle, commit.Short), highlighting: settings.DiffHighlighting));
         List<IDisposable> colours = [];
         if (Workspace.Language.ForPath(file.Path).Name == "C#")
         {
@@ -351,6 +358,7 @@ public partial class MainWindow
         }
         DiffHunk? hunk = diff.Hunks.Cast<DiffHunk?>().FirstOrDefault(h => h!.Value.NewStart == change.Line);
         string? before = hunk is { OldCount: > 0 } found ? diff.Before(found) : null;
+        InlineChanges words = InlineChanges.Empty;
         void Then(Action run)
         {
             ClosePopup();
@@ -364,8 +372,16 @@ public partial class MainWindow
                 _ = ShowChangePopupAsync(Editors.CodeEditor, now, next);
             }
         }
+        // The file's changed words are marked in it while the popup shows them, as Rider marks them; an edit since moves them.
+        void MarkFile(bool on) => editor.SetInlineChanges(on && ReferenceEquals(editor.Document.Snapshot, diff.Text) ? words.Right : []);
         ChangePopup popup = new(
             before,
+            settings.ChangePopupWords,
+            highlightWordsChanged: on =>
+            {
+                MarkFile(on);
+                ApplySettings(settings with { ChangePopupWords = on });
+            },
             previous: () => Then(() => Move(-1)),
             next: () => Then(() => Move(1)),
             rollback: () => Then(() =>
@@ -374,8 +390,25 @@ public partial class MainWindow
                 _ = RollbackLinesAsync();
             }),
             diff: () => Then(() => _ = ShowDiffAsync(document.Path)));
+        bool open = true;
+        popup.DetachedFromVisualTree += (_, _) =>
+        {
+            open = false;
+            MarkFile(false);
+        };
         Avalonia.Point below = editor.GutterPoint(change.Line + Math.Max(1, change.Count) - 1);
         ShowPopup(popup, PopupPoint(editor, new Avalonia.Point(4, below.Y + 2)));
+        if (hunk is not { } compared)
+        {
+            return;
+        }
+        // The popup opens at once; the words that changed land in it, and in the file, once worked out.
+        words = await BackgroundWork.Run(() => diff.InnerChanges(compared, DiffHighlighting.Words));
+        if (open)
+        {
+            popup.ShowWords(words.Left);
+            MarkFile(popup.HighlightToggle.IsChecked == true);
+        }
     }
 
     /// <summary>Annotate with Git Blame, or Close Annotations when the file shows them or is about to.</summary>
