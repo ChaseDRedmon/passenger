@@ -23,28 +23,77 @@
     <PublicizeBeforeTargets />
   </PropertyGroup>
 
+  <!-- Copies (or moves) the files From has and To lacks, each one whole: a move never replaces a file, so of two builds
+       placing the same assembly the first one's stays. Done here rather than by MSBuild's Copy and Move, which on Windows
+       refuse a path past 260 characters, as an assembly's publicized path is in a folder as deep as CI's. -->
+  <UsingTask TaskName="PublicizedFiles" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <From Required="true" />
+      <To Required="true" />
+      <Pattern />
+      <Move ParameterType="System.Boolean" />
+    </ParameterGroup>
+    <Task>
+      <Using Namespace="System.IO" />
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        if (Directory.Exists(From))
+        {
+            foreach (string file in Directory.EnumerateFiles(From, string.IsNullOrEmpty(Pattern) ? "*" : Pattern, SearchOption.AllDirectories))
+            {
+                // Compiled against .NET Standard 2.0, which has no Path.GetRelativePath.
+                string target = Path.Combine(To, file.Substring(From.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+                if (File.Exists(target))
+                {
+                    continue;
+                }
+                Directory.CreateDirectory(Path.GetDirectoryName(target) ?? To);
+                try
+                {
+                    if (Move)
+                    {
+                        File.Move(file, target);
+                    }
+                    else
+                    {
+                        File.Copy(file, target);
+                    }
+                }
+                catch (IOException) when (File.Exists(target))
+                {
+                    // Another build placed the same file first, whole.
+                }
+            }
+            if (Move)
+            {
+                try
+                {
+                    Directory.Delete(From, recursive: true);
+                }
+                catch (Exception failed) when (failed is IOException || failed is UnauthorizedAccessException)
+                {
+                    // A virus scanner still reading a copy just made: the folder is only left behind.
+                    Log.LogMessage(MessageImportance.Low, $"{From} stays: {failed.Message}");
+                }
+            }
+        }
+      ]]></Code>
+    </Task>
+  </UsingTask>
+
   <Target Name="PublicizeWhole" DependsOnTargets="ResolveAssemblyReferences" BeforeTargets="ResolveReferences">
     <PropertyGroup>
       <_Publicized>$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)', '$(IntermediateOutputPath)', 'PublicizedAssemblies'))</_Publicized>
-      <_Publicizing>$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)', '$(IntermediateOutputPath)', 'PublicizedAssemblies.$([System.Guid]::NewGuid())'))</_Publicizing>
+      <_Publicizing>$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)', '$(IntermediateOutputPath)', 'publicizing', '$([System.Guid]::NewGuid().ToString().Substring(0, 8))'))</_Publicizing>
     </PropertyGroup>
-    <ItemGroup>
-      <_PublicizedFinished Include="$(_Publicized)**/*.dll" />
-    </ItemGroup>
-    <Copy SourceFiles="@(_PublicizedFinished)" DestinationFiles="@(_PublicizedFinished->'$(_Publicizing)%(RecursiveDir)%(Filename)%(Extension)')" />
+    <PublicizedFiles From="$(_Publicized)" To="$(_Publicizing)" Pattern="*.dll" />
     <PublicizeAssemblies ReferencePaths="@(ReferencePath)" Publicizes="@(Publicize)" DoNotPublicizes="@(DoNotPublicize)" OutputDirectory="$(_Publicizing)">
       <Output TaskParameter="ReferencePathsToDelete" ItemName="_PublicizedOriginal" />
       <Output TaskParameter="ReferencePathsToAdd" ItemName="_PublicizedReference" />
     </PublicizeAssemblies>
-    <ItemGroup>
-      <_PublicizedNew Include="$(_Publicizing)**/*" />
-      <_PublicizedNew Remove="@(_PublicizedNew)" Condition="Exists('$(_Publicized)%(RecursiveDir)%(Filename)%(Extension)')" />
-    </ItemGroup>
-    <Move SourceFiles="@(_PublicizedNew)" DestinationFiles="@(_PublicizedNew->'$(_Publicized)%(RecursiveDir)%(Filename)%(Extension)')" />
-    <RemoveDir Directories="$(_Publicizing)" />
+    <PublicizedFiles From="$(_Publicizing)" To="$(_Publicized)" Move="true" />
     <ItemGroup>
       <_PublicizedReference>
-        <Placed>$([System.String]::Copy('%(FullPath)').Replace('$(_Publicizing)', '$(_Publicized)'))</Placed>
+        <Placed>$([System.String]::Copy('%(Identity)').Replace('$(_Publicizing)', '$(_Publicized)'))</Placed>
       </_PublicizedReference>
       <ReferencePath Remove="@(_PublicizedOriginal)" />
       <ReferencePath Include="@(_PublicizedReference->'%(Placed)')" />
