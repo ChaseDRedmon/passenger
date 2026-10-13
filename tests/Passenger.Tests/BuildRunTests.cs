@@ -357,7 +357,9 @@ public sealed class BuildRunTests : IDisposable
             int command = window.Builder.ProcessId ?? 0;
             // Both projects build at once; one that waits for the other would never start, its step never ending.
             _ = Processes.WrittenId([.. projects.Select(p => Path.Combine(folder, "src", p, "step.pid"))], "a project's step to start");
-            Passenger.App.Screenshot.Pump(TimeSpan.FromSeconds(1));
+            // PowerShell on a loaded Windows runner can take more than a second to write its first line.
+            Ui.WaitFor(() => projects.Any(p => File.Exists(Path.Combine(folder, "src", p, "bin", "Debug", "net10.0", "written.txt"))),
+                "a project's step to write into its output folder", TimeSpan.FromSeconds(60));
             steps.AddRange(projects.Select(p => Processes.ReadId(Path.Combine(folder, "src", p, "step.pid"))).Where(id => id > 0));
             window.Perform(AppActions.Stop);
             Ui.WaitFor(() => !window.IsBuilding, "the build to stop");
