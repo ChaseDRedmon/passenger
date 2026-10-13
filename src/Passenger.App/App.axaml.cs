@@ -1,3 +1,6 @@
+using System.Diagnostics;
+using System.Reflection;
+using System.Runtime.InteropServices;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
@@ -22,7 +25,14 @@ public partial class App : Application
             window.KeepSettings();
             // A theme named on the command line is the run's, over the one kept.
             Program.ApplyTheme(this, Program.Options.Theme);
-            window.Opened += (_, _) => window.Start(Program.Options);
+            window.Opened += (_, _) =>
+            {
+                // The first of a start's phases in the log, as Rider's idea.log begins with its build and runtime.
+                string version = typeof(App).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "?";
+                IdeErrors.Write($"Passenger {version} on {RuntimeInformation.OSDescription} ({RuntimeInformation.FrameworkDescription}, "
+                    + $"{RuntimeInformation.ProcessArchitecture}): window shown {Stopwatch.GetElapsedTime(Program.StartedAt).TotalSeconds:0.00} s after launch");
+                window.Start(Program.Options);
+            };
             desktop.MainWindow = window;
             if (OperatingSystem.IsMacOS())
             {

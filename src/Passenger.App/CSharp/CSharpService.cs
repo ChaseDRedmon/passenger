@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Text.RegularExpressions;
 using Avalonia.Threading;
 using Passenger.App.Workspace;
 using Passenger.Core;
@@ -10,9 +12,15 @@ namespace Passenger.App.CSharp;
 /// projects, its state for the status bar, and a <see cref="CSharpDocument"/> for every C# file
 /// open in a tab. Files opened before the server is ready are attached once it is. A server that ends
 /// on its own, or stops answering, is started again with the open files, as Rider restarts its backend, a few times at
-/// most. A UI-thread object: what the server says from its own threads crosses through <see cref="UiThread"/>.</summary>
+/// most. What the server tells the person (a project that did not load and why) is said in the status bar and the IDE's
+/// log, its errors and warnings logged, its load's progress shown, and each start's phases timed in the log. A UI-thread
+/// object: what the server says from its own threads crosses through <see cref="UiThread"/>.</summary>
 public sealed class CSharpService : IAsyncDisposable
 {
+    /// <summary>How long after an error the server logged a message it shows can be its reason (Roslyn logs a project's
+    /// failure to load, then shows that there were problems loading it).</summary>
+    private static readonly TimeSpan ReasonWindow = TimeSpan.FromSeconds(10);
+
     /// <summary>How many times a server that keeps ending or hanging is started again within <see cref="RestartWindow"/>.</summary>
     private const int RestartLimit = 3;
 
@@ -38,6 +46,21 @@ public sealed class CSharpService : IAsyncDisposable
 
     /// <summary>The server ended on its own or stopped answering, with what was done about it; raised on the UI thread.</summary>
     public event EventHandler<string>? Stopped;
+
+    /// <summary>What the server tells the person (<c>window/showMessage</c>, Roslyn's toasts), with the reason it logged
+    /// when it says to see the log; raised on the UI thread, for the status bar.</summary>
+    public event EventHandler<string>? Said;
+
+    /// <summary>The work the server reports under way (its projects loading), as the status bar shows it: its title and how
+    /// far it is; null when there is none.</summary>
+    public string? Progress { get; private set; }
+
+    /// <summary>The first error the server logged since it last showed a message, and when: the reason a message that
+    /// says to see the log is about.</summary>
+    private (string Text, long At)? unsaid;
+
+    /// <summary>The title of the work under way, from its begin: the reports that follow give only how far it is.</summary>
+    private string? progressTitle;
 
     /// <summary>The solution's problems changed (solution-wide analysis, or an open file's); raised on the UI thread.</summary>
     public event EventHandler? SolutionProblemsChanged;
@@ -251,6 +274,7 @@ public sealed class CSharpService : IAsyncDisposable
 
     private async Task Run(WorkspaceModel opening, CancellationToken cancel)
     {
+        long began = Stopwatch.GetTimestamp();
         try
         {
             string? solution = opening.Solution?.Path;
@@ -258,13 +282,16 @@ public sealed class CSharpService : IAsyncDisposable
             string logs = LogFolder;
             IReadOnlyDictionary<string, object?>? options = solutionWide ? FullSolution : null;
             // Started on a worker: the process, its log and the wait for its answer are no work for the window's thread.
-            RoslynSession started = await BackgroundWork.Run(() => RoslynSession.StartAsync(opening.Folder, solution, projects, logs, cancel, options), cancel);
+            RoslynSession started = await BackgroundWork.Run(() => RoslynSession.StartAsync(opening.Folder, solution, projects, logs, cancel, options, Hear), cancel);
             if (cancel.IsCancellationRequested)
             {
                 // Disposed, or started again, just as this server started: nothing else will end it.
                 await started.DisposeAsync();
                 return;
             }
+            string loading = started.Solution is { } named ? Path.GetFileName(named) : $"{projects.Length} project{(projects.Length == 1 ? "" : "s")}";
+            IdeErrors.Write($"C# language server (process {started.Server.ProcessId}) started for {opening.Folder} in {Since(began)}, loading {loading}");
+            _ = TimeFirstColoursAsync(started, began);
             TaskCompletionSource loaded = new(TaskCreationOptions.RunContinuationsAsynchronously);
             started.Loaded += (_, _) => loaded.TrySetResult();
             started.Server.RefreshRequested += (_, _) => UiThread.Post(RefreshAll);
@@ -283,10 +310,13 @@ public sealed class CSharpService : IAsyncDisposable
                 cancel.ThrowIfCancellationRequested();
                 if (!loaded.Task.IsCompleted)
                 {
+                    IdeErrors.Write($"C# language server (process {started.Server.ProcessId}) had not loaded {loading} after 5 minutes");
+                    Progress = null;
                     SetState("C# unavailable: the projects did not load in 5 minutes (the language server's log says where it stopped)");
                     return;
                 }
             }
+            IdeErrors.Write($"C# language server (process {started.Server.ProcessId}) loaded {loading} in {Since(began)}");
             SetState("C# ready");
             RefreshAll();
             StartAnalysis();
@@ -297,12 +327,101 @@ public sealed class CSharpService : IAsyncDisposable
         }
         catch (Exception error)
         {
-            SetState($"C# unavailable: {(error is LanguageServerFailed failed ? failed.Reason : error.Message)}");
+            string why = error is LanguageServerFailed failed ? failed.Reason : error.Message;
+            IdeErrors.Write($"The C# language server could not start for {opening.Folder}: {error}");
+            Progress = null;
+            SetState($"C# unavailable: {why}");
         }
         finally
         {
             Dispatcher.UIThread.Post(BackgroundWork.End);
         }
+    }
+
+    /// <summary>Listens to a server as it starts, before it is asked to load anything; on the server's thread, where its
+    /// errors and warnings go to the log at once and only what the window shows crosses to it.</summary>
+    private void Hear(LanguageServer server)
+    {
+        server.Logged += (_, message) =>
+        {
+            if (message.Type is 1 or 2)
+            {
+                IdeErrors.Write($"C# language server (process {server.ProcessId}) {(message.Type == 1 ? "error" : "warning")}: {message.Message}");
+            }
+            if (message.Type == 1)
+            {
+                long at = Stopwatch.GetTimestamp();
+                UiThread.Post(() => unsaid ??= (message.Message, at));
+            }
+        };
+        server.Shown += (_, message) =>
+        {
+            IdeErrors.Write($"C# language server (process {server.ProcessId}) says: {message.Message}");
+            UiThread.Post(() => OnShown(server, message));
+        };
+        server.Progressed += (_, progress) => UiThread.Post(() => OnProgress(server, progress));
+    }
+
+    /// <summary>A message the server shows: in the status bar, where one that says to see the log for the details of an
+    /// error is the error it logged just before (a project that did not load, and why), which the log has as well.</summary>
+    private void OnShown(LanguageServer from, LogMessageParams message)
+    {
+        if (disposed || (session is { } current && current.Server != from))
+        {
+            return;
+        }
+        (string Text, long At)? reason = unsaid;
+        unsaid = null;
+        Said?.Invoke(this, message.Type == 1 && reason is { } error && Stopwatch.GetElapsedTime(error.At) < ReasonWindow
+            ? Readable(error.Text, workspace?.Folder)
+            : message.Message);
+    }
+
+    private void OnProgress(LanguageServer from, WorkProgress progress)
+    {
+        if (disposed || (session is { } current && current.Server != from))
+        {
+            return;
+        }
+        if (progress.Ended)
+        {
+            progressTitle = null;
+            Progress = null;
+        }
+        else
+        {
+            progressTitle = progress.Title ?? progressTitle;
+            string what = (progressTitle ?? progress.Message ?? "Working").TrimEnd('.', '…');
+            Progress = progress.Percentage is { } percent ? $"{what}… {percent}%" : $"{what}…";
+        }
+        StateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>The last phase of a start the log times: the first colours the server gives an open file.</summary>
+    private async Task TimeFirstColoursAsync(RoslynSession started, long began)
+    {
+        // A wait with no fault to leave behind, never holding a screenshot: a folder may have no C# file open for a long while.
+        await Task.WhenAny(started.FirstColours, Task.Delay(TimeSpan.FromMinutes(10)));
+        if (started.FirstColours.IsCompleted && !disposed && session == started)
+        {
+            IdeErrors.Write($"C# language server (process {started.Server.ProcessId}) gave an open file its colours {Since(began)} after it was started");
+        }
+    }
+
+    private static string Since(long began) => $"{Stopwatch.GetElapsedTime(began).TotalSeconds:0.00} s";
+
+    /// <summary>A message the server logged, as the status bar says it: without its tags ("[project/open]"), the open
+    /// folder's paths made relative, its spaces single, and without MSBuild's repeat of the file at its end.</summary>
+    private static string Readable(string logged, string? folder)
+    {
+        string text = Regex.Replace(logged, @"^\s*(\[[^\]]*\]\s*)+", string.Empty);
+        if (folder is not null)
+        {
+            text = text.Replace(folder + Path.DirectorySeparatorChar, string.Empty, StringComparison.Ordinal);
+        }
+        text = Regex.Replace(text, @"\s+", " ").Trim();
+        int last = text.LastIndexOf(". ", StringComparison.Ordinal);
+        return last > 0 && text[..last].Contains(text[(last + 2)..], StringComparison.Ordinal) ? text[..(last + 1)] : text;
     }
 
     /// <summary>The server ended on its own: it crashed, or something else ended it.</summary>
@@ -334,6 +453,9 @@ public sealed class CSharpService : IAsyncDisposable
     private void Replace(RoslynSession lost, WorkspaceModel restarting, string what)
     {
         session = null;
+        Progress = null;
+        progressTitle = null;
+        unsaid = null;
         analysing?.Cancel();
         solutionReports.Clear();
         _ = lost.DisposeAsync();

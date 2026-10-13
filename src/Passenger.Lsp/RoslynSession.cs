@@ -9,6 +9,7 @@ namespace Passenger.Lsp;
 public sealed class RoslynSession : IAsyncDisposable
 {
     private readonly Dictionary<string, LspDocument> documents = new(StringComparer.Ordinal);
+    private readonly TaskCompletionSource coloured = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private RoslynSession(LanguageServer server, string folder, string? solution)
     {
@@ -31,19 +32,28 @@ public sealed class RoslynSession : IAsyncDisposable
     public string? Solution { get; }
     public bool IsLoaded { get; private set; }
 
+    /// <summary>Done once the server has first given a document its colours, the last of the phases a folder's opening
+    /// is timed by.</summary>
+    public Task FirstColours => coloured.Task;
+
+    internal void Coloured() => coloured.TrySetResult();
+
     /// <summary>Starts a server on a folder and has it open the solution or projects. Cancelled or failed, it ends the
     /// server it started: one given up (another folder opened) never goes on loading this folder unseen.</summary>
     /// <param name="solution">The solution to open; with none, <paramref name="projects"/> are opened. The caller decides
     /// both (the IDE's workspace model), so the server opens what the Explorer and the build see.</param>
     /// <param name="options">Server options to start with, over Passenger's own (the solution-wide analysis' scope).</param>
+    /// <param name="started">Given the server once it has answered, before it is asked to open anything, so what it says
+    /// of the load (a project that did not load, its progress) is heard from the start.</param>
     public static async Task<RoslynSession> StartAsync(string folder, string? solution, IReadOnlyList<string> projects, string logFolder,
-        CancellationToken cancel = default, IReadOnlyDictionary<string, object?>? options = null)
+        CancellationToken cancel = default, IReadOnlyDictionary<string, object?>? options = null, Action<LanguageServer>? started = null)
     {
         LanguageServer server = await LanguageServer.StartRoslynAsync(folder, logFolder, cancel, options).ConfigureAwait(false);
         RoslynSession session = new(server, folder, solution);
         try
         {
             cancel.ThrowIfCancellationRequested();
+            started?.Invoke(server);
             if (solution is not null)
             {
                 await server.NotifyAsync("solution/open", new OpenSolutionParams(DocumentUris.FromPath(solution))).ConfigureAwait(false);
@@ -207,6 +217,10 @@ public sealed class LspDocument : IDisposable
     {
         int version = Text.Version;
         SemanticTokens? tokens = await Server.RequestAsync<SemanticTokens>("textDocument/semanticTokens/full", new SemanticTokensParams(Identifier), cancel);
+        if (tokens is { Data.Length: > 0 })
+        {
+            session.Coloured();
+        }
         return (tokens, version);
     }
 

@@ -127,6 +127,7 @@ public partial class MainWindow
             csharp = new CSharpService();
             csharp.StateChanged += (_, _) => LanguageText.Text = LanguageLabel();
             csharp.Stopped += (_, message) => StatusText.Text = message;
+            csharp.Said += (_, message) => StatusText.Text = message;
             WatchProblems(csharp);
             csharp.Start(opening);
             foreach (OpenDocument open in Editors.Documents)

@@ -73,6 +73,14 @@ public sealed class DebugSession
         start.RedirectStandardOutput = true;
         start.RedirectStandardError = true;
         adapter = ChildProcesses.Start(start);
+        // What the adapter and the conversation say goes to the debugger's log as well as the console, so it outlives the session.
+        string name = $"adapter {adapter.Id}";
+        Action<string> console = log;
+        log = line =>
+        {
+            IdeLog.Write(IdeLog.Debugger, $"[{name}] {line}");
+            console(line);
+        };
         adapter.ErrorDataReceived += (_, e) =>
         {
             if (e.Data is null)
@@ -95,7 +103,7 @@ public sealed class DebugSession
         // After the last of its error stream, so a crash's own words reach the console and the log before its end.
         adapter.Exited += (_, _) => Task.WhenAny(errorsRead.Task, Task.Delay(TimeSpan.FromSeconds(2)))
             .ContinueWith(_ => UiThread.Post(() => OnAdapterExited(log)), TaskScheduler.Default);
-        connection = new DapConnection(adapter.StandardOutput.BaseStream, adapter.StandardInput.BaseStream, log);
+        connection = new DapConnection(adapter.StandardOutput.BaseStream, adapter.StandardInput.BaseStream, log) { Name = name };
         connection.EventReceived += (name, body) =>
         {
             if (name == "output")
@@ -167,6 +175,7 @@ public sealed class DebugSession
     {
         UiThread.Check();
         DebugSession session = new(breakpoints, lines, log, output) { Program = program };
+        IdeLog.Write(IdeLog.Debugger, $"[{session.connection.Name}] {request} {program}");
         session.connection.Start();
         try
         {
@@ -552,6 +561,7 @@ public sealed class DebugSession
             return;
         }
         ExitCode = exitCode ?? ExitCode;
+        IdeLog.Write(IdeLog.Debugger, $"[{connection.Name}] Ended debugging {Program}{(ExitCode is { } code ? $": exit code {code}" : string.Empty)}{(Failure is { } failed ? $": {failed}" : string.Empty)}");
         breakpoints.Changed -= OnBreakpointsChanged;
         breakpoints.ResetStatus();
         SetState(DebugState.Ended);

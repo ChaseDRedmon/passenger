@@ -11,7 +11,8 @@ namespace Passenger.App.Testing;
 
 /// <summary>Tests found and run through VSTest, as Rider and Visual Studio run them: the vstest.console of the SDK
 /// the folder builds with (its global.json's), driven through VSTest's own translation layer, so every framework
-/// with a VSTest adapter (xUnit, NUnit, MSTest) is found and run with its source locations and results.</summary>
+/// with a VSTest adapter (xUnit, NUnit, MSTest) is found and run with its source locations and results. What VSTest warns
+/// of or fails with is in the logs folder's vstest.log, and with Trace protocol messages on every message it sends.</summary>
 public sealed class TestRunner : IDisposable
 {
     private const string RunSettings = "<RunSettings><RunConfiguration><DesignMode>true</DesignMode></RunConfiguration></RunSettings>";
@@ -45,6 +46,7 @@ public sealed class TestRunner : IDisposable
         // The translation layer's async calls wait for vstest.console's handshake before they start it (and so for
         // ever); its blocking calls start it and wait for the connection, so they run on a worker thread.
         await BackgroundWork.Run(wrapper.StartSession);
+        IdeLog.Write(IdeLog.Tests, $"vstest.console of the SDK {sdk} started for {folder}");
         TestRunner runner = new(wrapper);
         if (cancellation.IsCancellationRequested)
         {
@@ -159,21 +161,14 @@ public sealed class TestRunner : IDisposable
             HandleDiscoveredTests(lastChunk);
             lock (found)
             {
+                IdeLog.Write(IdeLog.Tests, $"Discovery {(discoveryCompleteEventArgs.IsAborted ? "aborted" : "complete")}: {found.Count} test{(found.Count == 1 ? "" : "s")} found");
                 Done.TrySetResult([.. found]);
             }
         }
 
-        public void HandleLogMessage(TestMessageLevel level, string? message)
-        {
-            if (message is not null && level != TestMessageLevel.Informational)
-            {
-                log?.Invoke(message);
-            }
-        }
+        public void HandleLogMessage(TestMessageLevel level, string? message) => Said(level, message, log);
 
-        public void HandleRawMessage(string rawMessage)
-        {
-        }
+        public void HandleRawMessage(string rawMessage) => Raw(rawMessage);
     }
 
     private sealed class Run(Action<IReadOnlyList<TestResult>> results, Action<string>? log) : ITestRunEventsHandler
@@ -208,21 +203,43 @@ public sealed class TestRunner : IDisposable
             {
                 results = [.. all];
             }
+            string ended = testRunCompleteArgs.IsCanceled ? "stopped" : testRunCompleteArgs.IsAborted ? "aborted" : "complete";
+            IdeLog.Write(IdeLog.Tests, $"Run {ended}: {results.Count} result{(results.Count == 1 ? "" : "s")} in {testRunCompleteArgs.ElapsedTimeInRunningTests.TotalSeconds:0.00} s"
+                + (testRunCompleteArgs.Error is { } failed ? $": {failed.Message}" : string.Empty));
             Done.TrySetResult(new RunSummary(testRunCompleteArgs.ElapsedTimeInRunningTests, testRunCompleteArgs.IsCanceled, testRunCompleteArgs.IsAborted, testRunCompleteArgs.Error?.Message) { Results = results });
         }
 
         public int LaunchProcessWithDebuggerAttached(TestProcessStartInfo testProcessStartInfo) => -1;
 
-        public void HandleLogMessage(TestMessageLevel level, string? message)
-        {
-            if (message is not null && level != TestMessageLevel.Informational)
-            {
-                log?.Invoke(message);
-            }
-        }
+        public void HandleLogMessage(TestMessageLevel level, string? message) => Said(level, message, log);
 
-        public void HandleRawMessage(string rawMessage)
+        public void HandleRawMessage(string rawMessage) => Raw(rawMessage);
+    }
+
+    /// <summary>What VSTest or a test adapter said: a warning or an error in the run's output and vstest.log, the rest
+    /// (each adapter's progress) in vstest.log only while protocols are traced.</summary>
+    private static void Said(TestMessageLevel level, string? message, Action<string>? log)
+    {
+        if (message is null)
         {
+            return;
+        }
+        if (level != TestMessageLevel.Informational || IdeLog.Traces)
+        {
+            IdeLog.Write(IdeLog.Tests, $"{level}: {message}");
+        }
+        if (level != TestMessageLevel.Informational)
+        {
+            log?.Invoke(message);
+        }
+    }
+
+    /// <summary>A message from vstest.console as it came, for the trace.</summary>
+    private static void Raw(string message)
+    {
+        if (IdeLog.Traces)
+        {
+            IdeLog.Write(IdeLog.Tests, $"<-- {message}");
         }
     }
 }

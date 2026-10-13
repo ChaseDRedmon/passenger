@@ -56,9 +56,17 @@ public sealed class UnitTestsTests : IDisposable
         // Before any run, each test and its class has a run icon, not yet run.
         Assert.Contains(new TestMark(4, TestMarkKind.NotRun), editor.TestMarks);
         Assert.Contains(new TestMark(7, TestMarkKind.NotRun), editor.TestMarks);
+        string runnerLog = Path.Combine(IdeErrors.LogFolder, "vstest.log");
+        IdeErrors.Flush();
+        int logged = Ui.Shared(runnerLog).Length;
         // Run All has no key of Rider's: the Unit Tests window's button runs it.
         Assert.True(window.Perform(AppActions.RunAllTests));
         Ui.WaitFor(() => !window.Tests.IsBusy && Method(window, "Two_and_two_make_four")?.State == TestState.Passed, "the run of every test", TimeSpan.FromSeconds(120));
+        // The runner's log in the logs folder has what it found and how the run went.
+        IdeErrors.Flush();
+        string run = Ui.Shared(runnerLog)[Math.Min(logged, Ui.Shared(runnerLog).Length)..];
+        Assert.Matches(@"Discovery complete: \d+ tests? found", run);
+        Assert.Matches(@"Run complete: \d+ results? in \d+\.\d\d s", run);
         Assert.Equal(TestState.Failed, Method(window, "Two_and_two_make_five")!.State);
         Assert.Equal(TestState.Passed, Method(window, "Doubles")!.State);
         Assert.Equal(2, Method(window, "Doubles")!.Results.Count);

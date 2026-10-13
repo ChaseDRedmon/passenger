@@ -66,6 +66,14 @@ public sealed record AppSettings : IStateDocument<AppSettings>
     /// permissions.</summary>
     public bool McpServer { get; init; }
 
+    /// <summary>A client's verbose protocol trace: every message to and from the C# language servers, the debugger and
+    /// VSTest written to lsp.log, dap.log and vstest.log in the logs folder (<see cref="IdeLog.Traces"/>).</summary>
+    public bool TraceProtocols { get; init; }
+
+    /// <summary>Rider's debug log of its processes: every program the IDE runs in passenger.log with its exit code and
+    /// time, not only those that fail or take a while (<see cref="IdeLog.Programs"/>).</summary>
+    public bool LogEveryProgram { get; init; }
+
     public static IReadOnlyList<Action<JsonObject>> Upgrades { get; } = [StateStore.Unversioned];
 
     /// <summary>A hand-edited or later build's value this build cannot use is brought into range, or back to its default;

@@ -1,0 +1,185 @@
+using System.Globalization;
+using System.Text;
+
+namespace Passenger.Lsp;
+
+/// <summary>A language server's input or output, passed through unchanged, each message that crosses it handed whole to
+/// <see cref="LanguageServer.Trace"/> while one is set. The header-delimited frames are followed all along, so a trace
+/// turned on mid-conversation starts at the next message; a frame that does not read as one ends the tracing of this
+/// stream, never the connection.</summary>
+internal sealed class TracedStream(Stream inner, int server, string direction) : Stream
+{
+    /// <summary>The most of one message a trace keeps: a completion list or a file's colours can be megabytes.</summary>
+    private const int Kept = 64 * 1024;
+
+    private readonly List<byte> header = [];
+    private readonly MemoryStream body = new();
+    private readonly Lock gate = new();
+    private int remaining = -1;
+    private int length;
+    private bool tracing;
+    private bool lost;
+
+    public override bool CanRead => inner.CanRead;
+    public override bool CanSeek => false;
+    public override bool CanWrite => inner.CanWrite;
+    public override long Length => throw new NotSupportedException();
+
+    public override long Position
+    {
+        get => throw new NotSupportedException();
+        set => throw new NotSupportedException();
+    }
+
+    public override int Read(byte[] buffer, int offset, int count) => Read(buffer.AsSpan(offset, count));
+
+    public override int Read(Span<byte> buffer)
+    {
+        int read = inner.Read(buffer);
+        Follow(buffer[..read]);
+        return read;
+    }
+
+    public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+        ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+
+    public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+    {
+        int read = await inner.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+        Follow(buffer.Span[..read]);
+        return read;
+    }
+
+    public override void Write(byte[] buffer, int offset, int count) => Write(buffer.AsSpan(offset, count));
+
+    public override void Write(ReadOnlySpan<byte> buffer)
+    {
+        inner.Write(buffer);
+        Follow(buffer);
+    }
+
+    public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+        WriteAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+
+    public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+    {
+        await inner.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
+        Follow(buffer.Span);
+    }
+
+    public override void Flush() => inner.Flush();
+
+    public override Task FlushAsync(CancellationToken cancellationToken) => inner.FlushAsync(cancellationToken);
+
+    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+    public override void SetLength(long value) => throw new NotSupportedException();
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            inner.Dispose();
+        }
+        base.Dispose(disposing);
+    }
+
+    public override ValueTask DisposeAsync() => inner.DisposeAsync();
+
+    /// <summary>Follows the frames through bytes that crossed, in order; each message ends in the trace whole.</summary>
+    private void Follow(ReadOnlySpan<byte> bytes)
+    {
+        lock (gate)
+        {
+            while (bytes.Length > 0 && !lost)
+            {
+                if (remaining < 0)
+                {
+                    int end = HeaderEnd(bytes);
+                    int taken = end < 0 ? bytes.Length : end;
+                    foreach (byte b in bytes[..taken])
+                    {
+                        header.Add(b);
+                    }
+                    bytes = bytes[taken..];
+                    if (end >= 0)
+                    {
+                        Begin();
+                    }
+                    else if (header.Count > 4096)
+                    {
+                        lost = true;
+                    }
+                    continue;
+                }
+                int part = Math.Min(remaining, bytes.Length);
+                if (tracing && body.Length < Kept)
+                {
+                    body.Write(bytes[..Math.Min(part, Kept - (int)body.Length)]);
+                }
+                remaining -= part;
+                bytes = bytes[part..];
+                if (remaining == 0)
+                {
+                    End();
+                }
+            }
+        }
+    }
+
+    /// <summary>Where the header's blank line ends in these bytes, counting what the header holds already; -1 if not yet.</summary>
+    private int HeaderEnd(ReadOnlySpan<byte> bytes)
+    {
+        for (int i = 0; i < bytes.Length; i++)
+        {
+            int had = header.Count + i;
+            if (bytes[i] == '\n' && had >= 3 && At(bytes, i - 1) == '\r' && At(bytes, i - 2) == '\n' && At(bytes, i - 3) == '\r')
+            {
+                return i + 1;
+            }
+        }
+        return -1;
+    }
+
+    /// <summary>A byte before position <paramref name="i"/> of these bytes, reaching back into the header held.</summary>
+    private byte At(ReadOnlySpan<byte> bytes, int i) => i >= 0 ? bytes[i] : header[header.Count + i];
+
+    private void Begin()
+    {
+        string text = Encoding.ASCII.GetString([.. header]);
+        header.Clear();
+        length = -1;
+        foreach (string line in text.Split("\r\n"))
+        {
+            int colon = line.IndexOf(':', StringComparison.Ordinal);
+            if (colon > 0 && line.AsSpan(0, colon).Trim().Equals("Content-Length", StringComparison.OrdinalIgnoreCase)
+                && int.TryParse(line.AsSpan(colon + 1).Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out int found))
+            {
+                length = found;
+            }
+        }
+        if (length < 0)
+        {
+            lost = true;
+            return;
+        }
+        remaining = length;
+        tracing = LanguageServer.Trace is not null;
+        body.SetLength(0);
+        if (remaining == 0)
+        {
+            End();
+        }
+    }
+
+    private void End()
+    {
+        remaining = -1;
+        if (tracing && LanguageServer.Trace is { } trace)
+        {
+            string message = Encoding.UTF8.GetString(body.GetBuffer(), 0, (int)body.Length);
+            trace(server, length > Kept ? $"{direction} {message}… ({length:N0} bytes in all)" : $"{direction} {message}");
+        }
+        body.SetLength(0);
+    }
+}

@@ -13,6 +13,7 @@ What Passenger uses that others made, and under what terms.
 | Microsoft.CodeAnalysis.CSharp (Roslyn) | MIT | https://github.com/dotnet/roslyn |
 | roslyn-language-server (Roslyn's language server, copied beside the app under `roslyn/`) | MIT | https://github.com/dotnet/roslyn |
 | StreamJsonRpc | MIT | https://github.com/microsoft/vs-streamjsonrpc |
+| Microsoft.VisualStudio.Threading (StreamJsonRpc's, whose NonConcurrentSynchronizationContext keeps the language server's messages in order) | MIT | https://github.com/microsoft/vs-threading |
 | ModelContextProtocol.Core (the C# MCP SDK, for Passenger's MCP server) | Apache-2.0 | https://github.com/modelcontextprotocol/csharp-sdk |
 | Microsoft.Extensions.AI.Abstractions (the MCP SDK's content types) | MIT | https://github.com/dotnet/extensions |
 | Microsoft.TestPlatform.TranslationLayer, Microsoft.TestPlatform.ObjectModel (VSTest's client, for finding, running and debugging tests) | MIT | https://github.com/microsoft/vstest |

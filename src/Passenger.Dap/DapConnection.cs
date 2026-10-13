@@ -46,6 +46,14 @@ public sealed class DapConnection : IAsyncDisposable
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
     };
 
+    /// <summary>Where every message each connection sends or reads goes while set, with the connection's <see cref="Name"/>
+    /// and the message after an arrow for its direction ("-->" sent); called on the connection's threads. The IDE's
+    /// Trace protocol messages setting; an adapter never sets it.</summary>
+    public static Action<string, string>? Trace { get; set; }
+
+    /// <summary>What a trace calls this connection (the adapter's process).</summary>
+    public string Name { get; set; } = "dap";
+
     /// <summary>Completes when the other end closes its stream, or this end is disposed.</summary>
     public Task Completion => reading ?? Task.CompletedTask;
 
@@ -189,10 +197,13 @@ public sealed class DapConnection : IAsyncDisposable
 
     private void Write(JsonObject message)
     {
-        byte[] body = Encoding.UTF8.GetBytes(message.ToJsonString(Options));
+        string json = message.ToJsonString(Options);
+        byte[] body = Encoding.UTF8.GetBytes(json);
         byte[] header = Encoding.ASCII.GetBytes(string.Create(CultureInfo.InvariantCulture, $"Content-Length: {body.Length}\r\n\r\n"));
         lock (writeGate)
         {
+            // Under the gate, so the trace has the messages in the order they went.
+            Trace?.Invoke(Name, $"--> {json}");
             output.Write(header);
             output.Write(body);
             output.Flush();
@@ -237,6 +248,7 @@ public sealed class DapConnection : IAsyncDisposable
                     }
                     filled += read;
                 }
+                Trace?.Invoke(Name, $"<-- {Encoding.UTF8.GetString(buffer, start, length)}");
                 // Parsed from a copy: a document reads the memory it is given, and the buffer is reused.
                 JsonElement message = JsonDocument.Parse(buffer.AsSpan(start, length).ToArray()).RootElement;
                 buffer.AsSpan(start + length, filled - start - length).CopyTo(buffer);

@@ -6,7 +6,8 @@ namespace Passenger.Core;
 
 /// <summary>Every program Passenger starts is started here, one way: no shell and no window, an input of its own (never
 /// the IDE's terminal, nor an agent's pipe), UTF-8 streams, none of a git hook's repository variables, and a line in the
-/// log when it fails or takes a while (<see cref="Ended"/>). None outlives the IDE, however the IDE ends
+/// log when it fails or takes a while, or for every one with the debug log on (<see cref="Started"/>, <see cref="Ended"/>).
+/// None outlives the IDE, however the IDE ends
 /// (<see cref="Lifeline"/>). Not started here: the terminal's shell (Porta.Pty's; its pseudo-terminal's hangup ends it)
 /// and vstest.console (VSTest's own, which ends when the process that started it does).</summary>
 public static class ChildProcesses
@@ -20,6 +21,9 @@ public static class ChildProcesses
         "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
         "GIT_COMMON_DIR", "GIT_PREFIX", "GIT_NAMESPACE", "GIT_QUARANTINE_PATH",
     ];
+
+    /// <summary>A child started; raised on the thread that started it, for the IDE's log.</summary>
+    public static event EventHandler<ChildStart>? Started;
 
     /// <summary>A child ended; raised on any thread, for the IDE's log.</summary>
     public static event EventHandler<ChildEnd>? Ended;
@@ -95,6 +99,7 @@ public static class ChildProcesses
             throw;
         }
         Lifeline.Adopt(process);
+        Started?.Invoke(null, new ChildStart(process.Id, command, start.WorkingDirectory));
         if (closeInput)
         {
             process.StandardInput.Close();
@@ -232,6 +237,12 @@ public static class ChildProcesses
 public sealed record ChildResult(int ExitCode, string Output, string Error)
 {
     public bool Succeeded => ExitCode == 0;
+}
+
+/// <summary>A child's start: its process, the command, and the folder it runs in (the IDE's own when empty).</summary>
+public sealed record ChildStart(int ProcessId, string Command, string Folder)
+{
+    public override string ToString() => $"Process {ProcessId} started{(Folder.Length > 0 ? $" in {Folder}" : string.Empty)}: {Command}";
 }
 
 /// <summary>A child's end: its process, the command, its exit code and how long it ran.</summary>

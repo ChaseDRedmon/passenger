@@ -626,6 +626,9 @@ public sealed class DebuggerTests : IDisposable
             string log = Ui.IdeLog();
             Assert.Contains("UnauthorizedAccessException", log, StringComparison.Ordinal);
             Assert.Contains("at Program.<Main>", log, StringComparison.Ordinal);
+            // And in the debugger's own log, beside the session it ended.
+            string debuggerLog = Ui.Shared(Path.Combine(IdeErrors.LogFolder, "dap.log"));
+            Assert.Contains("Unhandled exception. System.UnauthorizedAccessException", debuggerLog, StringComparison.Ordinal);
             window.Close();
         }
         finally

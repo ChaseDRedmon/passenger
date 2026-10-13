@@ -69,6 +69,8 @@ public partial class MainWindow
         }
         ApplyAnalysis();
         ListenForAgents(next.McpServer);
+        IdeLog.Traces = next.TraceProtocols;
+        IdeLog.Programs = next.LogEveryProgram;
         if (keepsSettings)
         {
             state!.Settings.Set(next);

@@ -339,6 +339,8 @@ public partial class MainWindow : Window
         }
         Autosave();
         folder = opening;
+        // Where the log's timing of the language server's start (MainWindow.Workspace's CSharpService) begins.
+        IdeErrors.Write($"Opened {opening}{(withSolution?.Solution is { } solution ? $" with {Path.GetFileName(solution.Path)}" : string.Empty)}");
         agentSocket?.Describe(folder);
         namedSolution = solutionNamed ? named : null;
         // A folder without a solution has no projects until the walk for them lands: none to load, run or build meanwhile.
@@ -1740,13 +1742,15 @@ public partial class MainWindow : Window
         UpdateCaret();
     }
 
-    /// <summary>The file's language, with the language server's state beside it while it is not ready.</summary>
+    /// <summary>The file's language, with the language server's state beside it while it is not ready, or the work it
+    /// reports under way (its projects loading, and how far) whenever there is some.</summary>
     private string LanguageLabel()
     {
         string language = Editors.Active?.Language.Name ?? string.Empty;
-        if (csharp is { IsReady: false, State: { Length: > 0 } state })
+        string? shown = csharp?.Progress ?? (csharp is { IsReady: false, State: { Length: > 0 } state } ? state : null);
+        if (shown is not null)
         {
-            return language.Length > 0 ? $"{language} · {state}" : state;
+            return language.Length > 0 ? $"{language} · {shown}" : shown;
         }
         return language;
     }

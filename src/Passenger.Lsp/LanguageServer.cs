@@ -9,7 +9,8 @@ namespace Passenger.Lsp;
 /// output. Requests and notifications go out typed, and each failure of the server's comes back as a
 /// <see cref="LanguageServerFailed"/>, the connection's own exceptions never past this class; what the server asks of
 /// the client (its settings, a capability it registers, a refresh) is answered here and surfaced as events, each raised
-/// on any thread. Its standard error and its own logs go to <see cref="LogFolder"/>.</summary>
+/// on any thread, as is what it tells the person (<see cref="Logged"/>, <see cref="Shown"/>, <see cref="Progressed"/>).
+/// Its standard error and its own logs go to <see cref="LogFolder"/>, and with <see cref="Trace"/> set every message.</summary>
 public sealed class LanguageServer : IAsyncDisposable
 {
     /// <summary>How long a request waits before the server is checked: one this old may be slow work (usages across a
@@ -72,8 +73,20 @@ public sealed class LanguageServer : IAsyncDisposable
     /// <summary>The server's process, for the IDE's log and for a test to end it; kept once the process is gone.</summary>
     public int ProcessId { get; }
 
-    /// <summary>A message the server logged or showed; raised on any thread.</summary>
+    /// <summary>A message the server logged (<c>window/logMessage</c>), every one of which is in its own log too; raised on
+    /// any thread.</summary>
     public event EventHandler<LogMessageParams>? Logged;
+
+    /// <summary>A message the server shows the person: <c>window/showMessage</c>, or Roslyn's toast (a project that did
+    /// not load says so this way, the reason in an error it logged just before). Raised on any thread.</summary>
+    public event EventHandler<LogMessageParams>? Shown;
+
+    /// <summary>Work the server reports the progress of (<c>$/progress</c>: Roslyn's project loads); raised on any thread.</summary>
+    public event EventHandler<WorkProgress>? Progressed;
+
+    /// <summary>Where every message to and from every server goes while set, with the server's process and an arrow
+    /// for its direction ("-->" to the server); called on the connection's threads. Settings' Trace protocol messages.</summary>
+    public static Action<int, string>? Trace { get; set; }
 
     /// <summary>Roslyn has finished loading the projects it was asked to open; raised on any thread.</summary>
     public event EventHandler? ProjectsLoaded;
@@ -151,6 +164,9 @@ public sealed class LanguageServer : IAsyncDisposable
         start.RedirectStandardOutput = true;
         start.RedirectStandardError = true;
         Process process = ChildProcesses.Start(start);
+        // Every message passes the trace from initialize on, so one turned on while the server runs starts at the next.
+        TracedStream input = new(process.StandardInput.BaseStream, process.Id, "-->");
+        TracedStream output = new(process.StandardOutput.BaseStream, process.Id, "<--");
         ServerLog log;
         try
         {
@@ -165,9 +181,11 @@ public sealed class LanguageServer : IAsyncDisposable
         process.BeginErrorReadLine();
 
         SystemTextJsonFormatter formatter = new() { JsonSerializerOptions = Json.Options };
-        HeaderDelimitedMessageHandler handler = new(process.StandardInput.BaseStream, process.StandardOutput.BaseStream, formatter);
+        HeaderDelimitedMessageHandler handler = new(input, output, formatter);
         ClientTarget client = new();
-        JsonRpc rpc = new(handler);
+        // What the server sends is handled in the order it came, one at a time, rather than on the thread pool as it comes:
+        // a progress report handled after its end would leave the load showing, an error logged after its toast unread.
+        JsonRpc rpc = new(handler) { SynchronizationContext = new Microsoft.VisualStudio.Threading.NonConcurrentSynchronizationContext(sticky: false) };
         rpc.AddLocalRpcTarget(client, new JsonRpcTargetOptions { UseSingleObjectParameterDeserialization = true });
         LanguageServer server2 = new(process, rpc, client, log, logFolder, options);
         client.Owner = server2;
@@ -555,7 +573,15 @@ public sealed class LanguageServer : IAsyncDisposable
         }
 
         [JsonRpcMethod("window/showMessage")]
-        public void ShowMessage(LogMessageParams message) => LogMessage(message);
+        public void ShowMessage(LogMessageParams message)
+        {
+            Owner?.log.Write($"{DateTime.Now:HH:mm:ss.fff} Shown: {message.Message}");
+            Owner?.Shown?.Invoke(Owner, message);
+        }
+
+        /// <summary>Roslyn's own showMessage, with commands for VS Code's C# extension (Show C# logs) that have no meaning here.</summary>
+        [JsonRpcMethod("window/_roslyn_showToast")]
+        public void ShowToast(ShowToastParams toast) => ShowMessage(new LogMessageParams(toast.MessageType, toast.Message));
 
         /// <summary>Roslyn asks for each option as <c>csharp|group.name</c> or <c>group.name</c>; the ones named in
         /// <see cref="Settings"/> are answered, the rest left to the server's defaults.</summary>
@@ -594,8 +620,12 @@ public sealed class LanguageServer : IAsyncDisposable
         public object? CreateProgress(JsonElement? request = null) => null;
 
         [JsonRpcMethod("$/progress")]
-        public void Progress(JsonElement? progress = null)
+        public void Progress(ProgressParams progress)
         {
+            if (WorkProgress.From(progress) is { } work)
+            {
+                Owner?.Progressed?.Invoke(Owner, work);
+            }
         }
 
         [JsonRpcMethod("workspace/projectInitializationComplete")]
@@ -625,8 +655,5 @@ public sealed class LanguageServer : IAsyncDisposable
         public void Telemetry(JsonElement? message = null)
         {
         }
-
-        [JsonRpcMethod("workspace/_roslyn_projectNeedsRestore")]
-        public object? ProjectNeedsRestore(JsonElement? request = null) => null;
     }
 }

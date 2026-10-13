@@ -1,20 +1,19 @@
-using System.Text;
 using Avalonia.Logging;
 using Avalonia.Threading;
 
 namespace Passenger.App;
 
 /// <summary>Rider's IDE Internal Errors: an exception that escapes on the UI thread or from a task nobody awaited is
-/// written to the log in the settings folder (<c>logs/passenger.log</c>, Rider's idea.log) and shown in the status
-/// bar, and the IDE keeps running. Repeats of one error are one entry with its count, the list holds Rider's hundred,
-/// and the log is written by a thread of its own and rotated by size. Avalonia's warnings and errors go to the log.</summary>
+/// written to the log in the settings folder (<c>logs/passenger.log</c>, Rider's idea.log, through <see cref="IdeLog"/>)
+/// and shown in the status bar, and the IDE keeps running. Repeats of one error are one entry with its count, and the list
+/// holds Rider's hundred. Avalonia's warnings and errors, and the programs the IDE runs that fail, go to the log.</summary>
 public static class IdeErrors
 {
     /// <summary>The different errors listed at most, as Rider's MessagePool: past it, they are only in the log.</summary>
     public const int Limit = 100;
 
     /// <summary>The rotated logs kept beside the current one, <c>passenger.1.log</c> the newest (Rider's idea.log.count).</summary>
-    public const int Rotations = 12;
+    public const int Rotations = IdeLog.Rotations;
 
     private static readonly object Gate = new();
     private static readonly List<IdeError> Reported = [];
@@ -29,24 +28,20 @@ public static class IdeErrors
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Exception, object> Seen = [];
     private static Dispatcher? hooked;
 
-    /// <summary>Lines waiting for the log's thread; taken under <see cref="Writing"/> so they reach the file in order.</summary>
-    private static readonly List<LogLine> Queued = [];
-    private static readonly object Writing = new();
-    private static Thread? writer;
-
-    /// <summary>How long the log's thread rests after a write, so the lines of a burst share one opening of the file.</summary>
-    private static readonly TimeSpan Pause = TimeSpan.FromMilliseconds(250);
-
     /// <summary>An error was reported, a repeat with its count so far; raised on the UI thread.</summary>
     public static event EventHandler<IdeError>? Raised;
 
     /// <summary>The folder Help, Show Log opens: the state store's <c>logs</c>.</summary>
-    public static string LogFolder => Path.Combine(State.StateStore.DefaultRoot, "logs");
+    public static string LogFolder => IdeLog.Folder;
 
-    public static string LogPath => Path.Combine(LogFolder, "passenger.log");
+    public static string LogPath => IdeLog.PathOf(IdeLog.Ide);
 
-    /// <summary>The size past which the log is rotated, Rider's idea.log.limit: no log file grows beyond it.</summary>
-    public static long LogLimit { get; set; } = 10_000_000;
+    /// <summary>The size past which a log is rotated, Rider's idea.log.limit: no log file grows beyond it.</summary>
+    public static long LogLimit
+    {
+        get => IdeLog.Limit;
+        set => IdeLog.Limit = value;
+    }
 
     /// <summary>The errors reported since the last Clear, each once with how many times it came, the oldest first.</summary>
     public static IReadOnlyList<IdeError> Errors
@@ -102,9 +97,17 @@ public static class IdeErrors
             Flush();
         };
         Logger.Sink = new Sink();
+        // Every program at debug level, as Rider's debug log of its processes; otherwise those worth a person's look.
+        Core.ChildProcesses.Started += (_, start) =>
+        {
+            if (IdeLog.Programs)
+            {
+                Write(start.ToString());
+            }
+        };
         Core.ChildProcesses.Ended += (_, end) =>
         {
-            if (end.Notable)
+            if (end.Notable || IdeLog.Programs)
             {
                 Write(end.ToString());
             }
@@ -160,131 +163,10 @@ public static class IdeErrors
 
     /// <summary>A line in the log, for what is worth finding later (a server restarted) but not an error. It is queued
     /// from any thread and written by the log's own, so the UI thread never waits on the disk.</summary>
-    public static void Write(string line)
-    {
-        // The folder is the one in force now: a test's settings folder changes under a running process.
-        LogLine queued = new(LogPath, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} [{Environment.ProcessId}] {line}{Environment.NewLine}");
-        lock (Queued)
-        {
-            Queued.Add(queued);
-            if (writer is null)
-            {
-                AppDomain.CurrentDomain.ProcessExit += (_, _) => Flush();
-                writer = new Thread(WriteQueued) { IsBackground = true, Name = "Passenger log" };
-                writer.Start();
-            }
-            Monitor.Pulse(Queued);
-        }
-    }
+    public static void Write(string line) => IdeLog.Write(IdeLog.Ide, line);
 
     /// <summary>Writes every line queued, now, on the calling thread: before the process ends, and before the log is read.</summary>
-    public static void Flush()
-    {
-        lock (Writing)
-        {
-            List<LogLine> lines;
-            lock (Queued)
-            {
-                if (Queued.Count == 0)
-                {
-                    return;
-                }
-                lines = [.. Queued];
-                Queued.Clear();
-            }
-            int start = 0;
-            while (start < lines.Count)
-            {
-                int end = start + 1;
-                while (end < lines.Count && lines[end].Path == lines[start].Path)
-                {
-                    end++;
-                }
-                Append(lines[start].Path, lines, start, end);
-                start = end;
-            }
-        }
-    }
-
-    private static void WriteQueued()
-    {
-        while (true)
-        {
-            lock (Queued)
-            {
-                while (Queued.Count == 0)
-                {
-                    Monitor.Wait(Queued);
-                }
-            }
-            Flush();
-            Thread.Sleep(Pause);
-        }
-    }
-
-    /// <summary>Appends lines to one log, rotating it first whenever the next line would take it past the limit.</summary>
-    private static void Append(string path, List<LogLine> lines, int start, int end)
-    {
-        FileStream? file = null;
-        try
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            file = Open(path);
-            long length = file.Length;
-            bool rotates = true;
-            for (int i = start; i < end; i++)
-            {
-                byte[] bytes = Encoding.UTF8.GetBytes(lines[i].Text);
-                if (rotates && length > 0 && length + bytes.Length > LogLimit)
-                {
-                    file.Dispose();
-                    // One that cannot be moved (Windows, a reader not sharing deletion) is written on rather than lost.
-                    rotates = Rotate(path);
-                    file = Open(path);
-                    length = file.Length;
-                }
-                file.Write(bytes);
-                length += bytes.Length;
-            }
-        }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-        {
-        }
-        finally
-        {
-            file?.Dispose();
-        }
-    }
-
-    private static FileStream Open(string path) => new(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
-
-    /// <summary>Rider's RollingFileHandler: the oldest goes, each moves up one, and the log becomes <c>passenger.1.log</c>.</summary>
-    private static bool Rotate(string path)
-    {
-        try
-        {
-            File.Delete(Rotated(path, Rotations));
-            for (int n = Rotations - 1; n >= 1; n--)
-            {
-                if (File.Exists(Rotated(path, n)))
-                {
-                    File.Move(Rotated(path, n), Rotated(path, n + 1));
-                }
-            }
-            File.Move(path, Rotated(path, 1));
-            return true;
-        }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-        {
-            return false;
-        }
-    }
-
-    /// <summary>A rotated log's path: <c>passenger.3.log</c> beside <c>passenger.log</c>.</summary>
-    private static string Rotated(string path, int number) =>
-        Path.Combine(Path.GetDirectoryName(path)!, $"{Path.GetFileNameWithoutExtension(path)}.{number}{Path.GetExtension(path)}");
-
-    private sealed record LogLine(string Path, string Text);
+    public static void Flush() => IdeLog.Flush();
 
     /// <summary>Avalonia's warnings and errors, in the IDE's log rather than a trace nobody reads.</summary>
     private sealed class Sink : ILogSink

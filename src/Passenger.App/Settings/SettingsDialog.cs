@@ -19,8 +19,9 @@ public sealed class SettingsDialog : Window
     public const string RunPage = "Run";
     public const string KeymapPage = "Keymap";
     public const string McpPage = "MCP Server";
+    public const string DiagnosticsPage = "Diagnostics";
 
-    private static readonly string[] Order = [Appearance, SystemPage, EditorPage, RunPage, TerminalPage, McpPage, KeymapPage];
+    private static readonly string[] Order = [Appearance, SystemPage, EditorPage, RunPage, TerminalPage, McpPage, DiagnosticsPage, KeymapPage];
 
     private readonly Action<AppSettings> apply;
     private readonly List<Option> options = [];
@@ -196,6 +197,16 @@ public sealed class SettingsDialog : Window
             "mcp model context protocol agents ai claude codex attach socket",
             "Agents started with passenger --mcp-attach can use this window: read and change files, build, run and debug, use Git, "
             + "NuGet and the terminal. Each agent asks before its first use of a tool that changes something.");
+
+        // Rider's Help, Diagnostic Tools: what is written where is said under each, the folder being Help, Show Log's.
+        Add(DiagnosticsPage, "Trace protocol messages", Check(Working.TraceProtocols, v => Change(s => s with { TraceProtocols = v })),
+            "trace log lsp dap json-rpc language server debugger adapter vstest tests messages verbose",
+            "Every message to and from the C# language server, the debugger and the test runner is written to lsp.log, dap.log "
+            + "and vstest.log in the logs folder (Help, Show Log).");
+        Add(DiagnosticsPage, "Log every program started", Check(Working.LogEveryProgram, v => Change(s => s with { LogEveryProgram = v })),
+            "debug log processes programs commands git dotnet exit code time",
+            "Each program the IDE runs (git, dotnet, the servers) is written to passenger.log with its exit code and time. "
+            + "Otherwise only those that fail or take a second or more are.");
 
         keymapNote = new TextBlock { TextWrapping = TextWrapping.Wrap, IsVisible = false };
         keymapNote.Bind(TextBlock.ForegroundProperty, keymapNote.GetResourceObservable("Passenger.TextMuted"));
