@@ -88,10 +88,12 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.App/Editors`: `EditorArea` is a tree of splits, each an `EditorGroup` (tabs, find bar, editor); its
   `CodeEditor` and `Active` are the active group's, so code that acts on "the editor" keeps working, and wiring for every
   editor's events goes through `ForEachEditor`, since a split makes a new one.
-- `src/Passenger.App/Docking`: the tool windows' frame, in IntelliJ's six places (`DockHost`, `ToolWindow`), moved
-  by dragging a stripe button or a header, the layout kept in the state store as a `DockLayout`, with the folder open
-  and as the one a folder without its own opens on. A new tool window is a view and one `Dock.Add` in
-  `MainWindow.AddToolWindows`.
+- `src/Passenger.App/Docking`: the tool windows' frame, in IntelliJ's six places. `DockHost` is the layout and what
+  it keeps; `Stripe`, `ToolPane` and `FloatWindow` (a window of its own that knows nothing of tool windows) are its
+  parts. A window moves by dragging a stripe button or a header (`DockDrag` says where it lands); `DragGesture` and
+  `DropOverlay` are the one drag and drop zone, which editor tabs share. The layout is kept in the state store as a
+  `DockLayout`, with the folder open and as the one a folder without its own opens on. A new tool window is a view and
+  one `Dock.Add` in `MainWindow.AddToolWindows`.
 - `src/Passenger.App/State`: the IDE's own state, in one `StateStore` under `PASSENGER_SETTINGS` or the user's local
   application data, kept only by the person's window: the app's documents at its top (`settings.json`, `layout.json`)
   and each folder's under `workspaces/<name>-<hash>/` (editors and recent files, layout, breakpoints, bookmarks, the
