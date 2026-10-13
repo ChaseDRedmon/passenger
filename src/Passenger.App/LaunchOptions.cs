@@ -5,11 +5,11 @@ using Passenger.Text;
 
 namespace Passenger.App;
 
-/// <summary>The command line: <c>passenger [PATH] [--file F]... [--caret L:C] [--theme T]</c>, a screenshot with the
-/// steps to take before it, or the Model Context Protocol server: <c>--mcp [PATH]</c> (an IDE with no window, on standard
-/// input and output), <c>--mcp-attach [PID] [FOLDER]</c> (a window's, the one over the folder first), and <c>--no-mcp</c>
-/// (a window that never lets agents in). A flag it does not know, a value it cannot read or that is out of range, and a
-/// flag the chosen mode does not take are fatal rather than ignored, so a typo never runs other than what was asked.</summary>
+/// <summary>The command line: <c>passenger [PATH] [--file F]... [--caret L:C] [--theme T]</c>, PATH a folder, a file, or a
+/// solution or project opened as the workspace; a screenshot with the steps before it; or the Model Context Protocol
+/// server: <c>--mcp [PATH]</c> (an IDE with no window, on standard input and output), <c>--mcp-attach [PID] [FOLDER]</c>
+/// (a window's, the one over the folder first), and <c>--no-mcp</c> (a window that never lets agents in). A flag it does
+/// not know, a value it cannot read or out of range, or one the mode does not take is fatal, never ignored.</summary>
 public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, TextPosition? Caret, ThemeChoice? Theme, ScreenshotOptions? Screenshot)
 {
     /// <summary>The flags that may be given more than once: each is one more file or one more step.</summary>
@@ -30,6 +30,9 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
     /// <summary>Whether the window may listen for agents on its socket once its Enable MCP Server setting is on
     /// (<c>--no-mcp</c> says never).</summary>
     public bool ListenForAgents { get; init; } = true;
+
+    /// <summary>The solution (.sln, .slnx) PATH names, the workspace over <see cref="Folder"/>, its own folder.</summary>
+    public string? Solution { get; init; }
 
     public static LaunchOptions Empty { get; } = new(null, [], null, null, null);
 
@@ -156,7 +159,7 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
         }
 
         CheckMode(given, mcp, shot is not null, listen);
-        (string? folder, List<string> files) = Opened(path, named);
+        (string? folder, string? solution, List<string> files) = Opened(path, named);
         if (mcp == McpMode.Attach && files.Count > 0)
         {
             throw new FormatException($"--mcp-attach finds the window by its folder, and '{path}' is a file");
@@ -166,7 +169,7 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
             throw new FormatException("--caret needs a file to put the caret in, the PATH or a --file");
         }
         ScreenshotOptions? screenshot = shot is null ? null : Checked(new ScreenshotOptions(shot, size, scale, steps, crop), cropText, points);
-        return new LaunchOptions(folder, files, caret, theme, screenshot) { Mcp = mcp, AttachTo = attachTo, ListenForAgents = listen };
+        return new LaunchOptions(folder, files, caret, theme, screenshot) { Solution = solution, Mcp = mcp, AttachTo = attachTo, ListenForAgents = listen };
     }
 
     /// <summary>Refuses the first flag the chosen mode does not take: a window takes all but a screenshot's, a screenshot
@@ -196,11 +199,13 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
         }
     }
 
-    /// <summary>The folder and files that the path and the <c>--file</c>s name, as full paths, each refused unless it
-    /// exists as what it is named for.</summary>
-    private static (string? Folder, List<string> Files) Opened(string? path, List<string> named)
+    /// <summary>The folder, solution and files that the path and the <c>--file</c>s name, as full paths, each refused unless
+    /// it exists as what it is named for. A solution or a C# project is the workspace, as Rider opens one, not a file to
+    /// edit: the solution itself, a project its folder (with the folder's own solution, if it has one).</summary>
+    private static (string? Folder, string? Solution, List<string> Files) Opened(string? path, List<string> named)
     {
         string? folder = null;
+        string? solution = null;
         List<string> files = [];
         if (path is not null)
         {
@@ -212,7 +217,17 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
             {
                 string full = Path.GetFullPath(path);
                 folder = Path.GetDirectoryName(full);
-                files.Add(full);
+                switch (Path.GetExtension(full).ToLowerInvariant())
+                {
+                    case ".sln" or ".slnx":
+                        solution = full;
+                        break;
+                    case ".csproj":
+                        break;
+                    default:
+                        files.Add(full);
+                        break;
+                }
             }
             else
             {
@@ -231,7 +246,7 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
             }
             files.Add(full);
         }
-        return (folder, files);
+        return (folder, solution, files);
     }
 
     /// <summary>The screenshot, refused unless its PNG has a folder to go in, its frame is one the headless window draws,

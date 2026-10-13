@@ -289,10 +289,10 @@ public partial class MainWindow : Window
     /// <summary>Every file of the open folder, as Go to File searches them.</summary>
     public FileIndex FileIndex => index;
 
-    /// <summary>Opens what the command line named: a folder, files in it, a caret position.</summary>
+    /// <summary>Opens what the command line named: a folder or solution, files in it, a caret position.</summary>
     public void Start(LaunchOptions options)
     {
-        if (options.Folder is { } path)
+        if ((options.Solution ?? options.Folder) is { } path)
         {
             OpenFolder(path);
         }

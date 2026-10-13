@@ -1,11 +1,15 @@
 using System.Buffers.Binary;
 using System.Diagnostics;
+using Avalonia.Headless.XUnit;
+using Passenger.App;
+using Passenger.Core;
 
 namespace Passenger.Tests;
 
 /// <summary>The command line as a person types it: Passenger's own executable run with arguments, in a folder with a
 /// file and a subfolder. A malformed value, or a flag the mode asked for does not take, ends it at once with exit code 2
-/// and a line on standard error saying what is wrong, never a silent default or a stack trace.</summary>
+/// and a line on standard error saying what is wrong, never a silent default or a stack trace. A solution or project it
+/// names, as Windows does for one double-clicked, opens in the window as the workspace.</summary>
 public sealed class CommandLineTests : IDisposable
 {
     private static readonly string Passenger = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "Passenger.exe" : "Passenger");
@@ -67,6 +71,30 @@ public sealed class CommandLineTests : IDisposable
         // A PNG's width and height are the IHDR chunk's first words, big-endian, after the signature and the chunk's head.
         byte[] png = await File.ReadAllBytesAsync(Path.Combine(folder, "out.png"), TestContext.Current.CancellationToken);
         Assert.Equal((400, 250), (BinaryPrimitives.ReadInt32BigEndian(png.AsSpan(16)), BinaryPrimitives.ReadInt32BigEndian(png.AsSpan(20))));
+    }
+
+    [AvaloniaFact]
+    public void A_solution_or_project_given_as_a_double_click_gives_it_opens_as_the_workspace_and_neither_as_text()
+    {
+        // Two solutions, so the folder alone would open Alpha: only the one named makes Zebra the workspace.
+        File.WriteAllText(Path.Combine(folder, "Alpha.slnx"), "<Solution />\n");
+        string zebra = Path.Combine(folder, "Zebra.slnx");
+        File.WriteAllText(zebra, "<Solution />\n");
+        string project = Path.Combine(folder, "sub", "Tool.csproj");
+        File.WriteAllText(project, "<Project Sdk=\"Microsoft.NET.Sdk\" />\n");
+        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false };
+        window.Show();
+
+        window.Start(LaunchOptions.Parse([zebra]));
+        Ui.Settle();
+        Assert.True(window.Solution?.Path == PathNames.Canonical(zebra) && window.EditorArea.Active is null,
+            $"Zebra.slnx, as Windows opens it, was to be the workspace with no file open; the solution is {window.Solution?.Path} and the editor shows {window.EditorArea.Active?.Path}");
+
+        window.Start(LaunchOptions.Parse([project]));
+        Ui.Settle();
+        Assert.True(window.Folder == PathNames.Canonical(Path.GetDirectoryName(project)!) && window.EditorArea.Active is null,
+            $"Tool.csproj was to open its folder with no file open; the folder is {window.Folder} and the editor shows {window.EditorArea.Active?.Path}");
+        window.Close();
     }
 
     /// <summary>Passenger run in the test's folder with the arguments split at spaces and nothing on standard input, its
