@@ -212,7 +212,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   object model. `TestFinder` shows a solution's tests from code as it opens, before any build: test projects' files
   parsed off the UI thread, an open file's from its own parse (`TestsAtCaret.Read` is the one reading of a file's
   tests), changed ones through the folder watcher; discovery and runs merge into those rows by id.
-  `MainWindow.Tests.cs` wires it.
+  `MainWindow.Tests.cs` wires it. `TestTree` groups by Rider's Group By levels (`TestGrouping.cs`) and filters by
+  outcome and search; code that wants every test asks `TestTree.Methods` (each method once), never `Roots`. The
+  grouping and filters are a folder's `unitTests.json`.
 - `src/Passenger.App/Navigation`: Recent Files and the Go to popups, `NavigationHistory` (Back and Forward, the places
   edited for Last and Next Edit Location, and those Recent Locations lists, carried through edits) and
   `RecentLocationsPopup`; `MainWindow.Places.cs` records the places visited and edited. Base and Derived Symbols use the
