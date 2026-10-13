@@ -885,6 +885,8 @@ public sealed class VcsTests : IDisposable
         press.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
         Ui.WaitFor(() => window.Vcs.Changes.Count == 0 && window.Status?.StartsWith("1 file committed", StringComparison.Ordinal) == true, $"the commit ({window.Status})");
         Assert.Equal("2", Git("rev-list", "--count", "HEAD").Trim());
+        // Git reads what the commit did (slower on Windows) before it takes another change; one asked for meanwhile is refused.
+        Ui.WaitFor(() => !window.Vcs.IsBusy, "Git to finish the commit");
 
         // Stash Changes asked twice while the first runs: one stash and no complaint, and Commit off meanwhile.
         File.AppendAllText(Path.Combine(folder, "Shop.cs"), "// stashed\n");
