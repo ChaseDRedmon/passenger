@@ -79,12 +79,17 @@ public sealed class ProfilingSession : IAsyncDisposable
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
 
-        DiagnosticsClientConnector connector;
+        DiagnosticsClientConnector? connector;
         try
         {
             connector = await connecting;
         }
         catch (OperationCanceledException)
+        {
+            connector = null;
+        }
+        // Out of time, the connector may hand back nothing rather than throw.
+        if (connector is null)
         {
             ChildProcesses.Kill(process);
             throw new TimeoutException($"{Path.GetFileName(target.Program)} never reached the profiler: is it a .NET program?");

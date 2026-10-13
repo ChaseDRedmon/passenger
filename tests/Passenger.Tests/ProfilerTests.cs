@@ -70,6 +70,20 @@ public sealed class ProfilerTests : IDisposable
     }
 
     [Fact]
+    public async Task Profiling_a_program_that_ends_before_it_reaches_the_profiler_says_it_never_did()
+    {
+        // Not .NET, and gone at once: it never connects to the profiler's port, and the wait for it ends before 30 s.
+        ProfileTarget target = OperatingSystem.IsWindows()
+            ? new("cmd.exe", ["/c", "exit 0"], folder, new Dictionary<string, string>())
+            : new("/usr/bin/true", [], folder, new Dictionary<string, string>());
+        using CancellationTokenSource soon = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        soon.CancelAfter(TimeSpan.FromSeconds(3));
+
+        TimeoutException failed = await Assert.ThrowsAsync<TimeoutException>(() => ProfilingSession.StartAsync(target, folder, cancellation: soon.Token));
+        Assert.Contains("never reached the profiler", failed.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task A_memory_snapshot_of_a_running_program_counts_its_heap_by_type()
     {
         string program = Debuggees.Program("ReadsInputConsoleApp");
