@@ -161,7 +161,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   cannot launch here saying why); `LaunchPlan.ResolveAsync` works one out once, in one MSBuild request, into what Run,
   Debug, Profile, Hot Reload and a debugged test host start, and `RunConfigurationsDialog` is Run > Edit
   Configurations. A test project's first Project launch profile gives its variables to its tests.
-- `src/Passenger.App/Workspace`: `SolutionModel` reads solutions and projects for the Explorer's Solution view.
+- `src/Passenger.App/Workspace`: `SolutionModel` reads solutions and projects for the Explorer's Solution view, and
+  `SolutionEdits` is every change to a .sln or .slnx (solution folders, the files they list, projects in and out): a
+  .sln line by line and a .slnx through XDocument with its whitespace kept, so the rest of the file stays byte for byte
+  as it was; never `dotnet sln`, which rewrites a whole .sln. `MainWindow.Solution.cs` is the Solution view's New
+  Solution Folder, Existing Project, Existing Item, Rename and Remove.
   `EditorConfig` reads the .editorconfig files over a file (its own parser and globs); `FileIndent` picks a file's
   indent (its .editorconfig, else `Indentation.Detect` on its lines, else its language) and names it in the status bar;
   `OpenDocument.Save` applies the save-time properties. Every edit from the language server goes through
