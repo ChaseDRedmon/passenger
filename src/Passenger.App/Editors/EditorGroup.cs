@@ -385,17 +385,12 @@ public sealed class EditorGroup : DockPanel
                 area.SetActiveGroup(this);
                 Show(document);
                 area.Activated(this);
-                area.BeginTabDrag(this, document, e);
-                e.Pointer.Capture(border);
+                area.TabDrag.Begin((this, document), e, border);
                 e.Handled = true;
             }
         };
-        border.PointerMoved += (_, e) => area.ContinueTabDrag(e);
-        border.PointerReleased += (_, e) =>
-        {
-            area.EndTabDrag(e);
-            e.Pointer.Capture(null);
-        };
+        border.PointerMoved += (_, e) => area.TabDrag.Continue(e);
+        border.PointerReleased += (_, e) => area.TabDrag.End(e);
         return border;
     }
 

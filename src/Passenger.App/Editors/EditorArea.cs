@@ -1,9 +1,9 @@
 using System.Collections.ObjectModel;
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Passenger.App.Docking;
 using Passenger.App.Workspace;
 using Passenger.Core;
 using Passenger.Editor;
@@ -17,13 +17,10 @@ namespace Passenger.App.Editors;
 /// room. A file shows in as many groups as it is open in, over one text.</summary>
 public sealed class EditorArea : UserControl
 {
-    private const double DragThreshold = 6;
-
     private readonly ObservableCollection<OpenDocument> documents = [];
     private readonly ContentControl splits = new();
     private readonly Canvas assist = new() { ClipToBounds = false };
-    private readonly Canvas dropLayer = new() { IsHitTestVisible = false, IsVisible = false };
-    private readonly Border dropZone = new() { BorderThickness = new Thickness(2), CornerRadius = new CornerRadius(4) };
+    private readonly DropOverlay dropOverlay = new();
     private readonly StackPanel emptyState;
     private readonly TextBlock emptyTitle;
     private readonly TextBlock emptyHint;
@@ -32,7 +29,6 @@ public sealed class EditorArea : UserControl
     private readonly Dictionary<OpenDocument, int> held = [];
     private Node root;
     private EditorGroup activeGroup;
-    private (EditorGroup Group, OpenDocument Document, Point Start, bool Dragging)? drag;
 
     public EditorArea()
     {
@@ -45,12 +41,14 @@ public sealed class EditorArea : UserControl
         openButton = new Button { Classes = { "primary" }, Content = "Open…", HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 8, 0, 0) };
         openButton.Click += (_, _) => OpenRequested?.Invoke(this, EventArgs.Empty);
         emptyState = new StackPanel { Spacing = 10, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Children = { emptyTitle, emptyHint, openButton } };
-        dropZone.Bind(Border.BorderBrushProperty, dropZone.GetResourceObservable("Passenger.Accent"));
-        dropZone.Bind(Border.BackgroundProperty, dropZone.GetResourceObservable("Passenger.DropZone"));
-        dropLayer.Children.Add(dropZone);
-        Content = new Panel { Children = { splits, emptyState, assist, dropLayer } };
+        TabDrag = new DragGesture<(EditorGroup Group, OpenDocument Document)>(this, dropOverlay,
+            (_, at) => Target(at) is { } target ? (target.Zone, null) : null, (tab, at) => Drop(tab.Group, tab.Document, at));
+        Content = new Panel { Children = { splits, emptyState, assist, dropOverlay } };
         Rebuild();
     }
+
+    /// <summary>A tab dragged onto another group, or onto a group's edge to split it there.</summary>
+    internal DragGesture<(EditorGroup Group, OpenDocument Document)> TabDrag { get; }
 
     public event EventHandler? ActiveChanged;
 
@@ -559,69 +557,34 @@ public sealed class EditorArea : UserControl
         ActiveChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    // Dragging a tab.
+    // Dropping a dragged tab.
 
-    internal void BeginTabDrag(EditorGroup group, OpenDocument document, PointerPressedEventArgs e) =>
-        drag = (group, document, e.GetPosition(this), false);
-
-    internal void ContinueTabDrag(PointerEventArgs e)
+    private void Drop(EditorGroup from, OpenDocument document, Point at)
     {
-        if (drag is not { } current)
-        {
-            return;
-        }
-        Point at = e.GetPosition(this);
-        if (!current.Dragging && Math.Abs(at.X - current.Start.X) + Math.Abs(at.Y - current.Start.Y) < DragThreshold)
-        {
-            return;
-        }
-        drag = current with { Dragging = true };
-        if (Target(at) is { } target)
-        {
-            Canvas.SetLeft(dropZone, target.Zone.X + 2);
-            Canvas.SetTop(dropZone, target.Zone.Y + 2);
-            dropZone.Width = Math.Max(0, target.Zone.Width - 4);
-            dropZone.Height = Math.Max(0, target.Zone.Height - 4);
-            dropLayer.IsVisible = true;
-        }
-        else
-        {
-            dropLayer.IsVisible = false;
-        }
-    }
-
-    internal void EndTabDrag(PointerEventArgs e)
-    {
-        if (drag is not { } current)
-        {
-            return;
-        }
-        drag = null;
-        dropLayer.IsVisible = false;
-        if (!current.Dragging || Target(e.GetPosition(this)) is not { } target)
+        if (Target(at) is not { } target)
         {
             return;
         }
         switch (target.Place)
         {
             case DropPlace.Strip:
-                Move(current.Group, current.Document, target.Group, target.Index);
+                Move(from, document, target.Group, target.Index);
                 break;
             case DropPlace.Middle:
-                Move(current.Group, current.Document, target.Group);
+                Move(from, document, target.Group);
                 break;
             default:
                 // A tab dropped on its own group's edge, the group's only tab, has nothing to split from.
-                if (target.Group == current.Group && current.Group.Tabs.Count == 1)
+                if (target.Group == from && from.Tabs.Count == 1)
                 {
                     return;
                 }
                 bool across = target.Place is DropPlace.Left or DropPlace.Right;
                 bool before = target.Place is DropPlace.Left or DropPlace.Top;
-                Split(target.Group, current.Document, across ? Orientation.Horizontal : Orientation.Vertical, move: target.Group == current.Group, before);
-                if (target.Group != current.Group)
+                Split(target.Group, document, across ? Orientation.Horizontal : Orientation.Vertical, move: target.Group == from, before);
+                if (target.Group != from)
                 {
-                    current.Group.Remove(current.Document);
+                    from.Remove(document);
                     Collapse();
                 }
                 break;

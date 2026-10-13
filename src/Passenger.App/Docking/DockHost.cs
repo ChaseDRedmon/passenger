@@ -1,24 +1,15 @@
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Controls.Primitives;
-using Avalonia.Controls.Shapes;
-using Avalonia.Input;
-using Avalonia.Interactivity;
-using Avalonia.Layout;
-using Avalonia.Media;
-using Avalonia.Platform;
-using Avalonia.VisualTree;
 
 namespace Passenger.App.Docking;
 
-/// <summary>The window's frame as IntelliJ lays it out: a stripe of tool window buttons down each edge, the side
-/// areas left and right of the editor, the bottom area under them, each side split in two halves that show one
-/// window each. A window moves by dragging its stripe button or its header onto another place (the place under the
-/// pointer lights up), or by its header's Move to; the layout is captured for the next start.</summary>
+/// <summary>The window's frame as IntelliJ lays it out: a stripe of tool window buttons down each edge (<see
+/// cref="Stripe"/>), the side areas left and right of the editor, the bottom area under them, each side split in two
+/// halves that show one window each (<see cref="ToolPane"/>). A window moves by a drag (<see cref="DockDrag"/>) or by
+/// its header's Move to, floats in a <see cref="FloatWindow"/>, and the layout is captured for the next start.</summary>
 public sealed class DockHost : Grid
 {
-    private const double StripeWidth = 40;
-    private const double DragThreshold = 6;
+    internal const double StripeWidth = 40;
 
     /// <summary>The part of the frame's width, and of its height, the editor keeps however large the areas were kept (on
     /// a larger screen, say) or dragged, unless a window is maximised.</summary>
@@ -35,10 +26,6 @@ public sealed class DockHost : Grid
     private readonly HairlineDivider leftDivider;
     private readonly HairlineDivider rightDivider;
     private readonly HairlineDivider bottomDivider;
-    // Above the dividers, which stand above the areas.
-    private readonly Canvas dropLayer = new() { IsHitTestVisible = false, IsVisible = false, ZIndex = 2 };
-    private readonly Border dropZone = new() { BorderThickness = new Thickness(2), CornerRadius = new CornerRadius(4) };
-    private readonly TextBlock dropLabel = new() { FontWeight = FontWeight.SemiBold, Margin = new Thickness(10, 8) };
     private double leftWidth = 280;
     private double rightWidth = 300;
     private double bottomHeight = 280;
@@ -50,8 +37,6 @@ public sealed class DockHost : Grid
 
     /// <summary>The places a layout applied gave windows this build does not have (a later build's), kept for the next.</summary>
     private Dictionary<string, DockedWindow> others = [];
-    private (ToolWindow Window, Point Start, bool Dragging)? drag;
-    private ToolAnchor? dropTarget;
     private (ToolWindow Window, double Left, double Right, double Bottom)? maximized;
     private List<ToolWindow>? hiddenAll;
 
@@ -91,13 +76,21 @@ public sealed class DockHost : Grid
         leftArea.Children.Add(new HairlineDivider(GridResizeDirection.Rows) { [Grid.RowProperty] = 1 });
         rightArea.Children.Add(new HairlineDivider(GridResizeDirection.Rows) { [Grid.RowProperty] = 1 });
         bottomArea.Children.Add(new HairlineDivider(GridResizeDirection.Columns) { [Grid.ColumnProperty] = 1 });
-        dropZone.Child = dropLabel;
-        dropZone.Bind(Border.BorderBrushProperty, dropZone.GetResourceObservable("Passenger.Accent"));
-        dropZone.Bind(Border.BackgroundProperty, dropZone.GetResourceObservable("Passenger.DropZone"));
-        dropLayer.Children.Add(dropZone);
-        Place(dropLayer, 0, 0, rowSpan: 3, columnSpan: 7);
+        DockDrag drag = new(this, leftStripe, rightStripe);
+        Drag = drag.Gesture;
+        Place(drag.Overlay, 0, 0, rowSpan: 3, columnSpan: 7);
         Layout();
     }
+
+    /// <summary>A window dragged by its stripe button or its header.</summary>
+    internal DragGesture<ToolWindow> Drag { get; }
+
+    /// <summary>The left area's width as laid out, or as kept while it is closed: about what a window dropped on a side
+    /// would have.</summary>
+    internal double LeftAreaWidth => ColumnDefinitions[1].ActualWidth > 0 ? ColumnDefinitions[1].ActualWidth : leftWidth;
+
+    /// <summary>The bottom area's height as kept, open or not.</summary>
+    internal double BottomAreaHeight => bottomHeight;
 
     /// <summary>The editor area, between the side areas and above the bottom one.</summary>
     public Control? Center
@@ -267,7 +260,13 @@ public sealed class DockHost : Grid
             open.Activate();
             return;
         }
-        FloatWindow created = new(this, window);
+        FloatWindow created = new(this, window.WindowBounds, new Size(520, 420)) { Title = window.Title, ShowInTaskbar = window.Mode == ToolMode.Windowed };
+        ToolPane pane = new(this) { Floating = created };
+        pane.Show(window);
+        created.Content = pane;
+        created.Dismissed += (_, _) => FloatClosed(window, created);
+        // The tool window outlives its window: the pane lets it go, or it holds that window's whole tree.
+        created.Closed += (_, _) => pane.Show(null);
         floats[window] = created;
         if (window.Mode == ToolMode.Floating && TopLevel.GetTopLevel(this) is Window owner)
         {
@@ -418,116 +417,6 @@ public sealed class DockHost : Grid
         static double Positive(double value, double fallback) => value > 40 ? value : fallback;
     }
 
-    // Dragging, from a stripe button or a header.
-
-    internal void BeginDrag(ToolWindow window, PointerPressedEventArgs e)
-    {
-        if (e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
-        {
-            drag = (window, e.GetPosition(this), false);
-        }
-    }
-
-    /// <summary>Moves a drag on; true once it has gone far enough to be one (and so is no click).</summary>
-    internal bool ContinueDrag(PointerEventArgs e)
-    {
-        if (drag is not { } current)
-        {
-            return false;
-        }
-        Point at = e.GetPosition(this);
-        if (!current.Dragging && Distance(at, current.Start) < DragThreshold)
-        {
-            return false;
-        }
-        drag = current with { Dragging = true };
-        dropTarget = Target(at);
-        ShowDropZone(current.Window, dropTarget);
-        return true;
-    }
-
-    /// <summary>Ends a drag: the window goes where it was dropped. True when it was a drag (so no click).</summary>
-    internal bool EndDrag(PointerEventArgs e)
-    {
-        if (drag is not { } current)
-        {
-            return false;
-        }
-        drag = null;
-        dropLayer.IsVisible = false;
-        if (!current.Dragging)
-        {
-            return false;
-        }
-        Point at = e.GetPosition(this);
-        if (Target(at) is { } anchor)
-        {
-            Move(current.Window, anchor, StripeIndex(anchor, at));
-        }
-        return true;
-    }
-
-    /// <summary>The place a point drops a window on: a stripe's group under it, or the part of the window it is over
-    /// (the outer quarters for the sides, the lower part for the bottom); none over the editor's middle.</summary>
-    internal ToolAnchor? Target(Point at)
-    {
-        double width = Bounds.Width;
-        double height = Bounds.Height;
-        if (at.X < StripeWidth)
-        {
-            return leftStripe.AnchorAt(this.TranslatePoint(at, leftStripe) ?? at);
-        }
-        if (at.X > width - StripeWidth)
-        {
-            return rightStripe.AnchorAt(this.TranslatePoint(at, rightStripe) ?? at);
-        }
-        double inner = width - 2 * StripeWidth;
-        double x = (at.X - StripeWidth) / inner;
-        if (at.Y > height * 0.7)
-        {
-            return x < 0.5 ? ToolAnchor.BottomLeft : ToolAnchor.BottomRight;
-        }
-        bool upper = at.Y < height * 0.35;
-        return x < 0.25 ? (upper ? ToolAnchor.LeftTop : ToolAnchor.LeftBottom)
-            : x > 0.75 ? (upper ? ToolAnchor.RightTop : ToolAnchor.RightBottom)
-            : null;
-    }
-
-    /// <summary>A drop on a stripe keeps the place among its buttons; anywhere else goes last.</summary>
-    private int? StripeIndex(ToolAnchor anchor, Point at)
-    {
-        Stripe? stripe = at.X < StripeWidth ? leftStripe : at.X > Bounds.Width - StripeWidth ? rightStripe : null;
-        return stripe is null ? null : stripe.IndexAt(anchor, this.TranslatePoint(at, stripe) ?? at);
-    }
-
-    private void ShowDropZone(ToolWindow window, ToolAnchor? anchor)
-    {
-        dropLayer.IsVisible = anchor is not null;
-        if (anchor is not { } place)
-        {
-            return;
-        }
-        double width = Bounds.Width - 2 * StripeWidth;
-        double height = Bounds.Height;
-        double side = Math.Max(160, Math.Min(width * 0.25, ColumnDefinitions[1].ActualWidth > 0 ? ColumnDefinitions[1].ActualWidth : leftWidth));
-        double bottom = Math.Max(120, Math.Min(height * 0.4, bottomHeight));
-        double upperHeight = height - bottom;
-        Rect zone = place switch
-        {
-            ToolAnchor.LeftTop => new Rect(StripeWidth, 0, side, upperHeight / 2),
-            ToolAnchor.LeftBottom => new Rect(StripeWidth, upperHeight / 2, side, upperHeight / 2),
-            ToolAnchor.RightTop => new Rect(StripeWidth + width - side, 0, side, upperHeight / 2),
-            ToolAnchor.RightBottom => new Rect(StripeWidth + width - side, upperHeight / 2, side, upperHeight / 2),
-            ToolAnchor.BottomLeft => new Rect(StripeWidth, upperHeight, width / 2, bottom),
-            _ => new Rect(StripeWidth + width / 2, upperHeight, width / 2, bottom),
-        };
-        Canvas.SetLeft(dropZone, zone.X + 2);
-        Canvas.SetTop(dropZone, zone.Y + 2);
-        dropZone.Width = Math.Max(0, zone.Width - 4);
-        dropZone.Height = Math.Max(0, zone.Height - 4);
-        dropLabel.Text = $"{window.Title}: {ToolWindow.Name(place)}";
-    }
-
     // Layout.
 
     internal void Layout()
@@ -671,378 +560,5 @@ public sealed class DockHost : Grid
             LayoutChanged?.Invoke(this, EventArgs.Empty);
         };
         return divider;
-    }
-
-    private static double Distance(Point a, Point b) => Math.Sqrt(((a.X - b.X) * (a.X - b.X)) + ((a.Y - b.Y) * (a.Y - b.Y)));
-
-    /// <summary>One place's window: its header (title, Move to and Hide in a menu, a hide button) over its content.
-    /// The header drags the window elsewhere.</summary>
-    private sealed class ToolPane : DockPanel
-    {
-        private readonly DockHost host;
-
-        /// <summary>The floating window it stands in, if any: its header then moves that window.</summary>
-        public FloatWindow? Floating { get; init; }
-
-        private readonly TextBlock title = new() { FontWeight = FontWeight.SemiBold, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0, 0, 0) };
-        private readonly ContentControl body = new();
-        private readonly ContentControl tools = new() { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0) };
-        private readonly Border header;
-
-        public ToolPane(DockHost host)
-        {
-            this.host = host;
-            Button options = HeaderButton("Icon.More", "Options");
-            Button hide = HeaderButton("Icon.Minimize", "Hide (⇧⎋)");
-            options.Click += (_, _) => OptionsMenu().ShowAt(options);
-            hide.Click += (_, _) =>
-            {
-                if (Window is { } window)
-                {
-                    host.Hide(window.Id);
-                }
-            };
-            header = new Border
-            {
-                [DockProperty] = Dock.Top,
-                Height = 32,
-                Background = Brushes.Transparent,
-                Child = new DockPanel
-                {
-                    Children =
-                    {
-                        new StackPanel { [DockProperty] = Dock.Right, Orientation = Orientation.Horizontal, Spacing = 2, Margin = new Thickness(0, 0, 6, 0), Children = { options, hide } },
-                        new StackPanel { Orientation = Orientation.Horizontal, Children = { title, tools } },
-                    },
-                },
-            };
-            header.PointerPressed += (_, e) =>
-            {
-                if (Window is not { } window || (e.Source is Visual source && source.FindAncestorOfType<Button>(includeSelf: true) is not null))
-                {
-                    return;
-                }
-                if (e.ClickCount == 2 && Floating is null)
-                {
-                    host.ToggleMaximize(window);
-                    e.Handled = true;
-                }
-                else if (Floating is { } own)
-                {
-                    own.BeginMoveDrag(e);
-                }
-                else
-                {
-                    host.BeginDrag(window, e);
-                    e.Pointer.Capture(header);
-                }
-            };
-            header.PointerMoved += (_, e) => host.ContinueDrag(e);
-            header.PointerReleased += (_, e) =>
-            {
-                host.EndDrag(e);
-                e.Pointer.Capture(null);
-            };
-            Children.Add(header);
-            Children.Add(body);
-            this.Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Chrome"));
-            IsVisible = false;
-        }
-
-        public ToolWindow? Window { get; private set; }
-
-        public void Show(ToolWindow? window)
-        {
-            if (Window == window)
-            {
-                return;
-            }
-            if (Window is not null)
-            {
-                Window.PropertyChanged -= OnWindowChanged;
-            }
-            Window = window;
-            body.Content = null;
-            tools.Content = null;
-            if (window is not null)
-            {
-                window.PropertyChanged += OnWindowChanged;
-                // A content lives in one pane at a time, so it leaves its old one first.
-                if (window.Content.Parent is ContentControl old)
-                {
-                    old.Content = null;
-                }
-                body.Content = window.Content;
-                title.Text = window.Title;
-                if (window.HeaderTools?.Parent is ContentControl holder)
-                {
-                    holder.Content = null;
-                }
-                tools.Content = window.HeaderTools;
-            }
-            IsVisible = window is not null;
-        }
-
-        private void OnWindowChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
-        {
-            if (e.PropertyName == nameof(ToolWindow.Title) && Window is { } window)
-            {
-                title.Text = window.Title;
-            }
-        }
-
-        private MenuFlyout OptionsMenu()
-        {
-            MenuFlyout menu = new();
-            MenuItem move = new() { Header = "Move to" };
-            foreach (ToolAnchor anchor in Enum.GetValues<ToolAnchor>())
-            {
-                MenuItem item = new() { Header = ToolWindow.Name(anchor), IsEnabled = Window?.Anchor != anchor };
-                item.Click += (_, _) =>
-                {
-                    if (Window is { } window)
-                    {
-                        host.Move(window, anchor);
-                    }
-                };
-                move.Items.Add(item);
-            }
-            MenuItem mode = new() { Header = "View Mode" };
-            foreach ((ToolMode each, string name) in new[] { (ToolMode.Docked, "Dock"), (ToolMode.Floating, "Float"), (ToolMode.Windowed, "Window") })
-            {
-                MenuItem item = new() { Header = name, IsEnabled = Window?.Mode != each };
-                item.Click += (_, _) =>
-                {
-                    if (Window is { } window)
-                    {
-                        host.SetMode(window, each);
-                    }
-                };
-                mode.Items.Add(item);
-            }
-            MenuItem maximize = new() { Header = host.IsMaximized ? "Restore Size" : "Maximize", IsEnabled = Floating is null };
-            maximize.Click += (_, _) => host.ToggleMaximize(Window);
-            MenuItem hide = new() { Header = "Hide" };
-            hide.Click += (_, _) =>
-            {
-                if (Window is { } window)
-                {
-                    host.Hide(window.Id);
-                }
-            };
-            menu.Items.Add(mode);
-            menu.Items.Add(move);
-            menu.Items.Add(maximize);
-            menu.Items.Add(new Separator());
-            menu.Items.Add(hide);
-            return menu;
-        }
-
-        private static Button HeaderButton(string icon, string tip)
-        {
-            PathIcon glyph = new() { Classes = { "small" } };
-            glyph.Bind(PathIcon.DataProperty, glyph.GetResourceObservable(icon));
-            Button button = new() { Classes = { "tool" }, Content = glyph };
-            ToolTip.SetTip(button, tip);
-            return button;
-        }
-    }
-
-    /// <summary>A tool window floating over the IDE, or in a window of its own: its header and content, closed when
-    /// the tool window is hidden, and hiding it when the person closes it.</summary>
-    private sealed class FloatWindow : Window
-    {
-        private readonly DockHost host;
-        private readonly ToolWindow window;
-        private bool closingQuietly;
-
-        public FloatWindow(DockHost host, ToolWindow window)
-        {
-            this.host = host;
-            this.window = window;
-            Title = window.Title;
-            ShowInTaskbar = window.Mode == ToolMode.Windowed;
-            ToolPane pane = new(host) { Floating = this };
-            pane.Show(window);
-            Content = pane;
-            this.Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Chrome"));
-            if (window.WindowBounds is { } kept && OnScreen(kept) is { } at)
-            {
-                WindowStartupLocation = WindowStartupLocation.Manual;
-                Position = at.Position;
-                (Width, Height) = (at.Size.Width, at.Size.Height);
-            }
-            else
-            {
-                // Never placed, or placed on a screen no longer there (one unplugged): over the IDE.
-                WindowStartupLocation = WindowStartupLocation.CenterOwner;
-                Screen? ide = (TopLevel.GetTopLevel(host) is null ? null : Screens.ScreenFromVisual(host)) ?? Screens.Primary;
-                Size size = Fitted(window.WindowBounds is { } was ? new Size(was.Width, was.Height) : new Size(520, 420), ide);
-                (Width, Height) = (size.Width, size.Height);
-            }
-            Closed += (_, _) =>
-            {
-                if (!closingQuietly)
-                {
-                    host.FloatClosed(window, this);
-                }
-                // The tool window outlives this window: the pane lets it go, or it holds this window's whole tree.
-                pane.Show(null);
-            };
-        }
-
-        /// <summary>Where it stands: its position in screen pixels, its size in its own units.</summary>
-        public PixelRect Placement => new(Position.X, Position.Y, (int)Bounds.Width, (int)Bounds.Height);
-
-        public ToolWindow ToolWindow => window;
-
-        public DockHost Host => host;
-
-        public void CloseQuietly()
-        {
-            closingQuietly = true;
-            Close();
-        }
-
-        /// <summary>Where a kept window opens again: moved and shrunk into the working area of the screen it stood on
-        /// most, as IntelliJ fits a window to its screen; null when none of it stood on a screen there is now.</summary>
-        private (PixelPoint Position, Size Size)? OnScreen(PixelRect kept)
-        {
-            Screen? on = null;
-            long most = 0;
-            foreach (Screen screen in Screens.All)
-            {
-                PixelRect shown = new PixelRect(kept.X, kept.Y, (int)(kept.Width * screen.Scaling), (int)(kept.Height * screen.Scaling)).Intersect(screen.WorkingArea);
-                if ((long)shown.Width * shown.Height > most)
-                {
-                    (on, most) = (screen, (long)shown.Width * shown.Height);
-                }
-            }
-            if (on is null)
-            {
-                return null;
-            }
-            Size size = Fitted(new Size(kept.Width, kept.Height), on);
-            PixelRect area = on.WorkingArea;
-            int x = Math.Clamp(kept.X, area.X, Math.Max(area.X, area.Right - (int)Math.Ceiling(size.Width * on.Scaling)));
-            int y = Math.Clamp(kept.Y, area.Y, Math.Max(area.Y, area.Bottom - (int)Math.Ceiling(size.Height * on.Scaling)));
-            return (new PixelPoint(x, y), size);
-        }
-
-        /// <summary>A size in a window's own units, no larger than a screen's working area.</summary>
-        private static Size Fitted(Size size, Screen? screen) => screen is null ? size
-            : new Size(Math.Min(size.Width, screen.WorkingArea.Width / screen.Scaling), Math.Min(size.Height, screen.WorkingArea.Height / screen.Scaling));
-    }
-
-    /// <summary>A stripe of buttons down one edge: the side's upper and lower windows at its top (a gap between
-    /// them), the bottom area's half at its foot. A button shows or hides its window, and drags it elsewhere.</summary>
-    private sealed class Stripe : Border
-    {
-        private readonly DockHost host;
-        private readonly Dictionary<ToolAnchor, StackPanel> groups;
-        private readonly ToolAnchor upper;
-        private readonly ToolAnchor lower;
-        private readonly ToolAnchor bottom;
-        private readonly Rectangle gap;
-
-        public Stripe(DockHost host, ToolAnchor upper, ToolAnchor lower, ToolAnchor bottom, Thickness border)
-        {
-            this.host = host;
-            this.upper = upper;
-            this.lower = lower;
-            this.bottom = bottom;
-            groups = new Dictionary<ToolAnchor, StackPanel>
-            {
-                [upper] = Group(),
-                [lower] = Group(),
-                [bottom] = Group(),
-            };
-            gap = new Rectangle { Height = 1, Width = 20, Margin = new Thickness(0, 6) };
-            gap.Bind(Shape.FillProperty, gap.GetResourceObservable("Passenger.Hover"));
-            StackPanel sides = new() { [DockPanel.DockProperty] = Dock.Top, Children = { groups[upper], gap, groups[lower] } };
-            groups[bottom].VerticalAlignment = VerticalAlignment.Bottom;
-            groups[bottom][DockPanel.DockProperty] = Dock.Bottom;
-            Child = new DockPanel { Margin = new Thickness(0, 6), Children = { sides, groups[bottom] } };
-            BorderThickness = border;
-            this.Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Chrome"));
-            this.Bind(BorderBrushProperty, this.GetResourceObservable("Passenger.Divider"));
-        }
-
-        public void Fill(IReadOnlyList<ToolWindow> windows)
-        {
-            foreach ((ToolAnchor anchor, StackPanel group) in groups)
-            {
-                group.Children.Clear();
-                foreach (ToolWindow window in windows.Where(w => w.Anchor == anchor).OrderBy(w => w.Order))
-                {
-                    group.Children.Add(Button(window));
-                }
-            }
-            gap.IsVisible = groups[upper].Children.Count > 0 && groups[lower].Children.Count > 0;
-        }
-
-        /// <summary>The group a point (in the stripe's coordinates) is over: the bottom group's at or below it, the
-        /// lower side group's past the upper's end, else the upper's.</summary>
-        public ToolAnchor AnchorAt(Point at)
-        {
-            Rect bottomBounds = Placed(groups[bottom]);
-            double sidesEnd = Math.Min(bottomBounds.Top, Bounds.Height - 48) - 12;
-            if (at.Y >= sidesEnd)
-            {
-                return bottom;
-            }
-            // Past the upper group's buttons is the lower group; a side with no lower buttons splits the stripe, and one with
-            // no upper buttons takes a drop above its first lower button's middle into the upper group, as Rider's do.
-            double boundary = groups[lower].Children.Count == 0 ? Math.Max(Placed(groups[upper]).Bottom + 6, sidesEnd / 2)
-                : groups[upper].Children.Count == 0 && groups[lower].Children[0] is Control first ? Placed(first).Center.Y
-                : Placed(groups[upper]).Bottom + 6;
-            return at.Y > boundary ? lower : upper;
-        }
-
-        /// <summary>Where among a group's buttons a point falls, for a drop to keep its order.</summary>
-        public int IndexAt(ToolAnchor anchor, Point at)
-        {
-            StackPanel group = groups[anchor];
-            int index = 0;
-            foreach (Control button in group.Children)
-            {
-                Point centre = button.TranslatePoint(new Point(button.Bounds.Width / 2, button.Bounds.Height / 2), this) ?? default;
-                if (at.Y > centre.Y)
-                {
-                    index++;
-                }
-            }
-            return index;
-        }
-
-        private Rect Placed(Control group) =>
-            group.TranslatePoint(default, this) is { } origin ? new Rect(origin, group.Bounds.Size) : group.Bounds;
-
-        private ToggleButton Button(ToolWindow window)
-        {
-            PathIcon glyph = new();
-            glyph.Bind(PathIcon.DataProperty, glyph.GetResourceObservable(window.Icon));
-            ToggleButton button = new() { Classes = { "stripe" }, Content = glyph, IsChecked = window.IsShown, Tag = window.Id };
-            string? keys = window.Action is { } action ? AppActions.Keymap().ShortcutsFor(action).FirstOrDefault()?.Display() : null;
-            ToolTip.SetTip(button, keys is null ? window.Title : $"{window.Title} ({keys})");
-            button.AddHandler(PointerPressedEvent, (_, e) => host.BeginDrag(window, e), RoutingStrategies.Tunnel, handledEventsToo: true);
-            button.AddHandler(PointerMovedEvent, (_, e) => host.ContinueDrag(e), RoutingStrategies.Tunnel, handledEventsToo: true);
-            button.AddHandler(PointerReleasedEvent, (_, e) =>
-            {
-                if (host.EndDrag(e))
-                {
-                    // A drag is no click: the button keeps its state, and the move has laid the stripes out again.
-                    e.Handled = true;
-                }
-            }, RoutingStrategies.Tunnel, handledEventsToo: true);
-            button.Click += (_, _) =>
-            {
-                host.Toggle(window.Id);
-                button.IsChecked = window.IsShown;
-            };
-            return button;
-        }
-
-        private static StackPanel Group() => new() { Spacing = 4, HorizontalAlignment = HorizontalAlignment.Center };
     }
 }

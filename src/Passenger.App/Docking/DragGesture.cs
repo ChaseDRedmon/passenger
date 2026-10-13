@@ -1,0 +1,76 @@
+using Avalonia;
+using Avalonia.Input;
+
+namespace Passenger.App.Docking;
+
+/// <summary>Something pressed on to be dragged to a drop place (a tool window by its stripe button or header, an editor
+/// tab): it is a drag, and no click, once the pointer has gone <see cref="Threshold"/> from the press; meanwhile the
+/// overlay lights up the place under the pointer that <paramref name="placeAt"/> gives, and the release hands the point
+/// to <paramref name="drop"/>. Points are in <paramref name="surface"/>'s coordinates, the overlay's own.</summary>
+public sealed class DragGesture<T>(Visual surface, DropOverlay overlay, Func<T, Point, (Rect Place, string? Name)?> placeAt, Action<T, Point> drop)
+{
+    public const double Threshold = 6;
+
+    private (T Item, Point Start, IInputElement? Handle, bool Dragging)? pressed;
+
+    /// <summary>A left press on what may be dragged. The handle given takes the pointer until the release; a button,
+    /// which takes it itself and is released by losing it, gives none.</summary>
+    public void Begin(T item, PointerPressedEventArgs e, IInputElement? handle = null)
+    {
+        if (!e.GetCurrentPoint(surface).Properties.IsLeftButtonPressed)
+        {
+            return;
+        }
+        pressed = (item, e.GetPosition(surface), handle, false);
+        if (handle is not null)
+        {
+            e.Pointer.Capture(handle);
+        }
+    }
+
+    /// <summary>Moves a drag on; true once it has gone far enough to be one.</summary>
+    public bool Continue(PointerEventArgs e)
+    {
+        if (pressed is not { } current)
+        {
+            return false;
+        }
+        Point at = e.GetPosition(surface);
+        Vector moved = at - current.Start;
+        if (!current.Dragging && moved.Length < Threshold)
+        {
+            return false;
+        }
+        pressed = current with { Dragging = true };
+        if (placeAt(current.Item, at) is { } place)
+        {
+            overlay.Show(place.Place, place.Name);
+        }
+        else
+        {
+            overlay.Hide();
+        }
+        return true;
+    }
+
+    /// <summary>Ends a press: dragged, what it carried is dropped where the pointer is. True when it was a drag, which a
+    /// button then takes as no click.</summary>
+    public bool End(PointerEventArgs e)
+    {
+        if (pressed is not { } current)
+        {
+            return false;
+        }
+        pressed = null;
+        overlay.Hide();
+        if (current.Dragging)
+        {
+            drop(current.Item, e.GetPosition(surface));
+        }
+        if (current.Handle is not null)
+        {
+            e.Pointer.Capture(null);
+        }
+        return current.Dragging;
+    }
+}
