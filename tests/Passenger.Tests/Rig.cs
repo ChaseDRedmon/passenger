@@ -248,7 +248,10 @@ public sealed class EditorRig
 {
     public EditorRig(string text)
     {
+        // The one document a test makes: the editor's, which the test then drives as a person does.
+#pragma warning disable RS0030
         Document = new TextDocument(text);
+#pragma warning restore RS0030
         Editor = new CodeEditor { Keymap = DefaultKeymaps.VisualStudioMac(), Document = Document };
         Window = new Window { Width = 900, Height = 700, Content = Editor };
         Window.Show();

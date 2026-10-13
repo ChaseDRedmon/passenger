@@ -26,6 +26,7 @@ What Passenger uses that others made, and under what terms.
 | NeoSmart.AsyncLock | MIT | https://github.com/neosmart/AsyncLock |
 | ZLinq | MIT | https://github.com/Cysharp/ZLinq |
 | Krafs.Publicizer (build time only) | MIT | https://github.com/krafs/Publicizer |
+| Microsoft.CodeAnalysis.BannedApiAnalyzers (the tests' build only: the entry points a test may not call) | MIT | https://github.com/dotnet/roslyn |
 
 ## SharpDbg and ICorDebugSharp
 

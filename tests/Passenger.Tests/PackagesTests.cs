@@ -17,8 +17,8 @@ namespace Passenger.Tests;
 /// <summary>The NuGet window over a folder feed, offline: a search finds a package and its versions, Install puts it in
 /// a project at the version chosen, Update moves it, Remove takes it out, each through the .NET command line and each
 /// read back from the project file. Versions are offered in SemVer 2's order and without those nuget.org has unlisted
-/// (its answers recorded), and a package's details are shown once however fast the choices change. Central package
-/// management's versions are read from Directory.Packages.props.</summary>
+/// (its answers recorded), and a package's details are shown once however fast the choices change. Under central
+/// package management a version is read from Directory.Packages.props, and an install writes its version there.</summary>
 public sealed class PackagesTests : IDisposable
 {
     private readonly string folder = TestFolders.Create("nuget-");
@@ -169,18 +169,43 @@ public sealed class PackagesTests : IDisposable
         window.Close();
     }
 
-    [Fact]
-    public void A_centrally_managed_version_is_read_from_directory_packages_props()
+    [AvaloniaFact]
+    public void Under_central_package_management_the_window_shows_the_version_set_centrally_and_an_install_puts_its_version_there()
     {
-        File.WriteAllText(Path.Combine(folder, "Directory.Packages.props"), """
+        string props = Path.Combine(folder, "Directory.Packages.props");
+        File.WriteAllText(props, """
             <Project>
               <PropertyGroup><ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally></PropertyGroup>
               <ItemGroup><PackageVersion Include="Passenger.Sample" Version="1.1.0" /></ItemGroup>
             </Project>
             """);
-        File.WriteAllText(project, "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <ItemGroup>\n    <PackageReference Include=\"Passenger.Sample\" />\n  </ItemGroup>\n</Project>\n");
-        Assert.Equal(("Passenger.Sample", "1.1.0"), Assert.Single(ProjectModel.Load(project).Packages));
+        File.WriteAllText(project, "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net11.0</TargetFramework>\n  </PropertyGroup>\n  <ItemGroup>\n    <PackageReference Include=\"Passenger.Sample\" />\n  </ItemGroup>\n</Project>\n");
+        MainWindow window = Open(new FolderFeed(feed));
+        NuGetView nuget = window.NuGet;
+        nuget.Query = "sample";
+        Task searched = nuget.RefreshAsync();
+        Ui.Landed(() => searched.IsCompleted && nuget.Selected?.IsInstalled == true, "Passenger.Sample listed as installed");
+        Assert.Equal("1.1.0", ShownVersion(nuget, "Lib"));
+
+        // Another installed goes into the project by name, its version beside the first's in Directory.Packages.props.
+        nuget.Query = "other";
+        searched = nuget.RefreshAsync();
+        Ui.Landed(() => searched.IsCompleted && nuget.Selected?.Id == "Passenger.Other" && nuget.Versions.Count == 1, "Passenger.Other and its version");
+        Button install = InstallButton(nuget, "Lib") ?? throw new Xunit.Sdk.XunitException("The NuGet window offers no Install on Lib's line");
+        install.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Ui.Landed(() => !nuget.IsBusy && ShownVersion(nuget, "Lib") == "2.0.0", "Passenger.Other installed in Lib at 2.0.0");
+        System.Xml.Linq.XElement? central = System.Xml.Linq.XDocument.Load(props).Descendants("PackageVersion").SingleOrDefault(e => (string?)e.Attribute("Include") == "Passenger.Other");
+        Assert.True((string?)central?.Attribute("Version") == "2.0.0", $"The install did not put Passenger.Other's version in Directory.Packages.props:\n{File.ReadAllText(props)}");
+        System.Xml.Linq.XElement reference = Assert.Single(System.Xml.Linq.XDocument.Load(project).Descendants("PackageReference"), e => (string?)e.Attribute("Include") == "Passenger.Other");
+        Assert.True(reference.Attribute("Version") is null, $"The install wrote a version into the project, which central package management refuses:\n{File.ReadAllText(project)}");
+        window.Close();
     }
+
+    /// <summary>The version a project's line shows for the chosen package: the one installed there, or nothing.</summary>
+    private static string? ShownVersion(NuGetView nuget, string name) => nuget.GetLogicalDescendants().OfType<StackPanel>()
+        .Where(line => line.Children.FirstOrDefault() is TextBlock { Text: { } text } && text == name)
+        .Select(line => line.Children.OfType<TextBlock>().Skip(1).FirstOrDefault()?.Text)
+        .FirstOrDefault();
 
     /// <summary>A window on a folder (the Lib project's unless given) with the NuGet window open on a feed.</summary>
     private MainWindow Open(IPackageFeed packages, string? opened = null)

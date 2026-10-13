@@ -1027,6 +1027,50 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
     }
 
     [AvaloniaFact]
+    public void A_live_template_fills_every_place_of_a_variable_at_once_tab_goes_on_and_back_and_a_caret_moved_away_ends_it()
+    {
+        MainWindow window = project.Open("Loop.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        string Text() => editor.Document.Snapshot.ToString();
+        string Selected() => editor.Document.Snapshot.GetText(editor.Selections.Primary.Start, editor.Selections.Primary.Length);
+        PlaceAfter(editor, "int total = 0;");
+        editor.Focus();
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("for");
+        Ui.Settle();
+        Ui.Press(window, "TAB");
+
+        // The loop's index is in three places, all chosen, and what is typed goes into each.
+        Assert.True(editor.IsInSnippet);
+        Assert.Equal(3, editor.Selections.Count);
+        window.KeyTextInput("row");
+        Assert.Contains("        for (int row = 0; row < length; row++)\n        {\n", Text(), StringComparison.Ordinal);
+        Ui.Press(window, "TAB");
+        Assert.Equal("length", Selected());
+        window.KeyTextInput("rows");
+        // Shift+Tab goes back to the index, its three places chosen again; Tab twice more ends it at its end.
+        Ui.Press(window, "shift TAB");
+        Assert.Equal(3, editor.Selections.Count);
+        Ui.Press(window, "TAB");
+        Ui.Press(window, "TAB");
+        Assert.False(editor.IsInSnippet);
+        string loop = "        for (int row = 0; row < rows; row++)\n        {\n            \n        }\n";
+        Assert.Contains(loop, Text(), StringComparison.Ordinal);
+        Assert.Equal(Text().IndexOf(loop, StringComparison.Ordinal) + loop.IndexOf("            \n", StringComparison.Ordinal) + 12, editor.Selections.Primary.Caret);
+
+        // Another, left by the caret moving off its variable, is over.
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("thr");
+        Ui.Settle();
+        Ui.Press(window, "TAB");
+        Assert.True(editor.IsInSnippet);
+        Ui.Press(window, "UP");
+        Assert.False(editor.IsInSnippet, "The template went on with the caret off its variables");
+        Assert.Contains("throw new InvalidOperationException();", Text(), StringComparison.Ordinal);
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void A_postfix_template_after_an_expression_and_a_dot_wraps_it_where_it_fits()
     {
         MainWindow window = project.Open("Loop.cs");

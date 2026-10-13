@@ -23,6 +23,13 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <!-- A test drives the IDE whole or a real process through its real boundary: the entry points a unit test would call
+       instead are banned (BannedSymbols.txt), which warnings as errors make a failed build. -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" PrivateAssets="all" />
+    <AdditionalFiles Include="BannedSymbols.txt" />
+  </ItemGroup>
+
   <!-- The debugger's tests: the programs they debug, built first and never linked, and the diagnostics
        client that lets a program started suspended go on. -->
   <ItemGroup>

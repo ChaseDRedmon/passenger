@@ -199,7 +199,7 @@ public sealed record ProjectModel(
         projects.Where(p => PathNames.Within(path, p.Folder)).MaxBy(p => p.Folder.Length);
 
     /// <summary>Reads a project file, its path (and those it references) as the file system names them.</summary>
-    public static ProjectModel Load(string path)
+    internal static ProjectModel Load(string path)
     {
         path = PathNames.Canonical(path);
         string name = System.IO.Path.GetFileNameWithoutExtension(path);

@@ -709,7 +709,7 @@ public sealed class TerminalView : Control
 
     /// <summary>xterm's bytes for a key that is not plain text: Enter, the arrows and the keypad's keys, the
     /// function keys, and Ctrl (or Alt, as a leading ESC) with a letter. Null for keys whose text input carries them.</summary>
-    public static string? Encode(Key key, KeyModifiers mods, bool applicationCursor)
+    private static string? Encode(Key key, KeyModifiers mods, bool applicationCursor)
     {
         bool ctrl = mods.HasFlag(KeyModifiers.Control);
         bool alt = mods.HasFlag(KeyModifiers.Alt) && !OperatingSystem.IsMacOS();

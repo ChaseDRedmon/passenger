@@ -5,7 +5,6 @@ using Avalonia.Headless.XUnit;
 using Avalonia.Input;
 using Avalonia.Input.TextInput;
 using Passenger.Editor;
-using Passenger.Languages.CSharp;
 using Passenger.Text;
 
 namespace Passenger.Tests;
@@ -186,29 +185,24 @@ public sealed class EditingBehaviourTests
     public void A_word_being_typed_keeps_its_colour_before_the_reparse_lands_and_after()
     {
         string source = "class Numbers\n{\n    int Twice(int value) => value * 2;\n}\n";
-        EditorRig rig = new(source);
-        using CSharpHighlighter highlighter = new(rig.Document);
-        rig.Editor.Highlighter = highlighter;
-        Ui.Settle();
+        (Passenger.App.MainWindow window, Passenger.Editor.CodeEditor editor) = OpenCSharp(source);
         int method = source.IndexOf("Twice", StringComparison.Ordinal);
-        Assert.Equal(Passenger.Editor.TokenKind.Method, KindAt(highlighter, rig, method));
+        Assert.Equal(Passenger.Editor.TokenKind.Method, KindAt(editor, method));
 
-        rig.PlaceCaret(method + "Twice".Length);
-        rig.Window.KeyTextInput("r");
-        Assert.Equal(Passenger.Editor.TokenKind.Method, KindAt(highlighter, rig, method + 5));
+        editor.Selections = SelectionSet.Single(method + "Twice".Length);
+        window.KeyTextInput("r");
+        Assert.Equal(Passenger.Editor.TokenKind.Method, KindAt(editor, method + 5));
         Ui.Settle();
-        Assert.Equal(Passenger.Editor.TokenKind.Method, KindAt(highlighter, rig, method + 5));
+        Assert.Equal(Passenger.Editor.TokenKind.Method, KindAt(editor, method + 5));
+        window.Close();
     }
 
     [AvaloniaFact]
     public void Brackets_take_turns_in_three_colours_by_how_deeply_they_nest_and_a_comparison_is_not_one()
     {
         const string source = "class C\n{\n    bool M(List<int> xs)\n    {\n        return Call(xs[0], 1 < 2);\n    }\n}\n";
-        EditorRig rig = new(source);
-        using CSharpHighlighter highlighter = new(rig.Document);
-        rig.Editor.Highlighter = highlighter;
-        Ui.Settle();
-        Passenger.Editor.TokenKind? At(string before) => KindAt(highlighter, rig, source.IndexOf(before, StringComparison.Ordinal) + before.Length - 1);
+        (Passenger.App.MainWindow window, Passenger.Editor.CodeEditor editor) = OpenCSharp(source);
+        Passenger.Editor.TokenKind? At(string before) => KindAt(editor, source.IndexOf(before, StringComparison.Ordinal) + before.Length - 1);
 
         Assert.Equal(Passenger.Editor.TokenKind.Brace1, At("C\n{"));
         Assert.Equal(Passenger.Editor.TokenKind.Brace2, At("M("));
@@ -219,7 +213,8 @@ public sealed class EditingBehaviourTests
         Assert.Equal(Passenger.Editor.TokenKind.Brace1, At("xs["));
         Assert.Equal(Passenger.Editor.TokenKind.Brace1, At("0]"));
         Assert.NotEqual(Passenger.Editor.TokenKind.Brace1, At("1 <"));
-        Assert.Equal(Passenger.Editor.TokenKind.Brace1, KindAt(highlighter, rig, source.LastIndexOf('}')));
+        Assert.Equal(Passenger.Editor.TokenKind.Brace1, KindAt(editor, source.LastIndexOf('}')));
+        window.Close();
     }
 
     [AvaloniaFact]
@@ -238,44 +233,6 @@ public sealed class EditingBehaviourTests
         Assert.True(selected != plain, $"The selected line is {selected} past its end, as a line with no selection is");
         Assert.True(above == plain,
             $"The line above the selection is {above} past its end, the selection's {selected}, not the editor's {plain}: the selection reaches back over the line break before it");
-    }
-
-    [AvaloniaFact]
-    public void A_template_fills_every_place_of_a_variable_at_once_and_tab_goes_on_to_the_next_then_the_end()
-    {
-        EditorRig rig = new("    \n");
-        rig.PlaceCaret(4);
-        Passenger.Editor.Snippet loop = Passenger.Editor.Snippet.Parse(
-            "for (int $INDEX$ = 0; $INDEX$ < $UPPER$; $INDEX$++)\n{\n\t$END$\n}", new Dictionary<string, string> { ["INDEX"] = "i", ["UPPER"] = "length" }, "    ", "    ");
-        rig.Editor.InsertSnippet(new TextRange(4, 0), loop);
-        Assert.True(rig.Editor.IsInSnippet);
-        Assert.Equal(3, rig.Editor.Selections.Count);
-
-        rig.Type("row");
-        Assert.StartsWith("    for (int row = 0; row < length; row++)\n    {\n", rig.Text, StringComparison.Ordinal);
-        rig.Press("TAB");
-        Assert.Equal("length", rig.Text.Substring(rig.Editor.Selections.Primary.Start, rig.Editor.Selections.Primary.Length));
-        rig.Type("rows");
-        // Shift+Tab goes back to the first variable, all its places selected again.
-        rig.Press("shift TAB");
-        Assert.Equal(3, rig.Editor.Selections.Count);
-        rig.Press("TAB");
-        rig.Press("TAB");
-        Assert.False(rig.Editor.IsInSnippet);
-        Assert.Equal("    for (int row = 0; row < rows; row++)\n    {\n        \n    }\n", rig.Text);
-        Assert.Equal(rig.Text.IndexOf("        \n", StringComparison.Ordinal) + 8, rig.Caret);
-    }
-
-    [AvaloniaFact]
-    public void A_caret_that_leaves_the_variable_ends_the_template()
-    {
-        EditorRig rig = new("");
-        rig.Editor.InsertSnippet(new TextRange(0, 0), Passenger.Editor.Snippet.Parse("int $NAME$ = $VALUE$;$END$", new Dictionary<string, string> { ["NAME"] = "x", ["VALUE"] = "0" }, "", "    "));
-        Assert.True(rig.Editor.IsInSnippet);
-        rig.PlaceCaret(0);
-        Assert.False(rig.Editor.IsInSnippet);
-        rig.Press("TAB");
-        Assert.StartsWith("    int x", rig.Text, StringComparison.Ordinal);
     }
 
     [AvaloniaFact]
@@ -379,11 +336,26 @@ public sealed class EditingBehaviourTests
         return request.Client ?? throw new InvalidOperationException("The editor gave the input method no client");
     }
 
-    private static Passenger.Editor.TokenKind? KindAt(CSharpHighlighter highlighter, EditorRig rig, int offset) =>
-        highlighter.GetSpans(rig.Document.Snapshot, offset, 1)
+    /// <summary>The colour the editor gives a character, as the window's highlighting has it now.</summary>
+    private static Passenger.Editor.TokenKind? KindAt(Passenger.Editor.CodeEditor editor, int offset) =>
+        editor.Highlighter!.GetSpans(editor.Document.Snapshot, offset, 1)
             .Where(s => s.Start <= offset && offset < s.End)
             .Cast<Passenger.Editor.SyntaxSpan?>()
             .FirstOrDefault()?.Kind;
+
+    /// <summary>A C# file opened in the window, with no project: its colours are the window's own, read from its syntax.</summary>
+    private static (Passenger.App.MainWindow Window, Passenger.Editor.CodeEditor Editor) OpenCSharp(string source)
+    {
+        string folder = TestFolders.Create("colours-");
+        File.WriteAllText(Path.Combine(folder, "Numbers.cs"), source);
+        Passenger.App.MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(folder);
+        window.OpenFile("Numbers.cs");
+        Ui.Settle();
+        window.EditorArea.CodeEditor.Focus();
+        return (window, window.EditorArea.CodeEditor);
+    }
 
     private static Point Within(EditorRig rig, Point point) =>
         rig.Editor.TranslatePoint(point, rig.Window) ?? throw new InvalidOperationException("The editor is not in the window.");

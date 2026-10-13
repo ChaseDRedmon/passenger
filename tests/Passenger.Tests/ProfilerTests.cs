@@ -1,157 +1,54 @@
-using System.Diagnostics;
 using Avalonia.Headless.XUnit;
 using Passenger.App;
 using Passenger.Profiler;
-using Passenger.Tests.Debugging.Helpers;
 
 namespace Passenger.Tests;
 
-/// <summary>The profiler as dotTrace's sampling: a program started under it is caught from its first instruction to
-/// its end, its busy method leads the hot spots and sits under its caller in the call tree, and a .NET program it
-/// starts runs free rather than held at the profiler's port.</summary>
+/// <summary>The profiler as dotTrace's sampling, from the window: a configuration profiled is caught from its first
+/// instruction to its end, its busy method on the main thread's hot path, its allocations and collections listed, and a
+/// .NET program it starts runs free rather than held at the profiler's port; one that never reaches the profiler is said
+/// to, and a running one's heap is counted by type.</summary>
 public sealed class ProfilerTests : IDisposable
 {
     private readonly string folder = TestFolders.Create("profile-");
 
     public void Dispose() => TestFolders.Delete(folder);
 
-    [Fact]
-    public async Task A_program_profiled_from_its_start_shows_its_busy_method_and_starts_children_freely()
-    {
-        System.Text.StringBuilder output = new();
-        string program = Debuggees.Program("PassengerCases");
-        // The GC sizes gen0 from the machine's largest cache, which on CI's Windows runner outgrows the 60 MB Busy allocates.
-        Dictionary<string, string> youngCollections = new() { ["DOTNET_GCgen0size"] = "0x400000" };
-        ProfileTarget target = new(Passenger.Core.Dotnet.Host(), [program, "busy"], Path.GetDirectoryName(program)!, youngCollections);
-        await using ProfilingSession run = await ProfilingSession.StartAsync(target, folder, (text, _) =>
-        {
-            lock (output)
-            {
-                output.Append(text);
-            }
-        }, TestContext.Current.CancellationToken);
-        Snapshot snapshot = await run.WaitForExitAsync(TestContext.Current.CancellationToken).WaitAsync(TimeSpan.FromMinutes(2), TestContext.Current.CancellationToken);
-
-        await run.ExitedAsync();
-        lock (output)
-        {
-            string[] lines = output.ToString().ReplaceLineEndings("\n").Split('\n');
-            Assert.Contains("spun True", lines);
-            Assert.Contains("child said: child ran", lines);
-        }
-        // In the main thread's tree, Spin is called from the program's entry point, on its stack for about the 800 ms it
-        // spins: in time, since a loaded machine or a background process (whose timers macOS coalesces) gets a sample
-        // each few milliseconds rather than each one. A sample lands where the loop can be stopped, its call to the
-        // clock, so most of them are below Spin rather than in it.
-        CallNode? spin = Find(snapshot.Threads, n => n.Name.Contains("Busy.Spin", StringComparison.Ordinal));
-        Assert.NotNull(spin);
-        Assert.Contains("Main", spin.Parent!.Name, StringComparison.Ordinal);
-        Assert.True(spin.Total >= 5, $"only {spin.Total} samples of Spin, one each {snapshot.SampleMs:0.0} ms");
-        Assert.InRange(snapshot.Milliseconds(spin.Total), 400, 1200);
-        Assert.Contains(spin.Children, c => c.Name.Contains("Stopwatch", StringComparison.Ordinal));
-        Assert.True(File.Exists(snapshot.TracePath));
-
-        // The arrays it allocated lead the allocations, Allocate first in their back traces, and young collections ran.
-        AllocatedType arrays = snapshot.Allocations[0];
-        Assert.Equal("System.Byte[]", arrays.Name);
-        Assert.InRange(arrays.Bytes, 30_000_000, 120_000_000);
-        Assert.Contains("Busy.Allocate", arrays.BackTraces.Ordered[0].Name, StringComparison.Ordinal);
-        Assert.Contains(snapshot.Collections, c => c.Generation == 0);
-        Assert.All(snapshot.Collections, c => Assert.True(c.PauseMs >= 0));
-
-        // The stretch Spin ran is Spin's: narrowed to it, the run has no allocating, and the timeline's busiest row is
-        // the main thread.
-        (double From, double To) spun = snapshot.Span("Busy.Spin") ?? throw new InvalidOperationException("Spin never ran");
-        Assert.InRange(spun.To - spun.From, 500, 1200);
-        Snapshot spinning = snapshot.Within(spun.From, spun.To);
-        Assert.Same(snapshot, spinning.Whole);
-        Assert.NotNull(Find(spinning.Threads, n => n.Name.Contains("Busy.Spin", StringComparison.Ordinal)));
-        Assert.Null(Find(spinning.Threads, n => n.Name.Contains("Busy.Allocate", StringComparison.Ordinal)));
-        Assert.True(spinning.Samples < snapshot.Samples);
-        Assert.StartsWith("Main thread", snapshot.Timeline[0].Name, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task Profiling_a_program_that_ends_before_it_reaches_the_profiler_says_it_never_did()
-    {
-        // Not .NET, and gone at once: it never connects to the profiler's port, which is not waited on once it has ended.
-        ProfileTarget target = OperatingSystem.IsWindows()
-            ? new("cmd.exe", ["/c", "exit 3"], folder, new Dictionary<string, string>())
-            : new("/bin/sh", ["-c", "exit 3"], folder, new Dictionary<string, string>());
-        IReadOnlyList<string> before = Ports();
-        Stopwatch clock = Stopwatch.StartNew();
-
-        ProfilingException failed = await Assert.ThrowsAsync<ProfilingException>(() => ProfilingSession.StartAsync(target, folder, cancellation: TestContext.Current.CancellationToken));
-        Assert.Contains("never reached the profiler: it ended first, with exit code 3", failed.Message, StringComparison.Ordinal);
-        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(20), $"the profiler waited {clock.Elapsed.TotalSeconds:0} s for a program that had ended");
-        Assert.Equal(before, Ports());
-    }
-
-    [Fact]
-    public async Task A_program_that_cannot_start_is_not_profiled_and_leaves_no_port_listening()
-    {
-        // There, but no program: Unix will not run a file it may not execute, nor Windows text named .exe.
-        string notAProgram = Path.Combine(folder, OperatingSystem.IsWindows() ? "not-a-program.exe" : "not-a-program");
-        File.WriteAllText(notAProgram, "just text\n");
-        ProfileTarget target = new(notAProgram, [], folder, new Dictionary<string, string>());
-        IReadOnlyList<string> before = Ports();
-
-        ProfilingException failed = await Assert.ThrowsAsync<ProfilingException>(() => ProfilingSession.StartAsync(target, folder, cancellation: TestContext.Current.CancellationToken));
-        Assert.StartsWith("Could not start not-a-program", failed.Message, StringComparison.Ordinal);
-        // The port it was to reach is closed with it: no listener left waiting, nor its socket in /tmp.
-        Assert.Equal(before, Ports());
-    }
-
-    [Fact]
-    public async Task A_memory_snapshot_of_a_running_program_counts_its_heap_by_type()
-    {
-        string program = Debuggees.Program("ReadsInputConsoleApp");
-        ProfileTarget target = new(Passenger.Core.Dotnet.Host(), [program], Path.GetDirectoryName(program)!, new Dictionary<string, string>());
-        await using ProfilingSession run = await ProfilingSession.StartAsync(target, folder, cancellation: TestContext.Current.CancellationToken);
-        Task<MemorySnapshot>? taking = null;
-        try
-        {
-            // It waits on its input, so it is still there to be looked at.
-            await Task.Delay(500, TestContext.Current.CancellationToken);
-            // Bounded, so a createdump that never finishes (CI's macOS runner was left with one) fails this test rather
-            // than holding the whole run until it is stopped as hung.
-            taking = run.TakeMemorySnapshotAsync(TestContext.Current.CancellationToken);
-            if (await Task.WhenAny(taking, Task.Delay(TimeSpan.FromMinutes(2), TestContext.Current.CancellationToken)) != taking)
-            {
-                string createdump = NativeStacks.ChildNamed(run.ProcessId, "createdump") is int dumper
-                    ? NativeStacks.Describe("createdump's threads", dumper, "createdump")
-                    : "\nNo createdump was running under the program.";
-                Assert.Fail($"the runtime's createdump had not written the program's heap after 2 minutes.{createdump}");
-            }
-            MemorySnapshot heap = await taking;
-            HeapType strings = Assert.Single(heap.Types, t => t.Name == "System.String");
-            Assert.True(strings.Count > 10, $"{strings.Count} strings");
-            Assert.Equal(heap.Bytes, heap.Types.Sum(t => t.Bytes));
-            Assert.True(heap.Objects > 100);
-            Assert.False(run.HasExited);
-        }
-        finally
-        {
-            run.Kill();
-            // A dump given up on fails with its program; observed, so the window test beside this one is not failed for it.
-            _ = taking?.ContinueWith(dump => dump.Exception, TaskScheduler.Default);
-        }
-    }
-
     [AvaloniaFact]
     public void Profile_builds_and_runs_the_configuration_and_its_end_shows_the_snapshot()
     {
-        // Twenty threads: the main one spins, the others wait for it all along.
+        // Twenty threads: the main one spins, the others wait for it all along. Then 60 MB of short-lived arrays, and a
+        // .NET program of its own, which would wait for ever at the profiler's port if it took it from its parent.
         string project = Project("Spinner", """
             using System.Diagnostics;
+            if (args is ["child"])
+            {
+                Console.WriteLine("child ran");
+                return;
+            }
             using ManualResetEventSlim spun = new();
             Thread[] waiting = [.. Enumerable.Range(0, 19).Select(i => new Thread(() => Work.Wait(spun)))];
             foreach (Thread thread in waiting) { thread.Start(); }
             Console.WriteLine($"spun {Work.Spin(TimeSpan.FromMilliseconds(1000)) > 0}");
             spun.Set();
             foreach (Thread thread in waiting) { thread.Join(); }
+            Console.WriteLine($"allocated {Work.Allocate(60_000)}");
+            using Process child = Process.Start(new ProcessStartInfo(Environment.ProcessPath!, [typeof(Work).Assembly.Location, "child"]) { RedirectStandardOutput = true })!;
+            Console.WriteLine($"child said: {(child.WaitForExit(15000) ? child.StandardOutput.ReadToEnd().Trim() : "nothing, held at its start")}");
             static class Work
             {
+                public static long Allocate(int count)
+                {
+                    long made = 0;
+                    for (int i = 0; i < count; i++)
+                    {
+                        byte[] block = new byte[1024];
+                        block[i % 1024] = 1;
+                        made += block.Length;
+                    }
+                    return made;
+                }
+
                 public static double Spin(TimeSpan time)
                 {
                     Stopwatch clock = Stopwatch.StartNew();
@@ -167,6 +64,10 @@ public sealed class ProfilerTests : IDisposable
                 public static void Wait(ManualResetEventSlim until) => until.Wait();
             }
             """);
+        // The GC sizes its youngest generation from the machine's largest cache, which on CI's Windows outgrows the 60 MB.
+        Directory.CreateDirectory(Path.Combine(project, "Properties"));
+        File.WriteAllText(Path.Combine(project, "Properties", "launchSettings.json"),
+            "{ \"profiles\": { \"Young\": { \"commandName\": \"Project\", \"environmentVariables\": { \"DOTNET_GCgen0size\": \"0x400000\" } } } }");
         string settings = TestFolders.Create("settings-");
         MainWindow window = new() { Width = 1200, Height = 800, StateFolder = settings };
         window.Show();
@@ -197,7 +98,15 @@ public sealed class ProfilerTests : IDisposable
         // The hot path is open down the main thread: Spin is listed without a click.
         Assert.Contains(view.Rows, r => r.Node.Name.StartsWith("Work.Spin", StringComparison.Ordinal));
         Assert.StartsWith("Spinner-", Path.GetFileName(snapshot.TracePath), StringComparison.Ordinal);
-        Assert.Contains("spun True", window.BottomPanel.Run.Document.Snapshot.ToString(), StringComparison.Ordinal);
+        string console = window.BottomPanel.Run.Document.Snapshot.ToString();
+        Assert.Contains("spun True", console, StringComparison.Ordinal);
+        Assert.Contains("child said: child ran", console, StringComparison.Ordinal);
+
+        // The arrays lead the Allocations page, Allocate first in their back traces, and the GC page has young collections.
+        Assert.Equal("System.Byte[]", view.Types[0].Name);
+        Assert.InRange(view.Types[0].Bytes, 30_000_000, 120_000_000);
+        Assert.Contains(view.BackTraces, r => r.Node.Name.StartsWith("Work.Allocate", StringComparison.Ordinal));
+        Assert.Contains("of generation 0", view.CollectionsSummary, StringComparison.Ordinal);
 
         // What the run holds grows with where its threads were caught, not with how often: each stack is kept once,
         // and a waiting thread's samples, all at one stack, as a handful of runs.
@@ -252,6 +161,58 @@ public sealed class ProfilerTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void A_configuration_that_ends_before_it_reaches_the_profiler_is_said_to_and_leaves_no_port_listening()
+    {
+        // Built, then its runtime's settings taken away: the .NET host ends at once, before any runtime starts to reach
+        // the profiler's port, as a program that is not .NET does.
+        string project = Project("Spinner", "Console.WriteLine(\"ran\");\n",
+            "<Target Name=\"Unrunnable\" AfterTargets=\"Build\" Condition=\"'$(DesignTimeBuild)' != 'true'\"><Delete Files=\"$(TargetDir)$(TargetName).runtimeconfig.json\" /></Target>");
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(project);
+        Ui.Settle();
+        IReadOnlyList<string> before = Ports();
+
+        Task<string?> started = window.ProfileAsync();
+        Ui.WaitFor(() => started.IsCompleted, "the build and the start", TimeSpan.FromMinutes(3));
+        Assert.StartsWith("Spinner never reached the profiler: it ended first, with exit code ", started.Result, StringComparison.Ordinal);
+        Assert.Null(window.Profiling);
+        Assert.Equal(started.Result, window.ProfilerView.Status);
+        Assert.Equal(before, Ports());
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_memory_snapshot_of_a_program_being_profiled_counts_its_heap_by_type_and_it_runs_on()
+    {
+        string project = Project("Spinner", "Console.WriteLine(\"waiting\");\nConsole.WriteLine($\"read {Console.ReadLine()}\");\n");
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(project);
+        Ui.Settle();
+        Task<string?> started = window.ProfileAsync();
+        Ui.WaitFor(() => started.IsCompleted, "the build and the start", TimeSpan.FromMinutes(3));
+        Assert.Null(started.Result);
+        Passenger.App.Profiling.ProfilerView view = window.ProfilerView;
+        Ui.PumpUntil(() => window.BottomPanel.Run.Document.Snapshot.ToString().Contains("waiting", StringComparison.Ordinal), "the program to wait on its input");
+
+        // Get Memory Snapshot while it waits: the heap by type on the Memory page, the program still there.
+        Avalonia.Controls.Button take = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(view).OfType<Avalonia.Controls.Button>()
+            .Single(b => b.Content as string == "Get Memory Snapshot");
+        take.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+        // Bounded, so a createdump that never finishes (CI's macOS runner was left with one) fails here, not the run.
+        Ui.WaitFor(() => view.Memory is not null || window.Status?.StartsWith("No memory snapshot", StringComparison.Ordinal) == true,
+            "the memory snapshot", TimeSpan.FromMinutes(2));
+        Assert.True(view.Memory is not null, window.Status);
+        HeapType strings = Assert.Single(view.HeapTypes, t => t.Name == "System.String");
+        Assert.True(strings.Count > 10, $"{strings.Count} strings");
+        Assert.Equal(view.Memory.Bytes, view.HeapTypes.Sum(t => t.Bytes));
+        Assert.True(window.Profiling is { HasExited: false }, "The program being profiled ended with its memory snapshot");
+        window.Profiling.Kill();
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Profiling_a_configuration_whose_working_folder_is_gone_says_why_in_the_profiler_window()
     {
         string project = Project("Spinner", "Console.WriteLine(\"ran\");\n");
@@ -277,13 +238,14 @@ public sealed class ProfilerTests : IDisposable
         window.Close();
     }
 
-    /// <summary>A console project restored in the tests' folder, with this as its Program.cs.</summary>
-    private string Project(string name, string program)
+    /// <summary>A console project restored in the tests' folder, with this as its Program.cs and anything more its project
+    /// file is to hold.</summary>
+    private string Project(string name, string program, string more = "")
     {
         string project = Path.Combine(folder, name);
         Directory.CreateDirectory(project);
         File.WriteAllText(Path.Combine(project, $"{name}.csproj"),
-            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
+            $"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n  {more}\n</Project>\n");
         File.WriteAllText(Path.Combine(project, "Program.cs"), program);
         Restore.Run(project);
         return project;

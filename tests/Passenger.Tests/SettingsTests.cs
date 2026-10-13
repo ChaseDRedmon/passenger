@@ -98,7 +98,9 @@ public sealed class SettingsTests : IDisposable
 
             Ui.Press(window, mine);
             Assert.Equal(2, window.EditorArea.Groups.Count);
-            Assert.Equal(AppActions.SplitDown, AppActions.Keymap().ActionFor(Passenger.Editor.Shortcut.Parse(saveAll)));
+            // Save All's old keys split down now.
+            Ui.Press(window, saveAll);
+            Assert.True(window.EditorArea.Groups.Count == 3, "Save All's old keys, given to Split Down, split nothing");
         }
         finally
         {

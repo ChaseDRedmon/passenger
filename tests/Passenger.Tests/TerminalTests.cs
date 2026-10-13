@@ -13,141 +13,132 @@ using Passenger.Terminal;
 
 namespace Passenger.Tests;
 
-/// <summary>The terminal as programs use it: the screen reads xterm's sequences as xterm does (wrapping, scroll regions,
-/// the alternate screen, colours, wide characters, answers to a program's questions, resizing into the scrollback),
-/// and the Terminal window runs a real shell in a pseudo-terminal that takes typed commands and keys ahead of the IDE,
-/// whose floods of output and stuck pastes never hold the window, and whose pastes stay text; accents and emoji take
-/// the columns the shell counts, lines reflow as it resizes, and a place or a selection holds as output streams.</summary>
+/// <summary>The Terminal window as programs use it: a real shell in a pseudo-terminal, read as xterm is (scroll regions, the
+/// alternate screen, colours, wide characters, answers to a program's questions, the scrollback), keys sent as xterm sends
+/// them, typed commands and keys taken ahead of the IDE; floods of output and stuck pastes never hold the window, pastes
+/// stay text, accents and emoji take the columns the shell counts, lines reflow as it resizes, and a place or a selection
+/// holds as output streams.</summary>
 public sealed class TerminalTests
 {
-    [Fact]
-    public void Text_wraps_at_the_edge_and_scrolls_into_the_scrollback()
+    [AvaloniaFact]
+    public void What_a_full_screen_program_draws_lands_where_it_puts_it_and_the_shells_screen_comes_back_after()
     {
-        TerminalScreen screen = new(10, 3);
-        screen.Feed("abcdefghijKLM\r\n");
-        Assert.Equal("abcdefghij\nKLM\n", screen.ScreenText());
-        Assert.True(screen.Lines[0].Wrapped);
-        for (int i = 0; i < 5; i++)
+        if (OperatingSystem.IsWindows())
         {
-            screen.Feed($"line {i}\r\n");
+            // sh's printf writes the bytes.
+            return;
         }
-        Assert.Equal(["abcdefghij", "KLM", "line 0", "line 1", "line 2"], screen.Scrollback.Select(l => l.Text()));
-        Assert.Equal("line 3\nline 4\n", screen.ScreenText());
-        Assert.Equal((2, 0), (screen.CursorRow, screen.CursorColumn));
+        (MainWindow window, TerminalSession shell) = Open(TestFolders.Create("terminal-"), "/bin/sh");
+        TerminalScreen screen = shell.Screen;
+        // Room for the program's twelve rows and the line it leaves the cursor on: the terminal given the frame.
+        window.Perform(AppActions.MaximizeToolWindow);
+        WaitForScreen(window, shell, s => s.Rows >= 13, "the terminal to take the frame");
+        Run(window, "echo before");
+        WaitForLine(shell, "before", "the line before the program");
+
+        // As vim or less draw: the alternate screen, the cursor moved about, rows erased in part and whole, a scroll
+        // region that moves only its own rows, colours in each of xterm's forms, and a wide character at the right edge.
+        string draw = "printf '\\033[?1049h\\033[H\\033[2J"
+            + "1111111111\\r\\n2222222222\\r\\n3333333333\\r\\n4444444444\\033[2;3H\\033[K\\033[3;5H\\033[1K\\033[4;1H\\033[2K!"
+            + "\\033[5;1Htop\\r\\na\\r\\nb\\r\\nc\\r\\nbottom\\033[6;8r\\033[8;1H\\nd\\033[r"
+            + "\\033[10;1H\\033[1;31mA\\033[38;5;208mB\\033[38;2;10;20;30mC\\033[38:2::40:50:60mD\\033[0;44mE\\033[0mF"
+            + $"\\033[11;{screen.Columns - 3}Habcd\\346\\274\\242'; read x; printf '\\033[?1049l'";
+        Run(window, draw);
+        WaitForScreen(window, shell, s => s.IsAlternate && s.Lines[11].Cells[0].Rune == '漢', "the program to draw its screen");
+        Assert.Equal(["1111111111", "22", "     33333", "!"], screen.Lines[..4].Select(l => l.Text()));
+        Assert.True(screen.Lines[4..9].Select(l => l.Text()).SequenceEqual(["top", "b", "c", "d", "bottom"]),
+            $"a line fed at the foot of a scroll region over rows 6 to 8 moved rows outside it:\n{Screen(shell)}");
+        Cell[] colours = screen.Lines[9].Cells;
+        Assert.Equal((1, CellFlags.Bold), (colours[0].Style.Fore, colours[0].Style.Flags));
+        Assert.Equal(208, colours[1].Style.Fore);
+        Assert.Equal(CellStyle.FromRgb(10, 20, 30), colours[2].Style.Fore);
+        Assert.Equal(CellStyle.FromRgb(40, 50, 60), colours[3].Style.Fore);
+        Assert.Equal((CellStyle.Default, 4), (colours[4].Style.Fore, colours[4].Style.Back));
+        Assert.Equal(CellStyle.Plain, colours[5].Style);
+        Assert.True(screen.Lines[10].Text().EndsWith("abcd", StringComparison.Ordinal) && screen.Lines[10].Wrapped,
+            $"abcd at the right edge reads \"{screen.Lines[10].Text()}\"");
+        Assert.True((screen.Lines[11].Cells[0].Width, screen.Lines[11].Cells[1].Width) == (2, 0),
+            "the wide character at the edge was split across the rows rather than taken whole to the next");
+
+        // Its end gives the shell's screen back as it was, the prompt where the program left it.
+        Ui.Press(window, "ENTER");
+        WaitForScreen(window, shell, s => !s.IsAlternate && s.CursorColumn > 0 && s.Lines[s.CursorRow].Text().Trim().Length > 0, "the shell's screen back with its prompt");
+        Assert.Contains("before", Lines(screen));
+        Assert.Contains(Lines(screen), l => l.EndsWith("printf '\\033[?1049l'", StringComparison.Ordinal));
+        Assert.DoesNotContain(Lines(screen), l => l is "1111111111" or "     33333" or "bottom");
+        window.Close();
     }
 
-    [Fact]
-    public void Clear_buffer_leaves_only_the_prompt_at_the_top()
+    [AvaloniaFact]
+    public void A_programs_questions_about_the_terminal_are_answered()
     {
-        TerminalScreen screen = new(20, 3);
-        for (int i = 0; i < 6; i++)
+        if (OperatingSystem.IsWindows())
         {
-            screen.Feed($"output {i}\r\n");
+            // bash reads the answers.
+            return;
         }
-        screen.Feed("$ ls");
-        Assert.NotEmpty(screen.Scrollback);
-        screen.ClearBuffer();
+        (MainWindow window, TerminalSession shell) = Open(TestFolders.Create("terminal-"), "/bin/bash");
+        // Where the cursor is, as a program asks before drawing (.NET's Console.GetCursorPosition among them), and what
+        // the terminal is, each answer read back by the program from its input.
+        Run(window, "stty -echo; printf '\\033[5;10H\\033[6n'; IFS= read -r -d R at; printf '\\033[c'; IFS= read -r -d c is; stty echo; "
+            + "echo; echo \"at ${at#??} is ${is#??}\"");
+        WaitForLine(shell, "at 5;10 is ?62;22", "the program's answers");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Keys_reach_a_program_as_xterm_sends_them_in_either_cursor_mode()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            // sh and cat -v are Unix's.
+            return;
+        }
+        (MainWindow window, TerminalSession shell) = Open(TestFolders.Create("terminal-"), "/bin/sh");
+        Run(window, "cat -v");
+        WaitForScreen(window, shell, s => s.CursorColumn == 0, "cat to wait for its input");
+        foreach (string key in (string[])["UP", "control RIGHT", "DELETE", "shift TAB", "ENTER"])
+        {
+            Ui.Press(window, key);
+        }
+        // Twice: as the terminal echoes what was typed, and as cat read it.
+        WaitForScreen(window, shell, s => s.Lines.Count(l => l.Text() == "^[[A^[[1;5C^[[3~^[[Z") == 2, "the keys as cat read them");
+        Ui.Press(window, "control C");
+        WaitForScreen(window, shell, s => s.CursorColumn > 0, "the prompt after cat");
+
+        // A program that asks for the application cursor keys, as less and vim do, gets them.
+        Run(window, "printf '\\033[?1h'; cat -v");
+        WaitForScreen(window, shell, s => s.ApplicationCursorKeys && s.CursorColumn == 0, "cat to wait in the application cursor mode");
+        Ui.Press(window, "UP");
+        Ui.Press(window, "ENTER");
+        WaitForScreen(window, shell, s => s.Lines.Count(l => l.Text() == "^[OA") == 2, "Up as cat read it in the application cursor mode");
+        Ui.Press(window, "control C");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Output_past_the_screen_goes_to_the_scrollback_and_clear_buffer_leaves_only_the_prompt_at_the_top()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            // sh and seq are Unix's.
+            return;
+        }
+        (MainWindow window, TerminalSession shell) = Open(TestFolders.Create("terminal-"), "/bin/sh");
+        TerminalScreen screen = shell.Screen;
+        Run(window, $"printf '%0{screen.Columns + 5}d\\n' 7; seq 1 200");
+        WaitForLine(shell, "200", "seq's lines");
+        Assert.True(screen.Scrollback.Count > 0 && screen.LineAt(screen.FirstLine).Text() != "1",
+            $"seq's first lines left nothing in the scrollback: it holds {screen.Scrollback.Count}");
+        Assert.Contains(new string('0', screen.Columns + 4) + "7", Lines(screen));
+
+        Ui.ChooseFromMenu(window.TerminalPanel.View, "Clear Buffer");
         Assert.Empty(screen.Scrollback);
-        Assert.Equal("$ ls\n\n", screen.ScreenText());
-        Assert.Equal((0, 4), (screen.CursorRow, screen.CursorColumn));
-    }
-
-    [Fact]
-    public void Cursor_addressing_and_erasing_work_as_a_full_screen_program_uses_them()
-    {
-        TerminalScreen screen = new(10, 4);
-        screen.Feed("1111111111\r\n2222222222\r\n3333333333\r\n4444444444");
-        screen.Feed("\x1b[2;3H\x1b[K");
-        screen.Feed("\x1b[3;5H\x1b[1K");
-        screen.Feed("\x1b[4;1H\x1b[2K!");
-        Assert.Equal("1111111111\n22\n     33333\n!", screen.ScreenText());
-        screen.Feed("\x1b[1;1H\x1b[J");
-        Assert.Equal(string.Empty, screen.ScreenText().Trim('\n'));
-    }
-
-    [Fact]
-    public void A_scroll_region_scrolls_only_its_own_rows()
-    {
-        TerminalScreen screen = new(8, 5);
-        screen.Feed("top\r\na\r\nb\r\nc\r\nbottom");
-        // Rows 2 to 4 scroll; the top and bottom rows stay where they are, and nothing reaches the scrollback.
-        screen.Feed("\x1b[2;4r\x1b[4;1H\nd");
-        Assert.Equal("top\nb\nc\nd\nbottom", screen.ScreenText());
-        Assert.Empty(screen.Scrollback);
-    }
-
-    [Fact]
-    public void The_alternate_screen_leaves_the_shells_screen_and_cursor_as_they_were()
-    {
-        TerminalScreen screen = new(20, 4);
-        screen.Feed("$ vim\r\n");
-        screen.Feed("\x1b[?1049h\x1b[H\x1b[2Jfull screen\x1b[3;3H");
-        Assert.True(screen.IsAlternate);
-        Assert.Equal("full screen\n\n\n", screen.ScreenText());
-        screen.Feed("\x1b[?1049l");
-        Assert.False(screen.IsAlternate);
-        Assert.Equal("$ vim\n\n\n", screen.ScreenText());
-        Assert.Equal((1, 0), (screen.CursorRow, screen.CursorColumn));
-    }
-
-    [Fact]
-    public void Colours_come_from_the_palette_the_256_and_24_bit_forms_alike()
-    {
-        TerminalScreen screen = new(20, 2);
-        screen.Feed("\x1b[1;31mA\x1b[38;5;208mB\x1b[38;2;10;20;30mC\x1b[38:2::40:50:60mD\x1b[0;44mE\x1b[0mF");
-        Cell[] cells = screen.Lines[0].Cells;
-        Assert.Equal((1, CellFlags.Bold), (cells[0].Style.Fore, cells[0].Style.Flags));
-        Assert.Equal(208, cells[1].Style.Fore);
-        Assert.Equal(CellStyle.FromRgb(10, 20, 30), cells[2].Style.Fore);
-        Assert.Equal(CellStyle.FromRgb(40, 50, 60), cells[3].Style.Fore);
-        Assert.Equal((CellStyle.Default, 4), (cells[4].Style.Fore, cells[4].Style.Back));
-        Assert.Equal(CellStyle.Plain, cells[5].Style);
-    }
-
-    [Fact]
-    public void A_wide_character_takes_two_columns_and_goes_to_the_next_row_rather_than_split()
-    {
-        TerminalScreen screen = new(5, 2);
-        screen.Feed("abcd漢");
-        Assert.Equal("abcd\n漢", screen.ScreenText());
-        Assert.Equal((2, 0), (screen.Lines[1].Cells[0].Width, screen.Lines[1].Cells[1].Width));
-        Assert.Equal(2, screen.CursorColumn);
-    }
-
-    [Fact]
-    public void A_programs_questions_are_answered_through_the_reply()
-    {
-        TerminalScreen screen = new(80, 24);
-        List<string> replies = [];
-        screen.Reply += replies.Add;
-        screen.Feed("\x1b[5;10H\x1b[6n\x1b[c");
-        Assert.Equal(["\x1b[5;10R", "\x1b[?62;22c"], replies);
-    }
-
-    [Fact]
-    public void Shrinking_keeps_the_cursors_line_on_screen_and_growing_brings_lines_back()
-    {
-        TerminalScreen screen = new(10, 5);
-        screen.Feed("one\r\ntwo\r\nthree\r\nfour\r\n$ ");
-        screen.Resize(10, 3);
-        Assert.Equal("three\nfour\n$", screen.ScreenText());
-        Assert.Equal(["one", "two"], screen.Scrollback.Select(l => l.Text()));
-        Assert.Equal((2, 2), (screen.CursorRow, screen.CursorColumn));
-        screen.Resize(10, 5);
-        Assert.Equal("one\ntwo\nthree\nfour\n$", screen.ScreenText());
-        Assert.Equal(4, screen.CursorRow);
-    }
-
-    [Fact]
-    public void Keys_are_sent_as_xterm_sends_them()
-    {
-        Assert.Equal("\x1b[A", TerminalView.Encode(Key.Up, KeyModifiers.None, applicationCursor: false));
-        Assert.Equal("\x1bOA", TerminalView.Encode(Key.Up, KeyModifiers.None, applicationCursor: true));
-        Assert.Equal("\x1b[1;5C", TerminalView.Encode(Key.Right, KeyModifiers.Control, applicationCursor: false));
-        Assert.Equal("\x03", TerminalView.Encode(Key.C, KeyModifiers.Control, applicationCursor: false));
-        Assert.Equal("\x1b[3~", TerminalView.Encode(Key.Delete, KeyModifiers.None, applicationCursor: false));
-        Assert.Equal("\x1b[Z", TerminalView.Encode(Key.Tab, KeyModifiers.Shift, applicationCursor: false));
-        Assert.Null(TerminalView.Encode(Key.A, KeyModifiers.None, applicationCursor: false));
+        Assert.True(screen.CursorRow == 0 && screen.Lines[0].Text().Length > 0 && screen.Lines.Skip(1).All(l => l.Text().Length == 0),
+            $"after Clear Buffer the screen is not the prompt alone at its top:\n{Screen(shell)}");
+        Run(window, "echo after");
+        WaitForLine(shell, "after", "a command run after the clear");
+        window.Close();
     }
 
     [AvaloniaFact]
@@ -480,6 +471,12 @@ public sealed class TerminalTests
                 $"the cursor is at row {screen.CursorRow}, column {screen.CursorColumn}, not after the command typed ({prompt}):\n{Screen(shell)}");
             Ui.Press(window, "ENTER");
             WaitForLine(shell, "kept", "the command typed before the resizes to run");
+
+            // A program laying itself out reads the size the terminal has, narrowed again.
+            dock.Move(dock["terminal"]!, ToolAnchor.RightTop);
+            Ui.WaitFor(() => screen.Columns < wide, "the terminal to narrow again");
+            Run(window, "stty size");
+            WaitForLine(shell, $"{screen.Rows} {screen.Columns}", $"stty to count the terminal's {screen.Rows} rows and {screen.Columns} columns");
             window.Close();
         }
         finally
@@ -593,11 +590,22 @@ public sealed class TerminalTests
     /// <summary>Waits for a line of the scrollback or screen to read just so, and gives its number.</summary>
     private static long WaitForLine(TerminalSession shell, string text, string what) => WaitForLine(shell, line => line == text, what);
 
-    /// <summary>Waits for a line of the scrollback or screen whose text passes a test, and gives the newest one's number.</summary>
+    /// <summary>Waits for a line of the scrollback or screen whose text passes a test, and gives the newest one's number; a
+    /// wait that runs out says what the terminal shows instead.</summary>
     private static long WaitForLine(TerminalSession shell, Func<string, bool> test, string what)
     {
         long found = -1;
-        Ui.WaitFor(() =>
+        try
+        {
+            Ui.WaitFor(Shown, what, TimeSpan.FromSeconds(30));
+        }
+        catch (TimeoutException waited)
+        {
+            throw new TimeoutException($"{waited.Message}. The terminal shows:\n{Screen(shell)}", waited);
+        }
+        return found;
+
+        bool Shown()
         {
             TerminalScreen screen = shell.Screen;
             for (long line = screen.ScreenTop + screen.Rows - 1; line >= screen.FirstLine; line--)
@@ -609,8 +617,7 @@ public sealed class TerminalTests
                 }
             }
             return false;
-        }, what, TimeSpan.FromSeconds(30));
-        return found;
+        }
     }
 
     /// <summary>The scrollback's and screen's text, rows joined where the text wrapped, as a copy of them reads.</summary>
