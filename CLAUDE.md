@@ -17,7 +17,8 @@ just build                 # Debug build of the solution (Passenger.slnx); warni
 just run [PATH] [args]     # run the IDE on a folder or file (--file F, --caret L:C, --theme dark|light)
 just screenshot X.png ...  # the main window drawn off-screen to a PNG, after the steps given
 just publish RID           # self-contained Release build, ReadyToRun (osx-arm64, osx-x64, win-x64, win-arm64)
-just package-mac [RID]     # Passenger.app zipped in artifacts/package (PASSENGER_SIGN_IDENTITY, PASSENGER_NOTARY_PROFILE)
+just package-mac [RID] [--dry-run]  # artifacts/package/Passenger-macos-arm64.dmg (or -x64), checked mounted; signed
+                           # with PASSENGER_SIGN_IDENTITY and notarized with PASSENGER_NOTARY_PROFILE when set, else ad hoc
 just icons                 # rewrite Theme/Icons.axaml from the list in tools/icons.py (icons from a fixed commit)
 just notices               # fail naming any package the solution or Roslyn's server carries that the notices miss
 just test [filter]         # every test, or those whose name matches
