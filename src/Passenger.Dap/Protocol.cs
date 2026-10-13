@@ -88,6 +88,10 @@ public sealed record DapBreakpoint
     public int? Id { get; init; }
     public bool Verified { get; init; }
     public string? Message { get; init; }
+
+    /// <summary>Why one is not verified: "failed" for one the debugger refused (and will not take as it is), "pending" for
+    /// one that may yet bind.</summary>
+    public string? Reason { get; init; }
     public DapSource? Source { get; init; }
     public int? Line { get; init; }
     public int? Column { get; init; }

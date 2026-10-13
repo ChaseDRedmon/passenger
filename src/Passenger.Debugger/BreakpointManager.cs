@@ -47,6 +47,9 @@ public class BreakpointManager
 
         /// <summary>A source breakpoint's request as the client made it: one made again just so keeps this breakpoint.</summary>
         public BreakpointRequest? Request { get; set; }
+
+        /// <summary>The debugger will not take it as it is (a condition or hit count it cannot read), as its message says.</summary>
+        public bool Refused { get; set; }
     }
 
     public record FunctionBreakpointBinding(
@@ -175,14 +178,12 @@ public class BreakpointManager
         }
     }
 
-    /// <summary>
-    /// Get all pending (unverified) breakpoints
-    /// </summary>
+    /// <summary>The breakpoints not yet bound that may be once their code loads: not those refused.</summary>
     public List<BreakpointInfo> GetPendingBreakpoints()
     {
         lock (_lock)
         {
-            return _breakpoints.Values.Where(bp => !bp.Verified).ToList();
+            return _breakpoints.Values.Where(bp => !bp.Verified && !bp.Refused).ToList();
         }
     }
 

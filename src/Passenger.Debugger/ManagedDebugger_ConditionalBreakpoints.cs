@@ -39,27 +39,10 @@ public partial class ManagedDebugger
         }
     }
 
-    private static bool EvaluateHitCondition(int hitCount, string hitCondition)
-    {
-        // Support common hit count formats:
-        // "10" or "==10" - break when hit count equals 10
-        // ">=10" - break when hit count is >= 10
-        // ">10" - break when hit count is > 10
-        // "%10" - break every 10th hit (modulo)
-
-        hitCondition = hitCondition.Trim();
-        ReadOnlySpan<char> hitConditionSpan = hitCondition.AsSpan();
-        return hitConditionSpan switch
-        {
-            ['>', '=', ..] => int.TryParse(hitConditionSpan[2..], out int threshold) && hitCount >= threshold,
-            ['>', ..] => int.TryParse(hitConditionSpan[1..], out int threshold) && hitCount > threshold,
-            ['<', '=', ..] => int.TryParse(hitConditionSpan[2..], out int threshold) && hitCount <= threshold,
-            ['<', ..] => int.TryParse(hitConditionSpan[1..], out int threshold) && hitCount < threshold,
-            ['%', ..] => int.TryParse(hitConditionSpan[1..], out int modulo) && modulo > 0 && hitCount % modulo == 0,
-            ['=', '=', ..] => int.TryParse(hitConditionSpan[2..], out int target) && hitCount == target,
-            _ => int.TryParse(hitConditionSpan, out int target) && hitCount == target // Plain number means break when hit count = number
-        };
-    }
+    /// <summary>Whether a breakpoint stops on this hit of it. One whose hit count cannot be read was refused when set, so
+    /// it is never bound to be hit.</summary>
+    private static bool EvaluateHitCondition(int hitCount, string hitCondition) =>
+        Passenger.Dap.HitCondition.TryParse(hitCondition, out Passenger.Dap.HitCondition condition, out _) && condition.IsMet(hitCount);
 
     /// <summary>
     /// Check if a debug value is truthy (true, non-zero, non-null)

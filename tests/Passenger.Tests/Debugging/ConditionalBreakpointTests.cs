@@ -136,8 +136,12 @@ public class ConditionalBreakpointTests(ITestOutputHelper testOutputHelper)
         Assert.Equal(22, stopInfo.line);
     }
 
-    [Fact]
-    public async Task HitCondition_EqualsN_StopsOnNthHit()
+    /// <summary>Equal to, as Rider's mode writes it, as a number alone, and as Visual Studio's "=".</summary>
+    [Theory]
+    [InlineData("==2")]
+    [InlineData("2")]
+    [InlineData("= 2")]
+    public async Task HitCondition_EqualsN_StopsOnNthHit(string hitCondition)
     {
         bool startSuspended = true;
         string hitConditionFilePath = Debuggees.Source("DebuggableConsoleApp", "HitConditionClass.cs");
@@ -150,7 +154,7 @@ public class ConditionalBreakpointTests(ITestOutputHelper testOutputHelper)
             .WaitForInitializedEvent();
 
         debugProtocolHost
-            .WithBreakpointsRequest(hitConditionFilePath, [new DapSourceBreakpoint(10, HitCondition: "==2")])
+            .WithBreakpointsRequest(hitConditionFilePath, [new DapSourceBreakpoint(10, HitCondition: hitCondition)])
             .WithConfigurationDoneRequest()
             .WithOptionalResumeRuntime(p2.Id, startSuspended);
 
@@ -202,6 +206,42 @@ public class ConditionalBreakpointTests(ITestOutputHelper testOutputHelper)
         Assert.Equal(first.Breakpoints[1].Id, removed.Breakpoints[0].Id);
         Assert.Equal(first.Breakpoints[0].Id, added.Breakpoints[0].Id);
         Assert.True(added.Breakpoints[2].Verified, "the breakpoint added while paused binds");
+    }
+
+    [Theory]
+    [InlineData("3 times")]
+    [InlineData("abc")]
+    [InlineData("%0")]
+    [InlineData("==")]
+    public async Task A_hit_count_the_debugger_cannot_read_is_refused_saying_why(string hitCondition)
+    {
+        bool startSuspended = true;
+        using DebugSession host = DebugSession.ForAttach(testOutputHelper, startSuspended, out Process debuggee);
+        await host
+            .WithInitializeRequest()
+            .WithAttachRequest(debuggee.Id)
+            .WaitForInitializedEvent();
+        host
+            .WithBreakpointsRequest(Debuggees.Source("DebuggableConsoleApp", "MyClass.cs"), [new DapSourceBreakpoint(22)])
+            .WithConfigurationDoneRequest()
+            .WithOptionalResumeRuntime(debuggee.Id, startSuspended);
+        Assert.Equal(22, (await host.WaitForStoppedEvent()).ReadStopInfo().line);
+
+        // Set with the program's code loaded, where one it took would bind at once.
+        host.WithBreakpointsRequest(Debuggees.Source("DebuggableConsoleApp", "HitConditionClass.cs"),
+            [new DapSourceBreakpoint(10, HitCondition: hitCondition), new DapSourceBreakpoint(9)],
+            out SetBreakpointsResponse response);
+        DapBreakpoint refused = response.Breakpoints[0];
+        Assert.False(refused.Verified);
+        Assert.Equal("failed", refused.Reason);
+        Assert.Contains($"The hit count \"{hitCondition}\" is not one the debugger can read", refused.Message, StringComparison.Ordinal);
+        Assert.True(response.Breakpoints[1].Verified, "the breakpoint beside it binds");
+
+        // It never stops: from line 9 the program runs on round its loop to line 22.
+        Assert.Equal(9, (await host.WithContinueRequest().WaitForStoppedEvent()).ReadStopInfo().line);
+        StoppedEvent next = await host.WithContinueRequest().WaitForStoppedEvent();
+        Assert.EndsWith("MyClass.cs", next.ReadStopInfo().filePath, StringComparison.Ordinal);
+        Assert.Equal(22, next.ReadStopInfo().line);
     }
 
     /// <summary>HitConditionClass's count of its passes, where the program stopped.</summary>

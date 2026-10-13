@@ -339,7 +339,7 @@ public sealed class DebugAdapter
     {
         FunctionBreakpointRequest[] requests = [.. (arguments.Breakpoints ?? []).Select(b => new FunctionBreakpointRequest(b.Name, b.Condition, b.HitCondition, b.LogMessage))];
         List<BreakpointManager.BreakpointInfo> breakpoints = await Locked(() => debugger.SetFunctionBreakpoints(requests));
-        return new SetBreakpointsResponse([.. breakpoints.Select(b => new DapBreakpoint { Id = b.Id, Verified = b.Verified, Message = b.Message })]);
+        return new SetBreakpointsResponse([.. breakpoints.Select(b => new DapBreakpoint { Id = b.Id, Verified = b.Verified, Message = b.Message, Reason = b.Refused ? "failed" : null })]);
     }
 
     private async Task SetExceptionBreakpoints(SetExceptionBreakpointsArguments arguments)
@@ -470,6 +470,7 @@ public sealed class DebugAdapter
             EndColumn = bound && breakpoint.EndColumn is int endColumn ? ColumnOut(endColumn) : null,
             Offset = isEvent && bound ? 0 : null,
             Message = breakpoint.Message,
+            Reason = breakpoint.Refused ? "failed" : null,
             Source = source,
         };
     }

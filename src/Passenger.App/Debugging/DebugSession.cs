@@ -483,7 +483,7 @@ public sealed class DebugSession
     }
 
     private static (BreakpointStatus, string?, int?) Status(DapBreakpoint breakpoint) =>
-        (breakpoint.Verified ? BreakpointStatus.Bound : BreakpointStatus.Unknown, breakpoint.Message, breakpoint.Line - 1);
+        (breakpoint.Verified ? BreakpointStatus.Bound : breakpoint.Reason == "failed" ? BreakpointStatus.Invalid : BreakpointStatus.Unknown, breakpoint.Message, breakpoint.Line - 1);
 
     private void SetState(DebugState state)
     {

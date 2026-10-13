@@ -195,6 +195,36 @@ public sealed class DebuggerTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void A_hit_count_the_debugger_cannot_read_is_said_as_it_is_typed_and_the_breakpoint_refused()
+    {
+        MainWindow window = Open();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        editor.GoTo(new TextPosition(5, 0));
+        Ui.Run(window, AppActions.ToggleBreakpoint);
+        editor.GoTo(new TextPosition(3, 4));
+        Ui.Run(window, AppActions.EditBreakpoint);
+        BreakpointPopup popup = Assert.IsType<BreakpointPopup>(window.Popup);
+        Ui.Settle();
+        Ui.Press(window, "Tab");
+        window.KeyTextInput("3 times");
+        Ui.Settle();
+        const string said = "The hit count \"3 times\" is not one the debugger can read";
+        Assert.Contains(popup.GetVisualDescendants().OfType<TextBlock>(), t => t.IsEffectivelyVisible && t.Text?.StartsWith(said, StringComparison.Ordinal) == true);
+        Ui.Press(window, "Enter");
+        LineBreakpoint breakpoint = window.Debugger.Breakpoints.In(program)[0];
+        Assert.Equal("3 times", breakpoint.HitCondition);
+
+        // The debugger refuses it in the same words, and the loop runs through to the breakpoint after it.
+        Ui.Run(window, AppActions.Debug);
+        Ui.WaitFor(() => Value(window, "total") == "6", "the stop after the loop");
+        Assert.Contains(new LineMark(3, LineMarkKind.BreakpointInvalid, Conditional: true), editor.LineMarks);
+        Assert.StartsWith(said, breakpoint.Message, StringComparison.Ordinal);
+        Ui.Run(window, AppActions.Stop);
+        Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void A_launch_profile_debugs_with_its_arguments_environment_and_the_projects_folder()
     {
         Write("Program.cs", "string greeting = Environment.GetEnvironmentVariable(\"GREETING\") ?? \"none\";\nstring here = Environment.CurrentDirectory;\nConsole.WriteLine($\"{greeting} {args.Length} {here}\");\n");

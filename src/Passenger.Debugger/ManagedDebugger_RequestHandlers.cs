@@ -528,6 +528,14 @@ public partial class ManagedDebugger
             if (request.Condition is not null && SyntaxFactory.ParseExpression(request.Condition).DescendantNodesAndSelf().Any(static node => node is AnonymousFunctionExpressionSyntax))
             {
                 bp.Message = "Lambda expressions are not supported in breakpoint conditions.";
+                bp.Refused = true;
+                result.Add(bp);
+                continue;
+            }
+            if (bp.HitCondition is { } hits && !Passenger.Dap.HitCondition.TryParse(hits, out _, out string? problem))
+            {
+                bp.Message = problem;
+                bp.Refused = true;
                 result.Add(bp);
                 continue;
             }
@@ -565,6 +573,13 @@ public partial class ManagedDebugger
         foreach (FunctionBreakpointRequest request in breakpoints)
         {
             BreakpointManager.BreakpointInfo bp = _breakpointManager.CreateFunctionBreakpoint(request.Name, request.Condition, request.HitCondition, request.LogMessage);
+            if (bp.HitCondition is { } hits && !Passenger.Dap.HitCondition.TryParse(hits, out _, out string? problem))
+            {
+                bp.Message = problem;
+                bp.Refused = true;
+                result.Add(bp);
+                continue;
+            }
             try
             {
                 _ = FunctionBreakpointPattern.Parse(request.Name);

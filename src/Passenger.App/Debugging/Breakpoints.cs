@@ -36,8 +36,8 @@ public enum BreakpointStatus
     Unknown,
     Bound,
 
-    /// <summary>Refused: it will not stop the program (a line written since the build), and its
-    /// <see cref="LineBreakpoint.Message"/> says why.</summary>
+    /// <summary>Refused: it will not stop the program (a hit count the debugger cannot read, a line written since the
+    /// build), and its <see cref="LineBreakpoint.Message"/> says why.</summary>
     Invalid,
 }
 

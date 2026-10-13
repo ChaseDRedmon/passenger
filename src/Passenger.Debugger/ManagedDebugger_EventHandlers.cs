@@ -145,7 +145,7 @@ public partial class ManagedDebugger
         if (metadataReader.HasSymbols)
         {
             TryBindPendingBreakpoints();
-            foreach (BreakpointManager.BreakpointInfo breakpoint in _breakpointManager.GetFunctionBreakpoints())
+            foreach (BreakpointManager.BreakpointInfo breakpoint in _breakpointManager.GetFunctionBreakpoints().Where(b => !b.Refused))
             {
                 bool becameVerified = TryBindFunctionBreakpoint(breakpoint, moduleInfo);
                 if (becameVerified)

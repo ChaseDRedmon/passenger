@@ -4,25 +4,33 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Passenger.Dap;
 
 namespace Passenger.App.Debugging;
 
 /// <summary>What a breakpoint does, as Rider's breakpoint popup and Breakpoints dialog edit it: on or off,
-/// whether it stops, its condition and hit count, and a message to log. Enter submits, Escape gives up.</summary>
+/// whether it stops, its condition and hit count, and a message to log. Enter submits, Escape gives up. A hit count the
+/// debugger cannot read is said under its field as it is typed; the debugger refuses it in the same words.</summary>
 public sealed class BreakpointProperties : UserControl
 {
     private readonly CheckBox enabled = new() { Content = "Enabled" };
     private readonly CheckBox suspend = new() { Content = "Suspend execution" };
     private readonly TextBox condition = Field("A C# condition: count > 2");
     private readonly TextBox hitCount = Field("Stop on hits: ==3, >=2, %2");
+    private readonly TextBlock hitCountProblem = new() { TextWrapping = TextWrapping.Wrap, IsVisible = false };
     private readonly TextBox log = Field("Logged on each hit: count is {count}");
 
     public BreakpointProperties()
     {
-        Grid fields = new() { ColumnDefinitions = new ColumnDefinitions("Auto,*"), RowDefinitions = new RowDefinitions("Auto,Auto,Auto"), RowSpacing = 6, ColumnSpacing = 10 };
+        Grid fields = new() { ColumnDefinitions = new ColumnDefinitions("Auto,*"), RowDefinitions = new RowDefinitions("Auto,Auto,Auto,Auto"), RowSpacing = 6, ColumnSpacing = 10 };
         AddRow(fields, 0, "Condition:", condition);
         AddRow(fields, 1, "Hit count:", hitCount);
-        AddRow(fields, 2, "Log message:", log);
+        Grid.SetRow(hitCountProblem, 2);
+        Grid.SetColumn(hitCountProblem, 1);
+        fields.Children.Add(hitCountProblem);
+        AddRow(fields, 3, "Log message:", log);
+        hitCountProblem.Bind(TextBlock.ForegroundProperty, hitCountProblem.GetResourceObservable("Passenger.Editor.Error"));
+        hitCount.TextChanged += (_, _) => CheckHitCount();
         Content = new StackPanel
         {
             Spacing = 8,
@@ -70,6 +78,14 @@ public sealed class BreakpointProperties : UserControl
     }
 
     public void FocusCondition() => condition.Focus();
+
+    private void CheckHitCount()
+    {
+        string? problem = null;
+        bool readable = string.IsNullOrWhiteSpace(hitCount.Text) || HitCondition.TryParse(hitCount.Text, out _, out problem);
+        hitCountProblem.Text = problem;
+        hitCountProblem.IsVisible = !readable;
+    }
 
     private void OnKeyDown(object? sender, KeyEventArgs e)
     {
