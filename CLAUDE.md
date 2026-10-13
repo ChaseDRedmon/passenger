@@ -135,8 +135,12 @@ window or takes the focus; it shows everything but the system's own window chrom
   through `ConsoleSink`: a frame's output at a time, colour codes stripped whole across reads, the head trimmed past
   Rider's 1024 KB, and what is typed into it sent to the program. `Workspace/SolutionModel` reads
   solutions and projects for the Explorer's Solution view.
-- `src/Passenger.App`: the shell. One window-wide keymap (`AppActions.cs`) routes IDE actions
-  itself and editor actions to the focused editor. Explorer, editor tabs, files on disk.
+- `src/Passenger.App`: the shell. Explorer, editor tabs, files on disk. Each action is an `IdeAction` (id, title,
+  group, menu places, `Run`, `WhyNot`, whether its keys work while the terminal has them) that its feature adds to the
+  window's `ActionRegistry`: `MainWindow.Actions.cs` for the window's own, a partial's or controller's `Add…Actions`
+  for the rest, and a `ToolWindow`'s `Action` for its show action. `AppActions.cs` holds the ids and each platform's
+  keymap. Keys, the main menu (`MainMenu.Build`), Find Action, context menus and MCP's `ide_action` all run actions
+  through the registry, so one that cannot run says why; editor actions go to the focused editor.
 - `src/Passenger.App/Mcp`: Passenger as an MCP server (the official C# SDK). `PassengerTools` is every tool, each
   run on the UI thread as the window's own commands are and ended by its `CancellationToken`, answering with what its
   operation returned (`VcsOutcome`, `CommitResult`, `BuildOutcome`, the debugger's `Stop`), never with what the status
