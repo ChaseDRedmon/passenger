@@ -4,6 +4,8 @@
     <AssemblyName>Passenger</AssemblyName>
     <RootNamespace>Passenger.App</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Passenger.exe's icon on Windows, so its Start menu entry's and its file types' (tools/app-icon.sh). -->
+    <ApplicationIcon>Assets/Passenger.ico</ApplicationIcon>
     <!-- PathNames calls libc's realpath through a generated P/Invoke. -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
@@ -25,6 +27,8 @@
     <!-- The Model Context Protocol server (Mcp/), the official SDK's core, without its ASP.NET half. -->
     <PackageReference Include="ModelContextProtocol.Core" />
     <PackageReference Include="Microsoft.TestPlatform.TranslationLayer" />
+    <!-- The Windows install's hooks: what its installer and uninstaller ask of Passenger.exe (Installation.cs). -->
+    <PackageReference Include="Velopack" />
   </ItemGroup>
 
   <ItemGroup>

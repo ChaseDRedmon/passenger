@@ -53,6 +53,7 @@ just run                   # run it
 just screenshot shell.png  # draw the main window to a PNG off-screen (--size 1600x1000 --scale 2)
 just publish osx-arm64     # a self-contained Release build (osx-x64, win-x64, win-arm64 too)
 just package-mac           # Passenger.app, zipped; signed with PASSENGER_SIGN_IDENTITY, else ad hoc
+just package-win win-x64   # the Windows installer (or win-arm64), unsigned unless tools/package-win.sh's variables sign it
 just notices               # fail naming any package THIRD_PARTY_NOTICES.md does not name
 ```
 

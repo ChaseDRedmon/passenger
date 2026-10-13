@@ -2,9 +2,10 @@
 """Fails, naming each one, when a package Passenger restores or carries is missing from THIRD_PARTY_NOTICES.md.
 
 The packages are every one the solution's projects use, transitive ones included (`dotnet list package
---include-transitive`, so the solution must be restored first), and every one Roslyn's language server carries under
-roslyn/ (the .deps.json files in its restored package). A package is named in the notices by its id in backticks.
-CI runs this after its restore; `just notices` runs it here.
+--include-transitive`, so the solution must be restored first), every one Roslyn's language server carries under
+roslyn/ (the .deps.json files in its restored package), and every tool the repository's tool manifest pins
+(dotnet-tools.json). A package is named in the notices by its id in backticks. CI runs this after its restore;
+`just notices` runs it here.
 """
 import glob
 import json
@@ -73,6 +74,13 @@ def roslyn_packages():
     return used
 
 
+def tool_packages():
+    """Each package id the tool manifest pins: what the build runs (vpk packs the Windows installer)."""
+    with open(os.path.join(ROOT, "dotnet-tools.json"), encoding="utf-8") as f:
+        tools = json.load(f).get("tools", {})
+    return {name: {"dotnet-tools.json"} for name in tools}
+
+
 def named_in_notices():
     with open(NOTICES, encoding="utf-8") as f:
         text = f.read()
@@ -81,7 +89,7 @@ def named_in_notices():
 
 def main():
     used = solution_packages()
-    for package, users in roslyn_packages().items():
+    for package, users in [*roslyn_packages().items(), *tool_packages().items()]:
         used.setdefault(package, set()).update(users)
     named = named_in_notices()
     skipped = {package.lower() for package in NOT_SHIPPED}

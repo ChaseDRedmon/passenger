@@ -419,7 +419,8 @@
           "Passenger.Lsp": "[0.1.0, )",
           "Passenger.Profiler": "[0.1.0, )",
           "Passenger.Terminal": "[0.1.0, )",
-          "Passenger.Text": "[0.1.0, )"
+          "Passenger.Text": "[0.1.0, )",
+          "Velopack": "[1.2.161, )"
         }
       },
       "passenger.core": {
@@ -611,6 +612,12 @@
           "Nerdbank.Streams": "2.13.16",
           "Newtonsoft.Json": "13.0.3"
         }
+      },
+      "Velopack": {
+        "type": "CentralTransitive",
+        "requested": "[1.2.161, )",
+        "resolved": "1.2.161",
+        "contentHash": "OpHNacIumnkhaaX3ZlQ/TCR4YPOJvud2/PAOoWb6o+mIrLwIVA275I5wAgt4q/1O2VrJeDwR1qFQyqzG4lUArg=="
       }
     },
     "net11.0/linux-arm64": {

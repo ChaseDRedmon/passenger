@@ -3,13 +3,15 @@
 What Passenger uses that others made, and under what terms. Each package is named by its NuGet id, with the licence
 and the copyright its package states (its nuspec's licence expression or licence file and its copyright line, else its
 authors). `tools/check-notices.py`, which CI runs after its restore (`just notices` here), fails naming any package
-the solution restores, or Roslyn's language server carries, that is not named here.
+the solution restores, Roslyn's language server carries, or the tool manifest (`dotnet-tools.json`) pins, that is not
+named here.
 
 ## In the app
 
 What `just publish` carries for macOS and Windows: the app, the debugger beside it under `debugger/` and Roslyn's
-language server under `roslyn/`. Packages restored with these whose files no macOS or Windows build carries (SkiaSharp's
-and HarfBuzzSharp's natives for Linux and the browser, dbgshim's for Linux and 32-bit Windows) are left out.
+language server under `roslyn/`, and on Windows what Velopack's installer adds to it (`just package-win`). Packages
+restored with these whose files no macOS or Windows build carries (SkiaSharp's and HarfBuzzSharp's natives for Linux
+and the browser, dbgshim's for Linux and 32-bit Windows) are left out.
 
 | Package | In Passenger | Licence | Copyright |
 |---|---|---|---|
@@ -45,6 +47,8 @@ and HarfBuzzSharp's natives for Linux and the browser, dbgshim's for Linux and 3
 | `MP.Microsoft.CodeAnalysis.CSharp.ExpressionEvaluator.ExpressionCompiler`, `MP.Microsoft.CodeAnalysis.ExpressionEvaluator.ExpressionCompiler` | Roslyn's expression compiler, packed from Roslyn's source by MattParkerDev (https://github.com/MattParkerDev/roslyn, branch custom-ee-5.9.0) | MIT | no copyright line; its authors: .NET Foundation and contributors |
 | `NeoSmart.AsyncLock` | the debugger's locks | MIT | Copyright NeoSmart Technologies 2017-2022 |
 | `ZLinq` | the debugger's queries | MIT | © Cysharp, Inc. |
+| `Velopack` | the Windows install's hooks, which register and remove the file types Passenger opens as it is installed, updated and uninstalled | MIT | Copyright © Velopack Ltd. All rights reserved. |
+| `vpk` | in the Windows installer, Velopack's own programs, written in Rust with open-source crates: `Setup.exe` (the installer itself), and in the install `Update.exe` (which uninstalls it from Settings > Apps) and a `Passenger.exe` that starts `current\Passenger.exe` | MIT | Copyright © Velopack Ltd. All rights reserved. |
 
 ### Inside `roslyn/`
 
@@ -113,6 +117,7 @@ Packages the build or the tests use that no app carries.
 | `Microsoft.NET.Test.Sdk`, `Microsoft.TestPlatform.TestHost`, `Microsoft.CodeCoverage` | the tests' host | MIT | © Microsoft Corporation. All rights reserved. |
 | `Microsoft.Testing.Platform`, `Microsoft.Testing.Platform.MSBuild`, `Microsoft.Testing.Extensions.Telemetry`, `Microsoft.Testing.Extensions.TrxReport.Abstractions`, `Microsoft.ApplicationInsights` | xunit.v3's test platform | MIT | © Microsoft Corporation. All rights reserved. |
 | `Microsoft.Bcl.AsyncInterfaces`, `Microsoft.Win32.Registry` | the test platform's | MIT | © Microsoft Corporation. All rights reserved. |
+| `vpk` | Velopack's packer, a .NET tool at the version `dotnet-tools.json` pins, which builds the Windows installer (`tools/package-win.sh`). It carries others' programs under their own terms for what Passenger's installer does not use or carry: Microsoft's signtool and Azure Artifact Signing client, which sign it only when signing is asked for (the Windows SDK's and Microsoft's terms), WiX (MS-RL) for MSI packages, and zstd (BSD-3-Clause or GPL-2.0) | MIT | Copyright © Velopack Ltd. All rights reserved. |
 
 ## SharpDbg and ICorDebugSharp
 

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Styling;
+using Velopack;
 
 namespace Passenger.App;
 
@@ -18,6 +19,11 @@ internal static class Program
     public static int Main(string[] args)
     {
         StartedAt = Stopwatch.GetTimestamp();
+        // Before anything else, as Velopack asks: its installer's and uninstaller's runs of Passenger.exe end in Run.
+        if (Installation.Installed)
+        {
+            Installation.Hooked(VelopackApp.Build().SetArgs(args)).Run();
+        }
         LaunchOptions options;
         try
         {

@@ -35,7 +35,21 @@ publish rid:
 package-mac *args:
     tools/package-mac.sh {{args}}
 
-# Passenger's own icon (Assets/Passenger.icns and passenger.png) from Assets/passenger.svg; macOS, through QuickLook.
+# Passenger's Windows installer, packed by Velopack's vpk (dotnet-tools.json): it installs per user with no
+# administrator, adds a Start menu entry, opens .sln, .slnx and .csproj in Passenger, and uninstalls from Settings > Apps.
+# Signed on Windows by PASSENGER_SIGNTOOL_PARAMS or PASSENGER_ARTIFACT_SIGNING_METADATA (tools/package-win.sh).
+# The Windows installer, artifacts/package/Passenger-windows-x64.exe or -arm64.exe: just package-win [win-x64|win-arm64]
+[unix]
+package-win rid="win-x64":
+    tools/package-win.sh {{rid}}
+
+# On Windows the script runs in Git's sh: the one on the path, else Git for Windows' own beside git.exe.
+# The Windows installer, artifacts/package/Passenger-windows-x64.exe or -arm64.exe: just package-win [win-x64|win-arm64]
+[windows]
+package-win rid="win-x64":
+    $sh = (Get-Command sh -ErrorAction SilentlyContinue).Source; if (-not $sh) { $sh = Join-Path (Split-Path (Split-Path (Get-Command git).Source)) 'bin\sh.exe' }; & $sh tools/package-win.sh {{rid}}
+
+# Passenger's own icons (Passenger.icns, passenger.png, Passenger.ico) from Assets/passenger.svg; macOS, by QuickLook.
 app-icon:
     tools/app-icon.sh
 
@@ -43,7 +57,7 @@ app-icon:
 icons:
     python3 -I tools/icons.py
 
-# Fail naming any package the solution restores, or Roslyn's server carries, that THIRD_PARTY_NOTICES.md does not name.
+# Fail naming any package the solution restores, Roslyn's server carries or dotnet-tools.json pins that the notices miss.
 notices:
     python3 -I tools/check-notices.py
 

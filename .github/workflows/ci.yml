@@ -1,8 +1,9 @@
 # Every push to main and every pull request: the solution built (warnings are errors) and every test run, on macOS
 # (arm64) and Windows, as `just build` and `just test` run them; the macOS disk images made and checked, as
-# `just package-mac` makes them; and on Linux, the solution restored from nothing and every package checked against
-# THIRD_PARTY_NOTICES.md. Every restore is locked to the packages.lock.json files (GitHub sets CI, which
-# Directory.Build.props makes RestoreLockedMode). Actions are pinned to a release's commit.
+# `just package-mac` makes them; the Windows installer built, installed, used and uninstalled, as `just package-win`
+# builds it; and on Linux, the solution restored from nothing and every package checked against THIRD_PARTY_NOTICES.md.
+# Every restore is locked to the packages.lock.json files (GitHub sets CI, which Directory.Build.props makes
+# RestoreLockedMode). Actions are pinned to a release's commit.
 name: CI
 
 on:
@@ -186,6 +187,110 @@ jobs:
 
       - name: Make and check the disk image
         run: tools/package-mac.sh ${{ matrix.rid }}
+
+  # #34: the Windows installer as `just package-win` builds it, installed silently as a person's would be (per user, no
+  # administrator), an agent debugging a project through the Passenger it installed (so its Roslyn server and debugger
+  # run from the install), then uninstalled, with what each step must leave checked. Unsigned: a release (#56) signs it
+  # through the variables tools/package-win.sh reads, from the repository's secrets; a check need not spend signatures.
+  installer:
+    name: Windows installer (x64)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # The whole history: tools/package-win.sh names the version by the commit's tags.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      # .NET 10 runs vpk and the test's project, as in the test job.
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+          dotnet-version: 10.0.x
+
+      # The test job's packages, when it has saved them; this job saves none of its own.
+      - name: Restore cached NuGet packages
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('global.json', '**/Directory.Packages.props', '**/Directory.Build.props', '**/*.csproj', '**/packages.lock.json') }}
+          restore-keys: nuget-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Build the installer
+        run: tools/package-win.sh win-x64
+
+      # A person's state, which the uninstall must leave, is there before the install, as it is for one who reinstalls.
+      - name: Install
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $state = Join-Path $env:LOCALAPPDATA 'Passenger'
+          New-Item -ItemType Directory -Force -Path $state | Out-Null
+          Set-Content -Path (Join-Path $state 'kept-by-uninstall.txt') -Value 'a person''s state'
+          $setup = Start-Process -FilePath artifacts/package/Passenger-windows-x64.exe -ArgumentList '--silent' -Wait -PassThru
+          if ($setup.ExitCode -ne 0) { throw "Setup --silent exited $($setup.ExitCode)" }
+          $root = Join-Path $env:LOCALAPPDATA 'PassengerIDE'
+          $exe = Join-Path $root 'current\Passenger.exe'
+          $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'Passenger.lnk'
+          foreach ($path in $exe, (Join-Path $root 'Update.exe'), (Join-Path $root 'current\roslyn'), (Join-Path $root 'current\debugger'), $shortcut) {
+            if (-not (Test-Path $path)) { throw "The install has no $path" }
+          }
+          $entry = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\PassengerIDE'
+          if ($entry.DisplayName -ne 'Passenger') { throw "Settings > Apps lists the install as '$($entry.DisplayName)'" }
+          # The runner's Visual Studio keeps these types' default, so Passenger is among the programs that open them.
+          foreach ($extension in '.sln', '.slnx', '.csproj') {
+            $command = (Get-Item "HKCU:\Software\Classes\Passenger$extension\shell\open\command").GetValue('')
+            if ($command -ne "`"$exe`" `"%1`"") { throw "Passenger$extension opens with '$command', not Passenger.exe" }
+            if ((Get-Item "HKCU:\Software\Classes\$extension\OpenWithProgids").GetValueNames() -notcontains "Passenger$extension") {
+              throw "$extension does not list Passenger among the programs that open it"
+            }
+          }
+          "PASSENGER_EXECUTABLE=$exe" >> $env:GITHUB_ENV
+
+      - name: Build the tests
+        run: dotnet build tests/Passenger.Tests
+
+      - name: An agent debugs through the installed Passenger
+        run: dotnet test tests/Passenger.Tests --no-build --filter "FullyQualifiedName~McpTests.An_agent_with_a_windowless_Passenger_finds_code_reads_its_warnings_and_debugs_it" --blame-hang-timeout 10m --blame-hang-dump-type none
+
+      # Update.exe removes the folder a few seconds after it exits; the person's state and Velopack's own logs
+      # (%LocalAppData%\velopack) stay.
+      - name: Uninstall
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:LOCALAPPDATA 'PassengerIDE'
+          $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\PassengerIDE'
+          $quiet = (Get-ItemProperty $key).QuietUninstallString
+          if ($quiet -ne "`"$root\Update.exe`" --uninstall --silent") { throw "Settings > Apps uninstalls it silently with '$quiet'" }
+          $uninstall = Start-Process -FilePath (Join-Path $root 'Update.exe') -ArgumentList '--uninstall', '--silent' -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) { throw "Update.exe --uninstall --silent exited $($uninstall.ExitCode)" }
+          for ($i = 0; $i -lt 60 -and (Test-Path $root); $i++) { Start-Sleep -Seconds 1 }
+          $left = @()
+          if (Test-Path $root) { $left += "$root, with $(@(Get-ChildItem -Recurse -Force $root).Count) files" }
+          if (Test-Path $key) { $left += 'its entry in Settings > Apps' }
+          if (Test-Path (Join-Path ([Environment]::GetFolderPath('Programs')) 'Passenger.lnk')) { $left += 'its Start menu entry' }
+          foreach ($extension in '.sln', '.slnx', '.csproj') {
+            if (Test-Path "HKCU:\Software\Classes\Passenger$extension") { $left += "the Passenger$extension file type" }
+            $openWith = Get-Item "HKCU:\Software\Classes\$extension\OpenWithProgids" -ErrorAction SilentlyContinue
+            if ($openWith -and $openWith.GetValueNames() -contains "Passenger$extension") { $left += "Passenger among the programs that open $extension" }
+            $type = Get-Item "HKCU:\Software\Classes\$extension" -ErrorAction SilentlyContinue
+            if ($type -and $type.GetValue('') -eq "Passenger$extension") { $left += "Passenger as what opens $extension" }
+          }
+          if ($left) { throw "The uninstall left $($left -join '; ')" }
+          if (-not (Test-Path (Join-Path $env:LOCALAPPDATA 'Passenger\kept-by-uninstall.txt'))) { throw "The uninstall took the person's state" }
+
+      # For trying a pull request's installer by hand; not a release (#56).
+      - name: Upload the installer
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: Passenger-windows-x64
+          path: artifacts/package/Passenger-windows-x64.exe
+          retention-days: 7
 
   # #57's first step: the solution restores on Linux, in locked mode, with no package cache, so every package is
   # downloaded again and its signature checked against nuget.config's trusted signers, as NuGet does on Linux (and

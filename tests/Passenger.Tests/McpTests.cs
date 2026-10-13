@@ -19,7 +19,11 @@ namespace Passenger.Tests;
 [Collection(Debugging.Helpers.DebugSession.Collection)]
 public sealed class McpTests : IDisposable
 {
-    private static readonly string Passenger = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "Passenger.exe" : "Passenger");
+    /// <summary>The build's, beside the tests, or an installed copy that PASSENGER_EXECUTABLE names: CI's installer job
+    /// has an agent debug through the Passenger its Windows installer installed.</summary>
+    private static readonly string Passenger = Environment.GetEnvironmentVariable("PASSENGER_EXECUTABLE") is { Length: > 0 } installed
+        ? installed
+        : Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "Passenger.exe" : "Passenger");
 
     private readonly string folder = TestFolders.Create("mcp-");
     private readonly string settings = TestFolders.Create("agents-");
