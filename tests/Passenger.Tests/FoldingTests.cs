@@ -122,9 +122,9 @@ public sealed class FoldingTests : IDisposable
 
     /// <summary>A key in a file of 20,000 lines costs its parse what the key changed: Roslyn builds a new tree's nodes as
     /// they are read, so a walk of every node after each key (for the folds, or for each bracket's depth) built the whole
-    /// file again in the background. Each key here, and each member pasted in, deleted or wrapped in a #region, allocates
-    /// on the parsing worker under a twentieth of what opening the file did, and after each the folds are those the same
-    /// text has opened afresh.</summary>
+    /// file again in the background. Each key here (in a method or in the usings), and each member pasted in, deleted or
+    /// wrapped in a #region, allocates on the parsing worker under a twentieth of what opening the file did, and after
+    /// each the folds are those the same text has opened afresh.</summary>
     [AvaloniaFact]
     public void Typing_in_twenty_thousand_lines_parses_what_each_key_changed_and_the_folds_stay_those_of_the_whole_text()
     {
@@ -177,9 +177,16 @@ public sealed class FoldingTests : IDisposable
             Ui.Settle();
         }
 
+        int Find(string text, string what, int from = 0)
+        {
+            int found = text.IndexOf(what, from, StringComparison.Ordinal);
+            Assert.True(found >= 0, $"'{what}' is not in the text, so the edit that was to put it there did not happen");
+            return found;
+        }
+
         void TypeAt(string after, string text)
         {
-            int at = document.Text.Snapshot.ToString().IndexOf(after, StringComparison.Ordinal) + after.Length;
+            int at = Find(document.Text.Snapshot.ToString(), after) + after.Length;
             editor.Selections = SelectionSet.Single(at);
             editor.Focus();
             foreach (char c in text)
@@ -191,8 +198,8 @@ public sealed class FoldingTests : IDisposable
         void Replace(string what, string from, string to, string with)
         {
             string text = document.Text.Snapshot.ToString();
-            int start = text.IndexOf(from, StringComparison.Ordinal);
-            int end = text.IndexOf(to, start, StringComparison.Ordinal) + to.Length;
+            int start = Find(text, from);
+            int end = Find(text, to, start) + to.Length;
             editor.Selections = SelectionSet.Single(new Selection(start, end));
             editor.Focus();
             Measured(what, () =>
@@ -205,7 +212,7 @@ public sealed class FoldingTests : IDisposable
                 {
                     Task copied = window.Clipboard!.SetTextAsync(with);
                     Ui.WaitFor(() => copied.IsCompleted, "the clipboard to take the text");
-                    Ui.Press(window, "meta V");
+                    Ui.Press(window, Ui.Shortcut(EditorActions.Paste));
                 }
             });
         }
@@ -213,6 +220,9 @@ public sealed class FoldingTests : IDisposable
         // A member changed: a statement typed in a method's body.
         TypeAt("int value0 = seed + 100;", " int added = value0 * 2;");
         SameAsOpenedAfresh("a statement typed in a method");
+        // A using typed: Roslyn's parse makes the namespace below it anew, around the members it reuses.
+        TypeAt("using System", ".IO");
+        SameAsOpenedAfresh("a using typed");
         // A member put in, as a paste puts it, and a key typed in it.
         Replace("a method pasted in", "        public int Property120", "        public int Property120",
             "        /// <summary>\n        /// Pasted.\n        /// </summary>\n        public void Pasted()\n        {\n            int x = 0;\n        }\n\n        public int Property120");

@@ -42,8 +42,7 @@ public sealed class FoldRegions
     {
         SyntaxNode root = parse.Root;
         TextSnapshot text = parse.Text;
-        // Where the text changed since the tree before, in this one's offsets: only nodes there are paired with that tree's
-        // children by children; a node elsewhere the parse did not reuse is walked.
+        // Where the text changed since the tree before, in this one's offsets, where children are paired from both ends.
         TextSpan changed = default;
         if (before is not null)
         {
@@ -352,8 +351,18 @@ public sealed class FoldRegions
             {
                 Array.Resize(ref frames, depth * 2);
             }
-            bool there = node.FullSpan.Start <= changed.End && node.FullSpan.End >= changed.Start;
-            frames[depth++] = old is null || !there ? Frame.Walking(node) : Frame.Pairing(node, old);
+            if (old is null)
+            {
+                frames[depth++] = Frame.Walking(node);
+            }
+            else if (node.FullSpan.Start <= changed.End && node.FullSpan.End >= changed.Start)
+            {
+                frames[depth++] = Frame.Pairing(node, old);
+            }
+            else
+            {
+                frames[depth++] = node.RawKind == old.RawKind && node.FullSpan.Length == old.FullSpan.Length ? Frame.InStep(node, old) : Frame.Walking(node);
+            }
         }
 
         /// <summary>The regions a subtree of the tree before made, moved to where it is now: not its ancestors', though a
@@ -398,15 +407,25 @@ public sealed class FoldRegions
     }
 
     /// <summary>A node whose children are being walked: in order, or beside the tree before's node in its place, its
-    /// children paired with that node's, the same from the front and from the back and the rest in turn.</summary>
+    /// children paired with that node's: where the text changed, the same from the front and from the back and the rest
+    /// in turn; elsewhere, one for one.</summary>
     private struct Frame
     {
         private ChildSyntaxList.Enumerator children;
+        private ChildSyntaxList.Enumerator oldChildren;
+        private bool inStep;
         private SyntaxNodeOrToken[]? paired;
         private SyntaxNode?[]? olds;
         private int index;
 
         public static Frame Walking(SyntaxNode node) => new() { children = node.ChildNodesAndTokens().GetEnumerator() };
+
+        /// <summary>A node the parse made anew away from the text that changed, beside one of the same kind and length in
+        /// its place, child for child with no list made: Roslyn never reuses a namespace whole, only what it holds, and
+        /// makes again the nodes that end just before an edit, and a walk of the namespace after a key in the usings
+        /// built every node of the file.</summary>
+        public static Frame InStep(SyntaxNode node, SyntaxNode old) =>
+            new() { children = node.ChildNodesAndTokens().GetEnumerator(), oldChildren = old.ChildNodesAndTokens().GetEnumerator(), inStep = true };
 
         public static Frame Pairing(SyntaxNode node, SyntaxNode old)
         {
@@ -439,7 +458,7 @@ public sealed class FoldRegions
             {
                 bool more = children.MoveNext();
                 child = more ? children.Current : default;
-                old = null;
+                old = more && inStep && oldChildren.MoveNext() ? oldChildren.Current.AsNode() : null;
                 return more;
             }
             if (index < paired.Length)
