@@ -1,5 +1,9 @@
+using Avalonia;
+using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
+using Avalonia.Input;
+using Avalonia.VisualTree;
 using Passenger.App;
 using Passenger.Text;
 
@@ -83,6 +87,31 @@ public sealed class NavigationTests : IDisposable
         Assert.Equal("One.cs", window.ExplorerView.Selected?.Name);
         Ui.Press(window, "ENTER");
         Assert.Equal("One.cs", window.EditorArea.Active?.Name);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void The_explorer_chooses_the_file_shown_as_select_next_tab_or_a_click_on_a_tab_shows_another()
+    {
+        Write("One.cs", "class One { }");
+        Write("Two.cs", "class Two { }");
+        MainWindow window = Open();
+        window.OpenFile("One.cs");
+        window.OpenFile("Two.cs");
+        Ui.Settle();
+        Assert.Equal("Two.cs", window.ExplorerView.Selected?.Name);
+
+        Ui.Run(window, AppActions.NextTab);
+        Assert.Equal("One.cs", window.EditorArea.Active?.Name);
+        Assert.True(window.ExplorerView.Selected?.Name == "One.cs", $"Select Next Tab showed One.cs and left the Explorer on {window.ExplorerView.Selected?.Name}");
+
+        Control two = window.EditorArea.GetVisualDescendants().OfType<TextBlock>().First(t => t.Text == "Two.cs" && t.Classes.Contains("tabName"));
+        Point at = two.TranslatePoint(new Point(two.Bounds.Width / 2, two.Bounds.Height / 2), window)!.Value;
+        window.MouseDown(at, MouseButton.Left);
+        window.MouseUp(at, MouseButton.Left);
+        Ui.Settle();
+        Assert.Equal("Two.cs", window.EditorArea.Active?.Name);
+        Assert.True(window.ExplorerView.Selected?.Name == "Two.cs", $"A click on Two.cs's tab left the Explorer on {window.ExplorerView.Selected?.Name}");
         window.Close();
     }
 

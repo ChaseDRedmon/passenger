@@ -80,6 +80,7 @@ public partial class MainWindow : Window
         AddAgents();
         AddShutdown();
         Explorer.FileOpened += (_, path) => OpenFile(path);
+        Editors.ActiveChanged += (_, _) => FollowInExplorer();
         Structure.Follow(() => Editors.Active is { } shown
             ? (shown.Path, csharp?.For(shown)?.Lsp, Editors.CodeEditor.CaretPosition.Line)
             : null);
@@ -356,6 +357,20 @@ public partial class MainWindow : Window
         RestoreWorkspace();
         ShowWorkspaceName();
         UpdateStatus();
+    }
+
+    private string? followed;
+
+    /// <summary>Chooses the file shown in the Explorer as another is shown, a tab switched to as well as a file opened, as
+    /// Rider's Always Select Opened File; a row chosen there meanwhile stays chosen until then.</summary>
+    private void FollowInExplorer()
+    {
+        string? shown = Editors.Active?.Path;
+        if (shown is not null && shown != followed)
+        {
+            Explorer.Reveal(shown);
+        }
+        followed = shown;
     }
 
     public void OpenFile(string path)
