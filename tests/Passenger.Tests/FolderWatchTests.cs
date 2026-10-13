@@ -275,7 +275,7 @@ public sealed class FolderWatchTests : IDisposable
             IdeError error = Assert.Single(IdeErrors.Errors);
             Assert.StartsWith("Changes made outside Passenger in some folders will go unseen", error.Message, StringComparison.Ordinal);
             Assert.Contains("sudo sysctl --system", error.Message, StringComparison.Ordinal);
-            Assert.Contains("fs.inotify.max_user_watches", File.ReadAllText(IdeErrors.LogPath), StringComparison.Ordinal);
+            Assert.Contains("fs.inotify.max_user_watches", Ui.IdeLog(), StringComparison.Ordinal);
             Assert.Equal(["."], Watched(window));
 
             // The folders still watched still say what changes in them.
