@@ -57,6 +57,27 @@ public sealed class EditorSplitTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void A_closed_split_is_let_go_by_the_file_it_showed_and_the_split_left_still_follows_the_file()
+    {
+        MainWindow window = Open("One.cs", "Two.cs");
+        WeakReference<EditorGroup> closed = SplitFindAndClose(window);
+
+        // Typed on in the split left, its tab marks the file changed.
+        window.KeyTextInput("// ");
+        Ui.Settle();
+        EditorGroup left = Assert.Single(window.EditorArea.Groups);
+        Assert.StartsWith("// class Two", left.Editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
+        Assert.True(Tab(left, "Two.cs").GetVisualDescendants().OfType<Avalonia.Controls.Shapes.Ellipse>().Single(e => e.Classes.Contains("modified")).IsVisible,
+            "The tab of the file typed in shows no mark that it changed");
+
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        Assert.False(closed.TryGetTarget(out _), "The closed split (its editor, find bar and tabs) is still alive, held by the file it showed");
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void A_tab_dragged_to_its_splits_right_edge_splits_it_off_and_back_onto_the_first_strip_joins_it_again()
     {
         MainWindow window = Open("One.cs", "Two.cs");
@@ -201,6 +222,26 @@ public sealed class EditorSplitTests : IDisposable
         }
         Ui.Settle();
         return window;
+    }
+
+    /// <summary>Splits the file shown off to the right, opens Find there and closes the split's tab by its close button, the
+    /// file still open on the left: the split gone, held by nothing here.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static WeakReference<EditorGroup> SplitFindAndClose(MainWindow window)
+    {
+        EditorArea area = window.EditorArea;
+        Assert.True(window.Perform(AppActions.SplitRight));
+        Ui.Settle();
+        EditorGroup right = area.ActiveGroup;
+        Assert.True(window.Perform(AppActions.Find));
+        Ui.Settle();
+        Assert.True(right.Find.IsVisible);
+        Button close = Tab(right, "Two.cs").GetVisualDescendants().OfType<Button>().Single(b => b.Classes.Contains("tabClose"));
+        close.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Ui.Settle();
+        Assert.Single(area.Groups);
+        Assert.NotSame(right, area.ActiveGroup);
+        return new WeakReference<EditorGroup>(right);
     }
 
     private static Control Tab(EditorGroup group, string name) =>

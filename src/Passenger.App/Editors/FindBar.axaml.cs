@@ -55,6 +55,21 @@ public partial class FindBar : UserControl
         }
     }
 
+    /// <summary>Hides the bar and lets go of the editor and its text, as its group does when its last tab closes: nothing the
+    /// file holds keeps the bar, or the group around it, alive.</summary>
+    public void Detach()
+    {
+        IsVisible = false;
+        if (document is not null)
+        {
+            document.Changed -= OnDocumentChanged;
+        }
+        document = null;
+        editor = null;
+        result = SearchResult.None;
+        current = -1;
+    }
+
     /// <summary>Opens the bar (with the replace row if <paramref name="replace"/>), its query the
     /// selection when that is on one line, or the word under the caret.</summary>
     public void Open(bool replace)

@@ -205,6 +205,53 @@ public sealed class VcsTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void A_closed_diff_is_let_go_by_the_open_file_it_showed()
+    {
+        MainWindow window = Open();
+        Ui.WaitFor(() => window.Vcs.Repository is not null, "the working tree");
+        WeakReference<DiffView> closed = DiffAndClose(window);
+
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        Assert.False(closed.TryGetTarget(out _), "The closed diff (its editors and the last commit's text) is still alive, held by the open file it showed");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void An_edit_in_a_diff_after_the_files_tab_closed_is_saved_with_the_others_and_as_the_diff_closes()
+    {
+        MainWindow window = Open();
+        Ui.WaitFor(() => window.Vcs.Repository is not null, "the working tree");
+        string shop = window.EditorArea.Active!.Path;
+        Task<DiffWindow?> opening = window.ShowDiffAsync(shop);
+        Ui.WaitFor(() => opening.IsCompleted, "the diff to open");
+        DiffWindow diff = opening.Result!;
+
+        // The file's tab closes under the diff, whose right side still edits the file.
+        window.Perform(AppActions.CloseTab);
+        Ui.Settle();
+        Assert.Null(window.EditorArea.Active);
+        CodeEditor right = diff.View.Right;
+        right.Focus();
+        right.GoTo(new TextPosition(4, 4));
+        diff.KeyTextInput("public ");
+        Ui.Settle();
+        Assert.Contains("    public void Add()", right.Document.Snapshot.ToString(), StringComparison.Ordinal);
+
+        // Save All writes it, as every changed file; edited again, closing the diff writes it, and the file closes.
+        window.Perform(AppActions.SaveAll);
+        Assert.Contains("    public void Add()", File.ReadAllText(shop), StringComparison.Ordinal);
+        right.GoTo(new TextPosition(2, 4));
+        diff.KeyTextInput("long ");
+        diff.Close();
+        Ui.Settle();
+        Assert.Contains("    long int count;", File.ReadAllText(shop), StringComparison.Ordinal);
+        Assert.DoesNotContain(window.EditorArea.Documents, d => d.Path == shop);
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void A_click_on_a_change_bar_shows_what_the_lines_were_and_rolls_them_back()
     {
         MainWindow window = Open();
@@ -944,6 +991,23 @@ public sealed class VcsTests : IDisposable
             .OfType<Avalonia.Controls.Button>()
             .First(b => Avalonia.Controls.ToolTip.GetTip(b) as string == "Rollback");
         rollback.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+    }
+
+    /// <summary>Shows the open file's diff, typed in on its right side, and closes it: the diff gone, held by nothing here.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static WeakReference<DiffView> DiffAndClose(MainWindow window)
+    {
+        Task<DiffWindow?> opening = window.ShowDiffAsync(window.EditorArea.Active!.Path);
+        Ui.WaitFor(() => opening.IsCompleted, "the diff to open");
+        DiffWindow diff = opening.Result!;
+        Assert.Same(window.EditorArea.Active!.Text, diff.View.Right.Document);
+        diff.View.Right.Focus();
+        diff.KeyTextInput("// ");
+        Ui.WaitFor(() => diff.View.Hunks.Count == 1, "the difference typed");
+        diff.Close();
+        Ui.Settle();
+        Assert.Empty(window.OwnedWindows);
+        return new WeakReference<DiffView>(diff.View);
     }
 
     private static IReadOnlyList<ChangeMark> Marks(MainWindow window) => window.EditorArea.Active?.ChangeMarks ?? [];

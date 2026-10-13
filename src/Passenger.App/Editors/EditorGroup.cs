@@ -195,7 +195,9 @@ public sealed class EditorGroup : DockPanel
             }
             else
             {
-                Find.Close();
+                // A split left empty goes, and nothing of the file it showed may keep it.
+                Find.Detach();
+                Editor.Detach();
                 Editor.IsVisible = false;
                 tabBar.IsVisible = false;
                 banner.IsVisible = false;
@@ -308,9 +310,9 @@ public sealed class EditorGroup : DockPanel
             return new TextBlock();
         }
         OpenDocument document = tab.Document;
-        PathIcon icon = new() { Data = document.Icon, Foreground = document.IconBrush };
-        TextBlock name = new() { Classes = { "tabName" }, Text = document.Name, VerticalAlignment = VerticalAlignment.Center };
-        Ellipse modified = new() { Classes = { "modified" }, Width = 7, Height = 7, IsVisible = document.IsModified };
+        PathIcon icon = new();
+        TextBlock name = new() { Classes = { "tabName" }, VerticalAlignment = VerticalAlignment.Center };
+        Ellipse modified = new() { Classes = { "modified" }, Width = 7, Height = 7 };
         PathIcon closeGlyph = new() { Classes = { "small" } };
         closeGlyph.Bind(PathIcon.DataProperty, closeGlyph.GetResourceObservable("Icon.Close"));
         Button close = new() { Classes = { "tabClose" }, Content = closeGlyph };
@@ -331,18 +333,19 @@ public sealed class EditorGroup : DockPanel
                 Children = { icon, name, new Panel { Width = 16, Height = 16, Children = { modified, close } } },
             },
         };
-        ToolTip.SetTip(border, document.Path);
-        border.Classes.Set("active", tab.IsActive);
-        border.Classes.Set("elsewhere", !IsCurrent);
-        CurrentChanged += (_, _) => border.Classes.Set("elsewhere", !IsCurrent);
-        tab.PropertyChanged += (_, e) =>
+        void Paint()
         {
-            if (e.PropertyName == nameof(EditorTab.IsActive))
-            {
-                border.Classes.Set("active", tab.IsActive);
-            }
-        };
-        document.PropertyChanged += (_, e) =>
+            name.Text = document.Name;
+            icon.Data = document.Icon;
+            icon.Foreground = document.IconBrush;
+            ToolTip.SetTip(border, document.Path);
+            modified.IsVisible = document.IsModified;
+            border.Classes.Set("active", tab.IsActive);
+            border.Classes.Set("elsewhere", !IsCurrent);
+        }
+        void OnCurrentChanged(object? sender, EventArgs e) => border.Classes.Set("elsewhere", !IsCurrent);
+        void OnTabChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e) => border.Classes.Set("active", tab.IsActive);
+        void OnFileChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
         {
             if (e.PropertyName == nameof(OpenDocument.IsModified))
             {
@@ -350,12 +353,24 @@ public sealed class EditorGroup : DockPanel
             }
             else if (e.PropertyName == nameof(OpenDocument.Path))
             {
-                name.Text = document.Name;
-                icon.Data = document.Icon;
-                icon.Foreground = document.IconBrush;
-                ToolTip.SetTip(border, document.Path);
+                Paint();
             }
+        }
+        // Subscribed only while on the strip, so a tab closed or moved to another group is held by nothing it showed.
+        border.AttachedToVisualTree += (_, _) =>
+        {
+            CurrentChanged += OnCurrentChanged;
+            tab.PropertyChanged += OnTabChanged;
+            document.PropertyChanged += OnFileChanged;
+            Paint();
         };
+        border.DetachedFromVisualTree += (_, _) =>
+        {
+            CurrentChanged -= OnCurrentChanged;
+            tab.PropertyChanged -= OnTabChanged;
+            document.PropertyChanged -= OnFileChanged;
+        };
+        Paint();
         border.ContextMenu = TabMenu(document);
         border.PointerPressed += (_, e) =>
         {

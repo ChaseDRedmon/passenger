@@ -265,8 +265,7 @@ public partial class MainWindow
         foreach (OpenDocument document in Editors.Documents
             .Where(d => d.Path == path || (isFolder && d.Path.StartsWith(path + Path.DirectorySeparatorChar, StringComparison.Ordinal))).ToList())
         {
-            document.Text.MarkSaved();
-            Editors.Close(document);
+            Editors.CloseDeleted(document);
         }
         FilesChanged();
         StatusText.Text = $"Moved {what} to the Trash";

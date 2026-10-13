@@ -210,6 +210,11 @@ public partial class MainWindow
             }
             diff = kept;
         }
+        // Closed while the differences were read, the file's text is one nothing would save: it is shown, not edited.
+        if (open is not null && !Editors.Documents.Contains(open))
+        {
+            open = null;
+        }
         DiffView view = new(Path.GetFileName(path), diff, mine, editable: open is not null, rightColours: open?.Highlighter);
         IHighlighter? left = null;
         if (Workspace.Language.ForPath(path).Name == "C#")
@@ -219,6 +224,24 @@ public partial class MainWindow
         }
         DiffWindow window = new($"{Path.GetFileName(path)}: HEAD and your version", view);
         window.Closed += (_, _) => (left as IDisposable)?.Dispose();
+        if (open is not null)
+        {
+            // The file stays open while the diff edits it, so what is typed there is saved; closed for good, the diff goes too.
+            IDisposable hold = Editors.Hold(open);
+            void OnFileClosed(object? sender, OpenDocument closed)
+            {
+                if (closed == open)
+                {
+                    window.Close();
+                }
+            }
+            Editors.Closed += OnFileClosed;
+            window.Closed += (_, _) =>
+            {
+                Editors.Closed -= OnFileClosed;
+                hold.Dispose();
+            };
+        }
         window.Show(this);
         return window;
     }

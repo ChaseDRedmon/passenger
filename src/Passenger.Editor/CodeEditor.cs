@@ -395,6 +395,30 @@ public sealed partial class CodeEditor : Control
         SelectionChanged?.Invoke(this, EventArgs.Empty);
     }
 
+    /// <summary>Lets go of the text and colours shown, whose changes reach this editor no more, and of all drawn from them,
+    /// leaving an empty text until another is shown: a split or a diff that closed is then held by nothing it showed, and
+    /// an edit to the file no longer maps its carets or redraws it.</summary>
+    public void Detach()
+    {
+        blink.Stop();
+        hover?.Stop();
+        Highlighter = null;
+        Document = new TextDocument();
+        SetMarkers([]);
+        SetLineMarks([]);
+        SetChangeMarks([]);
+        SetBookmarks([]);
+        SetGutterAnnotations([]);
+        SetTestMarks([]);
+        SetLineAnnotations([]);
+        SetInlayHints([]);
+        SetFoldRegions([]);
+        SetHighlights([], -1);
+        hiddenCache = default;
+        stripeBuild = null;
+        stripeDrawn = default;
+    }
+
     /// <summary>Ranges a search found (sorted), drawn behind the text, the current one stronger. The
     /// search owns them and sets them again when the text changes.</summary>
     public IReadOnlyList<TextRange> Highlights { get; private set; } = [];

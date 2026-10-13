@@ -58,8 +58,7 @@ public partial class MainWindow
                 // Deleted elsewhere: its tab goes, as Rider's does, unless it holds edits that would go with it.
                 if (!document.IsModified)
                 {
-                    document.Text.MarkSaved();
-                    Editors.Close(document);
+                    Editors.CloseDeleted(document);
                 }
                 continue;
             }

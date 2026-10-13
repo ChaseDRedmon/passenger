@@ -83,10 +83,14 @@ public sealed class DiffView : DockPanel
             _ = CompareAsync();
         };
         mine.Changed += OnMineChanged;
+        // Closed, the diff lets go of the file's text and colours, which may outlive it by far, and drops a late comparison.
         DetachedFromVisualTree += (_, _) =>
         {
             rediff.Stop();
             mine.Changed -= OnMineChanged;
+            comparing++;
+            Left.Detach();
+            Right.Detach();
         };
         AddHandler(KeyDownEvent, (_, e) =>
         {

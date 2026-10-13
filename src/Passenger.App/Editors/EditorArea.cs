@@ -28,6 +28,7 @@ public sealed class EditorArea : UserControl
     private readonly TextBlock emptyHint;
     private readonly Button openButton;
     private readonly List<Action<CodeEditor>> editorHooks = [];
+    private readonly Dictionary<OpenDocument, int> held = [];
     private Node root;
     private EditorGroup activeGroup;
     private (EditorGroup Group, OpenDocument Document, Point Start, bool Dragging)? drag;
@@ -52,7 +53,7 @@ public sealed class EditorArea : UserControl
 
     public event EventHandler? ActiveChanged;
 
-    /// <summary>A file opened in a tab, before it is shown; and one whose last tab closed.</summary>
+    /// <summary>A file opened in a tab, before it is shown; and one closed, its last tab gone and nothing holding it.</summary>
     public event EventHandler<OpenDocument>? Opened;
 
     public event EventHandler<OpenDocument>? Closed;
@@ -146,9 +147,27 @@ public sealed class EditorArea : UserControl
         ActiveChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    /// <summary>Closes a file everywhere it is open, saved first as Rider never asks; false, the file left open, when
-    /// it could not be written.</summary>
-    public bool Close(OpenDocument document)
+    /// <summary>Closes a file's tabs everywhere, saved first as Rider never asks; false, the file left open, when it could
+    /// not be written. A file something else holds (<see cref="Hold"/>) stays open without a tab until let go.</summary>
+    public bool Close(OpenDocument document) => Close(document, forGood: false);
+
+    /// <summary>Closes a file deleted from disk, its edits with it, even while held: what held it hears it closed.</summary>
+    public void CloseDeleted(OpenDocument document)
+    {
+        document.Text.MarkSaved();
+        Close(document, forGood: true);
+    }
+
+    /// <summary>Keeps an open file open while something beside its tabs edits it (a diff's right side): its tabs may close,
+    /// and it is still saved as every open file is, then closed once let go with no tab. Closed for good meanwhile
+    /// (deleted, another folder opened), <see cref="Closed"/> says so.</summary>
+    public IDisposable Hold(OpenDocument document)
+    {
+        held[document] = held.GetValueOrDefault(document) + 1;
+        return new FileHold(this, document);
+    }
+
+    private bool Close(OpenDocument document, bool forGood)
     {
         if (document.IsModified && !TrySave(document))
         {
@@ -158,12 +177,52 @@ public sealed class EditorArea : UserControl
         {
             group.Remove(document);
         }
-        documents.Remove(document);
-        Closed?.Invoke(this, document);
-        document.Close();
+        if (forGood)
+        {
+            held.Remove(document);
+        }
+        if (!held.ContainsKey(document))
+        {
+            documents.Remove(document);
+            Closed?.Invoke(this, document);
+            document.Close();
+        }
         Collapse();
         ActiveChanged?.Invoke(this, EventArgs.Empty);
         return true;
+    }
+
+    private void LetGo(OpenDocument document)
+    {
+        if (!held.TryGetValue(document, out int count))
+        {
+            return;
+        }
+        if (count > 1)
+        {
+            held[document] = count - 1;
+            return;
+        }
+        held.Remove(document);
+        // A file that cannot be written now stays open, its edits shown in a tab again.
+        if (documents.Contains(document) && !root.Groups.Any(g => g.Has(document)) && !Close(document))
+        {
+            Activate(document);
+        }
+    }
+
+    private sealed class FileHold(EditorArea area, OpenDocument document) : IDisposable
+    {
+        private bool released;
+
+        public void Dispose()
+        {
+            if (!released)
+            {
+                released = true;
+                area.LetGo(document);
+            }
+        }
     }
 
     /// <summary>Closes a tab of one group: the file stays open if another group has it.</summary>
@@ -479,12 +538,12 @@ public sealed class EditorArea : UserControl
         }
     }
 
-    /// <summary>Closes every file, each saved first; false when one could not be, and stays open.</summary>
+    /// <summary>Closes every file, those held too, each saved first; false when one could not be, and stays open.</summary>
     public bool CloseAll()
     {
         foreach (OpenDocument document in documents.ToList())
         {
-            if (!Close(document))
+            if (!Close(document, forGood: true))
             {
                 return false;
             }
@@ -667,7 +726,7 @@ public sealed class EditorArea : UserControl
         Refresh();
     }
 
-    private void Refresh() => emptyState.IsVisible = documents.Count == 0;
+    private void Refresh() => emptyState.IsVisible = !root.Groups.Any(g => g.Tabs.Count > 0);
 
     private static Control Build(Node node)
     {

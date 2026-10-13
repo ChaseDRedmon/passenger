@@ -202,8 +202,7 @@ public static class WorkspaceEdits
         }
         foreach (OpenDocument document in editors.Documents.Where(d => PathNames.Within(d.Path, path)).ToList())
         {
-            document.Text.MarkSaved();
-            editors.Close(document);
+            editors.CloseDeleted(document);
         }
     }
 
