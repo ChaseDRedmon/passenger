@@ -159,6 +159,14 @@ public sealed class McpTests : IDisposable
             string answer = (await Call(client, "terminal_run", new() { ["command"] = command })).GetString()!;
             Assert.Contains("42", answer, StringComparison.Ordinal);
             Assert.Contains("Notes.txt", answer, StringComparison.Ordinal);
+            if (!OperatingSystem.IsWindows())
+            {
+                // Past the scrollback's limit, where each line printed drops the oldest, a command's answer is still its own.
+                int beyond = global::Passenger.Terminal.TerminalScreen.ScrollbackLimit + 100;
+                await Call(client, "terminal_run", new() { ["command"] = $"seq 1 {beyond}" });
+                string past = (await Call(client, "terminal_run", new() { ["command"] = "echo one; echo two" })).GetString()!;
+                Assert.True(past.Contains("one\ntwo", StringComparison.Ordinal), $"past the scrollback's limit, terminal_run answered a command that printed one and two with:\n{past}");
+            }
         }
         finally
         {

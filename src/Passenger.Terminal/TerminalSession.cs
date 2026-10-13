@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
-using System.Threading.Channels;
 using Avalonia.Threading;
 using Porta.Pty;
 
@@ -10,7 +9,8 @@ namespace Passenger.Terminal;
 /// <summary>A shell in a pseudo-terminal, as Rider's terminal runs one: the user's login shell in the folder, its
 /// output read off the window's thread and fed to the <see cref="TerminalScreen"/> on it a slice at a time, keys and
 /// pastes written to it off the window's thread, its size kept to the view's. Porta.Pty makes the pseudo-terminal
-/// (forkpty in a native shim on macOS and Linux, ConPTY on Windows).</summary>
+/// (forkpty in a native shim on macOS and Linux, ConPTY on Windows). Its reads and writes block, so each has a thread
+/// of its own: on the thread pool, a pool every thread of which a build or a debugger holds would hold the shell too.</summary>
 public sealed class TerminalSession : IAsyncDisposable
 {
     /// <summary>Output read but not yet on the screen past which reading waits, so a program writing faster than the
@@ -25,7 +25,7 @@ public sealed class TerminalSession : IAsyncDisposable
 
     private readonly ConcurrentQueue<byte[]> arrived = new();
     private readonly SemaphoreSlim room = new(0);
-    private readonly Channel<byte[]> outgoing = Channel.CreateUnbounded<byte[]>(new UnboundedChannelOptions { SingleReader = true });
+    private readonly BlockingCollection<byte[]> outgoing = new(new ConcurrentQueue<byte[]>());
     private IPtyConnection? pty;
     private byte[]? feeding;
     private int fed;
@@ -86,8 +86,8 @@ public sealed class TerminalSession : IAsyncDisposable
         });
         Stream reader = pty.ReaderStream;
         Stream writer = pty.WriterStream;
-        _ = Task.Run(() => ReadAsync(reader));
-        _ = Task.Run(() => SendAsync(writer));
+        new Thread(() => Read(reader)) { IsBackground = true, Name = "Terminal output" }.Start();
+        new Thread(() => Send(writer)) { IsBackground = true, Name = "Terminal input" }.Start();
     }
 
     /// <summary>Text for the shell, as typed.</summary>
@@ -97,11 +97,18 @@ public sealed class TerminalSession : IAsyncDisposable
     /// that reads nothing (a paste during sleep 30) leaves that write waiting in the kernel, never the window.</summary>
     public void Write(byte[] bytes)
     {
-        if (pty is null || !IsRunning || bytes.Length == 0)
+        if (pty is null || !IsRunning || bytes.Length == 0 || outgoing.IsAddingCompleted)
         {
             return;
         }
-        outgoing.Writer.TryWrite(bytes);
+        try
+        {
+            outgoing.Add(bytes);
+        }
+        catch (InvalidOperationException)
+        {
+            // The session closed between the look and the add.
+        }
     }
 
     /// <summary>A paste: line breaks as Enter sends them, every other control character left out, as xterm and Windows
@@ -165,7 +172,7 @@ public sealed class TerminalSession : IAsyncDisposable
     public ValueTask DisposeAsync()
     {
         closed = true;
-        outgoing.Writer.TryComplete();
+        outgoing.CompleteAdding();
         room.Release();
         if (IsRunning)
         {
@@ -196,14 +203,14 @@ public sealed class TerminalSession : IAsyncDisposable
 
     /// <summary>Reads the shell's output as it comes and hands it to the window's thread, waiting while the screen has
     /// <see cref="MostHeld"/> still to take.</summary>
-    private async Task ReadAsync(Stream reader)
+    private void Read(Stream reader)
     {
         byte[] buffer = new byte[64 * 1024];
         try
         {
             while (!closed)
             {
-                int read = await reader.ReadAsync(buffer);
+                int read = reader.Read(buffer);
                 if (read <= 0)
                 {
                     break;
@@ -216,7 +223,7 @@ public sealed class TerminalSession : IAsyncDisposable
                 }
                 while (Volatile.Read(ref held) >= MostHeld && !closed)
                 {
-                    await room.WaitAsync();
+                    room.Wait();
                 }
             }
         }
@@ -227,14 +234,14 @@ public sealed class TerminalSession : IAsyncDisposable
     }
 
     /// <summary>Writes what was typed and pasted, in order, for as long as the shell runs.</summary>
-    private async Task SendAsync(Stream writer)
+    private void Send(Stream writer)
     {
         try
         {
-            await foreach (byte[] bytes in outgoing.Reader.ReadAllAsync())
+            foreach (byte[] bytes in outgoing.GetConsumingEnumerable())
             {
-                await writer.WriteAsync(bytes);
-                await writer.FlushAsync();
+                writer.Write(bytes);
+                writer.Flush();
             }
         }
         catch (Exception failed) when (failed is IOException or ObjectDisposedException)

@@ -220,7 +220,8 @@ public sealed partial class PassengerTools
     {
         TerminalSession shell = await Terminal(cancel);
         TerminalScreen screen = shell.Screen;
-        int before = screen.Scrollback.Count + screen.CursorRow;
+        // By its number, which stays the line's own as the scrollback's oldest drop past its limit.
+        long before = screen.ScreenTop + screen.CursorRow;
         string prompt = Prompt(screen);
         int version = screen.Version;
         shell.Write(command + "\r");
@@ -238,14 +239,18 @@ public sealed partial class PassengerTools
                 continue;
             }
             // Its prompt back below it ends a command; one that leaves another prompt (a cd) or none (a server) ends once quiet.
-            bool prompted = prompt.Length > 0 && screen.Scrollback.Count + screen.CursorRow > before && Prompt(screen) == prompt;
+            bool prompted = prompt.Length > 0 && screen.ScreenTop + screen.CursorRow > before && Prompt(screen) == prompt;
             if (answered && DateTime.UtcNow - last > (prompted ? TimeSpan.FromMilliseconds(200) : TimeSpan.FromSeconds(2)))
             {
                 break;
             }
         }
-        int end = screen.Scrollback.Count + screen.CursorRow;
-        IEnumerable<string> lines = Enumerable.Range(Math.Max(0, before), Math.Max(0, end - before + 1)).Select(i => screen.LineAt(i).Text());
+        long end = screen.ScreenTop + screen.CursorRow;
+        List<string> lines = [];
+        for (long line = Math.Max(before, screen.FirstLine); line <= end; line++)
+        {
+            lines.Add(screen.LineAt(line).Text());
+        }
         return string.Join('\n', lines).TrimEnd();
     });
 

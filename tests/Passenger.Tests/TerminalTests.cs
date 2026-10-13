@@ -1,11 +1,13 @@
 using System.Diagnostics;
 using System.Globalization;
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
 using Avalonia.Input.Platform;
 using Passenger.App;
+using Passenger.App.Docking;
 using Passenger.Terminal;
 
 namespace Passenger.Tests;
@@ -13,7 +15,8 @@ namespace Passenger.Tests;
 /// <summary>The terminal as programs use it: the screen reads xterm's sequences as xterm does (wrapping, scroll regions,
 /// the alternate screen, colours, wide characters, answers to a program's questions, resizing into the scrollback),
 /// and the Terminal window runs a real shell in a pseudo-terminal that takes typed commands and keys ahead of the IDE,
-/// whose floods of output and stuck pastes never hold the window, and whose pastes stay text.</summary>
+/// whose floods of output and stuck pastes never hold the window, and whose pastes stay text; accents and emoji take
+/// the columns the shell counts, lines reflow as it resizes, and a place or a selection holds as output streams.</summary>
 public sealed class TerminalTests
 {
     [Fact]
@@ -285,8 +288,7 @@ public sealed class TerminalTests
             (MainWindow window, TerminalSession shell) = Open(folder, "/bin/sh");
             window.KeyTextInput("sleep 30");
             Ui.Press(window, "ENTER");
-            Ui.WaitFor(() => shell.Screen.CursorRow > 0 && shell.Screen.Lines[shell.Screen.CursorRow - 1].Text().Contains("sleep 30", StringComparison.Ordinal),
-                "sleep to start");
+            WaitForScreen(window, shell, s => s.CursorRow > 0 && s.Lines[s.CursorRow - 1].Text().Contains("sleep 30", StringComparison.Ordinal), "sleep to start");
 
             // Far more than the pseudo-terminal holds, while sleep reads none of it.
             Copy(window, string.Concat(Enumerable.Range(0, 2000).Select(i => $"echo pasted {i}\n")));
@@ -303,6 +305,48 @@ public sealed class TerminalTests
         }
         finally
         {
+            TestFolders.Delete(folder);
+        }
+    }
+
+    [AvaloniaFact]
+    public void The_shell_echoes_what_is_typed_while_every_thread_of_the_pool_is_busy()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            // sh is Unix's.
+            return;
+        }
+        string folder = Directory.CreateTempSubdirectory("passenger-terminal-").FullName;
+        using ManualResetEventSlim release = new();
+        try
+        {
+            (MainWindow window, TerminalSession shell) = Open(folder, "/bin/sh");
+            // Every thread of the pool held, as a build, a debugger or tests waiting on processes hold them, and more waiting.
+            ThreadPool.GetMinThreads(out int threads, out _);
+            for (int i = 0; i < threads * 4; i++)
+            {
+                ThreadPool.UnsafeQueueUserWorkItem(_ => release.Wait(TimeSpan.FromSeconds(60)), null);
+            }
+            Thread.Sleep(200);
+            Stopwatch typing = Stopwatch.StartNew();
+            window.KeyTextInput("echo typed");
+            window.KeyPress(Key.Enter, RawInputModifiers.None, PhysicalKey.None, null);
+            window.KeyRelease(Key.Enter, RawInputModifiers.None, PhysicalKey.None, null);
+            // Frames pumped by hand: settling waits for background work, which the busy pool would hold.
+            while (!Screen(shell).Contains("\ntyped", StringComparison.Ordinal) && typing.Elapsed < TimeSpan.FromSeconds(30))
+            {
+                Screenshot.Pump(TimeSpan.FromMilliseconds(20));
+            }
+            TimeSpan answered = typing.Elapsed;
+            release.Set();
+            Assert.True(answered < TimeSpan.FromSeconds(5),
+                $"with the pool's {threads} threads busy, the shell's answer to a command typed took {answered.TotalSeconds:F1} s:\n{Screen(shell)}");
+            window.Close();
+        }
+        finally
+        {
+            release.Set();
             TestFolders.Delete(folder);
         }
     }
@@ -340,6 +384,269 @@ public sealed class TerminalTests
         }
     }
 
+    [AvaloniaFact]
+    public void A_decomposed_accent_shows_on_its_letter_in_one_cell_and_copies_with_it()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            // sh's printf writes the bytes.
+            return;
+        }
+        string folder = Directory.CreateTempSubdirectory("passenger-terminal-").FullName;
+        try
+        {
+            (MainWindow window, TerminalSession shell) = Open(folder, "/bin/sh");
+            // Résumé.pdf as macOS's file system spells it, each é an e and a combining acute (CC 81), as ls prints it.
+            string name = "Re\u0301sume\u0301.pdf";
+            Run(window, @"printf 'Re\314\201sume\314\201.pdf\n'");
+            long line = WaitForLine(shell, text => text.StartsWith('R') && text.EndsWith(".pdf", StringComparison.Ordinal), "the name printed");
+            TerminalLine row = shell.Screen.LineAt(line);
+            Assert.True(row.Text() == name, $"Résumé.pdf printed as \"{row.Text()}\": its accents were dropped");
+            Assert.True(row.TextOf(1) == "e\u0301" && row.Cells[2].Rune == 's' && row.Cells[9].Rune == 'f',
+                $"Résumé.pdf took other columns than its ten letters, so text after an accent drifts from where the shell counts it: [{string.Join("|", Enumerable.Range(0, 12).Select(row.TextOf))}]");
+
+            // Dragged over and copied, it is what was printed.
+            Drag(window, line, 0, line, 9);
+            Ui.Press(window, CopyKey);
+            Assert.Equal(name, Ui.Clipboard(window));
+            window.Close();
+        }
+        finally
+        {
+            TestFolders.Delete(folder);
+        }
+    }
+
+    [AvaloniaFact]
+    public void An_emoji_takes_the_two_columns_the_shell_counts_so_the_text_after_it_stays_in_place()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            // sh's printf writes the bytes.
+            return;
+        }
+        string folder = Directory.CreateTempSubdirectory("passenger-terminal-").FullName;
+        try
+        {
+            (MainWindow window, TerminalSession shell) = Open(folder, "/bin/sh");
+            // A rocket (U+1F680), then a check mark (U+2705) and a lightning bolt (U+26A1), each two columns in zsh's count.
+            Run(window, @"printf '\360\237\232\200x\n\342\234\205\342\232\241y\n'");
+            long rocket = WaitForLine(shell, "\U0001F680x", "the rocket printed");
+            Assert.True(shell.Screen.LineAt(rocket).Cells[2].Rune == 'x',
+                $"x printed after a rocket stands in column {Array.FindIndex(shell.Screen.LineAt(rocket).Cells, c => c.Rune == 'x')}, not 2: the rocket overlaps it");
+            TerminalLine marks = shell.Screen.LineAt(rocket + 1);
+            Assert.True(marks.Text() == "\u2705\u26A1y" && marks.Cells[4].Rune == 'y',
+                $"y printed after a check mark and a lightning bolt stands in column {Array.FindIndex(marks.Cells, c => c.Rune == 'y')}, not 4");
+            window.Close();
+        }
+        finally
+        {
+            TestFolders.Delete(folder);
+        }
+    }
+
+    [AvaloniaFact]
+    public void A_long_line_reads_whole_after_the_terminal_narrows_and_widens_again_and_the_prompt_keeps_its_cursor()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            // sh and seq are Unix's.
+            return;
+        }
+        string folder = Directory.CreateTempSubdirectory("passenger-terminal-").FullName;
+        try
+        {
+            (MainWindow window, TerminalSession shell) = Open(folder, "/bin/sh");
+            TerminalScreen screen = shell.Screen;
+            int wide = screen.Columns;
+            Assert.True(wide >= 100, $"the terminal has {wide} columns, too few for a line of 100");
+            // The numbers 10 to 59 in a row: a line of 100 characters.
+            string hundred = string.Concat(Enumerable.Range(10, 50));
+            Run(window, "printf '%s' $(seq 10 59); echo");
+            WaitForLine(shell, hundred, "the line of 100 printed");
+            window.KeyTextInput("echo kept");
+            Ui.WaitFor(() => screen.Lines[screen.CursorRow].Text().EndsWith("echo kept", StringComparison.Ordinal), "the command typed");
+            string prompt = screen.Lines[screen.CursorRow].Text();
+
+            // Moved to the right side, as a drag of its stripe button moves it, the terminal is a side panel's width.
+            DockHost dock = window.DockHost;
+            dock.Move(dock["terminal"]!, ToolAnchor.RightTop);
+            Ui.WaitFor(() => screen.Columns < wide, "the terminal to narrow on the right side");
+            Assert.True(screen.Columns < 100, $"on the right side the terminal has {screen.Columns} columns, room for the whole line");
+            Assert.True(Lines(screen).Contains(hundred), $"at {screen.Columns} columns the line of 100 no longer reads whole, its rows joined:\n{Screen(shell)}");
+
+            dock.Move(dock["terminal"]!, ToolAnchor.BottomLeft);
+            Ui.WaitFor(() => screen.Columns == wide, "the terminal to widen back at the bottom");
+            Ui.Settle();
+            Assert.True(Enumerable.Range(0, screen.Rows).Any(r => screen.Lines[r].Text() == hundred),
+                $"widened again to {wide} columns, the line of 100 is not one row of the screen: the narrower width cut it\n{Screen(shell)}");
+            Assert.True(screen.Lines[screen.CursorRow].Text() == prompt && screen.CursorColumn == prompt.Length,
+                $"the cursor is at row {screen.CursorRow}, column {screen.CursorColumn}, not after the command typed ({prompt}):\n{Screen(shell)}");
+            Ui.Press(window, "ENTER");
+            WaitForLine(shell, "kept", "the command typed before the resizes to run");
+            window.Close();
+        }
+        finally
+        {
+            TestFolders.Delete(folder);
+        }
+    }
+
+    [AvaloniaFact]
+    public void Scrolled_back_the_terminal_holds_its_place_as_output_arrives()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            // sh and seq are Unix's.
+            return;
+        }
+        string folder = Directory.CreateTempSubdirectory("passenger-terminal-").FullName;
+        try
+        {
+            (MainWindow window, TerminalSession shell) = Open(folder, "/bin/sh");
+            TerminalView view = window.TerminalPanel.View;
+            Run(window, "seq 1 300");
+            WaitForLine(shell, "300", "seq's lines");
+            // Output that comes once the person is reading back: the loop waits for a file the test makes.
+            Run(window, "while [ ! -e go ]; do sleep 0.05; done; seq 1001 1100");
+            Ui.WaitFor(() => shell.Screen.Lines[shell.Screen.CursorRow].Text().Length == 0, "the loop to start waiting");
+
+            Point middle = view.TranslatePoint(new Point(view.Bounds.Width / 2, view.Bounds.Height / 2), window)!.Value;
+            for (int notch = 0; notch < 7; notch++)
+            {
+                window.MouseWheel(middle, new Vector(0, 1));
+            }
+            Ui.Settle();
+            Assert.True(view.ScrolledBack == 21, $"seven notches of the wheel scrolled {view.ScrolledBack} lines back, not 21");
+            string top = shell.Screen.LineAt(view.TopLine).Text();
+
+            File.WriteAllText(Path.Combine(folder, "go"), string.Empty);
+            WaitForLine(shell, "1100", "the hundred lines that came while scrolled back");
+            Ui.Settle();
+            Assert.True(view.ScrolledBack > 0, "the output scrolled the view back to the bottom while the person read back");
+            Assert.True(shell.Screen.LineAt(view.TopLine).Text() == top,
+                $"scrolled back to \"{top}\", the view moved to \"{shell.Screen.LineAt(view.TopLine).Text()}\" as 100 lines arrived");
+            window.Close();
+        }
+        finally
+        {
+            TestFolders.Delete(folder);
+        }
+    }
+
+    [AvaloniaFact]
+    public void A_selection_stays_on_its_text_as_output_streams_past_the_scrollbacks_limit()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            // sh and seq are Unix's.
+            return;
+        }
+        string folder = Directory.CreateTempSubdirectory("passenger-terminal-").FullName;
+        try
+        {
+            (MainWindow window, TerminalSession shell) = Open(folder, "/bin/sh");
+            TerminalScreen screen = shell.Screen;
+            string text = $"{TerminalScreen.ScrollbackLimit + 100}";
+            Run(window, $"seq 1 {text}");
+            WaitForLine(shell, text, "seq's lines");
+            Assert.True(screen.Scrollback.Count == TerminalScreen.ScrollbackLimit, $"the scrollback holds {screen.Scrollback.Count} lines, short of its limit");
+            Run(window, "while [ ! -e go ]; do sleep 0.05; done; seq 20001 20100");
+            Ui.WaitFor(() => screen.Lines[screen.CursorRow].Text().Length == 0, "the loop to start waiting");
+
+            // The person drags over seq's last line, and output streams in, each line now dropping the oldest.
+            long chosen = WaitForLine(shell, text, "seq's last line");
+            Drag(window, chosen, 0, chosen, text.Length - 1);
+            Assert.Equal(text, window.TerminalPanel.View.SelectedText);
+            File.WriteAllText(Path.Combine(folder, "go"), string.Empty);
+            WaitForLine(shell, "20100", "the hundred lines streamed past the limit");
+            Ui.Press(window, CopyKey);
+            Assert.True(Ui.Clipboard(window) == text,
+                $"the selection made on \"{text}\" copied \"{Ui.Clipboard(window)}\" once 100 more lines had dropped the oldest");
+            window.Close();
+        }
+        finally
+        {
+            TestFolders.Delete(folder);
+        }
+    }
+
+    /// <summary>Waits for the terminal's screen to show something, failing with what it shows instead, its size, its
+    /// cursor and what has the keys.</summary>
+    private static void WaitForScreen(MainWindow window, TerminalSession shell, Func<TerminalScreen, bool> shows, string what)
+    {
+        try
+        {
+            Ui.WaitFor(() => shows(shell.Screen), what);
+        }
+        catch (TimeoutException waited)
+        {
+            TerminalScreen screen = shell.Screen;
+            throw new TimeoutException($"{waited.Message}. The terminal, {screen.Columns} by {screen.Rows} with its cursor at row {screen.CursorRow} "
+                + $"column {screen.CursorColumn}, {window.FocusManager?.GetFocusedElement()?.GetType().Name ?? "nothing"} having the keys, shows:\n{Screen(shell)}", waited);
+        }
+    }
+
+    /// <summary>Types a command into the terminal and presses Enter.</summary>
+    private static void Run(MainWindow window, string command)
+    {
+        window.KeyTextInput(command);
+        Ui.Press(window, "ENTER");
+    }
+
+    /// <summary>Waits for a line of the scrollback or screen to read just so, and gives its number.</summary>
+    private static long WaitForLine(TerminalSession shell, string text, string what) => WaitForLine(shell, line => line == text, what);
+
+    /// <summary>Waits for a line of the scrollback or screen whose text passes a test, and gives the newest one's number.</summary>
+    private static long WaitForLine(TerminalSession shell, Func<string, bool> test, string what)
+    {
+        long found = -1;
+        Ui.WaitFor(() =>
+        {
+            TerminalScreen screen = shell.Screen;
+            for (long line = screen.ScreenTop + screen.Rows - 1; line >= screen.FirstLine; line--)
+            {
+                if (test(screen.LineAt(line).Text()))
+                {
+                    found = line;
+                    return true;
+                }
+            }
+            return false;
+        }, what, TimeSpan.FromSeconds(30));
+        return found;
+    }
+
+    /// <summary>The scrollback's and screen's text, rows joined where the text wrapped, as a copy of them reads.</summary>
+    private static List<string> Lines(TerminalScreen screen)
+    {
+        List<string> lines = [];
+        System.Text.StringBuilder line = new();
+        for (long at = screen.FirstLine; at < screen.ScreenTop + screen.Rows; at++)
+        {
+            TerminalLine row = screen.LineAt(at);
+            line.Append(row.Text());
+            if (!row.Wrapped)
+            {
+                lines.Add(line.ToString());
+                line.Clear();
+            }
+        }
+        return lines;
+    }
+
+    /// <summary>A drag with the mouse from one cell to another, as a person chooses text.</summary>
+    private static void Drag(MainWindow window, long fromLine, int fromColumn, long toLine, int toColumn)
+    {
+        TerminalView view = window.TerminalPanel.View;
+        Point from = view.TranslatePoint(view.PointOf(fromLine, fromColumn), window)!.Value;
+        Point to = view.TranslatePoint(view.PointOf(toLine, toColumn), window)!.Value;
+        window.MouseDown(from, MouseButton.Left);
+        window.MouseMove(to, RawInputModifiers.LeftMouseButton);
+        window.MouseUp(to, MouseButton.Left);
+        Ui.Settle();
+    }
+
     /// <summary>The window over a folder, its Terminal open on a shell of the test's and the keys going to it.</summary>
     private static (MainWindow Window, TerminalSession Shell) Open(string folder, string shell, params string[] arguments)
     {
@@ -356,6 +663,9 @@ public sealed class TerminalTests
 
     /// <summary>The terminal's Paste: Cmd+V on the Mac, Ctrl+Shift+V elsewhere.</summary>
     private static string PasteKey => OperatingSystem.IsMacOS() ? "meta V" : "control shift V";
+
+    /// <summary>The terminal's Copy: Cmd+C on the Mac, Ctrl+Shift+C elsewhere.</summary>
+    private static string CopyKey => OperatingSystem.IsMacOS() ? "meta C" : "control shift C";
 
     private static void Copy(TopLevel window, string text)
     {

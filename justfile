@@ -38,6 +38,10 @@ app-icon:
 icons:
     python3 -I tools/icons.py
 
+# Rewrite the terminal's table of wide characters from the Unicode Character Database (tools/unicode-widths.py).
+unicode-widths:
+    python3 -I tools/unicode-widths.py
+
 # Passenger as an MCP server over a folder, its tools on standard input and output, run from a clone of the
 # last build so rebuilding Passenger never changes the files under it (tools/mcp.sh). `.mcp.json` starts it.
 mcp folder="":

@@ -5,6 +5,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Input.Platform;
 using Avalonia.Media;
+using Avalonia.Media.Fonts.Tables.Cmap;
 
 namespace Passenger.Terminal;
 
@@ -27,9 +28,10 @@ public sealed class TerminalView : Control
     private TerminalSession? session;
     private double cellWidth = 8;
     private double cellHeight = 16;
-    private int scrolledBack;
-    private (int Line, int Column)? anchor;
-    private (int Line, int Column)? active;
+    private CharacterToGlyphMap? glyphs;
+    private long? heldTop;
+    private (long Line, int Column)? anchor;
+    private (long Line, int Column)? active;
     private bool selecting;
     private IBrush foreground = Brushes.White;
     private IBrush background = Brushes.Black;
@@ -71,7 +73,7 @@ public sealed class TerminalView : Control
         }
         session.Screen.ClearBuffer();
         ClearSelection();
-        scrolledBack = 0;
+        heldTop = null;
         InvalidateVisual();
     }
 
@@ -103,13 +105,31 @@ public sealed class TerminalView : Control
                 session.Output += OnOutput;
                 FitSize();
             }
-            scrolledBack = 0;
+            heldTop = null;
             InvalidateVisual();
         }
     }
 
     /// <summary>How many lines the view is scrolled back from the bottom.</summary>
-    public int ScrolledBack => scrolledBack;
+    public int ScrolledBack => session is null ? 0 : (int)(session.Screen.ScreenTop - TopLine);
+
+    /// <summary>The number of the line drawn at the top (<see cref="TerminalScreen.LineAt"/>). Scrolled back, it is the
+    /// line the person scrolled to, which holds its place as output arrives; else the screen's top row.</summary>
+    public long TopLine
+    {
+        get
+        {
+            if (session is null)
+            {
+                return 0;
+            }
+            TerminalScreen screen = session.Screen;
+            return heldTop is { } held ? Math.Clamp(held, screen.FirstLine, screen.ScreenTop) : screen.ScreenTop;
+        }
+    }
+
+    /// <summary>The middle of a line's cell, in this control's coordinates: where a click lands on it.</summary>
+    public Point PointOf(long line, int column) => new(Pad + ((column + 0.5) * cellWidth), Pad + ((line - TopLine + 0.5) * cellHeight));
 
     /// <summary>The text chosen by a drag, rows joined where the text wrapped; empty when nothing is chosen.</summary>
     public string SelectedText
@@ -120,10 +140,12 @@ public sealed class TerminalView : Control
             {
                 return string.Empty;
             }
+            TerminalScreen screen = session.Screen;
             StringBuilder text = new();
-            for (int line = startLine; line <= endLine; line++)
+            // Lines gone from the scrollback's front take what they chose with them.
+            for (long line = Math.Max(startLine, screen.FirstLine); line <= Math.Min(endLine, screen.ScreenTop + screen.Rows - 1); line++)
             {
-                TerminalLine row = session.Screen.LineAt(line);
+                TerminalLine row = screen.LineAt(line);
                 int from = line == startLine ? startColumn : 0;
                 int to = line == endLine ? endColumn + 1 : row.Cells.Length;
                 text.Append(row.Text(from, to));
@@ -136,8 +158,8 @@ public sealed class TerminalView : Control
         }
     }
 
-    /// <summary>Chooses lines of the scrollback and screen together (from the oldest), as a drag over them does.</summary>
-    public void Select(int fromLine, int fromColumn, int toLine, int toColumn)
+    /// <summary>Chooses lines of the scrollback and screen together, by their numbers, as a drag over them does.</summary>
+    public void Select(long fromLine, int fromColumn, long toLine, int toColumn)
     {
         anchor = (fromLine, fromColumn);
         active = (toLine, toColumn);
@@ -158,7 +180,9 @@ public sealed class TerminalView : Control
         {
             return;
         }
-        scrolledBack = Math.Clamp(scrolledBack + lines, 0, session.Screen.Scrollback.Count);
+        TerminalScreen screen = session.Screen;
+        long to = Math.Clamp(TopLine - lines, screen.FirstLine, screen.ScreenTop);
+        heldTop = to < screen.ScreenTop ? to : null;
         InvalidateVisual();
     }
 
@@ -210,6 +234,7 @@ public sealed class TerminalView : Control
         FormattedText probe = new("MMMMMMMMMM", CultureInfo.InvariantCulture, FlowDirection.LeftToRight, new Typeface(FontFamily), FontSize, Brushes.White);
         cellWidth = probe.WidthIncludingTrailingWhitespace / 10;
         cellHeight = Math.Ceiling(FontSize * 1.25);
+        glyphs = new Typeface(FontFamily).GlyphTypeface.CharacterToGlyphMap;
     }
 
     /// <summary>The screen as many whole cells as fit, the shell told of a change.</summary>
@@ -221,16 +246,25 @@ public sealed class TerminalView : Control
         }
         int columns = Math.Max(2, (int)((Bounds.Width - (Pad * 2)) / cellWidth));
         int rows = Math.Max(1, (int)((Bounds.Height - (Pad * 2)) / cellHeight));
+        if (columns != session.Screen.Columns)
+        {
+            // A reflow numbers the lines again: what was chosen, and the place scrolled back to, are other lines now.
+            anchor = null;
+            active = null;
+            heldTop = null;
+        }
         session.Resize(columns, rows);
         InvalidateVisual();
     }
 
+    /// <summary>New output shows at the bottom, but for a person reading back through the scrollback, whose top line
+    /// is held by its number, so the place holds as lines arrive below it; a program that clears the scrollback leaves
+    /// nothing to read back through, and the view follows the output again.</summary>
     private void OnOutput(object? sender, EventArgs e)
     {
-        // New output shows the bottom unless the person is reading back through the scrollback, whose place holds.
-        if (scrolledBack > 0 && session is not null)
+        if (session is { Screen.Scrollback.Count: 0 })
         {
-            scrolledBack = Math.Min(scrolledBack, session.Screen.Scrollback.Count);
+            heldTop = null;
         }
         InvalidateVisual();
     }
@@ -244,24 +278,24 @@ public sealed class TerminalView : Control
         }
         TerminalScreen screen = session.Screen;
         Typeface plain = new(FontFamily);
-        int first = screen.Scrollback.Count - scrolledBack;
+        long first = TopLine;
         var range = Ordered();
         for (int row = 0; row < screen.Rows; row++)
         {
-            int line = first + row;
-            if (line >= screen.LineCount)
+            long line = first + row;
+            if (line >= screen.ScreenTop + screen.Rows)
             {
                 break;
             }
             DrawLine(context, screen.LineAt(line), line, Pad + (row * cellHeight), plain, range);
         }
-        if (scrolledBack == 0 && screen.CursorVisible)
+        if (first == screen.ScreenTop && screen.CursorVisible)
         {
             DrawCursor(context, screen, plain);
         }
     }
 
-    private void DrawLine(DrawingContext context, TerminalLine line, int index, double y, Typeface plain, ((int Line, int Column), (int Line, int Column))? range)
+    private void DrawLine(DrawingContext context, TerminalLine line, long index, double y, Typeface plain, ((long Line, int Column), (long Line, int Column))? range)
     {
         Cell[] cells = line.Cells;
         int column = 0;
@@ -270,25 +304,40 @@ public sealed class TerminalView : Control
             Cell head = cells[column];
             bool chosen = Within(range, index, column);
             int end = column + 1;
-            // A run is cells drawn alike; a wide character is a run of its own, so the text after it stays on the grid.
-            if (head.Width == 1)
+            bool alone = !InRun(head);
+            if (!alone)
             {
-                while (end < cells.Length && cells[end].Width == 1 && cells[end].Style == head.Style && Within(range, index, end) == chosen)
+                // A run is cells drawn alike in the terminal's font, every glyph of which is a column wide, so it stays on the grid.
+                while (end < cells.Length && InRun(cells[end]) && cells[end].Style == head.Style && Within(range, index, end) == chosen)
                 {
                     end++;
                 }
             }
-            else if (head.Width == 2 && end < cells.Length)
+            else
             {
-                end++;
+                if (head.Width == 2 && end < cells.Length)
+                {
+                    end++;
+                }
+                // A spacing mark (a Devanagari vowel sign) has a column of its own, but is shaped with the letter before it.
+                while (end < cells.Length && cells[end].Width == 1 && CharUnicodeInfo.GetUnicodeCategory(cells[end].Rune) == UnicodeCategory.SpacingCombiningMark
+                    && cells[end].Style == head.Style && Within(range, index, end) == chosen)
+                {
+                    end++;
+                }
             }
-            DrawRun(context, cells, column, end, y, plain, chosen);
+            DrawRun(context, line, column, end, y, plain, chosen, alone);
             column = end;
         }
     }
 
-    private void DrawRun(DrawingContext context, Cell[] cells, int from, int to, double y, Typeface plain, bool chosen)
+    /// <summary>Whether a cell is drawn in a run with its neighbours: one code point a column wide that the terminal's
+    /// font has. A wide character, a letter with its marks or one another font draws is drawn alone, fitted to its cells.</summary>
+    private bool InRun(Cell cell) => cell.Width == 1 && !cell.IsJoined && (cell.Rune < 0x7f || glyphs?.ContainsGlyph(cell.Rune) == true);
+
+    private void DrawRun(DrawingContext context, TerminalLine line, int from, int to, double y, Typeface plain, bool chosen, bool alone)
     {
+        Cell[] cells = line.Cells;
         CellStyle style = cells[from].Style;
         bool inverse = style.Flags.HasFlag(CellFlags.Inverse);
         IBrush fore = Colour(style.Fore, foreground);
@@ -314,7 +363,7 @@ public sealed class TerminalView : Control
             {
                 continue;
             }
-            text.Append(cells[i].Rune == 0 ? " " : char.ConvertFromUtf32(cells[i].Rune));
+            text.Append(line.TextOf(i));
         }
         string shown = text.ToString();
         if (style.Flags.HasFlag(CellFlags.Hidden) || shown.Trim().Length == 0)
@@ -323,10 +372,17 @@ public sealed class TerminalView : Control
         }
         Typeface face = new(plain.FontFamily, style.Flags.HasFlag(CellFlags.Italic) ? FontStyle.Italic : FontStyle.Normal,
             style.Flags.HasFlag(CellFlags.Bold) ? FontWeight.Bold : FontWeight.Normal);
-        FormattedText formatted = new(shown, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, face, FontSize, fore);
         using (context.PushOpacity(style.Flags.HasFlag(CellFlags.Dim) ? 0.6 : 1))
         {
-            context.DrawText(formatted, new Point(x, y + ((cellHeight - formatted.Height) / 2)));
+            if (alone)
+            {
+                DrawFitted(context, shown, area, face, fore);
+            }
+            else
+            {
+                FormattedText formatted = new(shown, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, face, FontSize, fore);
+                context.DrawText(formatted, new Point(x, y + ((cellHeight - formatted.Height) / 2)));
+            }
             if (style.Flags.HasFlag(CellFlags.Underline))
             {
                 context.DrawLine(new Pen(fore, 1), new Point(x, y + cellHeight - 2), new Point(area.Right, y + cellHeight - 2));
@@ -335,6 +391,24 @@ public sealed class TerminalView : Control
             {
                 context.DrawLine(new Pen(fore, 1), new Point(x, y + (cellHeight / 2)), new Point(area.Right, y + (cellHeight / 2)));
             }
+        }
+    }
+
+    /// <summary>A grapheme drawn within its cells: another font's glyph (an emoji's, a Devanagari letter's) is made smaller
+    /// when it is wider than they are, so it never covers the next, and centred in them, as kitty and WezTerm fit them.</summary>
+    private void DrawFitted(DrawingContext context, string text, Rect cells, Typeface face, IBrush brush)
+    {
+        FormattedText formatted = new(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, face, FontSize, brush);
+        double width = formatted.WidthIncludingTrailingWhitespace;
+        if (width > cells.Width + 0.5 || formatted.Height > cells.Height * 1.4)
+        {
+            double scale = Math.Min(cells.Width / width, cells.Height * 1.25 / formatted.Height);
+            formatted = new(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, face, FontSize * scale, brush);
+            width = formatted.WidthIncludingTrailingWhitespace;
+        }
+        using (context.PushClip(cells))
+        {
+            context.DrawText(formatted, new Point(cells.X + Math.Max(0, (cells.Width - width) / 2), cells.Y + ((cells.Height - formatted.Height) / 2)));
         }
     }
 
@@ -362,8 +436,7 @@ public sealed class TerminalView : Control
                 context.FillRectangle(cursor, new Rect(x, y, width, cellHeight));
                 if (cell.Rune != 0)
                 {
-                    FormattedText under = new(char.ConvertFromUtf32(cell.Rune), CultureInfo.InvariantCulture, FlowDirection.LeftToRight, plain, FontSize, background);
-                    context.DrawText(under, new Point(x, y + ((cellHeight - under.Height) / 2)));
+                    DrawFitted(context, screen.Lines[screen.CursorRow].TextOf(column), new Rect(x, y, width, cellHeight), plain, background);
                 }
                 break;
         }
@@ -405,7 +478,7 @@ public sealed class TerminalView : Control
         return brush;
     }
 
-    private ((int Line, int Column) Start, (int Line, int Column) End)? Ordered()
+    private ((long Line, int Column) Start, (long Line, int Column) End)? Ordered()
     {
         if (anchor is not { } a || active is not { } b || a == b)
         {
@@ -414,16 +487,16 @@ public sealed class TerminalView : Control
         return (a.Line, a.Column).CompareTo((b.Line, b.Column)) <= 0 ? (a, b) : (b, a);
     }
 
-    private static bool Within(((int Line, int Column) Start, (int Line, int Column) End)? range, int line, int column) =>
+    private static bool Within(((long Line, int Column) Start, (long Line, int Column) End)? range, long line, int column) =>
         range is { } r && (line, column).CompareTo(r.Start) >= 0 && (line, column).CompareTo(r.End) <= 0;
 
-    /// <summary>The line (in the scrollback and screen together) and column under a point.</summary>
-    private (int Line, int Column) CellAt(Point at)
+    /// <summary>The line (by its number) and column under a point.</summary>
+    private (long Line, int Column) CellAt(Point at)
     {
         TerminalScreen screen = session!.Screen;
         int row = Math.Clamp((int)((at.Y - Pad) / cellHeight), 0, screen.Rows - 1);
         int column = Math.Clamp((int)((at.X - Pad) / cellWidth), 0, screen.Columns - 1);
-        return (screen.Scrollback.Count - scrolledBack + row, column);
+        return (TopLine + row, column);
     }
 
     protected override void OnPointerPressed(PointerPressedEventArgs e)
@@ -445,7 +518,7 @@ public sealed class TerminalView : Control
         {
             return;
         }
-        (int line, int column) = CellAt(e.GetPosition(this));
+        (long line, int column) = CellAt(e.GetPosition(this));
         if (e.ClickCount == 2)
         {
             SelectWord(line, column);
@@ -531,7 +604,7 @@ public sealed class TerminalView : Control
         }
     }
 
-    private void SelectWord(int line, int column)
+    private void SelectWord(long line, int column)
     {
         Cell[] cells = session!.Screen.LineAt(line).Cells;
         static bool Word(Cell cell) => cell.Rune != 0 && (char.IsLetterOrDigit(char.ConvertFromUtf32(cell.Rune), 0) || cell.Rune is '_' or '-' or '.' or '/' or '~');
@@ -620,7 +693,7 @@ public sealed class TerminalView : Control
 
     private void Typed()
     {
-        scrolledBack = 0;
+        heldTop = null;
         if (anchor is not null)
         {
             ClearSelection();

@@ -31,7 +31,10 @@ public sealed class TerminalScreen
     /// <summary>The most lines kept above the screen.</summary>
     public const int ScrollbackLimit = 10_000;
 
-    private readonly List<TerminalLine> scrollback = [];
+    /// <summary>The longest grapheme a cell holds, in UTF-16 units: a letter's marks beyond it are dropped.</summary>
+    private const int MostJoined = 32;
+
+    private readonly LineRing scrollback = new(ScrollbackLimit);
     private readonly Decoder utf8 = new UTF8Encoding(false).GetDecoder();
     private readonly StringBuilder parameters = new();
     private readonly StringBuilder intermediates = new();
@@ -57,7 +60,7 @@ public sealed class TerminalScreen
 
     public TerminalScreen(int columns = 80, int rows = 24)
     {
-        Columns = Math.Max(1, columns);
+        Columns = Math.Max(2, columns);
         Rows = Math.Max(1, rows);
         main = NewLines(Rows);
         Lines = main;
@@ -140,11 +143,20 @@ public sealed class TerminalScreen
         Version++;
     }
 
-    /// <summary>A line by its place in the scrollback and the screen together, from the oldest.</summary>
-    public TerminalLine LineAt(int line) => line < scrollback.Count ? scrollback[line] : Lines[line - scrollback.Count];
+    /// <summary>The number of the oldest line kept. Lines are numbered from the terminal's first, the scrollback's and the
+    /// screen's together, and keep their numbers as the oldest go (past <see cref="ScrollbackLimit"/>, or cleared), so a
+    /// selection or a read from a line on stays on its text while output streams; a reflow numbers them again.</summary>
+    public long FirstLine => scrollback.Dropped;
 
-    /// <summary>How many lines the scrollback and the screen hold together.</summary>
-    public int LineCount => scrollback.Count + Rows;
+    /// <summary>The number of the screen's top row: the scrollback's lines are those from <see cref="FirstLine"/> to it.</summary>
+    public long ScreenTop => scrollback.Dropped + scrollback.Count;
+
+    /// <summary>A line by its number, from <see cref="FirstLine"/> to the screen's last row.</summary>
+    public TerminalLine LineAt(long line)
+    {
+        long index = line - scrollback.Dropped;
+        return index < scrollback.Count ? scrollback[(int)index] : Lines[(int)(index - scrollback.Count)];
+    }
 
     /// <summary>The screen's text, a row a line, trailing blanks left out: for tests and for a copy of everything.</summary>
     public string ScreenText() => string.Join('\n', Lines.Select(l => l.Text()));
@@ -188,34 +200,52 @@ public sealed class TerminalScreen
 
     public void Feed(string text) => Feed(Encoding.UTF8.GetBytes(text));
 
-    /// <summary>A new size: rows given up go to the scrollback (blank ones below the cursor first), rows gained come
-    /// back from it, and every row is cut or padded to the new width.</summary>
+    /// <summary>A new size. At a new width the main screen and its scrollback reflow, as xterm.js's do: rows the text
+    /// wrapped across join and wrap again, so a line a narrower window cut reads whole once it widens, and the cursor
+    /// stays on its character. A full-screen program draws its own screen again, so the alternate one is only cut or
+    /// padded. Rows given up go to the scrollback (blank ones below the cursor first), rows gained come back from it.</summary>
     public void Resize(int columns, int rows)
     {
-        columns = Math.Max(1, columns);
+        columns = Math.Max(2, columns);
         rows = Math.Max(1, rows);
         if (columns == Columns && rows == Rows)
         {
             return;
         }
         bool shown = IsAlternate;
-        int cursor = CursorRow;
-        int hidden = Rows - 1;
-        main = Fit(main, rows, columns, toScrollback: true, ref shown ? ref hidden : ref cursor);
+        // The main screen's cursor is where 1049 saved it while a full-screen program has the alternate one.
+        Saved mainCursor = shown ? savedMain : Capture();
+        if (columns != Columns)
+        {
+            main = Reflow(main, columns, ref mainCursor);
+        }
+        int mainRow = mainCursor.Row;
+        main = Fit(main, rows, columns, toScrollback: true, ref mainRow);
+        mainCursor = mainCursor with { Row = mainRow };
+        int alternateRow = shown ? CursorRow : Rows - 1;
         if (alternate is not null)
         {
-            alternate = Fit(alternate, rows, columns, toScrollback: false, ref shown ? ref cursor : ref hidden);
+            alternate = Fit(alternate, rows, columns, toScrollback: false, ref alternateRow);
         }
         Lines = shown ? alternate! : main;
-        CursorRow = cursor;
         Columns = columns;
         Rows = rows;
         top = 0;
         bottom = rows - 1;
         tabStops = Stops(columns);
-        CursorRow = Math.Clamp(CursorRow, 0, rows - 1);
-        CursorColumn = Math.Clamp(CursorColumn, 0, columns - 1);
-        wrapPending = false;
+        if (shown)
+        {
+            savedMain = mainCursor with { Row = Math.Clamp(mainCursor.Row, 0, rows - 1) };
+            CursorRow = Math.Clamp(alternateRow, 0, rows - 1);
+            CursorColumn = Math.Clamp(CursorColumn, 0, columns - 1);
+            wrapPending = false;
+        }
+        else
+        {
+            CursorRow = Math.Clamp(mainCursor.Row, 0, rows - 1);
+            CursorColumn = Math.Clamp(mainCursor.Column, 0, columns - 1);
+            wrapPending = mainCursor.WrapPending && CursorColumn == columns - 1;
+        }
         Version++;
     }
 
@@ -246,9 +276,9 @@ public sealed class TerminalScreen
         {
             if (toScrollback && scrollback.Count > 0)
             {
-                list.Insert(0, scrollback[^1]);
-                scrollback[^1].Resize(columns, CellStyle.Plain);
-                scrollback.RemoveAt(scrollback.Count - 1);
+                TerminalLine back = scrollback.RemoveLast();
+                back.Resize(columns, CellStyle.Plain);
+                list.Insert(0, back);
                 cursor++;
             }
             else
@@ -257,6 +287,188 @@ public sealed class TerminalScreen
             }
         }
         return [.. list];
+    }
+
+    /// <summary>The main screen and the scrollback wrapped again at a new width, the screen keeping its row count: the
+    /// rows of each line (joined where text wrapped) cut at the new width, a wide character never split. The screen
+    /// keeps the cursor on the row it was on, pulling lines back from the scrollback as rows join, but rows a narrower
+    /// width adds fill the blank ones under the cursor before any goes up into the scrollback.</summary>
+    private TerminalLine[] Reflow(TerminalLine[] screen, int columns, ref Saved cursor)
+    {
+        // The screen's rows down to the last one written or the cursor's; blank rows below them are only room.
+        int used = Math.Clamp(cursor.Row, 0, screen.Length - 1);
+        for (int row = screen.Length - 1; row > used; row--)
+        {
+            if (screen[row].Length > 0 || screen[row].Wrapped)
+            {
+                used = row;
+                break;
+            }
+        }
+        List<TerminalLine> old = scrollback.TakeAll();
+        int screenStart = old.Count;
+        old.AddRange(screen.Take(used + 1));
+        int cursorLine = screenStart + Math.Clamp(cursor.Row, 0, used);
+        int cursorColumn = Math.Min(cursor.Column + (cursor.WrapPending ? 1 : 0), Columns);
+
+        List<TerminalLine> rows = new(old.Count);
+        Cell[] text = new Cell[Columns * 4];
+        List<string> carried = [];
+        (int Row, int Column, bool Pending) at = (0, 0, false);
+        int screenTop = 0;
+        for (int index = 0; index < old.Count;)
+        {
+            TerminalLine first = old[index];
+            if (!first.Wrapped && index != cursorLine && index != screenStart && first.Length <= columns)
+            {
+                // A row of text that fits the new width stays one row; most do.
+                first.Resize(columns, CellStyle.Plain);
+                rows.Add(first);
+                index++;
+                continue;
+            }
+            // One line of text: rows joined while each wrapped into the next.
+            int length = 0;
+            int cursorOffset = -1;
+            int topOffset = -1;
+            ReadOnlySpan<Cell> joined = default;
+            List<string>? graphemes = null;
+            carried.Clear();
+            while (true)
+            {
+                TerminalLine line = old[index];
+                bool continues = line.Wrapped && index + 1 < old.Count;
+                int take = continues ? line.Cells.Length : line.Length;
+                if (continues && line.Cells[^1].Rune == 0 && old[index + 1].Cells[0].Width == 2)
+                {
+                    // A wide character too wide for the row's last column went on to the next, leaving a blank that is not text.
+                    take--;
+                }
+                if (index == cursorLine)
+                {
+                    cursorOffset = length + cursorColumn;
+                    take = Math.Max(take, Math.Min(cursorColumn, line.Cells.Length));
+                }
+                if (index == screenStart)
+                {
+                    topOffset = length;
+                }
+                index++;
+                if (!continues && length == 0)
+                {
+                    // A line of one row is cut from its own cells.
+                    joined = line.Cells.AsSpan(0, take);
+                    graphemes = line.Graphemes;
+                    break;
+                }
+                if (length + take > text.Length)
+                {
+                    Array.Resize(ref text, Math.Max(text.Length * 2, length + take));
+                }
+                Array.Copy(line.Cells, 0, text, length, take);
+                if (line.Graphemes is { } own)
+                {
+                    // Each row numbers its own graphemes; joined, they are numbered in one list.
+                    for (int i = length; i < length + take; i++)
+                    {
+                        if (text[i].Joined != 0)
+                        {
+                            carried.Add(own[text[i].Joined - 1]);
+                            text[i].Joined = carried.Count < ushort.MaxValue ? (ushort)carried.Count : (ushort)0;
+                        }
+                    }
+                    graphemes = carried;
+                }
+                length += take;
+                if (!continues)
+                {
+                    joined = text.AsSpan(0, length);
+                    break;
+                }
+            }
+            if (Wrap(joined, graphemes, columns, rows, cursorOffset, topOffset, out int? topAt) is { } found)
+            {
+                at = found;
+            }
+            if (topAt is int topRow)
+            {
+                screenTop = topRow;
+            }
+        }
+
+        // Keep the cursor's row on the screen; rows added above it take the blank room below before the scrollback.
+        int count = rows.Count;
+        int top = Math.Max(0, at.Row - cursor.Row);
+        int free = Rows - (count - top);
+        if (free > 0 && top > screenTop)
+        {
+            top = Math.Max(screenTop, top - free);
+        }
+        if (count - top > Rows)
+        {
+            top = Math.Min(at.Row, count - Rows);
+        }
+        for (int i = 0; i < top; i++)
+        {
+            AddScrollback(rows[i]);
+        }
+        TerminalLine[] lines = new TerminalLine[Rows];
+        for (int row = 0; row < Rows; row++)
+        {
+            lines[row] = top + row < count ? rows[top + row] : new TerminalLine(columns, CellStyle.Plain);
+        }
+        cursor = cursor with { Row = at.Row - top, Column = at.Column, WrapPending = at.Pending };
+        return lines;
+    }
+
+    /// <summary>A line of text cut into rows of a width, added to <paramref name="rows"/>, a wide character that would
+    /// end a row going on to the next: where the cursor's offset lands (null when it is not in this line), and the row
+    /// where the old screen's top began. <paramref name="graphemes"/> are those the text's joined cells number.</summary>
+    private static (int Row, int Column, bool Pending)? Wrap(ReadOnlySpan<Cell> text, List<string>? graphemes, int columns,
+        List<TerminalLine> rows, int cursorOffset, int topOffset, out int? topAt)
+    {
+        (int Row, int Column, bool Pending)? cursorAt = null;
+        topAt = null;
+        int start = 0;
+        while (true)
+        {
+            int take = Math.Min(columns, text.Length - start);
+            if (take == columns && text[start + columns - 1].Width == 2)
+            {
+                take--;
+            }
+            bool last = start + take >= text.Length;
+            Cell[] cells = new Cell[columns];
+            text.Slice(start, take).CopyTo(cells);
+            cells.AsSpan(take).Fill(Cell.Blank(CellStyle.Plain));
+            if (cursorOffset >= start && (cursorOffset < start + take || (last && cursorOffset == start + take)))
+            {
+                int column = cursorOffset - start;
+                // After the text at the row's end, the cursor waits to wrap, as it did after the last column was written.
+                cursorAt = column < columns ? (rows.Count, column, false) : (rows.Count, columns - 1, true);
+            }
+            if (topOffset >= start && (topOffset < start + take || last))
+            {
+                topAt ??= rows.Count;
+            }
+            TerminalLine row = new(cells, wrapped: !last);
+            if (graphemes is { Count: > 0 })
+            {
+                for (int column = 0; column < take; column++)
+                {
+                    if (cells[column].Joined != 0)
+                    {
+                        row.SetGrapheme(column, graphemes[cells[column].Joined - 1]);
+                    }
+                }
+            }
+            rows.Add(row);
+            if (last)
+            {
+                return cursorAt;
+            }
+            start += take;
+        }
     }
 
     private void Process(int rune)
@@ -458,9 +670,9 @@ public sealed class TerminalScreen
             rune = LineDrawing[rune - 0x5f];
         }
         int width = Width(rune);
-        if (width == 0)
+        if (width == 0 || JoinsFlag(rune))
         {
-            // A combining mark has no column of its own; it is dropped rather than misplace the text after it.
+            Join(rune);
             return;
         }
         if (wrapPending && autoWrap)
@@ -504,6 +716,48 @@ public sealed class TerminalScreen
             CursorColumn += width;
         }
     }
+
+    /// <summary>A character with no column of its own (a combining mark, a joiner, a variation selector) joins the
+    /// grapheme in the cell before the cursor, as xterm.js joins it, so é written as e and a combining acute shows and
+    /// copies whole; at a row's start there is nothing to join, and it is dropped.</summary>
+    private void Join(int rune)
+    {
+        int column = Previous();
+        if (column < 0)
+        {
+            return;
+        }
+        TerminalLine line = Lines[CursorRow];
+        string joined = line.TextOf(column) + char.ConvertFromUtf32(rune);
+        if (joined.Length > MostJoined)
+        {
+            // A program writing marks without end grows no cell without end.
+            return;
+        }
+        if (line.Cells[column].Rune == 0)
+        {
+            line.Cells[column].Rune = ' ';
+        }
+        line.SetGrapheme(column, joined);
+    }
+
+    /// <summary>The cell the last character went into: before the cursor, or under it while a wrap is pending, the
+    /// first half of a wide one; -1 at a row's start.</summary>
+    private int Previous()
+    {
+        int column = wrapPending ? CursorColumn : CursorColumn - 1;
+        if (column > 0 && Lines[CursorRow].Cells[column].Width == 0)
+        {
+            column--;
+        }
+        return column;
+    }
+
+    /// <summary>Whether a regional indicator is a flag's second letter: the one before it stands alone, so the two are
+    /// one grapheme in the first's two columns, the two columns wcwidth gives the pair.</summary>
+    private bool JoinsFlag(int rune) =>
+        rune is >= 0x1F1E6 and <= 0x1F1FF && Previous() is int column and >= 0
+        && Lines[CursorRow].Cells[column] is { Joined: 0, Rune: >= 0x1F1E6 and <= 0x1F1FF };
 
     /// <summary>Writing over half of a wide character blanks its other half.</summary>
     private void Overwrite(Cell[] cells, int column)
@@ -571,14 +825,7 @@ public sealed class TerminalScreen
         }
     }
 
-    private void AddScrollback(TerminalLine line)
-    {
-        scrollback.Add(line);
-        if (scrollback.Count > ScrollbackLimit)
-        {
-            scrollback.RemoveRange(0, scrollback.Count - ScrollbackLimit);
-        }
-    }
+    private void AddScrollback(TerminalLine line) => scrollback.Add(line);
 
     /// <summary>What erased cells take: the current background, as xterm's erase does, and nothing else.</summary>
     private CellStyle Erasing => new(CellStyle.Default, style.Back, CellFlags.None);
@@ -1272,37 +1519,25 @@ public sealed class TerminalScreen
         return stops;
     }
 
-    /// <summary>How many columns a character takes: two for East Asian wide and full-width characters and emoji, none
-    /// for combining marks and other zero-width characters, one for the rest (wcwidth's rule).</summary>
+    /// <summary>How many columns a character takes, as xterm.js's Unicode 11 widths and wcwidth give it: none for a
+    /// combining mark, a format character (a joiner, a direction mark) or a Hangul vowel or final that joins its
+    /// syllable; two for East Asian Wide and Fullwidth characters and emoji (<see cref="WideCharacters"/>); one else.</summary>
     public static int Width(int rune)
     {
         if (rune < 0x300)
         {
             return 1;
         }
-        UnicodeCategory category = CharUnicodeInfo.GetUnicodeCategory(rune);
-        if (category is UnicodeCategory.NonSpacingMark or UnicodeCategory.EnclosingMark or UnicodeCategory.Format || rune is 0x200B)
+        if (rune is >= 0x1160 and <= 0x11FF or >= 0xD7B0 and <= 0xD7FF)
         {
             return 0;
         }
-        return rune switch
+        UnicodeCategory category = CharUnicodeInfo.GetUnicodeCategory(rune);
+        if (category is UnicodeCategory.NonSpacingMark or UnicodeCategory.EnclosingMark or UnicodeCategory.Format)
         {
-            >= 0x1100 and <= 0x115F => 2,
-            >= 0x2E80 and <= 0x303E => 2,
-            >= 0x3041 and <= 0x33FF => 2,
-            >= 0x3400 and <= 0x4DBF => 2,
-            >= 0x4E00 and <= 0x9FFF => 2,
-            >= 0xA000 and <= 0xA4CF => 2,
-            >= 0xAC00 and <= 0xD7A3 => 2,
-            >= 0xF900 and <= 0xFAFF => 2,
-            >= 0xFE30 and <= 0xFE4F => 2,
-            >= 0xFF00 and <= 0xFF60 => 2,
-            >= 0xFFE0 and <= 0xFFE6 => 2,
-            >= 0x1F300 and <= 0x1F64F => 2,
-            >= 0x1F900 and <= 0x1F9FF => 2,
-            >= 0x20000 and <= 0x3FFFD => 2,
-            _ => 1,
-        };
+            return 0;
+        }
+        return WideCharacters.Contains(rune) ? 2 : 1;
     }
 
     /// <summary>The DEC special graphics set from 0x5F, the box-drawing characters full-screen programs draw with.</summary>
