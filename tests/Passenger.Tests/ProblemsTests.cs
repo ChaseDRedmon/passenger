@@ -74,5 +74,48 @@ public sealed class ProblemsTests : IDisposable
         window.Close();
     }
 
+    /// <summary>Lines typed above a file's problems move them, and the File tab says where they are now after every key,
+    /// each row's place shown on its own line of the list as it was: the list's rows are not made again for every key, as
+    /// they were while the file had problems (every row's controls made, styled and laid out again a key).</summary>
+    [AvaloniaFact]
+    public void Lines_typed_above_a_files_problems_move_their_rows_without_making_the_list_again()
+    {
+        Write("Several.cs", "class Several\n{\n    int First = \"one\";\n    int Second = \"two\";\n    string Third = 3;\n}\n");
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(folder);
+        window.OpenFile("Several.cs");
+        window.Perform(AppActions.ShowProblems);
+        Ui.Settle();
+        ProblemsView problems = window.BottomPanel.Problems;
+        Assert.Equal(ProblemsTab.File, problems.Shown);
+        Ui.WaitFor(() => problems.FileProblems.Count(p => p.Severity == ProblemSeverity.Error) == 3, "the file's three errors");
+        Avalonia.Controls.ListBox list = Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(problems).OfType<Avalonia.Controls.ListBox>().First();
+        // The text on each row that says where its problem is, as the list shows it (its rows' boxes are reused anyway).
+        Avalonia.Controls.TextBlock[] Shown() => [.. Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(list).OfType<Avalonia.Controls.ListBoxItem>()
+            .Select(item => Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(item).OfType<Avalonia.Controls.TextBlock>()
+                .First(t => t.Text?.StartsWith("Several.cs:", StringComparison.Ordinal) == true))];
+        string[] Places() => [.. Shown().Select(t => t.Text ?? string.Empty)];
+        Avalonia.Controls.TextBlock[] before = Shown();
+        Assert.Equal(3, before.Length);
+        Assert.Equal(["Several.cs:3:17", "Several.cs:4:18", "Several.cs:5:20"], Places());
+
+        Passenger.Editor.CodeEditor editor = window.EditorArea.CodeEditor;
+        editor.GoTo(new TextPosition(1, 1));
+        editor.Focus();
+        for (int i = 1; i <= 3; i++)
+        {
+            Ui.Press(window, "ENTER");
+            Assert.Equal([2 + i, 3 + i, 4 + i], problems.FileProblems.Select(p => p.Position.Line));
+            Assert.True(Shown().SequenceEqual(before), $"After {i} lines went in above the problems the File tab's rows were made again");
+            Assert.Equal([$"Several.cs:{3 + i}:17", $"Several.cs:{4 + i}:18", $"Several.cs:{5 + i}:20"], Places());
+        }
+
+        // Once the server's own diagnostics come again, they are where the rows say.
+        Ui.Settle();
+        Assert.Equal(["Several.cs:6:17", "Several.cs:7:18", "Several.cs:8:20"], Places());
+        window.Close();
+    }
+
     private void Write(string name, string text) => File.WriteAllText(Path.Combine(folder, name), text);
 }

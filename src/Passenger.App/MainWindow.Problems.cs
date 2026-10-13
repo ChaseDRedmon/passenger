@@ -79,11 +79,16 @@ public partial class MainWindow
         }
         TextSnapshot text = file.Text.Snapshot;
         List<Problem> problems = [];
-        foreach (Marker marker in file.Markers.Where(m => m.Kind is MarkerKind.Error or MarkerKind.Warning))
+        string? project = null;
+        foreach (Marker marker in file.Markers)
         {
+            if (marker.Kind is not (MarkerKind.Error or MarkerKind.Warning))
+            {
+                continue;
+            }
             int start = Math.Min(marker.Range.Start, text.Length);
             problems.Add(new Problem(marker.Kind == MarkerKind.Error ? ProblemSeverity.Error : ProblemSeverity.Warning, marker.Message, null,
-                file.Path, text.GetPosition(start), ProjectNameOf(file.Path)));
+                file.Path, text.GetPosition(start), project ??= ProjectNameOf(file.Path)));
         }
         Bottom.Problems.ShowFile(file.Name, problems);
     }

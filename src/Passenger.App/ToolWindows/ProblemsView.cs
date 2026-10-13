@@ -19,8 +19,30 @@ public enum ProblemsTab
     Build,
 }
 
-/// <summary>A row of Problems: a group (a project or a file, with its count) or a problem, at its depth.</summary>
-public sealed record ProblemRow(int Depth, string Label, string? Detail, Problem? Problem);
+/// <summary>A row of Problems: a group (a project or a file, with its count) or a problem, at its depth. A problem of the
+/// current file moves with its text as it is typed, and its row with it, redrawing only where it is.</summary>
+public sealed class ProblemRow(int depth, string label, string? detail, Problem? problem) : Observable
+{
+    public int Depth { get; } = depth;
+
+    public string Label { get; } = label;
+
+    public string? Detail { get; private set; } = detail;
+
+    public Problem? Problem { get; private set; } = problem;
+
+    /// <summary>Takes the place an edit moved its problem to.</summary>
+    internal void MoveTo(Problem moved)
+    {
+        bool elsewhere = Problem?.Position != moved.Position;
+        Problem = moved;
+        if (elsewhere)
+        {
+            Detail = moved.Where;
+            Raise(nameof(Detail));
+        }
+    }
+}
 
 /// <summary>Rider's Problems window: the current file's problems as they are typed, the whole solution's with
 /// solution-wide analysis on (by project, then file), and the last build's apart from both, each a tab with its count.
@@ -115,12 +137,43 @@ public sealed class ProblemsView : DockPanel
         Shown = ProblemsTab.Build;
     }
 
-    /// <summary>The current file's problems, as they are typed.</summary>
+    /// <summary>The current file's problems, as they are typed: the same problems moved by a key move their rows, which
+    /// keep their place in the list, rather than every row being made again.</summary>
     public void ShowFile(string? name, IReadOnlyList<Problem> problems)
     {
+        Problem[] ordered = [.. Ordered(problems)];
+        if (name == fileName && Moved(file, ordered))
+        {
+            file = ordered;
+            if (Shown == ProblemsTab.File)
+            {
+                for (int i = 0; i < ordered.Length; i++)
+                {
+                    rows[i].MoveTo(ordered[i]);
+                }
+            }
+            return;
+        }
         fileName = name;
-        file = [.. Ordered(problems)];
+        file = ordered;
         Refresh();
+    }
+
+    /// <summary>Whether two lists are the same problems, in order, some perhaps in another place.</summary>
+    private static bool Moved(IReadOnlyList<Problem> before, IReadOnlyList<Problem> after)
+    {
+        if (before.Count != after.Count)
+        {
+            return false;
+        }
+        for (int i = 0; i < before.Count; i++)
+        {
+            if (before[i] != after[i] with { Position = before[i].Position })
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     /// <summary>The solution's problems, or null to take the tab away when solution-wide analysis goes off.</summary>
@@ -220,7 +273,16 @@ public sealed class ProblemsView : DockPanel
         PathIcon icon = new() { Margin = new Thickness(0, 0, 8, 0) };
         icon.Bind(PathIcon.DataProperty, icon.GetResourceObservable(problem.Severity == ProblemSeverity.Error ? "Icon.Error" : "Icon.Problems"));
         icon.Bind(PathIcon.ForegroundProperty, icon.GetResourceObservable(problem.Severity == ProblemSeverity.Error ? "Passenger.Editor.Error" : "Passenger.Editor.Warning"));
-        detail.Text = problem.Code is { Length: > 0 } code ? $"{row.Detail}  {code}" : row.Detail;
+        void Where() => detail.Text = problem.Code is { Length: > 0 } code ? $"{row.Detail}  {code}" : row.Detail;
+        Where();
+        // Followed only while shown, so a row let go of by the list holds nothing it showed.
+        void OnMoved(object? sender, System.ComponentModel.PropertyChangedEventArgs e) => Where();
+        panel.AttachedToVisualTree += (_, _) =>
+        {
+            row.PropertyChanged += OnMoved;
+            Where();
+        };
+        panel.DetachedFromVisualTree += (_, _) => row.PropertyChanged -= OnMoved;
         panel.Children.Add(icon);
         panel.Children.Add(new TextBlock { Text = row.Label, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 900 });
         panel.Children.Add(detail);
