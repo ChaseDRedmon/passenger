@@ -151,7 +151,9 @@ jobs:
           path: TestResults/
           if-no-files-found: ignore
 
-  # #57's first step: the solution restores on Linux, in locked mode, with no package cache.
+  # #57's first step: the solution restores on Linux, in locked mode, with no package cache, so every package is
+  # downloaded again and its signature checked against nuget.config's trusted signers, as NuGet does on Linux (and
+  # Windows) but not on macOS.
   packages:
     name: Packages (Linux)
     runs-on: ubuntu-latest

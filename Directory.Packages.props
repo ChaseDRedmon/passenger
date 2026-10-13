@@ -2,6 +2,9 @@
   <!-- One version per package for the whole repo; a project's reference names the package only. -->
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <!-- Roslyn's language server, roslyn-language-server.<rid>: a package per system, downloaded rather than
+         referenced (Passenger.Lsp.csproj), so its version is a property, not a PackageVersion. -->
+    <RoslynServerVersion>5.11.0</RoslynServerVersion>
   </PropertyGroup>
   <ItemGroup>
     <PackageVersion Include="Avalonia" Version="12.1.4" />

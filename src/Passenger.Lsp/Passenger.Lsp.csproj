@@ -2,11 +2,20 @@
   <!-- The Language Server Protocol client, and the Roslyn language server it runs. -->
   <PropertyGroup>
     <RootNamespace>Passenger.Lsp</RootNamespace>
-    <!-- Microsoft's server (MIT, built in the Roslyn repo), one package per platform. Only the
-         platform being built is downloaded; it is copied beside the app under roslyn/. -->
-    <RoslynServerVersion>5.11.0</RoslynServerVersion>
-    <RoslynServerRid Condition="'$(RuntimeIdentifier)' != ''">$(RuntimeIdentifier)</RoslynServerRid>
-    <RoslynServerRid Condition="'$(RoslynServerRid)' == ''">$([System.Runtime.InteropServices.RuntimeInformation]::RuntimeIdentifier)</RoslynServerRid>
+  </PropertyGroup>
+
+  <!-- Microsoft's server (MIT, built in the Roslyn repo), one package per platform at RoslynServerVersion
+       (Directory.Packages.props). Only the platform being built is downloaded; it is copied beside the app under
+       roslyn/. The platform is the publish's, else this machine's, named as the packages are: a .NET built by a Linux
+       distribution names its own (ubuntu.24.04-x64, alpine.3.22-x64), for which there is no package. -->
+  <PropertyGroup>
+    <RoslynServerFor>$(RuntimeIdentifier)</RoslynServerFor>
+    <RoslynServerFor Condition="'$(RoslynServerFor)' == ''">$([System.Runtime.InteropServices.RuntimeInformation]::RuntimeIdentifier)</RoslynServerFor>
+    <RoslynServerArchitecture>$([System.Text.RegularExpressions.Regex]::Replace($(RoslynServerFor), '^.*-', ''))</RoslynServerArchitecture>
+    <RoslynServerRid Condition="$(RoslynServerFor.StartsWith('win'))">win-$(RoslynServerArchitecture)</RoslynServerRid>
+    <RoslynServerRid Condition="$(RoslynServerFor.StartsWith('osx'))">osx-$(RoslynServerArchitecture)</RoslynServerRid>
+    <RoslynServerRid Condition="'$(RoslynServerRid)' == '' And ($(RoslynServerFor.Contains('musl')) Or $(RoslynServerFor.StartsWith('alpine')))">linux-musl-$(RoslynServerArchitecture)</RoslynServerRid>
+    <RoslynServerRid Condition="'$(RoslynServerRid)' == ''">linux-$(RoslynServerArchitecture)</RoslynServerRid>
   </PropertyGroup>
 
   <ItemGroup>
@@ -24,9 +33,18 @@
        one (the app, the tests) gets them beside its own binaries. -->
   <Target Name="IncludeRoslynServer" BeforeTargets="AssignTargetPaths">
     <PropertyGroup>
-      <RoslynServerFolder>$(NuGetPackageRoot)roslyn-language-server.$(RoslynServerRid.ToLowerInvariant())/$(RoslynServerVersion)/tools/net10.0/$(RoslynServerRid)/</RoslynServerFolder>
+      <RoslynServerPackage>$([MSBuild]::EnsureTrailingSlash('$(NuGetPackageRoot)'))roslyn-language-server.$(RoslynServerRid.ToLowerInvariant())/$(RoslynServerVersion.ToLowerInvariant())/</RoslynServerPackage>
     </PropertyGroup>
-    <Error Condition="!Exists('$(RoslynServerFolder)')" Text="The Roslyn language server for $(RoslynServerRid) is not at $(RoslynServerFolder); restore first." />
+    <Error Condition="!Exists('$(RoslynServerPackage)')" Text="Roslyn's language server for $(RoslynServerRid) is not at $(RoslynServerPackage); restore first." />
+    <ItemGroup>
+      <!-- tools/<the .NET it is built for>/<rid>/, found, so a server built for a newer .NET still is. -->
+      <RoslynServerEntry Include="$(RoslynServerPackage)tools/*/$(RoslynServerRid)/Microsoft.CodeAnalysis.LanguageServer.dll" />
+    </ItemGroup>
+    <Error Condition="'@(RoslynServerEntry->Count())' != '1'"
+           Text="roslyn-language-server.$(RoslynServerRid) $(RoslynServerVersion) does not hold exactly one tools/*/$(RoslynServerRid)/Microsoft.CodeAnalysis.LanguageServer.dll (it holds '@(RoslynServerEntry)'): the package's layout has changed." />
+    <PropertyGroup>
+      <RoslynServerFolder>@(RoslynServerEntry->'%(RootDir)%(Directory)')</RoslynServerFolder>
+    </PropertyGroup>
     <ItemGroup>
       <RoslynServerFile Include="$(RoslynServerFolder)**/*" />
       <None Include="@(RoslynServerFile)" Link="roslyn/%(RoslynServerFile.RecursiveDir)%(RoslynServerFile.Filename)%(RoslynServerFile.Extension)"

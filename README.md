@@ -55,6 +55,11 @@ just publish osx-arm64     # a self-contained Release build (osx-x64, win-x64, w
 just package-mac           # Passenger.app, zipped; signed with PASSENGER_SIGN_IDENTITY, else ad hoc
 ```
 
+Packages come only from nuget.org (`nuget.config`), at the versions and content each project's `packages.lock.json`
+pins, and on Windows and Linux only as nuget.org signed them (NuGet checks no signatures on macOS). A restore on your
+machine updates a lock file when you add or change a package; commit it with the change, since CI restores only what
+the lock files name.
+
 ## For agents
 
 Passenger is a Model Context Protocol server, so a coding agent can use what the IDE knows: diagnostics, symbols,

@@ -10,7 +10,10 @@ import sys
 import urllib.parse
 import urllib.request
 
-BASE = "https://raw.githubusercontent.com/microsoft/fluentui-system-icons/main/assets"
+# The repository's commit the icons come from, so every run draws the same ones: a newer set is a new commit here and
+# `just icons`, its changes to Icons.axaml then seen in review.
+COMMIT = "a347af95478f989038cccbf085978865264c048a"
+BASE = f"https://raw.githubusercontent.com/microsoft/fluentui-system-icons/{COMMIT}/assets"
 
 # Resource key, the icon's folder in the Fluent repo, and the file's size and style.
 ICONS = [
@@ -91,7 +94,7 @@ def fetch(folder, stem, cache):
 
 def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    cache = os.path.join(root, "artifacts", "icons")
+    cache = os.path.join(root, "artifacts", "icons", COMMIT)
     os.makedirs(cache, exist_ok=True)
     lines = [
         '<ResourceDictionary xmlns="https://github.com/avaloniaui"',

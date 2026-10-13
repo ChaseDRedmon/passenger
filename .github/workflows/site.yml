@@ -1,4 +1,5 @@
-# passenger-ide.net: site/ as it is, served by Cloudflare Pages.
+# passenger-ide.net: site/ as it is, served by Cloudflare Pages. Actions are pinned to a release's commit, and
+# wrangler, which holds the Cloudflare token, to one version.
 name: Site
 
 on:
@@ -18,9 +19,9 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Deploy to Cloudflare Pages
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: npx --yes wrangler@4 pages deploy site --project-name passenger-ide --branch main
+        run: npx --yes wrangler@4.148.0 pages deploy site --project-name passenger-ide --branch main
