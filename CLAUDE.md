@@ -84,7 +84,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   that reads C# syntax (templates, postfix, test marks, selection ranges, inline values) uses it, never a fresh parse.
 - `src/Passenger.Lsp`: the Language Server Protocol client (StreamJsonRpc over stdio) and the
   Roslyn language server it runs, downloaded per platform at build and copied beside the app under
-  `roslyn/`. `RoslynSession` opens the folder's solution; `LspDocument` keeps one document in step
+  `roslyn/`, less the four Visual Studio assemblies it never loads (`RoslynServerLeftOut`; the build fails if the
+  package stops carrying one). `RoslynSession` opens the folder's solution; `LspDocument` keeps one document in step
   and makes requests in the editor's offsets. A server that stops, restarts or refuses a request is one exception,
   `LanguageServerFailed`, which callers catch; StreamJsonRpc's own types never leave the project.
 - `src/Passenger.App/CSharp`: the language server in the IDE. `CSharpService` runs Roslyn for the
@@ -171,6 +172,9 @@ window or takes the focus; it shows everything but the system's own window chrom
 - **Every dependency, icon or asset** has an open-source licence and an entry in `THIRD_PARTY_NOTICES.md`, added in the
   same change that brings it in: a package by its NuGet id in backticks, with its licence and copyright as the package
   states them (`just notices`, and CI, fail on one missing), copied source by its file with the project it came from.
+  The one exception, decided by the owner: `Microsoft.VisualStudio.Telemetry` and
+  `Microsoft.VisualStudio.Utilities.Internal`, under Visual Studio's terms, stay inside Roslyn's server (MIT on nuget.org)
+  because its built-in Razor support needs them; THIRD_PARTY_NOTICES.md says so. Nothing else under such terms ships.
 - **Colours are tokens.** A control names a brush from `Theme/Tokens.axaml` (`Passenger.*`), never a literal colour,
   and every token exists in both the Dark and Light dictionaries.
 - **A malformed flag or value is fatal**, never a silent default (`LaunchOptions.cs`).
