@@ -188,7 +188,8 @@ public partial class MainWindow
     }
 
     /// <summary>Show Diff: the last commit's text beside the file's, in a window over this one. The right side is the
-    /// open file's own text when it is open, so an edit or a change put back there is the file's.</summary>
+    /// open file's own text when it is open, so an edit or a change put back there is the file's, in the file's colours as
+    /// they change.</summary>
     public async Task<DiffWindow?> ShowDiffAsync(string path)
     {
         if (vcs.Repository is null)
@@ -219,21 +220,31 @@ public partial class MainWindow
         }
         DiffWindow window = new($"{Path.GetFileName(path)}: HEAD and your version", view);
         window.Closed += (_, _) => (left as IDisposable)?.Dispose();
-        if (open is not null)
+        if (open is { } file)
         {
             // The file stays open while the diff edits it, so what is typed there is saved; closed for good, the diff goes too.
-            IDisposable hold = Editors.Hold(open);
+            IDisposable hold = Editors.Hold(file);
             void OnFileClosed(object? sender, OpenDocument closed)
             {
-                if (closed == open)
+                if (closed == file)
                 {
                     window.Close();
                 }
             }
+            // The file's colours as they are now: the language server's once it answers, another server's once it starts again.
+            void OnFileChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+            {
+                if (e.PropertyName == nameof(OpenDocument.Highlighter))
+                {
+                    view.Right.Highlighter = file.Highlighter;
+                }
+            }
             Editors.Closed += OnFileClosed;
+            file.PropertyChanged += OnFileChanged;
             window.Closed += (_, _) =>
             {
                 Editors.Closed -= OnFileClosed;
+                file.PropertyChanged -= OnFileChanged;
                 hold.Dispose();
             };
         }

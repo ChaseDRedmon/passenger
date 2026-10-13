@@ -274,6 +274,50 @@ public sealed class VcsTests : IDisposable
         window.Close();
     }
 
+    /// <summary>The diff's side of the open file took the file's colours as the diff opened and kept them: opened before
+    /// the language server answered, never the server's; opened before the server started again, the gone server's, which
+    /// no longer follow the text, so a word typed before them left them on the wrong words.</summary>
+    [AvaloniaFact]
+    public void A_diff_opened_before_the_language_server_answers_takes_its_colours_and_a_new_servers_when_it_starts_again()
+    {
+        File.WriteAllText(Path.Combine(folder, "Shop.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+        Restore.Run(folder);
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(folder);
+        window.OpenFile(Path.Combine(folder, "Shop.cs"));
+        Passenger.App.Workspace.OpenDocument shop = window.EditorArea.Active!;
+        Ui.PumpUntil(() => window.Vcs.Repository is not null, "the working tree found");
+        Task<DiffWindow?> opening = window.ShowDiffAsync(shop.Path);
+        Ui.PumpUntil(() => opening.IsCompleted, "the diff open");
+        DiffWindow diff = opening.Result!;
+        CodeEditor right = diff.View.Right;
+        Assert.True(right.Highlighter is not Passenger.Languages.CSharp.SemanticHighlighter, "The language server answered before the diff opened, so it had nothing to follow");
+
+        // The use of count in Add() is coloured as a field by the server alone.
+        int use = Original.IndexOf("count++", StringComparison.Ordinal);
+        Ui.WaitFor(() => window.CSharpService?.IsReady == true && Field(shop.Highlighter, shop.Text.Snapshot, use), "the server's colour on the field in the editor");
+        Assert.True(Field(right.Highlighter, right.Document.Snapshot, use),
+            "The diff opened before the language server answered never took its colours: the field it colours in the editor is plain in the diff");
+
+        // The server ends and another starts: a word typed before the field in the diff moves it, its colour with it.
+        int ended = window.CSharpService!.Session!.Server.ProcessId;
+        Process.GetProcessById(ended).Kill();
+        Ui.WaitFor(() => window.CSharpService.Session is { IsLoaded: true } session && session.Server.ProcessId != ended, "the language server started again");
+        Ui.WaitFor(() => Field(shop.Highlighter, shop.Text.Snapshot, use), "the new server's colour on the field in the editor");
+        right.Focus();
+        diff.KeyTextInput("sealed ");
+        Ui.Settle();
+        int moved = use + "sealed ".Length;
+        Assert.Equal(moved, shop.Text.Snapshot.ToString().IndexOf("count++", StringComparison.Ordinal));
+        Ui.WaitFor(() => Field(shop.Highlighter, shop.Text.Snapshot, moved), "the editor's colour on the field moved along");
+        Assert.True(Field(right.Highlighter, right.Document.Snapshot, moved),
+            "The diff kept the colours of the language server that ended, which no longer follow the text: the field moved along is plain in the diff");
+        diff.Close();
+        window.Close();
+    }
+
     [AvaloniaFact]
     public void A_closed_diff_is_let_go_by_the_open_file_it_showed()
     {
@@ -1202,6 +1246,10 @@ public sealed class VcsTests : IDisposable
     private static IReadOnlyList<ChangeMark> Marks(MainWindow window) => window.EditorArea.Active?.ChangeMarks ?? [];
 
     private static string Text(MainWindow window) => window.EditorArea.Active!.Text.Snapshot.ToString();
+
+    /// <summary>Whether colours give the word at an offset a field's colour.</summary>
+    private static bool Field(IHighlighter? colours, TextSnapshot text, int at) =>
+        colours?.GetSpans(text, at, 1).Any(s => s.Start == at && s.Kind == TokenKind.Field) == true;
 
     /// <summary>What each stash says, the newest first.</summary>
     private string[] Stashes() => Git("stash", "list", "--format=%s").Split('\n', StringSplitOptions.RemoveEmptyEntries);
