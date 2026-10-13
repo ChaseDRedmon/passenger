@@ -22,26 +22,32 @@ internal static class CSharpClassifier
         SyntaxKind.FinallyKeyword, SyntaxKind.YieldKeyword, SyntaxKind.AwaitKeyword, SyntaxKind.WhenKeyword,
     ];
 
-    /// <summary>Each bracket's nesting depth in a tree, by its offset: one pass over the tokens a parse, made by the
-    /// first classification of it (on the parsing thread), so a frame only looks a depth up.</summary>
-    private static readonly ConditionalWeakTable<SyntaxNode, Dictionary<int, int>> Depths = new();
-
     private static readonly TokenKind[] Braces = [TokenKind.Brace1, TokenKind.Brace2, TokenKind.Brace3];
 
     /// <summary>The spans of the tokens (and their trivia) that reach into <paramref name="range"/>,
     /// sorted. A comment or an excluded block that starts before the range is included whole. It
     /// finds the first token by position and walks token by token, never through a list of siblings,
-    /// so a class with ten thousand members costs what the lines on screen cost.</summary>
+    /// so a class with ten thousand members costs what the lines on screen cost. A bracket's depth is
+    /// counted on from the first token's (<see cref="DepthBefore"/>): an opener at the depth it opens
+    /// at, its closer at the same, a stray closer at none below the outermost.</summary>
     public static List<SyntaxSpan> Classify(SyntaxNode root, TextSpan range)
     {
         List<SyntaxSpan> spans = [];
-        Dictionary<int, int> depths = Depths.GetValue(root, Measure);
         SyntaxToken token = root.FindToken(Math.Min(range.Start, Math.Max(0, root.FullSpan.End - 1)));
+        int depth = DepthBefore(token);
         while (token.RawKind != 0 && token.FullSpan.Start <= range.End)
         {
             AddTrivia(token.LeadingTrivia, spans);
-            if (depths.TryGetValue(token.SpanStart, out int depth) && Bracket(token) != 0)
+            // A skipped token is trivia, not one of the tree's tokens: never a bracket.
+            int bracket = token.Parent is { IsStructuredTrivia: true } ? 0 : Bracket(token);
+            if (bracket > 0)
             {
+                Add(spans, token.SpanStart, token.Span.Length, Braces[depth % Braces.Length]);
+                depth++;
+            }
+            else if (bracket < 0)
+            {
+                depth = Math.Max(0, depth - 1);
                 Add(spans, token.SpanStart, token.Span.Length, Braces[depth % Braces.Length]);
             }
             else
@@ -52,6 +58,71 @@ internal static class CSharpClassifier
             token = Next(root, token);
         }
         return spans;
+    }
+
+    /// <summary>How many brackets are open before a token: those its ancestors hold before it, each node's own
+    /// brackets being its direct children, so a lookup reads the nodes around it rather than every token of the file
+    /// before it, which a new parse would build anew. The same as counting every bracket from the file's start
+    /// wherever each node's brackets pair within it; where they do not (one missing as it is typed), that bracket
+    /// counts inside its node and not beyond it.</summary>
+    private static int DepthBefore(SyntaxToken token)
+    {
+        int depth = 0;
+        SyntaxNodeOrToken on = token;
+        for (SyntaxNode? parent = token.Parent; parent is not null; on = parent, parent = parent.Parent)
+        {
+            if (parent.ChildNodesAndTokens().Count > ManyChildren)
+            {
+                depth += Opened(Brackets.GetValue(parent, OwnBrackets), on.FullSpan.Start);
+                continue;
+            }
+            foreach (SyntaxNodeOrToken child in parent.ChildNodesAndTokens())
+            {
+                if (child == on)
+                {
+                    break;
+                }
+                if (child.IsToken)
+                {
+                    depth += Bracket(child.AsToken());
+                }
+            }
+        }
+        return Math.Max(0, depth);
+    }
+
+    /// <summary>Past this many children a node's own brackets are found once and kept (<see cref="Brackets"/>) rather
+    /// than its children read up to a token each time: a list of thousands of elements on screen.</summary>
+    private const int ManyChildren = 32;
+
+    /// <summary>A node's own brackets, for a node with many children: where each starts and how many are open after it.</summary>
+    private static readonly ConditionalWeakTable<SyntaxNode, int[]> Brackets = new();
+
+    private static int[] OwnBrackets(SyntaxNode node)
+    {
+        List<int> found = [];
+        int open = 0;
+        foreach (SyntaxNodeOrToken child in node.ChildNodesAndTokens())
+        {
+            if (child.IsToken && Bracket(child.AsToken()) is int bracket and not 0)
+            {
+                open += bracket;
+                found.Add(child.FullSpan.Start);
+                found.Add(open);
+            }
+        }
+        return [.. found];
+    }
+
+    /// <summary>How many of a node's own brackets (<see cref="OwnBrackets"/>) before a child are open.</summary>
+    private static int Opened(int[] brackets, int child)
+    {
+        int open = 0;
+        for (int i = 0; i < brackets.Length && brackets[i] < child; i += 2)
+        {
+            open = brackets[i + 1];
+        }
+        return open;
     }
 
     /// <summary>The token after this one, as <c>GetNextToken(includeZeroWidth: false, includeSkipped: true)</c> finds it,
@@ -95,28 +166,6 @@ internal static class CSharpClassifier
             }
         }
         return false;
-    }
-
-    /// <summary>Every bracket's depth: an opener at the depth it opens at, its closer at the same, a stray closer at
-    /// none below the outermost.</summary>
-    private static Dictionary<int, int> Measure(SyntaxNode root)
-    {
-        Dictionary<int, int> depths = [];
-        int depth = 0;
-        foreach (SyntaxToken token in root.DescendantTokens())
-        {
-            switch (Bracket(token))
-            {
-                case 1:
-                    depths[token.SpanStart] = depth++;
-                    break;
-                case -1:
-                    depth = Math.Max(0, depth - 1);
-                    depths[token.SpanStart] = depth;
-                    break;
-            }
-        }
-        return depths;
     }
 
     /// <summary>1 for an opening bracket, -1 for a closing one, 0 for anything else: parentheses, square brackets,

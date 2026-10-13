@@ -26,12 +26,17 @@ public sealed class CSharpHighlighter : IHighlighter, IDisposable
     private SnapshotText text;
     private SyntaxTree? tree;
     private TextSnapshot? treeText;
+
+    /// <summary>What folds in <see cref="tree"/>, which the next parse's folds are found from.</summary>
+    private FoldRegions? treeFolds;
+    private long parseBytes;
+    private int parses;
     private int version;
     private bool parsing;
     private bool disposed;
 
     /// <summary>The parse under way, which a caller asking for the syntax before the first has landed waits for.</summary>
-    private Task<(SyntaxTree Tree, IReadOnlyList<FoldRegion> Folds)>? running;
+    private Task<(SyntaxTree Tree, FoldRegions Folds)>? running;
 
     /// <summary>The syntax given for <see cref="currentVersion"/> of the text.</summary>
     private ParsedText? current;
@@ -60,6 +65,10 @@ public sealed class CSharpHighlighter : IHighlighter, IDisposable
 
     /// <summary>A parse of the text as it stands found its folds.</summary>
     public event EventHandler? FoldsChanged;
+
+    /// <summary>What the parses of this file allocated on their worker, its folds and the lines on screen classified ahead
+    /// included, and how many there were: what typing costs off the UI thread, for a test to count rather than time.</summary>
+    public (long Bytes, int Parses) Worked => (Interlocked.Read(ref parseBytes), Volatile.Read(ref parses));
 
     /// <summary>A parse of the text as it stands landed: its syntax, for work on it off the UI thread. Raised on the UI
     /// thread, once typing has paused long enough for a parse to catch up with it.</summary>
@@ -155,11 +164,13 @@ public sealed class CSharpHighlighter : IHighlighter, IDisposable
         parsing = true;
         SnapshotText parsedText = text;
         SyntaxTree? previous = tree;
+        FoldRegions? previousFolds = treeFolds;
         int parsedVersion = version;
         (int Start, int Length)[] warm = [.. asked];
         BackgroundWork.Begin();
-        Task<(SyntaxTree Tree, IReadOnlyList<FoldRegion> Folds)> parse = Task.Run(() =>
+        Task<(SyntaxTree Tree, FoldRegions Folds)> parse = Task.Run(() =>
         {
+            long allocated = GC.GetAllocatedBytesForCurrentThread();
             SyntaxTree parsed = previous is null ? CSharpSyntaxTree.ParseText(parsedText, Options) : previous.WithChangedText(parsedText);
             // Classifying the lines on screen here builds the tree's nodes there (Roslyn makes them on
             // first touch, and a list of thousands of members makes arrays of thousands), so the UI
@@ -170,7 +181,10 @@ public sealed class CSharpHighlighter : IHighlighter, IDisposable
             {
                 CSharpClassifier.Classify(root, TextSpan.FromBounds(Math.Min(start, end), Math.Min(start + length, end)));
             }
-            return (Tree: parsed, Folds: FoldRegions.Of(root));
+            FoldRegions folds = FoldRegions.Of(new ParsedText(parsed, parsedText.Snapshot), previous is null ? null : previousFolds);
+            Interlocked.Add(ref parseBytes, GC.GetAllocatedBytesForCurrentThread() - allocated);
+            Interlocked.Increment(ref parses);
+            return (Tree: parsed, Folds: folds);
         });
         running = parse;
         parse.ContinueWith(done => OnUi(() =>
@@ -182,13 +196,14 @@ public sealed class CSharpHighlighter : IHighlighter, IDisposable
                 {
                     tree = done.Result.Tree;
                     treeText = parsedText.Snapshot;
+                    treeFolds = done.Result.Folds;
                     parsedText.ForgetHistory();
                     sinceTree.RemoveAll(batch => batch.Version <= parsedVersion);
                     cached.Clear();
                     Changed?.Invoke(this, EventArgs.Empty);
                     if (parsedVersion == version)
                     {
-                        Folds = done.Result.Folds;
+                        Folds = done.Result.Folds.All;
                         FoldsChanged?.Invoke(this, EventArgs.Empty);
                         Parsed?.Invoke(this, Current);
                     }
