@@ -99,7 +99,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   alone (`CSharpClassifier`); the language server's semantic colours layer over it. `CSharpHighlighter` is also each
   open file's one syntax service (`OpenDocument.Syntax`: the newest tree, carried through the edits since): a feature
   that reads C# syntax (templates, postfix, test marks, selection ranges, inline values) uses it, never a fresh parse.
-  `TypeHints` turns Roslyn's type hints into Rider's (after the name, left off where Rider calls the type evident).
+  `Markup/FoldScan` finds XML's and JSON's folds in one scan of the rope off the UI thread; every fold region has a
+  `FoldKind`, which Settings' Code Folding (Rider's Fold by default) and Collapse to Definitions read, and a folder keeps
+  each file's folds as it closed (`WorkspaceState.Folds`, through `FoldMemory`). `TypeHints` turns Roslyn's type hints
+  into Rider's (after the name, left off where Rider calls the type evident).
   A key costs what it changed, not the file's size: folds (`FoldRegions`) and bracket depths come from the parse
   before through the nodes Roslyn reused, never from a walk of the whole tree, and the server's colours are asked for
   the screen's lines first and the whole file only once typing stops.
@@ -199,7 +202,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   folder's own in `runConfigurations.json`, the rest made from the executable projects' launch profiles, those that
   cannot launch here saying why); `LaunchPlan.ResolveAsync` works one out once, in one MSBuild request, into what Run,
   Debug, Profile, Hot Reload and a debugged test host start, and `RunConfigurationsDialog` is Run > Edit
-  Configurations. A test project's first Project launch profile gives its variables to its tests. A configuration that
+  Configurations. A build says what started it (`BuildCause`): explicit builds open the Build window as they start,
+  the build before Run, Debug or Profile only with Settings' implicit-build option, a test run's never, and its end
+  brings the Build window forward as Showing build results says (errors only by default). A test project's first Project launch profile gives its variables to its tests. A configuration that
   uses the terminal (Rider's Use external console) runs in a Terminal tab of its name (`TerminalPanel.RunAsync`, a
   `TerminalRun` with its process, exit code and Stop); Debug answers the adapter's runInTerminal the same way
   (`DebugController.RunInTerminal`), and `debug_input`/`debug_output` use that tab. In a program's tab, Run, Debug,
@@ -262,6 +267,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   folder (`AgentSocket`, open only while the person's Enable MCP Server setting is on), and `--mcp-attach [PID]`
   (standard input and output joined to the window over the agent's folder). On a person's window a tool neither
   `ReadOnly` nor `Destructive = false` asks them the first time an agent uses it (`ConnectedTool`).
+- `src/Passenger.App/Debugging`: `BreakpointStore` holds line breakpoints by file and Rider's CLR exception
+  breakpoints (`ExceptionBreakpoint`; "Any exception" is every folder's and is never removed), kept with the folder;
+  `Muted` is Mute Breakpoints, which sends none while on. The engine decides exception breakpoints (`ExceptionRule`)
+  when the runtime reports a handler found or an exception unhandled, the stack still at the throw ("user code" is a
+  Just My Code frame); they cross the protocol as DAP `exceptionOptions` with Passenger's own scenarios and conditions.
 - The debugger, Passenger's own, started from SharpDbg and ICorDebugSharp (MIT; `THIRD_PARTY_NOTICES.md` says what came from where):
   `src/Passenger.Debugger.Interop` (ICorDebug, IMetaDataImport and dbgshim for the COM source generator),
   `src/Passenger.Debugger` (the engine), `src/Passenger.Dap` (the Debug Adapter Protocol, both ends) and
@@ -348,7 +358,8 @@ log, history or Git signing and hooks. No test reaches GitHub: the run points `P
 address, and a test that needs releases gives its window a `Releases` feed of its own (`UpdatesTests`); one that tests
 an update gives its window the updater of a copy installed in a test folder, and no other window has one. After every window test, pass or fail, the windows it left open are closed,
 what they started is waited out and its folders are removed (`TestsLeaveNothingBehind`), so one failure never
-cascades into the next test's waits. The run sets its own nice value to 0 when it starts below it (GitHub's macOS
+cascades into the next test's waits. A Mac that sleeps during a run fails tests with "Background work never finished"
+(Settle's limits are wall-clock); `pmset -g log` shows the sleeps, and the lead's full runs go under `caffeinate -is`. The run sets its own nice value to 0 when it starts below it (GitHub's macOS
 runner starts at −10), since MSBuild keeps no idle node at any other; a test that needs one skips, saying why, when
 the run is above 0 and cannot come down (`Nice`). MSBuild itself sometimes keeps no node (a race as a build ends, or
 more than 1.5 nodes a processor running machine-wide): a test that needs one waits for the count
