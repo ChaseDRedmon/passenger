@@ -1,0 +1,106 @@
+using Passenger.Dap;
+using Passenger.Tests.Debugging.Helpers;
+
+namespace Passenger.Tests.Debugging;
+
+/// <summary>Rider's Smart Step Into: the calls of the line a thread stopped at, in the order they run, each placed where it
+/// is written, and a step straight into the one chosen, lambdas and awaited async methods included.</summary>
+[Collection(DebugSession.Collection)]
+public class SmartStepIntoTests(ITestOutputHelper testOutputHelper)
+{
+    private const string Stepping = "SteppingConsoleApp";
+
+    private static int Line(string code) => Debuggees.Line(Stepping, code);
+
+    [Fact]
+    public async Task The_calls_of_a_line_are_listed_in_the_order_they_run_and_the_one_chosen_is_stepped_into()
+    {
+        const string code = "int nested = Outer(Inner());";
+        int line = Line(code);
+        using DebugSession host = await DebugSession.LaunchToBreakpoint(testOutputHelper, Stepping, line, []);
+        StoppedEvent stop = await host.WaitForStoppedEvent();
+        int thread = stop.ThreadId!.Value;
+
+        IReadOnlyList<StepInTarget> targets = Targets(host, thread);
+        Assert.Equal(["Inner()", "Outer(int)"], targets.Select(t => t.Label));
+        // Each is placed on its name, as Rider marks the calls on the line.
+        string text = File.ReadAllLines(Debuggees.Source(Stepping, "Program.cs"))[line - 1];
+        Assert.Equal((line, text.IndexOf("Inner", StringComparison.Ordinal) + 1, line, text.IndexOf("Inner", StringComparison.Ordinal) + 6),
+            (targets[0].Line, targets[0].Column, targets[0].EndLine, targets[0].EndColumn));
+        Assert.Equal(text.IndexOf("Outer", StringComparison.Ordinal) + 1, targets[1].Column);
+
+        // Straight into Outer, past Inner, which has run by then: Outer is given what it returned.
+        stop = await host.Step(thread, targets[1]);
+        Assert.Equal(("step", Line("static int Outer(int value)") + 1), (stop.Reason, stop.ReadStopInfo().line));
+        Assert.Contains("Outer", host.GetTopStackFrame(thread).Name, StringComparison.Ordinal);
+        Assert.Equal("20", Assert.Single(host.Locals(stop), v => v.Name == "value").Value);
+    }
+
+    [Fact]
+    public async Task Of_two_calls_of_the_same_method_the_second_chosen_is_the_one_stepped_into()
+    {
+        int line = Line("int sum = Add(Add(1, 2), 3);");
+        using DebugSession host = await DebugSession.LaunchToBreakpoint(testOutputHelper, Stepping, line, []);
+        StoppedEvent stop = await host.WaitForStoppedEvent();
+        int thread = stop.ThreadId!.Value;
+
+        IReadOnlyList<StepInTarget> targets = Targets(host, thread);
+        Assert.Equal(["Add(int, int)", "Add(int, int)"], targets.Select(t => t.Label));
+        Assert.True(targets[0].Column > targets[1].Column, "The inner call, which runs first, was not listed first");
+        stop = await host.Step(thread, targets[1]);
+        List<DapVariable> locals = host.Locals(stop);
+        Assert.Equal(("3", "3"), (Assert.Single(locals, v => v.Name == "a").Value, Assert.Single(locals, v => v.Name == "b").Value));
+    }
+
+    [Fact]
+    public async Task A_lambda_on_the_line_is_stepped_into_when_what_it_is_handed_to_runs_it()
+    {
+        const string code = "int[] doubled = [.. Numbers().Select(n => Twice(n))];";
+        int line = Line(code);
+        // At the statement's column: a breakpoint on the line alone binds to the lambda's body, which shares it.
+        int column = File.ReadAllLines(Debuggees.Source(Stepping, "Program.cs"))[line - 1].IndexOf(code, StringComparison.Ordinal) + 1;
+        using DebugSession host = DebugSession.ForLaunch(testOutputHelper);
+        await host.WithInitializeRequest().WithLaunchRequest(Debuggees.Program(Stepping), stopAtEntry: false, justMyCode: true).WaitForInitializedEvent();
+        host.WithBreakpointsRequest(Debuggees.Source(Stepping, "Program.cs"), [new DapSourceBreakpoint(line, column)]).WithConfigurationDoneRequest();
+        StoppedEvent stop = await host.WaitForStoppedEvent();
+        Assert.Equal((line, column), (stop.ReadStopInfo().line, stop.ReadStopInfo().column));
+        int thread = stop.ThreadId!.Value;
+
+        // Select is the framework's, which Just My Code does not step into; the lambda's body is the user's.
+        IReadOnlyList<StepInTarget> targets = Targets(host, thread);
+        Assert.Equal(["Numbers()", "n => Twice(n)"], targets.Select(t => t.Label));
+        stop = await host.Step(thread, targets[1]);
+        Assert.Equal(("step", line), (stop.Reason, stop.ReadStopInfo().line));
+        // In the lambda's own method, not Run's.
+        Assert.Contains(">b__", host.GetTopStackFrame(thread).Name, StringComparison.Ordinal);
+        Assert.Equal("1", Assert.Single(host.Locals(stop), v => v.Name == "n").Value);
+    }
+
+    [Fact]
+    public async Task An_awaited_async_method_is_stepped_into_at_its_first_line()
+    {
+        int line = Line("int computed = await ComputeAsync(Seed());");
+        using DebugSession host = await DebugSession.LaunchToBreakpoint(testOutputHelper, Stepping, line, []);
+        StoppedEvent stop = await host.WaitForStoppedEvent();
+        int thread = stop.ThreadId!.Value;
+
+        IReadOnlyList<StepInTarget> targets = Targets(host, thread);
+        Assert.Equal(["Seed()", "ComputeAsync(int)"], targets.Select(t => t.Label));
+        stop = await host.Step(thread, targets[1]);
+        Assert.Equal(("step", Line("static async Task<int> ComputeAsync(int value)") + 1), (stop.Reason, stop.ReadStopInfo().line));
+        Assert.Equal("4", Assert.Single(host.Locals(stop), v => v.Name == "value").Value);
+    }
+
+    private static IReadOnlyList<StepInTarget> Targets(DebugSession host, int thread) =>
+        host.Request<StepInTargetsResponse>("stepInTargets", new StepInTargetsArguments(host.GetTopStackFrame(thread).Id)).Targets;
+}
+
+internal static class SmartStepIntoRequests
+{
+    /// <summary>Smart Step Into's step: straight into a target, and the stop it comes to.</summary>
+    public static Task<StoppedEvent> Step(this DebugSession host, int thread, StepInTarget target)
+    {
+        host.Request("stepIn", new StepInArguments(thread, target.Id));
+        return host.WaitForStoppedEvent();
+    }
+}

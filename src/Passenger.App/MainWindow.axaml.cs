@@ -6,6 +6,7 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using Passenger.App.CSharp;
 using Passenger.App.Debugging;
 using Passenger.App.Editors;
@@ -441,7 +442,7 @@ public partial class MainWindow : Window
             e.Handled = true;
             return;
         }
-        if (TerminalTakes(e))
+        if (TerminalTakes(e) || DiffTakes(e))
         {
             return;
         }
@@ -483,6 +484,11 @@ public partial class MainWindow : Window
             e.Handled = true;
         }
     }
+
+    /// <summary>A diff in the window (Local History's) takes F7 and Shift+F7, Rider's next and previous difference there,
+    /// ahead of Smart Step Into's Shift+F7 everywhere else.</summary>
+    private bool DiffTakes(KeyEventArgs e) =>
+        e.Key == Key.F7 && FocusManager?.GetFocusedElement() is Visual focused && focused.FindAncestorOfType<Vcs.DiffView>(includeSelf: true) is not null;
 
     public bool IsPopupOpen => Popups.Layer.IsVisible;
 

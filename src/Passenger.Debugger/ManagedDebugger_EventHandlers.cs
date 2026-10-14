@@ -242,6 +242,12 @@ public partial class ManagedDebugger
             return;
         }
 
+        if (_smartStep is { } smart && breakpoint is ICorDebugFunctionBreakpoint entered && entered == smart.Breakpoint)
+        {
+            TakeSmartStepEntry(breakpointCorDebugManagedCallbackEventArgs.Thread, smart);
+            return;
+        }
+
         if (_stepper is { IsActive: false })
         {
             // The step is complete and its StepComplete queued behind this, at the same place: the step's stop stands for both.
@@ -432,6 +438,8 @@ public partial class ManagedDebugger
         stepper.Deactivate();
         _stepper = null;
         EndReturnWatch();
+        // The statement is left without its Smart Step Into target entered (not called, or called on another thread).
+        EndSmartStep();
         if (stepCompleteEventArgs.Reason is CorDebugStepReason.STEP_RETURN)
         {
             // Back in a caller, right after the call that returned; reading a value type's runs the program, so the frame
@@ -492,6 +500,7 @@ public partial class ManagedDebugger
     {
         _asyncStepper?.Disable();
         _stepAfterEvaluation = null;
+        EndSmartStep();
         if (_stepper is not null)
         {
             _stepper.Deactivate();

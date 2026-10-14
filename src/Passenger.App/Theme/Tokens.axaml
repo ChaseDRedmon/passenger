@@ -121,6 +121,10 @@
             <SolidColorBrush x:Key="Passenger.Editor.UsageReadMark" Color="#5B786A" />
             <SolidColorBrush x:Key="Passenger.Editor.UsageWriteMark" Color="#BA6387" />
             <SolidColorBrush x:Key="Passenger.Editor.MatchedBrace" Color="#43454A" />
+            <!-- Rider Dark's DEBUGGER_SMART_STEP_INTO_TARGET and _SELECTION (its effect colour the box). -->
+            <SolidColorBrush x:Key="Passenger.Editor.SmartStepTarget" Color="#53385E" />
+            <SolidColorBrush x:Key="Passenger.Editor.SmartStepChosen" Color="#824991" />
+            <SolidColorBrush x:Key="Passenger.Editor.SmartStepBorder" Color="#C76DC7" />
             <!-- Rider Dark's WHITESPACES and SOFT_WRAP_SIGN_COLOR. -->
             <SolidColorBrush x:Key="Passenger.Editor.Whitespace" Color="#686868" />
             <SolidColorBrush x:Key="Passenger.Editor.SoftWrapSign" Color="#787878" />
@@ -284,6 +288,10 @@
             <SolidColorBrush x:Key="Passenger.Editor.UsageReadMark" Color="#D0A1FF" />
             <SolidColorBrush x:Key="Passenger.Editor.UsageWriteMark" Color="#F0A8D2" />
             <SolidColorBrush x:Key="Passenger.Editor.MatchedBrace" Color="#93D9D9" />
+            <!-- Rider Light's DEBUGGER_SMART_STEP_INTO_TARGET and _SELECTION (its effect colour the box). -->
+            <SolidColorBrush x:Key="Passenger.Editor.SmartStepTarget" Color="#E2D3F0" />
+            <SolidColorBrush x:Key="Passenger.Editor.SmartStepChosen" Color="#F2B3FF" />
+            <SolidColorBrush x:Key="Passenger.Editor.SmartStepBorder" Color="#CC29CC" />
             <!-- Rider Light's WHITESPACES and SOFT_WRAP_SIGN_COLOR. -->
             <SolidColorBrush x:Key="Passenger.Editor.Whitespace" Color="#D0D0D0" />
             <SolidColorBrush x:Key="Passenger.Editor.SoftWrapSign" Color="#949494" />

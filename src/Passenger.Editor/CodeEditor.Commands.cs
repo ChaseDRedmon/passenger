@@ -17,7 +17,7 @@ public sealed partial class CodeEditor
     public bool TryExecute(string action, bool extend = false)
     {
         TextSnapshot text = document.Snapshot;
-        if (RunSnippetKey(action) || RunFolding(action))
+        if (RunChoiceKey(action) || RunSnippetKey(action) || RunFolding(action))
         {
             return true;
         }

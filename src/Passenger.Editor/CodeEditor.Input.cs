@@ -95,9 +95,16 @@ public sealed partial class CodeEditor
         }
         if (!point.Properties.IsLeftButtonPressed)
         {
+            CancelChoices();
             return;
         }
         Focus();
+        if (point.Position.X >= GutterWidth && ClickChoice(OffsetAt(point.Position)))
+        {
+            e.Handled = true;
+            return;
+        }
+        CancelChoices();
         if (ClickFold(point.Position))
         {
             e.Handled = true;

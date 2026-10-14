@@ -242,6 +242,14 @@ public sealed class DebugSession
 
     public Task StepIntoAsync() => Resume("stepIn");
 
+    /// <summary>Smart Step Into's step: straight into one of the calls <see cref="StepInTargetsAsync"/> gave.</summary>
+    public Task StepIntoTargetAsync(int target) => Resume("stepIn", thread => new StepInArguments(thread, target));
+
+    /// <summary>The calls a frame's statement can step into, in the order they run, each placed where it is written (lines
+    /// and columns from one, at the built lines).</summary>
+    public async Task<IReadOnlyList<StepInTarget>> StepInTargetsAsync(int frameId) =>
+        (await connection.RequestAsync<StepInTargetsResponse>("stepInTargets", new StepInTargetsArguments(frameId))).Targets;
+
     public Task StepOutAsync() => Resume("stepOut");
 
     /// <summary>Runs on to a line: a breakpoint the user never sees, gone again at the next stop.</summary>
@@ -516,7 +524,7 @@ public sealed class DebugSession
     /// <summary>Sets the paused program going (a continue or a step), saying it runs only once the adapter has: a request it
     /// refuses throws its reason with the program still paused where it was. A stop that came before the answer (a step
     /// that ends at once) stands. One asked while another's answer is awaited is let go, as a press while running is.</summary>
-    private async Task Resume(string command)
+    private async Task Resume(string command, Func<int, object>? arguments = null)
     {
         UiThread.Check();
         if (State != DebugState.Paused || resuming || disconnected is not null || StoppedThread is not int thread)
@@ -527,7 +535,7 @@ public sealed class DebugSession
         resuming = true;
         try
         {
-            await connection.RequestAsync(command, new ThreadArguments(thread));
+            await connection.RequestAsync(command, arguments?.Invoke(thread) ?? new ThreadArguments(thread));
         }
         finally
         {

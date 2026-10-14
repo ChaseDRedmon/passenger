@@ -5,8 +5,8 @@ using Passenger.Debugger.ExpressionEvaluator.Cil;
 
 namespace Passenger.Debugger;
 
-/// <summary>What a method's IL calls between two offsets, for the values a step's calls return: each call, object creation
-/// and delegate made of a method (a lambda's body, a method group), with what it names.</summary>
+/// <summary>What a method's IL calls between two offsets, for the values a step's calls return and for Smart Step Into:
+/// each call, object creation and delegate made of a method (a lambda's body, a method group), with what it names.</summary>
 public partial class ModuleMetadataReader
 {
     internal enum CallKind
@@ -96,6 +96,51 @@ public partial class ModuleMetadataReader
             default:
                 return null;
         }
+    }
+
+    /// <summary>A method's sequence points that show a line, in IL order.</summary>
+    internal IReadOnlyList<SequencePoint> VisibleSequencePoints(int methodToken)
+    {
+        if (_pdbMetadataReader is not { } reader)
+        {
+            return [];
+        }
+        MethodDebugInformation debugInfo = reader.GetMethodDebugInformation(MetadataTokens.MethodDefinitionHandle(methodToken));
+        return debugInfo.SequencePointsBlob.IsNil ? [] : [.. debugInfo.GetSequencePoints().Where(point => !point.IsHidden).OrderBy(point => point.Offset)];
+    }
+
+    /// <summary>The file a sequence point of a method is in.</summary>
+    internal string? DocumentOf(int methodToken, SequencePoint point)
+    {
+        if (_pdbMetadataReader is not { } reader)
+        {
+            return null;
+        }
+        DocumentHandle document = point.Document.IsNil ? reader.GetMethodDebugInformation(MetadataTokens.MethodDefinitionHandle(methodToken)).Document : point.Document;
+        return document.IsNil ? null : reader.GetString(reader.GetDocument(document).Name);
+    }
+
+    /// <summary>The MoveNext an async or iterator method's state machine runs its body in, found by the attribute the
+    /// compiler puts on the method; null for a method without one.</summary>
+    internal int? GetStateMachineMoveNextToken(int kickoffMethodToken)
+    {
+        MethodDefinition kickoff = _peMetadataReader.GetMethodDefinition(MetadataTokens.MethodDefinitionHandle(kickoffMethodToken));
+        TypeDefinition declaringType = _peMetadataReader.GetTypeDefinition(kickoff.GetDeclaringType());
+        foreach (TypeDefinitionHandle stateMachineHandle in declaringType.GetNestedTypes())
+        {
+            if (!kickoff.GetCustomAttributes().Any(attribute => StateMachineAttributeMatches(attribute, stateMachineHandle)))
+            {
+                continue;
+            }
+            foreach (MethodDefinitionHandle methodHandle in _peMetadataReader.GetTypeDefinition(stateMachineHandle).GetMethods())
+            {
+                if (_peMetadataReader.GetString(_peMetadataReader.GetMethodDefinition(methodHandle).Name) == "MoveNext")
+                {
+                    return MetadataTokens.GetToken(methodHandle);
+                }
+            }
+        }
+        return null;
     }
 
     private static string SimpleName(string name) => name.IndexOf('`') is int arity and >= 0 ? name[..arity] : name;

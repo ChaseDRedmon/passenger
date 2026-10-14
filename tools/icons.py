@@ -60,6 +60,8 @@ ICONS = [
     ("RunToCursor", "Arrow Step In Right", "20_regular"),
     # Rider's Detach, after Stop: the debugger unplugged, the program left running.
     ("Detach", "Plug Disconnected", "20_regular"),
+    # Smart Step Into: a call of the line chosen to step into, a target.
+    ("SmartStepInto", "Target Arrow", "20_regular"),
     ("Breakpoints", "Record", "20_regular"),
     ("MuteBreakpoints", "Circle Off", "20_regular"),
     ("Evaluate", "Calculator", "20_regular"),

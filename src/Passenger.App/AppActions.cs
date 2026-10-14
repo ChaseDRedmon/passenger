@@ -143,6 +143,7 @@ public static class AppActions
     public const string Pause = "app.debug.pause";
     public const string StepOver = "app.debug.stepOver";
     public const string StepInto = "app.debug.stepInto";
+    public const string SmartStepInto = "app.debug.smartStepInto";
     public const string StepOut = "app.debug.stepOut";
     public const string RunToCursor = "app.debug.runToCursor";
     public const string SetNextStatement = "app.debug.setNextStatement";
@@ -349,6 +350,7 @@ public static class AppActions
                 .Bind(Pause, "meta PAUSE", "shift meta P")
                 .Bind(StepOver, "F10")
                 .Bind(StepInto, "F11", "meta F11")
+                .Bind(SmartStepInto, "shift F7")
                 .Bind(StepOut, "shift F11")
                 .Bind(RunToCursor, "meta F10")
                 .Bind(SetNextStatement, "meta shift F10")
@@ -466,6 +468,7 @@ public static class AppActions
             .Bind(Pause, "control PAUSE", "shift control P")
             .Bind(StepOver, "F10")
             .Bind(StepInto, "F11")
+            .Bind(SmartStepInto, "shift F7")
             .Bind(StepOut, "shift F11")
             .Bind(RunToCursor, "control F10")
             .Bind(SetNextStatement, "control shift F10")

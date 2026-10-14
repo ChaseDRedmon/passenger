@@ -344,6 +344,46 @@ public sealed class DebuggerTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void Smart_step_into_marks_the_lines_calls_in_the_order_they_run_and_enter_steps_into_the_one_chosen()
+    {
+        Write("Program.cs", "int nested = Outer(Inner());\nConsole.WriteLine(nested);\nConsole.WriteLine(\"done\");\n\n"
+            + "static int Inner() => 20;\nstatic int Outer(int value)\n{\n    return value + 1;\n}\n");
+        MainWindow window = Open();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        editor.GoTo(new TextPosition(0, 0));
+        Ui.Run(window, AppActions.ToggleBreakpoint);
+        Ui.Run(window, AppActions.Debug);
+        Ui.WaitFor(() => window.Debugger.Session?.State == DebugState.Paused && Row(window, "nested") is not null, "the stop at the line of calls");
+
+        // Shift+F7 marks the calls in the editor, the first chosen; Escape leaves them, and the program where it is.
+        Ui.Run(window, AppActions.SmartStepInto);
+        Ui.WaitFor(() => editor.IsChoosing, "the line's calls to be offered");
+        Assert.Equal(["Inner", "Outer"], editor.Choices.Select(r => editor.Document.Snapshot.GetText(r.Start, r.Length)));
+        Assert.Equal(0, editor.Chosen);
+        Ui.Press(window, "Escape");
+        Assert.False(editor.IsChoosing, "Escape did not leave Smart Step Into");
+        Assert.Equal(DebugState.Paused, window.Debugger.Session?.State);
+        Assert.Contains(new LineMark(0, LineMarkKind.ExecutionPoint), editor.LineMarks);
+
+        // The arrows and Tab move the choice, round from the last to the first; Enter steps straight into Outer.
+        Ui.Run(window, AppActions.SmartStepInto);
+        Ui.WaitFor(() => editor.IsChoosing, "the line's calls offered again");
+        Ui.Press(window, "Right");
+        Assert.Equal(1, editor.Chosen);
+        Ui.Press(window, "Tab");
+        Assert.Equal(0, editor.Chosen);
+        Ui.Press(window, "shift Tab");
+        Assert.Equal(1, editor.Chosen);
+        Ui.Press(window, "Enter");
+        Ui.WaitFor(() => Value(window, "value") == "20", "the stop in Outer, given what Inner returned");
+        Assert.False(editor.IsChoosing);
+        Assert.Contains(new LineMark(6, LineMarkKind.ExecutionPoint), editor.LineMarks);
+        Ui.Run(window, AppActions.Stop);
+        Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void An_exception_stop_lists_the_exception_as_exception_and_a_watch_reads_its_message()
     {
         Write("Program.cs", "int index = 5;\nthrow new InvalidOperationException($\"bad index {index}\");\n");

@@ -423,6 +423,7 @@ public partial class ManagedDebugger
             _unhandledByUser = null;
             _variableManager.ClearAndDisposeHandleValues();
             _frameReferenceManager.Clear();
+            _stepInTargets.Clear();
         }
         if (!EvalStatus.IsRunning && (TakeDeferredEvent() || TakePendingPause()))
         {
@@ -444,6 +445,7 @@ public partial class ManagedDebugger
     {
         // A step's calls' values are shown at its own stop; one that stops anywhere else stops showing them.
         EndReturnWatch();
+        EndSmartStep();
         if (reason != "step")
         {
             ForgetReturnedValues();
@@ -561,8 +563,9 @@ public partial class ManagedDebugger
         StepOutOfHandler(thread, handler);
     }
 
-    /// <summary>A step from a frame, the thread's top one unless another is given, set up without letting the program go.</summary>
-    internal ICorDebugStepper SetupStepper(ICorDebugThread thread, StepType stepType, ICorDebugFrame? from = null)
+    /// <summary>A step from a frame, the thread's top one unless another is given, set up without letting the program go:
+    /// through its statement, or the IL range given.</summary>
+    internal ICorDebugStepper SetupStepper(ICorDebugThread thread, StepType stepType, ICorDebugFrame? from = null, (int Start, int End)? through = null)
     {
         ICorDebugFrame frame = from ?? thread.ActiveFrame;
         if (frame is not ICorDebugILFrame ilFrame)
@@ -586,7 +589,7 @@ public partial class ManagedDebugger
             }
             bool stepIn = stepType is StepType.StepIn;
             // A module the debugger could not read has no lines: the step is the runtime's own, an instruction's.
-            if (StepRangeOf(ilFrame) is not var (start, end))
+            if ((through ?? StepRangeOf(ilFrame)) is not var (start, end))
             {
                 stepper.Step(stepIn);
                 return;
@@ -930,12 +933,15 @@ public partial class ManagedDebugger
             _returnWatch = null;
             _returned.Clear();
             _returnedThread = null;
+            _smartStep = null;
         }
         else
         {
             EndReturnWatch();
             ForgetReturnedValues();
+            EndSmartStep();
         }
+        _stepInTargets.Clear();
         _stepper = null!;
         _stepping = null;
         _stepAfterEvaluation = null;

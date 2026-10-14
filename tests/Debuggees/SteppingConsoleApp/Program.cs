@@ -11,7 +11,8 @@ static class Calls
     public static void Run()
     {
         int nested = Outer(Inner());
-        Console.WriteLine($"nested {nested}");
+        int sum = Add(Add(1, 2), 3);
+        Console.WriteLine($"nested {nested} {sum}");
     }
 
     static int Inner() => 20;
@@ -19,6 +20,11 @@ static class Calls
     static int Outer(int value)
     {
         return value + 1;
+    }
+
+    static int Add(int a, int b)
+    {
+        return a + b;
     }
 }
 

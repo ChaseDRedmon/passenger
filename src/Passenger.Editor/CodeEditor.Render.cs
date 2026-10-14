@@ -99,6 +99,7 @@ public sealed partial class CodeEditor
                 }
                 DrawSelections(context, view, gaps, from, y, size.Width, focused);
                 DrawHighlights(context, view, gaps, from, y);
+                DrawChoices(context, view, gaps, from, y);
                 if (showWhitespaces)
                 {
                     DrawWhitespace(context, text, view, gaps, from, y);
@@ -943,6 +944,9 @@ public sealed partial class CodeEditor
         public IBrush SoftWrapSign { get; private init; } = Brush("#787878");
         public IBrush LinkUnderline { get; private init; } = Brush("#406AC2");
         public IBrush PopupBorder { get; private init; } = Brush("#43454A");
+        public IBrush SmartStepTarget { get; private init; } = Brush("#53385E");
+        public IBrush SmartStepChosen { get; private init; } = Brush("#824991");
+        public IBrush SmartStepBorder { get; private init; } = Brush("#C76DC7");
         public Geometry? ErrorIcon { get; private init; }
         public Geometry? WarningIcon { get; private init; }
         public Geometry? PassedIcon { get; private init; }
@@ -1004,6 +1008,9 @@ public sealed partial class CodeEditor
                 SoftWrapSign = Find(control, "Passenger.Editor.SoftWrapSign") ?? defaults.SoftWrapSign,
                 LinkUnderline = Find(control, "Passenger.Editor.LinkUnderline") ?? defaults.LinkUnderline,
                 PopupBorder = Find(control, "Passenger.Editor.PopupBorder") ?? defaults.PopupBorder,
+                SmartStepTarget = Find(control, "Passenger.Editor.SmartStepTarget") ?? defaults.SmartStepTarget,
+                SmartStepChosen = Find(control, "Passenger.Editor.SmartStepChosen") ?? defaults.SmartStepChosen,
+                SmartStepBorder = Find(control, "Passenger.Editor.SmartStepBorder") ?? defaults.SmartStepBorder,
                 ErrorIcon = Icon(control, "Icon.Error"),
                 WarningIcon = Icon(control, "Icon.Problems"),
                 PassedIcon = Icon(control, "Icon.Check"),

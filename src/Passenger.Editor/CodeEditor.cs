@@ -371,6 +371,7 @@ public sealed partial class CodeEditor : Control
             document.Changed += OnDocumentChanged;
             // A template's places, a composition and a GoTo waiting for layout are offsets in the text left behind.
             snippet = null;
+            CancelChoices();
             pendingGoTo = null;
             UsageHighlights = [];
             UsagesKept = false;
@@ -699,6 +700,8 @@ public sealed partial class CodeEditor : Control
         // First, since what follows the change asks where its carets are drawn.
         FollowWraps(e);
         FollowSnippet(e.Edits);
+        // What was offered to choose among is the text left behind.
+        CancelChoices();
         FollowUsages(e.Edits);
         FollowInlineChanges(e.Edits);
         FollowLinkEdits(e.Edits);

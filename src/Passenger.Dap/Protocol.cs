@@ -280,6 +280,28 @@ public sealed record SetExpressionResponse
 
 public sealed record ThreadArguments(int ThreadId);
 
+/// <summary>Step Into: the thread, and the call to step straight into (a target stepInTargets gave), Smart Step Into's.</summary>
+public sealed record StepInArguments(int ThreadId, int? TargetId = null);
+
+/// <summary>The calls a frame's statement can step into, in the order they run (Smart Step Into's question).</summary>
+public sealed record StepInTargetsArguments(int FrameId);
+
+public sealed record StepInTargetsResponse
+{
+    public IReadOnlyList<StepInTarget> Targets { get; init; } = [];
+}
+
+/// <summary>A call a step can go straight into: its label, and where it is written, when the debugger can say.</summary>
+public sealed record StepInTarget
+{
+    public int Id { get; init; }
+    public string Label { get; init; } = string.Empty;
+    public int? Line { get; init; }
+    public int? Column { get; init; }
+    public int? EndLine { get; init; }
+    public int? EndColumn { get; init; }
+}
+
 public sealed record ContinueResponse(bool? AllThreadsContinued = null);
 
 public sealed record DisconnectArguments(bool? Restart = null, bool? TerminateDebuggee = null);

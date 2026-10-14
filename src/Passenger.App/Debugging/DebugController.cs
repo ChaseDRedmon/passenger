@@ -255,17 +255,18 @@ public sealed class DebugController
             _ => !IsDebugging ? NothingDebugged : Session!.State == DebugState.Paused ? "The program is paused already" : null, new("Run", 1, 1));
         Add(AppActions.StepOver, "Step Over", context => _ = ResumeAsync(session => session.StepOverAsync(), "step over"), _ => NotPaused(), new("Run", 1, 2));
         Add(AppActions.StepInto, "Step Into", context => _ = ResumeAsync(session => session.StepIntoAsync(), "step into"), _ => NotPaused(), new("Run", 1, 3));
-        Add(AppActions.StepOut, "Step Out", context => _ = ResumeAsync(session => session.StepOutAsync(), "step out"), _ => NotPaused(), new("Run", 1, 4));
+        Add(AppActions.SmartStepInto, "Smart Step Into", context => _ = SmartStepIntoAsync(), _ => NotPaused(), new("Run", 1, 4));
+        Add(AppActions.StepOut, "Step Out", context => _ = ResumeAsync(session => session.StepOutAsync(), "step out"), _ => NotPaused(), new("Run", 1, 5));
         Add(AppActions.RunToCursor, "Run to Cursor", c => _ = ResumeAsync(session => session.RunToCursorAsync(c.File!.Path, c.Caret.Line), "run to the cursor"),
-            c => NeedsFile(c) ?? NotPaused(), new("Run", 1, 5));
-        Add(AppActions.SetNextStatement, "Set Next Statement", c => _ = SetNextStatementAsync(Session!, c.File!.Path, c.Caret.Line),
             c => NeedsFile(c) ?? NotPaused(), new("Run", 1, 6));
+        Add(AppActions.SetNextStatement, "Set Next Statement", c => _ = SetNextStatementAsync(Session!, c.File!.Path, c.Caret.Line),
+            c => NeedsFile(c) ?? NotPaused(), new("Run", 1, 7));
         Add(AppActions.ShowExecutionPoint, "Show Execution Point", _ =>
         {
             (string path, int line) = executionPoint!.Value;
             Navigate?.Invoke(this, (path, new TextPosition(Current(path, line), 0)));
-        }, _ => NotPaused() ?? (executionPoint is null ? "Where the program is paused has no source" : null), new("Run", 1, 7));
-        Add(AppActions.Evaluate, "Evaluate Expression...", c => view.FocusEvaluate(c.Symbol ?? string.Empty), _ => NotPaused(), new("Run", 1, 8));
+        }, _ => NotPaused() ?? (executionPoint is null ? "Where the program is paused has no source" : null), new("Run", 1, 8));
+        Add(AppActions.Evaluate, "Evaluate Expression...", c => view.FocusEvaluate(c.Symbol ?? string.Empty), _ => NotPaused(), new("Run", 1, 9));
         Add(AppActions.AddToWatches, "Add to Watches", c => _ = Evaluate(c.Symbol!, watch: true),
             c => NotPaused() ?? (c.Symbol is { Length: > 0 } ? null : "No expression is at the caret"), null);
         // In Rider's Run menu after Stop, and on the Debug window's toolbar after it.
@@ -308,6 +309,80 @@ public sealed class DebugController
         {
             // The session ended meanwhile, which says why itself.
         }
+    }
+
+    /// <summary>Rider's Smart Step Into: the calls of the line the program is paused at, in the order they run, offered in
+    /// its editor (each filled, the chosen one boxed, Rider's colours) to step straight into: the arrow keys or Tab move the
+    /// choice, Enter or a click takes it, Escape leaves it. One call is stepped into at once; with none, it is Step Into.</summary>
+    private async Task SmartStepIntoAsync()
+    {
+        UiThread.Check();
+        if (Session is not { State: DebugState.Paused } session || Stop is not { Frames: [var top, ..] } || top.Source?.Path is not { } source)
+        {
+            await ResumeAsync(session => session.StepIntoAsync(), "step into");
+            return;
+        }
+        int stop = shown;
+        IReadOnlyList<StepInTarget> targets;
+        try
+        {
+            targets = await session.StepInTargetsAsync(top.Id);
+        }
+        catch (DapException error)
+        {
+            Message?.Invoke(this, $"Smart Step Into: {error.Reason}");
+            return;
+        }
+        if (stop != shown)
+        {
+            return;
+        }
+        string path = PathNames.Canonical(source);
+        Navigate?.Invoke(this, (path, new TextPosition(Current(path, Math.Max(0, top.Line - 1)), Math.Max(0, top.Column - 1))));
+        CodeEditor editor = editors.CodeEditor;
+        List<(StepInTarget Target, TextRange Range)> placed = editors.Active?.Path == path ? Placed(targets, path, editor.Document.Snapshot) : [];
+        if (placed.Count <= 1)
+        {
+            // Nothing to choose between: the one call there is, else Step Into, as Rider does.
+            await ResumeAsync(session => placed.Count == 1 ? session.StepIntoTargetAsync(placed[0].Target.Id) : session.StepIntoAsync(), "step into");
+            return;
+        }
+        editor.Focus();
+        editor.OfferChoices([.. placed.Select(p => p.Range)], chosen =>
+        {
+            if (chosen is int index && Session == session && session.State == DebugState.Paused && stop == shown)
+            {
+                _ = ResumeAsync(paused => paused.StepIntoTargetAsync(placed[index].Target.Id), "smart step into");
+            }
+        });
+        Message?.Invoke(this, "Smart Step Into: choose a call with the arrow keys or Tab, Enter to step into it, Escape to leave");
+    }
+
+    /// <summary>Where each target is in a file's text as it is now (from the built lines), those placed on one line each.</summary>
+    private List<(StepInTarget, TextRange)> Placed(IReadOnlyList<StepInTarget> targets, string path, TextSnapshot text)
+    {
+        List<(StepInTarget, TextRange)> placed = [];
+        foreach (StepInTarget target in targets)
+        {
+            if (target is not { Line: int line, Column: int column, EndLine: int endLine, EndColumn: int endColumn } || line != endLine)
+            {
+                continue;
+            }
+            int now = Current(path, line - 1);
+            if (now < 0 || now >= text.LineCount)
+            {
+                continue;
+            }
+            LineSpan row = text.GetLine(now);
+            int start = row.Start;
+            int length = row.Length;
+            if (column - 1 > length || endColumn - 1 > length || endColumn <= column)
+            {
+                continue;
+            }
+            placed.Add((target, TextRange.FromBounds(start + column - 1, start + endColumn - 1)));
+        }
+        return placed;
     }
 
     /// <summary>Rider's Set Next Statement: the paused thread goes on from a line (from zero) of the method it is
@@ -466,6 +541,7 @@ public sealed class DebugController
                 Message?.Invoke(this, Said(session));
                 break;
             case DebugState.Running:
+                editors.CodeEditor.CancelChoices();
                 executionPoint = null;
                 stopException = null;
                 UpdateAllMarks();

@@ -15,7 +15,8 @@ using Passenger.Editor;
 namespace Passenger.App.ToolWindows;
 
 /// <summary>The Debug tool window, laid out as Rider's: a toolbar down the left (rerun, resume,
-/// pause, stop, detach, then View Breakpoints and Mute Breakpoints), the stepping actions across the top beside the Debugger and Console tabs, and under
+/// pause, stop, detach, then View Breakpoints and Mute Breakpoints), the stepping actions (Smart Step Into after Step Into,
+/// as Rider's) across the top beside the Debugger and Console tabs, and under
 /// Debugger the frames of the chosen thread on the left with the variables of the chosen frame on the
 /// right, an expression to evaluate or watch above them.</summary>
 public sealed class DebugView : DockPanel
@@ -134,6 +135,7 @@ public sealed class DebugView : DockPanel
                 new Border { Width = 12 },
                 Tool(AppActions.StepOver, "Icon.StepOver", "Step Over"),
                 Tool(AppActions.StepInto, "Icon.StepInto", "Step Into"),
+                Tool(AppActions.SmartStepInto, "Icon.SmartStepInto", "Smart Step Into"),
                 Tool(AppActions.StepOut, "Icon.StepOut", "Step Out"),
                 Tool(AppActions.RunToCursor, "Icon.RunToCursor", "Run to Cursor"),
                 Tool(AppActions.Evaluate, "Icon.Evaluate", "Evaluate Expression"),
@@ -249,7 +251,7 @@ public sealed class DebugView : DockPanel
     {
         bool paused = state == DebugState.Paused;
         bool live = state is DebugState.Running or DebugState.Paused or DebugState.Starting;
-        foreach (string action in new[] { AppActions.StepOver, AppActions.StepInto, AppActions.StepOut, AppActions.RunToCursor, AppActions.Evaluate, AppActions.Resume })
+        foreach (string action in new[] { AppActions.StepOver, AppActions.StepInto, AppActions.SmartStepInto, AppActions.StepOut, AppActions.RunToCursor, AppActions.Evaluate, AppActions.Resume })
         {
             tools[action].IsEnabled = paused;
         }

@@ -159,7 +159,26 @@ public sealed class DebugAdapter
             return new ContinueResponse(AllThreadsContinued: true);
         });
         connection.Handle<ThreadArguments>("next", arguments => Locked(() => debugger.Step(arguments.ThreadId, StepType.StepOver)));
-        connection.Handle<ThreadArguments>("stepIn", arguments => Locked(() => debugger.Step(arguments.ThreadId, StepType.StepIn)));
+        connection.Handle<StepInArguments>("stepIn", arguments => Locked(() => arguments.TargetId is int target
+            ? debugger.StepIntoTarget(arguments.ThreadId, target)
+            : debugger.Step(arguments.ThreadId, StepType.StepIn)));
+        // Smart Step Into: the calls of the frame's statement, each placed where it is written.
+        connection.Handle<StepInTargetsArguments, StepInTargetsResponse>("stepInTargets", async arguments =>
+        {
+            List<StepInTargetInfo> targets = await Locked(() => debugger.StepInTargets(arguments.FrameId));
+            return new StepInTargetsResponse
+            {
+                Targets = [.. targets.Select(t => new StepInTarget
+                {
+                    Id = t.Id,
+                    Label = t.Label,
+                    Line = t.Line is int line ? LineOut(line) : null,
+                    Column = t.Column is int column ? ColumnOut(column) : null,
+                    EndLine = t.EndLine is int endLine ? LineOut(endLine) : null,
+                    EndColumn = t.EndColumn is int endColumn ? ColumnOut(endColumn) : null,
+                })],
+            };
+        });
         connection.Handle<ThreadArguments>("stepOut", arguments => Locked(() => debugger.Step(arguments.ThreadId, StepType.StepOut)));
         connection.Handle<ThreadArguments>("pause", _ => Locked(() => debugger.Pause()));
         connection.Handle<DisconnectArguments>("disconnect", arguments => Locked(() => debugger.Disconnect(arguments.TerminateDebuggee ?? false)), then: RequestShutdown);
@@ -231,7 +250,7 @@ public sealed class DebugAdapter
             SupportsExceptionInfoRequest = true,
             SupportsExceptionFilterOptions = true,
             SupportsExceptionOptions = true,
-            SupportsStepInTargetsRequest = false,
+            SupportsStepInTargetsRequest = true,
             SupportsGotoTargetsRequest = true,
             ExceptionBreakpointFilters =
             [
