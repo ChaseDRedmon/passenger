@@ -47,8 +47,8 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         Ui.Run(window, AppActions.ToggleBreakpoint);
         Assert.Contains(new LineMark(3, LineMarkKind.Breakpoint), editor.LineMarks);
 
-        Ui.Run(window, AppActions.Debug);
-        Ui.WaitFor(() => window.Debugger.Session?.State == DebugState.Paused, "the program to stop at the breakpoint");
+        StartDebugging(window);
+        WaitDebugging(window, () => window.Debugger.Session?.State == DebugState.Paused, "the program to stop at the breakpoint");
         Ui.WaitFor(() => Value(window, "i") == "1", "the locals at the first stop");
         Assert.Equal("0", Value(window, "total"));
         Assert.Contains(new LineMark(3, LineMarkKind.ExecutionPoint), editor.LineMarks);
@@ -88,8 +88,8 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         CodeEditor editor = window.EditorArea.CodeEditor;
         editor.GoTo(new TextPosition(3, 4));
         Ui.Run(window, AppActions.ToggleBreakpoint);
-        Ui.Run(window, AppActions.Debug);
-        Ui.WaitFor(() => window.Debugger.Session?.State == DebugState.Paused, "the program to stop at the breakpoint");
+        StartDebugging(window);
+        WaitDebugging(window, () => window.Debugger.Session?.State == DebugState.Paused, "the program to stop at the breakpoint");
         Ui.WaitFor(() => Value(window, "i") == "1", "the locals at the first stop");
         Passenger.App.ToolWindows.DebugView view = window.BottomPanel.Debug;
 
@@ -118,8 +118,8 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         CodeEditor editor = window.EditorArea.CodeEditor;
         editor.GoTo(new TextPosition(3, 4));
         Ui.Run(window, AppActions.ToggleBreakpoint);
-        Ui.Run(window, AppActions.Debug);
-        Ui.WaitFor(() => Value(window, "i") == "1", "the stop in the loop");
+        StartDebugging(window);
+        WaitDebugging(window, () => Value(window, "i") == "1", "the stop in the loop");
 
         // From the arrow beside line 4 to line 6, the Console.WriteLine after the loop.
         Point from = Arrow(window, editor, 3);
@@ -169,8 +169,8 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         CodeEditor editor = window.EditorArea.CodeEditor;
         editor.GoTo(new TextPosition(3, 4));
         Ui.Run(window, AppActions.ToggleBreakpoint);
-        Ui.Run(window, AppActions.Debug);
-        Ui.WaitFor(() => Value(window, "i") == "1", "the first stop");
+        StartDebugging(window);
+        WaitDebugging(window, () => Value(window, "i") == "1", "the first stop");
 
         // A line broken at the top while paused: the breakpoint, the arrow and the values go down a line with their code.
         editor.GoTo(new TextPosition(0, 0));
@@ -220,8 +220,8 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         Assert.Equal("3 times", breakpoint.HitCondition);
 
         // The debugger refuses it in the same words, and the loop runs through to the breakpoint after it.
-        Ui.Run(window, AppActions.Debug);
-        Ui.WaitFor(() => Value(window, "total") == "6", "the stop after the loop");
+        StartDebugging(window);
+        WaitDebugging(window, () => Value(window, "total") == "6", "the stop after the loop");
         Assert.Contains(new LineMark(3, LineMarkKind.BreakpointInvalid, Conditional: true), editor.LineMarks);
         Assert.StartsWith(said, breakpoint.Message, StringComparison.Ordinal);
         Ui.Run(window, AppActions.Stop);
@@ -240,8 +240,8 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         window.EditorArea.CodeEditor.GoTo(new TextPosition(2, 0));
         Ui.Run(window, AppActions.ToggleBreakpoint);
 
-        Ui.Run(window, AppActions.Debug);
-        Ui.WaitFor(() => Value(window, "here") is not null, "the stop with the program's locals");
+        StartDebugging(window);
+        WaitDebugging(window, () => Value(window, "here") is not null, "the stop with the program's locals");
         Assert.Equal("\"Hi\"", Value(window, "greeting"));
         // A string shows as C# writes it, so a Windows path's backslashes are doubled.
         Assert.Equal(Microsoft.CodeAnalysis.CSharp.SymbolDisplay.FormatLiteral(window.Folder!, quote: true), Value(window, "here"));
@@ -298,8 +298,8 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         Write("Program.cs", "int[] values = [1, 2];\nint index = 5;\nConsole.WriteLine(values[index]);\n");
         MainWindow window = Open();
         CodeEditor editor = window.EditorArea.CodeEditor;
-        Ui.Run(window, AppActions.Debug);
-        Ui.WaitFor(() => editor.LineAnnotations.Any(a => a.Kind == LineAnnotationKind.Exception), "the exception at its line");
+        StartDebugging(window);
+        WaitDebugging(window, () => editor.LineAnnotations.Any(a => a.Kind == LineAnnotationKind.Exception), "the exception at its line");
         LineAnnotation thrown = Assert.Single(editor.LineAnnotations, a => a.Kind == LineAnnotationKind.Exception);
         Assert.Equal(2, thrown.Line);
         Assert.StartsWith("IndexOutOfRangeException", thrown.Text, StringComparison.Ordinal);
@@ -318,8 +318,8 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         MainWindow window = Open();
         window.EditorArea.CodeEditor.GoTo(new TextPosition(0, 0));
         Ui.Run(window, AppActions.ToggleBreakpoint);
-        Ui.Run(window, AppActions.Debug);
-        Ui.WaitFor(() => window.Debugger.Session?.State == DebugState.Paused && Row(window, "total") is not null, "the stop before the call");
+        StartDebugging(window);
+        WaitDebugging(window, () => window.Debugger.Session?.State == DebugState.Paused && Row(window, "total") is not null, "the stop before the call");
         Passenger.App.ToolWindows.DebugView view = window.BottomPanel.Debug;
         Assert.DoesNotContain(view.Tree.Rows, r => r.IsReturnValue);
 
@@ -356,8 +356,8 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         CodeEditor editor = window.EditorArea.CodeEditor;
         editor.GoTo(new TextPosition(0, 0));
         Ui.Run(window, AppActions.ToggleBreakpoint);
-        Ui.Run(window, AppActions.Debug);
-        Ui.WaitFor(() => window.Debugger.Session?.State == DebugState.Paused && Row(window, "nested") is not null, "the stop at the line of calls");
+        StartDebugging(window);
+        WaitDebugging(window, () => window.Debugger.Session?.State == DebugState.Paused && Row(window, "nested") is not null, "the stop at the line of calls");
 
         // Shift+F7 marks the calls in the editor, the first chosen; Escape leaves them, and the program where it is.
         Ui.Run(window, AppActions.SmartStepInto);
@@ -392,8 +392,8 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
     {
         Write("Program.cs", "int index = 5;\nthrow new InvalidOperationException($\"bad index {index}\");\n");
         MainWindow window = Open();
-        Ui.Run(window, AppActions.Debug);
-        Ui.WaitFor(() => Row(window, "$exception") is not null, "the exception in Variables");
+        StartDebugging(window);
+        WaitDebugging(window, () => Row(window, "$exception") is not null, "the exception in Variables");
         VariableNode exception = Row(window, "$exception")!;
         Assert.True(exception.IsException);
         Assert.Equal("System.InvalidOperationException", exception.Type);
@@ -426,8 +426,8 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         Assert.Equal("i == 2", breakpoint.Condition);
         Assert.Contains(new LineMark(3, LineMarkKind.Breakpoint, Conditional: true), editor.LineMarks);
 
-        Ui.Run(window, AppActions.Debug);
-        Ui.WaitFor(() => window.Debugger.Session?.State == DebugState.Paused && Value(window, "i") is not null, "the stop the condition allows");
+        StartDebugging(window);
+        WaitDebugging(window, () => window.Debugger.Session?.State == DebugState.Paused && Value(window, "i") is not null, "the stop the condition allows");
         Assert.Equal("2", Value(window, "i"));
         Ui.Run(window, AppActions.Stop);
         Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
@@ -456,8 +456,8 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         Ui.Press(window, "Enter");
         Assert.Equal("i is {i}, total {total}", Assert.Single(window.Debugger.Breakpoints.In(program)).LogMessage);
 
-        Ui.Run(window, AppActions.Debug);
-        Ui.WaitFor(() => window.Debugger.Session?.State == DebugState.Ended, "the program to run to its end without stopping");
+        StartDebugging(window);
+        WaitDebugging(window, () => window.Debugger.Session?.State == DebugState.Ended, "the program to run to its end without stopping");
         string console = window.BottomPanel.Debug.Console.Document.Snapshot.ToString();
         Assert.Contains("i is 1, total 0\ni is 2, total 1\ni is 3, total 3\n", console, StringComparison.Ordinal);
         Assert.Contains("total 6", console, StringComparison.Ordinal);
@@ -506,8 +506,8 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         Assert.Equal("turn == 2", operation.Condition);
 
         // The argument exceptions and the first turn's pass: the stop is the second turn's, at the line that threw it.
-        Ui.Run(window, AppActions.Debug);
-        Ui.WaitFor(() => editor.LineAnnotations.Any(a => a.Kind == LineAnnotationKind.Exception), "the stop at the exception breakpoint");
+        StartDebugging(window);
+        WaitDebugging(window, () => editor.LineAnnotations.Any(a => a.Kind == LineAnnotationKind.Exception), "the stop at the exception breakpoint");
         LineAnnotation thrown = Assert.Single(editor.LineAnnotations, a => a.Kind == LineAnnotationKind.Exception);
         Assert.Equal((11, "InvalidOperationException: operation 2"), (thrown.Line, thrown.Text));
         Assert.Equal("2", Value(window, "turn"));
@@ -538,8 +538,8 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         Click(window, Button(breakpoints, "Done"));
         Assert.Equal(ExceptionScenarios.Thrown | ExceptionScenarios.HandledInExternalCode | ExceptionScenarios.Unhandled, operation.Scenarios);
 
-        Ui.Run(window, AppActions.Debug);
-        Ui.WaitFor(() => editor.LineAnnotations.Any(a => a.Kind == LineAnnotationKind.Exception) || window.Debugger.Session?.State == DebugState.Ended,
+        StartDebugging(window);
+        WaitDebugging(window, () => editor.LineAnnotations.Any(a => a.Kind == LineAnnotationKind.Exception) || window.Debugger.Session?.State == DebugState.Ended,
             "the stop where List.Sort catches the comparer's exception");
         Assert.Equal((10, "InvalidOperationException: left to List.Sort"), Thrown(editor));
         Ui.Run(window, AppActions.Resume);
@@ -553,8 +553,8 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         Click(window, Scenario(breakpoints, "Exception handler:", "Unhandled"));
         Click(window, Button(breakpoints, "Done"));
         Assert.Equal(ExceptionScenarios.Thrown | ExceptionScenarios.HandledInUserCode, operation.Scenarios);
-        Ui.Run(window, AppActions.Debug);
-        Ui.WaitFor(() => editor.LineAnnotations.Any(a => a.Kind == LineAnnotationKind.Exception) || window.Debugger.Session?.State == DebugState.Ended,
+        StartDebugging(window);
+        WaitDebugging(window, () => editor.LineAnnotations.Any(a => a.Kind == LineAnnotationKind.Exception) || window.Debugger.Session?.State == DebugState.Ended,
             "the stop at the exception the program catches");
         Assert.Equal((2, "InvalidOperationException: caught by the program"), Thrown(editor));
         Ui.Run(window, AppActions.Resume);
@@ -594,7 +594,7 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         Assert.Single(window.Debugger.Breakpoints.In(program));
         Assert.Equal(2, window.Debugger.Breakpoints.Exceptions.Count);
 
-        Ui.Run(window, AppActions.Debug);
+        StartDebugging(window);
         Passenger.App.ToolWindows.OutputView console = window.BottomPanel.Debug.Console;
         Ui.WaitFor(() => console.Document.Snapshot.ToString().Contains("passed 1", StringComparison.Ordinal) || window.Debugger.Session?.State is DebugState.Paused or DebugState.Ended,
             "the first turn to run past both breakpoints");
@@ -771,8 +771,8 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         MainWindow window = Open();
         window.EditorArea.CodeEditor.GoTo(new TextPosition(3, 4));
         Ui.Run(window, AppActions.ToggleBreakpoint);
-        Ui.Run(window, AppActions.Debug);
-        Ui.WaitFor(() => Value(window, "total") == "0", "the first stop");
+        StartDebugging(window);
+        WaitDebugging(window, () => Value(window, "total") == "0", "the first stop");
 
         // Click the row, F2, type over the value, Enter: Rider's Set Value.
         ListBox list = window.BottomPanel.Debug.VariablesList;
@@ -804,8 +804,8 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         CodeEditor editor = window.EditorArea.CodeEditor;
         editor.GoTo(new TextPosition(3, 4));
         Ui.Run(window, AppActions.ToggleBreakpoint);
-        Ui.Run(window, AppActions.Debug);
-        Ui.WaitFor(() => Value(window, "i") == "1", "the stop in the loop");
+        StartDebugging(window);
+        WaitDebugging(window, () => Value(window, "i") == "1", "the stop in the loop");
         Passenger.App.ToolWindows.DebugView view = window.BottomPanel.Debug;
 
         Ui.Run(window, AppActions.Evaluate);
@@ -840,8 +840,8 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
             + "    public override string? Source { get { Thread.Sleep(8000); return \"late\"; } set { } }\n}\n");
         MainWindow window = Open();
         CodeEditor editor = window.EditorArea.CodeEditor;
-        Ui.Run(window, AppActions.Debug);
-        Ui.WaitFor(() => window.BottomPanel.Debug.Frames.Count > 0, "the stop's frames, though its exception is not described");
+        StartDebugging(window);
+        WaitDebugging(window, () => window.BottomPanel.Debug.Frames.Count > 0, "the stop's frames, though its exception is not described");
         Assert.Equal(2, window.BottomPanel.Debug.Frames[0].Line);
         Assert.Contains(new LineMark(1, LineMarkKind.ExecutionPoint), editor.LineMarks);
         Ui.WaitFor(() => Value(window, "index") == "5", "the stop's locals");
@@ -861,8 +861,8 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         MainWindow window = Open();
         window.EditorArea.CodeEditor.GoTo(new TextPosition(6, 8));
         Ui.Run(window, AppActions.ToggleBreakpoint);
-        Ui.Run(window, AppActions.Debug);
-        Ui.WaitFor(() => Row(window, "inner") is not null, "the stop before the call");
+        StartDebugging(window);
+        WaitDebugging(window, () => Row(window, "inner") is not null, "the stop before the call");
         Passenger.App.ToolWindows.DebugView view = window.BottomPanel.Debug;
         VariableNode stale = Row(window, "inner")!;
         Assert.True(stale.HasChildren);
@@ -912,7 +912,7 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         MainWindow window = Open();
         try
         {
-            Ui.Run(window, AppActions.Debug);
+            StartDebugging(window);
             Passenger.App.ToolWindows.OutputView console = window.BottomPanel.Debug.Console;
             Ui.WaitFor(() => console.Document.Snapshot.ToString().Contains("Name? ", StringComparison.Ordinal), "the program to ask");
             window.BottomPanel.Debug.ShowTab(console: true);
@@ -1009,8 +1009,8 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         MainWindow window = Open();
         try
         {
-            Ui.Run(window, AppActions.Debug);
-            Ui.WaitFor(() => window.BottomPanel.Debug.Console.Document.Snapshot.ToString().Contains("looping", StringComparison.Ordinal), "the program to be in its loop");
+            StartDebugging(window);
+            WaitDebugging(window, () => window.BottomPanel.Debug.Console.Document.Snapshot.ToString().Contains("looping", StringComparison.Ordinal), "the program to be in its loop");
             window.Perform(AppActions.Pause);
             Ui.WaitFor(() => window.Debugger.Session?.State == DebugState.Paused && window.BottomPanel.Debug.Frames.Count > 0, "the pause to be shown");
             Assert.InRange(window.BottomPanel.Debug.Frames[0].Line, 3, 6);
@@ -1072,9 +1072,9 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         {
             window.EditorArea.CodeEditor.GoTo(new TextPosition(1, 0));
             Ui.Run(window, AppActions.ToggleBreakpoint);
-            Ui.Run(window, AppActions.Debug);
-            Ui.WaitFor(() => window.Debugger.Session?.State == DebugState.Paused, "the program to stop at the breakpoint");
-            debuggee = Processes.WrittenId(started, "the program to run under the debugger");
+            StartDebugging(window);
+            WaitDebugging(window, () => window.Debugger.Session?.State == DebugState.Paused, "the program to stop at the breakpoint");
+            debuggee = Running(window, started);
             adapter = window.Debugger.Session!.AdapterProcessId;
 
             // The debugger alone, as a crash ends it: what it started is left to whatever ends it next.
@@ -1105,8 +1105,8 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         int server = window.CSharpService?.Session?.Server.ProcessId ?? throw new InvalidOperationException("The language server did not start");
         try
         {
-            Ui.Run(window, AppActions.Debug);
-            debuggee = Processes.WrittenId(started, "the program to run under the debugger");
+            StartDebugging(window);
+            debuggee = Running(window, started);
             Ui.WaitFor(() => window.Debugger.Session is { State: DebugState.Running }, "the session to say the program runs");
             adapter = window.Debugger.Session!.AdapterProcessId;
             window.Close();
@@ -1154,8 +1154,8 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
                 try
                 {
                     MainWindow window = Open();
-                    Ui.Run(window, AppActions.Debug);
-                    int program = Processes.WrittenId(started, "the program to run under the debugger");
+                    StartDebugging(window);
+                    int program = Running(window, started);
                     Ui.WaitFor(() => window.Debugger.Session is { State: DebugState.Running }, "the session to say the program runs");
                     int debugger = window.Debugger.Session!.AdapterProcessId;
                     // A program stopped where it stands is one the debugger cannot end: it answers neither Stop nor the
@@ -1485,8 +1485,8 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
     {
         Write("Program.cs", File.ReadAllText(Debugging.Helpers.Debuggees.Source("TerminalConsoleApp", "Program.cs")));
         MainWindow window = InTerminal("child");
-        Ui.Run(window, AppActions.Debug);
-        Ui.WaitFor(() => window.Debugger.Session?.Terminal is { } started && TerminalText(started).Contains("key?", StringComparison.Ordinal), "the program to start its child and ask for a key");
+        StartDebugging(window);
+        WaitDebugging(window, () => window.Debugger.Session?.Terminal is { } started && TerminalText(started).Contains("key?", StringComparison.Ordinal), "the program to start its child and ask for a key");
         Passenger.App.Run.TerminalRun run = window.Debugger.Session!.Terminal!;
         string said = TerminalText(run).Split('\n').First(l => l.StartsWith("child ", StringComparison.Ordinal));
         int child = int.Parse(said["child ".Length..], System.Globalization.CultureInfo.InvariantCulture);
@@ -1528,6 +1528,49 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         window.OpenFile(program);
         Ui.Settle();
         return window;
+    }
+
+    /// <summary>Debug, as Alt+F5 starts it, its build and the debugger's start landed: one that was refused fails here with
+    /// the status bar's words, not in a wait for a program that never ran.</summary>
+    private static void StartDebugging(MainWindow window)
+    {
+        Ui.Run(window, AppActions.Debug);
+        Assert.True(window.Debugger.Session is not null, $"Debug did not start the program: {window.Status}");
+    }
+
+    /// <summary>Waits as <see cref="Ui.WaitFor"/> does for what a program being debugged does; one that never comes says
+    /// how the debugging stood.</summary>
+    private static void WaitDebugging(MainWindow window, Func<bool> condition, string what)
+    {
+        try
+        {
+            Ui.WaitFor(condition, what);
+        }
+        catch (TimeoutException waited)
+        {
+            throw new TimeoutException($"{waited.Message}. {Debugged(window)}", waited);
+        }
+    }
+
+    /// <summary>The id a program being debugged wrote to a file as it began, saying how the debugging stood when none came.</summary>
+    private static int Running(MainWindow window, string file)
+    {
+        try
+        {
+            return Processes.WrittenId(file, "the program to run under the debugger");
+        }
+        catch (TimeoutException waited)
+        {
+            throw new TimeoutException($"{waited.Message}. {Debugged(window)}", waited);
+        }
+    }
+
+    /// <summary>The debugging as the window shows it: the session's state, the status bar and the end of the Debug console.</summary>
+    private static string Debugged(MainWindow window)
+    {
+        string console = window.BottomPanel.Debug.Console.Document.Snapshot.ToString();
+        return $"The session is {window.Debugger.Session?.State.ToString() ?? "not started"}, the status bar says \"{window.Status}\" "
+            + $"and the console ends \"{console[Math.Max(0, console.Length - 400)..]}\"";
     }
 
     private string Write(string relative, string text)

@@ -270,7 +270,11 @@ public sealed class DebugSession
                 await session.SendFunctionBreakpointsAsync();
             }
             await session.connection.RequestAsync("configurationDone", new DapEmpty());
-            session.SetState(DebugState.Running);
+            // A stop at the program's first lines can be told before this answer is written: it stands, as one before a resume's does.
+            if (session.State == DebugState.Starting)
+            {
+                session.SetState(DebugState.Running);
+            }
             return session;
         }
         catch
