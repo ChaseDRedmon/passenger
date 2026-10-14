@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using ModelContextProtocol.Server;
 using Passenger.App.Packages;
+using Passenger.App.Profiling;
 using Passenger.App.Vcs;
 using Passenger.App.Workspace;
 using Passenger.Editor;
