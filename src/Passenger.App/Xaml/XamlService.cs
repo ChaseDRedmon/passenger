@@ -74,9 +74,16 @@ public sealed class XamlService : IDisposable
         }
         if (document.Language.Name == "C#")
         {
-            // Followed whether or not its project's XAML has loaded yet: the project it is in is found once typing pauses.
+            // Only a file under a XAML project loaded or loading waits for typing to pause (background work every key would
+            // hold half a second): a project that loads later reads the open files as they then are.
             Debounce wait = new(SourceSettle, () => Loaded(document.Path) is { } owner ? SourceTypedAsync(owner, document) : Task.CompletedTask);
-            EventHandler<DocumentChangedEventArgs> handler = (_, _) => wait.Restart();
+            EventHandler<DocumentChangedEventArgs> handler = (_, _) =>
+            {
+                if (Loaded(document.Path) is not null)
+                {
+                    wait.Restart();
+                }
+            };
             document.Text.Changed += handler;
             document.Parsed += OnParsed;
             sources[document] = (handler, wait);
