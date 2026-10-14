@@ -387,6 +387,8 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
             window = project.Open("Mixed.cs");
             CodeEditor editor = window.EditorArea.CodeEditor;
             OpenDocument document = window.EditorArea.Active!;
+            List<string> ended = [];
+            window.CSharpService!.Stopped += (_, why) => ended.Add(why);
             Ui.Settle();
             int At(string text) => document.Text.Snapshot.ToString().IndexOf(text, StringComparison.Ordinal);
             void Edit(string what, params TextEdit[] edits)
@@ -435,9 +437,63 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
             PlaceAfter(editor, "int total = 1;");
             window.KeyTextInput(" int wrong = \"text\";");
             Ui.WaitFor(() => document.Markers.Any(m => m.Kind == MarkerKind.Error), "the squiggle under the error typed");
+            // A server that ended (a change it could not place) is started again with the whole file, which hides a drift.
+            Assert.True(ended.Count == 0, $"The language server ended as the edits went to it ({string.Join("; ", ended)}): a change "
+                + "reached it where its copy of the file has no such place, and only a server started again with the whole file had the file's lines");
             TextSnapshot after = editor.Document.Snapshot;
             Marker error = Assert.Single(document.Markers, m => m.Kind == MarkerKind.Error);
             Assert.Equal("\"text\"", after.GetText(error.Range));
+            int use = after.ToString().IndexOf("return total", StringComparison.Ordinal) + "return ".Length;
+            Ui.WaitFor(() => document.Highlighter!.GetSpans(editor.Document.Snapshot, use, 1).Any(s => s.Start == use && s.Kind == TokenKind.Local),
+                "the server's colour on the local's use");
+        }
+        finally
+        {
+            window?.Close();
+            File.Delete(path);
+        }
+    }
+
+    /// <summary>Changes that begin or end between a "\r\n"'s halves (text put between them, a line's end replaced up to its
+    /// '\r', a '\n' taken with what follows it) reach the server where they were made, though Roslyn reads no column there
+    /// and would put each before the '\r': code typed below them is squiggled on its own words, and the server never ends
+    /// over a change it cannot place.</summary>
+    [AvaloniaFact]
+    public void Changes_between_a_carriage_return_and_its_line_feed_reach_the_server_where_they_were_made()
+    {
+        string path = project.Write("Halves.cs",
+            "static class Halves\n{\n    /* one,\r\ntwo,\r\nthree. */\n    public static int Value()\n    {\n        int total = 1;\n        return total;\n    }\n}\n");
+        MainWindow? window = null;
+        try
+        {
+            window = project.Open("Halves.cs");
+            CodeEditor editor = window.EditorArea.CodeEditor;
+            OpenDocument document = window.EditorArea.Active!;
+            List<string> ended = [];
+            window.CSharpService!.Stopped += (_, why) => ended.Add(why);
+            Ui.Settle();
+            int At(string text) => document.Text.Snapshot.ToString().IndexOf(text, StringComparison.Ordinal);
+            void Edit(TextEdit edit)
+            {
+                document.Text.Edit([edit], editor.Selections, editor.Selections);
+                Ui.Settle();
+            }
+
+            Edit(new TextEdit(At("one,\r\n") + "one,\r".Length, 0, "x"));
+            Edit(new TextEdit(At("two,\r\n"), "two,\r".Length, "deux,\r"));
+            Edit(new TextEdit(At("deux,\r\n") + "deux,\r".Length, "\nthree".Length, string.Empty));
+            Assert.Contains("/* one,\rx\ndeux,\r. */\n", editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
+
+            PlaceAfter(editor, "int total = 1;");
+            window.KeyTextInput(" int wrong = \"text\";");
+            Ui.WaitFor(() => document.Markers.Any(m => m.Kind == MarkerKind.Error), "the squiggle under the error typed");
+            Assert.True(ended.Count == 0, $"The language server ended as the changes went to it ({string.Join("; ", ended)}): one reached it "
+                + "where its copy of the file has no such place");
+            TextSnapshot after = editor.Document.Snapshot;
+            Marker[] errors = [.. document.Markers.Where(m => m.Kind == MarkerKind.Error)];
+            Assert.True(errors is [{ } error] && after.GetText(error.Range) == "\"text\"",
+                $"The errors are {string.Join("; ", errors.Select(e => $"'{after.GetText(e.Range)}' at {e.Range.Start}: {e.Message}"))}, not one under the "
+                + "string typed: the server's copy of the file is not the editor's");
             int use = after.ToString().IndexOf("return total", StringComparison.Ordinal) + "return ".Length;
             Ui.WaitFor(() => document.Highlighter!.GetSpans(editor.Document.Snapshot, use, 1).Any(s => s.Start == use && s.Kind == TokenKind.Local),
                 "the server's colour on the local's use");

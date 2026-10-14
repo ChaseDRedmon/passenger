@@ -54,7 +54,8 @@ public sealed class ServerLines
     }
 
     /// <summary>An offset as the server's line and column (UTF-16 units); between the halves of "\r\n" it is the
-    /// column past the '\r', as Roslyn counts it.</summary>
+    /// column past the '\r', as Roslyn counts it, though it reads a column past a line's end as the line's end, so no
+    /// change is sent there (LspDocument).</summary>
     public LspPosition PositionOf(int offset)
     {
         int line = Text.GetLineFromOffset(offset);

@@ -434,8 +434,9 @@ public sealed class LspDocument : IDisposable
 
     /// <summary>The edits sent last to first, the order an incremental sync is read in, so each change's place in the text
     /// before the edit is its place in the text the changes sent before it left. Edits that touch go as one change: the
-    /// later one can decide whether a '\r' where they meet ends a line. The server's lines are carried to the new text
-    /// here, so the next change, and every request until then, finds them without reading the file.</summary>
+    /// later one can decide whether a '\r' where they meet ends a line. A change that begins or ends between the halves of
+    /// "\r\n" takes in the half beside it and puts it back (<see cref="Unsplit"/>). The server's lines are carried to the
+    /// new text here, so the next change, and every request until then, finds them without reading the file.</summary>
     private void OnChanged(object? sender, DocumentChangedEventArgs e)
     {
         ServerLines before = ServerLines.Of(e.Before);
@@ -448,11 +449,36 @@ public sealed class LspDocument : IDisposable
             {
                 first--;
             }
-            TextRange range = TextRange.FromBounds(e.Edits[first].Start, e.Edits[last].End);
             string text = first == last ? e.Edits[last].Text : string.Concat(e.Edits.Skip(first).Take(last - first + 1).Select(edit => edit.Text));
+            (TextRange range, text) = Unsplit(e.Before, TextRange.FromBounds(e.Edits[first].Start, e.Edits[last].End), text);
             changes.Add(new TextDocumentContentChangeEvent(before.RangeOf(range), text));
             last = first - 1;
         }
         Server.Notify("textDocument/didChange", new DidChangeTextDocumentParams(new VersionedTextDocumentIdentifier(Uri, e.Version), changes));
     }
+
+    /// <summary>A change as the server can be sent it. Roslyn reads a column past a line's end as the end, before its break,
+    /// as the LSP says to, so no position is between a "\r\n"'s halves: a change made there would land before the '\r',
+    /// and the server's lines would differ from the editor's from then on, until a change sent past its last line ended
+    /// it. Such an end moves out past the half beside it, which the change's text puts back; no neighbouring change
+    /// overlaps it then, since one that touched it was sent as part of it.</summary>
+    private static (TextRange Range, string Text) Unsplit(TextSnapshot before, TextRange range, string text)
+    {
+        int start = range.Start;
+        int end = range.End;
+        if (Splits(before, start))
+        {
+            start--;
+            text = "\r" + text;
+        }
+        if (Splits(before, end))
+        {
+            end++;
+            text += "\n";
+        }
+        return (TextRange.FromBounds(start, end), text);
+    }
+
+    /// <summary>Whether an offset is between the '\r' and the '\n' of a "\r\n".</summary>
+    private static bool Splits(TextSnapshot text, int offset) => offset > 0 && offset < text.Length && text[offset - 1] == '\r' && text[offset] == '\n';
 }
