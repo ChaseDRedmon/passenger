@@ -59,6 +59,7 @@ public sealed class DockingTests
         MainWindow window = Open();
         DockHost dock = window.DockHost;
         dock.Move(dock["hierarchy"]!, ToolAnchor.RightBottom);
+        dock.Move(dock["liveTree"]!, ToolAnchor.LeftBottom);
         Ui.Settle();
         Assert.Single(Stripe(window, right: true));
         Point lowest = Middle(window, Button(window, "hierarchy"));
