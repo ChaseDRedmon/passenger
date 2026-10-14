@@ -45,6 +45,10 @@ public sealed class BuildRunController
     /// <summary>The build's last lines, which its outcome carries.</summary>
     private readonly Queue<string> builtLines = new();
 
+    /// <summary>The problem the build's last line began, kept from Problems until a line that doesn't go on with its
+    /// message, so a message of several lines is one problem, listed once however often MSBuild repeats it.</summary>
+    private Problem? reading;
+
     private BuildKind buildKind;
     private IReadOnlyList<string>? lastProjects;
     private string? buildFramework;
@@ -67,9 +71,14 @@ public sealed class BuildRunController
         this.parts = parts;
         session.Builder.Line += (_, line) =>
         {
-            if (BuildOutput.Parse(line) is { } problem && !session.Problems.Contains(problem))
+            if (reading is not null && BuildOutput.Continuing(reading, line) is { } longer)
             {
-                session.Problems.Add(problem);
+                reading = longer;
+            }
+            else
+            {
+                ReadProblem();
+                reading = BuildOutput.Parse(line);
             }
             builtLines.Enqueue(line);
             if (builtLines.Count > BuiltLinesKept)
@@ -173,6 +182,7 @@ public sealed class BuildRunController
         afterBuild = then;
         parts.Editors.SaveAll();
         session.Problems.Clear();
+        reading = null;
         builtLines.Clear();
         parts.Views.Build.Clear();
         parts.Views.Build.SetRunning(true);
@@ -220,8 +230,19 @@ public sealed class BuildRunController
         }
     }
 
+    /// <summary>Puts the problem being read in Problems, unless it is there already.</summary>
+    private void ReadProblem()
+    {
+        if (reading is { } problem && !session.Problems.Contains(problem))
+        {
+            session.Problems.Add(problem);
+        }
+        reading = null;
+    }
+
     private void OnBuilt(int code)
     {
+        ReadProblem();
         if (code == 0 && buildQueue.Count > 0 && !session.Builder.WasStopped)
         {
             parts.Views.Build.Append("\n");

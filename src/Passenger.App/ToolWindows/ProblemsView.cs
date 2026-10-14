@@ -401,13 +401,20 @@ public sealed class ProblemsView : DockPanel
         };
         panel.DetachedFromVisualTree += (_, _) => row.PropertyChanged -= OnMoved;
         panel.Children.Add(icon);
+        // A message of several lines (a compiler's stack trace) shows its first in the row and all of them on hover.
+        string label = row.Label;
+        if (label.IndexOf('\n') is int lineEnd and >= 0)
+        {
+            label = label[..lineEnd].TrimEnd('\r');
+            ToolTip.SetTip(panel, row.Label);
+        }
         // A rule's name the message ends with is its link (an ESLint problem's), else the address where the message has it.
         int at = problem.Link is not { } named ? -1
-            : problem.LinkText is { } words ? row.Label.LastIndexOf(words, StringComparison.Ordinal)
-            : row.Label.IndexOf(named.OriginalString, StringComparison.Ordinal);
+            : problem.LinkText is { } words ? label.LastIndexOf(words, StringComparison.Ordinal)
+            : label.IndexOf(named.OriginalString, StringComparison.Ordinal);
         if (problem.Link is not { } link || at < 0)
         {
-            panel.Children.Add(new TextBlock { Text = row.Label, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 900 });
+            panel.Children.Add(new TextBlock { Text = label, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 900 });
         }
         else
         {
@@ -420,9 +427,9 @@ public sealed class ProblemsView : DockPanel
                 LinkClicked?.Invoke(this, link);
                 e.Handled = true;
             };
-            panel.Children.Add(new TextBlock { Text = row.Label[..at], VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 700 });
+            panel.Children.Add(new TextBlock { Text = label[..at], VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 700 });
             panel.Children.Add(open);
-            if (row.Label[(at + address.Length)..] is { Length: > 0 } after)
+            if (label[(at + address.Length)..] is { Length: > 0 } after)
             {
                 panel.Children.Add(new TextBlock { Text = after, VerticalAlignment = VerticalAlignment.Center });
             }

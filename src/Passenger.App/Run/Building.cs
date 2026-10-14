@@ -161,9 +161,26 @@ public static partial class BuildOutput
         return new Problem(severity, message, match.Groups["code"].Value, path, new TextPosition(lineNumber, column), project) { Link = Problem.LinkIn(message) };
     }
 
+    /// <summary>The problem before with this line's text added, when the line goes on with its message: MSBuild's console
+    /// logger writes each further line of a message (Avalonia's XAML compiler's stack trace, NuGet's dependency chains) as
+    /// a line of its own with the same place, code and project and the text indented past the one space after the code,
+    /// and it is one problem, as Rider lists it. Null when the line is a problem of its own, or none.</summary>
+    public static Problem? Continuing(Problem before, string line)
+    {
+        if (Diagnostic().Match(line) is not { Success: true } match || Parse(line) is not { } more
+            || more with { Message = before.Message, Link = before.Link } != before
+            || (match.Groups["gap"].Length < 2 && more.Message.Length > 0))
+        {
+            return null;
+        }
+        string gap = match.Groups["gap"].Value;
+        string message = $"{before.Message}\n{(gap.Length > 1 ? gap[1..] : string.Empty)}{match.Groups["message"].Value.TrimEnd()}";
+        return before with { Message = message, Link = Problem.LinkIn(message) };
+    }
+
     /// <summary>The location is the parenthesis just before ": error", so the path may hold parentheses of its own
     /// ("Shop (copy)", "C:\Program Files (x86)"); MSBuild's subcategory may stand before the category (Avalonia's XAML
     /// compiler's "Avalonia error AVLN2000").</summary>
-    [GeneratedRegex(@"^\s*(?<file>.*?)(?:\((?<line>\d+)(?:,(?<column>\d+))?(?:[-,]\d+)*\))?\s*:\s*(?:[A-Za-z][\w.]*\s+)?(?<severity>error|warning)\s+(?<code>[A-Za-z]+\d+)\s*:\s*(?<message>.*?)(?:\s+\[(?<project>[^\]]+)\])?\s*$")]
+    [GeneratedRegex(@"^\s*(?<file>.*?)(?:\((?<line>\d+)(?:,(?<column>\d+))?(?:[-,]\d+)*\))?\s*:\s*(?:[A-Za-z][\w.]*\s+)?(?<severity>error|warning)\s+(?<code>[A-Za-z]+\d+)\s*:(?<gap>\s*)(?<message>.*?)(?:\s+\[(?<project>[^\]]+)\])?\s*$")]
     private static partial Regex Diagnostic();
 }

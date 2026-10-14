@@ -1,7 +1,9 @@
 using System.Diagnostics;
 using Avalonia;
+using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
+using Avalonia.VisualTree;
 using Passenger.App;
 using Passenger.App.Explorer;
 using Passenger.App.Run;
@@ -104,6 +106,37 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
         Assert.True(problem is not null, $"The build failed but Problems has nothing for its error, listing [{string.Join(", ", window.BottomPanel.Problems.Problems.Select(p => $"{p.Code} {p.Path}"))}]");
         Assert.Equal(PathNames.Canonical(Path.Combine(folder, "Shop (copy)", "Program.cs")), problem.Path);
         Assert.Equal(new TextPosition(1, 12), problem.Position);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_build_error_whose_message_runs_over_several_lines_is_one_problem_showing_its_first_line()
+    {
+        // As Avalonia's XAML compiler reports a file it cannot read, its stack trace a line each, and NuGet a downgrade
+        // with its dependency chains: MSBuild writes every line of such a message as a line of its own.
+        Write("src/Hello/Hello.csproj",
+            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n" +
+            "  <Target Name=\"Unreadable\" BeforeTargets=\"Build\">\n" +
+            "    <Warning File=\"Program.cs\" Code=\"NU1608\" Text=\"Detected package version outside of dependency constraint.%0A Hello -&gt; A -&gt; X (&gt;= 2.0)%0A Hello -&gt; X (&gt;= 1.0)\" />\n" +
+            "    <Error File=\"Views/Main.axaml\" Code=\"AVLN1001\" Text=\"File doesn't contain valid XAML: 'Hello' is an unexpected token.%0A   at System.Xml.XmlTextReaderImpl.Throw(Exception e)%0A   at System.Xml.XmlTextReaderImpl.ParseAttributes()\" />\n" +
+            "  </Target>\n</Project>\n");
+        MainWindow window = Open();
+        Ui.Press(window, Ui.Shortcut(AppActions.Build));
+        Ui.Settle();
+        IReadOnlyList<Problem> problems = window.BottomPanel.Problems.Problems;
+        Assert.True(problems.Count(p => p.Severity == ProblemSeverity.Error) == 1,
+            $"The compiler's one error should be one problem with its stack trace, not a problem a line; Problems lists [{string.Join(" | ", problems.Select(p => p.Message))}]");
+        Problem error = Assert.Single(problems, p => p.Severity == ProblemSeverity.Error);
+        Assert.Equal("File doesn't contain valid XAML: 'Hello' is an unexpected token.\n   at System.Xml.XmlTextReaderImpl.Throw(Exception e)\n   at System.Xml.XmlTextReaderImpl.ParseAttributes()", error.Message);
+        Problem warning = Assert.Single(problems, p => p.Severity == ProblemSeverity.Warning);
+        Assert.Equal("Detected package version outside of dependency constraint.\n Hello -> A -> X (>= 2.0)\n Hello -> X (>= 1.0)", warning.Message);
+        Assert.StartsWith("Build failed: 1 error, 1 warning", window.Status, StringComparison.Ordinal);
+        window.Perform(AppActions.ShowProblems);
+        window.BottomPanel.Problems.Shown = ProblemsTab.Build;
+        Ui.Settle();
+        TextBlock[] shown = [.. window.BottomPanel.Problems.GetVisualDescendants().OfType<TextBlock>()];
+        Assert.Contains(shown, t => t.Text == "File doesn't contain valid XAML: 'Hello' is an unexpected token.");
+        Assert.DoesNotContain(shown, t => t.Text?.Contains("ParseAttributes", StringComparison.Ordinal) == true);
         window.Close();
     }
 
