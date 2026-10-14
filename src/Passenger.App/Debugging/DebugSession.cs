@@ -270,7 +270,7 @@ public sealed class DebugSession
                 await session.SendFunctionBreakpointsAsync();
             }
             await session.connection.RequestAsync("configurationDone", new DapEmpty());
-            // A stop at the program's first lines can be told before this answer is written: it stands, as one before a resume's does.
+            // A stop told before this answer stands, as one before a resume's does (Passenger's adapter tells none until it is written).
             if (session.State == DebugState.Starting)
             {
                 session.SetState(DebugState.Running);

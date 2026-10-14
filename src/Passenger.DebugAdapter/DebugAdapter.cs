@@ -26,6 +26,12 @@ public sealed class DebugAdapter
     /// <summary>The longest the client may take to start a program in its terminal.</summary>
     private static readonly TimeSpan RunInTerminalLimit = TimeSpan.FromSeconds(30);
 
+    /// <summary>The engine's lock as configurationDone leaves it, held until its answer has been written.</summary>
+    private IDisposable? configuring;
+
+    /// <summary>The client went without disconnecting (<see cref="AbortAsync"/>): no answer of configurationDone's will be written.</summary>
+    private bool aborted;
+
     /// <summary>The adapter over a connection; <paramref name="symbols"/> keeps the symbols decompiled for assemblies that
     /// ship none, without which their frames have no source.</summary>
     public DebugAdapter(DapConnection connection, Action<string>? log = null, Passenger.Debugger.Decompilation.SymbolCache? symbols = null)
@@ -46,6 +52,9 @@ public sealed class DebugAdapter
     /// already. A request still holding the lock after 10 s (one that never ends) is not waited for longer.</summary>
     public async Task AbortAsync()
     {
+        // The client that went may have gone before configurationDone's answer could be written.
+        Volatile.Write(ref aborted, true);
+        LetEventsGo();
         try
         {
             using CancellationTokenSource limit = new(TimeSpan.FromSeconds(10));
@@ -75,7 +84,7 @@ public sealed class DebugAdapter
         connection.Handle<InitializeArguments, DapCapabilities>("initialize", Initialize, then: () => connection.SendEvent("initialized"));
         connection.Handle<LaunchArguments>("launch", Launch);
         connection.Handle<AttachArguments>("attach", Attach);
-        connection.Handle<DapEmpty>("configurationDone", _ => Locked(() => debugger.ConfigurationDone()));
+        connection.Handle<DapEmpty>("configurationDone", ConfigurationDone, then: LetEventsGo);
         connection.Handle<SetBreakpointsArguments, SetBreakpointsResponse>("setBreakpoints", SetBreakpoints);
         connection.Handle<SetFunctionBreakpointsArguments, SetBreakpointsResponse>("setFunctionBreakpoints", SetFunctionBreakpoints);
         connection.Handle<SetExceptionBreakpointsArguments, SetExceptionBreakpointsResponse>("setExceptionBreakpoints", SetExceptionBreakpoints);
@@ -338,6 +347,32 @@ public sealed class DebugAdapter
             throw new InvalidOperationException($"Failed to attach: {error.Message}", error);
         }
     }
+
+    /// <summary>Launches or attaches as asked, under the engine's lock, which is held until the answer has been written
+    /// (<see cref="LetEventsGo"/>): the program runs from here, and none of its events (a stop at its first line, its end) is
+    /// handled, and so told, before the client hears that its configuration is done.</summary>
+    private async Task ConfigurationDone(DapEmpty _)
+    {
+        IDisposable held = await debugger.DapRequestAndRuntimeEventLock.LockAsync();
+        try
+        {
+            await debugger.DrainRuntimeEventQueue();
+            await debugger.ConfigurationDone().ConfigureAwait(false);
+        }
+        catch
+        {
+            held.Dispose();
+            throw;
+        }
+        Interlocked.Exchange(ref configuring, held);
+        if (Volatile.Read(ref aborted))
+        {
+            LetEventsGo();
+        }
+    }
+
+    /// <summary>configurationDone's answer is written, or never will be (the client went): the program's events are handled.</summary>
+    private void LetEventsGo() => Interlocked.Exchange(ref configuring, null)?.Dispose();
 
     private async Task<SetBreakpointsResponse> SetBreakpoints(SetBreakpointsArguments arguments)
     {
