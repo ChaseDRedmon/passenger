@@ -675,18 +675,8 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         window.ApplySettings(window.Settings with { McpServer = false });
         WaitFor(() => window.AgentStatus is null, "the status bar to say no agent is on the window");
         Assert.False(File.Exists(socket), "The window still listens for agents with its MCP server off");
-        Assert.True(Await(Task.Run(async () =>
-        {
-            try
-            {
-                await Result(client, "workspace");
-                return false;
-            }
-            catch (Exception error) when (error is not (OperationCanceledException or TimeoutException))
-            {
-                return true;
-            }
-        }), "the shut-out agent's call"), "An agent kept using the window after its MCP server was turned off");
+        // Its connection ends, which its client hears: a call made as it ends can leave the SDK a failed request unawaited.
+        Await(client.Completion, "the shut-out agent's connection to end");
         Await(Task.Run(async () =>
         {
             await client.DisposeAsync();
