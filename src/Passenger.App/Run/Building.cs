@@ -13,6 +13,10 @@ public sealed partial record Problem(ProblemSeverity Severity, string Message, s
     /// <summary>The page the message points to for more (a vulnerable package's advisory), which Problems links.</summary>
     public Uri? Link { get; init; }
 
+    /// <summary>The words of the message the link is drawn on (an ESLint rule's name), or null for its address, which the
+    /// message then has in it.</summary>
+    public string? LinkText { get; init; }
+
     /// <summary>The first web address in a message, less the punctuation ending its sentence; null without one.</summary>
     public static Uri? LinkIn(string message) =>
         Address().Match(message) is { Success: true } found

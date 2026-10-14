@@ -108,7 +108,7 @@ public partial class MainWindow
             }
             int start = Math.Min(marker.Range.Start, text.Length);
             problems.Add(new Problem(marker.Kind == MarkerKind.Error ? ProblemSeverity.Error : ProblemSeverity.Warning, marker.Message, null,
-                file.Path, text.GetPosition(start), project ??= ProjectNameOf(file.Path)));
+                file.Path, text.GetPosition(start), project ??= ProjectNameOf(file.Path)) { Link = marker.Link, LinkText = marker.LinkText });
         }
         Bottom.Problems.ShowFile(file.Name, problems);
     }

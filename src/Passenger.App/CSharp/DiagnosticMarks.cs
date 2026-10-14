@@ -59,6 +59,7 @@ internal static class DiagnosticMarks
                 Range = new LspRange(lines.PositionOf(Math.Min(now.Start, length)), lines.PositionOf(Math.Min(now.End, length))),
                 Severity = diagnostic.Severity,
                 Code = diagnostic.Code,
+                CodeDescription = diagnostic.CodeDescription,
                 Source = diagnostic.Source,
                 Message = diagnostic.Message,
                 Tags = diagnostic.Tags,

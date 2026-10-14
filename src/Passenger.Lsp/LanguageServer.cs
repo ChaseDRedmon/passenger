@@ -49,11 +49,15 @@ public sealed class LanguageServer : IAsyncDisposable
     /// <summary>What <c>vscode/content</c> answers (a JSON schema by its URI); null for a server that asks none.</summary>
     private readonly Func<string, CancellationToken, Task<string>>? content;
 
+    /// <summary>What makes an edit the server asks for (<c>workspace/applyEdit</c>); null refuses every one.</summary>
+    private readonly Func<JsonElement, Task<string?>>? applyEdit;
+
     private LanguageServer(Process process, JsonRpc rpc, ClientTarget client, ServerLog log, string logFolder, IReadOnlyDictionary<string, object?>? options,
-        Func<string?, object?>? configure = null, Func<string, CancellationToken, Task<string>>? content = null)
+        Func<string?, object?>? configure = null, Func<string, CancellationToken, Task<string>>? content = null, Func<JsonElement, Task<string?>>? applyEdit = null)
     {
         this.configure = configure;
         this.content = content;
+        this.applyEdit = applyEdit;
         this.options = new Dictionary<string, object?>(options ?? new Dictionary<string, object?>(), StringComparer.Ordinal);
         this.process = process;
         this.rpc = rpc;
@@ -122,6 +126,11 @@ public sealed class LanguageServer : IAsyncDisposable
     /// <summary>A document's diagnostics, as a server that pushes them sends them (<c>textDocument/publishDiagnostics</c>:
     /// TypeScript's); raised on any thread.</summary>
     public event EventHandler<PublishDiagnosticsParams>? DiagnosticsPublished;
+
+    /// <summary>A message of the server's own beyond the protocol (ESLint's <c>eslint/status</c>, <c>eslint/noLibrary</c>,
+    /// <c>eslint/noConfig</c>, <c>eslint/probeFailed</c>, <c>eslint/openDoc</c>): a request among them is answered at once
+    /// with nothing. Raised on any thread.</summary>
+    public event EventHandler<ServerMessage>? Said;
 
     /// <summary>The TypeScript server says which TypeScript it runs: its version, and where it is from (<c>workspace</c>,
     /// the project's own node_modules; <c>bundled</c>, the one carried beside it). Raised on any thread.</summary>
@@ -263,7 +272,7 @@ public sealed class LanguageServer : IAsyncDisposable
         {
             start.Environment["EnableWindowsTargeting"] = "true";
         }
-        LanguageServer server2 = await StartCoreAsync(start, folder, logFolder, ClientCapabilities.Value, null, options, null, null, cancel).ConfigureAwait(false);
+        LanguageServer server2 = await StartCoreAsync(start, folder, logFolder, ClientCapabilities.Value, null, options, null, null, null, cancel).ConfigureAwait(false);
         try
         {
             try
@@ -292,12 +301,12 @@ public sealed class LanguageServer : IAsyncDisposable
     {
         Directory.CreateDirectory(start.LogFolder);
         return StartCoreAsync(start.Process, start.Folder, start.LogFolder, start.Capabilities, start.InitializationOptions, null,
-            start.Configuration ?? (_ => null), start.Content, cancel);
+            start.Configuration ?? (_ => null), start.Content, start.ApplyEdit, cancel);
     }
 
     private static async Task<LanguageServer> StartCoreAsync(ProcessStartInfo start, string folder, string logFolder, JsonElement capabilities,
         object? initializationOptions, IReadOnlyDictionary<string, object?>? options, Func<string?, object?>? configure,
-        Func<string, CancellationToken, Task<string>>? content, CancellationToken cancel)
+        Func<string, CancellationToken, Task<string>>? content, Func<JsonElement, Task<string?>>? applyEdit, CancellationToken cancel)
     {
         start.RedirectStandardInput = true;
         start.RedirectStandardOutput = true;
@@ -326,7 +335,7 @@ public sealed class LanguageServer : IAsyncDisposable
         // a progress report handled after its end would leave the load showing, an error logged after its toast unread.
         JsonRpc rpc = new(handler) { SynchronizationContext = new Microsoft.VisualStudio.Threading.NonConcurrentSynchronizationContext(sticky: false) };
         rpc.AddLocalRpcTarget(client, new JsonRpcTargetOptions { UseSingleObjectParameterDeserialization = true });
-        LanguageServer server2 = new(process, rpc, client, log, logFolder, options, configure, content);
+        LanguageServer server2 = new(process, rpc, client, log, logFolder, options, configure, content, applyEdit);
         client.Owner = server2;
         rpc.StartListening();
 
@@ -553,6 +562,11 @@ public sealed class LanguageServer : IAsyncDisposable
             // An error is an answer too, and a connection gone is Exited's to report.
         }
     }
+
+    /// <summary>Runs one of the server's own commands (<c>workspace/executeCommand</c>, as ESLint's fixes are), which may ask
+    /// the client to make an edit on the way (<see cref="ServerStart.ApplyEdit"/>).</summary>
+    public Task<JsonElement> ExecuteCommandAsync(LspCommand command, CancellationToken cancel = default) =>
+        RequestAsync<JsonElement>("workspace/executeCommand", new ExecuteCommandParams(command.Command, command.Arguments ?? []), cancel);
 
     /// <summary>A call hierarchy item's callers, each with where the calls are.</summary>
     public async Task<IReadOnlyList<IncomingCall>> IncomingCallsAsync(HierarchyItem item, CancellationToken cancel = default) =>
@@ -831,10 +845,54 @@ public sealed class LanguageServer : IAsyncDisposable
         [JsonRpcMethod("window/showDocument")]
         public object ShowDocument(JsonElement? request = null) => new { success = false };
 
-        /// <summary>An edit a server's own command would make: Passenger applies what its commands answer itself, and runs
-        /// none that only edit this way.</summary>
+        /// <summary>An edit a server's own command makes (ESLint's fixes): made by what its start names, else refused, as
+        /// Passenger applies what Roslyn's commands answer itself. Awaited apart from the messages that follow.</summary>
         [JsonRpcMethod("workspace/applyEdit")]
-        public object ApplyEdit(JsonElement? request = null) => new { applied = false, failureReason = "Passenger does not run commands that edit through the server" };
+        public async Task<object> ApplyEdit(JsonElement request)
+        {
+            if (Owner?.applyEdit is not { } apply || request.ValueKind != JsonValueKind.Object || !request.TryGetProperty("edit", out JsonElement edit))
+            {
+                return new { applied = false, failureReason = "Passenger does not run commands that edit through the server" };
+            }
+            string? refused = await apply(edit.Clone()).ConfigureAwait(false);
+            return refused is null ? new { applied = true } : new { applied = false, failureReason = refused };
+        }
+
+        [JsonRpcMethod("eslint/status")]
+        public void EslintStatus(JsonElement said) => Say("eslint/status", said);
+
+        [JsonRpcMethod("eslint/exitCalled")]
+        public void EslintExitCalled(JsonElement said) => Say("eslint/exitCalled", said);
+
+        [JsonRpcMethod("eslint/showOutputChannel")]
+        public void EslintShowOutput(JsonElement? said = null) => Say("eslint/showOutputChannel", said ?? default);
+
+        [JsonRpcMethod("eslint/noLibrary")]
+        public object EslintNoLibrary(JsonElement said) => Asked("eslint/noLibrary", said);
+
+        [JsonRpcMethod("eslint/noConfig")]
+        public object EslintNoConfig(JsonElement said) => Asked("eslint/noConfig", said);
+
+        [JsonRpcMethod("eslint/probeFailed")]
+        public object EslintProbeFailed(JsonElement said) => Asked("eslint/probeFailed", said);
+
+        [JsonRpcMethod("eslint/openDoc")]
+        public object EslintOpenDoc(JsonElement said) => Asked("eslint/openDoc", said);
+
+        private void Say(string method, JsonElement said)
+        {
+            Owner?.log.Write($"{DateTime.Now:HH:mm:ss.fff} {method} {(said.ValueKind == JsonValueKind.Undefined ? string.Empty : said.GetRawText())}");
+            if (Owner is { } owner)
+            {
+                owner.Said?.Invoke(owner, new ServerMessage(method, said.ValueKind == JsonValueKind.Undefined ? said : said.Clone()));
+            }
+        }
+
+        private object Asked(string method, JsonElement said)
+        {
+            Say(method, said);
+            return new { };
+        }
 
         /// <summary>The TypeScript server's word on which TypeScript it runs, the project's own or the one Passenger carries.</summary>
         [JsonRpcMethod("$/typescriptVersion")]

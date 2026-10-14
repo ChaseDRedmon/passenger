@@ -51,6 +51,7 @@ public sealed class EditorGroup : DockPanel
     private Control? side;
     private readonly Border banner;
     private readonly TextBlock bannerText;
+    private readonly Button bannerLink;
     private EditorTab? active;
 
     public EditorGroup(EditorArea area)
@@ -82,7 +83,33 @@ public sealed class EditorGroup : DockPanel
         tabBar.Bind(Border.BorderBrushProperty, tabBar.GetResourceObservable("Passenger.Divider"));
         // Rider's editor notification: what a file is when it is not the project's own.
         bannerText = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0), FontSize = 12, TextTrimming = TextTrimming.CharacterEllipsis };
-        banner = new Border { [DockProperty] = Dock.Top, Height = 28, IsVisible = false, BorderThickness = new Thickness(0, 0, 0, 1), Child = bannerText };
+        // What the notice offers to do, at the banner's right, as Rider's notifications put their links.
+        bannerLink = new Button
+        {
+            Name = "BannerLink",
+            Classes = { "link" },
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 12, 0),
+            IsVisible = false,
+            [DockProperty] = Dock.Right,
+        };
+        bannerLink.Click += (_, e) =>
+        {
+            e.Handled = true;
+            if (active?.Document.NoticeAction is { } action)
+            {
+                action.Run();
+            }
+        };
+        banner = new Border
+        {
+            [DockProperty] = Dock.Top,
+            Height = 28,
+            IsVisible = false,
+            BorderThickness = new Thickness(0, 0, 0, 1),
+            Child = new DockPanel { Children = { bannerLink, bannerText } },
+        };
         banner.Bind(Border.BackgroundProperty, banner.GetResourceObservable("Passenger.Banner"));
         banner.Bind(Border.BorderBrushProperty, banner.GetResourceObservable("Passenger.Divider"));
         Children.Add(tabBar);
@@ -253,11 +280,19 @@ public sealed class EditorGroup : DockPanel
         banner.IsVisible = said.Length > 0;
         bannerText.Text = string.Join("  ·  ", said);
         // Narrower than the banner's words, the editor shows the rest when the pointer rests on it.
-        ToolTip.SetTip(banner, said.Length > 0 ? bannerText.Text : null);
+        ToolTip.SetTip(bannerText, said.Length > 0 ? bannerText.Text : null);
+        bannerLink.IsVisible = document.Notice is not null && document.NoticeAction is not null;
+        bannerLink.Content = document.NoticeAction?.Text;
     }
 
     /// <summary>What the banner over the file shown says, null while it shows none.</summary>
     public string? BannerText => banner.IsVisible ? bannerText.Text : null;
+
+    /// <summary>The link the banner offers after what it says, null while it offers none.</summary>
+    public string? BannerLink => banner.IsVisible && bannerLink.IsVisible ? bannerLink.Content as string : null;
+
+    /// <summary>The banner's link, for a click on it.</summary>
+    public Control BannerLinkControl => bannerLink;
 
     /// <summary>Takes a file's tab away; the group shows its neighbour, or nothing when it was the last.</summary>
     public void Remove(OpenDocument document)
@@ -368,7 +403,7 @@ public sealed class EditorGroup : DockPanel
             case nameof(OpenDocument.Markers):
                 Editor.SetMarkers(document.Markers);
                 break;
-            case nameof(OpenDocument.Notice):
+            case nameof(OpenDocument.Notice) or nameof(OpenDocument.NoticeAction):
                 ShowBanner(document);
                 break;
             case nameof(OpenDocument.InlayHints):

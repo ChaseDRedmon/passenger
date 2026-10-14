@@ -372,17 +372,20 @@ public sealed class ProblemsView : DockPanel
         };
         panel.DetachedFromVisualTree += (_, _) => row.PropertyChanged -= OnMoved;
         panel.Children.Add(icon);
-        int at = problem.Link is { } named ? row.Label.IndexOf(named.OriginalString, StringComparison.Ordinal) : -1;
+        // A rule's name the message ends with is its link (an ESLint problem's), else the address where the message has it.
+        int at = problem.Link is not { } named ? -1
+            : problem.LinkText is { } words ? row.Label.LastIndexOf(words, StringComparison.Ordinal)
+            : row.Label.IndexOf(named.OriginalString, StringComparison.Ordinal);
         if (problem.Link is not { } link || at < 0)
         {
             panel.Children.Add(new TextBlock { Text = row.Label, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 900 });
         }
         else
         {
-            // The address where the message has it, in the link colour, the words around it as they are.
-            string address = link.OriginalString;
+            // The link's words in the link colour, the words around them as they are.
+            string address = problem.LinkText ?? link.OriginalString;
             Button open = new() { Classes = { "link" }, Content = address, VerticalAlignment = VerticalAlignment.Center };
-            ToolTip.SetTip(open, $"Open {address} in the browser");
+            ToolTip.SetTip(open, $"Open {link.OriginalString} in the browser");
             open.Click += (_, e) =>
             {
                 LinkClicked?.Invoke(this, link);

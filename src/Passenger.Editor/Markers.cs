@@ -13,5 +13,11 @@ public enum MarkerKind
     Unnecessary,
 }
 
-/// <summary>A range the language service has something to say about, and what it says.</summary>
-public readonly record struct Marker(TextRange Range, MarkerKind Kind, string Message);
+/// <summary>A range the language service has something to say about, and what it says; <see cref="Link"/> is a page that
+/// explains it (an ESLint rule's), which the words <see cref="LinkText"/> of the message stand for.</summary>
+public readonly record struct Marker(TextRange Range, MarkerKind Kind, string Message)
+{
+    public Uri? Link { get; init; }
+
+    public string? LinkText { get; init; }
+}

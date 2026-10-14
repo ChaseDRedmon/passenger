@@ -194,6 +194,11 @@ public sealed class CodeAction
 /// the client's own to run (<see cref="ClientCommands"/>).</summary>
 public sealed record LspCommand(string Title, string Command, IReadOnlyList<JsonElement>? Arguments = null);
 
+public sealed record ExecuteCommandParams(string Command, IReadOnlyList<JsonElement> Arguments);
+
+/// <summary>A message of a server's own beyond the protocol, by its method, with what it sent.</summary>
+public sealed record ServerMessage(string Method, JsonElement Params);
+
 /// <summary>Roslyn's codeAction/resolveFixAll: a fix-all's data, as its code action carried it, and the scope chosen.</summary>
 public sealed record FixAllCodeActionParams(string Title, JsonElement Data, string Scope);
 
@@ -294,10 +299,20 @@ public sealed class Diagnostic
     public LspRange Range { get; init; } = new(new LspPosition(0, 0), new LspPosition(0, 0));
     public int? Severity { get; init; }
     public JsonElement? Code { get; init; }
+
+    /// <summary>Where the code is explained (<c>{ "href": … }</c>): an ESLint rule's page.</summary>
+    public JsonElement? CodeDescription { get; init; }
+
     public string? Source { get; init; }
     public string Message { get; init; } = string.Empty;
     public List<int>? Tags { get; init; }
     public JsonElement? Data { get; init; }
+
+    /// <summary>The page <see cref="CodeDescription"/> names, when it is a web address.</summary>
+    [JsonIgnore]
+    public Uri? CodePage =>
+        CodeDescription is { ValueKind: JsonValueKind.Object } description && description.TryGetProperty("href", out JsonElement href)
+        && href.ValueKind == JsonValueKind.String && Uri.TryCreate(href.GetString(), UriKind.Absolute, out Uri? page) ? page : null;
 }
 
 public sealed record DocumentDiagnosticParams(TextDocumentIdentifier TextDocument, string? Identifier = null, string? PreviousResultId = null);

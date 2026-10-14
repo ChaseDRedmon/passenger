@@ -386,6 +386,16 @@ public sealed class LspDocument : IDisposable
         return Shapes.CodeActions(result);
     }
 
+    /// <summary>The actions of one kind the server has for the whole document (ESLint's <c>source.fixAll.eslint</c>),
+    /// asked for as a save asks for them.</summary>
+    public async Task<IReadOnlyList<CodeAction>> SourceActionsAsync(string kind, CancellationToken cancel = default)
+    {
+        LspRange whole = new(new LspPosition(0, 0), PositionOf(Text.Snapshot.Length));
+        JsonElement result = await Server.RequestAsync<JsonElement>("textDocument/codeAction",
+            new CodeActionParams(Identifier, whole, new CodeActionContext([], [kind], TriggerKind: 2)), cancel);
+        return Shapes.CodeActions(result);
+    }
+
     public Task<CodeAction?> ResolveAsync(CodeAction action, CancellationToken cancel = default) =>
         Server.RequestAsync<CodeAction>("codeAction/resolve", action, cancel);
 

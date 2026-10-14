@@ -127,6 +127,15 @@ public sealed class OpenDocument : Observable
         set => Set(ref notice, value);
     }
 
+    private NoticeAction? noticeAction;
+
+    /// <summary>What the banner offers to do about its notice, as a link after it (Run 'npm install'); null for nothing.</summary>
+    public NoticeAction? NoticeAction
+    {
+        get => noticeAction;
+        set => Set(ref noticeAction, value);
+    }
+
     /// <summary>The projects the language server compiles the file in (a target framework of a multi-targeted project
     /// each), by the server's names for them; none while it has not said, or for a file it does not know.</summary>
     public IReadOnlyList<string> ProjectContexts
@@ -774,6 +783,10 @@ public sealed class OpenDocument : Observable
         Raise(nameof(EncodingName));
     }
 }
+
+/// <summary>A link the editor's banner offers after its notice, as Rider's editor notifications offer theirs: its words and
+/// what it does.</summary>
+public sealed record NoticeAction(string Text, Action Run);
 
 /// <summary>What the editor needs to know about a file's language before any language server answers: its name (which
 /// <see cref="Languages.Highlighters"/> colours it by), its comments and how it indents. A language with no line comment
