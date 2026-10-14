@@ -362,7 +362,13 @@ window or takes the focus; it shows everything but the system's own window chrom
   when the runtime reports a handler found or an exception unhandled, the stack still at the throw ("user code" is a
   Just My Code frame); they cross the protocol as DAP `exceptionOptions` with Passenger's own scenarios and conditions.
   An evaluation the runtime won't start where the thread is stopped (a pause in optimized or native code) is
-  `EvalRefusedException`; a value shown by its ToString then shows its type.
+  `EvalRefusedException`; a value shown by its ToString then shows its type. Data breakpoints (Variables' Set Data
+  Breakpoint, `ManagedDebugger_DataBreakpoints`, `DebugRegisters`): the runtime watches memory only on Windows x64
+  (`FEATURE_DATABREAKPOINT`), so elsewhere the item is greyed with the reason; the engine pins the object
+  (`ICorDebugHeapValue4`, the runtime's advice over GC notifications) and sets DR0–DR7 on every thread through both the
+  runtime's context and Win32. They last one session, as Rider's do, and their window tests run only on Windows x64.
+  The engine's lock (`EngineLock`) is held by one request or runtime event at a time and is not re-entrant: code under
+  it never takes it again (`DrainRuntimeEventQueue` runs under its caller's hold).
 - The debugger, Passenger's own, started from SharpDbg and ICorDebugSharp (MIT; `THIRD_PARTY_NOTICES.md` says what came from where):
   `src/Passenger.Debugger.Interop` (ICorDebug, IMetaDataImport and dbgshim for the COM source generator),
   `src/Passenger.Debugger` (the engine), `src/Passenger.Dap` (the Debug Adapter Protocol, both ends) and
