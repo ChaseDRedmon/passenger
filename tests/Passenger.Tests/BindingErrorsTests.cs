@@ -87,7 +87,9 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
         list.SelectedItem = problems.Rows.Single(r => r.Problem is not null);
         Ui.ChooseFromMenu(list, "Show Context Actions");
         Ui.WaitFor(() => window.Assist.Offered.Count > 0, "the binding's fixes");
-        Assert.Equal(["Change 'Nmae' to 'Name'"], window.Assist.Offered);
+        // The fix comes first; the XAML refactorings that apply at the element (Extract Style) follow it, as in Rider.
+        Assert.Equal("Change 'Nmae' to 'Name'", window.Assist.Offered[0]);
+        Assert.Single(window.Assist.Offered, offered => offered.StartsWith("Change ", StringComparison.Ordinal));
         Ui.Press(window, "ENTER");
         Assert.Contains("Text=\"{Binding Name}\"", window.EditorArea.CodeEditor.Document.Snapshot.ToString(), StringComparison.Ordinal);
 
