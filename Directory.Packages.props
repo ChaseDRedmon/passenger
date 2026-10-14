@@ -8,6 +8,11 @@
     <!-- Avalonia's dotnet new templates, at the Avalonia version below: downloaded for the tests' own local feed, from
          which they install them without reaching nuget.org (tests/Passenger.Tests/AvaloniaApp.cs). -->
     <AvaloniaTemplatesVersion>12.1.4</AvaloniaTemplatesVersion>
+    <!-- WPF's reference pack, at the version the SDK in global.json gives its own target's WPF (its
+         KnownFrameworkReference's TargetingPackVersion): downloaded for the tests' local feed, from which the WPF app they
+         make restores off Windows without reaching nuget.org (tests/Passenger.Tests/WpfApp.cs). Another SDK's version
+         fails WpfXamlTests saying which to pin here, rather than the app's restore reaching nuget.org. -->
+    <WindowsDesktopRefVersion>11.0.0-rc.1.26425.128</WindowsDesktopRefVersion>
   </PropertyGroup>
   <ItemGroup>
     <PackageVersion Include="Avalonia" Version="12.1.4" />

@@ -1,47 +1,60 @@
-using System.Security;
 using Passenger.Core;
 
 namespace Passenger.Tests;
 
-/// <summary>A WPF app as <c>dotnet new wpf</c> makes it, at the SDK's own target, from a template hive of the run's own.
-/// WPF builds for Windows alone; elsewhere the app's folder says <c>EnableWindowsTargeting</c>, so its restore takes
-/// WindowsDesktop's reference pack from nuget.org, into a package folder and an HTTP cache of the run's own rather than the
-/// person's, and MarkupCompile still runs in its build.</summary>
+/// <summary>A WPF app as <c>dotnet new wpf</c> makes it, for the test project's own target (the SDK's), from a template
+/// hive of the run's own, restoring from the run's local feed alone (<see cref="AvaloniaApp.Feed"/>), never nuget.org.
+/// WPF builds for Windows alone; elsewhere the app's folder says <c>EnableWindowsTargeting</c>, the SDK's own way to build
+/// a Windows app elsewhere, so its restore takes WindowsDesktop's reference pack, which the test project downloads at
+/// the version Directory.Packages.props pins, from that feed, and MarkupCompile still runs in its build.</summary>
 internal static class WpfApp
 {
-    /// <summary>Where restore puts the reference pack off Windows, once per run.</summary>
-    private static string Packages => Path.Combine(TestRun.Root, "wpf-packages");
+    private static readonly Lazy<string> Hive = new(() => Directory.CreateDirectory(Path.Combine(TestRun.Root, "wpf-templates")).FullName,
+        LazyThreadSafetyMode.ExecutionAndPublication);
 
-    /// <summary>Makes the app in a folder, its project and namespace named <paramref name="name"/>, and restores it.</summary>
+    /// <summary>The target the app is made for, the test project's own.</summary>
+    private static string Framework => AvaloniaApp.Metadata("TargetFramework");
+
+    /// <summary>Makes the app in a folder, its project and namespace named <paramref name="name"/>, without restoring it.</summary>
     public static void Create(string folder, string name)
     {
-        string hive = Directory.CreateDirectory(Path.Combine(TestRun.Root, "wpf-templates")).FullName;
-        ChildResult made = Run(["new", "wpf", "--output", folder, "--name", name, "--no-restore", "--no-update-check", "--debug:custom-hive", hive]);
+        string pinned = AvaloniaApp.Metadata("WindowsDesktopRefVersion");
+        string needed = AvaloniaApp.Metadata("SdkWindowsDesktopRefVersion");
+        Assert.True(pinned == needed, $"This SDK's WPF for {Framework} takes Microsoft.WindowsDesktop.App.Ref {needed}, but Directory.Packages.props "
+            + $"pins WindowsDesktopRefVersion {pinned}, so the WPF app's restore would find no pack in the run's local feed: pin {needed} and restore "
+            + "(dotnet restore Passenger.slnx --force-evaluate)");
+        ChildResult made = Run(["new", "wpf", "--output", folder, "--name", name, "--framework", Framework, "--no-restore", "--no-update-check",
+            "--debug:custom-hive", Hive.Value]);
         Assert.True(made.Succeeded, $"dotnet new wpf did not make the test's app (exit code {made.ExitCode}):\n{made.Output}{made.Error}");
-        if (OperatingSystem.IsWindows())
+        AddToFeed(pinned);
+        AvaloniaApp.UseFeed(folder);
+        if (!OperatingSystem.IsWindows())
         {
-            return;
-        }
-        File.WriteAllText(Path.Combine(folder, "Directory.Build.props"), $"""
-            <Project>
-              <PropertyGroup>
-                <EnableWindowsTargeting>true</EnableWindowsTargeting>
-                <RestorePackagesPath>{SecurityElement.Escape(Packages)}</RestorePackagesPath>
-              </PropertyGroup>
-            </Project>
+            File.WriteAllText(Path.Combine(folder, "Directory.Build.props"), """
+                <Project>
+                  <PropertyGroup>
+                    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+                  </PropertyGroup>
+                </Project>
 
-            """);
-        ChildResult restored = Run(["restore", folder], ("NUGET_HTTP_CACHE_PATH", Path.Combine(TestRun.Root, "wpf-http-cache")));
-        Assert.True(restored.Succeeded, $"The WPF app did not restore, so WindowsDesktop's reference pack is not read (exit code {restored.ExitCode}):\n{restored.Output}{restored.Error}");
+                """);
+        }
     }
 
-    private static ChildResult Run(IReadOnlyList<string> arguments, params (string Name, string Value)[] environment)
+    /// <summary>Copies WindowsDesktop's reference pack into the run's local feed from the package cache the test project's
+    /// restore downloaded it into.</summary>
+    private static void AddToFeed(string version)
     {
-        System.Diagnostics.ProcessStartInfo start = ChildProcesses.DotnetCommand(arguments);
-        foreach ((string variable, string value) in environment)
+        string lower = version.ToLowerInvariant();
+        string downloaded = Path.Combine(AvaloniaApp.Metadata("NuGetPackageRoot"), "microsoft.windowsdesktop.app.ref", lower, $"microsoft.windowsdesktop.app.ref.{lower}.nupkg");
+        Assert.True(File.Exists(downloaded), $"Microsoft.WindowsDesktop.App.Ref {version} is not in the package cache at {downloaded}: restore the tests first");
+        string copy = Path.Combine(AvaloniaApp.Feed, Path.GetFileName(downloaded));
+        if (!File.Exists(copy))
         {
-            start.Environment[variable] = value;
+            File.Copy(downloaded, copy);
         }
-        return Task.Run(() => ChildProcesses.RunAsync(start, limit: Restore.Limit)).GetAwaiter().GetResult();
     }
+
+    private static ChildResult Run(IReadOnlyList<string> arguments) =>
+        Task.Run(() => ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(arguments), limit: TimeSpan.FromMinutes(3))).GetAwaiter().GetResult();
 }

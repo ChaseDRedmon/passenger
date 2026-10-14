@@ -20,8 +20,8 @@ internal static class AvaloniaApp
     /// <summary>Avalonia.Templates' version, the one the test project downloads (Directory.Packages.props).</summary>
     public static string TemplatesVersion { get; } = Metadata("AvaloniaTemplatesVersion");
 
-    /// <summary>The run's local feed: a folder of packages holding Avalonia.Templates, copied from the package cache the
-    /// test project's restore downloaded it into.</summary>
+    /// <summary>The run's local feed: a folder of packages holding Avalonia.Templates (and WindowsDesktop's reference pack,
+    /// once <see cref="WpfApp"/> adds it), copied from the package cache the test project's restore downloaded them into.</summary>
     public static string Feed => Path.Combine(FeedFolder.Value, "packages");
 
     /// <summary>Writes a nuget.config into a folder that names the run's local feed and no other, so a dotnet new install
@@ -89,7 +89,7 @@ internal static class AvaloniaApp
     }
 
     /// <summary>A value the test project's build put in the assembly (Passenger.Tests.csproj).</summary>
-    private static string Metadata(string key) =>
+    internal static string Metadata(string key) =>
         typeof(AvaloniaApp).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().FirstOrDefault(a => a.Key == key)?.Value
         ?? throw new InvalidOperationException($"The test assembly was built without its {key}");
 

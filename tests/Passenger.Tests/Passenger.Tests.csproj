@@ -31,6 +31,20 @@
     <AssemblyMetadata Include="AvaloniaTemplatesVersion" Value="$(AvaloniaTemplatesVersion)" />
   </ItemGroup>
 
+  <!-- WPF's reference pack, likewise, for the WPF app WpfXamlTests make (WpfApp.Feed), with the target they make it for
+       and the version the SDK's own WPF needs there, which the tests check against the one pinned. -->
+  <ItemGroup>
+    <PackageDownload Include="Microsoft.WindowsDesktop.App.Ref" Version="[$(WindowsDesktopRefVersion)]" />
+    <AssemblyMetadata Include="WindowsDesktopRefVersion" Value="$(WindowsDesktopRefVersion)" />
+    <AssemblyMetadata Include="TargetFramework" Value="$(TargetFramework)" />
+  </ItemGroup>
+  <Target Name="SdkWindowsDesktopRefVersion" BeforeTargets="GetAssemblyAttributes">
+    <ItemGroup>
+      <AssemblyMetadata Include="SdkWindowsDesktopRefVersion"
+                        Value="@(KnownFrameworkReference->WithMetadataValue('Identity', 'Microsoft.WindowsDesktop.App')->WithMetadataValue('TargetFramework', '$(TargetFramework)')->'%(TargetingPackVersion)')" />
+    </ItemGroup>
+  </Target>
+
   <!-- A test drives the IDE whole or a real process through its real boundary: the entry points a unit test would call
        instead are banned (BannedSymbols.txt), which warnings as errors make a failed build. -->
   <ItemGroup>
