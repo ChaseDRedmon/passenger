@@ -254,6 +254,13 @@ window or takes the focus; it shows everything but the system's own window chrom
   templates once per SDK from its own cache (`templatecache.json`, refreshed by `dotnet new list`) and each template's
   `ide.host.json` for the options an IDE shows; `NewProjectDialog` is Rider's New Project dialog;
   `MainWindow.NewProject.cs` opens a new solution through `Open` and adds a project through `SolutionEdits`.
+  `TemplatePacks` is the template packages New Project offers when dotnet new lacks them (Avalonia's, and Rider's
+  Aspire, Azure Functions and AI Extensions), their kinds kept with the version they were taken from; choosing one
+  offers Install (`dotnet new install` through a `ProcessRunner` into the dialog's console), then the templates are
+  read again (`ProjectTemplates.Forget`). Solution templates are New Solution's only and make the solution themselves.
+  dotnet new runs with the template's skip-restore option and `DeveloperTools.TakeOut` removes Avalonia Accelerate's
+  DevTools from what it made before Passenger restores; every `dotnet new` goes through `ProjectTemplates.New` or
+  `NewCommand`, which add the IDE's `Hive` (`--debug:custom-hive`) when set.
 - `src/Passenger.Profiler`: the profiler with no UI. `ProfilingSession` starts a program held at a diagnostic port of
   its own and streams EventPipe to a .nettrace; `Snapshot` reads it (TraceEvent) into call trees and hot spots.
   `App/Profiling` is the window (`ProfilerView`, `FlameGraph`), `ProfilerCommands` the Profile action.
@@ -537,6 +544,11 @@ for the pointer. `BindingErrorsTests` run and debug `tests/Debuggees/BindingErro
 caption binds a misspelt Name; "rebind" typed into its console makes it fail again.
 `XamlTests`' `AvaloniaApp` makes `dotnet new avalonia.app` from templates installed into the run's own hive
 (`--debug:custom-hive`) and takes Accelerate's DevTools out of it.
+The run's IDE keeps dotnet new templates in its own home (DOTNET_CLI_HOME) on macOS and Linux and in
+`ProjectTemplates.Hive` (a hive of the run's) on Windows, apart from `AvaloniaApp`'s. `AvaloniaApp.Feed` is the run's
+local feed (Avalonia.Templates at `AvaloniaTemplatesVersion`, downloaded at restore by a `PackageDownload` and copied
+from the package cache), so installs never reach nuget.org; `UseFeed(folder)` points a folder's nuget.config at it
+alone. `NewSolutionTests` installs Avalonia's templates through New Solution and runs the app it made headless.
 
 The MCP server's tests (`McpTests`) are agents using the SDK's own client: one starts `Passenger --mcp` and debugs a
 project through it, others attach to a window with `--mcp-attach` (its sockets under the run's
