@@ -47,6 +47,9 @@ public sealed class DebugSession
     private readonly Dictionary<int, PropertyBreakpoint> propertyById = [];
     private int? bindingErrorsId;
 
+    /// <summary>The function breakpoints' last request, until its answer (their new ids) has been read.</summary>
+    private Task functionsAnswered = Task.CompletedTask;
+
     private readonly Dictionary<int, LineBreakpoint> byId = [];
     private readonly TaskCompletionSource initialized = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Queue<string> errors = new();
@@ -809,8 +812,38 @@ public sealed class DebugSession
         // A report from the debugger raises it too: only what changes the request goes back to it.
         if (State is DebugState.Running or DebugState.Paused && disconnected is null && functionsSent != FunctionSignature())
         {
-            _ = SendFunctionBreakpointsAsync();
+            functionsAnswered = SendFunctionBreakpointsAsync();
         }
+    }
+
+    /// <summary>A stop at a breakpoint the debugger gave an id in an answer still on its way back (the answer is read off
+    /// the thread pool, the event straight onto the UI thread, so the stop can come first), taken once that answer is:
+    /// a property breakpoint's or Avalonia Binding Errors' stop is then known for one, and shown in the code that did it.</summary>
+    private async Task TakeStopAfter(Task answered, StoppedEvent stopped)
+    {
+        await Task.WhenAny(answered);
+        if (disconnected is null && State == DebugState.Running)
+        {
+            TakeStop(stopped);
+        }
+    }
+
+    private void TakeStop(StoppedEvent stopped)
+    {
+        stops++;
+        StoppedThread = stopped.ThreadId;
+        StopReason = stopped.Reason;
+        DataStop = stopped.Reason == "data breakpoint" && stopped.HitBreakpointIds?.Select(id => dataById.GetValueOrDefault(id)).FirstOrDefault(d => d is not null) is { } watched
+            ? (watched, stopped.Text)
+            : null;
+        PropertyStop = stopped.Reason == "breakpoint" ? stopped.HitBreakpointIds?.Select(id => propertyById.GetValueOrDefault(id)).FirstOrDefault(p => p is not null) : null;
+        BindingErrorStop = stopped.Reason == "breakpoint" && bindingErrorsId is int failed && stopped.HitBreakpointIds?.Contains(failed) == true;
+        if (runToCursor is { } target)
+        {
+            runToCursor = null;
+            _ = SendBreakpointsAsync(target.Path);
+        }
+        SetState(DebugState.Paused);
     }
 
     private string FunctionSignature() =>
@@ -829,20 +862,13 @@ public sealed class DebugSession
                 break;
             case "stopped" when disconnected is null:
                 StoppedEvent stopped = body.Read<StoppedEvent>();
-                stops++;
-                StoppedThread = stopped.ThreadId;
-                StopReason = stopped.Reason;
-                DataStop = stopped.Reason == "data breakpoint" && stopped.HitBreakpointIds?.Select(id => dataById.GetValueOrDefault(id)).FirstOrDefault(d => d is not null) is { } watched
-                    ? (watched, stopped.Text)
-                    : null;
-                PropertyStop = stopped.Reason == "breakpoint" ? stopped.HitBreakpointIds?.Select(id => propertyById.GetValueOrDefault(id)).FirstOrDefault(p => p is not null) : null;
-                BindingErrorStop = stopped.Reason == "breakpoint" && bindingErrorsId is int failed && stopped.HitBreakpointIds?.Contains(failed) == true;
-                if (runToCursor is { } target)
+                if (stopped.Reason == "breakpoint" && !functionsAnswered.IsCompleted
+                    && stopped.HitBreakpointIds?.Any(id => !byId.ContainsKey(id) && !propertyById.ContainsKey(id) && id != bindingErrorsId) == true)
                 {
-                    runToCursor = null;
-                    _ = SendBreakpointsAsync(target.Path);
+                    _ = TakeStopAfter(functionsAnswered, stopped);
+                    break;
                 }
-                SetState(DebugState.Paused);
+                TakeStop(stopped);
                 break;
             case "continued":
                 SetState(DebugState.Running);
