@@ -21,9 +21,6 @@ namespace Passenger.App;
 
 public partial class MainWindow : Window
 {
-    /// <summary>Room at the toolbar's left for macOS's window buttons once the toolbar is the title bar.</summary>
-    private const double MacWindowButtons = 72;
-
     /// <summary>The window's least width and height (its MinWidth and MinHeight), which a screenshot's <c>--size</c> is
     /// held to: Avalonia would widen a smaller window to them without a word.</summary>
     public const double SmallestWidth = 800;
@@ -62,17 +59,11 @@ public partial class MainWindow : Window
         status = new StatusBar(StatusText, StatusIcon, CaretText, IndentText, LanguageText, LineSeparatorButton, LineEndingText, EncodingButton, EncodingText);
         popups = new PopupHost(Overlay, OverlayHost, Editors, () => session.Debug.Breakpoints);
         navigator = new Navigation.Navigator(new Navigation.NavigatorParts(Editors, () => session, popups, status, path => OpenFile(path), TextOf));
-        if (OperatingSystem.IsMacOS())
-        {
-            // The toolbar is the title bar on macOS, as in Rider. Windows keeps the system's title bar
-            // until the shell draws its own chrome there.
-            ExtendClientAreaToDecorationsHint = true;
-            ExtendClientAreaTitleBarHeightHint = Toolbar.Height;
-        }
         // One keymap for the whole window, seen before any control: IDE actions run from anywhere,
         // editor actions go to the editor when it has the focus.
         AddHandler(KeyDownEvent, OnKeyDownFirst, RoutingStrategies.Tunnel);
         AddActions();
+        AddTitleBar();
         AddWelcome();
         AddChords();
         AddToolWindows();
@@ -318,16 +309,6 @@ public partial class MainWindow : Window
         session.Opened(full);
         Explorer.Reveal(full);
         return null;
-    }
-
-    protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
-    {
-        base.OnPropertyChanged(change);
-        if (change.Property == IsExtendedIntoWindowDecorationsProperty)
-        {
-            double left = IsExtendedIntoWindowDecorations && OperatingSystem.IsMacOS() ? MacWindowButtons : 8;
-            ToolbarContent.Margin = new Thickness(left, 0, 8, 0);
-        }
     }
 
     /// <summary>A key's action that throws is reported as an IDE error, never the IDE's end. The window it was pressed in
@@ -783,20 +764,6 @@ public partial class MainWindow : Window
     }
 
     private void UpdateCaret() => status.ShowCaret(Editors.Active is null ? null : Editors.CodeEditor);
-
-    private void OnToolbarPressed(object? sender, PointerPressedEventArgs e)
-    {
-        if (!IsExtendedIntoWindowDecorations || !e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
-        {
-            return;
-        }
-        if (e.ClickCount == 2)
-        {
-            WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
-            return;
-        }
-        BeginMoveDrag(e);
-    }
 
     private void OnProjectClicked(object? sender, RoutedEventArgs e) => ShowProjectMenu();
 

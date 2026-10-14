@@ -215,6 +215,15 @@ public sealed partial class SettingsDialog : Window
         ComboBox theme = new() { ItemsSource = new[] { "System", "Dark", "Light" }, SelectedIndex = Working.Theme switch { ThemeChoice.Dark => 1, ThemeChoice.Light => 2, _ => 0 }, Width = 160 };
         theme.SelectionChanged += (_, _) => Change(s => s with { Theme = theme.SelectedIndex switch { 1 => ThemeChoice.Dark, 2 => ThemeChoice.Light, _ => ThemeChoice.System } });
         Add(Appearance, "Theme", theme, "colour color dark light");
+        if (TitleBars.Offered)
+        {
+            // Rider's UI Options checkbox; where this desktop keeps the system's title bar it says why, greyed, as Rider's.
+            CheckBox merge = Check(Working.MergeMainMenuWithWindowTitle, v => Change(s => s with { MergeMainMenuWithWindowTitle = v }));
+            merge.IsEnabled = TitleBars.NotOnThisDesktop is null;
+            Add(Appearance, "Merge main menu with window title", merge,
+                "title bar window header toolbar decorations frame caption buttons minimize maximize close system linux",
+                TitleBars.NotOnThisDesktop ?? TitleBars.Experimental);
+        }
 
         Add(SystemPage, "Reopen projects on startup", Check(Working.ReopenProjectsOnStartup, v => Change(s => s with { ReopenProjectsOnStartup = v })),
             "reopen last solution project folder startup start launch welcome screen recent");

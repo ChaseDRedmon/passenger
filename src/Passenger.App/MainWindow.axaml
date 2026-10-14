@@ -7,18 +7,51 @@
         Title="Passenger"
         Icon="/Assets/passenger.png"
         Width="1400" Height="900"
-        MinWidth="{x:Static app:MainWindow.SmallestWidth}" MinHeight="{x:Static app:MainWindow.SmallestHeight}"
-        Background="{DynamicResource Passenger.Editor.Background}">
-    <Panel>
+        MinWidth="{x:Static app:MainWindow.SmallestWidth}" MinHeight="{x:Static app:MainWindow.SmallestHeight}">
+    <Window.Resources>
+        <!-- Avalonia's own title bar, which Windows and Linux draw once the window extends into its frame: none of it is
+             drawn, the toolbar being the title bar with the window's buttons its own. On Linux its frame is the resize
+             grips' width; the window's edge lies inside it (MainWindow.TitleBar.cs). -->
+        <ControlTheme x:Key="TitleBarDecorations" TargetType="WindowDrawnDecorations">
+            <Setter Property="DefaultTitleBarHeight" Value="40" />
+            <Setter Property="DefaultFrameThickness" Value="4" />
+            <Setter Property="DefaultShadowThickness" Value="0" />
+            <Setter Property="Template">
+                <WindowDrawnDecorationsTemplate>
+                    <WindowDrawnDecorationsContent />
+                </WindowDrawnDecorationsTemplate>
+            </Setter>
+        </ControlTheme>
+    </Window.Resources>
+    <Panel Name="Root" Background="{DynamicResource Passenger.Editor.Background}">
     <Grid RowDefinitions="Auto,*,Auto">
 
-        <!-- The toolbar. On macOS it is also the title bar, so its empty space drags the window. -->
+        <!-- The toolbar, which is the window's title bar too (MainWindow.TitleBar.cs): its empty space moves the window and
+             a double click on it maximizes, while what is on it takes its own clicks (the role User, where Windows asks). -->
         <Border Name="Toolbar" Grid.Row="0" Height="40"
                 Background="{DynamicResource Passenger.Chrome}"
                 BorderBrush="{DynamicResource Passenger.Divider}" BorderThickness="0,0,0,1"
                 PointerPressed="OnToolbarPressed">
             <DockPanel Name="ToolbarContent" Margin="8,0">
-                <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
+                <!-- The window's buttons at the bar's right, Rider's on Windows and Linux; macOS's own stand at its left.
+                     Their roles make Windows treat them as its caption buttons (its snap layouts on the maximize one). -->
+                <StackPanel Name="WindowButtons" DockPanel.Dock="Right" Orientation="Horizontal" Margin="10,0,0,0" IsVisible="False">
+                    <Button Name="MinimizeButton" Classes="windowButton" ToolTip.Tip="Minimize" AutomationProperties.Name="Minimize"
+                            WindowDecorationProperties.ElementRole="MinimizeButton" Click="OnMinimizeClicked">
+                        <Path Data="M0,5.5 H10" />
+                    </Button>
+                    <Button Name="MaximizeButton" Classes="windowButton" AutomationProperties.Name="Maximize"
+                            WindowDecorationProperties.ElementRole="MaximizeButton" Click="OnMaximizeClicked">
+                        <Path Name="MaximizeGlyph" Data="M0.5,0.5 H9.5 V9.5 H0.5 Z" />
+                    </Button>
+                    <Button Name="CloseButton" Classes="windowButton close" ToolTip.Tip="Close" AutomationProperties.Name="Close"
+                            WindowDecorationProperties.ElementRole="CloseButton" Click="OnCloseClicked">
+                        <Path Data="M0,0 L10,10 M10,0 L0,10" />
+                    </Button>
+                </StackPanel>
+
+                <StackPanel Name="ToolbarStart" DockPanel.Dock="Left" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center"
+                            WindowDecorationProperties.ElementRole="User">
                     <!-- Rider's main menu behind a button, where the system has no menu bar of its own. -->
                     <Button Name="MenuButton" Classes="tool" ToolTip.Tip="Main menu" Click="OnMenuClicked">
                         <PathIcon Data="{StaticResource Icon.Menu}" />
@@ -44,7 +77,8 @@
                     </Button>
                 </StackPanel>
 
-                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
+                <StackPanel Name="ToolbarEnd" DockPanel.Dock="Right" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center"
+                            WindowDecorationProperties.ElementRole="User">
                     <Button Name="BuildButton" Classes="tool" ToolTip.Tip="Build solution" Click="OnBuildClicked">
                         <PathIcon Data="{StaticResource Icon.Build}" />
                     </Button>

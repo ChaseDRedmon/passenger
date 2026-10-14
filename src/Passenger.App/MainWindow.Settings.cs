@@ -77,6 +77,7 @@ public partial class MainWindow
             ApplyTo(group.Editor, next);
         }
         FollowViewSettings(before, next);
+        FollowTitleBar(next);
         Explorer.NestFiles = next.NestFiles;
         assist.Templates = CSharp.TemplateSet.Of(next);
         assist.XamlFormat = next.XamlFormat;

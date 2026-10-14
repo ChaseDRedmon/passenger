@@ -14,6 +14,14 @@
             <SolidColorBrush x:Key="Passenger.TextMuted" Color="#868A91" />
             <SolidColorBrush x:Key="Passenger.Icon" Color="#CED0D6" />
             <SolidColorBrush x:Key="Passenger.Hover" Color="#393B40" />
+            <!-- The merged title bar's window buttons, Rider's on Windows (JetBrains' title pane buttons' colours), and the edge
+                 Linux shows round a window that draws its own frame. -->
+            <SolidColorBrush x:Key="Passenger.WindowButton.Hover" Color="#1AFFFFFF" />
+            <SolidColorBrush x:Key="Passenger.WindowButton.Pressed" Color="#33FFFFFF" />
+            <SolidColorBrush x:Key="Passenger.WindowButton.CloseHover" Color="#E81123" />
+            <SolidColorBrush x:Key="Passenger.WindowButton.ClosePressed" Color="#F1707A" />
+            <SolidColorBrush x:Key="Passenger.WindowButton.CloseGlyph" Color="#FFFFFF" />
+            <SolidColorBrush x:Key="Passenger.WindowEdge" Color="#43454A" />
             <!-- The line between a stripe's upper and lower windows, plainer than a hover but not a border. -->
             <SolidColorBrush x:Key="Passenger.StripeSeparator" Color="#55585E" />
             <SolidColorBrush x:Key="Passenger.Selected" Color="#43454A" />
@@ -189,6 +197,12 @@
             <SolidColorBrush x:Key="Passenger.TextMuted" Color="#6C707E" />
             <SolidColorBrush x:Key="Passenger.Icon" Color="#6C707E" />
             <SolidColorBrush x:Key="Passenger.Hover" Color="#DFE1E5" />
+            <SolidColorBrush x:Key="Passenger.WindowButton.Hover" Color="#1A000000" />
+            <SolidColorBrush x:Key="Passenger.WindowButton.Pressed" Color="#33000000" />
+            <SolidColorBrush x:Key="Passenger.WindowButton.CloseHover" Color="#E81123" />
+            <SolidColorBrush x:Key="Passenger.WindowButton.ClosePressed" Color="#F1707A" />
+            <SolidColorBrush x:Key="Passenger.WindowButton.CloseGlyph" Color="#FFFFFF" />
+            <SolidColorBrush x:Key="Passenger.WindowEdge" Color="#C9CCD6" />
             <SolidColorBrush x:Key="Passenger.StripeSeparator" Color="#C5C8CF" />
             <SolidColorBrush x:Key="Passenger.Selected" Color="#D3D5DB" />
             <SolidColorBrush x:Key="Passenger.RowSelected" Color="#D5E1FF" />

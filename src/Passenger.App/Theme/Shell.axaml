@@ -141,6 +141,40 @@
     <Style Selector="Button.tool:pressed /template/ ContentPresenter#PART_ContentPresenter">
         <Setter Property="Background" Value="{DynamicResource Passenger.Selected}" />
     </Style>
+    <!-- The window's buttons at the merged title bar's right, as Rider draws them on Windows: the bar's height, square
+         corners, thin glyphs, and red under Close. -->
+    <Style Selector="Button.windowButton">
+        <Setter Property="Width" Value="46" />
+        <Setter Property="VerticalAlignment" Value="Stretch" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="CornerRadius" Value="0" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="Focusable" Value="False" />
+    </Style>
+    <Style Selector="Button.windowButton Path">
+        <Setter Property="Width" Value="10" />
+        <Setter Property="Height" Value="10" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="Stroke" Value="{DynamicResource Passenger.Icon}" />
+    </Style>
+    <Style Selector="Button.windowButton:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource Passenger.WindowButton.Hover}" />
+    </Style>
+    <Style Selector="Button.windowButton:pressed /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource Passenger.WindowButton.Pressed}" />
+    </Style>
+    <Style Selector="Button.windowButton.close:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource Passenger.WindowButton.CloseHover}" />
+    </Style>
+    <Style Selector="Button.windowButton.close:pressed /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource Passenger.WindowButton.ClosePressed}" />
+    </Style>
+    <Style Selector="Button.windowButton.close:pointerover Path">
+        <Setter Property="Stroke" Value="{DynamicResource Passenger.WindowButton.CloseGlyph}" />
+    </Style>
     <!-- A toolbar toggle (Mute Breakpoints): a tool button that stays pressed while it is on. -->
     <Style Selector="ToggleButton.tool">
         <Setter Property="Width" Value="30" />
