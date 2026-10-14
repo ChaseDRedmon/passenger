@@ -170,13 +170,13 @@ public partial class MainWindow
             "No branch or tag matches");
         popup.Done += (_, chosen) =>
         {
-            ClosePopup();
+            popups.Close();
             if (chosen?.Value is GitRef named)
             {
                 _ = CompareWithAsync(path, named.FullName, named.Name, path);
             }
         };
-        ShowPopup(popup);
+        popups.Show(popup);
         return popup;
     }
 
@@ -194,13 +194,13 @@ public partial class MainWindow
             history.Count == 0 ? $"Git has no history of {Path.GetFileName(path)}" : "No revision matches");
         popup.Done += (_, chosen) =>
         {
-            ClosePopup();
+            popups.Close();
             if (chosen?.Value is HistoryCommit revision)
             {
                 _ = CompareWithAsync(path, revision.Commit.Hash, revision.Commit.Short, revision.Changes.FirstOrDefault()?.Path ?? path);
             }
         };
-        ShowPopup(popup);
+        popups.Show(popup);
         return popup;
     }
 

@@ -32,7 +32,7 @@ public partial class MainWindow
         popup.DetachedFromVisualTree += (_, _) => KeepFindScope(popup.Scope, closing: true);
         popup.Done += (_, match) =>
         {
-            ClosePopup();
+            popups.Close();
             if (match is not null)
             {
                 NavigateTo(match.Path, new TextPosition(match.Line, match.Column));
@@ -54,7 +54,7 @@ public partial class MainWindow
                 await popup.SearchAsync();
             }
         };
-        ShowPopup(popup);
+        popups.Show(popup);
         return popup;
     }
 
@@ -237,13 +237,13 @@ public partial class MainWindow
         popup.OptionChanged += (_, on) => edited = on;
         popup.Done += (_, row) =>
         {
-            ClosePopup();
+            popups.Close();
             if (row is not null)
             {
                 OpenFile(row.Path);
             }
         };
-        ShowPopup(popup);
+        popups.Show(popup);
         return popup;
     }
 

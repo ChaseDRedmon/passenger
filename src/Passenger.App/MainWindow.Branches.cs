@@ -45,8 +45,8 @@ public partial class MainWindow
             _ => string.Empty,
         };
         NamePopup popup = new($"Create Branch from {from.Name}", initial, async name => (await vcs.NewBranchFromAsync(name.Trim(), from)).Problem);
-        popup.Done += (_, _) => ClosePopup();
-        ShowPopup(popup);
+        popup.Done += (_, _) => popups.Close();
+        popups.Show(popup);
         return popup;
     }
 
@@ -64,8 +64,8 @@ public partial class MainWindow
             }
             return outcome.Problem;
         });
-        popup.Done += (_, _) => ClosePopup();
-        ShowPopup(popup);
+        popup.Done += (_, _) => popups.Close();
+        popups.Show(popup);
         return popup;
     }
 

@@ -92,7 +92,7 @@ public partial class MainWindow
     /// while it is open turn Show edited only, as Rider's do.</summary>
     public RecentLocationsPopup ShowRecentLocations()
     {
-        if (Popup is RecentLocationsPopup open)
+        if (popups.Open is RecentLocationsPopup open)
         {
             open.EditedOnly = !open.EditedOnly;
             return open;
@@ -104,7 +104,7 @@ public partial class MainWindow
             recentEditedOnly);
         popup.Done += (_, place) =>
         {
-            ClosePopup();
+            popups.Close();
             if (place is not null)
             {
                 GoToPlace(place);
@@ -121,7 +121,7 @@ public partial class MainWindow
             }
             made.Clear();
         };
-        ShowPopup(popup);
+        popups.Show(popup);
         return popup;
     }
 

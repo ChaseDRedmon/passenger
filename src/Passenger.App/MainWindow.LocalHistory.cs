@@ -129,13 +129,13 @@ public partial class MainWindow
             [.. rows.Select(r => new Choice(r.Title, ToolWindows.GitLogView.When(r.Time), r))], "There are no changes");
         popup.Done += (_, chosen) =>
         {
-            ClosePopup();
+            popups.Close();
             if (chosen?.Value is HistoryRow row)
             {
                 ShowLocalHistory(open)?.SelectSet(row.Set);
             }
         };
-        ShowPopup(popup);
+        popups.Show(popup);
         return popup;
     }
 
@@ -158,8 +158,8 @@ public partial class MainWindow
             StatusText.Text = $"Label {label} created";
             return Task.FromResult<string?>(null);
         });
-        popup.Done += (_, _) => ClosePopup();
-        ShowPopup(popup);
+        popup.Done += (_, _) => popups.Close();
+        popups.Show(popup);
         return popup;
     }
 

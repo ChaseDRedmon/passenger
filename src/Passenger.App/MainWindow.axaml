@@ -135,7 +135,7 @@
     </Grid>
 
     <!-- Popups (Go to File, Go to Line) over everything; a click outside one dismisses it. -->
-    <Panel Name="Overlay" IsVisible="False" Background="Transparent" PointerPressed="OnOverlayPressed">
+    <Panel Name="Overlay" IsVisible="False" Background="Transparent">
         <ContentControl Name="OverlayHost" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,84,0,0" />
     </Panel>
     </Panel>

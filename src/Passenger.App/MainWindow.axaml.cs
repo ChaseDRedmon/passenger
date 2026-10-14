@@ -31,6 +31,9 @@ public partial class MainWindow : Window
     public const double SmallestHeight = 500;
 
     private readonly KeymapDispatcher keys = new(AppActions.Keymap());
+
+    /// <summary>The popups over this window and its editor windows.</summary>
+    private readonly PopupHost popups;
     private readonly CodeAssist assist;
     private readonly UsageHighlighting usages;
     private readonly DebugController debug;
@@ -193,6 +196,7 @@ public partial class MainWindow : Window
             }
         };
         debug = new DebugController(Editors, Bottom.Debug) { RunInTerminal = RunForDebugger };
+        popups = new PopupHost(Overlay, OverlayHost, Editors, () => debug.Breakpoints);
         testGutter = new Testing.TestGutter(Bottom.TestTree);
         Bind(session);
         Bottom.Build.RerunClicked += (_, _) => buildRun.Rebuild();
@@ -338,10 +342,10 @@ public partial class MainWindow : Window
 
     private void OnKey(KeyEventArgs e)
     {
-        if (e.Key == Key.Escape && e.KeyModifiers == KeyModifiers.None && IsPopupOpen)
+        if (e.Key == Key.Escape && e.KeyModifiers == KeyModifiers.None && popups.IsOpen)
         {
             // Escape closes what is over the window before anything under it hears it.
-            DismissPopup();
+            popups.Dismiss();
             e.Handled = true;
             return;
         }
@@ -393,10 +397,10 @@ public partial class MainWindow : Window
     private bool DiffTakes(KeyEventArgs e) =>
         e.Key == Key.F7 && FocusManager?.GetFocusedElement() is Visual focused && focused.FindAncestorOfType<Vcs.DiffView>(includeSelf: true) is not null;
 
-    public bool IsPopupOpen => Popups.Layer.IsVisible;
+    public bool IsPopupOpen => popups.IsOpen;
 
     /// <summary>What the open popup is (Go to File, a breakpoint's properties, the Breakpoints window), or null.</summary>
-    public Control? Popup => IsPopupOpen ? Popups.Host.Content as Control : null;
+    public Control? Popup => popups.Open;
 
     public CodeAssist Assist => assist;
 
@@ -705,13 +709,13 @@ public partial class MainWindow : Window
         Navigation.GoToFilePopup popup = new(session.Index, session.RecentFiles.Skip(Editors.Active is null ? 0 : 1).ToList());
         popup.Done += (_, path) =>
         {
-            ClosePopup();
+            popups.Close();
             if (path is not null)
             {
                 OpenFile(path);
             }
         };
-        ShowPopup(popup);
+        popups.Show(popup);
     }
 
     /// <summary>The actions run from Find Action, the latest first, which it lists before anything is typed.</summary>
@@ -725,7 +729,7 @@ public partial class MainWindow : Window
         Navigation.ActionPopup popup = new(actions, context, recentActions);
         popup.Done += (_, chosen) =>
         {
-            ClosePopup();
+            popups.Close();
             if (chosen is null || chosen.Id == AppActions.FindAction || !Request(chosen.Id, context))
             {
                 return;
@@ -737,7 +741,7 @@ public partial class MainWindow : Window
                 recentActions.RemoveAt(recentActions.Count - 1);
             }
         };
-        ShowPopup(popup);
+        popups.Show(popup);
     }
 
     private void ShowSymbols(string title, string placeholder, Func<string, CancellationToken, Task<IReadOnlyList<Navigation.SymbolRow>>> search)
@@ -749,13 +753,13 @@ public partial class MainWindow : Window
         Navigation.SymbolPopup popup = new(title, placeholder, search, SelectedWord());
         popup.Done += (_, row) =>
         {
-            ClosePopup();
+            popups.Close();
             if (row is not null)
             {
                 NavigateTo(row.Path, row.Position);
             }
         };
-        ShowPopup(popup);
+        popups.Show(popup);
     }
 
     /// <summary>What a symbol search starts from: the editor's selection, if it is one word, as Rider seeds it.</summary>
@@ -860,13 +864,13 @@ public partial class MainWindow : Window
         };
         popup.Done += (_, row) =>
         {
-            ClosePopup();
+            popups.Close();
             if (row is not null)
             {
                 NavigateTo(row.Path, row.Position);
             }
         };
-        ShowPopup(popup);
+        popups.Show(popup);
     }
 
     private static IReadOnlyList<Navigation.SymbolRow> FilterOutline(IReadOnlyList<Navigation.SymbolRow> outline, string query)
@@ -908,78 +912,13 @@ public partial class MainWindow : Window
         Navigation.GoToLinePopup popup = new(editor.CaretPosition, editor.Document.Snapshot.LineCount);
         popup.Done += (_, position) =>
         {
-            ClosePopup();
+            popups.Close();
             if (position is { } at)
             {
                 editor.GoTo(at);
             }
         };
-        ShowPopup(popup);
-    }
-
-    /// <summary>A popup over the window the person works in (this one or an editor window): centred under the toolbar, as
-    /// Go to File's is, or beside a point of that window (a breakpoint's, from <see cref="PopupPoint"/>), kept inside it.</summary>
-    private void ShowPopup(Control popup, Point? at = null)
-    {
-        (Panel layer, ContentControl host) = PopupsInFront();
-        if (Popups.Layer != layer)
-        {
-            Popups.Layer.IsVisible = false;
-            Popups.Host.Content = null;
-        }
-        popups = (layer, host);
-        if (at is { } point)
-        {
-            popup.Measure(Size.Infinity);
-            double width = popup.Width is double w && !double.IsNaN(w) ? w : popup.DesiredSize.Width;
-            // A layer never shown yet was never laid out: it covers what holds it.
-            Size room = layer.Bounds.Size is { Width: > 0 } laid ? laid : (layer.Parent as Visual)?.Bounds.Size ?? default;
-            host.HorizontalAlignment = HorizontalAlignment.Left;
-            host.Margin = new Thickness(Math.Clamp(point.X, 8, Math.Max(8, room.Width - width - 8)), Math.Clamp(point.Y, 8, Math.Max(8, room.Height - popup.DesiredSize.Height - 8)), 0, 0);
-        }
-        else
-        {
-            host.HorizontalAlignment = HorizontalAlignment.Center;
-            host.Margin = new Thickness(0, layer == Overlay ? 84 : EditorWindowPopupTop, 0, 0);
-        }
-        host.Content = popup;
-        layer.IsVisible = true;
-    }
-
-    private void ClosePopup()
-    {
-        Popups.Layer.IsVisible = false;
-        Popups.Host.Content = null;
-        if (Editors.Active is not null)
-        {
-            Editors.CodeEditor.Focus();
-        }
-    }
-
-    private void OnOverlayPressed(object? sender, PointerPressedEventArgs e)
-    {
-        if (e.Source == sender)
-        {
-            DismissPopup();
-        }
-    }
-
-    /// <summary>Closes the popup as a click outside it or Escape does: a breakpoint's popup or window keeps what
-    /// was typed in it, as Rider's do.</summary>
-    private void DismissPopup()
-    {
-        switch (Popups.Host.Content)
-        {
-            case Debugging.BreakpointPopup breakpoint:
-                breakpoint.Close(debug.Breakpoints, more: false);
-                break;
-            case Debugging.BreakpointsWindow breakpoints:
-                breakpoints.Close();
-                break;
-            default:
-                ClosePopup();
-                break;
-        }
+        popups.Show(popup);
     }
 
     /// <summary>Rider's Unload Project: the project shows dimmed with nothing under it, and leaves the run configurations,
@@ -1001,17 +940,17 @@ public partial class MainWindow : Window
     public void ShowBreakpointPopup(Debugging.LineBreakpoint breakpoint)
     {
         CodeEditor editor = Editors.CodeEditor;
-        Point at = PopupPoint(editor, editor.GutterPoint(breakpoint.Line)) ?? new Point(100, 100);
+        Point at = popups.PointIn(editor, editor.GutterPoint(breakpoint.Line)) ?? new Point(100, 100);
         Debugging.BreakpointPopup popup = new(breakpoint, debug.Breakpoints, actions!.Shortcut(AppActions.ViewBreakpoints));
         popup.Closed += (_, more) =>
         {
-            ClosePopup();
+            popups.Close();
             if (more)
             {
                 ShowBreakpoints(breakpoint);
             }
         };
-        ShowPopup(popup, at);
+        popups.Show(popup, at);
         Dispatcher.UIThread.Post(popup.Properties.FocusCondition, DispatcherPriority.Loaded);
     }
 
@@ -1021,13 +960,13 @@ public partial class MainWindow : Window
         Debugging.BreakpointsWindow window = new(debug.Breakpoints, chosen, ExceptionTypesAsync);
         window.Closed += (_, show) =>
         {
-            ClosePopup();
+            popups.Close();
             if (show is not null)
             {
                 NavigateTo(show.Path, new TextPosition(show.Line, 0));
             }
         };
-        ShowPopup(window);
+        popups.Show(window);
     }
 
     /// <summary>The exception types Add CLR Exception Breakpoints offers: the solution's own, as the language server finds

@@ -44,10 +44,10 @@ public partial class MainWindow
         ErrorsPopup popup = new(IdeErrors.Errors, IdeErrors.Unlisted);
         popup.Done += (_, _) =>
         {
-            ClosePopup();
+            popups.Close();
             ShowErrorCount();
         };
-        ShowPopup(popup);
+        popups.Show(popup);
         return popup;
     }
 }

@@ -88,8 +88,8 @@ public partial class MainWindow
         gitView.NewBranchRequested += (_, commit) =>
         {
             NamePopup popup = new($"New Branch from {commit.Short}", string.Empty, async name => (await vcs.NewBranchAtAsync(name, commit.Hash)).Problem);
-            popup.Done += (_, _) => ClosePopup();
-            ShowPopup(popup);
+            popup.Done += (_, _) => popups.Close();
+            popups.Show(popup);
         };
         gitView.ResetRequested += async (_, reset) =>
         {
@@ -191,8 +191,8 @@ public partial class MainWindow
             return null;
         }
         NamePopup popup = new("Stash Changes", string.Empty, async message => (await vcs.StashAsync(message)).Problem);
-        popup.Done += (_, _) => ClosePopup();
-        ShowPopup(popup);
+        popup.Done += (_, _) => popups.Close();
+        popups.Show(popup);
         return popup;
     }
 
@@ -209,12 +209,12 @@ public partial class MainWindow
         popup.Done += (_, _) =>
         {
             // Escape may have closed it while a pop ran, and another popup taken its place since.
-            if (Popup == popup)
+            if (popups.Open == popup)
             {
-                ClosePopup();
+                popups.Close();
             }
         };
-        ShowPopup(popup);
+        popups.Show(popup);
         return popup;
     }
 
@@ -222,8 +222,8 @@ public partial class MainWindow
     public void ShowNewBranch()
     {
         NamePopup popup = new("Create New Branch", string.Empty, async name => (await vcs.NewBranchAsync(name)).Problem);
-        popup.Done += (_, _) => ClosePopup();
-        ShowPopup(popup);
+        popup.Done += (_, _) => popups.Close();
+        popups.Show(popup);
     }
 
     /// <summary>Show Diff: the last commit's text beside the file's, in a window over this one. The right side is the
@@ -360,7 +360,7 @@ public partial class MainWindow
         InlineChanges words = InlineChanges.Empty;
         void Then(Action run)
         {
-            ClosePopup();
+            popups.Close();
             run();
         }
         void Move(int step)
@@ -396,7 +396,7 @@ public partial class MainWindow
             MarkFile(false);
         };
         Avalonia.Point below = editor.GutterPoint(change.Line + Math.Max(1, change.Count) - 1);
-        ShowPopup(popup, PopupPoint(editor, new Avalonia.Point(4, below.Y + 2)));
+        popups.Show(popup, popups.PointIn(editor, new Avalonia.Point(4, below.Y + 2)));
         if (hunk is not { } compared)
         {
             return;
