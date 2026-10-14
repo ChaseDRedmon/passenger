@@ -343,6 +343,13 @@ window or takes the focus; it shows everything but the system's own window chrom
   templates once per SDK from its own cache (`templatecache.json`, refreshed by `dotnet new list`) and each template's
   `ide.host.json` for the options an IDE shows; `NewProjectDialog` is Rider's New Project dialog;
   `MainWindow.NewProject.cs` opens a new solution through `Open` and adds a project through `SolutionEdits`.
+  `ProjectTemplates.Ahead.cs` reads the templates ahead once a person's window has started (`MainWindow.PreloadTemplates`;
+  screenshots and `--mcp` don't), keeps the newest per SDK (`Ready`, what the dialog opens with), and reads again when a
+  watch on dotnet new's `packages.json` (home or `Hive`) or the .NET install's sdk/templates/template-packs folders sees a
+  change, raising `Changed`. `TemplateFamilies` groups them as Rider's New Solution does: a template group is a Type
+  that joins the first of Rider's project types its classifications name (`Kinds`, Rider's names and order), the rest
+  grouped by their short name's family; `NewProjectDialog` lists families under a search, with a Type chooser whose
+  choice sets the options below it, values the person set kept where the new Type has them.
   `TemplatePacks` is the template packages New Project offers when dotnet new lacks them (Avalonia's, and Rider's
   Aspire, Azure Functions and AI Extensions), their kinds kept with the version they were taken from; choosing one
   offers Install (`dotnet new install` through a `ProcessRunner` into the dialog's console), then the templates are
@@ -782,6 +789,11 @@ client can drop its own when the call's token is cancelled. `McpTests.AvaloniaAp
 `AvaloniaApp.HeadlessProject()`, which LiveTreeApp and BindingErrorsApp also use). The Windows on Arm VM runs a test
 filter on a commit with `~/Documents/passenger-vm/vm-test.sh NAME FILTER` (66–120 min for the whole suite, by the Mac's
 load); the VM can't see dot folders, and a batch file in the share runs as `powershell -Command "& cmd.exe /c '…'"`.
+The Ubuntu VM ("Ubuntu 26.04 ARM64", a real GNOME desktop CI lacks) runs one with
+`~/Documents/passenger-vm/vm-test-linux.sh NAME FILTER`, headless as CI's are, from `~/src/passenger-NAME`, its .NET in
+`~/.dotnet` and Node.js in `~/.local/node` on the login path; a script in the share runs as `bash -l
+/media/psf/Home/…`. `TemplateFamiliesTests` installs and uninstalls a test template of its own (`probetest`, from a
+folder) in the run's template home while a dialog is open; the watch sees it.
 
 ## Code style
 
