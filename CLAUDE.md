@@ -136,7 +136,21 @@ window or takes the focus; it shows everything but the system's own window chrom
   DataContext, an items control's ItemsSource for its templates and columns) are read only where the dialect compiles
   no binding, so Avalonia's compiled bindings read x:DataType alone. MarkupCompile's errors (MC####) mark their lines as
   AVLN's do; a named WPF element's code-behind field is MarkupCompile's `obj/…/File.g.cs` (the server's design-time
-  build writes it), found from C# by its `#line`. XAML Preview on a WPF file says WPF has none.
+  build writes it), found from C# by its `#line`. An `x:Class` no C# declares is a class of its root element's type,
+  declared at its `x:Class`, where the dialect's compiler makes it (`XamlDialect.MakesClasses`: WPF's MarkupCompile);
+  Avalonia's compiler refuses one (AVLN2000), so there it stays marked. XAML Preview on a WPF file draws it on Windows
+  (`WpfPreviewHost`) and elsewhere says WPF previews only on Windows; `XamlPreview` is the pane's model for either
+  previewer (`AvaloniaPreviewHost`, `WpfPreviewHost`), its `PreviewElement`s what a click in the frame chooses and the
+  caret outlines. `src/Passenger.WpfPreview` is WPF's previewer, Passenger's own (MIT, net8.0-windows, built
+  everywhere with EnableWindowsTargeting, carried under `wpfpreview/` only in a Windows build or publish):
+  `WpfPreviewHost` copies the project's last build to the state's `previews/<pid>-<guid>` (as Visual Studio's shadow
+  cache, so `bin/` is never locked) and runs it with `dotnet exec` on the project's runtimeconfig and deps.json (or its
+  own rolling-forward one for a library or a project before .NET 8); JSON lines over stdio (`Protocol.cs`, compiled
+  into both), each frame a PNG at 96 DPI with the elements' boxes from `VisualDiagnostics.GetXamlSourceInfo`. The file
+  loads as loose XAML (`LooseXaml`: the root of its tag's type, x:Class, events, EventSetters and x:Code blanked);
+  App.xaml's resources become the application's; `pack://application:,,,/` is the project's through WPF's private
+  resource-assembly fields. A WPF control with no code-behind has no constructor calling `InitializeComponent`, so it
+  draws empty where it is used, in the app and its preview alike.
   `Features` also has `XamlFormatter`/`XamlFormatSettings` (Rider's XML formatter, which is XAML's, at Rider's
   defaults, read from .editorconfig by Rider's `xml_*` keys or their `resharper_` forms and `max_line_length`; XAML
   Styler's attribute order and empty-element options as `xaml_enable_attribute_reordering`,
@@ -338,7 +352,12 @@ window or takes the focus; it shows everything but the system's own window chrom
   `NewCommand`, which add the IDE's `Hive` (`--debug:custom-hive`) when set.
 - `src/Passenger.Profiler`: the profiler with no UI. `ProfilingSession` starts a program held at a diagnostic port of
   its own and streams EventPipe to a .nettrace; `Snapshot` reads it (TraceEvent) into call trees and hot spots.
-  `App/Profiling` is the window (`ProfilerView`, `FlameGraph`), `ProfilerCommands` the Profile action.
+  `App/Profiling` is the window (`ProfilerView`, `FlameGraph`), `ProfilerCommands` the Profile action. Every session
+  enables `UiFrames.Provider`: `Snapshot.UiFrames` are an Avalonia app's frames, each with the compositor's first
+  drawing after it, recorded by the inspector (below); `App/Profiling/FramesView` is the Frames page (`FrameChart`, the
+  layout table by type then control, own time first), a control's row opening its XAML and, for the Live Visual Tree's
+  process, choosing it there. `ProfilingSession.AttachAsync` profiles a running program at its own diagnostic port
+  (Run > Attach Profiler to Running Program: the debugged one, else Run's); an `Attached` one is never killed.
   `MemorySnapshot` is a heap dump read with ClrMD into `HeapGraph` (roots by dotMemory's kinds, shortest paths, a
   dominator tree for retained bytes); `HeapHistory` follows a run's snapshots' objects through every GC (an EventPipe
   session of the GC's survival and movement events), so `SnapshotComparison` gives new, dead and survived objects;
@@ -544,7 +563,13 @@ window or takes the focus; it shows everything but the system's own window chrom
   as Variables does; running, only for the control chosen, read again on `valuesChanged`.
   `App/LiveTree/BindingValuesController` shows them after the lines (`OpenDocument.LiveValues`,
   `LineAnnotationKind.Failed`) and on hover. The runtime evaluates nothing on a UI thread waiting outside .NET, so a
-  stop on another thread shows none, saying so. A stop whose ids came in an unanswered setFunctionBreakpoints waits for
+  stop on another thread shows none, saying so. The startup hook turns on Avalonia's
+  `Avalonia.Diagnostics.Diagnostic.IsEnabled` switch, so Avalonia makes its `Avalonia.Diagnostic.Source` Measure and
+  Arrange activities (tagged `Control`) and `Avalonia.Diagnostic.Meter` histograms; `FrameRecorder` (`Frames.cs`)
+  listens only while a session enables Passenger's EventSource `Passenger-Avalonia`, so they land in the .nettrace.
+  Protocol v5 `overlays` sets each window's `RendererDiagnostics.DebugOverlays` (the Run and Debug windows' toggle,
+  `LiveTree/OverlaysCommands`, `ToolWindows/OverlaysButton`, Run > Avalonia Debug Overlays; the last choice is the next
+  launch's `PASSENGER_INSPECTOR_OVERLAYS`). Profile launches get the inspector too (`ProjectSession.InspectedProfile`). A stop whose ids came in an unanswered setFunctionBreakpoints waits for
   that answer (`DebugSession.TakeStopAfter`), so a property or binding-error stop is known as one.
   The inspector also takes Avalonia's logger before the app's Main (`Bindings.cs`, put back over any sink the app sets,
   which is still fed) and tells of each failed binding (`bindingFailed`: control, property, path, message, XAML place,
@@ -733,7 +758,9 @@ never throws, while what it waits for isn't there yet. `WindowsOnlyProjectsTests
 (`WpfApp.Create(asMade: true)`, `WpfApp.CreateWindowsForms`) never restored: Passenger restores and builds them itself.
 `DecompiledSymbolsTests` (Alone) give each adapter a cache folder of their own; PassengerCases' `corelib` case stops in
 a callback from List.ForEach, CoreLib's frame below it. `BindingValuesTests` debug `tests/Debuggees/BindingValuesApp`
-("rename" typed into its console renames the customer on the UI thread).
+("rename" typed into its console renames the customer on the UI thread). `AvaloniaFramesTests` (Alone) profile,
+debug and run `tests/Debuggees/FramesApp` (its SlowPanel spins 30 ms a measure). `WpfPreviewTests` (Windows only)
+preview WpfXamlTests' gallery; the VM's hand check is `~/Documents/passenger-vm/handcheck/wpfprev200/preview.cmd`.
 `XamlTests`' `AvaloniaApp` makes `dotnet new avalonia.app` from templates installed into the run's own hive
 (`--debug:custom-hive`) and takes Accelerate's DevTools out of it.
 The run's IDE keeps dotnet new templates in its own home (DOTNET_CLI_HOME) on macOS and Linux and in
