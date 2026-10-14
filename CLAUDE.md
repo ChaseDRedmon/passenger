@@ -392,6 +392,14 @@ window or takes the focus; it shows everything but the system's own window chrom
   default 64. `App/LiveTree/LiveApp` is Passenger's end (the session's, ended with its debugging); `LiveTreeController`
   and `LiveTreeView` are the window, which asks nothing while the app is paused. Why a style fails is read from its
   selector's text (`Selectors.cs`); whether it applies is always Avalonia's answer. Agents' tools ask the same `LiveApp`.
+  The inspector also takes Avalonia's logger before the app's Main (`Bindings.cs`, put back over any sink the app sets,
+  which is still fed) and tells of each failed binding (`bindingFailed`: control, property, path, message, XAML place,
+  and for a member the source's type lacks its nearest members) once, then its count at most every 250 ms. Run gives an
+  Avalonia app the inspector too (`ProjectSession.InspectedRun`, `RunApp`; none under Hot Reload, whose dotnet watch
+  would load it); the Live Visual Tree follows only the debugger's `LiveApp`. `App/LiveTree/BindingErrors` is how a
+  failed binding shows: a console line with its place first in a compiler message's shape (so `ConsoleLinks` links it),
+  Problems' Bindings tab (`BindingProblem`, by file, each once with its count), and fixes through
+  `CodeAssist.EditorFixes`, Passenger's own fixes that Show Context Actions lists before the server's.
 - `tools/Passenger.Notices`: writes the app's `THIRD-PARTY-NOTICES.txt` (beside `LICENSE.txt` in every build and
   publish, through `WriteNotices` in `Passenger.App.csproj`) from the packages the build copies, the self-contained
   runtime pack, the debugger's and Roslyn's server's `.deps.json`, each package's licence and copyright, and the part
@@ -510,7 +518,8 @@ window tests copy it into a folder of their own (`Debuggees.CopyTo`). The protoc
 to a time runs in `Alone`. `PASSENGER_ENGINE_LOG=FILE` keeps the engine's own log, for the
 tests' sessions and the IDE's alike. `LiveTreeTests` debug `tests/Debuggees/LiveTreeApp`, headless, with no project file
 of its own (the test writes one on the tests' own Avalonia version); "click X,Y" typed into its Debug console stands in
-for the pointer.
+for the pointer. `BindingErrorsTests` run and debug `tests/Debuggees/BindingErrorsApp` (written the same way), whose
+caption binds a misspelt Name; "rebind" typed into its console makes it fail again.
 
 The MCP server's tests (`McpTests`) are agents using the SDK's own client: one starts `Passenger --mcp` and debugs a
 project through it, others attach to a window with `--mcp-attach` (its sockets under the run's
