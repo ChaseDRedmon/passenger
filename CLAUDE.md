@@ -521,7 +521,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   and calls `Breaks.Changed`, on which the IDE sets one function breakpoint per property breakpoint (condition
   `breakpoint == Id && (…)`, the hit count kept in the app). The inspector is never optimized (the debugger reads that
   call's arguments) and its watching code is `[DebuggerNonUserCode]`, shown as external code under Just My Code, so
-  the stop selects the code that set the value. `BindingErrorBreakpoint` is Avalonia Binding Errors ("Any binding
+  the stop selects the code that set the value. `BindingErrorBreakpoint` is XAML Binding Errors ("Any binding
   error", off until turned on, never removed, kept with the folder): under a debugger the inspector's binding sink calls
   `Breaks.BindingFailed(BindingError)` (`Breaks.cs`, with `Breaks.Changed`) on each failure, repeats too, on the thread
   that evaluated it, where the IDE sets one function breakpoint (`Wire.Failed`), sent with the property breakpoints' in
@@ -547,6 +547,22 @@ window or takes the focus; it shows everything but the system's own window chrom
   `DecompileAsync` off it, then the frame under it again; without Just My Code a stop in such an assembly waits as
   `AfterDecompiling`, dropped if the program was let go. A [DebuggerDisplay] fragment of dotted names that doesn't
   evaluate is read as the value's property by that metadata name (Roslyn's `{System.Collections.ICollection.Count}`).
+  configurationDone's answer comes before any of the program's events: the adapter launches or attaches under the
+  engine's lock and keeps it until the answer is written (its `then`, or `AbortAsync` when the client went), and
+  `DebugSession.StartAsync` leaves a stop told before that answer standing, as `Resume` does.
+  Hot Reload while debugging (Edit and Continue): `Passenger.Roslyn.Extension/HotReload.cs` drives the server's own
+  `EditAndContinueService` (its session starting at the debugging session's first C# edit, given each file's pre-edit
+  text, checked against the build PDB's checksums), the runtime's capabilities read from the program's CoreLib; the
+  deltas reach the engine as Passenger's `applyChanges` request (`Passenger.Dap`, with `hotReloadState`), and
+  `ManagedDebugger_HotReload.cs` applies them (`ICorDebugModule2.ApplyChanges`, which needs `GetMetaDataInterface` asked
+  first) and remaps frames (`FunctionRemapOpportunity`/`RemapFunction`, a stepper deactivated before the remap).
+  `ModuleMetadataReader_EnC.cs` keeps each update as a generation: read a method's sequence points, locals and IL only
+  through `Points`, `DebugOf` and `MethodIL` at the frame's EnC version (`VersionOf`), never the PDB's directly; after
+  an update `_peMetadataReader` is mscordbi's saved copy of the module's metadata, `_imageMetadataReader` the image's.
+  A Debug launch sets `DOTNET_MODIFIABLE_ASSEMBLIES=debug`. `Debugging/HotReload.cs` and `MainWindow.HotReload.cs` are
+  Apply Hot Reload Changes (Alt+F10, toolbar and Debug/Run windows' flame, edits made while paused applied on the next
+  resume or step), Problems' Hot Reload tab for rude edits, and the restart (Settings' Hot Reload page: always restart
+  for a change it can't apply, on by default, else dotnet watch's question); attached sessions get none.
 - `src/Passenger.Inspector`: the Live Visual Tree's helper inside an Avalonia app being debugged (Passenger's own, MIT,
   net8.0, carried under `inspector/`, never put in the app's build): a startup hook `ProjectSession.Inspected` gives only
   a Debug launch whose build has Avalonia.Base.dll beside it (`DOTNET_STARTUP_HOOKS`, which it takes back out of the
@@ -576,7 +592,18 @@ window or takes the focus; it shows everything but the system's own window chrom
   listens only while a session enables Passenger's EventSource `Passenger-Avalonia`, so they land in the .nettrace.
   Protocol v5 `overlays` sets each window's `RendererDiagnostics.DebugOverlays` (the Run and Debug windows' toggle,
   `LiveTree/OverlaysCommands`, `ToolWindows/OverlaysButton`, Run > Avalonia Debug Overlays; the last choice is the next
-  launch's `PASSENGER_INSPECTOR_OVERLAYS`). Profile launches get the inspector too (`ProjectSession.InspectedProfile`). A stop whose ids came in an unanswered setFunctionBreakpoints waits for
+  launch's `PASSENGER_INSPECTOR_OVERLAYS`). Profile launches get the inspector too (`ProjectSession.InspectedProfile`).
+  `src/Passenger.Inspector.Wpf` is the WPF counterpart (MIT, net8.0-windows, built everywhere with EnableWindowsTargeting,
+  carried under `inspector/wpf/` only by a Windows build or win-* publish): `LiveApp.For` gives it (`LiveAppKind.Wpf`) to
+  a Run or Debug launch on Windows whose runtimeconfig names Microsoft.WindowsDesktop.App and whose assembly references
+  PresentationFramework, with `ENABLE_XAML_DIAGNOSTICS_SOURCE_INFO=1`. It links Protocol.cs and Connection.cs (the same
+  socket, protocol v5, `Hello.Framework`), runs in the default load context, and retries a main-thread dispatcher WPF is
+  still making. Value sources are `DependencyPropertyHelper.GetValueSource`; places `VisualDiagnostics.GetXamlSourceInfo`
+  turned into files through the assembly's PDB; binding errors come from `PresentationTraceSources` and
+  `BindingDiagnostics.BindingFailed`, and `Breaks.BindingFailed`/`Changed` keep their names so one function breakpoint
+  serves both frameworks (XAML Binding Errors; a WPF stop has no user frame, so the editor shows the XAML). Its
+  `Driver.cs` clicks through UI Automation patterns in-process and sends WPF's own key, text and wheel events, never
+  activating a window. `PASSENGER_INSPECTOR_TRACE=FILE` traces its start and answers. A stop whose ids came in an unanswered setFunctionBreakpoints waits for
   that answer (`DebugSession.TakeStopAfter`), so a property or binding-error stop is known as one.
   The inspector also takes Avalonia's logger before the app's Main (`Bindings.cs`, put back over any sink the app sets,
   which is still fed) and tells of each failed binding (`bindingFailed`: control, property, path, message, XAML place,
@@ -757,11 +784,14 @@ the PATH and skip, saying why, without it (the TypeScript ones also on a Node.js
 `engines.node`). `EslintPrettierTests` copy the tests' own eslint and prettier (`tests/Passenger.Tests/NodePackages`,
 put in `node-packages/` at build by `tools/Passenger.NodePackages`) into their project; the run's npm is offline with
 its own cache and config (`TestRun`), so Run 'npm install' fails fast without the registry. The Windows VM has no
-Node.js, so the web languages' tests skip there; CI's Windows runner has it. `BindingErrorsTests` also debug BindingErrorsApp with Avalonia Binding Errors on. Headless, a window
+Node.js, so the web languages' tests skip there; CI's Windows runner has it. `BindingErrorsTests` also debug BindingErrorsApp with XAML Binding Errors on. Headless, a window
 never loses activation, so a menu stays open under a dialog, and when the dialog closes the window puts focus back on
 what it remembers, never a menu (a focus scope of its own): `MainWindow.KeepKeys` gives an open menu the keys back.
 Read any log the IDE or a server may be writing with sharing (`Ui.Shared`), and a `WaitFor` condition returns false,
-never throws, while what it waits for isn't there yet. `WindowsOnlyProjectsTests` open a dotnet new wpf and winforms app
+never throws, while what it waits for isn't there yet. A test that opens a dialog holds it to `DialogButtonsTests.Check`
+(centred words, one height and radius, Rider's order). `HotReloadTests` and `HotReloadEditsTests` (Alone) edit debugged
+programs (`KeyTextInput` drops `\n`, so multi-line edits go through `Typing.Replace`); `WpfLiveTreeTests` (Alone,
+Windows only) debug `tests/Debuggees/WpfTreeApp` in a real window, and `McpTests.WpfApp.cs` drives it with `--mcp`. `WindowsOnlyProjectsTests` open a dotnet new wpf and winforms app
 (`WpfApp.Create(asMade: true)`, `WpfApp.CreateWindowsForms`) never restored: Passenger restores and builds them itself.
 `DecompiledSymbolsTests` (Alone) give each adapter a cache folder of their own; PassengerCases' `corelib` case stops in
 a callback from List.ForEach, CoreLib's frame below it. `BindingValuesTests` debug `tests/Debuggees/BindingValuesApp`
@@ -802,4 +832,12 @@ folder) in the run's template home while a dialog is open; the watch sees it.
 - Comments say why, or what else depends on this, never what the next lines do. A type's or member's `///` summary
   is at most five lines; an in-body comment is one line.
 - XAML: four spaces; one style per selector in `Theme/Shell.axaml`, restyling Fluent's states on its
-  `PART_ContentPresenter`, where Fluent paints them.
+  `PART_ContentPresenter`, where Fluent paints them. Shell.axaml starts with base styles every Button, TextBox,
+  ComboBox, NumericUpDown, CheckBox and MenuItem takes (content centred, `Passenger.ControlHeight` 28, the radius
+  resources `ControlRadius` 4, `ToolRadius` 6, `PopupRadius` 8); a class style comes after them and says only how it
+  differs. A visual inconsistency is fixed once in a shared place (a token, a base style or resource, or a helper such
+  as `DialogFooter.Of`), never per control, following Rider where the design is in question; a control that can't use
+  the shared piece says why in one line. A dialog's buttons come from `DialogFooter.Of(default, cancel, more…)` (Rider's
+  order per platform) in a `Border.footerBar`; a list or table in a page is `Border.framed`; a rule inside a page is
+  `Passenger.Separator` (`Passenger.Divider` is for edges between panels). PopupHost gives each popup room for its
+  frame's shadow.
