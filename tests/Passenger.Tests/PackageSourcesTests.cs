@@ -162,7 +162,7 @@ public sealed class PackageSourcesTests : IDisposable
         Button add = Descendants<Button>(nuget.Sources).Single(b => b.Name == "AddFeed");
         add.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Ui.Settle();
-        FeedDialog dialog = Assert.Single(window.OwnedWindows.OfType<FeedDialog>());
+        FeedDialog dialog = DialogButtonsTests.Check(Assert.Single(window.OwnedWindows.OfType<FeedDialog>()));
         Assert.Equal("New feed", dialog.Title);
         dialog.FeedName = "team";
         dialog.Url = "https://nuget.example.com/v3/index.json";

@@ -98,8 +98,9 @@ public sealed class DialogButtonsTests : IDisposable
             {
                 continue;
             }
-            // Where its words are drawn: a text stretched across the button still draws them from its left.
-            double left = content.TranslatePoint(default, button)!.Value.X;
+            // Where its words are laid out (an icon turned in place keeps its box): a text stretched across the button
+            // still draws them from its left.
+            double left = presenter.Bounds.X + content.Bounds.X;
             double right = button.Bounds.Width - left - Math.Min(content.DesiredSize.Width, content.Bounds.Width);
             Assert.True(Math.Abs(left - right) <= 1.5,
                 $"{Name(button)} in {title} has its words {left:0.#} px from its left edge and {right:0.#} px from its right: they are not centred in the button");

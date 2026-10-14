@@ -219,7 +219,7 @@ public sealed class SolutionViewTests : IDisposable
         // Add, Reference... on the project: the other project offered, checked with Space, OK with Enter.
         RightClick(window, Row(window, NodeKind.Project, "Shop.App"));
         ChooseFromMenu(window, "Add", "Reference...");
-        AddReferenceDialog dialog = Assert.Single(window.OwnedWindows.OfType<AddReferenceDialog>());
+        AddReferenceDialog dialog = DialogButtonsTests.Check(Assert.Single(window.OwnedWindows.OfType<AddReferenceDialog>()));
         ReferenceChoice offered = Assert.Single(dialog.Choices);
         Assert.Equal(("Shop.Core", core, false), (offered.Name, offered.Path, offered.IsChosen));
         Ui.Press(dialog, "SPACE");

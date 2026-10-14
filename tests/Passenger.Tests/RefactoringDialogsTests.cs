@@ -275,7 +275,7 @@ public sealed class RefactoringDialogsTests : IClassFixture<RestoredFolders>, ID
     private static T Shown<T>(MainWindow window, string what) where T : RefactoringDialog
     {
         Ui.WaitFor(() => window.OwnedWindows.OfType<T>().Any() || window.Status?.Contains(what, StringComparison.Ordinal) == true, $"{what}'s dialog to open");
-        return window.OwnedWindows.OfType<T>().FirstOrDefault() ?? throw new Xunit.Sdk.XunitException($"{what} opened no dialog: {window.Status}");
+        return DialogButtonsTests.Check(window.OwnedWindows.OfType<T>().FirstOrDefault() ?? throw new Xunit.Sdk.XunitException($"{what} opened no dialog: {window.Status}"));
     }
 
     /// <summary>Next clicked, and the dialog waited out: closed once the refactoring is made, failing with what it says

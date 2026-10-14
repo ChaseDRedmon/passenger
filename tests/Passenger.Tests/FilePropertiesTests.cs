@@ -277,7 +277,7 @@ public sealed class FilePropertiesTests : IDisposable
     private static void Answer(MainWindow window, string title, string button)
     {
         Ui.WaitFor(() => window.OwnedWindows.OfType<ChoiceDialog>().Any(), $"the question '{title}'");
-        ChoiceDialog asked = window.OwnedWindows.OfType<ChoiceDialog>().Single();
+        ChoiceDialog asked = DialogButtonsTests.Check(window.OwnedWindows.OfType<ChoiceDialog>().Single());
         Assert.Equal(title, asked.Title);
         Press(asked, button);
     }

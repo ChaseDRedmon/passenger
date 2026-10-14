@@ -59,7 +59,7 @@ public sealed class ConflictsTests : IDisposable
 
         Assert.True(window.Perform(AppActions.ResolveConflicts), window.Status);
         Ui.Settle();
-        ConflictsDialog dialog = Assert.IsType<ConflictsDialog>(window.Frontmost);
+        ConflictsDialog dialog = DialogButtonsTests.Check(Assert.IsType<ConflictsDialog>(window.Frontmost));
         Assert.Equal("Merging branch feature into branch main", dialog.Description);
         Assert.Equal(["Name", "Yours (main)", "Theirs (feature)"], dialog.Columns);
         Assert.Equal(["Prices.cs Modified Modified", "Shop.cs Modified Modified"], dialog.Rows.Select(r => $"{r.Conflict.Name} {r.Yours} {r.Theirs}"));
@@ -75,7 +75,7 @@ public sealed class ConflictsTests : IDisposable
         dialog.Chosen = [dialog.Rows.Single()];
         Press(dialog, "Merge...");
         Ui.Landed(() => window.Frontmost is MergeWindow, "the merge window");
-        MergeWindow merge = (MergeWindow)window.Frontmost;
+        MergeWindow merge = DialogButtonsTests.Check((MergeWindow)window.Frontmost);
         MergeView view = merge.View;
         Assert.Equal("Merge Revisions for Prices.cs", merge.Title);
         Assert.Equal(("Your version, branch main", "Changes from branch feature"), (view.Texts.Sides.LeftTitle, view.Texts.Sides.RightTitle));

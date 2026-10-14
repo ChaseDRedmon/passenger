@@ -91,7 +91,7 @@ public sealed class LiveTemplatesTests : IClassFixture<LiveTemplatesTests.Projec
 
         // Edit variables: TYPE is the containing type's name, not to be typed over; WHO is the constant "world".
         Click(dialog, page.EditVariablesButton);
-        TemplateVariablesDialog variables = Assert.Single(dialog.OwnedWindows.OfType<TemplateVariablesDialog>());
+        TemplateVariablesDialog variables = DialogButtonsTests.Check(Assert.Single(dialog.OwnedWindows.OfType<TemplateVariablesDialog>()));
         Assert.Equal(["TYPE", "WHO"], variables.Variables.Select(v => v.Name));
         Assert.Equal("No macro selected", variables.MacroText);
         Choose(variables, "Containing type name");
@@ -269,7 +269,7 @@ public sealed class LiveTemplatesTests : IClassFixture<LiveTemplatesTests.Projec
     private static void Choose(TemplateVariablesDialog variables, string macro)
     {
         Click(variables, variables.ChangeMacroButton);
-        ChooseMacroDialog macros = Assert.Single(variables.OwnedWindows.OfType<ChooseMacroDialog>());
+        ChooseMacroDialog macros = DialogButtonsTests.Check(Assert.Single(variables.OwnedWindows.OfType<ChooseMacroDialog>()));
         Assert.True(macros.Choose(macro), $"Choose macro does not offer {macro}");
         Click(macros, macros.OkButton);
         Assert.Equal(macro, variables.MacroText);

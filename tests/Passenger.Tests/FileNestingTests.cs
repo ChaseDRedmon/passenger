@@ -182,7 +182,7 @@ public sealed class FileNestingTests : IDisposable
         nesting.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
         menu.Hide();
         Ui.WaitFor(() => window.Frontmost is FileNestingDialog, "the File Nesting dialog");
-        return (FileNestingDialog)window.Frontmost;
+        return DialogButtonsTests.Check((FileNestingDialog)window.Frontmost);
     }
 
     /// <summary>Opens the Explorer down to a file or folder and gives its row.</summary>
