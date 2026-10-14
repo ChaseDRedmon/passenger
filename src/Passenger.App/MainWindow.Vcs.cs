@@ -172,10 +172,8 @@ public partial class MainWindow
         MenuItem Action(string id)
         {
             MenuItem item = Item(actions[id]!.Title, () => Request(id, context));
-            if (actions.Shortcut(id) is { } keys)
-            {
-                item.Header = $"{item.Header}    {keys}";
-            }
+            // In the menu's column of keys, as every menu's are, not run on after the title.
+            ShowKeys(item, id);
             return item;
         }
         if (session.Vcs.Repository is null)

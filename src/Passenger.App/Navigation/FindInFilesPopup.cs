@@ -69,9 +69,10 @@ public sealed class FindInFilesPopup : UserControl
         projects = choices.Projects;
         Width = 820;
         query = new TextBox { Classes = { "search" }, PlaceholderText = "Text to find", Text = initial ?? string.Empty };
-        matchCase = Option("Cc", "Match case (Alt+C)");
-        words = Option("W", "Words (Alt+O)");
-        regex = Option(".*", "Regex (Alt+X)");
+        // The find bar's own marks for the same options, where letters of their own told them apart.
+        matchCase = Option(OptionGlyph("Icon.MatchCase"), "Match case (Alt+C)");
+        words = Option(OptionGlyph("Icon.WholeWord"), "Words (Alt+O)");
+        regex = Option(new TextBlock { Text = ".*", FontFamily = CSharp.Fonts.Mono, FontWeight = FontWeight.Bold, FontSize = 12 }, "Regex (Alt+X)");
         DockPanel find = new() { Margin = new Thickness(10, 0, 10, 6) };
         StackPanel toggles = new() { Orientation = Orientation.Horizontal, Spacing = 2, Margin = new Thickness(6, 0, 0, 0), Children = { matchCase, words, regex } };
         DockPanel.SetDock(toggles, Dock.Right);
@@ -158,7 +159,8 @@ public sealed class FindInFilesPopup : UserControl
             ToolWindows.ListMenus.Item("Copy Line", null, () => _ = ToolWindows.ListMenus.CopyAsync(this, chosen.LineText.Trim())),
         ]);
         preview = new CodeEditor { IsReadOnly = true, ShowErrorStripe = false, Height = 180, Focusable = false };
-        Border previewFrame = new() { BorderThickness = new Thickness(0, 1, 0, 0), Child = preview };
+        // Clear of the frame's rounded foot, which the editor's square corners would cover.
+        Border previewFrame = new() { BorderThickness = new Thickness(0, 1, 0, 0), Padding = new Thickness(0, 0, 0, 8), Child = preview };
         previewFrame.Bind(Border.BorderBrushProperty, previewFrame.GetResourceObservable("Passenger.Divider"));
         Content = new Border
         {
@@ -520,9 +522,16 @@ public sealed class FindInFilesPopup : UserControl
         return glyph;
     }
 
-    private static ToggleButton Option(string label, string tip)
+    private static PathIcon OptionGlyph(string icon)
     {
-        ToggleButton button = new() { Classes = { "option" }, Content = label, FontSize = 11 };
+        PathIcon glyph = new();
+        glyph.Bind(PathIcon.DataProperty, glyph.GetResourceObservable(icon));
+        return glyph;
+    }
+
+    private static ToggleButton Option(Control label, string tip)
+    {
+        ToggleButton button = new() { Classes = { "option" }, Content = label };
         ToolTip.SetTip(button, tip);
         return button;
     }

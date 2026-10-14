@@ -24,6 +24,8 @@ internal sealed class ToolPane : DockPanel
         options.Click += (_, _) =>
         {
             MenuFlyout menu = OptionsMenu();
+            // Down from the ⋮, inside the pane, as Rider's options drop; Fluent's centres a flyout on its button.
+            menu.Placement = PlacementMode.BottomEdgeAlignedRight;
             host.OpenOptions = menu;
             menu.Closed += (_, _) => host.OpenOptions = host.OpenOptions == menu ? null : host.OpenOptions;
             menu.ShowAt(options);

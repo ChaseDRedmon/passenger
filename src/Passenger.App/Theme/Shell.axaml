@@ -27,6 +27,13 @@
         <Setter Property="VerticalContentAlignment" Value="Center" />
         <Setter Property="CornerRadius" Value="{DynamicResource Passenger.ControlRadius}" />
     </Style>
+    <!-- A menu's chosen item on a rounded band inset from the menu's rounded frame, as Rider's are, where Fluent's runs
+         square to the frame's edges. -->
+    <Style Selector="MenuItem">
+        <Setter Property="Margin" Value="4,0" />
+        <Setter Property="CornerRadius" Value="{DynamicResource Passenger.ControlRadius}" />
+    </Style>
+
     <!-- A dialog's buttons at its foot (DialogFooter), each as wide as the others at the least. -->
     <Style Selector="StackPanel.footer">
         <Setter Property="Orientation" Value="Horizontal" />
@@ -51,8 +58,12 @@
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="CornerRadius" Value="{DynamicResource Passenger.ControlRadius}" />
     </Style>
+    <!-- Selected text as the editor shows it, readable in both themes: Fluent's is the system's saturated blue, under
+         black text in light. -->
     <Style Selector="TextBox">
         <Setter Property="CornerRadius" Value="{DynamicResource Passenger.ControlRadius}" />
+        <Setter Property="SelectionBrush" Value="{DynamicResource Passenger.Editor.Selection}" />
+        <Setter Property="SelectionForegroundBrush" Value="{DynamicResource Passenger.Text}" />
     </Style>
     <!-- A drop-down framed as a field and as tall, its text inset as a field's (Fluent's is taller and its frame
          brighter). -->
@@ -64,6 +75,16 @@
         <Setter Property="VerticalContentAlignment" Value="Center" />
     </Style>
     <Style Selector="ComboBox:pointerover /template/ Border#Background">
+        <Setter Property="BorderBrush" Value="{DynamicResource Passenger.FieldBorder}" />
+    </Style>
+    <!-- A disabled drop-down or field stands on the page's own ground with its frame and dimmed text, as Rider's does:
+         Fluent's solid grey slab read as a button, in light most of all. -->
+    <Style Selector="ComboBox:disabled /template/ Border#Background">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Passenger.FieldBorder}" />
+    </Style>
+    <Style Selector="TextBox.search:disabled /template/ Border#PART_BorderElement">
+        <Setter Property="Background" Value="Transparent" />
         <Setter Property="BorderBrush" Value="{DynamicResource Passenger.FieldBorder}" />
     </Style>
     <!-- A number box likewise: its text box no taller than the box, its buttons' edges a field's. -->
@@ -558,6 +579,11 @@
         <Setter Property="MinHeight" Value="0" />
         <Setter Property="VerticalAlignment" Value="Center" />
         <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <!-- A disabled editable drop-down's text has no ground of its own, where Fluent's disabled text box drew a second box
+         inside the drop-down's. Named by its state: a style without it lost to Fluent's disabled one. -->
+    <Style Selector="TextBox#PART_EditableTextBox:disabled /template/ Border#PART_BorderElement">
+        <Setter Property="Background" Value="Transparent" />
     </Style>
 
     <!-- A popup over the window (Go to File, Go to Line): the chrome's colour, a soft shadow. -->

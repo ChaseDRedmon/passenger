@@ -125,6 +125,7 @@ public partial class MainWindow
         }
         Action release = KeepKeys(MenuButton, () => flyout.IsOpen ? flyout.Items.OfType<Control>().FirstOrDefault()?.FindLogicalAncestorOfType<MenuBase>() : null);
         flyout.Closed += (_, _) => release();
+        flyout.Placement = PlacementMode.BottomEdgeAlignedLeft;
         flyout.ShowAt(MenuButton);
     }
 
@@ -224,12 +225,8 @@ public partial class MainWindow
             return menu;
         }
         IdeAction action = actions![entry.Action!]!;
-        // The gesture is shown, not bound: the window's keymap runs the keys.
-        MenuItem actionItem = new() { Header = action.TitleWhere(context), InputGesture = actions.Gesture(action.Id), IsEnabled = action.CanRun(context) };
-        if (actionItem.InputGesture is null && actions.Keymap.ShortcutsFor(action.Id).FirstOrDefault() is { Second: not null } chord)
-        {
-            ShowChord(actionItem, chord);
-        }
+        MenuItem actionItem = new() { Header = action.TitleWhere(context), IsEnabled = action.CanRun(context) };
+        ShowKeys(actionItem, action.Id);
         if (action.IsChecked is { } isChecked)
         {
             actionItem.ToggleType = MenuItemToggleType.CheckBox;
@@ -249,6 +246,17 @@ public partial class MainWindow
         };
         item.Click += (_, _) => listed.Run();
         return item;
+    }
+
+    /// <summary>An action's shortcut in an item's column of keys: its one keystroke as the item's gesture, a chord as its
+    /// text. The gesture is shown, not bound: the window's keymap runs the keys.</summary>
+    private void ShowKeys(MenuItem item, string action)
+    {
+        item.InputGesture = actions!.Gesture(action);
+        if (item.InputGesture is null && actions.Keymap.ShortcutsFor(action).FirstOrDefault() is { Second: not null } chord)
+        {
+            ShowChord(item, chord);
+        }
     }
 
     /// <summary>A chord in an item's shortcut column, as Rider's own menus show one ("⌘E, C"): a KeyGesture holds one

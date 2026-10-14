@@ -38,6 +38,7 @@ internal sealed partial class InfoCard : Border
     {
         Text = code,
         FontFamily = Fonts.Mono,
+        FontFeatures = Fonts.NoLigatures,
         FontSize = 12.5,
         TextWrapping = TextWrapping.Wrap,
         Foreground = Brush("Passenger.Text"),
@@ -200,7 +201,7 @@ internal sealed class CompletionPopup : Border
                         Text = row.Letter,
                         FontSize = 10,
                         FontWeight = FontWeight.Bold,
-                        Foreground = Brushes.Black,
+                        Foreground = InfoCard.Brush("Passenger.BadgeText"),
                         HorizontalAlignment = HorizontalAlignment.Center,
                         VerticalAlignment = VerticalAlignment.Center,
                     },
@@ -220,6 +221,7 @@ internal sealed class CompletionPopup : Border
                 {
                     Text = row.Label,
                     FontFamily = Fonts.Mono,
+                    FontFeatures = Fonts.NoLigatures,
                     FontSize = 12.5,
                     TextTrimming = TextTrimming.CharacterEllipsis,
                     VerticalAlignment = VerticalAlignment.Center,
@@ -445,4 +447,8 @@ internal sealed class RenameBox : Border
 internal static class Fonts
 {
     public static readonly FontFamily Mono = new("avares://Passenger.Editor/Fonts#JetBrains Mono");
+
+    /// <summary>Code as the editor draws it by default, its characters each its own: JetBrains Mono would join "<>" into
+    /// a diamond and "=>" into an arrow.</summary>
+    public static readonly FontFeatureCollection NoLigatures = [new FontFeature { Tag = "calt", Value = 0 }, new FontFeature { Tag = "liga", Value = 0 }];
 }

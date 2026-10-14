@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
@@ -63,22 +64,52 @@ public sealed class PopupHost
             Layers.Host.Content = null;
         }
         shown = (layer, host);
+        Thickness shadow = MakeRoom(popup, host);
         if (at is { } point)
         {
             popup.Measure(Size.Infinity);
-            double width = popup.Width is double w && !double.IsNaN(w) ? w : popup.DesiredSize.Width;
+            // The frame's own size: a popup that holds its frame has the room inside it, the host has it round any other.
+            Thickness inside = popup is TemplatedControl ? shadow : default;
+            double width = (popup.Width is double w && !double.IsNaN(w) ? w : popup.DesiredSize.Width) - inside.Left - inside.Right;
+            double height = popup.DesiredSize.Height - inside.Top - inside.Bottom;
             // A layer never shown yet was never laid out: it covers what holds it.
             Size room = layer.Bounds.Size is { Width: > 0 } laid ? laid : (layer.Parent as Visual)?.Bounds.Size ?? default;
             host.HorizontalAlignment = HorizontalAlignment.Left;
-            host.Margin = new Thickness(Math.Clamp(point.X, 8, Math.Max(8, room.Width - width - 8)), Math.Clamp(point.Y, 8, Math.Max(8, room.Height - popup.DesiredSize.Height - 8)), 0, 0);
+            host.Margin = new Thickness(Math.Clamp(point.X, 8, Math.Max(8, room.Width - width - 8)) - shadow.Left,
+                Math.Clamp(point.Y, 8, Math.Max(8, room.Height - height - 8)) - shadow.Top, 0, 0);
         }
         else
         {
             host.HorizontalAlignment = HorizontalAlignment.Center;
-            host.Margin = new Thickness(0, layer == overlay ? WindowPopupTop : EditorWindowPopupTop, 0, 0);
+            host.Margin = new Thickness(0, (layer == overlay ? WindowPopupTop : EditorWindowPopupTop) - shadow.Top, 0, 0);
         }
         host.Content = popup;
         layer.IsVisible = true;
+    }
+
+    /// <summary>Room round a popup's frame for its shadow (Shell.axaml's Border.popup), taken from the place the popup
+    /// is put so the frame stands where it would without it: Avalonia draws a control no further out than its parent,
+    /// so a frame that fills its popup lost its shadow and showed square corners.</summary>
+    private static Thickness MakeRoom(Control popup, ContentControl host)
+    {
+        Thickness room = new(32, 24, 32, 40);
+        if (popup is TemplatedControl framed)
+        {
+            host.Padding = default;
+            if (framed.Padding != room)
+            {
+                framed.Padding = room;
+                if (!double.IsNaN(framed.Width))
+                {
+                    framed.Width += room.Left + room.Right;
+                }
+            }
+        }
+        else
+        {
+            host.Padding = room;
+        }
+        return room;
     }
 
     /// <summary>Closes the popup; the editor shown has the keys again.</summary>

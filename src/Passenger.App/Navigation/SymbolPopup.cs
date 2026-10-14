@@ -264,7 +264,7 @@ public sealed class SymbolPopup : UserControl
             Text = letter,
             FontSize = 10,
             FontWeight = FontWeight.Bold,
-            Foreground = Brushes.Black,
+            Foreground = InfoCard.Brush("Passenger.BadgeText"),
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
         },

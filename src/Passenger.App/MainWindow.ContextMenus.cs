@@ -106,9 +106,15 @@ public partial class MainWindow
         }
     }
 
-    /// <summary>Opens a context menu, remembering it while it is open, the keys kept in it (<see cref="KeepKeys"/>).</summary>
+    /// <summary>Opens a context menu, remembering it while it is open, the keys kept in it (<see cref="KeepKeys"/>). A
+    /// widget's (the project's, the branch's, the run configuration's) drops from under it, as Rider's do, where one at
+    /// the pointer covered the widget.</summary>
     private void Open(ContextMenu menu, Control target)
     {
+        if (target is Button && !menu.IsSet(ContextMenu.PlacementProperty))
+        {
+            menu.Placement = PlacementMode.BottomEdgeAlignedLeft;
+        }
         OpenContextMenu?.Close();
         OpenContextMenu = menu;
         Action release = KeepKeys(target, () => menu.IsOpen ? menu : null);

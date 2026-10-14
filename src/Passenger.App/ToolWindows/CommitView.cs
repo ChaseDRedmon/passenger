@@ -515,14 +515,15 @@ public sealed class CommitView : DockPanel
         if (row.Change.Kind is ChangeKind.Conflicted)
         {
             // Nothing to choose: a conflicted file is resolved first.
-            StackPanel conflicted = FileLine(row.Change, vcs.Repository);
+            DockPanel conflicted = FileLine(row.Change, vcs.Repository);
             conflicted.Margin = new Thickness(44, 0, 0, 0);
             return conflicted;
         }
         CheckBox box = new() { IsChecked = row.IsChosen, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(22, 0, 2, 0) };
         box.IsCheckedChanged += (_, _) => row.IsChosen = box.IsChecked == true;
         Follow(box, row, () => box.IsChecked = row.IsChosen);
-        StackPanel line = FileLine(row.Change, vcs.Repository);
+        DockPanel line = FileLine(row.Change, vcs.Repository);
+        DockPanel.SetDock(box, Dock.Left);
         line.Children.Insert(0, box);
         return line;
     }
@@ -535,14 +536,12 @@ public sealed class CommitView : DockPanel
         {
             lines.Children.Add(FileLine(change, repository));
         }
-        Border frame = new()
+        return new Border
         {
-            BorderThickness = new Thickness(1),
+            Classes = { "framed" },
             MaxHeight = (24 * 8) + 6,
             Child = new ScrollViewer { Content = lines, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled },
         };
-        frame.Bind(Border.BorderBrushProperty, frame.GetResourceObservable("Passenger.Divider"));
-        return frame;
     }
 
     /// <summary>Shows an item's state now and as it changes while the control is on screen, so a control the list's
@@ -561,7 +560,7 @@ public sealed class CommitView : DockPanel
 
     /// <summary>A changed file as the window shows it: its icon, its name in its change's colour (struck through when
     /// deleted) and its folder from the repository's top.</summary>
-    private static StackPanel FileLine(FileChange change, Git? repository)
+    private static DockPanel FileLine(FileChange change, Git? repository)
     {
         PathIcon icon = new()
         {
@@ -578,14 +577,12 @@ public sealed class CommitView : DockPanel
             name.TextDecorations = TextDecorations.Strikethrough;
         }
         string where = repository is not null ? Path.GetDirectoryName(repository.Relative(change.Path))?.Replace('\\', '/') ?? string.Empty : string.Empty;
-        TextBlock folder = new() { Text = where, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0), FontSize = 12 };
+        TextBlock folder = new() { Text = where, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0), FontSize = 12, TextTrimming = TextTrimming.CharacterEllipsis };
         folder.Bind(TextBlock.ForegroundProperty, folder.GetResourceObservable("Passenger.TextMuted"));
-        StackPanel line = new()
-        {
-            Orientation = Orientation.Horizontal,
-            Height = 24,
-            Children = { icon, name, folder },
-        };
+        // The folder takes what the row leaves, ending in an ellipsis in a narrow window rather than cut mid-letter.
+        DockPanel.SetDock(icon, Dock.Left);
+        DockPanel.SetDock(name, Dock.Left);
+        DockPanel line = new() { Height = 24, Children = { icon, name, folder } };
         ToolTip.SetTip(line, change.From is { } from ? $"{change.Kind}: {from} -> {change.Path}" : $"{change.Kind}: {change.Path}");
         return line;
     }

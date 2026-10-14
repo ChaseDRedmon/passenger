@@ -29,12 +29,18 @@ public sealed class WelcomeView : UserControl
         this.Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Editor.Background"));
         TextBlock title = new() { Text = "Welcome to Passenger", FontSize = 22, FontWeight = FontWeight.SemiBold, Margin = new Thickness(0, 0, 0, 4) };
         title.Bind(TextBlock.ForegroundProperty, title.GetResourceObservable("Passenger.Text"));
-        TextBlock subtitle = new() { Classes = { "muted" }, Text = "Start a new solution, open a solution, project or folder, or clone a repository.", Margin = new Thickness(0, 0, 0, 20) };
+        TextBlock subtitle = new()
+        {
+            Classes = { "muted" },
+            Text = "Start a new solution, open a solution, project or folder, or clone a repository.",
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 20),
+        };
 
-        search = new TextBox { Classes = { "search" }, PlaceholderText = "Search recent solutions", Margin = new Thickness(0, 0, 12, 0) };
+        search = new TextBox { Classes = { "search" }, PlaceholderText = "Search recent solutions" };
         search.TextChanged += (_, _) => Filter();
         search.AddHandler(KeyDownEvent, OnSearchKeyDown, RoutingStrategies.Tunnel);
-        Button open = new() { Content = "Open", MinWidth = 72, HorizontalContentAlignment = HorizontalAlignment.Center };
+        Button open = new() { Content = "Open", MinWidth = 72 };
         open.Click += (_, _) => OpenRequested?.Invoke(this, EventArgs.Empty);
         Button openFolder = new() { Content = "Open Folder" };
         openFolder.Click += (_, _) => OpenFolderRequested?.Invoke(this, EventArgs.Empty);
@@ -43,11 +49,25 @@ public sealed class WelcomeView : UserControl
         // New Solution goes first, as Rider's does.
         NewSolutionButton = new Button { Content = "New Solution" };
         NewSolutionButton.Click += (_, _) => NewSolutionRequested?.Invoke(this, EventArgs.Empty);
-        StackPanel buttons = new() { Orientation = Orientation.Horizontal, Spacing = 8, Children = { NewSolutionButton, open, openFolder, clone } };
-        DockPanel bar = new() { Margin = new Thickness(0, 0, 0, 12) };
-        DockPanel.SetDock(buttons, Dock.Right);
-        bar.Children.Add(buttons);
+        WrapPanel buttons = new() { ItemSpacing = 8, LineSpacing = 8, Children = { NewSolutionButton, open, openFolder, clone } };
+        Grid bar = new() { Margin = new Thickness(0, 0, 0, 12), ColumnDefinitions = new ColumnDefinitions("*,Auto"), RowDefinitions = new RowDefinitions("Auto,Auto") };
         bar.Children.Add(search);
+        bar.Children.Add(buttons);
+        // Too narrow for the field and the buttons side by side, the buttons go under it, wrapping as they must: beside
+        // it they were drawn over it, and cut off at the page's edge.
+        bar.SizeChanged += (_, e) =>
+        {
+            buttons.Measure(Size.Infinity);
+            bool under = e.NewSize.Width < buttons.DesiredSize.Width + 12 + 240;
+            Grid.SetRow(buttons, under ? 1 : 0);
+            Grid.SetColumn(buttons, under ? 0 : 1);
+            Grid.SetColumnSpan(buttons, under ? 2 : 1);
+            Grid.SetColumnSpan(search, under ? 2 : 1);
+            search.Margin = under ? default : new Thickness(0, 0, 12, 0);
+            buttons.Margin = under ? new Thickness(0, 8, 0, 0) : default;
+        };
+        search.Margin = new Thickness(0, 0, 12, 0);
+        Grid.SetColumn(buttons, 1);
 
         notice = new TextBlock { TextWrapping = TextWrapping.Wrap, IsVisible = false, Margin = new Thickness(4, 0, 4, 10) };
         notice.Bind(TextBlock.ForegroundProperty, notice.GetResourceObservable("Passenger.Editor.Warning"));

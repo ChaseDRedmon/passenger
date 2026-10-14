@@ -243,5 +243,6 @@ public sealed class HierarchyView : DockPanel
         };
     }
 
-    private static ToggleButton Toggle() => new() { Classes = { "option" }, FontSize = 12, Padding = new Thickness(8, 2) };
+    // As wide as its words: an option toggle is otherwise an icon's square, which cut "Supertypes" to "S".
+    private static ToggleButton Toggle() => new() { Classes = { "option" }, FontSize = 12, Width = double.NaN, Padding = new Thickness(8, 2) };
 }

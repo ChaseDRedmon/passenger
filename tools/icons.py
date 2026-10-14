@@ -122,6 +122,8 @@ ICONS = [
     ("Overlays", "Layer", "20_regular"),
     # Apply Hot Reload Changes on the toolbar and the Run and Debug windows: Rider's flame.
     ("HotReload", "Fire", "20_regular"),
+    # The Hierarchy window's stripe button: a type over the types it derives from or that derive from it.
+    ("Hierarchy", "Diagram", "20_regular"),
 ]
 
 
