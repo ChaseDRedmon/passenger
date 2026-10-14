@@ -34,6 +34,9 @@ public partial class MainWindow : Window
 
     /// <summary>The popups over this window and its editor windows.</summary>
     private readonly PopupHost popups;
+
+    /// <summary>What the last action came to, and the file shown's place and properties.</summary>
+    private readonly StatusBar status;
     private readonly CodeAssist assist;
     private readonly UsageHighlighting usages;
     private readonly DebugController debug;
@@ -52,6 +55,7 @@ public partial class MainWindow : Window
     {
         UiThread.Own();
         InitializeComponent();
+        status = new StatusBar(StatusText, StatusIcon, CaretText, IndentText, LanguageText, LineSeparatorButton, LineEndingText, EncodingButton, EncodingText);
         session = ProjectSession.None(Setup());
         if (OperatingSystem.IsMacOS())
         {
@@ -117,7 +121,7 @@ public partial class MainWindow : Window
             }
         };
         Editors.CaretMoved += (_, _) => UpdateCaret();
-        Editors.SaveFailed += (_, problem) => StatusText.Text = problem;
+        Editors.SaveFailed += (_, problem) => status.Text = problem;
         Editors.Opened += (_, document) =>
         {
             session.CSharp?.Attach(document);
@@ -131,7 +135,7 @@ public partial class MainWindow : Window
         Editors.ForEachEditor(editor => editor.ProblemsRequested += (_, _) => ShowToolWindow("problems"));
         // IntelliJ's words for its caret limit.
         Editors.ForEachEditor(editor => editor.CaretLimitReached += (_, _) =>
-            StatusText.Text = string.Create(CultureInfo.InvariantCulture, $"Cannot create more than {SelectionSet.MaxCount:N0} carets"));
+            status.Text = string.Create(CultureInfo.InvariantCulture, $"Cannot create more than {SelectionSet.MaxCount:N0} carets"));
         Editors.ForEachEditor(editor => editor.ExecutionPointDragged += (_, line) =>
         {
             if (Editors.Active is { } active && debug?.Session is { State: DebugState.Paused } session)
@@ -184,10 +188,10 @@ public partial class MainWindow : Window
         });
         assist = new CodeAssist(Editors, Editors.AssistLayer, () => session.CSharp);
         assist.Navigate += (_, target) => NavigateTo(target.Path, target.Position);
-        assist.Message += (_, message) => StatusText.Text = message;
+        assist.Message += (_, message) => status.Text = message;
         assist.FilesChanged += (_, _) => FilesChanged();
         usages = new UsageHighlighting(Editors, () => session.CSharp);
-        usages.Message += (_, message) => StatusText.Text = message;
+        usages.Message += (_, message) => status.Text = message;
         Bottom.Problems.Chosen += (_, problem) =>
         {
             if (problem.Path is { } path)
@@ -217,7 +221,7 @@ public partial class MainWindow : Window
             Request(AppActions.FindUsages);
         };
         debug.ActionRequested += (_, action) => Request(action);
-        debug.Message += (_, message) => StatusText.Text = message;
+        debug.Message += (_, message) => status.Text = message;
         debug.Navigate += (_, target) => ShowStop(target.Path, target.Position);
         debug.StateChanged += (_, _) => OnDebugStateChanged();
         assist.DebuggerValue = debug.ValueAt;
@@ -306,7 +310,7 @@ public partial class MainWindow : Window
         string full = PathNames.Canonical(Path.IsPathRooted(path) || session.Folder is not { } open ? path : Path.Combine(open, path));
         if (Editors.Open(full) is { } problem)
         {
-            StatusText.Text = problem;
+            status.Text = problem;
             return problem;
         }
         session.Opened(full);
@@ -427,7 +431,7 @@ public partial class MainWindow : Window
 
     /// <summary>The status bar's text, which says what the last action came to, for the person. What an operation came to
     /// is its own answer (a build's outcome, a commit's), never this, which anything may have replaced since.</summary>
-    public string? Status => StatusText.Text;
+    public string? Status => status.Text;
 
     /// <summary>Builds the solution (or, with none, the folder's projects), as Build does; <paramref name="then"/> hears how
     /// it ended.</summary>
@@ -846,7 +850,7 @@ public partial class MainWindow : Window
     {
         if (Editors.Active is not { } active || session.CSharp?.For(active)?.Lsp is null)
         {
-            StatusText.Text = "File Structure needs a C# file the language server has open";
+            status.Text = "File Structure needs a C# file the language server has open";
             return;
         }
         IReadOnlyList<Navigation.SymbolRow>? outline = null;
@@ -931,7 +935,7 @@ public partial class MainWindow : Window
         }
         Explorer.Refresh();
         session.Configurations.Configure(Projects);
-        StatusText.Text = $"{Path.GetFileNameWithoutExtension(project)} {(unloaded ? "unloaded" : "reloaded")}";
+        status.Text = $"{Path.GetFileNameWithoutExtension(project)} {(unloaded ? "unloaded" : "reloaded")}";
         FindTests();
         KeepWorkspace();
     }
@@ -989,25 +993,11 @@ public partial class MainWindow : Window
         return [.. solution.Concat(runtime).Distinct(StringComparer.Ordinal)];
     }
 
+    /// <summary>The status bar and the title follow the file shown.</summary>
     private void UpdateStatus()
     {
-        OpenDocument? active = Editors.Active;
-        string? folder = Folder;
-        string where = folder is null ? "No solution" : Path.GetFileName(folder);
-        if (active is not null)
-        {
-            where = folder is not null && PathNames.IsUnder(active.Path, folder)
-                ? Path.GetRelativePath(folder, active.Path)
-                : active.Path;
-        }
-        // With a file open the status bar's path names it, so the message line is left for messages.
-        StatusText.Text = active is null ? where : string.Empty;
+        status.ShowFile(Editors.Active, Folder, Editors.CodeEditor, LanguageLabel());
         ShowTitle();
-        ShowStorage(active);
-        IndentText.Text = active?.Indentation.Shown ?? "";
-        ToolTip.SetTip(IndentText, active?.Indentation.Tip(active.Language.Name));
-        LanguageText.Text = LanguageLabel();
-        UpdateCaret();
     }
 
     /// <summary>The window's title, as Rider's: the solution (or the project opened alone, or the folder) and the file its
@@ -1034,20 +1024,7 @@ public partial class MainWindow : Window
         return language;
     }
 
-    private void UpdateCaret()
-    {
-        if (Editors.Active is null)
-        {
-            CaretText.Text = "";
-            return;
-        }
-        CodeEditor editor = Editors.CodeEditor;
-        TextPosition caret = editor.CaretPosition;
-        int carets = editor.Selections.Count;
-        int selected = editor.Selections.Items.Sum(s => s.Length);
-        string position = $"{caret.Line + 1}:{caret.Column + 1}";
-        CaretText.Text = carets > 1 ? $"{carets} carets" : selected > 0 ? $"{position} ({selected} chars)" : position;
-    }
+    private void UpdateCaret() => status.ShowCaret(Editors.Active is null ? null : Editors.CodeEditor);
 
     private void OnToolbarPressed(object? sender, PointerPressedEventArgs e)
     {

@@ -105,7 +105,7 @@ public partial class MainWindow
         }
         catch (InvalidOperationException none)
         {
-            StatusText.Text = none.Message;
+            status.Text = none.Message;
             return null;
         }
     }
@@ -154,7 +154,7 @@ public partial class MainWindow
     {
         if (vcs.Repository is not { } repository)
         {
-            StatusText.Text = NoRepository;
+            status.Text = NoRepository;
             return null;
         }
         IReadOnlyList<GitRef> refs = await repository.RefNamesAsync();
@@ -210,12 +210,12 @@ public partial class MainWindow
     {
         if (vcs.Repository is not { } repository)
         {
-            StatusText.Text = NoRepository;
+            status.Text = NoRepository;
             return null;
         }
         if (await repository.TextAtAsync(revision, then) is not { } theirs)
         {
-            StatusText.Text = $"{Path.GetFileName(then)} is not in {version}";
+            status.Text = $"{Path.GetFileName(then)} is not in {version}";
             return null;
         }
         OpenDocument? open = Editors.Documents.FirstOrDefault(d => d.Path == path);

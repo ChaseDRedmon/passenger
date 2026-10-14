@@ -36,7 +36,7 @@ public partial class MainWindow
         {
             await Avalonia.Input.Platform.ClipboardExtensions.SetTextAsync(clipboard, text);
         }
-        StatusText.Text = $"{(cut ? "Cut" : "Copied")} {Together([.. paths.Select(Path.GetFileName).OfType<string>()])}";
+        status.Text = $"{(cut ? "Cut" : "Copied")} {Together([.. paths.Select(Path.GetFileName).OfType<string>()])}";
     }
 
     /// <summary>Paste on a row: what was cut or copied goes into the folder the row stands for (<see cref="ExplorerNode.Into"/>).</summary>
@@ -50,7 +50,7 @@ public partial class MainWindow
         if (held is not { } what || text != what.Text)
         {
             Forget();
-            StatusText.Text = "Nothing to paste: no files or folders were cut or copied";
+            status.Text = "Nothing to paste: no files or folders were cut or copied";
             return;
         }
         if (what.Cut)
@@ -147,7 +147,7 @@ public partial class MainWindow
             Explorer.FocusRows();
             refused.Insert(0, $"{(copy ? "Copied" : "Moved")} {Together([.. put.Select(Path.GetFileName).OfType<string>()])} to {Path.GetFileName(into)}");
         }
-        StatusText.Text = string.Join("; ", refused);
+        status.Text = string.Join("; ", refused);
         return put;
     }
 
@@ -292,7 +292,7 @@ public partial class MainWindow
         string verb = redo ? "Redo" : "Undo";
         if (Editors.Commands.Blocked(command, redo) is { } changed)
         {
-            StatusText.Text = $"Cannot {verb.ToLowerInvariant()} {command.Name}: {changed}";
+            status.Text = $"Cannot {verb.ToLowerInvariant()} {command.Name}: {changed}";
             return;
         }
         // Named as they are now: after the command's moves for an undo, before them for a redo.
@@ -306,6 +306,6 @@ public partial class MainWindow
         // Asked again: a file may have changed while the question was open.
         string? failed = Editors.Commands.Blocked(command, redo) ?? (redo ? Editors.Commands.Redo(command) : Editors.Commands.Undo(command));
         FilesChanged();
-        StatusText.Text = failed is null ? $"{(redo ? "Redone" : "Undone")}: {command.Name}" : $"Cannot {verb.ToLowerInvariant()} {command.Name}: {failed}";
+        status.Text = failed is null ? $"{(redo ? "Redone" : "Undone")}: {command.Name}" : $"Cannot {verb.ToLowerInvariant()} {command.Name}: {failed}";
     }
 }

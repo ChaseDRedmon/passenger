@@ -169,7 +169,7 @@ public partial class MainWindow
     {
         if (asked)
         {
-            StatusText.Text = "Checking for updates...";
+            status.Text = "Checking for updates...";
         }
         ReleaseFeed feed = Releases;
         CancellationToken end = updatesEnd.Token;
@@ -188,14 +188,14 @@ public partial class MainWindow
                     ShowReady(release);
                     if (asked)
                     {
-                        StatusText.Text = $"Passenger {release.Version} is ready: restart to update";
+                        status.Text = $"Passenger {release.Version} is ready: restart to update";
                     }
                 }
                 else
                 {
                     if (asked)
                     {
-                        StatusText.Text = $"Passenger {release.Version} is available, and downloading";
+                        status.Text = $"Passenger {release.Version} is available, and downloading";
                     }
                     if (downloadingRelease?.Version != release.Version)
                     {
@@ -215,14 +215,14 @@ public partial class MainWindow
                 }
                 if (asked)
                 {
-                    StatusText.Text = $"Passenger {release.Version} is available";
+                    status.Text = $"Passenger {release.Version} is available";
                 }
                 break;
             case ReleaseAnswer.Failed { Reason: var reason } when asked:
-                StatusText.Text = $"Could not check for updates: {reason}";
+                status.Text = $"Could not check for updates: {reason}";
                 break;
             case ReleaseAnswer.Current when asked:
-                StatusText.Text = UpToDate;
+                status.Text = UpToDate;
                 break;
         }
     }
@@ -291,11 +291,11 @@ public partial class MainWindow
                 break;
             case UpdateOutcome.Refused { Reason: var reason }:
                 ShowRefused(release, $"Passenger {release.Version} was not installed: {reason}");
-                StatusText.Text = $"Passenger {release.Version} was not installed: {reason}";
+                status.Text = $"Passenger {release.Version} was not installed: {reason}";
                 break;
             case UpdateOutcome.Failed { Reason: var reason }:
                 ShowUpdate(release, release.Link, $"Could not download Passenger {release.Version}: {reason}");
-                StatusText.Text = $"Could not download Passenger {release.Version}: {reason}";
+                status.Text = $"Could not download Passenger {release.Version}: {reason}";
                 break;
             default:
                 ShowUpdate(release, release.Link);
@@ -313,7 +313,7 @@ public partial class MainWindow
         }
         if (updater.OthersRunning())
         {
-            StatusText.Text = $"Another Passenger is open from {updater.Installed}: close it, then restart to update";
+            status.Text = $"Another Passenger is open from {updater.Installed}: close it, then restart to update";
             return;
         }
         // Every window closes, as Passenger restarts; one that will not keeps the update for the next end.
@@ -361,12 +361,12 @@ public partial class MainWindow
         state.Updates.Set(state.Updates.Value with { Installing = null });
         if (installing == Product.Version)
         {
-            StatusText.Text = $"Passenger was updated to {installing}";
+            status.Text = $"Passenger was updated to {installing}";
             IdeErrors.Write($"Updates: Passenger {installing} was installed as the last session ended");
         }
         else
         {
-            StatusText.Text = $"Passenger {installing} did not install: Help, Show Log says why";
+            status.Text = $"Passenger {installing} did not install: Help, Show Log says why";
             IdeErrors.Write($"Updates: Passenger {installing} was to install as the last session ended, but this is {Product.Version}");
         }
     }

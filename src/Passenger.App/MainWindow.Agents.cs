@@ -48,7 +48,7 @@ public partial class MainWindow
             }
             catch (Exception error) when (error is IOException or SocketException or ArgumentException or UnauthorizedAccessException)
             {
-                StatusText.Text = $"Agents cannot reach this window: {error.Message}";
+                status.Text = $"Agents cannot reach this window: {error.Message}";
             }
         }
         else if (!(on && AgentsAllowed) && agentSocket is not null)

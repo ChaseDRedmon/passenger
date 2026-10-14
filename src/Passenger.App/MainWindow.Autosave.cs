@@ -42,13 +42,13 @@ public partial class MainWindow
         Editors.Opened += (_, document) => document.Text.Changed += (_, _) => RestartIdleSave();
         Editors.Opened += (_, document) =>
         {
-            document.Converted += (_, message) => StatusText.Text = message;
+            document.Converted += (_, message) => status.Text = message;
             // The status bar's encoding follows a file's: saved as UTF-8, or a BOM added on disk.
             document.PropertyChanged += (_, e) =>
             {
                 if (e.PropertyName == nameof(OpenDocument.EncodingName) && Editors.Active == document)
                 {
-                    ShowStorage(document);
+                    status.ShowStorage(document);
                 }
             };
         };

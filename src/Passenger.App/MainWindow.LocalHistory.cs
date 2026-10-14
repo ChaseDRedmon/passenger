@@ -100,13 +100,13 @@ public partial class MainWindow
     {
         if (session.LocalHistory is not { } history || Folder is not { } folder)
         {
-            StatusText.Text = NoFolder;
+            status.Text = NoFolder;
             return null;
         }
         string full = PathNames.Canonical(path);
         if (!PathNames.Within(full, folder))
         {
-            StatusText.Text = $"{Path.GetFileName(full)} is not in the open folder";
+            status.Text = $"{Path.GetFileName(full)} is not in the open folder";
             return null;
         }
         bool isFolder = Directory.Exists(full);
@@ -120,7 +120,7 @@ public partial class MainWindow
     {
         if (session.LocalHistory is not { } history || Folder is not { } open)
         {
-            StatusText.Text = NoFolder;
+            status.Text = NoFolder;
             return null;
         }
         IReadOnlyList<HistoryEvent> events = history.Snapshot().Events;
@@ -144,7 +144,7 @@ public partial class MainWindow
     {
         if (session.LocalHistory is not { } history)
         {
-            StatusText.Text = NoFolder;
+            status.Text = NoFolder;
             return null;
         }
         NamePopup popup = new("Put Label", string.Empty, name =>
@@ -155,7 +155,7 @@ public partial class MainWindow
                 return Task.FromResult<string?>("A label needs a name");
             }
             history.Label(label);
-            StatusText.Text = $"Label {label} created";
+            status.Text = $"Label {label} created";
             return Task.FromResult<string?>(null);
         });
         popup.Done += (_, _) => popups.Close();
@@ -218,6 +218,6 @@ public partial class MainWindow
             }
         }
         FilesChanged();
-        StatusText.Text = refused.Count == 0 ? activity : $"Cannot revert because {string.Join(", ", refused)} could not be written";
+        status.Text = refused.Count == 0 ? activity : $"Cannot revert because {string.Join(", ", refused)} could not be written";
     }
 }

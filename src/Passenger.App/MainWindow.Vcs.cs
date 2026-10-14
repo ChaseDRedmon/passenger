@@ -102,7 +102,7 @@ public partial class MainWindow
         };
         Explorer.IsVersioned = path => vcs.Repository?.IsInside(path) == true;
         vcs.SaveFirst = () => Editors.SaveAll();
-        vcs.Message += (_, message) => StatusText.Text = message;
+        vcs.Message += (_, message) => status.Text = message;
         vcs.Changed += (_, _) => OnVcsChanged();
         Editors.Opened += (_, document) => vcs.Attach(document);
         Editors.Closed += (_, document) => vcs.Detach(document);
@@ -187,7 +187,7 @@ public partial class MainWindow
     {
         if (vcs.Repository is null)
         {
-            StatusText.Text = "The folder is not in a Git repository";
+            status.Text = "The folder is not in a Git repository";
             return null;
         }
         NamePopup popup = new("Stash Changes", string.Empty, async message => (await vcs.StashAsync(message)).Problem);
@@ -201,7 +201,7 @@ public partial class MainWindow
     {
         if (vcs.Repository is null)
         {
-            StatusText.Text = "The folder is not in a Git repository";
+            status.Text = "The folder is not in a Git repository";
             return null;
         }
         UnstashPopup popup = new(await vcs.StashesAsync(), async (stash, pop) => (await vcs.UnstashAsync(stash, pop)).Succeeded,
@@ -233,7 +233,7 @@ public partial class MainWindow
     {
         if (vcs.Repository is null)
         {
-            StatusText.Text = "The folder is not in a Git repository";
+            status.Text = "The folder is not in a Git repository";
             return null;
         }
         OpenDocument? open = Editors.Documents.FirstOrDefault(d => d.Path == path);
@@ -420,7 +420,7 @@ public partial class MainWindow
         }
         if (!await vcs.AnnotateAsync(document))
         {
-            StatusText.Text = $"{document.Name} is not tracked by Git";
+            status.Text = $"{document.Name} is not tracked by Git";
         }
     }
 
@@ -434,7 +434,7 @@ public partial class MainWindow
         ShowToolWindow("git");
         GitWindow.ShowLog();
         await GitLog.SelectHashAsync(lines[line].Hash);
-        StatusText.Text = $"{lines[line].Short} {lines[line].Summary} ({lines[line].Author}, {lines[line].Time.ToLocalTime():f})";
+        status.Text = $"{lines[line].Short} {lines[line].Summary} ({lines[line].Author}, {lines[line].Time.ToLocalTime():f})";
     }
 
     /// <summary>Rider's gutter menu where no breakpoint is: annotations on or off.</summary>
@@ -485,7 +485,7 @@ public partial class MainWindow
     {
         if (changes.Count == 0)
         {
-            StatusText.Text = "No files are chosen to roll back";
+            status.Text = "No files are chosen to roll back";
             return;
         }
         // The files are listed, as Rider's Rollback Changes lists them, so what goes back is seen before it does.
@@ -506,7 +506,7 @@ public partial class MainWindow
     {
         if (Editors.Active is not { } document || document.ChangeMarks.Count == 0)
         {
-            StatusText.Text = "No changes in this file";
+            status.Text = "No changes in this file";
             return;
         }
         int line = Editors.CodeEditor.CaretPosition.Line;
@@ -523,7 +523,7 @@ public partial class MainWindow
     {
         if (Editors.Active is not { } document)
         {
-            StatusText.Text = "No change here to roll back";
+            status.Text = "No change here to roll back";
             return;
         }
         FileDiff? diff;
@@ -542,7 +542,7 @@ public partial class MainWindow
         }
         if (diff?.HunkAt(Editors.CodeEditor.CaretPosition.Line) is not { } hunk)
         {
-            StatusText.Text = "No change here to roll back";
+            status.Text = "No change here to roll back";
             return;
         }
         Editors.CodeEditor.ApplyEdits([diff.Restore(hunk)]);
@@ -559,7 +559,7 @@ public partial class MainWindow
         string line = Path.GetRelativePath(repository.Root, path).Replace('\\', '/');
         string before = File.Exists(ignore) ? File.ReadAllText(ignore) : string.Empty;
         File.WriteAllText(ignore, before + (before.Length > 0 && !before.EndsWith('\n') ? "\n" : string.Empty) + line + "\n");
-        StatusText.Text = $"Added {line} to .gitignore";
+        status.Text = $"Added {line} to .gitignore";
         _ = vcs.RefreshAsync();
     }
 }

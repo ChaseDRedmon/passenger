@@ -33,7 +33,7 @@ public partial class MainWindow
         {
             return true;
         }
-        StatusText.Text = why;
+        status.Text = why;
         return false;
     }
 

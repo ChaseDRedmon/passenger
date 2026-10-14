@@ -31,15 +31,15 @@ public partial class MainWindow
         chordWait.Stop();
         if (keys.Pending is { } first)
         {
-            beforeChord = StatusText.Text;
+            beforeChord = status.Text;
             chordMessage = ChordMessage(first);
-            StatusText.Text = chordMessage;
+            status.Text = chordMessage;
             chordWait.Start();
             return;
         }
-        if (chordMessage is not null && StatusText.Text == chordMessage)
+        if (chordMessage is not null && status.Text == chordMessage)
         {
-            StatusText.Text = beforeChord;
+            status.Text = beforeChord;
         }
         chordMessage = null;
     }

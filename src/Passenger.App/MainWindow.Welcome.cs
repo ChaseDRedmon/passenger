@@ -51,7 +51,7 @@ public partial class MainWindow
         welcome.Say(why);
         if (why is not null)
         {
-            StatusText.Text = why;
+            status.Text = why;
             return why;
         }
         OpenChosen(full);
@@ -129,7 +129,7 @@ public partial class MainWindow
         if (!Directory.Exists(path) && !File.Exists(path))
         {
             string gone = $"{RecentRow.Home(path)} no longer exists: it was moved or deleted, or its drive is not connected";
-            StatusText.Text = gone;
+            status.Text = gone;
             welcome.Say(gone);
             ShowRecent();
             return gone;
@@ -179,7 +179,7 @@ public partial class MainWindow
             if (row.Missing)
             {
                 string gone = $"{row.Name} was not reopened: {row.Shown} no longer exists";
-                StatusText.Text = gone;
+                status.Text = gone;
                 welcome.Say(gone);
                 continue;
             }

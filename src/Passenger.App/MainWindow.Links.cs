@@ -132,7 +132,7 @@ public partial class MainWindow
                 }
                 else
                 {
-                    StatusText.Text = BrowserLaunch.NotResponding(address);
+                    status.Text = BrowserLaunch.NotResponding(address);
                 }
             });
         });

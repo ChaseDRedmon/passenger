@@ -44,7 +44,7 @@ public partial class MainWindow
     {
         if (Solution is not { } solution)
         {
-            StatusText.Text = "No solution is open to add a project to";
+            status.Text = "No solution is open to add a project to";
             return null;
         }
         ProjectTarget target = new(solution.Path, into, [.. solution.Projects.Select(p => Path.GetFileNameWithoutExtension(p.Path))]);
@@ -72,7 +72,7 @@ public partial class MainWindow
         }
         if (refused.Count > 0)
         {
-            StatusText.Text = string.Join("; ", refused);
+            status.Text = string.Join("; ", refused);
             return;
         }
         BuildSolution();

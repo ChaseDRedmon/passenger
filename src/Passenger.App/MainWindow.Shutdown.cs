@@ -49,7 +49,7 @@ public partial class MainWindow
         if (!Autosave())
         {
             const string unsaved = "The solution was not closed: a changed file could not be saved";
-            StatusText.Text = unsaved;
+            status.Text = unsaved;
             return unsaved;
         }
         Remember();
@@ -61,7 +61,7 @@ public partial class MainWindow
         if (!LeaveFolder())
         {
             const string open = "The solution was not closed: an open file could not be saved";
-            StatusText.Text = open;
+            status.Text = open;
             return open;
         }
         EndSession();

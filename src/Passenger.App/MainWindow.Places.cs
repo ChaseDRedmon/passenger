@@ -73,7 +73,7 @@ public partial class MainWindow
     {
         if (session.Navigation.StepEdits(step, Here(), path => Editors.Documents.Any(d => d.Path == path) || File.Exists(path)) is not { } place)
         {
-            StatusText.Text = step < 0 ? NoEditBefore : NoEditAfter;
+            status.Text = step < 0 ? NoEditBefore : NoEditAfter;
             return;
         }
         GoToPlace(place);

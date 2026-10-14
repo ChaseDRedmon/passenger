@@ -21,7 +21,7 @@ public partial class MainWindow
     public string SnapshotFolder => profiler!.SnapshotFolder;
 
     private void AddProfiler() => profiler = new ProfilerCommands(new ProfilerParts(() => session, () => buildRun, Dock, actions!, Bottom.Run,
-        text => StatusText.Text = text, () => StateFolder, PickSnapshotAsync, NavigateTo));
+        text => status.Text = text, () => StateFolder, PickSnapshotAsync, NavigateTo));
 
     /// <summary>Profiles the chosen configuration as Profile does: null once it runs, else what stopped it.</summary>
     public Task<string?> ProfileAsync(string? arguments = null) => profiler!.ProfileAsync(arguments);

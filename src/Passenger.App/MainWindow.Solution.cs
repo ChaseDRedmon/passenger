@@ -149,7 +149,7 @@ public partial class MainWindow
             ReloadSolution();
             refused.Insert(0, $"Added {Together([.. added.Select(named)])} to {solution.Name}");
         }
-        StatusText.Text = string.Join("; ", refused);
+        status.Text = string.Join("; ", refused);
         return added.LastOrDefault();
     }
 
@@ -177,7 +177,7 @@ public partial class MainWindow
         {
             ReloadSolution();
         }
-        StatusText.Text = problem ?? done;
+        status.Text = problem ?? done;
         return problem;
     }
 

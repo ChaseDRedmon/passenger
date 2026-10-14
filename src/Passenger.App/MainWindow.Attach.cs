@@ -49,7 +49,7 @@ public partial class MainWindow
         {
             if (await dialog.ShowDialog<DotnetProcess?>(this) is { } chosen && await AttachAsync(chosen) is { } problem)
             {
-                StatusText.Text = problem;
+                status.Text = problem;
             }
         }
     }
@@ -79,7 +79,7 @@ public partial class MainWindow
     private async Task Reattach()
     {
         DotnetProcess last = attachedTo[^1];
-        StatusText.Text = $"Looking for {last.Program} to attach to";
+        status.Text = $"Looking for {last.Program} to attach to";
         IReadOnlyList<DotnetProcess> running = await BackgroundWork.Run(DotnetProcesses.List);
         List<DotnetProcess> candidates = running.FirstOrDefault(p => p.Id == last.Id && Same(p, last)) is { } same ? [same]
             : running.Where(p => Same(p, last)).ToList() is { Count: > 0 } alike ? alike
@@ -88,11 +88,11 @@ public partial class MainWindow
         {
             if (await AttachAsync(only) is { } problem)
             {
-                StatusText.Text = problem;
+                status.Text = problem;
             }
             return;
         }
-        StatusText.Text = candidates.Count == 0
+        status.Text = candidates.Count == 0
             ? $"Reattach to Process: no .NET process named {last.Program} is running"
             : $"Reattach to Process: {candidates.Count} programs are named {last.Program}; choose one";
         ShowAttachToProcess(last.Program);

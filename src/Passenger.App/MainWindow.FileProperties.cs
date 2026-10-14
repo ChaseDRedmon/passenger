@@ -29,13 +29,13 @@ public partial class MainWindow
         }
         Editors.Opened += (_, document) =>
         {
-            document.WriteFailed += (_, problem) => StatusText.Text = problem;
+            document.WriteFailed += (_, problem) => status.Text = problem;
             // The widgets' tips say what the .editorconfig asks, read again on a change to it or a save.
             document.PropertyChanged += (_, e) =>
             {
                 if (e.PropertyName == nameof(OpenDocument.Conventions) && Editors.Active == document)
                 {
-                    ShowStorage(document);
+                    status.ShowStorage(document);
                 }
             };
         };
@@ -54,15 +54,6 @@ public partial class MainWindow
 
     /// <summary>The status bar's line separator and encoding widgets for the file shown: Rider's names, and tips that say
     /// what the file's .editorconfig asks.</summary>
-    private void ShowStorage(OpenDocument? active)
-    {
-        LineSeparatorButton.IsVisible = active is not null;
-        EncodingButton.IsVisible = active is not null;
-        LineEndingText.Text = active?.Separator.ToString() ?? string.Empty;
-        EncodingText.Text = active?.EncodingName ?? string.Empty;
-        ToolTip.SetTip(LineSeparatorButton, active?.SeparatorTip);
-        ToolTip.SetTip(EncodingButton, active?.EncodingTip);
-    }
 
     /// <summary>Rider's line separator popup: the Line Separators menu, the file's own disabled.</summary>
     private void OnLineSeparatorClicked(object? sender, RoutedEventArgs e)
@@ -106,7 +97,7 @@ public partial class MainWindow
     {
         if (document.IsReadOnly)
         {
-            StatusText.Text = $"{document.Name} is read-only";
+            status.Text = $"{document.Name} is read-only";
             return;
         }
         string from = document.EncodingName;
@@ -116,13 +107,13 @@ public partial class MainWindow
             if (EncodingChange.OnlyBom(document.Encoding, to))
             {
                 document.ConvertTo(to);
-                StatusText.Text = $"{document.Name} was converted to {to.Name}";
+                status.Text = $"{document.Name} was converted to {to.Name}";
                 return;
             }
             if (change is { Reload: Safety.Same, Convert: Safety.Same })
             {
                 document.TakeEncoding(to);
-                StatusText.Text = $"{document.Name}'s encoding is {to.Name} now: its text and its bytes are the same in it";
+                status.Text = $"{document.Name}'s encoding is {to.Name} now: its text and its bytes are the same in it";
                 return;
             }
             string? answer = await Choose($"{document.Name}: Reload or Convert to {to.Name}",
@@ -134,7 +125,7 @@ public partial class MainWindow
             {
                 if (change.OtherBom)
                 {
-                    StatusText.Text = $"File '{document.Name}' can't be reloaded in the '{to.Name}' encoding: it starts with the byte-order mark of another";
+                    status.Text = $"File '{document.Name}' can't be reloaded in the '{to.Name}' encoding: it starts with the byte-order mark of another";
                     return;
                 }
                 if (change.Reload == Safety.Unsafe && !await Confirm($"Incompatible Encoding: {to.Name}",
@@ -143,7 +134,7 @@ public partial class MainWindow
                     return;
                 }
                 document.ReloadIn(to);
-                StatusText.Text = $"{document.Name} was reloaded in {to.Name}";
+                status.Text = $"{document.Name} was reloaded in {to.Name}";
             }
             else if (answer == "Convert")
             {
@@ -154,13 +145,13 @@ public partial class MainWindow
                     return;
                 }
                 document.ConvertTo(to);
-                StatusText.Text = $"{document.Name} was converted to {to.Name}";
+                status.Text = $"{document.Name} was converted to {to.Name}";
             }
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
             // Nothing changed: the file could not be read again, or written.
-            StatusText.Text = $"{document.Name} is still {from}: {error.Message}";
+            status.Text = $"{document.Name} is still {from}: {error.Message}";
         }
     }
 
@@ -179,10 +170,10 @@ public partial class MainWindow
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
-            StatusText.Text = $"{document.Name} could not be saved: {error.Message}";
+            status.Text = $"{document.Name} could not be saved: {error.Message}";
             return;
         }
-        StatusText.Text = $"Changed Line Separators from {from} to {to}";
+        status.Text = $"Changed Line Separators from {from} to {to}";
     }
 
     /// <summary>Asks which of several ways to go on (Reload or Convert), the answer the button's words or null for Cancel.</summary>

@@ -24,7 +24,7 @@ public partial class MainWindow
         ShowErrorCount();
         if (PassengerApp.Front is not { IsVisible: true } front || front == this)
         {
-            StatusText.Text = $"IDE error: {error.Message}";
+            status.Text = $"IDE error: {error.Message}";
         }
     }
 

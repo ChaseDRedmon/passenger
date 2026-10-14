@@ -122,7 +122,7 @@ public partial class MainWindow
                 break;
             case ExplorerAction.CopyPath when path is not null && Clipboard is { } clipboard:
                 await clipboard.SetTextAsync(path);
-                StatusText.Text = $"Copied {path}";
+                status.Text = $"Copied {path}";
                 break;
             case ExplorerAction.Reveal when path is not null:
                 ChildProcesses.Reveal(path);
@@ -352,7 +352,7 @@ public partial class MainWindow
                 recording => FollowInProjects([.. moves.Select(m => (m.From, PathNames.Canonical(m.To)))], recording));
             FilesChanged();
             Explorer.Reveal(PathNames.Canonical(target));
-            StatusText.Text = $"Renamed {Path.GetFileName(path)} to {name}, and {type.Name} to {renamed} in {files} file{(files == 1 ? "" : "s")}"
+            status.Text = $"Renamed {Path.GetFileName(path)} to {name}, and {type.Name} to {renamed} in {files} file{(files == 1 ? "" : "s")}"
                 + (dropped.Count > 0 ? $", but not in {string.Join(", ", dropped)}: it was edited meanwhile" : string.Empty);
             return null;
         }
@@ -402,7 +402,7 @@ public partial class MainWindow
             }
             if (FollowInProjects([.. moves.Select(m => (m.From, PathNames.Canonical(m.To)))], recording) is { } unfollowed)
             {
-                StatusText.Text = unfollowed;
+                status.Text = unfollowed;
             }
         }
         Explorer.Reveal(PathNames.Canonical(target));
@@ -434,7 +434,7 @@ public partial class MainWindow
         string name = Path.GetFileNameWithoutExtension(project);
         if (Solution is not { } solution || Folder is null)
         {
-            StatusText.Text = $"{name} is in no solution to remove it from";
+            status.Text = $"{name} is in no solution to remove it from";
             return false;
         }
         if (!await Confirm("Remove Project", $"Remove {name} from the solution? Its folder and files stay on disk.", "Remove"))
@@ -443,7 +443,7 @@ public partial class MainWindow
         }
         if (EditSolution(file => SolutionEdits.RemoveProject(file, project), $"Removed {name} from {solution.Name}") is { } problem)
         {
-            StatusText.Text = $"{name} could not be removed: {problem}";
+            status.Text = $"{name} could not be removed: {problem}";
             return false;
         }
         string own = PathNames.Canonical(Path.GetDirectoryName(project)!);
@@ -477,7 +477,7 @@ public partial class MainWindow
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
-            StatusText.Text = $"{what} could not be deleted: {error.Message}";
+            status.Text = $"{what} could not be deleted: {error.Message}";
             return false;
         }
         foreach (OpenDocument document in Editors.Documents.Where(d => PathNames.Within(d.Path, path)).ToList())
@@ -485,7 +485,7 @@ public partial class MainWindow
             Editors.CloseDeleted(document);
         }
         FilesChanged();
-        StatusText.Text = $"Moved {what} to the Trash";
+        status.Text = $"Moved {what} to the Trash";
         return true;
     }
 

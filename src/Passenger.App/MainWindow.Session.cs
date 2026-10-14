@@ -45,7 +45,7 @@ public partial class MainWindow
         cancel => buildRun.BuildAsync(BuildCause.Tests, cancel));
 
     /// <summary>What the builds and runs of this window's sessions show themselves in and start with.</summary>
-    private BuildRunParts BuildRunParts() => new(Bottom, Editors, Dock, () => settings, text => StatusText.Text = text, () => debug, ShowInTerminal,
+    private BuildRunParts BuildRunParts() => new(Bottom, Editors, Dock, () => settings, text => status.Text = text, () => debug, ShowInTerminal,
         OpenBrowserOnceListening, () => StateFolder);
 
     /// <summary>Opens a folder, or a solution (.sln, .slnx) or C# project (.csproj) over its folder, as the workspace; what
@@ -105,7 +105,7 @@ public partial class MainWindow
     {
         // Held while it waits, so a screenshot or a test finds the folder open rather than the moment between.
         using IDisposable held = BackgroundWork.Scope();
-        StatusText.Text = $"Opening {Path.GetFileName(folder)}…";
+        status.Text = $"Opening {Path.GetFileName(folder)}…";
         await ending;
         if (open == opens && Ended is null)
         {
@@ -240,14 +240,14 @@ public partial class MainWindow
     {
         if (service is not null)
         {
-            service.StateChanged += (_, _) => LanguageText.Text = LanguageLabel();
+            service.StateChanged += (_, _) => status.ShowLanguage(LanguageLabel());
             service.StateChanged += (_, _) => usages.Refresh();
-            service.Stopped += (_, message) => StatusText.Text = message;
-            service.Said += (_, said) => Say(said.Text, said.Severity);
+            service.Stopped += (_, message) => status.Text = message;
+            service.Said += (_, said) => status.Say(said.Text, said.Severity);
             WatchProblems(service);
             service.FollowIndent(Editors.Active);
         }
-        LanguageText.Text = LanguageLabel();
+        status.ShowLanguage(LanguageLabel());
         ShowSolutionProblems();
         ShowProjectProblems();
     }

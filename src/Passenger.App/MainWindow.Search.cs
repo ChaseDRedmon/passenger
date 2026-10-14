@@ -50,7 +50,7 @@ public partial class MainWindow
             if (await Confirm("Replace in Files", $"Replace {what} with '{asked.Replacement}'? An open file's change can be undone there; a closed file is written.", "Replace All"))
             {
                 IReadOnlyList<string> converted = ReplaceInFiles(asked.Query, asked.Replacement, [.. asked.Matches.Select(m => m.Path).Distinct()]);
-                StatusText.Text = string.Join("; ", [$"Replaced {what}", .. converted]);
+                status.Text = string.Join("; ", [$"Replaced {what}", .. converted]);
                 await popup.SearchAsync();
             }
         };

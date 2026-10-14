@@ -106,7 +106,7 @@ public partial class MainWindow
     {
         if (vcs.Repository is not { } repository)
         {
-            StatusText.Text = NoRepository;
+            status.Text = NoRepository;
             return null;
         }
         IReadOnlyList<FileChange> files = await vcs.ChangesSinceAsync(branch);

@@ -44,7 +44,7 @@ public partial class MainWindow
     {
         if (vcs.Repository is null || vcs.Conflicts.Count == 0)
         {
-            StatusText.Text = vcs.Repository is null ? NoRepository : "No conflicts found";
+            status.Text = vcs.Repository is null ? NoRepository : "No conflicts found";
             return null;
         }
         if (conflictsDialog is { } open)

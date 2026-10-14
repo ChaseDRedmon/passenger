@@ -60,7 +60,7 @@ public partial class MainWindow
         {
             if (session == next)
             {
-                StatusText.Text = message;
+                status.Text = message;
                 Bottom.Tests.Status = message;
             }
         };
@@ -114,7 +114,7 @@ public partial class MainWindow
         {
             if (await run() is { } problem)
             {
-                StatusText.Text = problem;
+                status.Text = problem;
                 Bottom.Tests.Status = problem;
             }
         }

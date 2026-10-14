@@ -101,7 +101,7 @@ public partial class MainWindow
         {
             if (await DebugAsync() is { } problem)
             {
-                StatusText.Text = problem;
+                status.Text = problem;
             }
         }
     }

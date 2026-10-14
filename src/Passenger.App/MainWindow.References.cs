@@ -20,7 +20,7 @@ public partial class MainWindow
         List<ProjectModel> others = [.. all.Where(p => !PathNames.Same(p.Path, project)).OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase)];
         if (others.Count == 0)
         {
-            StatusText.Text = $"The solution has no other project for {name} to reference";
+            status.Text = $"The solution has no other project for {name} to reference";
             return null;
         }
         HashSet<string> referenced = new(all.FirstOrDefault(p => PathNames.Same(p.Path, project))?.ProjectReferences ?? [], StringComparer.Ordinal);
@@ -67,11 +67,11 @@ public partial class MainWindow
         {
             said.Add($"{name} could not be changed: {error.Message}");
             ReloadSolution();
-            StatusText.Text = string.Join("; ", said);
+            status.Text = string.Join("; ", said);
             return error.Message;
         }
         ReloadSolution();
-        StatusText.Text = string.Join("; ", said);
+        status.Text = string.Join("; ", said);
         return null;
     }
 
@@ -97,7 +97,7 @@ public partial class MainWindow
         {
             ReloadSolution();
         }
-        StatusText.Text = problem is null ? $"Removed the reference to {other} from {name}" : $"{name} could not be changed: {problem}";
+        status.Text = problem is null ? $"Removed the reference to {other} from {name}" : $"{name} could not be changed: {problem}";
         return problem is null;
     }
 

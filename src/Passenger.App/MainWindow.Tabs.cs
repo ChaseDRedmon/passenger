@@ -57,7 +57,7 @@ public partial class MainWindow
         {
             if (Editors.ReopenClosedTab() is { } why)
             {
-                StatusText.Text = why;
+                status.Text = why;
             }
         }, _ => Editors.CanReopen ? null : "No tab has been closed", (2, 0));
         Tab(A.SplitRight, "Split Right", c => Editors.Split(TabOf(c)!.Value.Group, TabOf(c)!.Value.File, Orientation.Horizontal, move: false), NeedsFile, (2, 1));

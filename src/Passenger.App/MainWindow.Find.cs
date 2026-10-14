@@ -68,6 +68,6 @@ public partial class MainWindow
         }
         Find.Show(title, usages);
         ShowToolWindow("find");
-        StatusText.Text = $"{title}: {usages.Count} found";
+        status.Text = $"{title}: {usages.Count} found";
     }
 }
