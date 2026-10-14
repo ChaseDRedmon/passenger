@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using Avalonia;
 using Avalonia.Controls;
 using Passenger.App.Settings;
 
@@ -58,6 +59,85 @@ public static partial class TitleBars
             _ => now == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized,
         };
     }
+
+    /// <summary>Asks the X11 window manager (GNOME's Mutter, KDE's KWin) for its own window menu at a point on the screen,
+    /// as GTK's header bars do on a right click (_GTK_SHOW_WINDOW_MENU); a system without libX11 or a display asks nothing.</summary>
+    public static void ShowWindowMenu(nint window, PixelPoint at)
+    {
+        try
+        {
+            nint display = XOpenDisplay(0);
+            if (display == 0)
+            {
+                return;
+            }
+            try
+            {
+                XClientMessageEvent message = new()
+                {
+                    Type = 33,
+                    SendEvent = 1,
+                    Display = display,
+                    Window = window,
+                    MessageType = XInternAtom(display, "_GTK_SHOW_WINDOW_MENU", 0),
+                    Format = 32,
+                    // The pointer device's id, which GTK sends and the window managers ignore: the core pointer's.
+                    Data0 = 2,
+                    Data1 = at.X,
+                    Data2 = at.Y,
+                };
+                const long SubstructureNotify = 1 << 19, SubstructureRedirect = 1 << 20;
+                XSendEvent(display, XDefaultRootWindow(display), 0, SubstructureNotify | SubstructureRedirect, ref message);
+                XFlush(display);
+            }
+            finally
+            {
+                XCloseDisplay(display);
+            }
+        }
+        catch (Exception error) when (error is DllNotFoundException or EntryPointNotFoundException)
+        {
+            // Not an X11 desktop: there is no window manager to ask.
+        }
+    }
+
+    /// <summary>Xlib's XClientMessageEvent inside XEvent's 24 longs, as a 64-bit Linux lays it out.</summary>
+    [StructLayout(LayoutKind.Explicit, Size = 192)]
+    private struct XClientMessageEvent
+    {
+        [FieldOffset(0)] public int Type;
+        [FieldOffset(8)] public nuint Serial;
+        [FieldOffset(16)] public int SendEvent;
+        [FieldOffset(24)] public nint Display;
+        [FieldOffset(32)] public nint Window;
+        [FieldOffset(40)] public nint MessageType;
+        [FieldOffset(48)] public int Format;
+        [FieldOffset(56)] public nint Data0;
+        [FieldOffset(64)] public nint Data1;
+        [FieldOffset(72)] public nint Data2;
+        [FieldOffset(80)] public nint Data3;
+        [FieldOffset(88)] public nint Data4;
+    }
+
+    private const string X11 = "libX11.so.6";
+
+    [LibraryImport(X11)]
+    private static partial nint XOpenDisplay(nint name);
+
+    [LibraryImport(X11)]
+    private static partial int XCloseDisplay(nint display);
+
+    [LibraryImport(X11)]
+    private static partial nint XDefaultRootWindow(nint display);
+
+    [LibraryImport(X11, StringMarshalling = StringMarshalling.Utf8)]
+    private static partial nint XInternAtom(nint display, string name, int onlyIfExists);
+
+    [LibraryImport(X11)]
+    private static partial int XSendEvent(nint display, nint window, int propagate, long mask, ref XClientMessageEvent message);
+
+    [LibraryImport(X11)]
+    private static partial int XFlush(nint display);
 
     private const string CoreFoundation = "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation";
     private const uint Utf8 = 0x08000100;

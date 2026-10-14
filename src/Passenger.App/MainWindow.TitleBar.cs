@@ -6,6 +6,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Styling;
+using Avalonia.VisualTree;
 using Passenger.App.Settings;
 
 namespace Passenger.App;
@@ -85,11 +86,27 @@ public partial class MainWindow
         }
     }
 
-    /// <summary>A press on the bar's empty space moves the window, and a double click does what the system's title bar's
-    /// does. Where Windows has the bar's roles the press never comes here: Windows takes it as its own caption's.</summary>
+    /// <summary>Window menus a right press on the bar's empty space asked Linux's window manager for: what a test reads.</summary>
+    public int WindowMenusAsked { get; private set; }
+
+    /// <summary>A press on the bar's empty space moves the window, a double click does what the system's title bar's does,
+    /// and on Linux a right press shows the window manager's window menu, as on its own title bar. Where Windows has the
+    /// bar's roles the press never comes here: Windows takes it as its own caption's.</summary>
     private void OnToolbarPressed(object? sender, PointerPressedEventArgs e)
     {
-        if (!TitleBarMerged || !e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
+        PointerPointProperties pressed = e.GetCurrentPoint(this).Properties;
+        if (TitleBarMerged && TitleBars.Offered && pressed.IsRightButtonPressed
+            && (e.Source as Visual)?.FindAncestorOfType<Button>(includeSelf: true) is null)
+        {
+            WindowMenusAsked++;
+            if (TryGetPlatformHandle() is { HandleDescriptor: "XID" } handle)
+            {
+                TitleBars.ShowWindowMenu(handle.Handle, this.PointToScreen(e.GetPosition(this)));
+            }
+            e.Handled = true;
+            return;
+        }
+        if (!TitleBarMerged || !pressed.IsLeftButtonPressed)
         {
             return;
         }

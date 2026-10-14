@@ -13,9 +13,9 @@ namespace Passenger.Tests;
 /// <summary>The toolbar is the main window's title bar, as Rider's main toolbar is: the window's title (solution and
 /// file) still named for the taskbar, Alt+Tab and Mission Control, the bar's empty space moving the window and a double
 /// click on it maximizing it, what is on the bar keeping its own clicks; the window's buttons at its right on Windows and
-/// Linux, macOS's traffic lights' room at its left; and on Linux alone Rider's choice of the merged bar, off at first.
-/// Where Windows decides what a press in the bar is (its caption, a button, the bar's own), the roles it asks are
-/// checked, as no test sees the system's own window.</summary>
+/// Linux, macOS's traffic lights' room at its left; and on Linux alone Rider's choice of the merged bar, off at first, a
+/// right press on it showing the window manager's menu. Where Windows decides what a press in the bar is (its caption, a
+/// button, the bar's own), the roles it asks are checked, as no test sees the system's own window.</summary>
 public sealed class TitleBarTests : IDisposable
 {
     private readonly string folder = TestFolders.Create("title-bar-");
@@ -152,6 +152,12 @@ public sealed class TitleBarTests : IDisposable
             "Turned on, the toolbar did not become the title bar with the window's buttons");
         Click(window, EmptySpace(window));
         Assert.True(window.MovesStarted == 1, "The merged title bar's empty space did not move the window");
+        // A right press there asks the window manager for its window menu, as on its own title bar; one on a button not.
+        RightClick(window, EmptySpace(window));
+        Button settings = Bar(window).GetVisualDescendants().OfType<Button>().Single(b => ToolTip.GetTip(b) as string == "Settings");
+        RightClick(window, Centre(window, settings));
+        Assert.True(window.WindowMenusAsked == 1, $"Right presses on the merged bar asked for the window manager's menu {window.WindowMenusAsked} times, not once (on its empty space)");
+        Assert.True(window.MovesStarted == 1, "A right press on the merged bar moved the window");
 
         dialog = window.ShowSettings();
         Ui.Settle();
@@ -206,6 +212,13 @@ public sealed class TitleBarTests : IDisposable
     {
         window.MouseDown(at, MouseButton.Left);
         window.MouseUp(at, MouseButton.Left);
+        Ui.Settle();
+    }
+
+    private static void RightClick(MainWindow window, Point at)
+    {
+        window.MouseDown(at, MouseButton.Right);
+        window.MouseUp(at, MouseButton.Right);
         Ui.Settle();
     }
 
