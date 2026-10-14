@@ -126,7 +126,8 @@ public partial class MainWindow
     };
 
     /// <summary>An entry of a menu in the window (the menu button's, a context menu): its action's title and one-key
-    /// shortcut, disabled where it cannot run in the context the menu opened in, and run there when chosen.</summary>
+    /// shortcut, or its chord where it has none, disabled where it cannot run in the context the menu opened in, and run
+    /// there when chosen.</summary>
     private Control FlyoutEntry(MenuEntry entry, ActionContext context)
     {
         if (entry.IsSeparator)
@@ -157,6 +158,10 @@ public partial class MainWindow
         IdeAction action = actions![entry.Action!]!;
         // The gesture is shown, not bound: the window's keymap runs the keys.
         MenuItem actionItem = new() { Header = action.TitleWhere(context), InputGesture = actions.Gesture(action.Id), IsEnabled = action.CanRun(context) };
+        if (actionItem.InputGesture is null && actions.Keymap.ShortcutsFor(action.Id).FirstOrDefault() is { Second: not null } chord)
+        {
+            ShowChord(actionItem, chord);
+        }
         if (action.IsChecked is { } isChecked)
         {
             actionItem.ToggleType = MenuItemToggleType.CheckBox;
@@ -165,6 +170,17 @@ public partial class MainWindow
         actionItem.Click += (_, _) => RunFromMenu(action.Id, context);
         return actionItem;
     }
+
+    /// <summary>A chord in an item's shortcut column, as Rider's own menus show one ("⌘E, C"): a KeyGesture holds one
+    /// keystroke, so the text Fluent's item draws its gesture with is given the chord. macOS's menu bar gets none, since
+    /// a key equivalent there would take the chord's first key before the window could wait for its second.</summary>
+    private static void ShowChord(MenuItem item, Shortcut chord) => item.TemplateApplied += (_, e) =>
+    {
+        if (e.NameScope.Find<TextBlock>("PART_InputGestureText") is { } keys)
+        {
+            keys.Text = chord.Display();
+        }
+    };
 
     /// <summary>A menu item chosen: its action run where its keys would have gone, in the context its menu opened in when
     /// that is known. False when it cannot run there, which the status bar says.</summary>

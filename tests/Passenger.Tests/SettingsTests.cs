@@ -92,12 +92,6 @@ public sealed class SettingsTests : IDisposable
             string saveAll = Ui.Shortcut(AppActions.SaveAll);
             dialog.Rebind(AppActions.SplitDown, saveAll);
             Assert.Empty(AppActions.Keymap(dialog.Working.Shortcuts).ShortcutsFor(AppActions.SaveAll));
-
-            // Add... takes the next keys pressed as one more shortcut.
-            dialog.Capture(AppActions.MoveToOppositeGroup);
-            dialog.KeyPress(Avalonia.Input.Key.F8, Avalonia.Input.RawInputModifiers.Shift, Avalonia.Input.PhysicalKey.None, null);
-            Ui.Settle();
-            Assert.Equal(["shift F8"], dialog.Working.Shortcuts[AppActions.MoveToOppositeGroup]);
             dialog.Ok();
             Ui.Settle();
 

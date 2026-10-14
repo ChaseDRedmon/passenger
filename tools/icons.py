@@ -104,6 +104,8 @@ ICONS = [
     # The NuGet window's Sources tab: a feed's Edit, and the lock of one whose nuget.config holds its credentials.
     ("Edit", "Edit", "16_regular"),
     ("Lock", "Lock Closed", "16_regular"),
+    # Settings' Keymap: Find Actions by Shortcut, Rider's keyboard with a magnifier over it (Search drawn on it).
+    ("Keyboard", "Keyboard", "20_regular"),
 ]
 
 

@@ -36,9 +36,11 @@ public readonly record struct Keystroke(Key Key, KeyModifiers Modifiers)
 
     public static Keystroke From(KeyEventArgs e) => new(e.Key, e.KeyModifiers);
 
-    /// <summary>For menus and tooltips: ⌘⇧L on macOS, Ctrl+Shift+L elsewhere.</summary>
+    /// <summary>For menus and tooltips: ⌘⇧L on macOS, Ctrl+Shift+L elsewhere, a key named as Rider names it (its Mac
+    /// symbols for Return, Escape, Tab and the keys around them).</summary>
     public string Display()
     {
+        bool mac = OperatingSystem.IsMacOS();
         string key = Key switch
         {
             Key.OemPeriod => ".",
@@ -52,8 +54,15 @@ public readonly record struct Keystroke(Key Key, KeyModifiers Modifiers)
             Key.OemPlus => "=",
             Key.OemMinus => "-",
             Key.OemTilde => "`",
-            Key.Back => OperatingSystem.IsMacOS() ? "⌫" : "Backspace",
-            Key.Return => OperatingSystem.IsMacOS() ? "↩" : "Enter",
+            Key.Back => mac ? "⌫" : "Backspace",
+            Key.Return => mac ? "⏎" : "Enter",
+            Key.Escape => mac ? "⎋" : "Escape",
+            Key.Tab => mac ? "⇥" : "Tab",
+            Key.Delete => mac ? "⌦" : "Delete",
+            Key.Home => mac ? "↖" : "Home",
+            Key.End => mac ? "↘" : "End",
+            Key.PageUp => mac ? "⇞" : "Page Up",
+            Key.PageDown => mac ? "⇟" : "Page Down",
             Key.Up => "↑",
             Key.Down => "↓",
             Key.Left => "←",
@@ -61,7 +70,7 @@ public readonly record struct Keystroke(Key Key, KeyModifiers Modifiers)
             >= Key.D0 and <= Key.D9 => ((char)('0' + (Key - Key.D0))).ToString(),
             _ => Key.ToString(),
         };
-        if (OperatingSystem.IsMacOS())
+        if (mac)
         {
             string mods = (Modifiers.HasFlag(KeyModifiers.Control) ? "⌃" : "") + (Modifiers.HasFlag(KeyModifiers.Alt) ? "⌥" : "")
                 + (Modifiers.HasFlag(KeyModifiers.Shift) ? "⇧" : "") + (Modifiers.HasFlag(KeyModifiers.Meta) ? "⌘" : "");
@@ -159,9 +168,14 @@ public sealed record Shortcut(Keystroke First, Keystroke? Second = null)
         };
     }
 
+    /// <summary>As Rider shows it: "⌘K, ⌘C" for a chord (Ctrl+K, Ctrl+C elsewhere).</summary>
     public string Display() => Second is { } second ? $"{First.Display()}, {second.Display()}" : First.Display();
 
     public string Notation() => Second is { } second ? $"{First.Notation()} , {second.Notation()}" : First.Notation();
+
+    /// <summary>Whether this is pressed by starting with that, as Rider's Find Actions by Shortcut matches: the same first
+    /// keystroke, and the same second when that names one.</summary>
+    public bool StartsWith(Shortcut prefix) => First == prefix.First && (prefix.Second is null || prefix.Second == Second);
 }
 
 /// <summary>Which shortcuts run which action. An action is a name from <see cref="EditorActions"/>
@@ -229,6 +243,14 @@ public sealed class Keymap
         byAction.TryGetValue(action, out List<Shortcut>? list) ? list : [];
 
     public string? ActionFor(Shortcut shortcut) => byShortcut.GetValueOrDefault(shortcut);
+
+    /// <summary>The other actions' shortcuts that clash with one, as Rider's keymap finds them: the same first keystroke
+    /// and, unless either is one keystroke alone, the same second. So a chord clashes with the key that begins it, which
+    /// would run before the chord's second key could be pressed, and a key with every chord it begins.</summary>
+    public IReadOnlyList<(string Action, Shortcut Shortcut)> Conflicts(string action, Shortcut shortcut) =>
+        [.. byAction.Where(pair => pair.Key != action).SelectMany(pair => pair.Value
+            .Where(theirs => theirs.First == shortcut.First && (theirs.Second is null || shortcut.Second is null || theirs.Second == shortcut.Second))
+            .Select(theirs => (pair.Key, theirs)))];
 
     public bool StartsChord(Keystroke first) => byShortcut.Keys.Any(s => s.Second is not null && s.First == first);
 

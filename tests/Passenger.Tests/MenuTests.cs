@@ -2,6 +2,7 @@ using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
+using Avalonia.VisualTree;
 using Passenger.App;
 using Passenger.Editor;
 
@@ -80,6 +81,30 @@ public sealed class MenuTests : IDisposable
         query.CaretIndex = 3;
         Item(Open(bar, "Edit"), "Select All").Command!.Execute(null);
         Assert.Equal(3, query.SelectionEnd - query.SelectionStart);
+        window.Close();
+    }
+
+    /// <summary>A menu in the window shows an action whose keys are all chords with its first chord, as Rider's menus show
+    /// one ("⌘E, C" for Code Cleanup), where a gesture could hold only one keystroke.</summary>
+    [AvaloniaFact]
+    public void The_editors_menu_shows_a_chord_for_an_action_whose_keys_are_all_chords()
+    {
+        File.WriteAllText(Path.Combine(folder, "One.cs"), "class One { }\n");
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(folder);
+        window.OpenFile("One.cs");
+        Ui.Settle();
+        window.EditorArea.CodeEditor.Focus();
+        Ui.Run(window, AppActions.ShowContextMenu);
+        Ui.WaitFor(() => window.OpenContextMenu is not null, "the editor's menu");
+        Ui.Settle();
+        Shortcut chord = AppActions.Keymap().ShortcutsFor(AppActions.CodeCleanup)[0];
+        Assert.NotNull(chord.Second);
+        MenuItem cleanup = window.OpenContextMenu!.Items.OfType<MenuItem>().First(i => i.Header as string == "Code Cleanup");
+        string? shown = cleanup.GetVisualDescendants().OfType<TextBlock>().FirstOrDefault(t => t.Name == "PART_InputGestureText")?.Text;
+        Assert.True(shown == chord.Display(), $"Code Cleanup's item shows '{shown}' for its keys, not {chord.Display()}");
+        window.OpenContextMenu.Close();
         window.Close();
     }
 

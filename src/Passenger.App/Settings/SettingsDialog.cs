@@ -10,7 +10,7 @@ namespace Passenger.App.Settings;
 /// <summary>Rider's Settings: the pages down the left under a search box, the chosen page's options on the right,
 /// OK, Cancel and Apply below. A search keeps the pages with an option whose words match and shows only those options,
 /// as Rider's search narrows the tree. The options edit a copy, which Apply and OK hand back.</summary>
-public sealed class SettingsDialog : Window
+public sealed partial class SettingsDialog : Window
 {
     public const string Appearance = "Appearance";
     public const string SystemPage = "System Settings";
@@ -46,9 +46,9 @@ public sealed class SettingsDialog : Window
     private readonly TextBlock heading;
     private readonly StackPanel body;
     private readonly TextBlock nothing;
-    private readonly Dictionary<string, TextBlock> shortcutTexts = [];
-    private TextBlock? keymapNote;
-    private string? capturing;
+
+    /// <summary>What a page keeps above its options as they scroll (the Keymap page's toolbar).</summary>
+    private readonly Decorator pageTop = new();
 
     public SettingsDialog(AppSettings current, ActionRegistry actions, Action<AppSettings> apply)
     {
@@ -97,7 +97,9 @@ public sealed class SettingsDialog : Window
         bottom.Bind(Border.BorderBrushProperty, bottom.GetResourceObservable("Passenger.Divider"));
         DockPanel right = new() { Margin = new Thickness(20, 16, 20, 0) };
         DockPanel.SetDock(heading, Dock.Top);
+        DockPanel.SetDock(pageTop, Dock.Top);
         right.Children.Add(heading);
+        right.Children.Add(pageTop);
         right.Children.Add(new ScrollViewer { Content = body });
         Border editorPane = new() { Child = right };
         editorPane.Bind(Border.BackgroundProperty, editorPane.GetResourceObservable("Passenger.Editor.Background"));
@@ -111,7 +113,6 @@ public sealed class SettingsDialog : Window
         Content = root;
         Filter();
         Opened += (_, _) => Dispatcher.UIThread.Post(() => search.Focus(), DispatcherPriority.Loaded);
-        AddHandler(KeyDownEvent, OnCaptureKey, Avalonia.Interactivity.RoutingStrategies.Tunnel);
     }
 
     /// <summary>The settings as the options now stand.</summary>
@@ -154,13 +155,18 @@ public sealed class SettingsDialog : Window
     private void Filter()
     {
         string[] words = Query.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        Func<Option, bool> byShortcut = ShortcutFiltered();
         foreach (Option option in options)
         {
-            option.Row.IsVisible = words.All(w => option.Words.Contains(w, StringComparison.OrdinalIgnoreCase));
+            option.Row.IsVisible = words.All(w => option.Words.Contains(w, StringComparison.OrdinalIgnoreCase)) && byShortcut(option);
         }
         string? was = Page;
-        string[] listed = [.. Order.Where(p => options.Any(o => o.Page == p && o.Row.IsVisible))];
-        pages.ItemsSource = listed;
+        string[] listed = [.. Order.Where(p => options.Any(o => o.Page == p && o.Row.IsVisible) || (p == KeymapPage && shortcutFilter is not null))];
+        // A new list chooses no page for a moment, which would take the Keymap page's top, Find Shortcut with it, away.
+        if (!listed.SequenceEqual(Pages))
+        {
+            pages.ItemsSource = listed;
+        }
         nothing.IsVisible = listed.Length == 0;
         pages.SelectedItem = listed.Contains(was) ? was : listed.FirstOrDefault();
         ShowPage();
@@ -170,6 +176,7 @@ public sealed class SettingsDialog : Window
     {
         body.Children.Clear();
         heading.Text = Page ?? string.Empty;
+        pageTop.Child = Page == KeymapPage ? keymapHeader : null;
         foreach (Option option in options.Where(o => o.Page == Page))
         {
             body.Children.Add(option.Row);
@@ -334,90 +341,7 @@ public sealed class SettingsDialog : Window
             "Each program the IDE runs (git, dotnet, the servers) is written to passenger.log with its exit code and time. "
             + "Otherwise only those that fail or take a second or more are.");
 
-        keymapNote = new TextBlock { TextWrapping = TextWrapping.Wrap, IsVisible = false };
-        keymapNote.Bind(TextBlock.ForegroundProperty, keymapNote.GetResourceObservable("Passenger.TextMuted"));
-        Add(KeymapPage, $"{keymap.Name} keymap", keymapNote, "keymap shortcut binding keys");
-        foreach (IdeAction action in actions.All.OrderBy(a => a.Title, StringComparer.Ordinal))
-        {
-            TextBlock keys = new() { VerticalAlignment = VerticalAlignment.Center, Width = 200, TextTrimming = TextTrimming.CharacterEllipsis };
-            keys.Bind(TextBlock.ForegroundProperty, keys.GetResourceObservable("Passenger.TextMuted"));
-            shortcutTexts[action.Id] = keys;
-            Button add = new() { Content = "Add...", Padding = new Thickness(8, 2) };
-            add.Click += (_, _) => Capture(action.Id);
-            Button remove = new() { Content = "Remove", Padding = new Thickness(8, 2) };
-            remove.Click += (_, _) => Rebind(action.Id);
-            Button reset = new() { Content = "Reset", Padding = new Thickness(8, 2) };
-            reset.Click += (_, _) => ResetShortcuts(action.Id);
-            StackPanel editor = new() { Orientation = Orientation.Horizontal, Spacing = 6, Children = { keys, add, remove, reset } };
-            Add(KeymapPage, action.Title, editor, $"{action.Group} {actions.Shortcut(action.Id)} keymap shortcut");
-        }
-        ShowShortcuts();
-    }
-
-    /// <summary>Gives an action exactly these shortcuts (keymap notation, "meta shift K"); none unbinds it. A shortcut
-    /// another action had is taken from it, and the page says so.</summary>
-    public void Rebind(string action, params string[] shortcuts)
-    {
-        Keymap before = AppActions.Keymap(Working.Shortcuts);
-        List<string> taken = [];
-        foreach (string text in shortcuts)
-        {
-            if (before.ActionFor(Shortcut.Parse(text)) is { } other && other != action)
-            {
-                taken.Add($"{Shortcut.Parse(text).Display()} was {actions[other]?.Title ?? other}'s");
-                // The other action keeps its remaining shortcuts as its own.
-                Working = Working with { Shortcuts = new(Working.Shortcuts) { [other] = [.. before.ShortcutsFor(other).Where(s => s != Shortcut.Parse(text)).Select(s => s.Notation())] } };
-            }
-        }
-        Working = Working with { Shortcuts = new(Working.Shortcuts) { [action] = shortcuts } };
-        ShowShortcuts();
-        keymapNote!.Text = taken.Count > 0 ? string.Join("; ", taken) + "." : string.Empty;
-        keymapNote.IsVisible = taken.Count > 0;
-    }
-
-    /// <summary>Puts an action's shortcuts back as the keymap has them.</summary>
-    public void ResetShortcuts(string action)
-    {
-        Dictionary<string, string[]> shortcuts = new(Working.Shortcuts);
-        shortcuts.Remove(action);
-        Working = Working with { Shortcuts = shortcuts };
-        ShowShortcuts();
-    }
-
-    /// <summary>The next keys pressed become one more shortcut of an action, as Rider's Add Keyboard Shortcut does.</summary>
-    public void Capture(string action)
-    {
-        capturing = action;
-        shortcutTexts[action].Text = "Press the keys...";
-    }
-
-    private void ShowShortcuts()
-    {
-        Keymap current = AppActions.Keymap(Working.Shortcuts);
-        foreach ((string action, TextBlock text) in shortcutTexts)
-        {
-            IReadOnlyList<Shortcut> keys = current.ShortcutsFor(action);
-            text.Text = keys.Count == 0 ? "No shortcut" : string.Join(", ", keys.Select(k => k.Display()));
-        }
-    }
-
-    /// <summary>Seen before the focused control: the keys being captured are a shortcut, not typing.</summary>
-    private void OnCaptureKey(object? sender, Avalonia.Input.KeyEventArgs e)
-    {
-        if (capturing is { } action && e.Key is not (Avalonia.Input.Key.LeftShift or Avalonia.Input.Key.RightShift or Avalonia.Input.Key.LeftCtrl
-            or Avalonia.Input.Key.RightCtrl or Avalonia.Input.Key.LeftAlt or Avalonia.Input.Key.RightAlt or Avalonia.Input.Key.LWin or Avalonia.Input.Key.RWin))
-        {
-            capturing = null;
-            e.Handled = true;
-            if (e.Key == Avalonia.Input.Key.Escape && e.KeyModifiers == Avalonia.Input.KeyModifiers.None)
-            {
-                ShowShortcuts();
-                return;
-            }
-            Shortcut pressed = new(Keystroke.From(e));
-            string[] keep = [.. AppActions.Keymap(Working.Shortcuts).ShortcutsFor(action).Select(s => s.Notation())];
-            Rebind(action, [.. keep, pressed.Notation()]);
-        }
+        AddKeymap(keymap);
     }
 
     /// <summary>A page that is one control of its own (the live templates' list and editor), the whole of its width, found
@@ -425,8 +349,8 @@ public sealed class SettingsDialog : Window
     private void AddPage(string page, Control content, string keywords) => options.Add(new Option(page, page, content, $"{page} {keywords}"));
 
     /// <summary>An option's row: its label, what edits it, and a note under the editor when it needs saying what it
-    /// does.</summary>
-    private void Add(string page, string label, Control editor, string keywords, string? note = null)
+    /// does; a keymap row names its action.</summary>
+    private Control Add(string page, string label, Control editor, string keywords, string? note = null, string? action = null)
     {
         TextBlock name = new() { Text = label, Width = 220, TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center };
         Control row = new StackPanel { Orientation = Orientation.Horizontal, Children = { name, editor } };
@@ -436,7 +360,8 @@ public sealed class SettingsDialog : Window
             said.Bind(TextBlock.ForegroundProperty, said.GetResourceObservable("Passenger.TextMuted"));
             row = new StackPanel { Spacing = 4, Children = { row, said } };
         }
-        options.Add(new Option(page, label, row, $"{page} {label} {keywords}"));
+        options.Add(new Option(page, label, row, $"{page} {label} {keywords}", action));
+        return row;
     }
 
     private static NumericUpDown Number(double value, double min, double max, double step, Action<double> changed)
@@ -459,5 +384,5 @@ public sealed class SettingsDialog : Window
         return box;
     }
 
-    private sealed record Option(string Page, string Label, Control Row, string Words);
+    private sealed record Option(string Page, string Label, Control Row, string Words, string? Action = null);
 }
