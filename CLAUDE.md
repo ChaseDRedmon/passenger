@@ -54,7 +54,9 @@ artifacts/bin/Passenger.App/debug/Passenger . --file src/Passenger.App/App.axaml
 A step after one that opens a dialog goes to that dialog, as a person's keys and clicks would. `--key` takes
 "cmd+shift+L" or Rider's "meta shift L"; `--drag X1,Y1,X2,Y2` drags (`--drag-hold` keeps the button down,
 to capture a tool window over its drop place); `--right-click X,Y` opens the menu of what is there; `--crop X,Y,W,H`,
-`--click X,Y` and `--hover X,Y` (the pointer left to rest, for a hover card) are in logical units; `--wait MS` gives a running program time.
+`--click X,Y` and `--hover X,Y` (the pointer left to rest, for a hover card) are in logical units; `--click-name NAME`
+clicks the visible control of that x:Name at its centre (a name none has ends it with exit code 2); `--wait MS` gives a
+running program time.
 
 Headless, the dispatcher's timers (the editor's hover, a caret's blink) fire only inside a running dispatcher frame,
 never from running its queued jobs: a wait that needs one pumps a frame (`Screenshot.Pump`, `Ui.WaitFor` in tests).
@@ -119,8 +121,16 @@ window or takes the focus; it shows everything but the system's own window chrom
   MarkupExtension, positions kept, tolerant of half-typed markup), `Metadata` (a TypeSystem over the project's
   assemblies through System.Reflection.Metadata and its C# through Roslyn's parser), `Projects` (ProjectInputs reads
   project.assets.json; XamlProjectBuilder keeps a project's types and XAML under its own lock), `Dialects`
-  (AvaloniaDialect) and `Features` (XamlCompletion, XamlDiagnostics, XamlNavigation, ThemeVariants, Colours). Not
+  (AvaloniaDialect, WpfDialect) and `Features` (XamlCompletion, XamlDiagnostics, XamlNavigation, ThemeVariants, Colours). Not
   Avalonia.Ide.CompletionEngine, which is archived, predates Avalonia 12 and went with AvaloniaVS into Accelerate.
+  A project's dialect is the framework it references (`XamlProjectBuilder.DialectOf`): Avalonia's package, or WPF's
+  shared framework (restore's Microsoft.WindowsDesktop.App[.WPF], else UseWPF); any other's .xaml (MAUI, WinUI) gets no
+  XAML service. WPF's types come from the WindowsDesktop reference pack, read from where restore put it
+  (EnableWindowsTargeting off Windows) before the SDK's packs. Design-time data-context hints (d:DesignInstance,
+  DataContext, an items control's ItemsSource for its templates and columns) are read only where the dialect compiles
+  no binding, so Avalonia's compiled bindings read x:DataType alone. MarkupCompile's errors (MC####) mark their lines as
+  AVLN's do; a named WPF element's code-behind field is MarkupCompile's `obj/…/File.g.cs` (the server's design-time
+  build writes it), found from C# by its `#line`. XAML Preview on a WPF file says WPF has none.
   `src/Passenger.App/Xaml`: `XamlService` is the session's (`ProjectSession.Xaml`), one `XamlDocument` per open XAML
   file, projects read off the UI thread, told each build's AVLN problems; `LibrarySources` decompiles a library's
   type read-only; `SourceLink` fetches a theme's XAML through its PDB's Source Link from symbols.nuget.org (whose
@@ -271,7 +281,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   `HeapGraph.StaticBases` reaches ISOSDacInterface14 through ClrMD's private fields: a ClrMD update keeps
   `MemorySnapshotsTests` passing.
 - `src/Passenger.Terminal`: the terminal. `TerminalScreen` is the VT emulator (no UI), `TerminalView` draws it and
-  encodes the keys, `TerminalSession` runs the shell in a pseudo-terminal (Porta.Pty). `MainWindow.Terminal.cs` is its
+  encodes the keys, `TerminalSession` runs the shell in a pseudo-terminal (Porta.Pty); on Windows PowerShell is told
+  `HISTFILE` as PSReadLine's `HistorySavePath` before its first prompt, so a test's or screenshot's never reaches the
+  person's history. `MainWindow.Terminal.cs` is its
   tool window and the keys it takes ahead of the IDE's.
 - `src/Passenger.App/Run` and `ToolWindows`: build and run through the .NET command line
   (`ProcessRunner` streams a process into a document; `BuildOutput` reads MSBuild's error lines),
@@ -329,7 +341,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   every move through `EditorArea.MoveFile` so open files, breakpoints and bookmarks follow.
   `EditorConfig` reads the .editorconfig files over a file (its own parser and globs); `FileIndent` picks a file's
   indent (its .editorconfig, else `Indentation.Detect` on its lines, else its language) and names it in the status bar;
-  `OpenDocument.Save` applies the save-time properties. Every edit from the language server goes through
+  `OpenDocument.Save` applies the save-time properties; a project edit or a save waits out a reader that shares no
+  writes (Windows refuses the write while a project load reads the file) for up to 2 s (`FileText.WhileHeld`). Every
+  edit from the language server goes through
   `LineEndings.Fit`, then `Indentation.Fit`. `OpenDocument` keeps how its file is stored, encoding, BOM and
   `LineSeparator` (a CR file's breaks are held as '\n' and written as '\r'); the status bar's widgets and File > File
   Encoding / Line Separators change them (`MainWindow.FileProperties.cs`), each one undoable step, a choice winning
@@ -413,7 +427,13 @@ window or takes the focus; it shows everything but the system's own window chrom
   the temp folder (macOS allows 104 characters). `Protocol.cs` is compiled into both ends, deeper than System.Text.Json's
   default 64. `App/LiveTree/LiveApp` is Passenger's end (the session's, ended with its debugging); `LiveTreeController`
   and `LiveTreeView` are the window, which asks nothing while the app is paused. Why a style fails is read from its
-  selector's text (`Selectors.cs`); whether it applies is always Avalonia's answer. Agents' tools ask the same `LiveApp`.
+  selector's text (`Selectors.cs`); whether it applies is always Avalonia's answer. Agents' tools (`app_*`,
+  `Mcp/PassengerTools.App.cs`) ask the same inspector: its windows, the tree with each element's box, text and state,
+  `capture` (`Pictures.cs`: the window rendered by the app at a scale, its popups drawn over it) and `input`
+  (`Driver.cs`: raw input into the window's `ITopLevelImpl.Input` with a mouse device of its own, so the window is never
+  activated and the real pointer never moves, waiting for a rendered frame before and after, since hit testing reads
+  the last one). `LiveTree/AppQuery` is how an agent names elements (`@id`, type, #name, .class, "text", steps by /,
+  [n]); `LiveApp.Own()` loads the inspector into Passenger itself for `app: ide`, once per process.
   The inspector also takes Avalonia's logger before the app's Main (`Bindings.cs`, put back over any sink the app sets,
   which is still fed) and tells of each failed binding (`bindingFailed`: control, property, path, message, XAML place,
   and for a member the source's type lacks its nearest members) once, then its count at most every 250 ms. Run gives an
@@ -512,7 +532,10 @@ log, history or Git signing and hooks. No test reaches GitHub: the run points `P
 address, and a test that needs releases gives its window a `Releases` feed of its own (`UpdatesTests`); one that tests
 an update gives its window the updater of a copy installed in a test folder, and no other window has one. After every window test, pass or fail, the windows it left open are closed,
 what they started is waited out and its folders are removed (`TestsLeaveNothingBehind`), so one failure never
-cascades into the next test's waits. A Mac that sleeps during a run fails tests with "Background work never finished"
+cascades into the next test's waits. A plain `[Fact]` that runs window code through `HeadlessUnitTestSession.Dispatch`
+must not end on the session's thread (the next window test would wait on it for good): it hands a failure back as the
+run's answer and `await Task.Yield()`s before throwing. After a resume, a debugging test waits for the session to leave
+the stop before waiting for Ended or Paused. A Mac that sleeps during a run fails tests with "Background work never finished"
 (Settle's limits are wall-clock); `pmset -g log` shows the sleeps, and the lead's full runs go under `caffeinate -is`.
 
 What runs beside what is chosen (`Collections.cs`): window tests run one at a time on Avalonia's session thread and, as
@@ -549,12 +572,20 @@ The run's IDE keeps dotnet new templates in its own home (DOTNET_CLI_HOME) on ma
 local feed (Avalonia.Templates at `AvaloniaTemplatesVersion`, downloaded at restore by a `PackageDownload` and copied
 from the package cache), so installs never reach nuget.org; `UseFeed(folder)` points a folder's nuget.config at it
 alone. `NewSolutionTests` installs Avalonia's templates through New Solution and runs the app it made headless.
+`WpfXamlTests`' app (`WpfApp`, `dotnet new wpf` at the test project's own target) restores from that feed alone:
+Microsoft.WindowsDesktop.App.Ref is a `PackageDownload` at Directory.Packages.props' `WindowsDesktopRefVersion`, which
+the tests check against the version the SDK's KnownFrameworkReference gives the target, failing with the version to
+pin when an SDK changes it; off Windows the app sets EnableWindowsTargeting and MarkupCompile builds it there too.
 
 The MCP server's tests (`McpTests`) are agents using the SDK's own client: one starts `Passenger --mcp` and debugs a
 project through it, others attach to a window with `--mcp-attach` (its sockets under the run's
 `PASSENGER_SETTINGS`) and change what the window shows, once it lets them in and the person answers its questions.
 An agent that gives up on a call sends the protocol's "cancelled" notification itself (`CallGivingUp`): the C# SDK's
-client can drop its own when the call's token is cancelled.
+client can drop its own when the call's token is cancelled. `McpTests.AvaloniaApp.cs` drive `tests/Debuggees/AgentApp`
+(headless, its popups windows of their own; `AgentAppFolder` writes and restores it once per class from
+`AvaloniaApp.HeadlessProject()`, which LiveTreeApp and BindingErrorsApp also use). The Windows on Arm VM runs a test
+filter on a commit with `~/Documents/passenger-vm/vm-test.sh NAME FILTER` (66–120 min for the whole suite, by the Mac's
+load); the VM can't see dot folders, and a batch file in the share runs as `powershell -Command "& cmd.exe /c '…'"`.
 
 ## Code style
 
