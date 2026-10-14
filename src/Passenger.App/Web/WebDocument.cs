@@ -23,11 +23,17 @@ public sealed class WebDocument : IServerDocument, IDisposable
     private TextRange[] ranges = [];
     private IReadOnlyList<Diagnostic>? placed = [];
 
+    /// <summary>The file's markers from its own server, and from ESLint, which the editor shows together.</summary>
+    private IReadOnlyList<Marker> own = [];
+    private IReadOnlyList<Marker> lint = [];
+
     internal WebDocument(OpenDocument document, WebServerKind kind, string languageId)
     {
         this.document = document;
         Kind = kind;
         LanguageId = languageId;
+        // What a server before this one marked moves with the text until this one says otherwise.
+        own = document.Markers;
         document.Text.Changed += OnChanged;
         document.Saved += OnSaved;
     }
@@ -47,6 +53,16 @@ public sealed class WebDocument : IServerDocument, IDisposable
     public bool Provides(string capability) => session?.Server.Provides(capability) == true;
 
     public IReadOnlyList<Diagnostic> Diagnostics => placed ??= DiagnosticMarks.Placed(document.Text.Snapshot, found, ranges);
+
+    /// <summary>ESLint's share of the file, while ESLint checks it.</summary>
+    public EslintDocument? Lint { get; set; }
+
+    /// <summary>ESLint's problems, shown with the server's own.</summary>
+    public void ShowLint(IReadOnlyList<Marker> markers)
+    {
+        lint = markers;
+        document.Markers = [.. own, .. lint];
+    }
 
     internal void Connect(LanguageSession started)
     {
@@ -86,9 +102,11 @@ public sealed class WebDocument : IServerDocument, IDisposable
             }
             placed = null;
         }
-        if (document.Markers.Count > 0)
+        if (own.Count + lint.Count > 0)
         {
-            document.Markers = [.. document.Markers.Select(m => m with { Range = TextEditing.MapRange(m.Range, e.Edits) })];
+            own = [.. own.Select(m => m with { Range = TextEditing.MapRange(m.Range, e.Edits) })];
+            lint = [.. lint.Select(m => m with { Range = TextEditing.MapRange(m.Range, e.Edits) })];
+            document.Markers = [.. own, .. lint];
         }
         Pull(Settle);
     }
@@ -174,7 +192,8 @@ public sealed class WebDocument : IServerDocument, IDisposable
         ranges = [.. found.Select(d => DiagnosticMarks.Offsets(lines, d.Range))];
         placed = diagnostics;
         // The server's own codes stay with the diagnostics, which its quick fixes are asked for by.
-        document.Markers = [.. found.Select((d, i) => DiagnosticMarks.Marker(Named(d), ranges[i])).OfType<Marker>()];
+        own = [.. found.Select((d, i) => DiagnosticMarks.Marker(Named(d), ranges[i])).OfType<Marker>()];
+        document.Markers = [.. own, .. lint];
     }
 
     /// <summary>A diagnostic with the code Rider shows before its message: TypeScript's as TS2322 (from its own server, or
@@ -188,6 +207,7 @@ public sealed class WebDocument : IServerDocument, IDisposable
             Range = diagnostic.Range,
             Severity = diagnostic.Severity,
             Code = code is null ? null : System.Text.Json.JsonSerializer.SerializeToElement(code),
+            CodeDescription = diagnostic.CodeDescription,
             Source = diagnostic.Source,
             Message = diagnostic.Message,
             Tags = diagnostic.Tags,

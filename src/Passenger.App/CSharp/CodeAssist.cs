@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Media;
 using Passenger.App.Editors;
 using Passenger.App.MSBuild;
+using Passenger.App.Web;
 using Passenger.App.Workspace;
 using Passenger.App.Xaml;
 using Passenger.Core;
@@ -262,7 +263,13 @@ public sealed partial class CodeAssist
         Code(AppActions.Generate, "Generate...", context => _ = ShowFixes(a => GenerateWords.Any(w => a.Title.StartsWith(w, StringComparison.Ordinal)), "Generate"),
             new("Code", 0, 2));
         Code(AppActions.SurroundWith, "Surround With...", _ => ShowSurround(), new("Code", 0, 3), server: false, syntax: true, markup: true);
-        Code(AppActions.Reformat, "Reformat Code", context => _ = Reformat(), new("Code", 1, 0), markup: true);
+        // A file Prettier formats (Run on 'Reformat Code' action) needs no language server.
+        actions.Add(new IdeAction(AppActions.Reformat, "Reformat Code", "Code", context => _ = Reformat())
+        {
+            WhyNot = context => PrettierReformats(context.File) ? (context.Editor.IsReadOnly ? "The file is read-only" : null) : WhyNot(context, server: true, markup: true),
+            Menus = [new("Code", 1, 0)],
+        });
+        AddLintingActions(actions);
         Code(AppActions.CodeCleanup, "Code Cleanup", context => _ = Cleanup(), new("Code", 1, 1), markup: true);
         Code(AppActions.OptimizeUsings, "Optimize Imports", context => _ = OptimizeUsings(), new("Code", 1, 2));
         Code(AppActions.RefactorThis, "Refactor This...", context => _ = ShowFixes(a => a.Kind?.StartsWith("refactor", StringComparison.Ordinal) == true, "Refactor This"),
@@ -1115,15 +1122,21 @@ public sealed partial class CodeAssist
             .ToList();
         try
         {
+            // ESLint's fixes for the line first, as Rider lists its linters' before the language's own.
+            IReadOnlyList<EslintFix> linted = only is null ? await LintFixes(document, primary.Caret) : [];
             IReadOnlyList<CodeAction> actions = [.. (await lsp.CodeActionsAsync(primary.Range, here)).Where(a => a.Disabled is null && (only?.Invoke(a) ?? true))];
-            if (actions.Count == 0)
+            if (actions.Count == 0 && linted.Count == 0)
             {
                 Message?.Invoke(this, only is null ? "No fixes or refactorings here" : "No refactorings here");
                 return;
             }
-            List<Choice> choices = [.. actions.Select(a => new Choice(a.Title, a.Kind ?? string.Empty, a))];
-            ShowModal(new ChoicePopup(title, choices), primary.Caret, what, choice =>
-                choice?.Value is CodeAction chosen ? Carry(document, chosen, primary.Caret, chosen.Title, null) : Task.CompletedTask);
+            List<Choice> choices = [.. linted.Select(f => new Choice(f.Title, f.Action.Kind ?? string.Empty, f)), .. actions.Select(a => new Choice(a.Title, a.Kind ?? string.Empty, a))];
+            ShowModal(new ChoicePopup(title, choices), primary.Caret, what, choice => choice?.Value switch
+            {
+                EslintFix fix => RunLintFix(document, fix),
+                CodeAction chosen => Carry(document, chosen, primary.Caret, chosen.Title, null),
+                _ => Task.CompletedTask,
+            });
         }
         catch (LanguageServerFailed failed)
         {
@@ -1652,6 +1665,12 @@ public sealed partial class CodeAssist
             {
                 Message?.Invoke(this, changed ? "Reformatted" : "Already formatted");
             }
+            return;
+        }
+        // Rider's Prettier "Run on 'Reformat Code' action": a file its .prettierignore names goes to its language server.
+        if (editors.Active is { } file && PrettierReformats(file) && Web?.Invoke() is { } web
+            && await Prettify(web, file, "Reformat Code") is not (Prettified.Ignored or Prettified.Unsupported))
+        {
             return;
         }
         if (Ask("Reformat Code") is not { } lsp || editors.Active is not { } document)

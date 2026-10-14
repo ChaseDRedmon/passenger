@@ -52,6 +52,11 @@ public partial class MainWindow
                 Item(E.UnfoldDocComments), Item(E.FoldDocComments), separator, Item(E.ToggleFold)),
             separator,
             Item(A.Reformat), Item(A.CodeCleanup));
+        // Rider adds its JavaScript tools' items to the editor's menu for the files they work on.
+        if (Web.WebLanguages.LanguageOf(active.Path) is not null || session.Web?.Prettier.PackageFor(active.Path) is not null)
+        {
+            Add(Item(A.ReformatWithPrettier), Item(A.FixEslintProblems));
+        }
         if (active.Syntax is { } syntax && Testing.TestsAtCaret.At(syntax.Current, editor.CaretPosition.Line) is { } test)
         {
             string name = test.Method ?? test.Type[(test.Type.LastIndexOfAny(['.', '+']) + 1)..];

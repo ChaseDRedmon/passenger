@@ -24,6 +24,8 @@ public sealed partial class SettingsDialog : Window
     public const string BuildPage = "Build";
     public const string RunPage = "Run";
     public const string NodePage = "Node.js";
+    public const string EslintPage = "ESLint";
+    public const string PrettierPage = "Prettier";
     public const string SchemasPage = "Remote JSON Schemas";
     public const string KeymapPage = "Keymap";
     public const string McpPage = "MCP Server";
@@ -41,7 +43,7 @@ public sealed partial class SettingsDialog : Window
     public static readonly string[] DiscordChoices = ["Passenger only", "The solution", "The solution and the file"];
 
     private static readonly string[] Order = [Appearance, SystemPage, UpdatesPage, EditorPage, CodeFoldingPage, PostfixPage, XamlCodeStylePage, LiveTemplatesPage,
-        BuildPage, RunPage, NodePage, SchemasPage, TerminalPage, McpPage, DiscordPage, DiagnosticsPage, KeymapPage];
+        BuildPage, RunPage, NodePage, EslintPage, PrettierPage, SchemasPage, TerminalPage, McpPage, DiscordPage, DiagnosticsPage, KeymapPage];
 
     /// <summary>Rider's names for Attributes format's choices, in <see cref="Passenger.Xaml.Features.XamlAttributeStyle"/>'s order.</summary>
     public static readonly string[] AttributeStyles = ["On single line", "First attribute on single line", "Each attribute on separate lines", "Do not touch"];
@@ -351,6 +353,7 @@ public sealed partial class SettingsDialog : Window
         Add(NodePage, "Node interpreter", node, "node nodejs interpreter javascript typescript html css json language server npm path",
             "The Node.js the JavaScript, TypeScript, HTML, CSS and JSON language servers run on. Empty, it is the first on the PATH, "
             + "as the login shell finds it. Without one, those files keep their colours only.");
+        AddCodeQualityTools();
         // Rider's Languages & Frameworks, Schemas and DTDs, Remote JSON Schemas.
         Add(SchemasPage, "Allow downloading JSON Schemas from remote sources", Check(Working.DownloadJsonSchemas, v => Change(s => s with { DownloadJsonSchemas = v })),
             "json schema schemas remote download web http https schemastore $schema validation completion",

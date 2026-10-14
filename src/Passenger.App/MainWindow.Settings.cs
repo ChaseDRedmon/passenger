@@ -96,6 +96,7 @@ public partial class MainWindow
         }
         ApplyAnalysis();
         session.Web?.UseNode(next.NodeInterpreter);
+        session.Web?.UseTools();
         ListenForAgents(next.McpServer);
         WatchUpdates(next.CheckForUpdates);
         FollowInDiscord();

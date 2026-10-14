@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Avalonia.Threading;
+using Passenger.App.Settings;
 using Passenger.App.Workspace;
 using Passenger.Core;
 using Passenger.Editor;
@@ -37,19 +38,33 @@ public sealed class WebLanguages : IAsyncDisposable
     private static readonly TimeSpan RestartWindow = TimeSpan.FromMinutes(5);
 
     private readonly string folder;
+    private readonly Func<AppSettings> settings;
     private readonly Dictionary<WebServerKind, Server> servers = [];
     private readonly Dictionary<OpenDocument, WebDocument> documents = [];
+
+    /// <summary>The folders npm install runs in now, whose files' banners say so.</summary>
+    private readonly HashSet<string> installing = new(StringComparer.FromComparison(PathNames.Comparison));
+    private readonly CancellationTokenSource ending = new();
     private string? configured;
     private Task<NodeRuntime>? finding;
+
+    /// <summary>The ESLint settings the ESLint server runs by, which a change of them starts it again for.</summary>
+    private (ToolConfiguration, string?, string) linting;
     private bool disposed;
 
-    /// <summary>A folder's servers, run on the Node.js Settings names (null for the PATH's); remote JSON schemas are
-    /// downloaded while <paramref name="downloadSchemas"/> says so.</summary>
-    public WebLanguages(string folder, string? node, Func<bool> downloadSchemas)
+    /// <summary>A folder's servers, run on the Node.js Settings names (null for the PATH's), with ESLint and Prettier as
+    /// <paramref name="settings"/> configure them; remote JSON schemas are downloaded while Settings allows it.</summary>
+    public WebLanguages(string folder, Func<AppSettings> settings)
     {
         this.folder = folder;
-        configured = node;
-        Schemas = new JsonSchemas(downloadSchemas);
+        this.settings = settings;
+        AppSettings now = settings();
+        configured = now.NodeInterpreter;
+        linting = Linting(now);
+        Schemas = new JsonSchemas(() => settings().DownloadJsonSchemas);
+        Eslint = new EslintService(folder, settings, FindNodeAsync);
+        Prettier = new PrettierService(folder, settings, FindNodeAsync);
+        Eslint.Message += (_, message) => Message?.Invoke(this, message);
     }
 
     /// <summary>A server's state changed (starting, ready, stopped, no Node.js); raised on the UI thread.</summary>
@@ -58,7 +73,16 @@ public sealed class WebLanguages : IAsyncDisposable
     /// <summary>A server ended or stopped answering, with what was done about it, for the status bar.</summary>
     public event EventHandler<string>? Stopped;
 
+    /// <summary>Something else for the status bar: ESLint's word on a file, npm install's end. Raised on the UI thread.</summary>
+    public event EventHandler<string>? Message;
+
     public JsonSchemas Schemas { get; }
+
+    /// <summary>ESLint, for the files it checks.</summary>
+    public EslintService Eslint { get; }
+
+    /// <summary>Prettier, for the files it formats.</summary>
+    public PrettierService Prettier { get; }
 
     /// <summary>The folder the servers work on.</summary>
     public string Folder => folder;
@@ -124,15 +148,13 @@ public sealed class WebLanguages : IAsyncDisposable
         {
             features.Connect(running);
         }
-        else if (server.Problem is { } problem)
-        {
-            document.Notice = Notice(language.LanguageId, problem);
-        }
-        else if (server.Starting is null)
+        else if (server.Problem is null && server.Starting is null)
         {
             Start(server);
         }
         // Else the start under way connects it with the rest of its kind.
+        Eslint.Attach(document, features);
+        Announce(document);
     }
 
     public void Detach(OpenDocument document)
@@ -140,8 +162,175 @@ public sealed class WebLanguages : IAsyncDisposable
         UiThread.Check();
         if (documents.Remove(document, out WebDocument? features))
         {
+            Eslint.Detach(document);
             features.Dispose();
             document.Notice = null;
+            document.NoticeAction = null;
+        }
+    }
+
+    /// <summary>The Node.js the servers run on, looked for once. Asked from any thread.</summary>
+    private Task<NodeRuntime> FindNodeAsync() => UiThread.InvokeAsync(() =>
+    {
+        string? asked = configured;
+        return finding ??= BackgroundWork.Run(() => NodeRuntime.FindAsync(asked));
+    });
+
+    private static (ToolConfiguration, string?, string) Linting(AppSettings settings) => (settings.Eslint, settings.EslintPackage, settings.EslintFiles);
+
+    /// <summary>What a file's banner says: why its language server cannot run (no Node.js); else that a package its
+    /// package.json lists for ESLint or Prettier is not installed, offering to install it; else nothing.</summary>
+    private void Announce(OpenDocument document)
+    {
+        if (!documents.TryGetValue(document, out WebDocument? features))
+        {
+            return;
+        }
+        if (servers.GetValueOrDefault(features.Kind) is { Problem: { } problem })
+        {
+            document.Notice = Notice(features.LanguageId, problem);
+            document.NoticeAction = null;
+            return;
+        }
+        List<string> tools = [];
+        string? manifest = null;
+        if (Eslint.Missing(document.Path) is { } linted)
+        {
+            tools.Add("ESLint");
+            manifest = linted;
+        }
+        if (Prettier.Missing(document.Path) is { } formatted)
+        {
+            tools.Add("Prettier");
+            manifest ??= formatted;
+        }
+        if (manifest is null)
+        {
+            document.Notice = null;
+            document.NoticeAction = null;
+            return;
+        }
+        string where = Path.GetDirectoryName(manifest)!;
+        if (installing.Contains(where))
+        {
+            document.Notice = $"Running npm install in {Shown(where)}…";
+            document.NoticeAction = null;
+            return;
+        }
+        string packages = string.Join(" and ", tools.Select(t => t.ToLowerInvariant()));
+        document.Notice = tools.Count == 1
+            ? $"{tools[0]} is not installed: {Shown(manifest)} lists {packages}, which is not in node_modules."
+            : $"{string.Join(" and ", tools)} are not installed: {Shown(manifest)} lists {packages}, which are not in node_modules.";
+        document.NoticeAction = new NoticeAction("Run 'npm install'", () => _ = InstallAsync(where));
+    }
+
+    private void AnnounceAll()
+    {
+        foreach (OpenDocument document in documents.Keys.ToList())
+        {
+            Announce(document);
+        }
+    }
+
+    /// <summary>A path as the banner names it: from the folder open when it is inside it.</summary>
+    private string Shown(string path) => PathNames.IsUnder(path, folder) ? Path.GetRelativePath(folder, path) : PathNames.Same(path, folder) ? Path.GetFileName(folder) : path;
+
+    /// <summary>The packages looked for again, a package.json or its lock changed (npm install run in the terminal):
+    /// ESLint checks the files it covers now, and each banner says what is still missing.</summary>
+    public void Recheck()
+    {
+        UiThread.Check();
+        if (disposed)
+        {
+            return;
+        }
+        foreach ((OpenDocument document, WebDocument features) in documents.ToList())
+        {
+            Eslint.Attach(document, features);
+        }
+        AnnounceAll();
+    }
+
+    /// <summary>Files changed on disk: a package.json or lock file looks for the packages again, and ESLint hears of its
+    /// configuration's changes.</summary>
+    public void FilesChanged(IReadOnlyCollection<string> paths)
+    {
+        UiThread.Check();
+        if (paths.Any(p => Path.GetFileName(p) is "package.json" or "package-lock.json" or "npm-shrinkwrap.json" or "yarn.lock" or "pnpm-lock.yaml"))
+        {
+            Recheck();
+        }
+        Eslint.FilesChanged(paths);
+    }
+
+    /// <summary>Settings changed: ESLint configured otherwise starts again on the files it covers then, and every banner
+    /// says what is missing by the new settings.</summary>
+    public void UseTools()
+    {
+        UiThread.Check();
+        if (disposed)
+        {
+            return;
+        }
+        (ToolConfiguration, string?, string) now = Linting(settings());
+        if (now != linting)
+        {
+            linting = now;
+            Eslint.Reset();
+        }
+        Recheck();
+    }
+
+    /// <summary>Rider's "Run 'npm install'": npm install in the folder of the package.json that lists what is missing, on
+    /// the Node.js the servers run on, through ChildProcesses; the banners say so meanwhile, and once it is done ESLint
+    /// checks the files it covers and the banners go.</summary>
+    public async Task InstallAsync(string where)
+    {
+        UiThread.Check();
+        if (disposed || !installing.Add(where))
+        {
+            return;
+        }
+        AnnounceAll();
+        Message?.Invoke(this, $"Running npm install in {Shown(where)}…");
+        try
+        {
+            NodeRuntime node = await FindNodeAsync();
+            if (node.Problem is { } none)
+            {
+                Message?.Invoke(this, $"npm install needs Node.js: {none}");
+                return;
+            }
+            if (Npm.Cli(node.Path!) is not { } cli)
+            {
+                Message?.Invoke(this, $"npm install cannot run: there is no npm beside {node.Path} or on the PATH");
+                return;
+            }
+            ChildResult result = await BackgroundWork.Run(() => ChildProcesses.RunAsync(Npm.Install(node.Path!, cli, where), cancel: ending.Token), ending.Token);
+            if (result.Succeeded)
+            {
+                Message?.Invoke(this, $"npm install finished in {Shown(where)}");
+            }
+            else
+            {
+                IdeErrors.Write($"npm install in {where} failed with exit code {result.ExitCode}:\n{result.Error}{result.Output}");
+                string said = (result.Error + "\n" + result.Output).Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .FirstOrDefault(l => l.Contains("error", StringComparison.OrdinalIgnoreCase)) ?? "the IDE's log has what it said";
+                Message?.Invoke(this, $"npm install failed in {Shown(where)} (exit code {result.ExitCode}): {said}");
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // The folder was closed.
+        }
+        catch (Exception error) when (error is System.ComponentModel.Win32Exception or IOException or InvalidOperationException)
+        {
+            Message?.Invoke(this, $"npm install could not run in {Shown(where)}: {error.Message}");
+        }
+        finally
+        {
+            installing.Remove(where);
+            Recheck();
         }
     }
 
@@ -192,6 +381,8 @@ public sealed class WebLanguages : IAsyncDisposable
         }
         configured = node;
         finding = null;
+        Eslint.Reset();
+        _ = Prettier.ResetAsync();
         foreach (Server server in servers.Values.ToList())
         {
             Replace(server, restart: true);
@@ -264,9 +455,9 @@ public sealed class WebLanguages : IAsyncDisposable
             {
                 features.Connect(started);
             }
-            foreach (OpenDocument open in documents.Keys.Where(d => documents[d].Kind == server.Kind))
+            foreach (OpenDocument open in documents.Keys.Where(d => documents[d].Kind == server.Kind).ToList())
             {
-                open.Notice = null;
+                Announce(open);
             }
             StateChanged?.Invoke(this, EventArgs.Empty);
             return started;
@@ -299,9 +490,9 @@ public sealed class WebLanguages : IAsyncDisposable
     {
         server.Problem = problem;
         server.State = label;
-        foreach ((OpenDocument open, WebDocument features) in documents.Where(d => d.Value.Kind == server.Kind))
+        foreach (OpenDocument open in documents.Where(d => d.Value.Kind == server.Kind).Select(d => d.Key).ToList())
         {
-            open.Notice = Notice(features.LanguageId, problem);
+            Announce(open);
         }
         StateChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -499,6 +690,9 @@ public sealed class WebLanguages : IAsyncDisposable
     {
         UiThread.Check();
         disposed = true;
+        ending.Cancel();
+        Task linter = Eslint.DisposeAsync().AsTask();
+        Task formatter = Prettier.DisposeAsync().AsTask();
         foreach (WebDocument features in documents.Values)
         {
             features.Dispose();
@@ -506,20 +700,21 @@ public sealed class WebLanguages : IAsyncDisposable
         foreach (OpenDocument document in documents.Keys)
         {
             document.Notice = null;
+            document.NoticeAction = null;
         }
         documents.Clear();
-        List<LanguageSession> ending = [];
+        List<LanguageSession> closing = [];
         foreach (Server server in servers.Values)
         {
             server.Cancel?.Cancel();
             if (server.Session is { } session)
             {
-                ending.Add(session);
+                closing.Add(session);
             }
         }
         servers.Clear();
         // Not held: the window's end waits for it with no UI thread to come back to.
-        return ending.Count == 0 ? ValueTask.CompletedTask : new ValueTask(Task.Run(() => Task.WhenAll(ending.Select(s => s.DisposeAsync().AsTask()))));
+        return new ValueTask(Task.Run(() => Task.WhenAll([linter, formatter, .. closing.Select(s => s.DisposeAsync().AsTask())])));
     }
 
     /// <summary>One kind's server: running, starting, or unable to run and why, and when it was last started again.</summary>

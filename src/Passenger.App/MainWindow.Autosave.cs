@@ -3,6 +3,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
 using Passenger.App.Workspace;
+using Passenger.Editor;
 
 namespace Passenger.App;
 
@@ -84,6 +85,34 @@ public partial class MainWindow
         // The application menu's Quit and the system's shutdown close every window, each keeping its solution to reopen.
         quitting = e.CloseReason is WindowCloseReason.ApplicationShutdown or WindowCloseReason.OSShutdown;
         base.OnClosing(e);
+    }
+
+    /// <summary>File, Save (the file shown) or Save All: each changed file first gets what Settings ask of a save, Rider's
+    /// actions on save (Run eslint --fix on save, then Prettier's Run on save), which Rider runs on an explicit save and
+    /// never on autosave, each one undoable edit.</summary>
+    private async Task SaveExplicitly(bool all)
+    {
+        List<OpenDocument> saving = all ? [.. Editors.Documents.Where(d => d.IsModified)] : Editors.Active is { IsModified: true } shown ? [shown] : [];
+        BackgroundWork.Begin();
+        try
+        {
+            foreach (OpenDocument document in saving)
+            {
+                await assist.BeforeSave(document);
+            }
+            if (all)
+            {
+                Editors.SaveAll();
+            }
+            else
+            {
+                Editors.SaveActive();
+            }
+        }
+        finally
+        {
+            BackgroundWork.End();
+        }
     }
 
     /// <summary>Saves every changed file but those awaiting a File Cache Conflict answer, unless this window does not

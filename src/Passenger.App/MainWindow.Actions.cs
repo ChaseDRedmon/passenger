@@ -67,8 +67,8 @@ public partial class MainWindow
         AddEditing();
         Add(A.Open, "Open...", "IDE", context => _ = PickWorkspace(), menu: ("File", 0, 0));
         actions.Add(new IdeAction(A.RecentFiles, "Recent Files", "IDE", _ => ShowRecentFiles()) { Menus = [new("File", 0, 4), new("View", 2, 0)] });
-        Add(A.Save, "Save", "IDE", _ => Editors.SaveActive(), NeedsFile, ("File", 1, 0));
-        Add(A.SaveAll, "Save All", "IDE", _ => Editors.SaveAll(), _ => Editors.Documents.Any(d => d.IsModified) ? null : "Every file is saved", ("File", 1, 1));
+        Add(A.Save, "Save", "IDE", context => _ = SaveExplicitly(all: false), NeedsFile, ("File", 1, 0));
+        Add(A.SaveAll, "Save All", "IDE", context => _ = SaveExplicitly(all: true), _ => Editors.Documents.Any(d => d.IsModified) ? null : "Every file is saved", ("File", 1, 1));
         // Quit is the application menu's on macOS; either closes every window, as Rider's does.
         Add(A.Exit, "Exit", "IDE", _ => PassengerApp.Quit(), menu: OperatingSystem.IsMacOS() ? null : ("File", 4, 0));
         Add(A.FindAction, "Find Action...", "IDE", _ => ShowFindAction(), menu: ("Help", 0, 0));

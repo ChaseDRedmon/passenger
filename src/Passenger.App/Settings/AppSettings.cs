@@ -161,6 +161,44 @@ public sealed record AppSettings : IStateDocument<AppSettings>
     /// CSS and JSON language servers run on, or null for the first on the PATH as the login shell finds it.</summary>
     public string? NodeInterpreter { get; init; }
 
+    /// <summary>Rider's ESLint "Run for files" at its default.</summary>
+    public const string DefaultEslintFiles = "**/*.{js,ts,jsx,tsx,cjs,cts,mjs,mts,html,vue}";
+
+    /// <summary>Rider's Prettier "Run for files" at its default.</summary>
+    public const string DefaultPrettierFiles = "**/*.{js,ts,jsx,tsx,cjs,cts,mjs,mts,json,vue,astro}";
+
+    /// <summary>Rider's Languages &amp; Frameworks, JavaScript, Code Quality Tools, ESLint: Automatic (the project's own
+    /// eslint package, found from the file's folder up, and its configuration), Manual (<see cref="EslintPackage"/>) or
+    /// Disabled. Its problems are shown as a file is typed, through VS Code's ESLint language server.</summary>
+    public ToolConfiguration Eslint { get; init; } = ToolConfiguration.Automatic;
+
+    /// <summary>Manual ESLint configuration's package: the eslint package's folder (…/node_modules/eslint).</summary>
+    public string? EslintPackage { get; init; }
+
+    /// <summary>ESLint's "Run for files": the files it checks, a glob of their paths from the folder open.</summary>
+    public string EslintFiles { get; init; } = DefaultEslintFiles;
+
+    /// <summary>"Run eslint --fix on save": a save (File, Save All) first fixes what ESLint can fix in each file it checks.</summary>
+    public bool EslintFixOnSave { get; init; }
+
+    /// <summary>Rider's Languages &amp; Frameworks, JavaScript, Prettier: Automatic (the project's own prettier package, found
+    /// from the file's folder up), Manual (<see cref="PrettierPackage"/>) or Disabled.</summary>
+    public ToolConfiguration Prettier { get; init; } = ToolConfiguration.Automatic;
+
+    /// <summary>Manual Prettier configuration's package: the prettier package's folder (…/node_modules/prettier).</summary>
+    public string? PrettierPackage { get; init; }
+
+    /// <summary>Prettier's "Run for files": the files Reformat Code and a save format with it, a glob of their paths from the
+    /// folder open.</summary>
+    public string PrettierFiles { get; init; } = DefaultPrettierFiles;
+
+    /// <summary>"Run on 'Reformat Code' action": Reformat Code formats the files <see cref="PrettierFiles"/> covers with
+    /// Prettier, others with their language server.</summary>
+    public bool PrettierOnReformat { get; init; } = true;
+
+    /// <summary>"Run on save": a save (File, Save All) formats each file <see cref="PrettierFiles"/> covers with Prettier first.</summary>
+    public bool PrettierOnSave { get; init; }
+
     /// <summary>Rider's Remote JSON Schemas, "Allow downloading JSON Schemas from remote sources": a JSON file's own
     /// <c>$schema</c> on the web is downloaded to check and complete it. Those Passenger carries never are.</summary>
     public bool DownloadJsonSchemas { get; init; } = true;
@@ -236,6 +274,12 @@ public sealed record AppSettings : IStateDocument<AppSettings>
             PostfixTemplates = PostfixTemplates ?? [],
             TerminalShell = string.IsNullOrWhiteSpace(TerminalShell) ? null : TerminalShell,
             NodeInterpreter = string.IsNullOrWhiteSpace(NodeInterpreter) ? null : NodeInterpreter.Trim(),
+            Eslint = Enum.IsDefined(Eslint) ? Eslint : defaults.Eslint,
+            EslintPackage = string.IsNullOrWhiteSpace(EslintPackage) ? null : EslintPackage.Trim(),
+            EslintFiles = string.IsNullOrWhiteSpace(EslintFiles) ? defaults.EslintFiles : EslintFiles.Trim(),
+            Prettier = Enum.IsDefined(Prettier) ? Prettier : defaults.Prettier,
+            PrettierPackage = string.IsNullOrWhiteSpace(PrettierPackage) ? null : PrettierPackage.Trim(),
+            PrettierFiles = string.IsNullOrWhiteSpace(PrettierFiles) ? defaults.PrettierFiles : PrettierFiles.Trim(),
             SoftWrapFiles = SoftWrapFiles ?? defaults.SoftWrapFiles,
             XamlFormat = (XamlFormat ?? defaults.XamlFormat).Clamped(),
         };
@@ -308,6 +352,19 @@ public enum BuildResultsMode
     ForWarningsOrErrors,
     ForErrors,
     Never,
+}
+
+/// <summary>Rider's choices for how ESLint and Prettier are configured (their ConfigurationMode), in its order.</summary>
+public enum ToolConfiguration
+{
+    /// <summary>Not run.</summary>
+    Disabled,
+
+    /// <summary>The project's own package, found from each file's folder up, and its own configuration files.</summary>
+    Automatic,
+
+    /// <summary>The package Settings names, for every file the glob covers.</summary>
+    Manual,
 }
 
 /// <summary>Rider's choices for "Open project in" (its GeneralSettings' confirmOpenNewProject), in the order its System

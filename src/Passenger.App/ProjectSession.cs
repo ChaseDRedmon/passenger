@@ -106,7 +106,7 @@ public sealed class ProjectSession : IAsyncDisposable
         session.Configurations.Configure(session.Projects);
         session.Index.Build(folder);
         session.Watcher = new FolderWatcher(folder, setup.Watching);
-        session.Web = new Web.WebLanguages(folder, setup.Settings().NodeInterpreter, () => setup.Settings().DownloadJsonSchemas);
+        session.Web = new Web.WebLanguages(folder, setup.Settings);
         return session;
     }
 

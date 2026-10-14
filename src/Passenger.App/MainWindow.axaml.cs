@@ -183,6 +183,7 @@ public partial class MainWindow : Window
         assist = new CodeAssist(Editors, Editors.AssistLayer, () => session.CSharp) { Xaml = () => session.Xaml, MSBuild = () => session.MSBuild, Web = () => session.Web };
         assist.Navigate += (_, target) => NavigateTo(target.Path, target.Position);
         assist.Message += (_, message) => status.Text = message;
+        assist.Browse += (_, page) => Browse(page);
         assist.FilesChanged += (_, _) => FilesChanged();
         usages = new UsageHighlighting(Editors, () => session.CSharp);
         usages.Message += (_, message) => status.Text = message;

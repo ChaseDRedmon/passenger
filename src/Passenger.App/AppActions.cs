@@ -117,6 +117,11 @@ public static class AppActions
     public const string HighlightUsages = "app.code.highlightUsages";
     public const string Reformat = "app.code.reformat";
     public const string CodeCleanup = "app.code.cleanup";
+
+    // Rider's ReformatWithPrettierAction (its Visual Studio keymaps give its keys to VcsShowPrevChangeMarker) and
+    // Javascript.Linters.EsLint.Fix, which it names Fix ESLint Problems; both in the editor's menu.
+    public const string ReformatWithPrettier = "app.code.reformatWithPrettier";
+    public const string FixEslintProblems = "app.code.fixEslintProblems";
     public const string RefactorThis = "app.code.refactorThis";
     public const string Generate = "app.code.generate";
     public const string ExtractMethod = "app.code.extractMethod";

@@ -246,6 +246,34 @@ public partial class MainWindow
                     status.Text = message;
                 }
             };
+            web.Message += (_, message) =>
+            {
+                if (session == next)
+                {
+                    status.Text = message;
+                }
+            };
+            web.Eslint.Browse += (_, page) =>
+            {
+                if (session == next)
+                {
+                    Browse(page);
+                }
+            };
+            // ESLint's fixes are made by its server's commands, which hand their edit to the window to make.
+            web.Eslint.ApplyEdit = edit =>
+            {
+                List<string> dropped = [];
+                try
+                {
+                    WorkspaceEdits.Apply(Editors, edit, null, dropped);
+                }
+                catch (WorkspaceEditFailed failed)
+                {
+                    return failed.Message;
+                }
+                return dropped.Count > 0 ? $"{string.Join(", ", dropped)} changed since ESLint was asked" : null;
+            };
         }
         next.WorkspaceChanged += (_, _) =>
         {
