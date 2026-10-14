@@ -123,8 +123,9 @@ public sealed class LspDocument : IDisposable
         Uri = uri;
         Text = text;
         Identifier = new TextDocumentIdentifier(uri);
+        IsRazor = IsRazorPath(uri);
         session.Server.Notify("textDocument/didOpen",
-            new DidOpenTextDocumentParams(new TextDocumentItem(uri, "csharp", text.Version, text.Snapshot.ToString())));
+            new DidOpenTextDocumentParams(new TextDocumentItem(uri, IsRazor ? "aspnetcorerazor" : "csharp", text.Version, text.Snapshot.ToString())));
         text.Changed += OnChanged;
     }
 
@@ -132,6 +133,14 @@ public sealed class LspDocument : IDisposable
     public TextDocument Text { get; }
     public TextDocumentIdentifier Identifier { get; }
     private LanguageServer Server => session.Server;
+
+    /// <summary>A Razor file (.razor, .cshtml), which the server hands to Razor, cohosted in it: its colours have Razor's
+    /// legend (<see cref="LanguageServer.RazorLegend"/>) and its diagnostics are Razor's one source.</summary>
+    public bool IsRazor { get; }
+
+    /// <summary>Whether a file (its path or its URI) is one Razor answers for in the server: a component or a page.</summary>
+    public static bool IsRazorPath(string path) =>
+        path.EndsWith(".razor", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".cshtml", StringComparison.OrdinalIgnoreCase);
 
     public void Saved() => Server.Notify("textDocument/didSave", new DidSaveTextDocumentParams(Identifier));
 
@@ -147,6 +156,15 @@ public sealed class LspDocument : IDisposable
         if (!Server.HasExited)
         {
             Server.Notify("textDocument/didClose", new DidCloseTextDocumentParams(Identifier));
+            if (IsRazor)
+            {
+                // Razor's own word that the file closed, as VS Code says it, so Razor lets go of its HTML too.
+                Server.Tell("razor/documentClosed", Identifier);
+            }
+        }
+        if (IsRazor)
+        {
+            Server.ForgetRazorHtml(DocumentUris.ToPath(Uri));
         }
     }
 
@@ -282,12 +300,13 @@ public sealed class LspDocument : IDisposable
     }
 
     /// <summary>Every diagnostic the server has for the document, pulled from each source it
-    /// registered, and the version they are for.</summary>
+    /// registered (a Razor file's from Razor's one), and the version they are for.</summary>
     public async Task<(IReadOnlyList<Diagnostic> Diagnostics, int Version)> DiagnosticsAsync(CancellationToken cancel = default)
     {
         int version = Text.Version;
         List<Diagnostic> all = [];
-        foreach (string? source in Server.DiagnosticSources)
+        IReadOnlyList<string?> sources = IsRazor ? [null] : Server.DiagnosticSources;
+        foreach (string? source in sources)
         {
             DocumentDiagnosticReport? report = await Server.RequestAsync<DocumentDiagnosticReport>("textDocument/diagnostic",
                 new DocumentDiagnosticParams(Identifier, source), cancel);

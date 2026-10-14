@@ -96,6 +96,9 @@ public sealed class SemanticHighlighter : IHighlighter, IBraceMatcher, IDisposab
     /// <summary>The syntax's pair: brackets are the parser's to tell, never the server's.</summary>
     public BracePair? PairAt(TextSnapshot snapshot, int offset) => (syntax as IBraceMatcher)?.PairAt(snapshot, offset);
 
+    /// <summary>The syntax's tag pair, a Razor file's markup's.</summary>
+    public BracePair? TagPairAt(TextSnapshot snapshot, int caret) => (syntax as IBraceMatcher)?.TagPairAt(snapshot, caret);
+
     public void Dispose()
     {
         disposed = true;
@@ -439,10 +442,19 @@ public sealed class SemanticHighlighter : IHighlighter, IBraceMatcher, IDisposab
         return true;
     }
 
-    /// <summary>Roslyn's token types, standard and its own, as the editor's kinds; operators and
-    /// punctuation are left to the syntax.</summary>
+    /// <summary>Roslyn's token types, standard and its own, and Razor's for a Razor file's markup, as the editor's kinds:
+    /// a component's tag in a type's colour and its parameters in a property's, as Rider has them, HTML's as the HTML
+    /// grammar colours it, Razor's directives and transitions as keywords. Operators, punctuation and text are left to
+    /// the syntax.</summary>
     private static TokenKind? Kind(string type) => type switch
     {
+        "razorTransition" or "razorDirective" or "razorDirectiveColon" or "razorDirectiveAttribute" => TokenKind.Keyword,
+        "razorComponentElement" or "razorTagHelperElement" => TokenKind.Class,
+        "razorComponentAttribute" or "razorTagHelperAttribute" => TokenKind.Property,
+        "razorComment" or "razorCommentStar" or "razorCommentTransition" or "markupComment" or "markupCommentPunctuation" => TokenKind.Comment,
+        "markupElement" or "markupTagDelimiter" or "markupOperator" => TokenKind.Tag,
+        "markupAttribute" => TokenKind.AttributeName,
+        "markupAttributeValue" or "markupAttributeQuote" => TokenKind.AttributeValue,
         "namespace" => TokenKind.Namespace,
         "class" or "recordClass" or "recordClassName" or "className" or "record" => TokenKind.Class,
         "struct" or "recordStruct" or "recordStructName" or "structName" => TokenKind.Struct,

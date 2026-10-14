@@ -109,9 +109,16 @@ public sealed class LanguageServer : IAsyncDisposable
 
     public SemanticTokensLegend? Legend { get; private set; }
 
+    /// <summary>The legend of a Razor file's colours, which Razor registers as it starts: C#'s token types, then markup's
+    /// and Razor's own. Null until it has.</summary>
+    public SemanticTokensLegend? RazorLegend => client.RazorLegend;
+
     /// <summary>The diagnostic sources the server registered (Roslyn splits them: syntax, semantic,
     /// analyzers), each pulled on its own.</summary>
     public IReadOnlyList<string?> DiagnosticSources => client.DiagnosticSources;
+
+    /// <summary>Lets go of what Razor gave the client of a closed Razor file's HTML.</summary>
+    internal void ForgetRazorHtml(string path) => client.Html.Forget(path);
 
     /// <summary>The sources that answer for the whole workspace (<c>workspace/diagnostic</c>), as well as for one document.</summary>
     public IReadOnlyList<string?> WorkspaceDiagnosticSources => client.WorkspaceDiagnosticSources;
@@ -322,6 +329,21 @@ public sealed class LanguageServer : IAsyncDisposable
         RemoteRpcException refused => new LanguageServerFailed($"the language server refused it: {refused.Message.Split('\n')[0].Trim()}", method, error),
         _ => null,
     };
+
+    /// <summary>Makes a request nothing waits on the answer to (Razor's word that a file closed), from the thread pool, where
+    /// its failure is caught: awaited on a window's thread as it closes, the failure would be left to a dispatcher that never
+    /// runs again, unobserved.</summary>
+    internal void Tell(string method, object parameters) => _ = Task.Run(async () =>
+    {
+        try
+        {
+            await InvokeAsync<JsonElement>(method, parameters, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (LanguageServerFailed)
+        {
+            // Gone, or refused: nothing waits on it.
+        }
+    });
 
     /// <summary>Sends a notification nothing waits on (a document's change, its closing). One the server can no longer
     /// take, having ended or been ended, is dropped: a server started again is sent the open documents afresh.</summary>
@@ -586,6 +608,17 @@ public sealed class LanguageServer : IAsyncDisposable
 
         public LanguageServer? Owner { get; set; }
 
+        public RazorHtml Html { get; } = new();
+
+        public SemanticTokensLegend? RazorLegend { get; private set; }
+
+        /// <summary>Whether a registration is one of Razor's: Razor's are each for its files, by a document selector,
+        /// where Roslyn's are for every file.</summary>
+        private static bool ForRazor(Registration registration) =>
+            registration.RegisterOptions is { ValueKind: JsonValueKind.Object } options && options.TryGetProperty("documentSelector", out JsonElement selector)
+            && selector.ValueKind == JsonValueKind.Array && selector.EnumerateArray().Any(filter =>
+                filter.ValueKind == JsonValueKind.Object && filter.TryGetProperty("language", out JsonElement language) && language.GetString() == "aspnetcorerazor");
+
         public IReadOnlyList<string?> DiagnosticSources
         {
             get
@@ -627,7 +660,16 @@ public sealed class LanguageServer : IAsyncDisposable
         [JsonRpcMethod("client/registerCapability")]
         public object? RegisterCapability(RegistrationParams request)
         {
-            foreach (Registration registration in request.Registrations.Where(r => r.Method == "textDocument/diagnostic"))
+            foreach (Registration registration in request.Registrations.Where(ForRazor))
+            {
+                if (registration.Method == "textDocument/semanticTokens" && registration.RegisterOptions is { } options
+                    && options.TryGetProperty("legend", out JsonElement legend))
+                {
+                    RazorLegend = legend.Deserialize<SemanticTokensLegend>(Json.Options);
+                }
+            }
+            // A Razor file's diagnostics are Razor's one source, pulled as the file's own (LspDocument.IsRazor).
+            foreach (Registration registration in request.Registrations.Where(r => r.Method == "textDocument/diagnostic" && !ForRazor(r)))
             {
                 string? identifier = registration.RegisterOptions is { ValueKind: JsonValueKind.Object } options
                     && options.TryGetProperty("identifier", out JsonElement id) ? id.GetString() : null;
@@ -690,5 +732,76 @@ public sealed class LanguageServer : IAsyncDisposable
         public void Telemetry(JsonElement? message = null)
         {
         }
+
+        /// <summary>A Razor file's HTML, which Razor sends before it asks HTML's answer at a place in it: the requests below,
+        /// each as Razor received it wrapped with the file and its HTML's checksum (<see cref="RazorHtml"/>). A list answers
+        /// empty, so Razor goes on with its own part (the C#'s formatting, its components' completion); one answer null.</summary>
+        [JsonRpcMethod("razor/updateHtml")]
+        public object? UpdateHtml(JsonElement update)
+        {
+            Html.Update(update);
+            return null;
+        }
+
+        [JsonRpcMethod("textDocument/completion")]
+        public object HtmlCompletion(JsonElement forwarded) => Html.Completion(forwarded);
+
+        [JsonRpcMethod("completionItem/resolve")]
+        public JsonElement? HtmlCompletionResolve(JsonElement forwarded) => Asked(forwarded);
+
+        [JsonRpcMethod("codeAction/resolve")]
+        public JsonElement? HtmlCodeActionResolve(JsonElement forwarded) => Asked(forwarded);
+
+        [JsonRpcMethod("textDocument/formatting")]
+        public object[] HtmlFormatting(JsonElement? forwarded = null) => [];
+
+        [JsonRpcMethod("textDocument/rangeFormatting")]
+        public object[] HtmlRangeFormatting(JsonElement? forwarded = null) => [];
+
+        [JsonRpcMethod("textDocument/onTypeFormatting")]
+        public object[] HtmlOnTypeFormatting(JsonElement? forwarded = null) => [];
+
+        [JsonRpcMethod("textDocument/codeAction")]
+        public object[] HtmlCodeActions(JsonElement? forwarded = null) => [];
+
+        [JsonRpcMethod("textDocument/documentHighlight")]
+        public object[] HtmlHighlights(JsonElement? forwarded = null) => [];
+
+        [JsonRpcMethod("textDocument/foldingRange")]
+        public object[] HtmlFolds(JsonElement? forwarded = null) => [];
+
+        [JsonRpcMethod("textDocument/documentColor")]
+        public object[] HtmlColours(JsonElement? forwarded = null) => [];
+
+        [JsonRpcMethod("textDocument/colorPresentation")]
+        public object[] HtmlColourPresentations(JsonElement? forwarded = null) => [];
+
+        [JsonRpcMethod("textDocument/hover")]
+        public object? HtmlHover(JsonElement? forwarded = null) => null;
+
+        [JsonRpcMethod("textDocument/signatureHelp")]
+        public object? HtmlSignatureHelp(JsonElement? forwarded = null) => null;
+
+        [JsonRpcMethod("textDocument/definition")]
+        public object? HtmlDefinition(JsonElement? forwarded = null) => null;
+
+        [JsonRpcMethod("textDocument/implementation")]
+        public object? HtmlImplementation(JsonElement? forwarded = null) => null;
+
+        [JsonRpcMethod("textDocument/prepareRename")]
+        public object? HtmlPrepareRename(JsonElement? forwarded = null) => null;
+
+        [JsonRpcMethod("textDocument/rename")]
+        public object? HtmlRename(JsonElement? forwarded = null) => null;
+
+        [JsonRpcMethod("textDocument/linkedEditingRange")]
+        public object? HtmlLinkedEditing(JsonElement? forwarded = null) => null;
+
+        [JsonRpcMethod("textDocument/_vs_onAutoInsert")]
+        public object? HtmlAutoInsert(JsonElement? forwarded = null) => null;
+
+        /// <summary>The request Razor wrapped, which a resolve answers unchanged: HTML has nothing to add to it.</summary>
+        private static JsonElement? Asked(JsonElement forwarded) =>
+            forwarded.ValueKind == JsonValueKind.Object && forwarded.TryGetProperty("request", out JsonElement request) ? request.Clone() : null;
     }
 }

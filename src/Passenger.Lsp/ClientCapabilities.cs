@@ -6,7 +6,9 @@ namespace Passenger.Lsp;
 /// the specification: pull diagnostics registered per source, semantic tokens over ranges and whole
 /// files, completion with resolve, code actions with resolve, rename with prepare, and UTF-16
 /// positions, which are what the editor's columns already are. Not workspace/applyEdit: Roslyn never
-/// asks it, leaving the edits its commands make to the client (<see cref="ClientCommands"/>).</summary>
+/// asks it, leaving the edits its commands make to the client (<see cref="ClientCommands"/>). The features a dynamic
+/// registration is taken for are those Razor registers for .razor and .cshtml files at startup, its colours' legend
+/// among them; Roslyn's own C# ones are its static capabilities either way.</summary>
 public static class ClientCapabilities
 {
     public static readonly JsonElement Value = JsonDocument.Parse("""
@@ -26,6 +28,7 @@ public static class ClientCapabilities
       "textDocument": {
         "synchronization": { "didSave": true, "dynamicRegistration": false },
         "completion": {
+          "dynamicRegistration": true,
           "completionItem": {
             "snippetSupport": false,
             "commitCharactersSupport": true,
@@ -36,8 +39,9 @@ public static class ClientCapabilities
           "completionList": { "itemDefaults": ["commitCharacters"] },
           "contextSupport": true
         },
-        "hover": { "contentFormat": ["markdown", "plaintext"] },
+        "hover": { "dynamicRegistration": true, "contentFormat": ["markdown", "plaintext"] },
         "signatureHelp": {
+          "dynamicRegistration": true,
           "signatureInformation": {
             "documentationFormat": ["markdown", "plaintext"],
             "parameterInformation": { "labelOffsetSupport": true },
@@ -45,15 +49,16 @@ public static class ClientCapabilities
           },
           "contextSupport": true
         },
-        "definition": { "linkSupport": true },
+        "definition": { "dynamicRegistration": true, "linkSupport": true },
         "typeDefinition": { "linkSupport": true },
-        "implementation": { "linkSupport": true },
-        "references": {},
-        "callHierarchy": {},
-        "typeHierarchy": {},
-        "documentHighlight": {},
-        "documentSymbol": { "hierarchicalDocumentSymbolSupport": true },
+        "implementation": { "dynamicRegistration": true, "linkSupport": true },
+        "references": { "dynamicRegistration": true },
+        "callHierarchy": { "dynamicRegistration": true },
+        "typeHierarchy": { "dynamicRegistration": true },
+        "documentHighlight": { "dynamicRegistration": true },
+        "documentSymbol": { "dynamicRegistration": true, "hierarchicalDocumentSymbolSupport": true },
         "codeAction": {
+          "dynamicRegistration": true,
           "codeActionLiteralSupport": {
             "codeActionKind": { "valueSet": ["", "quickfix", "refactor", "refactor.extract", "refactor.inline", "refactor.rewrite", "source", "source.organizeImports"] }
           },
@@ -61,12 +66,12 @@ public static class ClientCapabilities
           "dataSupport": true,
           "resolveSupport": { "properties": ["edit"] }
         },
-        "formatting": {},
-        "rangeFormatting": {},
-        "onTypeFormatting": {},
-        "rename": { "prepareSupport": true },
+        "formatting": { "dynamicRegistration": true },
+        "rangeFormatting": { "dynamicRegistration": true },
+        "onTypeFormatting": { "dynamicRegistration": true },
+        "rename": { "dynamicRegistration": true, "prepareSupport": true },
         "semanticTokens": {
-          "dynamicRegistration": false,
+          "dynamicRegistration": true,
           "requests": { "range": true, "full": { "delta": false } },
           "tokenTypes": [],
           "tokenModifiers": [],
@@ -74,7 +79,7 @@ public static class ClientCapabilities
           "multilineTokenSupport": false,
           "overlappingTokenSupport": false
         },
-        "inlayHint": { "resolveSupport": { "properties": ["tooltip"] } },
+        "inlayHint": { "dynamicRegistration": true, "resolveSupport": { "properties": ["tooltip"] } },
         "diagnostic": { "dynamicRegistration": true, "relatedDocumentSupport": false },
         "publishDiagnostics": { "relatedInformation": false, "tagSupport": { "valueSet": [1, 2] } }
       }

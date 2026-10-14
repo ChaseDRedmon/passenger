@@ -58,8 +58,13 @@ and the browser, dbgshim's for Linux and 32-bit Windows) are left out.
 ### Inside `roslyn/`
 
 Roslyn's language server carries these packages' assemblies in its own package, which Microsoft gives as a whole under
-MIT with the `ThirdPartyNotices.rtf` copied beside them. What each package says of itself on nuget.org, at the version
-the server's `.deps.json` names, or, for a version not published there, what its releases there say:
+MIT with the `ThirdPartyNotices.rtf` copied beside them. Its Razor support (`Microsoft.CodeAnalysis.Razor.Compiler`,
+`.Razor.Workspaces`, `.Remote.Razor`, `Microsoft.VisualStudioCode.RazorExtension`,
+`Microsoft.AspNetCore.Razor.Utilities.Shared`) is Roslyn's own, built in the Roslyn repository with the server, so the
+package's MIT is its licence; it is what colours, completes, checks, navigates, renames and formats .razor and .cshtml
+files in Passenger, cohosted in the server, and nothing of it comes from VS Code's C# extension. What each package says
+of itself on nuget.org, at the version the server's `.deps.json` names, or, for a version not published there, what its
+releases there say:
 
 | Package | Licence | Copyright |
 |---|---|---|

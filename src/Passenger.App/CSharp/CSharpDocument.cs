@@ -54,12 +54,19 @@ public sealed class CSharpDocument : IDisposable
             return;
         }
         Lsp = session.Open(document.Path, document.Text);
-        if (session.Server.Legend is { } legend && document.Highlighter is { } syntax)
+        Colour(Lsp, session.Server);
+        Pull(TimeSpan.Zero);
+    }
+
+    /// <summary>The server's colours over the parser's, once the server has said its legend: a Razor file's is the one Razor
+    /// registers as it starts, which can come after the file was opened.</summary>
+    private void Colour(LspDocument lsp, LanguageServer server)
+    {
+        if (semantic is null && (lsp.IsRazor ? server.RazorLegend : server.Legend) is { } legend && document.Highlighter is { } syntax)
         {
-            semantic = new SemanticHighlighter(syntax, Lsp, legend);
+            semantic = new SemanticHighlighter(syntax, lsp, legend);
             document.Highlighter = semantic;
         }
-        Pull(TimeSpan.Zero);
     }
 
     public void Refresh()
@@ -68,7 +75,15 @@ public sealed class CSharpDocument : IDisposable
         RefreshDiagnostics();
     }
 
-    public void RefreshColours() => semantic?.Refresh();
+    public void RefreshColours()
+    {
+        if (semantic is null && Lsp is { } lsp && service.Session is { } session)
+        {
+            Colour(lsp, session.Server);
+            return;
+        }
+        semantic?.Refresh();
+    }
 
     public void RefreshDiagnostics() => Pull(TimeSpan.Zero);
 
@@ -211,13 +226,24 @@ public sealed class CSharpDocument : IDisposable
                     shown.Add(placed with { Data = hint });
                 }
             }
-            else if (!Generic.Contains(label))
+            else if (!Generic.Contains(label) && !(lsp.IsRazor && OnDirective(lsp.OffsetOf(hint.Position))))
             {
                 shown.Add(new InlayHint(lsp.OffsetOf(hint.Position), label, hint.PaddingLeft, hint.PaddingRight, InlayHintKind.Parameter, hint));
             }
         }
         return shown;
     }
+
+    /// <summary>Whether a place is on a Razor directive's line (<c>@page "/counter"</c>), whose value Razor's generated C#
+    /// passes to an attribute: the server names the attribute's parameter there, which Rider never shows.</summary>
+    private bool OnDirective(int offset)
+    {
+        TextSnapshot text = document.Text.Snapshot;
+        return Directive.IsMatch(text.GetLineText(text.GetLineFromOffset(Math.Min(offset, text.Length))));
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex Directive =
+        new(@"^\s*@(page|layout|inherits|implements|namespace|attribute|typeparam|rendermode|preservewhitespace|model|inject|section)\b");
 
     /// <summary>What a diagnostic draws as: errors, warnings and information squiggled; code the
     /// compiler calls unnecessary faded; the server's quieter hints left off the page.</summary>

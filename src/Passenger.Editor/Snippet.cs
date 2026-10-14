@@ -91,6 +91,95 @@ public sealed record Snippet(string Text, IReadOnlyList<IReadOnlyList<TextRange>
         return new Snippet(text.ToString(), [.. stops.Select(n => (IReadOnlyList<TextRange>)places[n])], last);
     }
 
+    /// <summary>The language server protocol's snippet syntax, as a completion's text gives it: <c>$1</c> and
+    /// <c>${1:placeholder}</c> each a stop (a number's places one field, Tab visiting them by number), <c>${1|a,b|}</c> its
+    /// first choice, <c>$0</c> where the caret ends, a variable its default or nothing, and a backslash escaping
+    /// <c>$</c>, <c>}</c>, <c>\</c>, <c>,</c> and <c>|</c>.</summary>
+    public static Snippet FromProtocol(string snippet)
+    {
+        StringBuilder text = new();
+        SortedDictionary<int, List<TextRange>> stops = [];
+        int at = 0;
+        Read(null);
+        TextRange end = stops.Remove(0, out List<TextRange>? final) ? final[0] : new TextRange(text.Length, 0);
+        return new Snippet(text.ToString(), [.. stops.Values], end);
+
+        // Reads to the end, or to the '}' closing a placeholder, which it passes.
+        void Read(char? until)
+        {
+            while (at < snippet.Length)
+            {
+                char c = snippet[at];
+                if (c == '\\' && at + 1 < snippet.Length && snippet[at + 1] is '$' or '}' or '\\' or ',' or '|')
+                {
+                    text.Append(snippet[at + 1]);
+                    at += 2;
+                }
+                else if (until is { } close && c == close)
+                {
+                    at++;
+                    return;
+                }
+                else if (c == '$' && at + 1 < snippet.Length && (char.IsAsciiDigit(snippet[at + 1]) || snippet[at + 1] == '{' || IsName(snippet[at + 1])))
+                {
+                    at++;
+                    Placeholder();
+                }
+                else
+                {
+                    text.Append(c);
+                    at++;
+                }
+            }
+        }
+
+        // After a '$': a number or a name, bare or in braces with what follows it.
+        void Placeholder()
+        {
+            bool braced = snippet[at] == '{';
+            if (braced)
+            {
+                at++;
+            }
+            int from = at;
+            while (at < snippet.Length && (char.IsAsciiDigit(snippet[at]) || IsName(snippet[at])))
+            {
+                at++;
+            }
+            string name = snippet[from..at];
+            int start = text.Length;
+            if (braced && at < snippet.Length)
+            {
+                if (snippet[at] == ':')
+                {
+                    at++;
+                    Read('}');
+                }
+                else if (snippet[at] == '|')
+                {
+                    int choices = snippet.IndexOf("|}", at + 1, StringComparison.Ordinal);
+                    string first = snippet[(at + 1)..(choices < 0 ? snippet.Length : choices)].Split(',')[0];
+                    text.Append(first);
+                    at = choices < 0 ? snippet.Length : choices + 2;
+                }
+                else if (snippet[at] == '}')
+                {
+                    at++;
+                }
+            }
+            if (int.TryParse(name, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int number))
+            {
+                if (!stops.TryGetValue(number, out List<TextRange>? places))
+                {
+                    stops[number] = places = [];
+                }
+                places.Add(TextRange.FromBounds(start, text.Length));
+            }
+        }
+
+        static bool IsName(char c) => char.IsAsciiLetter(c) || c == '_';
+    }
+
     /// <summary>The wrapped text, its lines after the first indented as the template's line it starts on, which on the
     /// template's first line is the indentation of the line it goes on; an empty line stays empty.</summary>
     private static void AppendWrapped(StringBuilder text, string selection, string indent)

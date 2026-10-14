@@ -275,11 +275,12 @@ public sealed class CSharpService : IAsyncDisposable
         _ = Run(workspace, cancel.Token);
     }
 
-    /// <summary>Gives an open document its C# features, now or once the server is ready.</summary>
+    /// <summary>Gives an open document its C# features, now or once the server is ready: a C# file, or a Razor file
+    /// (.razor, .cshtml), which the server's Razor answers for, the C# in it included.</summary>
     public void Attach(OpenDocument document)
     {
         UiThread.Check();
-        if (document.Language.Name != "C#" || documents.ContainsKey(document))
+        if (document.Language.Name is not ("C#" or "Razor") || documents.ContainsKey(document))
         {
             return;
         }

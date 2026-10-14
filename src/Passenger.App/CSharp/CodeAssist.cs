@@ -291,7 +291,7 @@ public sealed partial class CodeAssist
         HideHover();
         if (completion.IsVisible)
         {
-            if (text.All(IsIdentifierChar))
+            if (text.All(IsWordChar))
             {
                 Filter();
                 if (open is { IsIncomplete: true })
@@ -348,9 +348,10 @@ public sealed partial class CodeAssist
     private void AfterTyped(string text)
     {
         char last = text[^1];
-        if (last == '.')
+        if (last == '.' || (InRazor && last is '<' or '@'))
         {
-            _ = StartCompletion(".");
+            // In a Razor file, as in Rider, a tag's '<' lists the elements and components, and '@' Razor's directives and the C#.
+            _ = StartCompletion(last.ToString());
         }
         else if (IsIdentifierChar(last) && !char.IsDigit(last) && WordStart(Editor.Selections.Primary.Caret) == Editor.Selections.Primary.Caret - 1)
         {
@@ -413,7 +414,7 @@ public sealed partial class CodeAssist
             }
             int start = list.Items.FirstOrDefault(i => i.TextEdit is not null)?.TextEdit is { } edit
                 ? lsp.OffsetOf(edit.Range.Start)
-                : WordStart(caret);
+                : lsp.IsRazor ? RazorWordStart(caret, list.Items) : WordStart(caret);
             // Rider lists the live templates that may go here with the server's items, ahead of a keyword they share.
             TemplateScope scope = Syntax is { } syntax ? TemplateScopes.At(syntax, caret).Scope : TemplateScope.None;
             templatesOffered.Clear();
@@ -457,7 +458,7 @@ public sealed partial class CodeAssist
             return;
         }
         string typed = text.GetText(open.Start, caret - open.Start);
-        if (!typed.All(IsIdentifierChar))
+        if (!typed.All(IsWordChar))
         {
             CloseCompletion();
             return;
@@ -542,6 +543,17 @@ public sealed partial class CodeAssist
         start = asked.MapOffset(start);
         int caret = Math.Min(asked.MapOffset(typed), Editor.Document.Snapshot.Length);
         string insert = item.TextEdit?.NewText ?? item.TextEditText ?? item.InsertText ?? item.Label;
+        if (item.InsertTextFormat == 2)
+        {
+            // A snippet (Razor's attribute="$0", a component with its required parameters): its places are Tab's to visit.
+            Snippet snippet = Snippet.FromProtocol(insert);
+            if (item.AdditionalTextEdits is not { Count: > 0 })
+            {
+                Editor.InsertSnippet(TextRange.FromBounds(start, Math.Max(start, caret)), snippet);
+                return;
+            }
+            insert = snippet.Text;
+        }
         List<Passenger.Text.TextEdit> edits = [new Passenger.Text.TextEdit(start, Math.Max(0, caret - start), insert)];
         if (item.AdditionalTextEdits is { Count: > 0 } extra && WorkspaceEdits.Carried(asked, extra, indent) is { } placed)
         {
@@ -1639,6 +1651,36 @@ public sealed partial class CodeAssist
     }
 
     private static bool IsIdentifierChar(char c) => char.IsLetterOrDigit(c) || c == '_';
+
+    /// <summary>Whether the file shown is a Razor file, whose completion's words are markup's as well as C#'s.</summary>
+    private bool InRazor => Current?.Lsp?.IsRazor == true;
+
+    /// <summary>A character of the word a completion list narrows by: an identifier's, and in a Razor file a markup
+    /// name's too (<c>@onclick</c>, <c>data-enhance-nav</c>, <c>@bind:after</c>).</summary>
+    private bool IsWordChar(char c) => IsIdentifierChar(c) || (c is '@' or '-' or ':' && InRazor);
+
+    /// <summary>Where a Razor list's word starts when its items say no range: back over an identifier, then over as much of
+    /// a markup name before it as some item begins with, so <c>data-en</c> is replaced whole by <c>data-enhance-nav</c>
+    /// while C#'s <c>a-b</c> completes only <c>b</c>.</summary>
+    private int RazorWordStart(int caret, IReadOnlyList<CompletionItem> items)
+    {
+        TextSnapshot text = Editor.Document.Snapshot;
+        int identifier = WordStart(caret);
+        int start = identifier;
+        while (start > 0 && IsWordChar(text[start - 1]))
+        {
+            start--;
+        }
+        for (; start < identifier; start++)
+        {
+            string typed = text.GetText(start, caret - start);
+            if (items.Any(i => (i.FilterText ?? i.Label).StartsWith(typed, StringComparison.OrdinalIgnoreCase)))
+            {
+                return start;
+            }
+        }
+        return identifier;
+    }
 
     private static int? Score(string typed, string text)
     {
