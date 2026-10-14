@@ -41,7 +41,7 @@ public sealed class DebugSession
     private string? dataSent;
     private readonly Dictionary<int, DataBreakpoint> dataById = [];
 
-    /// <summary>The function breakpoints (the property breakpoints' and Avalonia Binding Errors') as last sent, and the
+    /// <summary>The function breakpoints (the property breakpoints' and XAML Binding Errors') as last sent, and the
     /// breakpoint each is by the id the debugger gave it.</summary>
     private string functionsSent = string.Empty;
     private readonly Dictionary<int, PropertyBreakpoint> propertyById = [];
@@ -163,7 +163,7 @@ public sealed class DebugSession
     /// <summary>The property breakpoint the program stopped at, while paused there.</summary>
     public PropertyBreakpoint? PropertyStop { get; private set; }
 
-    /// <summary>Paused at Avalonia Binding Errors: a binding of the app failed where it stopped.</summary>
+    /// <summary>Paused at XAML Binding Errors: a binding of the app failed where it stopped.</summary>
     public bool BindingErrorStop { get; private set; }
 
     /// <summary>Why the debugger can set no data breakpoint where it runs, or null where it can.</summary>
@@ -727,13 +727,13 @@ public sealed class DebugSession
     /// <summary>The property breakpoints that are on; none while muted.</summary>
     private List<PropertyBreakpoint> PropertiesSending() => breakpoints.Muted ? [] : [.. breakpoints.Properties.Where(p => p.Enabled)];
 
-    /// <summary>Avalonia Binding Errors when it is on; never while muted.</summary>
+    /// <summary>XAML Binding Errors when it is on; never while muted.</summary>
     private BindingErrorBreakpoint? BindingErrorsSending() => !breakpoints.Muted && breakpoints.BindingErrors.Enabled ? breakpoints.BindingErrors : null;
 
     /// <summary>Sends the function breakpoints, which replace those sent before. A property breakpoint is one on the method
     /// the inspector in the app calls at a watched property's change, its condition naming the breakpoint first; its hit count
     /// is the inspector's, which counts only its own property's changes, and one the inspector cannot read is refused here, as
-    /// a line's is. Avalonia Binding Errors is one on the method each failed binding calls, its condition and log message
+    /// a line's is. XAML Binding Errors is one on the method each failed binding calls, its condition and log message
     /// reading the failure as <c>$bindingError</c>, the method's parameter.</summary>
     private async Task SendFunctionBreakpointsAsync()
     {
@@ -794,22 +794,22 @@ public sealed class DebugSession
         }
     }
 
-    /// <summary>What a tracepoint of Avalonia Binding Errors with no message of its own logs, as Rider's "Breakpoint reached"
+    /// <summary>What a tracepoint of XAML Binding Errors with no message of its own logs, as Rider's "Breakpoint reached"
     /// does for a line's: the failure.</summary>
-    private const string BindingErrorLog = "Avalonia binding error: {bindingError.Description,nq}";
+    private const string BindingErrorLog = "Binding error: {bindingError.Description,nq}";
 
-    /// <summary>A condition or log message of Avalonia Binding Errors as the debugger reads it: <c>$bindingError</c>, the name
+    /// <summary>A condition or log message of XAML Binding Errors as the debugger reads it: <c>$bindingError</c>, the name
     /// Variables shows the failure by, is the parameter of the method it stops in.</summary>
     private static string? BindingErrorTerms(string? text) => text?.Replace("$bindingError", "bindingError", StringComparison.Ordinal);
 
-    /// <summary>What the debugger said of Avalonia Binding Errors: until an Avalonia app's inspector has loaded, it has nowhere
+    /// <summary>What the debugger said of XAML Binding Errors: until an Avalonia or WPF app's inspector has loaded, it has nowhere
     /// to stop, which is no fault of the breakpoint.</summary>
     private void ReportBindingErrors(DapBreakpoint answer) =>
         breakpoints.ReportBindingErrors(answer.Verified ? BreakpointStatus.Bound : answer.Reason == "failed" ? BreakpointStatus.Invalid : BreakpointStatus.Unknown,
-            answer.Verified || answer.Reason == "failed" ? answer.Message : NoAvaloniaApp);
+            answer.Verified || answer.Reason == "failed" ? answer.Message : NoInspectedApp);
 
-    /// <summary>Why Avalonia Binding Errors has not bound in a program the debugger runs.</summary>
-    private const string NoAvaloniaApp = "No Avalonia app has started under the debugger with the Live Visual Tree's inspector, which tells of its failed bindings";
+    /// <summary>Why XAML Binding Errors has not bound in a program the debugger runs.</summary>
+    private const string NoInspectedApp = "No Avalonia or WPF app has started under the debugger with the Live Visual Tree's inspector, which tells of its failed bindings";
 
     private void OnFunctionsChanged(object? sender, EventArgs e)
     {
@@ -822,7 +822,7 @@ public sealed class DebugSession
 
     /// <summary>A stop at a breakpoint the debugger gave an id in an answer still on its way back (the answer is read off
     /// the thread pool, the event straight onto the UI thread, so the stop can come first), taken once that answer is:
-    /// a property breakpoint's or Avalonia Binding Errors' stop is then known for one, and shown in the code that did it.</summary>
+    /// a property breakpoint's or XAML Binding Errors' stop is then known for one, and shown in the code that did it.</summary>
     private async Task TakeStopAfter(Task answered, StoppedEvent stopped)
     {
         await Task.WhenAny(answered);

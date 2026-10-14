@@ -342,7 +342,7 @@ public sealed class BuildRunController
             ran = chosen.Name;
             RunProject = Path.GetDirectoryName(plan.Project);
             string running = hotReload ? $"Running {chosen.Name} with Hot Reload: a save applies its changes" : $"Running {chosen.Name}";
-            // An Avalonia app is launched with the inspector in it, which tells of its failed bindings while it runs.
+            // An Avalonia or WPF app is launched with the inspector in it, which tells of its failed bindings while it runs.
             LaunchPlan launched = session.InspectedRun(plan, hotReload);
             LiveApp? inspected = session.RunApp;
             ShowBindings();
@@ -497,7 +497,7 @@ public sealed class BuildRunController
         // Before the session clears the Debug window's console, which forgets the links the last one's output had.
         DebugProject = Path.GetDirectoryName(plan.Project);
         DebugController debug = session.Debug;
-        // An Avalonia app is launched with the Live Visual Tree's inspector in it, which ends with this debugging.
+        // An Avalonia or WPF app is launched with the Live Visual Tree's inspector in it, which ends with this debugging.
         LaunchPlan launched = session.Inspected(plan);
         LiveApp? inspected = session.LiveApp;
         ShowBindings();

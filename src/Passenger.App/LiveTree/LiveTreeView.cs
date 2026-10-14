@@ -167,7 +167,7 @@ public sealed class LiveTreeView : DockPanel
         Children.Add(split);
         ShowPage(LiveTreePage.Properties);
         ShowDetails(null, null);
-        ShowStatus("Debug an Avalonia app to see its windows and controls here.", null);
+        ShowStatus("Debug an Avalonia or WPF app to see its windows and controls here.", null);
     }
 
     /// <summary>A control chosen in the tree.</summary>

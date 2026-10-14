@@ -30,7 +30,7 @@ public static class McpHost
         "Passenger is a C# IDE. These tools act on its open workspace as its user would: open a folder or solution, ask the C# " +
         "language server about code (diagnostics, symbol_info, definition, usages, rename, code_actions), build, run, and debug " +
         "(breakpoint_set, debug_start or debug_attach, debug_step, debug_evaluate, debug_variables), see or drive the window (screenshot, " +
-        "ide_action), and look at and drive the Avalonia app it runs or debugs as a person tests it (app_screenshot, app_tree, app_click, " +
+        "ide_action), and look at and drive the Avalonia or WPF app it runs or debugs as a person tests it (app_screenshot, app_tree, app_click, " +
         "app_type, app_key, app_scroll, app_binding_errors). Lines and columns count from 1; relative paths are the open folder's. Debugging " +
         "tools wait for the program to stop and say where it is, with the top frame's locals.";
 

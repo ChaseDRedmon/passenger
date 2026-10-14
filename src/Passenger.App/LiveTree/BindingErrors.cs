@@ -17,7 +17,7 @@ public sealed record BindingProblem(BindingFailure Failure, Problem Problem)
         .Where(part => !string.IsNullOrEmpty(part)));
 }
 
-/// <summary>An Avalonia app's failed bindings, as the Run and Debug consoles and Problems show them: a console's line names
+/// <summary>An Avalonia or WPF app's failed bindings, as the Run and Debug consoles and Problems show them: a console's line names
 /// the control's XAML element first, as a compiler's message names its place, so the console links it; a path that names a
 /// member its source's type does not have is offered the type's nearest members as fixes, at the member in the XAML.</summary>
 public static partial class BindingErrors
@@ -33,7 +33,7 @@ public static partial class BindingErrors
         return $"{place}binding error: {failure.Control}.{failure.Property} to {failure.Path}: {Message(failure)}{again}\n";
     }
 
-    /// <summary>Avalonia's message, and the nearest members when the path named one its source's type does not have.</summary>
+    /// <summary>The framework's message, and the nearest members when the path named one its source's type does not have.</summary>
     public static string Message(BindingFailure failure) => failure.Nearest.Count == 0
         ? failure.Message
         : $"{failure.Message.TrimEnd()} Did you mean {string.Join(" or ", failure.Nearest)}?";

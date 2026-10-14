@@ -454,14 +454,14 @@ public sealed partial class PassengerTools(MainWindow window)
         "handledInExternalCode, unhandled (a new one on a type in all of them, as Rider sets it). Bound at once while debugging. In Avalonia " +
         "XAML (.axaml) a line's breakpoint stops where the first element or attribute written on it is made or set, and one with an attribute " +
         "(as written on that line: Background, Grid.Row) where that property is set as its element is made. With bindingErrors true it turns " +
-        "on Avalonia Binding Errors, which stops a debugged Avalonia app the moment a binding fails, its condition and log message reading the " +
+        "on XAML Binding Errors, which stops a debugged Avalonia or WPF app the moment a binding fails, its condition and log message reading the " +
         "failure as $bindingError (Control, Property, Path, FailedPart, DataContext, Message, Xaml).")]
     public Task<IReadOnlyList<BreakpointInfo>> SetBreakpoint(
         string? path = null,
         int? line = null,
         [Description("In .axaml, an attribute on the line, by its name as written, for a breakpoint on it alone")] string? attribute = null,
         [Description("An exception type's full name, or \"Any exception\", for an exception breakpoint in place of a path and line")] string? exception = null,
-        [Description("True for Avalonia Binding Errors, in place of a path and line")] bool bindingErrors = false,
+        [Description("True for XAML Binding Errors, in place of a path and line")] bool bindingErrors = false,
         string? condition = null,
         string? hitCondition = null,
         [Description("Written on each hit, its {expressions} evaluated there")] string? logMessage = null,
@@ -495,11 +495,11 @@ public sealed partial class PassengerTools(MainWindow window)
     [McpServerTool(Name = "breakpoint_remove", Title = "Remove a breakpoint", Destructive = false), Description(
         "Removes the breakpoint on a line (or on an .axaml attribute of it), or the exception breakpoint on an exception type (\"Any " +
         "exception\" is never removed: breakpoint_set turns it off with its scenarios, or the person's Breakpoints window). With bindingErrors " +
-        "true it turns Avalonia Binding Errors off, which every folder keeps.")]
+        "true it turns XAML Binding Errors off, which every folder keeps.")]
     public Task<IReadOnlyList<BreakpointInfo>> RemoveBreakpoint(string? path = null, int? line = null,
         [Description("In .axaml, the attribute whose breakpoint to remove")] string? attribute = null,
         [Description("An exception type's full name, in place of a path and line")] string? exception = null,
-        [Description("True to turn Avalonia Binding Errors off, in place of a path and line")] bool bindingErrors = false,
+        [Description("True to turn XAML Binding Errors off, in place of a path and line")] bool bindingErrors = false,
         CancellationToken cancel = default) => OnUi(cancel, () =>
     {
         BreakpointStore store = Session.Debug.Breakpoints;
@@ -529,7 +529,7 @@ public sealed partial class PassengerTools(MainWindow window)
     [McpServerTool(Name = "breakpoints", Title = "Every breakpoint", ReadOnly = true), Description(
         "Every breakpoint: the line breakpoints (an .axaml one on an attribute naming it), then the session's data breakpoints (set from " +
         "Variables' Set Data Breakpoint) and Avalonia property breakpoints (the Live Visual Tree's Break When Value Changes), then the CLR " +
-        "exception breakpoints (\"Any exception\" among them) with their scenarios and Avalonia Binding Errors (bindingErrors true, off until " +
+        "exception breakpoints (\"Any exception\" among them) with their scenarios and XAML Binding Errors (bindingErrors true, off until " +
         "turned on), each with whether the running debugger took it. While Mute " +
         "Breakpoints (ide_action app.debug.muteBreakpoints) is on, none stops.")]
     public Task<IReadOnlyList<BreakpointInfo>> ListBreakpoints(CancellationToken cancel = default) =>

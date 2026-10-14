@@ -9,6 +9,7 @@
     <Project Path="src/Passenger.Editor/Passenger.Editor.csproj" />
     <Project Path="src/Passenger.Host/Passenger.Host.csproj" />
     <Project Path="src/Passenger.Inspector/Passenger.Inspector.csproj" />
+    <Project Path="src/Passenger.Inspector.Wpf/Passenger.Inspector.Wpf.csproj" />
     <Project Path="src/Passenger.Languages/Passenger.Languages.csproj" />
     <Project Path="src/Passenger.Lsp/Passenger.Lsp.csproj" />
     <Project Path="src/Passenger.Profiler/Passenger.Profiler.csproj" />

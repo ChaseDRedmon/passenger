@@ -191,14 +191,14 @@ public sealed class ProjectSession : IAsyncDisposable
     /// <summary>The folder's debugger, its breakpoints with it.</summary>
     public DebugController Debug { get; }
 
-    /// <summary>The Avalonia app the debugger launched last, which the Live Visual Tree inspects; null after any other
+    /// <summary>The Avalonia or WPF app the debugger launched last, which the Live Visual Tree inspects; null after any other
     /// program. It ends with its debugging, and with the folder.</summary>
     public LiveApp? LiveApp { get; private set; }
 
     /// <summary>Another app is being inspected, or none.</summary>
     public event EventHandler? LiveAppChanged;
 
-    /// <summary>A plan as Debug launches it: an Avalonia app's carries the inspector the Live Visual Tree talks to (its
+    /// <summary>A plan as Debug launches it: an Avalonia or WPF app's carries the inspector the Live Visual Tree talks to (its
     /// startup hook, and a socket of the app's own), any other's is the plan itself.</summary>
     public LaunchPlan Inspected(LaunchPlan plan)
     {
@@ -210,12 +210,13 @@ public sealed class ProjectSession : IAsyncDisposable
         return LiveApp?.Plan ?? plan;
     }
 
-    /// <summary>The Avalonia app Run started last, inspected for its failed bindings alone (the Live Visual Tree follows
-    /// the debugger's); null after any other program, or one Hot Reload runs. It ends with its run, and with the folder.</summary>
+    /// <summary>The Avalonia or WPF app Run started last, inspected for its failed bindings and agents' tools (the Live Visual
+    /// Tree follows the debugger's); null after any other program, or one Hot Reload runs. It ends with its run, and with the
+    /// folder.</summary>
     public LiveApp? RunApp { get; private set; }
 
-    /// <summary>A plan as Run launches it: an Avalonia app's carries the inspector, as Debug's does, unless Hot Reload runs
-    /// it, whose dotnet watch is a .NET program of its own that would load the inspector first.</summary>
+    /// <summary>A plan as Run launches it: an Avalonia or WPF app's carries the inspector, as Debug's does, unless Hot Reload
+    /// runs it, whose dotnet watch is a .NET program of its own that would load the inspector first.</summary>
     public LaunchPlan InspectedRun(LaunchPlan plan, bool hotReload)
     {
         UiThread.Check();
@@ -230,12 +231,13 @@ public sealed class ProjectSession : IAsyncDisposable
     /// its run, and with the folder.</summary>
     public LiveApp? ProfiledApp { get; private set; }
 
-    /// <summary>A plan as Profile launches it: an Avalonia app's carries the inspector, as Run's does.</summary>
+    /// <summary>A plan as Profile launches it: an Avalonia app's carries the inspector, as Run's does; a WPF app's none, as
+    /// what it records (frames, overlays) is Avalonia's.</summary>
     public LaunchPlan InspectedProfile(LaunchPlan plan)
     {
         UiThread.Check();
         ProfiledApp?.Dispose();
-        ProfiledApp = LiveTree.LiveApp.For(plan, Overlays);
+        ProfiledApp = LiveTree.LiveApp.For(plan, Overlays, wpf: false);
         InspectedChanged?.Invoke(this, EventArgs.Empty);
         return ProfiledApp?.Plan ?? plan;
     }

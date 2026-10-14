@@ -96,13 +96,13 @@ public sealed class PropertyBreakpoint(int id, long element, string described, s
     public override string Location { get; } = $"{property} on {described}";
 }
 
-/// <summary>The Avalonia Binding Errors breakpoint, as an exception breakpoint is for exceptions: on, it stops an Avalonia app
+/// <summary>The XAML Binding Errors breakpoint, as an exception breakpoint is for exceptions: on, it stops an Avalonia or WPF app
 /// being debugged the moment one of its bindings fails, where the app was when it failed (the inspector in the app calls
 /// <see cref="Inspector.Wire.Failed"/> there). Every folder has the one, off until it is turned on, and none removes it.
 /// Its condition and log message read the failure as <c>$bindingError</c>.</summary>
 public sealed class BindingErrorBreakpoint : Breakpoint
 {
-    /// <summary>Its name in the Breakpoints window, under "Avalonia Binding Errors", as "Any exception" is under the CLR's.</summary>
+    /// <summary>Its name in the Breakpoints window, under "XAML Binding Errors", as "Any exception" is under the CLR's.</summary>
     public const string AnyBindingError = "Any binding error";
 
     public BindingErrorBreakpoint() => Enabled = false;
@@ -129,7 +129,7 @@ public sealed record BreakpointsState : IStateDocument<BreakpointsState>
     /// <summary>The CLR exception breakpoints, "Any exception" (no type) among them; none kept is "Any exception" as Rider has it.</summary>
     public List<KeptExceptionBreakpoint>? Exceptions { get; init; }
 
-    /// <summary>The Avalonia Binding Errors breakpoint; none kept is off.</summary>
+    /// <summary>The XAML Binding Errors breakpoint; none kept is off.</summary>
     public KeptBindingErrorBreakpoint? BindingErrors { get; init; }
 
     public static IReadOnlyList<Action<JsonObject>> Upgrades { get; } = [StateStore.Unversioned];
@@ -171,7 +171,7 @@ public sealed record KeptExceptionBreakpoint(string? Type)
     public bool Unhandled { get; init; } = true;
 }
 
-/// <summary>The Avalonia Binding Errors breakpoint as kept: whether it is on and what it does.</summary>
+/// <summary>The XAML Binding Errors breakpoint as kept: whether it is on and what it does.</summary>
 public sealed record KeptBindingErrorBreakpoint
 {
     public bool Enabled { get; init; }
@@ -181,7 +181,7 @@ public sealed record KeptBindingErrorBreakpoint
     public string? LogMessage { get; init; }
 }
 
-/// <summary>Every breakpoint: the line breakpoints by file, the CLR exception breakpoints, Avalonia Binding Errors and the
+/// <summary>Every breakpoint: the line breakpoints by file, the CLR exception breakpoints, XAML Binding Errors and the
 /// session's data and property breakpoints.
 /// A breakpoint in an open file moves with the text around it, as Rider's do, so an edit above it leaves it on its line;
 /// one whose line is deleted lands where the deletion did, and two on one line become one. Muted, none of them stops the
@@ -209,10 +209,10 @@ public sealed class BreakpointStore
     /// <summary>The data breakpoints changed: added, removed, muted, what one does, or what the debugger said.</summary>
     public event EventHandler? DataChanged;
 
-    /// <summary>Avalonia Binding Errors changed: turned on or off, muted, what it does, or what the debugger said.</summary>
+    /// <summary>XAML Binding Errors changed: turned on or off, muted, what it does, or what the debugger said.</summary>
     public event EventHandler? BindingErrorsChanged;
 
-    /// <summary>Avalonia Binding Errors, the folder's one, off until it is turned on.</summary>
+    /// <summary>XAML Binding Errors, the folder's one, off until it is turned on.</summary>
     public BindingErrorBreakpoint BindingErrors { get; } = new();
 
     public IEnumerable<string> Files => byPath.Where(p => p.Value.Count > 0).Select(p => p.Key);
@@ -317,7 +317,7 @@ public sealed class BreakpointStore
         }
     }
 
-    /// <summary>Avalonia Binding Errors as kept, or as a folder's is at first (off).</summary>
+    /// <summary>XAML Binding Errors as kept, or as a folder's is at first (off).</summary>
     private void SetBindingErrors(KeptBindingErrorBreakpoint kept)
     {
         BindingErrors.Enabled = kept.Enabled;
@@ -329,7 +329,7 @@ public sealed class BreakpointStore
     }
 
     /// <summary>Takes every breakpoint away, as another folder opens: each folder's are its own, "Any exception" as Rider
-    /// sets it and Avalonia Binding Errors off until the folder says otherwise, and none muted.</summary>
+    /// sets it and XAML Binding Errors off until the folder says otherwise, and none muted.</summary>
     public void Clear()
     {
         Muted = false;
@@ -582,7 +582,7 @@ public sealed class BreakpointStore
         Changed?.Invoke(this, path);
     }
 
-    /// <summary>Records what the debugger said of Avalonia Binding Errors (unknown when it was not sent).</summary>
+    /// <summary>Records what the debugger said of XAML Binding Errors (unknown when it was not sent).</summary>
     public void ReportBindingErrors(BreakpointStatus status, string? message)
     {
         if (BindingErrors.Status == status && BindingErrors.Message == message)

@@ -2,14 +2,17 @@ using System.Text.Json.Serialization;
 
 namespace Passenger.Inspector;
 
-// What Passenger and its inspector inside an Avalonia app say to each other, compiled into both: one JSON object a line
-// over the socket Passenger names in the app's environment. Passenger asks (Request) and the app answers each by its id
-// (Reply); the app also tells without being asked (a Reply with an Event): hello once its UI runs, treeChanged as controls
-// come and go, picked when the person points at one, bindingFailed as a binding fails (from before hello, as the app starts).
-// An agent's tools ask the same: the windows, the tree with each element's layout and text, a picture the app draws of a
-// window, and input to it as a person's goes. A property breakpoint (Break When Value Changes) asks it to watch an element's
-// property, which stops the debugged app at each change its hit count lets through (PropertyBreaks.cs); in a debugged app each
-// failed binding also calls a method the Avalonia Binding Errors breakpoint stops in (Breaks.cs). The bindings of a XAML file's
+// What Passenger and its inspector inside an Avalonia app (src/Passenger.Inspector) or a WPF app (src/Passenger.Inspector.Wpf)
+// say to each other, compiled into all three: one JSON object a line over the socket Passenger names in the app's environment.
+// The messages are the same for both (a WPF dependency property is a property, its value sources take the same words); what
+// one framework has not (Avalonia's overlays, frames and binding values) the other's inspector refuses. Passenger asks
+// (Request) and the app answers each by its id (Reply); the app also tells without being asked (a Reply with an Event): hello
+// once its UI runs, treeChanged as controls come and go, picked when the person points at one, bindingFailed as a binding
+// fails (from before hello, as the app starts). An agent's tools ask the same: the windows, the tree with each element's
+// layout and text, a picture the app draws of a window, and input to it as a person's goes. A property breakpoint (Break When
+// Value Changes) asks it to watch an element's property, which stops the debugged app at each change its hit count lets
+// through (PropertyBreaks.cs); in a debugged app each failed binding also calls a method the XAML Binding Errors breakpoint
+// stops in (Breaks.cs, by the same name in either inspector). The bindings of a XAML file's
 // elements are read with their values (values, BindingValues.cs): asked over the socket while the app runs, and through the
 // debugger's evaluation of BindingValues.Read while it is paused, when its UI thread answers nothing. Avalonia's renderer debug
 // overlays are set on the app's windows (overlays, Overlays.cs), from the launch on when its environment names them. The app's
@@ -30,6 +33,14 @@ public static class Wire
 
     /// <summary>The runtime's list of startup hooks, which loads the inspector before the app's Main.</summary>
     public const string StartupHooks = "DOTNET_STARTUP_HOOKS";
+
+    /// <summary>A WPF app's environment: the launched project's folder, where its XAML is when its build's symbols do not say.</summary>
+    public const string ProjectVariable = "PASSENGER_INSPECTOR_PROJECT";
+
+    /// <summary>A WPF app's environment, set to 1: WPF then records where in its XAML each object was made (its
+    /// VisualDiagnostics.GetXamlSourceInfo) and raises BindingDiagnostics.BindingFailed, as Visual Studio has it for a run it
+    /// starts. WPF reads it as it first loads XAML, so it stays in the app's environment.</summary>
+    public const string XamlSourceInfoVariable = "ENABLE_XAML_DIAGNOSTICS_SOURCE_INFO";
 
     /// <summary>The Avalonia the inspector is built for; an app on another major version is refused, saying which it has.</summary>
     public const int AvaloniaMajor = 12;
@@ -58,7 +69,7 @@ public static class Wire
     public const string Changed = "Passenger.Inspector.Breaks.Changed";
 
     /// <summary>The method each failed binding calls in a debugged app (Bindings.cs), where the debugger's function breakpoint
-    /// for the Avalonia Binding Errors breakpoint is.</summary>
+    /// for the XAML Binding Errors breakpoint is; the WPF inspector's has the same name, so the one breakpoint serves both.</summary>
     public const string Failed = "Passenger.Inspector.Breaks.BindingFailed";
 
     public const string Hello = "hello";
@@ -248,7 +259,11 @@ public sealed record Reply
 
 /// <summary>The app's first word: its process, the Avalonia it runs (its assembly's version), and why the inspector cannot
 /// serve it when it cannot (another major version of Avalonia, none at all).</summary>
-public sealed record Hello(int Protocol, int ProcessId, string? Avalonia, string? Problem);
+public sealed record Hello(int Protocol, int ProcessId, string? Avalonia, string? Problem)
+{
+    /// <summary>From a WPF app's inspector: WPF and its version ("WPF 10.0.1"), where an Avalonia app says its Avalonia.</summary>
+    public string? Framework { get; init; }
+}
 
 /// <summary>A binding that failed in the app, as Avalonia logged it (its Binding area, Warning or Error): the control it is
 /// on (Type#Name) and the property it sets, its path and the part of the path that failed, Avalonia's message, the control's
@@ -364,6 +379,12 @@ public static class StyleKinds
     public const string TemplatedParentTheme = "Templated parent's theme";
 
     public const string Style = "Style";
+
+    /// <summary>WPF's: a trigger of a style (the element's own, or its default one), applying while its conditions hold.</summary>
+    public const string Trigger = "Trigger";
+
+    /// <summary>WPF's: a trigger of a control template, the element's own or the one of the control whose template made it.</summary>
+    public const string TemplateTrigger = "Template trigger";
 }
 
 /// <summary>A setter of a style: the property, the value it sets, where it is written, and what became of it

@@ -12,7 +12,7 @@ namespace Passenger.App.LiveTree;
 /// going to a place in a file.</summary>
 public sealed record LiveTreeParts(DockHost Dock, ActionRegistry Actions, Action<string> Say, Action<string, TextPosition> Navigate);
 
-/// <summary>The window's Live Visual Tree, over the session it has: it follows the Avalonia app the session's debugger
+/// <summary>The window's Live Visual Tree, over the session it has: it follows the Avalonia or WPF app the session's debugger
 /// launched (<see cref="ProjectSession.LiveApp"/>), shows its window as the app's UI comes up, and asks the app for its tree
 /// (again whenever its controls come and go), for the chosen control's details, for Select Element and for the outline over
 /// the control chosen. While the app is paused nothing is asked, since its UI thread answers nothing: the window keeps what
@@ -258,7 +258,7 @@ public sealed class LiveTreeController
         switch (app)
         {
             case null:
-                View.ShowStatus("Debug an Avalonia app to see its windows and controls here.", null);
+                View.ShowStatus("Debug an Avalonia or WPF app to see its windows and controls here.", null);
                 break;
             case { State: LiveAppState.Waiting }:
                 View.ShowStatus($"Waiting for {app.Name} to show its windows…", null);
@@ -274,12 +274,10 @@ public sealed class LiveTreeController
                 View.ShowStatus($"{app.Name} has ended.", null);
                 break;
             default:
-                View.ShowStatus(null, app.Avalonia is { } version ? $"{app.Name} · Avalonia {Version(version)}" : app.Name);
+                View.ShowStatus(null, $"{app.Name} · {app.Framework}");
                 break;
         }
     }
-
-    private static string Version(string version) => System.Version.TryParse(version, out Version? read) ? read.ToString(3) : version;
 
     private void OnAppState(object? sender, EventArgs e)
     {
@@ -351,7 +349,7 @@ public sealed class LiveTreeController
     /// <summary>Why the window cannot ask the app now: nothing inspected, not up yet, refused, gone, or paused.</summary>
     private string? WhyNotAsk() => app switch
     {
-        null => "No Avalonia app is being debugged",
+        null => "No Avalonia or WPF app is being debugged",
         { State: LiveAppState.Waiting } => $"{app.Name} has not shown its windows yet",
         { State: LiveAppState.Refused } => app.Problem,
         { State: LiveAppState.Ended } => $"{app.Name} has ended",

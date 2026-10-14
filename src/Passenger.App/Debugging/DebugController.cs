@@ -45,7 +45,7 @@ public sealed class DebugController : IDisposable
     /// <summary>What a property breakpoint's stop changed and what changed it, as the inspector in the app said it.</summary>
     private string? propertyChange;
 
-    /// <summary>The failed binding Avalonia Binding Errors stopped at, as the inspector's call there has it, and the frame
+    /// <summary>The failed binding XAML Binding Errors stopped at, as the inspector's call there has it, and the frame
     /// shown at the stop, where its words are written over the line.</summary>
     private BindingStop? bindingStop;
     private int? bindingFrame;
@@ -829,7 +829,7 @@ public sealed class DebugController : IDisposable
         {
             return;
         }
-        // A property breakpoint, and Avalonia Binding Errors, stop in the inspector's call, under Avalonia's: the user's code
+        // A property breakpoint, and XAML Binding Errors, stop in the inspector's call, under Avalonia's: the user's code
         // that set the value or made the binding fail is where it stopped, as Just My Code shows it; with none (a style a
         // pointer set) the call's own frame, whose values say what happened, but no line of the inspector's.
         DapStackFrame? user = stack.FirstOrDefault(f => f.Source?.Path is not null && f.PresentationHint != "subtle");
@@ -1181,7 +1181,7 @@ public sealed record DataWatchOffer(string Title, string? WhyNot)
 /// them), and the exception it stopped on, described as the stop's line shows it.</summary>
 public sealed record DebugStop(int Thread, string? Reason, IReadOnlyList<DapStackFrame> Frames, DapStackFrame? Top, string? Exception)
 {
-    /// <summary>The failed binding Avalonia Binding Errors stopped at, placed in its XAML.</summary>
+    /// <summary>The failed binding XAML Binding Errors stopped at, placed in its XAML.</summary>
     public BindingProblem? Binding { get; init; }
 }
 

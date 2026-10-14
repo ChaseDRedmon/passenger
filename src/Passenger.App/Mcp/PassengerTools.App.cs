@@ -8,10 +8,11 @@ using Passenger.Inspector;
 
 namespace Passenger.App.Mcp;
 
-/// <summary>The Avalonia app Passenger runs or debugs, as an agent tests it: its windows, pictures the app draws of them, its
-/// visual tree, clicks, typing, keys and scrolling given as a person's are, and its failed bindings. All through the
-/// inspector Run and Debug launch an Avalonia 12 app with (<see cref="LiveApp"/>), the Live Visual Tree's, or for
-/// Passenger's own windows the same inspector loaded into Passenger.</summary>
+/// <summary>The Avalonia or WPF app Passenger runs or debugs, as an agent tests it: its windows, pictures the app draws of
+/// them, its visual tree, clicks, typing, keys and scrolling given as a person's are, and its failed bindings. All through the
+/// inspector Run and Debug launch an Avalonia 12 app or a WPF app with (<see cref="LiveApp"/>), the Live Visual Tree's, or for
+/// Passenger's own windows the same inspector loaded into Passenger. A WPF app's clicks go through UI Automation and its keys
+/// through WPF's input manager (src/Passenger.Inspector.Wpf/Driver.cs).</summary>
 public sealed partial class PassengerTools
 {
     private const string AppChoice =
@@ -28,14 +29,15 @@ public sealed partial class PassengerTools
     private static readonly TimeSpan AppUiLimit = TimeSpan.FromSeconds(60);
 
     [McpServerTool(Name = "app_windows", Title = "The app's windows", ReadOnly = true), Description(
-        "The windows of the Avalonia app that Run or Debug started (an Avalonia 12 app, launched with Passenger's inspector in it; one still " +
-        "starting is waited for), or Passenger's own with app ide: each with its id (@N, which the other app_ tools take), type, title, size " +
-        "in units, pixels a unit, whether it is active and shown, and for a popup (a menu, a drop-down) the window it opened from.")]
+        "The windows of the Avalonia or WPF app that Run or Debug started (an Avalonia 12 app, or a WPF app on Windows, launched with " +
+        "Passenger's inspector in it; one still starting is waited for), or Passenger's own with app ide: each with its id (@N, which the " +
+        "other app_ tools take), type, title, size in units, pixels a unit, whether it is active and shown, and for a popup (a menu, a " +
+        "drop-down) the window it opened from.")]
     public Task<AppWindows> AppWindowsList([Description(AppChoice)] string? app = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         LiveApp live = await InspectedAsync(app, cancel);
         IReadOnlyList<AppWindow> windows = await live.WindowsAsync();
-        return new AppWindows(live.Name, live.Avalonia, live.ProcessId, [.. windows.Select(w => new AppWindowInfo(
+        return new AppWindows(live.Name, live.Framework, live.Avalonia, live.ProcessId, [.. windows.Select(w => new AppWindowInfo(
             Id(w.Id), w.Type, w.Name, w.Title, Math.Round(w.Width, 2), Math.Round(w.Height, 2), w.Scaling, w.Active, w.Visible, w.Owner is long owner ? Id(owner) : null))]);
     });
 
@@ -80,7 +82,7 @@ public sealed partial class PassengerTools
         [Description(ControlQuery + "; the tree starts there")] string? control = null,
         [Description("A query (as control takes) for the elements to list, in place of the whole tree")] string? filter = null,
         [Description("Levels below where it starts")] int? depth = null,
-        [Description("Avalonia properties to show the values of (IsEnabled, Foreground, Grid.Row, Offset) where an element has them")] IReadOnlyList<string>? properties = null,
+        [Description("Properties to show the values of (Avalonia's, or a WPF app's dependency properties: IsEnabled, Foreground, Grid.Row, Offset) where an element has them")] IReadOnlyList<string>? properties = null,
         bool templates = false,
         bool hidden = false,
         CancellationToken cancel = default) => OnUi(cancel, async () =>
@@ -170,7 +172,7 @@ public sealed partial class PassengerTools
     [McpServerTool(Name = "app_key", Title = "Press keys in the app", Destructive = true), Description(
         "Presses keys in the app as a keyboard would, one chord after another (\"Enter\", \"Tab Tab Space\", \"ctrl+A Delete\", " +
         "\"primary+S\" for the platform's Cmd or Ctrl): an element is given the keyboard focus first, else the keys go to whatever has it. " +
-        "Keys are Avalonia's names (Enter, Escape, Back, Delete, Left, PageDown, F5, A, D1 or 1); modifiers ctrl, shift, alt, cmd (meta), " +
+        "Keys are Avalonia's names, which WPF's share (Enter, Escape, Back, Delete, Left, PageDown, F5, A, D1 or 1); modifiers ctrl, shift, alt, cmd (meta), " +
         "primary. A printable key types its character when nothing takes the key itself. Key bindings and commands run as they would.")]
     public Task<string> AppKey(
         [Description("Chords separated by spaces, each keys joined by +")] string keys,
@@ -227,8 +229,8 @@ public sealed partial class PassengerTools
     });
 
     [McpServerTool(Name = "app_binding_errors", Title = "The app's failed bindings", ReadOnly = true), Description(
-        "The bindings that have failed in the Avalonia apps Run and Debug started last (or the one named), as Problems' Bindings tab lists " +
-        "them: each once, with its control, property, path, Avalonia's message (and the nearest members when the path names one its source " +
+        "The bindings that have failed in the Avalonia or WPF apps Run and Debug started last (or the one named), as Problems' Bindings tab lists " +
+        "them: each once, with its control, property, path, the framework's message (and the nearest members when the path names one its source " +
         "lacks), where in the XAML (the misspelt member when the file has it) and how many times it failed. An app that ended keeps its " +
         "list until the next of its kind starts; Passenger's own (app ide) are those since an agent first looked at its windows.")]
     public Task<IReadOnlyList<AppBindingError>> AppBindingErrors([Description(AppChoice)] string? app = null, CancellationToken cancel = default) => OnUi(cancel, () =>
@@ -236,15 +238,15 @@ public sealed partial class PassengerTools
         IEnumerable<LiveApp> apps = app switch
         {
             null => new[] { Session.RunApp, Session.LiveApp }.OfType<LiveApp>(),
-            "run" => [Session.RunApp ?? throw new InvalidOperationException("Run has started no Avalonia app in this folder")],
-            "debug" => [Session.LiveApp ?? throw new InvalidOperationException("Debug has started no Avalonia app in this folder")],
+            "run" => [Session.RunApp ?? throw new InvalidOperationException("Run has started no Avalonia or WPF app in this folder")],
+            "debug" => [Session.LiveApp ?? throw new InvalidOperationException("Debug has started no Avalonia or WPF app in this folder")],
             "ide" => [LiveApp.Own()],
             _ => throw new ArgumentException($"No app '{app}': name run, debug or ide"),
         };
         List<LiveApp> chosen = [.. apps];
         if (chosen.Count == 0)
         {
-            throw new InvalidOperationException("No Avalonia app has been run or debugged in this folder; run or debug_start one");
+            throw new InvalidOperationException("No Avalonia or WPF app has been run or debugged in this folder; run or debug_start one");
         }
         return Task.FromResult<IReadOnlyList<AppBindingError>>([.. chosen.SelectMany(live => live.Bindings.Select(failure =>
         {
@@ -264,11 +266,11 @@ public sealed partial class PassengerTools
         {
             null => Running(),
             "run" => Session.RunApp ?? throw new InvalidOperationException(Builds.IsRunning
-                ? "What Run started is not an Avalonia app Passenger inspects (it has no Avalonia.Base.dll beside it, or Hot Reload runs it)"
-                : "Run has started no Avalonia app; run starts one"),
+                ? $"What Run started is not {Inspectable}, or Hot Reload runs it"
+                : "Run has started no Avalonia or WPF app; run starts one"),
             "debug" => Session.LiveApp ?? throw new InvalidOperationException(Session.Debug.IsDebugging
-                ? "What is being debugged is not an Avalonia app Passenger inspects (it has no Avalonia.Base.dll beside it)"
-                : "Debug has started no Avalonia app; debug_start starts one"),
+                ? $"What is being debugged is not {Inspectable}"
+                : "Debug has started no Avalonia or WPF app; debug_start starts one"),
             "ide" => LiveApp.Own(),
             _ => throw new ArgumentException($"No app '{app}': name run, debug or ide"),
         };
@@ -314,14 +316,17 @@ public sealed partial class PassengerTools
         }
         if (Builds.IsRunning || Session.Debug.IsDebugging)
         {
-            return "What is running is not an Avalonia app Passenger inspects (it has no Avalonia.Base.dll beside it, or Hot Reload runs it)";
+            return $"What is running is not {Inspectable}, or Hot Reload runs it";
         }
         return apps.FirstOrDefault() is { } ended
             ? Ended(ended)
-            : "No Avalonia app is running: run or debug_start one (Avalonia 12), or name app ide for Passenger's own windows";
+            : "No Avalonia or WPF app is running: run or debug_start one (Avalonia 12, or WPF on Windows), or name app ide for Passenger's own windows";
 
         static string Ended(LiveApp app) => $"{app.Name} has ended: run or debug_start starts it again, or name app ide for Passenger's own windows";
     }
+
+    /// <summary>What Passenger inspects, as a refusal says it.</summary>
+    private const string Inspectable = "an app Passenger inspects (an Avalonia 12 app, Avalonia.Base.dll beside it, or a WPF app on Windows)";
 
     /// <summary>The app's tree, flattened, and the window named (else the app's first, or for Passenger's own the window this
     /// agent works in).</summary>
@@ -447,8 +452,9 @@ public sealed partial class PassengerTools
         (done.Shows is { } shows ? $"; it shows \"{shows}\"" : string.Empty) + (done.Focused is { } focused ? $"; {focused} has the focus" : "; nothing has the focus");
 }
 
-/// <summary>An app's windows, with what the app is: its run configuration's name, its Avalonia and its process.</summary>
-public sealed record AppWindows(string App, string? Avalonia, int? ProcessId, IReadOnlyList<AppWindowInfo> Windows);
+/// <summary>An app's windows, with what the app is: its run configuration's name, its framework ("Avalonia 12.1.4", "WPF
+/// 10.0.1"), its Avalonia's version (null for WPF) and its process.</summary>
+public sealed record AppWindows(string App, string Framework, string? Avalonia, int? ProcessId, IReadOnlyList<AppWindowInfo> Windows);
 
 public sealed record AppWindowInfo(string Id, string Type, string? Name, string? Title, double Width, double Height, double Scaling, bool Active, bool Visible, string? Owner);
 

@@ -10,7 +10,7 @@ public partial class MainWindow
     /// <summary>The Live Visual Tree tool window.</summary>
     public LiveTreeView LiveTree => liveTree!.View;
 
-    /// <summary>The Avalonia app the Live Visual Tree follows, or null.</summary>
+    /// <summary>The Avalonia or WPF app the Live Visual Tree follows, or null.</summary>
     public LiveApp? LiveApp => liveTree!.App;
 
     /// <summary>A debugged app's binding values in its .axaml files.</summary>

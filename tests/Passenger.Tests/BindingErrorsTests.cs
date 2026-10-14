@@ -132,14 +132,14 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
         string program = Path.Combine(folder, "Program.cs");
 
         // Off until turned on, by its box in the Breakpoints window, under its own group after the CLR exception breakpoints.
-        Assert.False(store.BindingErrors.Enabled, "Avalonia Binding Errors was on before anything turned it on");
+        Assert.False(store.BindingErrors.Enabled, "XAML Binding Errors was on before anything turned it on");
         Ui.Run(window, AppActions.ViewBreakpoints);
         BreakpointsWindow breakpoints = Assert.IsType<BreakpointsWindow>(window.Popup);
         Assert.Equal([ExceptionBreakpoint.AnyException, BindingErrorBreakpoint.AnyBindingError], breakpoints.Listed.Select(b => b.Location));
-        Assert.Contains(breakpoints.GetVisualDescendants().OfType<TextBlock>(), t => t.Text == "Avalonia Binding Errors");
+        Assert.Contains(breakpoints.GetVisualDescendants().OfType<TextBlock>(), t => t.Text == "XAML Binding Errors");
         Click(window, Row(breakpoints, BindingErrorBreakpoint.AnyBindingError).GetVisualDescendants().OfType<CheckBox>().First());
         Click(window, Button(breakpoints, "Done"));
-        Assert.True(store.BindingErrors.Enabled, "Its box did not turn Avalonia Binding Errors on");
+        Assert.True(store.BindingErrors.Enabled, "Its box did not turn XAML Binding Errors on");
 
         // The caption's binding fails as the app gives its window a view model: the stop is there, in the app's own code.
         Assert.Null(Ui.Await(window.DebugAsync(), "the app to build and start under the debugger", TimeSpan.FromMinutes(4)));
@@ -201,7 +201,7 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
         window.Close();
     }
 
-    /// <summary>Text typed after Avalonia Binding Errors' condition in the Breakpoints window.</summary>
+    /// <summary>Text typed after XAML Binding Errors' condition in the Breakpoints window.</summary>
     private static void Condition(MainWindow window, string typed)
     {
         Ui.Run(window, AppActions.ViewBreakpoints);
@@ -225,7 +225,7 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
         catch (TimeoutException)
         {
             string said = Console(window);
-            throw new TimeoutException($"Waited a minute for {what} ({window.Status}; Avalonia Binding Errors {window.Debugger.Breakpoints.BindingErrors.Status}: "
+            throw new TimeoutException($"Waited a minute for {what} ({window.Status}; XAML Binding Errors {window.Debugger.Breakpoints.BindingErrors.Status}: "
                 + $"{window.Debugger.Breakpoints.BindingErrors.Message}); the console said:\n{said[Math.Max(0, said.Length - 3000)..]}");
         }
         return window.Debugger.Stop ?? throw new Xunit.Sdk.XunitException($"The program ended before {what}: {window.Status}");

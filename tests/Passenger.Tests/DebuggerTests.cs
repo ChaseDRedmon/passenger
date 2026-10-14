@@ -476,7 +476,7 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
 
         Ui.Run(window, AppActions.ViewBreakpoints);
         BreakpointsWindow breakpoints = Assert.IsType<BreakpointsWindow>(window.Popup);
-        // The line breakpoints, then Rider's "Any exception" and Avalonia Binding Errors, which every folder has.
+        // The line breakpoints, then Rider's "Any exception" and XAML Binding Errors, which every folder has.
         Assert.Equal(["Program.cs:4", "Program.cs:6", ExceptionBreakpoint.AnyException, BindingErrorBreakpoint.AnyBindingError], breakpoints.Listed.Select(b => b.Location));
         CheckBox first = breakpoints.GetVisualDescendants().OfType<CheckBox>().First(c => c.Content is null);
         first.IsChecked = false;
@@ -630,9 +630,9 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
             Click(first, Row(breakpoints, ExceptionBreakpoint.AnyException).GetVisualDescendants().OfType<CheckBox>().First());
             Assert.Equal([ExceptionBreakpoint.AnyException, "System.InvalidOperationException", "System.ArgumentNullException", BindingErrorBreakpoint.AnyBindingError],
                 breakpoints.Listed.Select(b => b.Location));
-            // Avalonia Binding Errors, off at first, turned on by its box and given a condition, as an exception breakpoint is.
-            Assert.False(first.Debugger.Breakpoints.BindingErrors.Enabled, "Avalonia Binding Errors was on in a folder that never turned it on");
-            Assert.Contains(breakpoints.GetVisualDescendants().OfType<TextBlock>(), t => t.Text == "Avalonia Binding Errors");
+            // XAML Binding Errors, off at first, turned on by its box and given a condition, as an exception breakpoint is.
+            Assert.False(first.Debugger.Breakpoints.BindingErrors.Enabled, "XAML Binding Errors was on in a folder that never turned it on");
+            Assert.Contains(breakpoints.GetVisualDescendants().OfType<TextBlock>(), t => t.Text == "XAML Binding Errors");
             Click(first, Row(breakpoints, BindingErrorBreakpoint.AnyBindingError).GetVisualDescendants().OfType<CheckBox>().First());
             Click(first, Row(breakpoints, BindingErrorBreakpoint.AnyBindingError));
             Click(first, breakpoints.GetVisualDescendants().OfType<TextBox>().First(t => t.PlaceholderText?.StartsWith("A C# condition", StringComparison.Ordinal) == true));
@@ -650,7 +650,7 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
             BindingErrorBreakpoint bindings = second.Debugger.Breakpoints.BindingErrors;
             Assert.Equal((true, "$bindingError.Path == \"Name\""), (bindings.Enabled, bindings.Condition));
 
-            // Delete removes the one chosen, but never "Any exception" or Avalonia Binding Errors, whose boxes turn them off.
+            // Delete removes the one chosen, but never "Any exception" or XAML Binding Errors, whose boxes turn them off.
             breakpoints = OpenBreakpoints(second);
             Click(second, Row(breakpoints, "System.ArgumentNullException"));
             Ui.Press(second, "Delete");
@@ -664,7 +664,7 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
 
             MainWindow third = Keeping(settings);
             Assert.Equal([null, "System.InvalidOperationException"], third.Debugger.Breakpoints.Exceptions.Select(e => e.Type));
-            Assert.True(third.Debugger.Breakpoints.BindingErrors.Enabled, "Avalonia Binding Errors was not kept on with the folder");
+            Assert.True(third.Debugger.Breakpoints.BindingErrors.Enabled, "XAML Binding Errors was not kept on with the folder");
             third.Close();
         }
         finally

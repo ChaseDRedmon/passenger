@@ -1,0 +1,61 @@
+using Passenger.Inspector;
+
+/// <summary>The runtime calls this before the app's Main, as DOTNET_STARTUP_HOOKS names this assembly: only in a WPF app's
+/// run Passenger launched, never in the app as shipped. It takes itself and its socket out of the environment (so nothing the
+/// app starts loads it; ENABLE_XAML_DIAGNOSTICS_SOURCE_INFO, which WPF reads as it first loads XAML, stays), checks that the
+/// app runs WPF, and starts the inspector, which needs no context of its own: WPF's assemblies are the app's shared framework.
+/// Nothing it does can stop the app.</summary>
+internal static class StartupHook
+{
+    public static void Initialize()
+    {
+        string? socket = Environment.GetEnvironmentVariable(Wire.SocketVariable);
+        string? project = Environment.GetEnvironmentVariable(Wire.ProjectVariable);
+        Unlist();
+        if (socket is not { Length: > 0 })
+        {
+            return;
+        }
+        try
+        {
+            if (Problem() is { } problem)
+            {
+                Connection.Refuse(socket, null, problem);
+                return;
+            }
+            Start(socket, project);
+        }
+        catch (Exception error)
+        {
+            Connection.Refuse(socket, null, $"The inspector could not start in the app: {error.GetBaseException().Message}");
+        }
+    }
+
+    /// <summary>Apart from <see cref="Initialize"/>, so an app without WPF fails here, inside its try, as WPF's types load.</summary>
+    private static void Start(string socket, string? project)
+    {
+        Passenger.Inspector.Wpf.Agent.Trace($"the startup hook, on thread {Environment.CurrentManagedThreadId} ({Thread.CurrentThread.GetApartmentState()})");
+        Passenger.Inspector.Wpf.Agent.Start(socket, Thread.CurrentThread, project);
+    }
+
+    /// <summary>This hook, the socket and the project, out of the environment the app's own programs inherit; other hooks stay.</summary>
+    private static void Unlist()
+    {
+        Environment.SetEnvironmentVariable(Wire.SocketVariable, null);
+        Environment.SetEnvironmentVariable(Wire.ProjectVariable, null);
+        string self = typeof(StartupHook).Assembly.Location;
+        if (Environment.GetEnvironmentVariable(Wire.StartupHooks) is { Length: > 0 } hooks)
+        {
+            string[] others = [.. hooks.Split(Path.PathSeparator).Where(h => h.Length > 0 && !string.Equals(Path.GetFullPath(h), self, StringComparison.OrdinalIgnoreCase))];
+            Environment.SetEnvironmentVariable(Wire.StartupHooks, others.Length == 0 ? null : string.Join(Path.PathSeparator, others));
+        }
+    }
+
+    /// <summary>Why the inspector cannot serve the app: it has no WPF among the assemblies it will load.</summary>
+    private static string? Problem()
+    {
+        bool wpf = (AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string)?.Split(Path.PathSeparator)
+            .Any(p => string.Equals(Path.GetFileName(p), "PresentationFramework.dll", StringComparison.OrdinalIgnoreCase)) == true;
+        return wpf ? null : "The app does not use WPF";
+    }
+}

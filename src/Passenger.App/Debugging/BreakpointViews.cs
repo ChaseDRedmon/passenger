@@ -82,7 +82,7 @@ public sealed class BreakpointProperties : UserControl
         enabled.IsChecked = breakpoint.Enabled;
         suspend.IsChecked = breakpoint.Suspend;
         condition.Text = breakpoint.Condition ?? string.Empty;
-        // A property breakpoint's condition reads the change it stops at, and Avalonia Binding Errors' the failed binding.
+        // A property breakpoint's condition reads the change it stops at, and XAML Binding Errors' the failed binding.
         condition.PlaceholderText = breakpoint switch
         {
             PropertyBreakpoint => "A C# condition: newValue != oldValue",
@@ -255,7 +255,7 @@ public sealed class BreakpointPopup : UserControl
 /// <summary>Rider's Breakpoints window: the line breakpoints (XAML's among them) under ".NET Line Breakpoints", the
 /// session's data breakpoints under "Data Breakpoints", its property breakpoints under "Avalonia Property Breakpoints" and
 /// the exception breakpoints under "CLR Exception Breakpoints" ("Any exception" first) and the binding errors' one under
-/// "Avalonia Binding Errors", each turned on or off by its box, and the chosen one's properties beside the list. + adds an
+/// "XAML Binding Errors", each turned on or off by its box, and the chosen one's properties beside the list. + adds an
 /// exception breakpoint by its
 /// type, offering the exception types that match what is typed (Rider's Add CLR Exception Breakpoints); − removes the
 /// chosen one. Double-click (or Go to Source) shows a line breakpoint's line.</summary>
@@ -515,7 +515,7 @@ public sealed class BreakpointsWindow : UserControl
         }
     }
 
-    /// <summary>Every breakpoint but the folder's own two, "Any exception" and Avalonia Binding Errors, turned off instead.</summary>
+    /// <summary>Every breakpoint but the folder's own two, "Any exception" and XAML Binding Errors, turned off instead.</summary>
     private static bool Removable(Breakpoint breakpoint) => breakpoint is not (ExceptionBreakpoint { IsAny: true } or BindingErrorBreakpoint);
 
     private void GoTo()
@@ -560,7 +560,7 @@ public sealed class BreakpointsWindow : UserControl
         {
             list.Items.Add(Item(breakpoint));
         }
-        list.Items.Add(Group("Avalonia Binding Errors"));
+        list.Items.Add(Group("XAML Binding Errors"));
         list.Items.Add(Item(store.BindingErrors));
         list.SelectedItem = list.Items.OfType<ListBoxItem>().FirstOrDefault(i => chosen is not null && i.Tag == chosen) ?? list.Items.OfType<ListBoxItem>().FirstOrDefault(i => i.Tag is Breakpoint);
         ShowChosen();

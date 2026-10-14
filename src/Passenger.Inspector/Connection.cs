@@ -98,7 +98,7 @@ internal sealed class Connection : IDisposable
     }
 
     /// <summary>Waits a moment for what is queued to be written, as the inspector gives up on an app it cannot serve.</summary>
-    private void Drain()
+    internal void Drain()
     {
         outgoing.CompleteAdding();
         writer.Join(TimeSpan.FromSeconds(1));

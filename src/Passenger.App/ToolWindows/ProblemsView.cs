@@ -303,7 +303,7 @@ public sealed class ProblemsView : DockPanel
                         rows.Add(new ProblemRow(1, binding.Problem.Message, binding.Detail, binding.Problem));
                     }
                 }
-                empty.Text = "No failed bindings: those of an Avalonia app run or debugged here are listed as they fail";
+                empty.Text = "No failed bindings: those of an Avalonia or WPF app run or debugged here are listed as they fail";
                 break;
             default:
                 Grouped(Problems);

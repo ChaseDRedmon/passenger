@@ -1,5 +1,7 @@
 using System.Net.Sockets;
 using System.Reflection;
+using System.Reflection.Metadata;
+using System.Reflection.PortableExecutable;
 using System.Runtime.Loader;
 using System.Text;
 using System.Text.Json;
@@ -30,12 +32,18 @@ public sealed class BindingFailedEventArgs(BindingFailure failure, int times) : 
 /// <summary>Why the app could not answer: not connected, gone, or what the inspector in it said.</summary>
 public sealed class LiveAppException(string message) : Exception(message);
 
-/// <summary>Passenger's end of its inspector inside an Avalonia app it runs or debugs (src/Passenger.Inspector, carried under
-/// inspector/): the launch plan is given the inspector as a startup hook and a socket of its own to connect to; from before
-/// the app's Main the inspector tells of each binding that fails, and once the app's UI is up it says hello and answers on
-/// the app's UI thread, live while the app runs; paused under the debugger, it answers once the app runs again. Made only
-/// for a program whose build carries Avalonia, and only for one launch, so nothing of it is ever in the app as built. A
-/// UI-thread object: its events come on the UI thread.</summary>
+/// <summary>The framework an inspected app is built on, which picks the inspector it is given.</summary>
+public enum LiveAppKind
+{
+    Avalonia,
+    Wpf,
+}
+
+/// <summary>Passenger's end of its inspector inside an Avalonia app it runs or debugs (src/Passenger.Inspector) or a WPF app
+/// (src/Passenger.Inspector.Wpf, also given ENABLE_XAML_DIAGNOSTICS_SOURCE_INFO), one protocol for both: a startup hook and a
+/// socket of the launch's own; from before Main it tells of failed bindings, and once the UI is up says hello and answers on
+/// the UI thread (paused under the debugger, once it runs again). One launch's alone, never in the app as built. A UI-thread
+/// object: its events come on the UI thread.</summary>
 public sealed class LiveApp : IDisposable
 {
     /// <summary>The sockets this process has made, which number each one's name apart.</summary>
@@ -48,20 +56,29 @@ public sealed class LiveApp : IDisposable
     private NetworkStream? stream;
     private int next;
 
-    private LiveApp(string name, string socket, Socket listener, LaunchPlan? plan, IReadOnlyList<string> overlays)
+    private LiveApp(string name, string socket, Socket listener, LaunchPlan? plan, IReadOnlyList<string> overlays, LiveAppKind kind = LiveAppKind.Avalonia)
     {
         this.listener = listener;
         SocketPath = socket;
         Name = name;
         Overlays = overlays;
+        Kind = kind;
         if (plan is not null)
         {
             Dictionary<string, string> environment = new(plan.Environment)
             {
                 [Wire.SocketVariable] = socket,
-                [Wire.StartupHooks] = Hooks(plan, InspectorPath),
+                [Wire.StartupHooks] = Hooks(plan, kind == LiveAppKind.Wpf ? WpfInspectorPath : InspectorPath),
             };
-            if (overlays.Count > 0)
+            if (kind == LiveAppKind.Wpf)
+            {
+                environment[Wire.XamlSourceInfoVariable] = "1";
+                if (plan.Project is { } project)
+                {
+                    environment[Wire.ProjectVariable] = Path.GetDirectoryName(project)!;
+                }
+            }
+            else if (overlays.Count > 0)
             {
                 environment[Wire.OverlaysVariable] = string.Join(',', overlays);
             }
@@ -73,6 +90,21 @@ public sealed class LiveApp : IDisposable
 
     /// <summary>The inspector beside the app, as its build carries it.</summary>
     public static string InspectorPath => Path.Combine(AppContext.BaseDirectory, "inspector", "Passenger.Inspector.dll");
+
+    /// <summary>The WPF app's inspector, which only a Windows build carries.</summary>
+    public static string WpfInspectorPath => Path.Combine(AppContext.BaseDirectory, "inspector", "wpf", "Passenger.Inspector.Wpf.dll");
+
+    /// <summary>The framework the app is built on, which its inspector serves.</summary>
+    public LiveAppKind Kind { get; }
+
+    /// <summary>The framework and its version as the window says it, once the app has said hello: "Avalonia 12.1.4",
+    /// "WPF 10.0.1"; the framework alone before.</summary>
+    public string Framework => Kind == LiveAppKind.Wpf
+        ? FrameworkSaid ?? "WPF"
+        : Avalonia is { } version ? $"Avalonia {(System.Version.TryParse(version, out Version? read) ? read.ToString(3) : version)}" : "Avalonia";
+
+    /// <summary>What a WPF app's inspector said it runs, from its hello.</summary>
+    private string? FrameworkSaid { get; set; }
 
     /// <summary>The plan as it is launched: the inspector among its startup hooks, and the socket to connect to; none for
     /// Passenger's own windows (<see cref="Own"/>).</summary>
@@ -157,15 +189,51 @@ public sealed class LiveApp : IDisposable
     private readonly Dictionary<int, BindingFailure> bindings = [];
 
     /// <summary>The live app for a plan whose program is built with Avalonia (Avalonia.Base beside its assembly), showing
-    /// these renderer debug overlays from its first window, or null for any other program, or when this build of Passenger
-    /// carries no inspector.</summary>
-    public static LiveApp? For(LaunchPlan plan, IReadOnlyList<string>? overlays = null)
+    /// these renderer debug overlays from its first window, or, with <paramref name="wpf"/>, on Windows with WPF (its
+    /// assembly a WindowsDesktop app's that references WPF's); null for any other program, or when this build of Passenger
+    /// carries no inspector for it.</summary>
+    public static LiveApp? For(LaunchPlan plan, IReadOnlyList<string>? overlays = null, bool wpf = true)
     {
-        if (plan.Built is not { } built || !File.Exists(Path.Combine(Path.GetDirectoryName(built)!, "Avalonia.Base.dll")) || !File.Exists(InspectorPath))
+        if (plan.Built is not { } built)
         {
             return null;
         }
-        return Listen(plan.Name) is (string socket, Socket listener) ? new LiveApp(plan.Name, socket, listener, plan, overlays ?? []) : null;
+        LiveAppKind kind;
+        if (File.Exists(Path.Combine(Path.GetDirectoryName(built)!, "Avalonia.Base.dll")) && File.Exists(InspectorPath))
+        {
+            kind = LiveAppKind.Avalonia;
+        }
+        else if (wpf && OperatingSystem.IsWindows() && File.Exists(WpfInspectorPath) && IsWpf(built))
+        {
+            kind = LiveAppKind.Wpf;
+        }
+        else
+        {
+            return null;
+        }
+        return Listen(plan.Name) is (string socket, Socket listener) ? new LiveApp(plan.Name, socket, listener, plan, overlays ?? [], kind) : null;
+    }
+
+    /// <summary>Whether an assembly is a WPF app's: it runs on the WindowsDesktop framework (its runtimeconfig.json names it)
+    /// and references WPF's assemblies, as a Windows Forms app does not.</summary>
+    private static bool IsWpf(string built)
+    {
+        string config = Path.ChangeExtension(built, ".runtimeconfig.json");
+        try
+        {
+            if (!File.Exists(built) || !File.Exists(config) || !File.ReadAllText(config).Contains("Microsoft.WindowsDesktop.App", StringComparison.Ordinal))
+            {
+                return false;
+            }
+            using FileStream stream = File.OpenRead(built);
+            using PEReader pe = new(stream);
+            MetadataReader metadata = pe.GetMetadataReader();
+            return metadata.AssemblyReferences.Any(handle => metadata.GetString(metadata.GetAssemblyReference(handle).Name) is "PresentationFramework" or "PresentationCore");
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or BadImageFormatException or InvalidOperationException)
+        {
+            return false;
+        }
     }
 
     /// <summary>The renderer debug overlays the app's windows show, as the launch asked or the app last said.</summary>
@@ -406,6 +474,7 @@ public sealed class LiveApp : IDisposable
         {
             case Wire.Hello when reply.Hello is { } hello:
                 Avalonia = hello.Avalonia;
+                FrameworkSaid = hello.Framework;
                 ProcessId = hello.ProcessId;
                 if (hello.Protocol != Wire.Version)
                 {
