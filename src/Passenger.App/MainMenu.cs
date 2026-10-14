@@ -24,6 +24,9 @@ public static class MainMenu
     public const string ToolWindows = "Tool Windows";
     public const string RecentSolutions = "Recent Solutions";
 
+    /// <summary>The Run menu's Avalonia renderer debug overlays, each a toggle.</summary>
+    public const string AvaloniaOverlays = "Avalonia Debug Overlays";
+
     /// <summary>Rider's name for the Window menu's list of the project windows open (its OpenProjectWindows group).</summary>
     public const string OpenSolutionWindows = "Open Solution Windows";
 
@@ -46,6 +49,7 @@ public static class MainMenu
         new("File/Local History", 2, 2),
         new("Edit/Find", 3, 0),
         new("Navigate/Bookmarks", 4, 0),
+        new("Run/" + AvaloniaOverlays, 3, 1),
         new("Code/Code Completion", 0, 0),
         new("Code/Folding", 3, 0),
         new("Window/Layout Settings", 0, 0),

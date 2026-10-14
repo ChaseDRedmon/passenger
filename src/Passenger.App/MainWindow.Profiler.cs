@@ -21,10 +21,14 @@ public partial class MainWindow
     public string SnapshotFolder => profiler!.SnapshotFolder;
 
     private void AddProfiler() => profiler = new ProfilerCommands(new ProfilerParts(() => session, () => buildRun, Dock, actions!, Bottom.Run,
-        text => status.Text = text, () => StateFolder, PickSnapshotAsync, NavigateTo));
+        text => status.Text = text, () => StateFolder, PickSnapshotAsync, NavigateTo, (process, control) => liveTree?.Reveal(process, control) == true));
 
     /// <summary>Profiles the chosen configuration as Profile does: null once it runs, else what stopped it.</summary>
     public Task<string?> ProfileAsync(string? arguments = null) => profiler!.ProfileAsync(arguments);
+
+    /// <summary>Attach Profiler: the program being debugged (else the one Run runs) profiled from now; null once it is,
+    /// else why not.</summary>
+    public Task<string?> AttachProfilerAsync() => profiler!.AttachAsync();
 
     /// <summary>Get Snapshot: the run ended and its snapshot read, or why there is none.</summary>
     public Task<SnapshotRead> SnapshotAsync() => profiler!.SnapshotAsync();

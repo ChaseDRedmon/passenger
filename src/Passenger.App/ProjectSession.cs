@@ -204,8 +204,9 @@ public sealed class ProjectSession : IAsyncDisposable
     {
         UiThread.Check();
         LiveApp?.Dispose();
-        LiveApp = LiveTree.LiveApp.For(plan);
+        LiveApp = LiveTree.LiveApp.For(plan, Overlays);
         LiveAppChanged?.Invoke(this, EventArgs.Empty);
+        InspectedChanged?.Invoke(this, EventArgs.Empty);
         return LiveApp?.Plan ?? plan;
     }
 
@@ -219,9 +220,33 @@ public sealed class ProjectSession : IAsyncDisposable
     {
         UiThread.Check();
         RunApp?.Dispose();
-        RunApp = hotReload ? null : LiveTree.LiveApp.For(plan);
+        RunApp = hotReload ? null : LiveTree.LiveApp.For(plan, Overlays);
+        InspectedChanged?.Invoke(this, EventArgs.Empty);
         return RunApp?.Plan ?? plan;
     }
+
+    /// <summary>The Avalonia app Profile started last, which records its frames for the profiler while it is profiled and
+    /// shows the overlays the Run window sets (its output is the Run window's); null after any other program. It ends with
+    /// its run, and with the folder.</summary>
+    public LiveApp? ProfiledApp { get; private set; }
+
+    /// <summary>A plan as Profile launches it: an Avalonia app's carries the inspector, as Run's does.</summary>
+    public LaunchPlan InspectedProfile(LaunchPlan plan)
+    {
+        UiThread.Check();
+        ProfiledApp?.Dispose();
+        ProfiledApp = LiveTree.LiveApp.For(plan, Overlays);
+        InspectedChanged?.Invoke(this, EventArgs.Empty);
+        return ProfiledApp?.Plan ?? plan;
+    }
+
+    /// <summary>Avalonia's renderer debug overlays (by the names of its flags) an inspected launch shows from its first
+    /// window: the launch option the Run and Debug windows' overlay toggles leave, so a launch after shows what the one
+    /// before was left showing.</summary>
+    public IReadOnlyList<string> Overlays { get; set; } = [];
+
+    /// <summary>Run, Debug or Profile launched another app, inspected or not.</summary>
+    public event EventHandler? InspectedChanged;
 
     /// <summary>The bindings that failed in the apps Run and Debug launched last, each once with its count: those of an app
     /// that ended stay until the next of its kind launches.</summary>
@@ -633,6 +658,7 @@ public sealed class ProjectSession : IAsyncDisposable
         Profiling?.Kill();
         LiveApp?.Dispose();
         RunApp?.Dispose();
+        ProfiledApp?.Dispose();
         Tests.Stop();
         parts.Add(("the test runner", Tests.DisposeAsync().AsTask()));
         parts.Add(("the language server", CSharp?.DisposeAsync().AsTask() ?? Task.CompletedTask));

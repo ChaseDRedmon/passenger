@@ -16,9 +16,11 @@ public sealed record ProfileTarget(string Program, IReadOnlyList<string> Argumen
 
 /// <summary>A profiling run, as dotTrace's sampling mode makes one: the program is started held at a diagnostic port of
 /// its own (DOTNET_DiagnosticPorts, as dotnet-trace's --diagnostic-port does), so the run begins at its first
-/// instruction; the port is cleared in the program before it goes on, so a .NET program it starts is not held too. Its
-/// EventPipe stream (the sampler, and the runtime's method loads to name the frames) is written to a .nettrace file
-/// until <see cref="StopAsync"/> or the program's end, then read into a <see cref="Snapshot"/>.</summary>
+/// instruction; the port is cleared in the program before it goes on, so a .NET program it starts is not held too. Or a
+/// program already running (one being debugged) is attached to at its own diagnostic port, as dotnet-trace's --process-id
+/// does, and goes on as it was after. Its EventPipe stream (the sampler, the runtime's method loads to name the frames, and
+/// an Avalonia app's frames from Passenger's inspector in it) is written to a .nettrace file until <see cref="StopAsync"/>
+/// or the program's end, then read into a <see cref="Snapshot"/>.</summary>
 public sealed class ProfilingSession : IAsyncDisposable
 {
     /// <summary>The runtime's events dotnet-trace's cpu-sampling profile asks for: what names the frames (loader, JIT,
@@ -26,16 +28,16 @@ public sealed class ProfilingSession : IAsyncDisposable
     private const long RuntimeKeywords = 0x14C14FCCBD;
 
     private readonly Process process;
-    private readonly DiagnosticsClientConnector connector;
+    private readonly DiagnosticsClientConnector? connector;
     private readonly EventPipeSession session;
     private readonly Task copying;
     private readonly Task reading;
-    private readonly string port;
+    private readonly string? port;
     private readonly Stopwatch clock = Stopwatch.StartNew();
     private int stopped;
     private HeapHistory? heapHistory;
 
-    private ProfilingSession(Process process, DiagnosticsClientConnector connector, EventPipeSession session, Task copying, Task reading, string trace, string port)
+    private ProfilingSession(Process process, DiagnosticsClientConnector? connector, EventPipeSession session, Task copying, Task reading, string trace, string? port)
     {
         this.process = process;
         this.connector = connector;
@@ -50,14 +52,26 @@ public sealed class ProfilingSession : IAsyncDisposable
 
     public bool HasExited => process.HasExited;
 
+    /// <summary>Whether the program was running before the profiler came, and is not the profiler's to end or to type to.</summary>
+    public bool Attached => connector is null;
+
     /// <summary>How long it has run.</summary>
     public TimeSpan Elapsed => clock.Elapsed;
 
     public string TracePath { get; }
 
     /// <summary>The program's standard input, kept open as a console's is for a program that waits on a read: what the
-    /// person types goes here.</summary>
-    public StreamWriter Input => process.StandardInput;
+    /// person types goes here. None for a program attached to, whose input is another's.</summary>
+    public StreamWriter? Input => Attached ? null : process.StandardInput;
+
+    /// <summary>What a run asks EventPipe for: the sampler, the runtime's events (verbose for the GC's allocation ticks, a
+    /// type and a stack every 100 KB or so allocated), and the frames of an Avalonia app with Passenger's inspector in it.</summary>
+    private static EventPipeProvider[] Providers =>
+    [
+        new EventPipeProvider(Snapshot.SampleProvider, EventLevel.Informational),
+        new EventPipeProvider("Microsoft-Windows-DotNETRuntime", EventLevel.Verbose, RuntimeKeywords),
+        new EventPipeProvider(UiFrames.Provider, EventLevel.Informational),
+    ];
 
     /// <summary>Starts a program under the profiler. The trace goes into <paramref name="folder"/>; the program's output
     /// comes to <paramref name="output"/> as it is read, with whether it came on standard error, on any thread. A start that
@@ -150,31 +164,8 @@ public sealed class ProfilingSession : IAsyncDisposable
         {
             // The port is the program's alone; what it starts runs freely.
             client.SetEnvironmentVariable("DOTNET_DiagnosticPorts", string.Empty);
-            session = await client.StartEventPipeSessionAsync(
-                [
-                    new EventPipeProvider(Snapshot.SampleProvider, EventLevel.Informational),
-                    // Verbose for the GC's allocation ticks: a type and a stack every 100 KB or so allocated.
-                    new EventPipeProvider("Microsoft-Windows-DotNETRuntime", EventLevel.Verbose, RuntimeKeywords),
-                ],
-                requestRundown: true,
-                circularBufferMB: 512,
-                cancellation);
-            FileStream file = new(trace, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
-            EventPipeSession streaming = session;
-            Task copying = Task.Run(async () =>
-            {
-                await using (file)
-                {
-                    try
-                    {
-                        await streaming.EventStream.CopyToAsync(file);
-                    }
-                    catch (Exception error) when (error is IOException or ObjectDisposedException)
-                    {
-                        // The program ended mid-write: what was written is the run.
-                    }
-                }
-            });
+            session = await client.StartEventPipeSessionAsync(Providers, requestRundown: true, circularBufferMB: 512, cancellation);
+            Task copying = Copy(session, trace);
             client.ResumeRuntime();
             return new ProfilingSession(process, connector, session, copying, reading, trace, port);
         }
@@ -237,6 +228,65 @@ public sealed class ProfilingSession : IAsyncDisposable
         }
     }
 
+    /// <summary>Profiles a .NET program already running, from now until <see cref="StopAsync"/> or its end, at the diagnostic
+    /// port its runtime opens for itself: one being debugged, say, whose Avalonia frames its inspector records while the
+    /// session lasts. Nothing is started and the program is left as it was. A program gone, or with no port to reach, is a
+    /// <see cref="ProfilingException"/> saying why.</summary>
+    public static async Task<ProfilingSession> AttachAsync(int processId, string name, string folder, CancellationToken cancellation = default)
+    {
+        Process process;
+        try
+        {
+            process = Process.GetProcessById(processId);
+        }
+        catch (Exception error) when (error is ArgumentException or InvalidOperationException)
+        {
+            throw new ProfilingException($"Could not profile {name}: it has ended", error);
+        }
+        string trace;
+        try
+        {
+            trace = NewTrace(folder, name);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            process.Dispose();
+            throw new ProfilingException($"Could not profile {name}: no snapshot can be written in {folder}: {error.Message}", error);
+        }
+        EventPipeSession session;
+        try
+        {
+            session = await new DiagnosticsClient(processId).StartEventPipeSessionAsync(Providers, requestRundown: true, circularBufferMB: 512, cancellation);
+        }
+        catch (Exception error) when (error is DiagnosticsClientException or IOException or UnauthorizedAccessException or SocketException or TimeoutException)
+        {
+            bool gone = process.HasExited;
+            process.Dispose();
+            throw new ProfilingException(gone ? $"Could not profile {name}: it has ended" : $"The profiler could not reach {name}: {error.Message}", error);
+        }
+        return new ProfilingSession(process, null, session, Copy(session, trace), Task.CompletedTask, trace, null);
+    }
+
+    /// <summary>The session's stream written to the trace as it comes, until the session or the program ends.</summary>
+    private static Task Copy(EventPipeSession session, string trace)
+    {
+        FileStream file = new(trace, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+        return Task.Run(async () =>
+        {
+            await using (file)
+            {
+                try
+                {
+                    await session.EventStream.CopyToAsync(file);
+                }
+                catch (Exception error) when (error is IOException or ObjectDisposedException)
+                {
+                    // The program ended mid-write: what was written is the run.
+                }
+            }
+        });
+    }
+
     /// <summary>A file for a run's trace, named for its program and when it began, never one written before.</summary>
     private static string NewTrace(string folder, string name)
     {
@@ -269,9 +319,9 @@ public sealed class ProfilingSession : IAsyncDisposable
         RemovePort(port);
     }
 
-    private static void RemovePort(string port)
+    private static void RemovePort(string? port)
     {
-        if (OperatingSystem.IsWindows())
+        if (port is null || OperatingSystem.IsWindows())
         {
             // A named pipe, which goes with its last handle.
             return;
@@ -332,8 +382,14 @@ public sealed class ProfilingSession : IAsyncDisposable
         await Task.WhenAny(reading, Task.Delay(TimeSpan.FromSeconds(2)));
     }
 
-    /// <summary>Ends the program.</summary>
-    public void Kill() => ChildProcesses.Kill(process);
+    /// <summary>Ends the program, unless it was attached to: that one is another's to end.</summary>
+    public void Kill()
+    {
+        if (!Attached)
+        {
+            ChildProcesses.Kill(process);
+        }
+    }
 
     public async ValueTask DisposeAsync()
     {
@@ -342,7 +398,10 @@ public sealed class ProfilingSession : IAsyncDisposable
             await heapHistory.DisposeAsync();
         }
         session.Dispose();
-        await connector.DisposeAsync();
+        if (connector is not null)
+        {
+            await connector.DisposeAsync();
+        }
         RemovePort(port);
         process.Dispose();
     }

@@ -108,11 +108,12 @@ public sealed class Snapshot
     private readonly IReadOnlyDictionary<int, string> threadNames;
     private readonly IReadOnlyList<AllocationTick> ticks;
     private readonly IReadOnlyList<Collection> allCollections;
+    private readonly IReadOnlyList<UiFrame> allUiFrames;
     private readonly Lazy<IReadOnlyList<ThreadLine>> timeline;
 
     private Snapshot(IReadOnlyList<(int Thread, SampleRun[] Runs)> runs, IReadOnlyList<int[]> stacks, IReadOnlyList<(string Method, string Module)> frames,
         IReadOnlyDictionary<int, string> threadNames, IReadOnlyList<AllocationTick> ticks, IReadOnlyList<Collection> collections,
-        double startMs, double endMs, string trace, Snapshot? whole)
+        IReadOnlyList<UiFrame> uiFrames, double startMs, double endMs, string trace, Snapshot? whole)
     {
         this.runs = runs;
         this.stacks = stacks;
@@ -120,6 +121,7 @@ public sealed class Snapshot
         this.threadNames = threadNames;
         this.ticks = ticks;
         allCollections = collections;
+        allUiFrames = uiFrames;
         StartMs = startMs;
         EndMs = endMs;
         TracePath = trace;
@@ -144,6 +146,7 @@ public sealed class Snapshot
         (All, HotSpots, IReadOnlyDictionary<int, CallNode> byId) = Build(counted);
         Threads = All.Ordered;
         Collections = [.. collections.Where(c => c.AtMs >= startMs && c.AtMs <= endMs)];
+        UiFrames = whole is null ? uiFrames : [.. uiFrames.Where(f => f.StartMs >= startMs && f.StartMs <= endMs)];
         Allocations = Allocated([.. ticks.Where(t => t.AtMs >= startMs && t.AtMs <= endMs)]);
         timeline = new(() => Lines(byId));
     }
@@ -160,6 +163,10 @@ public sealed class Snapshot
 
     /// <summary>The garbage collections, in order.</summary>
     public IReadOnlyList<Collection> Collections { get; }
+
+    /// <summary>An Avalonia app's frames, in order, as its inspector recorded them (<see cref="Profiler.UiFrames"/>); none for
+    /// any other program.</summary>
+    public IReadOnlyList<UiFrame> UiFrames { get; }
 
     /// <summary>Every thread under one root, whose total is every sample: what the flame graph spans.</summary>
     public CallNode All { get; }
@@ -202,7 +209,7 @@ public sealed class Snapshot
         Snapshot whole = Whole;
         double from = Math.Max(whole.StartMs, Math.Min(fromMs, toMs));
         double to = Math.Min(whole.EndMs, Math.Max(fromMs, toMs));
-        return new Snapshot(whole.runs, whole.stacks, whole.frames, whole.threadNames, whole.ticks, whole.allCollections, from, to, whole.TracePath, whole);
+        return new Snapshot(whole.runs, whole.stacks, whole.frames, whole.threadNames, whole.ticks, whole.allCollections, whole.allUiFrames, from, to, whole.TracePath, whole);
     }
 
     /// <summary>When a method was on a sampled stack, first to last, or null when it never was: what the timeline shows
@@ -391,8 +398,9 @@ public sealed class Snapshot
     }
 
     /// <summary>Reads a .nettrace file EventPipe wrote: the samples' stacks, with the methods named from the run's own
-    /// method load events, the allocation ticks and the collections. Each stack is named once (the trace numbers its own),
-    /// kept once however many samples caught it, and a thread's samples in a row at one stack become one run.</summary>
+    /// method load events, the allocation ticks, the collections and an Avalonia app's frames. Each stack is named once (the
+    /// trace numbers its own), kept once however many samples caught it, and a thread's samples in a row at one stack become
+    /// one run.</summary>
     public static Snapshot Read(string nettrace)
     {
         string etlx = TraceLog.CreateFromEventPipeDataFile(nettrace, null, new TraceLogOptions { ContinueOnError = true });
@@ -410,6 +418,7 @@ public sealed class Snapshot
             Dictionary<string, string> types = new(StringComparer.Ordinal);
             List<AllocationTick> ticks = [];
             List<Collection> collections = [];
+            Profiler.UiFrames.Reader uiFrames = new();
             (int Number, int Generation, string Reason, double At)? collecting = null;
             double? suspended = null;
             foreach (TraceEvent data in log.Events)
@@ -444,7 +453,7 @@ public sealed class Snapshot
                     }
                     continue;
                 }
-                if (data.ProviderName != SampleProvider || data.CallStackIndex() == CallStackIndex.Invalid)
+                if (uiFrames.Take(data) || data.ProviderName != SampleProvider || data.CallStackIndex() == CallStackIndex.Invalid)
                 {
                     continue;
                 }
@@ -466,9 +475,13 @@ public sealed class Snapshot
                 }
             }
             (int Thread, SampleRun[] Runs)[] kept = [.. runs.Select(t => (t.Key, t.Value.ToArray()))];
-            double first = kept.Length == 0 ? 0 : kept.Min(t => t.Runs.Min(r => r.FromMs));
-            double end = kept.Length == 0 ? 0 : kept.Max(t => t.Runs.Max(r => r.ToMs));
-            return new Snapshot(kept, stacks, named, threads, ticks, collections, first, end, nettrace, null);
+            IReadOnlyList<UiFrame> drawn = uiFrames.Frames();
+            // A run attached for its frames alone may have few samples: its frames are the run too.
+            IEnumerable<double> starts = kept.Select(t => t.Runs.Min(r => r.FromMs)).Concat(drawn.Select(f => f.StartMs));
+            IEnumerable<double> ends = kept.Select(t => t.Runs.Max(r => r.ToMs)).Concat(drawn.Select(f => f.EndMs));
+            double first = starts.DefaultIfEmpty(0).Min();
+            double end = ends.DefaultIfEmpty(0).Max();
+            return new Snapshot(kept, stacks, named, threads, ticks, collections, drawn, first, end, nettrace, null);
 
             // The event's stack as a number into the table, each the trace numbers named once and each distinct one kept once.
             int Stack(TraceEvent data)

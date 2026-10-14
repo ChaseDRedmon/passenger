@@ -139,6 +139,8 @@ public sealed class DebugView : DockPanel
                 Tool(AppActions.StepOut, "Icon.StepOut", "Step Out"),
                 Tool(AppActions.RunToCursor, "Icon.RunToCursor", "Run to Cursor"),
                 Tool(AppActions.Evaluate, "Icon.Evaluate", "Evaluate Expression"),
+                new Border { Width = 12 },
+                Overlays,
             },
         };
         Border topBar = new() { [DockProperty] = Dock.Top, Height = 32, BorderThickness = new Thickness(0, 0, 0, 1), Child = top };
@@ -179,6 +181,9 @@ public sealed class DebugView : DockPanel
 
     /// <summary>A toolbar button pressed: the app action it runs.</summary>
     public event EventHandler<string>? ActionRequested;
+
+    /// <summary>Avalonia's debug overlays in the app being debugged, shown while one with the inspector in it runs.</summary>
+    public OverlaysButton Overlays { get; } = new();
 
     public event EventHandler<DapThread>? ThreadChosen;
 

@@ -1,5 +1,6 @@
 using Microsoft.Diagnostics.NETCore.Client;
 using Passenger.App.Docking;
+using Passenger.App.LiveTree;
 using Passenger.App.Run;
 using Passenger.App.ToolWindows;
 using Passenger.Core;
@@ -11,7 +12,8 @@ namespace Passenger.App.Profiling;
 
 /// <summary>What a window lends its profiler: its session and that session's builds and runs, the tool windows' frame and
 /// the window's actions, the Run console a profiled program writes to, the status bar, the store's folder, the system's
-/// file panel for a snapshot to open, and going to a place in the code.</summary>
+/// file panel for a snapshot to open, going to a place in the code, and choosing a control of a process in the Live Visual
+/// Tree.</summary>
 public sealed record ProfilerParts(
     Func<ProjectSession> Session,
     Func<BuildRunController> Builds,
@@ -21,18 +23,25 @@ public sealed record ProfilerParts(
     Action<string> Say,
     Func<string> StateFolder,
     Func<Task<string?>> PickSnapshot,
-    Action<string, TextPosition> Navigate);
+    Action<string, TextPosition> Navigate,
+    Func<int, long, bool> RevealControl);
 
 /// <summary>The window's profiler, as Rider's: Profile builds and starts the chosen configuration under the sampling
-/// profiler, the Performance Profiler window follows the run, Get Snapshot (or the program's end) shows where its time
-/// went and a memory snapshot what its heap holds, snapshots written before open again, and a method named there opens in
-/// the code. The run is the session's (<see cref="ProjectSession.Profiling"/>), ended with its folder. A UI-thread object of
-/// the window.</summary>
+/// profiler (an Avalonia app with the inspector in it, which records its frames), or Attach Profiler profiles the program
+/// Run or Debug started from now on; the Performance Profiler window follows the run, Get Snapshot (or the program's end)
+/// shows where its time went and a memory snapshot what its heap holds, snapshots written before open again, and a method
+/// or a control named there opens in the code. The run is the session's (<see cref="ProjectSession.Profiling"/>), ended
+/// with its folder. A UI-thread object of the window.</summary>
 public sealed class ProfilerCommands
 {
+    private const string NothingRunning = "Nothing is running to profile: Run or Debug a configuration first, or Profile one";
+
     private readonly ProfilerParts parts;
     private string profilingName = string.Empty;
     private Task<SnapshotRead>? snapshotting;
+
+    /// <summary>The process the snapshot shown came from, none for one opened from its file.</summary>
+    private int? shownProcess;
 
     public ProfilerCommands(ProfilerParts parts)
     {
@@ -49,9 +58,15 @@ public sealed class ProfilerCommands
                 : Session.Configurations.Chosen is null ? "Nothing to profile: no executable project" : null,
             Menus = [new MenuPlace("Run", 0, 2)],
         });
+        parts.Actions.Add(new IdeAction(AppActions.AttachProfiler, "Attach Profiler to Running Program", "Run", context => _ = AttachReportingAsync())
+        {
+            WhyNot = _ => Session.Profiling is not null ? "A run is already being profiled" : Attachable() is null ? NothingRunning : null,
+            Menus = [new MenuPlace("Run", 3, 0)],
+        });
         View.StopRequested += (_, _) => _ = SnapshotAsync();
         View.KillRequested += (_, _) => Session.Profiling?.Kill();
         View.OpenRequested += (_, method) => _ = OpenMethodAsync(method);
+        View.FramesPage.ControlOpened += (_, control) => OpenControl(control);
         View.OpenSnapshotRequested += (_, _) => _ = PickSnapshotAsync();
         View.OpenKeptRequested += (_, path) => _ = OpenSnapshotAsync(path);
         View.RevealSnapshotsRequested += (_, _) =>
@@ -122,9 +137,12 @@ public sealed class ProfilerCommands
             return why;
         }
         OutputView run = parts.RunConsole;
+        // An Avalonia app is profiled with the inspector in it, which records its frames into the run's trace.
+        LaunchPlan launched = profiled.InspectedProfile(plan!);
+        LiveApp? inspected = profiled.ProfiledApp;
         try
         {
-            ProfileTarget target = new(plan!.Program, plan.Arguments, plan.WorkingDirectory, plan.Environment);
+            ProfileTarget target = new(launched.Program, launched.Arguments, launched.WorkingDirectory, launched.Environment);
             run.Clear();
             ConsoleSink console = run.Sink;
             ProfilingSession running;
@@ -142,12 +160,13 @@ public sealed class ProfilerCommands
                 return "The solution was closed";
             }
             profilingName = chosen.Name;
-            run.Input = ProgramInput.Of(running.Input);
+            run.Input = running.Input is { } input ? ProgramInput.Of(input) : null;
             View.Running(chosen.Name, () => running.Elapsed);
             parts.Say($"Profiling {chosen.Name}");
             // A program that ends by itself ends the run, and its snapshot shows.
             _ = running.ExitedAsync().ContinueWith(_ => UiThread.Post(() =>
             {
+                inspected?.Dispose();
                 console.End(ConsoleStream.Output);
                 console.End(ConsoleStream.Error);
                 if (!profiled.Runner.IsRunning)
@@ -165,9 +184,97 @@ public sealed class ProfilerCommands
         catch (Exception error) when (error is ProfilingException or InvalidOperationException or IOException or UnauthorizedAccessException
             or TimeoutException or System.ComponentModel.Win32Exception or DiagnosticsClientException)
         {
+            inspected?.Dispose();
             profiled.Profiling = null;
             View.Stopped(error.Message);
             return error.Message;
+        }
+    }
+
+    /// <summary>Attach Profiler: profiles the program Debug or Run started, from now until Get Snapshot or its end, as
+    /// dotTrace attaches to a running process; an Avalonia app's inspector records its frames for as long. The program goes
+    /// on as it was, after too. Null once it is profiled, else why not, which the profiler window says too.</summary>
+    public async Task<string?> AttachAsync()
+    {
+        ProjectSession profiled = Session;
+        if (profiled.Profiling is not null)
+        {
+            return "A run is already being profiled";
+        }
+        if (Attachable() is not { } target)
+        {
+            return NothingRunning;
+        }
+        parts.Dock.Show("profiler");
+        ProfilingSession running;
+        try
+        {
+            using (BackgroundWork.Scope())
+            {
+                running = await ProfilingSession.AttachAsync(target.ProcessId, target.File, SnapshotFolder);
+            }
+        }
+        catch (ProfilingException failed)
+        {
+            View.Stopped(failed.Message);
+            return failed.Message;
+        }
+        if (profiled.IsEnded || profiled.Profiling is not null)
+        {
+            await running.DisposeAsync();
+            return profiled.IsEnded ? "The solution was closed" : "A run is already being profiled";
+        }
+        profiled.Profiling = running;
+        profilingName = target.Name;
+        View.Running(target.Name, () => running.Elapsed, attached: true);
+        parts.Say($"Profiling {target.Name} from now: Get Snapshot when it has done what is to be measured");
+        _ = running.ExitedAsync().ContinueWith(_ => UiThread.Post(() =>
+        {
+            if (profiled.Profiling == running && profiled == Session)
+            {
+                _ = SnapshotAsync();
+            }
+        }), TaskScheduler.Default);
+        return null;
+    }
+
+    /// <summary>The program Attach Profiler profiles: the one being debugged, else the one Run runs (an Avalonia app by the
+    /// process its inspector said it is, which under Hot Reload is not dotnet watch's); its name as the window says it,
+    /// and as its snapshot's file is named.</summary>
+    private (int ProcessId, string Name, string File)? Attachable()
+    {
+        ProjectSession current = Session;
+        if (current.Debug.IsDebugging && current.Debug.Session is { ProcessStarted.IsCompletedSuccessfully: true } debugging)
+        {
+            int process = debugging.ProcessStarted.Result;
+            LiveApp? app = current.LiveApp is { ProcessId: int inspected } live && inspected == process ? live : null;
+            string program = app?.Plan?.Built ?? debugging.Program;
+            return (process, app?.Name ?? Path.GetFileNameWithoutExtension(program), FileName(Path.GetFileNameWithoutExtension(program)));
+        }
+        if (current.Runner.IsRunning && (current.RunApp?.ProcessId ?? current.Runner.ProcessId) is int running)
+        {
+            string name = current.RunApp?.Name ?? current.Configurations.Chosen?.Name ?? "the program";
+            return (running, name, FileName(current.RunApp?.Plan?.Built is { } built ? Path.GetFileNameWithoutExtension(built) : name));
+        }
+        return null;
+    }
+
+    /// <summary>A name made fit for a file's: what a file system refuses, and a colon, as dashes.</summary>
+    private static string FileName(string name) =>
+        string.Concat(name.Select(c => Path.GetInvalidFileNameChars().Contains(c) || c == ':' || c == '/' || c == '\\' ? '-' : c)).Trim();
+
+    /// <summary>A control the Frames page names: its XAML opened at its element, and, when the snapshot is of the app the
+    /// Live Visual Tree follows, the control chosen there.</summary>
+    private void OpenControl(UiControl control)
+    {
+        bool revealed = shownProcess is int process && parts.RevealControl(process, control.Id);
+        if (control.File is { } file && File.Exists(file))
+        {
+            parts.Navigate(PathNames.Canonical(file), new TextPosition(Math.Max(0, control.Line - 1), 0));
+        }
+        else if (!revealed)
+        {
+            parts.Say($"{control.Label} was made in code, or by XAML compiled without source information");
         }
     }
 
@@ -191,7 +298,10 @@ public sealed class ProfilerCommands
         try
         {
             Snapshot snapshot = await run.StopAsync();
+            shownProcess = run.ProcessId;
             View.Show(snapshot, name);
+            // Brought forward over the console or Debug window the run's program was driven from.
+            parts.Dock.Show("profiler");
             await KeepSnapshotsAsync(trim: true);
             string read = $"Snapshot of {name}: {snapshot.Samples:N0} samples, kept in {Path.GetDirectoryName(snapshot.TracePath)}";
             parts.Say(read);
@@ -244,6 +354,7 @@ public sealed class ProfilerCommands
         try
         {
             Snapshot snapshot = await BackgroundWork.Run(() => Snapshot.Read(path));
+            shownProcess = null;
             View.Show(snapshot, Path.GetFileNameWithoutExtension(path));
             parts.Say($"{Path.GetFileName(path)}: {snapshot.Samples:N0} samples");
             return snapshot;
@@ -266,6 +377,14 @@ public sealed class ProfilerCommands
     private async Task ProfileReportingAsync()
     {
         if (await ProfileAsync() is { } problem)
+        {
+            parts.Say(problem);
+        }
+    }
+
+    private async Task AttachReportingAsync()
+    {
+        if (await AttachAsync() is { } problem)
         {
             parts.Say(problem);
         }

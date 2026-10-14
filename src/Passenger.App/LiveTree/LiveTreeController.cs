@@ -492,6 +492,21 @@ public sealed class LiveTreeController
         }
     }
 
+    /// <summary>Chooses a control by the inspector's id for it, as the profiler's frames name one, when the app the window
+    /// follows is the process they came from: the tree, asked again, chooses it. False for any other process.</summary>
+    public bool Reveal(int processId, long id)
+    {
+        UiThread.Check();
+        if (app is not { State: LiveAppState.Connected, ProcessId: int running } || running != processId)
+        {
+            return false;
+        }
+        Choose(id);
+        parts.Dock.Show(window.Id);
+        _ = RefreshAsync();
+        return true;
+    }
+
     /// <summary>The person pointed at a control in the app (or pressed Escape there): the tree, asked again, chooses it.</summary>
     private void OnPicked(object? sender, long? id)
     {

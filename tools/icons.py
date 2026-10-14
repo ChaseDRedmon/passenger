@@ -118,6 +118,8 @@ ICONS = [
     ("ZoomOut", "Zoom Out", "20_regular"),
     ("ActualSize", "Ratio One To One", "20_regular"),
     ("ZoomFit", "Zoom Fit", "20_regular"),
+    # The Run and Debug windows' Avalonia debug overlays: layers drawn over the app's window.
+    ("Overlays", "Layer", "20_regular"),
 ]
 
 

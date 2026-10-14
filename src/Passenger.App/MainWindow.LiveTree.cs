@@ -16,9 +16,14 @@ public partial class MainWindow
     /// <summary>A debugged app's binding values in its .axaml files.</summary>
     private BindingValuesController? bindingValues;
 
+    /// <summary>Avalonia's renderer debug overlays in the apps Run, Debug and Profile launch.</summary>
+    private OverlaysCommands? overlays;
+
     private void AddLiveTree()
     {
         liveTree = new LiveTreeController(new LiveTreeParts(Dock, actions!, text => status.Text = text, NavigateTo));
         bindingValues = new BindingValuesController(Editors, liveTree);
+        overlays = new OverlaysCommands(new OverlaysParts(Bottom, actions!, text => status.Text = text));
+        overlays.Bind(session);
     }
 }

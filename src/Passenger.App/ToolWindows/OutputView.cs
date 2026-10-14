@@ -61,7 +61,13 @@ public sealed class OutputView : DockPanel
             [DockProperty] = Dock.Left,
             Width = 36,
             BorderThickness = new Thickness(0, 0, 1, 0),
-            Child = new StackPanel { Spacing = 2, Margin = new Thickness(0, 6), HorizontalAlignment = HorizontalAlignment.Center, Children = { rerun, stop, clear } },
+            Child = new StackPanel
+            {
+                Spacing = 2,
+                Margin = new Thickness(0, 6),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Children = { rerun, stop, clear, new Border { Height = 8 }, Overlays },
+            },
         };
         tools.Bind(Border.BorderBrushProperty, tools.GetResourceObservable("Passenger.Divider"));
         if (toolbar)
@@ -97,6 +103,9 @@ public sealed class OutputView : DockPanel
 
     public event EventHandler? RerunClicked;
     public event EventHandler? StopClicked;
+
+    /// <summary>Avalonia's debug overlays in the app the console runs, shown while one with the inspector in it runs.</summary>
+    public OverlaysButton Overlays { get; } = new() { MenuPlacement = PlacementMode.RightEdgeAlignedTop };
 
     /// <summary>A program's text as it reached the console, its colour codes gone: what a build's error list reads, a
     /// batch at a time.</summary>

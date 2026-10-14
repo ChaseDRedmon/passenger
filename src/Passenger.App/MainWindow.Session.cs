@@ -191,6 +191,7 @@ public partial class MainWindow
         BindDebug(next);
         liveTree?.Bind(next);
         bindingValues?.Bind(next);
+        overlays?.Bind(next);
         BindVcs(next);
         BindBookmarks(next);
         // Files open as it binds (a file opened with no folder) are its too.

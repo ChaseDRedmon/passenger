@@ -81,8 +81,8 @@ public sealed class MemorySnapshotsTests : IDisposable
         ProfilerView view = window.ProfilerView;
         MemoryView memory = view.MemoryPage;
         MemorySnapshot first = Snapshot(window, 1);
-        window.Profiling!.Input.WriteLine("grow");
-        window.Profiling.Input.Flush();
+        window.Profiling!.Input!.WriteLine("grow");
+        window.Profiling.Input!.Flush();
         Ui.PumpUntil(() => Console(window).Contains("grown", StringComparison.Ordinal), "the program to grow");
         MemorySnapshot second = Snapshot(window, 2);
         Assert.Equal([first, second], memory.Snapshots);
@@ -272,8 +272,8 @@ public sealed class MemorySnapshotsTests : IDisposable
         Stopwatch clock = Stopwatch.StartNew();
         MemorySnapshot first = Snapshot(window, 1, s => stall = s > stall ? s : stall);
         TimeSpan firstTook = clock.Elapsed;
-        window.Profiling!.Input.WriteLine("add");
-        window.Profiling.Input.Flush();
+        window.Profiling!.Input!.WriteLine("add");
+        window.Profiling.Input!.Flush();
         Ui.PumpUntil(() => Console(window).Contains("added", StringComparison.Ordinal), "the program to add its nodes");
         clock.Restart();
         MemorySnapshot second = Snapshot(window, 2, s => stall = s > stall ? s : stall);

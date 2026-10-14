@@ -230,8 +230,9 @@ public sealed partial class PassengerTools
     [McpServerTool(Name = "profile", Title = "Profile a configuration", Destructive = true), Description(
         "Builds and runs a run configuration (the chosen one if none is named) under the sampling profiler from its first instruction, as " +
         "Profile does, until it ends by itself or, with seconds, for that long (then the snapshot is taken and the program goes on). " +
-        "Returns the run's length, the hot spots by their own time, and the hot path of the busiest thread; the Performance Profiler window " +
-        "shows the whole snapshot.")]
+        "Returns the run's length, the hot spots by their own time, and the hot path of the busiest thread, and for an Avalonia app its frames " +
+        "(their UI thread's time, layout and rendering) with the controls heaviest in layout by their own measure and arrange time; the " +
+        "Performance Profiler window shows the whole snapshot.")]
     public Task<ProfileInfo> Profile(
         string? configuration = null,
         [Description(Arguments)] string? arguments = null,
@@ -277,11 +278,30 @@ public sealed partial class PassengerTools
             [.. snapshot.HotSpots.Take(Math.Clamp(top, 1, 200)).Select(h => Frame(h.Name, h.Total, h.Self))],
             path,
             snapshot.TracePath,
-            heap);
+            heap)
+        {
+            Frames = UiFramesOf(snapshot.UiFrames, Math.Clamp(top, 1, 200)),
+        };
 
         ProfileFrame Frame(string method, int total, int self) =>
             new(method, (int)Math.Round(snapshot.Milliseconds(total)), (int)Math.Round(snapshot.Milliseconds(self)));
     });
+
+    /// <summary>An Avalonia app's frames as the profile tool says them, the heaviest controls first; null with none.</summary>
+    private static UiFramesInfo? UiFramesOf(IReadOnlyList<Passenger.Profiler.UiFrame> frames, int top)
+    {
+        if (frames.Count == 0)
+        {
+            return null;
+        }
+        double[] times = [.. frames.Select(f => f.DurationMs).Order()];
+        IEnumerable<Passenger.Profiler.LayoutCost> controls = Passenger.Profiler.UiFrames.ByType(frames).SelectMany(type => type.Controls);
+        return new UiFramesInfo(frames.Count, Math.Round(times[times.Length / 2], 1), Math.Round(times[^1], 1), Math.Round(frames.Sum(f => f.LayoutMs), 1),
+            Math.Round(frames.Sum(f => f.RecordMs + f.CompositeMs), 1),
+            [.. controls.OrderByDescending(c => c.Work.SelfMs).Take(top).Select(c => new ControlLayoutInfo(c.Name, c.Work.Measures, Math.Round(c.Work.MeasureMs, 1),
+                c.Work.Arranges, Math.Round(c.Work.ArrangeMs, 1), Math.Round(c.Work.SelfMs, 1),
+                c.Control?.File is { } file ? $"{file}:{c.Control.Line}" : null))]);
+    }
 
     // The terminal
 
@@ -395,7 +415,19 @@ public sealed record VcsCommit(string Hash, string Subject, string Author, strin
 /// <summary>A frame of a profile: a method, the milliseconds with it on the stack, and those in it alone.</summary>
 public sealed record ProfileFrame(string Method, int TotalMs, int SelfMs);
 
-public sealed record ProfileInfo(double DurationMs, int Samples, int Threads, IReadOnlyList<ProfileFrame> HotSpots, IReadOnlyList<ProfileFrame> HotPath, string Trace, IReadOnlyList<HeapTypeInfo>? Heap = null);
+public sealed record ProfileInfo(double DurationMs, int Samples, int Threads, IReadOnlyList<ProfileFrame> HotSpots, IReadOnlyList<ProfileFrame> HotPath, string Trace, IReadOnlyList<HeapTypeInfo>? Heap = null)
+{
+    /// <summary>An Avalonia app's frames, as the Frames page shows them; null for any other program.</summary>
+    public UiFramesInfo? Frames { get; init; }
+}
+
+/// <summary>An Avalonia app's frames in a profile: how many, their UI thread's time at the median and at the longest, the time
+/// measuring and arranging and recording what to render in all, and the controls heaviest in layout by their own time.</summary>
+public sealed record UiFramesInfo(int Count, double MedianMs, double LongestMs, double LayoutMs, double RenderMs, IReadOnlyList<ControlLayoutInfo> Heaviest);
+
+/// <summary>A control's layout in a profile: Type#Name, its measures and arranges with their time, its own time without
+/// what it measured or arranged in turn, and its XAML's file:line when the app's build recorded it.</summary>
+public sealed record ControlLayoutInfo(string Control, int Measures, double MeasureMs, int Arranges, double ArrangeMs, double OwnMs, string? Xaml);
 
 /// <summary>A type on the heap of a memory snapshot: its live objects and their bytes.</summary>
 public sealed record HeapTypeInfo(string Type, int Count, long Bytes);

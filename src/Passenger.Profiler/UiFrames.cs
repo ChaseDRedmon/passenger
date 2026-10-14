@@ -1,0 +1,167 @@
+using Microsoft.Diagnostics.Tracing;
+
+namespace Passenger.Profiler;
+
+/// <summary>A control an Avalonia app laid out, as Passenger's inspector in it names it: its id (the Live Visual Tree's for
+/// the same control), its type without and with its namespace, its name, the control whose template made it, and where its
+/// XAML is (the file and line, from one), when the app's build recorded it.</summary>
+public sealed record UiControl(long Id, string Type, string FullType, string? Name, string? TemplatedBy, string? File, int Line)
+{
+    /// <summary>As the profiler lists it: Type#Name, or the type in the template of the control that made it.</summary>
+    public string Label => Name is { Length: > 0 } ? $"{Type}#{Name}" : TemplatedBy is { Length: > 0 } by ? $"{Type} in {by}'s template" : Type;
+}
+
+/// <summary>What measuring and arranging cost: how many of each, their time with what they measured or arranged in turn, and
+/// their own time without, in milliseconds.</summary>
+public readonly record struct LayoutWork(int Measures, double MeasureMs, double MeasureSelfMs, int Arranges, double ArrangeMs, double ArrangeSelfMs)
+{
+    /// <summary>The time measuring and arranging took in the control itself: what tells the heaviest control.</summary>
+    public double SelfMs => MeasureSelfMs + ArrangeSelfMs;
+
+    public static LayoutWork operator +(LayoutWork a, LayoutWork b) => new(a.Measures + b.Measures, a.MeasureMs + b.MeasureMs, a.MeasureSelfMs + b.MeasureSelfMs,
+        a.Arranges + b.Arranges, a.ArrangeMs + b.ArrangeMs, a.ArrangeSelfMs + b.ArrangeSelfMs);
+}
+
+/// <summary>A control's layout in a frame.</summary>
+public readonly record struct ControlWork(UiControl Control, LayoutWork Work);
+
+/// <summary>An Avalonia frame: the UI thread's layout and render work in one go, when it began (milliseconds from the trace's
+/// start) and how long it took, Avalonia's measure and arrange passes in it, the time measuring and arranging, the time
+/// recording what to render, how many measures and arranges, and each control's layout; then the compositor's passes that
+/// drew it, after it.</summary>
+public sealed record UiFrame(int Number, double StartMs, double DurationMs, int MeasurePasses, int ArrangePasses, double MeasureMs, double ArrangeMs,
+    double RecordMs, int Measures, int Arranges, IReadOnlyList<ControlWork> Controls)
+{
+    /// <summary>The compositor's update and render passes drawing what the frame recorded, in milliseconds.</summary>
+    public double CompositeMs { get; init; }
+
+    public double LayoutMs => MeasureMs + ArrangeMs;
+
+    public double EndMs => StartMs + DurationMs;
+}
+
+/// <summary>A row of the layout table: a control type, its work in all its controls and those controls under it, or one control.</summary>
+public sealed record LayoutCost(string Name, UiControl? Control, LayoutWork Work, IReadOnlyList<LayoutCost> Controls);
+
+/// <summary>An Avalonia app's frames as its inspector tells them through Passenger's EventSource (the inspector's Frames.cs):
+/// read from a trace with the profiler's other events, and the layout table worked out of any of them.</summary>
+public static class UiFrames
+{
+    /// <summary>The inspector's EventSource, which a session enables to have the app's frames recorded.</summary>
+    public const string Provider = "Passenger-Avalonia";
+
+    /// <summary>How soon after one window's drawing ends another's begins in the same tick of the render loop.</summary>
+    private const double SameTick = 2;
+
+    /// <summary>The layout of some frames by control type, the heaviest by its own time first, each with its controls, the
+    /// heaviest first.</summary>
+    public static IReadOnlyList<LayoutCost> ByType(IEnumerable<UiFrame> frames)
+    {
+        Dictionary<long, (UiControl Control, LayoutWork Work)> controls = [];
+        foreach (UiFrame frame in frames)
+        {
+            foreach (ControlWork laid in frame.Controls)
+            {
+                controls[laid.Control.Id] = controls.TryGetValue(laid.Control.Id, out (UiControl Control, LayoutWork Work) so) ? (so.Control, so.Work + laid.Work) : (laid.Control, laid.Work);
+            }
+        }
+        return [.. controls.Values
+            .GroupBy(c => c.Control.FullType, StringComparer.Ordinal)
+            .Select(type =>
+            {
+                List<LayoutCost> each = [.. type.Select(c => new LayoutCost(c.Control.Label, c.Control, c.Work, [])).OrderByDescending(c => c.Work.SelfMs).ThenBy(c => c.Name, StringComparer.Ordinal)];
+                LayoutWork all = each.Aggregate(default(LayoutWork), (sum, c) => sum + c.Work);
+                return new LayoutCost(type.First().Control.Type, null, all, each);
+            })
+            .OrderByDescending(t => t.Work.SelfMs)
+            .ThenBy(t => t.Name, StringComparer.Ordinal)];
+    }
+
+    /// <summary>Gathers the inspector's events from a trace as it is read, in order.</summary>
+    internal sealed class Reader
+    {
+        private readonly Dictionary<long, UiControl> controls = [];
+        private readonly Dictionary<int, List<ControlWork>> laidOut = [];
+        private readonly List<UiFrame> frames = [];
+        private readonly List<(double At, double Ms)> composited = [];
+
+        /// <summary>Takes the event if it is the inspector's.</summary>
+        public bool Take(TraceEvent data)
+        {
+            if (data.ProviderName != Provider)
+            {
+                return false;
+            }
+            switch ((int)data.ID)
+            {
+                case 1:
+                    long id = Long(data, "id");
+                    controls[id] = new UiControl(id, Text(data, "type") ?? "?", Text(data, "fullType") ?? "?", Text(data, "name"), Text(data, "templatedBy"), Text(data, "file"), Int(data, "line"));
+                    break;
+                case 2:
+                    int number = Int(data, "frame");
+                    long control = Long(data, "control");
+                    if (!laidOut.TryGetValue(number, out List<ControlWork>? works))
+                    {
+                        laidOut[number] = works = [];
+                    }
+                    UiControl named = controls.TryGetValue(control, out UiControl? known) ? known : new UiControl(control, "?", "?", null, null, null, 0);
+                    works.Add(new ControlWork(named, new LayoutWork(Int(data, "measures"), Double(data, "measureMs"), Double(data, "measureSelfMs"),
+                        Int(data, "arranges"), Double(data, "arrangeMs"), Double(data, "arrangeSelfMs"))));
+                    break;
+                case 3:
+                    int frame = Int(data, "frame");
+                    double duration = Double(data, "durationMs");
+                    double start = data.TimeStampRelativeMSec - Double(data, "endedMsAgo") - duration;
+                    laidOut.Remove(frame, out List<ControlWork>? laid);
+                    frames.Add(new UiFrame(frame, start, duration, Int(data, "measurePasses"), Int(data, "arrangePasses"), Double(data, "measureMs"),
+                        Double(data, "arrangeMs"), Double(data, "renderMs"), Int(data, "measures"), Int(data, "arranges"),
+                        [.. (laid ?? []).OrderByDescending(c => c.Work.SelfMs)]));
+                    break;
+                case 4:
+                    double ms = Double(data, "updateMs") + Double(data, "renderMs");
+                    composited.Add((data.TimeStampRelativeMSec - ms, ms));
+                    break;
+            }
+            return true;
+        }
+
+        /// <summary>The frames in order, each with the compositor's first drawing after it (every window's, which a tick of
+        /// the render loop draws together) before the next frame: later drawings with no frame between (an animation, the
+        /// FPS overlay's counter) are the compositor's alone.</summary>
+        public IReadOnlyList<UiFrame> Frames()
+        {
+            List<UiFrame> ordered = [.. frames.OrderBy(f => f.StartMs)];
+            composited.Sort((a, b) => a.At.CompareTo(b.At));
+            int next = 0;
+            for (int i = 0; i < ordered.Count; i++)
+            {
+                UiFrame frame = ordered[i];
+                double before = i + 1 < ordered.Count ? ordered[i + 1].StartMs : double.MaxValue;
+                while (next < composited.Count && composited[next].At < frame.EndMs - 1)
+                {
+                    next++;
+                }
+                double drawn = 0;
+                double tick = double.MaxValue;
+                while (next < composited.Count && composited[next].At < before && composited[next].At <= tick)
+                {
+                    // The same tick: one window's drawing begins as the one before it ends.
+                    tick = Math.Min(tick, composited[next].At + composited[next].Ms + SameTick);
+                    drawn += composited[next].Ms;
+                    next++;
+                }
+                ordered[i] = frame with { CompositeMs = drawn };
+            }
+            return ordered;
+        }
+
+        private static string? Text(TraceEvent data, string name) => data.PayloadByName(name) as string is { Length: > 0 } text ? text : null;
+
+        private static int Int(TraceEvent data, string name) => Convert.ToInt32(data.PayloadByName(name) ?? 0, System.Globalization.CultureInfo.InvariantCulture);
+
+        private static long Long(TraceEvent data, string name) => Convert.ToInt64(data.PayloadByName(name) ?? 0L, System.Globalization.CultureInfo.InvariantCulture);
+
+        private static double Double(TraceEvent data, string name) => Convert.ToDouble(data.PayloadByName(name) ?? 0.0, System.Globalization.CultureInfo.InvariantCulture);
+    }
+}

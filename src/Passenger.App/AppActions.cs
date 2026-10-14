@@ -71,9 +71,18 @@ public static class AppActions
     public const string Profile = "app.profile";
     public const string ShowProfiler = "app.showProfiler";
 
+    // dotTrace's attach to a running process, for the program Run or Debug started: no key of Rider's.
+    public const string AttachProfiler = "app.profiler.attach";
+
     // The Live Visual Tree of an Avalonia app being debugged, as Visual Studio's for WPF: no key of Rider's or VS's.
     public const string ShowLiveTree = "app.showLiveTree";
     public const string SelectElement = "app.liveTree.selectElement";
+
+    // Avalonia's renderer debug overlays in an app Run, Debug or Profile launched (Avalonia's own names): no key of Rider's.
+    public const string OverlayFps = "app.avalonia.overlay.Fps";
+    public const string OverlayDirtyRects = "app.avalonia.overlay.DirtyRects";
+    public const string OverlayLayoutTimeGraph = "app.avalonia.overlay.LayoutTimeGraph";
+    public const string OverlayRenderTimeGraph = "app.avalonia.overlay.RenderTimeGraph";
     public const string Find = "app.find";
     public const string Replace = "app.replace";
     public const string FindNext = "app.findNext";

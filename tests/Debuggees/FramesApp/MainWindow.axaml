@@ -1,0 +1,13 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:FramesApp"
+        x:Class="FramesApp.MainWindow"
+        Title="Frames App" Width="480" Height="320">
+    <StackPanel x:Name="Panel" Margin="12" Spacing="8">
+        <TextBlock x:Name="Caption" Text="Frames" />
+        <Button x:Name="Save" Content="Save" />
+        <local:SlowPanel x:Name="Slow">
+            <TextBlock Text="Measured slowly" />
+        </local:SlowPanel>
+    </StackPanel>
+</Window>
