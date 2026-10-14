@@ -6,18 +6,21 @@ using Avalonia.Controls.Templates;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Passenger.App.LiveTree;
 using Passenger.App.Run;
 
 namespace Passenger.App.ToolWindows;
 
 /// <summary>Which of Problems' tabs: the current file's, the solution's (with solution-wide analysis on), the projects'
-/// load problems (Rider's Toolset, Environment), or the last build's.</summary>
+/// load problems (Rider's Toolset, Environment), the last build's, or the bindings that failed in the Avalonia apps run and
+/// debugged last.</summary>
 public enum ProblemsTab
 {
     File,
     Solution,
     Toolset,
     Build,
+    Bindings,
 }
 
 /// <summary>A row of Problems: a group (a project or a file, with its count) or a problem, at its depth. A problem of the
@@ -47,7 +50,8 @@ public sealed class ProblemRow(int depth, string label, string? detail, Problem?
 
 /// <summary>Rider's Problems window: the current file's problems as they are typed, the whole solution's with
 /// solution-wide analysis on (by project, then file), the warnings and errors the projects loaded with (Rider's Toolset,
-/// Environment, by project), and the last build's apart from them, each a tab with its count. Errors come before
+/// Environment, by project), the last build's apart from them, and the bindings that failed in a running Avalonia app (by
+/// XAML file, each once with its control, property, path and count), each a tab with its count. Errors come before
 /// warnings; a double-click or Enter goes to a problem, and the web address in its message is a link.</summary>
 public sealed class ProblemsView : DockPanel
 {
@@ -58,6 +62,7 @@ public sealed class ProblemsView : DockPanel
     private IReadOnlyList<Problem> file = [];
     private IReadOnlyList<Problem>? solution;
     private IReadOnlyList<Problem> toolset = [];
+    private IReadOnlyList<BindingProblem> bindings = [];
     private string? fileName;
 
     public ProblemsView()
@@ -96,7 +101,13 @@ public sealed class ProblemsView : DockPanel
             ListMenus.Item("Copy Message", null, () => _ = ListMenus.CopyAsync(this, problem.Message)),
             ListMenus.Item("Open Link", null, () => LinkClicked?.Invoke(this, problem.Link!), problem.Link is not null),
             new Separator(),
-            ListMenus.Item("Show Context Actions", null, () => FixRequested?.Invoke(this, problem), problem.Path is not null && Shown != ProblemsTab.Toolset),
+            ListMenus.Item("Show Context Actions", null, () => FixRequested?.Invoke(this, problem), problem.Path is not null && Shown switch
+            {
+                ProblemsTab.Toolset => false,
+                // A failed binding's fixes are the nearest members of its source's type, when it has any.
+                ProblemsTab.Bindings => bindings.Any(b => b.Problem == problem && b.Failure.Nearest.Count > 0),
+                _ => true,
+            }),
         ]);
         Refresh();
     }
@@ -121,6 +132,9 @@ public sealed class ProblemsView : DockPanel
 
     /// <summary>The warnings and errors the projects loaded with.</summary>
     public IReadOnlyList<Problem> ToolsetProblems => toolset;
+
+    /// <summary>The bindings that failed in the apps run and debugged last, each once.</summary>
+    public IReadOnlyList<BindingProblem> BindingProblems => bindings;
 
     /// <summary>The rows of the tab shown.</summary>
     public IReadOnlyList<ProblemRow> Rows => rows;
@@ -212,20 +226,48 @@ public sealed class ProblemsView : DockPanel
         Refresh();
     }
 
+    /// <summary>The failed bindings, in Bindings, as often as their counts change: the row chosen stays chosen, and another
+    /// tab shown is left as it is but for the count on Bindings' own.</summary>
+    public void ShowBindings(IReadOnlyList<BindingProblem> problems)
+    {
+        bindings = [.. problems.OrderBy(b => b.Problem.Severity).ThenBy(b => b.Problem.Path, StringComparer.Ordinal)
+            .ThenBy(b => b.Problem.Position.Line).ThenBy(b => b.Problem.Position.Column).ThenBy(b => b.Failure.Id)];
+        if (Shown != ProblemsTab.Bindings)
+        {
+            Titles();
+            return;
+        }
+        Problem? chosen = (list.SelectedItem as ProblemRow)?.Problem;
+        Refresh();
+        if (chosen is not null && rows.FirstOrDefault(r => r.Problem == chosen) is { } again)
+        {
+            list.SelectedItem = again;
+        }
+    }
+
     private static IEnumerable<Problem> Ordered(IEnumerable<Problem> problems) =>
         problems.OrderBy(p => p.Severity).ThenBy(p => p.Path, StringComparer.Ordinal).ThenBy(p => p.Position.Line).ThenBy(p => p.Position.Column);
 
-    private void Refresh()
+    /// <summary>Each tab's title with its count, the one shown pressed.</summary>
+    private void Titles()
     {
         tabs[ProblemsTab.File].Content = Titled(fileName is null ? "File" : $"File: {fileName}", file.Count);
         tabs[ProblemsTab.Solution].Content = Titled("Solution", solution?.Count ?? 0);
         tabs[ProblemsTab.Solution].IsVisible = solution is not null;
         tabs[ProblemsTab.Toolset].Content = Titled("Toolset, Environment", toolset.Count);
         tabs[ProblemsTab.Build].Content = Titled("Build", Problems.Count);
+        tabs[ProblemsTab.Bindings].Content = Titled("Bindings", bindings.Count);
         foreach ((ProblemsTab tab, ToggleButton button) in tabs)
         {
             button.IsChecked = tab == Shown;
         }
+
+        static string Titled(string title, int count) => count == 0 ? title : $"{title}  {count}";
+    }
+
+    private void Refresh()
+    {
+        Titles();
         rows.Clear();
         switch (Shown)
         {
@@ -251,14 +293,24 @@ public sealed class ProblemsView : DockPanel
                 }
                 empty.Text = "The projects loaded without problems";
                 break;
+            case ProblemsTab.Bindings:
+                foreach (IGrouping<string, BindingProblem> file in bindings.GroupBy(b => b.Problem.Path ?? string.Empty)
+                    .OrderBy(g => g.Key.Length == 0).ThenBy(g => g.Key, StringComparer.Ordinal))
+                {
+                    rows.Add(new ProblemRow(0, file.Key.Length > 0 ? System.IO.Path.GetFileName(file.Key) : "Not from XAML", Count(file.Count()), null));
+                    foreach (BindingProblem binding in file)
+                    {
+                        rows.Add(new ProblemRow(1, binding.Problem.Message, binding.Detail, binding.Problem));
+                    }
+                }
+                empty.Text = "No failed bindings: those of an Avalonia app run or debugged here are listed as they fail";
+                break;
             default:
                 Grouped(Problems);
                 empty.Text = "No problems from the last build";
                 break;
         }
         empty.IsVisible = rows.Count == 0;
-
-        static string Titled(string title, int count) => count == 0 ? title : $"{title}  {count}";
     }
 
     private static string Count(int count) => count == 1 ? "1 problem" : $"{count} problems";

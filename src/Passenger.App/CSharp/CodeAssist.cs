@@ -11,6 +11,10 @@ using Passenger.Text;
 
 namespace Passenger.App.CSharp;
 
+/// <summary>A fix Passenger offers itself at a place in a file, beside the language server's (a running app's failed binding's
+/// nearest member): what Show Context Actions lists, a quieter detail, and the text it puts in place of a range.</summary>
+public sealed record EditorFix(string Title, string Detail, TextRange Range, string Text);
+
 /// <summary>What the language server adds to the editor as you work: completion as you type, a card
 /// when the pointer rests (the diagnostics there and the symbol's description), signature help after
 /// an opening bracket or a comma, and the commands Rider binds (quick fixes, rename, go to
@@ -221,7 +225,12 @@ public sealed partial class CodeAssist
         // Rider's Code, Code Completion: Basic, then Complete Current Statement after a separator.
         Code(AppActions.Complete, "Basic Completion", context => _ = StartCompletion(null), new("Code/Code Completion", 0, 0));
         Code(AppActions.CompleteStatement, "Complete Current Statement", _ => CompleteStatement(), new("Code/Code Completion", 1, 0), server: false, syntax: true);
-        Code(AppActions.QuickFix, "Show Context Actions", context => _ = ShowFixes(), new("Code", 0, 1));
+        // Passenger's own fixes first, which a file the server does not read (a XAML file) may have too.
+        actions.Add(new IdeAction(AppActions.QuickFix, "Show Context Actions", "Code", context => _ = ShowFixes())
+        {
+            WhyNot = context => OwnFixes(context.File, context.Editor.Selections.Primary.Caret).Count > 0 ? null : WhyNot(context, server: true),
+            Menus = [new("Code", 0, 1)],
+        });
         // Rider's Generate: the server's actions that write code for the type (constructors, equality, interface members,
         // overrides).
         Code(AppActions.Generate, "Generate...", context => _ = ShowFixes(a => GenerateWords.Any(w => a.Title.StartsWith(w, StringComparison.Ordinal)), "Generate"),
@@ -877,9 +886,38 @@ public sealed partial class CodeAssist
         }
     }
 
+    /// <summary>The fixes Passenger offers itself at an offset of a file, which Show Context Actions lists before asking the
+    /// language server; none by default.</summary>
+    public Func<OpenDocument, int, IReadOnlyList<EditorFix>>? EditorFixes { get; set; }
+
+    private IReadOnlyList<EditorFix> OwnFixes(OpenDocument? file, int offset) => file is not null && EditorFixes?.Invoke(file, offset) is { } fixes ? fixes : [];
+
+    /// <summary>Passenger's own fixes at the caret as Rider's list, the one chosen made as one undoable edit; false with none.</summary>
+    private bool ShowOwnFixes(string title)
+    {
+        if (editors.Active is not { } document || OwnFixes(document, Caret) is not { Count: > 0 } fixes)
+        {
+            return false;
+        }
+        int at = Caret;
+        ShowModal(new ChoicePopup(title, [.. fixes.Select(f => new Choice(f.Title, f.Detail, f))]), at, "Show Context Actions", choice =>
+        {
+            if (choice?.Value is EditorFix chosen && editors.Active == document)
+            {
+                Editor.ApplyEdits([new TextEdit(chosen.Range.Start, chosen.Range.Length, chosen.Text)], SelectionSet.Single(chosen.Range.Start + chosen.Text.Length));
+            }
+            return Task.CompletedTask;
+        });
+        return true;
+    }
+
     private async Task ShowFixesCore(Func<CodeAction, bool>? only, string title)
     {
         string what = only is null ? "Show Context Actions" : title;
+        if (only is null && ShowOwnFixes(title))
+        {
+            return;
+        }
         if (Ask(what) is not { } lsp || Current is not { } current || editors.Active is not { } document)
         {
             return;

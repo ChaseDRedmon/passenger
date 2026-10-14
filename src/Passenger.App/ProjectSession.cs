@@ -12,6 +12,7 @@ using Passenger.App.Vcs;
 using Passenger.App.Workspace;
 using Passenger.Core;
 using Passenger.Editor;
+using Passenger.Inspector;
 using Passenger.Profiler;
 
 namespace Passenger.App;
@@ -189,6 +190,25 @@ public sealed class ProjectSession : IAsyncDisposable
         LiveAppChanged?.Invoke(this, EventArgs.Empty);
         return LiveApp?.Plan ?? plan;
     }
+
+    /// <summary>The Avalonia app Run started last, inspected for its failed bindings alone (the Live Visual Tree follows
+    /// the debugger's); null after any other program, or one Hot Reload runs. It ends with its run, and with the folder.</summary>
+    public LiveApp? RunApp { get; private set; }
+
+    /// <summary>A plan as Run launches it: an Avalonia app's carries the inspector, as Debug's does, unless Hot Reload runs
+    /// it, whose dotnet watch is a .NET program of its own that would load the inspector first.</summary>
+    public LaunchPlan InspectedRun(LaunchPlan plan, bool hotReload)
+    {
+        UiThread.Check();
+        RunApp?.Dispose();
+        RunApp = hotReload ? null : LiveTree.LiveApp.For(plan);
+        return RunApp?.Plan ?? plan;
+    }
+
+    /// <summary>The bindings that failed in the apps Run and Debug launched last, each once with its count: those of an app
+    /// that ended stay until the next of its kind launches.</summary>
+    public IEnumerable<(LiveApp App, BindingFailure Failure)> FailedBindings =>
+        new[] { RunApp, LiveApp }.OfType<LiveApp>().SelectMany(app => app.Bindings.Select(failure => (app, failure)));
 
     /// <summary>The folder's Git working tree, once its lookup (<see cref="Start"/>) has found one.</summary>
     public VcsController Vcs { get; } = new();
@@ -456,6 +476,7 @@ public sealed class ProjectSession : IAsyncDisposable
         InTerminal?.Stop();
         Profiling?.Kill();
         LiveApp?.Dispose();
+        RunApp?.Dispose();
         Tests.Stop();
         parts.Add(("the test runner", Tests.DisposeAsync().AsTask()));
         parts.Add(("the language server", CSharp?.DisposeAsync().AsTask() ?? Task.CompletedTask));

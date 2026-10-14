@@ -1,0 +1,12 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="BindingErrorsApp.MainWindow"
+        x:CompileBindings="False"
+        Title="Binding Errors App" Width="480" Height="320">
+    <StackPanel Margin="12" Spacing="8">
+        <TextBlock x:Name="Greeting" Text="{Binding Greeting}" />
+        <TextBlock x:Name="Caption"
+                   FontSize="16"
+                   Text="{Binding Nmae}" />
+    </StackPanel>
+</Window>

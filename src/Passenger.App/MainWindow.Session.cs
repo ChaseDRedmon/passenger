@@ -199,6 +199,7 @@ public partial class MainWindow
         StopButton.IsVisible = next.Debug.IsDebugging || buildRun.IsRunning;
         // The last folder's build said nothing of this one.
         Bottom.Problems.ForgetBuild();
+        buildRun.ShowBindings();
         if (Dock["problems"] is { } problemsWindow)
         {
             problemsWindow.Title = "Problems";

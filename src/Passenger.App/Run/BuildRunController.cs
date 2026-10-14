@@ -5,8 +5,11 @@ using Passenger.App.Editors;
 using Passenger.App.LiveTree;
 using Passenger.App.Settings;
 using Passenger.App.ToolWindows;
+using Passenger.App.Workspace;
 using Passenger.Core;
 using Passenger.Editor;
+using Passenger.Inspector;
+using Passenger.Text;
 
 namespace Passenger.App.Run;
 
@@ -54,6 +57,9 @@ public sealed class BuildRunController
 
     /// <summary>The run configuration the Run window last ran.</summary>
     private string ran = string.Empty;
+
+    /// <summary>Where each failed binding of an app goes in Problems, found once, when it first fails.</summary>
+    private readonly Dictionary<(LiveApp App, int Id), Problem> placed = [];
 
     public BuildRunController(ProjectSession session, BuildRunParts parts)
     {
@@ -331,22 +337,30 @@ public sealed class BuildRunController
             ran = chosen.Name;
             RunProject = Path.GetDirectoryName(plan.Project);
             string running = hotReload ? $"Running {chosen.Name} with Hot Reload: a save applies its changes" : $"Running {chosen.Name}";
+            // An Avalonia app is launched with the inspector in it, which tells of its failed bindings while it runs.
+            LaunchPlan launched = session.InspectedRun(plan, hotReload);
+            LiveApp? inspected = session.RunApp;
+            ShowBindings();
             Dictionary<string, string> variables = hotReload
-                ? new Dictionary<string, string>(plan.Environment) { ["DOTNET_WATCH_SUPPRESS_EMOJIS"] = "1", ["DOTNET_WATCH_RESTART_ON_RUDE_EDIT"] = "true" }
-                : new Dictionary<string, string>(plan.Environment);
+                ? new Dictionary<string, string>(launched.Environment) { ["DOTNET_WATCH_SUPPRESS_EMOJIS"] = "1", ["DOTNET_WATCH_RESTART_ON_RUDE_EDIT"] = "true" }
+                : new Dictionary<string, string>(launched.Environment);
             if (plan.Console == ConsoleKind.Terminal)
             {
+                // The terminal's text is the program's own: its failed bindings are in Problems alone.
+                WatchBindings(inspected, null);
                 string? refused = await RunInTerminalAsync(chosen.Name, hotReload ? DotnetStart(Watch(plan), plan.WorkingDirectory) : ChildProcesses.Command(plan.Program, plan.Arguments, plan.WorkingDirectory), variables, running);
                 if (refused is null && session.InTerminal is { } inTerminal)
                 {
                     parts.OpenBrowser(plan, inTerminal.Ended);
                 }
+                EndWith(inspected, refused is null && session.InTerminal is { } run ? run.Ended : Task.CompletedTask);
                 return refused;
             }
             session.InTerminal = null;
             parts.Views.Run.SetRunning(true);
             parts.Dock.Show("run");
             parts.Say(running);
+            WatchBindings(inspected, parts.Views.Run);
             string? notStarted = Started(hotReload
                 ? session.Runner.StartDotnet(Watch(plan), plan.WorkingDirectory, variables)
                 : session.Runner.Start(plan.Program, plan.Arguments, plan.WorkingDirectory, variables));
@@ -354,6 +368,7 @@ public sealed class BuildRunController
             {
                 parts.OpenBrowser(plan, session.Runner.Ended);
             }
+            EndWith(inspected, notStarted is null ? session.Runner.Ended : Task.CompletedTask);
             return notStarted;
         }
         finally
@@ -480,12 +495,11 @@ public sealed class BuildRunController
         // An Avalonia app is launched with the Live Visual Tree's inspector in it, which ends with this debugging.
         LaunchPlan launched = session.Inspected(plan);
         LiveApp? inspected = session.LiveApp;
+        ShowBindings();
+        WatchBindings(inspected, parts.Views.Debug.Console);
         string? refused = await debug.StartAsync(launched);
         Task ended = refused is null ? DebugEnded(debug) : Task.CompletedTask;
-        if (inspected is not null)
-        {
-            _ = EndWithAsync(inspected, ended);
-        }
+        EndWith(inspected, ended);
         if (refused is null)
         {
             parts.OpenBrowser(plan, ended);
@@ -493,12 +507,75 @@ public sealed class BuildRunController
         return refused;
     }
 
-    /// <summary>An app's inspector let go once its debugging ends: one that never connected (startup hooks turned off in
-    /// the app) waits no longer.</summary>
-    private static async Task EndWithAsync(LiveApp app, Task ended)
+    /// <summary>An app's inspector let go once its run or debugging ends: one that never connected (startup hooks turned off
+    /// in the app) waits no longer. Its failed bindings stay in Problems until the next launch of its kind.</summary>
+    private static void EndWith(LiveApp? app, Task ended)
     {
-        await ended;
-        app.Dispose();
+        if (app is not null)
+        {
+            _ = EndWithAsync(app, ended);
+        }
+
+        static async Task EndWithAsync(LiveApp app, Task ended)
+        {
+            await ended;
+            app.Dispose();
+        }
+    }
+
+    /// <summary>An app's failed bindings as they come: each a line of its console linked to its XAML (none for a program in
+    /// the terminal, whose text is its own), and Problems' Bindings.</summary>
+    private void WatchBindings(LiveApp? app, OutputView? console)
+    {
+        if (app is null)
+        {
+            return;
+        }
+        app.BindingFailed += (_, failed) =>
+        {
+            if (session.IsEnded)
+            {
+                return;
+            }
+            console?.Append(BindingErrors.Line(Placed(app, failed.Failure), session.Folder), error: true);
+            ShowBindings();
+        };
+    }
+
+    /// <summary>The failed bindings of the apps Run and Debug launched last, in Problems' Bindings.</summary>
+    public void ShowBindings() => parts.Views.Problems.ShowBindings([.. session.FailedBindings.Select(b => Placed(b.App, b.Failure))]);
+
+    /// <summary>A failure with its problem, which is placed once, when it first fails: at its misspelt member where its XAML
+    /// has it, else at its control's element.</summary>
+    private BindingProblem Placed(LiveApp app, BindingFailure failure)
+    {
+        if (!placed.TryGetValue((app, failure.Id), out Problem? problem))
+        {
+            problem = placed[(app, failure.Id)] = BindingErrors.Problem(failure, failure.Place is { } at ? TextOf(at.File) : null).Problem;
+        }
+        return new BindingProblem(failure, problem);
+    }
+
+    /// <summary>A XAML file's text as the editor has it, else as it is on disk, else none.</summary>
+    private TextSnapshot? TextOf(string file)
+    {
+        if (!File.Exists(file))
+        {
+            return null;
+        }
+        string path = PathNames.Canonical(file);
+        if (parts.Editors.Documents.FirstOrDefault(d => PathNames.Same(d.Path, path)) is { } open)
+        {
+            return open.Text.Snapshot;
+        }
+        try
+        {
+            return FileText.Load(path) is { } read ? TextSnapshot.From(read.Text) : null;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
     }
 
     /// <summary>The end of the session being debugged; done already when there is none.</summary>

@@ -216,6 +216,8 @@ public partial class MainWindow : Window
             Request(AppActions.FindUsages);
         };
         assist.DebuggerValue = (offset, cancel) => session.Debug.ValueAt(offset, cancel);
+        // A running app's failed binding is offered its source's nearest members, at the member its XAML names.
+        assist.EditorFixes = (file, offset) => Passenger.App.LiveTree.BindingErrors.Fixes(file, offset, session.FailedBindings.Select(b => b.Failure));
         assist.AddActions(actions!);
         usages.AddActions(actions!);
         DebugController.AddActions(actions!, () => session.Debug);

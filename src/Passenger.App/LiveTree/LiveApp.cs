@@ -17,14 +17,23 @@ public enum LiveAppState
     Ended,
 }
 
+/// <summary>A binding failed in an app: the failure as the app last said it, and how many times since it last did.</summary>
+public sealed class BindingFailedEventArgs(BindingFailure failure, int times) : EventArgs
+{
+    public BindingFailure Failure { get; } = failure;
+
+    public int Times { get; } = times;
+}
+
 /// <summary>Why the app could not answer: not connected, gone, or what the inspector in it said.</summary>
 public sealed class LiveAppException(string message) : Exception(message);
 
-/// <summary>Passenger's end of its inspector inside an Avalonia app it launches (src/Passenger.Inspector, carried under
-/// inspector/): the launch plan is given the inspector as a startup hook and a socket of its own to connect to, and once
-/// the app's UI is up the inspector says hello and answers on the app's UI thread, live while the app runs; paused under the
-/// debugger, it answers once the app runs again. Made only for a program whose build carries Avalonia, and only for one
-/// launch, so nothing of it is ever in the app as built. A UI-thread object: its events come on the UI thread.</summary>
+/// <summary>Passenger's end of its inspector inside an Avalonia app it runs or debugs (src/Passenger.Inspector, carried under
+/// inspector/): the launch plan is given the inspector as a startup hook and a socket of its own to connect to; from before
+/// the app's Main the inspector tells of each binding that fails, and once the app's UI is up it says hello and answers on
+/// the app's UI thread, live while the app runs; paused under the debugger, it answers once the app runs again. Made only
+/// for a program whose build carries Avalonia, and only for one launch, so nothing of it is ever in the app as built. A
+/// UI-thread object: its events come on the UI thread.</summary>
 public sealed class LiveApp : IDisposable
 {
     /// <summary>The sockets this process has made, which number each one's name apart.</summary>
@@ -83,6 +92,15 @@ public sealed class LiveApp : IDisposable
 
     /// <summary>Select Element ended: the element the person pointed at, or null when they pressed Escape.</summary>
     public event EventHandler<long?>? Picked;
+
+    /// <summary>A binding failed in the app, for the first time or again (<see cref="BindingFailedEventArgs.Times"/> since
+    /// it was last told), from before its UI is up until it ends.</summary>
+    public event EventHandler<BindingFailedEventArgs>? BindingFailed;
+
+    /// <summary>Each binding that failed in the app, once, with how many times it has, in the order they first failed.</summary>
+    public IReadOnlyList<BindingFailure> Bindings => [.. bindings.Values];
+
+    private readonly Dictionary<int, BindingFailure> bindings = [];
 
     /// <summary>The live app for a plan whose program is built with Avalonia (Avalonia.Base beside its assembly), or null for
     /// any other program, or when this build of Passenger carries no inspector.</summary>
@@ -301,6 +319,17 @@ public sealed class LiveApp : IDisposable
                 break;
             case Wire.PickEnded:
                 Picked?.Invoke(this, null);
+                break;
+            case Wire.BindingFailed when reply.Binding is { } failure:
+                int before = bindings.TryGetValue(failure.Id, out BindingFailure? known) ? known.Count : 0;
+                if (failure.Count > before)
+                {
+                    bindings[failure.Id] = failure;
+                    BindingFailed?.Invoke(this, new BindingFailedEventArgs(failure, failure.Count - before));
+                }
+                break;
+            case Wire.BindingFailed when reply.Error is { } why:
+                IdeErrors.Write($"{Name}: {why}");
                 break;
         }
     }
