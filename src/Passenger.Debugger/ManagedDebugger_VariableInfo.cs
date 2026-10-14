@@ -559,6 +559,21 @@ public partial class ManagedDebugger
     }
 
     internal class EvalException(string message) : Exception(message);
+
+    /// <summary>An evaluation the runtime would not start on the thread where it is stopped (a pause can catch it in the
+    /// runtime's optimized or native code): nothing ran. Said as Visual Studio says it; its HResult is the runtime's.</summary>
+    internal sealed class EvalRefusedException : EvalException
+    {
+        public EvalRefusedException(System.Runtime.InteropServices.COMException refused) : base(Said(refused)) => HResult = refused.HResult;
+
+        private static string Said(System.Runtime.InteropServices.COMException refused) => refused.HResult switch
+        {
+            Cor.CORDBG_E_ILLEGAL_IN_OPTIMIZED_CODE => "Cannot evaluate expression because the code of the current method is optimized",
+            Cor.CORDBG_E_ILLEGAL_AT_GC_UNSAFE_POINT => "Cannot evaluate expression because a thread is stopped at a point where garbage collection is impossible, possibly because the code is optimized",
+            _ => $"Cannot evaluate expression where the thread is stopped: {refused.Message}",
+        };
+    }
+
     private async Task AddProperties(mdProperty[] mdProperties, IMetaDataImport metadataImport, ICorDebugClass corDebugClass, ThreadId threadId, FrameStackDepth stackDepth, ICorDebugValue corDebugValue, List<VariableInfo> result)
     {
         foreach (mdProperty mdProperty in mdProperties)

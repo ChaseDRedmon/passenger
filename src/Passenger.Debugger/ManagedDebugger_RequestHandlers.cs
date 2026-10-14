@@ -1085,7 +1085,7 @@ public partial class ManagedDebugger
             };
             return exceptionInfo;
         }
-        catch (COMException error) when (error.HResult is Cor.CORDBG_E_ILLEGAL_AT_GC_UNSAFE_POINT or Cor.CORDBG_E_FUNC_EVAL_BAD_START_POINT)
+        catch (EvalRefusedException error) when (error.HResult is Cor.CORDBG_E_ILLEGAL_AT_GC_UNSAFE_POINT or Cor.CORDBG_E_FUNC_EVAL_BAD_START_POINT)
         {
             // A thread whose exception came while another thread's evaluation ran is held where no code can run on it.
             return UnevaluatedExceptionInfo(StopFrame(thread), threadId, currentException,

@@ -232,7 +232,15 @@ public static class Extensions
             throw new ManagedDebugger.EvalException("An evaluation that could not be stopped is still running on this thread, so no other can run on it until it returns");
         }
 
-        startEval();
+        try
+        {
+            startEval();
+        }
+        catch (COMException refused)
+        {
+            // Nothing ran: the runtime runs no code on a thread a pause caught in optimized or native code.
+            throw new ManagedDebugger.EvalRefusedException(refused);
+        }
 
         ICorDebugProcess process = thread.Process;
         evalStatus.ThreadId = thread.Id;

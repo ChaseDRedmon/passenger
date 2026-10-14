@@ -375,7 +375,7 @@ public sealed partial class DiskImageUpdater : Updater
     private static async Task Open(string bundle)
     {
         List<string> arguments = ["-n"];
-        foreach (string variable in (string[])["PASSENGER_SETTINGS", ReleaseFeed.Variable, Discord.DiscordIpc.Variable])
+        foreach (string variable in (string[])[State.StateStore.Variable, ReleaseFeed.Variable, Discord.DiscordIpc.Variable])
         {
             if (Environment.GetEnvironmentVariable(variable) is { Length: > 0 } value)
             {

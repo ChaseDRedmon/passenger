@@ -23,4 +23,6 @@ public static class Cor
     public const int CORDBG_E_ILLEGAL_SHUTDOWN_ORDER = -2146231275;
 
     public const int CORDBG_E_ILLEGAL_AT_GC_UNSAFE_POINT = -2146231261;
+
+    public const int CORDBG_E_ILLEGAL_IN_OPTIMIZED_CODE = -2146231258;
 }

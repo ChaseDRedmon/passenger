@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Passenger.App.State;
 using Passenger.App.Workspace;
 using Passenger.Core;
 
@@ -61,9 +62,10 @@ public sealed partial record LaunchPlan
     }
 
     /// <summary>Works out what a configuration launches among the open folder's projects, asking MSBuild where the project
-    /// builds (and any property its values name), which needs no build. Throws a <see cref="LaunchException"/> saying why
-    /// it cannot: a kind of profile Passenger does not run, a project gone or unloaded, MSBuild's refusal.</summary>
-    public static async Task<LaunchPlan> ResolveAsync(RunConfiguration configuration, IReadOnlyList<ProjectModel> projects, CancellationToken cancel = default)
+    /// builds (and any property its values name), which needs no build. A Passenger it launches keeps its state in the
+    /// launching one's state folder's sandbox/ (<see cref="SandboxedState"/>). Throws a <see cref="LaunchException"/> saying
+    /// why it cannot: a kind of profile Passenger does not run, a project gone or unloaded, MSBuild's refusal.</summary>
+    public static async Task<LaunchPlan> ResolveAsync(RunConfiguration configuration, IReadOnlyList<ProjectModel> projects, string stateFolder, CancellationToken cancel = default)
     {
         if (configuration.Unsupported is { } why)
         {
@@ -108,13 +110,18 @@ public sealed partial record LaunchPlan
         string working = configuration.WorkingDirectory is { Length: > 0 } folder
             ? System.IO.Path.TrimEndingDirectorySeparator(PathNames.Canonical(System.IO.Path.Combine(project.Folder, Expand(folder))))
             : System.IO.Path.GetDirectoryName(target)!;
+        Dictionary<string, string> environment = configuration.Environment.ToDictionary(v => v.Key, v => Expand(v.Value));
+        if (SandboxedState(built ?? program, environment, stateFolder) is { } sandbox)
+        {
+            environment[StateStore.Variable] = sandbox;
+        }
         return new LaunchPlan
         {
             Name = configuration.Name,
             Program = program,
             Arguments = arguments,
             WorkingDirectory = working,
-            Environment = configuration.Environment.ToDictionary(v => v.Key, v => Expand(v.Value)),
+            Environment = environment,
             Project = project.Path,
             Framework = framework,
             Build = configuration.BuildBeforeLaunch ? new BuildStep(project.Path, framework) : null,
@@ -123,6 +130,16 @@ public sealed partial record LaunchPlan
             BrowserUrl = configuration.LaunchBrowser && configuration.BrowserUrl.Length > 0 ? Expand(configuration.BrowserUrl) : null,
         };
     }
+
+    /// <summary>The state folder a Passenger launched from this one is given, as IntelliJ's DevKit runs the IDE it develops
+    /// on a sandbox: sandbox/ in this one's, so the two never share settings, recent solutions, a folder's editors and
+    /// breakpoints, the log or agents' sockets, and the one debugged starts on Passenger's defaults (no MCP server, no
+    /// Discord). Null for any other program, or when the configuration names a state folder itself.</summary>
+    private static string? SandboxedState(string launched, IReadOnlyDictionary<string, string> environment, string stateFolder) =>
+        string.Equals(System.IO.Path.GetFileNameWithoutExtension(launched), typeof(LaunchPlan).Assembly.GetName().Name, StringComparison.OrdinalIgnoreCase)
+        && !environment.Keys.Any(k => string.Equals(k, StateStore.Variable, StringComparison.OrdinalIgnoreCase))
+            ? System.IO.Path.Combine(stateFolder, "sandbox")
+            : null;
 
     /// <summary>A program a configuration names: the .NET command line by name is the one the IDE builds with, a path is
     /// the project folder's when relative, and a bare name is looked for on the PATH as a shell would.</summary>

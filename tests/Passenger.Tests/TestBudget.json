@@ -7,6 +7,7 @@
     "BuildRunTests": 300,
     "UnitTestsTests": 240,
     "McpTests": 240,
+    "SelfDebuggingTests": 180,
     "IdeErrorsTests": 150,
     "VcsTests": 150,
     "UpdatesTests": 150,

@@ -40,8 +40,11 @@ public sealed class StateStore
         Refactorings = new(Path.Combine(root, "refactorings.json"));
     }
 
+    /// <summary>The variable that names the folder in the user's local application data's place.</summary>
+    public const string Variable = "PASSENGER_SETTINGS";
+
     /// <summary>The folder: PASSENGER_SETTINGS names it, else the user's local application data.</summary>
-    public static string DefaultRoot => Environment.GetEnvironmentVariable("PASSENGER_SETTINGS") is { Length: > 0 } folder
+    public static string DefaultRoot => Environment.GetEnvironmentVariable(Variable) is { Length: > 0 } folder
         ? folder
         : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Passenger");
 

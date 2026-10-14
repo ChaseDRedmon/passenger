@@ -76,7 +76,16 @@ public partial class ManagedDebugger
             ICorDebugFunction toStringFunction = FindMethodOnType(valueToFormat.ExactType, "ToString", [], false, false) ?? throw new InvalidOperationException($"Could not find ToString on {friendlyTypeName}");
             ICorDebugThread thread = _process!.GetThread(threadId.Value);
             ICorDebugType[] typeParameters = valueToFormat.ExactType.TypeParameters;
-            ICorDebugValue result = await thread.CreateEval().CallParameterizedFunctionAsync(ProcessRuntimeEventsUntilEvalEvent, EvalStatus, toStringFunction, typeParameters.Length, typeParameters, 1, [valueToFormat], throwOnException: true) ?? throw new InvalidOperationException($"ToString returned no value for {friendlyTypeName}");
+            ICorDebugValue result;
+            try
+            {
+                result = await thread.CreateEval().CallParameterizedFunctionAsync(ProcessRuntimeEventsUntilEvalEvent, EvalStatus, toStringFunction, typeParameters.Length, typeParameters, 1, [valueToFormat], throwOnException: true) ?? throw new InvalidOperationException($"ToString returned no value for {friendlyTypeName}");
+            }
+            catch (EvalRefusedException)
+            {
+                // A thread a pause caught in the runtime's optimized code runs no ToString: its type, its fields still there to open.
+                return new FormattedValue(friendlyTypeName, $"{{{friendlyTypeName}}}", debuggerProxyTypeName, false);
+            }
             try
             {
                 value = (result.UnwrapDebugValue() as ICorDebugStringValue)?.String ?? throw new InvalidOperationException($"ToString returned a non-string value for {friendlyTypeName}");

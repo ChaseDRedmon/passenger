@@ -64,11 +64,11 @@ internal static class Program
     private static int Apart(Func<int> run)
     {
         string? scratch = null;
-        if (Environment.GetEnvironmentVariable("PASSENGER_SETTINGS") is not { Length: > 0 } root)
+        if (Environment.GetEnvironmentVariable(State.StateStore.Variable) is not { Length: > 0 } root)
         {
             scratch = Directory.CreateTempSubdirectory("passenger-screenshot-").FullName;
             root = scratch;
-            Environment.SetEnvironmentVariable("PASSENGER_SETTINGS", scratch);
+            Environment.SetEnvironmentVariable(State.StateStore.Variable, scratch);
         }
         // sh takes HISTFILE as given, and zsh takes its startup files, and from them its history, from ZDOTDIR.
         Environment.SetEnvironmentVariable("HISTFILE", Path.Combine(root, "history"));

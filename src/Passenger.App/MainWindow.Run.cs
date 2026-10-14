@@ -137,7 +137,7 @@ public partial class MainWindow
     {
         try
         {
-            return (await LaunchPlan.ResolveAsync(arguments is null ? chosen : chosen with { Arguments = arguments }, Projects), null);
+            return (await LaunchPlan.ResolveAsync(arguments is null ? chosen : chosen with { Arguments = arguments }, Projects, StateFolder), null);
         }
         catch (Exception error) when (error is LaunchException or IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
         {

@@ -549,6 +549,9 @@ public static class Debuggees
         throw new DirectoryNotFoundException($"No Passenger.slnx above {AppContext.BaseDirectory}");
     });
 
+    /// <summary>The repository the tests were built from, its Passenger.slnx at the top.</summary>
+    public static string Root => Repository.Value;
+
     public static string Source(params string[] path) => Path.Combine([Repository.Value, "tests", "Debuggees", .. path]);
 
     public static string Program(string name) => Path.Combine(Repository.Value, "artifacts", "bin", name, "debug", $"{name}.dll");

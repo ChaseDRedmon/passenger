@@ -45,6 +45,27 @@ public class PauseTests(ITestOutputHelper testOutputHelper)
         AssertInLoop(host.GetTopStackFrame(stepped.ThreadId!.Value));
     }
 
+    /// <summary>A pause that caught the thread in the runtime's own code (its sleep), where the runtime may run none of the
+    /// program's: a value its ToString would show is then shown by its type, as Visual Studio shows it, its fields there to
+    /// open, never as an error in its place.</summary>
+    [Fact]
+    public async Task A_value_paused_in_a_sleep_shows_its_type_and_fields_where_its_ToString_cannot_run()
+    {
+        using DebugSession host = DebugSession.ForLaunch(testOutputHelper);
+        await Launch(host, sleeps: true);
+
+        StoppedEvent stopped = await Pause(host);
+        host.WithStackTraceRequest(stopped.ThreadId!.Value, out StackTraceResponse stack, levels: null);
+        DapStackFrame main = stack.StackFrames.First(f => f.Source?.Path?.EndsWith("Program.cs", StringComparison.Ordinal) == true);
+        host.WithScopesRequest(main.Id, out ScopesResponse scopes);
+        host.WithVariablesRequest(scopes.Scopes.Single().VariablesReference, out List<DapVariable> locals);
+        DapVariable nap = Assert.Single(locals, v => v.Name == "nap");
+        Assert.True(nap.Value is "00:00:00.0200000" or "{System.TimeSpan}" && nap.PresentationHint?.Attributes?.Contains("failedEvaluation") != true,
+            $"A TimeSpan read where the pause caught its thread shows as {nap.Value}");
+        host.WithVariablesRequest(nap.VariablesReference, out List<DapVariable> fields);
+        Assert.Equal("200000", Assert.Single(fields, f => f.Name == "_ticks").Value);
+    }
+
     [Fact]
     public async Task Listing_an_objects_properties_leaves_the_programs_other_threads_where_they_were()
     {
@@ -143,6 +164,6 @@ public class PauseTests(ITestOutputHelper testOutputHelper)
     private static void AssertInLoop(DapStackFrame top)
     {
         Assert.EndsWith("Program.cs", top.Source?.Path);
-        Assert.InRange(top.Line, Debuggees.Line(Looping, "turns++") - 2, Debuggees.Line(Looping, "Thread.Sleep(20)") + 2);
+        Assert.InRange(top.Line, Debuggees.Line(Looping, "turns++") - 2, Debuggees.Line(Looping, "Thread.Sleep(nap)") + 2);
     }
 }
