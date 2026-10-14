@@ -45,6 +45,53 @@
     </ItemGroup>
   </Target>
 
+  <!-- The project's own ESLint and Prettier that EslintPrettierTests put in a test folder's node_modules: npm packages
+       NodePackages/package.json pins and its package-lock.json locks, each tarball with its sha512, put in place at build by
+       tools/Passenger.NodePackages as the web language servers are (no Node.js, cached in artifacts/node/cache), and copied
+       into the tests' output under node-packages/, never into the app's. No test reaches npm's registry. To move a pin,
+       change package.json, have npm write the lock file again there (npm install with its package-lock-only and
+       ignore-scripts options), and bring THIRD_PARTY_NOTICES.md's tests' table along. -->
+  <PropertyGroup>
+    <TestNodeLock>$(MSBuildThisFileDirectory)NodePackages/package-lock.json</TestNodeLock>
+    <TestNodeRoot>$([MSBuild]::EnsureTrailingSlash('$(ArtifactsPath)'))node/</TestNodeRoot>
+    <TestNodeFolder>$(TestNodeRoot)tests/</TestNodeFolder>
+    <TestNodeStamp>$(TestNodeRoot)tests.stamp</TestNodeStamp>
+    <TestNodeArguments>$(TestNodeRoot)tests.arguments</TestNodeArguments>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../tools/Passenger.NodePackages/Passenger.NodePackages.csproj" ReferenceOutputAssembly="false" Private="false"
+                      GlobalPropertiesToRemove="RuntimeIdentifier;SelfContained;PublishReadyToRun" />
+  </ItemGroup>
+  <Target Name="WriteTestNodeArguments">
+    <MSBuild Projects="../../tools/Passenger.NodePackages/Passenger.NodePackages.csproj" Targets="GetTargetPath"
+             RemoveProperties="RuntimeIdentifier;SelfContained;PublishReadyToRun" BuildInParallel="$(BuildInParallel)">
+      <Output TaskParameter="TargetOutputs" ItemName="TestNodePackagesTool" />
+    </MSBuild>
+    <ItemGroup>
+      <TestNodeLine Include="lock=$(TestNodeLock)" />
+      <TestNodeLine Include="cache=$(TestNodeRoot)cache" />
+      <TestNodeLine Include="out=$(TestNodeFolder)" />
+      <TestNodeLine Include="stamp=$(TestNodeStamp)" />
+    </ItemGroup>
+    <MakeDir Directories="$(TestNodeRoot)" />
+    <WriteLinesToFile File="$(TestNodeArguments)" Lines="@(TestNodeLine)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+  </Target>
+  <Target Name="FetchTestNodePackages" DependsOnTargets="WriteTestNodeArguments"
+          Inputs="$(TestNodeLock);$(TestNodeArguments);@(TestNodePackagesTool)" Outputs="$(TestNodeStamp)">
+    <PropertyGroup>
+      <TestNodeHost>$(DOTNET_HOST_PATH)</TestNodeHost>
+      <TestNodeHost Condition="'$(TestNodeHost)' == ''">dotnet</TestNodeHost>
+    </PropertyGroup>
+    <Exec Command="&quot;$(TestNodeHost)&quot; &quot;@(TestNodePackagesTool)&quot; &quot;$(TestNodeArguments)&quot;" />
+  </Target>
+  <Target Name="IncludeTestNodePackages" BeforeTargets="AssignTargetPaths" DependsOnTargets="FetchTestNodePackages">
+    <ItemGroup>
+      <TestNodeFile Include="$(TestNodeFolder)node_modules/**/*" />
+      <None Include="@(TestNodeFile)" Link="node-packages/node_modules/%(TestNodeFile.RecursiveDir)%(TestNodeFile.Filename)%(TestNodeFile.Extension)"
+            CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    </ItemGroup>
+  </Target>
+
   <!-- A test drives the IDE whole or a real process through its real boundary: the entry points a unit test would call
        instead are banned (BannedSymbols.txt), which warnings as errors make a failed build. -->
   <ItemGroup>

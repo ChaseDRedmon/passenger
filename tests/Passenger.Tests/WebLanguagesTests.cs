@@ -497,7 +497,7 @@ public sealed class WebLanguagesTests : IClassFixture<WebLanguagesTests.Shop>
         public static string? TooOld()
         {
             Passenger.App.Web.NodeRuntime node = Task.Run(() => Passenger.App.Web.NodeRuntime.FindAsync(null)).GetAwaiter().GetResult();
-            return node.Problem ?? node.TooOldFor(Path.Combine(AppContext.BaseDirectory, "web", "node_modules", "typescript-language-server", "package.json"), "TypeScript");
+            return node.Problem ?? node.TooOldFor(Path.Combine(AppContext.BaseDirectory, "web", "node_modules", "typescript-language-server", "package.json"), "the TypeScript language server");
         }
 
         public void Dispose() => TestFolders.Delete(Folder);

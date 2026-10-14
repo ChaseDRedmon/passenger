@@ -131,7 +131,7 @@ carry of their own. `tools/check-notices.py` fails naming any package the lock f
 |---|---|---|---|
 | `typescript-language-server` | the TypeScript and JavaScript language server, over TypeScript's own tsserver (a project's own `node_modules/typescript` when it has one) | Apache-2.0 | Copyright (c) 2015 - present Microsoft Corporation |
 | `typescript` (6.0.3, and 4.9.5 under vscode-langservers-extracted) | TypeScript's compiler and tsserver for a project without its own; the HTML server's for a page's scripts | Apache-2.0 | no copyright line; its author: Microsoft Corp. |
-| `vscode-langservers-extracted` | VS Code's HTML, CSS and JSON language servers, as extracted from VS Code (its ESLint and Markdown servers, carried with them, are not run) | MIT | Copyright (c) 2020 hrsh7th |
+| `vscode-langservers-extracted` | VS Code's HTML, CSS, JSON and ESLint language servers, as extracted from VS Code and vscode-eslint (the ESLint server runs a project's own eslint package; its Markdown server, carried with them, is not run) | MIT | Copyright (c) 2020 hrsh7th |
 | `vscode-css-languageservice`, `vscode-html-languageservice`, `vscode-json-languageservice`, `jsonc-parser`, `request-light`, `vscode-uri` | the servers' language services | MIT | Copyright (c) Microsoft |
 | `vscode-languageserver`, `vscode-languageserver-protocol`, `vscode-languageserver-types`, `vscode-languageserver-textdocument`, `vscode-jsonrpc`, `vscode-nls`, `vscode-markdown-languageservice` | the servers' side of the Language Server Protocol | MIT | Copyright (c) Microsoft Corporation |
 | `@vscode/l10n` | the servers' messages | MIT | no copyright line; its author: Microsoft Corporation |
@@ -164,6 +164,60 @@ Packages the build or the tests use that no app carries.
 | `Microsoft.Testing.Platform`, `Microsoft.Testing.Platform.MSBuild`, `Microsoft.Testing.Extensions.Telemetry`, `Microsoft.Testing.Extensions.TrxReport.Abstractions`, `Microsoft.ApplicationInsights` | xunit.v3's test platform | MIT | © Microsoft Corporation. All rights reserved. |
 | `Microsoft.Bcl.AsyncInterfaces`, `Microsoft.Win32.Registry` | the test platform's | MIT | © Microsoft Corporation. All rights reserved. |
 | `vpk` | Velopack's packer, a .NET tool at the version `dotnet-tools.json` pins, which builds the Windows installer (`tools/package-win.sh`). It carries others' programs under their own terms for what Passenger's installer does not use or carry: Microsoft's signtool and Azure Artifact Signing client, which sign it only when signing is asked for (the Windows SDK's and Microsoft's terms), WiX (MS-RL) for MSI packages, and zstd (BSD-3-Clause or GPL-2.0) | MIT | Copyright © Velopack Ltd. All rights reserved. |
+
+### The tests' own ESLint and Prettier
+
+The npm packages `EslintPrettierTests` put in a test folder's node_modules as a project's own ESLint and Prettier:
+`tests/Passenger.Tests/NodePackages/package.json` pins the two and `package-lock.json` everything they bring, each with
+its tarball's sha512, which the tests' build checks as `tools/Passenger.NodePackages` puts them in the tests' output
+(`node-packages/`). No app carries them, and no test fetches them from npm. Each is named by its npm name, with the
+licence its package.json states and the copyright line its licence file (else its source) carries, else its author.
+`tools/check-notices.py` fails naming any package the lock file pins that is not named here.
+
+| Package | In Passenger | Licence | Copyright |
+|---|---|---|---|
+| `eslint` | the project's own ESLint, which Passenger's ESLint support runs through the ESLint language server | MIT | Copyright OpenJS Foundation and other contributors, <www.openjsf.org> |
+| `prettier` | the project's own Prettier, which Passenger's Prettier runner formats with | MIT | Copyright © James Long and contributors |
+| `@eslint/config-array`, `@eslint/core`, `@eslint/object-schema`, `@eslint/plugin-kit`, `@humanfs/core`, `@humanfs/node`, `@humanfs/types` | eslint's configuration, rules and file system | Apache-2.0 | no copyright line; its author: Nicholas C. Zakas |
+| `@eslint/config-helpers` | eslint's configuration | Apache-2.0 | no copyright line or author; its repository is eslint/rewrite |
+| `@humanwhocodes/module-importer`, `@humanwhocodes/retry` | eslint's | Apache-2.0 | no copyright line; its author: Nicholas C. Zaks (as it is written) |
+| `eslint-visitor-keys` (5.0.1, and 3.4.3 under @eslint-community/eslint-utils) | eslint's syntax tree | Apache-2.0 | no copyright line; its author: Toru Nagashima |
+| `@eslint-community/eslint-utils`, `@eslint-community/regexpp` | eslint's rules | MIT | Copyright (c) 2018 Toru Nagashima |
+| `eslint-scope` | eslint's scopes | BSD-2-Clause | Copyright JS Foundation and other contributors, https://js.foundation |
+| `espree` | eslint's parser | BSD-2-Clause | Copyright (c) Open JS Foundation |
+| `esrecurse` | eslint-scope's | BSD-2-Clause | Copyright (C) 2014 Yusuke Suzuki <utatane.tea@gmail.com> |
+| `estraverse` | eslint-scope's | BSD-2-Clause | Copyright (C) 2012-2013 Yusuke Suzuki <utatane.tea@gmail.com> |
+| `esutils` | eslint's | BSD-2-Clause | Copyright (C) 2013-2014 Yusuke Suzuki <utatane.tea@gmail.com> |
+| `esquery` | eslint's selectors | BSD-3-Clause | Copyright (c) 2013, Joel Feenstra |
+| `acorn` | espree's | MIT | Copyright (C) 2012-2022 by various contributors (see AUTHORS) |
+| `acorn-jsx` | espree's | MIT | Copyright (C) 2012-2017 by Ingvar Stepanyan |
+| `ajv` | eslint's rule options | MIT | Copyright (c) 2015-2017 Evgeny Poberezkin |
+| `fast-deep-equal`, `fast-json-stable-stringify`, `json-schema-traverse` | ajv's | MIT | Copyright (c) 2017 Evgeny Poberezkin |
+| `uri-js` | ajv's | BSD-2-Clause | Copyright 2011 Gary Court. All rights reserved. |
+| `punycode` | uri-js's | MIT | Copyright Mathias Bynens <https://mathiasbynens.be/> |
+| `json-stable-stringify-without-jsonify` | eslint's | MIT | no copyright line; its author: James Halliday |
+| `@types/esrecurse`, `@types/estree`, `@types/json-schema` | eslint's types | MIT | Copyright (c) Microsoft Corporation. |
+| `debug` | eslint's | MIT | Copyright (c) 2014-2017 TJ Holowaychuk <tj@vision-media.ca> |
+| `ms` | debug's | MIT | Copyright (c) 2020 Vercel, Inc. |
+| `cross-spawn` | eslint's | MIT | Copyright (c) 2018 Made With MOXY Lda <hello@moxy.studio> |
+| `which`, `isexe` | cross-spawn's | ISC | Copyright (c) Isaac Z. Schlueter and Contributors |
+| `shebang-command` | cross-spawn's | MIT | Copyright (c) Kevin Mårtensson <kevinmartensson@gmail.com> (github.com/kevva) |
+| `shebang-regex`, `path-key`, `path-exists`, `find-up`, `locate-path`, `p-limit`, `p-locate`, `yocto-queue`, `escape-string-regexp` | eslint's | MIT | Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> |
+| `file-entry-cache`, `flat-cache`, `cacheable`, `@cacheable/memory`, `@cacheable/utils`, `hookified` (1.15.1, and 2.2.0 under qified), `qified` | eslint's cache | MIT | no copyright line; its author: Jared Wray <me@jaredwray.com> |
+| `hashery`, `@keyv/bigmap` | the cache's | MIT | Copyright (c) 2025 Jared Wray; Copyright (c) Jared Wray |
+| `keyv`, `@keyv/serialize` | the cache's | MIT | Copyright (c) 2017-2021 Luke Childs |
+| `flatted` | flat-cache's | ISC | Copyright (c) 2018-2020, Andrea Giammarchi, @WebReflection |
+| `glob-parent` | eslint's | ISC | Copyright (c) 2015, 2019 Elan Shanker, 2021 Blaine Bublitz <blaine.bublitz@gmail.com>, Eric Schoffstall <yo@contra.io> and other contributors |
+| `ignore` | eslint's | MIT | Copyright (c) 2013 Kael Zhang <i@kael.me>, contributors |
+| `imurmurhash` | eslint's | MIT | no copyright line; its author: Jens Taylor |
+| `is-glob`, `is-extglob` | eslint's | MIT | Copyright (c) 2014-2017, Jon Schlinkert. |
+| `word-wrap` | optionator's | MIT | Copyright (c) 2014-2016, Jon Schlinkert |
+| `minimatch` | eslint's globs | BlueOak-1.0.0 | no copyright line; its author: Isaac Z. Schlueter <i@izs.me> |
+| `brace-expansion`, `balanced-match` | minimatch's | MIT | Copyright Julian Gruber <julian@juliangruber.com> |
+| `optionator`, `levn`, `prelude-ls`, `type-check` | eslint's options | MIT | Copyright (c) George Zahariev |
+| `deep-is` | optionator's | MIT | Copyright (c) 2012, 2013 Thorsten Lorenz <thlorenz@gmx.de> |
+| `fast-levenshtein` | optionator's | MIT | Copyright (c) 2013 Ramesh Nair |
+| `natural-compare` | eslint's | MIT | no copyright line; its author: Lauri Rooden |
 
 ## Licence texts
 

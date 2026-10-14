@@ -1,0 +1,11 @@
+{
+  "name": "passenger-test-node-packages",
+  "version": "1.0.0",
+  "private": true,
+  "description": "The project's own ESLint and Prettier the tests put in a test folder's node_modules (EslintPrettierTests), fetched at build by tools/Passenger.NodePackages; never carried by the app.",
+  "license": "MIT",
+  "dependencies": {
+    "eslint": "10.11.0",
+    "prettier": "3.9.9"
+  }
+}

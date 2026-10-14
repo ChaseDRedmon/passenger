@@ -85,6 +85,17 @@ public sealed class TestRun : IDisposable
         Environment.SetEnvironmentVariable(Passenger.App.Web.JsonSchemas.Variable, "http://127.0.0.1:9/");
         // Nor the person's Discord: a window without a stand-in of its own looks where nothing listens.
         Environment.SetEnvironmentVariable(Passenger.App.Discord.DiscordIpc.Variable, DiscordNowhere);
+        // Nor npm's registry: an npm install the IDE runs (Run 'npm install') takes only what the run's own empty cache
+        // has, and reads none of the person's npm configuration or cache.
+        string npmConfig = Path.Combine(Root, "npmrc");
+        File.WriteAllText(npmConfig, string.Empty);
+        Environment.SetEnvironmentVariable("npm_config_userconfig", npmConfig);
+        Environment.SetEnvironmentVariable("npm_config_globalconfig", npmConfig);
+        Environment.SetEnvironmentVariable("npm_config_cache", Path.Combine(Root, "npm-cache"));
+        Environment.SetEnvironmentVariable("npm_config_offline", "true");
+        Environment.SetEnvironmentVariable("npm_config_update_notifier", "false");
+        Environment.SetEnvironmentVariable("npm_config_audit", "false");
+        Environment.SetEnvironmentVariable("npm_config_fund", "false");
         // A run stopped before its end (Ctrl+C) leaves nothing either.
         AppDomain.CurrentDomain.ProcessExit += (_, _) => End();
     }

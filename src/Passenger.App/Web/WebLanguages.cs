@@ -428,7 +428,7 @@ public sealed class WebLanguages : IAsyncDisposable
                 Unavailable(server, none, node.Path is null || !File.Exists(node.Path) ? "no Node.js" : "Node.js could not run");
                 return null;
             }
-            if (node.TooOldFor(package, Name(server.Kind)) is { } old)
+            if (node.TooOldFor(package, $"the {Name(server.Kind)} language server") is { } old)
             {
                 Unavailable(server, old, "Node.js too old");
                 return null;

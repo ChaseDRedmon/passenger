@@ -4,7 +4,8 @@
 The packages are every one the solution's projects use, transitive ones included (`dotnet list package
 --include-transitive`, so the solution must be restored first), every one Roslyn's language server carries under
 roslyn/ (the .deps.json files in its restored package), every npm package the web language servers' lock file pins
-(src/Passenger.Lsp/WebServers/package-lock.json, carried under web/), and every tool the repository's tool manifest pins
+(src/Passenger.Lsp/WebServers/package-lock.json, carried under web/) and the tests' own does
+(tests/Passenger.Tests/NodePackages/package-lock.json), and every tool the repository's tool manifest pins
 (dotnet-tools.json). A package is named in the notices by its id in backticks. CI runs this after its restore;
 `just notices` runs it here.
 """
@@ -76,13 +77,15 @@ def roslyn_packages():
 
 
 def web_packages():
-    """Each npm package the web language servers' lock file pins, carried under web/."""
-    with open(os.path.join(ROOT, "src", "Passenger.Lsp", "WebServers", "package-lock.json"), encoding="utf-8") as f:
-        packages = json.load(f).get("packages", {})
+    """Each npm package the web language servers' lock file pins, carried under web/, and each the tests' own lock file
+    pins (their project's own ESLint and Prettier)."""
     used = {}
-    for place, package in packages.items():
-        if place and not package.get("dev") and not package.get("link"):
-            used.setdefault(place.rsplit("node_modules/", 1)[-1], set()).add("web/")
+    for lock, user in [(("src", "Passenger.Lsp", "WebServers"), "web/"), (("tests", "Passenger.Tests", "NodePackages"), "the tests' node_modules")]:
+        with open(os.path.join(ROOT, *lock, "package-lock.json"), encoding="utf-8") as f:
+            packages = json.load(f).get("packages", {})
+        for place, package in packages.items():
+            if place and not package.get("dev") and not package.get("link"):
+                used.setdefault(place.rsplit("node_modules/", 1)[-1], set()).add(user)
     return used
 
 
