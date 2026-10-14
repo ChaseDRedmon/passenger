@@ -156,14 +156,30 @@ public sealed class ProjectModels
     }
 
     /// <summary>The workspace's projects, the active file's first.</summary>
-    private static IEnumerable<string> Ordered(WorkspaceModel workspace, string? active)
+    /// <summary>The workspace's projects, the active file's first and then those it references as last evaluated, through
+    /// their references: what the language server loads first.</summary>
+    private IEnumerable<string> Ordered(WorkspaceModel workspace, string? active)
     {
         List<string> paths = [.. workspace.Projects.Where(p => p.Exists).Select(p => p.Path).Distinct(StringComparer.Ordinal)];
-        if (active is not null && ProjectModel.Owning(workspace.Projects, active) is { } owner && paths.Remove(owner.Path))
+        if (active is null || ProjectModel.Owning(workspace.Projects, active) is not { } owner || !paths.Contains(owner.Path))
         {
-            paths.Insert(0, owner.Path);
+            return paths;
         }
-        return paths;
+        List<string> first = [];
+        Queue<string> next = new([owner.Path]);
+        while (next.TryDequeue(out string? path))
+        {
+            if (first.Contains(path) || !paths.Contains(path))
+            {
+                continue;
+            }
+            first.Add(path);
+            foreach (string reference in known.GetValueOrDefault(path)?.Dependencies.SelectMany(d => d.Projects) ?? [])
+            {
+                next.Enqueue(PathNames.Canonical(reference));
+            }
+        }
+        return [.. first, .. paths.Except(first, StringComparer.Ordinal)];
     }
 
     /// <summary>The global properties a build of the solution gives its projects, which a Directory.Build.props may read.</summary>

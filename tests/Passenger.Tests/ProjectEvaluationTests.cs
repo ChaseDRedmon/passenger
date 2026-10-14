@@ -124,6 +124,32 @@ public sealed class ProjectEvaluationTests : IDisposable
         third.Close();
     }
 
+    [AvaloniaFact]
+    public void The_project_of_the_file_shown_and_those_it_references_load_in_the_language_server_before_the_rest()
+    {
+        Write("Shop.slnx", "<Solution>\n  <Project Path=\"App/App.csproj\" />\n  <Project Path=\"Core/Core.csproj\" />\n  <Project Path=\"Reports/Reports.csproj\" />\n"
+            + "  <Project Path=\"Admin/Admin.csproj\" />\n</Solution>\n");
+        Write("App/App.csproj", Project.Replace("</ItemGroup>", "  <ProjectReference Include=\"../Core/Core.csproj\" />\n  </ItemGroup>"));
+        foreach (string name in new[] { "Core", "Reports", "Admin" })
+        {
+            Write($"{name}/{name}.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n</Project>\n");
+            Write($"{name}/{name}Code.cs", $"class {name}Code\n{{\n}}\n");
+        }
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(Path.Combine(folder, "Shop.slnx"));
+        window.OpenFile(Path.Combine(folder, "App", "Program.cs"));
+        Ui.Settle();
+        Assert.True(window.CSharpService?.Session is not null, "No language server started");
+        // The order the server took them in, as its log says it finished (or failed) each: unrestored, they load with errors.
+        string log = File.ReadAllText(Directory.EnumerateFiles(Passenger.App.CSharp.CSharpService.LogFolder, $"server-*-{window.CSharpService!.Session!.Server.ProcessId}.log").Single());
+        int At(string project) => log.IndexOf(Path.Combine(project, project + ".csproj"), StringComparison.Ordinal) is >= 0 and var at ? at
+            : throw new InvalidOperationException($"The language server's log says nothing of {project}:\n{log}");
+        Assert.True(Math.Max(At("App"), At("Core")) < Math.Min(At("Reports"), At("Admin")),
+            $"The language server took up another project before the file shown's, and the one it references:\n{log}");
+        window.Close();
+    }
+
     private MainWindow Open()
     {
         MainWindow window = new() { Width = 1200, Height = 800 };

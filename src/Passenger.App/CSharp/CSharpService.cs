@@ -43,6 +43,10 @@ public sealed class CSharpService : IAsyncDisposable
     /// up the server kept there and leaves its own there as it ends.</summary>
     public CSharpService(WarmServer? warm = null) => this.warm = warm;
 
+    /// <summary>The projects a starting server opens before the rest, asked on the UI thread as it is ready to open them:
+    /// the file shown's and those it references, so that file's answers come first.</summary>
+    public Func<Task<IReadOnlyList<string>>>? FirstProjects { get; set; }
+
     /// <summary>The state changed (starting, loading projects, ready, failed); raised on the UI thread.</summary>
     public event EventHandler? StateChanged;
 
@@ -385,7 +389,16 @@ public sealed class CSharpService : IAsyncDisposable
             else
             {
                 // Started on a worker: the process, its log and the wait for its answer are no work for the window's thread.
-                started = await BackgroundWork.Run(() => RoslynSession.StartAsync(opening.Folder, solution, projects, logs, cancel, options, Hear), cancel);
+                Func<Task<IReadOnlyList<string>>>? first = FirstProjects is { } ahead ? () => UiThread.InvokeAsync(async () =>
+                {
+                    IReadOnlyList<string> named = await ahead();
+                    if (named.Count > 0)
+                    {
+                        IdeErrors.Write($"C# language server loads {string.Join(", ", named.Select(Path.GetFileNameWithoutExtension))} first, for the file shown");
+                    }
+                    return named;
+                }) : null;
+                started = await BackgroundWork.Run(() => RoslynSession.StartAsync(opening.Folder, solution, projects, logs, cancel, options, Hear, first), cancel);
                 if (cancel.IsCancellationRequested)
                 {
                     // Disposed, or started again, just as this server started: nothing else will end it.

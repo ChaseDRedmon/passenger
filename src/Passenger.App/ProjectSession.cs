@@ -257,6 +257,50 @@ public sealed class ProjectSession : IAsyncDisposable
         }
     }
 
+    /// <summary><see cref="ActiveProjects"/> once the evaluation has said what each of them references (the file shown's
+    /// project is evaluated first), which the language server waits a few seconds for at most.</summary>
+    private async Task<IReadOnlyList<string>> ActiveProjectsAsync()
+    {
+        DateTime until = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (!Models.Idle.IsCompleted && DateTime.UtcNow < until && ActiveProjects(evaluated: true) is null)
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(100));
+        }
+        return ActiveProjects() ?? [];
+    }
+
+    /// <summary>The project of the file shown and every project it references, through their references, as MSBuild
+    /// evaluated them: what the language server opens before the rest. None when that is every project, or nothing is shown;
+    /// null, asked for <paramref name="evaluated"/> ones only, while one of them is not evaluated yet.</summary>
+    private IReadOnlyList<string>? ActiveProjects(bool evaluated = false)
+    {
+        if (Workspace is not { } open || setup.Editors.Active?.Path is not { } shown || ProjectModel.Owning(open.Projects, shown) is not { } owner)
+        {
+            return [];
+        }
+        Dictionary<string, ProjectModel> byPath = open.Projects.DistinctBy(p => p.Path).ToDictionary(p => p.Path, StringComparer.Ordinal);
+        List<string> found = [];
+        HashSet<string> seen = new(StringComparer.Ordinal);
+        Queue<string> next = new([owner.Path]);
+        while (next.TryDequeue(out string? path))
+        {
+            if (!seen.Add(path) || !byPath.TryGetValue(path, out ProjectModel? project))
+            {
+                continue;
+            }
+            if (evaluated && project.Evaluated is null)
+            {
+                return null;
+            }
+            found.Add(path);
+            foreach (string reference in project.ProjectReferences)
+            {
+                next.Enqueue(reference);
+            }
+        }
+        return found.Count < byPath.Count ? found : [];
+    }
+
     /// <summary>Evaluations landed: the workspace and the run configurations take them in, and the window hears which.</summary>
     private void OnEvaluated(IReadOnlyCollection<string> changed)
     {
@@ -462,7 +506,7 @@ public sealed class ProjectSession : IAsyncDisposable
         CSharp = null;
         if (!IsEnded && Workspace is { } opening && (opening.Solution is not null || opening.Projects.Count > 0))
         {
-            CSharp = new CSharpService(setup.WarmServer) { SolutionWide = setup.SolutionWide() };
+            CSharp = new CSharpService(setup.WarmServer) { SolutionWide = setup.SolutionWide(), FirstProjects = ActiveProjectsAsync };
             CSharpChanged?.Invoke(this, EventArgs.Empty);
             CSharp.Start(opening);
             foreach (OpenDocument open in setup.Editors.Documents)

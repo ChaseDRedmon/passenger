@@ -19,10 +19,23 @@ public sealed class RoslynSession : IAsyncDisposable
         Projects = solution is null ? projects : [];
         server.ProjectsLoaded += (_, _) =>
         {
+            // The server says so after each open it was sent: the projects opened first, then the rest.
+            if (Interlocked.Increment(ref completed) < opens)
+            {
+                firstLoaded.TrySetResult();
+                return;
+            }
             IsLoaded = true;
             Loaded?.Invoke(this, EventArgs.Empty);
         };
     }
+
+    /// <summary>How many opens the server was sent, and how many it has said it finished.</summary>
+    private int opens = 1;
+    private int completed;
+
+    /// <summary>Done once the projects opened first have loaded, after which the rest are opened.</summary>
+    private readonly TaskCompletionSource firstLoaded = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     /// <summary>The projects have loaded, so answers now know the whole solution. Raised on any
     /// thread.</summary>
@@ -50,8 +63,11 @@ public sealed class RoslynSession : IAsyncDisposable
     /// <param name="options">Server options to start with, over Passenger's own (the solution-wide analysis' scope).</param>
     /// <param name="started">Given the server once it has answered, before it is asked to open anything, so what it says
     /// of the load (a project that did not load, its progress) is heard from the start.</param>
+    /// <param name="first">Asked as the server is ready to open them: the projects to open before the rest (the active
+    /// file's and those it references), which the server loads alone, so the file being worked on is answered for first.</param>
     public static async Task<RoslynSession> StartAsync(string folder, string? solution, IReadOnlyList<string> projects, string logFolder,
-        CancellationToken cancel = default, IReadOnlyDictionary<string, object?>? options = null, Action<LanguageServer>? started = null)
+        CancellationToken cancel = default, IReadOnlyDictionary<string, object?>? options = null, Action<LanguageServer>? started = null,
+        Func<Task<IReadOnlyList<string>>>? first = null)
     {
         LanguageServer server = await LanguageServer.StartRoslynAsync(folder, logFolder, cancel, options).ConfigureAwait(false);
         RoslynSession session = new(server, folder, solution, projects);
@@ -59,6 +75,15 @@ public sealed class RoslynSession : IAsyncDisposable
         {
             cancel.ThrowIfCancellationRequested();
             started?.Invoke(server);
+            IReadOnlyList<string> ahead = first is null ? [] : await first().ConfigureAwait(false);
+            if (ahead.Count > 0)
+            {
+                session.opens = 2;
+                await server.NotifyAsync("project/open", new OpenProjectParams([.. ahead.Select(DocumentUris.FromPath)])).ConfigureAwait(false);
+                // The rest once those have loaded: opened at once, the server would take them all in one batch.
+                _ = session.OpenRestAsync(solution, projects);
+                return session;
+            }
             if (solution is not null)
             {
                 await server.NotifyAsync("solution/open", new OpenSolutionParams(DocumentUris.FromPath(solution))).ConfigureAwait(false);
@@ -74,6 +99,35 @@ public sealed class RoslynSession : IAsyncDisposable
             throw;
         }
         return session;
+    }
+
+    /// <summary>Opens the solution (or the projects) once the projects opened first have loaded; a server gone meanwhile
+    /// opens nothing more.</summary>
+    private async Task OpenRestAsync(string? solution, IReadOnlyList<string> projects)
+    {
+        try
+        {
+            await firstLoaded.Task.WaitAsync(TimeSpan.FromMinutes(5)).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            // Never said: the rest are opened anyway, the server taking them in turn.
+        }
+        try
+        {
+            if (solution is not null)
+            {
+                await Server.NotifyAsync("solution/open", new OpenSolutionParams(DocumentUris.FromPath(solution))).ConfigureAwait(false);
+            }
+            else
+            {
+                await Server.NotifyAsync("project/open", new OpenProjectParams([.. projects.Select(DocumentUris.FromPath)])).ConfigureAwait(false);
+            }
+        }
+        catch (LanguageServerFailed)
+        {
+            // Gone: a server started again opens everything afresh.
+        }
     }
 
     /// <summary>Starts following a document open in an editor: the server is sent its text, then every
