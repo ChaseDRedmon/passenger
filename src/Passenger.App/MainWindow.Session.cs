@@ -212,6 +212,13 @@ public partial class MainWindow
                 OnCSharpChanged(next.CSharp);
             }
         };
+        next.Xaml.Message += (_, message) =>
+        {
+            if (session == next)
+            {
+                status.Text = message;
+            }
+        };
         next.WorkspaceChanged += (_, _) =>
         {
             if (session == next)

@@ -421,6 +421,13 @@
       "passenger.text": {
         "type": "Project"
       },
+      "passenger.xaml": {
+        "type": "Project",
+        "dependencies": {
+          "Microsoft.CodeAnalysis.CSharp": "[5.9.0, )",
+          "Passenger.Text": "[0.1.0, )"
+        }
+      },
       "Microsoft.CodeAnalysis.CSharp": {
         "type": "CentralTransitive",
         "requested": "[5.9.0, )",

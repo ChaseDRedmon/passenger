@@ -183,7 +183,7 @@ public partial class MainWindow : Window
                 session.Debug.Breakpoints.Toggle(active.Path, click.Line);
             }
         });
-        assist = new CodeAssist(Editors, Editors.AssistLayer, () => session.CSharp);
+        assist = new CodeAssist(Editors, Editors.AssistLayer, () => session.CSharp) { Xaml = () => session.Xaml };
         assist.Navigate += (_, target) => NavigateTo(target.Path, target.Position);
         assist.Message += (_, message) => status.Text = message;
         assist.FilesChanged += (_, _) => FilesChanged();
@@ -233,6 +233,9 @@ public partial class MainWindow : Window
 
     /// <summary>The C# service for the open folder, or null when it has no projects.</summary>
     public CSharpService? CSharpService => session.CSharp;
+
+    /// <summary>The open folder's XAML: each open XAML file's share of its project's types and files.</summary>
+    public Xaml.XamlService XamlService => session.Xaml;
 
     public EditorArea EditorArea => Editors;
 

@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- XAML with no UI, Passenger's own and shared by its dialects (Avalonia's now, WPF's next): XML with positions, xmlns
+       to CLR namespaces, the types a project's assemblies and its own C# declare (System.Reflection.Metadata, Roslyn's
+       parser), markup extensions, resources, and what a XAML file completes, warns of and goes to from that. -->
+  <PropertyGroup>
+    <RootNamespace>Passenger.Xaml</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
+    <ProjectReference Include="../Passenger.Text/Passenger.Text.csproj" />
+  </ItemGroup>
+</Project>

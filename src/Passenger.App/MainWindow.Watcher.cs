@@ -60,6 +60,7 @@ public partial class MainWindow
         }
         PackageSourcesChanged(changes);
         session.Tests.Finder.FolderChanged(changes);
+        session.Xaml.FilesChanged(changes.Paths);
         foreach (OpenDocument document in Editors.Documents.Where(d => changes.Paths.Contains(d.Path)).ToList())
         {
             if (File.Exists(document.Path))

@@ -218,6 +218,9 @@ public sealed class ProjectSession : IAsyncDisposable
     /// <summary>The language server on the folder's projects, or null for a folder with none (or no folder).</summary>
     public CSharpService? CSharp { get; private set; }
 
+    /// <summary>The XAML of the folder's projects, read by Passenger's own XAML for each XAML file open.</summary>
+    public Xaml.XamlService Xaml { get; } = new();
+
     /// <summary>A language server started (or none, after one ended) in place of the one before.</summary>
     public event EventHandler? CSharpChanged;
 
@@ -267,6 +270,7 @@ public sealed class ProjectSession : IAsyncDisposable
     public void Attach(OpenDocument document)
     {
         CSharp?.Attach(document);
+        Xaml.Attach(document);
         Debug.Attach(document);
         Vcs.Attach(document);
     }
@@ -275,6 +279,7 @@ public sealed class ProjectSession : IAsyncDisposable
     public void Detach(OpenDocument document)
     {
         CSharp?.Detach(document);
+        Xaml.Detach(document);
         Debug.Detach(document);
         Vcs.Detach(document);
     }
@@ -296,6 +301,8 @@ public sealed class ProjectSession : IAsyncDisposable
         {
             CSharp?.Detach(document);
             CSharp?.Attach(document);
+            Xaml.Detach(document);
+            Xaml.Attach(document);
         }
     }
 
@@ -481,6 +488,7 @@ public sealed class ProjectSession : IAsyncDisposable
         parts.Add(("the test runner", Tests.DisposeAsync().AsTask()));
         parts.Add(("the language server", CSharp?.DisposeAsync().AsTask() ?? Task.CompletedTask));
         CSharp = null;
+        Xaml.Dispose();
         return parts;
     }
 

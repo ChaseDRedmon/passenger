@@ -444,6 +444,7 @@
           "Passenger.Profiler": "[0.1.0, )",
           "Passenger.Terminal": "[0.1.0, )",
           "Passenger.Text": "[0.1.0, )",
+          "Passenger.Xaml": "[0.1.0, )",
           "StreamJsonRpc": "[2.25.29, )",
           "Velopack": "[1.2.161, )"
         }
@@ -497,6 +498,13 @@
       },
       "passenger.text": {
         "type": "Project"
+      },
+      "passenger.xaml": {
+        "type": "Project",
+        "dependencies": {
+          "Microsoft.CodeAnalysis.CSharp": "[5.9.0, )",
+          "Passenger.Text": "[0.1.0, )"
+        }
       },
       "Avalonia": {
         "type": "CentralTransitive",

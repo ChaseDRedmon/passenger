@@ -8,6 +8,7 @@ using Passenger.Editor;
 using Passenger.Languages.CSharp;
 using Passenger.Lsp;
 using Passenger.Text;
+using Passenger.Xaml.Features;
 
 namespace Passenger.App.CSharp;
 
@@ -223,7 +224,7 @@ public sealed partial class CodeAssist
     public void AddActions(ActionRegistry actions)
     {
         // Rider's Code, Code Completion: Basic, then Complete Current Statement after a separator.
-        Code(AppActions.Complete, "Basic Completion", context => _ = StartCompletion(null), new("Code/Code Completion", 0, 0));
+        Code(AppActions.Complete, "Basic Completion", context => _ = StartCompletion(null), new("Code/Code Completion", 0, 0), xaml: true);
         Code(AppActions.CompleteStatement, "Complete Current Statement", _ => CompleteStatement(), new("Code/Code Completion", 1, 0), server: false, syntax: true);
         // Passenger's own fixes first, which a file the server does not read (a XAML file) may have too.
         actions.Add(new IdeAction(AppActions.QuickFix, "Show Context Actions", "Code", context => _ = ShowFixes())
@@ -274,16 +275,17 @@ public sealed partial class CodeAssist
         Code(AppActions.PreviousError, "Previous Highlighted Error", _ => StepToMarker(forward: false), new("Navigate", 3, 1), server: false);
         Code(AppActions.QuickDocumentation, "Quick Documentation", context => _ = ShowHover(Caret, Editor.PointOf(Caret)), new("View", 1, 1), server: false);
 
-        void Code(string id, string title, Action<ActionContext> run, MenuPlace menu, bool server = true, bool syntax = false) =>
-            actions.Add(new IdeAction(id, title, "Code", run) { WhyNot = context => WhyNot(context, server, syntax), Menus = [menu] });
+        void Code(string id, string title, Action<ActionContext> run, MenuPlace menu, bool server = true, bool syntax = false, bool xaml = false) =>
+            actions.Add(new IdeAction(id, title, "Code", run) { WhyNot = context => WhyNot(context, server, syntax, xaml), Menus = [menu] });
     }
 
     private int Caret => Editor.Selections.Primary.Caret;
 
     /// <summary>Why an action cannot run: no file; for one that asks the server, none for the file; for one that edits by
     /// the file's syntax, a file not C# or one that cannot be edited.</summary>
-    private string? WhyNot(ActionContext context, bool server, bool syntax = false) =>
+    private string? WhyNot(ActionContext context, bool server, bool syntax = false, bool xaml = false) =>
         context.File is null ? "No file is open"
+        : xaml && XamlOf(context.File) is { } markup && (markup.IsLoaded || !markup.Loaded.IsCompleted) ? null
         : syntax && context.File.Syntax is null ? "The file is not C#"
         : syntax && context.Editor.IsReadOnly ? "The file is read-only"
         : !server || Current is not null ? null
@@ -357,6 +359,14 @@ public sealed partial class CodeAssist
     private void AfterTyped(string text)
     {
         char last = text[^1];
+        if (XamlCurrent is not null)
+        {
+            if (XamlTrigger(text) || (IsIdentifierChar(last) && !char.IsDigit(last) && WordStart(Editor.Selections.Primary.Caret) == Editor.Selections.Primary.Caret - 1))
+            {
+                _ = StartCompletion(null);
+            }
+            return;
+        }
         if (last == '.' || (InRazor && last is '<' or '@'))
         {
             // In a Razor file, as in Rider, a tag's '<' lists the elements and components, and '@' Razor's directives and the C#.
@@ -402,10 +412,16 @@ public sealed partial class CodeAssist
 
     private async Task StartCompletionCore(string? trigger, bool incomplete)
     {
+        if (XamlCurrent is { } xaml)
+        {
+            await StartXamlCompletion(xaml);
+            return;
+        }
         if (Current?.Lsp is not { } lsp)
         {
             return;
         }
+        xamlOffered.Clear();
         completing?.Cancel();
         CancellationTokenSource cancel = new();
         completing = cancel;
@@ -479,7 +495,7 @@ public sealed partial class CodeAssist
             .ThenByDescending(x => x.item.Preselect == true)
             .ThenBy(x => x.item.SortText ?? x.item.Label, StringComparer.Ordinal)
             .Take(200)
-            .Select(x => Row(x.item))
+            .Select(x => Swatched(Row(x.item)))
             .ToList();
         if (rows.Count == 0)
         {
@@ -507,7 +523,18 @@ public sealed partial class CodeAssist
     /// <summary>The chosen item in place of the name typed, up to <paramref name="end"/> (the caret when not given).</summary>
     private async Task CommitCore(int? end = null)
     {
-        if (open is null || completion.Selected is not { } row || Current?.Lsp is not { } lsp)
+        if (open is null || completion.Selected is not { } row)
+        {
+            return;
+        }
+        if (xamlOffered.TryGetValue(row.Item, out XamlItem? xamlItem))
+        {
+            int from = open.Start;
+            CloseCompletion();
+            CommitXaml(xamlItem, from);
+            return;
+        }
+        if (Current?.Lsp is not { } lsp)
         {
             return;
         }
@@ -612,6 +639,7 @@ public sealed partial class CodeAssist
         completing?.Cancel();
         describing?.Cancel();
         open = null;
+        xamlOffered.Clear();
         completion.IsVisible = false;
         itemCard.IsVisible = false;
     }
@@ -1695,7 +1723,7 @@ public sealed partial class CodeAssist
 
     /// <summary>A character of the word a completion list narrows by: an identifier's, and in a Razor file a markup
     /// name's too (<c>@onclick</c>, <c>data-enhance-nav</c>, <c>@bind:after</c>).</summary>
-    private bool IsWordChar(char c) => IsIdentifierChar(c) || (c is '@' or '-' or ':' && InRazor);
+    private bool IsWordChar(char c) => IsIdentifierChar(c) || (c is '@' or '-' or ':' && InRazor) || (xamlOffered.Count > 0 && xamlWordCharacters.Contains(c));
 
     /// <summary>Where a Razor list's word starts when its items say no range: back over an identifier, then over as much of
     /// a markup name before it as some item begins with, so <c>data-en</c> is replaced whole by <c>data-enhance-nav</c>
@@ -1744,6 +1772,12 @@ public sealed partial class CodeAssist
         }
         return null;
     }
+
+    /// <summary>A XAML colour's row badged with the colour itself, as Rider shows a colour in its list.</summary>
+    private CompletionRow Swatched(CompletionRow row) =>
+        xamlOffered.TryGetValue(row.Item, out XamlItem? item) && KnownColours.Parse(item.Colour) is { } colour
+            ? row with { Letter = string.Empty, Badge = new SolidColorBrush(Color.FromArgb(colour.A, colour.R, colour.G, colour.B)) }
+            : row;
 
     /// <summary>A row's badge: the letter and colour Rider gives each kind of completion.</summary>
     private static CompletionRow Row(CompletionItem item)
