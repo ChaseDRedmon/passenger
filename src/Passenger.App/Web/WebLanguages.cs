@@ -128,10 +128,11 @@ public sealed class WebLanguages : IAsyncDisposable
         {
             document.Notice = Notice(language.LanguageId, problem);
         }
-        else
+        else if (server.Starting is null)
         {
             Start(server);
         }
+        // Else the start under way connects it with the rest of its kind.
     }
 
     public void Detach(OpenDocument document)
