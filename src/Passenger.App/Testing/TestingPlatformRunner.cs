@@ -468,6 +468,8 @@ public sealed class TestingPlatformRunner : ITestRunner
             };
             rpc.AddLocalRpcTarget(target, new JsonRpcTargetOptions { UseSingleObjectParameterDeserialization = true });
             rpc.StartListening();
+            // A test host ending on Windows resets its connection, faulting its end, which the requests waiting on it hear of.
+            _ = rpc.Completion.ContinueWith(t => _ = t.Exception, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
             Host host = new(name, process, id, client, rpc, target, said);
             try
             {
