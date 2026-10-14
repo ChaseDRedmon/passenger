@@ -92,6 +92,19 @@ public sealed record AppSettings : IStateDocument<AppSettings>
     /// and an edit that cannot be applied restarts it.</summary>
     public bool HotReload { get; init; }
 
+    /// <summary>Rider's Hot Reload when debugging (Edit and Continue): Debug launches the program so its code can change as it
+    /// runs, Apply Hot Reload Changes applies the edits, and edits made while it is paused are applied as it goes on. On,
+    /// as in Rider and Visual Studio.</summary>
+    public bool HotReloadWhileDebugging { get; init; } = true;
+
+    /// <summary>Visual Studio's Hot Reload on file save: a C# file saved while the program is debugged applies its edits.</summary>
+    public bool HotReloadOnSave { get; init; }
+
+    /// <summary>An edit Hot Reload cannot apply (a rude edit) restarts the debugged program, built again with the same
+    /// configuration and breakpoints, without asking: dotnet watch's "Always" (its DOTNET_WATCH_RESTART_ON_RUDE_EDIT), on by
+    /// default here. Off, the restart is asked as dotnet watch asks it.</summary>
+    public bool RestartOnRudeEdit { get; init; } = true;
+
     /// <summary>Rider's "Tool Window: when build is explicitly invoked, open the build progress view in a tool window": the
     /// Build menu's builds, rebuilds and cleans open the Build window as they start.</summary>
     public bool OpenBuildWindowOnBuild { get; init; } = true;

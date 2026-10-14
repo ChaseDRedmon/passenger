@@ -210,6 +210,27 @@ public sealed class DebugAdapter
                 })],
             };
         });
+        // Hot Reload: what the language's Edit and Continue needs of the program, and its updates applied.
+        connection.Handle<DapEmpty, HotReloadStateResponse>("hotReloadState", async _ => await Locked(() =>
+        {
+            (IReadOnlyList<string>? capabilities, string? unknown) = debugger.HotReloadCapabilities();
+            return new HotReloadStateResponse
+            {
+                Capabilities = capabilities,
+                CapabilitiesUnknown = unknown,
+                Modules = [.. debugger.HotReloadModules().Select(m => new DapHotReloadModule(m.Mvid, m.Name, m.Path, m.Editable, m.WhyNot))],
+                ActiveStatements = [.. debugger.ActiveStatements().Select(s => new DapActiveStatement(s.Module, s.Token, s.Version, s.ILOffset, s.Document,
+                    s.StartLine, s.StartColumn, s.EndLine, s.EndColumn, s.Flags))],
+            };
+        }));
+        connection.Handle<ApplyChangesArguments, ApplyChangesResponse>("applyChanges", async arguments =>
+        {
+            List<ModuleUpdate> updates = [.. arguments.Updates.Select(u => new ModuleUpdate(u.Module, u.Name, u.Metadata, u.IL, u.Pdb, u.UpdatedMethods, u.UpdatedTypes,
+                [.. u.Lines.Select(l => (l.Document, (IReadOnlyList<(int, int)>)[.. l.Updates.Select(x => (x.OldLine, x.NewLine))]))],
+                [.. u.ActiveStatements.Select(a => new StatementUpdate(a.Token, a.Version, a.ILOffset, a.StartLine, a.StartColumn, a.EndLine, a.EndColumn))]))];
+            IReadOnlyList<ModuleApplied> applied = await Locked(() => debugger.ApplyChanges(updates));
+            return new ApplyChangesResponse([.. applied.Select(a => new DapModuleApplied(a.Module, a.Name, a.Applied, a.Message))]);
+        });
         connection.Handle<ThreadArguments>("stepOut", arguments => Locked(() => debugger.Step(arguments.ThreadId, StepType.StepOut)));
         connection.Handle<ThreadArguments>("pause", _ => Locked(() => debugger.Pause()));
         connection.Handle<DisconnectArguments>("disconnect", arguments => Locked(() => debugger.Disconnect(arguments.TerminateDebuggee ?? false)), then: RequestShutdown);
@@ -317,14 +338,23 @@ public sealed class DebugAdapter
                 args.Insert(0, program);
                 program = "dotnet";
             }
+            Dictionary<string, string> environment = arguments.Env?.ToDictionary() ?? [];
+            bool hotReload = arguments.HotReload ?? false;
+            if (hotReload)
+            {
+                // The runtime's own switch for code that may change (unoptimized modules get Edit and Continue), as dotnet
+                // watch and Visual Studio set it; one the launch gives is kept.
+                environment.TryAdd("DOTNET_MODIFIABLE_ASSEMBLIES", "debug");
+            }
             LaunchInfo launch = new()
             {
                 Program = program,
                 Arguments = args,
                 Cwd = arguments.Cwd,
-                Env = arguments.Env?.ToDictionary() ?? [],
+                Env = environment,
                 StopAtEntry = arguments.StopAtEntry ?? false,
                 LaunchRequestConsoleType = console,
+                HotReload = hotReload,
             };
             await Locked(() => debugger.Launch(launch, arguments.JustMyCode ?? true));
         }

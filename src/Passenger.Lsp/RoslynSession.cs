@@ -195,6 +195,11 @@ public sealed class RoslynSession : IAsyncDisposable, IDocumentHost
 
     /// <summary>Symbols across the workspace whose names match a query, as Go to Symbol finds them
     /// (Roslyn matches by pattern: initials and camel humps as well as substrings).</summary>
+    /// <summary>A message to Passenger's extension in the server about the whole solution, and its answer
+    /// (<see cref="RoslynExtension"/>).</summary>
+    public Task<T> ExtensionAsync<T>(string handler, object message, CancellationToken cancel = default) =>
+        RoslynExtension.AskWorkspaceAsync<T>(Server, handler, message, cancel);
+
     public async Task<IReadOnlyList<SymbolInformation>> SymbolsAsync(string query, CancellationToken cancel = default) =>
         await Server.RequestAsync<List<SymbolInformation>>("workspace/symbol", new WorkspaceSymbolParams(query), cancel) ?? [];
 

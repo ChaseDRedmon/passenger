@@ -64,6 +64,7 @@ public partial class ManagedDebugger
         _logger?.Invoke($"Launching program: {launchInfo.Program} {string.Join(' ', launchInfo.Arguments)}");
         _justMyCode = justMyCode;
         _stopAtEntry = launchInfo.StopAtEntry;
+        _hotReload = launchInfo.HotReload;
         _pendingLaunchInfo = launchInfo;
     }
 
@@ -358,6 +359,7 @@ public partial class ManagedDebugger
     public async Task Step(int threadId, StepType type)
     {
         _logger?.Invoke($"{type} on thread {threadId}");
+        _lastStep = type;
         ArgumentNullException.ThrowIfNull(_process);
         if (!_threads.TryGetValue(threadId, out ThreadInfo? threadInfo))
         {

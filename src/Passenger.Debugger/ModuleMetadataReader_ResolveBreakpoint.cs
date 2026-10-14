@@ -5,20 +5,17 @@ using Passenger.Debugger.ExpressionEvaluator.Cil;
 namespace Passenger.Debugger;
 public partial class ModuleMetadataReader
 {
-    private (DocumentHandle Document, int Score) BestDocument(string sourceFilePath)
+    /// <summary>The name of the module's document that names a source file best, by the PDB's name of it (the build's, or
+    /// one an update brought).</summary>
+    private (string? Document, int Score) BestDocument(string sourceFilePath)
     {
-        MetadataReader? reader = _pdbMetadataReader;
-        (DocumentHandle Document, int Score) best = (default, 0);
-        if (reader is null)
+        (string? Document, int Score) best = (null, 0);
+        foreach (string name in DocumentNames())
         {
-            return best;
-        }
-        foreach (DocumentHandle handle in reader.Documents)
-        {
-            int score = SourcePaths.Match(sourceFilePath, reader.GetString(reader.GetDocument(handle).Name));
+            int score = SourcePaths.Match(sourceFilePath, name);
             if (score > best.Score)
             {
-                best = (handle, score);
+                best = (name, score);
             }
         }
         return best;
@@ -26,9 +23,9 @@ public partial class ModuleMetadataReader
 
     private sealed record MethodCandidate(
     int Token,
-    SequencePoint FirstSp,      // smallest End where EndLine >= line (next-line snapping)
-    SequencePoint LastSp,       // largest End where EndLine >= line
-    SequencePoint? CoveringSp,  // latest Start where the requested source position is covered
+    Point FirstSp,      // smallest End where EndLine >= line (next-line snapping)
+    Point LastSp,       // largest End where EndLine >= line
+    Point? CoveringSp,  // latest Start where the requested source position is covered
     string DocPath)
     {
         public bool CoversLine => CoveringSp.HasValue;
@@ -40,27 +37,19 @@ public partial class ModuleMetadataReader
 
     public ResolvedBreakpoint? ResolveBreakpoint(string sourceFilePath, int line, int? column = null)
     {
-        MetadataReader? reader = _pdbMetadataReader;
-        if (reader is null)
+        if (_pdbMetadataReader is null || BestDocument(sourceFilePath).Document is not { } document)
         {
             return null;
         }
 
-        DocumentHandle documentHandle = BestDocument(sourceFilePath).Document;
-
-        if (documentHandle.IsNil)
-        {
-            return null;
-        }
-
-        List<MethodCandidate> candidates = reader.MethodDebugInformation
-            .Select(h => CollectCandidate(h, documentHandle, line, column))
+        List<MethodCandidate> candidates = MethodsWithPoints()
+            .Select(token => CollectCandidate(token, document, line, column))
             .OfType<MethodCandidate>()
             .ToList();
-        bool rewritten = IsRewrittenDocument(documentHandle);
-        if (rewritten && column is int requested && !candidates.Any(c => c.CoversLine) && UnpointedAttribute(documentHandle, new LineCol(line, requested)) is { } setter)
+        bool rewritten = IsRewrittenDocument(document);
+        if (rewritten && column is int requested && !candidates.Any(c => c.CoversLine) && UnpointedAttribute(document, new LineCol(line, requested)) is { } setter)
         {
-            ResolvedBreakpoint attributed = new(setter.Token, setter.Point.Offset, line, line, requested, requested, reader.GetString(reader.GetDocument(documentHandle).Name)) { Attributed = true };
+            ResolvedBreakpoint attributed = new(setter.Token, setter.Point.Offset, line, line, requested, requested, document) { Attributed = true };
             return attributed with { BindOffset = JitBoundaryAtOrBefore(attributed.MethodToken, attributed.ILOffset) };
         }
         ResolvedBreakpoint? resolved = Resolve(candidates, rewritten);
@@ -72,27 +61,21 @@ public partial class ModuleMetadataReader
     /// which comes in the IL right after the point of the attribute before it. That point is the one written last before the
     /// attribute (a template's builder's over the template's own, which begins its method); the point after it in the IL
     /// when that goes back to the element, else it itself. Null when nothing is written before the attribute.</summary>
-    private (int Token, SequencePoint Point)? UnpointedAttribute(DocumentHandle document, LineCol requested)
+    private (int Token, Point Point)? UnpointedAttribute(string document, LineCol requested)
     {
-        MetadataReader reader = _pdbMetadataReader!;
-        (int Token, SequencePoint Point)? prior = null;
-        foreach (MethodDebugInformationHandle handle in reader.MethodDebugInformation)
+        (int Token, Point Point)? prior = null;
+        foreach (int token in MethodsWithPoints())
         {
-            MethodDebugInformation info = reader.GetMethodDebugInformation(handle);
-            if (info.SequencePointsBlob.IsNil)
-            {
-                continue;
-            }
-            foreach (SequencePoint point in info.GetSequencePoints())
+            foreach (Point point in Points(token))
             {
                 LineCol at = point.Start();
-                if (point.IsHidden || (point.Document.IsNil ? info.Document : point.Document) != document || at > requested)
+                if (point.IsHidden || point.Document != document || at > requested)
                 {
                     continue;
                 }
                 if (prior is not { } best || at > best.Point.Start() || (at == best.Point.Start() && point.Offset < best.Point.Offset))
                 {
-                    prior = (MetadataTokens.GetToken(handle.ToDefinitionHandle()), point);
+                    prior = (token, point);
                 }
             }
         }
@@ -100,19 +83,26 @@ public partial class ModuleMetadataReader
         {
             return null;
         }
-        SequencePoint? next = VisibleSequencePoints(found.Token).FirstOrDefault(p => p.Offset > found.Point.Offset) is { IsHidden: false } after && after.Offset > found.Point.Offset ? after : null;
+        Point? next = VisibleSequencePoints(found.Token).FirstOrDefault(p => p.Offset > found.Point.Offset) is { IsHidden: false, Document: not null } after && after.Offset > found.Point.Offset ? after : null;
         return next is { } back && back.Start() < found.Point.Start() ? (found.Token, back) : found;
     }
 
     /// <summary>Whether a document's sequence points were written by a rewriter of the compiled IL rather than a compiler:
     /// Avalonia's XAML compiler (XamlIl, through Cecil) names no language for the .axaml files it maps its code to, and
     /// places a point at each element and attribute, mid-expression, where C#'s compiler places them where the stack is
-    /// empty.</summary>
-    private bool IsRewrittenDocument(DocumentHandle document)
+    /// empty. A document only an update brings is C#'s.</summary>
+    private bool IsRewrittenDocument(string document)
     {
         MetadataReader reader = _pdbMetadataReader!;
-        GuidHandle language = reader.GetDocument(document).Language;
-        return language.IsNil || reader.GetGuid(language) == Guid.Empty;
+        foreach (DocumentHandle handle in reader.Documents)
+        {
+            Document found = reader.GetDocument(handle);
+            if (reader.GetString(found.Name) == document)
+            {
+                return found.Language.IsNil || reader.GetGuid(found.Language) == Guid.Empty;
+            }
+        }
+        return false;
     }
 
     /// <summary>The nearest IL offset at or before <paramref name="offset"/> that CoreCLR's JIT maps to native code for a
@@ -126,8 +116,7 @@ public partial class ModuleMetadataReader
         {
             return offset;
         }
-        MethodDefinition method = _peMetadataReader.GetMethodDefinition(MetadataTokens.MethodDefinitionHandle(methodToken));
-        if (method.RelativeVirtualAddress == 0 || _peReader.GetMethodBody(method.RelativeVirtualAddress).GetILBytes() is not { } il)
+        if (MethodIL(methodToken) is not { } il)
         {
             return offset;
         }
@@ -241,34 +230,26 @@ public partial class ModuleMetadataReader
         return NewResolvedBreakpoint(outer.Token, outer.CoveringSp!.Value, outer.DocPath);
     }
 
-    private MethodCandidate? CollectCandidate(MethodDebugInformationHandle handle, DocumentHandle docHandle, int line, int? column)
+    private MethodCandidate? CollectCandidate(int token, string document, int line, int? column)
     {
-        MetadataReader reader = _pdbMetadataReader ?? throw new InvalidOperationException("No symbols are loaded.");
-        MethodDebugInformation info = reader.GetMethodDebugInformation(handle);
-        if (info.SequencePointsBlob.IsNil)
-        {
-            return null;
-        }
-
-        SequencePoint? firstSP = null;
-        SequencePoint? lastSP = null;
-        SequencePoint? coveringSP = null;
+        Point? firstSP = null;
+        Point? lastSP = null;
+        Point? coveringSP = null;
         string? docPath = null;
 
-        foreach (SequencePoint sp in info.GetSequencePoints())
+        foreach (Point sp in Points(token))
         {
             if (sp.IsHidden)
             {
                 continue;
             }
 
-            DocumentHandle spDoc = sp.Document.IsNil ? info.Document : sp.Document;
-            if (spDoc != docHandle || sp.IsBeforeRequestedPosition(line, column))
+            if (sp.Document != document || sp.IsBeforeRequestedPosition(line, column))
             {
                 continue;
             }
 
-            docPath ??= reader.GetString(reader.GetDocument(spDoc).Name);
+            docPath ??= document;
 
             if (firstSP is null || sp.End() < firstSP.Value.End())
             {
@@ -291,9 +272,9 @@ public partial class ModuleMetadataReader
             return null;
         }
 
-        return new MethodCandidate(MetadataTokens.GetToken(handle.ToDefinitionHandle()), firstSP.Value, lastSP!.Value, coveringSP, docPath!);
+        return new MethodCandidate(token, firstSP.Value, lastSP!.Value, coveringSP, docPath!);
     }
-    private static ResolvedBreakpoint NewResolvedBreakpoint(int token, SequencePoint sp, string docPath) =>
+    private static ResolvedBreakpoint NewResolvedBreakpoint(int token, Point sp, string docPath) =>
         new(token, sp.Offset, sp.StartLine, sp.EndLine, sp.StartColumn, sp.EndColumn, docPath);
 }
 
@@ -312,26 +293,26 @@ internal readonly record struct LineCol(int Line, int Column) : IComparable<Line
 
 file static class LineColExtensions
 {
-    public static LineCol Start(this SequencePoint sp) => new(sp.StartLine, sp.StartColumn);
-    public static LineCol End(this SequencePoint sp) => new(sp.EndLine, sp.EndColumn);
+    public static LineCol Start(this ModuleMetadataReader.Point sp) => new(sp.StartLine, sp.StartColumn);
+    public static LineCol End(this ModuleMetadataReader.Point sp) => new(sp.EndLine, sp.EndColumn);
 }
 file static class SequencePointExtensions
 {
-    public static bool IsBeforeRequestedPosition(this SequencePoint sp, int requestedLine, int? requestedColumn)
+    public static bool IsBeforeRequestedPosition(this ModuleMetadataReader.Point sp, int requestedLine, int? requestedColumn)
     {
         return requestedColumn is null
             ? sp.EndLine < requestedLine
             : sp.End() < new LineCol(requestedLine, requestedColumn.Value);
     }
 
-    public static bool CoversRequestedPosition(this SequencePoint sp, int requestedLine, int? requestedColumn)
+    public static bool CoversRequestedPosition(this ModuleMetadataReader.Point sp, int requestedLine, int? requestedColumn)
     {
         return requestedColumn is null
             ? sp.StartLine <= requestedLine
             : new LineCol(requestedLine, requestedColumn.Value) is var requestedPosition && sp.Start() <= requestedPosition && requestedPosition <= sp.End();
     }
 
-    public static bool ShouldReplaceCoveringSequencePoint(this SequencePoint sp, SequencePoint? coveringSp, int? requestedColumn)
+    public static bool ShouldReplaceCoveringSequencePoint(this ModuleMetadataReader.Point sp, ModuleMetadataReader.Point? coveringSp, int? requestedColumn)
     {
         if (coveringSp is null)
         {

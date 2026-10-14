@@ -102,6 +102,7 @@ public partial class MainWindow
         Add(A.FileStructure, "File Structure", "Navigate", _ => navigator.ShowFileStructure(), NeedsFile, ("Navigate", 1, 4));
 
         AddBuilding();
+        AddHotReload();
         AddAttaching();
         AddTests();
 

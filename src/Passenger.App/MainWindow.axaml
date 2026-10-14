@@ -97,6 +97,9 @@
                     <Button Name="ProfileButton" Classes="tool" ToolTip.Tip="Profile" Click="OnProfileClicked">
                         <PathIcon Data="{StaticResource Icon.Profile}" />
                     </Button>
+                    <Button Name="HotReloadButton" Classes="tool" ToolTip.Tip="Apply Hot Reload Changes" IsVisible="False" Click="OnHotReloadClicked">
+                        <PathIcon Data="{StaticResource Icon.HotReload}" Foreground="{DynamicResource Passenger.HotReload}" />
+                    </Button>
                     <Button Name="StopButton" Classes="tool" ToolTip.Tip="Stop" IsVisible="False" Click="OnStopClicked">
                         <PathIcon Data="{StaticResource Icon.Stop}" Foreground="{DynamicResource Passenger.Editor.Error}" />
                     </Button>

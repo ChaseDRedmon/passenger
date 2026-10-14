@@ -27,14 +27,9 @@ public partial class ModuleMetadataReader
 
     /// <summary>The calls in [start, end) of a method's IL, in IL order: the order they run, within a statement. None for
     /// a module with no image (one emitted as the program runs).</summary>
-    internal IReadOnlyList<CallSite> CallSites(int methodToken, int start, int end)
+    internal IReadOnlyList<CallSite> CallSites(int methodToken, int start, int end, int? version = null)
     {
-        if (_peReader is null)
-        {
-            return [];
-        }
-        MethodDefinition method = _peMetadataReader.GetMethodDefinition(MetadataTokens.MethodDefinitionHandle(methodToken));
-        if (method.RelativeVirtualAddress == 0 || _peReader.GetMethodBody(method.RelativeVirtualAddress).GetILBytes() is not { } il)
+        if (MethodIL(methodToken, version) is not { } il)
         {
             return [];
         }
@@ -99,26 +94,11 @@ public partial class ModuleMetadataReader
     }
 
     /// <summary>A method's sequence points that show a line, in IL order.</summary>
-    internal IReadOnlyList<SequencePoint> VisibleSequencePoints(int methodToken)
-    {
-        if (_pdbMetadataReader is not { } reader)
-        {
-            return [];
-        }
-        MethodDebugInformation debugInfo = reader.GetMethodDebugInformation(MetadataTokens.MethodDefinitionHandle(methodToken));
-        return debugInfo.SequencePointsBlob.IsNil ? [] : [.. debugInfo.GetSequencePoints().Where(point => !point.IsHidden).OrderBy(point => point.Offset)];
-    }
+    internal IReadOnlyList<Point> VisibleSequencePoints(int methodToken, int? version = null) =>
+        [.. Points(methodToken, version).Where(point => !point.IsHidden).OrderBy(point => point.Offset)];
 
     /// <summary>The file a sequence point of a method is in.</summary>
-    internal string? DocumentOf(int methodToken, SequencePoint point)
-    {
-        if (_pdbMetadataReader is not { } reader)
-        {
-            return null;
-        }
-        DocumentHandle document = point.Document.IsNil ? reader.GetMethodDebugInformation(MetadataTokens.MethodDefinitionHandle(methodToken)).Document : point.Document;
-        return document.IsNil ? null : reader.GetString(reader.GetDocument(document).Name);
-    }
+    internal static string? DocumentOf(Point point) => point.Document;
 
     /// <summary>The MoveNext an async or iterator method's state machine runs its body in, found by the attribute the
     /// compiler puts on the method; null for a method without one.</summary>

@@ -51,6 +51,15 @@ public class ModuleInfo : IDisposable
     /// <summary>An emitted module the runtime has added to (a type emitted) since its metadata was read.</summary>
     internal bool Stale { get; set; }
 
+    /// <summary>Whether the runtime has Edit and Continue on for the module, so Hot Reload can change its code; and why not
+    /// when it has not.</summary>
+    internal bool Editable { get; set; }
+
+    internal string? WhyNotEditable { get; set; } = "The module was loaded before the debugger could ask the runtime about it";
+
+    /// <summary>The module's metadata as Hot Reload's updates have made it, in memory that does not move; null before any.</summary>
+    internal byte[]? CurrentMetadata { get; set; }
+
     /// <summary>Copies of an emitted module's metadata read before the current one, kept with the module, as a request may
     /// still be reading one.</summary>
     private readonly List<ModuleMetadataReader> _superseded = [];

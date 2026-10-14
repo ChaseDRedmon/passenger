@@ -21,6 +21,7 @@ public sealed class OutputView : DockPanel
 
     private readonly Button rerun;
     private readonly Button stop;
+    private readonly Button hotReload;
     private readonly ConsoleColours colours = new();
     private int limit = DefaultLimitKb * 1024;
     private ConsoleInput? input;
@@ -51,10 +52,14 @@ public sealed class OutputView : DockPanel
         Editor.LinkClicked += (_, link) => LinkClicked?.Invoke(this, (LinkTarget)link.Target);
         rerun = Tool("Icon.Rerun", "Rerun");
         stop = Tool("Icon.Stop", "Stop");
+        hotReload = Tool("Icon.HotReload", "Apply Hot Reload Changes");
+        ((PathIcon)hotReload.Content!).Bind(PathIcon.ForegroundProperty, hotReload.GetResourceObservable("Passenger.HotReload"));
+        hotReload.IsVisible = false;
         Button clear = Tool("Icon.Clear", "Clear");
         stop.IsEnabled = false;
         rerun.Click += (_, _) => RerunClicked?.Invoke(this, EventArgs.Empty);
         stop.Click += (_, _) => StopClicked?.Invoke(this, EventArgs.Empty);
+        hotReload.Click += (_, _) => HotReloadClicked?.Invoke(this, EventArgs.Empty);
         clear.Click += (_, _) => Clear();
         Border tools = new()
         {
@@ -66,7 +71,7 @@ public sealed class OutputView : DockPanel
                 Spacing = 2,
                 Margin = new Thickness(0, 6),
                 HorizontalAlignment = HorizontalAlignment.Center,
-                Children = { rerun, stop, clear, new Border { Height = 8 }, Overlays },
+                Children = { rerun, stop, hotReload, clear, new Border { Height = 8 }, Overlays },
             },
         };
         tools.Bind(Border.BorderBrushProperty, tools.GetResourceObservable("Passenger.Divider"));
@@ -106,6 +111,15 @@ public sealed class OutputView : DockPanel
 
     /// <summary>Avalonia's debug overlays in the app the console runs, shown while one with the inspector in it runs.</summary>
     public OverlaysButton Overlays { get; } = new() { MenuPlacement = PlacementMode.RightEdgeAlignedTop };
+
+    /// <summary>Apply Hot Reload Changes pressed: shown while the program runs under dotnet watch.</summary>
+    public event EventHandler? HotReloadClicked;
+
+    /// <summary>Shows Apply Hot Reload Changes while the program runs with Hot Reload.</summary>
+    public void ShowHotReload(bool on) => hotReload.IsVisible = on;
+
+    /// <summary>Whether Apply Hot Reload Changes shows.</summary>
+    public bool ShowsHotReload => hotReload.IsVisible;
 
     /// <summary>A program's text as it reached the console, its colour codes gone: what a build's error list reads, a
     /// batch at a time.</summary>

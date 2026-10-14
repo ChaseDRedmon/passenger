@@ -176,6 +176,128 @@ public sealed class DebugController : IDisposable
     /// <summary>The folder open, which the Debug console names its files from.</summary>
     public string? Folder { get; init; }
 
+    /// <summary>The C# language server whose Edit and Continue computes Hot Reload's updates, when it runs.</summary>
+    public Func<Lsp.RoslynSession?> Server { get; init; } = () => null;
+
+    /// <summary>Whether a launch is debugged with Hot Reload (Settings' Hot Reload while debugging): its code may change
+    /// as it runs, and edits made while it is paused are applied as it goes on.</summary>
+    public Func<bool> HotReloadOn { get; init; } = () => false;
+
+    /// <summary>The session's Hot Reload, while it has one.</summary>
+    public HotReload? HotReload => hotReload is not null && IsDebugging ? hotReload : null;
+
+    private HotReload? hotReload;
+
+    /// <summary>What the last Apply Changes came to, until the next.</summary>
+    public HotReloadOutcome? LastApplied { get; private set; }
+
+    /// <summary>An Apply Changes ended: the window shows its problems and says it.</summary>
+    public event EventHandler<HotReloadOutcome>? Applied;
+
+    /// <summary>Restarts the program for edits Hot Reload cannot apply, as Settings says (or asks, as dotnet watch does);
+    /// true once it restarts, so a resume that applied first does not go on. The window's.</summary>
+    public Func<HotReloadOutcome, Task<bool>> RestartFor { get; set; } = _ => Task.FromResult(false);
+
+    /// <summary>The Apply Changes under way, which a second one waits for.</summary>
+    private Task<HotReloadOutcome>? applying;
+
+    /// <summary>Why Apply Changes cannot run: nothing debugged, a session without Hot Reload, or one that stopped taking
+    /// changes.</summary>
+    public string? WhyNotApply() => !IsDebugging ? NothingDebugged
+        : hotReload is null ? (Session!.Attached
+            ? "Hot Reload applies changes to a program the debugger launched with Hot Reload while debugging on"
+            : "This program was launched with Hot Reload while debugging off (Settings, Debugger)")
+        : hotReload.WhyNot;
+
+    /// <summary>Rider's Apply Hot Reload Changes: the edits since the launch or the last apply, applied to the program
+    /// paused or running. Applied, the files' lines are the program's from now (the built lines forget their edits), their
+    /// breakpoints are bound again in the new code, and a paused program's stop is read again where it now is.</summary>
+    public Task<HotReloadOutcome> ApplyChangesAsync()
+    {
+        UiThread.Check();
+        return applying ??= ApplyOnceAsync();
+    }
+
+    /// <summary>Apply Changes as the action runs it: an edit that needs a restart restarts the program, as Settings says.</summary>
+    public async Task ApplyAndRestartAsync()
+    {
+        if (await ApplyChangesAsync() is { Result: HotReloadResult.RestartNeeded } outcome)
+        {
+            await RestartAsked(outcome);
+        }
+    }
+
+    /// <summary>The window's restart for edits Hot Reload cannot apply; declined, those edits are not asked about again until
+    /// the next edit, as dotnet watch's No.</summary>
+    private async Task<bool> RestartAsked(HotReloadOutcome outcome)
+    {
+        if (await RestartFor(outcome))
+        {
+            return true;
+        }
+        if (hotReload is not null)
+        {
+            hotReload.Changed = false;
+        }
+        return false;
+    }
+
+    private async Task<HotReloadOutcome> ApplyOnceAsync()
+    {
+        using IDisposable held = BackgroundWork.Scope();
+        try
+        {
+            if (WhyNotApply() is { } why || Session is not { } session || hotReload is not { } reload)
+            {
+                HotReloadOutcome refused = new(HotReloadResult.Failed, WhyNotApply() ?? NothingDebugged);
+                Message?.Invoke(this, refused.Said);
+                return refused;
+            }
+            Message?.Invoke(this, "Applying Hot Reload changes…");
+            HotReloadOutcome outcome = await reload.ApplyAsync();
+            if (session != Session || disposed)
+            {
+                return outcome;
+            }
+            if (outcome.Result is HotReloadResult.Applied or HotReloadResult.NothingToApply)
+            {
+                List<string> files = [.. outcome.Files.Select(PathNames.Canonical)];
+                // The stop shown keeps its place in the text, then the files' lines are the program's.
+                if (executionPoint is { } point && files.Contains(point.Path))
+                {
+                    executionPoint = (point.Path, Current(point.Path, point.Line));
+                }
+                foreach (string path in files)
+                {
+                    lines?.Reset(path);
+                }
+                await session.SendBreakpointsAgainAsync(files);
+                if (outcome.Result == HotReloadResult.Applied && session.State == DebugState.Paused && session.StoppedThread is int thread)
+                {
+                    try
+                    {
+                        await ChooseThread(thread);
+                    }
+                    catch (DapException error)
+                    {
+                        Message?.Invoke(this, $"The debugger could not show the stop: {error.Reason}");
+                    }
+                }
+                UpdateAllMarks();
+            }
+            LastApplied = outcome;
+            view.Console.Append($"Hot Reload: {outcome.Said}\n", error: outcome.Result is not (HotReloadResult.Applied or HotReloadResult.NothingToApply));
+            Message?.Invoke(this, outcome.Said);
+            Applied?.Invoke(this, outcome);
+            StateChanged?.Invoke(this, EventArgs.Empty);
+            return outcome;
+        }
+        finally
+        {
+            applying = null;
+        }
+    }
+
     /// <summary>Launches a plan's program under the debugger (after its build), its output in the Debug window's Console,
     /// or in a tab of the Terminal window when its configuration uses the terminal. Null once the session is open (the
     /// program may have ended already), else why it could not.</summary>
@@ -184,8 +306,9 @@ public sealed class DebugController : IDisposable
         Func<RunInTerminalArguments, Task<Run.TerminalRun>>? inTerminal = plan.Console == Run.ConsoleKind.Terminal && RunInTerminal is { } run
             ? arguments => run(plan.Name, arguments)
             : null;
-        return OpenAsync((built, log, output) => DebugSession.LaunchAsync(plan, Breakpoints, built, log, output, inTerminal, ColumnOf), plan.Name,
-            launched: true, inTerminal: inTerminal is not null);
+        bool hotReloadOn = HotReloadOn();
+        return OpenAsync((built, log, output) => DebugSession.LaunchAsync(plan, Breakpoints, built, log, output, inTerminal, ColumnOf, hotReloadOn), plan.Name,
+            launched: true, inTerminal: inTerminal is not null, hotReloadOn: hotReloadOn);
     }
 
     /// <summary>The column a breakpoint asks the debugger for: in Avalonia XAML, its attribute's or its line's first name's
@@ -208,7 +331,8 @@ public sealed class DebugController : IDisposable
 
     /// <summary>Starts a session, its output in the Console; a program it launched reads what is typed there, as in
     /// Rider's Debug console (one attached to has an input of its own, and one in the terminal reads the terminal's).</summary>
-    private async Task<string?> OpenAsync(Func<BuiltLines, Action<string>, Action<OutputEvent>, Task<DebugSession>> open, string name, bool launched, bool inTerminal = false)
+    private async Task<string?> OpenAsync(Func<BuiltLines, Action<string>, Action<OutputEvent>, Task<DebugSession>> open, string name, bool launched, bool inTerminal = false,
+        bool hotReloadOn = false)
     {
         UiThread.Check();
         if (IsDebugging)
@@ -217,6 +341,7 @@ public sealed class DebugController : IDisposable
         }
         // Not the last session's while this one starts, nor once it could not: a caller asks Session whether it did.
         Session = null;
+        hotReload = null;
         this.name = name;
         Stop = null;
         view.Clear();
@@ -260,6 +385,8 @@ public sealed class DebugController : IDisposable
                 }
             });
             Session = session;
+            // Begun as the program starts, on the solution as just built, which Roslyn measures every later edit from.
+            hotReload = hotReloadOn ? HotReload.Start(session, Server) : null;
             view.Tree.Load = reference => session.VariablesAsync(reference);
             if (launched && !inTerminal)
             {
@@ -409,6 +536,20 @@ public sealed class DebugController : IDisposable
         {
             return;
         }
+        // Rider's "Changes will be applied on the next step or resume": edits made while paused go first. An edit that needs a
+        // restart restarts the program (or asks, as Settings says); one that does not compile is left, and the program goes
+        // on running the code it has, rather than staying stranded at the stop.
+        if (HotReload is { Changed: true } && WhyNotApply() is null && session.State == DebugState.Paused)
+        {
+            if (await ApplyChangesAsync() is { Result: HotReloadResult.RestartNeeded } outcome && await RestartAsked(outcome))
+            {
+                return;
+            }
+            if (session != Session || session.State != DebugState.Paused)
+            {
+                return;
+            }
+        }
         try
         {
             await resume(session);
@@ -537,6 +678,10 @@ public sealed class DebugController : IDisposable
         {
             // The built lines first: a breakpoint's move asks them what it now asks of the debugger.
             lines?.Follow(document.Path, change);
+            if (hotReload is not null && change.Edits.Count > 0 && Path.GetExtension(document.Path).ToLowerInvariant() is ".cs" or ".razor" or ".cshtml")
+            {
+                hotReload.Changed = true;
+            }
             Breakpoints.Follow(document.Path, change);
             FollowStop(document, change);
             if (Breakpoints.In(document.Path).Any(b => b.Attribute is not null))
@@ -547,6 +692,7 @@ public sealed class DebugController : IDisposable
         };
         following[document] = follow;
         document.Text.Changed += follow;
+        document.Saved += OnSaved;
         UpdateMarks(document);
     }
 
@@ -556,7 +702,28 @@ public sealed class DebugController : IDisposable
         if (following.Remove(document, out EventHandler<DocumentChangedEventArgs>? follow))
         {
             document.Text.Changed -= follow;
+            document.Saved -= OnSaved;
         }
+    }
+
+    /// <summary>Whether a save while the program is debugged applies the edits (Settings' Apply changes on file save).</summary>
+    public Func<bool> HotReloadOnSave { get; init; } = () => false;
+
+    /// <summary>An apply a save asked for, run once the saves of one Save All are done.</summary>
+    private bool applyOnSave;
+
+    private void OnSaved(object? sender, EventArgs e)
+    {
+        if (applyOnSave || HotReload is not { Changed: true } || !HotReloadOnSave() || WhyNotApply() is not null)
+        {
+            return;
+        }
+        applyOnSave = true;
+        Dispatcher.UIThread.Post(() =>
+        {
+            applyOnSave = false;
+            _ = ApplyAndRestartAsync();
+        });
     }
 
     /// <summary>The value of the expression under the pointer while paused (a.b.c up to the word
@@ -669,6 +836,7 @@ public sealed class DebugController : IDisposable
                 Message?.Invoke(this, Said(session));
                 break;
             case DebugState.Ended:
+                hotReload?.End();
                 executionPoint = null;
                 lines = null;
                 UpdateAllMarks();

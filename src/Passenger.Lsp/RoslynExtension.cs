@@ -26,11 +26,28 @@ public static class RoslynExtension
         {
             return $"the C# language server could not load Passenger's extension: {thrown}";
         }
-        HashSet<string> active = answer.ValueKind == JsonValueKind.Object && answer.TryGetProperty("documentMessageHandlers", out JsonElement names) && names.ValueKind == JsonValueKind.Array
-            ? [.. names.EnumerateArray().Select(n => n.GetString() ?? string.Empty)]
-            : [];
-        string[] missing = [.. Handlers.All.Where(h => !active.Contains(h))];
+        HashSet<string> active = [.. Named(answer, "documentMessageHandlers"), .. Named(answer, "workspaceMessageHandlers")];
+        string[] missing = [.. Handlers.All.Concat(HotReloadHandlers.All).Where(h => !active.Contains(h))];
         return missing.Length == 0 ? null : $"the C# language server did not take Passenger's {string.Join(", ", missing.Select(m => m[(m.LastIndexOf('.') + 1)..]))}";
+
+        static IEnumerable<string> Named(JsonElement answer, string kind) =>
+            answer.ValueKind == JsonValueKind.Object && answer.TryGetProperty(kind, out JsonElement names) && names.ValueKind == JsonValueKind.Array
+                ? names.EnumerateArray().Select(n => n.GetString() ?? string.Empty)
+                : [];
+    }
+
+    /// <summary>A message to one of the extension's workspace handlers, about the solution the server has open, and its
+    /// answer; a <see cref="LanguageServerFailed"/> when the server has no extension to ask, refuses, or the handler throws.</summary>
+    internal static async Task<T> AskWorkspaceAsync<T>(LanguageServer server, string handler, object message, CancellationToken cancel)
+    {
+        if (server.ExtensionProblem is { } problem)
+        {
+            throw new LanguageServerFailed(problem, handler);
+        }
+        string text = JsonSerializer.Serialize(message, message.GetType());
+        JsonElement answer = await server.RequestAsync<JsonElement>("workspace/_vs_dispatchExtensionMessage",
+            new DispatchWorkspaceMessageParams(handler, text), cancel).ConfigureAwait(false);
+        return Answer<T>(answer, handler);
     }
 
     /// <summary>A message to one of the extension's handlers about a document, and its answer; a
@@ -54,6 +71,12 @@ public static class RoslynExtension
             // The handlers are the solution's: a file in no project the server loaded is in a workspace of its own.
             throw new LanguageServerFailed("the file is in no project the C# language server has loaded", handler, failed);
         }
+        return Answer<T>(answer, handler);
+    }
+
+    /// <summary>A handler's answer read from the server's reply, or the failure it carries.</summary>
+    private static T Answer<T>(JsonElement answer, string handler)
+    {
         if (Thrown(answer) is { } thrown)
         {
             throw new LanguageServerFailed($"Passenger's extension to the C# language server failed: {thrown}", handler);
@@ -106,4 +129,6 @@ public static class RoslynExtension
     private sealed record ActivateExtensionParams(string AssemblyFilePath);
 
     private sealed record DispatchExtensionMessageParams(string MessageName, string Message, TextDocumentIdentifier TextDocument);
+
+    private sealed record DispatchWorkspaceMessageParams(string MessageName, string Message);
 }

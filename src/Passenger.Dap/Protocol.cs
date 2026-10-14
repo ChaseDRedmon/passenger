@@ -59,6 +59,10 @@ public sealed record LaunchArguments
 
     /// <summary>internalConsole (the output comes as events), integratedTerminal or externalTerminal.</summary>
     public string? Console { get; init; }
+
+    /// <summary>Passenger's own: the program's code may be changed as it runs (Hot Reload, applyChanges). The runtime is
+    /// told DOTNET_MODIFIABLE_ASSEMBLIES=debug and each of the user's modules gets Edit and Continue as it loads.</summary>
+    public bool? HotReload { get; init; }
 }
 
 public sealed record AttachArguments
@@ -426,3 +430,50 @@ public sealed record ModuleEvent(string Reason, DapModule Module);
 public sealed record DapModule(string Id, string Name, string? Path = null);
 
 public sealed record ProcessEvent(string Name, int? SystemProcessId = null, bool? IsLocalProcess = null, string? StartMethod = null);
+
+/// <summary>This debugger's own request: what Hot Reload needs of the program. The edits its runtime can take, as its own
+/// CoreLib names them (System.Reflection.Metadata.MetadataUpdater's capabilities), or why they are unknown; the modules it
+/// has loaded, each with whether the runtime lets it be edited; and, paused, the statements its threads are in.</summary>
+public sealed record HotReloadStateResponse
+{
+    public IReadOnlyList<string>? Capabilities { get; init; }
+
+    /// <summary>Why the runtime's capabilities could not be read, when they could not.</summary>
+    public string? CapabilitiesUnknown { get; init; }
+
+    public IReadOnlyList<DapHotReloadModule> Modules { get; init; } = [];
+
+    public IReadOnlyList<DapActiveStatement> ActiveStatements { get; init; } = [];
+}
+
+/// <summary>A module loaded: its MVID, name and file, and whether its code can be edited (the runtime's Edit and Continue on
+/// for it), else why not.</summary>
+public sealed record DapHotReloadModule(Guid Mvid, string Name, string? Path, bool Editable, string? WhyNot = null);
+
+/// <summary>A statement a thread is in: its method (module, token, the version of its code the frame runs), the IL offset,
+/// its sequence point's document and place (lines and columns from zero), and Roslyn's ActiveStatementFlags.</summary>
+public sealed record DapActiveStatement(Guid Module, int Token, int Version, int ILOffset, string? Document,
+    int StartLine, int StartColumn, int EndLine, int EndColumn, int Flags);
+
+/// <summary>This debugger's own request: the updates the language's Edit and Continue made, applied to the program, paused
+/// or running (a running one is stopped for it and goes on).</summary>
+public sealed record ApplyChangesArguments(IReadOnlyList<DapModuleUpdate> Updates);
+
+/// <summary>One module's update: the metadata, IL and PDB deltas, the methods and types it changes, the lines that moved in
+/// each document (a line from zero, from which on the lines move to the new one's), and where each active statement went.</summary>
+public sealed record DapModuleUpdate(Guid Module, string Name, byte[] Metadata, byte[] IL, byte[] Pdb,
+    IReadOnlyList<int> UpdatedMethods, IReadOnlyList<int> UpdatedTypes, IReadOnlyList<DapLineUpdates> Lines,
+    IReadOnlyList<DapStatementUpdate> ActiveStatements);
+
+public sealed record DapLineUpdates(string Document, IReadOnlyList<DapLineUpdate> Updates);
+
+public sealed record DapLineUpdate(int OldLine, int NewLine);
+
+/// <summary>Where an active statement of a method's version is in the new version's source (lines and columns from zero).</summary>
+public sealed record DapStatementUpdate(int Token, int Version, int ILOffset, int StartLine, int StartColumn, int EndLine, int EndColumn);
+
+/// <summary>What became of each module's update, in the order given: applied, or why not. Once one fails, the program
+/// may hold part of it, so Hot Reload stops for the session.</summary>
+public sealed record ApplyChangesResponse(IReadOnlyList<DapModuleApplied> Modules);
+
+public sealed record DapModuleApplied(Guid Module, string Name, bool Applied, string? Message = null);

@@ -129,6 +129,10 @@ public partial class ManagedDebugger
 
         ModuleInfo moduleInfo = new ModuleInfo(corModule, modulePath, metadataReader, isUserCode, emitted ? new CORDB_ADDRESS(_lastEmittedModuleKey--) : null);
         _modules[moduleInfo.BaseAddress] = moduleInfo;
+        if (!emitted)
+        {
+            EnableEditAndContinue(corModule, moduleInfo);
+        }
         ModuleSet_Version++;
         TryBindEntryBreakpoint(moduleInfo);
 
@@ -457,7 +461,7 @@ public partial class ManagedDebugger
             ilFrame = (ICorDebugILFrame)corThread.ActiveFrame;
         }
         ModuleInfo? module = FindModule(ilFrame.Function.Module);
-        if (module is not null && module.MetadataReader.IsCurrentSequencePointHidden(ilFrame.Function.Token, ilFrame.IP.pnOffset))
+        if (module is not null && module.MetadataReader.IsCurrentSequencePointHidden(ilFrame.Function.Token, ilFrame.IP.pnOffset, ModuleMetadataReader.VersionOf(ilFrame)))
         {
             // Past a hidden sequence point, which would show the line before it as where the step ended.
             SetupStepper(corThread, StepType.StepOver);

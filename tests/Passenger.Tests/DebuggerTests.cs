@@ -187,10 +187,11 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         Assert.Contains("written after the program being debugged was built", window.Debugger.Breakpoints.In(program)[0].Message, StringComparison.Ordinal);
 
         // Resumed, the program stops on the loop's next turn at the statement the breakpoint was bound to, shown where it now is.
+        // Hot Reload applied the moved lines as it went on, so the debugger names the line as it now is too.
         Ui.Run(window, AppActions.Resume);
         Ui.WaitFor(() => editor.LineMarks.Any(m => m.Kind == LineMarkKind.ExecutionPoint), "the next stop");
         Ui.WaitFor(() => Value(window, "i") == "2", "the loop's next turn at the breakpoint's statement, not the line after it");
-        Assert.Equal(4, window.BottomPanel.Debug.Frames[0].Line);
+        Assert.Equal(5, window.BottomPanel.Debug.Frames[0].Line);
         Assert.Contains(new LineMark(4, LineMarkKind.ExecutionPoint), editor.LineMarks);
         Assert.Contains(new LineMark(4, LineMarkKind.BreakpointBound), editor.LineMarks);
         Assert.Contains(new LineAnnotation(2, "i: 2", LineAnnotationKind.InlineValue), editor.LineAnnotations);

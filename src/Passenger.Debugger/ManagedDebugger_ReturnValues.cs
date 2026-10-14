@@ -43,7 +43,7 @@ public partial class ManagedDebugger
         }
         (int ip, CorDebugMappingResult mapping) = frame.IP;
         List<WatchedCall> calls = [];
-        foreach (ModuleMetadataReader.CallSite call in module.MetadataReader.CallSites(frame.Function.Token, start, end))
+        foreach (ModuleMetadataReader.CallSite call in module.MetadataReader.CallSites(frame.Function.Token, start, end, ModuleMetadataReader.VersionOf(frame)))
         {
             // A call before the stop has run already: the one the stop is right after (a step out's) included.
             bool toCome = call.Offset > ip || (call.Offset == ip && mapping.HasFlag(CorDebugMappingResult.MAPPING_EXACT));
@@ -112,11 +112,12 @@ public partial class ManagedDebugger
         }
         int token = frame.Function.Token;
         (int ip, _) = frame.IP;
-        if (module.MetadataReader.GetStartAndEndSequencePointIlOffsetsForIlOffset(token, ip) is not var (start, _))
+        int? version = ModuleMetadataReader.VersionOf(frame);
+        if (module.MetadataReader.GetStartAndEndSequencePointIlOffsetsForIlOffset(token, ip, version) is not var (start, _))
         {
             return;
         }
-        foreach (ModuleMetadataReader.CallSite call in module.MetadataReader.CallSites(token, start, ip + 1).Reverse())
+        foreach (ModuleMetadataReader.CallSite call in module.MetadataReader.CallSites(token, start, ip + 1, version).Reverse())
         {
             if (call.Kind == ModuleMetadataReader.CallKind.Call && module.MetadataReader.DescribeCall(call.Token) is { ReturnType: not "void" } called
                 && !IsCompilersOwn(called) && await ReadReturnedValue(thread, frame, call.Offset, MethodLabel(called.Name)))

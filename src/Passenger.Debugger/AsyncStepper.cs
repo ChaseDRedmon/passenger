@@ -210,7 +210,7 @@ internal sealed class AsyncStepper
             }
 
             // Check if method has async stepping info
-            ModuleMetadataReader.AsyncMethodSteppingInfo? asyncInfo = moduleInfo.MetadataReader.GetAsyncMethodSteppingInfo(methodToken);
+            ModuleMetadataReader.AsyncMethodSteppingInfo? asyncInfo = moduleInfo.MetadataReader.GetAsyncMethodSteppingInfo(methodToken, methodVersion);
             if (asyncInfo is null)
             {
                 return (false, null);

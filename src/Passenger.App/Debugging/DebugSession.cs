@@ -208,7 +208,7 @@ public sealed class DebugSession
     /// <paramref name="output"/> on the connection's thread, in order. With <paramref name="runInTerminal"/> the program
     /// runs in the terminal it starts, which the adapter asks for (runInTerminal), and its output goes there.</summary>
     public static Task<DebugSession> LaunchAsync(Run.LaunchPlan plan, BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output,
-        Func<RunInTerminalArguments, Task<Run.TerminalRun>>? runInTerminal = null, Func<LineBreakpoint, int?>? columns = null) =>
+        Func<RunInTerminalArguments, Task<Run.TerminalRun>>? runInTerminal = null, Func<LineBreakpoint, int?>? columns = null, bool hotReload = false) =>
         StartAsync(plan.Built ?? plan.Program, "launch", new LaunchArguments
         {
             Program = plan.Program,
@@ -218,6 +218,7 @@ public sealed class DebugSession
             Console = runInTerminal is null ? "internalConsole" : "integratedTerminal",
             JustMyCode = true,
             StopAtEntry = false,
+            HotReload = hotReload,
         }, breakpoints, lines, log, output, runInTerminal, columns);
 
     /// <summary>Starts the adapter and attaches it to a running .NET process (one Attach to Process chose, or a test host
@@ -569,6 +570,29 @@ public sealed class DebugSession
     /// name there), and what it would watch, or why none can.</summary>
     public Task<DataBreakpointInfoResponse> DataBreakpointInfoAsync(int variablesReference, string name) =>
         connection.RequestAsync<DataBreakpointInfoResponse>("dataBreakpointInfo", new DataBreakpointInfoArguments(name, variablesReference));
+
+    /// <summary>What Hot Reload needs of the program: its runtime's capabilities, its modules and, paused, its active
+    /// statements.</summary>
+    public Task<HotReloadStateResponse> HotReloadStateAsync() =>
+        connection.RequestAsync<HotReloadStateResponse>("hotReloadState", new DapEmpty());
+
+    /// <summary>Applies Edit and Continue's updates to the program, paused or running.</summary>
+    public Task<ApplyChangesResponse> ApplyChangesAsync(IReadOnlyList<DapModuleUpdate> updates) =>
+        connection.RequestAsync<ApplyChangesResponse>("applyChanges", new ApplyChangesArguments(updates));
+
+    /// <summary>Sends files' breakpoints again, at their lines now, after an update the program took: the debugger binds
+    /// each again in the code it runs now, as the files' built lines are now their lines.</summary>
+    public async Task SendBreakpointsAgainAsync(IEnumerable<string> paths)
+    {
+        UiThread.Check();
+        foreach (string path in paths.Where(p => breakpoints.In(p).Count > 0 || sent.ContainsKey(p)).ToList())
+        {
+            if (State is DebugState.Running or DebugState.Paused && disconnected is null)
+            {
+                await SendBreakpointsAsync(path);
+            }
+        }
+    }
 
     /// <summary>An expression's value in a frame; context is watch, hover or repl.</summary>
     public Task<EvaluateResponse> EvaluateAsync(string expression, int? frameId, string context) =>

@@ -44,7 +44,13 @@ public partial class ManagedDebugger
         {
             int ilOffset = WrittenAt(frame) ?? ilFrame.IP.pnOffset;
             mdMethodDef methodToken = function.Token;
-            (string sourceFilePath, int startLine, int endLine, int startColumn, int endColumn)? sourceInfo = module.MetadataReader.GetSourceLocationForOffset(methodToken, ilOffset);
+            int? version = ModuleMetadataReader.VersionOf(ilFrame);
+            (string sourceFilePath, int startLine, int endLine, int startColumn, int endColumn)? sourceInfo = module.MetadataReader.GetSourceLocationForOffset(methodToken, ilOffset, version);
+            // A frame still in a method's old code, at a statement Hot Reload moved: shown where the statement now is.
+            if (sourceInfo is { } old && version is int at && _statementUpdates.TryGetValue((module.MetadataReader.Mvid, methodToken, at, ilOffset), out StatementUpdate? moved))
+            {
+                sourceInfo = (old.sourceFilePath, moved.StartLine + 1, moved.EndLine + 1, moved.StartColumn + 1, moved.EndColumn + 1);
+            }
             if (sourceInfo is not null)
             {
                 DecompiledSourceInfo? decompiledSourceInfo = null;

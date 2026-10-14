@@ -200,6 +200,7 @@ public partial class MainWindow : Window
         Bottom.Build.StopClicked += (_, _) => session.Builder.Stop();
         Bottom.Run.RerunClicked += (_, _) => Request(AppActions.RunProgram);
         Bottom.Run.StopClicked += (_, _) => session.Runner.Stop();
+        Bottom.Run.HotReloadClicked += (_, _) => Request(AppActions.ApplyHotReloadChanges);
         AddUnitTests();
         AddLinks();
         AddLocalHistory();
@@ -459,6 +460,7 @@ public partial class MainWindow : Window
     private void OnDebugStateChanged()
     {
         StopButton.IsVisible = session.Debug.IsDebugging || buildRun.IsRunning;
+        ShowHotReloadButtons();
     }
 
     /// <summary>Opens a tool window in its place ("debug", "build", "tests"...), as its stripe button does.</summary>

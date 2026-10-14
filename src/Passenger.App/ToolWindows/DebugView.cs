@@ -165,6 +165,7 @@ public sealed class DebugView : DockPanel
                 Tool(AppActions.Pause, "Icon.Pause", "Pause Program"),
                 Tool(AppActions.Stop, "Icon.Stop", "Stop"),
                 Tool(AppActions.Detach, "Icon.Detach", "Detach"),
+                HotReloadTool(),
                 new Border { Height = 8 },
                 Tool(AppActions.ViewBreakpoints, "Icon.Breakpoints", "View Breakpoints and Exceptions"),
                 mute,
@@ -427,6 +428,22 @@ public sealed class DebugView : DockPanel
 
     private IReadOnlyList<Control> ThreadsMenu() =>
         threads.SelectedItem is DapThread thread ? [ListMenus.Item("Copy Name", null, () => _ = ListMenus.CopyAsync(this, ThreadLabel(thread)))] : [];
+
+    /// <summary>Apply Hot Reload Changes, in Rider's flame: shown while the session has Hot Reload.</summary>
+    private Button HotReloadTool()
+    {
+        Button button = Tool(AppActions.ApplyHotReloadChanges, "Icon.HotReload", "Apply Hot Reload Changes");
+        ((PathIcon)button.Content!).Bind(PathIcon.ForegroundProperty, button.GetResourceObservable("Passenger.HotReload"));
+        button.IsVisible = false;
+        return button;
+    }
+
+    /// <summary>Shows Apply Hot Reload Changes while the session has Hot Reload, pressable while its program runs.</summary>
+    public void ShowHotReload(bool on, bool canApply)
+    {
+        tools[AppActions.ApplyHotReloadChanges].IsVisible = on;
+        tools[AppActions.ApplyHotReloadChanges].IsEnabled = canApply;
+    }
 
     private Button Tool(string action, string icon, string tip)
     {

@@ -188,6 +188,9 @@ public static class AppActions
     public const string AttachToProcess = "app.debug.attachToProcess";
     public const string ReattachToProcess = "app.debug.reattachToProcess";
     public const string Detach = "app.debug.detach";
+
+    // Rider's RiderDebuggerApplyEncChagnes, "Apply Hot Reload Changes", on Alt+F10 in both its Visual Studio keymaps.
+    public const string ApplyHotReloadChanges = "app.debug.applyHotReloadChanges";
     public const string Evaluate = "app.debug.evaluate";
     public const string AddToWatches = "app.debug.addToWatches";
     public const string ShowContextMenu = "app.contextMenu";
@@ -389,6 +392,7 @@ public static class AppActions
                 .Bind(StepOut, "shift F11")
                 .Bind(RunToCursor, "meta F10")
                 .Bind(SetNextStatement, "meta shift F10")
+                .Bind(ApplyHotReloadChanges, "alt F10")
                 .Bind(ExtendSelection, "meta alt RIGHT")
                 .Bind(CallHierarchy, "control alt H")
                 .Bind(TypeHierarchy, "meta E , H", "meta E , meta H")
@@ -509,6 +513,7 @@ public static class AppActions
             .Bind(StepOut, "shift F11")
             .Bind(RunToCursor, "control F10")
             .Bind(SetNextStatement, "control shift F10")
+            .Bind(ApplyHotReloadChanges, "alt F10")
             .Bind(ExtendSelection, "control W", "shift alt EQUALS", "control alt RIGHT")
             .Bind(CallHierarchy, "control alt H")
             .Bind(TypeHierarchy, "control E , H", "control E , control H")

@@ -101,6 +101,12 @@ public sealed class BuildRunController
     /// <summary>Whether a program Run started runs, in the Run window or the terminal.</summary>
     public bool IsRunning => session.Runner.IsRunning || session.InTerminal is { IsRunning: true };
 
+    /// <summary>Whether the program Run started runs under dotnet watch (Settings' Hot Reload when running), which applies
+    /// the edits of each file saved.</summary>
+    public bool WatchesHotReload => watching && IsRunning;
+
+    private bool watching;
+
     /// <summary>The end of the program Run last started, in the Run window or the terminal, with its exit code.</summary>
     public Task<int> RunEnd => session.InTerminal?.Ended ?? session.Runner.Ended;
 
@@ -330,6 +336,7 @@ public sealed class BuildRunController
             parts.Views.Run.Clear();
             // dotnet watch builds the project itself, and runs it again after an edit it cannot apply.
             bool hotReload = parts.Settings().HotReload && chosen.Program.Length == 0;
+            watching = hotReload;
             (LaunchPlan? plan, string? problem) = await PrepareAsync(chosen, arguments, build: !hotReload);
             if (plan is null)
             {
@@ -476,12 +483,29 @@ public sealed class BuildRunController
     /// does, with these arguments in place of its own if given; the Debug window opens on its Console until the program
     /// stops somewhere. Null once its session is open, or what stopped it (a failed build, no configuration, the adapter's
     /// refusal).</summary>
-    public async Task<string?> DebugAsync(string? arguments = null)
+    public Task<string?> DebugAsync(string? arguments = null) =>
+        session.Configurations.Chosen is { } chosen ? DebugAsync(chosen, arguments) : Task.FromResult<string?>("Nothing to debug: no executable project");
+
+    /// <summary>The configuration Debug last launched, and the arguments it was given, which a restart for Hot Reload
+    /// launches again.</summary>
+    private (RunConfiguration Configuration, string? Arguments)? debugged;
+
+    /// <summary>Hot Reload's restart for an edit it cannot apply: the program Debug last launched is stopped (on Windows its
+    /// files are locked while it runs), built again and launched with the same configuration and arguments, the
+    /// breakpoints the store's. Null once the new session is open, else why it could not.</summary>
+    public async Task<string?> RestartDebugAsync()
     {
-        if (session.Configurations.Chosen is not { } chosen)
+        if (debugged is not var (configuration, arguments))
         {
-            return "Nothing to debug: no executable project";
+            return "Nothing was launched under the debugger to restart";
         }
+        await session.Debug.StopAsync();
+        return await DebugAsync(configuration, arguments);
+    }
+
+    private async Task<string?> DebugAsync(RunConfiguration chosen, string? arguments)
+    {
+        debugged = (chosen, arguments);
         using IDisposable held = BackgroundWork.Scope();
         (LaunchPlan? plan, string? problem) = await PrepareAsync(chosen, arguments);
         if (plan is null)

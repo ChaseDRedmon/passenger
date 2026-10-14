@@ -281,11 +281,25 @@ internal sealed class CilExpressionCompiler(ManagedDebugger debugger)
         ImmutableArray<MetadataBlock>.Builder builder = ImmutableArray.CreateBuilder<MetadataBlock>(modules.Count);
         foreach (ModuleInfo moduleInfo in modules)
         {
-            IMetaDataTables2 tables = moduleInfo.Module.GetMetaDataInterface<IMetaDataTables2>();
-            (nint pointer, int size) = tables.MetaDataStorage;
-            MetadataReader reader = moduleInfo.MetadataReader.PeMetadataReader;
-            ModuleDefinition module = reader.GetModuleDefinition();
-            Guid generationId = module.GenerationId.IsNil ? Guid.Empty : reader.GetGuid(module.GenerationId);
+            nint pointer;
+            int size;
+            Guid generationId;
+            if (moduleInfo.CurrentMetadata is { } updated)
+            {
+                // Hot Reload changed the module: its metadata as the updates made it (the image's storage is the build's),
+                // each update's a generation of its own.
+                pointer = System.Runtime.InteropServices.Marshal.UnsafeAddrOfPinnedArrayElement(updated, 0);
+                size = updated.Length;
+                generationId = new Guid([.. BitConverter.GetBytes(moduleInfo.MetadataReader.Generations), .. new byte[12]]);
+            }
+            else
+            {
+                IMetaDataTables2 tables = moduleInfo.Module.GetMetaDataInterface<IMetaDataTables2>();
+                (pointer, size) = tables.MetaDataStorage;
+                MetadataReader reader = moduleInfo.MetadataReader.PeMetadataReader;
+                ModuleDefinition module = reader.GetModuleDefinition();
+                generationId = module.GenerationId.IsNil ? Guid.Empty : reader.GetGuid(module.GenerationId);
+            }
             builder.Add(new MetadataBlock(
                 new ModuleId(moduleInfo.MetadataReader.Mvid, moduleInfo.ModuleName),
                 generationId,
@@ -350,7 +364,10 @@ internal sealed class CilExpressionCompiler(ManagedDebugger debugger)
             : (StandaloneSignatureHandle)MetadataTokens.Handle(frame.Function.LocalVarSigToken);
         ImmutableArray<LocalInfo<TypeSymbol>> localInfo = metadataDecoder.GetLocalInfo(localSignature);
         int ilOffset = EvaluationContextBase.NormalizeILOffset((uint)frame.IP.pnOffset);
-        MetadataReader? pdbReader = moduleInfo.MetadataReader.PdbMetadataReader;
+        // The frame's version of the method: Hot Reload's update that last changed it reads from that update's PDB delta,
+        // which Roslyn's reader maps the method into (its EncMap).
+        int version = ModuleMetadataReader.VersionOf(frame) ?? 1;
+        MetadataReader? pdbReader = moduleInfo.MetadataReader.DebugOf(methodToken, version)?.Reader;
         MethodDebugInfo<TypeSymbol, LocalSymbol> debugInfo = pdbReader is null
             ? MethodDebugInfo<TypeSymbol, LocalSymbol>.None
             : MethodDebugInfo<TypeSymbol, LocalSymbol>.ReadFromPortable(pdbReader, methodToken, ilOffset, symbolProvider, isVisualBasicMethod: false);
@@ -367,7 +384,7 @@ internal sealed class CilExpressionCompiler(ManagedDebugger debugger)
         locals.AddRange(debugInfo.LocalConstants);
 
         return new EvaluationContext(
-            new MethodContextReuseConstraints(moduleId, methodToken, methodVersion: 1, reuseSpan),
+            new MethodContextReuseConstraints(moduleId, methodToken, methodVersion: version, reuseSpan),
             compilation,
             currentFrame,
             currentSourceMethod,

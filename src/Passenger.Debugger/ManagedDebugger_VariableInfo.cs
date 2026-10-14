@@ -35,7 +35,7 @@ public partial class ManagedDebugger
         int currentIlOffset = corDebugIlFrame.IP.pnOffset;
         foreach ((int index, ICorDebugValue? localVariableCorDebugValue) in corDebugIlFrame.LocalVariables.Index())
         {
-            string? localVariableName = module.MetadataReader.GetLocalVariableName(corDebugFunction.Token, index, currentIlOffset);
+            string? localVariableName = module.MetadataReader.GetLocalVariableName(corDebugFunction.Token, index, currentIlOffset, ModuleMetadataReader.VersionOf(corDebugIlFrame));
             if (localVariableName is null)
             {
                 continue; // Compiler generated locals will not be found. E.g. DefaultInterpolatedStringHandler

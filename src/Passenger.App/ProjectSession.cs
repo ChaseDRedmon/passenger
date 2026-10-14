@@ -66,7 +66,14 @@ public sealed class ProjectSession : IAsyncDisposable
         Builder = new ProcessRunner(setup.Views.Build);
         Runner = new ProcessRunner(setup.Views.Run, takesInput: true);
         Tests = new TestController(setup.Views.TestTree, setup.BuildForTests, () => Projects, line => setup.Views.Build.Append($"{line}\n"));
-        Debug = new DebugController(setup.Editors, setup.Views.Debug) { RunInTerminal = setup.RunForDebugger, Folder = folder };
+        Debug = new DebugController(setup.Editors, setup.Views.Debug)
+        {
+            RunInTerminal = setup.RunForDebugger,
+            Folder = folder,
+            Server = () => CSharp?.Session,
+            HotReloadOn = () => setup.Settings().HotReloadWhileDebugging,
+            HotReloadOnSave = () => setup.Settings().HotReloadOnSave,
+        };
         // Kept with the folder from Keep on, while the window keeps state.
         Debug.Breakpoints.Changed += (_, _) => State?.Breakpoints.Set(Debug.Breakpoints.Capture());
         Debug.Breakpoints.ExceptionsChanged += (_, _) => State?.Breakpoints.Set(Debug.Breakpoints.Capture());

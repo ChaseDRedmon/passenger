@@ -25,6 +25,12 @@ public sealed class BuiltLines
         lines.Follow(change);
     }
 
+    /// <summary>The files edited since the build.</summary>
+    public IReadOnlyCollection<string> Files => files.Keys;
+
+    /// <summary>A file's lines as they are now are the built lines: Hot Reload has given the program its code as it is.</summary>
+    public void Reset(string path) => files.Remove(path);
+
     /// <summary>Where a built line (from zero) of a file is now.</summary>
     public int ToCurrent(string path, int line) => files.TryGetValue(path, out Lines? lines) ? lines.ToCurrent(line) : line;
 

@@ -18,6 +18,8 @@
   <Target Name="ReferenceRoslynServer" BeforeTargets="ResolveAssemblyReferences" DependsOnTargets="FindRoslynServer">
     <ItemGroup>
       <RoslynServerAssembly Include="Microsoft.CodeAnalysis;Microsoft.CodeAnalysis.CSharp;Microsoft.CodeAnalysis.Workspaces;Microsoft.CodeAnalysis.CSharp.Workspaces;Microsoft.CodeAnalysis.ExternalAccess.Extensions" />
+      <!-- Edit and Continue (HotReload.cs): the server's own EnC service, kept internal, made public to compile against below. -->
+      <RoslynServerAssembly Include="Microsoft.CodeAnalysis.Features" />
       <!-- The project system the loader joins: the server's own, kept internal, made public to compile against below. -->
       <RoslynServerAssembly Include="Microsoft.CodeAnalysis.LanguageServer;Microsoft.CodeAnalysis.LanguageServer.Protocol;Microsoft.CodeAnalysis.Workspaces.MSBuild;Microsoft.CodeAnalysis.Workspaces.MSBuild.Contracts;Microsoft.Extensions.Logging.Abstractions;System.Composition.AttributedModel" />
       <Reference Include="@(RoslynServerAssembly->'$(RoslynServerFolder)%(Identity).dll')" Private="false" />
@@ -31,6 +33,7 @@
     <Publicize Include="Microsoft.CodeAnalysis.Workspaces.MSBuild" IncludeCompilerGeneratedMembers="false" />
     <Publicize Include="Microsoft.CodeAnalysis.Workspaces.MSBuild.Contracts" IncludeCompilerGeneratedMembers="false" />
     <Publicize Include="Microsoft.CodeAnalysis.Workspaces" IncludeCompilerGeneratedMembers="false" />
+    <Publicize Include="Microsoft.CodeAnalysis.Features" IncludeCompilerGeneratedMembers="false" />
   </ItemGroup>
 
   <Import Project="../Publicize.targets" />

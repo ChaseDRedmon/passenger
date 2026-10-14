@@ -21,6 +21,9 @@ public enum ProblemsTab
     Toolset,
     Build,
     Bindings,
+
+    /// <summary>The edits the last Hot Reload could not apply, or warned of, each at its line.</summary>
+    HotReload,
 }
 
 /// <summary>A row of Problems: a group (a project or a file, with its count) or a problem, at its depth. A problem of the
@@ -63,6 +66,8 @@ public sealed class ProblemsView : DockPanel
     private IReadOnlyList<Problem>? solution;
     private IReadOnlyList<Problem> toolset = [];
     private IReadOnlyList<BindingProblem> bindings = [];
+    private IReadOnlyList<Problem>? hotReload;
+    private string hotReloadSaid = string.Empty;
     private string? fileName;
 
     public ProblemsView()
@@ -136,8 +141,25 @@ public sealed class ProblemsView : DockPanel
     /// <summary>The bindings that failed in the apps run and debugged last, each once.</summary>
     public IReadOnlyList<BindingProblem> BindingProblems => bindings;
 
+    /// <summary>The edits the last Hot Reload could not apply or warned of; null before one in this window.</summary>
+    public IReadOnlyList<Problem>? HotReloadProblems => hotReload;
+
     /// <summary>The rows of the tab shown.</summary>
     public IReadOnlyList<ProblemRow> Rows => rows;
+
+    /// <summary>What the last Hot Reload came to (its words, and its edits by file at their lines), in the Hot Reload tab,
+    /// shown when it has problems.</summary>
+    public void ShowHotReload(string said, IReadOnlyList<Problem> problems)
+    {
+        hotReload = [.. Ordered(problems)];
+        hotReloadSaid = said;
+        if (problems.Count > 0)
+        {
+            Shown = ProblemsTab.HotReload;
+            return;
+        }
+        Refresh();
+    }
 
     /// <summary>The tab shown.</summary>
     public ProblemsTab Shown
@@ -145,7 +167,7 @@ public sealed class ProblemsView : DockPanel
         get;
         set
         {
-            field = value == ProblemsTab.Solution && solution is null ? ProblemsTab.File : value;
+            field = (value == ProblemsTab.Solution && solution is null) || (value == ProblemsTab.HotReload && hotReload is null) ? ProblemsTab.File : value;
             Refresh();
         }
     }
@@ -257,6 +279,8 @@ public sealed class ProblemsView : DockPanel
         tabs[ProblemsTab.Toolset].Content = Titled("Toolset, Environment", toolset.Count);
         tabs[ProblemsTab.Build].Content = Titled("Build", Problems.Count);
         tabs[ProblemsTab.Bindings].Content = Titled("Bindings", bindings.Count);
+        tabs[ProblemsTab.HotReload].Content = Titled("Hot Reload", hotReload?.Count ?? 0);
+        tabs[ProblemsTab.HotReload].IsVisible = hotReload is not null;
         foreach ((ProblemsTab tab, ToggleButton button) in tabs)
         {
             button.IsChecked = tab == Shown;
@@ -304,6 +328,11 @@ public sealed class ProblemsView : DockPanel
                     }
                 }
                 empty.Text = "No failed bindings: those of an Avalonia or WPF app run or debugged here are listed as they fail";
+                break;
+            case ProblemsTab.HotReload:
+                rows.Add(new ProblemRow(0, hotReloadSaid, null, null));
+                Grouped(hotReload ?? []);
+                empty.Text = "Hot Reload applied every change";
                 break;
             default:
                 Grouped(Problems);

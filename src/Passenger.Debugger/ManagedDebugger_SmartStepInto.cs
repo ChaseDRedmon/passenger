@@ -69,7 +69,8 @@ public partial class ManagedDebugger
         }
         int token = frame.Function.Token;
         (int ip, CorDebugMappingResult mapping) = frame.IP;
-        IReadOnlyList<SequencePoint> points = module.MetadataReader.VisibleSequencePoints(token);
+        int? version = ModuleMetadataReader.VersionOf(frame);
+        IReadOnlyList<ModuleMetadataReader.Point> points = module.MetadataReader.VisibleSequencePoints(token, version);
         int at = -1;
         for (int i = 0; i < points.Count && points[i].Offset <= ip; i++)
         {
@@ -88,11 +89,11 @@ public partial class ManagedDebugger
         int start = points[at].Offset;
         int end = last + 1 < points.Count ? points[last + 1].Offset : frame.Function.ILCode.Size;
         // A call before the stop has run already (the one a step out returned from, mid-statement), as Rider leaves it out.
-        List<ModuleMetadataReader.CallSite> calls = [.. module.MetadataReader.CallSites(token, start, end)
+        List<ModuleMetadataReader.CallSite> calls = [.. module.MetadataReader.CallSites(token, start, end, version)
             .Where(call => call.Offset > ip || (call.Offset == ip && mapping.HasFlag(CorDebugMappingResult.MAPPING_EXACT)))];
 
         _logger?.Invoke($"Step-in calls of IL_{start:X4}..IL_{end:X4}, lines {points[at].StartLine}-{points[last].EndLine}: {calls.Count}");
-        string? path = module.MetadataReader.DocumentOf(token, points[at]);
+        string? path = ModuleMetadataReader.DocumentOf(points[at]);
         SourceText? text = path is not null && File.Exists(path) ? SourceText.From(File.ReadAllText(path)) : null;
         List<(StepInPlan Plan, string Label, LinePositionSpan? Place)> found = text is null
             ? FromCalls(module, calls, threadId, range, start, end)
@@ -113,7 +114,7 @@ public partial class ManagedDebugger
     /// run: each invocation by its name to the next call of that name in the IL, a lambda to the delegate made of the
     /// method its body is, which runs once what it is handed to is called, so it comes after that call.</summary>
     private List<(StepInPlan, string, LinePositionSpan?)> FromSource(ModuleInfo module, List<ModuleMetadataReader.CallSite> calls, SourceText text,
-        SequencePoint first, SequencePoint last, ThreadId threadId, StackRange range, int start, int end)
+        ModuleMetadataReader.Point first, ModuleMetadataReader.Point last, ThreadId threadId, StackRange range, int start, int end)
     {
         int Position(int line, int column) => line < 1 || line > text.Lines.Count ? 0 : Math.Min(text.Lines[line - 1].Start + column - 1, text.Lines[line - 1].End);
         TextSpan statement = TextSpan.FromBounds(Position(first.StartLine, first.StartColumn), Math.Max(Position(first.StartLine, first.StartColumn), Position(last.EndLine, last.EndColumn)));

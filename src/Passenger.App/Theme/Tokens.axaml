@@ -32,6 +32,7 @@
             <SolidColorBrush x:Key="Passenger.Link" Color="#548AF7" />
             <SolidColorBrush x:Key="Passenger.LinkHover" Color="#7AA4F9" />
             <SolidColorBrush x:Key="Passenger.Run" Color="#5FAD65" />
+            <SolidColorBrush x:Key="Passenger.HotReload" Color="#E08855" />
             <SolidColorBrush x:Key="Passenger.Test.Passed" Color="#5FAD65" />
             <SolidColorBrush x:Key="Passenger.Test.Failed" Color="#E55765" />
             <SolidColorBrush x:Key="Passenger.Test.Skipped" Color="#868A91" />
@@ -212,6 +213,7 @@
             <SolidColorBrush x:Key="Passenger.Link" Color="#2E55A3" />
             <SolidColorBrush x:Key="Passenger.LinkHover" Color="#3574F0" />
             <SolidColorBrush x:Key="Passenger.Run" Color="#208A3C" />
+            <SolidColorBrush x:Key="Passenger.HotReload" Color="#C2601F" />
             <SolidColorBrush x:Key="Passenger.Test.Passed" Color="#4E9A54" />
             <SolidColorBrush x:Key="Passenger.Test.Failed" Color="#D9414F" />
             <SolidColorBrush x:Key="Passenger.Test.Skipped" Color="#8C8C8C" />

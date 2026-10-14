@@ -120,6 +120,8 @@ ICONS = [
     ("ZoomFit", "Zoom Fit", "20_regular"),
     # The Run and Debug windows' Avalonia debug overlays: layers drawn over the app's window.
     ("Overlays", "Layer", "20_regular"),
+    # Apply Hot Reload Changes on the toolbar and the Run and Debug windows: Rider's flame.
+    ("HotReload", "Fire", "20_regular"),
 ]
 
 

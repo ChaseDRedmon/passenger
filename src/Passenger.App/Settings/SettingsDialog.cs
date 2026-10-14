@@ -23,6 +23,7 @@ public sealed partial class SettingsDialog : Window
     public const string TerminalPage = "Terminal";
     public const string BuildPage = "Build";
     public const string RunPage = "Run";
+    public const string HotReloadPage = "Hot Reload";
     public const string NodePage = "Node.js";
     public const string EslintPage = "ESLint";
     public const string PrettierPage = "Prettier";
@@ -43,7 +44,7 @@ public sealed partial class SettingsDialog : Window
     public static readonly string[] DiscordChoices = ["Passenger only", "The solution", "The solution and the file"];
 
     private static readonly string[] Order = [Appearance, SystemPage, UpdatesPage, EditorPage, CodeFoldingPage, PostfixPage, XamlCodeStylePage, LiveTemplatesPage,
-        BuildPage, RunPage, NodePage, EslintPage, PrettierPage, SchemasPage, TerminalPage, McpPage, DiscordPage, DiagnosticsPage, KeymapPage];
+        BuildPage, RunPage, HotReloadPage, NodePage, EslintPage, PrettierPage, SchemasPage, TerminalPage, McpPage, DiscordPage, DiagnosticsPage, KeymapPage];
 
     /// <summary>Rider's names for Attributes format's choices, in <see cref="Passenger.Xaml.Features.XamlAttributeStyle"/>'s order.</summary>
     public static readonly string[] AttributeStyles = ["On single line", "First attribute on single line", "Each attribute on separate lines", "Do not touch"];
@@ -342,6 +343,13 @@ public sealed partial class SettingsDialog : Window
             "build tool window results after completed finished failed errors warnings always never toolset presentation");
 
         Add(RunPage, "Hot Reload on save", Check(Working.HotReload, v => Change(s => s with { HotReload = v })), "dotnet watch apply changes edit continue running");
+        // Rider's Build, Execution, Deployment | Hot Reload, with Visual Studio's apply on save and dotnet watch's restart.
+        Add(HotReloadPage, "Enable Hot Reload when debugging (Edit and Continue)", Check(Working.HotReloadWhileDebugging, v => Change(s => s with { HotReloadWhileDebugging = v })),
+            "hot reload edit and continue enc debug apply changes paused running alt f10");
+        Add(HotReloadPage, "Apply changes on file save while debugging", Check(Working.HotReloadOnSave, v => Change(s => s with { HotReloadOnSave = v })),
+            "hot reload save apply changes debug edit and continue");
+        Add(HotReloadPage, "Always restart when a change cannot be applied (rude edit)", Check(Working.RestartOnRudeEdit, v => Change(s => s with { RestartOnRudeEdit = v })),
+            "hot reload rude edit restart ask always never dotnet watch");
         NumericUpDown buffer = Number(Working.ConsoleBufferKb, AppSettings.MinConsoleBufferKb, AppSettings.MaxConsoleBufferKb, 64, v => Change(s => s with { ConsoleBufferKb = (int)v }));
         Add(RunPage, "Console buffer size", new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { buffer, new TextBlock { Text = "KB", VerticalAlignment = VerticalAlignment.Center } } },
             "console cycle buffer size output limit lines run debug build kb");

@@ -8,4 +8,7 @@ public class LaunchInfo
     public required bool StopAtEntry { get; set; }
     public required List<string> Arguments { get; set; }
     public required Dictionary<string, string> Env { get; set; }
+
+    /// <summary>Whether the program's code may be changed as it runs (Hot Reload): its modules get Edit and Continue as they load.</summary>
+    public bool HotReload { get; set; }
 }

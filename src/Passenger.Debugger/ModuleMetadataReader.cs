@@ -15,7 +15,10 @@ public partial class ModuleMetadataReader : IDisposable
     /// <summary>The module's image; none for one made as the program runs (System.Reflection.Emit), read from its metadata alone.</summary>
     private readonly PEReader? _peReader;
     private readonly MetadataReaderProvider? _metadataProvider;
-    private readonly MetadataReader _peMetadataReader;
+    private MetadataReader _peMetadataReader;
+
+    /// <summary>The image's own metadata, whose RVAs find its methods' IL, whatever Hot Reload has made of the metadata since.</summary>
+    private readonly MetadataReader _imageMetadataReader;
     private MetadataReaderProvider? _pdbProvider;
     private MetadataReader? _pdbMetadataReader;
     internal MetadataReader PeMetadataReader => _peMetadataReader;
@@ -173,12 +176,14 @@ public partial class ModuleMetadataReader : IDisposable
     {
         _peReader = peReader;
         _peMetadataReader = peReader.GetMetadataReader(MetadataReaderOptions.None);
+        _imageMetadataReader = _peMetadataReader;
     }
 
     private ModuleMetadataReader(MetadataReaderProvider metadataProvider)
     {
         _metadataProvider = metadataProvider;
         _peMetadataReader = metadataProvider.GetMetadataReader(MetadataReaderOptions.None);
+        _imageMetadataReader = _peMetadataReader;
     }
 
     /// <summary>A module known by its metadata alone, a copy of the runtime's (a module emitted as the program runs), with
@@ -372,30 +377,14 @@ public partial class ModuleMetadataReader : IDisposable
         _pdbMetadataReader = reader;
     }
 
-    public (string sourceFilePath, int startLine, int endLine, int startColumn, int endColumn)? GetSourceLocationForOffset(int methodToken, int ilOffset)
+    /// <summary>Where a method's code at an IL offset is written, for the code at a version (the newest without one).</summary>
+    public (string sourceFilePath, int startLine, int endLine, int startColumn, int endColumn)? GetSourceLocationForOffset(int methodToken, int ilOffset, int? version = null)
     {
-        MetadataReader? reader = _pdbMetadataReader;
-        if (reader is null)
+        if (GetSequencePointForOffset(methodToken, ilOffset, version, skipHidden: true) is not { Document: { } document } point)
         {
             return null;
         }
-
-        MethodDefinitionHandle methodHandle = MetadataTokens.MethodDefinitionHandle(methodToken);
-        MethodDebugInformation methodDebugInfo = reader.GetMethodDebugInformation(methodHandle);
-
-        SequencePoint? sequencePoint = GetSequencePointForOffset(methodToken, ilOffset, skipHidden: true);
-
-        if (sequencePoint is null)
-        {
-            return null;
-        }
-
-        SequencePoint sp = sequencePoint.Value;
-
-        DocumentHandle spDocument = sp.Document.IsNil ? methodDebugInfo.Document : sp.Document;
-        Document document = reader.GetDocument(spDocument);
-        string documentFilePath = reader.GetString(document.Name);
-        return (documentFilePath, sp.StartLine, sp.EndLine, sp.StartColumn, sp.EndColumn);
+        return (document, point.StartLine, point.EndLine, point.StartColumn, point.EndColumn);
     }
 
     /// <summary>
@@ -403,26 +392,13 @@ public partial class ModuleMetadataReader : IDisposable
     /// Unlike source-location lookup, this must retain hidden points so stepping does not
     /// incorrectly map a compiler-generated async continuation back to prior user code.
     /// </summary>
-    public bool IsCurrentSequencePointHidden(int methodToken, int ilOffset) => GetSequencePointForOffset(methodToken, ilOffset)?.IsHidden is true;
+    public bool IsCurrentSequencePointHidden(int methodToken, int ilOffset, int? version = null) => GetSequencePointForOffset(methodToken, ilOffset, version)?.IsHidden is true;
 
-    private SequencePoint? GetSequencePointForOffset(int methodToken, int ilOffset, bool skipHidden = false)
+    private Point? GetSequencePointForOffset(int methodToken, int ilOffset, int? version, bool skipHidden = false)
     {
-        MetadataReader? reader = _pdbMetadataReader;
-        if (reader is null)
-        {
-            return null;
-        }
-
-        MethodDefinitionHandle methodHandle = MetadataTokens.MethodDefinitionHandle(methodToken);
-        MethodDebugInformation methodDebugInfo = reader.GetMethodDebugInformation(methodHandle);
-        if (methodDebugInfo.SequencePointsBlob.IsNil)
-        {
-            return null;
-        }
-
         // PDB sequence points are ordered by offset; retain the last eligible point at or before the IP.
-        SequencePoint? currentPoint = null;
-        foreach (SequencePoint sequencePoint in methodDebugInfo.GetSequencePoints())
+        Point? currentPoint = null;
+        foreach (Point sequencePoint in Points(methodToken, version))
         {
             if (sequencePoint.Offset > ilOffset)
             {
@@ -442,44 +418,11 @@ public partial class ModuleMetadataReader : IDisposable
 
     internal ResolvedBreakpoint? ResolveBreakpointAtMethodEntry(int methodToken)
     {
-        MetadataReader? reader = _pdbMetadataReader;
-        if (reader is null)
+        if (Points(methodToken).FirstOrDefault(p => !p.IsHidden) is not { Document: { } document } point)
         {
             return null;
         }
-
-        MethodDefinitionHandle methodHandle = MetadataTokens.MethodDefinitionHandle(methodToken);
-        MethodDebugInformation methodDebugInfo = reader.GetMethodDebugInformation(methodHandle);
-        if (methodDebugInfo.SequencePointsBlob.IsNil)
-        {
-            return null;
-        }
-
-        SequencePoint? sequencePoint = null;
-        foreach (SequencePoint candidate in methodDebugInfo.GetSequencePoints())
-        {
-            if (candidate.IsHidden)
-            {
-                continue;
-            }
-
-            sequencePoint = candidate;
-            break;
-        }
-        if (sequencePoint is null)
-        {
-            return null;
-        }
-
-        DocumentHandle documentHandle = sequencePoint.Value.Document.IsNil ? methodDebugInfo.Document : sequencePoint.Value.Document;
-        if (documentHandle.IsNil)
-        {
-            return null;
-        }
-
-        Document document = reader.GetDocument(documentHandle);
-        return new ResolvedBreakpoint(methodToken, sequencePoint.Value.Offset, sequencePoint.Value.StartLine, sequencePoint.Value.EndLine,
-            sequencePoint.Value.StartColumn, sequencePoint.Value.EndColumn, reader.GetString(document.Name));
+        return new ResolvedBreakpoint(methodToken, point.Offset, point.StartLine, point.EndLine, point.StartColumn, point.EndColumn, document);
     }
 
     public ImmutableArray<string> GetImportedNamespaces(int methodToken)
@@ -491,13 +434,11 @@ public partial class ModuleMetadataReader : IDisposable
         }
 
         MethodDefinitionHandle methodHandle = (MethodDefinitionHandle)handle;
-        MethodDebugInformationHandle methodDebugHandle = methodHandle.ToDebugInformationHandle();
         ImmutableArray<string>.Builder namespaces = ImmutableArray.CreateBuilder<string>();
 
-        MetadataReader? reader = _pdbMetadataReader;
-        if (reader is not null)
+        if (DebugOf(methodToken) is { Reader: { } reader } debug)
         {
-            foreach (LocalScopeHandle scopeHandle in reader.GetLocalScopes(methodDebugHandle))
+            foreach (LocalScopeHandle scopeHandle in reader.GetLocalScopes(debug.Handle))
             {
                 LocalScope scope = reader.GetLocalScope(scopeHandle);
                 ImportScope importScope = reader.GetImportScope(scope.ImportScope);
@@ -526,17 +467,14 @@ public partial class ModuleMetadataReader : IDisposable
         return namespaces.ToImmutable();
     }
 
-    public string? GetLocalVariableName(int methodToken, int localIndex, int currentIlOffset)
+    public string? GetLocalVariableName(int methodToken, int localIndex, int currentIlOffset, int? version = null)
     {
-        MetadataReader? reader = _pdbMetadataReader;
-        if (reader is null)
+        if (DebugOf(methodToken, version) is not { Reader: { } reader } debug)
         {
             return null;
         }
 
-        MethodDefinitionHandle methodHandle = MetadataTokens.MethodDefinitionHandle(methodToken);
-
-        LocalScopeHandleCollection localScopes = reader.GetLocalScopes(methodHandle);
+        LocalScopeHandleCollection localScopes = reader.GetLocalScopes(debug.Handle);
         foreach (LocalScopeHandle scopeHandle in localScopes)
         {
             LocalScope scope = reader.GetLocalScope(scopeHandle);
@@ -598,28 +536,13 @@ public partial class ModuleMetadataReader : IDisposable
         return null;
     }
 
-    public (int ilStartOffset, int ilEndOffset)? GetStartAndEndSequencePointIlOffsetsForIlOffset(int methodToken, int ip)
+    public (int ilStartOffset, int ilEndOffset)? GetStartAndEndSequencePointIlOffsetsForIlOffset(int methodToken, int ip, int? version = null)
     {
-        MetadataReader? reader = _pdbMetadataReader;
-        if (reader is null)
-        {
-            return null;
-        }
-
-        MethodDefinitionHandle methodHandle = MetadataTokens.MethodDefinitionHandle(methodToken);
-        MethodDebugInformation debugInfo = reader.GetMethodDebugInformation(methodHandle);
-
-        if (debugInfo.SequencePointsBlob.IsNil)
-        {
-            return null;
-        }
-
         // Get valid, ordered sequence points
-        List<SequencePoint?> points = debugInfo
-            .GetSequencePoints()
+        List<Point?> points = Points(methodToken, version)
             .Where(sp => sp.StartLine != 0 && sp.IsHidden is false)
             .OrderBy(sp => sp.Offset)
-            .Cast<SequencePoint?>()
+            .Cast<Point?>()
             .ToList();
 
         if (points.Count is 0)
@@ -628,10 +551,10 @@ public partial class ModuleMetadataReader : IDisposable
         }
 
         // Find the last point at or before the IP
-        SequencePoint? startPoint = points.LastOrDefault(sp => sp!.Value.Offset <= ip); // e.g. ip = 0, it is possible that there is no matching sequence point
+        Point? startPoint = points.LastOrDefault(sp => sp!.Value.Offset <= ip); // e.g. ip = 0, it is possible that there is no matching sequence point
 
         // Find the first point after the IP
-        SequencePoint? endPoint = points.FirstOrDefault(sp => sp!.Value.Offset > ip);
+        Point? endPoint = points.FirstOrDefault(sp => sp!.Value.Offset > ip);
 
         int ilStartOffset = startPoint?.Offset ?? ip;
         int ilEndOffset = endPoint?.Offset ?? ilStartOffset;
@@ -643,28 +566,23 @@ public partial class ModuleMetadataReader : IDisposable
     public (int currentIlOffset, int? nextUserCodeIlOffset) GetFrameCurrentIlOffsetAndNextUserCodeIlOffset(ICorDebugILFrame ilFrame)
     {
         ICorDebugFunction method = ilFrame.Function;
-        ICorDebugCode code = method.ILCode;
         mdMethodDef methodToken = method.Token;
         (int pnOffset, CorDebugMappingResult pMappingResult) ipResult = ilFrame.IP;
         if (ipResult.pMappingResult is CorDebugMappingResult.MAPPING_UNMAPPED_ADDRESS or CorDebugMappingResult.MAPPING_NO_INFO)
         {
             throw new InvalidOperationException("IL Frame IP is unmapped or has no info");
         }
-        int? nextUserCodeIlOffset = GetNextUserCodeIlOffset(methodToken, ipResult.pnOffset);
+        int? nextUserCodeIlOffset = GetNextUserCodeIlOffset(methodToken, ipResult.pnOffset, VersionOf(ilFrame));
         return (ipResult.pnOffset, nextUserCodeIlOffset);
     }
 
-    public int? GetNextUserCodeIlOffset(int methodToken, int currentIlOffset)
-    {
-        MetadataReader? reader = _pdbMetadataReader;
-        if (reader is null)
-        {
-            return null;
-        }
+    /// <summary>The EnC version of the code a frame runs (1 for the build's), or null when the runtime will not say.</summary>
+    internal static int? VersionOf(ICorDebugFrame frame) =>
+        frame.TryGetCode(out ICorDebugCode code) is Cor.S_OK && code.TryGetVersionNumber(out uint version) is Cor.S_OK ? (int)version : null;
 
-        MethodDefinitionHandle methodHandle = MetadataTokens.MethodDefinitionHandle(methodToken);
-        MethodDebugInformation debugInfo = reader.GetMethodDebugInformation(methodHandle);
-        foreach (SequencePoint sequencePoint in debugInfo.GetSequencePoints())
+    public int? GetNextUserCodeIlOffset(int methodToken, int currentIlOffset, int? version = null)
+    {
+        foreach (Point sequencePoint in Points(methodToken, version))
         {
             if (sequencePoint.StartLine is 0 or SequencePoint.HiddenLine)
             {
@@ -690,20 +608,16 @@ public partial class ModuleMetadataReader : IDisposable
     /// </summary>
     /// <param name="methodToken">Method token</param>
     /// <returns>Async method stepping info if method has await blocks, null otherwise</returns>
-    public AsyncMethodSteppingInfo? GetAsyncMethodSteppingInfo(int methodToken)
+    public AsyncMethodSteppingInfo? GetAsyncMethodSteppingInfo(int methodToken, int? version = null)
     {
-        MetadataReader? reader = _pdbMetadataReader;
-        if (reader is null)
+        if (DebugOf(methodToken, version) is not { Reader: { } reader } debug)
         {
             return null;
         }
 
-        MethodDefinitionHandle methodHandle = MetadataTokens.MethodDefinitionHandle(methodToken);
-        EntityHandle entityHandle = MetadataTokens.EntityHandle(methodToken);
-
         AsyncMethodSteppingInfo result = new AsyncMethodSteppingInfo();
         bool foundOffset = false;
-        foreach (CustomDebugInformationHandle cdiHandle in reader.GetCustomDebugInformation(entityHandle))
+        foreach (CustomDebugInformationHandle cdiHandle in reader.GetCustomDebugInformation(debug.Handle))
         {
             CustomDebugInformation cdi = reader.GetCustomDebugInformation(cdiHandle);
 
@@ -732,21 +646,16 @@ public partial class ModuleMetadataReader : IDisposable
         }
 
         // Find last IL offset for user code in this method
-        MethodDebugInformation debugInfo = reader.GetMethodDebugInformation(methodHandle);
-
-        if (!debugInfo.SequencePointsBlob.IsNil)
+        foreach (Point sp in Points(methodToken, version))
         {
-            foreach (SequencePoint sp in debugInfo.GetSequencePoints())
+            // Skip hidden sequence points and invalid lines
+            if (sp.StartLine == 0 || sp.IsHidden || sp.Offset < 0)
             {
-                // Skip hidden sequence points and invalid lines
-                if (sp.StartLine == 0 || sp.IsHidden || sp.Offset < 0)
-                {
-                    continue;
-                }
-
-                result.LastUserCodeIlOffset = sp.Offset;
-                foundOffset = true;
+                continue;
             }
+
+            result.LastUserCodeIlOffset = sp.Offset;
+            foundOffset = true;
         }
 
         if (!foundOffset)
@@ -760,23 +669,18 @@ public partial class ModuleMetadataReader : IDisposable
     /// <summary>
     /// Get all source files referenced in the PDB
     /// </summary>
-    public IEnumerable<string> GetSourceFiles()
-    {
-        MetadataReader? reader = _pdbMetadataReader;
-        if (reader is null)
-        {
-            yield break;
-        }
-
-        foreach (DocumentHandle handle in reader.Documents)
-        {
-            Document document = reader.GetDocument(handle);
-            yield return reader.GetString(document.Name);
-        }
-    }
+    public IEnumerable<string> GetSourceFiles() => DocumentNames();
 
     public void Dispose()
     {
+        foreach (MetadataReaderProvider updated in _updatedMetadata)
+        {
+            updated.Dispose();
+        }
+        foreach (Generation generation in _generations)
+        {
+            generation.Dispose();
+        }
         _pdbProvider?.Dispose();
         _peReader?.Dispose();
         _metadataProvider?.Dispose();
