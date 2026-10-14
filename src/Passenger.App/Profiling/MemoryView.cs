@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Templates;
 using Avalonia.Input;
 using Avalonia.Layout;
@@ -11,10 +12,29 @@ using Passenger.Profiler;
 
 namespace Passenger.App.Profiling;
 
+/// <summary>A row of an object set's Shortest Paths to Roots: a step, how deep it sits, and whether the steps after it are
+/// listed under it.</summary>
+public sealed class RetentionRow(RetentionNode node, int depth, ObservableCollection<RetentionRow> list) : Observable
+{
+    private bool isExpanded;
+
+    public RetentionNode Node { get; } = node;
+
+    public int Depth { get; } = depth;
+
+    public ObservableCollection<RetentionRow> List { get; } = list;
+
+    public bool IsExpanded
+    {
+        get => isExpanded;
+        set => Set(ref isExpanded, value);
+    }
+}
+
 /// <summary>The profiler window's Memory page, as dotMemory's in Rider: the run's memory snapshots on the left; on the
-/// right the chosen one's types, a comparison of two (Compare with…), or an object set opened from either; above it the
-/// trail of what was opened, to go back along. What takes a while on a large heap (a comparison, an object set) is worked
-/// out off the UI thread.</summary>
+/// right the chosen one's types, a comparison of two (Compare with…), or an object set opened from either, with its
+/// objects, Shortest Paths to Roots and Key Retention Paths; above it the trail of what was opened, to go back along.
+/// What takes a while on a large heap (a comparison, an object set's paths) is worked out off the UI thread.</summary>
 public sealed class MemoryView : DockPanel
 {
     private const double NumberWidth = 104;
@@ -28,9 +48,16 @@ public sealed class MemoryView : DockPanel
     private readonly ListBox types;
     private readonly ListBox deltas;
     private readonly ListBox objects;
+    private readonly ObservableCollection<RetentionRow> pathRows = [];
+    private readonly ListBox paths;
+    private readonly ListBox keyPaths;
+    private readonly ToggleButton[] setTabs;
     private readonly DockPanel typePage;
     private readonly DockPanel deltaPage;
     private readonly DockPanel setPage;
+    private readonly DockPanel objectsPage;
+    private readonly DockPanel pathsPage;
+    private readonly DockPanel keyPathsPage;
     private readonly List<Page> trail = [];
     private int loading;
     private int typeSort;
@@ -65,8 +92,8 @@ public sealed class MemoryView : DockPanel
         summary.TextWrapping = TextWrapping.Wrap;
         StackPanel top = new() { [DockProperty] = Dock.Top, Children = { head, summary } };
 
-        Table typeTable = new(("Type", 0), ("Objects", NumberWidth), ("Bytes", NumberWidth + 16));
-        types = List<HeapType>(type => typeTable.Row(Cell(type.Name), Number($"{type.Count:N0}"), Number(Size(type.Bytes))));
+        Table typeTable = new(("Type", 0), ("Objects", NumberWidth), ("Bytes", NumberWidth), ("Retained bytes", NumberWidth + 16));
+        types = List<HeapType>(type => typeTable.Row(Cell(type.Name), Number($"{type.Count:N0}"), Number(Size(type.Bytes)), Number(Size(type.RetainedBytes))));
         OnEnter(types, OpenType);
         typePage = Framed(typeTable.Header(SortTypes), types);
 
@@ -77,9 +104,28 @@ public sealed class MemoryView : DockPanel
         OnEnter(deltas, () => OpenDelta(Kind.New));
         deltaPage = Framed(deltaTable.Header(SortDeltas), deltas);
 
-        Table objectTable = new(("Object", 0), ("Bytes", NumberWidth + 16));
-        objects = List<HeapObject>(item => objectTable.Row(ObjectCell(item), Number(Size(item.Bytes))));
-        setPage = Framed(objectTable.Header(null), objects);
+        Table objectTable = new(("Object", 0), ("Bytes", NumberWidth), ("Retained bytes", NumberWidth + 16));
+        objects = List<HeapObject>(item => objectTable.Row(ObjectCell(item), Number(Size(item.Bytes)), Number(Size(item.RetainedBytes))));
+        OnEnter(objects, OpenObject);
+        objectsPage = Framed(objectTable.Header(null), objects);
+
+        Table pathTable = new(("Path", 0), ("Objects", NumberWidth), ("Retained bytes", NumberWidth + 16));
+        paths = List<RetentionRow>(row => pathTable.Row(PathStep(row), Number($"{row.Node.Objects:N0}"), Number(Size(row.Node.RetainedBytes))));
+        paths.ItemsSource = pathRows;
+        paths.KeyDown += OnPathKey;
+        pathsPage = Framed(pathTable.Header(null), paths);
+
+        Table keyTable = new(("Key retention path", 0), ("Objects", NumberWidth), ("Retained bytes", NumberWidth + 16));
+        keyPaths = List<RetentionPath>(path => keyTable.Row(Cell(path.Text), Number($"{path.Objects:N0}"), Number(Size(path.RetainedBytes))));
+        keyPathsPage = Framed(keyTable.Header(null), keyPaths);
+
+        setTabs = [Tab("Objects", 0), Tab("Shortest Paths to Roots", 1), Tab("Key Retention Paths", 2)];
+        StackPanel tabs = new() { Orientation = Orientation.Horizontal, Spacing = 2, Margin = new Thickness(8, 0, 8, 4), [DockProperty] = Dock.Top };
+        foreach (ToggleButton tab in setTabs)
+        {
+            tabs.Children.Add(tab);
+        }
+        setPage = new DockPanel { Children = { tabs, new Panel { Children = { objectsPage, pathsPage, keyPathsPage } } } };
 
         waiting = Muted(string.Empty);
         waiting.HorizontalAlignment = HorizontalAlignment.Center;
@@ -101,12 +147,17 @@ public sealed class MemoryView : DockPanel
     /// <summary>The object set shown, or null.</summary>
     public ObjectSet? Set => Current is SetPage page ? page.Set : null;
 
-    /// <summary>The rows as listed now: the snapshot's types, the comparison's, the set's objects.</summary>
+    /// <summary>The rows as listed now: the snapshot's types, the comparison's, the set's objects, its paths' steps (as far
+    /// as they are open) and its key retention paths.</summary>
     public IReadOnlyList<HeapType> TypeRows => types.ItemsSource as IReadOnlyList<HeapType> ?? [];
 
     public IReadOnlyList<TypeDelta> DeltaRows => deltas.ItemsSource as IReadOnlyList<TypeDelta> ?? [];
 
     public IReadOnlyList<HeapObject> ObjectRows => objects.ItemsSource as IReadOnlyList<HeapObject> ?? [];
+
+    public IReadOnlyList<RetentionRow> PathRows => pathRows;
+
+    public IReadOnlyList<RetentionPath> KeyPathRows => keyPaths.ItemsSource as IReadOnlyList<RetentionPath> ?? [];
 
     /// <summary>The trail of what was opened, as its crumbs read: "Snapshot #2 › New objects of the type Item".</summary>
     public string Trail => string.Join(" › ", trail.Select(p => p.Crumb));
@@ -125,6 +176,9 @@ public sealed class MemoryView : DockPanel
     public ListBox DeltaList => deltas;
 
     public ListBox ObjectList => objects;
+
+    /// <summary>Which of the object set's views is shown: its objects (0), Shortest Paths to Roots (1), Key Retention Paths (2).</summary>
+    public int SetTab => Array.FindIndex(setTabs, t => t.IsChecked == true);
 
     /// <summary>A snapshot taken: listed and shown. The first of a run puts the earlier run's away, which it cannot be compared with.</summary>
     public void Add(MemorySnapshot snapshot)
@@ -234,9 +288,12 @@ public sealed class MemoryView : DockPanel
                 Action("Open Survived Objects", () => OpenDelta(Kind.Survived));
                 break;
             case SetPage set:
-                summary.Text = $"{set.Set.Count:N0} object{(set.Set.Count == 1 ? "" : "s")}, {Size(set.Set.Bytes)}, in {set.Set.Snapshot.Name}";
+                summary.Text = $"{set.Set.Count:N0} object{(set.Set.Count == 1 ? "" : "s")}, {Size(set.Set.Bytes)}, retained {Size(set.Set.RetainedBytes)}, in {set.Set.Snapshot.Name}";
                 objects.ItemsSource = set.Set.Objects;
                 objects.SelectedIndex = set.Set.Count > 0 ? 0 : -1;
+                ShowPaths(set.Paths);
+                keyPaths.ItemsSource = set.KeyPaths;
+                ShowTab(set.Tab);
                 break;
             default:
                 summary.Text = string.Empty;
@@ -268,7 +325,7 @@ public sealed class MemoryView : DockPanel
     {
         if (Current is SnapshotPage { Snapshot: var snapshot } && types.SelectedItem is HeapType type)
         {
-            _ = OpenSetAsync(() => snapshot.ObjectsOf(type));
+            _ = OpenSetAsync(() => snapshot.ObjectsOf(type), 0);
         }
     }
 
@@ -281,19 +338,115 @@ public sealed class MemoryView : DockPanel
                 Kind.New => () => comparison.NewObjectsOf(type),
                 Kind.Dead => () => comparison.DeadObjectsOf(type),
                 _ => () => comparison.SurvivedObjectsOf(type),
-            });
+            }, 0);
         }
     }
 
-    /// <summary>Opens an object set, found off the UI thread.</summary>
-    private async Task OpenSetAsync(Func<ObjectSet> find)
+    private void OpenObject()
+    {
+        if (Current is SetPage { Set: var set } && objects.SelectedItem is HeapObject item)
+        {
+            _ = OpenSetAsync(() => set.Snapshot.ObjectAt(item.Address)!, 1);
+        }
+    }
+
+    /// <summary>Opens an object set, found with its paths off the UI thread, on one of its views.</summary>
+    private async Task OpenSetAsync(Func<ObjectSet> find, int tab)
     {
         List<Page> from = [.. trail];
-        int load = Begin("Finding the objects…");
-        SetPage page = await BackgroundWork.Run(() => new SetPage(find()));
+        int load = Begin("Building the shortest paths to roots…");
+        SetPage page = await BackgroundWork.Run(() =>
+        {
+            ObjectSet set = find();
+            return new SetPage(set, set.ShortestPathsToRoots(), set.KeyRetentionPaths(), tab);
+        });
         if (load == loading)
         {
             Go([.. from, page]);
+        }
+    }
+
+    private void ShowTab(int tab)
+    {
+        for (int i = 0; i < setTabs.Length; i++)
+        {
+            setTabs[i].IsChecked = i == tab;
+        }
+        objectsPage.IsVisible = tab == 0;
+        pathsPage.IsVisible = tab == 1;
+        keyPathsPage.IsVisible = tab == 2;
+        if (Current is SetPage page && page.Tab != tab)
+        {
+            trail[^1] = page with { Tab = tab };
+        }
+    }
+
+    /// <summary>The paths' steps, the set's most retaining path open down to its root, as dotMemory opens it.</summary>
+    private void ShowPaths(RetentionNode top)
+    {
+        pathRows.Clear();
+        RetentionRow row = new(top, 0, pathRows);
+        pathRows.Add(row);
+        while (row.Node.Children.Count > 0)
+        {
+            Expand(row);
+            row = pathRows[pathRows.IndexOf(row) + 1];
+        }
+        paths.SelectedItem = row;
+    }
+
+    /// <summary>Opens or closes a step of the paths.</summary>
+    public void Toggle(RetentionRow row)
+    {
+        if (row.IsExpanded)
+        {
+            Collapse(row);
+        }
+        else
+        {
+            Expand(row);
+        }
+    }
+
+    private static void Expand(RetentionRow row)
+    {
+        if (row.IsExpanded || row.Node.Children.Count == 0)
+        {
+            return;
+        }
+        row.IsExpanded = true;
+        int at = row.List.IndexOf(row) + 1;
+        foreach (RetentionNode child in row.Node.Children)
+        {
+            row.List.Insert(at++, new RetentionRow(child, row.Depth + 1, row.List));
+        }
+    }
+
+    private static void Collapse(RetentionRow row)
+    {
+        int at = row.List.IndexOf(row) + 1;
+        while (at < row.List.Count && row.List[at].Depth > row.Depth)
+        {
+            row.List.RemoveAt(at);
+        }
+        row.IsExpanded = false;
+    }
+
+    private void OnPathKey(object? sender, KeyEventArgs e)
+    {
+        if (paths.SelectedItem is not RetentionRow row)
+        {
+            return;
+        }
+        if (e.Key == Key.Right && !row.IsExpanded)
+        {
+            Expand(row);
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Left && row.IsExpanded)
+        {
+            Collapse(row);
+            e.Handled = true;
         }
     }
 
@@ -324,7 +477,8 @@ public sealed class MemoryView : DockPanel
         {
             0 => snapshot.Types.OrderBy(t => t.Name, StringComparer.Ordinal),
             1 => snapshot.Types.OrderByDescending(t => t.Count),
-            _ => snapshot.Types.OrderByDescending(t => t.Bytes),
+            2 => snapshot.Types.OrderByDescending(t => t.Bytes),
+            _ => snapshot.Types.OrderByDescending(t => t.RetainedBytes),
         };
         types.ItemsSource = typeSort < 0 ? [.. sorted.Reverse()] : sorted.ToList();
     }
@@ -348,6 +502,13 @@ public sealed class MemoryView : DockPanel
         };
         IEnumerable<TypeDelta> sorted = column == 0 ? comparison.Types.OrderBy(t => t.Name, StringComparer.Ordinal) : comparison.Types.OrderByDescending(key);
         deltas.ItemsSource = deltaSort < 0 ? [.. sorted.Reverse()] : sorted.ToList();
+    }
+
+    private ToggleButton Tab(string label, int index)
+    {
+        ToggleButton tab = new() { Content = label, Classes = { "panelTab" } };
+        tab.Click += (_, _) => ShowTab(index);
+        return tab;
     }
 
     private Button Action(string label, Action run)
@@ -378,6 +539,36 @@ public sealed class MemoryView : DockPanel
         Border band = new() { [DockProperty] = Dock.Top, BorderThickness = new Thickness(0, 0, 0, 1), Child = header, Padding = new Thickness(0, 0, 0, 3) };
         band.Bind(Border.BorderBrushProperty, band.GetResourceObservable("Passenger.Divider"));
         return new DockPanel { Children = { band, list } };
+    }
+
+    private Control PathStep(RetentionRow row)
+    {
+        PathIcon chevron = new() { Classes = { "chevron" }, IsVisible = row.Node.Children.Count > 0, RenderTransformOrigin = RelativePoint.Center };
+        chevron.Bind(PathIcon.DataProperty, chevron.GetResourceObservable("Icon.ChevronRight"));
+        chevron.RenderTransform = new RotateTransform(row.IsExpanded ? 90 : 0);
+        row.PropertyChanged += (_, _) => chevron.RenderTransform = new RotateTransform(row.IsExpanded ? 90 : 0);
+        Border toggle = new() { Width = 18, Height = 22, Background = Brushes.Transparent, Child = chevron };
+        toggle.PointerPressed += (_, e) =>
+        {
+            Toggle(row);
+            e.Handled = true;
+        };
+        TextBlock text = Cell(row.Node.Text);
+        if (row.Node.Root is { } root)
+        {
+            // A root as dotMemory writes one: its kind, then what names it.
+            text.Text = null;
+            text.Inlines = new Avalonia.Controls.Documents.InlineCollection { new Avalonia.Controls.Documents.Run(root.KindName) { FontWeight = FontWeight.SemiBold } };
+            if (root.Name.Length > 0)
+            {
+                text.Inlines.Add(new Avalonia.Controls.Documents.Run($": {root.Name}"));
+            }
+        }
+        else if (row.Depth == 0)
+        {
+            text.FontWeight = FontWeight.SemiBold;
+        }
+        return new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(row.Depth * 14, 0, 0, 0), Children = { toggle, text } };
     }
 
     private static Control SnapshotRow(MemorySnapshot snapshot) => new StackPanel
@@ -487,5 +678,5 @@ public sealed class MemoryView : DockPanel
 
     private sealed record ComparisonPage(SnapshotComparison Comparison) : Page(Comparison.Title);
 
-    private sealed record SetPage(ObjectSet Set) : Page(Set.Title);
+    private sealed record SetPage(ObjectSet Set, RetentionNode Paths, IReadOnlyList<RetentionPath> KeyPaths, int Tab) : Page(Set.Title);
 }

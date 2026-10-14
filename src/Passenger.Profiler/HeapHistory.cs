@@ -69,7 +69,7 @@ internal sealed class HeapHistory(int processId) : IAsyncDisposable
                         {
                             continue;
                         }
-                        string phases = $"dump {dumped.TotalSeconds:0.0} s, reading {(graph.Walked + graph.Analysed).TotalSeconds:0.0} s";
+                        string phases = $"dump {dumped.TotalSeconds:0.0} s, reading {graph.Walked.TotalSeconds:0.0} s, retention {graph.Analysed.TotalSeconds:0.0} s";
                         return Place(graph, heard ? written : null, clock.Elapsed, phases);
                     }
                     finally

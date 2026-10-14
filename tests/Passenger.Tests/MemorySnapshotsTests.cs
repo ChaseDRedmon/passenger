@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Headless.XUnit;
 using Avalonia.Interactivity;
 using Avalonia.VisualTree;
@@ -10,8 +11,9 @@ using Passenger.Profiler;
 namespace Passenger.Tests;
 
 /// <summary>dotMemory's memory snapshots, from the profiler window: two snapshots of a run compared object by object (new,
-/// dead and survived, however the GC moved what lived on), and a heap of a million objects read, compared and opened while
-/// the window goes on answering.</summary>
+/// dead and survived, however the GC moved what lived on), a type's objects opened to the shortest paths that keep them
+/// from the GC roots with each root's kind and what they retain, and a heap of a million objects read, compared and opened
+/// while the window goes on answering.</summary>
 public sealed class MemorySnapshotsTests : IDisposable
 {
     private readonly string folder = TestFolders.Create("memory-");
@@ -142,6 +144,102 @@ public sealed class MemorySnapshotsTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void A_types_objects_open_to_their_shortest_paths_from_the_roots_with_each_roots_kind_and_what_they_retain()
+    {
+        // A thousand entries a static field keeps through its list, and one only a GC handle does.
+        MainWindow window = Profiled("Cacher", """
+            using System.Runtime.CompilerServices;
+            using System.Runtime.InteropServices;
+            Cache.Fill(1000);
+            GCHandle handle = Cache.Hold();
+            Console.WriteLine("ready");
+            Console.ReadLine();
+            handle.Free();
+            static class Cache
+            {
+                public static readonly List<Entry> Entries = [];
+
+                [MethodImpl(MethodImplOptions.NoInlining)]
+                public static void Fill(int count)
+                {
+                    for (int i = 0; i < count; i++)
+                    {
+                        Entries.Add(new Entry($"entry {i}", new byte[64]));
+                    }
+                }
+
+                [MethodImpl(MethodImplOptions.NoInlining)]
+                public static GCHandle Hold() => GCHandle.Alloc(new Entry("held", new byte[64]));
+            }
+            sealed class Entry(string name, byte[] data)
+            {
+                public string Name { get; } = name;
+                public byte[] Data { get; } = data;
+            }
+            """);
+        MemoryView memory = window.ProfilerView.MemoryPage;
+        Snapshot(window, 1);
+        HeapType entries = Assert.Single(memory.TypeRows, t => t.Name == "Entry");
+        Assert.Equal(1001, entries.Count);
+        Assert.True(entries.RetainedBytes > entries.Bytes, "The entries' retained bytes leave out the names and data only they hold");
+
+        // The type opened, as a double-click or Enter opens it.
+        Focus(memory.TypeList, entries);
+        Ui.Press(window, "enter");
+        Ui.WaitFor(() => memory.Set is not null, "the entries");
+        ObjectSet set = memory.Set!;
+        Assert.Equal(("Entry", 1001), (set.Title, set.Count));
+        Assert.Equal(set.RetainedBytes, memory.ObjectRows.Sum(o => o.RetainedBytes));
+        Assert.All(memory.ObjectRows, o => Assert.True(o.RetainedBytes >= o.Bytes + 64, $"An entry retains {o.RetainedBytes} bytes, less than itself and its data"));
+        ulong held = memory.ObjectRows.Single(o => set.Snapshot.ObjectAt(o.Address)!.ShortestPathsToRoots().Children[0].Root?.Kind == RootKind.Handle).Address;
+
+        // Shortest Paths to Roots: the static field's, open from the entries down to it through what holds them.
+        Click(memory, "Shortest Paths to Roots");
+        Assert.Equal(1, memory.SetTab);
+        string[] shown = [.. memory.PathRows.Select(r => $"{new string(' ', r.Depth)}{r.Node.Text} {r.Node.Objects}")];
+        Assert.Equal(
+            [
+                "Entry 1001",
+                " Entry[] elements 1000",
+                "  System.Collections.Generic.List<Entry>._items 1000",
+                "   Static reference: Cache.Entries 1000",
+                " Handle 1",
+            ],
+            shown);
+        RetentionRow staticRoot = memory.PathRows[3];
+        Assert.Equal(RootKind.StaticReference, staticRoot.Node.Root?.Kind);
+        long cached = memory.ObjectRows.Where(o => o.Address != held).Sum(o => o.RetainedBytes);
+        Assert.Equal(cached, staticRoot.Node.RetainedBytes);
+        Assert.Equal(cached, memory.PathRows[1].Node.RetainedBytes);
+        Assert.Equal(cached, memory.PathRows[2].Node.RetainedBytes);
+        Assert.Equal(RootKind.Handle, memory.PathRows[4].Node.Root?.Kind);
+
+        // Key Retention Paths: each from its root, the most retaining first.
+        Click(memory, "Key Retention Paths");
+        Assert.Equal(
+            [
+                "Static reference: Cache.Entries → System.Collections.Generic.List<Entry>._items → Entry[] elements → Entry",
+                "Handle → Entry",
+            ],
+            memory.KeyPathRows.Select(p => p.Text));
+        Assert.Equal((1000, cached), (memory.KeyPathRows[0].Objects, memory.KeyPathRows[0].RetainedBytes));
+
+        // One entry opened alone: its own path, the element of the array it is.
+        Click(memory, "Objects");
+        HeapObject one = memory.ObjectRows.First(o => o.Address != held);
+        Focus(memory.ObjectList, one);
+        Ui.Press(window, "enter");
+        Ui.WaitFor(() => memory.Set?.Count == 1, "the entry alone");
+        Assert.Equal(1, memory.SetTab);
+        Assert.Equal($"Entry at 0x{one.Address:x}", memory.Set!.Title);
+        Assert.Matches(@"^Entry\[\] at \[\d+\]$", memory.PathRows[1].Node.Text);
+        Assert.Equal("Static reference: Cache.Entries", memory.PathRows[^1].Node.Text);
+        Assert.Equal(one.RetainedBytes, memory.Set.RetainedBytes);
+        window.Profiling!.Kill();
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void A_heap_of_a_million_objects_is_read_compared_and_opened_while_the_window_goes_on_answering()
     {
         MainWindow window = Profiled("Million", """
@@ -191,15 +289,16 @@ public sealed class MemorySnapshotsTests : IDisposable
         clock.Restart();
         memory.Choose(nodes);
         Click(memory, "Open New Objects");
-        Responsive(() => memory.Set is not null, "the new nodes", s => stall = s > stall ? s : stall);
+        Responsive(() => memory.Set is not null, "the new nodes and their paths", s => stall = s > stall ? s : stall);
         TimeSpan opened = clock.Elapsed;
         Assert.Equal(200_000, memory.ObjectRows.Count);
+        Assert.Equal("Static reference: Heap.Nodes", memory.PathRows[^1].Node.Text);
         Assert.True(comparing.IsCompletedSuccessfully);
 
         TestContext.Current.TestOutputHelper?.WriteLine(
             $"Snapshot #1, {first.Objects:N0} objects: {firstTook.TotalSeconds:0.0} s ({first.Phases}); "
             + $"snapshot #2, {second.Objects:N0} objects: {secondTook.TotalSeconds:0.0} s ({second.Phases}); "
-            + $"compared in {compared.TotalMilliseconds:N0} ms; 200,000 new nodes opened in {opened.TotalMilliseconds:N0} ms; "
+            + $"compared in {compared.TotalMilliseconds:N0} ms; 200,000 new nodes and their paths opened in {opened.TotalMilliseconds:N0} ms; "
             + $"the UI thread held at most {stall.TotalMilliseconds:N0} ms at a time");
         Assert.True(stall < TimeSpan.FromMilliseconds(500), $"The window stopped answering for {stall.TotalMilliseconds:N0} ms while a million objects were read and opened");
         window.Profiling.Kill();
@@ -259,9 +358,19 @@ public sealed class MemorySnapshotsTests : IDisposable
 
     private static void Click(Avalonia.Visual within, string label)
     {
-        Button found = within.GetVisualDescendants().OfType<Button>().First(b => b.Content as string == label);
+        Control found = within.GetVisualDescendants().OfType<Control>()
+            .First(c => c is Button { Content: string text } && text == label || c is ToggleButton { Content: string tab } && tab == label);
         found.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Ui.Settle();
+    }
+
+    /// <summary>A row chosen and given the keys, as a click on it gives them.</summary>
+    private static void Focus(ListBox list, object row)
+    {
+        list.SelectedItem = row;
+        list.ScrollIntoView(row);
+        Ui.Settle();
+        Assert.True(list.ContainerFromItem(row)?.Focus() == true, "The chosen row could not take the keys");
     }
 
     private static string Console(MainWindow window) => window.BottomPanel.Run.Document.Snapshot.ToString();

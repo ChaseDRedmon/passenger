@@ -1,14 +1,14 @@
 namespace Passenger.Profiler;
 
-/// <summary>A type on the heap: how many objects of it live, and the bytes they take themselves (shallow, as dotMemory's
-/// first view has them).</summary>
-public sealed record HeapType(string Name, int Count, long Bytes)
+/// <summary>A type on the heap: how many objects of it live, the bytes they take themselves (shallow), and the bytes they
+/// keep alive together (retained), as dotMemory's type list has them.</summary>
+public sealed record HeapType(string Name, int Count, long Bytes, long RetainedBytes)
 {
     internal int Index { get; init; }
 }
 
-/// <summary>What a program's heap held at a moment, as dotMemory's snapshot: every object a GC root keeps alive, by type.
-/// The runtime writes a dump of the heap through its
+/// <summary>What a program's heap held at a moment, as dotMemory's snapshot: every object a GC root keeps alive, by type,
+/// with what each retains and the shortest path that keeps it. The runtime writes a dump of the heap through its
 /// diagnostic port (createdump, so no debugger attaches) and ClrMD reads it; the dump, as large as the heap, is deleted
 /// once read. Snapshots of one run can be compared, object by object.</summary>
 public sealed class MemorySnapshot
@@ -36,7 +36,7 @@ public sealed class MemorySnapshot
         {
             if (counts[t] > 0)
             {
-                types.Add(new HeapType(graph.Types[t].Name, counts[t], bytes[t]) { Index = t });
+                types.Add(new HeapType(graph.Types[t].Name, counts[t], bytes[t], graph.TypeRetained[t]) { Index = t });
             }
         }
         Types = [.. types.OrderByDescending(t => t.Bytes).ThenBy(t => t.Name, StringComparer.Ordinal)];
@@ -63,7 +63,7 @@ public sealed class MemorySnapshot
     /// <summary>How long the dump and its reading took, the program held for the dump's part.</summary>
     public TimeSpan Took { get; }
 
-    /// <summary>What the time went on: the dump, and its reading.</summary>
+    /// <summary>What the time went on: the dump, its reading, the retention analysis.</summary>
     public string Phases { get; }
 
     internal HeapGraph Graph { get; }
@@ -84,6 +84,10 @@ public sealed class MemorySnapshot
         }
         return new ObjectSet(this, type.Name, [.. found]);
     }
+
+    /// <summary>The object at an address, alone, as an object set; null when the snapshot has none there.</summary>
+    public ObjectSet? ObjectAt(ulong address) =>
+        Graph.IndexOf(address) is var at and >= 0 ? new ObjectSet(this, $"{Graph.Types[Graph.Type[at]].Name} at 0x{address:x}", [at]) : null;
 
     /// <summary>Why this snapshot and another cannot be compared object by object, or null when they can.</summary>
     public string? WhyNotComparable(MemorySnapshot other)
