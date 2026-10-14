@@ -26,7 +26,7 @@ public sealed class MembersMoveDialog : RefactoringDialog
         this.up = up;
         this.hierarchy = hierarchy;
         this.make = make;
-        BaseBox = new ComboBox { Classes = { "compact" }, HorizontalAlignment = HorizontalAlignment.Stretch };
+        BaseBox = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
         foreach (Member type in hierarchy.Bases)
         {
             BaseBox.Items.Add(type.Text);
@@ -57,7 +57,7 @@ public sealed class MembersMoveDialog : RefactoringDialog
         header.Children.Add(Muted("Members", 0));
         header.Children.Add(Muted("Make abstract", 1));
         Border headerFrame = new() { Child = header, BorderThickness = new Thickness(0, 0, 0, 1) };
-        headerFrame.Bind(Border.BorderBrushProperty, headerFrame.GetResourceObservable("Passenger.Divider"));
+        headerFrame.Bind(Border.BorderBrushProperty, headerFrame.GetResourceObservable("Passenger.Separator"));
         DockPanel.SetDock(headerFrame, Dock.Top);
         StackPanel rows = new() { Margin = new Thickness(0, 4) };
         foreach (Member member in hierarchy.Members)

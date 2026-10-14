@@ -56,7 +56,7 @@ public sealed class ChangeSignatureDialog : RefactoringDialog
             header.Children.Add(title);
         }
         Border headerFrame = new() { Child = header, BorderThickness = new Thickness(0, 0, 0, 1) };
-        headerFrame.Bind(Border.BorderBrushProperty, headerFrame.GetResourceObservable("Passenger.Divider"));
+        headerFrame.Bind(Border.BorderBrushProperty, headerFrame.GetResourceObservable("Passenger.Separator"));
         Border tableFrame = new()
         {
             Classes = { "framed" },

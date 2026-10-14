@@ -112,6 +112,8 @@ public sealed class NewProjectDialog : Window
         list = new ListBox
         {
             Classes = { "tree" },
+            // The chosen family's band as wide as the search field above, its name where the field's text starts.
+            Padding = new Thickness(8, 0),
             ItemTemplate = new FuncDataTemplate<TemplateFamily?>((row, _) => row is null ? new Panel() : Item(row), supportsRecycling: false),
         };
         list.SelectionChanged += (_, _) =>
@@ -1131,7 +1133,7 @@ public sealed class NewProjectDialog : Window
     /// <summary>A family's row: its name, its Types on hover, and Rider's word for one none of whose Types is installed.</summary>
     private static Control Item(TemplateFamily row)
     {
-        Border item = new() { Padding = new Thickness(10, 6) };
+        Border item = new() { Padding = new Thickness(5, 6) };
         string types = row.Types.Count > 1 ? $": {string.Join(", ", row.Types.Select(t => t.TypeName))}" : row.Name == row.Types[0].Name ? string.Empty : $": {row.Types[0].Name}";
         ToolTip.SetTip(item, row.NotInstalled ? $"{row.Name}{types}, from {row.Types[0].Pack!.Id}, which is not installed" : $"{row.Name}{types}");
         item.Child = Named(row.Name, row.NotInstalled);

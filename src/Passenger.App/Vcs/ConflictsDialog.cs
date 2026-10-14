@@ -62,7 +62,7 @@ public sealed class ConflictsDialog : Window
             Children = { Column("Name", 0), yoursColumn, theirsColumn },
         };
         Border underHeader = new() { Child = header, BorderThickness = new Thickness(0, 0, 0, 1), [DockPanel.DockProperty] = Avalonia.Controls.Dock.Top };
-        underHeader.Bind(Border.BorderBrushProperty, underHeader.GetResourceObservable("Passenger.Divider"));
+        underHeader.Bind(Border.BorderBrushProperty, underHeader.GetResourceObservable("Passenger.Separator"));
         list = new ListBox
         {
             Classes = { "tree" },

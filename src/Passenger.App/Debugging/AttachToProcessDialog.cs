@@ -60,7 +60,7 @@ public sealed class AttachToProcessDialog : Window
             header.Children.Add(new TextBlock { [Grid.ColumnProperty] = column, Text = titles[column], Classes = { "muted" }, Margin = new Thickness(4, 5, 10, 5) });
         }
         Border headerFrame = new() { [DockPanel.DockProperty] = Dock.Top, Child = header, BorderThickness = new Thickness(0, 0, 0, 1) };
-        headerFrame.Bind(Border.BorderBrushProperty, headerFrame.GetResourceObservable("Passenger.Divider"));
+        headerFrame.Bind(Border.BorderBrushProperty, headerFrame.GetResourceObservable("Passenger.Separator"));
 
         rows = new ListBox
         {
