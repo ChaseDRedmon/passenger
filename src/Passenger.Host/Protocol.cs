@@ -38,6 +38,11 @@ public static class HostMethods
     /// up on, so the host's one build session is free for the next folder's; answered once it is asked, the request
     /// itself answering that it was cancelled once it has stopped.</summary>
     public const string Cancel = "cancel";
+
+    /// <summary><see cref="InspectParams"/> to <see cref="ProjectInsight"/>: one project evaluated for the code help in its
+    /// MSBuild files (its properties with where each was set, its items, targets and imports, its evaluation's errors and
+    /// warnings), the open files' unsaved text taken in place of what is on disk; cached while what it read holds.</summary>
+    public const string Inspect = "inspect";
 }
 
 public static class HostJson
@@ -125,3 +130,83 @@ public sealed record BuildDiagnostic(bool Error, string Message, string Project)
 /// <summary>A file's last write (UTC ticks) and length, 0 and -1 for one not there; for a folder, the hash of its names and
 /// how many (<see cref="Stamps.Folder"/>).</summary>
 public sealed record Stamp(string Path, long Ticks, long Length, bool Folder = false);
+
+/// <summary>A project to evaluate for code help, with the global properties (the solution's) and the text of the open
+/// MSBuild files that differ from what is on disk, by path, which its evaluation reads instead.</summary>
+public sealed record InspectParams(string Project, IReadOnlyDictionary<string, string> Properties, IReadOnlyDictionary<string, string> Texts);
+
+/// <summary>What a project's evaluation knows for the code help in its files. A project that did not evaluate (an unknown
+/// SDK, a malformed condition, XML that does not read) has <see cref="Evaluated"/> false and its diagnostics alone. Places
+/// name their file by its index in <see cref="Files"/>; what lies in the SDK and the package folders (<see cref="Installed"/>)
+/// is named only where code help goes into it (a target's or a property's definition, an import), never listed.</summary>
+public sealed record ProjectInsight
+{
+    public required string Project { get; init; }
+
+    public bool Evaluated { get; init; }
+
+    /// <summary>The target framework evaluated, for a multi-targeted project (its first); null for one with one.</summary>
+    public string? Framework { get; init; }
+
+    public IReadOnlyList<string> Files { get; init; } = [];
+
+    /// <summary>The evaluation's errors and warnings in the project's own files (an unknown SDK, a malformed condition, an
+    /// import not found), as MSBuild words them.</summary>
+    public IReadOnlyList<InsightDiagnostic> Diagnostics { get; init; } = [];
+
+    public IReadOnlyList<InsightProperty> Properties { get; init; } = [];
+
+    public IReadOnlyList<InsightItemType> ItemTypes { get; init; } = [];
+
+    /// <summary>The items each element of the project's own files made, by the element's place.</summary>
+    public IReadOnlyList<InsightItem> Items { get; init; } = [];
+
+    public IReadOnlyList<InsightTarget> Targets { get; init; } = [];
+
+    /// <summary>What each import of the project's own files brought in, an SDK's implicit ones included.</summary>
+    public IReadOnlyList<InsightImport> Imports { get; init; } = [];
+
+    /// <summary>The target frameworks the SDK knows (SupportedTargetFramework's aliases), newest first, with their names.</summary>
+    public IReadOnlyList<InsightFramework> Frameworks { get; init; } = [];
+
+    /// <summary>The folders whose files only change with their versions (the .NET install, the package folders), which an
+    /// editor opens read-only.</summary>
+    public IReadOnlyList<string> Installed { get; init; } = [];
+
+    /// <summary>The project file and its imports outside <see cref="Installed"/>, as they were when evaluated.</summary>
+    public IReadOnlyList<Stamp> Inputs { get; init; } = [];
+
+    public double Seconds { get; init; }
+}
+
+/// <summary>A place in a file of <see cref="ProjectInsight.Files"/>, its line and column from 1 as MSBuild counts them.</summary>
+public sealed record InsightPlace(int File, int Line, int Column);
+
+public sealed record InsightDiagnostic(bool Error, string? Code, string Message, string File, int Line, int Column);
+
+public enum PropertyOrigin
+{
+    Set,
+    Global,
+    Environment,
+    Reserved,
+}
+
+/// <summary>A property's evaluated value and the places that set it, the one that last did first.</summary>
+public sealed record InsightProperty(string Name, string Value, PropertyOrigin Origin, IReadOnlyList<InsightPlace> Set);
+
+/// <summary>An item type: how many items it has, the first of them, the metadata they carry and where the project's own
+/// files add to it.</summary>
+public sealed record InsightItemType(string Name, int Count, IReadOnlyList<string> Includes, IReadOnlyList<string> Metadata, IReadOnlyList<InsightPlace> Defined);
+
+/// <summary>What one item element made: its items' includes (the first of them) and how many, and the first's metadata.</summary>
+public sealed record InsightItem(string Type, InsightPlace Element, int Count, IReadOnlyList<string> Includes, IReadOnlyDictionary<string, string> Metadata);
+
+/// <summary>A target and every place it is defined, the one in force first.</summary>
+public sealed record InsightTarget(string Name, IReadOnlyList<InsightPlace> Defined);
+
+/// <summary>An import element's place and the file it brought in: an SDK's implicit import names the SDK, at the place of
+/// the attribute or element that names it.</summary>
+public sealed record InsightImport(InsightPlace Element, string Imported, string? Sdk);
+
+public sealed record InsightFramework(string Alias, string Name);

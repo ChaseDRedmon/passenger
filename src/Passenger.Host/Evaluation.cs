@@ -14,7 +14,7 @@ namespace Passenger.Host;
 internal static class Evaluation
 {
     /// <summary>As Roslyn's build host loads a project: a missing or broken import is no failure, an unknown SDK is.</summary>
-    private const ProjectLoadSettings Settings = ProjectLoadSettings.IgnoreMissingImports | ProjectLoadSettings.IgnoreEmptyImports
+    internal const ProjectLoadSettings Settings = ProjectLoadSettings.IgnoreMissingImports | ProjectLoadSettings.IgnoreEmptyImports
         | ProjectLoadSettings.IgnoreInvalidImports | ProjectLoadSettings.RejectCircularImports
         | ProjectLoadSettings.DoNotEvaluateElementsWithFalseCondition | ProjectLoadSettings.FailOnUnresolvedSdk;
 

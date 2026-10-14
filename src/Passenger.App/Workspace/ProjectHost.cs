@@ -149,6 +149,13 @@ public sealed class ProjectHost : IAsyncDisposable
             partial => built(partial.Deserialize<BuiltProject>(HostJson.Options)!), cancel)).Deserialize<BuildDone>(HostJson.Options)
             ?? throw new ProjectHostFailed("the project host gave no answer for its builds");
 
+    /// <summary>Evaluates one project for the code help in its MSBuild files, the open files' unsaved texts read in place of
+    /// the disk's; the host answers again from its cache while what the last answer read holds.</summary>
+    public async Task<ProjectInsight> InspectAsync(string project, IReadOnlyDictionary<string, string> properties, IReadOnlyDictionary<string, string> texts,
+        CancellationToken cancel = default) =>
+        (await AskAsync(HostMethods.Inspect, new InspectParams(project, properties, texts), null, cancel)).Deserialize<ProjectInsight>(HostJson.Options)
+            ?? throw new ProjectHostFailed("the project host gave no answer for the project's evaluation");
+
     private async Task<JsonElement> AskAsync(string method, object parameters, Action<JsonElement>? partial, CancellationToken cancel)
     {
         TaskCompletionSource<JsonElement> answered = new(TaskCreationOptions.RunContinuationsAsynchronously);

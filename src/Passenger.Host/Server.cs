@@ -55,6 +55,7 @@ public sealed class Server(TextWriter protocol, HostReady ready)
                 HostMethods.Evaluate => Evaluate(request.Id, Read<EvaluateParams>(request), cancel.Token),
                 HostMethods.Build => await Build(request.Id, Read<BuildParams>(request), cancel.Token),
                 HostMethods.Cancel => Cancel(Read<CancelParams>(request)),
+                HostMethods.Inspect => Inspection.Run(Read<InspectParams>(request), cancel.Token),
                 _ => throw new InvalidOperationException($"the host has no method {request.Method}"),
             };
             Write(new HostReply { Id = request.Id, Result = JsonSerializer.SerializeToElement(result, result.GetType(), HostJson.Options) });
