@@ -234,6 +234,14 @@ public partial class ManagedDebugger
             return;
         }
 
+        if (breakpoint is ICorDebugFunctionBreakpoint afterCall && WatchedCallOf(afterCall) is { } watched)
+        {
+            // Right after a call a step over runs: what it returned is read, and the step goes on.
+            await TakeWatchedReturn(breakpointCorDebugManagedCallbackEventArgs.Thread, watched);
+            Continue(clearVariables: true);
+            return;
+        }
+
         if (_stepper is { IsActive: false })
         {
             // The step is complete and its StepComplete queued behind this, at the same place: the step's stop stands for both.
@@ -414,7 +422,7 @@ public partial class ManagedDebugger
         }
     }
 
-    private void HandleStepComplete(object? sender, StepCompleteCorDebugManagedCallbackEventArgs stepCompleteEventArgs)
+    private async Task HandleStepComplete(object? sender, StepCompleteCorDebugManagedCallbackEventArgs stepCompleteEventArgs)
     {
         ICorDebugThread corThread = stepCompleteEventArgs.Thread;
         ICorDebugILFrame ilFrame = (ICorDebugILFrame)corThread.ActiveFrame;
@@ -423,6 +431,14 @@ public partial class ManagedDebugger
         ICorDebugStepper stepper = _stepper ?? throw new InvalidOperationException("No stepper found for step complete");
         stepper.Deactivate();
         _stepper = null;
+        EndReturnWatch();
+        if (stepCompleteEventArgs.Reason is CorDebugStepReason.STEP_RETURN)
+        {
+            // Back in a caller, right after the call that returned; reading a value type's runs the program, so the frame
+            // is read again after.
+            await TakeValueReturnedTo(corThread, ilFrame);
+            ilFrame = (ICorDebugILFrame)corThread.ActiveFrame;
+        }
         ModuleInfo? module = FindModule(ilFrame.Function.Module);
         if (module is not null && module.MetadataReader.IsCurrentSequencePointHidden(ilFrame.Function.Token, ilFrame.IP.pnOffset))
         {

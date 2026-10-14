@@ -96,7 +96,7 @@ internal sealed class CilExpressionCompiler(ManagedDebugger debugger)
     private static readonly PortableExecutableReference _intrinsicMethodsReference = MetadataReference.CreateFromImage(CreateIntrinsicMethodsAssembly());
 
     private const int CacheCapacity = 256;
-    private readonly record struct CompileCacheKey(int ModuleVersion, CompileContextKind ContextKind, CORDB_ADDRESS Module, int Token, int IlOffset, string Expression, bool HasException);
+    private readonly record struct CompileCacheKey(int ModuleVersion, CompileContextKind ContextKind, CORDB_ADDRESS Module, int Token, int IlOffset, string Expression, string? Exception, string ReturnValues);
     private enum CompileContextKind { Method, Type }
     private readonly Dictionary<CompileCacheKey, CacheEntry> _compileCache = new();
     private readonly LinkedList<CompileCacheKey> _compileLru = new();
@@ -117,9 +117,12 @@ internal sealed class CilExpressionCompiler(ManagedDebugger debugger)
         }
         ICorDebugILFrame frame = debugger.GetIlFrameForThreadIdAndStackDepth(context.ThreadId, context.StackDepth);
         ICorDebugModule preferredModule = context.RootValue is not null ? context.RootValue.ExactType.Class.Module : frame.Function.Module;
-        bool hasException = debugger.GetCurrentException(context.ThreadId) is not null;
+        // The exception's own type, in the program's assemblies: the debugger's runtime is another version, and a type of
+        // it is one the expression compiler cannot find among the program's.
+        string? exception = debugger.GetCurrentException(context.ThreadId) is { } thrown ? debugger.AliasTypeName(thrown.ExactType) : null;
+        IReadOnlyList<(string Name, string Type)> returnValues = context.RootValue is null ? debugger.ReturnValueAliases(context.ThreadId) : [];
         EnsureModuleVersion();
-        CompileCacheKey key = CreateCacheKey(expression, context, frame, preferredModule, hasException);
+        CompileCacheKey key = CreateCacheKey(expression, context, frame, preferredModule, exception, string.Join(';', returnValues.Select(r => r.Type)));
         if (TryGetCachedCompiled(key, out CompiledEvaluationMethod? cached))
         {
             return cached;
@@ -133,7 +136,7 @@ internal sealed class CilExpressionCompiler(ManagedDebugger debugger)
         DiagnosticBag diagnostics = DiagnosticBag.GetInstance();
         try
         {
-            ImmutableArray<Alias> aliases = GetAliases(hasException);
+            ImmutableArray<Alias> aliases = GetAliases(exception, returnValues);
             CompileResult? result = evaluationContext.CompileExpression(
                 expression,
                 DkmEvaluationFlags.TreatAsExpression,
@@ -158,7 +161,7 @@ internal sealed class CilExpressionCompiler(ManagedDebugger debugger)
         }
     }
 
-    private CompileCacheKey CreateCacheKey(string expression, CompiledExpressionEvaluationContext context, ICorDebugILFrame frame, ICorDebugModule preferredModule, bool hasException)
+    private CompileCacheKey CreateCacheKey(string expression, CompiledExpressionEvaluationContext context, ICorDebugILFrame frame, ICorDebugModule preferredModule, string? exception, string returnValues)
     {
         if (context.RootValue is not null)
         {
@@ -169,7 +172,8 @@ internal sealed class CilExpressionCompiler(ManagedDebugger debugger)
                 context.RootValue.ExactType.Class.Token,
                 0,
                 expression,
-                hasException);
+                exception,
+                returnValues);
         }
         return new CompileCacheKey(
             debugger.ModuleSet_Version,
@@ -178,7 +182,8 @@ internal sealed class CilExpressionCompiler(ManagedDebugger debugger)
             frame.Function.Token,
             EvaluationContextBase.NormalizeILOffset((uint)frame.IP.pnOffset),
             expression,
-            hasException);
+            exception,
+            returnValues);
     }
 
     private bool TryGetCachedCompiled(CompileCacheKey key, out CompiledEvaluationMethod result)
@@ -227,9 +232,13 @@ internal sealed class CilExpressionCompiler(ManagedDebugger debugger)
         _metadataBlocksCache.Clear();
     }
 
-    private static ImmutableArray<Alias> GetAliases(bool hasException) => hasException
-        ? [new Alias(DkmClrAliasKind.Exception, "Error", "$exception", typeof(Exception).AssemblyQualifiedName!, Guid.Empty, null!)]
-        : ImmutableArray<Alias>.Empty;
+    /// <summary>The debugger's own names an expression may use: $exception while the thread has one, and the values the
+    /// last step's calls returned, each typed as it is, as Visual Studio's expression evaluator gives them.</summary>
+    private static ImmutableArray<Alias> GetAliases(string? exception, IReadOnlyList<(string Name, string Type)> returnValues) =>
+    [
+        .. exception is not null ? [new Alias(DkmClrAliasKind.Exception, "Error", "$exception", exception, Guid.Empty, null!)] : ImmutableArray<Alias>.Empty,
+        .. returnValues.Select(returned => new Alias(DkmClrAliasKind.ReturnValue, returned.Name, returned.Name, returned.Type, Guid.Empty, null!)),
+    ];
 
     internal DelegateMaterializerAssembly GetDelegateMaterializer(CompiledExpressionEvaluationContext context)
     {
@@ -415,6 +424,7 @@ internal sealed class CilExpressionCompiler(ManagedDebugger debugger)
 				public static object GetObjectByAlias(string name) => throw null;
 				public static ref T GetVariableAddress<T>(string name) => throw null;
 				public static System.Exception GetException() => throw null;
+				public static object GetReturnValue(int index) => throw null;
 			}
 			""";
         CSharpCompilation compilation = CSharpCompilation.Create(

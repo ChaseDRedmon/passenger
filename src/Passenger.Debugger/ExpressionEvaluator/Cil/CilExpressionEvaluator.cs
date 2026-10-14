@@ -21,6 +21,13 @@ internal sealed class CilExpressionEvaluator(RuntimeAssemblyPrimitiveTypeClasses
                 ICorDebugHandleValue handle = handles.CreateOwnedHandle(reference);
                 return new EvaluationResult { Value = handle, OwnedResultHandle = handles.DetachIfOwned(handle) };
             }
+            if (ManagedDebugger.ReturnValueIndex(expression) is int index && debugger.TryGetReturnedValue(context.ThreadId, index, out ICorDebugHandleValue? returned) && returned is not null)
+            {
+                // What a call returned, named alone: the value itself, as $exception is, with no code compiled to reach it.
+                using EvaluationHandleScope handles = new EvaluationHandleScope();
+                ICorDebugHandleValue handle = handles.CreateOwnedHandle(returned);
+                return new EvaluationResult { Value = handle, OwnedResultHandle = handles.DetachIfOwned(handle) };
+            }
             CompiledEvaluationMethod? compiled = _compiler.TryCompile(expression, context, out string? error);
             if (compiled is null)
             {

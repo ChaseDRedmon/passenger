@@ -273,6 +273,7 @@ public partial class ManagedDebugger
     public void Continue()
     {
         _logger?.Invoke("Continue");
+        ForgetReturnedValues();
         Continue(clearVariables: true, allowSuperfluous: true);
     }
 
@@ -372,6 +373,7 @@ public partial class ManagedDebugger
         {
             throw new InvalidOperationException("A step operation is already in progress");
         }
+        ForgetReturnedValues();
         if (EvalStatus.Abandoned.ContainsKey(threadId))
         {
             // The thread runs an evaluation given up, above the stop: a stepper made now would be the evaluation's, and the
@@ -403,6 +405,10 @@ public partial class ManagedDebugger
             }
         }
         SetupStepper(thread, type);
+        if (type is StepType.StepOver && thread.ActiveFrame is ICorDebugILFrame from && StepRangeOf(from) is var (start, end))
+        {
+            WatchReturns(thread, from, start, end);
+        }
         Continue(clearVariables: true);
     }
 
@@ -763,7 +769,8 @@ public partial class ManagedDebugger
         };
     }
 
-    /// <summary>A frame's one scope, Locals, when it has locals, arguments or an exception to show; none otherwise.</summary>
+    /// <summary>A frame's one scope, Locals, when it has locals, arguments, an exception or return values to show; none
+    /// otherwise.</summary>
     public List<ScopeInfo> GetScopes(int frameId)
     {
         List<ScopeInfo> result = new List<ScopeInfo>();
@@ -794,7 +801,7 @@ public partial class ManagedDebugger
         ICorDebugThread? thread = _threads.GetValueOrDefault(threadId.Value)?.Thread;
         ArgumentNullException.ThrowIfNull(thread);
         bool hasCurrentException = thread.TryGetCurrentException(out _) is Cor.S_OK;
-        if (localVariables.Length is 0 && arguments.Length is 0 && !hasCurrentException)
+        if (localVariables.Length is 0 && arguments.Length is 0 && !hasCurrentException && !HasReturnedValues(threadId, frameStackDepth))
         {
             return result;
         }
@@ -832,6 +839,7 @@ public partial class ManagedDebugger
                 ICorDebugILFrame ilFrame = GetIlFrameForThreadIdAndStackDepth(variablesReference.ThreadId, variablesReference.FrameStackDepth);
                 ICorDebugFunction corDebugFunction = ilFrame.Function;
                 ModuleInfo module = GetModuleInfoForModule(corDebugFunction.Module);
+                await AddReturnedValues(result, variablesReference.ThreadId, variablesReference.FrameStackDepth);
                 await AddCurrentException(result, variablesReference.ThreadId, variablesReference.FrameStackDepth);
                 ICorDebugValue? classContainingHoistedLocalsValue = await AddArguments(module, corDebugFunction, result, variablesReference.ThreadId, variablesReference.FrameStackDepth);
                 await AddLocalVariables(module, corDebugFunction, result, variablesReference.ThreadId, variablesReference.FrameStackDepth, classContainingHoistedLocalsValue);

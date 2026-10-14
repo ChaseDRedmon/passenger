@@ -309,7 +309,7 @@ public partial class ManagedDebugger
                 case LoadClassCorDebugManagedCallbackEventArgs a: HandleClassLoaded(a); break;
                 case UnloadModuleCorDebugManagedCallbackEventArgs a: HandleModuleUnloaded(sender, a); break;
                 case BreakpointCorDebugManagedCallbackEventArgs a: await HandleBreakpoint(sender, a).ConfigureAwait(false); break;
-                case StepCompleteCorDebugManagedCallbackEventArgs a: HandleStepComplete(sender, a); break;
+                case StepCompleteCorDebugManagedCallbackEventArgs a: await HandleStepComplete(sender, a).ConfigureAwait(false); break;
                 case BreakCorDebugManagedCallbackEventArgs a: HandleBreak(sender, a); break;
                 case ExceptionCorDebugManagedCallbackEventArgs a: HandleException(sender, a); break;
                 case Exception2CorDebugManagedCallbackEventArgs a: await HandleException2(sender, a).ConfigureAwait(false); break;
@@ -442,6 +442,12 @@ public partial class ManagedDebugger
 
     private void ReportStop(int threadId, string reason, string? filePath = null, int line = 0, int column = 0, IReadOnlyList<int>? hitBreakpointIds = null)
     {
+        // A step's calls' values are shown at its own stop; one that stops anywhere else stops showing them.
+        EndReturnWatch();
+        if (reason != "step")
+        {
+            ForgetReturnedValues();
+        }
         _stopShown = true;
         OnStopped?.Invoke(new StopInfo(threadId, reason, filePath, line, column, hitBreakpointIds));
     }
@@ -580,15 +586,26 @@ public partial class ManagedDebugger
             }
             bool stepIn = stepType is StepType.StepIn;
             // A module the debugger could not read has no lines: the step is the runtime's own, an instruction's.
-            if (FindModule(frame.Function.Module)?.MetadataReader.GetStartAndEndSequencePointIlOffsetsForIlOffset(frame.Function.Token, ilFrame.IP.pnOffset) is not var (start, end))
+            if (StepRangeOf(ilFrame) is not var (start, end))
             {
                 stepper.Step(stepIn);
                 return;
             }
-            // A sequence point of no length steps to the end of the method.
-            COR_DEBUG_STEP_RANGE range = new() { startOffset = checked((uint)start), endOffset = checked((uint)(start == end ? frame.Function.ILCode.Size : end)) };
+            COR_DEBUG_STEP_RANGE range = new() { startOffset = checked((uint)start), endOffset = checked((uint)end) };
             stepper.StepRange(stepIn, [range], 1);
         });
+    }
+
+    /// <summary>The IL a step from a frame's statement steps through: its sequence point to the next one that shows a line,
+    /// to the method's end from one of no length. None in a module the debugger could not read.</summary>
+    private (int Start, int End)? StepRangeOf(ICorDebugILFrame frame)
+    {
+        ICorDebugFunction function = frame.Function;
+        if (FindModule(function.Module)?.MetadataReader.GetStartAndEndSequencePointIlOffsetsForIlOffset(function.Token, frame.IP.pnOffset) is not var (start, end))
+        {
+            return null;
+        }
+        return (start, start == end ? function.ILCode.Size : end);
     }
 
     /// <summary>Binds a line breakpoint in the module whose symbols name its file best; false, with why on the breakpoint,
@@ -908,6 +925,17 @@ public partial class ManagedDebugger
 
         _asyncStepper?.Dispose();
         _asyncStepper = null;
+        if (exited)
+        {
+            _returnWatch = null;
+            _returned.Clear();
+            _returnedThread = null;
+        }
+        else
+        {
+            EndReturnWatch();
+            ForgetReturnedValues();
+        }
         _stepper = null!;
         _stepping = null;
         _stepAfterEvaluation = null;

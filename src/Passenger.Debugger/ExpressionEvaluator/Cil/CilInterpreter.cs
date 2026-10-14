@@ -705,7 +705,7 @@ internal sealed class CilInterpreter(ManagedDebugger debugger, RuntimeAssemblyPr
     }
 
     /// <summary>A call the expression compiler makes to the debugger itself: a variable the expression declares, its
-    /// address or value, or the exception the thread is stopped at.</summary>
+    /// address or value, the exception the thread is stopped at, or a value a call returned.</summary>
     private async Task DebuggerIntrinsicAsync(string intrinsic, Stack<CilValue> stack, Interpretation run)
     {
         switch (intrinsic)
@@ -731,6 +731,17 @@ internal sealed class CilInterpreter(ManagedDebugger debugger, RuntimeAssemblyPr
                 ICorDebugValue exception = debugger.GetCurrentException(run.Context.ThreadId)
                     ?? throw new InvalidOperationException("No current exception is available");
                 stack.Push(run.Handles.Root(CilValue.FromCorValue(exception)));
+                break;
+            }
+            case "GetReturnValue":
+            {
+                int index = stack.Pop().AsInt32();
+                if (!debugger.TryGetReturnedValue(run.Context.ThreadId, index, out ICorDebugHandleValue? returned))
+                {
+                    throw new InvalidOperationException("No call has returned a value since the last step");
+                }
+                // As an object, as the compiler takes it: a value type's box, which the code it compiled unboxes.
+                stack.Push(returned is null ? CilValue.Null() : CilValue.FromDebuggeeValue(returned));
                 break;
             }
             default:

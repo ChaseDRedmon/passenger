@@ -41,6 +41,7 @@
     <ProjectReference Include="../Debuggees/LoopingConsoleApp/LoopingConsoleApp.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="../Debuggees/PassengerCases/PassengerCases.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="../Debuggees/ReadsInputConsoleApp/ReadsInputConsoleApp.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../Debuggees/SteppingConsoleApp/SteppingConsoleApp.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="../Debuggees/TerminalConsoleApp/TerminalConsoleApp.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="../Debuggees/TopLevelStatementsConsoleApp/TopLevelStatementsConsoleApp.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>

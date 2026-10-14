@@ -14,6 +14,16 @@ public sealed class VariableNode(string name, string value, string? type, int re
     /// <summary>The row this one opened from, if any.</summary>
     public VariableNode? Parent { get; init; }
 
+    /// <summary>What the debugger says names the value in an expression, where its name does not: a call's value
+    /// ("Count() returned") is $ReturnValue.</summary>
+    public string? EvaluateName { get; init; }
+
+    /// <summary>A value a call of the last step returned, listed at the top of the frame's values as Rider lists them.</summary>
+    public bool IsReturnValue => Depth == 0 && Role == VariableRole.Value && EvaluateName?.StartsWith("$ReturnValue", StringComparison.Ordinal) == true;
+
+    /// <summary>The exception the program stopped at, $exception.</summary>
+    public bool IsException => Depth == 0 && Role == VariableRole.Value && Name == "$exception";
+
     /// <summary>The C# that reaches this value from the frame, for Set Value: a local's name, a member after its
     /// object's expression, an element's index after its array's. Null for a row no expression reaches (a
     /// scope, the static members, a result).</summary>
@@ -31,7 +41,7 @@ public sealed class VariableNode(string name, string value, string? type, int re
             }
             if (Parent is null || Parent.Role == VariableRole.Scope)
             {
-                return Name;
+                return EvaluateName ?? Name;
             }
             // The raw view lists the members of the object above it.
             string? owner = Parent.Name switch
@@ -83,6 +93,7 @@ public sealed class VariableNode(string name, string value, string? type, int re
             variable.PresentationHint?.Attributes?.Contains("failedEvaluation") == true ? VariableRole.Error : VariableRole.Value)
         {
             Parent = parent,
+            EvaluateName = variable.EvaluateName is { Length: > 0 } named && named != variable.Name ? named : null,
         };
 }
 

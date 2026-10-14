@@ -140,8 +140,31 @@ internal sealed class CilValue
             // As wide as the debuggee's native integers are, which its value's own size says.
             CorElementType.I => data.Length == 8 ? BitConverter.ToInt64(data) : BitConverter.ToInt32(data),
             CorElementType.U => data.Length == 8 ? BitConverter.ToUInt64(data) : BitConverter.ToUInt32(data),
+            // What a box of a floating-point value holds, unboxed (a reference to the box stays one): as its class.
+            CorElementType.VALUETYPE when ReferenceEquals(unwrapped, value) => PrimitiveClassName(value) switch
+            {
+                "System.Double" => BitConverter.ToDouble(data),
+                "System.Single" => BitConverter.ToSingle(data),
+                _ => null,
+            },
             _ => null
         };
+    }
+
+    /// <summary>The name of a value's class when it is one of CoreLib's floating-point types, which no integer reading
+    /// covers; null for any other.</summary>
+    private static string? PrimitiveClassName(ICorDebugValue value)
+    {
+        try
+        {
+            ICorDebugClass corClass = value.ExactType.Class;
+            string name = corClass.Module.GetMetaDataInterface<IMetaDataImport>().GetTypeDefProps(corClass.Token).szTypeDef;
+            return name is "System.Double" or "System.Single" ? name : null;
+        }
+        catch (Exception error) when (error is System.Runtime.InteropServices.COMException or InvalidOperationException)
+        {
+            return null;
+        }
     }
 
     private bool TryReadValueTypeInteger(out long value)

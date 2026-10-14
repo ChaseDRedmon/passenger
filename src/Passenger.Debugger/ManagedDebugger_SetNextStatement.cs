@@ -39,6 +39,7 @@ public partial class ManagedDebugger
             throw new InvalidOperationException($"The program cannot go on from there ({Marshal.GetExceptionForHR(safe)?.Message ?? $"0x{safe:X8}"})");
         }
         frame.SetIP(ilOffset);
+        ForgetReturnedValues();
         // Every frame and value of the thread was invalidated by the move: the stop is new.
         _variableManager.ClearAndDisposeHandleValues();
         _frameReferenceManager.Clear();

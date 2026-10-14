@@ -455,7 +455,7 @@ public partial class MainWindow : Window
         {
             if (!shifted)
             {
-                if (!BranchesTake(action))
+                if (!BranchesTake(action) && !Bottom.Debug.TakesAction(action))
                 {
                     Request(action);
                 }

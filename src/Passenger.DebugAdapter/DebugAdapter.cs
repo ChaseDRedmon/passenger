@@ -100,7 +100,7 @@ public sealed class DebugAdapter
             return new VariablesResponse([.. variables.Select(v => new DapVariable
             {
                 Name = v.Name,
-                EvaluateName = v.Name,
+                EvaluateName = v.EvaluateName ?? v.Name,
                 Value = v.Value,
                 Type = v.Type,
                 PresentationHint = ToProtocol(v.PresentationHint),

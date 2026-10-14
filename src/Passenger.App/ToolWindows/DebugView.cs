@@ -293,6 +293,19 @@ public sealed class DebugView : DockPanel
         consolePane.IsVisible = console;
     }
 
+    /// <summary>Rider's Add to Watches from the Evaluate field, Ctrl+Shift+Enter (⇧⌘Enter), the keys Complete Current
+    /// Statement has elsewhere: true when the field has the keyboard and an expression, and took them.</summary>
+    public bool TakesAction(string action)
+    {
+        if (action != AppActions.CompleteStatement || !evaluate.IsKeyboardFocusWithin || string.IsNullOrWhiteSpace(evaluate.Text))
+        {
+            return false;
+        }
+        EvaluateRequested?.Invoke(this, (evaluate.Text.Trim(), true));
+        evaluate.Text = string.Empty;
+        return true;
+    }
+
     private void OnEvaluateKey(object? sender, KeyEventArgs e)
     {
         if (e.Key != Key.Enter || string.IsNullOrWhiteSpace(evaluate.Text))
@@ -456,7 +469,15 @@ public sealed class DebugView : DockPanel
             }
         };
         PathIcon icon = new() { Margin = new Thickness(0, 0, 6, 0) };
-        icon.Bind(PathIcon.DataProperty, icon.GetResourceObservable(node.Role == VariableRole.Watch ? "Icon.Evaluate" : "Icon.Variable"));
+        // Rider's own marks for what the debugger adds to a frame's values: a call's value, and the exception stopped at.
+        string iconKey = node switch
+        {
+            { Role: VariableRole.Watch } => "Icon.Evaluate",
+            { IsReturnValue: true } => "Icon.StepOut",
+            { IsException: true } => "Icon.Error",
+            _ => "Icon.Variable",
+        };
+        icon.Bind(PathIcon.DataProperty, icon.GetResourceObservable(iconKey));
         TextBlock type = new() { Text = node.TypeLabel, VerticalAlignment = VerticalAlignment.Center };
         type.Bind(TextBlock.ForegroundProperty, type.GetResourceObservable("Passenger.TextMuted"));
         TextBlock value = new() { Text = node.Value, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 900 };

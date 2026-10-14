@@ -307,6 +307,65 @@ public sealed class DebuggerTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void A_step_over_a_call_lists_what_it_returned_at_the_top_of_Variables_and_a_watch_names_it()
+    {
+        Write("Program.cs", "int total = Add(2, 3);\nConsole.WriteLine(Describe(total));\nConsole.WriteLine(\"done\");\n\n"
+            + "static int Add(int a, int b) => a + b;\nstatic string Describe(int value) => $\"total {value}\";\n");
+        MainWindow window = Open();
+        window.EditorArea.CodeEditor.GoTo(new TextPosition(0, 0));
+        Ui.Run(window, AppActions.ToggleBreakpoint);
+        Ui.Run(window, AppActions.Debug);
+        Ui.WaitFor(() => window.Debugger.Session?.State == DebugState.Paused && Row(window, "total") is not null, "the stop before the call");
+        Passenger.App.ToolWindows.DebugView view = window.BottomPanel.Debug;
+        Assert.DoesNotContain(view.Tree.Rows, r => r.IsReturnValue);
+
+        Ui.Run(window, AppActions.StepOver);
+        Ui.WaitFor(() => Value(window, "Add() returned") == "5", "what the call returned, in Variables");
+        VariableNode returned = view.Tree.Rows[0];
+        Assert.Equal(("Add() returned", "int", "$ReturnValue"), (returned.Name, returned.Type, returned.Expression));
+        Assert.True(returned.IsReturnValue, "The call's value was not shown as one");
+
+        // Its menu's Add to Watches watches its name in an expression, which evaluates to the value.
+        view.VariablesList.SelectedItem = returned;
+        Ui.ChooseFromMenu(view.VariablesList, "Add to Watches");
+        Ui.WaitFor(() => view.Tree.Rows.Any(r => r.Role == VariableRole.Watch && r.Name == "$ReturnValue" && r.Value == "5"), "the watch of the value returned");
+        Ui.Run(window, AppActions.Evaluate);
+        window.KeyTextInput("$returnvalue * 2");
+        Ui.Press(window, OperatingSystem.IsMacOS() ? "meta shift Enter" : "control shift Enter");
+        Watched(view, "$returnvalue * 2", "10", "a watch computed from the value returned");
+
+        // The next step's calls replace it.
+        Ui.Run(window, AppActions.StepOver);
+        Shows(view, "Describe() returned", "\"total 5\"", "the next step's value");
+        Assert.DoesNotContain(view.Tree.Rows, r => r.Name == "Add() returned");
+        Ui.Run(window, AppActions.Stop);
+        Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void An_exception_stop_lists_the_exception_as_exception_and_a_watch_reads_its_message()
+    {
+        Write("Program.cs", "int index = 5;\nthrow new InvalidOperationException($\"bad index {index}\");\n");
+        MainWindow window = Open();
+        Ui.Run(window, AppActions.Debug);
+        Ui.WaitFor(() => Row(window, "$exception") is not null, "the exception in Variables");
+        VariableNode exception = Row(window, "$exception")!;
+        Assert.True(exception.IsException);
+        Assert.Equal("System.InvalidOperationException", exception.Type);
+        Assert.True(exception.HasChildren, "The exception does not open to its members");
+
+        Ui.Run(window, AppActions.Evaluate);
+        window.KeyTextInput("$exception.Message");
+        Ui.Press(window, OperatingSystem.IsMacOS() ? "meta shift Enter" : "control shift Enter");
+        Passenger.App.ToolWindows.DebugView view = window.BottomPanel.Debug;
+        Watched(view, "$exception.Message", "\"bad index 5\"", "the watch of the exception's message");
+        Ui.Run(window, AppActions.Stop);
+        Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void A_condition_typed_into_a_breakpoints_popup_decides_where_it_stops()
     {
         MainWindow window = Open();
@@ -615,6 +674,34 @@ public sealed class DebuggerTests : IDisposable
         window.MouseDown(at, MouseButton.Left);
         window.MouseUp(at, MouseButton.Left);
         Ui.Settle();
+    }
+
+    /// <summary>Waits for a top-level row of Variables to show a value; a failure says what the rows showed instead.</summary>
+    private static void Shows(Passenger.App.ToolWindows.DebugView view, string name, string value, string what)
+    {
+        try
+        {
+            Ui.WaitFor(() => view.Tree.Rows.Any(r => r.Depth == 0 && r.Name == name && r.Value == value), what, TimeSpan.FromSeconds(30));
+        }
+        catch (TimeoutException)
+        {
+            string shown = string.Join("; ", view.Tree.Rows.Where(r => r.Depth == 0).Select(r => $"{r.Name} = {r.Value}"));
+            throw new TimeoutException($"{name} never showed {value}: the rows were {(shown.Length == 0 ? "none" : shown)}");
+        }
+    }
+
+    /// <summary>Waits for a watch to show a value; a failure says what the watches showed instead.</summary>
+    private static void Watched(Passenger.App.ToolWindows.DebugView view, string expression, string value, string what)
+    {
+        try
+        {
+            Ui.WaitFor(() => view.Tree.Rows.Any(r => r.Role == VariableRole.Watch && r.Name == expression && r.Value == value), what, TimeSpan.FromSeconds(30));
+        }
+        catch (TimeoutException)
+        {
+            string shown = string.Join("; ", view.Tree.Rows.Where(r => r.Role == VariableRole.Watch).Select(r => $"{r.Name} = {r.Value}"));
+            throw new TimeoutException($"{expression} never showed {value} as a watch: the watches were {(shown.Length == 0 ? "none" : shown)}");
+        }
     }
 
     /// <summary>The exception the stop shown names, and the line it shows it at.</summary>
