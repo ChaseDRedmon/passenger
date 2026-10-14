@@ -24,6 +24,7 @@
     "LiveTemplatesTests": 90,
     "Debugging.PauseTests": 90,
     "MemorySnapshotsTests": 90,
+    "LiveTreeTests": 90,
     "RazorTests": 90
   }
 }

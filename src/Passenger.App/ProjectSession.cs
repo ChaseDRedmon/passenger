@@ -2,6 +2,7 @@ using Passenger.App.CSharp;
 using Passenger.App.Debugging;
 using Passenger.App.Editors;
 using Passenger.App.History;
+using Passenger.App.LiveTree;
 using Passenger.App.Navigation;
 using Passenger.App.Run;
 using Passenger.App.State;
@@ -170,6 +171,24 @@ public sealed class ProjectSession : IAsyncDisposable
 
     /// <summary>The folder's debugger, its breakpoints with it.</summary>
     public DebugController Debug { get; }
+
+    /// <summary>The Avalonia app the debugger launched last, which the Live Visual Tree inspects; null after any other
+    /// program. It ends with its debugging, and with the folder.</summary>
+    public LiveApp? LiveApp { get; private set; }
+
+    /// <summary>Another app is being inspected, or none.</summary>
+    public event EventHandler? LiveAppChanged;
+
+    /// <summary>A plan as Debug launches it: an Avalonia app's carries the inspector the Live Visual Tree talks to (its
+    /// startup hook, and a socket of the app's own), any other's is the plan itself.</summary>
+    public LaunchPlan Inspected(LaunchPlan plan)
+    {
+        UiThread.Check();
+        LiveApp?.Dispose();
+        LiveApp = LiveTree.LiveApp.For(plan);
+        LiveAppChanged?.Invoke(this, EventArgs.Empty);
+        return LiveApp?.Plan ?? plan;
+    }
 
     /// <summary>The folder's Git working tree, once its lookup (<see cref="Start"/>) has found one.</summary>
     public VcsController Vcs { get; } = new();
@@ -436,6 +455,7 @@ public sealed class ProjectSession : IAsyncDisposable
         Builder.Stop();
         InTerminal?.Stop();
         Profiling?.Kill();
+        LiveApp?.Dispose();
         Tests.Stop();
         parts.Add(("the test runner", Tests.DisposeAsync().AsTask()));
         parts.Add(("the language server", CSharp?.DisposeAsync().AsTask() ?? Task.CompletedTask));

@@ -1,0 +1,344 @@
+using System.Net.Sockets;
+using System.Text;
+using System.Text.Json;
+using Passenger.App.Run;
+using Passenger.Core;
+using Passenger.Inspector;
+
+namespace Passenger.App.LiveTree;
+
+/// <summary>Where the inspector in an app stands: launched and not yet heard from, answering, refused (another Avalonia,
+/// none), or gone with the app.</summary>
+public enum LiveAppState
+{
+    Waiting,
+    Connected,
+    Refused,
+    Ended,
+}
+
+/// <summary>Why the app could not answer: not connected, gone, or what the inspector in it said.</summary>
+public sealed class LiveAppException(string message) : Exception(message);
+
+/// <summary>Passenger's end of its inspector inside an Avalonia app it launches (src/Passenger.Inspector, carried under
+/// inspector/): the launch plan is given the inspector as a startup hook and a socket of its own to connect to, and once
+/// the app's UI is up the inspector says hello and answers on the app's UI thread, live while the app runs; paused under the
+/// debugger, it answers once the app runs again. Made only for a program whose build carries Avalonia, and only for one
+/// launch, so nothing of it is ever in the app as built. A UI-thread object: its events come on the UI thread.</summary>
+public sealed class LiveApp : IDisposable
+{
+    /// <summary>The sockets this process has made, which number each one's name apart.</summary>
+    private static int made;
+
+    private readonly Socket listener;
+    private readonly CancellationTokenSource closing = new();
+    private readonly Dictionary<int, TaskCompletionSource<Reply>> asked = [];
+    private readonly SemaphoreSlim writing = new(1, 1);
+    private NetworkStream? stream;
+    private int next;
+
+    private LiveApp(LaunchPlan plan, string socket, Socket listener)
+    {
+        this.listener = listener;
+        SocketPath = socket;
+        Name = plan.Name;
+        Dictionary<string, string> environment = new(plan.Environment)
+        {
+            [Wire.SocketVariable] = socket,
+            [Wire.StartupHooks] = Hooks(plan, InspectorPath),
+        };
+        Plan = plan with { Environment = environment };
+        // Not held: it waits as long as the app runs, which nothing drawn waits for.
+        _ = Task.Run(ServeAsync);
+    }
+
+    /// <summary>The inspector beside the app, as its build carries it.</summary>
+    public static string InspectorPath => Path.Combine(AppContext.BaseDirectory, "inspector", "Passenger.Inspector.dll");
+
+    /// <summary>The plan as it is launched: the inspector among its startup hooks, and the socket to connect to.</summary>
+    public LaunchPlan Plan { get; }
+
+    /// <summary>The run configuration's name, as the window says it.</summary>
+    public string Name { get; }
+
+    /// <summary>The socket's file, while it waits for the app.</summary>
+    public string SocketPath { get; }
+
+    public LiveAppState State { get; private set; }
+
+    /// <summary>Why the inspector cannot serve the app, once refused.</summary>
+    public string? Problem { get; private set; }
+
+    /// <summary>The app's Avalonia, from its hello.</summary>
+    public string? Avalonia { get; private set; }
+
+    /// <summary>The app's process, from its hello.</summary>
+    public int? ProcessId { get; private set; }
+
+    /// <summary>The app connected, was refused, or went.</summary>
+    public event EventHandler? StateChanged;
+
+    /// <summary>Controls came or went in the app since its tree was last asked for.</summary>
+    public event EventHandler? TreeChanged;
+
+    /// <summary>Select Element ended: the element the person pointed at, or null when they pressed Escape.</summary>
+    public event EventHandler<long?>? Picked;
+
+    /// <summary>The live app for a plan whose program is built with Avalonia (Avalonia.Base beside its assembly), or null for
+    /// any other program, or when this build of Passenger carries no inspector.</summary>
+    public static LiveApp? For(LaunchPlan plan)
+    {
+        if (plan.Built is not { } built || !File.Exists(Path.Combine(Path.GetDirectoryName(built)!, "Avalonia.Base.dll")) || !File.Exists(InspectorPath))
+        {
+            return null;
+        }
+        string socket = Path.Combine(Path.GetTempPath(), $"passenger-{Environment.ProcessId}-{Interlocked.Increment(ref made)}.sock");
+        // Only a dead Passenger that had this process's number leaves one by this name.
+        File.Delete(socket);
+        Socket listener = new(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+        try
+        {
+            listener.Bind(new UnixDomainSocketEndPoint(socket));
+            listener.Listen(1);
+        }
+        catch (SocketException error)
+        {
+            listener.Dispose();
+            IdeErrors.Write($"The Live Visual Tree could not listen for {plan.Name} at {socket}: {error.Message}");
+            return null;
+        }
+        return new LiveApp(plan, socket, listener);
+    }
+
+    /// <summary>The inspector first among the program's startup hooks, those its configuration or the IDE's environment
+    /// name after it.</summary>
+    private static string Hooks(LaunchPlan plan, string inspector)
+    {
+        string? others = plan.Environment.TryGetValue(Wire.StartupHooks, out string? given) ? given : Environment.GetEnvironmentVariable(Wire.StartupHooks);
+        return others is { Length: > 0 } ? $"{inspector}{Path.PathSeparator}{others}" : inspector;
+    }
+
+    /// <summary>The app's windows and their visual trees.</summary>
+    public async Task<AppTree> TreeAsync() => (await AskAsync(new Request(0, Wire.Tree))).Tree ?? new AppTree([]);
+
+    /// <summary>An element looked at closely: its properties and their sources, its layout, its styles.</summary>
+    public async Task<ElementDetails> DetailsAsync(long element) =>
+        (await AskAsync(new Request(0, Wire.Details, element))).Details ?? throw new LiveAppException("The app said nothing of that element");
+
+    /// <summary>Select Element on (the next click in the app chooses what it is on) or off.</summary>
+    public Task PickAsync(bool on) => AskAsync(new Request(0, Wire.Pick, On: on));
+
+    /// <summary>Outlines an element in the app, or takes the outline away.</summary>
+    public Task HighlightAsync(long? element) => AskAsync(new Request(0, Wire.Highlight, element));
+
+    private async Task<Reply> AskAsync(Request request)
+    {
+        if (State != LiveAppState.Connected || stream is not { } open)
+        {
+            throw new LiveAppException(State switch
+            {
+                LiveAppState.Waiting => $"{Name} has not shown its UI yet",
+                LiveAppState.Refused => Problem ?? $"{Name} cannot be inspected",
+                _ => $"{Name} has ended",
+            });
+        }
+        int id = Interlocked.Increment(ref next);
+        TaskCompletionSource<Reply> answer = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (asked)
+        {
+            asked[id] = answer;
+        }
+        byte[] line = [.. JsonSerializer.SerializeToUtf8Bytes(request with { Id = id }, WireJson.Default.Request), (byte)'\n'];
+        await writing.WaitAsync();
+        try
+        {
+            await open.WriteAsync(line);
+        }
+        catch (Exception error) when (error is IOException or ObjectDisposedException or SocketException)
+        {
+            Answered(id, null);
+            throw new LiveAppException($"{Name} has ended");
+        }
+        finally
+        {
+            writing.Release();
+        }
+        Reply reply;
+        try
+        {
+            reply = await answer.Task.WaitAsync(AnswerLimit);
+        }
+        catch (TimeoutException)
+        {
+            // Forgotten, so its answer, if it ever comes, finds no one waiting.
+            Answered(id, null);
+            throw new LiveAppException($"{Name} did not answer within {AnswerLimit.TotalSeconds:0} s");
+        }
+        return reply.Error is { } why ? throw new LiveAppException(why) : reply;
+    }
+
+    /// <summary>How long the app may take to answer: its UI thread busy, or the app paused under the debugger.</summary>
+    public static readonly TimeSpan AnswerLimit = TimeSpan.FromSeconds(10);
+
+    /// <summary>Takes the app's one connection, then reads what it says until it goes.</summary>
+    private async Task ServeAsync()
+    {
+        Socket client;
+        try
+        {
+            client = await listener.AcceptAsync(closing.Token);
+        }
+        catch (Exception error) when (error is OperationCanceledException or SocketException or ObjectDisposedException)
+        {
+            return;
+        }
+        finally
+        {
+            // The one app it was made for has come (or will not): nothing else may connect.
+            listener.Dispose();
+            Forget(SocketPath);
+        }
+        NetworkStream network = new(client, ownsSocket: true);
+        stream = network;
+        try
+        {
+            using StreamReader reader = new(network, new UTF8Encoding(false));
+            while (await reader.ReadLineAsync(closing.Token) is { } line)
+            {
+                Reply? reply;
+                try
+                {
+                    reply = JsonSerializer.Deserialize(line, WireJson.Default.Reply);
+                }
+                catch (JsonException error)
+                {
+                    IdeErrors.Write($"The Live Visual Tree could not read what {Name} said: {error.Message}");
+                    continue;
+                }
+                if (reply is null)
+                {
+                    continue;
+                }
+                if (reply.Id is int id)
+                {
+                    Answered(id, reply);
+                }
+                else
+                {
+                    UiThread.Post(() => Told(reply));
+                }
+            }
+        }
+        catch (Exception error) when (error is OperationCanceledException or IOException or ObjectDisposedException or SocketException)
+        {
+        }
+        finally
+        {
+            await network.DisposeAsync();
+            FailAll();
+            UiThread.Post(() => Become(LiveAppState.Ended));
+        }
+    }
+
+    private void Answered(int id, Reply? reply)
+    {
+        TaskCompletionSource<Reply>? answer;
+        lock (asked)
+        {
+            asked.Remove(id, out answer);
+        }
+        if (reply is null)
+        {
+            answer?.TrySetException(new LiveAppException($"{Name} has ended"));
+        }
+        else
+        {
+            answer?.TrySetResult(reply);
+        }
+    }
+
+    private void FailAll()
+    {
+        List<TaskCompletionSource<Reply>> left;
+        lock (asked)
+        {
+            left = [.. asked.Values];
+            asked.Clear();
+        }
+        foreach (TaskCompletionSource<Reply> answer in left)
+        {
+            answer.TrySetException(new LiveAppException($"{Name} has ended"));
+        }
+    }
+
+    /// <summary>What the app tells unasked, on the UI thread.</summary>
+    private void Told(Reply reply)
+    {
+        if (State == LiveAppState.Ended)
+        {
+            return;
+        }
+        switch (reply.Event)
+        {
+            case Wire.Hello when reply.Hello is { } hello:
+                Avalonia = hello.Avalonia;
+                ProcessId = hello.ProcessId;
+                if (hello.Protocol != Wire.Version)
+                {
+                    Problem = $"{Name}'s inspector speaks version {hello.Protocol} of Passenger's protocol, not {Wire.Version}";
+                }
+                else
+                {
+                    Problem = hello.Problem;
+                }
+                Become(Problem is null ? LiveAppState.Connected : LiveAppState.Refused);
+                break;
+            case Wire.TreeChanged:
+                TreeChanged?.Invoke(this, EventArgs.Empty);
+                break;
+            case Wire.Picked:
+                Picked?.Invoke(this, reply.Element);
+                break;
+            case Wire.PickEnded:
+                Picked?.Invoke(this, null);
+                break;
+        }
+    }
+
+    private void Become(LiveAppState state)
+    {
+        if (State == state || State == LiveAppState.Ended)
+        {
+            return;
+        }
+        State = state;
+        StateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>The app is done with: its socket closed, whatever it was asked failing, and its state ended.</summary>
+    public void Dispose()
+    {
+        UiThread.Check();
+        if (closing.IsCancellationRequested)
+        {
+            return;
+        }
+        closing.Cancel();
+        listener.Dispose();
+        stream?.Dispose();
+        Forget(SocketPath);
+        FailAll();
+        Become(LiveAppState.Ended);
+    }
+
+    private static void Forget(string socket)
+    {
+        try
+        {
+            File.Delete(socket);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+        }
+    }
+}

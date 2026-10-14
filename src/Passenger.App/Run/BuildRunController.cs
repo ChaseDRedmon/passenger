@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Passenger.App.Debugging;
 using Passenger.App.Docking;
 using Passenger.App.Editors;
+using Passenger.App.LiveTree;
 using Passenger.App.Settings;
 using Passenger.App.ToolWindows;
 using Passenger.Core;
@@ -476,12 +477,28 @@ public sealed class BuildRunController
         // Before the session clears the Debug window's console, which forgets the links the last one's output had.
         DebugProject = Path.GetDirectoryName(plan.Project);
         DebugController debug = session.Debug;
-        string? refused = await debug.StartAsync(plan);
+        // An Avalonia app is launched with the Live Visual Tree's inspector in it, which ends with this debugging.
+        LaunchPlan launched = session.Inspected(plan);
+        LiveApp? inspected = session.LiveApp;
+        string? refused = await debug.StartAsync(launched);
+        Task ended = refused is null ? DebugEnded(debug) : Task.CompletedTask;
+        if (inspected is not null)
+        {
+            _ = EndWithAsync(inspected, ended);
+        }
         if (refused is null)
         {
-            parts.OpenBrowser(plan, DebugEnded(debug));
+            parts.OpenBrowser(plan, ended);
         }
         return refused;
+    }
+
+    /// <summary>An app's inspector let go once its debugging ends: one that never connected (startup hooks turned off in
+    /// the app) waits no longer.</summary>
+    private static async Task EndWithAsync(LiveApp app, Task ended)
+    {
+        await ended;
+        app.Dispose();
     }
 
     /// <summary>The end of the session being debugged; done already when there is none.</summary>

@@ -67,6 +67,10 @@ public static class AppActions
     public const string ShowNuGet = "app.showNuGet";
     public const string Profile = "app.profile";
     public const string ShowProfiler = "app.showProfiler";
+
+    // The Live Visual Tree of an Avalonia app being debugged, as Visual Studio's for WPF: no key of Rider's or VS's.
+    public const string ShowLiveTree = "app.showLiveTree";
+    public const string SelectElement = "app.liveTree.selectElement";
     public const string Find = "app.find";
     public const string Replace = "app.replace";
     public const string FindNext = "app.findNext";

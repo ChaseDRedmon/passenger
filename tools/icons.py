@@ -110,6 +110,9 @@ ICONS = [
     ("Lock", "Lock Closed", "16_regular"),
     # Settings' Keymap: Find Actions by Shortcut, Rider's keyboard with a magnifier over it (Search drawn on it).
     ("Keyboard", "Keyboard", "20_regular"),
+    # The Live Visual Tree: its window's tree of controls, and Select Element, a control picked in the app.
+    ("LiveTree", "Organization", "20_regular"),
+    ("SelectElement", "Select Object", "20_regular"),
 ]
 
 

@@ -1,0 +1,15 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="LiveTreeApp.MainWindow"
+        Title="Live Tree App" Width="480" Height="320">
+    <Window.Styles>
+        <Style Selector="Button.danger">
+            <Setter Property="Foreground" Value="Red" />
+        </Style>
+    </Window.Styles>
+    <StackPanel x:Name="Panel" Margin="12" Spacing="8">
+        <TextBlock x:Name="Greeting" Classes="title" Text="Hello" />
+        <Button x:Name="Save" Content="Save" />
+        <Button x:Name="Delete" Content="Delete" Background="Orange" />
+    </StackPanel>
+</Window>

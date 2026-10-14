@@ -83,6 +83,7 @@ public partial class MainWindow : Window
         AddFolding();
         AddPackages();
         AddProfiler();
+        AddLiveTree();
         AddBreadcrumbs();
         AddBookmarks();
         AddPlaces();
