@@ -29,6 +29,7 @@
     "RazorTests": 90,
     "NewSolutionTests": 120,
     "XamlTests": 150,
-    "WpfXamlTests": 90
+    "WpfXamlTests": 90,
+    "XamlEditingTests": 120
   }
 }

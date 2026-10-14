@@ -19,6 +19,7 @@ public sealed partial class SettingsDialog : Window
     public const string CodeFoldingPage = "Code Folding";
     public const string LiveTemplatesPage = "Live Templates";
     public const string PostfixPage = "Postfix Completion";
+    public const string XamlCodeStylePage = "Code Style: XAML";
     public const string TerminalPage = "Terminal";
     public const string BuildPage = "Build";
     public const string RunPage = "Run";
@@ -37,8 +38,17 @@ public sealed partial class SettingsDialog : Window
     /// <summary>The names of <see cref="DiscordShown"/>'s choices, in its order.</summary>
     public static readonly string[] DiscordChoices = ["Passenger only", "The solution", "The solution and the file"];
 
-    private static readonly string[] Order = [Appearance, SystemPage, UpdatesPage, EditorPage, CodeFoldingPage, PostfixPage, LiveTemplatesPage, BuildPage, RunPage,
-        TerminalPage, McpPage, DiscordPage, DiagnosticsPage, KeymapPage];
+    private static readonly string[] Order = [Appearance, SystemPage, UpdatesPage, EditorPage, CodeFoldingPage, PostfixPage, XamlCodeStylePage, LiveTemplatesPage,
+        BuildPage, RunPage, TerminalPage, McpPage, DiscordPage, DiagnosticsPage, KeymapPage];
+
+    /// <summary>Rider's names for Attributes format's choices, in <see cref="Passenger.Xaml.Features.XamlAttributeStyle"/>'s order.</summary>
+    public static readonly string[] AttributeStyles = ["On single line", "First attribute on single line", "Each attribute on separate lines", "Do not touch"];
+
+    /// <summary>Rider's names for Attributes indenting's choices, in <see cref="Passenger.Xaml.Features.XamlAttributeIndent"/>'s order.</summary>
+    public static readonly string[] AttributeIndents = ["Single indent", "Double indent", "Align by first attribute"];
+
+    /// <summary>Rider's names for an element's inside indenting, in <see cref="Passenger.Xaml.Features.XamlContentIndent"/>'s order.</summary>
+    public static readonly string[] ContentIndents = ["Do not change indenting", "One indent from parent element", "No indent from parent element", "No indent at all"];
 
     /// <summary>Puts what the options changed in force: from the settings as they were applied last, to the options'.</summary>
     private readonly Action<AppSettings, AppSettings> apply;
@@ -289,6 +299,8 @@ public sealed partial class SettingsDialog : Window
             $"{Folding} block comments .net");
         Add(CodeFoldingPage, "XML tags", Check(Working.FoldXmlTags, v => Change(s => s with { FoldXmlTags = v })),
             $"{Folding} xml elements tags project csproj props axaml xaml");
+
+        AddXamlCodeStyle();
 
         // Rider's Editor, General, Postfix Completion and Editor, Live Templates, C#: each a page of its own, found by its
         // templates' words too.

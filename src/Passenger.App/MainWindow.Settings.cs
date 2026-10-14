@@ -79,6 +79,7 @@ public partial class MainWindow
         FollowViewSettings(before, next);
         Explorer.NestFiles = next.NestFiles;
         assist.Templates = CSharp.TemplateSet.Of(next);
+        assist.XamlFormat = next.XamlFormat;
         terminal!.View.FontSize = next.TerminalFontSize;
         foreach (ToolWindows.OutputView console in (ToolWindows.OutputView[])[Bottom.Run, Bottom.Build, Bottom.Debug.Console])
         {

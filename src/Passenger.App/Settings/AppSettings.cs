@@ -193,6 +193,10 @@ public sealed record AppSettings : IStateDocument<AppSettings>
     /// Nesting... turns it off.</summary>
     public bool NestFiles { get; init; } = true;
 
+    /// <summary>Rider's Code Style for XAML (its XML formatter's options, with XAML Styler's attribute order and empty-element
+    /// style), which Reformat Code lays out Avalonia's and WPF's XAML by, a file's .editorconfig over it.</summary>
+    public Passenger.Xaml.Features.XamlFormatSettings XamlFormat { get; init; } = new();
+
     public static IReadOnlyList<Action<JsonObject>> Upgrades { get; } = [StateStore.Unversioned];
 
     /// <summary>A hand-edited or later build's value this build cannot use is brought into range, or back to its default;
@@ -218,6 +222,7 @@ public sealed record AppSettings : IStateDocument<AppSettings>
             PostfixTemplates = PostfixTemplates ?? [],
             TerminalShell = string.IsNullOrWhiteSpace(TerminalShell) ? null : TerminalShell,
             SoftWrapFiles = SoftWrapFiles ?? defaults.SoftWrapFiles,
+            XamlFormat = (XamlFormat ?? defaults.XamlFormat).Clamped(),
         };
     }
 

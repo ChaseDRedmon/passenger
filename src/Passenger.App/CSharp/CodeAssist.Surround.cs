@@ -1,3 +1,4 @@
+using Passenger.App.Xaml;
 using Passenger.Editor;
 using Passenger.Languages.CSharp;
 using Passenger.Text;
@@ -13,6 +14,11 @@ public sealed partial class CodeAssist
     /// where Rider leaves the caret.</summary>
     private void ShowSurround()
     {
+        if (editors.Active is { } markup && XamlService.IsXaml(markup.Path))
+        {
+            ShowXamlSurround(markup);
+            return;
+        }
         if (editors.Active is not { Syntax: { } parser } document)
         {
             return;

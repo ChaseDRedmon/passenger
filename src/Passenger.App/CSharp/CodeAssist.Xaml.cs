@@ -490,28 +490,39 @@ public sealed partial class CodeAssist
         });
     }
 
-    /// <summary>Show Context Actions in XAML: the fixes of the problems on the caret's line, the file checked as it stands.</summary>
-    private async Task XamlFixes(XamlDocument xaml, IReadOnlyList<EditorFix> own)
+    /// <summary>Show Context Actions in XAML: the fixes of the problems on the caret's line, the file checked as it stands,
+    /// then the refactorings there; Refactor This (<paramref name="refactor"/>): Rename where a name is, then those.</summary>
+    private async Task XamlFixes(XamlDocument xaml, IReadOnlyList<EditorFix> own, bool refactor = false)
     {
         int caret = Editor.Selections.Primary.Caret;
         List<XamlFix> fixes = [];
+        List<Choice> refactorings = [];
         // A file whose project could not be read still has the running app's fixes.
         if (await xaml.FileAsync() is { } file)
         {
-            IReadOnlyList<XamlDiagnostic> found = await BackgroundWork.Run(() => XamlDiagnostics.Of(file));
-            TextSnapshot text = TextSnapshot.From(file.Text);
-            int line = text.GetLineFromOffset(Math.Min(caret, text.Length));
-            fixes.AddRange(found.Where(d => text.GetLineFromOffset(Math.Min(d.Range.Start, text.Length)) == line).SelectMany(d => d.Fixes));
+            if (!refactor)
+            {
+                IReadOnlyList<XamlDiagnostic> found = await BackgroundWork.Run(() => XamlDiagnostics.Of(file));
+                TextSnapshot text = TextSnapshot.From(file.Text);
+                int line = text.GetLineFromOffset(Math.Min(caret, text.Length));
+                fixes.AddRange(found.Where(d => text.GetLineFromOffset(Math.Min(d.Range.Start, text.Length)) == line).SelectMany(d => d.Fixes));
+            }
+            else if (await BackgroundWork.Run(() => XamlNavigation.At(file, caret)) is { Named: { } named })
+            {
+                refactorings.Add(new Choice("Rename...", named.Value, XamlRefactoring.Rename));
+            }
+            refactorings.AddRange(await BackgroundWork.Run(() => XamlRefactoringsAt(file, caret)));
         }
-        if (fixes.Count == 0 && own.Count == 0)
+        if (fixes.Count == 0 && own.Count == 0 && refactorings.Count == 0)
         {
-            Message?.Invoke(this, "No fixes here");
+            Message?.Invoke(this, refactor ? "No refactorings here" : "No fixes here");
             return;
         }
-        // A failed binding's fixes (the running app's word) come first, then the file's own problems'.
-        List<Choice> choices = [.. own.Select(f => new Choice(f.Title, f.Detail, f)), .. fixes.Select(f => new Choice(f.Title, Path.GetFileName(f.Path), f))];
+        // A failed binding's fixes (the running app's word) come first, then the file's own problems', then the refactorings.
+        List<Choice> choices = [.. own.Select(f => new Choice(f.Title, f.Detail, f)), .. fixes.Select(f => new Choice(f.Title, f.Detail ?? Path.GetFileName(f.Path), f)),
+            .. refactorings];
         OpenDocument? document = editors.Active;
-        ShowModal(new ChoicePopup("Fixes", choices), caret, "Show Context Actions", choice =>
+        ShowModal(new ChoicePopup(refactor ? "Refactor This" : "Fixes", choices), caret, refactor ? "Refactor This" : "Show Context Actions", choice =>
         {
             if (choice?.Value is XamlFix fix)
             {
@@ -521,28 +532,21 @@ public sealed partial class CodeAssist
             {
                 Editor.ApplyEdits([new TextEdit(chosen.Range.Start, chosen.Range.Length, chosen.Text)], SelectionSet.Single(chosen.Range.Start + chosen.Text.Length));
             }
+            else if (choice?.Value is XamlRefactoring refactoring && editors.Active == document)
+            {
+                // Not awaited: its dialog waits for the person, which no screenshot or test should wait out.
+                _ = RunXamlRefactoring(refactoring);
+            }
             return Task.CompletedTask;
         });
     }
 
-    /// <summary>A XAML fix made against its file's text as it is now (open, or on disk) and applied as one command.</summary>
+    /// <summary>A XAML fix made against its files' texts as they are now (open, or on disk), the files it makes made, as one
+    /// command.</summary>
     private void ApplyFix(XamlFix fix)
     {
-        string text = ReadOpenOrDisk(fix.Path);
-        IReadOnlyList<TextEdit> edits = fix.Edits(text);
-        if (edits.Count == 0)
-        {
-            Message?.Invoke(this, $"{fix.Title}: nothing to change");
-            return;
-        }
-        TextSnapshot snapshot = TextSnapshot.From(text);
-        List<LspTextEdit> changes = [.. edits.Select(e => new LspTextEdit(new LspRange(Lsp(snapshot.GetPosition(e.Start)), Lsp(snapshot.GetPosition(e.End))), e.Text))];
-        JsonElement edit = JsonSerializer.SerializeToElement(new { changes = new Dictionary<string, List<LspTextEdit>> { [DocumentUris.FromPath(fix.Path)] = changes } }, Json.Options);
-        List<string> dropped = [];
-        TypeRename.Apply(editors, edit, [], fix.Title, null, dropped);
-        Message?.Invoke(this, dropped.Count > 0 ? $"{fix.Title} was not applied: {string.Join(", ", dropped)} was edited meanwhile" : fix.Title);
-
-        static LspPosition Lsp(TextPosition position) => new(position.Line, position.Column);
+        string? refused = ApplyXamlChanges(fix.Title, [new XamlFileChange(fix.Path, fix.Edits), .. fix.Others]);
+        Message?.Invoke(this, refused is null ? fix.Title : $"{fix.Title} was not applied: {refused}");
     }
 
     /// <summary>The hover card's words for a XAML name.</summary>

@@ -154,6 +154,27 @@ public static class LiveTemplates
             { Live = false, Surround = SurroundScope.Types },
     }.Select(t => t with { BuiltIn = true })];
 
+    /// <summary>XAML's Surround With: Rider's XML <c>tag</c> (the name to type, the caret then in its start tag) and the
+    /// layout elements a XAML view is wrapped in, each in its start tag once made; those that hold one child only offered
+    /// around one element, Avalonia's Panel only in Avalonia's XAML.</summary>
+    public static IReadOnlyList<XamlSurround> Xaml { get; } =
+    [
+        new(new LiveTemplate("tag", "tag", TemplateScope.None, "<$TAG$$END$>\n\t$SELECTION$\n</$TAG$>", V(C("TAG", "Grid"))) { Live = false, Mnemonic = '1', BuiltIn = true }),
+        Panel("Grid", '2'),
+        Panel("StackPanel", '3'),
+        Panel("Border", '4') with { OneChild = true },
+        Panel("ScrollViewer", '5') with { OneChild = true },
+        Panel("DockPanel", '6'),
+        Panel("WrapPanel", '7'),
+        Panel("Canvas", '8'),
+        Panel("Viewbox", '9') with { OneChild = true },
+        Panel("Panel", '0') with { AvaloniaOnly = true },
+    ];
+
+    private static XamlSurround Panel(string element, char mnemonic) =>
+        new(new LiveTemplate(element, $"Surround with <{element}>", TemplateScope.None, $"<{element}$END$>\n\t$SELECTION$\n</{element}>", V())
+            { Live = false, Mnemonic = mnemonic, BuiltIn = true });
+
     /// <summary>What a template's availability is and what it is used in, read from where it is offered.</summary>
     public static (TemplateAvailability Availability, TemplateUse Use) Availability(LiveTemplate template)
     {
@@ -234,6 +255,9 @@ public static class LiveTemplates
         }
     }
 }
+
+/// <summary>A XAML surround template: whether it may hold one child only, and whether only Avalonia's XAML has it.</summary>
+public sealed record XamlSurround(LiveTemplate Template, bool OneChild = false, bool AvaloniaOnly = false);
 
 /// <summary>The templates in force: the live and surround templates with the person's changes, and the postfix
 /// templates turned on, with whether completion lists them.</summary>

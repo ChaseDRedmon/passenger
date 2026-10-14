@@ -142,6 +142,10 @@ public static class AppActions
     public const string Move = "app.code.move";
     public const string PullMembersUp = "app.code.pullMembersUp";
     public const string PushMembersDown = "app.code.pushMembersDown";
+
+    // Rider's XAML refactorings (XamlExtractResource, XamlExtractStyle), which its keymaps give no keys.
+    public const string ExtractResource = "app.code.extractResource";
+    public const string ExtractStyle = "app.code.extractStyle";
     public const string QuickDocumentation = "app.code.quickDocumentation";
     public const string NextError = "app.code.nextError";
     public const string PreviousError = "app.code.previousError";

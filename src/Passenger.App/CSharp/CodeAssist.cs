@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Media;
 using Passenger.App.Editors;
 using Passenger.App.Workspace;
+using Passenger.App.Xaml;
 using Passenger.Core;
 using Passenger.Editor;
 using Passenger.Languages.CSharp;
@@ -236,12 +237,12 @@ public sealed partial class CodeAssist
         // overrides).
         Code(AppActions.Generate, "Generate...", context => _ = ShowFixes(a => GenerateWords.Any(w => a.Title.StartsWith(w, StringComparison.Ordinal)), "Generate"),
             new("Code", 0, 2));
-        Code(AppActions.SurroundWith, "Surround With...", _ => ShowSurround(), new("Code", 0, 3), server: false, syntax: true);
-        Code(AppActions.Reformat, "Reformat Code", context => _ = Reformat(), new("Code", 1, 0));
-        Code(AppActions.CodeCleanup, "Code Cleanup", context => _ = Cleanup(), new("Code", 1, 1));
+        Code(AppActions.SurroundWith, "Surround With...", _ => ShowSurround(), new("Code", 0, 3), server: false, syntax: true, markup: true);
+        Code(AppActions.Reformat, "Reformat Code", context => _ = Reformat(), new("Code", 1, 0), markup: true);
+        Code(AppActions.CodeCleanup, "Code Cleanup", context => _ = Cleanup(), new("Code", 1, 1), markup: true);
         Code(AppActions.OptimizeUsings, "Optimize Imports", context => _ = OptimizeUsings(), new("Code", 1, 2));
         Code(AppActions.RefactorThis, "Refactor This...", context => _ = ShowFixes(a => a.Kind?.StartsWith("refactor", StringComparison.Ordinal) == true, "Refactor This"),
-            new("Refactor", 0, 0));
+            new("Refactor", 0, 0), xaml: true);
         // IntelliJ's RefactoringMenu: Rename and Change Signature, the Extract and Introduce actions, Inline; Move and Safe
         // Delete; Pull Members Up and Push Members Down, with Encapsulate Field, which Rider adds last.
         Code(AppActions.Rename, "Rename...", _ => ShowRename(), new("Refactor", 1, 0), xaml: true);
@@ -260,6 +261,17 @@ public sealed partial class CodeAssist
         Code(AppActions.PullMembersUp, "Pull Members Up...", context => _ = MoveMembers(up: true), new("Refactor", 3, 0));
         Code(AppActions.PushMembersDown, "Push Members Down...", context => _ = MoveMembers(up: false), new("Refactor", 3, 1));
         Code(AppActions.EncapsulateField, "Encapsulate Field...", context => _ = Refactor(EncapsulateField), new("Refactor", 3, 2));
+        // Rider's XAML refactorings, which ask their options in a dialog, in their own group.
+        actions.Add(new IdeAction(AppActions.ExtractResource, "Extract Resource...", "Code", context => _ = ExtractResource())
+        {
+            WhyNot = context => WhyNotXaml(context),
+            Menus = [new("Refactor", 4, 0)],
+        });
+        actions.Add(new IdeAction(AppActions.ExtractStyle, "Extract Style...", "Code", context => _ = ExtractStyle())
+        {
+            WhyNot = context => WhyNotXaml(context),
+            Menus = [new("Refactor", 4, 1)],
+        });
         // Rider's order in Navigate: Declaration, Derived Symbols, Implementation(s), Type Declaration, Base Symbols.
         Code(AppActions.GoToDeclaration, "Go to Declaration", context => _ = GoToDefinition(Caret), new("Navigate", 2, 0), xaml: true);
         Code(AppActions.DerivedSymbols, "Derived Symbols", context => _ = GoToRelated("Derived Symbols", Caret, DerivedSymbolsAsync, "No derived symbols found"),
@@ -275,17 +287,27 @@ public sealed partial class CodeAssist
         Code(AppActions.PreviousError, "Previous Highlighted Error", _ => StepToMarker(forward: false), new("Navigate", 3, 1), server: false);
         Code(AppActions.QuickDocumentation, "Quick Documentation", context => _ = ShowHover(Caret, Editor.PointOf(Caret)), new("View", 1, 1), server: false);
 
-        void Code(string id, string title, Action<ActionContext> run, MenuPlace menu, bool server = true, bool syntax = false, bool xaml = false) =>
-            actions.Add(new IdeAction(id, title, "Code", run) { WhyNot = context => WhyNot(context, server, syntax, xaml), Menus = [menu] });
+        void Code(string id, string title, Action<ActionContext> run, MenuPlace menu, bool server = true, bool syntax = false, bool xaml = false, bool markup = false) =>
+            actions.Add(new IdeAction(id, title, "Code", run) { WhyNot = context => WhyNot(context, server, syntax, xaml, markup), Menus = [menu] });
     }
 
     private int Caret => Editor.Selections.Primary.Caret;
 
-    /// <summary>Why an action cannot run: no file; for one that asks the server, none for the file; for one that edits by
-    /// the file's syntax, a file not C# or one that cannot be edited.</summary>
-    private string? WhyNot(ActionContext context, bool server, bool syntax = false, bool xaml = false) =>
+    /// <summary>Why an action of a XAML file's alone cannot run: no file, a file not XAML of a project Passenger reads, or
+    /// one that cannot be edited.</summary>
+    private string? WhyNotXaml(ActionContext context) =>
         context.File is null ? "No file is open"
-        : xaml && XamlOf(context.File) is { } markup && (markup.IsLoaded || !markup.Loaded.IsCompleted) ? null
+        : XamlOf(context.File) is not { } markup || (markup.Loaded.IsCompleted && !markup.IsLoaded) ? "The file is not XAML of an Avalonia or WPF project"
+        : context.Editor.IsReadOnly ? "The file is read-only"
+        : null;
+
+    /// <summary>Why an action cannot run: no file; for one that asks the server, none for the file; for one that edits by
+    /// the file's syntax, a file not C# or one that cannot be edited. One that also edits XAML (<paramref name="markup"/>)
+    /// takes any XAML file that can be edited.</summary>
+    private string? WhyNot(ActionContext context, bool server, bool syntax = false, bool xaml = false, bool markup = false) =>
+        context.File is null ? "No file is open"
+        : markup && XamlService.IsXaml(context.File.Path) ? (context.Editor.IsReadOnly ? "The file is read-only" : null)
+        : xaml && XamlOf(context.File) is { } markupFile && (markupFile.IsLoaded || !markupFile.Loaded.IsCompleted) ? null
         : syntax && context.File.Syntax is null ? "The file is not C#"
         : syntax && context.Editor.IsReadOnly ? "The file is read-only"
         : !server || Current is not null ? null
@@ -950,7 +972,7 @@ public sealed partial class CodeAssist
     {
         if (XamlCurrent is { } xaml)
         {
-            await XamlFixes(xaml, only is null ? OwnFixes(editors.Active, Caret) : []);
+            await XamlFixes(xaml, only is null ? OwnFixes(editors.Active, Caret) : [], refactor: only is not null);
             return;
         }
         string what = only is null ? "Show Context Actions" : title;
@@ -1479,6 +1501,14 @@ public sealed partial class CodeAssist
 
     private async Task ReformatCore()
     {
+        if (editors.Active is { } shown && XamlService.IsXaml(shown.Path))
+        {
+            if (await ReformatXaml(shown, "Reformat Code") is { } changed)
+            {
+                Message?.Invoke(this, changed ? "Reformatted" : "Already formatted");
+            }
+            return;
+        }
         if (Ask("Reformat Code") is not { } lsp || editors.Active is not { } document)
         {
             return;
@@ -1515,6 +1545,15 @@ public sealed partial class CodeAssist
     /// removed (IDE0005's fix), the usings sorted, then the file reformatted.</summary>
     private async Task CleanupCore()
     {
+        // Rider's Code Cleanup on XAML reformats it, by the same code style.
+        if (editors.Active is { } shown && XamlService.IsXaml(shown.Path))
+        {
+            if (await ReformatXaml(shown, "Code Cleanup") is { } changed)
+            {
+                Message?.Invoke(this, changed ? "Code cleanup reformatted" : "Already clean");
+            }
+            return;
+        }
         if (Ask("Code Cleanup") is not { } lsp || editors.Active is not { } document)
         {
             return;

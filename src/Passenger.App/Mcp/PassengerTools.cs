@@ -253,6 +253,28 @@ public sealed partial class PassengerTools(MainWindow window)
     [McpServerTool(Name = "format", Title = "Reformat a file", Destructive = true), Description("Reformats a file as the IDE's Reformat Code does, and saves it.")]
     public Task<string> Format(string path, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
+        if (Passenger.App.Xaml.XamlService.IsXaml(Resolve(path)))
+        {
+            // XAML is Passenger's own to lay out, by the window's XAML code style with the file's .editorconfig over it.
+            OpenDocument markup = Document(path);
+            window.OpenFile(markup.Path);
+            using Passenger.Text.ChangeTracker tracked = new(markup.Text);
+            Passenger.Xaml.Features.XamlFormatted formatted = await CodeAssist.FormatXamlAsync(markup, window.Settings.XamlFormat);
+            if (formatted.Problem is { } problem)
+            {
+                return $"Not reformatted: {problem}";
+            }
+            if (tracked.Map(formatted.Edits) is not { } laid)
+            {
+                return "Not reformatted: the file was edited meanwhile";
+            }
+            if (laid.Count > 0)
+            {
+                WorkspaceEdits.ApplyTo(Editors, markup, laid);
+                markup.Save();
+            }
+            return laid.Count == 0 ? "Already formatted" : $"Reformatted ({laid.Count} edits)";
+        }
         (OpenDocument document, LspDocument lsp) = await Code(path, cancel);
         window.OpenFile(document.Path);
         using Passenger.Text.ChangeTracker asked = new(document.Text);
