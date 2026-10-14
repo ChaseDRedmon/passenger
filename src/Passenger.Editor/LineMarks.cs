@@ -122,6 +122,10 @@ public enum TestMarkKind
 /// <summary>A test's run icon on a line (from zero), right of the line numbers; a click on it asks the host to run it.</summary>
 public readonly record struct TestMark(int Line, TestMarkKind Kind);
 
+/// <summary>A colour a line (from zero) writes or names, shown as a swatch right of the line numbers, as Rider's gutter
+/// shows one; a click on it asks the host for its picker. <see cref="Data"/> is what the host knows it by.</summary>
+public readonly record struct ColourMark(int Line, Avalonia.Media.Color Colour, object? Data = null);
+
 /// <summary>How lines differ from the last commit, as the gutter's change bar shows it; a conflict is a merge's change
 /// both sides made otherwise.</summary>
 public enum ChangeMarkKind

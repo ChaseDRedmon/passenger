@@ -43,6 +43,10 @@ public sealed class XamlService : IDisposable
     /// <summary>Something to say in the status bar (a project's XAML still loading).</summary>
     public event EventHandler<string>? Message;
 
+    /// <summary>Where a library's own files come from (a theme's XAML for go to declaration): its Source Link, or a
+    /// stand-in of a test's.</summary>
+    public ILibraryFiles LibraryFiles { get; set; } = new SourceLink();
+
     /// <summary>Whether a path is a XAML file Passenger reads, by its extension.</summary>
     public static bool IsXaml(string path) => Path.GetExtension(path).ToLowerInvariant() is ".axaml" or ".paml" or ".xaml";
 
@@ -60,7 +64,7 @@ public sealed class XamlService : IDisposable
         {
             return;
         }
-        if (IsXaml(document.Path))
+        if (IsXaml(document.Path) && !Paths.IsUnder(document.Path, LibrarySources.Folder))
         {
             if (ProjectOf(document.Path) is { } loading)
             {
@@ -74,6 +78,7 @@ public sealed class XamlService : IDisposable
             Debounce wait = new(SourceSettle, () => Loaded(document.Path) is { } owner ? SourceTypedAsync(owner, document) : Task.CompletedTask);
             EventHandler<DocumentChangedEventArgs> handler = (_, _) => wait.Restart();
             document.Text.Changed += handler;
+            document.Parsed += OnParsed;
             sources[document] = (handler, wait);
         }
     }
@@ -88,6 +93,7 @@ public sealed class XamlService : IDisposable
         if (sources.Remove(document, out (EventHandler<DocumentChangedEventArgs> Handler, Debounce Wait) source))
         {
             document.Text.Changed -= source.Handler;
+            document.Parsed -= OnParsed;
             source.Wait.Stop();
         }
     }
@@ -127,6 +133,16 @@ public sealed class XamlService : IDisposable
         }
     }
 
+    /// <summary>An open XAML file's resources, includes or names changed as it was typed: the project's other open files
+    /// are checked again against them.</summary>
+    internal void Summarised(XamlDocument changed)
+    {
+        foreach (XamlDocument document in documents.Values.Where(d => d != changed && d.Loading.ProjectPath == changed.Loading.ProjectPath))
+        {
+            document.ProjectChanged();
+        }
+    }
+
     /// <summary>A build ended: each open XAML file takes the XAML compiler's problems in it, in place of the last build's.</summary>
     public void Built(IReadOnlyList<Run.Problem> problems)
     {
@@ -136,6 +152,33 @@ public sealed class XamlService : IDisposable
             document.Built(problems.Where(p => p.Path is { } path && PathNames.Same(path, document.Document.Path)));
         }
     }
+
+    /// <summary>A C# file parsed: its colours (Color.Parse, FromRgb and the rest) found off the UI thread, and its
+    /// swatches shown when the text is still the one parsed.</summary>
+    private async void OnParsed(object? sender, Languages.CSharp.ParsedText parsed)
+    {
+        if (sender is not OpenDocument document)
+        {
+            return;
+        }
+        try
+        {
+            IReadOnlyList<Passenger.Xaml.Features.ColourUse> colours = await BackgroundWork.Run(() => Passenger.Xaml.Features.Colours.InCSharp(parsed.Root));
+            if (!disposed && document.Text.Snapshot == parsed.Text && (colours.Count > 0 || document.ColourMarks.Count > 0))
+            {
+                document.ColourMarks = Marks(parsed.Text, colours);
+            }
+        }
+        catch (Exception error)
+        {
+            IdeErrors.Report(error);
+        }
+    }
+
+    /// <summary>The gutter's swatches for colours found in a text: a line's first.</summary>
+    internal static IReadOnlyList<ColourMark> Marks(TextSnapshot text, IReadOnlyList<Passenger.Xaml.Features.ColourUse> colours) =>
+        [.. colours.Where(c => c.Offset <= text.Length).Select(c => new ColourMark(text.GetLineFromOffset(c.Offset),
+            Avalonia.Media.Color.FromArgb(c.Colour.A, c.Colour.R, c.Colour.G, c.Colour.B), c))];
 
     /// <summary>The load of the project a XAML file is in, begun if it has not been; null for a file in no C# project.
     /// Whether the project's XAML is one Passenger reads is learned off the UI thread, as the load begins.</summary>

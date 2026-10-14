@@ -190,6 +190,7 @@ public sealed class EditorGroup : DockPanel
         Editor.SetLineMarks(document.LineMarks);
         Editor.SetLineAnnotations(document.LineAnnotations);
         Editor.SetTestMarks(document.TestMarks);
+        Editor.SetColourMarks(document.ColourMarks);
         Editor.SetChangeMarks(document.ChangeMarks);
         Editor.SetGutterAnnotations(document.GutterAnnotations);
         Editor.SetBookmarks(document.Bookmarks);
@@ -318,6 +319,9 @@ public sealed class EditorGroup : DockPanel
                 break;
             case nameof(OpenDocument.TestMarks):
                 Editor.SetTestMarks(document.TestMarks);
+                break;
+            case nameof(OpenDocument.ColourMarks):
+                Editor.SetColourMarks(document.ColourMarks);
                 break;
             case nameof(OpenDocument.ChangeMarks):
                 Editor.SetChangeMarks(document.ChangeMarks);

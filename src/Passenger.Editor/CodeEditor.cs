@@ -216,6 +216,15 @@ public sealed partial class CodeEditor : Control
         InvalidateVisual();
     }
 
+    /// <summary>The colours lines write, each a swatch in the gutter, from the host.</summary>
+    public IReadOnlyList<ColourMark> ColourMarks { get; private set; } = [];
+
+    public void SetColourMarks(IReadOnlyList<ColourMark> marks)
+    {
+        ColourMarks = marks;
+        InvalidateVisual();
+    }
+
     /// <summary>Whether a point (in the editor's coordinates) is in the gutter's column of run icons and the
     /// execution arrow, right of the line numbers.</summary>
     public bool IsInMarkColumn(Point at) => ShowLineNumbers && at.X >= GutterWidth - FoldWidth - GutterPadRight && at.X < GutterWidth - FoldWidth;
@@ -488,6 +497,7 @@ public sealed partial class CodeEditor : Control
         SetBookmarks([]);
         SetGutterAnnotations([]);
         SetTestMarks([]);
+        SetColourMarks([]);
         SetLineAnnotations([]);
         SetInlayHints([]);
         SetFoldRegions([]);

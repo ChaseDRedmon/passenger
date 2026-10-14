@@ -156,26 +156,135 @@ public sealed partial class CodeAssist
         {
             return;
         }
-        IReadOnlyList<XamlTarget> targets = [.. found.Symbol.Targets.Where(t => t.Kind != XamlTargetKind.Theme)];
-        if (targets.Count == 0)
-        {
-            Message?.Invoke(this, "Cannot find a declaration to go to");
-            return;
-        }
+        IReadOnlyList<XamlTarget> targets = found.Symbol.Targets;
         if (targets.Count == 1)
         {
-            await Arrive(targets[0]);
+            await Arrive(targets[0], found.File);
             return;
         }
-        List<Choice> choices = [.. targets.Select(t => new Choice(t.Name, t.Path is { } path ? Path.GetFileName(path) : t.Type?.Origin.AssemblyName ?? string.Empty, t))];
+        List<Choice> choices = [.. targets.Select(t => new Choice(t.Name, t.Path is { } path ? Path.GetFileName(path)
+            : t.Kind == XamlTargetKind.Theme ? "Theme" : t.Type?.Origin.AssemblyName ?? string.Empty, t))];
         ShowModal(new ChoicePopup($"Declarations of {found.Symbol.Name}", choices), offset, "Go to Declaration",
-            choice => choice?.Value is XamlTarget target ? Arrive(target) : Task.CompletedTask);
+            choice => choice?.Value is XamlTarget target ? Arrive(target, found.File) : Task.CompletedTask);
     }
+
+    /// <summary>Goes into the theme library's own XAML (Fluent's): a control's theme, a part of its template, or a resource
+    /// the theme defines, its file had from the library's Source Link and opened read-only where it is written. The files
+    /// are those compiled into the theme, and those its control list merges in (Fluent's Button.xaml, in
+    /// FluentControls.xaml), whose own text says them.</summary>
+    private async Task ArriveInTheme(XamlTarget target, XamlFile file)
+    {
+        if (Xaml?.Invoke() is not { } service)
+        {
+            return;
+        }
+        Passenger.Xaml.Metadata.AssemblyTypes? theme = file.Types.Assemblies.Where(a => a.Name.Contains(".Themes.", StringComparison.Ordinal) && a.XamlFiles.Count > 0)
+            .OrderBy(a => a.Name.EndsWith(".Fluent", StringComparison.Ordinal) ? 0 : 1).FirstOrDefault();
+        if (theme is null)
+        {
+            Message?.Invoke(this, "The project references no theme whose XAML can be read");
+            return;
+        }
+        Said said = new();
+        string assembly = LibrarySources.Implementation(theme.Path);
+        List<string> known = [.. theme.XamlFiles];
+        Task<string?> Fetch(string path)
+        {
+            Message?.Invoke(this, $"Reading {theme.Name}'s {path.TrimStart('/')} from its Source Link…");
+            return service.LibraryFiles.FileAsync(assembly, theme.Name, path, said, CancellationToken.None);
+        }
+        IReadOnlyList<string> names = target.Type is { } type ? [.. file.Types.SelfAndBases(type).Select(t => t.Name)] : [];
+        string? Named() => names.Select(n => known.FirstOrDefault(f => Path.GetFileNameWithoutExtension(f) == n)).FirstOrDefault(f => f is not null);
+        bool Prefixed() => target.Part is { } key && known.Any(f => key.StartsWith(Path.GetFileNameWithoutExtension(f), StringComparison.Ordinal));
+        if (target.Type is not null ? Named() is null : !Prefixed())
+        {
+            foreach (string hub in theme.XamlFiles.Where(f => f.EndsWith("Controls.xaml", StringComparison.Ordinal)))
+            {
+                if (await Fetch(hub) is { } local)
+                {
+                    known.AddRange(Included(ReadText(local), hub, theme.Name).Where(f => !known.Contains(f)));
+                }
+            }
+        }
+        List<string> candidates = [];
+        if (target.Type is not null)
+        {
+            candidates.AddRange(Named() is { } named ? [named] : []);
+        }
+        else if (target.Part is { } key)
+        {
+            candidates.AddRange(known.Where(f => key.StartsWith(Path.GetFileNameWithoutExtension(f), StringComparison.Ordinal))
+                .OrderByDescending(f => Path.GetFileNameWithoutExtension(f).Length));
+            candidates.AddRange(known.Where(f => f.Contains("/Accents/", StringComparison.Ordinal) && !candidates.Contains(f)));
+        }
+        Regex place = ThemePlace(target);
+        foreach (string candidate in candidates.Take(12))
+        {
+            if (await Fetch(candidate) is not { } local)
+            {
+                continue;
+            }
+            string text = ReadText(local);
+            Match where = place.Match(text);
+            if (where.Success)
+            {
+                Navigate?.Invoke(this, (local, TextSnapshot.From(text).GetPosition(where.Groups["at"].Index)));
+                Message?.Invoke(this, $"{theme.Name}'s {candidate.TrimStart('/')}, from its Source Link");
+                return;
+            }
+        }
+        Message?.Invoke(this, said.Last ?? $"{target.Name} is not in {theme.Name}'s XAML");
+    }
+
+    /// <summary>The files a theme's XAML merges in, as paths in its project: avares:// ones of its own assembly, and those
+    /// beside the file.</summary>
+    private static IEnumerable<string> Included(string text, string from, string assembly)
+    {
+        string folder = from[..(from.LastIndexOf('/') + 1)];
+        foreach (Match include in IncludeSource().Matches(text))
+        {
+            string source = include.Groups["source"].Value;
+            string own = $"avares://{assembly}/";
+            if (source.StartsWith(own, StringComparison.Ordinal))
+            {
+                yield return "/" + source[own.Length..];
+            }
+            else if (!source.Contains("://", StringComparison.Ordinal))
+            {
+                yield return source.StartsWith('/') ? source : folder + source;
+            }
+        }
+    }
+
+    [GeneratedRegex(@"<(?:Merge)?ResourceInclude\b[^>]*\bSource=""(?<source>[^""]+)""")]
+    private static partial Regex IncludeSource();
+
+    /// <summary>The last reason a library file could not be had, kept as it is said.</summary>
+    private sealed class Said : IProgress<string>
+    {
+        public string? Last { get; private set; }
+
+        public void Report(string value) => Last = value;
+    }
+
+    /// <summary>Where a theme's XAML writes what a target names: a template part's name, a control's theme, a resource's key.</summary>
+    private static Regex ThemePlace(XamlTarget target) => target switch
+    {
+        { Part: { } part, Type: not null } => new($@"\b(?:x:)?Name=""(?<at>{Regex.Escape(part)})"""),
+        { Type: { } shown } => new($@"<(?<at>ControlTheme)\b[^>]*(?:\{{x:Type\s+{Regex.Escape(shown.Name)}\}}|TargetType=""{Regex.Escape(shown.Name)}"")"),
+        { Part: { } key } => new($@"\bx:Key=""(?<at>{Regex.Escape(key)})"""),
+        _ => new("(?!)"),
+    };
 
     /// <summary>Goes where a XAML name leads: a place in the project's source, a range of a file, or a library's type
     /// decompiled.</summary>
-    private async Task Arrive(XamlTarget target)
+    private async Task Arrive(XamlTarget target, XamlFile? file = null)
     {
+        if (target.Kind == XamlTargetKind.Theme && file is not null)
+        {
+            await ArriveInTheme(target, file);
+            return;
+        }
         if (target.Place is { } place)
         {
             Navigate?.Invoke(this, (place.Path, new TextPosition(place.Line, place.Column)));
@@ -369,6 +478,61 @@ public sealed partial class CodeAssist
             Message?.Invoke(this, dropped.Count > 0 ? $"Renamed, but not in {string.Join(", ", dropped)}: it was edited meanwhile"
                 : files > 1 ? $"Renamed in {files} files" : "Renamed");
         });
+    }
+
+    /// <summary>Show Context Actions in XAML: the fixes of the problems on the caret's line, the file checked as it stands.</summary>
+    private async Task XamlFixes(XamlDocument xaml, IReadOnlyList<EditorFix> own)
+    {
+        int caret = Editor.Selections.Primary.Caret;
+        List<XamlFix> fixes = [];
+        // A file whose project could not be read still has the running app's fixes.
+        if (await xaml.FileAsync() is { } file)
+        {
+            IReadOnlyList<XamlDiagnostic> found = await BackgroundWork.Run(() => XamlDiagnostics.Of(file));
+            TextSnapshot text = TextSnapshot.From(file.Text);
+            int line = text.GetLineFromOffset(Math.Min(caret, text.Length));
+            fixes.AddRange(found.Where(d => text.GetLineFromOffset(Math.Min(d.Range.Start, text.Length)) == line).SelectMany(d => d.Fixes));
+        }
+        if (fixes.Count == 0 && own.Count == 0)
+        {
+            Message?.Invoke(this, "No fixes here");
+            return;
+        }
+        // A failed binding's fixes (the running app's word) come first, then the file's own problems'.
+        List<Choice> choices = [.. own.Select(f => new Choice(f.Title, f.Detail, f)), .. fixes.Select(f => new Choice(f.Title, Path.GetFileName(f.Path), f))];
+        OpenDocument? document = editors.Active;
+        ShowModal(new ChoicePopup("Fixes", choices), caret, "Show Context Actions", choice =>
+        {
+            if (choice?.Value is XamlFix fix)
+            {
+                ApplyFix(fix);
+            }
+            else if (choice?.Value is EditorFix chosen && editors.Active == document)
+            {
+                Editor.ApplyEdits([new TextEdit(chosen.Range.Start, chosen.Range.Length, chosen.Text)], SelectionSet.Single(chosen.Range.Start + chosen.Text.Length));
+            }
+            return Task.CompletedTask;
+        });
+    }
+
+    /// <summary>A XAML fix made against its file's text as it is now (open, or on disk) and applied as one command.</summary>
+    private void ApplyFix(XamlFix fix)
+    {
+        string text = ReadOpenOrDisk(fix.Path);
+        IReadOnlyList<TextEdit> edits = fix.Edits(text);
+        if (edits.Count == 0)
+        {
+            Message?.Invoke(this, $"{fix.Title}: nothing to change");
+            return;
+        }
+        TextSnapshot snapshot = TextSnapshot.From(text);
+        List<LspTextEdit> changes = [.. edits.Select(e => new LspTextEdit(new LspRange(Lsp(snapshot.GetPosition(e.Start)), Lsp(snapshot.GetPosition(e.End))), e.Text))];
+        JsonElement edit = JsonSerializer.SerializeToElement(new { changes = new Dictionary<string, List<LspTextEdit>> { [DocumentUris.FromPath(fix.Path)] = changes } }, Json.Options);
+        List<string> dropped = [];
+        TypeRename.Apply(editors, edit, [], fix.Title, null, dropped);
+        Message?.Invoke(this, dropped.Count > 0 ? $"{fix.Title} was not applied: {string.Join(", ", dropped)} was edited meanwhile" : fix.Title);
+
+        static LspPosition Lsp(TextPosition position) => new(position.Line, position.Column);
     }
 
     /// <summary>The hover card's words for a XAML name.</summary>

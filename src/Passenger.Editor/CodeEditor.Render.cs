@@ -529,6 +529,14 @@ public sealed partial class CodeEditor
                 tests[test.Line] = test.Kind;
             }
         }
+        Dictionary<int, Color> colours = [];
+        foreach (ColourMark colour in ColourMarks)
+        {
+            if (colour.Line >= first && colour.Line <= last)
+            {
+                colours.TryAdd(colour.Line, colour.Colour);
+            }
+        }
         for (int i = 0; i < shown.Count; i++)
         {
             if (shown[i].Row > 0)
@@ -552,6 +560,10 @@ public sealed partial class CodeEditor
             else if (tests.TryGetValue(line, out TestMarkKind test))
             {
                 DrawTestMark(context, test, right, top);
+            }
+            else if (colours.TryGetValue(line, out Color colour))
+            {
+                DrawSwatch(context, colour, right, top);
             }
             if (marks.Breakpoints.TryGetValue(line, out LineMark mark))
             {
@@ -831,6 +843,15 @@ public sealed partial class CodeEditor
             // Rider's failed test: the run icon with a red mark on it.
             context.DrawEllipse(palette.Error, new Pen(palette.Gutter, 1.2), new Point(x + size, y + size - 1), 2.6, 2.6);
         }
+    }
+
+    /// <summary>A colour's swatch right of the line numbers: a small square of it, ringed so a colour near the gutter's
+    /// own still shows.</summary>
+    private void DrawSwatch(DrawingContext context, Color colour, double right, double top)
+    {
+        double size = Math.Min(metrics.LineHeight - 6, 12);
+        Rect square = new(right + 5, top + ((metrics.LineHeight - size) / 2), size, size);
+        context.DrawRectangle(new SolidColorBrush(colour), new Pen(palette.LineNumber, 1), square, 2, 2);
     }
 
     /// <summary>The execution point's arrow, in the space right of the line numbers.</summary>

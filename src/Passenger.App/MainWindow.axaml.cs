@@ -152,6 +152,10 @@ public partial class MainWindow : Window
                 ShowTestMenu(editor, active, click.Line);
                 return;
             }
+            if (PickColour(editor, active, click))
+            {
+                return;
+            }
             if (!click.Context && editor.IsInAnnotationColumn(click.Position))
             {
                 _ = ShowBlamedCommitAsync(active, click.Line);

@@ -132,6 +132,24 @@ public sealed class XamlProjectBuilder
         }
     }
 
+    /// <summary>An open XAML file's text as it is typed: its summary taken when it says something new (a resource, an
+    /// include, a name, a class), so the project's other files see it; null when it says nothing new.</summary>
+    public XamlProject? XamlTyped(string path, XmlTree tree)
+    {
+        lock (gate)
+        {
+            XamlProject current = built ?? Make();
+            XamlFileSummary summary = XamlFileSummary.Of(path, tree, current.ResolveSource);
+            if (files.TryGetValue(path, out XamlFileSummary? known) && known.Signature == summary.Signature)
+            {
+                return null;
+            }
+            files[path] = summary;
+            return built = new XamlProject(inputs, current.Types, Dialect, new Dictionary<string, XamlFileSummary>(files, StringComparer.Ordinal),
+                assets, themeKeys, [.. referenced.Select(r => (r.Inputs.AssemblyName, r.Inputs.Folder))]);
+        }
+    }
+
     /// <summary>Which project's assembly a C# file is compiled into, of this one and those it references; null for none.</summary>
     private string? AssemblyOf(string path)
     {

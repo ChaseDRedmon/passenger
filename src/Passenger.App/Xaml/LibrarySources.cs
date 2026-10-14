@@ -51,7 +51,7 @@ public static partial class LibrarySources
 
     /// <summary>The assembly with the code: a package's lib/ beside the ref/ compiled against, the running runtime's for
     /// the framework's reference pack, else the one given.</summary>
-    private static string Implementation(string reference)
+    public static string Implementation(string reference)
     {
         string separator = Path.DirectorySeparatorChar.ToString();
         string refFolder = $"{separator}ref{separator}";
@@ -75,7 +75,7 @@ public static partial class LibrarySources
     }
 
     /// <summary>A folder name for one version of an assembly, so a package updated decompiles afresh.</summary>
-    private static string Stamp(string assembly)
+    public static string Stamp(string assembly)
     {
         FileInfo file = new(assembly);
         return $"{(uint)HashCode.Combine(assembly.GetHashCode(StringComparison.Ordinal), file.LastWriteTimeUtc.Ticks, file.Length):x8}";

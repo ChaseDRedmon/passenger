@@ -75,6 +75,9 @@ public sealed class XamlFile
 
     public XamlProject Project { get; }
 
+    /// <summary>The theme variant (Dark, Light) whose resources a swatch shows where a theme has several.</summary>
+    public string? Variant { get; init; }
+
     public TypeSystem Types => Project.Types;
 
     public XamlDialect Dialect => Project.Dialect;

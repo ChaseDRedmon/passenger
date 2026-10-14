@@ -19,6 +19,7 @@ public sealed class OpenDocument : Observable
     private IReadOnlyList<LineAnnotation> lineAnnotations = [];
     private IReadOnlyList<InlayHint> inlayHints = [];
     private IReadOnlyList<TestMark> testMarks = [];
+    private IReadOnlyList<ColourMark> colourMarks = [];
     private IReadOnlyList<ChangeMark> changeMarks = [];
     private IReadOnlyList<string?> gutterAnnotations = [];
     private IReadOnlyList<int> bookmarks = [];
@@ -125,6 +126,13 @@ public sealed class OpenDocument : Observable
     {
         get => testMarks;
         set => Set(ref testMarks, value);
+    }
+
+    /// <summary>The colours its lines write or name (XAML's, C#'s), each a swatch in the gutter.</summary>
+    public IReadOnlyList<ColourMark> ColourMarks
+    {
+        get => colourMarks;
+        set => Set(ref colourMarks, value);
     }
 
     /// <summary>The change bars: the lines that differ from the last commit.</summary>

@@ -79,6 +79,8 @@ public sealed class TestRun : IDisposable
         // No test reaches GitHub: a window or a Passenger started that checks for updates without a stand-in of its own
         // asks a loopback port nothing listens on.
         Environment.SetEnvironmentVariable(Passenger.App.Updates.ReleaseFeed.Variable, "http://127.0.0.1:9/repos/Zaneris/passenger/releases/latest");
+        // Nor NuGet's symbol server: a theme's sources asked for without a stand-in of the test's come from where nothing listens.
+        Environment.SetEnvironmentVariable(Passenger.App.Xaml.SourceLink.Variable, "http://127.0.0.1:9/");
         // Nor the person's Discord: a window without a stand-in of its own looks where nothing listens.
         Environment.SetEnvironmentVariable(Passenger.App.Discord.DiscordIpc.Variable, DiscordNowhere);
         // A run stopped before its end (Ctrl+C) leaves nothing either.

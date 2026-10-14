@@ -1,4 +1,7 @@
+using Avalonia;
 using Avalonia.Headless;
+using Avalonia.Input;
+using Avalonia.Media;
 using Avalonia.Headless.XUnit;
 using Passenger.App;
 using Passenger.App.Run;
@@ -221,6 +224,8 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
         Assert.Equal("class Avalonia.Controls.Button : ContentControl", window.Assist.HoverText);
         Ui.Press(window, "ESCAPE");
         Ui.Run(window, AppActions.GoToDeclaration);
+        Ui.WaitFor(() => window.Assist.Offered.Count == 2, "the class and its control theme to choose from");
+        Ui.Press(window, "ENTER");
         Ui.Settle();
         // Avalonia's own Button, decompiled from the package's assembly, read-only, at the class.
         OpenDocument library = window.EditorArea.Active!;
@@ -295,6 +300,195 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
         Assert.Equal(["Undo Rename Go to Start? It changes MainWindow.axaml.cs and MainWindow.axaml."], asked);
         Assert.Contains("Go.Content = \"Start\";", behind.Text.Snapshot.ToString(), StringComparison.Ordinal);
         window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_key_one_theme_variant_lacks_is_warned_of_where_defined_and_used_and_the_fix_adds_it_to_that_variant()
+    {
+        MainWindow window = app.Open(app.PathOf("MainWindow.axaml"));
+        OpenDocument view = window.EditorArea.Active!;
+        PlaceAfter(window.EditorArea.CodeEditor, "<Button Name=\"Go\" Content=\"Go\"");
+        window.KeyTextInput(" Foreground=\"{DynamicResource Danger}\"");
+        window.OpenFile(app.PathOf("Styles/Palette.axaml"));
+        Ui.Settle();
+        CodeEditor palette = window.EditorArea.CodeEditor;
+        OpenDocument document = window.EditorArea.Active!;
+        PlaceAfter(palette, "<SolidColorBrush x:Key=\"Muted\" Color=\"#868A91\" />");
+        window.KeyTextInput("\n            <SolidColorBrush x:Key=\"Danger\" Color=\"#E55765\" />");
+        Ui.WaitFor(() => document.Markers.Any(m => m.Kind == MarkerKind.Warning), "the warning on the key only Dark defines");
+        Assert.Equal("'Danger' is defined for Dark but not for Light", MarkerOn(palette, document, "Danger").Message);
+        Ui.WaitFor(() => view.Markers.Any(m => m.Kind == MarkerKind.Warning), "the warning on the window's use of it, from the palette as typed");
+        Marker used = Assert.Single(view.Markers);
+        Assert.Equal("'Danger' is not defined for Light", used.Message);
+
+        Ui.Run(window, AppActions.QuickFix);
+        Ui.WaitFor(() => window.Assist.Offered.Count > 0, "the fix offered on the key's line");
+        Assert.Equal(["Add 'Danger' to Light"], window.Assist.Offered);
+        Ui.Press(window, "ENTER");
+        Ui.Settle();
+        Assert.Contains("<SolidColorBrush x:Key=\"Muted\" Color=\"#6C707E\" />\n            <SolidColorBrush x:Key=\"Danger\" Color=\"#E55765\" />\n        </ResourceDictionary>",
+            palette.Document.Snapshot.ToString(), StringComparison.Ordinal);
+        Ui.WaitFor(() => document.Markers.Count == 0 && view.Markers.Count == 0, "both warnings gone once Light has the key too");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void An_avares_path_completes_from_the_projects_assets_is_warned_of_when_missing_and_goes_to_its_file()
+    {
+        MainWindow window = app.Open(app.PathOf("MainWindow.axaml"));
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        OpenDocument document = window.EditorArea.Active!;
+        PlaceAfter(editor, "<StackPanel Margin=\"12\" Spacing=\"8\">");
+        window.KeyTextInput("\n        <Image Source=");
+        window.KeyTextInput("\"");
+        Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("avares://Gallery/Assets/logo.png"), "the project's asset as an avares:// path");
+        Assert.Contains("avares://Gallery/Styles/Palette.axaml", window.Assist.CompletionLabels);
+        window.KeyTextInput("logo");
+        Ui.Settle();
+        Assert.Equal("avares://Gallery/Assets/logo.png", window.Assist.CompletionLabels.FirstOrDefault());
+        Ui.Press(window, "ENTER");
+        Assert.EndsWith("<Image Source=\"avares://Gallery/Assets/logo.png|\"", CaretLine(editor), StringComparison.Ordinal);
+        Ui.Press(window, "END");
+        window.KeyTextInput(" />");
+        Ui.Settle();
+        Assert.Empty(document.Markers);
+
+        Replace(editor, "logo.png", "logo2.png");
+        Ui.WaitFor(() => document.Markers.Count == 1, "the warning on the asset that is not there");
+        Assert.Equal("'avares://Gallery/Assets/logo2.png' is not found", document.Markers[0].Message);
+        Assert.Equal(MarkerKind.Warning, document.Markers[0].Kind);
+
+        window.OpenFile(app.PathOf("App.axaml"));
+        Ui.Settle();
+        PlaceAfter(window.EditorArea.CodeEditor, "Source=\"avares://Gallery/Sty");
+        Ui.Run(window, AppActions.GoToDeclaration);
+        Ui.Settle();
+        Assert.Equal("Palette.axaml", window.EditorArea.Active?.Name);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Colours_show_as_gutter_swatches_and_one_chosen_in_the_picker_is_written_back_as_it_was_written()
+    {
+        MainWindow window = app.Open(app.PathOf("MainWindow.axaml"));
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        OpenDocument view = window.EditorArea.Active!;
+        int button = editor.Document.Snapshot.GetLineFromOffset(editor.Document.Snapshot.ToString().IndexOf("<Button Name=\"Go\"", StringComparison.Ordinal));
+        // The button's background names the palette's Accent: its swatch is the dark theme's, which the window shows.
+        Ui.WaitFor(() => view.ColourMarks.Any(m => m.Line == button), "the swatch of the brush the button's background names");
+        Assert.Equal(Color.Parse("#3D7BF5"), view.ColourMarks.Single(m => m.Line == button).Colour);
+        Point swatch = editor.TranslatePoint(editor.GutterColumnPoint(GutterColumn.Marks, button), window)!.Value;
+        Assert.Equal(Color.Parse("#3D7BF5"), Ui.Pixel(window, swatch));
+
+        window.MouseDown(swatch, MouseButton.Left);
+        window.MouseUp(swatch, MouseButton.Left);
+        Ui.Settle();
+        Assert.Equal("#3D7BF5", window.PickingColour);
+        window.KeyTextInput("#E2A33F");
+        Ui.Settle();
+        Assert.Equal("#E2A33F", window.PickingColour);
+        Ui.Press(window, "ENTER");
+        Ui.Settle();
+        Assert.Null(window.PickingColour);
+        // Written where the brush is defined, in the palette's dark dictionary; the light one keeps its own.
+        string palette = File.ReadAllText(app.PathOf("Styles/Palette.axaml"));
+        Assert.Contains("<SolidColorBrush x:Key=\"Accent\" Color=\"#E2A33F\" />", palette, StringComparison.Ordinal);
+        Assert.Contains("<SolidColorBrush x:Key=\"Accent\" Color=\"#3574F0\" />", palette, StringComparison.Ordinal);
+        Ui.WaitFor(() => view.ColourMarks.SingleOrDefault(m => m.Line == button).Colour == Color.Parse("#E2A33F"), "the swatch following the palette");
+
+        // C#'s colours too, written back in the form they were written.
+        window.OpenFile(app.PathOf("MainWindow.axaml.cs"));
+        Ui.Settle();
+        CodeEditor code = window.EditorArea.CodeEditor;
+        OpenDocument behind = window.EditorArea.Active!;
+        PlaceAfter(code, "Go.Content = \"Start\";");
+        window.KeyTextInput("\n        Go.Background = new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.FromRgb(0x33, 0x66, 0x99));");
+        int line = code.CaretPosition.Line;
+        Ui.WaitFor(() => behind.ColourMarks.Any(m => m.Line == line), "the swatch of the colour FromRgb makes");
+        Assert.Equal(Color.Parse("#336699"), behind.ColourMarks.Single(m => m.Line == line).Colour);
+        Point made = code.TranslatePoint(code.GutterColumnPoint(GutterColumn.Marks, line), window)!.Value;
+        window.MouseDown(made, MouseButton.Left);
+        window.MouseUp(made, MouseButton.Left);
+        Ui.Settle();
+        window.KeyTextInput("#AA0000");
+        Ui.Press(window, "ENTER");
+        Ui.Settle();
+        Assert.Contains("new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.FromRgb(170, 0, 0));", code.Document.Snapshot.GetLineText(line), StringComparison.Ordinal);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Go_to_declaration_reaches_the_themes_own_xaml_for_a_control_a_template_part_and_a_theme_resource()
+    {
+        MainWindow window = app.Open(app.PathOf("MainWindow.axaml"));
+        // Fluent's sources as its Source Link gives them, stood in: FluentControls.xaml merges Button.xaml in.
+        ThemeSources sources = new(TestFolders.Create("xaml-theme-"));
+        window.XamlService.LibraryFiles = sources;
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "<Butt");
+        Ui.Run(window, AppActions.GoToDeclaration);
+        Ui.WaitFor(() => window.Assist.Offered.Count == 2, "the class and its control theme to choose from");
+        Assert.Equal(["Avalonia.Controls.Button", "Button's control theme"], window.Assist.Offered);
+        Ui.Press(window, "DOWN");
+        Ui.Press(window, "ENTER");
+        Ui.Settle();
+        OpenDocument theme = window.EditorArea.Active!;
+        Assert.Equal("Button.xaml", theme.Name);
+        Assert.True(theme.IsReadOnly, "the theme's XAML opened editable");
+        Assert.Contains("<|ControlTheme x:Key=\"{x:Type Button}\" TargetType=\"Button\">", CaretLine(window.EditorArea.CodeEditor), StringComparison.Ordinal);
+        Assert.Equal([("Avalonia.Themes.Fluent", "/Controls/FluentControls.xaml"), ("Avalonia.Themes.Fluent", "/Controls/Button.xaml")], sources.Asked);
+
+        window.OpenFile(app.PathOf("App.axaml"));
+        Ui.Settle();
+        PlaceAfter(window.EditorArea.CodeEditor, "<FluentTheme />");
+        window.KeyTextInput("\n        <Style Selector=\"Button /template/ ContentPresenter#PART_ContentPresenter\">\n            <Setter Property=\"Background\" Value=\"{DynamicResource ButtonBackground}\" />\n        </Style>");
+        PlaceAfter(window.EditorArea.CodeEditor, "#PART_Con");
+        Ui.Run(window, AppActions.GoToDeclaration);
+        Ui.Settle();
+        Assert.Equal("Button.xaml", window.EditorArea.Active?.Name);
+        Assert.Contains("<ContentPresenter x:Name=\"|PART_ContentPresenter\"", CaretLine(window.EditorArea.CodeEditor), StringComparison.Ordinal);
+
+        window.OpenFile(app.PathOf("App.axaml"));
+        Ui.Settle();
+        PlaceAfter(window.EditorArea.CodeEditor, "{DynamicResource ButtonBack");
+        Ui.Run(window, AppActions.GoToDeclaration);
+        Ui.Settle();
+        Assert.Equal("Button.xaml", window.EditorArea.Active?.Name);
+        Assert.Contains("x:Key=\"|ButtonBackground\"", CaretLine(window.EditorArea.CodeEditor), StringComparison.Ordinal);
+        window.Close();
+    }
+
+    /// <summary>A theme library's files as its Source Link would give them, written into a folder of the test's; what was
+    /// asked for, in order.</summary>
+    private sealed class ThemeSources(string folder) : Passenger.App.Xaml.ILibraryFiles
+    {
+        public List<(string Assembly, string Path)> Asked { get; } = [];
+
+        public Task<string?> FileAsync(string assembly, string assemblyName, string path, IProgress<string>? why, CancellationToken cancel)
+        {
+            Asked.Add((assemblyName, path));
+            string? text = path switch
+            {
+                "/Controls/FluentControls.xaml" => "<ResourceDictionary xmlns=\"https://github.com/avaloniaui\" xmlns:x=\"http://schemas.microsoft.com/winfx/2006/xaml\">\n"
+                    + "  <ResourceDictionary.MergedDictionaries>\n    <MergeResourceInclude Source=\"Button.xaml\" />\n  </ResourceDictionary.MergedDictionaries>\n</ResourceDictionary>\n",
+                "/Controls/Button.xaml" => "<ResourceDictionary xmlns=\"https://github.com/avaloniaui\" xmlns:x=\"http://schemas.microsoft.com/winfx/2006/xaml\">\n"
+                    + "  <StaticResource x:Key=\"ButtonBackground\" ResourceKey=\"ControlFillColorDefaultBrush\" />\n"
+                    + "  <ControlTheme x:Key=\"{x:Type Button}\" TargetType=\"Button\">\n    <Setter Property=\"Template\">\n      <ControlTemplate>\n"
+                    + "        <ContentPresenter x:Name=\"PART_ContentPresenter\" Content=\"{TemplateBinding Content}\" />\n      </ControlTemplate>\n    </Setter>\n"
+                    + "  </ControlTheme>\n</ResourceDictionary>\n",
+                _ => null,
+            };
+            if (text is null)
+            {
+                why?.Report($"{path} is not in the stand-in");
+                return Task.FromResult<string?>(null);
+            }
+            // Kept as Source Link's files are, under a MetadataAsSource folder, which the editor shows read-only.
+            string local = Path.Combine(folder, "MetadataAsSource", "SourceLink", assemblyName, path.TrimStart('/'));
+            Directory.CreateDirectory(Path.GetDirectoryName(local)!);
+            File.WriteAllText(local, text);
+            return Task.FromResult<string?>(local);
+        }
     }
 
     /// <summary>The one marker over a stretch of the text.</summary>

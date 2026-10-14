@@ -48,6 +48,35 @@ public sealed class AssemblyTypes
     /// <summary>The assembly's own attributes a dialect reads (<c>XmlnsDefinition</c>, <c>XmlnsPrefix</c>).</summary>
     public IReadOnlyList<ClrAttribute> Attributes { get; }
 
+    /// <summary>The XAML files compiled into it on their own, by their paths in its project
+    /// (<c>/Controls/FluentControls.xaml</c>), as the methods Avalonia's compiler makes for each name them
+    /// (<c>Build:/Controls/FluentControls.xaml</c>); a dictionary one of them merges in is compiled into it.</summary>
+    public IReadOnlyList<string> XamlFiles
+    {
+        get
+        {
+            lock (gate)
+            {
+                if (xamlFiles is not null)
+                {
+                    return xamlFiles;
+                }
+                HashSet<string> found = new(StringComparer.Ordinal);
+                foreach (MethodDefinitionHandle handle in reader.MethodDefinitions)
+                {
+                    string name = reader.GetString(reader.GetMethodDefinition(handle).Name);
+                    if (name.StartsWith("Build:/", StringComparison.Ordinal))
+                    {
+                        found.Add(name["Build:".Length..]);
+                    }
+                }
+                return xamlFiles = [.. found.Order(StringComparer.Ordinal)];
+            }
+        }
+    }
+
+    private List<string>? xamlFiles;
+
     /// <summary>The string constants its code holds: what XAML compiled into it keeps of its resources' keys.</summary>
     public IReadOnlyList<string> Strings
     {

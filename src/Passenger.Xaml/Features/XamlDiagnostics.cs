@@ -11,15 +11,16 @@ public enum XamlSeverity
     Warning,
 }
 
-/// <summary>A problem in a XAML file, where it is and in the words Problems shows; a fix it offers, when it has one.</summary>
+/// <summary>A problem in a XAML file, where it is and in the words Problems shows, and the fixes it offers.</summary>
 public sealed record XamlDiagnostic(TextRange Range, XamlSeverity Severity, string Message)
 {
-    /// <summary>What fixes it, as edits to files (a theme variant's missing key added), with the fix's title.</summary>
-    public XamlFix? Fix { get; init; }
+    /// <summary>What puts it right (a theme variant's missing key added), each a quick fix.</summary>
+    public IReadOnlyList<XamlFix> Fixes { get; init; } = [];
 }
 
-/// <summary>A fix: its title, and edits to one or more files.</summary>
-public sealed record XamlFix(string Title, IReadOnlyList<(string Path, TextEdit Edit)> Edits);
+/// <summary>A quick fix: its title, the file it changes, and its edits made from that file's text as it is when the fix
+/// is chosen.</summary>
+public sealed record XamlFix(string Title, string Path, Func<string, IReadOnlyList<TextEdit>> Edits);
 
 /// <summary>The problems Avalonia's XAML compiler would find, found as the file is typed: markup that is not
 /// well-formed, an undeclared prefix, a type, property, event handler, markup extension or directive nothing resolves, a
@@ -41,6 +42,7 @@ public static class XamlDiagnostics
         {
             return found;
         }
+        found.AddRange(ThemeVariants.Of(file));
         Dictionary<string, XmlAttribute> named = new(StringComparer.Ordinal);
         foreach (XmlElement element in file.Tree.Elements)
         {
@@ -172,6 +174,7 @@ public static class XamlDiagnostics
         {
             Value(file, attribute, property, found);
         }
+        Asset(file, attribute, found);
         if (element.LocalName == "Setter" && attribute.Name == "Property" && file.StyleTargetAt(element) is { } target
             && XamlCompletion.SetterProperty(file, element) is null)
         {
@@ -180,6 +183,26 @@ public static class XamlDiagnostics
         if (element.LocalName == "Style" && attribute.Name == "Selector")
         {
             Selector(file, attribute, found);
+        }
+    }
+
+    /// <summary>An asset a value names that is not there: an avares:// path of this project or one it references, or a
+    /// path from its folder or the file's, where an include, an image or an icon is read from (a font's family after
+    /// its #).</summary>
+    private static void Asset(XamlFile file, XmlAttribute attribute, List<XamlDiagnostic> found)
+    {
+        string value = attribute.Value.Trim();
+        bool named = value.StartsWith("avares://", StringComparison.Ordinal)
+            || (attribute.Name is "Source" or "Icon" && value.Length > 0 && !value.Contains("://", StringComparison.Ordinal));
+        if (!named)
+        {
+            return;
+        }
+        int hash = value.IndexOf('#');
+        string path = hash < 0 ? value : value[..hash];
+        if (file.Project.ResolveSource(path, file.Path) is { } local && !File.Exists(local) && !Directory.Exists(local))
+        {
+            found.Add(new XamlDiagnostic(attribute.ValueRange, XamlSeverity.Warning, $"'{path}' is not found"));
         }
     }
 
@@ -327,7 +350,15 @@ public static class XamlDiagnostics
     {
         XamlProject project = file.Project;
         XamlFileSummary own = project.Files.TryGetValue(file.Path, out XamlFileSummary? summary) ? summary : XamlFileSummary.Of(file.Path, file.Tree, project.ResolveSource);
-        if (project.Definitions(own, key.Value).Count > 0 || project.ThemeKeys.Contains(key.Value) || ReferencedKey(project, key.Value))
+        if (project.Definitions(own, key.Value).Count > 0)
+        {
+            if (ThemeVariants.Use(file, own, key.ValueRange, key.Value) is { } missing)
+            {
+                found.Add(missing);
+            }
+            return;
+        }
+        if (project.ThemeKeys.Contains(key.Value) || ReferencedKey(project, key.Value))
         {
             return;
         }

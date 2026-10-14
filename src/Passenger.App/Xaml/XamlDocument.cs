@@ -57,16 +57,17 @@ public sealed class XamlDocument : IDisposable
         TextSnapshot text = Document.Text.Snapshot;
         int version = Document.Text.Version;
         string path = Document.Path;
+        string? variant = Avalonia.Application.Current?.ActualThemeVariant.Key?.ToString();
         if (await Loading.Loaded is null || await Loading.Builder is not { } builder)
         {
             return null;
         }
         XamlProject project = builder.Current;
-        if (last is { } kept && kept.Version == version && kept.Project == project)
+        if (last is { } kept && kept.Version == version && kept.Project == project && kept.File.Variant == variant)
         {
             return kept.File;
         }
-        XamlFile file = await BackgroundWork.Run(() => Read(path, text.ToString(), project));
+        XamlFile file = await BackgroundWork.Run(() => Read(path, text.ToString(), project, variant));
         if (Document.Text.Version == version)
         {
             last = (version, project, file);
@@ -75,10 +76,10 @@ public sealed class XamlDocument : IDisposable
     }
 
     /// <summary>A parse made a file of the project, the project's summary of it taken from this text.</summary>
-    private static XamlFile Read(string path, string text, XamlProject project)
+    private static XamlFile Read(string path, string text, XamlProject project, string? variant)
     {
         XmlTree tree = XmlTree.Parse(text);
-        return new XamlFile(path, tree, project.With(XamlFileSummary.Of(path, tree, project.ResolveSource)));
+        return new XamlFile(path, tree, project.With(XamlFileSummary.Of(path, tree, project.ResolveSource))) { Variant = variant };
     }
 
     /// <summary>What completion offers at a caret, for the text as it stands.</summary>
@@ -103,6 +104,10 @@ public sealed class XamlDocument : IDisposable
         {
             return;
         }
+        if (await Loading.Builder is { } builder && await BackgroundWork.Run(() => builder.XamlTyped(file.Path, file.Tree)) is not null && !disposed)
+        {
+            service.Summarised(this);
+        }
         IReadOnlyList<XamlDiagnostic> found = await BackgroundWork.Run(() => XamlDiagnostics.Of(file));
         if (disposed || Document.Text.Version != version)
         {
@@ -111,6 +116,11 @@ public sealed class XamlDocument : IDisposable
         Diagnostics = found;
         live = [.. found.Select(d => new Marker(d.Range, d.Severity == XamlSeverity.Error ? MarkerKind.Error : MarkerKind.Warning, d.Message))];
         Show();
+        IReadOnlyList<ColourUse> colours = await BackgroundWork.Run(() => Colours.InXaml(file, file.Variant));
+        if (!disposed && Document.Text.Version == version)
+        {
+            Document.ColourMarks = XamlService.Marks(Document.Text.Snapshot, colours);
+        }
     }
 
     /// <summary>The XAML compiler's problems in this file from the build that just ended, placed on their lines; each

@@ -755,7 +755,7 @@ public static class XamlCompletion
                 {
                     yield return new XamlItem(definition.Key, XamlItemKind.Resource, definition.Key, $"{definition.ElementName} in {Path.GetFileName(scope.Path)}")
                     {
-                        Colour = definition.Colour,
+                        Colour = scope.Resources.FirstOrDefault(r => r.Key == definition.Key && r.Variant == file.Variant && r.Colour is not null)?.Colour ?? definition.Colour,
                     };
                 }
             }

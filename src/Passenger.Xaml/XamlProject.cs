@@ -12,6 +12,9 @@ namespace Passenger.Xaml;
 public sealed record ResourceDefinition(string Key, string Path, TextRange KeyRange, string ElementName, TextRange ElementRange, string? Variant,
     TextRange? Group, string? Colour)
 {
+    /// <summary>Where its colour is written (its Color attribute's value, a Color element's text).</summary>
+    public TextRange? ColourRange { get; init; }
+
     /// <summary>Where the definition's own element starts, its key range's line found from it.</summary>
     public int Start => ElementRange.Start;
 }
@@ -23,6 +26,13 @@ public sealed record XamlFileSummary(string Path, string? Class, IReadOnlyList<R
     IReadOnlyList<(string Name, TextRange Range, string Element)> Names, IReadOnlyList<string> StyleClasses, bool IsApplication,
     IReadOnlyList<ThemeGroup> ThemeGroups)
 {
+    /// <summary>What the summary says, as one string, to tell whether a new one says anything new.</summary>
+    public string Signature => signature ??= string.Join('|', [Class ?? string.Empty, IsApplication.ToString(),
+        .. Resources.Select(r => $"{r.Key}:{r.ElementName}:{r.Variant}:{r.Colour}:{r.KeyRange.Start}:{r.ElementRange.End}"),
+        .. Includes, .. Names.Select(n => $"{n.Name}:{n.Element}"), .. StyleClasses, .. ThemeGroups.Select(g => string.Join(',', g.Variants))]);
+
+    private string? signature;
+
     /// <summary>Summarises a parse; <paramref name="resolve"/> turns an include's <c>Source</c> into its file.</summary>
     public static XamlFileSummary Of(string path, XmlTree tree, Func<string, string, string?> resolve)
     {
@@ -40,7 +50,7 @@ public sealed record XamlFileSummary(string Path, string? Class, IReadOnlyList<R
             {
                 (string? variant, TextRange? group) = VariantOf(element, x);
                 resources.Add(new ResourceDefinition(key.Value, path, key.ValueRange, element.LocalName, TextRange.FromBounds(element.Start, element.End),
-                    variant, group, ColourOf(element, tree.Text)));
+                    variant, group, ColourOf(element, tree.Text)) { ColourRange = ColourRangeOf(element, tree.Text) });
             }
             if (element.LocalName.EndsWith(".ThemeDictionaries", StringComparison.Ordinal))
             {
@@ -126,6 +136,30 @@ public sealed record XamlFileSummary(string Path, string? Class, IReadOnlyList<R
         "Color" => TextOf(element, text),
         _ => null,
     };
+
+    private static TextRange? ColourRangeOf(XmlElement element, string text)
+    {
+        if (element.LocalName == "SolidColorBrush" && element.Attribute("Color") is { } attribute)
+        {
+            return attribute.ValueRange;
+        }
+        if (element.LocalName is "SolidColorBrush" or "Color" && element.Texts.Count == 1 && element.Children.Count == 0)
+        {
+            TextRange range = element.Texts[0].Range;
+            int start = range.Start;
+            int end = range.End;
+            while (start < end && char.IsWhiteSpace(text[start]))
+            {
+                start++;
+            }
+            while (end > start && char.IsWhiteSpace(text[end - 1]))
+            {
+                end--;
+            }
+            return TextRange.FromBounds(start, end);
+        }
+        return null;
+    }
 
     private static string? TextOf(XmlElement element, string text) =>
         element.Texts.Count == 1 && element.Children.Count == 0 ? text[element.Texts[0].Start..element.Texts[0].End].Trim() : null;

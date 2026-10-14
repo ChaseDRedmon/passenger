@@ -229,7 +229,7 @@ public sealed partial class CodeAssist
         // Passenger's own fixes first, which a file the server does not read (a XAML file) may have too.
         actions.Add(new IdeAction(AppActions.QuickFix, "Show Context Actions", "Code", context => _ = ShowFixes())
         {
-            WhyNot = context => OwnFixes(context.File, context.Editor.Selections.Primary.Caret).Count > 0 ? null : WhyNot(context, server: true),
+            WhyNot = context => OwnFixes(context.File, context.Editor.Selections.Primary.Caret).Count > 0 ? null : WhyNot(context, server: true, xaml: true),
             Menus = [new("Code", 0, 1)],
         });
         // Rider's Generate: the server's actions that write code for the type (constructors, equality, interface members,
@@ -948,6 +948,11 @@ public sealed partial class CodeAssist
 
     private async Task ShowFixesCore(Func<CodeAction, bool>? only, string title)
     {
+        if (XamlCurrent is { } xaml)
+        {
+            await XamlFixes(xaml, only is null ? OwnFixes(editors.Active, Caret) : []);
+            return;
+        }
         string what = only is null ? "Show Context Actions" : title;
         if (only is null && ShowOwnFixes(title))
         {
