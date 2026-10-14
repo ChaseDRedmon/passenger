@@ -15,14 +15,13 @@ namespace Passenger.App;
 public partial class MainWindow
 {
     private Profiling.ProfilerView? profilerView;
-    private ProfilingSession? profiling;
     private string profilingName = string.Empty;
 
     /// <summary>The Performance Profiler tool window.</summary>
     public Profiling.ProfilerView ProfilerView => profilerView!;
 
-    /// <summary>The run being profiled, or null.</summary>
-    public ProfilingSession? Profiling => profiling;
+    /// <summary>The run being profiled, the open folder's, or null.</summary>
+    public ProfilingSession? Profiling => session.Profiling;
 
     /// <summary>Where the open folder's snapshots are kept, a .nettrace file a run (which PerfView and speedscope read
     /// too): beside its state, as Rider keeps a solution's, the newest <see cref="Snapshots.Kept"/>. With no folder open,
@@ -39,11 +38,11 @@ public partial class MainWindow
         });
         actions!.Add(new IdeAction(AppActions.Profile, "Profile", "Run", context => _ = ProfileReportingAsync())
         {
-            WhyNot = _ => profiling is not null ? "A run is already being profiled" : Configuration is null ? "Nothing to profile: no executable project" : null,
+            WhyNot = _ => session.Profiling is not null ? "A run is already being profiled" : Configuration is null ? "Nothing to profile: no executable project" : null,
             Menus = [new MenuPlace("Run", 0, 2)],
         });
         profilerView.StopRequested += (_, _) => _ = SnapshotAsync();
-        profilerView.KillRequested += (_, _) => profiling?.Kill();
+        profilerView.KillRequested += (_, _) => session.Profiling?.Kill();
         profilerView.OpenRequested += (_, method) => _ = OpenMethodAsync(method);
         profilerView.OpenSnapshotRequested += (_, _) => _ = PickSnapshotAsync();
         profilerView.OpenKeptRequested += (_, path) => _ = OpenSnapshotAsync(path);
@@ -79,7 +78,9 @@ public partial class MainWindow
     /// stopped it, which the profiler window says too (all but a failed build, which the Build window shows).</summary>
     public async Task<string?> ProfileAsync(string? arguments = null)
     {
-        if (profiling is not null)
+        ProjectSession profiled = session;
+        BuildRunController builds = buildRun;
+        if (profiled.Profiling is not null)
         {
             return "A run is already being profiled";
         }
@@ -87,10 +88,14 @@ public partial class MainWindow
         {
             return "Nothing to profile: no executable project";
         }
-        (LaunchPlan? plan, string? problem) = await ResolvePlanAsync(chosen, arguments);
-        if (plan?.Build is { } step && await BuildAsync(step) is { Succeeded: false } unbuilt)
+        (LaunchPlan? plan, string? problem) = await builds.ResolvePlanAsync(chosen, arguments);
+        if (plan?.Build is { } step && await builds.BuildBeforeLaunchAsync(step) is { Succeeded: false } unbuilt)
         {
             return unbuilt.Message;
+        }
+        if (profiled.IsEnded)
+        {
+            return "The solution was closed";
         }
         ShowToolWindow("profiler");
         if ((plan is null ? problem : plan.WhyNot("profile")) is { } why)
@@ -100,17 +105,24 @@ public partial class MainWindow
         }
         try
         {
-            ProfileTarget profiled = new(plan!.Program, plan.Arguments, plan.WorkingDirectory, plan.Environment);
+            ProfileTarget target = new(plan!.Program, plan.Arguments, plan.WorkingDirectory, plan.Environment);
             Bottom.Run.Clear();
             ToolWindows.ConsoleSink console = Bottom.Run.Sink;
+            ProfilingSession running;
             // Held until the program has reached the profiler (or never will), not while it runs: that is the person's.
             using (BackgroundWork.Scope())
             {
-                profiling = await ProfilingSession.StartAsync(profiled, SnapshotFolder,
+                running = await ProfilingSession.StartAsync(target, SnapshotFolder,
                     (text, error) => console.Write(text, error ? ToolWindows.ConsoleStream.Error : ToolWindows.ConsoleStream.Output));
             }
+            profiled.Profiling = running;
+            if (profiled.IsEnded)
+            {
+                // Its folder was left as it started: it ends with the folder's other programs.
+                running.Kill();
+                return "The solution was closed";
+            }
             profilingName = chosen.Name;
-            ProfilingSession running = profiling;
             Bottom.Run.Input = Run.ProgramInput.Of(running.Input);
             profilerView!.Running(chosen.Name, () => running.Elapsed);
             StatusText.Text = $"Profiling {chosen.Name}";
@@ -119,12 +131,12 @@ public partial class MainWindow
             {
                 console.End(ToolWindows.ConsoleStream.Output);
                 console.End(ToolWindows.ConsoleStream.Error);
-                if (!runner.IsRunning)
+                if (!profiled.Runner.IsRunning)
                 {
                     Bottom.Run.Input = null;
                 }
                 Bottom.Run.Flush();
-                if (profiling == running)
+                if (profiled.Profiling == running && profiled == session)
                 {
                     _ = SnapshotAsync();
                 }
@@ -134,7 +146,7 @@ public partial class MainWindow
         catch (Exception error) when (error is ProfilingException or InvalidOperationException or IOException or UnauthorizedAccessException
             or TimeoutException or System.ComponentModel.Win32Exception or DiagnosticsClientException)
         {
-            profiling = null;
+            profiled.Profiling = null;
             profilerView!.Stopped(error.Message);
             return error.Message;
         }
@@ -144,9 +156,9 @@ public partial class MainWindow
     /// again while the snapshot is read (Get Snapshot as the program ends, say), it answers with that same reading.</summary>
     public Task<SnapshotRead> SnapshotAsync()
     {
-        if (profiling is { } run)
+        if (session.Profiling is { } run)
         {
-            profiling = null;
+            session.Profiling = null;
             snapshotting = ReadSnapshotAsync(run);
         }
         return snapshotting ?? Task.FromResult(new SnapshotRead(null, "Nothing has been profiled"));
@@ -185,7 +197,7 @@ public partial class MainWindow
     /// compare it with; the run goes on.</summary>
     public async Task<MemorySnapshot?> MemorySnapshotAsync()
     {
-        if (profiling is not { } run)
+        if (session.Profiling is not { } run)
         {
             StatusText.Text = "A memory snapshot needs a program being profiled";
             return null;

@@ -4,27 +4,34 @@ using Passenger.App.History;
 using Passenger.App.Navigation;
 using Passenger.App.Run;
 using Passenger.App.State;
+using Passenger.App.Testing;
+using Passenger.App.ToolWindows;
 using Passenger.App.Workspace;
 using Passenger.Core;
 using Passenger.Editor;
+using Passenger.Profiler;
 
 namespace Passenger.App;
 
 /// <summary>What a window lends each session it makes: its editors (whose open files the session's services follow), where
-/// its state and Local History are kept, how folders are watched, and the warm language server a test's windows share.</summary>
+/// its state and Local History are kept, how folders are watched, the warm language server a test's windows share, the
+/// consoles and tests tree its runners and test runner write to, and the build a test run starts with.</summary>
 public sealed record SessionSetup(
     EditorArea Editors,
     string StateFolder,
     HistoryKeeping HistoryKeeping,
     FolderWatching Watching,
     Func<bool> SolutionWide,
-    WarmServer? WarmServer);
+    WarmServer? WarmServer,
+    ToolViews Views,
+    Func<CancellationToken, Task<BuildOutcome>> BuildForTests);
 
 /// <summary>One folder or solution open in a window, or a window's nothing before one opens: what the folder has (its
-/// solution read, its files indexed and watched, Local History, run configurations, recent files and the places Back goes
-/// to, what it keeps in the store) and what it runs (the language server), made as the folder opens and ended together as
-/// it is left (<see cref="EndAsync"/>), so nothing of one folder outlives it into the next. The window builds its
-/// controllers over the session it has and binds its views to it. A UI-thread object.</summary>
+/// solution read, its files indexed and watched, Local History, run configurations, the last build's problems, recent files
+/// and the places Back goes to, what it keeps in the store) and what it runs (the language server, its builds and programs,
+/// one in the terminal, the profiler's run, its tests), made as the folder opens and ended together as it is left
+/// (<see cref="LeaveAsync"/>) or its window closes (<see cref="CloseAsync"/>), so nothing of one folder outlives it into
+/// the next. The window builds its controllers over the session it has and binds its views to it. A UI-thread object.</summary>
 public sealed class ProjectSession : IAsyncDisposable
 {
     /// <summary>How many recently opened files Go to File offers before anything is typed.</summary>
@@ -43,6 +50,9 @@ public sealed class ProjectSession : IAsyncDisposable
         this.setup = setup;
         Folder = folder;
         Configurations = new RunConfigurations(folder);
+        Builder = new ProcessRunner(setup.Views.Build);
+        Runner = new ProcessRunner(setup.Views.Run, takesInput: true);
+        Tests = new TestController(setup.Views.TestTree, setup.BuildForTests, () => Projects, line => setup.Views.Build.Append($"{line}\n"));
     }
 
     /// <summary>A window's session with no folder open: files may still be open, alone.</summary>
@@ -128,6 +138,24 @@ public sealed class ProjectSession : IAsyncDisposable
 
     public RunConfigurations Configurations { get; }
 
+    /// <summary>The folder's builds, rebuilds and cleans, in the window's Build console.</summary>
+    public ProcessRunner Builder { get; }
+
+    /// <summary>The program Run started in the window's Run console, while it runs or since it last did.</summary>
+    public ProcessRunner Runner { get; }
+
+    /// <summary>The errors and warnings the last build found, each once.</summary>
+    public List<Problem> Problems { get; } = [];
+
+    /// <summary>The program Run last started in a tab of the Terminal window, until a run in the Run console comes after it.</summary>
+    public TerminalRun? InTerminal { get; set; }
+
+    /// <summary>The run being profiled, or null.</summary>
+    public ProfilingSession? Profiling { get; set; }
+
+    /// <summary>The folder's unit tests: those its test projects declare, their runs and their results.</summary>
+    public TestController Tests { get; }
+
     /// <summary>The language server on the folder's projects, or null for a folder with none (or no folder).</summary>
     public CSharpService? CSharp { get; private set; }
 
@@ -138,7 +166,7 @@ public sealed class ProjectSession : IAsyncDisposable
     /// show follows.</summary>
     public event EventHandler? WorkspaceChanged;
 
-    /// <summary>Whether the session has been left (<see cref="EndAsync"/>).</summary>
+    /// <summary>Whether the session has been left, or its window closed.</summary>
     public bool IsEnded => ending is not null;
 
     /// <summary>The folder's documents from now on: what the store kept of the folder's own (its configurations, Find in
@@ -297,31 +325,85 @@ public sealed class ProjectSession : IAsyncDisposable
         CSharpChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    /// <summary>Leaves the folder: what the store keeps of it is kept no more, its watcher and Local History stop at once,
-    /// the language server is asked to end, and the task finishes once it has (and what else is ending with it), or
-    /// <paramref name="limit"/> after, each late one named in the log. It needs no UI thread once begun, so the process can
-    /// wait for it after the window's loop has stopped.</summary>
-    public Task EndAsync(TimeSpan limit, params (string What, Task Ending)[] with)
+    /// <summary>Leaves the folder while its window stays: everything it runs ends, and the task finishes once each end has
+    /// landed (a stopped build's outcome, a killed program's exit, said in the window's views before another folder takes
+    /// them) and the session has let go of the window's consoles, or <see cref="MainWindow.EndLimit"/> after, each late one
+    /// named in the log. What else ends with it (the window's debugger, its terminals) is waited for alike.</summary>
+    public Task LeaveAsync(params (string What, Task Ending)[] with)
     {
         UiThread.Check();
         if (ending is not null)
         {
             return ending;
         }
-        State = null;
-        Watcher?.Dispose();
-        LocalHistory?.Release();
-        (string What, Task Ending)[] parts =
-        [
-            .. with,
-            ("the language server", CSharp?.DisposeAsync().AsTask() ?? Task.CompletedTask),
-        ];
-        CSharp = null;
-        ending = Within(limit, Folder, parts);
+        List<(string What, Task Ending)> parts = [.. with];
+        // Their ends are posted to the window's thread, which carries on while it waits.
+        if (Builder.IsRunning)
+        {
+            parts.Add(("the build", Builder.Ended));
+        }
+        if (Runner.IsRunning)
+        {
+            parts.Add(("the program", Runner.Ended));
+        }
+        if (InTerminal is { IsRunning: true } inTerminal)
+        {
+            parts.Add(("the program in the terminal", inTerminal.Ended));
+        }
+        Task ended = Within(MainWindow.EndLimit, Folder, End(parts));
+        ending = LetGoOnceEnded();
+        return ending;
+
+        async Task LetGoOnceEnded()
+        {
+            await ended;
+            LetGo();
+        }
+    }
+
+    /// <summary>Ends what the folder runs as its window closes: programs and builds killed, the rest asked to end, and the
+    /// task finishes once those have, or <see cref="MainWindow.EndLimit"/> after. It needs no UI thread once begun, so the
+    /// process can wait for it after the window's loop has stopped.</summary>
+    public Task CloseAsync(params (string What, Task Ending)[] with)
+    {
+        UiThread.Check();
+        if (ending is not null)
+        {
+            return ending;
+        }
+        ending = Within(MainWindow.EndLimit, Folder, End([.. with]));
+        LetGo();
         return ending;
     }
 
-    public ValueTask DisposeAsync() => new(EndAsync(MainWindow.EndLimit));
+    public ValueTask DisposeAsync() => new(CloseAsync());
+
+    /// <summary>What ends at once (the store's documents, the watcher, Local History, programs, builds, the profiled run, a
+    /// test run), and what is asked to end: the test runner and the language server, with the parts given.</summary>
+    private List<(string What, Task Ending)> End(List<(string What, Task Ending)> parts)
+    {
+        State = null;
+        Watcher?.Dispose();
+        LocalHistory?.Release();
+        // A build stopped now says so with nothing of this folder's in Problems, which another folder's take next.
+        Problems.Clear();
+        Runner.Stop();
+        Builder.Stop();
+        InTerminal?.Stop();
+        Profiling?.Kill();
+        Tests.Stop();
+        parts.Add(("the test runner", Tests.DisposeAsync().AsTask()));
+        parts.Add(("the language server", CSharp?.DisposeAsync().AsTask() ?? Task.CompletedTask));
+        CSharp = null;
+        return parts;
+    }
+
+    /// <summary>The session lets go of the window's consoles, which the next session's runners write to.</summary>
+    private void LetGo()
+    {
+        Builder.Dispose();
+        Runner.Dispose();
+    }
 
     /// <summary>Waits for what is ending, for at most the limit, naming in the log what had not ended by then.</summary>
     internal static Task Within(TimeSpan limit, string? folder, IReadOnlyList<(string What, Task Ending)> parts)

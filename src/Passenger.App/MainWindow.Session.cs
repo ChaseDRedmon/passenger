@@ -1,4 +1,6 @@
+using System.Diagnostics.CodeAnalysis;
 using Passenger.App.CSharp;
+using Passenger.App.Run;
 using Passenger.App.Workspace;
 using Passenger.Core;
 using Passenger.Editor;
@@ -36,8 +38,15 @@ public partial class MainWindow
     /// <summary>The read of the open folder under way, done once it has landed.</summary>
     public Task WorkspaceRead => session.WorkspaceRead;
 
-    /// <summary>What a session of this window is made with: its editors, where it keeps state, how it watches folders.</summary>
-    private SessionSetup Setup() => new(Editors, StateFolder, HistoryKeeping, Watching, () => settings.SolutionWideAnalysis, WarmServer);
+    /// <summary>What a session of this window is made with: its editors, where it keeps state, how it watches folders, the
+    /// warm server it may take up, its consoles and tests tree, and a test run's build, which the session's builds and runs
+    /// make.</summary>
+    private SessionSetup Setup() => new(Editors, StateFolder, HistoryKeeping, Watching, () => settings.SolutionWideAnalysis, WarmServer, Bottom,
+        cancel => buildRun.BuildAsync(BuildCause.Tests, cancel));
+
+    /// <summary>What the builds and runs of this window's sessions show themselves in and start with.</summary>
+    private BuildRunParts BuildRunParts() => new(Bottom, Editors, Dock, () => settings, text => StatusText.Text = text, () => debug, ShowInTerminal,
+        OpenBrowserOnceListening, () => StateFolder);
 
     /// <summary>Opens a folder, or a solution (.sln, .slnx) or C# project (.csproj) over its folder, as the workspace; what
     /// a person chooses goes through <see cref="Open"/>, which refuses anything else. The workspace already open is only
@@ -147,17 +156,15 @@ public partial class MainWindow
     {
         ProjectSession leaving = session;
         IdeErrors.Write($"Closed {leaving.Folder}");
-        StopPrograms();
+        nuget?.StopChange();
         Task debugging = debug.StopAsync();
-        tests.Stop();
-        Task testing = tests.DisposeAsync().AsTask();
         Task terminals = Task.CompletedTask;
         if (terminal is { Tabs.Count: > 0 })
         {
             Dock.Hide("terminal");
             terminals = terminal.CloseAllAsync();
         }
-        ending = leaving.EndAsync(EndLimit, ("the debugger", debugging), ("the test runner", testing), ("the terminal", terminals));
+        ending = leaving.LeaveAsync(("the debugger", debugging), ("the terminal", terminals));
         Bind(ProjectSession.None(Setup()));
         // The session gone keeps nothing more: what clearing these changes is written nowhere.
         debug.Breakpoints.Clear();
@@ -165,20 +172,30 @@ public partial class MainWindow
         localHistoryView?.CloseAll();
         Explorer.Unload();
         _ = vcs.CloseAsync();
-        tests.Open(null);
-        problems.Clear();
-        Bottom.Problems.Show(problems);
-        if (Dock["problems"] is { } problemsWindow)
-        {
-            problemsWindow.Title = "Problems";
-        }
     }
 
     /// <summary>The window's views and controllers follow a session from now: what it says reaches them while it is the
     /// window's, never after.</summary>
+    [MemberNotNull(nameof(buildRun))]
     private void Bind(ProjectSession next)
     {
         session = next;
+        buildRun = new BuildRunController(next, BuildRunParts());
+        buildRun.RunningChanged += (_, _) =>
+        {
+            if (session == next)
+            {
+                StopButton.IsVisible = debug.IsDebugging || buildRun.IsRunning;
+            }
+        };
+        BindTests(next);
+        StopButton.IsVisible = debug.IsDebugging || buildRun.IsRunning;
+        // The last folder's build said nothing of this one.
+        Bottom.Problems.ForgetBuild();
+        if (Dock["problems"] is { } problemsWindow)
+        {
+            problemsWindow.Title = "Problems";
+        }
         Explorer.Tree.Unloaded = next.Unloaded;
         next.CSharpChanged += (_, _) =>
         {

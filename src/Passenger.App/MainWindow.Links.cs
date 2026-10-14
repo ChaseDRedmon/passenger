@@ -12,12 +12,6 @@ public partial class MainWindow
 {
     private readonly List<Uri> browsed = [];
 
-    /// <summary>The project folder the Run window's program and the Debug window's came from, where a relative path in
-    /// their output is looked for first.</summary>
-    private string? runProject;
-
-    private string? debugProject;
-
     /// <summary>Ends the wait for the last launch's program to listen, once it ended or another launched.</summary>
     private CancellationTokenSource? browserWait;
 
@@ -32,8 +26,9 @@ public partial class MainWindow
             console.LinkClicked += (_, target) => OpenLink(target);
         }
         Bottom.Tests.LinkClicked += (_, target) => OpenLink(target);
-        Bottom.Run.Links.Folders = () => LinkFolders(runProject);
-        Bottom.Debug.Console.Links.Folders = () => LinkFolders(debugProject);
+        // The project folder the Run window's program and the Debug window's came from is looked in first.
+        Bottom.Run.Links.Folders = () => LinkFolders(buildRun.RunProject);
+        Bottom.Debug.Console.Links.Folders = () => LinkFolders(buildRun.DebugProject);
         Bottom.Build.Links.Folders = () => LinkFolders(null);
         Bottom.Tests.Links.Folders = () => LinkFolders(null);
         AddTerminalLinks();

@@ -9,8 +9,9 @@ namespace Passenger.App.Run;
 /// <summary>A child process whose output and errors stream into a console as they arrive, through its sink: read off the
 /// UI thread, colour codes taken out, standard error in the error colour. A program run (not a build) reads what the
 /// person types into the console, as in Rider; a build's input is closed, so a step that reads ends rather than waits.
-/// Stopping kills the whole process tree, as a run's Stop button does.</summary>
-public sealed class ProcessRunner
+/// Stopping kills the whole process tree, as a run's Stop button does. The console is the window's; a runner lets go of it
+/// when disposed, its folder left, and another folder's runner writes there.</summary>
+public sealed class ProcessRunner : IDisposable
 {
     private readonly StringBuilder partialLine = new();
     private readonly OutputView console;
@@ -23,14 +24,19 @@ public sealed class ProcessRunner
     {
         this.console = console;
         this.takesInput = takesInput;
-        console.Written += (_, text) =>
-        {
-            if (running && Line is not null)
-            {
-                Lines(text);
-            }
-        };
+        console.Written += OnWritten;
     }
+
+    private void OnWritten(object? sender, string text)
+    {
+        if (running && Line is not null)
+        {
+            Lines(text);
+        }
+    }
+
+    /// <summary>Lets go of the console, its process stopped first: nothing more it reads is taken as its lines.</summary>
+    public void Dispose() => console.Written -= OnWritten;
 
     /// <summary>A whole line of output, for whoever reads it (the build's error list); UI thread.</summary>
     public event EventHandler<string>? Line;

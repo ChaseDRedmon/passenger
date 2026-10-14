@@ -61,8 +61,7 @@ public partial class MainWindow
             Menus = [new MenuPlace(LocalHistoryMenu, 1, 2)],
         });
         Editors.Opened += (_, document) => LookAt(document);
-        // Rider's system labels and activities: a test run's end, a Git operation's changes, a refactoring's.
-        tests.Ran += (_, passed) => session.LocalHistory?.Label(passed ? "Tests Passed" : "Tests Failed", system: true);
+        // Rider's system activities: a Git operation's changes, a refactoring's (a test run's label is the session's tests').
         vcs.Activity = name => session.LocalHistory?.During(name);
         // Another action since (a quick fix) is not the refactoring, though it may edit files the same way.
         actions.Running += (_, action) => refactoring = action.Menus.Any(m => m.Path == "Refactor") ? action.Title.TrimEnd('.') : null;

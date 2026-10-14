@@ -334,7 +334,7 @@ public sealed partial class PassengerTools(MainWindow window)
         }
         int? code = ended.IsCompletedSuccessfully ? ended.Result : null;
         string output = window.RunInTerminal is { } inTerminal ? Tail(inTerminal.Session, 200) : Tail(window.BottomPanel.Run, 200);
-        return new RunResult(code is null, code, code is int exit ? MainWindow.RunEnded(name, exit) : $"Running {name}", output);
+        return new RunResult(code is null, code, code is int exit ? BuildRunController.RunEnded(name, exit) : $"Running {name}", output);
     });
 
     [McpServerTool(Name = "stop", Title = "Stop", Destructive = false), Description("Stops whatever is running or being debugged, as Stop does.")]

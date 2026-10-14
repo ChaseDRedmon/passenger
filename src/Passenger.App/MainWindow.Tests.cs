@@ -13,7 +13,7 @@ namespace Passenger.App;
 public partial class MainWindow
 {
     /// <summary>The unit test runner, its tree and its runs.</summary>
-    public Testing.TestController Tests => tests;
+    public Testing.TestController Tests => session.Tests;
 
     /// <summary>The run icons beside the tests of each open file.</summary>
     public Testing.TestGutter TestGutter => testGutter;
@@ -21,32 +21,25 @@ public partial class MainWindow
     /// <summary>Wires the Unit Tests window, the gutter's icons and the tests found from code to the window.</summary>
     private void AddUnitTests()
     {
-        tests.Message += (_, message) =>
-        {
-            StatusText.Text = message;
-            Bottom.Tests.Status = message;
-        };
-        tests.LaunchUnderDebugger = LaunchTestHost;
-        tests.AttachDebugger = AttachTestHost;
         // The gutter reads each open file's tests from its parse; the tree takes the same read.
-        testGutter.Read += (_, read) => tests.Finder.OpenRead(read.Document.Path, read.Tests);
+        testGutter.Read += (_, read) => session.Tests.Finder.OpenRead(read.Document.Path, read.Tests);
         Editors.Opened += (_, document) => testGutter.Watch(document);
         Editors.Closed += (_, document) =>
         {
             testGutter.Forget(document);
-            tests.Finder.Closed(document.Path);
+            session.Tests.Finder.Closed(document.Path);
         };
         // The grouping and outcomes chosen are the folder's, as Rider keeps a session's.
-        tests.Tree.ViewChanged += (_, _) => session.State?.UnitTests.Set(new Testing.UnitTestsState
+        Bottom.TestTree.ViewChanged += (_, _) => session.State?.UnitTests.Set(new Testing.UnitTestsState
         {
-            Grouping = [.. tests.Tree.Grouping],
-            Outcomes = [.. tests.Tree.Outcomes.Order()],
+            Grouping = [.. Bottom.TestTree.Grouping],
+            Outcomes = [.. Bottom.TestTree.Outcomes.Order()],
         });
         Bottom.Tests.ActionRequested += (_, action) => Request(action);
         Bottom.Tests.RunRequested += (_, debugging) =>
         {
             IReadOnlyList<Testing.TestNode> chosen = Bottom.Tests.Selected;
-            RunTests(() => tests.RunAsync(Folder!, chosen, debugging));
+            RunTests(() => session.Tests.RunAsync(Folder!, chosen, debugging));
         };
         Bottom.Tests.UntilFailureRequested += (_, _) => RunUntilFailure(Bottom.Tests.Selected);
         Bottom.Tests.GoToRequested += (_, node) =>
@@ -58,11 +51,30 @@ public partial class MainWindow
         };
     }
 
+    /// <summary>A session's test runner says what it does in the status bar and the Unit Tests window while it is the
+    /// window's, debugs a test under the window's debugger, and labels its runs in the folder's Local History.</summary>
+    private void BindTests(ProjectSession next)
+    {
+        Testing.TestController tests = next.Tests;
+        tests.Message += (_, message) =>
+        {
+            if (session == next)
+            {
+                StatusText.Text = message;
+                Bottom.Tests.Status = message;
+            }
+        };
+        tests.LaunchUnderDebugger = LaunchTestHost;
+        tests.AttachDebugger = AttachTestHost;
+        // Rider's system labels: a test run's end.
+        tests.Ran += (_, passed) => next.LocalHistory?.Label(passed ? "Tests Passed" : "Tests Failed", system: true);
+    }
+
     /// <summary>The Unit Tests window's grouping and outcomes as the folder kept them, or Rider's defaults.</summary>
     private void RestoreUnitTests(Testing.UnitTestsState kept)
     {
-        tests.Tree.Group(kept.Grouping);
-        tests.Tree.ShowOutcomes(kept.Outcomes);
+        session.Tests.Tree.Group(kept.Grouping);
+        session.Tests.Tree.ShowOutcomes(kept.Outcomes);
     }
 
     /// <summary>The Unit Tests window follows the folder's projects: their tests are found from code once the folder's
@@ -70,7 +82,7 @@ public partial class MainWindow
     private void FindTests()
     {
         Task read = WorkspaceRead;
-        tests.Open(Folder, projectsRead: read.IsCompleted);
+        session.Tests.Open(Folder, projectsRead: read.IsCompleted);
         if (!read.IsCompleted)
         {
             _ = FindTestsOnceRead(read, Folder);
@@ -84,7 +96,7 @@ public partial class MainWindow
         await read;
         if (Folder == opening)
         {
-            tests.Open(Folder);
+            session.Tests.Open(Folder);
         }
     }
 
@@ -146,7 +158,7 @@ public partial class MainWindow
                 RunUntilFailure(chosen);
                 return;
             }
-            RunTests(() => tests.RunAsync(Folder!, chosen, debug));
+            RunTests(() => session.Tests.RunAsync(Folder!, chosen, debug));
             return;
         }
         if (TestAtCaret(context) is { } test)
@@ -164,8 +176,8 @@ public partial class MainWindow
         }
         RunTests(async () =>
         {
-            string? problem = await tests.RunUntilFailureAsync(Folder, chosen);
-            if (tests.FirstFailed(chosen) is { } failed)
+            string? problem = await session.Tests.RunUntilFailureAsync(Folder, chosen);
+            if (session.Tests.FirstFailed(chosen) is { } failed)
             {
                 Bottom.Tests.Choose(failed);
             }
@@ -187,7 +199,7 @@ public partial class MainWindow
             if (Matching() is not { Count: > 0 })
             {
                 // A test the code's reading does not know (an attribute of the project's own) is found by a runner.
-                if (await tests.DiscoverAsync(Folder) is { } problem)
+                if (await session.Tests.DiscoverAsync(Folder) is { } problem)
                 {
                     return problem;
                 }
@@ -198,10 +210,10 @@ public partial class MainWindow
             }
             if (!untilFailure)
             {
-                return await tests.RunAsync(Folder, found, debug);
+                return await session.Tests.RunAsync(Folder, found, debug);
             }
-            string? stopped = await tests.RunUntilFailureAsync(Folder, found);
-            if (tests.FirstFailed(found) is { } failed)
+            string? stopped = await session.Tests.RunUntilFailureAsync(Folder, found);
+            if (session.Tests.FirstFailed(found) is { } failed)
             {
                 Bottom.Tests.Choose(failed);
             }
@@ -209,7 +221,7 @@ public partial class MainWindow
         });
 
         List<Testing.TestNode> Matching() =>
-            [.. tests.Tree.Methods.Where(m => m.FullName is { } name && Testing.TestsAtCaret.Matches(name, context.Type, context.Method))];
+            [.. session.Tests.Tree.Methods.Where(m => m.FullName is { } name && Testing.TestsAtCaret.Matches(name, context.Type, context.Method))];
     }
 
     /// <summary>A test host a runner would start, started under the debugger as a plan of its own (the runner built it, and

@@ -136,6 +136,13 @@ public sealed class ProblemsView : DockPanel
         }
     }
 
+    /// <summary>The last build's problems gone with their folder, the tab shown as it was.</summary>
+    public void ForgetBuild()
+    {
+        Problems.Clear();
+        Refresh();
+    }
+
     /// <summary>The last build's problems, in the Build tab, shown.</summary>
     public void Show(IEnumerable<Problem> problems)
     {

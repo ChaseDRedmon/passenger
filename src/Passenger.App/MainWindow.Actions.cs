@@ -210,13 +210,7 @@ public partial class MainWindow
                 RunSelected();
             }
         }, _ => debug.Session is { } session && session == attachSession ? null : Unconfigured("run"), ("Run", 0, 6));
-        Add(A.Stop, "Stop", "Run", context =>
-        {
-            _ = debug.StopAsync();
-            runner.Stop();
-            terminalRun?.Stop();
-            builder.Stop();
-        }, _ => debug.IsDebugging || IsRunning || builder.IsRunning ? null : "Nothing is running", ("Run", 0, 7));
+        Add(A.Stop, "Stop", "Run", _ => buildRun.Stop(), _ => buildRun.WhyNotStop(), ("Run", 0, 7));
         Add(A.EditBreakpoint, "Edit Breakpoint...", "Debug", c =>
         {
             int line = c.Caret.Line;
@@ -245,10 +239,10 @@ public partial class MainWindow
         Add(A.RunTests, "Run Unit Tests", "Unit Tests", c => RunTestsInContext(c, debug: false), NoTestHere, ("Tests", 0, 0));
         Add(A.DebugTests, "Debug Unit Tests", "Unit Tests", c => RunTestsInContext(c, debug: true), NoTestHere, ("Tests", 0, 1));
         Add(A.RunTestsUntilFailure, "Run Unit Tests Until Failure", "Unit Tests", c => RunTestsInContext(c, debug: false, untilFailure: true), NoTestHere, ("Tests", 0, 2));
-        Add(A.RunAllTests, "Run All Tests", "Unit Tests", _ => RunTests(() => tests.RunAsync(Folder!)), NeedsFolder, ("Tests", 0, 3));
-        Add(A.RerunTests, "Rerun Unit Tests", "Unit Tests", _ => RunTests(() => tests.RerunAsync(Folder!)), NeedsFolder, ("Tests", 1, 0));
-        Add(A.RerunFailedTests, "Rerun Failed Tests", "Unit Tests", _ => RunTests(() => tests.RerunFailedAsync(Folder!)), NeedsFolder, ("Tests", 1, 1));
-        Add(A.StopTests, "Stop Unit Tests", "Unit Tests", _ => tests.Stop(), NeedsFolder, ("Tests", 1, 2));
+        Add(A.RunAllTests, "Run All Tests", "Unit Tests", _ => RunTests(() => session.Tests.RunAsync(Folder!)), NeedsFolder, ("Tests", 0, 3));
+        Add(A.RerunTests, "Rerun Unit Tests", "Unit Tests", _ => RunTests(() => session.Tests.RerunAsync(Folder!)), NeedsFolder, ("Tests", 1, 0));
+        Add(A.RerunFailedTests, "Rerun Failed Tests", "Unit Tests", _ => RunTests(() => session.Tests.RerunFailedAsync(Folder!)), NeedsFolder, ("Tests", 1, 1));
+        Add(A.StopTests, "Stop Unit Tests", "Unit Tests", _ => session.Tests.Stop(), NeedsFolder, ("Tests", 1, 2));
 
         string? NoTestHere(ActionContext context) => NeedsFolder(context)
             ?? (ChosenTests(context) is null && ChosenProjects(context) is null && TestAtCaret(context) is null ? "No test is at the caret" : null);

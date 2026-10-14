@@ -6,29 +6,19 @@ using Passenger.Editor;
 
 namespace Passenger.App;
 
-/// <summary>The window's run configurations and what launches them: those the folder's projects generate beside the
-/// folder's own (kept with its state), the one chosen in the toolbar, Edit Configurations, and Run and Debug, which resolve
-/// the chosen one into a <see cref="LaunchPlan"/>, build as it says and start that plan, as Profile does in its partial.</summary>
+/// <summary>The window's run configurations (the session's <see cref="RunConfigurations"/>): the one chosen in the toolbar,
+/// its menu and Edit Configurations; Run and Debug, which the session's <see cref="BuildRunController"/> launches; and the
+/// tab of the Terminal window a configuration that uses one runs in.</summary>
 public partial class MainWindow
 {
-    /// <summary>A Run between its press and its program's start (the plan resolved, the project built), which a second
-    /// press may not start again.</summary>
-    private bool launching;
-
-    /// <summary>The run configuration the Run window last ran.</summary>
-    private string ran = string.Empty;
-
-    /// <summary>The program Run last started in the terminal, until a run in the Run window comes after it.</summary>
-    private TerminalRun? terminalRun;
-
     /// <summary>Whether a program Run started runs, in the Run window or the terminal.</summary>
-    public bool IsRunning => runner.IsRunning || terminalRun is { IsRunning: true };
+    public bool IsRunning => buildRun.IsRunning;
 
     /// <summary>The program Run last started, when it runs in the terminal; null when the last ran in the Run window.</summary>
-    public TerminalRun? RunInTerminal => terminalRun;
+    public TerminalRun? RunInTerminal => session.InTerminal;
 
     /// <summary>The end of the program Run last started, in the Run window or the terminal, with its exit code.</summary>
-    public Task<int> RunEnd => terminalRun?.Ended ?? runner.Ended;
+    public Task<int> RunEnd => buildRun.RunEnd;
 
     /// <summary>Every configuration: the generated ones, then the folder's own.</summary>
     public IReadOnlyList<RunConfiguration> Configurations => session.Configurations.All;
@@ -38,9 +28,6 @@ public partial class MainWindow
 
     /// <summary>The run configurations dialog open over the window, or null.</summary>
     public RunConfigurationsDialog? RunConfigurationsDialog { get; private set; }
-
-    /// <summary>How a run that ended is named, in the status bar and to an agent.</summary>
-    public static string RunEnded(string name, int code) => $"{name} exited with code {code}";
 
     /// <summary>Chooses the run configuration by name, as the toolbar's menu does; false when there is none.</summary>
     public bool SelectConfiguration(string name) => session.Configurations.Select(name);
@@ -67,156 +54,12 @@ public partial class MainWindow
         return dialog;
     }
 
-    /// <summary>A configuration's plan, with these arguments in place of its own if given, or why it has none.</summary>
-    private async Task<(LaunchPlan? Plan, string? Problem)> ResolvePlanAsync(RunConfiguration chosen, string? arguments)
-    {
-        try
-        {
-            return (await LaunchPlan.ResolveAsync(arguments is null ? chosen : chosen with { Arguments = arguments }, Projects, StateFolder), null);
-        }
-        catch (Exception error) when (error is LaunchException or IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
-        {
-            return (null, error.Message);
-        }
-    }
+    /// <summary>Runs the chosen configuration as Run does: null once it runs (<see cref="RunEnd"/> is its end), else why it
+    /// could not, which the status bar says too.</summary>
+    public Task<string?> RunAsync(string? arguments = null) => buildRun.RunAsync(arguments);
 
-    /// <summary>A configuration's plan with its build before launch done: the plan to start, or why there is none.</summary>
-    private async Task<(LaunchPlan? Plan, string? Problem)> PrepareAsync(RunConfiguration chosen, string? arguments, bool build = true)
-    {
-        (LaunchPlan? plan, string? problem) = await ResolvePlanAsync(chosen, arguments);
-        if (build && plan?.Build is { } step && await BuildAsync(step) is { Succeeded: false } unbuilt)
-        {
-            return (null, unbuilt.Message);
-        }
-        return (plan, problem);
-    }
-
-    /// <summary>A plan's build before launch, in the Build window as Build Selected Projects writes it, which comes forward
-    /// only as Settings says for a build Run, Debug or Profile starts.</summary>
-    private Task<BuildOutcome> BuildAsync(BuildStep step)
-    {
-        TaskCompletionSource<BuildOutcome> built = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        Build(BuildKind.Build, [step.Project], outcome => built.TrySetResult(outcome), step.Framework, BuildCause.BeforeLaunch);
-        return built.Task;
-    }
-
-    /// <summary>Runs the chosen configuration, with these arguments in place of its own if given: its plan's program started
-    /// after its build, its output and input in the Run window, or in a tab of the Terminal window when the configuration
-    /// uses the terminal. Null once it runs (<see cref="RunEnd"/> is its end), else why it could not, which the status bar
-    /// says too.</summary>
-    public async Task<string?> RunAsync(string? arguments = null)
-    {
-        if (Configuration is not { } chosen)
-        {
-            return Said("Nothing to run: no executable project");
-        }
-        if (IsRunning || launching)
-        {
-            return Said("Already running");
-        }
-        launching = true;
-        using IDisposable held = BackgroundWork.Scope();
-        try
-        {
-            Editors.SaveAll();
-            Bottom.Run.Clear();
-            // dotnet watch builds the project itself, and runs it again after an edit it cannot apply.
-            bool hotReload = settings.HotReload && chosen.Program.Length == 0;
-            (LaunchPlan? plan, string? problem) = await PrepareAsync(chosen, arguments, build: !hotReload);
-            if (plan is null)
-            {
-                return Said(problem!);
-            }
-            if (plan.WhyNot("run", built: !hotReload) is { } why)
-            {
-                return Said(why);
-            }
-            ran = chosen.Name;
-            runProject = Path.GetDirectoryName(plan.Project);
-            string running = hotReload ? $"Running {chosen.Name} with Hot Reload: a save applies its changes" : $"Running {chosen.Name}";
-            Dictionary<string, string> variables = hotReload
-                ? new Dictionary<string, string>(plan.Environment) { ["DOTNET_WATCH_SUPPRESS_EMOJIS"] = "1", ["DOTNET_WATCH_RESTART_ON_RUDE_EDIT"] = "true" }
-                : new Dictionary<string, string>(plan.Environment);
-            if (plan.Console == ConsoleKind.Terminal)
-            {
-                string? refused = await RunInTerminalAsync(chosen.Name, hotReload ? DotnetStart(Watch(plan), plan.WorkingDirectory) : ChildProcesses.Command(plan.Program, plan.Arguments, plan.WorkingDirectory), variables, running);
-                if (refused is null && terminalRun is { } inTerminal)
-                {
-                    OpenBrowserOnceListening(plan, inTerminal.Ended);
-                }
-                return refused;
-            }
-            terminalRun = null;
-            Bottom.Run.SetRunning(true);
-            StopButton.IsVisible = true;
-            ShowToolWindow("run");
-            StatusText.Text = running;
-            string? notStarted = Started(hotReload
-                ? runner.StartDotnet(Watch(plan), plan.WorkingDirectory, variables)
-                : runner.Start(plan.Program, plan.Arguments, plan.WorkingDirectory, variables));
-            if (notStarted is null)
-            {
-                OpenBrowserOnceListening(plan, runner.Ended);
-            }
-            return notStarted;
-        }
-        finally
-        {
-            launching = false;
-        }
-    }
-
-    /// <summary>The .NET command line as the IDE runs it, or null where there is none (which the run then says).</summary>
-    private static System.Diagnostics.ProcessStartInfo? DotnetStart(IReadOnlyList<string> arguments, string folder)
-    {
-        try
-        {
-            return ChildProcesses.DotnetCommand(arguments, folder);
-        }
-        catch (FileNotFoundException)
-        {
-            return null;
-        }
-    }
-
-    /// <summary>Runs a plan's program in a tab of the Terminal window named for its configuration, the keys going to it, as
-    /// Rider's Use external console runs one in a console of its own; Stop ends it, and its end shows in the status bar as
-    /// a run's in the Run window does. Null once it runs, else why it could not.</summary>
-    private async Task<string?> RunInTerminalAsync(string name, System.Diagnostics.ProcessStartInfo? start, IReadOnlyDictionary<string, string> variables, string running)
-    {
-        if (start is null)
-        {
-            return Said("No .NET command line found: install the .NET SDK, or set DOTNET_ROOT to where it is.");
-        }
-        foreach ((string variable, string value) in variables)
-        {
-            start.Environment[variable] = value;
-        }
-        TerminalRun run;
-        try
-        {
-            run = await ShowInTerminal(name, start);
-        }
-        catch (LaunchException failed)
-        {
-            return Said(failed.Message);
-        }
-        terminalRun = run;
-        StopButton.IsVisible = true;
-        StatusText.Text = running;
-        _ = Ended();
-        return null;
-
-        async Task Ended()
-        {
-            int code = await run.Ended;
-            StopButton.IsVisible = IsRunning || debug.IsDebugging;
-            if (terminalRun == run)
-            {
-                StatusText.Text = RunEnded(name, code);
-            }
-        }
-    }
+    /// <summary>Debugs the chosen configuration as Debug does: null once its session is open, else what stopped it.</summary>
+    public Task<string?> DebugAsync(string? arguments = null) => buildRun.DebugAsync(arguments);
 
     /// <summary>Starts in a tab of the Terminal window, named for the configuration being debugged, the program the debugger
     /// asks for (its runInTerminal request): held at its start by the variables the debugger gives it until the debugger
@@ -246,85 +89,8 @@ public partial class MainWindow
         return starting;
     }
 
-    /// <summary>dotnet watch's command line for a plan, as Rider's Hot Reload runs it: the project for its framework, no
-    /// launch profile (the plan has its values already), the program's own arguments after <c>--</c>. It runs the program in
-    /// its own working folder, which is the plan's.</summary>
-    private static List<string> Watch(LaunchPlan plan)
-    {
-        List<string> watch = ["watch", "--non-interactive", "run", "--project", plan.Project!, "--no-launch-profile"];
-        if (plan.Framework is { } framework)
-        {
-            watch.AddRange(["--framework", framework]);
-        }
-        watch.Add("--");
-        watch.AddRange(plan.Built is { } assembly && plan.Arguments.Count > 0 && plan.Arguments[0] == assembly ? plan.Arguments.Skip(1) : plan.Arguments);
-        return watch;
-    }
-
     /// <summary>Run, from its key, the toolbar or the Run window: what stopped it, if anything, is in the status bar.</summary>
     private void RunSelected() => _ = RunAsync();
-
-    /// <summary>A run that could not start leaves the Run window idle, Stop hidden, and says why.</summary>
-    private string? Started(string? problem)
-    {
-        if (problem is not null)
-        {
-            Bottom.Run.SetRunning(false);
-            StopButton.IsVisible = debug.IsDebugging;
-            StatusText.Text = problem;
-        }
-        return problem;
-    }
-
-    /// <summary>Resolves and builds the chosen configuration, then launches its plan under the debugger, as Rider's Debug
-    /// does, with these arguments in place of its own if given; the Debug window opens on its Console until the program
-    /// stops somewhere. Null once its session is open, or what stopped it (a failed build, no configuration, the adapter's
-    /// refusal).</summary>
-    public async Task<string?> DebugAsync(string? arguments = null)
-    {
-        if (Configuration is not { } chosen)
-        {
-            return "Nothing to debug: no executable project";
-        }
-        using IDisposable held = BackgroundWork.Scope();
-        (LaunchPlan? plan, string? problem) = await PrepareAsync(chosen, arguments);
-        if (plan is null)
-        {
-            return problem;
-        }
-        if (plan.WhyNot("debug") is { } why)
-        {
-            return why;
-        }
-        ShowToolWindow("debug");
-        Bottom.Debug.ShowTab(console: true);
-        // Before the session clears the Debug window's console, which forgets the links the last one's output had.
-        debugProject = Path.GetDirectoryName(plan.Project);
-        string? refused = await debug.StartAsync(plan);
-        if (refused is null)
-        {
-            OpenBrowserOnceListening(plan, DebugEnded());
-        }
-        return refused;
-    }
-
-    /// <summary>The end of the session being debugged; done already when there is none.</summary>
-    private Task DebugEnded()
-    {
-        if (debug.Session is not { State: not Debugging.DebugState.Ended } session)
-        {
-            return Task.CompletedTask;
-        }
-        TaskCompletionSource ended = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        session.StateChanged += (_, _) =>
-        {
-            if (session.State == Debugging.DebugState.Ended)
-            {
-                ended.TrySetResult();
-            }
-        };
-        return ended.Task;
-    }
 
     /// <summary>Debug, from its key or the toolbar: what stopped it, if anything, goes to the status bar.</summary>
     public void DebugSelected()

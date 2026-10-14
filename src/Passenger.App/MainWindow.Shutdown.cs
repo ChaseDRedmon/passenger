@@ -24,24 +24,15 @@ public partial class MainWindow
         });
     }
 
+    /// <summary>The session's programs and builds go now, so a server lets go of its port; the rest are asked to end.</summary>
     private void EndChildren()
     {
-        StopPrograms();
+        nuget?.StopChange();
         _ = terminal?.CloseAllAsync();
-        Ended = session.EndAsync(EndLimit,
+        Ended = session.CloseAsync(
             ("the debugger", debug.CloseAsync()),
-            ("the test runner", tests.DisposeAsync().AsTask()),
             ("the solution left before", ending),
             ("Discord", EndDiscord()));
-    }
-
-    /// <summary>Programs and builds have nothing to finish: their process trees go now, so a server lets go of its port.</summary>
-    private void StopPrograms()
-    {
-        runner.Stop();
-        builder.Stop();
-        nuget?.StopChange();
-        profiling?.Kill();
     }
 
     /// <summary>Rider's Close Solution: its changed files saved as closing the window saves them (one that cannot be keeps
