@@ -12,6 +12,9 @@ public sealed class RunConfigurations(string? folder)
     private List<RunConfiguration> own = [];
     private StateDocument<RunConfigurationsState>? kept;
 
+    /// <summary>The projects the list was last made from.</summary>
+    private IReadOnlyList<ProjectModel> projects = [];
+
     /// <summary>Whether the one chosen was the person's choice (in the toolbar, Edit Configurations or the store), which
     /// stays chosen, rather than the first there was, which follows the projects as their evaluations land.</summary>
     private bool picked;
@@ -43,8 +46,13 @@ public sealed class RunConfigurations(string? folder)
     /// it is there.</summary>
     public void Configure(IReadOnlyList<ProjectModel> projects) => Configure(projects, picked ? Chosen?.Name : null);
 
+    /// <summary>Why a configuration cannot launch here among the projects loaded now, as the toolbar's menu greys it; null
+    /// when it can.</summary>
+    public string? WhyNotHere(RunConfiguration configuration) => configuration.WhyNotHere(projects);
+
     private void Configure(IReadOnlyList<ProjectModel> projects, string? keep)
     {
+        this.projects = projects;
         All = [.. RunConfiguration.Generate(projects), .. own];
         Chosen = All.FirstOrDefault(c => string.Equals(c.Name, keep, StringComparison.OrdinalIgnoreCase)) ?? All.FirstOrDefault();
         Changed?.Invoke(this, EventArgs.Empty);

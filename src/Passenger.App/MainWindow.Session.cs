@@ -275,7 +275,7 @@ public partial class MainWindow
         {
             if (session == next)
             {
-                RunConfigName.Text = next.Configurations.Chosen?.Name ?? "No configurations";
+                ShowChosenConfiguration(next.Configurations);
             }
         };
         if (next.Watcher is { } watcher)
@@ -288,7 +288,7 @@ public partial class MainWindow
                 }
             };
         }
-        RunConfigName.Text = next.Configurations.Chosen?.Name ?? "No configurations";
+        ShowChosenConfiguration(next.Configurations);
         agentSocket?.Describe(next.Folder);
         OnCSharpChanged(next.CSharp);
         BindPreviews(next);

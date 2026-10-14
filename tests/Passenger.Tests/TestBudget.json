@@ -33,6 +33,7 @@
     "NewSolutionTests": 120,
     "XamlTests": 150,
     "WpfXamlTests": 90,
+    "WindowsOnlyProjectsTests": 90,
     "XamlEditingTests": 120,
     "ProjectFileHelpTests": 90
   }

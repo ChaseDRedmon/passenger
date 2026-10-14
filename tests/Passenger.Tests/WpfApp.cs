@@ -2,11 +2,13 @@ using Passenger.Core;
 
 namespace Passenger.Tests;
 
-/// <summary>A WPF app as <c>dotnet new wpf</c> makes it, for the test project's own target (the SDK's), from a template
-/// hive of the run's own, restoring from the run's local feed alone (<see cref="AvaloniaApp.Feed"/>), never nuget.org.
-/// WPF builds for Windows alone; elsewhere the app's folder says <c>EnableWindowsTargeting</c>, the SDK's own way to build
-/// a Windows app elsewhere, so its restore takes WindowsDesktop's reference pack, which the test project downloads at
-/// the version Directory.Packages.props pins, from that feed, and MarkupCompile still runs in its build.</summary>
+/// <summary>A WPF app as <c>dotnet new wpf</c> makes it (or a Windows Forms app as <c>dotnet new winforms</c> does), for
+/// the test project's own target (the SDK's), from a template hive of the run's own, restoring from the run's local feed
+/// alone (<see cref="AvaloniaApp.Feed"/>), never nuget.org. Both build for Windows alone; elsewhere the SDK builds them with
+/// <c>EnableWindowsTargeting</c>, so their restore takes WindowsDesktop's reference pack (WPF's and Windows Forms' both),
+/// which the test project downloads at the version Directory.Packages.props pins, from that feed, and MarkupCompile still
+/// runs in a WPF app's build. The app's folder says it for the tests that restore it themselves; as dotnet new makes it,
+/// it does not, and Passenger gives it (WindowsOnlyProjectsTests).</summary>
 internal static class WpfApp
 {
     private static readonly Lazy<string> Hive = new(() => Directory.CreateDirectory(Path.Combine(TestRun.Root, "wpf-templates")).FullName,
@@ -15,20 +17,26 @@ internal static class WpfApp
     /// <summary>The target the app is made for, the test project's own.</summary>
     private static string Framework => AvaloniaApp.Metadata("TargetFramework");
 
-    /// <summary>Makes the app in a folder, its project and namespace named <paramref name="name"/>, without restoring it.</summary>
-    public static void Create(string folder, string name)
+    /// <summary>Makes the app in a folder, its project and namespace named <paramref name="name"/>, without restoring it;
+    /// off Windows its folder says EnableWindowsTargeting unless it is to be as dotnet new makes it.</summary>
+    public static void Create(string folder, string name, bool asMade = false) => Make("wpf", folder, name, asMade);
+
+    /// <summary>A Windows Forms app as dotnet new winforms makes it, without restoring it, on the same reference pack.</summary>
+    public static void CreateWindowsForms(string folder, string name) => Make("winforms", folder, name, asMade: true);
+
+    private static void Make(string template, string folder, string name, bool asMade)
     {
         string pinned = AvaloniaApp.Metadata("WindowsDesktopRefVersion");
         string needed = AvaloniaApp.Metadata("SdkWindowsDesktopRefVersion");
         Assert.True(pinned == needed, $"This SDK's WPF for {Framework} takes Microsoft.WindowsDesktop.App.Ref {needed}, but Directory.Packages.props "
             + $"pins WindowsDesktopRefVersion {pinned}, so the WPF app's restore would find no pack in the run's local feed: pin {needed} and restore "
             + "(dotnet restore Passenger.slnx --force-evaluate)");
-        ChildResult made = Run(["new", "wpf", "--output", folder, "--name", name, "--framework", Framework, "--no-restore", "--no-update-check",
+        ChildResult made = Run(["new", template, "--output", folder, "--name", name, "--framework", Framework, "--no-restore", "--no-update-check",
             "--debug:custom-hive", Hive.Value]);
-        Assert.True(made.Succeeded, $"dotnet new wpf did not make the test's app (exit code {made.ExitCode}):\n{made.Output}{made.Error}");
+        Assert.True(made.Succeeded, $"dotnet new {template} did not make the test's app (exit code {made.ExitCode}):\n{made.Output}{made.Error}");
         AddToFeed(pinned);
         AvaloniaApp.UseFeed(folder);
-        if (!OperatingSystem.IsWindows())
+        if (!asMade && !OperatingSystem.IsWindows())
         {
             File.WriteAllText(Path.Combine(folder, "Directory.Build.props"), """
                 <Project>

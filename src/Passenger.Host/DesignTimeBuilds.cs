@@ -167,13 +167,13 @@ internal static class DesignTimeBuilds
         {
             properties["TargetFramework"] = framework;
         }
-        return Project.FromFile(path, new ProjectOptions
+        return WindowsTargeting.Load(given => Project.FromFile(path, new ProjectOptions
         {
-            GlobalProperties = properties,
+            GlobalProperties = given,
             ProjectCollection = collection,
             EvaluationContext = context,
             LoadSettings = Settings,
-        });
+        }), properties, collection);
     }
 
     /// <summary>Compile and CoreCompile, and XAML's markup compilation where a project has it, as Roslyn's build host runs,

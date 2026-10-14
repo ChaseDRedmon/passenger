@@ -145,13 +145,13 @@ internal static class Inspection
         {
             global["TargetFramework"] = framework;
         }
-        return Project.FromFile(path, new ProjectOptions
+        return WindowsTargeting.Load(given => Project.FromFile(path, new ProjectOptions
         {
-            GlobalProperties = global,
+            GlobalProperties = given,
             ProjectCollection = collection,
             EvaluationContext = context,
             LoadSettings = Evaluation.Settings,
-        });
+        }), global, collection);
     }
 
     /// <summary>An exception's place and words: MSBuild's own for a project that does not load, the reader's for XML that

@@ -21,7 +21,8 @@
                      DoubleTapped="OnRowDoubleTapped">
                 <ListBox.ItemTemplate>
                     <DataTemplate x:DataType="explorer:ExplorerNode">
-                        <StackPanel Orientation="Horizontal" Margin="{Binding Indent}" Opacity="{Binding Opacity}" Height="24">
+                        <StackPanel Orientation="Horizontal" Margin="{Binding Indent}" Opacity="{Binding Opacity}" Height="24"
+                                    ToolTip.Tip="{Binding Tip}">
                             <Border Width="18" Height="24" Background="Transparent" PointerPressed="OnChevronPressed">
                                 <PathIcon Classes="chevron" Data="{StaticResource Icon.ChevronRight}" IsVisible="{Binding HasChildren}"
                                           RenderTransformOrigin="50%,50%">

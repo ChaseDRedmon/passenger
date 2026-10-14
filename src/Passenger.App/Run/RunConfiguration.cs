@@ -63,6 +63,11 @@ public sealed record RunConfiguration
     [JsonIgnore]
     public string? Unsupported { get; init; }
 
+    /// <summary>Why it cannot launch here among these projects: its launch profile's kind, or, when it runs its project's
+    /// own program, a project that runs only on Windows (WPF, Windows Forms) elsewhere; null when it can.</summary>
+    public string? WhyNotHere(IEnumerable<ProjectModel> projects) => Unsupported
+        ?? (Program.Length == 0 && projects.FirstOrDefault(p => Core.PathNames.Same(p.Path, Project)) is { } project ? project.RunsOnlyOnWindows(Framework) : null);
+
     /// <summary>The configurations the folder's executable projects make: one per launch profile, named "Project: profile"
     /// as Rider names them, and the project itself when none of its profiles runs here.</summary>
     public static IReadOnlyList<RunConfiguration> Generate(IEnumerable<ProjectModel> projects)

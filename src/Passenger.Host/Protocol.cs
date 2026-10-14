@@ -102,7 +102,16 @@ public sealed record EvaluatedProject
     public IReadOnlyList<Stamp> Folders { get; init; } = [];
 }
 
-public sealed record FrameworkDependencies(string? Framework, IReadOnlyList<PackageDependency> Packages, IReadOnlyList<string> Projects);
+public sealed record FrameworkDependencies(string? Framework, IReadOnlyList<PackageDependency> Packages, IReadOnlyList<string> Projects)
+{
+    /// <summary>The shared frameworks it references (FrameworkReference: Microsoft.NETCore.App, WPF's
+    /// Microsoft.WindowsDesktop.App.WPF), the SDK's implicit ones included.</summary>
+    public IReadOnlyList<string> FrameworkReferences { get; init; } = [];
+
+    /// <summary>Whether the host evaluated it with EnableWindowsTargeting, which a Windows-only framework needs off Windows,
+    /// so a build of it needs it too.</summary>
+    public bool WindowsTargeting { get; init; }
+}
 
 /// <summary>A package reference, its version as restore takes it: its own, its VersionOverride, or the central one.</summary>
 public sealed record PackageDependency(string Name, string? Version, bool Implicit);

@@ -106,15 +106,35 @@ public partial class MainWindow
         }
     }
 
+    /// <summary>Why a configuration cannot launch here (a launch profile Passenger does not run, a WPF app off Windows), as
+    /// the toolbar's menu greys it; null when it can.</summary>
+    public string? WhyNotHere(RunConfiguration configuration) => session.Configurations.WhyNotHere(configuration);
+
+    /// <summary>The toolbar widget names the configuration chosen, greyed with why when it cannot launch here.</summary>
+    private void ShowChosenConfiguration(RunConfigurations configurations)
+    {
+        RunConfiguration? chosen = configurations.Chosen;
+        string? why = chosen is null ? null : configurations.WhyNotHere(chosen);
+        RunConfigName.Text = chosen?.Name ?? "No configurations";
+        RunConfigName.Classes.Set("muted", why is not null);
+        ToolTip.SetTip(RunConfigButton, why is null ? "Run configuration" : $"{chosen!.Name} cannot run here: {why}");
+    }
+
     /// <summary>The run configurations to choose from, as a menu under the toolbar widget, and Edit Configurations below
-    /// them, as Rider's run widget lists them.</summary>
+    /// them, as Rider's run widget lists them: one that cannot launch here is listed greyed, with why beside it, and can
+    /// still be chosen, so Run says why and Edit Configurations shows it.</summary>
     private void OnRunConfigClicked(object? sender, RoutedEventArgs e)
     {
         ContextMenu menu = new();
         foreach (RunConfiguration each in Configurations)
         {
-            MenuItem item = new() { Header = each.Name };
             string name = each.Name;
+            string? why = WhyNotHere(each);
+            MenuItem item = new() { Header = why is null ? name : Greyed(name, why) };
+            if (why is not null)
+            {
+                ToolTip.SetTip(item, $"{name} cannot run here: {why}");
+            }
             item.Click += (_, _) => SelectConfiguration(name);
             menu.Items.Add(item);
         }
@@ -127,5 +147,16 @@ public partial class MainWindow
         edit.Click += (_, _) => Request(AppActions.EditConfigurations);
         menu.Items.Add(edit);
         Open(menu, RunConfigButton);
+
+        static StackPanel Greyed(string name, string why) => new()
+        {
+            Orientation = Avalonia.Layout.Orientation.Horizontal,
+            Spacing = 8,
+            Children =
+            {
+                new TextBlock { Text = name, Classes = { "muted" } },
+                new TextBlock { Text = why, Classes = { "muted" }, FontSize = 11, VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center },
+            },
+        };
     }
 }

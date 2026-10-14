@@ -82,8 +82,9 @@ public static partial class BuildOutput
 {
     /// <summary>The arguments a build, rebuild or clean runs with: no terminal logger animation, no repeated summary,
     /// lines not wrapped, so every problem is one line read once. A framework given builds a project for that one alone,
-    /// as a run configuration's build before launch does.</summary>
-    public static IReadOnlyList<string> Arguments(string target, BuildKind kind = BuildKind.Build, string? framework = null)
+    /// as a run configuration's build before launch does. Windows targeting builds a WPF or Windows Forms project off
+    /// Windows, as the project host evaluates it (<see cref="WindowsTargeting(string, IReadOnlyList{ProjectModel})"/>).</summary>
+    public static IReadOnlyList<string> Arguments(string target, BuildKind kind = BuildKind.Build, string? framework = null, bool windowsTargeting = false)
     {
         List<string> arguments = kind switch
         {
@@ -95,8 +96,47 @@ public static partial class BuildOutput
         {
             arguments.AddRange(["--framework", framework]);
         }
+        if (windowsTargeting)
+        {
+            arguments.Add("-p:EnableWindowsTargeting=true");
+        }
         arguments.AddRange(["-nologo", "-tl:off", "-clp:NoSummary;ForceNoAlign"]);
         return arguments;
+    }
+
+    /// <summary>Whether a build of a target (the solution, the folder, or one project) needs EnableWindowsTargeting: a
+    /// project it builds (the one named and those it references, or every one) is one the project host evaluated with it.
+    /// A global property, so every project the build reaches has it, which changes nothing for those that need no Windows
+    /// framework.</summary>
+    public static bool WindowsTargeting(string target, IReadOnlyList<ProjectModel> projects)
+    {
+        Dictionary<string, ProjectModel> byPath = new(StringComparer.FromComparison(PathNames.Comparison));
+        foreach (ProjectModel each in projects)
+        {
+            byPath.TryAdd(each.Path, each);
+        }
+        if (!byPath.ContainsKey(target))
+        {
+            return projects.Any(p => p.WindowsTargeting);
+        }
+        HashSet<string> seen = new(StringComparer.FromComparison(PathNames.Comparison));
+        Queue<string> next = new([target]);
+        while (next.TryDequeue(out string? path))
+        {
+            if (!seen.Add(path) || !byPath.TryGetValue(path, out ProjectModel? project))
+            {
+                continue;
+            }
+            if (project.WindowsTargeting)
+            {
+                return true;
+            }
+            foreach (string reference in project.ProjectReferences)
+            {
+                next.Enqueue(reference);
+            }
+        }
+        return false;
     }
 
     public static Problem? Parse(string line)

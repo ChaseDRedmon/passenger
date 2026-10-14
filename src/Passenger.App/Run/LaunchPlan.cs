@@ -75,6 +75,11 @@ public sealed partial record LaunchPlan
             ?? throw new LaunchException($"{configuration.Name} cannot run: its project {System.IO.Path.GetFileName(configuration.Project)} is not loaded in the open folder");
         string? framework = configuration.Framework is { Length: > 0 } chosen ? chosen
             : project.TargetFrameworks.Count > 1 ? project.TargetFrameworks[0] : null;
+        // Before its build: the program would build here (EnableWindowsTargeting) and then fail to start for want of WindowsDesktop.
+        if (configuration.Program.Length == 0 && project.RunsOnlyOnWindows(framework) is { } windows)
+        {
+            throw new LaunchException($"{configuration.Name} cannot run here: {windows}");
+        }
         HashSet<string> names = new(StringComparer.OrdinalIgnoreCase) { "TargetPath", "ProjectDir" };
         foreach (string text in (string[])[configuration.Program, configuration.Arguments, configuration.WorkingDirectory, .. configuration.Environment.Values])
         {

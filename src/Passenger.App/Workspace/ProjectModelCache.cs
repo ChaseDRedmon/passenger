@@ -17,7 +17,23 @@ public sealed record ProjectModelCache : IStateDocument<ProjectModelCache>
     /// <summary>Each project's evaluation, complete, by its path.</summary>
     public Dictionary<string, EvaluatedProject> Projects { get; init; } = [];
 
-    public static IReadOnlyList<Action<JsonObject>> Upgrades { get; } = [StateStore.Unversioned];
+    public static IReadOnlyList<Action<JsonObject>> Upgrades { get; } = [StateStore.Unversioned, ForgetWindowsTargeted];
+
+    /// <summary>The evaluations of projects that target Windows, kept before they said which frameworks they reference
+    /// (whether one runs only on Windows), are evaluated again.</summary>
+    private static void ForgetWindowsTargeted(JsonObject document)
+    {
+        if (document["projects"] is not JsonObject projects)
+        {
+            return;
+        }
+        foreach (string path in projects.Where(p => p.Value?["targetFrameworks"] is JsonArray frameworks
+            && frameworks.Any(f => f?.GetValueKind() == System.Text.Json.JsonValueKind.String && f.GetValue<string>().Contains("-windows", StringComparison.OrdinalIgnoreCase)))
+            .Select(p => p.Key).ToList())
+        {
+            projects.Remove(path);
+        }
+    }
 
     /// <summary>An entry left out that has no path, or is not complete (a multi-targeted project's outer evaluation alone).</summary>
     public ProjectModelCache Clamped() => this with

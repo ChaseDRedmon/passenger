@@ -159,13 +159,13 @@ internal static class Evaluation
         {
             global["TargetFramework"] = framework;
         }
-        return Project.FromFile(path, new ProjectOptions
+        return WindowsTargeting.Load(given => Project.FromFile(path, new ProjectOptions
         {
-            GlobalProperties = global,
+            GlobalProperties = given,
             ProjectCollection = collection,
             EvaluationContext = context,
             LoadSettings = Settings,
-        });
+        }), global, collection);
     }
 
     private static string? NonEmpty(string value) => value.Length > 0 ? value : null;
@@ -189,7 +189,11 @@ internal static class Evaluation
                 p.GetMetadataValue("IsImplicitlyDefined").Equals("true", StringComparison.OrdinalIgnoreCase)))
             .DistinctBy(p => p.Name, StringComparer.OrdinalIgnoreCase)];
         List<string> projects = [.. project.GetItems("ProjectReference").Select(r => r.GetMetadataValue("FullPath")).Distinct(PathComparer)];
-        return new FrameworkDependencies(framework, packages, projects);
+        return new FrameworkDependencies(framework, packages, projects)
+        {
+            FrameworkReferences = [.. project.GetItems("FrameworkReference").Select(r => r.EvaluatedInclude).Distinct(StringComparer.OrdinalIgnoreCase)],
+            WindowsTargeting = WindowsTargeting.Given(project),
+        };
     }
 
     /// <summary>The project's files, every evaluation's, each once: of the file item types and those the project names as

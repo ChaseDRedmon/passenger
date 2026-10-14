@@ -328,7 +328,24 @@ public sealed record ProjectBuildCache : IStateDocument<ProjectBuildCache>
 
     public Dictionary<string, KeptBuild> Projects { get; init; } = [];
 
-    public static IReadOnlyList<Action<JsonObject>> Upgrades { get; } = [StateStore.Unversioned];
+    public static IReadOnlyList<Action<JsonObject>> Upgrades { get; } = [StateStore.Unversioned, ForgetWindowsTargeting];
+
+    /// <summary>The builds that failed off Windows for want of EnableWindowsTargeting (NETSDK1100), kept before the host
+    /// gave it, are built again.</summary>
+    private static void ForgetWindowsTargeting(JsonObject document)
+    {
+        if (document["projects"] is not JsonObject projects)
+        {
+            return;
+        }
+        foreach (string path in projects.Where(p => p.Value?["diagnostics"] is JsonArray said
+            && said.Any(d => d?["message"] is JsonValue message && message.GetValueKind() == System.Text.Json.JsonValueKind.String
+                && message.GetValue<string>().Contains("EnableWindowsTargeting", StringComparison.Ordinal)))
+            .Select(p => p.Key).ToList())
+        {
+            projects.Remove(path);
+        }
+    }
 
     public ProjectBuildCache Clamped() => this with
     {

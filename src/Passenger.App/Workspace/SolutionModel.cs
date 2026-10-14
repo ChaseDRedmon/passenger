@@ -246,6 +246,64 @@ public sealed record ProjectModel(
     public bool IsRunnable => (string.Equals(OutputType, "Exe", StringComparison.OrdinalIgnoreCase)
         || string.Equals(OutputType, "WinExe", StringComparison.OrdinalIgnoreCase)) && !IsTestProject;
 
+    /// <summary>Whether the project host evaluates and builds it with EnableWindowsTargeting (off Windows, for a framework
+    /// the SDK marks Windows-only that the project does not enable itself), which Passenger's own builds of it give too.</summary>
+    public bool WindowsTargeting => Evaluated?.Dependencies.Any(d => d.WindowsTargeting) == true;
+
+    /// <summary>Off Windows, its target frameworks whose program runs only on Windows, each with the Windows desktop UI it
+    /// references (WPF, Windows Forms, or both: the WindowsDesktop shared framework, which only Windows has); none on
+    /// Windows, where it runs.</summary>
+    public IReadOnlyList<(string Framework, string Desktop)> WindowsOnly
+    {
+        get
+        {
+            if (OperatingSystem.IsWindows() || Evaluated is null)
+            {
+                return [];
+            }
+            List<(string, string)> found = [];
+            foreach (FrameworkDependencies framework in Evaluated.Dependencies)
+            {
+                if ((framework.Framework ?? TargetFrameworks.FirstOrDefault()) is { } name && Desktop(framework.FrameworkReferences) is { } desktop)
+                {
+                    found.Add((name, desktop));
+                }
+            }
+            return found;
+        }
+    }
+
+    /// <summary>Why its program cannot run here, as Run, Debug and Profile say it ("WPF runs only on Windows"), for the
+    /// framework given or its first; null when it can.</summary>
+    public string? RunsOnlyOnWindows(string? framework = null)
+    {
+        string? running = framework is { Length: > 0 } ? framework : TargetFrameworks.FirstOrDefault();
+        foreach ((string name, string desktop) in WindowsOnly)
+        {
+            if (running is null || string.Equals(name, running, StringComparison.OrdinalIgnoreCase))
+            {
+                return $"{desktop} {(desktop.Contains(" and ", StringComparison.Ordinal) ? "run" : "runs")} only on Windows";
+            }
+        }
+        return null;
+    }
+
+    /// <summary>The Windows desktop UI a framework's references name: WindowsDesktop's WPF or Windows Forms profile, or
+    /// the whole of it (both, as UseWPF with UseWindowsForms references it); null for none.</summary>
+    private static string? Desktop(IReadOnlyList<string> references)
+    {
+        bool whole = references.Contains("Microsoft.WindowsDesktop.App", StringComparer.OrdinalIgnoreCase);
+        bool wpf = whole || references.Contains("Microsoft.WindowsDesktop.App.WPF", StringComparer.OrdinalIgnoreCase);
+        bool forms = whole || references.Contains("Microsoft.WindowsDesktop.App.WindowsForms", StringComparer.OrdinalIgnoreCase);
+        return (wpf, forms) switch
+        {
+            (true, true) => "WPF and Windows Forms",
+            (true, false) => "WPF",
+            (false, true) => "Windows Forms",
+            _ => null,
+        };
+    }
+
     /// <summary>The project a file or folder belongs to: of the projects whose folders hold it, the one nearest it, as a
     /// nested project's files are its own; null when none does. Paths are canonical, as the projects' are.</summary>
     public static ProjectModel? Owning(IEnumerable<ProjectModel> projects, string path) =>

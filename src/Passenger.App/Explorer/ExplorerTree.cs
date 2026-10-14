@@ -160,6 +160,7 @@ public sealed class ExplorerTree
         {
             ProjectModel project = projects[node.Path!];
             node.Detail = Unloaded.Contains(project.Path) ? "(unloaded)" : DetailOf(project);
+            node.Tip = Unloaded.Contains(project.Path) ? null : TipOf(project);
             foreach (ExplorerNode below in Loaded(node).ToList())
             {
                 any |= below.Reload();
@@ -423,11 +424,33 @@ public sealed class ExplorerTree
             List<ExplorerNode> children = [Dependencies(given, node.Depth + 1)];
             children.AddRange(HeldIn(given, string.Empty, node.Depth + 1));
             return children;
-        }, DetailOf(Current(given)));
+        }, DetailOf(Current(given))) { Tip = TipOf(Current(given)) };
 
-    /// <summary>What a project's row says beside its name: its frameworks, or that MSBuild could not evaluate it.</summary>
-    private static string? DetailOf(ProjectModel project) =>
-        project.Problem is not null ? "(load failed)" : project.TargetFrameworks.Count > 0 ? string.Join(", ", project.TargetFrameworks) : null;
+    /// <summary>What a project's row says beside its name: its frameworks, and off Windows those that run only on Windows
+    /// (a WPF or Windows Forms app's); or that MSBuild could not evaluate it.</summary>
+    private static string? DetailOf(ProjectModel project)
+    {
+        if (project.Problem is not null)
+        {
+            return "(load failed)";
+        }
+        if (project.TargetFrameworks.Count == 0)
+        {
+            return null;
+        }
+        string frameworks = string.Join(", ", project.TargetFrameworks);
+        IReadOnlyList<(string Framework, string Desktop)> windowsOnly = project.WindowsOnly;
+        // The mark first, so a narrow Solution view still shows it.
+        return windowsOnly.Count == 0 ? frameworks
+            : windowsOnly.Count >= project.TargetFrameworks.Count ? $"Windows only · {frameworks}"
+            : $"{frameworks} · {string.Join(", ", windowsOnly.Select(w => w.Framework))} Windows only";
+    }
+
+    /// <summary>What hovering a Windows-only project's row says: why, and what Passenger still does with it here.</summary>
+    private static string? TipOf(ProjectModel project) =>
+        project.WindowsOnly is [(string framework, _), ..] && project.RunsOnlyOnWindows(framework) is { } why
+            ? $"{why}: Passenger builds {project.Name} here for its code help (EnableWindowsTargeting), and Run, Debug and Profile need Windows"
+            : null;
 
     /// <summary>A project's dependencies as MSBuild evaluates them: for a project of one framework, it with the projects and
     /// packages it references; for a multi-targeted one, each framework with its own, as Rider shows them.</summary>
@@ -611,6 +634,15 @@ public sealed class ExplorerNode : Observable
     }
 
     private string? detail;
+
+    /// <summary>What hovering the row says, when it says anything: why a project runs only on Windows.</summary>
+    public string? Tip
+    {
+        get => tip;
+        set => Set(ref tip, value);
+    }
+
+    private string? tip;
 
     /// <summary>Where the row is among the solution's own folders: a solution folder's path in the solution ("/src/tools/"),
     /// or for a file one holds, that folder's; null for every other row.</summary>

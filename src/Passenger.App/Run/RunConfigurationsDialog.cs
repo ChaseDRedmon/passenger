@@ -52,7 +52,7 @@ public sealed class RunConfigurationsDialog : Window
         AddButton.Click += (_, _) => Add();
         CopyButton.Click += (_, _) => Copy();
         RemoveButton.Click += (_, _) => Remove();
-        list.ItemTemplate = new FuncDataTemplate<Entry>((row, _) => RowView(row?.Configuration));
+        list.ItemTemplate = new FuncDataTemplate<Entry>((row, _) => RowView(row?.Configuration, row?.Configuration.WhyNotHere(projects)));
         list.SelectionChanged += (_, _) =>
         {
             if (!showing)
@@ -201,6 +201,10 @@ public sealed class RunConfigurationsDialog : Window
 
     /// <summary>Why the last Apply or OK was refused, or empty.</summary>
     public string Problem => problem.Text ?? string.Empty;
+
+    /// <summary>What the fields cannot say of the configuration chosen: where a generated one comes from, why one cannot
+    /// run here.</summary>
+    public string Note => note.Text ?? string.Empty;
 
     /// <summary>The environment table's rows as they stand: each variable's name and value boxes.</summary>
     public IReadOnlyList<(TextBox Name, TextBox Value)> Variables =>
@@ -405,7 +409,7 @@ public sealed class RunConfigurationsDialog : Window
             {
                 AddVariable(name, value, focus: false);
             }
-            note.Text = Note(shown, project);
+            note.Text = NoteOn(shown, project, shown.WhyNotHere(projects));
             note.IsVisible = note.Text.Length > 0;
             bool editable = !shown.Generated;
             foreach (Control field in (Control[])[NameBox, ProjectBox, FrameworkBox, ProfileBox, ProgramBox, ArgumentsBox, WorkingDirectoryBox, ConsoleBox, BrowserBox, BrowserUrlBox, BuildBox, AddVariableButton, variables])
@@ -420,13 +424,13 @@ public sealed class RunConfigurationsDialog : Window
     }
 
     /// <summary>What the fields cannot say: where a generated one comes from, and why one cannot run here.</summary>
-    private static string Note(RunConfiguration shown, ProjectModel? project)
+    private static string NoteOn(RunConfiguration shown, ProjectModel? project, string? whyNot)
     {
         string name = project?.Name ?? Path.GetFileNameWithoutExtension(shown.Project);
         string origin = !shown.Generated ? string.Empty
             : shown.LaunchProfile.Length > 0 ? $"Generated from the launch profile {shown.LaunchProfile} in {name}'s Properties/launchSettings.json. Copy it to change it."
             : $"Generated for the executable project {name}. Copy it to change it.";
-        return shown.Unsupported is { } why ? $"{origin} It cannot run here: {why}.".Trim() : origin;
+        return whyNot is { } why ? $"{origin} It cannot run here: {why}.".Trim() : origin;
     }
 
     private int IndexOf(ProjectModel project)
@@ -496,11 +500,18 @@ public sealed class RunConfigurationsDialog : Window
         return header;
     }
 
-    /// <summary>A list row: the configuration's name, and for a generated one where it came from, muted beside it.</summary>
-    private static Control RowView(RunConfiguration? row)
+    /// <summary>A list row: the configuration's name, greyed when it cannot run here (why in its tip), and for a generated
+    /// one where it came from, muted beside it.</summary>
+    private static Control RowView(RunConfiguration? row, string? whyNot)
     {
         StackPanel line = new() { Orientation = Orientation.Horizontal, Spacing = 8 };
-        line.Children.Add(new TextBlock { Text = row?.Name, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center });
+        TextBlock name = new() { Text = row?.Name, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
+        if (whyNot is not null)
+        {
+            name.Classes.Add("muted");
+            ToolTip.SetTip(line, $"{row?.Name} cannot run here: {whyNot}");
+        }
+        line.Children.Add(name);
         if (row is { Generated: true })
         {
             line.Children.Add(new TextBlock { Text = row.LaunchProfile.Length > 0 ? "launchSettings.json" : "project", Classes = { "muted" }, FontSize = 11, VerticalAlignment = VerticalAlignment.Center });

@@ -256,6 +256,13 @@ public sealed class LanguageServer : IAsyncDisposable
         // The dotnet restore Roslyn runs leaves its MSBuild node in the server's process group, which a restart ends: a
         // build of the IDE's that took that node up would lose it midway, so a server's nodes are its own.
         start.Environment["MSBUILDNODEHANDSHAKESALT"] += $"-server-{Interlocked.Increment(ref started)}";
+        // The server's own dotnet restore takes no properties: off Windows a WPF or Windows Forms project restores only with
+        // EnableWindowsTargeting (NETSDK1100), so the server's environment says it, where MSBuild reads it as a property a
+        // project's own value still overrides, and which a project with no Windows-only framework never reads.
+        if (!OperatingSystem.IsWindows() && !start.Environment.ContainsKey("EnableWindowsTargeting"))
+        {
+            start.Environment["EnableWindowsTargeting"] = "true";
+        }
         LanguageServer server2 = await StartCoreAsync(start, folder, logFolder, ClientCapabilities.Value, null, options, null, null, cancel).ConfigureAwait(false);
         try
         {

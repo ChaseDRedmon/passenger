@@ -208,7 +208,7 @@ public sealed class BuildRunController
         string target = buildQueue.Dequeue();
         string verb = buildKind switch { BuildKind.Rebuild => "Rebuilding", BuildKind.Clean => "Cleaning", _ => "Building" };
         parts.Say($"{verb} {Path.GetFileName(target)}…");
-        if (session.Builder.StartDotnet(BuildOutput.Arguments(target, buildKind, buildFramework), session.Folder!) is { } problem)
+        if (session.Builder.StartDotnet(BuildOutput.Arguments(target, buildKind, buildFramework, BuildOutput.WindowsTargeting(target, session.Projects)), session.Folder!) is { } problem)
         {
             FinishBuild(new BuildOutcome(BuildStatus.NotStarted, problem));
         }
