@@ -48,11 +48,12 @@ public sealed class LiveApp : IDisposable
     private NetworkStream? stream;
     private int next;
 
-    private LiveApp(string name, string socket, Socket listener, LaunchPlan? plan)
+    private LiveApp(string name, string socket, Socket listener, LaunchPlan? plan, IReadOnlyList<string> overlays)
     {
         this.listener = listener;
         SocketPath = socket;
         Name = name;
+        Overlays = overlays;
         if (plan is not null)
         {
             Dictionary<string, string> environment = new(plan.Environment)
@@ -60,6 +61,10 @@ public sealed class LiveApp : IDisposable
                 [Wire.SocketVariable] = socket,
                 [Wire.StartupHooks] = Hooks(plan, InspectorPath),
             };
+            if (overlays.Count > 0)
+            {
+                environment[Wire.OverlaysVariable] = string.Join(',', overlays);
+            }
             Plan = plan with { Environment = environment };
         }
         // Not held: it waits as long as the app runs, which nothing drawn waits for.
@@ -96,13 +101,13 @@ public sealed class LiveApp : IDisposable
             throw new LiveAppException("This Passenger was started by another Passenger, whose inspector it carries: that one's app tools (app run or debug) look at its windows");
         }
         (string socket, Socket listener) = Listen("Passenger") ?? throw new LiveAppException("Passenger could not listen for its own inspector");
-        LiveApp app = new("Passenger", socket, listener, plan: null);
+        LiveApp app = new("Passenger", socket, listener, plan: null, []);
         try
         {
             Assembly inspector = AssemblyLoadContext.Default.LoadFromAssemblyPath(InspectorPath);
             inspector.GetType("Passenger.Inspector.Agent", throwOnError: true)!
                 .GetMethod("Start", BindingFlags.Public | BindingFlags.Static)!
-                .Invoke(null, [socket, Thread.CurrentThread, typeof(Avalonia.AvaloniaObject).Assembly.GetName().Version!.ToString()]);
+                .Invoke(null, [socket, Thread.CurrentThread, typeof(Avalonia.AvaloniaObject).Assembly.GetName().Version!.ToString(), null]);
         }
         catch (Exception error) when (error is IOException or BadImageFormatException or TypeLoadException or MissingMethodException or TargetInvocationException)
         {
@@ -151,15 +156,28 @@ public sealed class LiveApp : IDisposable
 
     private readonly Dictionary<int, BindingFailure> bindings = [];
 
-    /// <summary>The live app for a plan whose program is built with Avalonia (Avalonia.Base beside its assembly), or null for
-    /// any other program, or when this build of Passenger carries no inspector.</summary>
-    public static LiveApp? For(LaunchPlan plan)
+    /// <summary>The live app for a plan whose program is built with Avalonia (Avalonia.Base beside its assembly), showing
+    /// these renderer debug overlays from its first window, or null for any other program, or when this build of Passenger
+    /// carries no inspector.</summary>
+    public static LiveApp? For(LaunchPlan plan, IReadOnlyList<string>? overlays = null)
     {
         if (plan.Built is not { } built || !File.Exists(Path.Combine(Path.GetDirectoryName(built)!, "Avalonia.Base.dll")) || !File.Exists(InspectorPath))
         {
             return null;
         }
-        return Listen(plan.Name) is (string socket, Socket listener) ? new LiveApp(plan.Name, socket, listener, plan) : null;
+        return Listen(plan.Name) is (string socket, Socket listener) ? new LiveApp(plan.Name, socket, listener, plan, overlays ?? []) : null;
+    }
+
+    /// <summary>The renderer debug overlays the app's windows show, as the launch asked or the app last said.</summary>
+    public IReadOnlyList<string> Overlays { get; private set; }
+
+    /// <summary>The app's windows show these renderer debug overlays (none to take them away) from now, windows opened
+    /// later too; answered with the windows, each with the overlays it shows.</summary>
+    public async Task<IReadOnlyList<AppWindow>> SetOverlaysAsync(IReadOnlyList<string> overlays)
+    {
+        IReadOnlyList<AppWindow> windows = (await AskAsync(new Request(0, Wire.Overlays) { Overlays = overlays })).Windows ?? [];
+        Overlays = overlays;
+        return windows;
     }
 
     /// <summary>A socket of its own in the temp folder for one app's inspector to connect to, or null, logged, when it cannot.</summary>

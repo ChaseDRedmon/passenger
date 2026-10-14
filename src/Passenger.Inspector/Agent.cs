@@ -19,7 +19,8 @@ public static class Agent
     /// <summary>The inspector on the app's UI thread, once made: what an evaluation's read of binding values names elements by.</summary>
     internal static Inspector? Current { get; private set; }
 
-    public static void Start(string socket, Thread main, string avalonia)
+    /// <param name="overlays">The renderer debug overlays the launch named (<see cref="Wire.OverlaysVariable"/>), or null.</param>
+    public static void Start(string socket, Thread main, string avalonia, string? overlays)
     {
         // Before the app's Main, so a binding that fails as its first window opens is heard.
         if (Connection.Open(socket) is not { } connection)
@@ -27,11 +28,11 @@ public static class Agent
             return;
         }
         Bindings.Start(connection);
-        Thread thread = new(() => Serve(connection, main, avalonia)) { IsBackground = true, Name = "Passenger inspector" };
+        Thread thread = new(() => Serve(connection, main, avalonia, overlays)) { IsBackground = true, Name = "Passenger inspector" };
         thread.Start();
     }
 
-    private static void Serve(Connection connection, Thread main, string avalonia)
+    private static void Serve(Connection connection, Thread main, string avalonia, string? overlays)
     {
         using Connection held = connection;
         Dispatcher dispatcher = WaitForUi(main);
@@ -39,7 +40,7 @@ public static class Agent
         Inspector inspector;
         try
         {
-            inspector = dispatcher.Invoke(() => Current = new Inspector(connection));
+            inspector = dispatcher.Invoke(() => Current = new Inspector(connection, overlays));
         }
         catch (Exception error)
         {

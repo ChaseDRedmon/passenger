@@ -11,6 +11,8 @@
     <!-- Never optimized, a Release build as a Debug one: the debugger reads a property breakpoint's arguments where the app
          stops (its condition's, what changed), which optimized code need not keep. -->
     <Optimize>false</Optimize>
+    <!-- The frame events are written as EventSource's fast path writes them, from the stack (Frames.cs). -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>

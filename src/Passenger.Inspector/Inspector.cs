@@ -22,20 +22,18 @@ internal sealed class Inspector
     private static readonly TimeSpan Settle = TimeSpan.FromMilliseconds(300);
 
     private readonly Connection connection;
-    private readonly ConditionalWeakTable<Visual, object> ids = new();
-    private readonly Dictionary<long, WeakReference<Visual>> byId = [];
     private readonly List<IDisposable> handlers = [];
     private readonly Picker picker;
     private readonly Driver driver;
     private readonly PropertyBreaks breaks = new();
     private readonly ValueWatch values;
-    private long next;
     private bool told;
 
     /// <summary>Whether Passenger has asked for the tree since it was last told of a change, so it is told only once.</summary>
     private bool watched;
 
-    public Inspector(Connection connection)
+    /// <param name="overlays">The renderer debug overlays the launch asked for (<see cref="Wire.OverlaysVariable"/>), or null.</param>
+    public Inspector(Connection connection, string? overlays = null)
     {
         Dispatcher.UIThread.VerifyAccess();
         this.connection = connection;
@@ -44,8 +42,16 @@ internal sealed class Inspector
         values = new ValueWatch(connection);
         handlers.Add(Control.LoadedEvent.AddClassHandler(typeof(Control), (sender, _) => Changed(sender)));
         handlers.Add(Control.UnloadedEvent.AddClassHandler(typeof(Control), (sender, _) => Changed(sender)));
-        handlers.Add(Window.WindowOpenedEvent.AddClassHandler(typeof(Window), (sender, _) => Changed(sender)));
+        handlers.Add(Window.WindowOpenedEvent.AddClassHandler(typeof(Window), (sender, _) =>
+        {
+            Overlays.Opened(sender as TopLevel);
+            Changed(sender);
+        }));
         handlers.Add(Window.WindowClosedEvent.AddClassHandler(typeof(Window), (sender, _) => Changed(sender)));
+        if (overlays is { Length: > 0 })
+        {
+            Overlays.Want(overlays.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries), TopLevels());
+        }
     }
 
     public Reply Handle(Request request)
@@ -67,6 +73,7 @@ internal sealed class Inspector
                 Wire.Input => new Reply { Id = request.Id, Done = driver.Do(request.Input ?? throw new Refusal("No input was given")) },
                 Wire.Watch => Done(request, () => Watch(request)),
                 Wire.Values => new Reply { Id = request.Id, Values = Values(request) },
+                Wire.Overlays => new Reply { Id = request.Id, Windows = SetOverlays(request) },
                 _ => new Reply { Id = request.Id, Error = $"The inspector does not know '{request.Method}'" },
             };
         }
@@ -140,27 +147,17 @@ internal sealed class Inspector
         return new Reply { Id = request.Id };
     }
 
-    /// <summary>The id Passenger knows a visual by, the same for as long as it lives.</summary>
-    public long IdOf(Visual visual)
+    /// <summary>The overlays asked for set on every window, those opened later too, and the windows as they are now.</summary>
+    private List<AppWindow> SetOverlays(Request request)
     {
-        if (ids.TryGetValue(visual, out object? known))
-        {
-            return (long)known;
-        }
-        long id = ++next;
-        ids.Add(visual, id);
-        if (byId.Count > 4096 && byId.Count % 4096 == 0)
-        {
-            foreach (long dead in byId.Where(e => !e.Value.TryGetTarget(out _)).Select(e => e.Key).ToList())
-            {
-                byId.Remove(dead);
-            }
-        }
-        byId[id] = new WeakReference<Visual>(visual);
-        return id;
+        Overlays.Want(request.Overlays ?? [], TopLevels());
+        return Windows();
     }
 
-    public Visual? Find(long? id) => id is long known && byId.TryGetValue(known, out WeakReference<Visual>? held) && held.TryGetTarget(out Visual? visual) ? visual : null;
+    /// <summary>The id Passenger knows a visual by, the same for as long as it lives.</summary>
+    public long IdOf(Visual visual) => ElementIds.Of(visual);
+
+    public Visual? Find(long? id) => ElementIds.Find(id);
 
     /// <summary>Whether a visual is the inspector's own (Select Element's outline), which the tree leaves out.</summary>
     public bool IsOwn(Visual visual) => picker.IsOwn(visual);
@@ -189,7 +186,7 @@ internal sealed class Inspector
         top.RenderScaling,
         top is WindowBase { IsActive: true },
         top.IsVisible,
-        top is PopupRoot { ParentTopLevel: { } parent } ? IdOf(parent) : null))];
+        top is PopupRoot { ParentTopLevel: { } parent } ? IdOf(parent) : null) { Overlays = Overlays.Of(top) })];
 
     /// <summary>The app's top levels, each once: its desktop lifetime's windows or its single view's, then every other one
     /// Avalonia is drawing (a popup's, or every window of an app with no lifetime, as Passenger's own screenshot has).</summary>
@@ -311,3 +308,34 @@ internal sealed class Inspector
 /// <summary>Why the inspector will not do what it was asked (the element is disabled, covered, gone), in words an agent
 /// reads as they are.</summary>
 internal sealed class Refusal(string message) : Exception(message);
+
+/// <summary>The ids Passenger knows the app's visuals by, each the same for as long as the visual lives: the Live Visual Tree's,
+/// an agent's, and the profiler's frames' (<see cref="FrameRecorder"/>), so a control named in one is the one in the others.
+/// The app's UI thread's alone.</summary>
+internal static class ElementIds
+{
+    private static readonly ConditionalWeakTable<Visual, object> Ids = new();
+    private static readonly Dictionary<long, WeakReference<Visual>> ById = [];
+    private static long next;
+
+    public static long Of(Visual visual)
+    {
+        if (Ids.TryGetValue(visual, out object? known))
+        {
+            return (long)known;
+        }
+        long id = ++next;
+        Ids.Add(visual, id);
+        if (ById.Count > 4096 && ById.Count % 4096 == 0)
+        {
+            foreach (long dead in ById.Where(e => !e.Value.TryGetTarget(out _)).Select(e => e.Key).ToList())
+            {
+                ById.Remove(dead);
+            }
+        }
+        ById[id] = new WeakReference<Visual>(visual);
+        return id;
+    }
+
+    public static Visual? Find(long? id) => id is long known && ById.TryGetValue(known, out WeakReference<Visual>? held) && held.TryGetTarget(out Visual? visual) ? visual : null;
+}

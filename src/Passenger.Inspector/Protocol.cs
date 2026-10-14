@@ -11,16 +11,22 @@ namespace Passenger.Inspector;
 // property, which stops the debugged app at each change its hit count lets through (PropertyBreaks.cs); in a debugged app each
 // failed binding also calls a method the Avalonia Binding Errors breakpoint stops in (Breaks.cs). The bindings of a XAML file's
 // elements are read with their values (values, BindingValues.cs): asked over the socket while the app runs, and through the
-// debugger's evaluation of BindingValues.Read while it is paused, when its UI thread answers nothing.
+// debugger's evaluation of BindingValues.Read while it is paused, when its UI thread answers nothing. Avalonia's renderer debug
+// overlays are set on the app's windows (overlays, Overlays.cs), from the launch on when its environment names them. The app's
+// frames, layout and rendering go to Passenger's profiler by EventPipe, not this socket (Frames.cs).
 
 /// <summary>The names both ends agree on.</summary>
 public static class Wire
 {
     /// <summary>Bumped by a change either end must know of: a hello of another version is refused, saying so.</summary>
-    public const int Version = 4;
+    public const int Version = 5;
 
     /// <summary>The app's environment: the socket's path, where it connects.</summary>
     public const string SocketVariable = "PASSENGER_INSPECTOR";
+
+    /// <summary>The app's environment: Avalonia's renderer debug overlays its windows show from the launch on, as
+    /// <see cref="Request.Overlays"/> names them, joined by commas.</summary>
+    public const string OverlaysVariable = "PASSENGER_INSPECTOR_OVERLAYS";
 
     /// <summary>The runtime's list of startup hooks, which loads the inspector before the app's Main.</summary>
     public const string StartupHooks = "DOTNET_STARTUP_HOOKS";
@@ -37,6 +43,10 @@ public static class Wire
     public const string Input = "input";
     public const string Watch = "watch";
     public const string Values = "values";
+    public const string Overlays = "overlays";
+
+    /// <summary>Avalonia's renderer debug overlays, by the names of its RendererDebugOverlays flags, in its order.</summary>
+    public static readonly IReadOnlyList<string> OverlayNames = ["Fps", "DirtyRects", "LayoutTimeGraph", "RenderTimeGraph"];
 
     /// <summary>What the debugger evaluates for a XAML file's binding values while the app is paused, given the read (an
     /// <see cref="XamlRead"/>, as JSON) as a string: an object array, the <see cref="XamlValues"/> as JSON first, then each value
@@ -92,6 +102,10 @@ public sealed record Request(int Id, string Method, long? Element = null, bool? 
 
     /// <summary>With Values: the XAML file and its elements whose bindings to read.</summary>
     public XamlRead? Xaml { get; init; }
+
+    /// <summary>With Overlays: the renderer debug overlays every window of the app shows from now (<see cref="Wire.OverlayNames"/>),
+    /// none to take them away; answered with the windows.</summary>
+    public IReadOnlyList<string>? Overlays { get; init; }
 }
 
 /// <summary>A XAML file's bindings to read with their values: the file as the IDE has it, its elements by where the app's build
@@ -192,7 +206,11 @@ public sealed record InputDone(long Window, double? X, double? Y, long? Target, 
 /// <summary>One of the app's top levels: a window, or a popup's (a menu, a tooltip, a drop-down) with the window it opened
 /// from as its owner; its size in units and its pixels a unit.</summary>
 public sealed record AppWindow(long Id, string Type, string? Name, string? Title, double Width, double Height, double Scaling, bool Active,
-    bool Visible, long? Owner);
+    bool Visible, long? Owner)
+{
+    /// <summary>The renderer debug overlays it shows (<see cref="Wire.OverlayNames"/>), read back from its renderer; null for none.</summary>
+    public IReadOnlyList<string>? Overlays { get; init; }
+}
 
 /// <summary>A picture the app drew of one of its windows (its popups over it), or a part: a PNG, its size in pixels, the
 /// pixels a unit, and the part drawn in the window's units.</summary>
