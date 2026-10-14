@@ -113,7 +113,8 @@ public sealed partial class CodeAssist
     }
 
     /// <summary>A XAML item put in place of what was typed from <paramref name="start"/>: a snippet's caret where its
-    /// <c>$0</c> is, and completion opened again when the item says (a property's values once its quotes are in).</summary>
+    /// <c>$0</c> is, any other's after it, and completion opened again when the item says (a property's values once its
+    /// quotes are in).</summary>
     private void CommitXaml(XamlItem item, int start)
     {
         int caret = Editor.Selections.Primary.Caret;
@@ -124,7 +125,8 @@ public sealed partial class CodeAssist
         }
         else
         {
-            Editor.ApplyEdits([new TextEdit(replaced.Start, replaced.Length, item.Insert)]);
+            // Said, since with nothing typed (a list a property opened) the item is an insertion at the caret, which stays before it.
+            Editor.ApplyEdits([new TextEdit(replaced.Start, replaced.Length, item.Insert)], SelectionSet.Single(replaced.Start + item.Insert.Length));
         }
         if (item.Reopen)
         {

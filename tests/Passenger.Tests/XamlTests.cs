@@ -66,6 +66,41 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
     }
 
     [AvaloniaFact]
+    public void A_value_chosen_with_nothing_typed_from_the_list_its_property_opened_leaves_the_caret_after_it_to_type_on()
+    {
+        MainWindow window = app.Open(app.PathOf("MainWindow.axaml"));
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "<StackPanel Margin=\"12\" Spacing=\"8\">");
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("<");
+        Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Button"), "Avalonia's controls offered after a tag's '<'");
+        window.KeyTextInput("Butt");
+        Ui.Settle();
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput(" ");
+        window.KeyTextInput("V");
+        Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("VerticalAlignment"), "a Button's properties");
+        window.KeyTextInput("erticalA");
+        Ui.Settle();
+        Ui.Press(window, "ENTER");
+        Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Center"), "the enum's members offered inside the new value's quotes");
+        Assert.EndsWith("<Button VerticalAlignment=\"|\"", CaretLine(editor), StringComparison.Ordinal);
+
+        // Chosen at once, with nothing typed to replace: the caret goes after the value, so the quote typed next steps over
+        // the closing one and the next attribute follows, rather than both landing in front of the value.
+        string first = window.Assist.CompletionLabels[0];
+        Ui.Press(window, "ENTER");
+        Assert.True(CaretLine(editor).EndsWith($"<Button VerticalAlignment=\"{first}|\"", StringComparison.Ordinal),
+            $"The value chosen with nothing typed left the caret before it, where typing on goes in front of it: {CaretLine(editor)}");
+        window.KeyTextInput("\"");
+        window.KeyTextInput(" ");
+        window.KeyTextInput("H");
+        Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("HorizontalAlignment"), "a Button's properties after the value");
+        Assert.EndsWith($"<Button VerticalAlignment=\"{first}\" H|", CaretLine(editor), StringComparison.Ordinal);
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void A_resource_reference_offers_the_keys_the_app_merges_in_and_a_binding_its_data_types_properties_through_a_path()
     {
         MainWindow window = app.Open(app.PathOf("MainWindow.axaml"));
