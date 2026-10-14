@@ -27,7 +27,8 @@ env:
   AVALONIA_TELEMETRY_OPTOUT: 1
 
 jobs:
-  # The solution built and every test run on macOS and Windows (test.yml), as a release runs them too.
+  # The solution built and every test run on macOS, Windows and Linux, each system's in shards that run at once, then a
+  # summary job per system named as the system (test.yml), as a release runs them too.
   test:
     name: Test
     uses: ./.github/workflows/test.yml
@@ -55,7 +56,7 @@ jobs:
         with:
           global-json-file: global.json
 
-      # The test job's packages, when it has saved them; this job saves none of its own.
+      # The test shards' packages, when one has saved them; this job saves none of its own.
       - name: Restore cached NuGet packages
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -89,7 +90,7 @@ jobs:
           global-json-file: global.json
           dotnet-version: 10.0.x
 
-      # The test job's packages, when it has saved them; this job saves none of its own.
+      # The test shards' packages, when one has saved them; this job saves none of its own.
       - name: Restore cached NuGet packages
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -198,7 +199,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends file git libx11-6 libice6 libsm6 libfontconfig1 \
             desktop-file-utils shared-mime-info
 
-      # The test job's packages, when it has saved them; this job saves none of its own.
+      # The test shards' packages, when one has saved them; this job saves none of its own.
       - name: Restore cached NuGet packages
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:

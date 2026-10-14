@@ -52,7 +52,7 @@ env:
   AVALONIA_TELEMETRY_OPTOUT: 1
 
 jobs:
-  # What is released, before an hour of tests: the tag's version in numbers, as every package's version must be. A dry
+  # What is released, before the tests: the tag's version in numbers, as every package's version must be. A dry
   # run from a branch takes the version as tools/package-mac.sh and package-win.sh do: a vX.Y.Z tag on the commit, else
   # Directory.Build.props'.
   version:
@@ -150,7 +150,7 @@ jobs:
           global-json-file: global.json
           dotnet-version: 10.0.x
 
-      # The test job's packages; this job saves none of its own.
+      # The test shards' packages; this job saves none of its own.
       - name: Restore cached NuGet packages
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:

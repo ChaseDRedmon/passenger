@@ -1,5 +1,5 @@
 {
-  "runMinutes": 55,
+  "shardMinutes": 20,
   "classSeconds": 60,
   "classes": {
     "CodeAssistTests": 570,

@@ -30,6 +30,8 @@ just package-win [RID]     # artifacts/package/Passenger-windows-x64.exe (or -ar
 just notices               # fail naming any package the solution, Roslyn's server or a dotnet tool carries that the
                            # notices miss
 just test [filter]         # every test, or those whose name matches
+just test-times RUN [RUN...]  # rewrite TestTimes.json (each test class's seconds on CI, which deals the shards) from
+                           # CI runs' results
 just mcp [FOLDER]          # Passenger as an MCP server over a folder (this one by default), from a clone of the last build
 ```
 
@@ -474,11 +476,12 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `site/`: passenger-ide.net, plain HTML and CSS, deployed to Cloudflare Pages by `.github/workflows/site.yml` on a push that
   touches it. Its downloads are the latest GitHub release's assets, by fixed names (#56); its share card,
   `images/social.png`, is drawn from `tools/social-card.html` (the command is in its first comment).
-- `.github/workflows`: `test.yml` is every test on macOS and Windows, called by `ci.yml` (each push and pull request,
-  with the packages' and notices' jobs) and by `release.yml`, which a pushed `vX.Y.Z` tag runs: the tests, then both
-  disk images and both Windows installers at the tag's version, `SHA256SUMS` and Velopack's feeds, published as the
-  release under the fixed names the site and the updater link to. Its Run workflow with dry run builds it all and
-  publishes nothing.
+- `.github/workflows`: `test.yml` is every test on macOS, Windows and Linux, each system's suite in four shards run at
+  once (jobs named as "macOS (arm64), shard 1 of 4"), then a summary job per system named as the system ("macOS
+  (arm64)", the check that stands for it). It is called by `ci.yml` (each push and pull request, with the packages'
+  and notices' jobs) and by `release.yml`, which a pushed `vX.Y.Z` tag runs: the tests, then both disk images and both
+  Windows installers at the tag's version, `SHA256SUMS` and Velopack's feeds, published as the release under the fixed
+  names the site and the updater link to. Its Run workflow with dry run builds it all and publishes nothing.
 
 ## Rules
 
@@ -566,9 +569,16 @@ window answers, a profile's samples, the debugger's evaluation limit), or that d
 `Alone`, which runs after the rest with nothing beside it. A class whose tests share one project derives its fixture
 from `SharedProject`: its windows share one warm language server (`MainWindow.WarmServer`), the project is put back as
 written before each test, and a file a test adds goes through `project.Write`. A class whose tests each restore a fresh
-folder takes it from `RestoredFolders`. CI's Test step writes each class's time into the run's summary
-(`tools/test-times.py` over the .trx, budgets in `tests/Passenger.Tests/TestBudget.json`): a class over its seconds
-warns, and a run over its 55 minutes fails (raised from 40 when GitHub's runners took 41–45 and Windows hit its step limit). Raise a budget knowing why. The run sets its own nice value to 0 when it starts below it (GitHub's macOS
+folder takes it from `RestoredFolders`. CI splits each system's suite into shards, a runner each (#206), so a class
+never counts on another having run before it: each shard lists the suite and `tools/test-shards.py` deals the classes
+by their seconds on that system in `tests/Passenger.Tests/TestTimes.json` (one it lacks by its budget), the same deal in
+every shard, checked before any test runs to put every test in exactly one; inside a shard the collections keep their
+order. A shard writes its classes' times into its summary (`tools/test-times.py` over the .trx, budgets in
+`tests/Passenger.Tests/TestBudget.json`): a class over its seconds warns, and a shard over its 20 minutes fails (the
+whole run was an hour in one job a system). Each system's summary job fails unless every shard succeeded and every test
+has exactly one result, and warns when its run's own times would deal a slowest shard two minutes shorter: `just
+test-times RUN` writes them to TestTimes.json, for committing. Raise a budget, or add a shard, knowing why. The run
+sets its own nice value to 0 when it starts below it (GitHub's macOS
 runner starts at −10), since MSBuild keeps no idle node at any other; a test that needs one skips, saying why, when
 the run is above 0 and cannot come down (`Nice`). MSBuild itself sometimes keeps no node (a race as a build ends, or
 more than 1.5 nodes a processor running machine-wide): a test that needs one waits for the count

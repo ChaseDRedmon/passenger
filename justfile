@@ -16,6 +16,11 @@ build:
 test filter="":
     dotnet test tests/Passenger.Tests {{ if filter == "" { "" } else { "--filter " + quote(filter) } }}
 
+# Each test class's seconds on CI's runners, by which CI deals each system's tests to its shards (TestTimes.json),
+# rewritten from CI runs' results, which gh downloads, for committing: just test-times RUN [RUN...]
+test-times +runs:
+    python3 -I tools/test-shards.py update {{runs}}
+
 # Run the IDE (Debug, JIT): just run [--theme dark|light|system]
 run *args:
     dotnet run --project {{app}} -- {{args}}
