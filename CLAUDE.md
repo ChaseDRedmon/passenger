@@ -453,7 +453,18 @@ address, and a test that needs releases gives its window a `Releases` feed of it
 an update gives its window the updater of a copy installed in a test folder, and no other window has one. After every window test, pass or fail, the windows it left open are closed,
 what they started is waited out and its folders are removed (`TestsLeaveNothingBehind`), so one failure never
 cascades into the next test's waits. A Mac that sleeps during a run fails tests with "Background work never finished"
-(Settle's limits are wall-clock); `pmset -g log` shows the sleeps, and the lead's full runs go under `caffeinate -is`. The run sets its own nice value to 0 when it starts below it (GitHub's macOS
+(Settle's limits are wall-clock); `pmset -g log` shows the sleeps, and the lead's full runs go under `caffeinate -is`.
+
+What runs beside what is chosen (`Collections.cs`): window tests run one at a time on Avalonia's session thread and, as
+the assembly's one collection, class after class; beside them run only the debug adapter's protocol tests
+(`DebugSession.Collection`). A class with a test that holds what it tests to a time (a key's, a frame's, how soon the
+window answers, a profile's samples, the debugger's evaluation limit), or that debugs through the window, goes in
+`Alone`, which runs after the rest with nothing beside it. A class whose tests share one project derives its fixture
+from `SharedProject`: its windows share one warm language server (`MainWindow.WarmServer`), the project is put back as
+written before each test, and a file a test adds goes through `project.Write`. A class whose tests each restore a fresh
+folder takes it from `RestoredFolders`. CI's Test step writes each class's time into the run's summary
+(`tools/test-times.py` over the .trx, budgets in `tests/Passenger.Tests/TestBudget.json`): a class over its seconds
+warns, and a run over its 40 minutes fails. Raise a budget knowing why. The run sets its own nice value to 0 when it starts below it (GitHub's macOS
 runner starts at −10), since MSBuild keeps no idle node at any other; a test that needs one skips, saying why, when
 the run is above 0 and cannot come down (`Nice`). MSBuild itself sometimes keeps no node (a race as a build ends, or
 more than 1.5 nodes a processor running machine-wide): a test that needs one waits for the count
@@ -463,7 +474,8 @@ The debugger's tests (`tests/Passenger.Tests/Debugging`) run the adapter from th
 the IDE does, and launch or attach to the programs in `tests/Debuggees`, whose lines and columns (tabs included) they
 stop at: moving a line there means moving the tests that name it. A line breakpoint on a line with a lambda binds inside
 the lambda, so a test stopping at such a statement gives its column. `TerminalConsoleApp` there needs a real terminal;
-window tests copy it into a folder of their own (`Debuggees.CopyTo`). They run one at a time (`DebugSession.Collection`). `PASSENGER_ENGINE_LOG=FILE` keeps the engine's own log, for the
+window tests copy it into a folder of their own (`Debuggees.CopyTo`). The protocol tests run one at a time (`DebugSession.Collection`), beside the window tests; one that holds the engine
+to a time runs in `Alone`. `PASSENGER_ENGINE_LOG=FILE` keeps the engine's own log, for the
 tests' sessions and the IDE's alike.
 
 The MCP server's tests (`McpTests`) are agents using the SDK's own client: one starts `Passenger --mcp` and debugs a
