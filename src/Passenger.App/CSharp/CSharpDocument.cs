@@ -56,6 +56,68 @@ public sealed class CSharpDocument : IDisposable
         Lsp = session.Open(document.Path, document.Text);
         Colour(Lsp, session.Server);
         Pull(TimeSpan.Zero);
+        FindContexts();
+    }
+
+    /// <summary>The projects the server has the file in, by Roslyn's own <c>textDocument/_vs_getProjectContexts</c>,
+    /// asked again as the server's projects load: the one chosen stays while the server still has it.</summary>
+    public IReadOnlyList<ProjectContext> Contexts { get; private set; } = [];
+
+    /// <summary>Asks the server which projects it has the file in, as background work a screenshot waits for.</summary>
+    public void FindContexts()
+    {
+        if (Lsp is { IsRazor: false } lsp)
+        {
+            BackgroundWork.Begin();
+            _ = FindContextsAsync(lsp);
+        }
+    }
+
+    private async Task FindContextsAsync(LspDocument lsp)
+    {
+        try
+        {
+            ProjectContextList? found = await lsp.ProjectContextsAsync();
+            if (Lsp != lsp || found is null)
+            {
+                return;
+            }
+            Contexts = [.. found.ProjectContexts.Where(c => !c.IsMiscellaneous)];
+            ProjectContext? kept = lsp.Context is { } chosen ? Contexts.FirstOrDefault(c => c.Label == chosen.Label) : null;
+            if (lsp.Context is not null && kept is null)
+            {
+                // The project it was chosen in is gone (a framework no longer targeted): the server's choice from now on.
+                lsp.Context = null;
+                Refresh();
+            }
+            else
+            {
+                lsp.Context = kept;
+            }
+            document.ProjectContexts = [.. Contexts.Select(c => c.Label)];
+            document.ProjectContext = (kept ?? found.Default)?.Label;
+        }
+        catch (LanguageServerFailed)
+        {
+            // Not yet able to say (its projects still loading), or gone: asked again as they load.
+        }
+        finally
+        {
+            BackgroundWork.End();
+        }
+    }
+
+    /// <summary>Has the server answer for the file in another of its projects (Rider's target framework switcher): its
+    /// colours and diagnostics are asked for again in it.</summary>
+    public void Choose(ProjectContext context)
+    {
+        if (Lsp is not { } lsp)
+        {
+            return;
+        }
+        lsp.Context = context;
+        document.ProjectContext = context.Label;
+        Refresh();
     }
 
     /// <summary>The server's colours over the parser's, once the server has said its legend: a Razor file's is the one Razor

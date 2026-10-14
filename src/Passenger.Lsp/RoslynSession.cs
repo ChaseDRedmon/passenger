@@ -216,7 +216,6 @@ public sealed class LspDocument : IDisposable
         this.session = session;
         Uri = uri;
         Text = text;
-        Identifier = new TextDocumentIdentifier(uri);
         IsRazor = IsRazorPath(uri);
         session.Server.Notify("textDocument/didOpen",
             new DidOpenTextDocumentParams(new TextDocumentItem(uri, IsRazor ? "aspnetcorerazor" : "csharp", text.Version, text.Snapshot.ToString())));
@@ -225,7 +224,14 @@ public sealed class LspDocument : IDisposable
 
     public string Uri { get; }
     public TextDocument Text { get; }
-    public TextDocumentIdentifier Identifier { get; }
+
+    /// <summary>The project the server answers for the document in, chosen from its <see cref="ProjectContextsAsync"/>;
+    /// null for the one the server chooses.</summary>
+    public ProjectContext? Context { get; set; }
+
+    /// <summary>The document as each request names it, in its <see cref="Context"/>.</summary>
+    public TextDocumentIdentifier Identifier => new(Uri, Context);
+
     private LanguageServer Server => session.Server;
 
     /// <summary>A Razor file (.razor, .cshtml), which the server hands to Razor, cohosted in it: its colours have Razor's
@@ -236,7 +242,7 @@ public sealed class LspDocument : IDisposable
     public static bool IsRazorPath(string path) =>
         path.EndsWith(".razor", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".cshtml", StringComparison.OrdinalIgnoreCase);
 
-    public void Saved() => Server.Notify("textDocument/didSave", new DidSaveTextDocumentParams(Identifier));
+    public void Saved() => Server.Notify("textDocument/didSave", new DidSaveTextDocumentParams(new TextDocumentIdentifier(Uri)));
 
     public void Dispose()
     {
@@ -249,11 +255,11 @@ public sealed class LspDocument : IDisposable
         session.Forget(this);
         if (!Server.HasExited)
         {
-            Server.Notify("textDocument/didClose", new DidCloseTextDocumentParams(Identifier));
+            Server.Notify("textDocument/didClose", new DidCloseTextDocumentParams(new TextDocumentIdentifier(Uri)));
             if (IsRazor)
             {
                 // Razor's own word that the file closed, as VS Code says it, so Razor lets go of its HTML too.
-                Server.Tell("razor/documentClosed", Identifier);
+                Server.Tell("razor/documentClosed", new TextDocumentIdentifier(Uri));
             }
         }
         if (IsRazor)

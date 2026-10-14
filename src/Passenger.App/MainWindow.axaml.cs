@@ -90,6 +90,7 @@ public partial class MainWindow : Window
         AddHierarchy();
         AddFileOperations();
         AddFileProperties();
+        AddTargetFramework();
         AddAutosave();
         AddConflicts();
         AddErrors();

@@ -15,6 +15,8 @@ public sealed class OpenDocument : Observable
     private IHighlighter? parser;
     private IHighlighter? highlighter;
     private IReadOnlyList<Marker> markers = [];
+    private IReadOnlyList<string> projectContexts = [];
+    private string? projectContext;
     private IReadOnlyList<LineMark> lineMarks = [];
     private IReadOnlyList<LineAnnotation> lineAnnotations = [];
     private IReadOnlyList<InlayHint> inlayHints = [];
@@ -112,6 +114,22 @@ public sealed class OpenDocument : Observable
     {
         get => markers;
         set => Set(ref markers, value);
+    }
+
+    /// <summary>The projects the language server compiles the file in (a target framework of a multi-targeted project
+    /// each), by the server's names for them; none while it has not said, or for a file it does not know.</summary>
+    public IReadOnlyList<string> ProjectContexts
+    {
+        get => projectContexts;
+        set => Set(ref projectContexts, value);
+    }
+
+    /// <summary>The one of <see cref="ProjectContexts"/> the server answers for the file in: its colours, diagnostics and
+    /// everything else asked of it.</summary>
+    public string? ProjectContext
+    {
+        get => projectContext;
+        set => Set(ref projectContext, value);
     }
 
     /// <summary>The debugger's marks in the gutter: breakpoints and the execution point.</summary>

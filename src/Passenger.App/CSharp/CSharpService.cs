@@ -431,11 +431,14 @@ public sealed class CSharpService : IAsyncDisposable
             EventHandler onLoaded = (_, _) => loaded.TrySetResult();
             EventHandler onColours = (_, _) => UiThread.Post(() => Each(document => document.RefreshColours()));
             EventHandler onDiagnostics = (_, _) => UiThread.Post(() => Each(document => document.RefreshDiagnostics()));
+            // Projects loaded (the file shown's first, then the rest, or one loaded again): the files' projects may be others.
+            EventHandler onProjects = (_, _) => UiThread.Post(() => Each(document => document.FindContexts()));
             EventHandler<string> onExited = (_, why) => UiThread.Post(() => OnExited(started, why));
             EventHandler<string> onHung = (_, why) => UiThread.Post(() => OnNotResponding(started, why));
             started.Loaded += onLoaded;
             started.Server.ColoursRefreshRequested += onColours;
             started.Server.DiagnosticsRefreshRequested += onDiagnostics;
+            started.Server.ProjectsLoaded += onProjects;
             started.Server.Exited += onExited;
             started.Server.NotResponding += onHung;
             Hook(() =>
@@ -443,6 +446,7 @@ public sealed class CSharpService : IAsyncDisposable
                 started.Loaded -= onLoaded;
                 started.Server.ColoursRefreshRequested -= onColours;
                 started.Server.DiagnosticsRefreshRequested -= onDiagnostics;
+                started.Server.ProjectsLoaded -= onProjects;
                 started.Server.Exited -= onExited;
                 started.Server.NotResponding -= onHung;
             });

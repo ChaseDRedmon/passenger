@@ -238,6 +238,7 @@ public sealed class EditorGroup : DockPanel
         Editor.SetChangeMarks(document.ChangeMarks);
         Editor.SetGutterAnnotations(document.GutterAnnotations);
         Editor.SetBookmarks(document.Bookmarks);
+        Editor.ContextLabel = ContextShown(document);
         Editor.IsReadOnly = document.IsReadOnly;
         banner.IsVisible = document.IsReadOnly;
         bannerText.Text = document.Origin;
@@ -376,6 +377,10 @@ public sealed class EditorGroup : DockPanel
             case nameof(OpenDocument.Bookmarks):
                 Editor.SetBookmarks(document.Bookmarks);
                 break;
+            case nameof(OpenDocument.ProjectContexts):
+            case nameof(OpenDocument.ProjectContext):
+                Editor.ContextLabel = ContextShown(document);
+                break;
             case nameof(OpenDocument.Path):
                 Editor.LineCommentPrefix = document.Language.LineComment;
                 Editor.BlockComment = document.Language.BlockComment;
@@ -501,4 +506,22 @@ public sealed class EditorGroup : DockPanel
         border.PointerReleased += (_, e) => area.TabDragOf(this)?.End(e);
         return border;
     }
+
+    /// <summary>What the editor's context switcher shows for a file in several of the server's projects: the target
+    /// framework alone (Roslyn names a multi-targeted project's "Lib (net10.0)") when they are one project's, else the
+    /// project's name too; nothing for a file in one.</summary>
+    private static string? ContextShown(OpenDocument document)
+    {
+        if (document.ProjectContexts.Count < 2 || document.ProjectContext is not { } chosen)
+        {
+            return null;
+        }
+        return document.ProjectContexts.Select(ProjectOf).Distinct(StringComparer.Ordinal).Count() == 1 && FrameworkOf(chosen) is { } framework ? framework : chosen;
+
+        static string ProjectOf(string label) => FrameworkOf(label) is { } framework ? label[..^(framework.Length + 3)] : label;
+    }
+
+    /// <summary>The target framework a context's name ends with, in parentheses; null for a project's alone.</summary>
+    private static string? FrameworkOf(string label) =>
+        label.EndsWith(')') && label.LastIndexOf(" (", StringComparison.Ordinal) is int open and > 0 ? label[(open + 2)..^1] : null;
 }

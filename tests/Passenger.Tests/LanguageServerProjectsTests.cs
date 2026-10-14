@@ -1,12 +1,20 @@
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
+using Avalonia.Input;
+using Avalonia.Interactivity;
 using Passenger.App;
+using Passenger.App.Workspace;
 using Passenger.Core;
+using Passenger.Editor;
 
 namespace Passenger.Tests;
 
 /// <summary>The language server's projects. It loads them from what Passenger's project host built of them at design time,
 /// as its own build host would have built them, so it answers across a project reference; a folder opened again has them
-/// loaded from those builds as kept, none built again while nothing they read changed.</summary>
+/// loaded from those builds as kept, none built again while nothing they read changed. A file of a multi-targeted project
+/// is answered for in the target framework chosen in the editor's switcher, as Rider's.</summary>
 public sealed class LanguageServerProjectsTests : IClassFixture<RestoredFolders>, IDisposable
 {
     private readonly string folder;
@@ -67,6 +75,49 @@ public sealed class LanguageServerProjectsTests : IClassFixture<RestoredFolders>
             $"Opened again with nothing changed, the folder had {second.Session.DesignTimeBuilds.Builds} project(s) built again rather than loaded from the builds kept");
         second.Close();
     }
+
+    [AvaloniaFact]
+    public void A_file_of_a_multi_targeted_project_is_answered_for_in_the_target_framework_chosen_in_the_editor()
+    {
+        string greeter = Path.Combine(folder, "Lib", "Greeter.cs");
+        MainWindow window = Keeping();
+        window.OpenFile(greeter);
+        OpenDocument document = window.EditorArea.Active!;
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Ui.WaitFor(() => window.CSharpService?.IsReady == true && document.ProjectContexts.Count == 2,
+            "the server to say Greeter.cs is compiled for both of Lib's target frameworks", TimeSpan.FromMinutes(2));
+        Assert.Equal(["Lib (net10.0)", "Lib (net11.0)"], document.ProjectContexts.Order(StringComparer.Ordinal));
+        Assert.Equal(document.ProjectContext![5..^1], editor.ContextLabel);
+
+        // Only net11.0 compiles the member that names what does not exist.
+        Choose(window, editor, "Lib (net11.0)");
+        Assert.Equal("net11.0", editor.ContextLabel);
+        Ui.WaitFor(() => Missing(window, document), "the error on Missing, which only net11.0 compiles");
+        Choose(window, editor, "Lib (net10.0)");
+        Assert.Equal("net10.0", editor.ContextLabel);
+        Ui.WaitFor(() => !Missing(window, document) && window.CSharpService!.For(document)!.Diagnostics.Count == 0,
+            "the error on Missing to go, net10.0 compiling none of it");
+        window.Close();
+    }
+
+    /// <summary>Clicks the editor's switcher and the framework in the menu it opens.</summary>
+    private static void Choose(MainWindow window, CodeEditor editor, string context)
+    {
+        Rect bounds = editor.ContextSwitcherBounds;
+        Assert.True(bounds.Width > 0, "The editor shows no target framework switcher for a file compiled for two");
+        Point at = editor.TranslatePoint(bounds.Center, window)!.Value;
+        window.MouseDown(at, MouseButton.Left);
+        window.MouseUp(at, MouseButton.Left);
+        Ui.Settle();
+        ContextMenu menu = Assert.IsType<ContextMenu>(window.OpenContextMenu);
+        MenuItem item = menu.Items.OfType<MenuItem>().Single(i => (string?)i.Header == context);
+        item.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+        menu.Close();
+        Ui.Settle();
+    }
+
+    private static bool Missing(MainWindow window, OpenDocument document) =>
+        window.CSharpService?.For(document)?.Diagnostics.Any(d => d.Code?.ToString() == "CS0103" && d.Message.Contains("Missing", StringComparison.Ordinal)) == true;
 
     private MainWindow Keeping()
     {

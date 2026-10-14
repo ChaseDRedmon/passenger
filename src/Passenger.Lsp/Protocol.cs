@@ -36,7 +36,9 @@ public sealed record OutgoingCall(HierarchyItem To, IReadOnlyList<LspRange> From
 
 public sealed record LspLocationLink(LspRange? OriginSelectionRange, string TargetUri, LspRange TargetRange, LspRange TargetSelectionRange);
 
-public sealed record TextDocumentIdentifier(string Uri);
+/// <summary>A document, and the project the server is to answer for it in (Visual Studio's <c>_vs_projectContext</c>, a
+/// target framework of a multi-targeted project) when not the one it would choose.</summary>
+public sealed record TextDocumentIdentifier(string Uri, [property: JsonPropertyName("_vs_projectContext")] ProjectContext? ProjectContext = null);
 
 public sealed record VersionedTextDocumentIdentifier(string Uri, int Version);
 

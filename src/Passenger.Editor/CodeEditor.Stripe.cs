@@ -35,6 +35,10 @@ public sealed partial class CodeEditor
             showErrorStripe = value;
             vertical.AllowAutoHide = !value;
             stripe.IsVisible = counts.IsVisible = value;
+            if (switcher is not null)
+            {
+                switcher.IsVisible = value && contextLabel is not null;
+            }
             InvalidateArrange();
             InvalidateVisual();
         }
@@ -186,7 +190,9 @@ public sealed partial class CodeEditor
         stripe.Arrange(bar);
         counts.Measure(Size.Infinity);
         Size size = counts.DesiredSize;
-        counts.Arrange(new Rect(bar.X - size.Width - 6, 4, size.Width, size.Height));
+        Rect counted = new(bar.X - size.Width - 6, 4, size.Width, size.Height);
+        counts.Arrange(counted);
+        ArrangeContext(counted);
     }
 
     /// <summary>A mark on the stripe: what it is, the rows it covers, the offset a click goes to, and what it says.</summary>
