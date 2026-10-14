@@ -45,7 +45,8 @@ public sealed class AvaloniaFramesTests : IClassFixture<RestoredFolders>, IDispo
     {
         MainWindow window = Opened();
         // Thirty slow layouts, then the app ends, and with it the run, whose snapshot shows.
-        Assert.Null(Ui.Await(window.ProfileAsync("--frames 30"), "the app to build and start under the profiler", TimeSpan.FromMinutes(4)));
+        // 80 slow frames (2.4 s), so the panel leads the whole table even when the first layout shapes text slowly under load.
+        Assert.Null(Ui.Await(window.ProfileAsync("--frames 80"), "the app to build and start under the profiler", TimeSpan.FromMinutes(4)));
         Ui.WaitFor(() => window.ProfilerView.Snapshot is not null, $"the app's end to show its snapshot ({window.ProfilerView.Status})", TimeSpan.FromMinutes(2));
         ProfilerView view = window.ProfilerView;
         view.ShowPage(ProfilerPage.Frames);

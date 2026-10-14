@@ -78,7 +78,9 @@ public static partial class ProjectTemplates
         long started = System.Diagnostics.Stopwatch.GetTimestamp();
         try
         {
-            TemplateCatalog catalog = await BackgroundWork.Run(() => LoadAsync(folder));
+            // Not background work: nothing is drawn from it until a dialog opens, which waits for its own read, and holding
+            // a settle for dotnet new's second would outlast a chord's second key.
+            TemplateCatalog catalog = await Task.Run(() => LoadAsync(folder));
             IdeErrors.Write($"New Solution's templates read ahead in {System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalSeconds:0.00} s: "
                 + $"{catalog.Templates.Count} templates in {catalog.Families.Count} families, SDK {catalog.Sdk}");
         }
@@ -158,11 +160,12 @@ public static partial class ProjectTemplates
     }
 
     /// <summary>Something the templates come from changed: once its writes have settled, what was read is let go and the
-    /// folders asked for are read again, then the dialogs are told. Background work, as an open dialog fills in from it.</summary>
+    /// folders asked for are read again, then the dialogs are told (an open one fills in on the UI thread).</summary>
     private static void Seen(object? sender, FileSystemEventArgs e)
     {
         long change = Interlocked.Increment(ref changes);
-        _ = BackgroundWork.Run(async () =>
+        // Not background work, as a read ahead isn't: a template installed while a window waits for a key holds nothing.
+        _ = Task.Run(async () =>
         {
             await Task.Delay(Settling);
             if (Interlocked.Read(ref changes) != change)
