@@ -64,8 +64,9 @@
   </Target>
 
   <!-- The servers become this project's output under web/, so every project that references this one (the app, the
-       tests) carries them beside its own binaries, as roslyn/ comes. -->
-  <Target Name="IncludeWebServers" BeforeTargets="AssignTargetPaths" DependsOnTargets="FetchWebServers">
+       tests) carries them beside its own binaries, as roslyn/ comes. Not in a design-time build, which copies nothing and
+       would run Passenger.NodePackages before anything has built it (a fresh clone opened in an IDE failed to load). -->
+  <Target Name="IncludeWebServers" BeforeTargets="AssignTargetPaths" DependsOnTargets="FetchWebServers" Condition="'$(DesignTimeBuild)' != 'true'">
     <ItemGroup>
       <WebServersFile Include="$(WebServersFolder)node_modules/**/*" />
       <None Include="@(WebServersFile)" Link="web/node_modules/%(WebServersFile.RecursiveDir)%(WebServersFile.Filename)%(WebServersFile.Extension)"
