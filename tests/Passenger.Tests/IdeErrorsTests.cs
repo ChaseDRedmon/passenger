@@ -223,6 +223,23 @@ public sealed class IdeErrorsTests : IDisposable
         window.Close();
     }
 
+    /// <summary>A folder without a solution has its projects found by a walk off the window's thread, and its language
+    /// server starts once that walk lands: a window closed before then starts none, which nothing would end.</summary>
+    [AvaloniaFact]
+    public void A_window_closed_before_its_folders_projects_are_found_starts_no_language_server()
+    {
+        WriteProgram(folder);
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(folder);
+        Assert.True(window.CSharpService is null, "The folder's project was known before the walk for it landed, so there was no walk to close the window before");
+        window.Close();
+        Ui.Settle();
+        string[] started = ServerLogs();
+        Assert.True(started.Length == 0,
+            $"A language server started for the window after it had closed, which nothing ends before the IDE's own end: {string.Join(", ", started.Select(log => Processes.Describe(ServerOf(log))))}");
+    }
+
     [AvaloniaFact]
     public void A_window_test_that_throws_right_after_opening_a_project_leaves_no_language_server_and_no_work_for_the_next()
     {
