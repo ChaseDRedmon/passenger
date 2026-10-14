@@ -11,6 +11,13 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
     /// <summary>How much of a file is checked for a NUL byte before it is called binary.</summary>
     private const int BinaryProbe = 8000;
 
+    /// <summary>Windows' ERROR_SHARING_VIOLATION and ERROR_LOCK_VIOLATION as an IOException's HResult.</summary>
+    private const int SharingViolation = unchecked((int)0x80070020);
+    private const int LockViolation = unchecked((int)0x80070021);
+
+    /// <summary>How many times a write another program holds the file against is made, 50 ms apart: two seconds.</summary>
+    private const int HeldAttempts = 40;
+
     private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
     public string EncodingName => FileEncoding.Of(Encoding, HasBom).Name;
@@ -196,7 +203,8 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
 
     /// <summary>Moves the written file over the target. Windows refuses that while another program holds the target
     /// without sharing its deletion (a virus scanner, a build reading it): the move is tried again for a moment, then the
-    /// target is written in place, which such a program allows, so no save (nor the one quitting makes) fails for it.</summary>
+    /// target is written in place, which such a program allows, so no save (nor the one quitting makes) fails for it; one
+    /// sharing no writes either is waited out (<see cref="WhileHeld"/>).</summary>
     private static void Replace(string temporary, string target, byte[] preamble, byte[] body)
     {
         for (int attempt = 1; ; attempt++)
@@ -215,14 +223,34 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
                 Thread.Sleep(50);
             }
         }
-        using (FileStream stream = new(target, FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete))
+        WhileHeld(() =>
         {
+            using FileStream stream = new(target, FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
             stream.Write(preamble);
             stream.Write(body);
             stream.SetLength(stream.Position);
             stream.Flush(flushToDisk: true);
-        }
+        });
         File.Delete(temporary);
+    }
+
+    /// <summary>A write made again while Windows refuses it because another program has the file open sharing no writes,
+    /// as a build or a project load reading it does for a moment; any other failure, or that one past two seconds, is
+    /// thrown.</summary>
+    internal static void WhileHeld(Action write)
+    {
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                write();
+                return;
+            }
+            catch (IOException held) when (OperatingSystem.IsWindows() && attempt < HeldAttempts && held.HResult is SharingViolation or LockViolation)
+            {
+                Thread.Sleep(50);
+            }
+        }
     }
 
     /// <summary>The first character of a text that an encoding cannot hold (Latin-1 has no € and no emoji), which its

@@ -135,7 +135,8 @@ public sealed class FileNestingTests : IDisposable
         Ui.WaitFor(() => !window.IsPopupOpen, $"the rename to finish: {popup.Problem}");
         Assert.True(File.Exists(At("Figures.Circle.cs")), $"Shapes.Circle.cs was not renamed with Shapes.cs: {window.Status}");
         string project = File.ReadAllText(At("Shop.csproj"));
-        Assert.Equal(Project.Replace("Shapes.", "Figures.", StringComparison.Ordinal), project);
+        Assert.True(project == Project.Replace("Shapes.", "Figures.", StringComparison.Ordinal),
+            $"The project did not follow Shapes.cs and Shapes.Circle.cs to their new names ({window.Status}):\n{project}");
         Ui.WaitFor(() => Holder(window, At("Figures.Circle.cs")).Path == At("Figures.cs"), "Figures.Circle.cs nested under Figures.cs once the project is read again");
 
         // Undo takes the files and the project back together, asked first.

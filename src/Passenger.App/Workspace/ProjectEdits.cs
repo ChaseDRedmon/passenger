@@ -219,10 +219,12 @@ public static partial class ProjectEdits
                 groups.FirstOrDefault(g => m.Index >= g.OpenEnd && m.Index < g.CloseStart)))];
         }
 
+        /// <summary>Writes the project back, waiting out another program reading it, as a project load does the moment the
+        /// files the project names have moved (<see cref="FileText.WhileHeld"/>).</summary>
         public void Write(string text)
         {
             byte[] bytes = new UTF8Encoding(false).GetBytes(text);
-            File.WriteAllBytes(path, bom ? [.. Encoding.UTF8.Preamble, .. bytes] : bytes);
+            FileText.WhileHeld(() => File.WriteAllBytes(path, bom ? [.. Encoding.UTF8.Preamble, .. bytes] : bytes));
         }
     }
 }
