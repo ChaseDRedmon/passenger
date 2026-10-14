@@ -1,0 +1,351 @@
+using Passenger.App.CSharp;
+using Passenger.App.Editors;
+using Passenger.App.History;
+using Passenger.App.Navigation;
+using Passenger.App.Run;
+using Passenger.App.State;
+using Passenger.App.Workspace;
+using Passenger.Core;
+using Passenger.Editor;
+
+namespace Passenger.App;
+
+/// <summary>What a window lends each session it makes: its editors (whose open files the session's services follow), where
+/// its state and Local History are kept, how folders are watched, and the warm language server a test's windows share.</summary>
+public sealed record SessionSetup(
+    EditorArea Editors,
+    string StateFolder,
+    HistoryKeeping HistoryKeeping,
+    FolderWatching Watching,
+    Func<bool> SolutionWide,
+    WarmServer? WarmServer);
+
+/// <summary>One folder or solution open in a window, or a window's nothing before one opens: what the folder has (its
+/// solution read, its files indexed and watched, Local History, run configurations, recent files and the places Back goes
+/// to, what it keeps in the store) and what it runs (the language server), made as the folder opens and ended together as
+/// it is left (<see cref="EndAsync"/>), so nothing of one folder outlives it into the next. The window builds its
+/// controllers over the session it has and binds its views to it. A UI-thread object.</summary>
+public sealed class ProjectSession : IAsyncDisposable
+{
+    /// <summary>How many recently opened files Go to File offers before anything is typed.</summary>
+    public const int RecentLimit = 25;
+
+    private readonly SessionSetup setup;
+    private readonly List<string> recent = [];
+
+    /// <summary>Bumped by each read of the folder, so a walk for projects that lands after a later read is dropped.</summary>
+    private int reads;
+
+    private Task? ending;
+
+    private ProjectSession(SessionSetup setup, string? folder)
+    {
+        this.setup = setup;
+        Folder = folder;
+        Configurations = new RunConfigurations(folder);
+    }
+
+    /// <summary>A window's session with no folder open: files may still be open, alone.</summary>
+    public static ProjectSession None(SessionSetup setup) => new(setup, null);
+
+    /// <summary>Opens a folder (canonical) with its solution read, or the one named, or none: its Local History, index and
+    /// watcher, its configurations, and the language server on its projects; one without a solution is walked for them.</summary>
+    public static ProjectSession Open(SessionSetup setup, string folder, string? named, WorkspaceModel? withSolution)
+    {
+        ProjectSession session = new(setup, folder)
+        {
+            NamedSolution = named,
+            LocalHistory = History.LocalHistory.Open(folder, setup.StateFolder, setup.HistoryKeeping),
+        };
+        // Where the log's timing of the language server's start (CSharpService) begins.
+        IdeErrors.Write($"Opened {folder}{(withSolution is { } read && read.OpenedAs != folder ? $" with {Path.GetFileName(read.OpenedAs)}" : string.Empty)}");
+        // A folder without a solution has no projects until the walk for them lands: none to load, run or build meanwhile.
+        session.reads++;
+        session.Workspace = withSolution ?? new WorkspaceModel(folder, null, []);
+        session.Configurations.Configure(session.Projects);
+        session.Index.Build(folder);
+        session.Watcher = new FolderWatcher(folder, setup.Watching);
+        return session;
+    }
+
+    /// <summary>The folder open, canonical; null for a window with none.</summary>
+    public string? Folder { get; }
+
+    /// <summary>The solution or project opened by name, which a folder with several keeps over the solution its name would
+    /// pick.</summary>
+    public string? NamedSolution { get; private set; }
+
+    /// <summary>The folder's solution and projects, read when it opens and again when a solution or project changes; null
+    /// with no folder.</summary>
+    public WorkspaceModel? Workspace { get; private set; }
+
+    public SolutionModel? Solution => Workspace?.Solution;
+
+    /// <summary>The projects unloaded in the Solution view, which the folder keeps.</summary>
+    public ISet<string> Unloaded { get; } = new HashSet<string>(StringComparer.Ordinal);
+
+    /// <summary>The workspace's projects, but those unloaded.</summary>
+    public IReadOnlyList<ProjectModel> Projects => Workspace is null ? [] : [.. Workspace.Projects.Where(p => !Unloaded.Contains(p.Path))];
+
+    /// <summary>The loaded project a file or folder (a canonical path) belongs to, the nearest one holding it; null outside
+    /// them all.</summary>
+    public ProjectModel? ProjectOf(string path) => ProjectModel.Owning(Projects, path);
+
+    /// <summary>The name of the project a file belongs to, as Find and Problems group by it; outside them all, Rider's
+    /// Miscellaneous Files.</summary>
+    public string ProjectNameOf(string path) => ProjectOf(path) is { } owner ? Path.GetFileNameWithoutExtension(owner.Path) : "Miscellaneous Files";
+
+    /// <summary>The read of the folder under way, done once it has landed: a folder without a solution is walked for its
+    /// projects on a worker, which an agent's Open waits for before it says what the workspace holds.</summary>
+    public Task WorkspaceRead { get; private set; } = Task.CompletedTask;
+
+    /// <summary>The folder's documents in the store, while the window keeps them; null otherwise.</summary>
+    public ProjectState? State { get; private set; }
+
+    /// <summary>Every file of the folder, as Go to File and Find in Files search them.</summary>
+    public FileIndex Index { get; } = new();
+
+    /// <summary>What another program changes in the folder, seen at once; null with no folder.</summary>
+    public FolderWatcher? Watcher { get; private set; }
+
+    /// <summary>The folder's Local History; null with no folder.</summary>
+    public LocalHistory? LocalHistory { get; private set; }
+
+    /// <summary>The files opened lately, the latest first, which Go to File and Recent Files list.</summary>
+    public IReadOnlyList<string> RecentFiles => recent;
+
+    /// <summary>The places Back and Forward go to, and those edited.</summary>
+    public NavigationHistory Navigation { get; } = new();
+
+    /// <summary>Which regions each file opens folded.</summary>
+    public FoldMemory Folds { get; } = new();
+
+    /// <summary>Find in Files' scope as its popup left it last.</summary>
+    public FindScopeState FindScope { get; set; } = new();
+
+    /// <summary>The rows of the Solution view Find in Files was opened on last, when they are a scope of their own.</summary>
+    public (string Name, IReadOnlyList<string> Files, IReadOnlyList<string> Folders)? ChosenScope { get; set; }
+
+    public RunConfigurations Configurations { get; }
+
+    /// <summary>The language server on the folder's projects, or null for a folder with none (or no folder).</summary>
+    public CSharpService? CSharp { get; private set; }
+
+    /// <summary>A language server started (or none, after one ended) in place of the one before.</summary>
+    public event EventHandler? CSharpChanged;
+
+    /// <summary>The folder's solution or projects were read again: what the Explorer, the run configurations and the tests
+    /// show follows.</summary>
+    public event EventHandler? WorkspaceChanged;
+
+    /// <summary>Whether the session has been left (<see cref="EndAsync"/>).</summary>
+    public bool IsEnded => ending is not null;
+
+    /// <summary>The folder's documents from now on: what the store kept of the folder's own (its configurations, Find in
+    /// Files' scope, unloaded projects, folds and recent files) taken first, so restoring them writes nothing back.</summary>
+    public void Keep(ProjectState kept)
+    {
+        UiThread.Check();
+        FindScope = kept.Find.Value;
+        WorkspaceState workspace = kept.Workspace.Value;
+        foreach (string project in workspace.UnloadedProjects)
+        {
+            Unloaded.Add(project);
+        }
+        State = kept;
+        Configurations.Keep(kept.RunConfigurations, Projects);
+        Folds.Restore(workspace.Folds);
+        foreach (string file in workspace.RecentFiles.Where(File.Exists).Reverse())
+        {
+            Opened(file);
+        }
+    }
+
+    /// <summary>A file the editor opened: the latest of the recent files.</summary>
+    public void Opened(string path)
+    {
+        recent.Remove(path);
+        recent.Insert(0, path);
+        if (recent.Count > RecentLimit)
+        {
+            recent.RemoveAt(recent.Count - 1);
+        }
+    }
+
+    /// <summary>A file or folder moved: the recent files, the places and Local History follow it, and the language server
+    /// knows an open file at its new path.</summary>
+    public void Moved(FileMove move)
+    {
+        Navigation.Move(move.From, move.To);
+        LocalHistory?.Moved(move.From, move.To);
+        for (int i = 0; i < recent.Count; i++)
+        {
+            recent[i] = PathNames.Moved(recent[i], move.From, move.To);
+        }
+        foreach (OpenDocument document in move.Documents)
+        {
+            CSharp?.Detach(document);
+            CSharp?.Attach(document);
+        }
+    }
+
+    /// <summary>Reads the folder's solution again (after a package or project change, here or on disk), keeping the run
+    /// configuration chosen when it is still there.</summary>
+    public void ReadAgain()
+    {
+        if (Folder is not null)
+        {
+            Read(WorkspaceModel.ReadSolution(Folder, NamedSolution));
+        }
+    }
+
+    /// <summary>The same folder opened again, with the solution or project named this time, or none: the folder is read
+    /// again with it, and the language server starts again only when what it loads changed.</summary>
+    public void Reopen(string? named, WorkspaceModel? withSolution)
+    {
+        NamedSolution = named;
+        Read(withSolution);
+    }
+
+    /// <summary>Takes the folder's solution, read now; or for a folder without one the projects it had, read again now,
+    /// and those added or gone since once a worker has walked its folders for them.</summary>
+    private void Read(WorkspaceModel? withSolution)
+    {
+        reads++;
+        Reload(withSolution ?? Workspace!.Reread());
+        if (withSolution is null)
+        {
+            WalkForProjects();
+        }
+    }
+
+    /// <summary>Starts what a folder runs once the window has bound its views to the session: the language server, and for
+    /// a folder without a solution the walk for its projects.</summary>
+    public void Start(bool walk)
+    {
+        StartCSharp();
+        if (walk)
+        {
+            WalkForProjects();
+        }
+    }
+
+    /// <summary>Walks the folder for its projects off the window's thread, as background work, and takes what it finds when
+    /// it differs from what the session has, unless another read came first or the session was left.</summary>
+    private void WalkForProjects()
+    {
+        string walking = Folder!;
+        string? named = NamedSolution;
+        int walk = ++reads;
+        TaskCompletionSource landed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        WorkspaceRead = landed.Task;
+        // Held through the walk, then by the crossing, which lets go of what it can never deliver.
+        IDisposable held = BackgroundWork.Scope();
+        Task.Run(() => WorkspaceModel.Read(walking, named)).ContinueWith(walked =>
+        {
+            // Seen here, so a walk that failed after another read began is no unobserved task's error later.
+            _ = walked.Exception;
+            UiThread.Post(() =>
+            {
+                try
+                {
+                    if (walk == reads && !IsEnded && walked.GetAwaiter().GetResult() is { } found && !Workspace!.LoadsAs(found))
+                    {
+                        Reload(found);
+                    }
+                }
+                finally
+                {
+                    landed.TrySetResult();
+                }
+            });
+            held.Dispose();
+        }, TaskScheduler.Default);
+    }
+
+    /// <summary>Takes a new read of the folder. The language server starts again only when what it loaded changed: another
+    /// solution, or other projects.</summary>
+    private void Reload(WorkspaceModel read)
+    {
+        bool loaded = Workspace is not null && Workspace.LoadsAs(read);
+        Workspace = read;
+        Configurations.Configure(Projects);
+        if (!loaded)
+        {
+            StartCSharp();
+        }
+        WorkspaceChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>The language server on the workspace, in place of the one before, the files open its too; none for a
+    /// folder with neither a solution nor a project.</summary>
+    private void StartCSharp()
+    {
+        _ = CSharp?.DisposeAsync();
+        CSharp = null;
+        if (!IsEnded && Workspace is { } opening && (opening.Solution is not null || opening.Projects.Count > 0))
+        {
+            CSharp = new CSharpService(setup.WarmServer) { SolutionWide = setup.SolutionWide() };
+            CSharpChanged?.Invoke(this, EventArgs.Empty);
+            CSharp.Start(opening);
+            foreach (OpenDocument open in setup.Editors.Documents)
+            {
+                CSharp.Attach(open);
+            }
+            return;
+        }
+        CSharpChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>Leaves the folder: what the store keeps of it is kept no more, its watcher and Local History stop at once,
+    /// the language server is asked to end, and the task finishes once it has (and what else is ending with it), or
+    /// <paramref name="limit"/> after, each late one named in the log. It needs no UI thread once begun, so the process can
+    /// wait for it after the window's loop has stopped.</summary>
+    public Task EndAsync(TimeSpan limit, params (string What, Task Ending)[] with)
+    {
+        UiThread.Check();
+        if (ending is not null)
+        {
+            return ending;
+        }
+        State = null;
+        Watcher?.Dispose();
+        LocalHistory?.Release();
+        (string What, Task Ending)[] parts =
+        [
+            .. with,
+            ("the language server", CSharp?.DisposeAsync().AsTask() ?? Task.CompletedTask),
+        ];
+        CSharp = null;
+        ending = Within(limit, Folder, parts);
+        return ending;
+    }
+
+    public ValueTask DisposeAsync() => new(EndAsync(MainWindow.EndLimit));
+
+    /// <summary>Waits for what is ending, for at most the limit, naming in the log what had not ended by then.</summary>
+    internal static Task Within(TimeSpan limit, string? folder, IReadOnlyList<(string What, Task Ending)> parts)
+    {
+        if (parts.All(p => p.Ending.IsCompleted))
+        {
+            return Task.CompletedTask;
+        }
+        // Not held: nothing it does is drawn, and the process waits for it once the window's loop has stopped.
+        return Task.Run(async () =>
+        {
+            try
+            {
+                await Task.WhenAll(parts.Select(p => p.Ending)).WaitAsync(limit);
+            }
+            catch (TimeoutException)
+            {
+                string late = string.Join(" and ", parts.Where(p => !p.Ending.IsCompleted).Select(p => p.What));
+                IdeErrors.Write($"Closing{(folder is null ? string.Empty : $" {folder}")}: {late} had not ended after {limit.TotalSeconds:0} s");
+            }
+            catch (Exception error)
+            {
+                IdeErrors.Write($"Closing{(folder is null ? string.Empty : $" {folder}")}: ending what it started failed: {error}");
+            }
+        });
+    }
+}

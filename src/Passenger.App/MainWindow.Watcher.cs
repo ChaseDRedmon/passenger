@@ -13,7 +13,6 @@ public partial class MainWindow
     /// handed over between the two: its tab closed then, once in 160 rollbacks on Windows.</summary>
     private static readonly TimeSpan ComeBack = TimeSpan.FromMilliseconds(500);
 
-    private FolderWatcher? watcher;
     private readonly HashSet<OpenDocument> conflicted = [];
     private readonly HashSet<OpenDocument> gone = [];
 
@@ -26,27 +25,19 @@ public partial class MainWindow
         }
     };
 
-    /// <summary>Starts watching the folder just opened, and stops watching the one before.</summary>
-    private void Watch(string opened)
-    {
-        watcher?.Dispose();
-        watcher = new FolderWatcher(opened, Watching);
-        watcher.Changed += (_, changes) => OnFolderChanged(changes);
-    }
-
     /// <summary>How the folders opened from now on are watched: the system's way, unless a test chooses Linux's.</summary>
     public FolderWatching Watching { get; set; } = FolderWatching.Platform;
 
     /// <summary>The open folder's watcher.</summary>
-    public FolderWatcher? FolderWatcher => watcher;
+    public FolderWatcher? FolderWatcher => session.Watcher;
 
     private void OnFolderChanged(FolderChanges changes)
     {
-        if (folder is null)
+        if (session.Folder is not { } folder)
         {
             return;
         }
-        localHistory?.Noticed(changes.Paths);
+        session.LocalHistory?.Noticed(changes.Paths);
         if (changes.Projects)
         {
             ReloadSolution();
@@ -57,7 +48,7 @@ public partial class MainWindow
         }
         if (changes.Structure)
         {
-            index.Build(folder);
+            session.Index.Build(folder);
         }
         // An .editorconfig written, made or deleted: each open file follows what the ones over it say now.
         if (changes.Paths.Any(p => Path.GetFileName(p) == EditorConfig.FileName))

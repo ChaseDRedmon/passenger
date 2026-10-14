@@ -52,7 +52,7 @@ public partial class MainWindow
 
     private static string? NeedsFile(ActionContext context) => context.File is null ? NoFile : null;
 
-    private string? NeedsFolder(ActionContext _) => folder is null ? NoFolder : null;
+    private string? NeedsFolder(ActionContext _) => Folder is null ? NoFolder : null;
 
     /// <summary>The scope of the rows chosen in the Explorer while it has the keys, as Rider's Find in Files takes the
     /// Solution view's selection; null elsewhere, for the scope kept.</summary>
@@ -113,7 +113,7 @@ public partial class MainWindow
         actions.Add(new IdeAction(A.HideToolWindow, "Hide Active Tool Window", "Tool Windows", _ => HideToolWindow()) { Menus = [new("View", 3, 2)], FromTerminal = true });
         Add(A.FocusEditor, "Focus Editor", "IDE", _ => FocusEditor(), NeedsFile);
         Add(A.ToggleSolutionAnalysis, "Toggle Solution-Wide Analysis", "IDE", _ => ToggleSolutionAnalysis(),
-            _ => csharp is null ? "No C# language server runs for this folder" : null, ("Code", 4, 0));
+            _ => session.CSharp is null ? "No C# language server runs for this folder" : null, ("Code", 4, 0));
     }
 
     /// <summary>The editor's actions, run where the keys are: a text box's own editing there, another editor (a diff's)
@@ -230,12 +230,12 @@ public partial class MainWindow
         }, NeedsFile, ("Run", 2, 2));
         Add(A.ViewBreakpoints, "View Breakpoints and Exceptions...", "Debug", _ => ShowBreakpoints(null), menu: ("Run", 2, 3));
 
-        string? Unbuildable(ActionContext _) => folder is null ? "Nothing to build: no folder is open" : IsBuilding ? "Another build is running" : null;
+        string? Unbuildable(ActionContext _) => Folder is null ? "Nothing to build: no folder is open" : IsBuilding ? "Another build is running" : null;
 
         string? NoneSelected(ActionContext context) => Unbuildable(context)
             ?? (SelectedProjects().Count == 0 ? "No project is chosen in the Explorer or open in the editor" : null);
 
-        string? Unconfigured(string verb) => configuration is null ? $"Nothing to {verb}: no executable project" : null;
+        string? Unconfigured(string verb) => Configuration is null ? $"Nothing to {verb}: no executable project" : null;
     }
 
     /// <summary>The unit tests' actions: in context (the Unit Tests window's chosen rows while it has the keys, else the
@@ -245,9 +245,9 @@ public partial class MainWindow
         Add(A.RunTests, "Run Unit Tests", "Unit Tests", c => RunTestsInContext(c, debug: false), NoTestHere, ("Tests", 0, 0));
         Add(A.DebugTests, "Debug Unit Tests", "Unit Tests", c => RunTestsInContext(c, debug: true), NoTestHere, ("Tests", 0, 1));
         Add(A.RunTestsUntilFailure, "Run Unit Tests Until Failure", "Unit Tests", c => RunTestsInContext(c, debug: false, untilFailure: true), NoTestHere, ("Tests", 0, 2));
-        Add(A.RunAllTests, "Run All Tests", "Unit Tests", _ => RunTests(() => tests.RunAsync(folder!)), NeedsFolder, ("Tests", 0, 3));
-        Add(A.RerunTests, "Rerun Unit Tests", "Unit Tests", _ => RunTests(() => tests.RerunAsync(folder!)), NeedsFolder, ("Tests", 1, 0));
-        Add(A.RerunFailedTests, "Rerun Failed Tests", "Unit Tests", _ => RunTests(() => tests.RerunFailedAsync(folder!)), NeedsFolder, ("Tests", 1, 1));
+        Add(A.RunAllTests, "Run All Tests", "Unit Tests", _ => RunTests(() => tests.RunAsync(Folder!)), NeedsFolder, ("Tests", 0, 3));
+        Add(A.RerunTests, "Rerun Unit Tests", "Unit Tests", _ => RunTests(() => tests.RerunAsync(Folder!)), NeedsFolder, ("Tests", 1, 0));
+        Add(A.RerunFailedTests, "Rerun Failed Tests", "Unit Tests", _ => RunTests(() => tests.RerunFailedAsync(Folder!)), NeedsFolder, ("Tests", 1, 1));
         Add(A.StopTests, "Stop Unit Tests", "Unit Tests", _ => tests.Stop(), NeedsFolder, ("Tests", 1, 2));
 
         string? NoTestHere(ActionContext context) => NeedsFolder(context)

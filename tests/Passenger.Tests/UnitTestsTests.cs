@@ -836,7 +836,9 @@ public sealed class UnitTestsTests : IClassFixture<RestoredFolders>, IDisposable
         Assert.Equal(TestGroupings.Default, second.Tests.Tree.Grouping);
         Assert.True(Filter(second, "All Tests").IsChecked, "Another folder opened with the first folder's filter");
         Assert.Equal(["Other.Tests", "  Other.Tests", "    OtherTests", "      Elsewhere"], Shown(second));
-        second.OpenFolder(folder);
+        // The other folder's language server ends before the first folder opens again.
+        Task reopened = second.OpenFolder(folder);
+        Ui.WaitFor(() => reopened.IsCompleted, "the first folder to open again");
         Assert.Equal([TestGroupLevel.Category], second.Tests.Tree.Grouping);
         Assert.Equal([TestState.NotRun], second.Tests.Tree.Outcomes);
         second.Close();

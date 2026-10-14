@@ -16,7 +16,6 @@ public partial class MainWindow
 {
     private const string LocalHistoryMenu = "File/Local History";
 
-    private LocalHistory? localHistory;
     private LocalHistoryView? localHistoryView;
 
     /// <summary>The refactoring last asked for, which names what it writes in Local History.</summary>
@@ -26,7 +25,7 @@ public partial class MainWindow
     public HistoryKeeping HistoryKeeping { get; init; } = new();
 
     /// <summary>The open folder's Local History, or null with none open.</summary>
-    public LocalHistory? LocalHistory => localHistory;
+    public LocalHistory? LocalHistory => session.LocalHistory;
 
     /// <summary>The Local History tool window.</summary>
     public LocalHistoryView LocalHistoryWindow => localHistoryView!;
@@ -45,7 +44,7 @@ public partial class MainWindow
             WhyNot = context => NeedsFolder(context) ?? WhyNoTarget(context, fileOnly: false),
             Menus = [new MenuPlace(LocalHistoryMenu, 0, 0)],
         });
-        actions.Add(new IdeAction(AppActions.ShowProjectHistory, "Show Local History for Project...", "Local History", _ => ShowLocalHistory(folder!))
+        actions.Add(new IdeAction(AppActions.ShowProjectHistory, "Show Local History for Project...", "Local History", _ => ShowLocalHistory(Folder!))
         {
             TitleIn = _ => "Show Project History...",
             WhyNot = NeedsFolder,
@@ -62,10 +61,9 @@ public partial class MainWindow
             Menus = [new MenuPlace(LocalHistoryMenu, 1, 2)],
         });
         Editors.Opened += (_, document) => LookAt(document);
-        Closed += (_, _) => LeaveLocalHistory();
         // Rider's system labels and activities: a test run's end, a Git operation's changes, a refactoring's.
-        tests.Ran += (_, passed) => localHistory?.Label(passed ? "Tests Passed" : "Tests Failed", system: true);
-        vcs.Activity = name => localHistory?.During(name);
+        tests.Ran += (_, passed) => session.LocalHistory?.Label(passed ? "Tests Passed" : "Tests Failed", system: true);
+        vcs.Activity = name => session.LocalHistory?.During(name);
         // Another action since (a quick fix) is not the refactoring, though it may edit files the same way.
         actions.Running += (_, action) => refactoring = action.Menus.Any(m => m.Path == "Refactor") ? action.Title.TrimEnd('.') : null;
         // What a refactoring writes to files not open is one change set under its name; a quick fix's is not named.
@@ -73,29 +71,14 @@ public partial class MainWindow
         {
             string? name = refactoring;
             refactoring = null;
-            return name is null ? null : localHistory?.During(name);
+            return name is null ? null : session.LocalHistory?.During(name);
         };
-    }
-
-    /// <summary>The folder just opened has its history from now: what it kept before, and what happens to it next.</summary>
-    private void OpenLocalHistory(string opened)
-    {
-        LeaveLocalHistory();
-        localHistory = History.LocalHistory.Open(opened, StateFolder, HistoryKeeping);
-    }
-
-    /// <summary>The folder left: its histories' tabs close and it stops recording here.</summary>
-    private void LeaveLocalHistory()
-    {
-        localHistoryView?.CloseAll();
-        localHistory?.Release();
-        localHistory = null;
     }
 
     /// <summary>A file the editor opened: its content is what the history knows of it from now.</summary>
     private void LookAt(OpenDocument document)
     {
-        if (localHistory is not { } history || !history.Keeps(document.Path))
+        if (session.LocalHistory is not { } history || !history.Keeps(document.Path))
         {
             return;
         }
@@ -116,7 +99,7 @@ public partial class MainWindow
     /// any); null, with why in the status bar, for one outside the open folder.</summary>
     public HistoryTab? ShowLocalHistory(string path)
     {
-        if (localHistory is not { } history || folder is null)
+        if (session.LocalHistory is not { } history || Folder is not { } folder)
         {
             StatusText.Text = NoFolder;
             return null;
@@ -136,7 +119,7 @@ public partial class MainWindow
     /// <summary>Rider's Recent Changes: the folder's change sets, newest first; the one chosen opens in the project's history.</summary>
     public async Task<ChoicePopup?> ShowRecentChangesAsync()
     {
-        if (localHistory is not { } history || folder is not { } open)
+        if (session.LocalHistory is not { } history || Folder is not { } open)
         {
             StatusText.Text = NoFolder;
             return null;
@@ -160,7 +143,7 @@ public partial class MainWindow
     /// <summary>Rider's Put Label: a name, put across the folder's history now.</summary>
     public NamePopup? ShowPutLabel()
     {
-        if (localHistory is not { } history)
+        if (session.LocalHistory is not { } history)
         {
             StatusText.Text = NoFolder;
             return null;
@@ -186,7 +169,7 @@ public partial class MainWindow
     /// that did not exist then deleted (to the Trash, and kept in the history).</summary>
     private async Task RevertAsync(IReadOnlyList<(string Path, string? Version)> files, string activity)
     {
-        if (localHistory is not { } history)
+        if (session.LocalHistory is not { } history)
         {
             return;
         }

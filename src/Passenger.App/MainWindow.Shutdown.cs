@@ -19,7 +19,7 @@ public partial class MainWindow
         Closed += (_, _) => EndChildren();
         actions!.Add(new IdeAction(AppActions.CloseSolution, "Close Solution", "IDE", _ => CloseSolution())
         {
-            WhyNot = _ => folder is null ? "No solution is open" : null,
+            WhyNot = _ => Folder is null ? "No solution is open" : null,
             Menus = [new MenuPlace("File", 0, 5)],
         });
     }
@@ -28,30 +28,11 @@ public partial class MainWindow
     {
         StopPrograms();
         _ = terminal?.CloseAllAsync();
-        (string What, Task Ending)[] ending =
-        [
+        Ended = session.EndAsync(EndLimit,
             ("the debugger", debug.CloseAsync()),
             ("the test runner", tests.DisposeAsync().AsTask()),
-            ("the language server", csharp?.DisposeAsync().AsTask() ?? Task.CompletedTask),
-            ("Discord", EndDiscord()),
-        ];
-        // Not held: nothing it does is drawn, and the process waits for it once the window's loop has stopped.
-        Ended = Task.Run(async () =>
-        {
-            try
-            {
-                await Task.WhenAll(ending.Select(e => e.Ending)).WaitAsync(EndLimit);
-            }
-            catch (TimeoutException)
-            {
-                string late = string.Join(" and ", ending.Where(e => !e.Ending.IsCompleted).Select(e => e.What));
-                IdeErrors.Write($"Closing: {late} had not ended after {EndLimit.TotalSeconds:0} s");
-            }
-            catch (Exception error)
-            {
-                IdeErrors.Write($"Closing: ending what the window started failed: {error}");
-            }
-        });
+            ("the solution left before", ending),
+            ("Discord", EndDiscord()));
     }
 
     /// <summary>Programs and builds have nothing to finish: their process trees go now, so a server lets go of its port.</summary>
@@ -70,7 +51,7 @@ public partial class MainWindow
     public string? CloseSolution()
     {
         UiThread.Check();
-        if (folder is null)
+        if (Folder is null)
         {
             return "No solution is open";
         }
@@ -92,36 +73,7 @@ public partial class MainWindow
             StatusText.Text = open;
             return open;
         }
-        IdeErrors.Write($"Closed {folder}");
-        StopPrograms();
-        _ = debug.StopAsync();
-        tests.Stop();
-        _ = tests.DisposeAsync();
-        if (terminal is { Tabs.Count: > 0 })
-        {
-            Dock.Hide("terminal");
-            _ = terminal.CloseAllAsync();
-        }
-        watcher?.Dispose();
-        watcher = null;
-        folder = null;
-        workspace = null;
-        namedSolution = null;
-        reads++;
-        WorkspaceRead = Task.CompletedTask;
-        StartCSharp();
-        Explorer.Unload();
-        index.Clear();
-        _ = vcs.CloseAsync();
-        tests.Open(null);
-        LoadConfigurations();
-        problems.Clear();
-        Bottom.Problems.Show(problems);
-        if (Dock["problems"] is { } problemsWindow)
-        {
-            problemsWindow.Title = "Problems";
-        }
-        agentSocket?.Describe(null);
+        EndSession();
         ProjectName.Text = "No solution";
         ProjectBadge.IsVisible = false;
         Editors.ShowWelcome(welcome);

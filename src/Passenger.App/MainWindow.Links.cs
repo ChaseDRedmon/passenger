@@ -68,9 +68,9 @@ public partial class MainWindow
         {
             folders.Add(project);
         }
-        if (folder is not null)
+        if (Folder is not null)
         {
-            folders.Add(folder);
+            folders.Add(Folder);
         }
         folders.AddRange(Projects.Select(p => p.Folder).Where(f => !folders.Contains(f)));
         return folders;

@@ -24,9 +24,6 @@ public partial class MainWindow : Window
     /// <summary>Room at the toolbar's left for macOS's window buttons once the toolbar is the title bar.</summary>
     private const double MacWindowButtons = 72;
 
-    /// <summary>How many recently opened files Go to File offers before anything is typed.</summary>
-    private const int RecentLimit = 25;
-
     /// <summary>The window's least width and height (its MinWidth and MinHeight), which a screenshot's <c>--size</c> is
     /// held to: Avalonia would widen a smaller window to them without a word.</summary>
     public const double SmallestWidth = 800;
@@ -34,11 +31,8 @@ public partial class MainWindow : Window
     public const double SmallestHeight = 500;
 
     private readonly KeymapDispatcher keys = new(AppActions.Keymap());
-    private readonly FileIndex index = new();
-    private CSharpService? csharp;
     private readonly CodeAssist assist;
     private readonly UsageHighlighting usages;
-    private readonly Navigation.NavigationHistory history = new();
     private readonly ProcessRunner builder;
     private readonly ProcessRunner runner;
     private readonly DebugController debug;
@@ -54,13 +48,15 @@ public partial class MainWindow : Window
     private readonly Passenger.App.Explorer.ExplorerView Explorer = new();
     private readonly ToolWindows.ToolViews Bottom = new();
     private readonly ToolWindows.StructureView Structure = new();
-    private readonly List<string> recent = [];
-    private string? folder;
+
+    /// <summary>The folder open and what it has and runs, or the window's nothing before one opens.</summary>
+    private ProjectSession session;
 
     public MainWindow()
     {
         UiThread.Own();
         InitializeComponent();
+        session = ProjectSession.None(Setup());
         if (OperatingSystem.IsMacOS())
         {
             // The toolbar is the title bar on macOS, as in Rider. Windows keeps the system's title bar
@@ -100,7 +96,7 @@ public partial class MainWindow : Window
         Explorer.FileOpened += (_, path) => OpenFile(path);
         Editors.ActiveChanged += (_, _) => FollowInExplorer();
         Structure.Follow(() => Editors.Active is { } shown
-            ? (shown.Path, csharp?.For(shown)?.Lsp, Editors.CodeEditor.CaretPosition.Line)
+            ? (shown.Path, session.CSharp?.For(shown)?.Lsp, Editors.CodeEditor.CaretPosition.Line)
             : null);
         Structure.GoToRequested += (_, row) => NavigateTo(row.Path, row.Position);
         Editors.ActiveChanged += (_, _) => Structure.Invalidate();
@@ -112,28 +108,28 @@ public partial class MainWindow : Window
                 Structure.Invalidate();
             }
         };
-        Editors.Opened += (_, document) => document.Text.Changed += (_, change) => history.Follow(document.Path, change);
+        Editors.Opened += (_, document) => document.Text.Changed += (_, change) => session.Navigation.Follow(document.Path, change);
         Editors.ActiveChanged += (_, _) => UpdateStatus();
-        Editors.ActiveChanged += (_, _) => csharp?.FollowIndent(Editors.Active);
+        Editors.ActiveChanged += (_, _) => session.CSharp?.FollowIndent(Editors.Active);
         // The indent widget and the line break follow a file's .editorconfig changed, or its save.
         Editors.Opened += (_, document) => document.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName is nameof(OpenDocument.Indentation) or nameof(OpenDocument.LineEnding) && Editors.Active == document)
             {
                 UpdateStatus();
-                csharp?.FollowIndent(document);
+                session.CSharp?.FollowIndent(document);
             }
         };
         Editors.CaretMoved += (_, _) => UpdateCaret();
         Editors.SaveFailed += (_, problem) => StatusText.Text = problem;
         Editors.Opened += (_, document) =>
         {
-            csharp?.Attach(document);
+            session.CSharp?.Attach(document);
             debug?.Attach(document);
         };
         Editors.Closed += (_, document) =>
         {
-            csharp?.Detach(document);
+            session.CSharp?.Detach(document);
             debug?.Detach(document);
         };
         Editors.ForEachEditor(editor => editor.ProblemsRequested += (_, _) => ShowToolWindow("problems"));
@@ -190,12 +186,11 @@ public partial class MainWindow : Window
                 debug.Breakpoints.Toggle(active.Path, click.Line);
             }
         });
-        Closing += (_, _) => watcher?.Dispose();
-        assist = new CodeAssist(Editors, Editors.AssistLayer, () => csharp);
+        assist = new CodeAssist(Editors, Editors.AssistLayer, () => session.CSharp);
         assist.Navigate += (_, target) => NavigateTo(target.Path, target.Position);
         assist.Message += (_, message) => StatusText.Text = message;
         assist.FilesChanged += (_, _) => FilesChanged();
-        usages = new UsageHighlighting(Editors, () => csharp);
+        usages = new UsageHighlighting(Editors, () => session.CSharp);
         usages.Message += (_, message) => StatusText.Text = message;
         builder = new ProcessRunner(Bottom.Build);
         builder.Line += (_, line) =>
@@ -264,14 +259,14 @@ public partial class MainWindow : Window
     }
 
     /// <summary>The C# service for the open folder, or null when it has no projects.</summary>
-    public CSharpService? CSharpService => csharp;
+    public CSharpService? CSharpService => session.CSharp;
 
     public EditorArea EditorArea => Editors;
 
     public Explorer.ExplorerView ExplorerView => Explorer;
 
     /// <summary>Every file of the open folder, as Go to File searches them.</summary>
-    public FileIndex FileIndex => index;
+    public FileIndex FileIndex => session.Index;
 
     /// <summary>Opens what the command line named: a folder, solution or project, files in it, a caret position. Named
     /// nothing, what the system handed Passenger as it started (a solution double-clicked in the Finder), else the
@@ -309,82 +304,10 @@ public partial class MainWindow : Window
         {
             Editors.CodeEditor.GoTo(caret);
         }
-        if (folder is null && Editors.Documents.Count == 0)
+        if (session.Folder is null && Editors.Documents.Count == 0)
         {
             welcome.FocusSearch();
         }
-    }
-
-    /// <summary>Opens a folder, or a solution (.sln, .slnx) or C# project (.csproj) over its folder, as the workspace; what
-    /// a person chooses goes through <see cref="Open"/>, which refuses anything else. The workspace already open is only
-    /// read again: its language server and open files are kept.</summary>
-    public void OpenFolder(string path)
-    {
-        string named = PathNames.Canonical(path);
-        bool fileNamed = File.Exists(named) && WorkspaceModel.Opens(named);
-        string opening = fileNamed ? Path.GetDirectoryName(named)! : named;
-        WorkspaceModel? withSolution = WorkspaceModel.ReadSolution(opening, fileNamed ? named : opening == folder ? namedSolution : null);
-        if (opening == folder && (withSolution?.OpenedAs ?? opening) == workspace?.OpenedAs)
-        {
-            Read(withSolution);
-            return;
-        }
-        // Another folder's files are its own: this one's are kept with it and close, saved, as Rider's do.
-        if (folder is not null && folder != opening && !LeaveFolder())
-        {
-            return;
-        }
-        Autosave();
-        folder = opening;
-        OpenLocalHistory(opening);
-        // Where the log's timing of the language server's start (MainWindow.Workspace's CSharpService) begins.
-        IdeErrors.Write($"Opened {opening}{(withSolution is { } read && read.OpenedAs != opening ? $" with {Path.GetFileName(read.OpenedAs)}" : string.Empty)}");
-        agentSocket?.Describe(folder);
-        namedSolution = fileNamed ? named : null;
-        // A folder without a solution has no projects until the walk for them lands: none to load, run or build meanwhile.
-        reads++;
-        workspace = withSolution ?? new WorkspaceModel(opening, null, []);
-        Explorer.Load(workspace);
-        _ = vcs.OpenAsync(folder);
-        Explorer.Tree.Unloaded.Clear();
-        LoadConfigurations();
-        index.Build(folder);
-        Watch(folder);
-        StartCSharp();
-        if (withSolution is null)
-        {
-            WalkForProjects();
-        }
-        FindTests();
-        Editors.ShowFolderHint(folder);
-        RestoreWorkspace();
-        ShowWorkspaceName();
-        UpdateStatus();
-        Remember();
-        _ = KeepSnapshotsAsync();
-    }
-
-    /// <summary>What the open folder had goes, kept with it in the store first: its editors close, each saved (false, the
-    /// rest left open, when one cannot be), and its recent files, breakpoints, bookmarks, the places Back goes to and
-    /// Find in Files' scope, which are a folder's own as Rider keeps them with the project.</summary>
-    private bool LeaveFolder()
-    {
-        KeepWorkspace();
-        if (!Editors.CloseAll())
-        {
-            return false;
-        }
-        recent.Clear();
-        folds.Clear();
-        folderState = null;
-        debug.Breakpoints.Clear();
-        bookmarks.Clear();
-        history.Clear();
-        Editors.Commands.Clear();
-        findScope = new FindScopeState();
-        chosenScope = null;
-        LeaveLocalHistory();
-        return true;
     }
 
     private string? followed;
@@ -404,18 +327,13 @@ public partial class MainWindow : Window
     /// <summary>Opens a file in the editor; null once it is open, else why not, which the status bar says too.</summary>
     public string? OpenFile(string path)
     {
-        string full = PathNames.Canonical(Path.IsPathRooted(path) || folder is null ? path : Path.Combine(folder, path));
+        string full = PathNames.Canonical(Path.IsPathRooted(path) || session.Folder is not { } open ? path : Path.Combine(open, path));
         if (Editors.Open(full) is { } problem)
         {
             StatusText.Text = problem;
             return problem;
         }
-        recent.Remove(full);
-        recent.Insert(0, full);
-        if (recent.Count > RecentLimit)
-        {
-            recent.RemoveAt(recent.Count - 1);
-        }
+        session.Opened(full);
         Explorer.Reveal(full);
         return null;
     }
@@ -516,7 +434,7 @@ public partial class MainWindow : Window
     public DebugController Debugger => debug;
 
     /// <summary>The open folder, canonical, or null before one is opened.</summary>
-    public string? Folder => folder;
+    public string? Folder => session.Folder;
 
     /// <summary>The program the Run window shows, while it runs or since it last did.</summary>
     public ProcessRunner Runner => runner;
@@ -562,9 +480,9 @@ public partial class MainWindow : Window
     public void Build(BuildKind kind, IReadOnlyList<string>? projects = null, Action<BuildOutcome>? then = null, string? framework = null,
         BuildCause cause = BuildCause.Explicit)
     {
-        if (folder is null || IsBuilding)
+        if (Folder is null || IsBuilding)
         {
-            BuildOutcome refused = new(BuildStatus.Refused, folder is null ? "Nothing to build: no folder is open" : "Another build is running");
+            BuildOutcome refused = new(BuildStatus.Refused, Folder is null ? "Nothing to build: no folder is open" : "Another build is running");
             StatusText.Text = refused.Message;
             then?.Invoke(refused);
             return;
@@ -572,7 +490,7 @@ public partial class MainWindow : Window
         buildKind = kind;
         lastProjects = projects;
         buildFramework = projects is { Count: > 0 } ? framework : null;
-        IReadOnlyList<string> whole = workspace!.BuildTargets(Projects);
+        IReadOnlyList<string> whole = session.Workspace!.BuildTargets(Projects);
         buildQueue.Clear();
         foreach (string target in projects is { Count: > 0 } ? projects : whole)
         {
@@ -633,7 +551,7 @@ public partial class MainWindow : Window
         string target = buildQueue.Dequeue();
         string verb = buildKind switch { BuildKind.Rebuild => "Rebuilding", BuildKind.Clean => "Cleaning", _ => "Building" };
         StatusText.Text = $"{verb} {Path.GetFileName(target)}…";
-        if (builder.StartDotnet(BuildOutput.Arguments(target, buildKind, buildFramework), folder!) is { } problem)
+        if (builder.StartDotnet(BuildOutput.Arguments(target, buildKind, buildFramework), Folder!) is { } problem)
         {
             FinishBuild(new BuildOutcome(BuildStatus.NotStarted, problem));
         }
@@ -777,9 +695,9 @@ public partial class MainWindow : Window
             Dock.Apply(store.Layout.Value);
         }
         Dock.LayoutChanged += (_, _) => KeepDock();
-        debug.Breakpoints.Changed += (_, _) => folderState?.Breakpoints.Set(debug.Breakpoints.Capture());
-        debug.Breakpoints.ExceptionsChanged += (_, _) => folderState?.Breakpoints.Set(debug.Breakpoints.Capture());
-        bookmarks.Changed += (_, _) => folderState?.Bookmarks.Set(bookmarks.Capture());
+        debug.Breakpoints.Changed += (_, _) => session.State?.Breakpoints.Set(debug.Breakpoints.Capture());
+        debug.Breakpoints.ExceptionsChanged += (_, _) => session.State?.Breakpoints.Set(debug.Breakpoints.Capture());
+        bookmarks.Changed += (_, _) => session.State?.Bookmarks.Set(bookmarks.Capture());
         findSettings = store.Find.Value;
         assist.RenameSettings = store.Refactorings.Value;
         assist.RenameSettingsChanged += (_, _) => state?.Refactorings.Set(assist.RenameSettings);
@@ -800,9 +718,6 @@ public partial class MainWindow : Window
     /// <summary>The store of the window a person uses, the process's for its state folder, taken the first time it keeps
     /// something; null in a headless one.</summary>
     private State.StateStore? state;
-
-    /// <summary>The open folder's documents in the store, while this window keeps them.</summary>
-    private State.ProjectState? folderState;
 
     private bool keepsWorkspace;
 
@@ -838,21 +753,24 @@ public partial class MainWindow : Window
     {
         Docking.DockLayout now = Dock.Capture();
         state!.Layout.Set(now);
-        folderState?.Layout.Set(now);
+        session.State?.Layout.Set(now);
     }
 
-    private void KeepWorkspace() => folderState?.Workspace.Set(new WorkspaceState
+    private void KeepWorkspace() => session.State?.Workspace.Set(new WorkspaceState
     {
         Editors = Editors.Capture(),
         EditorWindows = Editors.CaptureWindows(),
-        RecentFiles = [.. recent],
-        UnloadedProjects = [.. Explorer.Tree.Unloaded],
-        Folds = folds.Capture(Editors.Documents),
+        RecentFiles = [.. session.RecentFiles],
+        UnloadedProjects = [.. session.Unloaded],
+        Folds = session.Folds.Capture(Editors.Documents),
     });
 
+    /// <summary>The open folder's state as the store kept it, once the window keeps state: its layout (else the one
+    /// changed last in any window), breakpoints, bookmarks, the Unit Tests window's view and the log's favourite branches,
+    /// the session's own (<see cref="ProjectSession.Keep"/>), and its editors, the one shown the latest recent file.</summary>
     private void RestoreWorkspace()
     {
-        if (!keepsWorkspace || folder is null)
+        if (!keepsWorkspace || session.Folder is not { } folder)
         {
             return;
         }
@@ -869,31 +787,18 @@ public partial class MainWindow : Window
         // Before the folder's documents are this window's, so what restoring them changes is not written back.
         debug.Breakpoints.Restore(opening.Breakpoints.Value);
         bookmarks.Restore(opening.Bookmarks.Value);
-        findScope = opening.Find.Value;
         RestoreUnitTests(opening.UnitTests.Value);
         GitBranches.Favorites = opening.GitBranches.Value;
-        folderState = opening;
+        session.Keep(opening);
         WorkspaceState kept = opening.Workspace.Value;
         if (kept.UnloadedProjects.Count > 0)
         {
-            foreach (string project in kept.UnloadedProjects)
-            {
-                Explorer.Tree.Unloaded.Add(project);
-            }
             Explorer.Refresh();
         }
-        LoadConfigurations();
-        folds.Restore(kept.Folds);
         Editors.Restore(kept.Editors, kept.EditorWindows);
-        foreach (string file in kept.RecentFiles.Where(File.Exists).Reverse())
-        {
-            recent.Remove(file);
-            recent.Insert(0, file);
-        }
         if (Editors.Active is { } shown)
         {
-            recent.Remove(shown.Path);
-            recent.Insert(0, shown.Path);
+            session.Opened(shown.Path);
         }
     }
 
@@ -924,7 +829,7 @@ public partial class MainWindow : Window
             // Only a move to another line or file is a place to come back to, as in IntelliJ.
             if (from is not null && Here() is { } to && (to.Path != from.Path || to.Line != from.Line))
             {
-                history.Left(from);
+                session.Navigation.Left(from);
             }
         }
     }
@@ -944,7 +849,7 @@ public partial class MainWindow : Window
     private void StepHistory(int step)
     {
         Navigation.HistoryPlace? here = Here();
-        Navigation.HistoryPlace? target = step < 0 ? history.Back(here, Reachable) : history.Forward(here, Reachable);
+        Navigation.HistoryPlace? target = step < 0 ? session.Navigation.Back(here, Reachable) : session.Navigation.Forward(here, Reachable);
         if (target is null)
         {
             return;
@@ -960,11 +865,11 @@ public partial class MainWindow : Window
 
     private void ShowGoToFile()
     {
-        if (folder is null)
+        if (Folder is null)
         {
             return;
         }
-        Navigation.GoToFilePopup popup = new(index, recent.Skip(Editors.Active is null ? 0 : 1).ToList());
+        Navigation.GoToFilePopup popup = new(session.Index, session.RecentFiles.Skip(Editors.Active is null ? 0 : 1).ToList());
         popup.Done += (_, path) =>
         {
             ClosePopup();
@@ -1004,7 +909,7 @@ public partial class MainWindow : Window
 
     private void ShowSymbols(string title, string placeholder, Func<string, CancellationToken, Task<IReadOnlyList<Navigation.SymbolRow>>> search)
     {
-        if (folder is null)
+        if (Folder is null)
         {
             return;
         }
@@ -1038,11 +943,12 @@ public partial class MainWindow : Window
         {
             return [];
         }
-        if (csharp?.Session is not { IsLoaded: true } session)
+        CSharpService? csharp = session.CSharp;
+        if (csharp?.Session is not { IsLoaded: true } server)
         {
             throw new Lsp.LanguageServerFailed(csharp is null ? "no C# language server runs for this folder" : $"the C# language server is not ready: {csharp.State}");
         }
-        IReadOnlyList<Lsp.SymbolInformation> found = await session.SymbolsAsync(query.Trim(), cancel);
+        IReadOnlyList<Lsp.SymbolInformation> found = await server.SymbolsAsync(query.Trim(), cancel);
         return [.. found.Take(200).Select(SymbolRowOf)];
     }
 
@@ -1050,21 +956,21 @@ public partial class MainWindow : Window
     /// before anything is typed.</summary>
     private async Task<IReadOnlyList<Navigation.SymbolRow>> SearchEverything(string query, CancellationToken cancel)
     {
-        string root = index.Root ?? folder ?? string.Empty;
+        string root = session.Index.Root ?? Folder ?? string.Empty;
         if (query.Trim().Length == 0)
         {
-            return [.. recent.Skip(Editors.Active is null ? 0 : 1).Select(path => FileRow(Path.GetRelativePath(root, path)))];
+            return [.. session.RecentFiles.Skip(Editors.Active is null ? 0 : 1).Select(path => FileRow(Path.GetRelativePath(root, path)))];
         }
         IReadOnlyList<Navigation.SymbolRow> symbols = [];
         try
         {
-            symbols = csharp?.Session is { IsLoaded: true } ? await SearchSymbols(query, cancel) : [];
+            symbols = session.CSharp?.Session is { IsLoaded: true } ? await SearchSymbols(query, cancel) : [];
         }
         catch (Lsp.LanguageServerFailed)
         {
             // The files still match without the server.
         }
-        IEnumerable<Navigation.SymbolRow> files = index.Search(query).Take(20).Select(FileRow);
+        IEnumerable<Navigation.SymbolRow> files = session.Index.Search(query).Take(20).Select(FileRow);
         static bool IsType(int kind) => kind is 5 or 10 or 11 or 23;
         return [.. symbols.Where(r => IsType(r.Kind)), .. files, .. symbols.Where(r => !IsType(r.Kind))];
 
@@ -1075,7 +981,7 @@ public partial class MainWindow : Window
     private Navigation.SymbolRow SymbolRowOf(Lsp.SymbolInformation symbol)
     {
         string path = Lsp.DocumentUris.ToPath(symbol.Location.Uri);
-        string where = folder is { } root && PathNames.IsUnder(path, root) ? Path.GetRelativePath(root, path) : Path.GetFileName(path);
+        string where = Folder is { } root && PathNames.IsUnder(path, root) ? Path.GetRelativePath(root, path) : Path.GetFileName(path);
         Lsp.LspPosition start = symbol.Location.Range.Start;
         return new Navigation.SymbolRow(symbol.Name, Container(symbol.ContainerName), $"{where}:{start.Line + 1}", symbol.Kind, path, new TextPosition(start.Line, start.Character));
     }
@@ -1101,7 +1007,7 @@ public partial class MainWindow : Window
     /// containers of what matches kept.</summary>
     private void ShowFileStructure()
     {
-        if (Editors.Active is not { } active || csharp?.For(active)?.Lsp is null)
+        if (Editors.Active is not { } active || session.CSharp?.For(active)?.Lsp is null)
         {
             StatusText.Text = "File Structure needs a C# file the language server has open";
             return;
@@ -1111,7 +1017,7 @@ public partial class MainWindow : Window
         Navigation.SymbolPopup popup = new($"File Structure: {active.Name}", "Filter by name, CamelHumps too", async (query, cancel) =>
         {
             // The server's document now: one started again while the popup is open has a new one.
-            Lsp.LspDocument lsp = csharp?.For(active)?.Lsp ?? throw new Lsp.LanguageServerFailed("the C# language server is not running");
+            Lsp.LspDocument lsp = session.CSharp?.For(active)?.Lsp ?? throw new Lsp.LanguageServerFailed("the C# language server is not running");
             outline ??= ToolWindows.StructureView.Flatten(await lsp.OutlineAsync(cancel), 0, active.Path, Lsp.ServerLines.Of(lsp.Text.Snapshot));
             return FilterOutline(outline, query.Trim());
         })
@@ -1247,12 +1153,12 @@ public partial class MainWindow : Window
     /// the solution's builds and the test runner until it is reloaded; the folder keeps the choice.</summary>
     public void SetUnloaded(string project, bool unloaded)
     {
-        if (unloaded ? !Explorer.Tree.Unloaded.Add(project) : !Explorer.Tree.Unloaded.Remove(project))
+        if (unloaded ? !session.Unloaded.Add(project) : !session.Unloaded.Remove(project))
         {
             return;
         }
         Explorer.Refresh();
-        Configure();
+        session.Configurations.Configure(Projects);
         StatusText.Text = $"{Path.GetFileNameWithoutExtension(project)} {(unloaded ? "unloaded" : "reloaded")}";
         FindTests();
         KeepWorkspace();
@@ -1297,11 +1203,11 @@ public partial class MainWindow : Window
     {
         IReadOnlyList<string> runtime = await BackgroundWork.Run(Debugging.ExceptionTypes.Runtime);
         IReadOnlyList<string> solution = [];
-        if (csharp?.Session is { IsLoaded: true } session)
+        if (session.CSharp?.Session is { IsLoaded: true } server)
         {
             try
             {
-                solution = Debugging.ExceptionTypes.FromSymbols(await session.SymbolsAsync("Exception"));
+                solution = Debugging.ExceptionTypes.FromSymbols(await server.SymbolsAsync("Exception"));
             }
             catch (Lsp.LanguageServerFailed)
             {
@@ -1314,6 +1220,7 @@ public partial class MainWindow : Window
     private void UpdateStatus()
     {
         OpenDocument? active = Editors.Active;
+        string? folder = Folder;
         string where = folder is null ? "No solution" : Path.GetFileName(folder);
         if (active is not null)
         {
@@ -1335,7 +1242,7 @@ public partial class MainWindow : Window
     /// own editors show, an editor window in front or not; with nothing open, the Welcome window's.</summary>
     private void ShowTitle()
     {
-        string? named = folder is null ? null : workspace?.Name ?? Path.GetFileName(folder);
+        string? named = Folder is not { } folder ? null : session.Workspace?.Name ?? Path.GetFileName(folder);
         OpenDocument? shown = Editors.ShownInMain;
         Title = shown is null ? named ?? "Welcome to Passenger" : $"{(named is null ? "" : named + " – ")}{shown.Name}";
         FollowInDiscord();
@@ -1346,6 +1253,7 @@ public partial class MainWindow : Window
     private string LanguageLabel()
     {
         string language = Editors.Active?.Language.Name ?? string.Empty;
+        CSharpService? csharp = session.CSharp;
         string? shown = csharp?.Progress ?? (csharp is { IsReady: false, State: { Length: > 0 } state } ? state : null);
         if (shown is not null)
         {

@@ -56,7 +56,7 @@ public partial class MainWindow
     private async Task OutlineAsync()
     {
         int asked = ++outlining;
-        if (Editors.Active is not { } document || csharp?.For(document)?.Lsp is not { } lsp)
+        if (Editors.Active is not { } document || session.CSharp?.For(document)?.Lsp is not { } lsp)
         {
             return;
         }
@@ -81,14 +81,14 @@ public partial class MainWindow
         List<Crumb> wanted = [];
         if (Editors.Active is { } document)
         {
-            string relative = folder is { } root && PathNames.IsUnder(document.Path, root)
+            string relative = Folder is { } root && PathNames.IsUnder(document.Path, root)
                 ? Path.GetRelativePath(root, document.Path)
                 : Path.GetFileName(document.Path);
             string[] parts = relative.Split(Path.DirectorySeparatorChar);
             // The last two folders: a deep path would push the rest of the status bar off.
             for (int i = Math.Max(0, parts.Length - 3); i < parts.Length - 1; i++)
             {
-                wanted.Add(new Crumb(parts[i], Path.Combine([folder ?? string.Empty, .. parts[..(i + 1)]]), null, Muted: true));
+                wanted.Add(new Crumb(parts[i], Path.Combine([Folder ?? string.Empty, .. parts[..(i + 1)]]), null, Muted: true));
             }
             wanted.Add(new Crumb(parts[^1], document.Path, null, Muted: false));
             if (outlined == document.Path)

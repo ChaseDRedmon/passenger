@@ -11,15 +11,6 @@ namespace Passenger.App;
 /// the chosen one into a <see cref="LaunchPlan"/>, build as it says and start that plan, as Profile does in its partial.</summary>
 public partial class MainWindow
 {
-    /// <summary>The person's own configurations for the open folder, in their order.</summary>
-    private List<RunConfiguration> own = [];
-
-    /// <summary>The folder <see cref="own"/> belongs to, so another folder's are never shown with this one.</summary>
-    private string? ownFolder;
-
-    private IReadOnlyList<RunConfiguration> configurations = [];
-    private RunConfiguration? configuration;
-
     /// <summary>A Run between its press and its program's start (the plan resolved, the project built), which a second
     /// press may not start again.</summary>
     private bool launching;
@@ -40,10 +31,10 @@ public partial class MainWindow
     public Task<int> RunEnd => terminalRun?.Ended ?? runner.Ended;
 
     /// <summary>Every configuration: the generated ones, then the folder's own.</summary>
-    public IReadOnlyList<RunConfiguration> Configurations => configurations;
+    public IReadOnlyList<RunConfiguration> Configurations => session.Configurations.All;
 
     /// <summary>The configuration chosen in the toolbar, which Run, Debug and Profile launch.</summary>
-    public RunConfiguration? Configuration => configuration;
+    public RunConfiguration? Configuration => session.Configurations.Chosen;
 
     /// <summary>The run configurations dialog open over the window, or null.</summary>
     public RunConfigurationsDialog? RunConfigurationsDialog { get; private set; }
@@ -51,75 +42,19 @@ public partial class MainWindow
     /// <summary>How a run that ended is named, in the status bar and to an agent.</summary>
     public static string RunEnded(string name, int code) => $"{name} exited with code {code}";
 
-    /// <summary>Reads the open folder's configurations: its own from the store when the window keeps state (else those made
-    /// since it opened), and those its projects generate; the one chosen is the one kept, else the first.</summary>
-    private void LoadConfigurations()
-    {
-        string? keep = configuration?.Name;
-        if (folderState is { } kept)
-        {
-            RunConfigurationsState read = kept.RunConfigurations.Value;
-            own = [.. read.Configurations.Select(FromStore)];
-            keep = read.Selected ?? (ownFolder == folder ? keep : null);
-        }
-        else if (ownFolder != folder)
-        {
-            own = [];
-            keep = null;
-        }
-        ownFolder = folder;
-        Configure(keep);
-    }
-
-    /// <summary>Makes the list again from the projects loaded now and the folder's own, the chosen one kept while it is there.</summary>
-    private void Configure() => Configure(configuration?.Name);
-
-    private void Configure(string? keep)
-    {
-        configurations = [.. RunConfiguration.Generate(Projects), .. own];
-        configuration = configurations.FirstOrDefault(c => string.Equals(c.Name, keep, StringComparison.OrdinalIgnoreCase)) ?? configurations.FirstOrDefault();
-        RunConfigName.Text = configuration?.Name ?? "No configurations";
-    }
-
     /// <summary>Chooses the run configuration by name, as the toolbar's menu does; false when there is none.</summary>
-    public bool SelectConfiguration(string name)
-    {
-        if (configurations.FirstOrDefault(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase)) is not { } chosen)
-        {
-            return false;
-        }
-        configuration = chosen;
-        RunConfigName.Text = chosen.Name;
-        KeepConfigurations();
-        return true;
-    }
+    public bool SelectConfiguration(string name) => session.Configurations.Select(name);
 
     /// <summary>Takes the folder's own configurations as Edit Configurations leaves them, and the one chosen there; kept
     /// with the folder when the window keeps state.</summary>
-    public void SetConfigurations(IReadOnlyList<RunConfiguration> mine, string? chosen)
-    {
-        UiThread.Check();
-        own = [.. mine.Select(c => c with { Generated = false, Unsupported = null })];
-        ownFolder = folder;
-        Configure(chosen ?? configuration?.Name);
-        KeepConfigurations();
-    }
-
-    private void KeepConfigurations() =>
-        folderState?.RunConfigurations.Set(new RunConfigurationsState { Configurations = [.. own.Select(ForStore)], Selected = configuration?.Name });
-
-    /// <summary>A configuration as the store keeps it: its project relative to the folder, so a hand edit reads plainly.</summary>
-    private RunConfiguration ForStore(RunConfiguration kept) => folder is not null && PathNames.IsUnder(kept.Project, folder)
-        ? kept with { Project = Path.GetRelativePath(folder, kept.Project).Replace('\\', '/') }
-        : kept;
-
-    private RunConfiguration FromStore(RunConfiguration kept) => folder is null ? kept : kept with { Project = PathNames.Canonical(Path.Combine(folder, kept.Project)) };
+    public void SetConfigurations(IReadOnlyList<RunConfiguration> mine, string? chosen) => session.Configurations.Set(mine, chosen, Projects);
 
     /// <summary>Run's Edit Configurations: the dialog over the window, its changes the folder's once applied.</summary>
     public RunConfigurationsDialog ShowRunConfigurations()
     {
-        RunConfigurationsDialog dialog = new([.. configurations.Where(c => c.Generated)], own, [.. Projects.Where(p => p.Exists && p.IsRunnable)],
-            configuration?.Name, SetConfigurations);
+        RunConfigurations configurations = session.Configurations;
+        RunConfigurationsDialog dialog = new([.. configurations.All.Where(c => c.Generated)], configurations.Own, [.. Projects.Where(p => p.Exists && p.IsRunnable)],
+            configurations.Chosen?.Name, (mine, chosen) => configurations.Set(mine, chosen, Projects));
         RunConfigurationsDialog = dialog;
         dialog.Closed += (_, _) =>
         {
@@ -171,7 +106,7 @@ public partial class MainWindow
     /// says too.</summary>
     public async Task<string?> RunAsync(string? arguments = null)
     {
-        if (configuration is not { } chosen)
+        if (Configuration is not { } chosen)
         {
             return Said("Nothing to run: no executable project");
         }
@@ -294,7 +229,7 @@ public partial class MainWindow
         }
         IEnumerable<string> rest = arguments.Args.Skip(1);
         // A program named without a folder (a .dll's "dotnet") is the one the IDE builds with, or one on the PATH.
-        System.Diagnostics.ProcessStartInfo start = ChildProcesses.Command(program is "dotnet" ? Core.Dotnet.Host() : program, rest, arguments.Cwd ?? folder);
+        System.Diagnostics.ProcessStartInfo start = ChildProcesses.Command(program is "dotnet" ? Core.Dotnet.Host() : program, rest, arguments.Cwd ?? Folder);
         foreach ((string variable, string value) in arguments.Env ?? new Dictionary<string, string>())
         {
             start.Environment[variable] = value;
@@ -347,7 +282,7 @@ public partial class MainWindow
     /// refusal).</summary>
     public async Task<string?> DebugAsync(string? arguments = null)
     {
-        if (configuration is not { } chosen)
+        if (Configuration is not { } chosen)
         {
             return "Nothing to debug: no executable project";
         }
@@ -410,7 +345,7 @@ public partial class MainWindow
     private void OnRunConfigClicked(object? sender, RoutedEventArgs e)
     {
         ContextMenu menu = new();
-        foreach (RunConfiguration each in configurations)
+        foreach (RunConfiguration each in Configurations)
         {
             MenuItem item = new() { Header = each.Name };
             string name = each.Name;

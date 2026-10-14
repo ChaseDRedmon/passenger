@@ -18,7 +18,9 @@ namespace Passenger.Tests;
 /// Explorer, language server, builds and runs and layout; Open asks This Window or New Window (or follows Settings' Open
 /// project in); the Window menu lists the windows and Next and Previous Solution Window step between them; quitting closes
 /// them all and a start reopens each, while one closed alone stays closed; and the settings are the process's, a change in
-/// one window followed by every other and kept whole in settings.json, another Passenger's too.</summary>
+/// one window followed by every other and kept whole in settings.json, another Passenger's too. One debugs through the
+/// window, so the class runs alone.</summary>
+[Collection(Alone.Name)]
 public sealed class ProjectWindowsTests : IDisposable
 {
     private readonly string settings = TestFolders.Create("windows-state-");
@@ -78,6 +80,64 @@ public sealed class ProjectWindowsTests : IDisposable
             $"The second window's Run window shows:\n{Output(second)}");
         second.Close();
         first.Close();
+    }
+
+    /// <summary>A folder's program running, another of its programs paused at a breakpoint, its build's warning in
+    /// Problems; another folder opened in the same window: both programs are gone, the Run, Debug and Problems windows show
+    /// nothing of the first folder, and Run runs the second folder's own configuration rather than saying one runs.</summary>
+    [AvaloniaFact]
+    public void Opening_another_folder_in_this_window_ends_what_the_first_ran_and_Run_runs_the_seconds_own()
+    {
+        File.WriteAllText(Path.Combine(alpha, "Alpha.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n"
+            + "  <Target Name=\"Warn\" BeforeTargets=\"Build\">\n    <Warning Code=\"ALPHA1\" Text=\"alpha warns at every build\" />\n  </Target>\n</Project>\n");
+        string program = Path.Combine(alpha, "Program.cs");
+        File.WriteAllText(program, "string name = System.Diagnostics.Debugger.IsAttached ? \"debugged.pid\" : \"run.pid\";\n"
+            + $"File.WriteAllText(Path.Combine(@\"{alpha}\", name), Environment.ProcessId.ToString());\n"
+            + "Console.WriteLine(\"alpha runs\");\n"
+            + "Thread.Sleep(Timeout.Infinite);\n");
+        Project(beta, "Beta");
+        Restore.Run(alpha);
+        Restore.Run(beta);
+        MainWindow window = Started(LaunchOptions.Empty with { Folder = alpha });
+        int running = 0;
+        int debugged = 0;
+        try
+        {
+            Assert.True(window.Perform(AppActions.RunProgram), "Run could not run in the first folder");
+            running = Processes.WrittenId(Path.Combine(alpha, "run.pid"), "the first folder's program to run");
+            Ui.WaitFor(() => window.BottomPanel.Problems.Problems.Any(p => p.Message.Contains("alpha warns", StringComparison.Ordinal)), "the first folder's build warning in Problems");
+            Ui.WaitFor(() => Output(window).Contains("alpha runs", StringComparison.Ordinal), "the first folder's program's output in the Run window");
+            window.Debugger.Breakpoints.Toggle(PathNames.Canonical(program), 3);
+            Assert.True(window.Perform(AppActions.Debug), "Debug could not run in the first folder");
+            debugged = Processes.WrittenId(Path.Combine(alpha, "debugged.pid"), "the first folder's program to start under the debugger");
+            Ui.WaitFor(() => window.Debugger.Session is { State: Passenger.App.Debugging.DebugState.Paused } && window.BottomPanel.Debug.Frames.Count > 0,
+                "the debugged program to stop at its breakpoint", TimeSpan.FromMinutes(2));
+
+            // This Window: the first folder's session ends before the second's begins.
+            Assert.Null(window.Open(beta));
+            Press(Asked(window), OpenProjectDialog.ThisWindow);
+            Ui.WaitFor(() => window.Folder == PathNames.Canonical(beta), "the second folder to open in the window");
+            Assert.True(Processes.Gone(running), "The first folder's program still runs after the second folder opened in its window");
+            Assert.True(Processes.Gone(debugged), "The first folder's debugged program still runs after the second folder opened in its window");
+            Assert.False(window.Runner.IsRunning || window.Debugger.IsDebugging, "The window still runs or debugs the first folder's program");
+            Assert.Equal(string.Empty, Output(window));
+            Assert.Equal(string.Empty, window.BottomPanel.Debug.Console.Document.Snapshot.ToString());
+            Assert.Empty(window.BottomPanel.Debug.Frames);
+            Assert.Empty(window.BottomPanel.Problems.Problems);
+
+            // Run is the second folder's, which runs at once rather than saying the first's still does.
+            Assert.Equal("Beta", window.Configuration?.Name);
+            Assert.True(window.Perform(AppActions.RunProgram), "Run could not run in the second folder");
+            Ui.WaitFor(() => Output(window).Contains("Process finished", StringComparison.Ordinal), "the second folder's program to run", TimeSpan.FromMinutes(3));
+            Assert.True(Output(window).Contains("beta runs 6", StringComparison.Ordinal), $"Run ran something other than the second folder's program:\n{Output(window)}");
+        }
+        finally
+        {
+            Processes.Kill(running);
+            Processes.Kill(debugged);
+            window.Close();
+        }
     }
 
     [AvaloniaFact]

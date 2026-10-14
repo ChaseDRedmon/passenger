@@ -246,11 +246,11 @@ public sealed class ExplorerTree
         Root = null;
         solution = null;
         IsSolutionView = false;
-        Unloaded.Clear();
     }
 
-    /// <summary>The projects unloaded, by path: shown dimmed, with nothing under them.</summary>
-    public ISet<string> Unloaded { get; } = new HashSet<string>(StringComparer.Ordinal);
+    /// <summary>The projects unloaded, by path: shown dimmed, with nothing under them. The open folder's own set, which
+    /// its session keeps.</summary>
+    public ISet<string> Unloaded { get; set; } = new HashSet<string>(StringComparer.Ordinal);
 
     /// <summary>A level of the solution as Rider's Solution view sorts it, whatever order the file declares: its folders,
     /// then its projects, then the files a folder holds, each by name.</summary>

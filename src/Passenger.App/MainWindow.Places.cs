@@ -34,13 +34,13 @@ public partial class MainWindow
             {
                 TextSnapshot text = left.Text.Snapshot;
                 int caret = Math.Min(left.Selections.Primary.Caret, text.Length);
-                history.Visited(new HistoryPlace(left.Path, caret, text.GetLineFromOffset(caret)));
+                session.Navigation.Visited(new HistoryPlace(left.Path, caret, text.GetLineFromOffset(caret)));
             }
             shownLast = Editors.Active;
         };
         Editors.Opened += (_, document) => document.Text.Changed += (_, _) => NoteEdit(document);
-        Add(A.LastEditLocation, "Last Edit Location", "Navigate", _ => StepEdits(-1), _ => history.CanStepEdits(-1) ? null : NoEditBefore, ("Navigate", 3, 4));
-        Add(A.NextEditLocation, "Next Edit Location", "Navigate", _ => StepEdits(1), _ => history.CanStepEdits(1) ? null : NoEditAfter, ("Navigate", 3, 5));
+        Add(A.LastEditLocation, "Last Edit Location", "Navigate", _ => StepEdits(-1), _ => session.Navigation.CanStepEdits(-1) ? null : NoEditBefore, ("Navigate", 3, 4));
+        Add(A.NextEditLocation, "Next Edit Location", "Navigate", _ => StepEdits(1), _ => session.Navigation.CanStepEdits(1) ? null : NoEditAfter, ("Navigate", 3, 5));
         Add(A.RecentChangedFiles, "Recently Changed Files", "IDE", _ => ShowRecentFiles(editedOnly: true), menu: ("View", 2, 1));
         Add(A.RecentLocations, "Recent Locations", "IDE", _ => ShowRecentLocations(), menu: ("View", 2, 2));
     }
@@ -62,7 +62,7 @@ public partial class MainWindow
             editNoted = false;
             if (Editors.Active == document && document.IsModified && Here() is { } here)
             {
-                history.Edited(here);
+                session.Navigation.Edited(here);
             }
         });
     }
@@ -71,7 +71,7 @@ public partial class MainWindow
     /// after the one it went to last, Back coming back from there.</summary>
     private void StepEdits(int step)
     {
-        if (history.StepEdits(step, Here(), path => Editors.Documents.Any(d => d.Path == path) || File.Exists(path)) is not { } place)
+        if (session.Navigation.StepEdits(step, Here(), path => Editors.Documents.Any(d => d.Path == path) || File.Exists(path)) is not { } place)
         {
             StatusText.Text = step < 0 ? NoEditBefore : NoEditAfter;
             return;
@@ -100,7 +100,7 @@ public partial class MainWindow
         Dictionary<string, (TextSnapshot Text, IHighlighter? Colours)> files = [];
         List<IDisposable> made = [];
         HistoryPlace? here = Here();
-        RecentLocationsPopup popup = new(editedOnly => [.. history.Recent(editedOnly, here).Select(place => Location(place, files, made)).OfType<RecentLocation>().Take(RecentLocationsShown)],
+        RecentLocationsPopup popup = new(editedOnly => [.. session.Navigation.Recent(editedOnly, here).Select(place => Location(place, files, made)).OfType<RecentLocation>().Take(RecentLocationsShown)],
             recentEditedOnly);
         popup.Done += (_, place) =>
         {
@@ -110,7 +110,7 @@ public partial class MainWindow
                 GoToPlace(place);
             }
         };
-        popup.Forgot += (_, place) => history.Forget(place);
+        popup.Forgot += (_, place) => session.Navigation.Forget(place);
         // The colours made for closed files go with the popup.
         popup.DetachedFromVisualTree += (_, _) =>
         {

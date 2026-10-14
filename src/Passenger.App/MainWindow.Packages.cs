@@ -14,7 +14,7 @@ public partial class MainWindow
 
     private void AddPackages()
     {
-        nuget = new ToolWindows.NuGetView(() => Projects, () => Solution?.Path is { } solution ? Path.GetDirectoryName(solution) : folder);
+        nuget = new ToolWindows.NuGetView(() => Projects, () => Solution?.Path is { } solution ? Path.GetDirectoryName(solution) : Folder);
         Dock.Add(new Docking.ToolWindow("nuget", "NuGet", "Icon.Package", nuget, Docking.ToolAnchor.BottomLeft)
         {
             Action = AppActions.ShowNuGet,

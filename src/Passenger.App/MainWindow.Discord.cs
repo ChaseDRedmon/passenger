@@ -56,7 +56,7 @@ public partial class MainWindow
     /// gives it its own.</summary>
     internal void FollowInDiscord()
     {
-        string? solution = folder is null ? null : workspace?.OpenedAs ?? folder;
+        string? solution = Folder is null ? null : session.Workspace?.OpenedAs ?? Folder;
         if (solution != timedSolution)
         {
             timedSolution = solution;
@@ -86,7 +86,7 @@ public partial class MainWindow
     /// chose.</summary>
     private DiscordActivity? ActivityNow()
     {
-        if (folder is null)
+        if (Folder is null)
         {
             return null;
         }
@@ -94,7 +94,7 @@ public partial class MainWindow
         {
             return new DiscordActivity(null, null, null);
         }
-        string named = workspace?.Name ?? Path.GetFileName(folder);
+        string named = session.Workspace?.Name ?? Path.GetFileName(Folder);
         return settings.DiscordShows switch
         {
             DiscordShown.PassengerOnly => new DiscordActivity(null, null, solutionOpened),

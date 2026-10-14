@@ -32,15 +32,16 @@ public sealed partial class PassengerTools(MainWindow window)
     public Task<Workspace> Open([Description("Absolute path, or relative to the open folder")] string path, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         string full = Resolve(path);
+        // Opened once what another folder ran has ended.
         if (Directory.Exists(full) || (File.Exists(full) && WorkspaceModel.Opens(full)))
         {
-            window.OpenFolder(full);
+            await window.OpenFolder(full).WaitAsync(cancel);
         }
         else if (File.Exists(full))
         {
             if (window.Folder is null)
             {
-                window.OpenFolder(Path.GetDirectoryName(full)!);
+                await window.OpenFolder(Path.GetDirectoryName(full)!).WaitAsync(cancel);
             }
             if (window.OpenFile(full) is { } problem)
             {

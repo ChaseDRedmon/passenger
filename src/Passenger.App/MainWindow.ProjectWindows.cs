@@ -22,7 +22,7 @@ public partial class MainWindow
 
     /// <summary>Whether the window has started (taken its command line) or opened a folder, so a solution the system hands
     /// Passenger goes to it rather than waiting for the first window's start.</summary>
-    public bool IsStarted => started || folder is not null;
+    public bool IsStarted => started || Folder is not null;
 
     private void AddProjectWindows()
     {
@@ -54,7 +54,7 @@ public partial class MainWindow
     private void OpenChosen(string full)
     {
         string opening = File.Exists(full) ? Path.GetDirectoryName(full)! : full;
-        if (folder is null || PathNames.Same(folder, opening)
+        if (Folder is null || PathNames.Same(Folder, opening)
             || PassengerApp.Windows.Any(w => w.Folder is { } other && PathNames.Same(other, opening)))
         {
             PassengerApp.OpenProject(full, OpenTarget.ThisWindow, this);
@@ -108,7 +108,7 @@ public partial class MainWindow
         }, w == this))];
 
     /// <summary>The window as a list of windows names it: its solution (or project, or folder), else the Welcome window's.</summary>
-    public string SolutionTitle => folder is null ? "Welcome to Passenger" : workspace?.Name ?? Path.GetFileName(folder);
+    public string SolutionTitle => Folder is null ? "Welcome to Passenger" : session.Workspace?.Name ?? Path.GetFileName(Folder);
 
     /// <summary>The workspace just opened is marked open among the recent ones, and the one it replaced in this window no
     /// longer is.</summary>

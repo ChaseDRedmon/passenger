@@ -44,7 +44,7 @@ public partial class MainWindow
             try
             {
                 agentSocket = Mcp.AgentSocket.Open(this);
-                agentSocket.Describe(folder);
+                agentSocket.Describe(Folder);
             }
             catch (Exception error) when (error is IOException or SocketException or ArgumentException or UnauthorizedAccessException)
             {

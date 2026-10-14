@@ -67,13 +67,13 @@ public partial class MainWindow
     /// there, the server not ready, or its failure.</summary>
     private async Task<(HierarchyItem? Item, string? Why)> Prepare(string what, string none, Func<LspDocument, int, Task<HierarchyItem?>> prepare)
     {
-        if (Editors.Active is not { } active || csharp?.For(active) is not { } features)
+        if (Editors.Active is not { } active || session.CSharp?.For(active) is not { } features)
         {
             return (null, Said(none));
         }
-        if (features.Lsp is not { } lsp || !csharp.IsReady)
+        if (features.Lsp is not { } lsp || !session.CSharp.IsReady)
         {
-            return (null, Said(csharp.Unready(what)));
+            return (null, Said(session.CSharp.Unready(what)));
         }
         try
         {
@@ -88,7 +88,7 @@ public partial class MainWindow
     /// <summary>The server running now, asked for as each level of a hierarchy opens: the window may have been shown by
     /// one since started again.</summary>
     private LanguageServer RunningServer() =>
-        csharp?.Session?.Server ?? throw new LanguageServerFailed("the C# language server is not running");
+        session.CSharp?.Session?.Server ?? throw new LanguageServerFailed("the C# language server is not running");
 
     private string Said(string why)
     {

@@ -27,7 +27,7 @@ public partial class MainWindow
     /// <summary>Where the open folder's snapshots are kept, a .nettrace file a run (which PerfView and speedscope read
     /// too): beside its state, as Rider keeps a solution's, the newest <see cref="Snapshots.Kept"/>. With no folder open,
     /// the store's own.</summary>
-    public string SnapshotFolder => Path.Combine(folder is null ? StateFolder : State.ProjectState.FolderOf(StateFolder, folder), "snapshots");
+    public string SnapshotFolder => Path.Combine(Folder is not { } folder ? StateFolder : State.ProjectState.FolderOf(StateFolder, folder), "snapshots");
 
     private void AddProfiler()
     {
@@ -39,7 +39,7 @@ public partial class MainWindow
         });
         actions!.Add(new IdeAction(AppActions.Profile, "Profile", "Run", context => _ = ProfileReportingAsync())
         {
-            WhyNot = _ => profiling is not null ? "A run is already being profiled" : configuration is null ? "Nothing to profile: no executable project" : null,
+            WhyNot = _ => profiling is not null ? "A run is already being profiled" : Configuration is null ? "Nothing to profile: no executable project" : null,
             Menus = [new MenuPlace("Run", 0, 2)],
         });
         profilerView.StopRequested += (_, _) => _ = SnapshotAsync();
@@ -83,7 +83,7 @@ public partial class MainWindow
         {
             return "A run is already being profiled";
         }
-        if (configuration is not { } chosen)
+        if (Configuration is not { } chosen)
         {
             return "Nothing to profile: no executable project";
         }
@@ -254,7 +254,7 @@ public partial class MainWindow
     {
         string bare = method.Split('(')[0];
         int dot = bare.LastIndexOf('.');
-        if (dot <= 0 || csharp?.Session is not { IsLoaded: true } session)
+        if (dot <= 0 || session.CSharp?.Session is not { IsLoaded: true } server)
         {
             StatusText.Text = $"{method} is not in the open code";
             return;
@@ -267,7 +267,7 @@ public partial class MainWindow
         IReadOnlyList<Lsp.SymbolInformation> found;
         try
         {
-            found = await session.SymbolsAsync(query, CancellationToken.None);
+            found = await server.SymbolsAsync(query, CancellationToken.None);
         }
         catch (Lsp.LanguageServerFailed failed)
         {

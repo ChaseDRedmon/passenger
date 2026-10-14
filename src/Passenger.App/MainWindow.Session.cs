@@ -1,0 +1,256 @@
+using Passenger.App.CSharp;
+using Passenger.App.Workspace;
+using Passenger.Core;
+using Passenger.Editor;
+
+namespace Passenger.App;
+
+/// <summary>The window's session (<see cref="ProjectSession"/>): a folder opened makes one and the window's views are
+/// bound to it; another folder opened here first leaves this one (its editors kept with it and closed, what it runs ended
+/// and waited for, within <see cref="EndLimit"/>), and Close Solution leaves it for the Welcome screen.</summary>
+public partial class MainWindow
+{
+    /// <summary>The end of the session left last, which the next one waits for before it opens.</summary>
+    private Task ending = Task.CompletedTask;
+
+    /// <summary>Bumped by each folder opened, so an open still waiting for the last session's end gives way to a later one.</summary>
+    private int opens;
+
+    /// <summary>The folder open in the window and what it has and runs; one with no folder before any opens.</summary>
+    public ProjectSession Session => session;
+
+    /// <summary>The open folder's solution and projects; null with no folder open.</summary>
+    public WorkspaceModel? WorkspaceModel => session.Workspace;
+
+    /// <summary>The open folder's solution, read from its files, or null for a folder without one.</summary>
+    public SolutionModel? Solution => session.Solution;
+
+    /// <summary>The workspace's projects, but those unloaded in the Solution view.</summary>
+    public IReadOnlyList<ProjectModel> Projects => session.Projects;
+
+    /// <summary>The loaded project a file or folder (a canonical path) belongs to; null outside them all.</summary>
+    public ProjectModel? ProjectOf(string path) => session.ProjectOf(path);
+
+    private string ProjectNameOf(string path) => session.ProjectNameOf(path);
+
+    /// <summary>The read of the open folder under way, done once it has landed.</summary>
+    public Task WorkspaceRead => session.WorkspaceRead;
+
+    /// <summary>What a session of this window is made with: its editors, where it keeps state, how it watches folders.</summary>
+    private SessionSetup Setup() => new(Editors, StateFolder, HistoryKeeping, Watching, () => settings.SolutionWideAnalysis, WarmServer);
+
+    /// <summary>Opens a folder, or a solution (.sln, .slnx) or C# project (.csproj) over its folder, as the workspace; what
+    /// a person chooses goes through <see cref="Open"/>, which refuses anything else. The workspace already open is only
+    /// read again: its language server and open files are kept. Another folder's session is left first, and the new one
+    /// made once what it ran has ended: the task is done once the folder is open (at once when nothing had to end), or
+    /// once a later open has taken its place.</summary>
+    public Task OpenFolder(string path)
+    {
+        UiThread.Check();
+        string named = PathNames.Canonical(path);
+        bool fileNamed = File.Exists(named) && WorkspaceModel.Opens(named);
+        string opening = fileNamed ? Path.GetDirectoryName(named)! : named;
+        if (opening == session.Folder)
+        {
+            ReadAgain(opening, fileNamed ? named : null);
+            return Task.CompletedTask;
+        }
+        // Another folder's files are its own: this one's are kept with it and close, saved, as Rider's do.
+        if (session.Folder is not null)
+        {
+            if (!LeaveFolder())
+            {
+                return Task.CompletedTask;
+            }
+            EndSession();
+        }
+        Autosave();
+        int open = ++opens;
+        if (ending.IsCompleted)
+        {
+            Begin(opening, fileNamed ? named : null);
+            return Task.CompletedTask;
+        }
+        return BeginOnceEndedAsync(open, opening, fileNamed ? named : null);
+    }
+
+    /// <summary>The folder open now, opened again: with the solution it has, read again; with another (a solution or project
+    /// named), read with that one, its files and what it runs kept.</summary>
+    private void ReadAgain(string folder, string? named)
+    {
+        WorkspaceModel? withSolution = WorkspaceModel.ReadSolution(folder, named ?? session.NamedSolution);
+        if ((withSolution?.OpenedAs ?? folder) == session.Workspace?.OpenedAs)
+        {
+            session.Reopen(session.NamedSolution, withSolution);
+            return;
+        }
+        Autosave();
+        session.Reopen(named, withSolution);
+        Explorer.Load(session.Workspace!);
+        ShowWorkspaceName();
+        UpdateStatus();
+        Remember();
+    }
+
+    private async Task BeginOnceEndedAsync(int open, string folder, string? named)
+    {
+        // Held while it waits, so a screenshot or a test finds the folder open rather than the moment between.
+        using IDisposable held = BackgroundWork.Scope();
+        StatusText.Text = $"Opening {Path.GetFileName(folder)}…";
+        await ending;
+        if (open == opens && Ended is null)
+        {
+            Begin(folder, named);
+        }
+    }
+
+    /// <summary>The folder's session made and the window bound to it: the Explorer, Git, the language server, the tests
+    /// found from code, what the store kept of the folder, and the folder among the recent ones.</summary>
+    private void Begin(string folder, string? named)
+    {
+        WorkspaceModel? withSolution = WorkspaceModel.ReadSolution(folder, named);
+        ProjectSession opened = ProjectSession.Open(Setup(), folder, named, withSolution);
+        // The consoles are another folder's: what it ran said its last there before its end landed.
+        Bottom.Run.Clear();
+        Bottom.Build.Clear();
+        Bottom.Debug.Clear();
+        Bind(opened);
+        Explorer.Load(opened.Workspace!);
+        _ = vcs.OpenAsync(folder);
+        opened.Start(walk: withSolution is null);
+        FindTests();
+        Editors.ShowFolderHint(folder);
+        RestoreWorkspace();
+        ShowWorkspaceName();
+        UpdateStatus();
+        Remember();
+        _ = KeepSnapshotsAsync();
+    }
+
+    /// <summary>What the open folder had in the window goes, kept with it in the store first: its editors close, each saved
+    /// (false, the rest left open, when one cannot be), and the editors' undo across files with them.</summary>
+    private bool LeaveFolder()
+    {
+        KeepWorkspace();
+        if (!Editors.CloseAll())
+        {
+            return false;
+        }
+        Editors.Commands.Clear();
+        return true;
+    }
+
+    /// <summary>Ends the session left: programs and builds at once, the debugger, the tests and the folder's terminals as
+    /// asked, then its language server; a session with no folder takes its place, the window's views of the folder
+    /// emptied, and its end is what the next folder waits for.</summary>
+    private void EndSession()
+    {
+        ProjectSession leaving = session;
+        IdeErrors.Write($"Closed {leaving.Folder}");
+        StopPrograms();
+        Task debugging = debug.StopAsync();
+        tests.Stop();
+        Task testing = tests.DisposeAsync().AsTask();
+        Task terminals = Task.CompletedTask;
+        if (terminal is { Tabs.Count: > 0 })
+        {
+            Dock.Hide("terminal");
+            terminals = terminal.CloseAllAsync();
+        }
+        ending = leaving.EndAsync(EndLimit, ("the debugger", debugging), ("the test runner", testing), ("the terminal", terminals));
+        Bind(ProjectSession.None(Setup()));
+        // The session gone keeps nothing more: what clearing these changes is written nowhere.
+        debug.Breakpoints.Clear();
+        bookmarks.Clear();
+        localHistoryView?.CloseAll();
+        Explorer.Unload();
+        _ = vcs.CloseAsync();
+        tests.Open(null);
+        problems.Clear();
+        Bottom.Problems.Show(problems);
+        if (Dock["problems"] is { } problemsWindow)
+        {
+            problemsWindow.Title = "Problems";
+        }
+    }
+
+    /// <summary>The window's views and controllers follow a session from now: what it says reaches them while it is the
+    /// window's, never after.</summary>
+    private void Bind(ProjectSession next)
+    {
+        session = next;
+        Explorer.Tree.Unloaded = next.Unloaded;
+        next.CSharpChanged += (_, _) =>
+        {
+            if (session == next)
+            {
+                OnCSharpChanged(next.CSharp);
+            }
+        };
+        next.WorkspaceChanged += (_, _) =>
+        {
+            if (session == next)
+            {
+                Explorer.Reload(next.Workspace!);
+                ShowWorkspaceName();
+                FindTests();
+            }
+        };
+        next.Configurations.Changed += (_, _) =>
+        {
+            if (session == next)
+            {
+                RunConfigName.Text = next.Configurations.Chosen?.Name ?? "No configurations";
+            }
+        };
+        if (next.Watcher is { } watcher)
+        {
+            watcher.Changed += (_, changes) =>
+            {
+                if (session == next)
+                {
+                    OnFolderChanged(changes);
+                }
+            };
+        }
+        RunConfigName.Text = next.Configurations.Chosen?.Name ?? "No configurations";
+        agentSocket?.Describe(next.Folder);
+        OnCSharpChanged(next.CSharp);
+    }
+
+    /// <summary>A new language server (or none) for the open folder: the status bar, the usages and Problems follow it.</summary>
+    private void OnCSharpChanged(CSharpService? service)
+    {
+        if (service is not null)
+        {
+            service.StateChanged += (_, _) => LanguageText.Text = LanguageLabel();
+            service.StateChanged += (_, _) => usages.Refresh();
+            service.Stopped += (_, message) => StatusText.Text = message;
+            service.Said += (_, said) => Say(said.Text, said.Severity);
+            WatchProblems(service);
+            service.FollowIndent(Editors.Active);
+        }
+        LanguageText.Text = LanguageLabel();
+        ShowSolutionProblems();
+        ShowProjectProblems();
+    }
+
+    /// <summary>Reads the solution's files again (after a package or project change, here or on disk), keeping the run
+    /// configuration chosen when it is still there and the Explorer's rows open.</summary>
+    public void ReloadSolution() => session.ReadAgain();
+
+    /// <summary>Rider names the window's project widget and its title after the solution (or the project opened alone), the
+    /// folder only without one.</summary>
+    private void ShowWorkspaceName()
+    {
+        if (session.Workspace is not { } workspace)
+        {
+            return;
+        }
+        string shown = workspace.Name;
+        ProjectName.Text = shown;
+        ProjectBadgeText.Text = Initials(shown);
+        ProjectBadge.IsVisible = true;
+        ShowTitle();
+    }
+}

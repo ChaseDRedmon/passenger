@@ -152,7 +152,7 @@ public partial class MainWindow
         }
         if (vcs.Repository is null)
         {
-            if (folder is { } open)
+            if (Folder is { } open)
             {
                 menu.Items.Add(Item("Create Git Repository...", () => _ = vcs.InitAsync(open)));
             }

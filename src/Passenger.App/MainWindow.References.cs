@@ -16,7 +16,7 @@ public partial class MainWindow
     public AddReferenceDialog? ShowAddReference(string project)
     {
         string name = Path.GetFileNameWithoutExtension(project);
-        IReadOnlyList<ProjectModel> all = workspace?.Projects ?? [];
+        IReadOnlyList<ProjectModel> all = session.Workspace?.Projects ?? [];
         List<ProjectModel> others = [.. all.Where(p => !PathNames.Same(p.Path, project)).OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase)];
         if (others.Count == 0)
         {
@@ -43,10 +43,10 @@ public partial class MainWindow
     public string? SetReferences(string project, IReadOnlyCollection<string> wanted)
     {
         string name = Path.GetFileNameWithoutExtension(project);
-        IReadOnlyList<string> had = workspace?.Projects.FirstOrDefault(p => PathNames.Same(p.Path, project))?.ProjectReferences ?? [];
+        IReadOnlyList<string> had = session.Workspace?.Projects.FirstOrDefault(p => PathNames.Same(p.Path, project))?.ProjectReferences ?? [];
         List<string> adding = [.. wanted.Where(w => !had.Any(h => PathNames.Same(h, w)))];
         // Only the solution's own projects are the dialog's to take out; a reference to one outside it stays.
-        List<string> removing = [.. had.Where(h => !wanted.Any(w => PathNames.Same(h, w)) && (workspace?.Projects.Any(p => PathNames.Same(p.Path, h)) ?? false))];
+        List<string> removing = [.. had.Where(h => !wanted.Any(w => PathNames.Same(h, w)) && (session.Workspace?.Projects.Any(p => PathNames.Same(p.Path, h)) ?? false))];
         if (adding.Count == 0 && removing.Count == 0)
         {
             return null;

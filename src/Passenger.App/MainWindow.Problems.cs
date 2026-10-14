@@ -61,7 +61,7 @@ public partial class MainWindow
     /// place to go to and the advisory or page its message names the link.</summary>
     private void ShowProjectProblems()
     {
-        Bottom.Problems.ShowToolset([.. (csharp?.ProjectProblems ?? []).Select(p => new Problem(p.Severity, p.Message, null, p.Project, new TextPosition(0, 0),
+        Bottom.Problems.ShowToolset([.. (session.CSharp?.ProjectProblems ?? []).Select(p => new Problem(p.Severity, p.Message, null, p.Project, new TextPosition(0, 0),
             Path.GetFileNameWithoutExtension(p.Project)) { Link = Problem.LinkIn(p.Message) })]);
     }
 
@@ -71,9 +71,9 @@ public partial class MainWindow
     /// <summary>Puts the analysis setting in force on the C# service there is (or the next one).</summary>
     private void ApplyAnalysis()
     {
-        if (csharp is not null)
+        if (session.CSharp is not null)
         {
-            csharp.SolutionWide = settings.SolutionWideAnalysis;
+            session.CSharp.SolutionWide = settings.SolutionWideAnalysis;
         }
         ShowAnalysis();
     }
@@ -84,14 +84,14 @@ public partial class MainWindow
         service.SolutionWide = settings.SolutionWideAnalysis;
         service.SolutionProblemsChanged += (_, _) =>
         {
-            if (csharp == service)
+            if (session.CSharp == service)
             {
                 ShowSolutionProblems();
             }
         };
         service.ProjectProblemsChanged += (_, _) =>
         {
-            if (csharp == service)
+            if (session.CSharp == service)
             {
                 ShowProjectProblems();
             }
@@ -145,7 +145,7 @@ public partial class MainWindow
 
     private void ShowSolutionProblems()
     {
-        IReadOnlyList<(string Path, Diagnostic Diagnostic)>? found = csharp?.SolutionProblems;
+        IReadOnlyList<(string Path, Diagnostic Diagnostic)>? found = session.CSharp?.SolutionProblems;
         Bottom.Problems.ShowSolution(found?.Select(p => new Problem(
             p.Diagnostic.Severity == 1 ? ProblemSeverity.Error : ProblemSeverity.Warning,
             p.Diagnostic.Message,
@@ -171,7 +171,7 @@ public partial class MainWindow
         AnalysisText.Text = text;
         AnalysisText.IsVisible = text.Length > 0;
         ToolTip.SetTip(AnalysisButton, tip);
-        AnalysisButton.IsVisible = csharp is not null;
+        AnalysisButton.IsVisible = session.CSharp is not null;
     }
 
     private void OnAnalysisClicked(object? sender, RoutedEventArgs e) => ToggleSolutionAnalysis();

@@ -27,7 +27,7 @@ public partial class MainWindow
         {
             Title = title,
             AllowMultiple = true,
-            SuggestedStartLocation = folder is null ? null : await StorageProvider.TryGetFolderFromPathAsync(folder),
+            SuggestedStartLocation = Folder is null ? null : await StorageProvider.TryGetFolderFromPathAsync(Folder),
             FileTypeFilter = patterns is null ? null : [new FilePickerFileType("Projects") { Patterns = patterns }],
         });
         return [.. picked.Select(f => f.TryGetLocalPath()).OfType<string>()];
@@ -200,11 +200,11 @@ public partial class MainWindow
         HashSet<string> chosen = new(projects, StringComparer.Ordinal);
         RunTests(async () =>
         {
-            if (Found().Count == 0 && await tests.DiscoverAsync(folder!) is { } problem)
+            if (Found().Count == 0 && await tests.DiscoverAsync(Folder!) is { } problem)
             {
                 return problem;
             }
-            return Found() is { Count: > 0 } found ? await tests.RunAsync(folder!, found, debug) : $"No tests were found in {what}";
+            return Found() is { Count: > 0 } found ? await tests.RunAsync(Folder!, found, debug) : $"No tests were found in {what}";
         });
 
         List<Testing.TestNode> Found() => [.. tests.Tree.Methods.Where(m => m.ProjectPath is { } project && chosen.Contains(project))];

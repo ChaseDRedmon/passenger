@@ -37,7 +37,7 @@ public partial class MainWindow
             tests.Finder.Closed(document.Path);
         };
         // The grouping and outcomes chosen are the folder's, as Rider keeps a session's.
-        tests.Tree.ViewChanged += (_, _) => folderState?.UnitTests.Set(new Testing.UnitTestsState
+        tests.Tree.ViewChanged += (_, _) => session.State?.UnitTests.Set(new Testing.UnitTestsState
         {
             Grouping = [.. tests.Tree.Grouping],
             Outcomes = [.. tests.Tree.Outcomes.Order()],
@@ -46,7 +46,7 @@ public partial class MainWindow
         Bottom.Tests.RunRequested += (_, debugging) =>
         {
             IReadOnlyList<Testing.TestNode> chosen = Bottom.Tests.Selected;
-            RunTests(() => tests.RunAsync(folder!, chosen, debugging));
+            RunTests(() => tests.RunAsync(Folder!, chosen, debugging));
         };
         Bottom.Tests.UntilFailureRequested += (_, _) => RunUntilFailure(Bottom.Tests.Selected);
         Bottom.Tests.GoToRequested += (_, node) =>
@@ -70,10 +70,10 @@ public partial class MainWindow
     private void FindTests()
     {
         Task read = WorkspaceRead;
-        tests.Open(folder, projectsRead: read.IsCompleted);
+        tests.Open(Folder, projectsRead: read.IsCompleted);
         if (!read.IsCompleted)
         {
-            _ = FindTestsOnceRead(read, folder);
+            _ = FindTestsOnceRead(read, Folder);
         }
     }
 
@@ -82,16 +82,16 @@ public partial class MainWindow
         // Held from the walk's end to the look it starts, so a screenshot or a test never finds the window between them.
         using IDisposable held = BackgroundWork.Scope();
         await read;
-        if (folder == opening)
+        if (Folder == opening)
         {
-            tests.Open(folder);
+            tests.Open(Folder);
         }
     }
 
     /// <summary>A run of tests shown in the Unit Tests window; what stopped it, if anything, in the status bar.</summary>
     private void RunTests(Func<Task<string?>> run)
     {
-        if (folder is null)
+        if (Folder is null)
         {
             return;
         }
@@ -146,7 +146,7 @@ public partial class MainWindow
                 RunUntilFailure(chosen);
                 return;
             }
-            RunTests(() => tests.RunAsync(folder!, chosen, debug));
+            RunTests(() => tests.RunAsync(Folder!, chosen, debug));
             return;
         }
         if (TestAtCaret(context) is { } test)
@@ -158,13 +158,13 @@ public partial class MainWindow
     /// <summary>Runs tests until one fails, as Rider's Run Until Failure, and shows the failed one's output.</summary>
     private void RunUntilFailure(IReadOnlyList<Testing.TestNode> chosen)
     {
-        if (folder is null || chosen.Count == 0)
+        if (Folder is null || chosen.Count == 0)
         {
             return;
         }
         RunTests(async () =>
         {
-            string? problem = await tests.RunUntilFailureAsync(folder, chosen);
+            string? problem = await tests.RunUntilFailureAsync(Folder, chosen);
             if (tests.FirstFailed(chosen) is { } failed)
             {
                 Bottom.Tests.Choose(failed);
@@ -177,7 +177,7 @@ public partial class MainWindow
     /// builds first and finds them as built.</summary>
     private void RunTestsAt(string type, string? method, bool debug, bool untilFailure = false)
     {
-        if (folder is null)
+        if (Folder is null)
         {
             return;
         }
@@ -187,7 +187,7 @@ public partial class MainWindow
             if (Matching() is not { Count: > 0 })
             {
                 // A test the code's reading does not know (an attribute of the project's own) is found by a runner.
-                if (await tests.DiscoverAsync(folder) is { } problem)
+                if (await tests.DiscoverAsync(Folder) is { } problem)
                 {
                     return problem;
                 }
@@ -198,9 +198,9 @@ public partial class MainWindow
             }
             if (!untilFailure)
             {
-                return await tests.RunAsync(folder, found, debug);
+                return await tests.RunAsync(Folder, found, debug);
             }
-            string? stopped = await tests.RunUntilFailureAsync(folder, found);
+            string? stopped = await tests.RunUntilFailureAsync(Folder, found);
             if (tests.FirstFailed(found) is { } failed)
             {
                 Bottom.Tests.Choose(failed);
@@ -221,7 +221,7 @@ public partial class MainWindow
             Name = "Tests",
             Program = start.FileName,
             Arguments = start.Arguments,
-            WorkingDirectory = start.WorkingDirectory ?? folder ?? Environment.CurrentDirectory,
+            WorkingDirectory = start.WorkingDirectory ?? Folder ?? Environment.CurrentDirectory,
             Environment = new Dictionary<string, string>(start.Environment),
         };
         ShowToolWindow("debug");

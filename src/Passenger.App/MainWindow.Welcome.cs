@@ -152,7 +152,7 @@ public partial class MainWindow
     /// project opened alone, or the folder without either), by the name the toolbar shows.</summary>
     private void Remember()
     {
-        if (!keepsWorkspace || workspace is null)
+        if (!keepsWorkspace || session.Workspace is not { } workspace)
         {
             return;
         }

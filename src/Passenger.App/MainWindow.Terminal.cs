@@ -14,7 +14,7 @@ public partial class MainWindow
 
     private void AddTerminal()
     {
-        terminal = new ToolWindows.TerminalPanel(() => folder ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+        terminal = new ToolWindows.TerminalPanel(() => Folder ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
         Dock.Add(new Docking.ToolWindow("terminal", "Terminal", "Icon.Terminal", terminal, Docking.ToolAnchor.BottomLeft)
         {
             Action = AppActions.ShowTerminal,

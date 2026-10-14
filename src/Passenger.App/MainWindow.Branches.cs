@@ -19,7 +19,7 @@ public partial class MainWindow
         panel.DeleteRequested += (_, branch) => _ = DeleteBranchAsync(branch);
         panel.CompareRequested += (_, branch) => CompareWithCurrent(branch);
         panel.WorkingTreeDiffRequested += (_, branch) => _ = ShowWorkingTreeDiffAsync(branch);
-        panel.FavoritesChanged += (_, favorites) => folderState?.GitBranches.Set(favorites);
+        panel.FavoritesChanged += (_, favorites) => session.State?.GitBranches.Set(favorites);
     }
 
     /// <summary>Rider's Git.Rename.Local.Branch shares Rename's keys (Ctrl+R, R in its Visual Studio keymap): while the

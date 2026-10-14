@@ -44,7 +44,7 @@ public partial class MainWindow
         {
             NodeKind.Folder => path,
             NodeKind.Project or NodeKind.Solution or NodeKind.File when path is not null => Path.GetDirectoryName(path),
-            _ => folder,
+            _ => Folder,
         };
         switch (action)
         {
@@ -261,7 +261,7 @@ public partial class MainWindow
     {
         string full = PathNames.Canonical(into);
         ProjectModel? project = ProjectOf(full);
-        string root = project is null ? Path.GetFileName(folder ?? full) : Path.GetFileNameWithoutExtension(project.Path);
+        string root = project is null ? Path.GetFileName(Folder ?? full) : Path.GetFileNameWithoutExtension(project.Path);
         string below = project is null ? string.Empty : Path.GetRelativePath(project.Folder, full);
         IEnumerable<string> parts = [root, .. below == "." ? [] : below.Split(Path.DirectorySeparatorChar)];
         return string.Join('.', parts.SelectMany(p => p.Split('.', StringSplitOptions.RemoveEmptyEntries)).Select(Identifier));
@@ -318,7 +318,8 @@ public partial class MainWindow
         {
             return $"{name} is already there";
         }
-        if (csharp?.Session is not { IsLoaded: true } session)
+        CSharpService? csharp = session.CSharp;
+        if (csharp?.Session is not { IsLoaded: true } server)
         {
             return csharp?.Unready("Renaming the type") ?? "Renaming the type needs the C# language server, which runs for a folder";
         }
@@ -328,11 +329,11 @@ public partial class MainWindow
         BackgroundWork.Begin();
         try
         {
-            Lsp.LspDocument server = open is not null ? csharp.For(open)?.Lsp ?? throw new Lsp.LanguageServerFailed("the C# language server has not opened the file yet")
-                : shown = session.Open(path, new TextDocument(FileText.Load(path)?.Text ?? string.Empty));
+            Lsp.LspDocument document = open is not null ? csharp.For(open)?.Lsp ?? throw new Lsp.LanguageServerFailed("the C# language server has not opened the file yet")
+                : shown = server.Open(path, new TextDocument(FileText.Load(path)?.Text ?? string.Empty));
             using Asked asked = WorkspaceEdits.Track(Editors);
-            System.Text.Json.JsonElement? edit = await server.RenameAsync(type.Offset, renamed);
-            (string Type, IReadOnlyList<string> Files)? named = await TypeRename.NamedAsync(Editors, session.Folder, server, type.Offset);
+            System.Text.Json.JsonElement? edit = await document.RenameAsync(type.Offset, renamed);
+            (string Type, IReadOnlyList<string> Files)? named = await TypeRename.NamedAsync(Editors, server.Folder, document, type.Offset);
             shown?.Dispose();
             shown = null;
             if (edit is not { } made)
@@ -420,18 +421,8 @@ public partial class MainWindow
     {
         bookmarks.Move(move.From, move.To);
         debug.Breakpoints.Move(move.From, move.To);
-        history.Move(move.From, move.To);
         vcs.Moved(move.From, move.To);
-        localHistory?.Moved(move.From, move.To);
-        for (int i = 0; i < recent.Count; i++)
-        {
-            recent[i] = PathNames.Moved(recent[i], move.From, move.To);
-        }
-        foreach (OpenDocument document in move.Documents)
-        {
-            csharp?.Detach(document);
-            csharp?.Attach(document);
-        }
+        session.Moved(move);
         FilesChanged();
     }
 
@@ -441,7 +432,7 @@ public partial class MainWindow
     public async Task<bool> RemoveProjectAsync(string project)
     {
         string name = Path.GetFileNameWithoutExtension(project);
-        if (Solution is not { } solution || folder is null)
+        if (Solution is not { } solution || Folder is null)
         {
             StatusText.Text = $"{name} is in no solution to remove it from";
             return false;
@@ -456,7 +447,7 @@ public partial class MainWindow
             return false;
         }
         string own = PathNames.Canonical(Path.GetDirectoryName(project)!);
-        bool apart = !PathNames.Within(folder, own) && !PathNames.Within(solution.Path, own) && !Projects.Any(p => PathNames.Within(p.Path, own));
+        bool apart = !PathNames.Within(Folder, own) && !PathNames.Within(solution.Path, own) && !Projects.Any(p => PathNames.Within(p.Path, own));
         if (apart && await Confirm("Delete Project Files", $"Also move the folder {Path.GetFileName(own)} and everything in it to the Trash?", "Move to Trash"))
         {
             await DeleteAsync(own, asked: true);
@@ -474,7 +465,7 @@ public partial class MainWindow
         {
             return false;
         }
-        History.LocalHistory? keeping = localHistory;
+        History.LocalHistory? keeping = session.LocalHistory;
         History.HistoryDeletion? taken = keeping is null ? null : await keeping.CaptureAsync(path);
         try
         {
@@ -502,9 +493,9 @@ public partial class MainWindow
     private void FilesChanged()
     {
         Explorer.Refresh();
-        if (folder is not null)
+        if (Folder is { } folder)
         {
-            index.Build(folder);
+            session.Index.Build(folder);
         }
         _ = vcs.RefreshAsync();
     }
