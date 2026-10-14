@@ -249,7 +249,7 @@ public sealed class LiveApp : IDisposable
         }
         catch (Exception error) when (error is IOException or ObjectDisposedException or SocketException)
         {
-            Answered(id, null);
+            Drop(id, answer);
             throw new LiveAppException($"{Name} has ended");
         }
         finally
@@ -264,7 +264,7 @@ public sealed class LiveApp : IDisposable
         catch (TimeoutException)
         {
             // Forgotten, so its answer, if it ever comes, finds no one waiting.
-            Answered(id, null);
+            Drop(id, answer);
             throw new LiveAppException($"{Name} did not answer within {AnswerLimit.TotalSeconds:0} s");
         }
         return reply.Error is { } why ? throw new LiveAppException(why) : reply;
@@ -333,21 +333,26 @@ public sealed class LiveApp : IDisposable
         }
     }
 
-    private void Answered(int id, Reply? reply)
+    /// <summary>Lets go of a request no one waits for any longer: an answer that still comes finds no one, and the app's end,
+    /// should it fail the request first, is observed here rather than reported as an error nobody saw.</summary>
+    private void Drop(int id, TaskCompletionSource<Reply> answer)
+    {
+        lock (asked)
+        {
+            asked.Remove(id);
+        }
+        _ = answer.Task.ContinueWith(static done => _ = done.Exception, CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+    }
+
+    private void Answered(int id, Reply reply)
     {
         TaskCompletionSource<Reply>? answer;
         lock (asked)
         {
             asked.Remove(id, out answer);
         }
-        if (reply is null)
-        {
-            answer?.TrySetException(new LiveAppException($"{Name} has ended"));
-        }
-        else
-        {
-            answer?.TrySetResult(reply);
-        }
+        answer?.TrySetResult(reply);
     }
 
     private void FailAll()
