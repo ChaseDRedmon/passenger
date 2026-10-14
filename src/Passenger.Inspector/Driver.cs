@@ -1,0 +1,363 @@
+using System.Diagnostics;
+using System.Globalization;
+using System.Reflection;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Input.Raw;
+using Avalonia.VisualTree;
+
+namespace Passenger.Inspector;
+
+/// <summary>An agent's clicks, typing, keys and scrolling, given to a window as its platform gives a person's: raw input
+/// into the window's own way in (what <c>ITopLevelImpl.Input</c> calls), so Avalonia hit tests, routes, tracks the pointer
+/// over, focuses, recognises gestures and runs key bindings and commands as it would. The pointer is a mouse of the
+/// inspector's own, apart from the person's (whose real pointer never moves), and nothing activates the window, so an app on
+/// the screen never takes the person's focus; keys go to the element given the keyboard focus, active window or not.</summary>
+internal sealed class Driver(Inspector inspector)
+{
+    /// <summary>The window's input root, which raw input names and Avalonia 12 keeps internal (its presentation source).</summary>
+    private static readonly PropertyInfo? InputRoot = typeof(TopLevel).GetProperty("InputRoot", BindingFlags.NonPublic | BindingFlags.Instance);
+
+    /// <summary>The physical key each key is on, on a QWERTY keyboard.</summary>
+    private static readonly Dictionary<Key, PhysicalKey> Physical = PhysicalKeys();
+
+    private readonly MouseDevice mouse = new(new Avalonia.Input.Pointer(Avalonia.Input.Pointer.GetNextFreeId(), PointerType.Mouse, true));
+    private readonly Stopwatch clock = Stopwatch.StartNew();
+
+    /// <summary>Moved on a second a click, so a click is never the second of a double click with the one before it.</summary>
+    private ulong apart;
+
+    private ulong Now => (ulong)clock.ElapsedMilliseconds + apart;
+
+    public InputDone Do(InputAction action)
+    {
+        Visual? element = action.Element is long id ? inspector.Find(id) ?? throw new Refusal("That element is no longer in the app") : null;
+        TopLevel top = element is not null
+            ? element as TopLevel ?? TopLevel.GetTopLevel(element) ?? throw new Refusal($"{Shown.Called(element)} is in no window")
+            : action.Window is long window && inspector.Find(window) is TopLevel named ? named
+            : throw new Refusal(action.Window is null ? "Name an element or a window" : "That window is no longer open");
+        if (top.PlatformImpl is null)
+        {
+            throw new Refusal("That window has closed");
+        }
+        // The window's own element names its point and takes its keys as any other does.
+        Visual? target = element == top && action.X is not null ? null : element;
+        return action.Kind switch
+        {
+            InputKinds.Click => Click(top, target, action),
+            InputKinds.Scroll => Scroll(top, target, action),
+            InputKinds.Type => Type(top, element, action),
+            InputKinds.Key => Keys(top, element, action),
+            _ => throw new Refusal($"The inspector knows no input '{action.Kind}'"),
+        };
+    }
+
+    private InputDone Click(TopLevel top, Visual? element, InputAction action)
+    {
+        Point at = At(top, element, action, "click");
+        RawInputModifiers held = Held(action.Modifiers);
+        (RawPointerEventType down, RawPointerEventType up) = action.Button switch
+        {
+            null or "left" => (RawPointerEventType.LeftButtonDown, RawPointerEventType.LeftButtonUp),
+            "right" => (RawPointerEventType.RightButtonDown, RawPointerEventType.RightButtonUp),
+            "middle" => (RawPointerEventType.MiddleButtonDown, RawPointerEventType.MiddleButtonUp),
+            _ => throw new Refusal($"A button is left, right or middle, not '{action.Button}'"),
+        };
+        Visual? hit = Hit(top, at);
+        IInputRoot root = Root(top);
+        apart += 1000;
+        Send(top, new RawPointerEventArgs(mouse, Now, root, RawPointerEventType.Move, at, held));
+        for (int i = 0; i < Math.Clamp(action.Count ?? 1, 1, 3); i++)
+        {
+            Send(top, new RawPointerEventArgs(mouse, Now, root, down, at, held));
+            Send(top, new RawPointerEventArgs(mouse, Now, root, up, at, held));
+        }
+        return Done(top, at, Took(element, hit), Shown.TextOf(element ?? hit ?? top));
+    }
+
+    private InputDone Scroll(TopLevel top, Visual? element, InputAction action)
+    {
+        Point at = At(top, element, action, "scroll");
+        Visual? hit = Hit(top, at);
+        IInputRoot root = Root(top);
+        RawInputModifiers held = Held(action.Modifiers);
+        Send(top, new RawPointerEventArgs(mouse, Now, root, RawPointerEventType.Move, at, held));
+        // Avalonia's wheel turns up and left with positive deltas, the way the content moves.
+        Send(top, new RawMouseWheelEventArgs(mouse, Now, root, at, new Vector(-(action.DeltaX ?? 0), -(action.DeltaY ?? 0)), held));
+        return Done(top, at, Took(element, hit), Shown.ScrolledOf(hit ?? element));
+    }
+
+    private InputDone Type(TopLevel top, Visual? element, InputAction action)
+    {
+        (Visual? focused, bool gave) = Focus(element);
+        if (action.Replace == true)
+        {
+            Press(top, Hotkeys.SelectAll);
+        }
+        else if (gave && focused is TextBox)
+        {
+            // As a person who clicks after the text: what is typed goes at its end, not wherever the caret was left.
+            Press(top, Hotkeys.End);
+        }
+        TextElementEnumerator characters = StringInfo.GetTextElementEnumerator(action.Text ?? string.Empty);
+        while (characters.MoveNext())
+        {
+            string character = characters.GetTextElement();
+            switch (character)
+            {
+                case "\n" or "\r\n" or "\r":
+                    Press(top, (Key.Enter, RawInputModifiers.None));
+                    break;
+                case "\t":
+                    Press(top, (Key.Tab, RawInputModifiers.None));
+                    break;
+                default:
+                    if (KeyOf(character) is { } key)
+                    {
+                        Press(top, key, character);
+                    }
+                    else
+                    {
+                        Send(top, new RawTextInputEventArgs(Keyboard(), Now, Root(top), character));
+                    }
+                    break;
+            }
+        }
+        return Into(top, focused);
+    }
+
+    private InputDone Keys(TopLevel top, Visual? element, InputAction action)
+    {
+        (Visual? focused, _) = Focus(element);
+        foreach (Chord chord in action.Keys ?? [])
+        {
+            if (!Enum.TryParse(chord.Key, ignoreCase: true, out Key key) || int.TryParse(chord.Key, out _))
+            {
+                throw new Refusal($"No key '{chord.Key}'");
+            }
+            RawInputModifiers held = Held(chord.Modifiers);
+            string? symbol = (held & (RawInputModifiers.Control | RawInputModifiers.Alt | RawInputModifiers.Meta)) == 0
+                && Physical.TryGetValue(key, out PhysicalKey physical) && physical.ToQwertyKeySymbol((held & RawInputModifiers.Shift) != 0) is { } said
+                && said.All(c => c >= ' ' && c != '\u007f')
+                    ? said
+                    : null;
+            Press(top, (key, held), symbol);
+        }
+        return Into(top, focused);
+    }
+
+    /// <summary>What keys went to (whatever since has the focus, a Tab having moved it) and what it shows now.</summary>
+    private InputDone Into(TopLevel top, Visual? focused) => Done(top, null, focused, focused is null ? null : Shown.TextOf(focused));
+
+    /// <summary>A key down and up, and between them the text it types when nothing took the key itself.</summary>
+    private void Press(TopLevel top, (Key Key, RawInputModifiers Held) key, string? text = null)
+    {
+        IKeyboardDevice keyboard = Keyboard();
+        PhysicalKey physical = Physical.GetValueOrDefault(key.Key);
+        RawKeyEventArgs down = new(keyboard, Now, Root(top), RawKeyEventType.KeyDown, key.Key, key.Held, physical, text);
+        Send(top, down);
+        if (text is not null && !down.Handled)
+        {
+            Send(top, new RawTextInputEventArgs(keyboard, Now, Root(top), text));
+        }
+        Send(top, new RawKeyEventArgs(keyboard, Now, Root(top), RawKeyEventType.KeyUp, key.Key, key.Held, physical, text));
+    }
+
+    /// <summary>The key a typed character is on, with Shift for a capital: letters, digits and the space bar; others are
+    /// typed as text alone, as an input method gives them.</summary>
+    private static (Key, RawInputModifiers)? KeyOf(string character) => character switch
+    {
+        [char c] when c is >= 'a' and <= 'z' => (Key.A + (c - 'a'), RawInputModifiers.None),
+        [char c] when c is >= 'A' and <= 'Z' => (Key.A + (c - 'A'), RawInputModifiers.Shift),
+        [char c] when c is >= '0' and <= '9' => (Key.D0 + (c - '0'), RawInputModifiers.None),
+        " " => (Key.Space, RawInputModifiers.None),
+        _ => null,
+    };
+
+    /// <summary>Gives an element the keyboard focus, as Tab or a click would, unless it or something inside it has it;
+    /// with none, whatever has the focus keeps it. Says what has it, and whether this gave it.</summary>
+    private static (Visual? Focused, bool Gave) Focus(Visual? element)
+    {
+        if (element is null or TopLevel)
+        {
+            return (Shown.Focused() as Visual, false);
+        }
+        if (element is not InputElement input)
+        {
+            throw new Refusal($"{Shown.Called(element)} takes no keys");
+        }
+        if (input.IsKeyboardFocusWithin)
+        {
+            return (Shown.Focused() as Visual, false);
+        }
+        if (!input.IsEffectivelyVisible)
+        {
+            throw new Refusal($"{Shown.Called(element)} is not shown (IsVisible is false on it or an ancestor)");
+        }
+        InputElement? taking = input.Focusable && input.IsEffectivelyEnabled
+            ? input
+            : input.GetVisualDescendants().OfType<InputElement>().FirstOrDefault(d => d.Focusable && d.IsEffectivelyEnabled && d.IsEffectivelyVisible);
+        if (taking is null || !taking.Focus(NavigationMethod.Pointer))
+        {
+            throw new Refusal(input.IsEffectivelyEnabled
+                ? $"{Shown.Called(element)} cannot take the keyboard focus (Focusable is false, and nothing inside it can)"
+                : $"{Shown.Called(element)} is disabled: it takes no keys");
+        }
+        return (taking, true);
+    }
+
+    /// <summary>Where the pointer acts: the point asked for in the window, or an element's centre (of the part of it its
+    /// window and scroll viewers show), or a point in the element from its top left. An element hidden, disabled, out of
+    /// view or covered by another is refused, saying which, rather than acting on whatever is there.</summary>
+    private static Point At(TopLevel top, Visual? element, InputAction action, string doing)
+    {
+        Rect window = new(top.ClientSize);
+        if (element is null)
+        {
+            if (action.X is not double x || action.Y is not double y)
+            {
+                throw new Refusal("Name an element, or a point (x and y) in the window");
+            }
+            Point point = new(x, y);
+            return window.Contains(point)
+                ? point
+                : throw new Refusal($"{Spot(point)} is outside the window, which is {Box(window)}");
+        }
+        string name = Shown.Called(element);
+        if (!element.IsEffectivelyVisible)
+        {
+            throw new Refusal($"{name} is not shown (IsVisible is false on it or an ancestor)");
+        }
+        if (element is InputElement { IsEffectivelyEnabled: false })
+        {
+            throw new Refusal($"{name} is disabled: a {doing} would not reach it");
+        }
+        Rect box = Shown.RectIn(element, top) ?? throw new Refusal($"{name} is in no window");
+        Rect seen = box.Intersect(window);
+        Visual? clipper = null;
+        for (Visual? at = element.GetVisualParent(); at is not null && at != top; at = at.GetVisualParent())
+        {
+            if (at.ClipToBounds && Shown.RectIn(at, top) is { } clip)
+            {
+                Rect within = seen.Intersect(clip);
+                if (within.Width <= 0 || within.Height <= 0)
+                {
+                    clipper ??= at;
+                }
+                seen = within;
+            }
+        }
+        if (seen.Width <= 0 || seen.Height <= 0)
+        {
+            throw new Refusal(clipper?.FindAncestorOfType<ScrollViewer>(includeSelf: true) is { } scroller
+                ? $"{name} is scrolled out of view inside {Shown.Called(scroller)}: scroll it to bring it into view"
+                : $"{name} is out of view ({Box(box)} in a window {Box(window)})");
+        }
+        Point aim = action.X is double ox && action.Y is double oy ? new Point(box.X + ox, box.Y + oy) : seen.Center;
+        if (!seen.Contains(aim))
+        {
+            throw new Refusal($"{Spot(aim)} is outside the part of {name} shown ({Box(seen)})");
+        }
+        if (Hit(top, aim) is { } hit && hit != element && !element.IsVisualAncestorOf(hit) && !hit.IsVisualAncestorOf(element))
+        {
+            throw new Refusal($"{name} is covered at {Spot(aim)} by {Inspector.Named(hit)}, which would take the {doing}");
+        }
+        return aim;
+    }
+
+    private static string Box(Rect rect) => string.Create(CultureInfo.InvariantCulture, $"{rect.X:0.##},{rect.Y:0.##} {rect.Width:0.##}x{rect.Height:0.##}");
+
+    private static string Spot(Point point) => string.Create(CultureInfo.InvariantCulture, $"{point.X:0.##},{point.Y:0.##}");
+
+    /// <summary>What took pointer input aimed at an element: the element when the hit is it or inside it, else what was hit
+    /// (an ancestor, the element taking no input where it was aimed).</summary>
+    private static Visual? Took(Visual? element, Visual? hit) =>
+        element is not null && hit is not null && (hit == element || element.IsVisualAncestorOf(hit)) ? element : hit;
+
+    /// <summary>What a person's pointer at a point would be over: what Avalonia's own hit test finds, disabled or not.</summary>
+    private static Visual? Hit(TopLevel top, Point at) => top.InputHitTest(at, enabledElementsOnly: false) as Visual;
+
+    private InputDone Done(TopLevel top, Point? at, Visual? target, string? shows) => new(
+        inspector.IdOf(top),
+        at?.X,
+        at?.Y,
+        target is null ? null : inspector.IdOf(target),
+        target is null ? null : Inspector.Named(target),
+        shows,
+        Shown.Focused() is Visual focused ? Inspector.Named(focused) : null);
+
+    /// <summary>The modifiers named, Primary being the platform's command key (Cmd on macOS, Ctrl elsewhere).</summary>
+    private static RawInputModifiers Held(IReadOnlyList<string>? names)
+    {
+        RawInputModifiers held = RawInputModifiers.None;
+        foreach (string name in names ?? [])
+        {
+            held |= name.ToLowerInvariant() switch
+            {
+                "control" or "ctrl" => RawInputModifiers.Control,
+                "shift" => RawInputModifiers.Shift,
+                "alt" or "option" => RawInputModifiers.Alt,
+                "meta" or "cmd" or "command" or "win" => RawInputModifiers.Meta,
+                "primary" => Raw(Hotkeys.Command),
+                _ => throw new Refusal($"No modifier '{name}'"),
+            };
+        }
+        return held;
+    }
+
+    private static RawInputModifiers Raw(KeyModifiers modifiers) =>
+        (modifiers.HasFlag(KeyModifiers.Control) ? RawInputModifiers.Control : 0)
+        | (modifiers.HasFlag(KeyModifiers.Shift) ? RawInputModifiers.Shift : 0)
+        | (modifiers.HasFlag(KeyModifiers.Alt) ? RawInputModifiers.Alt : 0)
+        | (modifiers.HasFlag(KeyModifiers.Meta) ? RawInputModifiers.Meta : 0);
+
+    private static IInputRoot Root(TopLevel top) =>
+        InputRoot?.GetValue(top) as IInputRoot ?? throw new Refusal("The inspector cannot reach this window's input in this Avalonia");
+
+    private static IKeyboardDevice Keyboard() =>
+        AvaloniaLocator.Current.GetService<IKeyboardDevice>() ?? throw new Refusal("The app has no keyboard device");
+
+    /// <summary>Raw input into the window, as its platform delivers it; on the UI thread it is handled before this returns.</summary>
+    private static void Send(TopLevel top, RawInputEventArgs input)
+    {
+        if (top.PlatformImpl?.Input is not { } deliver)
+        {
+            throw new Refusal("That window has closed");
+        }
+        deliver(input);
+    }
+
+    private static Dictionary<Key, PhysicalKey> PhysicalKeys()
+    {
+        Dictionary<Key, PhysicalKey> keys = [];
+        foreach (PhysicalKey physical in Enum.GetValues<PhysicalKey>())
+        {
+            if (physical != PhysicalKey.None)
+            {
+                keys.TryAdd(physical.ToQwertyKey(), physical);
+            }
+        }
+        return keys;
+    }
+
+    /// <summary>The platform's own keys for what typing needs, from the app's hotkey configuration (Avalonia's platform
+    /// settings, as its text boxes read them): the command modifier, Select All, and the end of a text box's text.</summary>
+    private static class Hotkeys
+    {
+        private static Avalonia.Input.Platform.PlatformHotkeyConfiguration? Configuration =>
+            AvaloniaLocator.Current.GetService<Avalonia.Platform.IPlatformSettings>()?.HotkeyConfiguration;
+
+        public static KeyModifiers Command => Configuration?.CommandModifiers ?? KeyModifiers.Control;
+
+        public static (Key, RawInputModifiers) SelectAll => Chord(Configuration?.SelectAll.FirstOrDefault(), new KeyGesture(Key.A, Command));
+
+        public static (Key, RawInputModifiers) End => Chord(Configuration?.MoveCursorToTheEndOfDocument.FirstOrDefault(), new KeyGesture(Key.End, KeyModifiers.Control));
+
+        private static (Key, RawInputModifiers) Chord(KeyGesture? gesture, KeyGesture otherwise)
+        {
+            KeyGesture chosen = gesture ?? otherwise;
+            return (chosen.Key, Raw(chosen.KeyModifiers));
+        }
+    }
+}

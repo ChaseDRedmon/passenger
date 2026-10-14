@@ -84,6 +84,11 @@ public static class Agent
         try
         {
             reply = await dispatcher.InvokeAsync(() => inspector.Handle(request));
+            if (request.Method == Wire.Input)
+            {
+                // Answered once what the input set going has been laid out, so what the agent looks at next shows it.
+                await dispatcher.InvokeAsync(() => { }, DispatcherPriority.Background);
+            }
         }
         catch (Exception error)
         {
