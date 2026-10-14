@@ -5,7 +5,7 @@ namespace Passenger.Inspector;
 // What Passenger and its inspector inside an Avalonia app say to each other, compiled into both: one JSON object a line
 // over the socket Passenger names in the app's environment. Passenger asks (Request) and the app answers each by its id
 // (Reply); the app also tells without being asked (a Reply with an Event): hello once its UI runs, treeChanged as controls
-// come and go, picked when the person points at one.
+// come and go, picked when the person points at one, bindingFailed as a binding fails (from before hello, as the app starts).
 
 /// <summary>The names both ends agree on.</summary>
 public static class Wire
@@ -31,6 +31,7 @@ public static class Wire
     public const string TreeChanged = "treeChanged";
     public const string Picked = "picked";
     public const string PickEnded = "pickEnded";
+    public const string BindingFailed = "bindingFailed";
 }
 
 /// <summary>What Passenger asks: the windows' tree, an element's details, Select Element on or off, or an element outlined
@@ -54,11 +55,22 @@ public sealed record Reply
 
     /// <summary>The element pointed at, with Picked.</summary>
     public long? Element { get; init; }
+
+    /// <summary>A binding that failed, with BindingFailed.</summary>
+    public BindingFailure? Binding { get; init; }
 }
 
 /// <summary>The app's first word: its process, the Avalonia it runs (its assembly's version), and why the inspector cannot
 /// serve it when it cannot (another major version of Avalonia, none at all).</summary>
 public sealed record Hello(int Protocol, int ProcessId, string? Avalonia, string? Problem);
+
+/// <summary>A binding that failed in the app, as Avalonia logged it (its Binding area, Warning or Error): the control it is
+/// on (Type#Name) and the property it sets, its path and the part of the path that failed, Avalonia's message, the control's
+/// XAML element when the app's build recorded it, and for a path naming what its source's type does not have, that type (as
+/// Avalonia names it), the member and the type's members nearest it. Id names one failure for the run; it comes again as it
+/// repeats, Count being how many times in all.</summary>
+public sealed record BindingFailure(int Id, string Level, string Control, string Property, string Path, string? ErrorPoint, string Message,
+    SourcePlace? Place, string? Type, string? Member, IReadOnlyList<string> Nearest, int Count);
 
 /// <summary>The app's top-level windows (popups among them), each with the visual tree under it.</summary>
 public sealed record AppTree(IReadOnlyList<Element> Roots);

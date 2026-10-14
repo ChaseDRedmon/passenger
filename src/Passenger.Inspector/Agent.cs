@@ -4,9 +4,10 @@ using Avalonia.Threading;
 
 namespace Passenger.Inspector;
 
-/// <summary>The inspector inside the app, started by the startup hook in its own context: it connects to Passenger, waits
-/// for the app's UI thread to exist (never touching the dispatcher before the app makes it, which would make the wrong
-/// thread the UI's), says hello, and answers each request there. It ends when Passenger goes.</summary>
+/// <summary>The inspector inside the app, started by the startup hook in its own context: it connects to Passenger and takes
+/// Avalonia's logger for the app's failed bindings before the app's Main, waits for the app's UI thread to exist (never
+/// touching the dispatcher before the app makes it, which would make the wrong thread the UI's), says hello, and answers
+/// each request there. It ends when Passenger goes.</summary>
 public static class Agent
 {
     /// <summary>How often it looks for the app's UI before it is up.</summary>
@@ -14,17 +15,19 @@ public static class Agent
 
     public static void Start(string socket, Thread main, string avalonia)
     {
-        Thread thread = new(() => Serve(socket, main, avalonia)) { IsBackground = true, Name = "Passenger inspector" };
-        thread.Start();
-    }
-
-    private static void Serve(string socket, Thread main, string avalonia)
-    {
-        using Connection? connection = Connection.Open(socket);
-        if (connection is null)
+        // Before the app's Main, so a binding that fails as its first window opens is heard.
+        if (Connection.Open(socket) is not { } connection)
         {
             return;
         }
+        Bindings.Start(connection);
+        Thread thread = new(() => Serve(connection, main, avalonia)) { IsBackground = true, Name = "Passenger inspector" };
+        thread.Start();
+    }
+
+    private static void Serve(Connection connection, Thread main, string avalonia)
+    {
+        using Connection held = connection;
         Dispatcher dispatcher = WaitForUi(main);
         Inspector inspector;
         try
@@ -34,6 +37,7 @@ public static class Agent
         catch (Exception error)
         {
             connection.Send(new Reply { Event = Wire.Hello, Hello = new Hello(Wire.Version, Environment.ProcessId, avalonia, $"The inspector could not start: {error.Message}") });
+            Bindings.Stop();
             return;
         }
         connection.Send(new Reply { Event = Wire.Hello, Hello = new Hello(Wire.Version, Environment.ProcessId, avalonia, null) });
@@ -41,6 +45,7 @@ public static class Agent
         {
             _ = AnswerAsync(dispatcher, inspector, connection, request);
         }
+        Bindings.Stop();
         dispatcher.Post(inspector.Stop);
     }
 
@@ -60,7 +65,7 @@ public static class Agent
     }
 
     /// <summary>Whether the app's Application is up, after which its dispatcher has its platform's loop.</summary>
-    private static bool HasApplication()
+    internal static bool HasApplication()
     {
         try
         {

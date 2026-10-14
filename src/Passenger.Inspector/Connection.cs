@@ -84,8 +84,18 @@ internal sealed class Connection : IDisposable
         }
     }
 
-    /// <summary>Queues a reply or an event; from any thread, never waiting on Passenger.</summary>
-    public void Send(Reply reply) => outgoing.TryAdd(reply);
+    /// <summary>Queues a reply or an event; from any thread, never waiting on Passenger, and nothing once it has gone.</summary>
+    public void Send(Reply reply)
+    {
+        try
+        {
+            outgoing.TryAdd(reply);
+        }
+        catch (InvalidOperationException)
+        {
+            // Closed as Passenger went, while the app's thread was saying something (a binding failing).
+        }
+    }
 
     /// <summary>Waits a moment for what is queued to be written, as the inspector gives up on an app it cannot serve.</summary>
     private void Drain()
