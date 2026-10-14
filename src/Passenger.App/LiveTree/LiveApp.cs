@@ -90,6 +90,11 @@ public sealed class LiveApp : IDisposable
         {
             throw new LiveAppException("This build of Passenger carries no inspector");
         }
+        // A Passenger another runs or debugs has that one's inspector, whose binding log a second would fight over the logger.
+        if (AppDomain.CurrentDomain.GetAssemblies().Any(a => a.GetName().Name == "Passenger.Inspector"))
+        {
+            throw new LiveAppException("This Passenger was started by another Passenger, whose inspector it carries: that one's app tools (app run or debug) look at its windows");
+        }
         (string socket, Socket listener) = Listen("Passenger") ?? throw new LiveAppException("Passenger could not listen for its own inspector");
         LiveApp app = new("Passenger", socket, listener, plan: null);
         try

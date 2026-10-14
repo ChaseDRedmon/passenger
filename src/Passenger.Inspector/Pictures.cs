@@ -17,7 +17,7 @@ internal static class Pictures
     private const int Longest = 1600;
 
     /// <summary>Pixels the whole window may take while it is drawn, before the crop: a scale asked for is lowered to fit.</summary>
-    private const double MostPixels = 40_000_000;
+    private const double MostPixels = 25_000_000;
 
     public static Picture Take(Visual shown, Request request)
     {

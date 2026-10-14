@@ -68,10 +68,14 @@ internal sealed class Driver(Inspector inspector)
         IInputRoot root = Root(top);
         apart += 1000;
         Send(top, new RawPointerEventArgs(mouse, Now, root, RawPointerEventType.Move, at, held));
-        for (int i = 0; i < Math.Clamp(action.Count ?? 1, 1, 3); i++)
+        // A press that closes the window (a button that acts on press) leaves nothing to release.
+        for (int i = 0; i < Math.Clamp(action.Count ?? 1, 1, 3) && top.PlatformImpl is not null; i++)
         {
             Send(top, new RawPointerEventArgs(mouse, Now, root, down, at, held));
-            Send(top, new RawPointerEventArgs(mouse, Now, root, up, at, held));
+            if (top.PlatformImpl is not null)
+            {
+                Send(top, new RawPointerEventArgs(mouse, Now, root, up, at, held));
+            }
         }
         return Done(top, at, Took(element, hit), Shown.TextOf(element ?? hit ?? top));
     }
@@ -117,7 +121,7 @@ internal sealed class Driver(Inspector inspector)
                     {
                         Press(top, key, character);
                     }
-                    else
+                    else if (top.PlatformImpl is not null)
                     {
                         Send(top, new RawTextInputEventArgs(Keyboard(), Now, Root(top), character));
                     }
@@ -150,18 +154,27 @@ internal sealed class Driver(Inspector inspector)
     /// <summary>What keys went to (whatever since has the focus, a Tab having moved it) and what it shows now.</summary>
     private InputDone Into(TopLevel top, Visual? focused) => Done(top, null, focused, focused is null ? null : Shown.TextOf(focused));
 
-    /// <summary>A key down and up, and between them the text it types when nothing took the key itself.</summary>
+    /// <summary>A key down and up, and between them the text it types when nothing took the key itself; nothing more once
+    /// the key has closed its window (Enter on a dialog), as its platform sends a closed window nothing.</summary>
     private void Press(TopLevel top, (Key Key, RawInputModifiers Held) key, string? text = null)
     {
-        IKeyboardDevice keyboard = Keyboard();
-        PhysicalKey physical = Physical.GetValueOrDefault(key.Key);
-        RawKeyEventArgs down = new(keyboard, Now, Root(top), RawKeyEventType.KeyDown, key.Key, key.Held, physical, text);
-        Send(top, down);
-        if (text is not null && !down.Handled)
+        if (top.PlatformImpl is null)
         {
-            Send(top, new RawTextInputEventArgs(keyboard, Now, Root(top), text));
+            return;
         }
-        Send(top, new RawKeyEventArgs(keyboard, Now, Root(top), RawKeyEventType.KeyUp, key.Key, key.Held, physical, text));
+        IKeyboardDevice keyboard = Keyboard();
+        IInputRoot root = Root(top);
+        PhysicalKey physical = Physical.GetValueOrDefault(key.Key);
+        RawKeyEventArgs down = new(keyboard, Now, root, RawKeyEventType.KeyDown, key.Key, key.Held, physical, text);
+        Send(top, down);
+        if (text is not null && !down.Handled && top.PlatformImpl is not null)
+        {
+            Send(top, new RawTextInputEventArgs(keyboard, Now, root, text));
+        }
+        if (top.PlatformImpl is not null)
+        {
+            Send(top, new RawKeyEventArgs(keyboard, Now, root, RawKeyEventType.KeyUp, key.Key, key.Held, physical, text));
+        }
     }
 
     /// <summary>The key a typed character is on, with Shift for a capital: letters, digits and the space bar; others are
