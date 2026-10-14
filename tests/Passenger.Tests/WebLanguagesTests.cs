@@ -25,7 +25,7 @@ public sealed class WebLanguagesTests : IClassFixture<WebLanguagesTests.Shop>
     [AvaloniaFact]
     public void A_script_completes_marks_a_syntax_error_goes_to_a_functions_declaration_and_renames_it_everywhere_it_is_called()
     {
-        Shop.SkipWithoutNode();
+        Shop.SkipWithoutNode(typescript: true);
         MainWindow window = app.Open("wwwroot/js/site.js");
         try
         {
@@ -74,7 +74,7 @@ public sealed class WebLanguagesTests : IClassFixture<WebLanguagesTests.Shop>
     [AvaloniaFact]
     public void TypeScript_under_a_tsconfig_completes_a_numbers_members_marks_a_type_error_goes_to_a_declaration_in_another_file_and_renames_across_files()
     {
-        Shop.SkipWithoutNode();
+        Shop.SkipWithoutNode(typescript: true);
         MainWindow window = app.Open("Scripts/items.ts");
         try
         {
@@ -303,8 +303,8 @@ public sealed class WebLanguagesTests : IClassFixture<WebLanguagesTests.Shop>
             Ui.Run(window, AppActions.Rename);
             Assert.Equal($"Rename needs the TypeScript language server: there is no Node.js at {missing}, which Settings | Languages & Frameworks | Node.js names", window.Status);
 
-            // Named again, the servers start on it and the banner goes.
-            if (Programs.Node() is { } node)
+            // A Node.js named that runs it, the server starts on it and the banner goes.
+            if (Programs.Node() is { } node && Shop.TooOld() is null)
             {
                 window.ApplySettings(window.Settings with { NodeInterpreter = node });
                 Ui.WaitFor(() => window.EditorArea.ActiveGroup.BannerText is null, "the banner to go once a Node.js is named");
@@ -321,7 +321,7 @@ public sealed class WebLanguagesTests : IClassFixture<WebLanguagesTests.Shop>
     [AvaloniaFact]
     public void A_project_with_its_own_typescript_is_read_by_it()
     {
-        Shop.SkipWithoutNode();
+        Shop.SkipWithoutNode(typescript: true);
         string folder = TestFolders.Create("own-typescript-");
         CopyFolder(Path.Combine(AppContext.BaseDirectory, "web", "node_modules", "typescript"), Path.Combine(folder, "node_modules", "typescript"));
         File.WriteAllText(Path.Combine(folder, "tsconfig.json"), "{ \"compilerOptions\": { \"strict\": true } }\n");
@@ -467,15 +467,23 @@ public sealed class WebLanguagesTests : IClassFixture<WebLanguagesTests.Shop>
             return window;
         }
 
-        /// <summary>Skips a test that needs the web language servers where there is no Node.js to run them, or one older
-        /// than the TypeScript server needs.</summary>
-        public static void SkipWithoutNode()
+        /// <summary>Skips a test that needs the web language servers where there is no Node.js to run them, or, for one that
+        /// needs the TypeScript server (<paramref name="typescript"/>), one older than it needs.</summary>
+        public static void SkipWithoutNode(bool typescript = false)
         {
             Assert.SkipWhen(Programs.Node() is null, "Node.js is not on the PATH, and the web language servers run on it");
+            if (typescript)
+            {
+                string? old = TooOld();
+                Assert.SkipWhen(old is not null, $"The TypeScript language server cannot run here: {old}");
+            }
+        }
+
+        /// <summary>Why the PATH's Node.js cannot run the TypeScript server, or null when it can.</summary>
+        public static string? TooOld()
+        {
             Passenger.App.Web.NodeRuntime node = Task.Run(() => Passenger.App.Web.NodeRuntime.FindAsync(null)).GetAwaiter().GetResult();
-            string package = Path.Combine(AppContext.BaseDirectory, "web", "node_modules", "typescript-language-server", "package.json");
-            string? old = node.TooOldFor(package, "TypeScript");
-            Assert.SkipWhen(old is not null, $"The web language servers cannot run here: {old}");
+            return node.Problem ?? node.TooOldFor(Path.Combine(AppContext.BaseDirectory, "web", "node_modules", "typescript-language-server", "package.json"), "TypeScript");
         }
 
         public void Dispose() => TestFolders.Delete(Folder);
