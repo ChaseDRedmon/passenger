@@ -452,7 +452,8 @@ public sealed class WebLanguagesTests : IClassFixture<WebLanguagesTests.Shop>
 
         public string Folder { get; }
 
-        public string PathOf(string relative) => Path.Combine(PathNames.Canonical(Folder), relative);
+        /// <summary>A file's path as the IDE names it: canonical, its '/' Windows' '\' there, so it compares with an open file's.</summary>
+        public string PathOf(string relative) => Path.GetFullPath(Path.Combine(PathNames.Canonical(Folder), relative));
 
         /// <summary>Every file as written, whatever a test saved.</summary>
         public void Reset()
