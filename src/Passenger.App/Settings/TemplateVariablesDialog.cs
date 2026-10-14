@@ -196,7 +196,7 @@ public sealed class ChooseMacroDialog : Window
         DockPanel root = new();
         DockPanel.SetDock(bottom, Dock.Bottom);
         root.Children.Add(bottom);
-        root.Children.Add(new Border { Margin = new Thickness(12), Child = list });
+        root.Children.Add(new Border { Classes = { "framed" }, Margin = new Thickness(12), Child = list });
         Border page = new() { Child = root };
         page.Bind(Border.BackgroundProperty, page.GetResourceObservable("Passenger.Editor.Background"));
         Content = page;

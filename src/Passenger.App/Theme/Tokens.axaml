@@ -16,6 +16,8 @@
             <!-- A kind badge's letter (Go to Symbol, completion), on the badge's syntax colour: dark on dark's light colours, light on
                  light's dark ones. -->
             <SolidColorBrush x:Key="Passenger.BadgeText" Color="#1E1F22" />
+            <!-- An unticked check box's edge: clearer than a field's, so it shows on a selected row's blue and in light. -->
+            <SolidColorBrush x:Key="Passenger.CheckBorder" Color="#6F737A" />
             <SolidColorBrush x:Key="Passenger.Text" Color="#DFE1E5" />
             <SolidColorBrush x:Key="Passenger.TextMuted" Color="#868A91" />
             <SolidColorBrush x:Key="Passenger.Icon" Color="#CED0D6" />
@@ -202,6 +204,7 @@
             <SolidColorBrush x:Key="Passenger.Divider" Color="#EBECF0" />
             <SolidColorBrush x:Key="Passenger.Separator" Color="#EBECF0" />
             <SolidColorBrush x:Key="Passenger.BadgeText" Color="#FFFFFF" />
+            <SolidColorBrush x:Key="Passenger.CheckBorder" Color="#A8ADBD" />
             <SolidColorBrush x:Key="Passenger.Text" Color="#1E1F22" />
             <SolidColorBrush x:Key="Passenger.TextMuted" Color="#6C707E" />
             <SolidColorBrush x:Key="Passenger.Icon" Color="#6C707E" />

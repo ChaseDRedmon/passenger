@@ -37,9 +37,11 @@ internal sealed class ColourPicker : Border
         square = new ShadeSquare(this) { Height = 160 };
         hue = new HueBar(this) { Height = 14 };
         alpha = new AlphaBar(this) { Height = 14 };
-        Border before = new() { Width = 28, Height = 22, CornerRadius = new CornerRadius(3, 0, 0, 3), Background = new SolidColorBrush(ToColor(start)) };
-        after = new Border { Width = 28, Height = 22, CornerRadius = new CornerRadius(0, 3, 3, 0) };
-        hex = new TextBox { Classes = { "search" }, Width = 110, FontFamily = new FontFamily("avares://Passenger.Editor/Fonts#JetBrains Mono") };
+        // The swatches as tall as the field and buttons beside them, rounded as they are.
+        Border before = new() { Width = 28, Height = 28, CornerRadius = new CornerRadius(4, 0, 0, 4), Background = new SolidColorBrush(ToColor(start)) };
+        after = new Border { Width = 28, Height = 28, CornerRadius = new CornerRadius(0, 4, 4, 0) };
+        // The field takes what the swatches and buttons leave: a fixed width crowded them at the buttons' own width.
+        hex = new TextBox { Classes = { "search" }, FontFamily = new FontFamily("avares://Passenger.Editor/Fonts#JetBrains Mono") };
         Button choose = new() { Content = "Choose", Classes = { "primary" }, IsDefault = true };
         Button cancel = new() { Content = "Cancel" };
         choose.Click += (_, _) => Chosen?.Invoke(this, Colour);
@@ -59,7 +61,7 @@ internal sealed class ColourPicker : Border
                     Children =
                     {
                         new StackPanel { [DockPanel.DockProperty] = Dock.Left, Orientation = Orientation.Horizontal, Children = { before, after } },
-                        new StackPanel { [DockPanel.DockProperty] = Dock.Right, Orientation = Orientation.Horizontal, Spacing = 6, Children = { cancel, choose } },
+                        new StackPanel { [DockPanel.DockProperty] = Dock.Right, Orientation = Orientation.Horizontal, Spacing = 8, Children = { cancel, choose } },
                         new Panel { Margin = new Thickness(8, 0), Children = { hex } },
                     },
                 },

@@ -50,7 +50,8 @@ public abstract class RefactoringDialog : Window
         DockPanel.SetDock(buttons, Dock.Right);
         bottomBar.Children.Add(buttons);
         bottomBar.Children.Add(problem);
-        Border bottom = new() { Classes = { "footerBar" }, Child = bottomBar };
+        // Inset as the page above it is, so Next ends where its fields do and a problem starts where its labels do.
+        Border bottom = new() { Classes = { "footerBar" }, Padding = new Thickness(20, 10), Child = bottomBar };
 
         DockPanel root = new();
         DockPanel.SetDock(top, Dock.Top);
