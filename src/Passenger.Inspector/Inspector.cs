@@ -28,6 +28,7 @@ internal sealed class Inspector
     private readonly Picker picker;
     private readonly Driver driver;
     private readonly PropertyBreaks breaks = new();
+    private readonly ValueWatch values;
     private long next;
     private bool told;
 
@@ -40,6 +41,7 @@ internal sealed class Inspector
         this.connection = connection;
         picker = new Picker(this, connection);
         driver = new Driver(this);
+        values = new ValueWatch(connection);
         handlers.Add(Control.LoadedEvent.AddClassHandler(typeof(Control), (sender, _) => Changed(sender)));
         handlers.Add(Control.UnloadedEvent.AddClassHandler(typeof(Control), (sender, _) => Changed(sender)));
         handlers.Add(Window.WindowOpenedEvent.AddClassHandler(typeof(Window), (sender, _) => Changed(sender)));
@@ -64,6 +66,7 @@ internal sealed class Inspector
                     : Gone(request),
                 Wire.Input => new Reply { Id = request.Id, Done = driver.Do(request.Input ?? throw new Refusal("No input was given")) },
                 Wire.Watch => Done(request, () => Watch(request)),
+                Wire.Values => new Reply { Id = request.Id, Values = Values(request) },
                 _ => new Reply { Id = request.Id, Error = $"The inspector does not know '{request.Method}'" },
             };
         }
@@ -97,6 +100,7 @@ internal sealed class Inspector
     public void Stop()
     {
         breaks.Stop();
+        values.Stop();
         picker.Choose(false);
         picker.Outline(null);
         foreach (IDisposable handler in handlers)
@@ -118,6 +122,16 @@ internal sealed class Inspector
         }
         Visual element = Find(request.Element) ?? throw new Refusal("That element is no longer in the app");
         breaks.Watch(breakpoint, element, request.Property ?? throw new Refusal("No property was named"), request.HitCondition);
+    }
+
+    /// <summary>A XAML file's bindings with their values, the properties read watched from now so the app says when they change.</summary>
+    private XamlValues Values(Request request)
+    {
+        XamlRead read = request.Xaml ?? throw new Refusal("No XAML file was named");
+        List<(AvaloniaObject, AvaloniaProperty)> watched = [];
+        XamlValues answer = BindingReader.Read(this, read, null, watched);
+        values.Watch(read.File, watched, read.More == true);
+        return answer;
     }
 
     private static Reply Done(Request request, Action action)
@@ -179,7 +193,10 @@ internal sealed class Inspector
 
     /// <summary>The app's top levels, each once: its desktop lifetime's windows or its single view's, then every other one
     /// Avalonia is drawing (a popup's, or every window of an app with no lifetime, as Passenger's own screenshot has).</summary>
-    public IReadOnlyList<TopLevel> TopLevels()
+    public IReadOnlyList<TopLevel> TopLevels() => AllTopLevels();
+
+    /// <summary><see cref="TopLevels"/>, for what reads the app without the inspector's own state (an evaluation's read).</summary>
+    public static IReadOnlyList<TopLevel> AllTopLevels()
     {
         List<TopLevel> tops = [];
         switch (Application.Current?.ApplicationLifetime)

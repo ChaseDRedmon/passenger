@@ -13,6 +13,12 @@ public static class Agent
     /// <summary>How often it looks for the app's UI before it is up.</summary>
     private static readonly TimeSpan Look = TimeSpan.FromMilliseconds(100);
 
+    /// <summary>The app's UI dispatcher, once the app has made it.</summary>
+    internal static Dispatcher? Ui { get; private set; }
+
+    /// <summary>The inspector on the app's UI thread, once made: what an evaluation's read of binding values names elements by.</summary>
+    internal static Inspector? Current { get; private set; }
+
     public static void Start(string socket, Thread main, string avalonia)
     {
         // Before the app's Main, so a binding that fails as its first window opens is heard.
@@ -29,10 +35,11 @@ public static class Agent
     {
         using Connection held = connection;
         Dispatcher dispatcher = WaitForUi(main);
+        Ui = dispatcher;
         Inspector inspector;
         try
         {
-            inspector = dispatcher.Invoke(() => new Inspector(connection));
+            inspector = dispatcher.Invoke(() => Current = new Inspector(connection));
         }
         catch (Exception error)
         {

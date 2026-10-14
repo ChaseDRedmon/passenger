@@ -9,13 +9,15 @@ namespace Passenger.Inspector;
 // An agent's tools ask the same: the windows, the tree with each element's layout and text, a picture the app draws of a
 // window, and input to it as a person's goes. A property breakpoint (Break When Value Changes) asks it to watch an element's
 // property, which stops the debugged app at each change its hit count lets through (PropertyBreaks.cs); in a debugged app each
-// failed binding also calls a method the Avalonia Binding Errors breakpoint stops in (Breaks.cs).
+// failed binding also calls a method the Avalonia Binding Errors breakpoint stops in (Breaks.cs). The bindings of a XAML file's
+// elements are read with their values (values, BindingValues.cs): asked over the socket while the app runs, and through the
+// debugger's evaluation of BindingValues.Read while it is paused, when its UI thread answers nothing.
 
 /// <summary>The names both ends agree on.</summary>
 public static class Wire
 {
     /// <summary>Bumped by a change either end must know of: a hello of another version is refused, saying so.</summary>
-    public const int Version = 3;
+    public const int Version = 4;
 
     /// <summary>The app's environment: the socket's path, where it connects.</summary>
     public const string SocketVariable = "PASSENGER_INSPECTOR";
@@ -34,6 +36,12 @@ public static class Wire
     public const string Capture = "capture";
     public const string Input = "input";
     public const string Watch = "watch";
+    public const string Values = "values";
+
+    /// <summary>What the debugger evaluates for a XAML file's binding values while the app is paused, given the read (an
+    /// <see cref="XamlRead"/>, as JSON) as a string: an object array, the <see cref="XamlValues"/> as JSON first, then each value
+    /// shown, at the <see cref="ShownValue.Slot"/> that names it.</summary>
+    public const string ReadValues = "global::Passenger.Inspector.BindingValues.Read";
 
     /// <summary>The method a watched property's change calls (PropertyBreaks.cs), where the debugger's function breakpoint
     /// for each property breakpoint is.</summary>
@@ -48,6 +56,9 @@ public static class Wire
     public const string Picked = "picked";
     public const string PickEnded = "pickEnded";
     public const string BindingFailed = "bindingFailed";
+
+    /// <summary>A property whose binding the last values read showed has changed since: what was read is out of date.</summary>
+    public const string ValuesChanged = "valuesChanged";
 }
 
 /// <summary>What Passenger asks: the windows' tree, an element's details, Select Element on or off, an element outlined in
@@ -78,7 +89,53 @@ public sealed record Request(int Id, string Method, long? Element = null, bool? 
     public Box? Area { get; init; }
 
     public InputAction? Input { get; init; }
+
+    /// <summary>With Values: the XAML file and its elements whose bindings to read.</summary>
+    public XamlRead? Xaml { get; init; }
 }
+
+/// <summary>A XAML file's bindings to read with their values: the file as the IDE has it, its elements by where the app's build
+/// recorded each, and the element chosen in the Live Visual Tree, which tells apart the instances of an element made more than
+/// once (a template's, a user control's).</summary>
+public sealed record XamlRead(string File, IReadOnlyList<XamlSpot> Elements, long? Chosen)
+{
+    /// <summary>Over the socket: these elements add to those the file's last read asked of (lines scrolled to), whose
+    /// properties the app goes on watching, rather than taking their place.</summary>
+    public bool? More { get; init; }
+}
+
+/// <summary>An element of a XAML file: where it starts as Avalonia records it (its name's line and column, from one), the class
+/// a root element names (its x:Class, for a root Avalonia records no place of), and the properties its bindings set, by the
+/// names their attributes have (an attached one as Owner.Name).</summary>
+public sealed record XamlSpot(int Line, int Column, string? Class, IReadOnlyList<string> Properties);
+
+/// <summary>What the app read of a XAML file's bindings: each element asked of that it made, or why none could be read
+/// (<see cref="Problem"/>; <see cref="WrongThread"/> when asked on a thread other than its UI thread).</summary>
+public sealed record XamlValues(IReadOnlyList<ElementValues> Elements, string? Problem)
+{
+    public bool? WrongThread { get; init; }
+}
+
+/// <summary>An element's bindings on the instance read (Type#Name, by the id the Live Visual Tree knows it by), or, made more
+/// times than one and none of them nearest the element chosen, how many instances there are and no bindings.</summary>
+public sealed record ElementValues(int Line, int Column, string? Control, long? Id, int Instances, IReadOnlyList<BoundValue> Bindings);
+
+/// <summary>A binding on a property of an element's instance: the property's value now, the binding's path as Avalonia writes
+/// it, the path walked from its source, each step with its value, and, for one that failed, why and at which step.
+/// <see cref="Unbound"/> when no binding gives the property its value now (code set it since).</summary>
+public sealed record BoundValue(string Property, string Path, ShownValue? Value, IReadOnlyList<PathStep> Steps, string? Failure, string? FailedAt)
+{
+    public bool? Unbound { get; init; }
+}
+
+/// <summary>A step of a binding's path: its source (DataContext, a named element, the templated parent) or a member read from
+/// the step before, and its value, none when the walk never reached it.</summary>
+public sealed record PathStep(string Name, ShownValue? Value);
+
+/// <summary>A value as the app writes it (a string quoted, an object of no words of its own by its type in braces) and its type;
+/// read through the debugger, also the slot of the evaluation's array that holds it (from one), which the debugger shows as
+/// Variables does.</summary>
+public sealed record ShownValue(string Text, string Type, int Slot);
 
 /// <summary>Input to the app as a person gives it: into its window's own way in from the platform, so hit testing, routing,
 /// pointer-over, focus, gestures, key bindings and commands all run as they would. Kind is one of <see cref="InputKinds"/>.
@@ -167,6 +224,8 @@ public sealed record Reply
     public Picture? Picture { get; init; }
 
     public InputDone? Done { get; init; }
+
+    public XamlValues? Values { get; init; }
 }
 
 /// <summary>The app's first word: its process, the Avalonia it runs (its assembly's version), and why the inspector cannot
@@ -313,6 +372,8 @@ public static class SetterStates
 [JsonSerializable(typeof(Request))]
 [JsonSerializable(typeof(Reply))]
 [JsonSerializable(typeof(BindingFailure))]
+[JsonSerializable(typeof(XamlRead))]
+[JsonSerializable(typeof(XamlValues))]
 internal sealed partial class WireJson : JsonSerializerContext
 {
 }

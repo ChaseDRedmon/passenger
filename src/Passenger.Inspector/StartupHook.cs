@@ -27,6 +27,10 @@ internal static class StartupHook
             }
             string self = typeof(StartupHook).Assembly.Location;
             Assembly inside = new AppAvaloniaContext(self).LoadFromAssemblyPath(self);
+            // An evaluation of BindingValues.Read finds this copy first: it hands the read to the one that inspects.
+            BindingValues.Live = inside.GetType("Passenger.Inspector.BindingValues", throwOnError: true)!
+                .GetMethod(nameof(BindingValues.Read), BindingFlags.Public | BindingFlags.Static)!
+                .CreateDelegate<Func<string, object?[]>>();
             inside.GetType("Passenger.Inspector.Agent", throwOnError: true)!
                 .GetMethod("Start", BindingFlags.Public | BindingFlags.Static)!
                 .Invoke(null, [socket, main, avalonia!.ToString()]);
