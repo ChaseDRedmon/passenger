@@ -108,10 +108,13 @@ public sealed class ActionsTests : IDisposable
             string commit = platforms.ShortcutsFor(AppActions.Commit)[0].Display();
             Assert.True(window.Perform(AppActions.Branches));
             Ui.WaitFor(() => window.OpenContextMenu is not null, "the branch menu");
-            string[] items = [.. window.OpenContextMenu!.Items.OfType<MenuItem>().Select(i => i.Header as string ?? string.Empty)];
+            Ui.Settle();
+            // The keys stand in the item's own column, as every menu's do, written as the keymap writes them.
+            MenuItem commitItem = window.OpenContextMenu!.Items.OfType<MenuItem>().Single(i => i.Header as string == "Commit...");
+            string[] shown = [.. commitItem.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text ?? string.Empty)];
             window.OpenContextMenu.Close();
-            Assert.True(items.Contains($"Commit...    {commit}"),
-                $"The branch menu does not show Commit's shortcut in this window's keymap, {commit}: [{string.Join(", ", items)}]");
+            Assert.True(shown.Contains(commit),
+                $"The branch menu does not show Commit's shortcut in this window's keymap, {commit}: [{string.Join(", ", shown)}]");
 
             // The keys it shows run Commit here.
             Ui.Press(window, platforms.ShortcutsFor(AppActions.Commit)[0].First.Notation());

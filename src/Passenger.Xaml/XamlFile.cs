@@ -153,7 +153,8 @@ public sealed class XamlFile
     public IReadOnlyList<string> ClrNamespacesOf(string? uri) => Types.ClrNamespacesOf(uri);
 
     /// <summary>The type a qualified name (<c>prefix:Name</c>) names at an element; for a markup extension, its
-    /// <c>…Extension</c> type is tried first, as XAML does.</summary>
+    /// <c>…Extension</c> type is tried first, and for an element after its own name (<c>&lt;StaticResource&gt;</c>), as
+    /// XAML does.</summary>
     public ClrType? ResolveType(XmlElement? scope, string qualified, bool extension = false)
     {
         int colon = qualified.IndexOf(':');
@@ -169,7 +170,7 @@ public sealed class XamlFile
             return LanguageType(name);
         }
         IReadOnlyList<string> namespaces = ClrNamespacesOf(uri);
-        foreach (string candidate in extension ? [name + "Extension", name] : new[] { name })
+        foreach (string candidate in extension ? [name + "Extension", name] : new[] { name, name + "Extension" })
         {
             foreach (string clr in namespaces)
             {
