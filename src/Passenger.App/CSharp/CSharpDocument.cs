@@ -147,6 +147,17 @@ public sealed class CSharpDocument : IServerDocument, IDisposable
         semantic?.Refresh();
     }
 
+    /// <summary>The server's word that its colours moved: asked for again unless the request out already answers with it.</summary>
+    public void ColoursMoved()
+    {
+        if (semantic is null)
+        {
+            RefreshColours();
+            return;
+        }
+        semantic.Refreshed();
+    }
+
     public void RefreshDiagnostics() => Pull(TimeSpan.Zero);
 
     public void Dispose()

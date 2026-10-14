@@ -299,6 +299,9 @@ public sealed class LspDocument : IDisposable
 
     private LanguageServer Server => session.Server;
 
+    /// <summary>The server's words so far that its colours moved (<see cref="LanguageServer.ColourRefreshes"/>).</summary>
+    public int ColourRefreshes => Server.ColourRefreshes;
+
     /// <summary>A Razor file (.razor, .cshtml), which the server hands to Razor, cohosted in it: its colours have Razor's
     /// legend (<see cref="LanguageServer.RazorLegend"/>) and its diagnostics are Razor's one source.</summary>
     public bool IsRazor { get; }

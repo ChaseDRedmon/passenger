@@ -109,6 +109,12 @@ public sealed class LanguageServer : IAsyncDisposable
     /// semantic tokens should be asked for again. Raised on any thread.</summary>
     public event EventHandler? ColoursRefreshRequested;
 
+    /// <summary>How many times so far the server has said its colours moved, counted as each word arrives, before
+    /// <see cref="ColoursRefreshRequested"/>: a request sent once a word had arrived answers with what it told of.</summary>
+    public int ColourRefreshes => Volatile.Read(ref colourRefreshes);
+
+    private int colourRefreshes;
+
     /// <summary>The server's diagnostics moved in a way only it knows: they should be pulled again, and only they, since
     /// asking a long file's colours again costs the server a second. Raised on any thread.</summary>
     public event EventHandler? DiagnosticsRefreshRequested;
@@ -899,6 +905,10 @@ public sealed class LanguageServer : IAsyncDisposable
         [JsonRpcMethod("workspace/semanticTokens/refresh")]
         public object? RefreshTokens(JsonElement? request = null)
         {
+            if (Owner is { } owner)
+            {
+                Interlocked.Increment(ref owner.colourRefreshes);
+            }
             Owner?.ColoursRefreshRequested?.Invoke(Owner, EventArgs.Empty);
             return null;
         }

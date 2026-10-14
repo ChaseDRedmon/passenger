@@ -433,7 +433,7 @@ public sealed class CSharpService : IAsyncDisposable
             }
             TaskCompletionSource loaded = new(TaskCreationOptions.RunContinuationsAsynchronously);
             EventHandler onLoaded = (_, _) => loaded.TrySetResult();
-            EventHandler onColours = (_, _) => UiThread.Post(() => Each(document => document.RefreshColours()));
+            EventHandler onColours = (_, _) => UiThread.Post(() => Each(document => document.ColoursMoved()));
             EventHandler onDiagnostics = (_, _) => UiThread.Post(() => Each(document => document.RefreshDiagnostics()));
             // Projects loaded (the file shown's first, then the rest, or one loaded again): the files' projects may be others.
             EventHandler onProjects = (_, _) => UiThread.Post(() => Each(document => document.FindContexts()));
