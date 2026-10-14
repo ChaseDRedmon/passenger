@@ -68,16 +68,40 @@ attach() {
     mounted=1
 }
 detach() {
-    # Spotlight or XProtect can hold a volume just made for a moment; the last try forces it.
-    for try in 1 2 3; do
-        if hdiutil detach "$mount" -quiet; then
+    # Spotlight or XProtect can hold a volume just made for a moment; the last tries force it, the very last saying why
+    # and what holds it (-quiet closes stderr, which left a failure here with no word on CI).
+    for try in 1 2 3 4 5; do
+        force=
+        if [ "$try" -gt 3 ]; then
+            force=-force
+        fi
+        if hdiutil detach "$mount" $force -quiet; then
             mounted=
             return
         fi
         sleep "$try"
     done
-    hdiutil detach "$mount" -force -quiet
+    if ! hdiutil detach "$mount" -force; then
+        lsof +D "$mount" >&2 || true
+        fail "the image mounted at $mount could not be detached"
+    fi
     mounted=
+}
+# hdiutil create and convert now and then fail on a CI runner ("Resource busy", the system's scanners on what was just
+# written), and -quiet closes stderr: tried three times, a moment apart, the last one saying why. OUT is removed first.
+retry_hdiutil() {
+    out=$1
+    shift
+    for try in 1 2; do
+        rm -f "$out"
+        if hdiutil "$@" -quiet; then
+            return
+        fi
+        echo "package-mac: hdiutil $1 failed (try $try), trying again" >&2
+        sleep $((try * 5))
+    done
+    rm -f "$out"
+    hdiutil "$@" || fail "hdiutil $1 failed three times"
 }
 trap '[ -z "$mounted" ] || hdiutil detach "$mount" -force -quiet' EXIT
 trap 'exit 1' HUP INT TERM
@@ -236,7 +260,7 @@ tiffutil -cathidpicheck "$work/background@1x.png" "$work/background@2x.png" -out
 # fseventsd logs nothing on a volume whose .fseventsd holds no_log, so the read-write mount leaves no log in the image.
 mkdir "$stage/.fseventsd"
 touch "$stage/.fseventsd/no_log"
-hdiutil create -volname "$volume_name" -srcfolder "$stage" -fs HFS+ -format UDRW -ov "$work/image.dmg" -quiet
+retry_hdiutil "$work/image.dmg" create -volname "$volume_name" -srcfolder "$stage" -fs HFS+ -format UDRW -ov "$work/image.dmg"
 attach "$work/image.dmg" -readwrite
 # The volume's top folder says it has an icon of its own (Finder's kHasCustomIcon), which hdiutil does not copy.
 xattr -wx com.apple.FinderInfo 0000000000000000040000000000000000000000000000000000000000000000 "$mount"
@@ -245,7 +269,7 @@ xattr -wx com.apple.FinderInfo 0000000000000000040000000000000000000000000000000
 python3 -I "$root/tools/dmg-layout.py" write "$mount" "$volume_name"
 detach
 # LZMA: about a quarter smaller than zlib or LZFSE (ULFO) to download; macOS reads it from 10.15, and the app needs 13.
-hdiutil convert "$work/image.dmg" -format ULMO -o "$image" -quiet
+retry_hdiutil "$image" convert "$work/image.dmg" -format ULMO -o "$image"
 rm -f "$work/image.dmg"
 if [ -n "$identity" ]; then
     developer codesign --force --timestamp --sign "$identity" "$image"
