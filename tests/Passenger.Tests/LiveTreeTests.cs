@@ -1,4 +1,3 @@
-using System.Reflection;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
@@ -34,7 +33,7 @@ public sealed class LiveTreeTests : IClassFixture<RestoredFolders>, IDisposable
                 File.Copy(file, Path.Combine(made, Path.GetFileName(file)));
             }
             string project = Path.Combine(made, "LiveTreeApp.csproj");
-            File.WriteAllText(project, Project());
+            File.WriteAllText(project, AvaloniaApp.HeadlessProject());
             return project;
         }));
     }
@@ -193,14 +192,4 @@ public sealed class LiveTreeTests : IClassFixture<RestoredFolders>, IDisposable
 
     /// <summary>The line (from one) of a file of the app holding some text, so a test names what it means rather than a number.</summary>
     private int Line(string file, string text) => Array.FindIndex(File.ReadAllLines(Path.Combine(folder, file)), l => l.Contains(text, StringComparison.Ordinal)) + 1;
-
-    /// <summary>The app's project, on the Avalonia the tests run, which their restore already has.</summary>
-    private static string Project()
-    {
-        string version = typeof(AvaloniaObject).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()!.InformationalVersion.Split('+')[0];
-        string packages = string.Concat(new[] { "Avalonia", "Avalonia.Themes.Fluent", "Avalonia.Fonts.Inter", "Avalonia.Headless", "Avalonia.HarfBuzz", "Avalonia.Skia" }
-            .Select(p => $"    <PackageReference Include=\"{p}\" Version=\"{version}\" />\n"));
-        return "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n"
-            + "    <Nullable>enable</Nullable>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n  <ItemGroup>\n" + packages + "  </ItemGroup>\n</Project>\n";
-    }
 }

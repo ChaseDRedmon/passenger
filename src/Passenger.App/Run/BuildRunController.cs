@@ -552,7 +552,7 @@ public sealed class BuildRunController
 
     /// <summary>A failure with its problem, which is placed once, when it first fails: at its misspelt member where its XAML
     /// has it, else at its control's element.</summary>
-    private BindingProblem Placed(LiveApp app, BindingFailure failure)
+    public BindingProblem Placed(LiveApp app, BindingFailure failure)
     {
         if (!placed.TryGetValue((app, failure.Id), out Problem? problem))
         {

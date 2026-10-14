@@ -1,4 +1,6 @@
 using System.Net.Sockets;
+using System.Reflection;
+using System.Runtime.Loader;
 using System.Text;
 using System.Text.Json;
 using Passenger.App.Run;
@@ -46,17 +48,20 @@ public sealed class LiveApp : IDisposable
     private NetworkStream? stream;
     private int next;
 
-    private LiveApp(LaunchPlan plan, string socket, Socket listener)
+    private LiveApp(string name, string socket, Socket listener, LaunchPlan? plan)
     {
         this.listener = listener;
         SocketPath = socket;
-        Name = plan.Name;
-        Dictionary<string, string> environment = new(plan.Environment)
+        Name = name;
+        if (plan is not null)
         {
-            [Wire.SocketVariable] = socket,
-            [Wire.StartupHooks] = Hooks(plan, InspectorPath),
-        };
-        Plan = plan with { Environment = environment };
+            Dictionary<string, string> environment = new(plan.Environment)
+            {
+                [Wire.SocketVariable] = socket,
+                [Wire.StartupHooks] = Hooks(plan, InspectorPath),
+            };
+            Plan = plan with { Environment = environment };
+        }
         // Not held: it waits as long as the app runs, which nothing drawn waits for.
         _ = Task.Run(ServeAsync);
     }
@@ -64,8 +69,44 @@ public sealed class LiveApp : IDisposable
     /// <summary>The inspector beside the app, as its build carries it.</summary>
     public static string InspectorPath => Path.Combine(AppContext.BaseDirectory, "inspector", "Passenger.Inspector.dll");
 
-    /// <summary>The plan as it is launched: the inspector among its startup hooks, and the socket to connect to.</summary>
-    public LaunchPlan Plan { get; }
+    /// <summary>The plan as it is launched: the inspector among its startup hooks, and the socket to connect to; none for
+    /// Passenger's own windows (<see cref="Own"/>).</summary>
+    public LaunchPlan? Plan { get; }
+
+    /// <summary>Passenger's own windows, once an agent has asked for them.</summary>
+    private static LiveApp? own;
+
+    /// <summary>Passenger's own windows, every one of this process's, inspected as an app is: the same inspector, loaded into
+    /// Passenger the first time an agent asks and kept from then on. The process's, as the inspector's binding log is
+    /// Avalonia's one logger, which it takes over (passing everything on to the IDE's own log) and keeps.</summary>
+    public static LiveApp Own()
+    {
+        UiThread.Check();
+        if (own is not null)
+        {
+            return own;
+        }
+        if (!File.Exists(InspectorPath))
+        {
+            throw new LiveAppException("This build of Passenger carries no inspector");
+        }
+        (string socket, Socket listener) = Listen("Passenger") ?? throw new LiveAppException("Passenger could not listen for its own inspector");
+        LiveApp app = new("Passenger", socket, listener, plan: null);
+        try
+        {
+            Assembly inspector = AssemblyLoadContext.Default.LoadFromAssemblyPath(InspectorPath);
+            inspector.GetType("Passenger.Inspector.Agent", throwOnError: true)!
+                .GetMethod("Start", BindingFlags.Public | BindingFlags.Static)!
+                .Invoke(null, [socket, Thread.CurrentThread, typeof(Avalonia.AvaloniaObject).Assembly.GetName().Version!.ToString()]);
+        }
+        catch (Exception error) when (error is IOException or BadImageFormatException or TypeLoadException or MissingMethodException or TargetInvocationException)
+        {
+            app.Dispose();
+            throw new LiveAppException($"Passenger's inspector could not start in Passenger: {error.GetBaseException().Message}");
+        }
+        own = app;
+        return app;
+    }
 
     /// <summary>The run configuration's name, as the window says it.</summary>
     public string Name { get; }
@@ -110,6 +151,12 @@ public sealed class LiveApp : IDisposable
         {
             return null;
         }
+        return Listen(plan.Name) is (string socket, Socket listener) ? new LiveApp(plan.Name, socket, listener, plan) : null;
+    }
+
+    /// <summary>A socket of its own in the temp folder for one app's inspector to connect to, or null, logged, when it cannot.</summary>
+    private static (string Socket, Socket Listener)? Listen(string name)
+    {
         string socket = Path.Combine(Path.GetTempPath(), $"passenger-{Environment.ProcessId}-{Interlocked.Increment(ref made)}.sock");
         // Only a dead Passenger that had this process's number leaves one by this name.
         File.Delete(socket);
@@ -122,10 +169,10 @@ public sealed class LiveApp : IDisposable
         catch (SocketException error)
         {
             listener.Dispose();
-            IdeErrors.Write($"The Live Visual Tree could not listen for {plan.Name} at {socket}: {error.Message}");
+            IdeErrors.Write($"The Live Visual Tree could not listen for {name} at {socket}: {error.Message}");
             return null;
         }
-        return new LiveApp(plan, socket, listener);
+        return (socket, listener);
     }
 
     /// <summary>The inspector first among the program's startup hooks, those its configuration or the IDE's environment
@@ -148,6 +195,21 @@ public sealed class LiveApp : IDisposable
 
     /// <summary>Outlines an element in the app, or takes the outline away.</summary>
     public Task HighlightAsync(long? element) => AskAsync(new Request(0, Wire.Highlight, element));
+
+    /// <summary>The app's windows and their popups, for an agent.</summary>
+    public async Task<IReadOnlyList<AppWindow>> WindowsAsync() => (await AskAsync(new Request(0, Wire.Windows))).Windows ?? [];
+
+    /// <summary>The windows' trees as an agent reads them: each element's place, text and state, and the properties named.</summary>
+    public async Task<AppTree> AgentTreeAsync(IReadOnlyList<string> properties) =>
+        (await AskAsync(new Request(0, Wire.Tree) { Layout = true, Properties = properties })).Tree ?? new AppTree([]);
+
+    /// <summary>A picture the app draws of a window, or of an element's part of it, or of an area of the window.</summary>
+    public async Task<Picture> CaptureAsync(long element, double? scale, Box? area) =>
+        (await AskAsync(new Request(0, Wire.Capture, element) { Scale = scale, Area = area })).Picture ?? throw new LiveAppException($"{Name} drew nothing");
+
+    /// <summary>Input to the app, as a person gives it, answered once it has been handled and laid out.</summary>
+    public async Task<InputDone> InputAsync(InputAction input) =>
+        (await AskAsync(new Request(0, Wire.Input) { Input = input })).Done ?? throw new LiveAppException($"{Name} did not say what the input did");
 
     private async Task<Reply> AskAsync(Request request)
     {

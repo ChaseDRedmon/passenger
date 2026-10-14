@@ -14,10 +14,11 @@ namespace Passenger.Tests;
 /// <summary>Passenger as an agent's IDE, over the Model Context Protocol with the SDK's own client: an
 /// agent that starts Passenger with no window (<c>--mcp</c>) and works a project through it, and one
 /// that joins the window a person is using (<c>--mcp-attach</c>) and changes what they see, once the
-/// person lets agents in, asking them before it first changes anything. Every exchange with Passenger has a time limit,
+/// person lets agents in, asking them before it first changes anything; and agents that look at and drive the Avalonia app
+/// Passenger runs (McpTests.AvaloniaApp.cs). Every exchange with Passenger has a time limit,
 /// and one that runs out or fails ends the test naming it and quoting what Passenger said meanwhile.</summary>
 [Collection(Alone.Name)]
-public sealed class McpTests : IClassFixture<RestoredFolders>, IDisposable
+public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFixture<AgentAppFolder>, IDisposable
 {
     /// <summary>The build's, beside the tests, or an installed copy that PASSENGER_EXECUTABLE names: CI's installer job
     /// has an agent debug through the Passenger its Windows installer installed.</summary>
@@ -30,8 +31,9 @@ public sealed class McpTests : IClassFixture<RestoredFolders>, IDisposable
     private readonly List<string> errors = [];
     private readonly List<Process> passengers = [];
 
-    public McpTests(RestoredFolders folders)
+    public McpTests(RestoredFolders folders, AgentAppFolder app)
     {
+        appFolder = app.Folder;
         string made = string.Empty;
         TestFolders.Prepare(() => made = folders.Take("mcp-", project =>
         {

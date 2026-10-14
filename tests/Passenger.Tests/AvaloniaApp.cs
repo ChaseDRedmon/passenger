@@ -56,6 +56,16 @@ internal static class AvaloniaApp
         return hive;
     }
 
+    /// <summary>The project file of a headless app of tests/Debuggees (LiveTreeApp, BindingErrorsApp, AgentApp), which have
+    /// none of their own: on the Avalonia the tests run, so their restore already has its packages.</summary>
+    public static string HeadlessProject()
+    {
+        string packages = string.Concat(new[] { "Avalonia", "Avalonia.Themes.Fluent", "Avalonia.Fonts.Inter", "Avalonia.Headless", "Avalonia.HarfBuzz", "Avalonia.Skia" }
+            .Select(p => $"    <PackageReference Include=\"{p}\" Version=\"{Version}\" />\n"));
+        return "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n"
+            + "    <Nullable>enable</Nullable>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n  <ItemGroup>\n" + packages + "  </ItemGroup>\n</Project>\n";
+    }
+
     /// <summary>Makes the app in a folder, its project and namespace named <paramref name="name"/>, without restoring it.</summary>
     public static void Create(string folder, string name)
     {

@@ -690,7 +690,7 @@ public sealed partial class PassengerTools(MainWindow window)
         {
             return await UiThread.InvokeAsync(work);
         }
-        catch (Exception error) when (error is InvalidOperationException or ArgumentException or IOException or UnauthorizedAccessException or TimeoutException or DapException or LanguageServerFailed)
+        catch (Exception error) when (error is InvalidOperationException or ArgumentException or IOException or UnauthorizedAccessException or TimeoutException or DapException or LanguageServerFailed or LiveTree.LiveAppException)
         {
             throw new ModelContextProtocol.McpException(error is DapException dap ? $"The debugger refused: {dap.Reason}" : error.Message, error);
         }

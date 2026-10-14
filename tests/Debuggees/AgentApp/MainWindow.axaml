@@ -1,0 +1,21 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="AgentApp.MainWindow"
+        x:CompileBindings="False"
+        Title="Agent App" Width="480" Height="360">
+    <StackPanel x:Name="Panel" Margin="12" Spacing="8">
+        <TextBlock x:Name="Counter" Text="Not clicked yet" />
+        <Button x:Name="Count" Content="Count" Click="OnCount" />
+        <TextBox x:Name="NameBox" Watermark="Your name" KeyDown="OnNameKey" />
+        <TextBlock x:Name="Greeting" Text="Nobody greeted" />
+        <TextBlock x:Name="Caption" Text="{Binding Nmae}" />
+        <ComboBox x:Name="Colour" SelectedIndex="0">
+            <ComboBoxItem>Red</ComboBoxItem>
+            <ComboBoxItem>Green</ComboBoxItem>
+            <ComboBoxItem>Blue</ComboBoxItem>
+        </ComboBox>
+        <ScrollViewer x:Name="List" Height="80">
+            <StackPanel x:Name="Items" />
+        </ScrollViewer>
+    </StackPanel>
+</Window>
