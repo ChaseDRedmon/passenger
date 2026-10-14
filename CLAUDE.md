@@ -189,6 +189,14 @@ window or takes the focus; it shows everything but the system's own window chrom
   `JsonSchemas` answers `vscode/content` from the carried schemas, else downloads while Settings' Remote JSON Schemas
   allows (`PASSENGER_SCHEMAS` points the tests at a dead address). `CodeAssist.Web.cs` gives JSON the Go to Declaration
   (package.json dependencies) and property Rename its server lacks. Agents' MCP tools don't know web files yet.
+  `WebLanguages.Eslint` (`EslintService`/`EslintDocument`) runs vscode-langservers-extracted's ESLint server per folder
+  on the project's own eslint (`ProjectPackages`: found from the file up, or Settings' Manual package); its fixes are
+  commands whose edits come back as `workspace/applyEdit` (`ServerStart.ApplyEdit`, applied through `WorkspaceEdits`),
+  and its markers go beside the server's (`WebDocument.ShowLint`). `WebLanguages.Prettier` runs the project's prettier
+  through `Web/prettier.cjs` (carried as `web/passenger/prettier.cjs`), one warm Node.js per folder over JSON lines.
+  `CodeAssist.Linting.cs` is ESLint's context actions, Fix ESLint Problems, Reformat Code / Reformat with Prettier and
+  `BeforeSave`, which `MainWindow.SaveExplicitly` runs on File Save / Save All only. A banner's link is
+  `OpenDocument.NoticeAction` (Run 'npm install', through ChildProcesses).
 - `src/Passenger.Host`: MSBuild in a process of its own (net10.0 on the machine's dotnet, one per SDK in
   `ProjectHosts`, started through ChildProcesses, carried under `host/`), loading the installed SDK's MSBuild (the one
   the folder's global.json picks) through MSBuildLocator. It answers JSON lines: `evaluate` (the Solution view's
@@ -714,7 +722,10 @@ screenshot's `--type` sends its text as one input, so completion opens only when
 (fixture `HeadlessTestsFolder`) run an xunit v3 headless project on the platform and one on VSTest
 (`IsTestingPlatformApplication=false`), restored through `AvaloniaApp.UseFeed`. `WebLanguagesTests` need Node.js on
 the PATH and skip, saying why, without it (the TypeScript ones also on a Node.js older than typescript-language-server's
-`engines.node`). `BindingErrorsTests` also debug BindingErrorsApp with Avalonia Binding Errors on. Headless, a window
+`engines.node`). `EslintPrettierTests` copy the tests' own eslint and prettier (`tests/Passenger.Tests/NodePackages`,
+put in `node-packages/` at build by `tools/Passenger.NodePackages`) into their project; the run's npm is offline with
+its own cache and config (`TestRun`), so Run 'npm install' fails fast without the registry. The Windows VM has no
+Node.js, so the web languages' tests skip there; CI's Windows runner has it. `BindingErrorsTests` also debug BindingErrorsApp with Avalonia Binding Errors on. Headless, a window
 never loses activation, so a menu stays open under a dialog, and when the dialog closes the window puts focus back on
 what it remembers, never a menu (a focus scope of its own): `MainWindow.KeepKeys` gives an open menu the keys back.
 Read any log the IDE or a server may be writing with sharing (`Ui.Shared`), and a `WaitFor` condition returns false,
