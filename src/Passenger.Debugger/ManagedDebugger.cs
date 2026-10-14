@@ -450,6 +450,8 @@ public partial class ManagedDebugger
             ForgetReturnedValues();
         }
         _stopShown = true;
+        // A pause holds threads where they stand, and an exception inside its managed dispatch, neither at a patch.
+        _stoppedInDispatch = reason is "pause" or "exception" ? null : threadId;
         OnStopped?.Invoke(new StopInfo(threadId, reason, filePath, line, column, hitBreakpointIds, text));
     }
 
@@ -884,7 +886,8 @@ public partial class ManagedDebugger
     }
 
     // Not intended to implement IDisposable - it is intended that this is called via Disconnect()
-    private void Dispose()
+    // letGo: the program runs on after (a detach), so no thread may be left inside the runtime's handling of a stop.
+    private void Dispose(bool letGo = false)
     {
         if (_process is null)
         {
@@ -892,6 +895,12 @@ public partial class ManagedDebugger
         }
         // A process that has exited is the runtime's to tear down: nothing below may call into it.
         bool exited = _exited.IsSet;
+        // The threads the runtime holds inside its handling of a breakpoint or a step's end, run off it before the detach.
+        List<int> inDispatch = [.. _deferredEvents.Select(DispatchThread).OfType<int>()];
+        if (_stopShown && _stoppedInDispatch is int stopped)
+        {
+            inDispatch.Insert(0, stopped);
+        }
 
         // Dispose modules, which releases PDB files
         foreach (ModuleInfo moduleInfo in _modules.Values)
@@ -944,6 +953,11 @@ public partial class ManagedDebugger
             EndSmartStep();
         }
         _stepInTargets.Clear();
+        if (!exited)
+        {
+            // A step under way would stop the program as it runs off its stop, and fails the detach.
+            _stepper?.TryDeactivate();
+        }
         _stepper = null!;
         _stepping = null;
         _stepAfterEvaluation = null;
@@ -975,9 +989,20 @@ public partial class ManagedDebugger
         // ProcessRuntimeEventQueue is blocked on DapRequestAndRuntimeEventLock (which we hold) and would
         // never complete if we waited on it here — that is the deadlock. Read and discard remaining events ourselves,
         // then let the processor exit once the lock is released.
-        while (_runtimeEventChannel.Reader.TryRead(out _)) { }
+        while (_runtimeEventChannel.Reader.TryRead(out CorDebugManagedCallbackEventArgs? unhandled))
+        {
+            if (DispatchThread(unhandled) is int thread)
+            {
+                inDispatch.Add(thread);
+            }
+        }
 
-        // Detach from the process
+        // Detach from the process, once no thread is left for it to answer; the program may end as it runs off its stop.
+        if (!exited && letGo)
+        {
+            RunOffDispatch(_process, inDispatch);
+            exited = _exited.IsSet;
+        }
         if (!exited)
         {
             if (_process?.TryDetach() is int detached and not Cor.S_OK)

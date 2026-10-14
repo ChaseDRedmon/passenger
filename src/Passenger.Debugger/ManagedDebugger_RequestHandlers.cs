@@ -1045,7 +1045,7 @@ public partial class ManagedDebugger
                     _logger?.Invoke($"Error stopping process during disconnect: {hResult}");
                 }
             }
-            Dispose();
+            Dispose(letGo: true);
         }
     }
 
