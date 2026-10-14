@@ -727,7 +727,7 @@ public partial class ManagedDebugger
             FunctionBreakpointPattern pattern = FunctionBreakpointPattern.Parse(bp.FunctionName);
             foreach (ResolvedFunctionBreakpoint resolved in FunctionBreakpointMetadataResolver.Resolve(module.MetadataReader, pattern))
             {
-                if (bp.FunctionBindings.Any(binding => binding.ModuleBaseAddress == module.BaseAddress && binding.MethodToken == resolved.MethodToken))
+                if (bp.FunctionBindings.Any(binding => ReferenceEquals(binding.Module, module) && binding.MethodToken == resolved.MethodToken))
                 {
                     continue;
                 }
@@ -739,7 +739,7 @@ public partial class ManagedDebugger
                     corBreakpoint.Activate(true);
                 }
 
-                bp.FunctionBindings.Add(new BreakpointManager.FunctionBreakpointBinding(corBreakpoint, module.BaseAddress, resolved.MethodToken, resolved.Source));
+                bp.FunctionBindings.Add(new BreakpointManager.FunctionBreakpointBinding(corBreakpoint, module.BaseAddress, resolved.MethodToken, resolved.Source, module));
                 bp.Verified = true;
                 bp.Message = null;
             }

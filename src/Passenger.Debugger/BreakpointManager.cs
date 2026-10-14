@@ -52,11 +52,15 @@ public class BreakpointManager
         public bool Refused { get; set; }
     }
 
+    /// <summary>A function breakpoint bound in one module. Its module is told apart from another of the same base address:
+    /// one assembly loaded into two load contexts (the Avalonia inspector, a startup hook that loads itself again) is two
+    /// modules over one image, and code runs in either.</summary>
     public record FunctionBreakpointBinding(
         ICorDebugFunctionBreakpoint CorBreakpoint,
         CORDB_ADDRESS ModuleBaseAddress,
         int MethodToken,
-        ModuleMetadataReader.ResolvedBreakpoint Source);
+        ModuleMetadataReader.ResolvedBreakpoint Source,
+        ModuleInfo Module);
 
     /// <summary>
     /// Create a new breakpoint
