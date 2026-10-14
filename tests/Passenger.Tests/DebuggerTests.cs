@@ -1274,6 +1274,12 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
             Assert.True(window.Perform(AppActions.Detach), "Detach could not run on the paused program");
             Ui.WaitFor(() => !window.Debugger.IsDebugging, "the debugger to let go of the paused program");
             Assert.True(program.WaitForExit(TimeSpan.FromSeconds(30)), "The program let go of at its breakpoint never ran on to its end");
+            if (program.ExitCode != 0 && OperatingSystem.IsWindows() && System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture == System.Runtime.InteropServices.Architecture.X64)
+            {
+                // Its copy with CET's shadow stacks off, let go the same way, says whether they are what ended it.
+                string unshadowed = LetGoAtBreakpoint(window, "ReadsInputConsoleAppNoCet");
+                Assert.Fail($"The program let go of at its breakpoint ended with exit code 0x{program.ExitCode:X8}; its copy built with CetCompat=false, let go the same way, {unshadowed}");
+            }
             Assert.Equal(0, program.ExitCode);
             Assert.Equal("read: hello", output.Result.Trim());
             Assert.DoesNotContain(editor.LineMarks, m => m.Kind == LineMarkKind.ExecutionPoint);
@@ -1364,6 +1370,39 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
     }
 
     /// <summary>Attach to Process from its keys, once it has listed the programs.</summary>
+    /// <summary>A debuggee built from ReadsInputConsoleApp's Program.cs, started outside Passenger, attached to through Attach
+    /// to Process, brought by a line to the breakpoint the window has on its source and let go there with Detach: how it
+    /// ended, in words for a failure message.</summary>
+    private static string LetGoAtBreakpoint(MainWindow window, string debuggee)
+    {
+        ProcessStartInfo start = ChildProcesses.Command(Debugging.Helpers.Debuggees.Apphost(debuggee), []);
+        start.RedirectStandardInput = true;
+        start.RedirectStandardOutput = true;
+        using Process program = ChildProcesses.Start(start);
+        Task<string> output = program.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);
+        try
+        {
+            Ui.WaitFor(() => DotnetProcesses.List().Any(p => p.Id == program.Id), $"{debuggee}'s runtime to start");
+            AttachToProcessDialog dialog = OpenAttachToProcess(window);
+            dialog.KeyTextInput(program.Id.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            Ui.Settle();
+            dialog.KeyPress(Key.Enter, RawInputModifiers.None, PhysicalKey.None, null);
+            Ui.WaitFor(() => window.Debugger.Session is { State: DebugState.Running }, $"the debugger to attach to {debuggee}");
+            program.StandardInput.WriteLine("hello");
+            program.StandardInput.Flush();
+            Ui.WaitFor(() => window.Debugger.Session?.State == DebugState.Paused, $"{debuggee} to stop at the breakpoint");
+            Assert.True(window.Perform(AppActions.Detach), $"Detach could not run on {debuggee}");
+            Ui.WaitFor(() => !window.Debugger.IsDebugging, $"the debugger to let go of {debuggee}");
+            return program.WaitForExit(TimeSpan.FromSeconds(30))
+                ? $"ended with exit code 0x{program.ExitCode:X8}, having written '{output.Result.Trim()}'"
+                : "never ran on to its end";
+        }
+        finally
+        {
+            Processes.Kill(program.Id);
+        }
+    }
+
     private static AttachToProcessDialog OpenAttachToProcess(MainWindow window)
     {
         Ui.Run(window, AppActions.AttachToProcess);
