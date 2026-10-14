@@ -26,11 +26,13 @@ public sealed class DebugAdapter
     /// <summary>The longest the client may take to start a program in its terminal.</summary>
     private static readonly TimeSpan RunInTerminalLimit = TimeSpan.FromSeconds(30);
 
-    public DebugAdapter(DapConnection connection, Action<string>? log = null)
+    /// <summary>The adapter over a connection; <paramref name="symbols"/> keeps the symbols decompiled for assemblies that
+    /// ship none, without which their frames have no source.</summary>
+    public DebugAdapter(DapConnection connection, Action<string>? log = null, Passenger.Debugger.Decompilation.SymbolCache? symbols = null)
     {
         this.connection = connection;
         this.log = log;
-        debugger = new ManagedDebugger(log);
+        debugger = new ManagedDebugger(log, symbols);
         Subscribe();
         Register();
     }
@@ -99,8 +101,16 @@ public sealed class DebugAdapter
             List<StackFrameInfo> frames = await Locked(() => debugger.GetStackTrace(arguments.ThreadId, arguments.StartFrame ?? 0, arguments.Levels));
             return new StackTraceResponse([.. frames.Select(ToProtocol)]);
         });
+        // The frame's assembly is decompiled between two holds of the engine's lock, never under one (CoreLib's takes many
+        // seconds), so a request meanwhile, a disconnect among them, is answered; the second fails if the program ran on.
         connection.Handle<ResolveStackFrameArguments, ResolveStackFrameResponse>("resolveStackFrame", async arguments =>
-            new ResolveStackFrameResponse(ToProtocol(await Locked(() => debugger.ResolveStackFrame(arguments.StackFrameId)))));
+        {
+            if (await Locked(() => debugger.SymbolsWantedAt(arguments.StackFrameId)) is { } wanted)
+            {
+                await debugger.DecompileAsync(wanted).ConfigureAwait(false);
+            }
+            return new ResolveStackFrameResponse(ToProtocol(await Locked(() => debugger.ResolveStackFrame(arguments.StackFrameId))));
+        });
         connection.Handle<ScopesArguments, ScopesResponse>("scopes", async arguments =>
         {
             List<ScopeInfo> scopes = await Locked(() => debugger.GetScopes(arguments.FrameId));

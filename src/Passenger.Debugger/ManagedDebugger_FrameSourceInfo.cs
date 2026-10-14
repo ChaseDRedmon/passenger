@@ -1,11 +1,4 @@
-using System.Reflection.PortableExecutable;
-using ICSharpCode.Decompiler;
-using ICSharpCode.Decompiler.CSharp;
-using ICSharpCode.Decompiler.CSharp.Transforms;
-using ICSharpCode.Decompiler.DebugInfo;
-using ICSharpCode.Decompiler.Metadata;
-using ICSharpCode.Decompiler.TypeSystem;
-using Passenger.Debugger.Decompilation;
+using System.Diagnostics;
 using Passenger.Debugger.Interop;
 
 namespace Passenger.Debugger;
@@ -18,10 +11,15 @@ public class DecompiledSourceInfo
     public required string CallingUserCodeAssemblyPath { get; init; }
 }
 public record struct AssemblyPathAndMvid(string AssemblyPath, Guid Mvid);
+
+/// <summary>An assembly to decompile symbols for: read under the engine's lock, decompiled off it.</summary>
+public sealed record SymbolsWanted(string AssemblyPath, string Name, Guid Mvid, IReadOnlyList<string> References);
+
 public partial class ManagedDebugger
 {
-    /// This appears to be 1 based, ie requires no adjustment when returned to the user
-    private SourceInfo? GetSourceInfoAtFrame(ICorDebugFrame frame, bool decompileIfNeeded)
+    /// This appears to be 1 based, ie requires no adjustment when returned to the user. With
+    /// <paramref name="decompiled"/>, a module with no symbols of its own takes the decompiled ones the cache has.
+    private SourceInfo? GetSourceInfoAtFrame(ICorDebugFrame frame, bool decompiled)
     {
         if (frame is not ICorDebugILFrame ilFrame)
         {
@@ -33,13 +31,9 @@ public partial class ManagedDebugger
         {
             return null;
         }
-        if (module.MetadataReader.HasSymbols is false && decompileIfNeeded && !module.IsDynamic)
+        if (decompiled)
         {
-            // No PDB on disk — generate one via decompilation and update the module entry
-            if (GetCachedOrGeneratePdb(module))
-            {
-                module.SymbolsFromDecompiled = true;
-            }
+            LoadDecompiledSymbols(module);
         }
 
         if (module.MetadataReader.HasSymbols && StoppedShortAt(frame) is { } placed)
@@ -115,81 +109,78 @@ public partial class ManagedDebugger
         return $"{GetFullMetadataTypeName(metadataImport, declaringType)}+{typeProps.szTypeDef}";
     }
 
-    private bool GetCachedOrGeneratePdb(ModuleInfo moduleInfo)
+    /// <summary>A module with no symbols of its own given its decompiled ones from the cache, read once; false while the cache
+    /// has none, which only <see cref="DecompileAsync"/> makes, off the engine's lock. One that does not load is deleted, to be
+    /// made again once.</summary>
+    private bool LoadDecompiledSymbols(ModuleInfo module)
     {
-        string sharpIdeSymbolCachePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Temp", "SharpIdeSymbolCache");
-        IMetaDataImport metadataImport = moduleInfo.Module.GetMetaDataInterface<IMetaDataImport>();
-        Guid mvid = metadataImport.ScopeProps.pmvid;
-        string assemblyName = Path.GetFileNameWithoutExtension(moduleInfo.ModuleName);
-        string pdbPath = Path.Combine(sharpIdeSymbolCachePath, assemblyName, mvid.ToString(), $"{assemblyName}.decompiled.pdb");
-        if (File.Exists(pdbPath))
+        if (module.SymbolsFromDecompiled)
         {
-            if (!moduleInfo.MetadataReader.TryLoadSymbols(pdbPath))
-            {
-                _logger?.Invoke($"GetCachedOrGeneratePdb: could not load cached PDB '{pdbPath}'");
-                return false;
-            }
             return true;
         }
-        return GeneratePdb(moduleInfo, pdbPath);
+        if (_symbols is null || module.IsDynamic || module.MetadataReader.HasSymbols)
+        {
+            return false;
+        }
+        string name = Path.GetFileNameWithoutExtension(module.ModuleName);
+        if (_symbols.Find(name, module.MetadataReader.Mvid) is not { } pdb)
+        {
+            return false;
+        }
+        if (module.MetadataReader.TryLoadSymbols(pdb))
+        {
+            module.SymbolsFromDecompiled = true;
+            return true;
+        }
+        _logger?.Invoke($"Decompiled symbols {pdb} did not load: deleted, to be made again");
+        _symbols.Discard(pdb);
+        return false;
     }
 
-
-    private bool GeneratePdb(ModuleInfo moduleInfo, string pdbPathToWriteTo)
+    /// <summary>What a module needs decompiled before its frames can show source: null when it has symbols (its own, or
+    /// decompiled ones the cache has), when it cannot be decompiled, or when this session has decompiled it already (once
+    /// is enough: a second that would not load either leaves it without source). Under the engine's lock.</summary>
+    private SymbolsWanted? WantedFor(ModuleInfo module)
     {
-        string assemblyPath = moduleInfo.ModulePath;
-        if (!File.Exists(assemblyPath))
+        if (_symbols is null || module.IsDynamic || module.MetadataReader.HasSymbols || string.IsNullOrEmpty(module.ModulePath)
+            || LoadDecompiledSymbols(module) || !File.Exists(module.ModulePath))
         {
-            return false;
+            return null;
         }
-
-        List<string> allModulePaths = _modules.Values.Select(m => m.ModulePath).Where(p => !string.IsNullOrEmpty(p)).ToList();
-        DebuggingAssemblyResolver resolver = new DebuggingAssemblyResolver(allModulePaths);
-
-        PEFile file;
-        try
+        Guid mvid = module.MetadataReader.Mvid;
+        lock (_decompiling)
         {
-            file = new PEFile(assemblyPath, PEStreamOptions.PrefetchEntireImage);
-        }
-        catch (Exception ex)
-        {
-            _logger?.Invoke($"GeneratePdb: failed to open PE file '{assemblyPath}': {ex.Message}");
-            return false;
-        }
-
-        using (file)
-        {
-            DecompilerSettings decompilerSettings = new DecompilerSettings();
-            DecompilerTypeSystem decompilerTypeSystem = new DecompilerTypeSystem(file, resolver, decompilerSettings);
-
-            _logger?.Invoke($"GeneratePdb: writing PDB to '{pdbPathToWriteTo}' for '{assemblyPath}'");
-            try
+            if (_decompiling.TryGetValue(mvid, out Task<bool>? tried) && tried.IsCompleted)
             {
-                string pdbDirectory = Path.GetDirectoryName(pdbPathToWriteTo)!;
-                if (!Directory.Exists(pdbDirectory))
-                {
-                    Directory.CreateDirectory(pdbDirectory);
-                }
-
-                using FileStream pdbStream = File.Create(pdbPathToWriteTo);
-                PortablePdbWriter2 portablePdbWriter2 = new PortablePdbWriter2 { NoLogo = true };
-                portablePdbWriter2.WritePdb(file, decompilerTypeSystem, decompilerSettings, pdbStream);
+                return null;
             }
-            catch (Exception ex)
-            {
-                _logger?.Invoke($"GeneratePdb: exception writing PDB: {ex}");
-                File.Delete(pdbPathToWriteTo);
-                return false;
-            }
-
-            if (!moduleInfo.MetadataReader.TryLoadSymbols(pdbPathToWriteTo))
-            {
-                _logger?.Invoke($"GeneratePdb: could not load generated PDB '{pdbPathToWriteTo}'");
-                return false;
-            }
-
-            _logger?.Invoke($"GeneratePdb: successfully loaded generated PDB for '{Path.GetFileName(assemblyPath)}'");
-            return true;
         }
+        List<string> references = [.. _modules.Values.Select(m => m.ModulePath).Where(path => !string.IsNullOrEmpty(path))];
+        return new SymbolsWanted(module.ModulePath, Path.GetFileNameWithoutExtension(module.ModuleName), mvid, references);
+    }
+
+    /// <summary>Decompiles an assembly's symbols into the cache, never under the engine's lock (CoreLib's takes many seconds,
+    /// and a disconnect meanwhile must be answered): one decompile per assembly a session, whoever asks, given up as the
+    /// session ends. True when the cache has them.</summary>
+    public Task<bool> DecompileAsync(SymbolsWanted wanted)
+    {
+        lock (_decompiling)
+        {
+            if (!_decompiling.TryGetValue(wanted.Mvid, out Task<bool>? decompiling))
+            {
+                decompiling = Task.Factory.StartNew(() => Decompile(wanted), CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+                _decompiling[wanted.Mvid] = decompiling;
+            }
+            return decompiling;
+        }
+    }
+
+    private bool Decompile(SymbolsWanted wanted)
+    {
+        _logger?.Invoke($"Decompiling {wanted.Name} ({wanted.Mvid}) for its symbols, off the engine's lock");
+        long began = Stopwatch.GetTimestamp();
+        bool made = _symbols!.Write(wanted.AssemblyPath, wanted.Name, wanted.Mvid, wanted.References, _ending.Token);
+        _logger?.Invoke($"Decompiling {wanted.Name} {(made ? "made its symbols" : "made none")} in {Stopwatch.GetElapsedTime(began).TotalSeconds:0.0} s");
+        return made;
     }
 }

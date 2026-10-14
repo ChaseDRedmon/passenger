@@ -169,18 +169,14 @@ public partial class ManagedDebugger
     }
 
     /// Source info for a synthetic frame is the location of the await the caller is currently suspended on. It is
-    /// resolved on demand so that a stack trace request never has to generate PDBs; pass decompileIfNeeded when
-    /// resolving an individual frame to decompile the module first if it has no symbols on disk.
-    private SourceInfo? GetSyntheticAsyncFrameSourceInfo(SyntheticAsyncCallerFrame frame, ThreadId threadId, FrameStackDepth physicalFrameStackDepth, bool decompileIfNeeded)
+    /// resolved on demand so that a stack trace request never reads decompiled PDBs; pass decompiled when resolving an
+    /// individual frame, to take the module's decompiled symbols from the cache when it has none of its own.
+    private SourceInfo? GetSyntheticAsyncFrameSourceInfo(SyntheticAsyncCallerFrame frame, ThreadId threadId, FrameStackDepth physicalFrameStackDepth, bool decompiled)
     {
         ModuleInfo module = frame.Module;
-        if (module.MetadataReader.HasSymbols is false && decompileIfNeeded)
+        if (decompiled)
         {
-            // No PDB on disk — generate one via decompilation and update the module entry
-            if (GetCachedOrGeneratePdb(module))
-            {
-                module.SymbolsFromDecompiled = true;
-            }
+            LoadDecompiledSymbols(module);
         }
         if (module.MetadataReader.HasSymbols is false)
         {

@@ -3,17 +3,29 @@ using Passenger.DebugAdapter;
 
 // Passenger's .NET debug adapter: the Debug Adapter Protocol on standard input and output, until the
 // client disconnects or goes away. Takes netcoredbg's flags, so a client written for it runs this:
-//   Passenger.DebugAdapter --interpreter=vscode [--engineLogging=FILE]
+//   Passenger.DebugAdapter --interpreter=vscode [--engineLogging=FILE] [--symbolCache=FOLDER]
 // A flag it does not know is fatal, so a typo never runs something other than what was asked.
 
 string? logPath = null;
+string? symbolCache = null;
 foreach (string arg in args)
 {
     if (arg is "--help" or "-h")
     {
-        Console.WriteLine("Passenger.DebugAdapter --interpreter=vscode [--engineLogging=FILE]");
+        Console.WriteLine("Passenger.DebugAdapter --interpreter=vscode [--engineLogging=FILE] [--symbolCache=FOLDER]");
         Console.WriteLine("  The Debug Adapter Protocol on standard input and output; --engineLogging writes the engine's log to FILE.");
+        Console.WriteLine("  --symbolCache keeps the symbols decompiled for assemblies that ship none in FOLDER, pruned as the adapter");
+        Console.WriteLine("  starts; without it their frames have no source.");
         return 0;
+    }
+    else if (arg.StartsWith("--symbolCache=", StringComparison.Ordinal))
+    {
+        if (arg.Length == "--symbolCache=".Length)
+        {
+            Console.Error.WriteLine("--symbolCache needs a folder");
+            return 2;
+        }
+        symbolCache = arg["--symbolCache=".Length..];
     }
     else if (arg.StartsWith("--interpreter=", StringComparison.Ordinal))
     {
@@ -56,7 +68,7 @@ Log("Starting");
 // No program the adapter launches may hold the protocol: on macOS and Linux it is given descriptors 0, 1 and 2 as its own.
 (Stream input, Stream output) = Passenger.Debugger.SuspendedLaunch.DetachProtocol();
 DapConnection connection = new(input, output, Log);
-DebugAdapter adapter = new(connection, Log);
+DebugAdapter adapter = new(connection, Log, symbolCache is null ? null : new Passenger.Debugger.Decompilation.SymbolCache(symbolCache, Log));
 TaskCompletionSource disconnected = new(TaskCreationOptions.RunContinuationsAsynchronously);
 adapter.ShutdownRequested += () => disconnected.TrySetResult();
 connection.Start();

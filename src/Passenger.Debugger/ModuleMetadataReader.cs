@@ -228,7 +228,9 @@ public partial class ModuleMetadataReader : IDisposable
         MetadataReaderProvider? provider = null;
         try
         {
-            provider = MetadataReaderProvider.FromPortablePdbStream(File.OpenRead(pdbPath), MetadataStreamOptions.PrefetchMetadata);
+            // Read whole and closed at once, sharing delete: another adapter may rename a fresh copy over it meanwhile.
+            provider = MetadataReaderProvider.FromPortablePdbStream(new FileStream(pdbPath, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete),
+                MetadataStreamOptions.PrefetchMetadata);
             SetPdbProvider(provider);
             return true;
         }

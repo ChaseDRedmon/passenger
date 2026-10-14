@@ -24,7 +24,7 @@ namespace Passenger.Debugger.Decompilation;
 
 // ILSpy's PortablePdbWriter (ICSharpCode.Decompiler/DebugInfo/PortablePdbWriter.cs), Copyright (c) 2018 Siegfried
 // Pammer, under the MIT licence THIRD_PARTY_NOTICES.md gives in full; changed to decompile its files in parallel and
-// return their text.
+// return their text. A change that moves what it maps raises SymbolCache.Format, so no cached PDB of the old one is read.
 public class PortablePdbWriter2
 {
     private const string decompilerVersion = DecompilerVersionInfo.Version;

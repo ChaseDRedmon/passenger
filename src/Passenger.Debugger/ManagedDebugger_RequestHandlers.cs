@@ -634,7 +634,7 @@ public partial class ManagedDebugger
                     index++;
 
                     int syntheticFrameId = _frameReferenceManager.GetOrCreateSyntheticAsyncFrameId(threadId, physicalFrameStackDepth, syntheticFrameIndex, syntheticFrame);
-                    result.Add(CreateSyntheticAsyncStackFrameInfo(syntheticFrameId, threadId, physicalFrameStackDepth, syntheticFrame, decompileIfNeeded: false));
+                    result.Add(CreateSyntheticAsyncStackFrameInfo(syntheticFrameId, threadId, physicalFrameStackDepth, syntheticFrame, decompiled: false));
                 }
             }
         }
@@ -646,22 +646,36 @@ public partial class ManagedDebugger
         return result;
     }
 
+    /// <summary>A frame with source: its module's own symbols, else those decompiled for it, which the cache has once
+    /// <see cref="SymbolsWantedAt"/>'s decompile has made them. Fails for a frame of a stop the program has run on from.</summary>
     public StackFrameInfo ResolveStackFrame(int frameId)
     {
         (ThreadId threadId, FrameStackDepth physicalFrameStackDepth, SyntheticAsyncCallerFrame frame)? syntheticFrame = _frameReferenceManager.GetSyntheticAsyncFrameById(frameId);
         if (syntheticFrame is not null)
         {
-            return CreateSyntheticAsyncStackFrameInfo(frameId, syntheticFrame.Value.threadId, syntheticFrame.Value.physicalFrameStackDepth, syntheticFrame.Value.frame, decompileIfNeeded: true);
+            return CreateSyntheticAsyncStackFrameInfo(frameId, syntheticFrame.Value.threadId, syntheticFrame.Value.physicalFrameStackDepth, syntheticFrame.Value.frame, decompiled: true);
         }
 
-        (ThreadId threadId, FrameStackDepth frameStackDepth) frameInfo = _frameReferenceManager.GetFrameInfoById(frameId) ?? throw new ArgumentException(_frameReferenceManager.Unknown(frameId));
-        ICorDebugFrame frame = GetFrameForThreadIdAndStackDepth(frameInfo.threadId, frameInfo.frameStackDepth);
-        if (frame is not ICorDebugILFrame)
+        return CreateStackFrameInfo(frameId, ResolvableFrame(frameId), true);
+    }
+
+    /// <summary>What a frame's module needs decompiled before <see cref="ResolveStackFrame"/> can give it source, or null when
+    /// nothing: read under the engine's lock, for <see cref="DecompileAsync"/> to make off it.</summary>
+    public SymbolsWanted? SymbolsWantedAt(int frameId)
+    {
+        if (_frameReferenceManager.GetSyntheticAsyncFrameById(frameId) is { } synthetic)
         {
-            throw new InvalidOperationException($"Stack frame '{frameId}' cannot be resolved because it is not an IL frame.");
+            return WantedFor(synthetic.frame.Module);
         }
+        ICorDebugILFrame frame = ResolvableFrame(frameId);
+        return FindModule(frame.Function.Module) is { } module ? WantedFor(module) : null;
+    }
 
-        return CreateStackFrameInfo(frameId, frame, true);
+    private ICorDebugILFrame ResolvableFrame(int frameId)
+    {
+        (ThreadId threadId, FrameStackDepth frameStackDepth) frameInfo = _frameReferenceManager.GetFrameInfoById(frameId) ?? throw new ArgumentException(_frameReferenceManager.Unknown(frameId));
+        return GetFrameForThreadIdAndStackDepth(frameInfo.threadId, frameInfo.frameStackDepth) as ICorDebugILFrame
+            ?? throw new InvalidOperationException($"Stack frame '{frameId}' cannot be resolved because it is not an IL frame.");
     }
 
     /// <summary>Rider's name for a frame whose method the debugger cannot read.</summary>
@@ -693,7 +707,7 @@ public partial class ManagedDebugger
         }
     }
 
-    private StackFrameInfo CreateStackFrameInfo(int frameId, ICorDebugFrame frame, bool decompileIfNeeded)
+    private StackFrameInfo CreateStackFrameInfo(int frameId, ICorDebugFrame frame, bool decompiled)
     {
         StackFrameInfo stackFrameInfo = new StackFrameInfo
         {
@@ -722,7 +736,7 @@ public partial class ManagedDebugger
             // returns null if the function is not a state machine method
             int? kickoffMethodToken = module.MetadataReader.GetStateMachineKickoffMethodToken(function.Token);
             stackFrameInfo.Name = GetMethodFormattedName(module, kickoffMethodToken ?? function.Token, ilFrame.TypeParameters);
-            SourceInfo? sourceInfo = GetSourceInfoAtFrame(ilFrame, decompileIfNeeded);
+            SourceInfo? sourceInfo = GetSourceInfoAtFrame(ilFrame, decompiled);
             // A method its own code says is not the user's ([DebuggerNonUserCode], [DebuggerStepThrough], [DebuggerHidden]) is
             // shown as external code is, as Just My Code passes over it.
             stackFrameInfo.IsUserCode = module.IsUserCode && !(_justMyCode && module.MetadataReader.IsNonUserCode(function.Token));
@@ -753,9 +767,9 @@ public partial class ManagedDebugger
         return stackFrameInfo;
     }
 
-    private StackFrameInfo CreateSyntheticAsyncStackFrameInfo(int frameId, ThreadId threadId, FrameStackDepth physicalFrameStackDepth, SyntheticAsyncCallerFrame frame, bool decompileIfNeeded)
+    private StackFrameInfo CreateSyntheticAsyncStackFrameInfo(int frameId, ThreadId threadId, FrameStackDepth physicalFrameStackDepth, SyntheticAsyncCallerFrame frame, bool decompiled)
     {
-        SourceInfo? source = GetSyntheticAsyncFrameSourceInfo(frame, threadId, physicalFrameStackDepth, decompileIfNeeded);
+        SourceInfo? source = GetSyntheticAsyncFrameSourceInfo(frame, threadId, physicalFrameStackDepth, decompiled);
         return new StackFrameInfo
         {
             Id = frameId,

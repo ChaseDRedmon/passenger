@@ -110,7 +110,7 @@ public class StepTests(ITestOutputHelper testOutputHelper)
         StoppedEvent stoppedEvent2 = await debugProtocolHost.WithStepInRequest(stoppedEvent.ThreadId!.Value).WaitForStoppedEvent();
         (string filePath, int line, int column) stopInfo2 = stoppedEvent2.ReadStopInfo();
         Assert.EndsWith("Console.cs", stopInfo2.filePath);
-        // Bumping ICSharpCode.Decompiler changed the decompiled output, so the line number changed. If this is failing, clear temp/SharpIdeSymbolCache and try again.
+        // The decompiled code's line: a newer ICSharpCode.Decompiler may move it (the cache keeps each version's apart).
         Assert.Equal(1219, stopInfo2.line);
     }
 

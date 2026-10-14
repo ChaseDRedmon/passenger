@@ -34,6 +34,11 @@ if (args is ["reads"])
 	Reads.Run();
 	return;
 }
+if (args is ["corelib"])
+{
+	CoreLibCalls.Run();
+	return;
+}
 Wrapper.CallWithCatch(() => throw new InvalidOperationException("thrown in user code"));
 Attributed.StepThrough();
 Attributed.NonUser();
@@ -323,5 +328,19 @@ static class Busy
 			kept += block.Length;
 		}
 		return kept;
+	}
+}
+
+// Code of the user's that CoreLib calls back: the frame below it is CoreLib's, which ships without symbols, so the
+// debugger decompiles it (the largest assembly a program loads) to show it with source.
+static class CoreLibCalls
+{
+	public static void Run()
+	{
+		List<int> each = [7];
+		each.ForEach(value =>
+		{
+			Console.WriteLine($"called by CoreLib with {value}");
+		});
 	}
 }

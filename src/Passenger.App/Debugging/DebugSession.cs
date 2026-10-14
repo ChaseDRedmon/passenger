@@ -84,7 +84,7 @@ public sealed class DebugSession
             throw new FileNotFoundException("The debug adapter is not beside the app", path);
         }
         // PASSENGER_ENGINE_LOG=FILE keeps the engine's own log of every session, for a stop or an end that goes wrong.
-        List<string> arguments = [path, "--interpreter=vscode"];
+        List<string> arguments = [path, "--interpreter=vscode", $"--symbolCache={SymbolCache}"];
         if (Environment.GetEnvironmentVariable("PASSENGER_ENGINE_LOG") is { Length: > 0 } engineLog)
         {
             arguments.Add($"--engineLogging={engineLog}");
@@ -197,6 +197,10 @@ public sealed class DebugSession
 
     /// <summary>The adapter's process, for a test to see it gone.</summary>
     public int AdapterProcessId => adapter.Id;
+
+    /// <summary>Where the adapter keeps symbols it decompiles for assemblies that ship none, and prunes them as it starts:
+    /// under the state folder's cache/, as Rider keeps its decompiler's under its system folder.</summary>
+    public static string SymbolCache => Path.Combine(Passenger.App.State.StateStore.DefaultRoot, "cache", "symbols");
 
     /// <summary>Starts the adapter and launches a plan's program under it (a .dll under dotnet, or an
     /// executable), with the breakpoints the store has, its exception breakpoints among them (Rider's "Any exception" stops

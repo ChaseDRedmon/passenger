@@ -32,7 +32,7 @@ public sealed class DebugSession : IDisposable
     private readonly string engineLog;
     private readonly bool ownLog;
 
-    private DebugSession(ITestOutputHelper output, Process? debuggee, bool terminateDebuggee)
+    private DebugSession(ITestOutputHelper output, Process? debuggee, bool terminateDebuggee, string? symbolCache = null)
     {
         this.debuggee = debuggee;
         this.terminateDebuggee = terminateDebuggee;
@@ -46,7 +46,9 @@ public sealed class DebugSession : IDisposable
         string? kept = Environment.GetEnvironmentVariable("PASSENGER_ENGINE_LOG") is { Length: > 0 } named ? named : null;
         ownLog = kept is null;
         engineLog = kept ?? Path.Combine(TestRun.Root, $"engine-{Guid.NewGuid():N}.log");
-        List<string> arguments = [path, "--interpreter=vscode", $"--engineLogging={engineLog}"];
+        // The symbols it decompiles go where the run's IDE keeps them (its state folder's), unless a test names a folder.
+        string symbols = symbolCache ?? Passenger.App.Debugging.DebugSession.SymbolCache;
+        List<string> arguments = [path, "--interpreter=vscode", $"--engineLogging={engineLog}", $"--symbolCache={symbols}"];
         // Started as the IDE starts it, so a test run that is killed leaves no adapter or program behind.
         ProcessStartInfo start = ChildProcesses.DotnetCommand(arguments);
         start.RedirectStandardInput = true;
@@ -87,17 +89,29 @@ public sealed class DebugSession : IDisposable
 
     /// <summary>The adapter with DebuggableConsoleApp started for it to attach to; suspended, the
     /// program waits at startup until the attach lets it go, in configurationDone.</summary>
-    public static DebugSession ForAttach(ITestOutputHelper output, bool startSuspended, out Process debuggee)
+    public static DebugSession ForAttach(ITestOutputHelper output, bool startSuspended, out Process debuggee, string? symbolCache = null)
     {
         debuggee = StartDebuggee(startSuspended);
-        return new DebugSession(output, debuggee, terminateDebuggee: false);
+        return new DebugSession(output, debuggee, terminateDebuggee: false, symbolCache);
     }
 
     /// <summary>The adapter, to attach to a program the test started; the program ends with the session.</summary>
     public static DebugSession ForAttach(ITestOutputHelper output, Process program) => new(output, program, terminateDebuggee: false);
 
-    /// <summary>The adapter alone, to launch a program itself; the program ends with the session.</summary>
-    public static DebugSession ForLaunch(ITestOutputHelper output) => new(output, null, terminateDebuggee: true);
+    /// <summary>The adapter alone, to launch a program itself; the program ends with the session. Decompiled symbols go to
+    /// <paramref name="symbolCache"/> when given.</summary>
+    public static DebugSession ForLaunch(ITestOutputHelper output, string? symbolCache = null) => new(output, null, terminateDebuggee: true, symbolCache);
+
+    /// <summary>Kills the adapter and the program it launched, as a crash or the IDE's own kill of an adapter that never
+    /// answered a disconnect does.</summary>
+    public void Kill()
+    {
+        ChildProcesses.Kill(adapter);
+        if (!adapter.WaitForExit(TimeSpan.FromSeconds(10)))
+        {
+            throw new TimeoutException($"The adapter (process {adapter.Id}) was still running 10 s after it was killed");
+        }
+    }
 
     /// <summary>A debuggee launched with a breakpoint on one line of its Program.cs and the exception
     /// filters given, running.</summary>
@@ -137,6 +151,23 @@ public sealed class DebugSession : IDisposable
 
     public void Request(string command, object? arguments = null, TimeSpan? limit = null) =>
         Answer(command, Answered(Connection.RequestAsync(command, arguments ?? new DapEmpty(), TestContext.Current.CancellationToken)), limit);
+
+    /// <summary>A request sent without waiting for its answer, for the test to await when it wants it; one it never awaits
+    /// (the adapter gone first) fails unseen by the window tests beside.</summary>
+    public Task<T> Send<T>(string command, object? arguments = null)
+    {
+        Task<T> answer = Connection.RequestAsync<T>(command, arguments ?? new DapEmpty(), TestContext.Current.CancellationToken);
+        Observe(answer);
+        return answer;
+    }
+
+    /// <summary>A disconnect, answered or not within <paramref name="limit"/>: true when it was, the adapter then on its way out.</summary>
+    public bool Disconnect(TimeSpan limit)
+    {
+        Task disconnect = Connection.RequestAsync("disconnect", new DisconnectArguments(TerminateDebuggee: terminateDebuggee));
+        Observe(disconnect);
+        return disconnect.Wait(limit, TestContext.Current.CancellationToken);
+    }
 
     private static async Task<bool> Answered(Task request)
     {

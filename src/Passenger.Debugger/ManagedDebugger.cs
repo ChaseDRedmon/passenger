@@ -172,9 +172,25 @@ public partial class ManagedDebugger
     private readonly Channel<CorDebugManagedCallbackEventArgs> _runtimeEventChannel;
     public readonly EngineLock DapRequestAndRuntimeEventLock = new();
 
-    public ManagedDebugger(Action<string>? logger = null)
+    /// <summary>Where symbols decompiled for assemblies without their own are kept; none without it, a frame of such an
+    /// assembly then shown without source.</summary>
+    private readonly Decompilation.SymbolCache? _symbols;
+
+    /// <summary>Each assembly's decompile this session, by its version (MVID), running or done; locked itself, as a
+    /// decompile is asked for under the engine's lock and ends off it.</summary>
+    private readonly Dictionary<Guid, Task<bool>> _decompiling = [];
+
+    /// <summary>Cancelled as the session ends, which gives up a decompile under way.</summary>
+    private readonly CancellationTokenSource _ending = new();
+
+    /// <summary>How often the program has been let go, so an event put off for a decompile is dropped when it was let go
+    /// meanwhile (<see cref="AfterDecompiling"/>).</summary>
+    private int _continued;
+
+    public ManagedDebugger(Action<string>? logger = null, Decompilation.SymbolCache? symbols = null)
     {
         _logger = logger;
+        _symbols = symbols;
         _breakpointManager = new BreakpointManager();
         _variableManager = new VariableManager();
         _frameReferenceManager = new FrameReferenceManager();
@@ -289,10 +305,69 @@ public partial class ManagedDebugger
         Continue(clearVariables: false);
     }
 
+    /// <summary>An event put off while the symbols of the code its thread stopped in were decompiled off the engine's lock,
+    /// handed back to the event loop once they were, the program held where the event found it meanwhile; dropped if the
+    /// program was let go since, as nothing it said holds then.</summary>
+    private sealed class AfterDecompiling(CorDebugManagedCallbackEventArgs held, int continued) : CorDebugManagedCallbackEventArgs
+    {
+        public CorDebugManagedCallbackEventArgs Held { get; } = held;
+        public int Continued { get; } = continued;
+    }
+
+    /// <summary>Without Just My Code every stop shows its code, decompiled where the assembly has no symbols: an event that
+    /// may stop in such code (a breakpoint, a step's end, a data breakpoint) first waits for that decompile, which runs off
+    /// the engine's lock so a request meanwhile (a disconnect) is answered. True when the event was put off.</summary>
+    private bool DecompileFirst(CorDebugManagedCallbackEventArgs e)
+    {
+        // During an evaluation an event is put off as it is (PutOffDuringEvaluation), and decompiled for once handed back.
+        if (_justMyCode || _symbols is null || EvalStatus.IsRunning)
+        {
+            return false;
+        }
+        ICorDebugThread? thread = e switch
+        {
+            BreakpointCorDebugManagedCallbackEventArgs breakpoint => breakpoint.Thread,
+            StepCompleteCorDebugManagedCallbackEventArgs step => step.Thread,
+            DataBreakpointCorDebugManagedCallbackEventArgs data => data.Thread,
+            _ => null,
+        };
+        SymbolsWanted? wanted;
+        try
+        {
+            wanted = thread?.ActiveFrame is ICorDebugILFrame frame && FindModule(frame.Function.Module) is { } module ? WantedFor(module) : null;
+        }
+        catch (Exception error) when (error is COMException or InvalidOperationException)
+        {
+            return false;
+        }
+        if (wanted is null)
+        {
+            return false;
+        }
+        int continued = _continued;
+        _logger?.Invoke($"{e.GetType().Name} waits for {wanted.Name}'s symbols to be decompiled");
+        DecompileAsync(wanted).ContinueWith(_ => _runtimeEventChannel.Writer.TryWrite(new AfterDecompiling(e, continued)),
+            CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        return true;
+    }
+
     private async Task OnAnyEvent(object? sender, CorDebugManagedCallbackEventArgs e)
     {
         try
         {
+            if (e is AfterDecompiling after)
+            {
+                if (after.Continued != _continued)
+                {
+                    _logger?.Invoke($"{after.Held.GetType().Name}, put off for a decompile, is dropped: the program was let go meanwhile");
+                    return;
+                }
+                e = after.Held;
+            }
+            else if (DecompileFirst(e))
+            {
+                return;
+            }
             _logger?.Invoke($"Event: {e.GetType().Name}");
             switch (e)
             {
@@ -434,6 +509,7 @@ public partial class ManagedDebugger
             return;
         }
         Marshal.ThrowExceptionForHR(result);
+        _continued++;
     }
 
     /// <summary>Set once the client is told the program has stopped, until it lets the program go on (a continue, a step):
@@ -889,6 +965,8 @@ public partial class ManagedDebugger
     // letGo: the program runs on after (a detach), so no thread may be left inside the runtime's handling of a stop.
     private void Dispose(bool letGo = false)
     {
+        // A decompile under way is given up, its temporary file deleted, whether or not a process was ever held.
+        _ending.Cancel();
         if (_process is null)
         {
             return; // A client may call Terminate, then Disconnect, both of which call Dispose. Dispose only needs to be run once.
