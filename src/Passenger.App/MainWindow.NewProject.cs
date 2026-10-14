@@ -24,6 +24,17 @@ public partial class MainWindow
         });
     }
 
+    /// <summary>dotnet new's templates read ahead of New Solution (where it puts a solution) once a person's window is up,
+    /// so the dialog opens with them; a process reads them once and keeps them fresh (<see cref="ProjectTemplates.Preload"/>).
+    /// An agent's headless IDE and a screenshot, which keep no settings, read them only when their dialog opens.</summary>
+    private void PreloadTemplates()
+    {
+        if (KeepsSettings)
+        {
+            ProjectTemplates.Preload(BesideLast());
+        }
+    }
+
     /// <summary>New Solution: the dialog over this window, and the solution opened, built, once it is made.</summary>
     public NewProjectDialog ShowNewSolution()
     {

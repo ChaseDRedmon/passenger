@@ -101,25 +101,23 @@ public sealed class NewSolutionTests : IDisposable
         Click(window, window.Welcome.NewSolutionButton);
         NewProjectDialog dialog = Templates(window);
 
-        // Avalonia's kinds are listed though dotnet new has none, after what it has, not installed; so are Rider's offers.
-        string[] avalonia = [.. dialog.Templates.Where(t => t.Pack?.Id == "Avalonia.Templates")
-            .Select(t => $"{t.Name} ({t.ShortName}; {string.Join(',', t.Languages)}){(t.IsSolution ? ", a solution" : string.Empty)}")];
-        Assert.Equal(["Avalonia .NET App (avalonia.app; C#,F#)", "Avalonia .NET MVVM App (avalonia.mvvm; C#,F#)",
-            "Avalonia Cross Platform Application (avalonia.xplat; C#,F#), a solution"], avalonia);
-        Assert.True(dialog.Templates.SkipWhile(t => t.Pack is null).All(t => t.Pack is not null),
-            $"Templates not installed are listed among those installed: [{string.Join(", ", dialog.Templates.Select(t => t.Name))}]");
+        // Avalonia's kinds are listed though dotnet new has none, as one family not installed; so are Rider's offers.
+        TemplateFamily avalonia = dialog.Families.Single(f => f.Name == "Avalonia");
+        Assert.True(avalonia.NotInstalled, "Avalonia's family is not marked not installed though dotnet new has none of it");
+        Assert.Equal(["App (avalonia.app; C#,F#)", "MVVM App (avalonia.mvvm; C#,F#)", "Cross Platform Application (avalonia.xplat; C#,F#), a solution"],
+            avalonia.Types.Select(t => $"{t.TypeName} ({t.ShortName}; {string.Join(',', t.Languages)}){(t.IsSolution ? ", a solution" : string.Empty)}"));
         foreach (string riders in (string[])["aspire-starter", "func", "aichatweb"])
         {
             Assert.True(dialog.Templates.Any(t => t.ShortNames.Contains(riders)), $"New Solution lists nothing that makes {riders}, which Rider offers to install");
         }
-        ProjectTemplate app = dialog.Templates.Single(t => t.ShortName == "avalonia.app");
-        Control row = dialog.TemplateRow(app)!;
+        Control row = dialog.FamilyRow("Avalonia")!;
         Assert.Contains("Not installed", row.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text));
 
         // Chosen, it offers to install its package, and nothing can be created from it until then.
         dialog.Folder = place;
         Click(dialog, row);
         Assert.Equal("Avalonia .NET App", dialog.Chosen?.Name);
+        Assert.Equal(["App", "MVVM App", "Cross Platform Application"], dialog.TypeNames);
         Assert.Contains("dotnet new install Avalonia.Templates", dialog.Offer, StringComparison.Ordinal);
         Assert.False(dialog.CreateButton.IsEnabled, "Create was offered for a template not installed");
 
@@ -129,18 +127,21 @@ public sealed class NewSolutionTests : IDisposable
         Assert.True(dialog.Problem is null, $"Avalonia's templates did not install: {dialog.Problem}\n{dialog.InstallOutput}");
         Assert.Contains($"Success: Avalonia.Templates@{AvaloniaApp.TemplatesVersion} installed", dialog.InstallOutput, StringComparison.Ordinal);
         Assert.True(dialog.Chosen is { Pack: null, ShortName: "avalonia.app" }, $"Once installed, the dialog went on to {dialog.Chosen?.Name} ({dialog.Chosen?.Pack?.Id ?? "installed"})");
+        Assert.True(dialog.Family is { Name: "Avalonia", NotInstalled: false }, $"Once installed, the dialog's family is {dialog.Family?.Name}, not installed: {dialog.Family?.NotInstalled}");
         Assert.Null(dialog.Offer);
         Assert.True(dialog.CreateButton.IsEnabled, "Create stayed off once the template was installed");
         Assert.Contains("net10.0", dialog.Chosen!.Frameworks("C#"));
         Assert.DoesNotContain(dialog.Templates, t => t.Pack?.Id == "Avalonia.Templates");
 
         // The cross-platform one makes a whole solution, its projects named after it.
-        ProjectTemplate crossPlatform = dialog.Templates.Single(t => t.ShortName == "avalonia.xplat");
+        ProjectTemplate crossPlatform = dialog.Family!.Types.Single(t => t.ShortName == "avalonia.xplat");
         Assert.True(crossPlatform.IsSolution, "Avalonia's cross-platform template is not taken for the solution it makes");
-        Click(dialog, dialog.TemplateRow(crossPlatform)!);
+        dialog.TypeChooser.SelectedItem = crossPlatform;
+        Ui.Settle();
         Assert.False(dialog.AsksProjectName, "A solution template asked for a project name");
         Assert.StartsWith($"dotnet new avalonia.xplat --name {dialog.SolutionName} ", dialog.Command, StringComparison.Ordinal);
-        Click(dialog, dialog.TemplateRow(dialog.Templates.Single(t => t.ShortName == "avalonia.app"))!);
+        dialog.TypeChooser.SelectedItem = dialog.Family.Types.Single(t => t.ShortName == "avalonia.app");
+        Ui.Settle();
         Assert.True(dialog.AsksProjectName, "A project template asked for no project name");
 
         dialog.SolutionName = "Gallery";
@@ -182,9 +183,10 @@ public sealed class NewSolutionTests : IDisposable
         // The solution folder src is named after the folder on disk the new project goes in.
         Assert.Equal(PathNames.Canonical(Path.Combine(place, "src")), dialog.Folder);
         Type(dialog, "Shop.Data");
-        ProjectTemplate library = dialog.Templates.FirstOrDefault(t => t.ShortName == "classlib")
-            ?? throw new InvalidOperationException($"dotnet new lists no class library: [{string.Join(", ", dialog.Templates.Select(t => t.Name))}]");
-        Click(dialog, dialog.TemplateRow(library)!);
+        // New Project lists no solution template: its families have project templates alone.
+        Assert.DoesNotContain(dialog.Templates, t => t.IsSolution);
+        Click(dialog, dialog.FamilyRow("Class Library")
+            ?? throw new InvalidOperationException($"New Project lists no Class Library: [{string.Join(", ", dialog.Families.Select(f => f.Name))}]"));
         Assert.Equal("Class Library", dialog.Chosen?.Name);
         Assert.Equal("Shop.Data", dialog.ProjectName);
         Click(dialog, dialog.CreateButton);

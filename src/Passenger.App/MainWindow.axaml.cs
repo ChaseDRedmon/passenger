@@ -284,6 +284,7 @@ public partial class MainWindow : Window
         {
             welcome.FocusSearch();
         }
+        PreloadTemplates();
     }
 
     private string? followed;

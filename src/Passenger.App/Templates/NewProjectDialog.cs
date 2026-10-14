@@ -1,8 +1,9 @@
 using System.Globalization;
-using System.Text.Json;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Templates;
+using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
@@ -21,19 +22,22 @@ public sealed record ProjectTarget(string Solution, string? Folder, IReadOnlyLis
 /// <summary>What Create made, canonical: New Solution's solution (null for Add New Project's) and the projects.</summary>
 public sealed record CreatedProjects(string? Solution, IReadOnlyList<string> Projects);
 
-/// <summary>Rider's New Project dialog, for New Solution and Add, New Project: dotnet new's templates down the left, then
-/// the known packages' kinds it has not got, each offering to install its package; on the right the names, where it goes,
-/// the target framework, the language, and the template's own options. Create refuses a name taken or a folder not empty,
-/// saying why, before anything is made; otherwise it runs dotnet new, takes Accelerate's tools out of what it made, and
-/// closes with it (<see cref="Created"/>). What a Create that failed or was canceled made is removed.</summary>
+/// <summary>Rider's New Project dialog, for New Solution and Add, New Project: the template families read ahead down the
+/// left (<see cref="TemplateFamilies"/>) under a search; on the right the names, where it goes, the family's Type, the
+/// framework, the language and the Type's options (a value set kept by a Type that has it), or a Type's package to
+/// install. A later read fills in, the choice kept. Create refuses a name taken or a folder not empty, saying why; else
+/// it runs dotnet new, takes Accelerate's tools out and closes with it (<see cref="Created"/>), or removes what it made.</summary>
 public sealed class NewProjectDialog : Window
 {
     private const double LabelWidth = 170;
 
     private readonly ProjectTarget? target;
     private readonly string readFrom;
+    private readonly TextBox search = new() { Classes = { "search" }, PlaceholderText = "Search", Margin = new Thickness(8, 8, 8, 6) };
     private readonly ListBox list;
     private readonly TextBlock loading;
+    private readonly ComboBox typeChooser = new() { MinWidth = 240 };
+    private readonly Control typeRow;
     private readonly TextBlock heading;
     private readonly TextBlock description;
     private readonly TextBox solutionName = new() { Classes = { "search" } };
@@ -67,9 +71,21 @@ public sealed class NewProjectDialog : Window
     private readonly Dictionary<string, string> values = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> byPerson = new(StringComparer.Ordinal);
     private readonly List<(TemplateOption Option, Control Row, Control Editor)> shown = [];
+
+    /// <summary>The Type last chosen in each family, by its key, which choosing the family again opens on.</summary>
+    private readonly Dictionary<string, string> typeOf = new(StringComparer.Ordinal);
+
+    /// <summary>The Type the search names in each family listed, by the family's name.</summary>
+    private readonly Dictionary<string, ProjectTemplate> named = new(StringComparer.Ordinal);
+
     private TemplateCatalog? catalog;
-    private IReadOnlyList<ProjectTemplate> templates = [];
+    private IReadOnlyList<TemplateFamily> families = [];
+    private IReadOnlyList<TemplateFamily> listed = [];
+    private TemplateFamily? family;
     private ProjectTemplate? template;
+
+    /// <summary>The Type chosen last, kept while a search finds nothing, so clearing it comes back to it.</summary>
+    private ProjectTemplate? lastChosen;
     private CancellationTokenSource? creating;
     private CancellationTokenSource? installing;
 
@@ -96,12 +112,33 @@ public sealed class NewProjectDialog : Window
         list = new ListBox
         {
             Classes = { "tree" },
-            ItemTemplate = new FuncDataTemplate<ProjectTemplate?>((row, _) => row is null ? new Panel() : Item(row), supportsRecycling: false),
+            ItemTemplate = new FuncDataTemplate<TemplateFamily?>((row, _) => row is null ? new Panel() : Item(row), supportsRecycling: false),
         };
-        list.SelectionChanged += (_, _) => Choose(list.SelectedItem as ProjectTemplate);
+        list.SelectionChanged += (_, _) =>
+        {
+            if (!setting && list.SelectedItem is TemplateFamily chosen)
+            {
+                ChooseFamily(chosen, named.GetValueOrDefault(chosen.Name));
+            }
+        };
+        search.TextChanged += (_, _) => Filter(searched: true);
+        search.AddHandler(KeyDownEvent, OnSearchKeyDown, RoutingStrategies.Tunnel);
         loading = new TextBlock { Classes = { "muted" }, Text = "Loading templates...", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(12) };
-        Border left = new() { Width = 260, BorderThickness = new Thickness(0, 0, 1, 0), Child = new Panel { Children = { list, loading } } };
+        DockPanel leftPanel = new();
+        DockPanel.SetDock(search, Dock.Top);
+        leftPanel.Children.Add(search);
+        leftPanel.Children.Add(new Panel { Children = { list, loading } });
+        Border left = new() { Width = 260, BorderThickness = new Thickness(0, 0, 1, 0), Child = leftPanel };
         left.Bind(Border.BorderBrushProperty, left.GetResourceObservable("Passenger.Divider"));
+        typeChooser.ItemTemplate = new FuncDataTemplate<ProjectTemplate?>((type, _) => type is null ? new Panel() : TypeItem(type), supportsRecycling: false);
+        typeChooser.SelectionChanged += (_, _) =>
+        {
+            if (!setting && typeChooser.SelectedItem is ProjectTemplate chosen)
+            {
+                ChooseType(chosen);
+            }
+        };
+        typeRow = Row("Type:", typeChooser);
 
         heading = new TextBlock { FontSize = 16, FontWeight = FontWeight.SemiBold };
         description = new TextBlock { Classes = { "muted" }, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0) };
@@ -141,20 +178,20 @@ public sealed class NewProjectDialog : Window
         details = new StackPanel
         {
             Spacing = 10,
-            Children = { Rule(), Row("Target framework:", framework), languageRow, options, Row(null, command) },
+            Children = { Row("Target framework:", framework), languageRow, options, Row(null, command) },
         };
         install.Click += (_, _) => _ = InstallAsync();
         offer = new StackPanel
         {
             Spacing = 10,
             IsVisible = false,
-            Children = { Rule(), offerText, offerCommand, install, installOutput },
+            Children = { offerText, offerCommand, install, installOutput },
         };
         StackPanel right = new()
         {
             Margin = new Thickness(24, 18, 24, 18),
             Spacing = 10,
-            Children = { new StackPanel { Children = { heading, description }, Margin = new Thickness(0, 0, 0, 8) }, fields, details, offer },
+            Children = { new StackPanel { Children = { heading, description }, Margin = new Thickness(0, 0, 0, 8) }, fields, Rule(), typeRow, details, offer },
         };
         Border rightPane = new() { Child = new ScrollViewer { Content = right } };
         rightPane.Bind(Border.BackgroundProperty, rightPane.GetResourceObservable("Passenger.Editor.Background"));
@@ -169,6 +206,10 @@ public sealed class NewProjectDialog : Window
             creating?.Cancel();
             installing?.Cancel();
         };
+        // What a read brings while the dialog is open (an install, another SDK) fills it in.
+        Action changed = () => _ = RefreshAsync();
+        ProjectTemplates.Changed += changed;
+        Closed += (_, _) => ProjectTemplates.Changed -= changed;
         StackPanel buttons = new() { Orientation = Orientation.Horizontal, Spacing = 8, Children = { cancel, create } };
         DockPanel bottomRow = new() { Margin = new Thickness(16, 10) };
         DockPanel.SetDock(buttons, Dock.Right);
@@ -185,8 +226,14 @@ public sealed class NewProjectDialog : Window
         root.Children.Add(rightPane);
         Content = root;
         ShowTemplate(null);
+        typeRow.IsVisible = false;
         readFrom = target is null ? folder : Path.GetDirectoryName(target.Solution)!;
-        TemplatesRead = LoadAsync(null);
+        // The templates read ahead, at once; the folder's own read fills in what it changes.
+        if (ProjectTemplates.Ready(readFrom) is { } ready)
+        {
+            Show(ready);
+        }
+        TemplatesRead = RefreshAsync();
         // The name has the keys as the dialog opens, its default chosen to be typed over; again once laid out.
         void FocusName()
         {
@@ -201,24 +248,30 @@ public sealed class NewProjectDialog : Window
         };
     }
 
-    /// <summary>The templates' read, done once they are listed or the dialog says why they could not be.</summary>
+    /// <summary>The read of the folder's templates, done once they are listed or the dialog says why they could not be.</summary>
     public Task TemplatesRead { get; }
 
-    /// <summary>The templates listed, in Rider's order: those installed, and the known packages' kinds dotnet new has not
-    /// got (<see cref="ProjectTemplate.Pack"/>); a solution template in New Solution only.</summary>
-    public IReadOnlyList<ProjectTemplate> Templates => templates;
+    /// <summary>Every family the dialog offers, in Rider's order, whatever the search; a solution template in New Solution
+    /// only.</summary>
+    public IReadOnlyList<TemplateFamily> Families => families;
 
-    /// <summary>The template chosen.</summary>
-    public ProjectTemplate? Chosen
-    {
-        get => template;
-        set => list.SelectedItem = value;
-    }
+    /// <summary>The families listed, those the search finds.</summary>
+    public IReadOnlyList<TemplateFamily> Listed => listed;
 
-    /// <summary>The template list's row for one, for a click on it; null when it is not listed.</summary>
-    public Control? TemplateRow(ProjectTemplate row)
+    /// <summary>Every template the dialog offers, family by family: those installed, and the known packages' kinds dotnet
+    /// new has not got (<see cref="ProjectTemplate.Pack"/>).</summary>
+    public IReadOnlyList<ProjectTemplate> Templates => [.. families.SelectMany(f => f.Types)];
+
+    /// <summary>The family chosen.</summary>
+    public TemplateFamily? Family => family;
+
+    /// <summary>The template chosen: the family's Type.</summary>
+    public ProjectTemplate? Chosen => template;
+
+    /// <summary>The list's row for a family, by its name, for a click on it; null when it is not listed.</summary>
+    public Control? FamilyRow(string name)
     {
-        int at = templates.ToList().IndexOf(row);
+        int at = listed.ToList().FindIndex(f => f.Name == name);
         if (at < 0)
         {
             return null;
@@ -227,6 +280,22 @@ public sealed class NewProjectDialog : Window
         list.UpdateLayout();
         return list.ContainerFromIndex(at);
     }
+
+    /// <summary>The Type chooser, shown for a family of more than one.</summary>
+    public ComboBox TypeChooser => typeChooser;
+
+    /// <summary>The Types the chooser offers, by their names in it; none while it is not shown.</summary>
+    public IReadOnlyList<string> TypeNames => typeRow.IsVisible && family is not null ? [.. family.Types.Select(t => t.TypeName)] : [];
+
+    /// <summary>The search over the families.</summary>
+    public string Query
+    {
+        get => search.Text ?? string.Empty;
+        set => search.Text = value;
+    }
+
+    /// <summary>The search box, for a click into it.</summary>
+    public TextBox SearchBox => search;
 
     public string SolutionName
     {
@@ -316,6 +385,15 @@ public sealed class NewProjectDialog : Window
         if (creating is not null || installing is not null || template is null)
         {
             return;
+        }
+        if (!TemplatesRead.IsCompleted)
+        {
+            // The templates shown may be another SDK's until the folder's own are read.
+            await TemplatesRead;
+            if (creating is not null || installing is not null || template is null)
+            {
+                return;
+            }
         }
         if (WhyNot() is { } refused)
         {
@@ -450,7 +528,8 @@ public sealed class NewProjectDialog : Window
             }
             ProjectTemplates.Forget();
             progress.Text = "Reading the templates...";
-            await LoadAsync(wanted);
+            // The Type offered stays chosen, now the one installed.
+            await RefreshAsync();
             if (template is { Pack: not null })
             {
                 Fail($"{pack.Id} is installed, but dotnet new has no {wanted.Name} ({wanted.ShortName}) from it");
@@ -659,43 +738,139 @@ public sealed class NewProjectDialog : Window
         }
     });
 
-    /// <summary>Reads the templates and lists them, the first chosen; after an install, the installed one of the kind that
-    /// was offered (<paramref name="installed"/>).</summary>
-    private async Task LoadAsync(ProjectTemplate? installed)
+    /// <summary>Reads the folder's templates and shows what the read brings, keeping the family and Type chosen: first, when
+    /// the dialog has nothing yet, what dotnet new listed last, then the read itself (a memory of it once read ahead).</summary>
+    private async Task RefreshAsync()
     {
         try
         {
-            catalog = await BackgroundWork.Run(() => ProjectTemplates.LoadAsync(readFrom));
+            if (catalog is null)
+            {
+                TemplateCatalog? last = null;
+                try
+                {
+                    last = await BackgroundWork.Run(() => ProjectTemplates.LastListedAsync(readFrom));
+                }
+                catch (Exception error) when (ProjectTemplates.Unreadable(error))
+                {
+                    // The read itself says why.
+                }
+                if (last is not null && catalog is null)
+                {
+                    Show(last);
+                }
+            }
+            Show(await BackgroundWork.Run(() => ProjectTemplates.LoadAsync(readFrom)));
         }
-        catch (Exception error) when (error is InvalidOperationException or IOException or UnauthorizedAccessException or JsonException
-            or TimeoutException or KeyNotFoundException or System.ComponentModel.Win32Exception)
+        catch (Exception error) when (ProjectTemplates.Unreadable(error))
         {
-            loading.Text = $"The templates could not be read: {error.Message}";
-            loading.IsVisible = true;
-            Fail(loading.Text);
-            return;
-        }
-        templates = [.. catalog.Templates.Where(t => target is null || !t.IsSolution)];
-        loading.IsVisible = templates.Count == 0;
-        loading.Text = "dotnet new has no project templates installed";
-        setting = true;
-        format.ItemsSource = catalog.SolutionFormats.Select(f => $".{f}").ToList();
-        format.SelectedIndex = 0;
-        setting = false;
-        list.ItemsSource = templates;
-        ProjectTemplate? chosen = installed is null ? templates.FirstOrDefault()
-            : templates.FirstOrDefault(t => t.Pack is null && t.IsSolution == installed.IsSolution && t.ShortNames.Contains(installed.ShortName, StringComparer.OrdinalIgnoreCase))
-              ?? templates.FirstOrDefault(t => t.Name == installed.Name);
-        list.SelectedItem = chosen;
-        if (chosen is not null)
-        {
-            list.ScrollIntoView(chosen);
+            if (catalog is null)
+            {
+                loading.Text = $"The templates could not be read: {error.Message}";
+                loading.IsVisible = true;
+            }
+            Fail($"The templates could not be read: {error.Message}");
         }
     }
 
-    /// <summary>A template chosen: its names (unless the person typed their own), languages, frameworks and options, or
-    /// for one not installed, the offer of its package.</summary>
-    private void Choose(ProjectTemplate? chosen)
+    /// <summary>The templates of a read, in families, the family and Type chosen kept where they still are (a Type not
+    /// installed becomes the one installed); a read of what is shown already changes nothing, and none lands while
+    /// Create runs, which has chosen.</summary>
+    private void Show(TemplateCatalog read)
+    {
+        if (ReferenceEquals(read, catalog) || catalog?.Shape == read.Shape || creating is not null)
+        {
+            return;
+        }
+        catalog = read;
+        families = [.. read.Families.Select(f => target is null ? f : f.Projects()).OfType<TemplateFamily>()];
+        setting = true;
+        string? formatWas = format.SelectedItem as string;
+        List<string> formats = [.. read.SolutionFormats.Select(f => $".{f}")];
+        format.ItemsSource = formats;
+        format.SelectedIndex = formatWas is not null && formats.Contains(formatWas) ? formats.IndexOf(formatWas) : 0;
+        setting = false;
+        Filter(searched: false);
+    }
+
+    /// <summary>Lists the families the search finds. A search typed opens the family chosen, or else the first found, on
+    /// the Type it names; a read shown keeps the Type chosen, else its family, else takes the first.</summary>
+    private void Filter(bool searched)
+    {
+        string[] words = Query.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        named.Clear();
+        List<TemplateFamily> found = [];
+        foreach (TemplateFamily each in families)
+        {
+            if (each.Matches(words, out IReadOnlyList<ProjectTemplate> types))
+            {
+                found.Add(each);
+                if (types.Count > 0)
+                {
+                    // The Type chosen in it last, if the search names it too, else the first it names.
+                    named[each.Name] = types.FirstOrDefault(t => typeOf.TryGetValue(each.Name, out string? last) && KnownBy(t) == last) ?? types[0];
+                }
+            }
+        }
+        listed = found;
+        string? key = lastChosen is null ? null : KnownBy(lastChosen);
+        int at = searched || key is null ? -1 : found.FindIndex(f => f.Types.Any(t => KnownBy(t) == key));
+        if (at < 0 && lastChosen is not null)
+        {
+            at = found.FindIndex(f => f.Name == lastChosen.Family);
+        }
+        if (at < 0 && found.Count > 0)
+        {
+            at = 0;
+        }
+        setting = true;
+        list.ItemsSource = found;
+        list.SelectedIndex = at;
+        setting = false;
+        if (catalog is not null)
+        {
+            loading.Text = families.Count == 0 ? "dotnet new has no project templates installed" : "Nothing matches";
+            loading.IsVisible = found.Count == 0;
+        }
+        if (at < 0)
+        {
+            ChooseFamily(null, null);
+            return;
+        }
+        TemplateFamily chosen = found[at];
+        ProjectTemplate? kept = key is null ? null : chosen.Types.FirstOrDefault(t => KnownBy(t) == key);
+        ChooseFamily(chosen, searched ? named.GetValueOrDefault(chosen.Name) ?? kept : kept);
+        list.ScrollIntoView(at);
+    }
+
+    /// <summary>A family chosen, on a Type: the one given, else the one last chosen in it, else its first; the chooser
+    /// shown when it has more than one.</summary>
+    private void ChooseFamily(TemplateFamily? chosen, ProjectTemplate? type)
+    {
+        family = chosen;
+        if (chosen is null)
+        {
+            typeRow.IsVisible = false;
+            ChooseType(null);
+            return;
+        }
+        ProjectTemplate pick = type is not null && chosen.Types.Contains(type) ? type
+            : typeOf.TryGetValue(chosen.Name, out string? last) && chosen.Types.FirstOrDefault(t => KnownBy(t) == last) is { } before ? before
+            : chosen.Types[0];
+        setting = true;
+        typeChooser.ItemsSource = chosen.Types;
+        typeChooser.SelectedItem = pick;
+        setting = false;
+        typeRow.IsVisible = chosen.Types.Count > 1;
+        ChooseType(pick);
+    }
+
+    /// <summary>What a Type is known by across reads: its short name, which a package's kind keeps once installed.</summary>
+    private static string KnownBy(ProjectTemplate type) => type.ShortName.ToLowerInvariant();
+
+    /// <summary>A Type chosen: its names (unless the person typed their own), languages (the one chosen kept where it has
+    /// it), frameworks and options, or for one not installed, the offer of its package.</summary>
+    private void ChooseType(ProjectTemplate? chosen)
     {
         if (ReferenceEquals(chosen, template))
         {
@@ -707,9 +882,13 @@ public sealed class NewProjectDialog : Window
         {
             return;
         }
+        lastChosen = chosen;
+        typeOf[chosen.Family] = KnownBy(chosen);
         setting = true;
+        string? languageWas = Language;
         language.ItemsSource = chosen.Languages;
-        language.SelectedIndex = chosen.Languages.Count > 0 ? 0 : -1;
+        language.SelectedIndex = languageWas is not null && chosen.Languages.Contains(languageWas) ? chosen.Languages.ToList().IndexOf(languageWas)
+            : chosen.Languages.Count > 0 ? 0 : -1;
         setting = false;
         if (target is null)
         {
@@ -918,7 +1097,7 @@ public sealed class NewProjectDialog : Window
         create.IsEnabled = !busy && template is { Pack: null };
         install.IsEnabled = !busy;
         list.IsEnabled = !busy;
-        foreach (Control field in (Control[])[solutionName, projectName, directory, browse, sameDirectory, format, framework, language, options])
+        foreach (Control field in (Control[])[search, typeChooser, solutionName, projectName, directory, browse, sameDirectory, format, framework, language, options])
         {
             field.IsEnabled = !busy;
         }
@@ -928,25 +1107,55 @@ public sealed class NewProjectDialog : Window
         }
     }
 
-    /// <summary>A template's row: its name, whole on hover where it is cut short, and for one not installed Rider's word
-    /// for it.</summary>
-    private static Control Item(ProjectTemplate row)
+    /// <summary>Up and Down in the search choose among the families found, as in the Welcome screen's; Escape clears a
+    /// search before it cancels.</summary>
+    private void OnSearchKeyDown(object? sender, KeyEventArgs e)
     {
-        TextBlock name = new() { Text = row.Name, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
-        Border item = new() { Padding = new Thickness(10, 6) };
-        ToolTip.SetTip(item, row.Pack is null ? row.Name : $"{row.Name}, from {row.Pack.Id}, which is not installed");
-        if (row.Pack is null)
+        if (e.KeyModifiers != KeyModifiers.None)
         {
-            item.Child = name;
-            return item;
+            return;
+        }
+        switch (e.Key)
+        {
+            case Key.Down or Key.Up when listed.Count > 0:
+                list.SelectedIndex = Math.Clamp(list.SelectedIndex + (e.Key == Key.Down ? 1 : -1), 0, listed.Count - 1);
+                list.ScrollIntoView(list.SelectedIndex);
+                e.Handled = true;
+                break;
+            case Key.Escape when Query.Length > 0:
+                Query = string.Empty;
+                e.Handled = true;
+                break;
+        }
+    }
+
+    /// <summary>A family's row: its name, its Types on hover, and Rider's word for one none of whose Types is installed.</summary>
+    private static Control Item(TemplateFamily row)
+    {
+        Border item = new() { Padding = new Thickness(10, 6) };
+        string types = row.Types.Count > 1 ? $": {string.Join(", ", row.Types.Select(t => t.TypeName))}" : row.Name == row.Types[0].Name ? string.Empty : $": {row.Types[0].Name}";
+        ToolTip.SetTip(item, row.NotInstalled ? $"{row.Name}{types}, from {row.Types[0].Pack!.Id}, which is not installed" : $"{row.Name}{types}");
+        item.Child = Named(row.Name, row.NotInstalled);
+        return item;
+    }
+
+    /// <summary>A Type in the chooser: its name, and Rider's word for one not installed.</summary>
+    private static Control TypeItem(ProjectTemplate type) => Named(type.TypeName, type.Pack is not null);
+
+    /// <summary>A name cut short where it must be, with "Not installed" after it for what dotnet new has not got.</summary>
+    private static Control Named(string text, bool notInstalled)
+    {
+        TextBlock name = new() { Text = text, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
+        if (!notInstalled)
+        {
+            return name;
         }
         TextBlock missing = new() { Text = "Not installed", Classes = { "muted" }, FontSize = 11, Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
         DockPanel both = new();
         DockPanel.SetDock(missing, Dock.Right);
         both.Children.Add(missing);
         both.Children.Add(name);
-        item.Child = both;
-        return item;
+        return both;
     }
 
     private Control Rule()

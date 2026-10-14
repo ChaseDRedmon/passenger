@@ -34,6 +34,7 @@
     "WebLanguagesTests": 120,
     "EslintPrettierTests": 90,
     "NewSolutionTests": 120,
+    "TemplateFamiliesTests": 90,
     "XamlTests": 150,
     "WpfXamlTests": 90,
     "WindowsOnlyProjectsTests": 90,
