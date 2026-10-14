@@ -134,6 +134,15 @@ window or takes the focus; it shows everything but the system's own window chrom
   no binding, so Avalonia's compiled bindings read x:DataType alone. MarkupCompile's errors (MC####) mark their lines as
   AVLN's do; a named WPF element's code-behind field is MarkupCompile's `obj/…/File.g.cs` (the server's design-time
   build writes it), found from C# by its `#line`. XAML Preview on a WPF file says WPF has none.
+  `Features` also has `XamlFormatter`/`XamlFormatSettings` (Rider's XML formatter, which is XAML's, at Rider's
+  defaults, read from .editorconfig by Rider's `xml_*` keys or their `resharper_` forms and `max_line_length`; XAML
+  Styler's attribute order and empty-element options as `xaml_enable_attribute_reordering`,
+  `xaml_attribute_ordering_rule_groups` and `xaml_remove_ending_tag_of_empty_element`, off by default; otherwise only
+  whitespace changes, and a second pass changes nothing), `XamlRefactorings` (Extract Resource, Extract Style, Surround
+  With's targets) and `CreateFromUsage` (a binding path's property or command, and a missing converter; the MVVM
+  Toolkit known by its attributes' full names). `CSharp/CodeAssist.XamlEditing.cs` is the window's side (dialogs in
+  `Xaml/XamlRefactoringDialogs.cs`, surround templates in `LiveTemplates.Xaml`), each change's files applied through
+  `ApplyXamlChanges` as one command; Settings' Code Style: XAML page is `AppSettings.XamlFormat`.
   `src/Passenger.App/Xaml`: `XamlService` is the session's (`ProjectSession.Xaml`), one `XamlDocument` per open XAML
   file, projects read off the UI thread, told each build's AVLN problems; `LibrarySources` decompiles a library's
   type read-only; `SourceLink` fetches a theme's XAML through its PDB's Source Link from symbols.nuget.org (whose
@@ -430,6 +439,17 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`FEATURE_DATABREAKPOINT`), so elsewhere the item is greyed with the reason; the engine pins the object
   (`ICorDebugHeapValue4`, the runtime's advice over GC notifications) and sets DR0–DR7 on every thread through both the
   runtime's context and Win32. They last one session, as Rider's do, and their window tests run only on Windows x64.
+  XAML breakpoints: XamlIl (through Cecil) writes a sequence point per .axaml element and attribute, in documents of
+  no language, mid-expression, where the JIT maps few; for such a document `ModuleMetadataReader.ResolveBreakpoint`
+  binds at `JitBoundaryAtOrBefore` (after a call, a nop, the method's start), an attribute with no point of its own at
+  the one after the attribute before it (`UnpointedAttribute`), a template's root in its builder, and the stop is shown
+  at the breakpoint's place. `LineBreakpoint.Attribute` is an attribute's breakpoint (F9 on it, `XamlBreakpoints`),
+  kept with the folder, sent with its name's column. `PropertyBreakpoint` is the Live Visual Tree's Break When Value
+  Changes, for one session: the inspector watches that element's property (protocol v3 `watch`, `PropertyBreaks.cs`)
+  and calls `Breaks.Changed`, on which the IDE sets one function breakpoint per property breakpoint (condition
+  `breakpoint == Id && (…)`, the hit count kept in the app). The inspector is never optimized (the debugger reads that
+  call's arguments) and its watching code is `[DebuggerNonUserCode]`, shown as external code under Just My Code, so
+  the stop selects the code that set the value.
   The engine's lock (`EngineLock`) is held by one request or runtime event at a time and is not re-entrant: code under
   it never takes it again (`DrainRuntimeEventQueue` runs under its caller's hold).
 - The debugger, Passenger's own, started from SharpDbg and ICorDebugSharp (MIT; `THIRD_PARTY_NOTICES.md` says what came from where):
@@ -595,7 +615,11 @@ to a time runs in `Alone`. `PASSENGER_ENGINE_LOG=FILE` keeps the engine's own lo
 tests' sessions and the IDE's alike. `LiveTreeTests` debug `tests/Debuggees/LiveTreeApp`, headless, with no project file
 of its own (the test writes one on the tests' own Avalonia version); "click X,Y" typed into its Debug console stands in
 for the pointer. `BindingErrorsTests` run and debug `tests/Debuggees/BindingErrorsApp` (written the same way), whose
-caption binds a misspelt Name; "rebind" typed into its console makes it fail again.
+caption binds a misspelt Name; "rebind" typed into its console makes it fail again. `XamlBreakpointsTests` debug
+`tests/Debuggees/XamlBreakpointsApp` the same way ("paint", "warn" and "rename" typed into its console change Save's
+background and width, the buttons' style class, and the caption's binding). `XamlEditingTests` drive each XAML editing
+tool in an Avalonia app and a WPF app of their own (`AvaloniaGallery`, `WpfGallery`), the MVVM Toolkit stood in by its
+attributes' full names.
 `XamlTests`' `AvaloniaApp` makes `dotnet new avalonia.app` from templates installed into the run's own hive
 (`--debug:custom-hive`) and takes Accelerate's DevTools out of it.
 The run's IDE keeps dotnet new templates in its own home (DOTNET_CLI_HOME) on macOS and Linux and in
