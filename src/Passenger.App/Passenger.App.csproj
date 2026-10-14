@@ -57,6 +57,13 @@
                       GlobalPropertiesToRemove="RuntimeIdentifier;SelfContained;PublishReadyToRun" />
     <!-- What Passenger and the inspector say to each other, one definition for both ends. -->
     <Compile Include="../Passenger.Inspector/Protocol.cs" Link="LiveTree/InspectorProtocol.cs" />
+    <!-- Built first and carried under host/, never linked: MSBuild's evaluation runs in its own process on the machine's
+         dotnet (Workspace/ProjectHost.cs), so it is built for none of the systems the app is published for. -->
+    <ProjectReference Include="../Passenger.Host/Passenger.Host.csproj" ReferenceOutputAssembly="false" Private="false"
+                      GlobalPropertiesToRemove="RuntimeIdentifier;SelfContained;PublishReadyToRun" />
+    <!-- The host's messages, one definition for both ends. -->
+    <Compile Include="../Passenger.Host/Protocol.cs" Link="Workspace/HostProtocol.cs" />
+    <Compile Include="../Passenger.Host/Stamps.cs" Link="Workspace/HostStamps.cs" />
   </ItemGroup>
 
   <!-- TraceEvent's props give a build its Windows natives under x86/, amd64/ and arm64/: msdia140 (the DIA SDK, for
@@ -80,7 +87,7 @@
     <None Include="../../LICENSE" Link="LICENSE.txt" CopyToOutputDirectory="PreserveNewest" Visible="false" />
   </ItemGroup>
 
-  <Target Name="NoticeInputs" DependsOnTargets="ResolvePackageAssets;ResolveRuntimePackAssets;IncludeDebugAdapter">
+  <Target Name="NoticeInputs" DependsOnTargets="ResolvePackageAssets;ResolveRuntimePackAssets;IncludeDebugAdapter;IncludeProjectHost">
     <MSBuild Projects="../../tools/Passenger.Notices/Passenger.Notices.csproj" Targets="GetTargetPath"
              RemoveProperties="RuntimeIdentifier;SelfContained;PublishReadyToRun" BuildInParallel="$(BuildInParallel)">
       <Output TaskParameter="TargetOutputs" ItemName="NoticesTool" />
@@ -100,6 +107,7 @@
       <!-- The runtime a self-contained app carries, from its runtime pack. -->
       <NoticePackage Include="@(RuntimePackAsset->'%(NuGetPackageId)/%(NuGetPackageVersion)')" Condition="'$(SelfContained)' == 'true'" />
       <NoticeDebuggerDeps Include="$(DebugAdapterFolder)*.deps.json" />
+      <NoticeHostDeps Include="$(ProjectHostFolder)*.deps.json" />
       <NoticesServerPackage Include="@(NoticesServer->WithMetadataValue('Kind', 'package'))" />
       <NoticeServerDeps Include="%(NoticesServerPackage.Folder)**/*.deps.json" />
       <NoticeText Include="$(NoticesRepository)THIRD_PARTY_NOTICES.md;$(NoticesRepository)LICENSE;$(NoticesRepository)tools/Passenger.Notices/Licenses/*.txt;$(NoticesRepository)src/Passenger.Editor/Fonts/OFL.txt" />
@@ -115,6 +123,7 @@
       <NoticeLine Include="packages=$(NuGetPackageRoot)" />
       <NoticeLine Include="@(NoticePackageOnce->'package=%(Identity)')" />
       <NoticeLine Include="@(NoticeDebuggerDeps->'debugger=%(FullPath)')" />
+      <NoticeLine Include="@(NoticeHostDeps->'host=%(FullPath)')" />
       <NoticeLine Include="@(NoticesServerPackage->'server=%(Identity)')" />
       <NoticeLine Include="@(NoticesServerPackage->'serverFolder=%(Folder)')" />
       <NoticeLine Include="@(NoticesServer->WithMetadataValue('Kind', 'leftOut')->'serverLeftOut=%(Identity)')" />
@@ -124,7 +133,7 @@
   </Target>
 
   <Target Name="WriteNotices" DependsOnTargets="NoticeInputs"
-          Inputs="$(NoticesArguments);@(NoticesTool);@(NoticeText);@(NoticeDebuggerDeps);@(NoticeServerDeps)" Outputs="$(NoticesFile)">
+          Inputs="$(NoticesArguments);@(NoticesTool);@(NoticeText);@(NoticeDebuggerDeps);@(NoticeHostDeps);@(NoticeServerDeps)" Outputs="$(NoticesFile)">
     <Exec Command="&quot;$(NoticesHost)&quot; &quot;@(NoticesTool)&quot; &quot;$(NoticesArguments)&quot;" />
   </Target>
 
@@ -144,6 +153,23 @@
     <ItemGroup>
       <InspectorFile Include="@(InspectorAssembly->'%(RootDir)%(Directory)%(Filename).dll');@(InspectorAssembly->'%(RootDir)%(Directory)%(Filename).pdb')" />
       <None Include="@(InspectorFile)" Link="inspector/%(InspectorFile.Filename)%(InspectorFile.Extension)"
+            CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    </ItemGroup>
+  </Target>
+
+  <!-- The project host's output becomes this project's output items under host/, as the debug adapter's does under
+       debugger/: the host and MSBuildLocator, the one package it carries. -->
+  <Target Name="IncludeProjectHost" BeforeTargets="AssignTargetPaths">
+    <MSBuild Projects="../Passenger.Host/Passenger.Host.csproj" Targets="GetTargetPath"
+             RemoveProperties="RuntimeIdentifier;SelfContained;PublishReadyToRun" BuildInParallel="$(BuildInParallel)">
+      <Output TaskParameter="TargetOutputs" ItemName="ProjectHostAssembly" />
+    </MSBuild>
+    <PropertyGroup>
+      <ProjectHostFolder>@(ProjectHostAssembly->'%(RootDir)%(Directory)')</ProjectHostFolder>
+    </PropertyGroup>
+    <ItemGroup>
+      <ProjectHostFile Include="$(ProjectHostFolder)*" />
+      <None Include="@(ProjectHostFile)" Link="host/%(ProjectHostFile.Filename)%(ProjectHostFile.Extension)"
             CopyToOutputDirectory="PreserveNewest" Visible="false" />
     </ItemGroup>
   </Target>

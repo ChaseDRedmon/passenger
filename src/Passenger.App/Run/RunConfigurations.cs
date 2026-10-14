@@ -12,6 +12,10 @@ public sealed class RunConfigurations(string? folder)
     private List<RunConfiguration> own = [];
     private StateDocument<RunConfigurationsState>? kept;
 
+    /// <summary>Whether the one chosen was the person's choice (in the toolbar, Edit Configurations or the store), which
+    /// stays chosen, rather than the first there was, which follows the projects as their evaluations land.</summary>
+    private bool picked;
+
     /// <summary>Every configuration: the generated ones, then the folder's own.</summary>
     public IReadOnlyList<RunConfiguration> All { get; private set; } = [];
 
@@ -31,11 +35,13 @@ public sealed class RunConfigurations(string? folder)
         RunConfigurationsState read = document.Value;
         own = [.. read.Configurations.Select(FromStore)];
         kept = document;
+        picked |= read.Selected is not null;
         Configure(projects, read.Selected ?? Chosen?.Name);
     }
 
-    /// <summary>Makes the list again from the projects loaded now and the folder's own, the chosen one kept while it is there.</summary>
-    public void Configure(IReadOnlyList<ProjectModel> projects) => Configure(projects, Chosen?.Name);
+    /// <summary>Makes the list again from the projects loaded now and the folder's own, the one the person chose kept while
+    /// it is there.</summary>
+    public void Configure(IReadOnlyList<ProjectModel> projects) => Configure(projects, picked ? Chosen?.Name : null);
 
     private void Configure(IReadOnlyList<ProjectModel> projects, string? keep)
     {
@@ -52,6 +58,7 @@ public sealed class RunConfigurations(string? folder)
             return false;
         }
         Chosen = chosen;
+        picked = true;
         Changed?.Invoke(this, EventArgs.Empty);
         Write();
         return true;
@@ -62,6 +69,7 @@ public sealed class RunConfigurations(string? folder)
     {
         UiThread.Check();
         own = [.. mine.Select(c => c with { Generated = false, Unsupported = null })];
+        picked |= chosen is not null;
         Configure(projects, chosen ?? Chosen?.Name);
         Write();
     }

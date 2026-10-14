@@ -134,7 +134,8 @@ public sealed class StateStore
 }
 
 /// <summary>A folder's documents: what its window had open, its layout, breakpoints, bookmarks, run configurations,
-/// Find in Files' scope, the Unit Tests window's grouping and outcomes, and the Git log's favourite branches.</summary>
+/// Find in Files' scope, the Unit Tests window's grouping and outcomes, the Git log's favourite branches, and its projects
+/// as MSBuild last evaluated them.</summary>
 public sealed class ProjectState
 {
     internal ProjectState(string root, string folder)
@@ -149,6 +150,7 @@ public sealed class ProjectState
         Find = new(Path.Combine(Folder, "find.json"));
         UnitTests = new(Path.Combine(Folder, "unitTests.json"));
         GitBranches = new(Path.Combine(Folder, "gitBranches.json"));
+        ProjectModels = new(Path.Combine(Folder, "projectModels.json"));
     }
 
     /// <summary>The folder the documents are in.</summary>
@@ -183,8 +185,12 @@ public sealed class ProjectState
     /// <summary>The branches marked and unmarked as favourites in the Git log, as Rider keeps them for a project.</summary>
     public StateDocument<ToolWindows.GitBranchesState> GitBranches { get; }
 
+    /// <summary>The folder's projects as MSBuild last evaluated them, which it opens on.</summary>
+    public StateDocument<ProjectModelCache> ProjectModels { get; }
+
     public void Flush()
     {
+        ProjectModels.Flush();
         Workspace.Flush();
         Layout.Flush();
         Breakpoints.Flush();

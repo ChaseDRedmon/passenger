@@ -45,6 +45,8 @@ public partial class MainWindow
         else if (changes.Structure)
         {
             Explorer.RefreshFolders(changes.Paths.Select(Path.GetDirectoryName).OfType<string>());
+            // A file come or gone may be one a project's wildcards take in: its folder's stamp says which.
+            session.Evaluate();
         }
         if (changes.Structure)
         {

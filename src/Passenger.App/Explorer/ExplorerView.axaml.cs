@@ -142,6 +142,10 @@ public partial class ExplorerView : UserControl
         {
             Rows.SelectedItem = again;
         }
+        if (revealing is { } waiting)
+        {
+            Reveal(waiting);
+        }
     }
 
     /// <summary>Opens the solution folders down to one (by its path in the solution) and chooses it, or what it holds at a
@@ -391,6 +395,24 @@ public partial class ExplorerView : UserControl
         Refresh();
     }
 
+    /// <summary>Projects MSBuild evaluated again: their rows show them anew, every other row as it was (open, chosen,
+    /// focused), and a file waiting to be chosen is chosen once it shows.</summary>
+    public void UpdateProjects(Workspace.WorkspaceModel workspace, IEnumerable<Workspace.ProjectModel> updated)
+    {
+        // A row made again takes the keys with it: they stay the Explorer's, on the row chosen, for the next Paste.
+        bool keys = Rows.IsKeyboardFocusWithin;
+        Take(workspace);
+        Tree.UpdateProjects(updated);
+        if (revealing is { } waiting)
+        {
+            Reveal(waiting);
+        }
+        if (keys && !Rows.IsKeyboardFocusWithin)
+        {
+            FocusRows();
+        }
+    }
+
     private void Take(Workspace.WorkspaceModel workspace)
     {
         solution = workspace.Solution;
@@ -482,15 +504,24 @@ public partial class ExplorerView : UserControl
         Rows.ContainerFromIndex(index)?.Focus();
     }
 
-    /// <summary>Opens the folders down to a file and selects its row.</summary>
+    /// <summary>Opens the folders down to a file and selects its row. A file the Solution view does not show yet (one just
+    /// made, moved or copied into a project, before MSBuild has evaluated the project again) is chosen once it does.</summary>
     public void Reveal(string path)
     {
         if (Tree.Reveal(path) is { } node)
         {
+            revealing = null;
             Rows.SelectedItem = node;
             Rows.ScrollIntoView(node);
         }
+        else
+        {
+            revealing = Tree.IsSolutionView && (File.Exists(path) || Directory.Exists(path)) ? path : null;
+        }
     }
+
+    /// <summary>A file or folder to choose once the Solution view shows it.</summary>
+    private string? revealing;
 
     private void Activate(ExplorerNode node)
     {

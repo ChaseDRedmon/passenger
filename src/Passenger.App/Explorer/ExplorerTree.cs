@@ -3,6 +3,7 @@ using Avalonia;
 using Avalonia.Media;
 using Passenger.App.Workspace;
 using Passenger.Core;
+using Passenger.Host;
 
 namespace Passenger.App.Explorer;
 
@@ -82,6 +83,7 @@ public sealed class ExplorerTree
     {
         IsSolutionView = true;
         this.solution = solution;
+        Take(solution.Projects);
         int count = solution.Projects.Count();
         ExplorerNode root = new(NodeKind.Solution, solution.Name, solution.Path, 0, false,
             node => Entries(solution.Entries, node.Depth + 1, null),
@@ -95,7 +97,78 @@ public sealed class ExplorerTree
     {
         IsSolutionView = true;
         solution = null;
+        Take([project]);
         Show(Project(project, 0));
+    }
+
+    /// <summary>The projects shown, as last evaluated, by path: a project's rows read theirs from here as they are made,
+    /// so one evaluated again shows anew in the rows already there (<see cref="UpdateProjects"/>).</summary>
+    private readonly Dictionary<string, ProjectModel> projects = new(StringComparer.Ordinal);
+
+    /// <summary>Each evaluated project's files by where they show, made the first time they are wanted.</summary>
+    private readonly Dictionary<string, ProjectFiles> files = new(StringComparer.Ordinal);
+
+    private void Take(IEnumerable<ProjectModel> shown)
+    {
+        projects.Clear();
+        files.Clear();
+        foreach (ProjectModel project in shown)
+        {
+            projects[project.Path] = project;
+        }
+    }
+
+    private ProjectModel Current(ProjectModel project) => projects.GetValueOrDefault(project.Path, project);
+
+    private ProjectFiles? FilesOf(ProjectModel project)
+    {
+        if (!project.IsEvaluated)
+        {
+            return null;
+        }
+        if (!files.TryGetValue(project.Path, out ProjectFiles? held))
+        {
+            files[project.Path] = held = new ProjectFiles(project);
+        }
+        return held;
+    }
+
+    /// <summary>Projects evaluated again: their rows read them anew, every row still there kept as it was (open, chosen,
+    /// focused), and the rows that came or went put in their places.</summary>
+    public void UpdateProjects(IEnumerable<ProjectModel> updated)
+    {
+        if (Root is null || !IsSolutionView)
+        {
+            return;
+        }
+        HashSet<string> changed = new(StringComparer.Ordinal);
+        foreach (ProjectModel project in updated)
+        {
+            if (projects.ContainsKey(project.Path))
+            {
+                projects[project.Path] = project;
+                files.Remove(project.Path);
+                changed.Add(project.Path);
+            }
+        }
+        if (solution is not null)
+        {
+            solution = solution.WithProjects(Current);
+        }
+        bool any = false;
+        foreach (ExplorerNode node in Loaded(Root).Where(n => n.Kind == NodeKind.Project && n.Path is { } path && changed.Contains(path)).ToList())
+        {
+            ProjectModel project = projects[node.Path!];
+            node.Detail = Unloaded.Contains(project.Path) ? "(unloaded)" : DetailOf(project);
+            foreach (ExplorerNode below in Loaded(node).ToList())
+            {
+                any |= below.Reload();
+            }
+        }
+        if (any)
+        {
+            Rebuild();
+        }
     }
 
     public void Toggle(ExplorerNode node)
@@ -162,7 +235,16 @@ public sealed class ExplorerTree
                 any |= node.Reload();
             }
         }
-        if (!any)
+        if (any)
+        {
+            Rebuild();
+        }
+    }
+
+    /// <summary>The rows made again from the nodes as they now are: those still there kept, the rest taken out or put in.</summary>
+    private void Rebuild()
+    {
+        if (Root is null)
         {
             return;
         }
@@ -209,10 +291,27 @@ public sealed class ExplorerTree
         }
         string full = PathNames.Canonical(path);
         string? owner = solution is null ? null : ProjectModel.Owning(solution.Projects, full)?.Path;
+        // A file a project takes from elsewhere shows where its Link puts it, in the project that holds it.
+        string? linked = null;
+        if (owner is null && solution is not null)
+        {
+            foreach (ProjectModel project in solution.Projects)
+            {
+                if (FilesOf(Current(project))?.LogicalOf(full) is { } logical)
+                {
+                    (owner, linked) = (project.Path, logical);
+                    break;
+                }
+            }
+        }
         ExplorerNode node = Root;
         while (node.Path != full)
         {
             Expand(node);
+            if (linked is not null && node.Kind == NodeKind.Project && node.Path == owner)
+            {
+                return RevealLinked(node, linked, full);
+            }
             ExplorerNode? next = node.Children?
                 .Where(c => c.Kind is not (NodeKind.Dependencies or NodeKind.Framework or NodeKind.Package or NodeKind.ProjectReference))
                 .FirstOrDefault(c => c.Path == full || c.Kind switch
@@ -229,6 +328,24 @@ public sealed class ExplorerTree
             node = next;
         }
         return node;
+    }
+
+    /// <summary>Opens a project's folders down to a file it takes from elsewhere, by where it shows, and returns its row.</summary>
+    private ExplorerNode? RevealLinked(ExplorerNode project, string logical, string full)
+    {
+        ExplorerNode node = project;
+        string[] folders = logical.Split('/');
+        foreach (string folder in folders[..^1])
+        {
+            Expand(node);
+            if (node.Children?.FirstOrDefault(c => c.Kind == NodeKind.Folder && c.Name == folder) is not { } next)
+            {
+                return null;
+            }
+            node = next;
+        }
+        Expand(node);
+        return node.Children?.FirstOrDefault(c => c.Path == full);
     }
 
     private void Show(ExplorerNode root)
@@ -293,39 +410,116 @@ public sealed class ExplorerTree
     /// by what the project says they depend on.</summary>
     public bool NestFiles { get; set; } = true;
 
-    /// <summary>How a project's files nest under one another: by its DependentUpon, and by Rider's rules when asked.</summary>
-    private sealed record Nesting(ProjectModel Project, bool ByName);
+    /// <summary>How a project's files nest under one another: by its DependentUpon, and by Rider's rules when asked; and
+    /// once it is evaluated, the files it holds.</summary>
+    private sealed record Nesting(ProjectModel Project, bool ByName, ProjectFiles? Files = null);
 
-    private ExplorerNode Project(ProjectModel project, int depth) => Unloaded.Contains(project.Path)
-        ? new(NodeKind.Project, project.Name, project.Path, depth, dimmed: true, null, "(unloaded)")
-        : new(NodeKind.Project, project.Name, project.Path, depth, !project.Exists, node =>
+    /// <summary>A project's row: once MSBuild has evaluated it, its files are the ones it holds as evaluated
+    /// (<see cref="ProjectFiles"/>); until then, or when it could not be, the files in its folder.</summary>
+    private ExplorerNode Project(ProjectModel given, int depth) => Unloaded.Contains(given.Path)
+        ? new(NodeKind.Project, given.Name, given.Path, depth, dimmed: true, null, "(unloaded)")
+        : new(NodeKind.Project, given.Name, given.Path, depth, !given.Exists, node =>
         {
-            List<ExplorerNode> children = [Dependencies(project, node.Depth + 1)];
-            children.AddRange(Contents(project.Folder, node.Depth + 1, dimmed: false, skip: project.Path, new Nesting(project, NestFiles)));
+            List<ExplorerNode> children = [Dependencies(given, node.Depth + 1)];
+            children.AddRange(HeldIn(given, string.Empty, node.Depth + 1));
             return children;
-        }, project.TargetFrameworks.Count > 0 ? string.Join(", ", project.TargetFrameworks) : null);
+        }, DetailOf(Current(given)));
 
-    private static ExplorerNode Dependencies(ProjectModel project, int depth) =>
+    /// <summary>What a project's row says beside its name: its frameworks, or that MSBuild could not evaluate it.</summary>
+    private static string? DetailOf(ProjectModel project) =>
+        project.Problem is not null ? "(load failed)" : project.TargetFrameworks.Count > 0 ? string.Join(", ", project.TargetFrameworks) : null;
+
+    /// <summary>A project's dependencies as MSBuild evaluates them: for a project of one framework, it with the projects and
+    /// packages it references; for a multi-targeted one, each framework with its own, as Rider shows them.</summary>
+    private ExplorerNode Dependencies(ProjectModel given, int depth) =>
         new(NodeKind.Dependencies, "Dependencies", null, depth, false, node =>
         {
+            ProjectModel project = Current(given);
             int below = node.Depth + 1;
             List<ExplorerNode> children = [];
+            IReadOnlyList<FrameworkDependencies> frameworks = project.Evaluated?.Dependencies ?? [];
+            if (frameworks is [{ Framework: not null }, ..])
+            {
+                children.AddRange(frameworks.Select(f => new ExplorerNode(NodeKind.Framework, f.Framework!, null, below, false, framework =>
+                {
+                    // Read when opened, so one evaluated again shows its packages as they are now.
+                    ProjectModel now = Current(given);
+                    FrameworkDependencies? its = now.Evaluated?.Dependencies.FirstOrDefault(d => d.Framework == framework.Name);
+                    return [.. Referenced(now, (its?.Projects ?? []).Select(PathNames.Canonical), its?.Packages ?? [], framework.Depth + 1)];
+                })
+                {
+                    Owner = given.Path,
+                }));
+                return children;
+            }
             children.AddRange(project.TargetFrameworks.Select(f => Leaf(NodeKind.Framework, f, null, below, project)));
-            children.AddRange(project.ProjectReferences.Select(r => Leaf(NodeKind.ProjectReference, Path.GetFileNameWithoutExtension(r), null, below, project, r)));
-            children.AddRange(project.Packages.Select(p => Leaf(NodeKind.Package, p.Name, p.Version, below, project)));
+            children.AddRange(Referenced(project, project.ProjectReferences, frameworks is [{ } one] ? one.Packages : [], below));
             return children;
-        }) { Owner = project.Path };
+        }) { Owner = given.Path };
+
+    /// <summary>The projects and packages a project (or one framework of it) references; packages the SDK adds of itself
+    /// are left out, as Rider leaves them.</summary>
+    private static IEnumerable<ExplorerNode> Referenced(ProjectModel project, IEnumerable<string> projects, IReadOnlyList<PackageDependency> packages, int depth) =>
+        projects.Select(r => Leaf(NodeKind.ProjectReference, Path.GetFileNameWithoutExtension(r), null, depth, project, r))
+            .Concat((packages.Count > 0 ? packages.Where(p => !p.Implicit).Select(p => (p.Name, p.Version)) : project.Packages)
+                .Select(p => Leaf(NodeKind.Package, p.Name, p.Version, depth, project)));
 
     private static ExplorerNode Leaf(NodeKind kind, string name, string? detail, int depth, ProjectModel owner, string? referenced = null) =>
         new(kind, name, null, depth, false, null, detail) { Owner = owner.Path, Referenced = referenced };
 
-    private static ExplorerNode Folder(string path, int depth, bool dimmed, Nesting? nesting = null) =>
+    private ExplorerNode Folder(string path, int depth, bool dimmed, Nesting? nesting = null) =>
         new(NodeKind.Folder, Path.GetFileName(path) is { Length: > 0 } name ? name : path, path, depth, dimmed,
             node => Contents(path, node.Depth + 1, node.IsDimmed, skip: null, nesting));
 
+    /// <summary>What a project holds at one place in it (its top, or a folder of it), read as it is now: once evaluated,
+    /// the files it holds there; until then, or when it could not be, the files on disk there.</summary>
+    private List<ExplorerNode> HeldIn(ProjectModel given, string relative, int depth)
+    {
+        ProjectModel project = Current(given);
+        ProjectFiles? files = FilesOf(project);
+        Nesting nesting = new(project, NestFiles, files);
+        if (files is null)
+        {
+            string folder = relative.Length == 0 ? project.Folder : Path.Combine(project.Folder, relative.Replace('/', Path.DirectorySeparatorChar));
+            return Contents(folder, depth, dimmed: false, skip: relative.Length == 0 ? project.Path : null, nesting, given);
+        }
+        return Held(given, files, relative, depth, nesting);
+    }
+
+    /// <summary>A folder of an evaluated project: what the project holds in it, by where each file shows (a linked file at
+    /// its Link), whether or not the folder is on disk.</summary>
+    private ExplorerNode HeldFolder(ProjectModel given, string path, string relative, int depth) =>
+        new(NodeKind.Folder, Path.GetFileName(relative), path, depth, false, node => HeldIn(given, relative, node.Depth + 1));
+
+    /// <summary>What an evaluated project holds at one place in it: its folders, then its files, each by name, a file's
+    /// dependents nested under it; a folder on disk with nothing in it at all shows too, as one just made does.</summary>
+    private List<ExplorerNode> Held(ProjectModel given, ProjectFiles files, string relative, int depth, Nesting nesting)
+    {
+        List<ExplorerNode> nodes = [.. files.FoldersIn(relative)
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .Select(name => relative.Length == 0 ? name : $"{relative}/{name}")
+            .Select(inner => HeldFolder(given, files.PathOf(inner), inner, depth))];
+        List<(string Name, string Path)> held = [.. files.FilesIn(relative)
+            .Where(f => !FileText.IsSaving(f.Name))
+            .OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase)];
+        IReadOnlyDictionary<string, string> parents = FileNesting.Parents([.. held.Select(f => f.Path)], nesting.Project, nesting.ByName);
+        foreach ((string name, string path) in held.Where(f => !parents.ContainsKey(f.Path)))
+        {
+            List<string> nested = [.. held.Where(f => parents.TryGetValue(f.Path, out string? parent) && parent == path).Select(f => f.Path)];
+            nodes.Add(nested.Count == 0
+                ? new ExplorerNode(NodeKind.File, name, path, depth, false, null)
+                : new ExplorerNode(NodeKind.File, name, path, depth, false, node =>
+                    [.. nested.Select(n => new ExplorerNode(NodeKind.File, Path.GetFileName(n), n, node.Depth + 1, false, null))])
+                {
+                    Nested = string.Join('/', nested.Select(Path.GetFileName)),
+                });
+        }
+        return nodes;
+    }
+
     /// <summary>A folder's entries, folders first, a save's temporary file left out (nothing reads the folder again once
     /// the save is done); a project hides its own build output and file, and nests its files under those they belong to.</summary>
-    private static List<ExplorerNode> Contents(string folder, int depth, bool dimmed, string? skip, Nesting? nesting)
+    private List<ExplorerNode> Contents(string folder, int depth, bool dimmed, string? skip, Nesting? nesting, ProjectModel? within = null)
     {
         List<FileSystemInfo> entries;
         try
@@ -348,7 +542,10 @@ public sealed class ExplorerTree
         {
             if (entry is DirectoryInfo)
             {
-                nodes.Add(Folder(entry.FullName, depth, dimmed || Excluded.Contains(entry.Name), nesting));
+                // A project's folder reads what it holds when opened, so it shows the project as evaluated once it is.
+                nodes.Add(within is not null && !Excluded.Contains(entry.Name)
+                    ? HeldFolder(within, entry.FullName, Path.GetRelativePath(within.Folder, entry.FullName).Replace('\\', '/'), depth)
+                    : Folder(entry.FullName, depth, dimmed || Excluded.Contains(entry.Name), nesting));
             }
             else if (!parents.ContainsKey(entry.FullName))
             {
@@ -396,7 +593,7 @@ public sealed class ExplorerNode : Observable
         Path = path;
         Depth = depth;
         IsDimmed = dimmed;
-        Detail = detail;
+        this.detail = detail;
         this.load = load;
     }
 
@@ -406,8 +603,14 @@ public sealed class ExplorerNode : Observable
     public int Depth { get; }
     public bool IsDimmed { get; }
 
-    /// <summary>A quieter word beside the name: a package's version, a project's frameworks.</summary>
-    public string? Detail { get; }
+    /// <summary>A quieter word beside the name: a package's version, a project's frameworks (which an evaluation changes).</summary>
+    public string? Detail
+    {
+        get => detail;
+        set => Set(ref detail, value);
+    }
+
+    private string? detail;
 
     /// <summary>Where the row is among the solution's own folders: a solution folder's path in the solution ("/src/tools/"),
     /// or for a file one holds, that folder's; null for every other row.</summary>
@@ -476,7 +679,9 @@ public sealed class ExplorerNode : Observable
         return !same;
     }
 
-    private static string Identity(ExplorerNode node) => $"{node.Kind}/{node.Path ?? node.Name}/{node.Nested}";
+    /// <summary>What makes a row the same row when its parent is read again: a package's version is part of it, so one
+    /// updated shows its new version.</summary>
+    private static string Identity(ExplorerNode node) => $"{node.Kind}/{node.Path ?? node.Name}/{node.Nested}/{(node.Path is null ? node.Detail : null)}";
 
     public bool IsExpanded
     {

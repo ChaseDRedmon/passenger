@@ -35,7 +35,7 @@ public sealed record WorkspaceModel(string Folder, SolutionModel? Solution, IRea
     /// <summary>Reads a folder, with the solution or project it was opened by, which stays its workspace while it is there.
     /// A folder without either is walked for its projects, which is a worker's job, never the window's thread's.</summary>
     public static WorkspaceModel Read(string folder, string? named = null) =>
-        ReadSolution(folder, named) ?? new WorkspaceModel(folder, null, [.. ProjectsUnder(folder).Select(ProjectModel.Load)]);
+        ReadSolution(folder, named) ?? new WorkspaceModel(folder, null, [.. ProjectsUnder(folder).Select(ProjectModel.Unevaluated)]);
 
     /// <summary>A folder read through the solution or project it was opened by, else its own solution: a listing of the
     /// folder's top and the files the solution names, quick enough for the window's thread. Null for a folder without one
@@ -44,16 +44,21 @@ public sealed record WorkspaceModel(string Folder, SolutionModel? Solution, IRea
     {
         if (named is not null && IsProject(named) && File.Exists(named))
         {
-            return new WorkspaceModel(folder, null, [ProjectModel.Load(named)]) { ProjectFile = named };
+            return new WorkspaceModel(folder, null, [ProjectModel.Unevaluated(named)]) { ProjectFile = named };
         }
         string? path = named is not null && IsSolution(named) && File.Exists(named) ? named : SolutionModel.Find(folder);
         return path is not null && SolutionModel.Load(path) is { } solution ? new WorkspaceModel(folder, solution, [.. solution.Projects]) : null;
     }
 
-    /// <summary>A folder without a solution read again through the projects found before: those still there, their files
-    /// read again (a package added), as quick as a solution's read. Only the walk finds those added since.</summary>
+    /// <summary>The same workspace with each project as <paramref name="map"/> gives it: MSBuild's evaluation of it, in
+    /// the solution's folders and in <see cref="Projects"/> alike.</summary>
+    public WorkspaceModel WithProjects(Func<ProjectModel, ProjectModel> map) =>
+        this with { Solution = Solution?.WithProjects(map), Projects = [.. Projects.Select(map)] };
+
+    /// <summary>A folder without a solution read again through the projects found before: those still there, as quick as
+    /// a solution's read. Only the walk finds those added since.</summary>
     public WorkspaceModel Reread() =>
-        new(Folder, null, [.. Projects.Where(p => File.Exists(p.Path)).Select(p => ProjectModel.Load(p.Path))]);
+        new(Folder, null, [.. Projects.Where(p => File.Exists(p.Path)).Select(p => ProjectModel.Unevaluated(p.Path))]);
 
     /// <summary>What building the whole builds: the solution, or each project loaded in turn when some are unloaded or
     /// there is no solution; the folder when it has neither, for the .NET command line to say why.</summary>

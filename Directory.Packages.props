@@ -36,6 +36,13 @@
     <!-- The Windows install's hooks (Installation.cs), at the version of the vpk tool that packs it (dotnet-tools.json). -->
     <PackageVersion Include="Velopack" Version="1.2.161" />
   </ItemGroup>
+  <!-- The project host (Passenger.Host): MSBuild compiled against at the oldest an SDK it may load carries (8.0.4xx's
+       17.11), never copied, and MSBuildLocator at the version Roslyn's own build host uses. -->
+  <ItemGroup>
+    <PackageVersion Include="Microsoft.Build" Version="17.11.48" />
+    <PackageVersion Include="Microsoft.Build.Framework" Version="17.11.48" />
+    <PackageVersion Include="Microsoft.Build.Locator" Version="1.10.2" />
+  </ItemGroup>
   <!-- The debugger's engine. The expression compiler is Roslyn's, packed from its own source (Roslyn does not
        publish it) at the Microsoft.CodeAnalysis version above, which it must match. -->
   <ItemGroup>

@@ -8,9 +8,11 @@ named here.
 
 ## In the app
 
-What `just publish` carries for macOS and Windows: the app, the debugger beside it under `debugger/`, Roslyn's
-language server under `roslyn/` and Passenger's own extension to it under `roslyn-extension/` (compiled against the
-server's assemblies and carrying none), and on Windows what Velopack's installer adds to it (`just package-win`). Packages
+What `just publish` carries for macOS and Windows: the app, the debugger beside it under `debugger/`, the project host
+under `host/` (MSBuild's evaluation in a process of its own, run on the installed .NET with the installed SDK's MSBuild,
+of which it carries nothing), Roslyn's language server under `roslyn/` and Passenger's own extension to it under
+`roslyn-extension/` (compiled against the server's assemblies and carrying none), and on Windows what Velopack's
+installer adds to it (`just package-win`). Packages
 restored with these whose files no macOS or Windows build carries (SkiaSharp's and HarfBuzzSharp's natives for Linux
 and the browser, dbgshim's for Linux and 32-bit Windows) are left out.
 
@@ -41,6 +43,7 @@ and the browser, dbgshim's for Linux and 32-bit Windows) are left out.
 | `NuGet.Configuration`, `NuGet.Common`, `NuGet.Frameworks` | NuGet's own reading of the nuget.config files, as restore reads them: the NuGet window's feeds, their credentials and package source mapping | Apache-2.0 | © Microsoft Corporation. All rights reserved. |
 | `System.Security.Cryptography.ProtectedData` | NuGet.Configuration's, for a feed's password NuGet keeps encrypted on Windows | MIT | © Microsoft Corporation. All rights reserved. |
 | `Microsoft.TestPlatform.TranslationLayer`, `Microsoft.TestPlatform.ObjectModel` | VSTest's client, for finding, running and debugging tests | MIT | © Microsoft Corporation. All rights reserved. |
+| `Microsoft.Build.Locator` | the project host's way to the installed .NET SDK's own MSBuild, which it loads, the one package under `host/` | MIT | © Microsoft Corporation. All rights reserved. |
 | `Microsoft.Diagnostics.NETCore.Client` | the debugger's and the profiler's diagnostic port | MIT | © Microsoft Corporation. All rights reserved. |
 | `Microsoft.Diagnostics.Runtime` | ClrMD, reading the profiler's memory snapshots | MIT | © Microsoft Corporation. All rights reserved. |
 | `Microsoft.Diagnostics.Tracing.TraceEvent` | reading the profiler's EventPipe traces, with its COM interop assemblies `Dia2Lib.dll` and `TraceReloggerLib.dll`; its Windows natives (`msdia140.dll`, `KernelTraceControl.dll`), which reading EventPipe never loads, are left out of every publish (`Passenger.App.csproj`) | MIT | © Microsoft Corporation. All rights reserved. |
@@ -120,6 +123,7 @@ Packages the build or the tests use that no app carries.
 | `Avalonia.BuildServices` | Avalonia's build task, whose telemetry `AVALONIA_TELEMETRY_OPTOUT` turns off (the README says how) | MIT | Copyright 2023-2025 © The AvaloniaUI Project |
 | `Microsoft.CodeAnalysis.Analyzers` | Roslyn's analyzers, which come with Microsoft.CodeAnalysis.Common | MIT | © Microsoft Corporation. All rights reserved. |
 | `Krafs.Publicizer` | the debugger's build | MIT | © Krafs 2024 |
+| `Microsoft.Build`, `Microsoft.Build.Framework`, `Microsoft.NET.StringTools`, `System.Configuration.ConfigurationManager`, `System.Diagnostics.EventLog`, `System.Reflection.MetadataLoadContext`, `System.Security.Cryptography.ProtectedData` | the project host's build: MSBuild's API and what it depends on, compiled against and never carried, since the host runs the installed SDK's own MSBuild (`src/Passenger.Host`) | MIT | © Microsoft Corporation. All rights reserved. |
 | `Microsoft.CodeAnalysis.BannedApiAnalyzers` | the tests' build: the entry points a test may not call | MIT | © Microsoft Corporation. All rights reserved. |
 | `xunit.v3`, `xunit.v3.assert`, `xunit.v3.common`, `xunit.v3.core.mtp-v1`, `xunit.v3.extensibility.core`, `xunit.v3.mtp-v1`, `xunit.v3.runner.common`, `xunit.v3.runner.inproc.console`, `xunit.analyzers`, `xunit.runner.visualstudio` | the tests | Apache-2.0 | Copyright (C) .NET Foundation |
 | `Avalonia.Headless.XUnit` | the tests on Avalonia's headless platform | MIT | Copyright 2013-2026 © The AvaloniaUI Project |

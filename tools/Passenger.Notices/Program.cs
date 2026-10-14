@@ -67,6 +67,9 @@ public sealed class Inputs
     /// <summary>The debugger's .deps.json files.</summary>
     public List<string> DebuggerDeps { get; } = [];
 
+    /// <summary>The project host's .deps.json files.</summary>
+    public List<string> HostDeps { get; } = [];
+
     /// <summary>Roslyn's server package's folder, and the folder its server is in.</summary>
     public string? Server { get; private set; }
 
@@ -116,6 +119,9 @@ public sealed class Inputs
                 case "debugger":
                     inputs.DebuggerDeps.Add(value);
                     break;
+                case "host":
+                    inputs.HostDeps.Add(value);
+                    break;
                 case "server":
                     inputs.Server = value;
                     break;
@@ -146,6 +152,7 @@ public static class Place
 {
     public const string App = "the app";
     public const string Debugger = "debugger/";
+    public const string Host = "host/";
     public const string Server = "roslyn/";
 }
 
@@ -157,10 +164,10 @@ public sealed class Entry(string id, string version)
 
     public string Version => version;
 
-    /// <summary>The app first, then debugger/ and roslyn/.</summary>
+    /// <summary>The app first, then debugger/, host/ and roslyn/.</summary>
     public SortedSet<string> Places { get; } = new(Comparer<string>.Create((a, b) => Order(a).CompareTo(Order(b))));
 
-    private static int Order(string place) => Array.IndexOf([Place.App, Place.Debugger, Place.Server], place);
+    private static int Order(string place) => Array.IndexOf([Place.App, Place.Debugger, Place.Host, Place.Server], place);
 
     public string Copyright { get; set; } = "";
 
@@ -200,6 +207,13 @@ public static partial class NoticesFile
                 Restored(id, version, path, Place.Debugger);
             }
         }
+        foreach (string deps in inputs.HostDeps)
+        {
+            foreach ((string id, string version, string? path) in Dependencies(deps))
+            {
+                Restored(id, version, path, Place.Host);
+            }
+        }
         if (inputs.Server is { } server)
         {
             Package(Path.GetFullPath(server), Place.Server);
@@ -236,8 +250,9 @@ public static partial class NoticesFile
             Passenger is {copyright}, under the MIT License in LICENSE.txt beside this file. It carries the software
             named below, each part under its own licence:
 
-            1. Packages: each with where Passenger carries it (the app; its debugger, under debugger/; Roslyn's language
-               server, under roslyn/), the copyright its package states, and the full text of its licence.
+            1. Packages: each with where Passenger carries it (the app; its debugger, under debugger/; its project host,
+               under host/; Roslyn's language server, under roslyn/), the copyright its package states, and the full text
+               of its licence.
             2. The notices the packages carry of their own.
             3. Source and assets Passenger copied from other projects, and the licences of its typefaces.
 

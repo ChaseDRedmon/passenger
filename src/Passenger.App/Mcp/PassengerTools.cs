@@ -63,9 +63,11 @@ public sealed partial class PassengerTools(MainWindow window)
         {
             throw new FileNotFoundException($"No folder or file at {full}");
         }
-        // A folder without a solution has its projects once the walk for them lands.
+        // A folder without a solution has its projects once the walk for them lands, and each project what MSBuild
+        // evaluates once its evaluation lands.
         await Session.WorkspaceRead.WaitAsync(cancel);
         await Task.Yield();
+        await Session.Models.Idle.WaitAsync(cancel);
         return Snapshot();
     });
 
@@ -681,14 +683,20 @@ public sealed partial class PassengerTools(MainWindow window)
     // The work behind them
 
     /// <summary>A tool's work on the UI thread, its waits ended by <paramref name="cancel"/> (the agent gave up on the
-    /// call, or went). What it refuses (nothing to debug, no such file) reaches the agent in its own words: the SDK
-    /// passes only an McpException's message on, and hides every other's.</summary>
-    private static async Task<T> OnUi<T>(CancellationToken cancel, Func<Task<T>> work)
+    /// call, or went), once the folder's projects are read and evaluated, which is what every tool that runs, builds or
+    /// tests a project asks about. What it refuses (nothing to debug, no such file) reaches the agent in its own words: the
+    /// SDK passes only an McpException's message on, and hides every other's.</summary>
+    private async Task<T> OnUi<T>(CancellationToken cancel, Func<Task<T>> work)
     {
         cancel.ThrowIfCancellationRequested();
         try
         {
-            return await UiThread.InvokeAsync(work);
+            return await UiThread.InvokeAsync(async () =>
+            {
+                await Session.WorkspaceRead.WaitAsync(cancel);
+                await Session.Models.Idle.WaitAsync(cancel);
+                return await work();
+            });
         }
         catch (Exception error) when (error is InvalidOperationException or ArgumentException or IOException or UnauthorizedAccessException or TimeoutException or DapException or LanguageServerFailed or LiveTree.LiveAppException)
         {

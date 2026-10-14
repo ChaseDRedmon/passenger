@@ -122,7 +122,8 @@ public partial class MainWindow
     private void Begin(string folder, string? named)
     {
         WorkspaceModel? withSolution = WorkspaceModel.ReadSolution(folder, named);
-        ProjectSession opened = ProjectSession.Open(Setup(), folder, named, withSolution);
+        // The projects as MSBuild last evaluated them, from the folder's cache, before any is evaluated again.
+        ProjectSession opened = ProjectSession.Open(Setup(), folder, named, withSolution, keepsWorkspace ? Store().Project(folder) : null);
         // The consoles are another folder's: what it ran said its last there before its end landed.
         Bottom.Run.Clear();
         Bottom.Build.Clear();
@@ -226,6 +227,22 @@ public partial class MainWindow
                 Explorer.Reload(next.Workspace!);
                 ShowWorkspaceName();
                 FindTests();
+            }
+        };
+        next.ProjectsEvaluated += (_, evaluated) =>
+        {
+            if (session == next)
+            {
+                Explorer.UpdateProjects(next.Workspace!, evaluated.Projects);
+                if (evaluated.TestsChanged)
+                {
+                    FindTests();
+                }
+                // A package installed, updated or removed shows so in the NuGet window once the project's evaluation says so.
+                if (evaluated.PackagesChanged && nuget is { Rows.Count: > 0 })
+                {
+                    _ = nuget.RefreshAsync();
+                }
             }
         };
         next.Configurations.Changed += (_, _) =>

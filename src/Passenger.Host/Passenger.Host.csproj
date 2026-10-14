@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- MSBuild's evaluation of the open folder's projects, in a process of its own: MSBuild needs the JIT and the
+       installed SDK's own assemblies, which MSBuildLocator finds as the folder's global.json picks the SDK, and none of it
+       belongs in the UI's process. The app carries it under host/ and runs it with the machine's dotnet (ProjectHost.cs),
+       on the newest runtime there, so whichever SDK the folder picks can load. It carries MSBuildLocator alone: MSBuild is
+       compiled against, never copied. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- The oldest runtime it needs, Roslyn's server's: it rolls forward to the newest the machine has. -->
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Passenger.Host</RootNamespace>
+    <RollForward>LatestMajor</RollForward>
+    <UseAppHost>false</UseAppHost>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Compiled against at the oldest MSBuild an SDK it may load has (8.0.4xx's); the SDK's own assemblies run. -->
+    <PackageReference Include="Microsoft.Build" ExcludeAssets="runtime" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.Build.Framework" ExcludeAssets="runtime" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.Build.Locator" />
+  </ItemGroup>
+
+  <!-- MSBuild's own dependencies come from the SDK with it: copied here, an older one would be loaded in their place. -->
+  <Target Name="CarryOnlyTheLocator" AfterTargets="ResolvePackageAssets">
+    <ItemGroup>
+      <RuntimeCopyLocalItems Remove="@(RuntimeCopyLocalItems)" Condition="'%(RuntimeCopyLocalItems.NuGetPackageId)' != 'Microsoft.Build.Locator'" />
+    </ItemGroup>
+  </Target>
+</Project>

@@ -172,8 +172,22 @@ public sealed class LanguageServer : IAsyncDisposable
         return Settings.TryGetValue(name, out object? value) ? value : null;
     }
 
-    /// <summary>The process has ended, or been ended by <see cref="Kill"/>.</summary>
-    public bool HasExited => killed || process.HasExited;
+    /// <summary>The process has ended, or been ended by <see cref="Kill"/>, or let go of (<see cref="DisposeAsync"/>).</summary>
+    public bool HasExited
+    {
+        get
+        {
+            try
+            {
+                return killed || process.HasExited;
+            }
+            catch (InvalidOperationException)
+            {
+                // Disposed: the process is no longer this server's to ask about.
+                return true;
+            }
+        }
+    }
 
     /// <summary>Starts the Roslyn language server Passenger ships (under <c>roslyn/</c> beside the
     /// app), initializes it for a folder, and returns once it has said what it can do. Cancelled or failed, it leaves no

@@ -32,6 +32,10 @@ public sealed record SessionSetup(
     Func<CancellationToken, Task<BuildOutcome>> BuildForTests,
     Func<string, Dap.RunInTerminalArguments, Task<TerminalRun>> RunForDebugger);
 
+/// <summary>Projects whose evaluation landed, as the workspace now has them, and whether which projects hold tests, or what
+/// packages the projects reference, changed with them.</summary>
+public sealed record EvaluatedProjects(IReadOnlyList<ProjectModel> Projects, bool TestsChanged, bool PackagesChanged);
+
 /// <summary>One folder or solution open in a window, or a window's nothing before one opens: what the folder has (its
 /// solution read, its files indexed and watched, Local History, run configurations, breakpoints, bookmarks, the last
 /// build's problems, recent files and the places Back goes to, what it keeps in the store) and what it runs (the language
@@ -67,14 +71,17 @@ public sealed class ProjectSession : IAsyncDisposable
         Bookmarks.Changed += (_, _) => State?.Bookmarks.Set(Bookmarks.Capture());
         // What a Git operation changes in the files is one change set of the folder's Local History, under its name.
         Vcs.Activity = name => LocalHistory?.During(name);
+        Models.Changed += (_, changed) => OnEvaluated(changed);
     }
 
     /// <summary>A window's session with no folder open: files may still be open, alone.</summary>
     public static ProjectSession None(SessionSetup setup) => new(setup, null);
 
     /// <summary>Opens a folder (canonical) with its solution read, or the one named, or none: its Local History, index and
-    /// watcher, its configurations, and the language server on its projects; one without a solution is walked for them.</summary>
-    public static ProjectSession Open(SessionSetup setup, string folder, string? named, WorkspaceModel? withSolution)
+    /// watcher, its configurations, and the language server on its projects; one without a solution is walked for them.
+    /// The projects are as the folder's cache in the store has them (<paramref name="kept"/>, when the window keeps state)
+    /// until MSBuild has evaluated them again (<see cref="Evaluate"/>).</summary>
+    public static ProjectSession Open(SessionSetup setup, string folder, string? named, WorkspaceModel? withSolution, ProjectState? kept = null)
     {
         ProjectSession session = new(setup, folder)
         {
@@ -85,7 +92,10 @@ public sealed class ProjectSession : IAsyncDisposable
         IdeErrors.Write($"Opened {folder}{(withSolution is { } read && read.OpenedAs != folder ? $" with {Path.GetFileName(read.OpenedAs)}" : string.Empty)}");
         // A folder without a solution has no projects until the walk for them lands: none to load, run or build meanwhile.
         session.reads++;
-        session.Workspace = withSolution ?? new WorkspaceModel(folder, null, []);
+        session.Models.Open(folder, kept?.ProjectModels);
+        session.openedAt = System.Diagnostics.Stopwatch.GetTimestamp();
+        session.Workspace = session.Models.Apply(withSolution ?? new WorkspaceModel(folder, null, []));
+        session.TimeSolutionView();
         session.Configurations.Configure(session.Projects);
         session.Index.Build(folder);
         session.Watcher = new FolderWatcher(folder, setup.Watching);
@@ -228,6 +238,50 @@ public sealed class ProjectSession : IAsyncDisposable
     /// show follows.</summary>
     public event EventHandler? WorkspaceChanged;
 
+    /// <summary>The folder's projects as MSBuild evaluates them, in the project host.</summary>
+    public ProjectModels Models { get; } = new();
+
+    /// <summary>Projects evaluated (or evaluated again) landed in the workspace: what the Solution view shows of them, and
+    /// whether which projects hold tests or what packages they reference changed.</summary>
+    public event EventHandler<EvaluatedProjects>? ProjectsEvaluated;
+
+    /// <summary>When the folder opened, which its first complete Solution view is timed from; 0 once it is.</summary>
+    private long openedAt;
+
+    /// <summary>Has each project of the workspace evaluated that needs it, the file shown's first.</summary>
+    public void Evaluate()
+    {
+        if (!IsEnded && Workspace is { } following)
+        {
+            Models.Follow(following, setup.Editors.Active?.Path);
+        }
+    }
+
+    /// <summary>Evaluations landed: the workspace and the run configurations take them in, and the window hears which.</summary>
+    private void OnEvaluated(IReadOnlyCollection<string> changed)
+    {
+        if (IsEnded || Workspace is not { } before)
+        {
+            return;
+        }
+        Workspace = Models.Apply(before);
+        Configurations.Configure(Projects);
+        bool tests = !before.Projects.Where(p => p.IsTestProject).Select(p => p.Path).SequenceEqual(Workspace.Projects.Where(p => p.IsTestProject).Select(p => p.Path));
+        bool packages = before.Projects.Zip(Workspace.Projects).Any(p => changed.Contains(p.First.Path) && !p.First.Packages.SequenceEqual(p.Second.Packages));
+        ProjectsEvaluated?.Invoke(this, new EvaluatedProjects([.. Workspace.Projects.Where(p => changed.Contains(p.Path))], tests, packages));
+        TimeSolutionView();
+    }
+
+    /// <summary>The log's phase of a folder's opening: the Solution view with every project as MSBuild evaluates it.</summary>
+    private void TimeSolutionView()
+    {
+        if (openedAt != 0 && Workspace is { } shown && shown.Projects.Where(p => p.Exists).All(p => p.Evaluated is { Complete: true }))
+        {
+            IdeErrors.Write($"Solution view shows the {shown.Projects.Count} projects of {shown.Name} as MSBuild evaluates them {System.Diagnostics.Stopwatch.GetElapsedTime(openedAt).TotalSeconds:0.00} s after the folder opened ({Models.Evaluations} evaluated)");
+            openedAt = 0;
+        }
+    }
+
     /// <summary>Whether the session has been left, or its window closed.</summary>
     public bool IsEnded => ending is not null;
 
@@ -346,6 +400,9 @@ public sealed class ProjectSession : IAsyncDisposable
         {
             WalkForProjects();
         }
+        // Once the files it opens with are open (those kept, those the command line names), so the one shown's project
+        // is evaluated first.
+        UiThread.Post(Evaluate);
     }
 
     /// <summary>Walks the folder for its projects off the window's thread, as background work, and takes what it finds when
@@ -386,13 +443,15 @@ public sealed class ProjectSession : IAsyncDisposable
     private void Reload(WorkspaceModel read)
     {
         bool loaded = Workspace is not null && Workspace.LoadsAs(read);
-        Workspace = read;
+        Workspace = Models.Apply(read);
         Configurations.Configure(Projects);
         if (!loaded)
         {
             StartCSharp();
         }
         WorkspaceChanged?.Invoke(this, EventArgs.Empty);
+        // Each project whose evaluation no longer stands (its file or an import changed) is evaluated again.
+        Evaluate();
     }
 
     /// <summary>The language server on the workspace, in place of the one before, the files open its too; none for a
@@ -474,6 +533,7 @@ public sealed class ProjectSession : IAsyncDisposable
     private List<(string What, Task Ending)> End(List<(string What, Task Ending)> parts)
     {
         State = null;
+        Models.Close();
         Watcher?.Dispose();
         LocalHistory?.Release();
         // A build stopped now says so with nothing of this folder's in Problems, which another folder's take next.

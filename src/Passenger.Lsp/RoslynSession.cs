@@ -244,6 +244,12 @@ public sealed class LspDocument : IDisposable
         return new Roslyn.Extension.Place(position.Line, position.Character);
     }
 
+    /// <summary>The projects the server compiles the document in, a target framework of a multi-targeted project each,
+    /// and the one it answers for; null when it has the document in none.</summary>
+    public Task<ProjectContextList?> ProjectContextsAsync(CancellationToken cancel = default) =>
+        Server.RequestAsync<ProjectContextList>("textDocument/_vs_getProjectContexts",
+            new GetProjectContextsParams(new TextDocumentItem(Uri, IsRazor ? "aspnetcorerazor" : "csharp", Text.Version, string.Empty)), cancel);
+
     /// <summary>The document's outline: its types, and their members under them.</summary>
     public async Task<IReadOnlyList<DocumentSymbol>> OutlineAsync(CancellationToken cancel = default) =>
         await Server.RequestAsync<List<DocumentSymbol>>("textDocument/documentSymbol", new DocumentSymbolParams(Identifier), cancel) ?? [];

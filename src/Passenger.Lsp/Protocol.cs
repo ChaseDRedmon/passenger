@@ -62,6 +62,27 @@ public sealed record WorkspaceFolder(string Uri, string Name);
 
 public sealed record InitializeParams(int ProcessId, string RootUri, IReadOnlyList<WorkspaceFolder> WorkspaceFolders, JsonElement Capabilities, string Locale = "en");
 
+/// <summary>One project a document is compiled in, as Visual Studio's protocol extension names it: a target framework
+/// of a multi-targeted project each, or Roslyn's Miscellaneous Files for a file in no project it has loaded. A request
+/// that carries one is answered as that project sees the document.</summary>
+public sealed record ProjectContext(
+    [property: JsonPropertyName("_vs_label")] string Label,
+    [property: JsonPropertyName("_vs_id")] string Id,
+    [property: JsonPropertyName("_vs_kind")] int Kind = 0,
+    [property: JsonPropertyName("_vs_is_miscellaneous")] bool IsMiscellaneous = false);
+
+/// <summary>The projects a document is in (<c>textDocument/_vs_getProjectContexts</c>) and the one the server answers
+/// for unless a request names another.</summary>
+public sealed record ProjectContextList(
+    [property: JsonPropertyName("_vs_projectContexts")] IReadOnlyList<ProjectContext> ProjectContexts,
+    [property: JsonPropertyName("_vs_defaultIndex")] int DefaultIndex)
+{
+    /// <summary>The context the server answers for by default; null when it named none.</summary>
+    public ProjectContext? Default => DefaultIndex >= 0 && DefaultIndex < ProjectContexts.Count ? ProjectContexts[DefaultIndex] : null;
+}
+
+public sealed record GetProjectContextsParams([property: JsonPropertyName("_vs_textDocument")] TextDocumentItem TextDocument);
+
 /// <summary>Roslyn's own: open a solution, or the projects of a folder with none.</summary>
 public sealed record OpenSolutionParams(string Solution);
 

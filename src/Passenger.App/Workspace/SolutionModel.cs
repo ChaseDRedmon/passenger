@@ -1,20 +1,30 @@
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using Passenger.Core;
+using Passenger.Host;
 
 namespace Passenger.App.Workspace;
 
-/// <summary>A solution as its files say it is: its folders, their files and its projects from the .slnx or .sln, and
-/// each SDK-style project's own declarations (output type, target frameworks, packages, project
-/// references) from its project file. Read directly, without MSBuild: enough for the Solution view
-/// and to know what can run. Evaluation proper (conditions, imports, globbing rules) belongs to the
-/// Host process when it comes.</summary>
+/// <summary>A solution as its file says it is: its folders, their files and its projects from the .slnx or .sln, read
+/// directly. What each project holds is MSBuild's evaluation of it, in the project host (<see cref="ProjectModels"/>),
+/// which <see cref="WithProjects"/> puts in place of the projects read here.</summary>
 public sealed record SolutionModel(string Path, string Name, IReadOnlyList<SolutionEntry> Entries)
 {
     /// <summary>The solution folder's GUID in a classic .sln, which marks an entry as a folder.</summary>
     private const string SolutionFolderType = "2150E333-8FDC-42A3-9474-1A3956D46DE8";
 
     public IEnumerable<ProjectModel> Projects => Entries.SelectMany(Flatten);
+
+    /// <summary>The same solution with each project as <paramref name="map"/> gives it (evaluated), its folders kept.</summary>
+    public SolutionModel WithProjects(Func<ProjectModel, ProjectModel> map) => this with { Entries = Mapped(Entries, map) };
+
+    private static List<SolutionEntry> Mapped(IEnumerable<SolutionEntry> entries, Func<ProjectModel, ProjectModel> map) =>
+        [.. entries.Select(entry => entry switch
+        {
+            ProjectModel project => map(project),
+            SolutionFolder folder => folder with { Children = Mapped(folder.Children, map) },
+            _ => entry,
+        })];
 
     /// <summary>Reads a solution, its own path and its projects' named as the file system names them
     /// (<see cref="PathNames.Canonical"/>), whatever letter case or links the solution's lines use.</summary>
@@ -69,7 +79,7 @@ public sealed record SolutionModel(string Path, string Name, IReadOnlyList<Solut
     {
         if (element.Name.LocalName == "Project" && element.Attribute("Path")?.Value is { } relative)
         {
-            into.Add(ProjectModel.Load(System.IO.Path.Combine(root, relative.Replace('\\', '/'))));
+            into.Add(ProjectModel.Unevaluated(System.IO.Path.Combine(root, relative.Replace('\\', '/'))));
         }
         else if (element.Name.LocalName == "File" && element.Attribute("Path")?.Value is { } file)
         {
@@ -123,7 +133,7 @@ public sealed record SolutionModel(string Path, string Name, IReadOnlyList<Solut
                 declaring = m.Groups["type"].Value.Equals(SolutionFolderType, StringComparison.OrdinalIgnoreCase)
                     ? new SolutionFolder(m.Groups["name"].Value, string.Empty, [])
                     : null;
-                byId[id] = declaring ?? (SolutionEntry)ProjectModel.Load(System.IO.Path.Combine(root, m.Groups["path"].Value.Replace('\\', '/')));
+                byId[id] = declaring ?? (SolutionEntry)ProjectModel.Unevaluated(System.IO.Path.Combine(root, m.Groups["path"].Value.Replace('\\', '/')));
                 order.Add(id);
             }
             else if (declaring is not null && line.Contains("ProjectSection(SolutionItems)", StringComparison.Ordinal))
@@ -195,9 +205,9 @@ public sealed record SolutionItem(string Name, string Path) : SolutionEntry(Name
     }
 }
 
-/// <summary>One project, from its project file's own declarations: among them the items it says depend on another file
-/// (DependentUpon), each as its Include or Update (relative to the project, wildcards and all) with the file it names
-/// (relative to the item's folder), which the Solution view nests.</summary>
+/// <summary>One project as MSBuild evaluates it (<see cref="Evaluated"/>, from the project host or the folder's cache of
+/// its evaluations): its output type, frameworks, packages, project references and files. Until it has been evaluated
+/// it is its path and name alone, and the Solution view shows the files in its folder.</summary>
 public sealed record ProjectModel(
     string Path,
     string Name,
@@ -206,8 +216,7 @@ public sealed record ProjectModel(
     IReadOnlyList<(string Name, string? Version)> Packages,
     IReadOnlyList<string> ProjectReferences,
     bool Exists,
-    bool DeclaredTest = false,
-    IReadOnlyList<(string Items, string Parent)>? Dependents = null) : SolutionEntry(Name)
+    bool DeclaredTest = false) : SolutionEntry(Name)
 {
     /// <summary>VSTest's test SDK and adapters, and what makes a Microsoft.Testing.Platform application: xUnit v3's packages,
     /// TUnit's, and the platform's own build package.</summary>
@@ -218,13 +227,16 @@ public sealed record ProjectModel(
         "xunit.v3.core.mtp-off", "TUnit", "TUnit.Engine", "Microsoft.Testing.Platform.MSBuild",
     };
 
-    public string Folder => System.IO.Path.GetDirectoryName(Path)!;
+    /// <summary>MSBuild's evaluation it was made from; null until there is one.</summary>
+    public EvaluatedProject? Evaluated { get; init; }
 
-    /// <summary>The SDKs that make a project an executable without its saying so: their own props set OutputType.</summary>
-    private static readonly HashSet<string> ExecutableSdks = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "Microsoft.NET.Sdk.Web", "Microsoft.NET.Sdk.Worker", "Microsoft.NET.Sdk.BlazorWebAssembly",
-    };
+    /// <summary>Whether what it holds is MSBuild's: evaluated, without a problem.</summary>
+    public bool IsEvaluated => Evaluated is { Problem: null };
+
+    /// <summary>Why MSBuild could not evaluate it, when it could not.</summary>
+    public string? Problem => Evaluated?.Problem;
+
+    public string Folder => System.IO.Path.GetDirectoryName(Path)!;
 
     /// <summary>Whether it holds tests VSTest or Microsoft.Testing.Platform runs: it says so (IsTestProject, MSTest.Sdk), or
     /// references a test SDK, an adapter or a Testing Platform test framework.</summary>
@@ -239,201 +251,40 @@ public sealed record ProjectModel(
     public static ProjectModel? Owning(IEnumerable<ProjectModel> projects, string path) =>
         projects.Where(p => PathNames.Within(path, p.Folder)).MaxBy(p => p.Folder.Length);
 
-    /// <summary>The file a file of the project depends on, as the last item naming it says (an Update after an Include,
-    /// as MSBuild applies them); null when none does.</summary>
-    public string? DependentUponOf(string file)
-    {
-        if (Dependents is not { Count: > 0 } || !PathNames.IsUnder(file, Folder))
-        {
-            return null;
-        }
-        string relative = System.IO.Path.GetRelativePath(Folder, file).Replace('\\', '/');
-        for (int at = Dependents.Count - 1; at >= 0; at--)
-        {
-            (string items, string parent) = Dependents[at];
-            if (items.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Any(item => Matches(item, relative)))
-            {
-                return System.IO.Path.GetFullPath(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(file)!, parent.Replace('\\', '/')));
-            }
-        }
-        return null;
-    }
+    /// <summary>The file a file of the project depends on, as its evaluated DependentUpon says (relative to the file's own
+    /// folder, as MSBuild has it); null when none does, or before the project is evaluated.</summary>
+    public string? DependentUponOf(string file) =>
+        Evaluated?.Items.FirstOrDefault(i => i.DependentUpon is not null && string.Equals(i.Path, file, PathNames.Comparison)) is { DependentUpon: { } parent }
+            ? System.IO.Path.GetFullPath(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(file)!, parent.Replace('\\', '/')))
+            : null;
 
-    /// <summary>Whether an item's Include or Update names a path of the project: by itself, or by MSBuild's wildcards
-    /// (<c>*</c> and <c>?</c> in a name, <c>**</c> for any folders), as the file system's case would.</summary>
-    private static bool Matches(string item, string relative)
-    {
-        string pattern = item.Replace('\\', '/');
-        if (pattern.StartsWith("./", StringComparison.Ordinal))
-        {
-            pattern = pattern[2..];
-        }
-        if (!pattern.Contains('*') && !pattern.Contains('?'))
-        {
-            return string.Equals(pattern, relative, PathNames.Comparison);
-        }
-        string expression = "^" + Regex.Escape(pattern)
-            .Replace(@"\*\*/", "(.*/)?", StringComparison.Ordinal)
-            .Replace(@"\*\*", ".*", StringComparison.Ordinal)
-            .Replace(@"\*", "[^/]*", StringComparison.Ordinal)
-            .Replace(@"\?", "[^/]", StringComparison.Ordinal) + "$";
-        return Regex.IsMatch(relative, expression, PathNames.Comparison == StringComparison.OrdinalIgnoreCase ? RegexOptions.IgnoreCase : RegexOptions.None);
-    }
-
-    /// <summary>Reads a project file, its path (and those it references) as the file system names them.</summary>
-    internal static ProjectModel Load(string path)
+    /// <summary>A project not yet evaluated: its path as the file system names it, and its name.</summary>
+    public static ProjectModel Unevaluated(string path)
     {
         path = PathNames.Canonical(path);
-        string name = System.IO.Path.GetFileNameWithoutExtension(path);
-        if (!File.Exists(path))
-        {
-            return new ProjectModel(path, name, null, [], [], [], false);
-        }
-        // A project file being written (dotnet add package) can be read half done: it is read again a moment later.
-        for (int attempt = 1; ; attempt++)
-        {
-            try
-            {
-                return Read(path, name, SharedRead.Xml(path).Root!);
-            }
-            catch (Exception error) when (error is System.Xml.XmlException or IOException && attempt < 3)
-            {
-                Thread.Sleep(50);
-            }
-            catch (Exception error) when (error is System.Xml.XmlException or IOException)
-            {
-                return new ProjectModel(path, name, null, [], [], [], true);
-            }
-        }
+        return new ProjectModel(path, System.IO.Path.GetFileNameWithoutExtension(path), null, [], [], [], File.Exists(path));
     }
 
-    private static ProjectModel Read(string path, string name, XElement project)
+    /// <summary>A project as MSBuild evaluated it: its name as the Solution view shows it (with its assembly's, when that
+    /// differs), every framework's packages (but those the SDK adds of itself) and project references.</summary>
+    public static ProjectModel From(string path, EvaluatedProject evaluated)
     {
-        IReadOnlyList<XElement> shared = SharedProperties(System.IO.Path.GetDirectoryName(path)!);
-        IReadOnlyList<string> sdks = Sdks(project);
-        // The project's own value wins over the one Directory.Build.props gives every project, as MSBuild's order has it.
-        string? Property(string key) => Declared(project, key) ?? shared.Select(props => Declared(props, key)).FirstOrDefault(v => v is not null);
-        List<string> frameworks = (Property("TargetFrameworks") ?? Property("TargetFramework") ?? string.Empty)
-            .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .ToList();
-        // Under central package management the version is the Directory.Packages.props one, not the project's.
-        IReadOnlyDictionary<string, string> central = CentralVersions(System.IO.Path.GetDirectoryName(path)!);
-        List<(string, string?)> packages = project.Descendants()
-            .Where(e => e.Name.LocalName == "PackageReference" && e.Attribute("Include") is not null)
-            .Select(e => (e.Attribute("Include")!.Value, e.Attribute("Version")?.Value ?? e.Elements().FirstOrDefault(c => c.Name.LocalName == "Version")?.Value
-                ?? e.Attribute("VersionOverride")?.Value ?? central.GetValueOrDefault(e.Attribute("Include")!.Value)))
-            .ToList();
-        List<string> references = project.Descendants()
-            .Where(e => e.Name.LocalName == "ProjectReference" && e.Attribute("Include") is not null)
-            .Select(e => PathNames.Canonical(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(path)!, e.Attribute("Include")!.Value.Replace('\\', '/'))))
-            .ToList();
-        string? outputType = Property("OutputType") ?? (sdks.Any(ExecutableSdks.Contains) ? "Exe" : null);
-        if (Property("AssemblyName") is { Length: > 0 } assembly && assembly != name)
+        string name = System.IO.Path.GetFileNameWithoutExtension(path);
+        if (evaluated.AssemblyName is { Length: > 0 } assembly && assembly != name)
         {
             name = $"{name} ({assembly})";
         }
-        // Test packages a Directory.Build.props gives every project under it make those projects tests too.
-        bool test = string.Equals(Property("IsTestProject"), "true", StringComparison.OrdinalIgnoreCase)
-            || sdks.Contains("MSTest.Sdk", StringComparer.OrdinalIgnoreCase)
-            || shared.Any(props => props.Descendants().Any(e => e.Name.LocalName == "PackageReference" && TestPackages.Contains(e.Attribute("Include")?.Value ?? string.Empty)));
-        // DependentUpon as an attribute or an element, on an item of the project's own groups.
-        List<(string, string)> dependents = [.. project.Descendants()
-            .Where(e => e.Parent?.Name.LocalName == "ItemGroup")
-            .Select(e => (Items: (e.Attribute("Include") ?? e.Attribute("Update"))?.Value,
-                Parent: (e.Attribute("DependentUpon")?.Value ?? e.Elements().FirstOrDefault(c => c.Name.LocalName == "DependentUpon")?.Value)?.Trim()))
-            .Where(i => !string.IsNullOrWhiteSpace(i.Items) && !string.IsNullOrEmpty(i.Parent))
-            .Select(i => (i.Items!, i.Parent!))];
-        return new ProjectModel(path, name, outputType, frameworks, packages, references, true, test, dependents);
-    }
-
-    /// <summary>The SDKs a project names, without their versions: Sdk="A;B/1.0" on the project, &lt;Sdk Name&gt; and &lt;Import Sdk&gt;.</summary>
-    private static IReadOnlyList<string> Sdks(XElement project) =>
-        [.. new[] { project.Attribute("Sdk")?.Value }
-            .Concat(project.Elements().Where(e => e.Name.LocalName == "Sdk").Select(e => e.Attribute("Name")?.Value))
-            .Concat(project.Elements().Where(e => e.Name.LocalName == "Import").Select(e => e.Attribute("Sdk")?.Value))
-            .SelectMany(names => (names ?? string.Empty).Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            .Select(sdk => sdk.Split('/')[0])];
-
-    /// <summary>A property's value as the file sets it outside any condition, the last setting winning as in MSBuild;
-    /// a conditional one only when there is no other.</summary>
-    private static string? Declared(XElement root, string key)
-    {
-        string? plain = null;
-        string? conditional = null;
-        foreach (XElement group in root.Descendants().Where(g => g.Name.LocalName == "PropertyGroup"))
-        {
-            foreach (XElement set in group.Elements().Where(e => e.Name.LocalName == key && e.Value.Trim().Length > 0))
-            {
-                if (group.Parent == root && group.Attribute("Condition") is null && set.Attribute("Condition") is null)
-                {
-                    plain = set.Value.Trim();
-                }
-                else
-                {
-                    conditional ??= set.Value.Trim();
-                }
-            }
-        }
-        return plain ?? conditional;
-    }
-
-    /// <summary>The versions the nearest Directory.Packages.props above a project sets (central package management), by
-    /// package; none when there is no such file.</summary>
-    public static IReadOnlyDictionary<string, string> CentralVersions(string folder)
-    {
-        for (DirectoryInfo? at = new(folder); at is not null; at = at.Parent)
-        {
-            string props = System.IO.Path.Combine(at.FullName, "Directory.Packages.props");
-            if (!File.Exists(props))
-            {
-                continue;
-            }
-            try
-            {
-                return SharedRead.Xml(props).Root!.Descendants()
-                    .Where(e => e.Name.LocalName == "PackageVersion" && e.Attribute("Include") is not null && e.Attribute("Version") is not null)
-                    .GroupBy(e => e.Attribute("Include")!.Value, StringComparer.OrdinalIgnoreCase)
-                    .ToDictionary(g => g.Key, g => g.First().Attribute("Version")!.Value, StringComparer.OrdinalIgnoreCase);
-            }
-            catch (System.Xml.XmlException)
-            {
-                return new Dictionary<string, string>();
-            }
-        }
-        return new Dictionary<string, string>();
-    }
-
-    /// <summary>The Directory.Build.props MSBuild imports for a project, the nearest above it, and the ones it goes on to
-    /// import from further up (GetPathOfFileAbove), nearest first: where a repository sets the target framework for all
-    /// its projects. Read as declared, until MSBuild evaluates projects.</summary>
-    private static IReadOnlyList<XElement> SharedProperties(string folder)
-    {
-        List<XElement> found = [];
-        for (DirectoryInfo? at = new(folder); at is not null; at = at.Parent)
-        {
-            string props = System.IO.Path.Combine(at.FullName, "Directory.Build.props");
-            if (!File.Exists(props))
-            {
-                continue;
-            }
-            XElement root;
-            try
-            {
-                root = SharedRead.Xml(props).Root!;
-            }
-            catch (Exception error) when (error is System.Xml.XmlException or IOException)
-            {
-                break;
-            }
-            found.Add(root);
-            bool importsAbove = root.Elements().Any(e => e.Name.LocalName == "Import"
-                && (e.Attribute("Project")?.Value ?? string.Empty).Contains("Directory.Build.props", StringComparison.OrdinalIgnoreCase));
-            if (!importsAbove)
-            {
-                break;
-            }
-        }
-        return found;
+        List<(string, string?)> packages = [.. evaluated.Dependencies
+            .SelectMany(d => d.Packages)
+            .Where(p => !p.Implicit)
+            .DistinctBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(p => (p.Name, p.Version))];
+        List<string> references = [.. evaluated.Dependencies
+            .SelectMany(d => d.Projects)
+            .Select(PathNames.Canonical)
+            .Distinct(StringComparer.Ordinal)];
+        return new ProjectModel(path, name, evaluated.OutputType, evaluated.TargetFrameworks, packages, references,
+            evaluated.Problem is null || File.Exists(path), evaluated.IsTestProject) { Evaluated = evaluated };
     }
 }
 
