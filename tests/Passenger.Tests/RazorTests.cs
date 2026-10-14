@@ -450,7 +450,7 @@ public sealed class RazorDebuggingTests : IDisposable
         MainWindow window = new() { Width = 1200, Height = 800 };
         window.Show();
         window.OpenFolder(folder);
-        string code = Path.Combine(PathNames.Canonical(folder), "Components/Pages/Tally.razor.cs");
+        string code = Path.Combine(PathNames.Canonical(folder), "Components", "Pages", "Tally.razor.cs");
         window.OpenFile(code);
         Ui.Settle();
         CodeEditor editor = window.EditorArea.CodeEditor;

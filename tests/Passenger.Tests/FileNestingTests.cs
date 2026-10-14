@@ -55,7 +55,8 @@ public sealed class FileNestingTests : IDisposable
         TestFolders.Delete(trash);
     }
 
-    private string At(string relative) => Path.Combine(folder, "Shop", relative);
+    /// <summary>A path in the project as the Explorer has it, a relative one written with / taking the system's separator.</summary>
+    private string At(string relative) => Path.Combine(folder, "Shop", relative.Replace('/', Path.DirectorySeparatorChar));
 
     [AvaloniaFact]
     public void The_solution_view_nests_each_file_under_the_one_it_belongs_to_and_File_Nesting_lays_the_rules_ones_out_flat()
