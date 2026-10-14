@@ -322,6 +322,56 @@ public sealed class WpfXamlTests : IClassFixture<WpfXamlTests.Gallery>
     }
 
     [AvaloniaFact]
+    public void A_user_control_with_no_code_behind_is_a_class_its_x_class_and_its_uses_are_not_marked_and_go_to_declaration_reaches_its_xaml()
+    {
+        // MarkupCompile alone makes the class: no C# declares it, and it is a UserControl, as its root says.
+        string badge = app.Write("Badge.xaml", Badge);
+        string uses = app.Write("Badges.xaml", Badges);
+        MainWindow window = app.Open(badge);
+        OpenDocument declared = window.EditorArea.Active!;
+        Assert.True(window.XamlService.For(declared)?.IsLoaded, "Badge.xaml was not read as WPF's XAML");
+        Ui.Settle();
+        Assert.True(declared.Markers.Count == 0, $"The XAML-only control is marked: {string.Join("; ", declared.Markers.Select(m => m.Message))}");
+
+        window.OpenFile(uses);
+        Ui.Settle();
+        OpenDocument user = window.EditorArea.Active!;
+        Assert.True(user.Markers.Count == 0, $"Its use, with a UserControl's Margin, is marked: {string.Join("; ", user.Markers.Select(m => m.Message))}");
+        PlaceAfter(window.EditorArea.CodeEditor, "<local:Bad");
+        Ui.Run(window, AppActions.GoToDeclaration);
+        Ui.Settle();
+        Assert.Equal("Badge.xaml", window.EditorArea.Active?.Name);
+        Assert.Contains("x:Class=\"|Gallery.Badge\"", CaretLine(window.EditorArea.CodeEditor), StringComparison.Ordinal);
+        window.Close();
+    }
+
+    /// <summary>A user control whose XAML is all there is of it: MarkupCompile's generated class is its class.</summary>
+    private const string Badge = """
+        <UserControl x:Class="Gallery.Badge"
+                     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+            <Border Background="{StaticResource Accent}" Padding="4">
+                <TextBlock Text="New" />
+            </Border>
+        </UserControl>
+
+        """;
+
+    /// <summary>A window that uses the badge, its UserControl's properties included.</summary>
+    private const string Badges = """
+        <Window x:Class="Gallery.Badges"
+                xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                xmlns:local="clr-namespace:Gallery"
+                Title="Badges" Height="200" Width="300">
+            <StackPanel>
+                <local:Badge Margin="4" HorizontalAlignment="Left" />
+            </StackPanel>
+        </Window>
+
+        """;
+
+    [AvaloniaFact]
     public void Xaml_preview_on_a_wpf_file_off_windows_says_where_the_preview_would_be_that_wpf_previews_only_on_windows()
     {
         Assert.SkipWhen(OperatingSystem.IsWindows(), "WPF previews on Windows: WpfPreviewTests draw it there");

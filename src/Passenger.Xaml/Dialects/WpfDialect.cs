@@ -32,6 +32,8 @@ public sealed class WpfDialect : XamlDialect
 
     public override IReadOnlyList<string> DesignerExtensions { get; } = ["DesignInstance", "DesignData"];
 
+    public override bool MakesClasses => true;
+
     public override XamlProperty? ContentProperty(TypeSystem types, ClrType type)
     {
         foreach (ClrType at in types.SelfAndBases(type))

@@ -31,6 +31,10 @@ public sealed class SourceTypes
     /// <summary>Its assembly attributes a dialect reads (<c>[assembly: XmlnsDefinition(...)]</c>).</summary>
     public IReadOnlyList<ClrAttribute> Attributes { get; }
 
+    /// <summary>Types a file declares other than in C#: the class a XAML file's <c>x:Class</c> names, which its XAML compiler
+    /// makes when no C# does.</summary>
+    public static SourceTypes Declaring(string path, IReadOnlyList<ClrType> types) => new(path, types, [], []);
+
     public static SourceTypes Read(string path, string text, string assemblyName)
     {
         SyntaxTree tree = CSharpSyntaxTree.ParseText(text, Options, path);

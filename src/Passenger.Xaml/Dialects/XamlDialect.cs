@@ -74,6 +74,10 @@ public abstract class XamlDialect
     /// <c>x:CompileBindings</c> are for.</summary>
     public virtual bool CompilesBindings => false;
 
+    /// <summary>Whether its compiler makes the class an <c>x:Class</c> names when no C# declares it (WPF's MarkupCompile);
+    /// Avalonia's refuses one it cannot find (AVLN2000).</summary>
+    public virtual bool MakesClasses => false;
+
     /// <summary>The markup extensions of the designer's namespace its designer reads (WPF's <c>d:DesignInstance</c>).</summary>
     public virtual IReadOnlyList<string> DesignerExtensions => [];
 

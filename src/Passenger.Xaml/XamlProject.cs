@@ -30,8 +30,14 @@ public sealed record XamlFileSummary(string Path, string? Class, IReadOnlyList<R
     /// not known here.</summary>
     public bool ForeignIncludes { get; init; }
 
+    /// <summary>The root element's namespace URI and name: the type an <c>x:Class</c> no C# declares derives from.</summary>
+    public (string Uri, string Name)? Root { get; init; }
+
+    /// <summary>Where the <c>x:Class</c> value is written, where a class no C# declares is declared.</summary>
+    public SourcePlace? ClassPlace { get; init; }
+
     /// <summary>What the summary says, as one string, to tell whether a new one says anything new.</summary>
-    public string Signature => signature ??= string.Join('|', [Class ?? string.Empty, IsApplication.ToString(), ForeignIncludes.ToString(),
+    public string Signature => signature ??= string.Join('|', [Class ?? string.Empty, Root?.ToString() ?? string.Empty, IsApplication.ToString(), ForeignIncludes.ToString(),
         .. Resources.Select(r => $"{r.Key}:{r.ElementName}:{r.Variant}:{r.Colour}:{r.KeyRange.Start}:{r.ElementRange.End}"),
         .. Includes, .. Names.Select(n => $"{n.Name}:{n.Element}"), .. StyleClasses, .. ThemeGroups.Select(g => string.Join(',', g.Variants))]);
 
@@ -91,8 +97,27 @@ public sealed record XamlFileSummary(string Path, string? Class, IReadOnlyList<R
         }
         XmlElement? root = tree.Root;
         string? rootPrefix = root is null ? null : LanguagePrefix(root, languagePrefixes);
-        string? @class = root is not null && rootPrefix is not null ? root.Attribute($"{rootPrefix}:Class")?.Value : null;
-        return new XamlFileSummary(path, @class, resources, includes, names, [.. classes], root?.LocalName == "Application", groups) { ForeignIncludes = foreign };
+        XmlAttribute? classAttribute = root is not null && rootPrefix is not null ? root.Attribute($"{rootPrefix}:Class") : null;
+        string? rootUri = root?.Attribute(root.Prefix.Length == 0 ? "xmlns" : "xmlns:" + root.Prefix)?.Value;
+        return new XamlFileSummary(path, classAttribute?.Value, resources, includes, names, [.. classes], root?.LocalName == "Application", groups)
+        {
+            ForeignIncludes = foreign,
+            Root = root is not null && rootUri is not null ? (rootUri, root.LocalName) : null,
+            ClassPlace = classAttribute is null ? null : PlaceOf(path, tree.Text, classAttribute.ValueStart),
+        };
+    }
+
+    /// <summary>An offset's line and column from zero.</summary>
+    private static SourcePlace PlaceOf(string path, string text, int offset)
+    {
+        int line = 0;
+        int lineStart = 0;
+        for (int at = text.IndexOf('\n'); at >= 0 && at < offset; at = text.IndexOf('\n', at + 1))
+        {
+            line++;
+            lineStart = at + 1;
+        }
+        return new SourcePlace(path, line, offset - lineStart);
     }
 
     /// <summary>The prefix XAML's language namespace has at an element, found once per element.</summary>

@@ -79,6 +79,27 @@ public sealed class TypeSystem
     /// <summary>The types an xmlns URI's CLR namespaces hold.</summary>
     public IEnumerable<string> NamespacesOf(string uri) => definitions.Where(d => d.Uri == uri).Select(d => d.ClrNamespace).Distinct(StringComparer.Ordinal);
 
+    /// <summary>The CLR namespaces an xmlns URI means: a <c>clr-namespace:</c> or <c>using:</c> one's own, else those the
+    /// assemblies map it to.</summary>
+    public IReadOnlyList<string> ClrNamespacesOf(string? uri)
+    {
+        if (uri is null)
+        {
+            return [];
+        }
+        if (uri.StartsWith("using:", StringComparison.Ordinal))
+        {
+            return [uri["using:".Length..].Trim()];
+        }
+        if (uri.StartsWith("clr-namespace:", StringComparison.Ordinal))
+        {
+            string rest = uri["clr-namespace:".Length..];
+            int semicolon = rest.IndexOf(';');
+            return [(semicolon < 0 ? rest : rest[..semicolon]).Trim()];
+        }
+        return [.. NamespacesOf(uri)];
+    }
+
     /// <summary>The type a reference names: from metadata by its full name; from source as the compiler would resolve it
     /// in its scope (its enclosing types, its namespace and those around it, its aliases, its usings, the project's global
     /// ones). A <c>Nullable&lt;T&gt;</c> is its <c>T</c>.</summary>

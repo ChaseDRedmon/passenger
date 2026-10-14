@@ -194,6 +194,28 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
     }
 
     [AvaloniaFact]
+    public void An_x_class_no_csharp_declares_is_marked_as_avalonias_compiler_refuses_it()
+    {
+        // Unlike WPF's MarkupCompile, Avalonia's compiler makes no class: it says "Unable to find type" (AVLN2000).
+        string badge = app.Write("Badge.axaml", """
+            <UserControl xmlns="https://github.com/avaloniaui"
+                         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                         x:Class="Gallery.Badge">
+                <TextBlock Text="New" />
+            </UserControl>
+
+            """);
+        MainWindow window = app.Open(badge);
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        OpenDocument document = window.EditorArea.Active!;
+        Ui.WaitFor(() => document.Markers.Count > 0, "the class nothing declares marked");
+        Marker marked = MarkerOn(editor, document, "Gallery.Badge");
+        Assert.Equal(MarkerKind.Error, marked.Kind);
+        Assert.Equal("Cannot resolve class 'Gallery.Badge'", marked.Message);
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void After_a_build_the_xaml_compilers_error_is_marked_on_its_line_and_listed_with_its_code()
     {
         MainWindow window = app.Open(app.PathOf("MainWindow.axaml"));

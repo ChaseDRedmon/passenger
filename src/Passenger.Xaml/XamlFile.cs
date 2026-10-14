@@ -150,24 +150,7 @@ public sealed class XamlFile
     }
 
     /// <summary>The CLR namespaces a URI maps to.</summary>
-    public IReadOnlyList<string> ClrNamespacesOf(string? uri)
-    {
-        if (uri is null)
-        {
-            return [];
-        }
-        if (uri.StartsWith("using:", StringComparison.Ordinal))
-        {
-            return [uri["using:".Length..].Trim()];
-        }
-        if (uri.StartsWith("clr-namespace:", StringComparison.Ordinal))
-        {
-            string rest = uri["clr-namespace:".Length..];
-            int semicolon = rest.IndexOf(';');
-            return [(semicolon < 0 ? rest : rest[..semicolon]).Trim()];
-        }
-        return [.. Types.NamespacesOf(uri)];
-    }
+    public IReadOnlyList<string> ClrNamespacesOf(string? uri) => Types.ClrNamespacesOf(uri);
 
     /// <summary>The type a qualified name (<c>prefix:Name</c>) names at an element; for a markup extension, its
     /// <c>…Extension</c> type is tried first, as XAML does.</summary>

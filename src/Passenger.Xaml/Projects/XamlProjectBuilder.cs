@@ -21,6 +21,10 @@ public sealed class XamlProjectBuilder
     private IReadOnlyList<string> assets = [];
     private XamlProject? built;
 
+    /// <summary>The XAML classes the last type system was made with (<see cref="XamlClasses"/>), so a XAML change that
+    /// declares none anew keeps it.</summary>
+    private string classes = string.Empty;
+
     private XamlProjectBuilder(ProjectInputs inputs, XamlDialect dialect, string? dotnetRoot)
     {
         this.inputs = inputs;
@@ -138,8 +142,7 @@ public sealed class XamlProjectBuilder
                 XamlProject current = built ?? Make();
                 files[path] = XamlFileSummary.Of(path, tree ?? XmlTree.Parse(text ?? ReadText(path)), current.ResolveSource);
             }
-            return built = new XamlProject(inputs, built?.Types ?? Make().Types, Dialect, new Dictionary<string, XamlFileSummary>(files, StringComparer.Ordinal),
-                assets, themeKeys, [.. referenced.Select(r => (r.Inputs.AssemblyName, r.Inputs.Folder))]);
+            return built = Remake();
         }
     }
 
@@ -156,8 +159,7 @@ public sealed class XamlProjectBuilder
                 return null;
             }
             files[path] = summary;
-            return built = new XamlProject(inputs, current.Types, Dialect, new Dictionary<string, XamlFileSummary>(files, StringComparer.Ordinal),
-                assets, themeKeys, [.. referenced.Select(r => (r.Inputs.AssemblyName, r.Inputs.Folder))]);
+            return built = Remake();
         }
     }
 
@@ -178,8 +180,51 @@ public sealed class XamlProjectBuilder
     private XamlProject Make()
     {
         TypeSystem types = new(assemblies, [.. sources.Values], inputs.AssemblyName, inputs.ImplicitUsings);
-        return new XamlProject(inputs, types, Dialect, new Dictionary<string, XamlFileSummary>(files, StringComparer.Ordinal), assets, themeKeys,
+        if (XamlClasses(types) is { Count: > 0 } declared)
+        {
+            types = new TypeSystem(assemblies, [.. sources.Values, .. declared], inputs.AssemblyName, inputs.ImplicitUsings);
+        }
+        classes = ClassesSaid();
+        return With(types);
+    }
+
+    /// <summary>The project after a XAML file changed: its types kept unless the files' classes changed.</summary>
+    private XamlProject Remake() => built is null || ClassesSaid() != classes ? Make() : With(built.Types);
+
+    private XamlProject With(TypeSystem types) =>
+        new(inputs, types, Dialect, new Dictionary<string, XamlFileSummary>(files, StringComparer.Ordinal), assets, themeKeys,
             [.. referenced.Select(r => (r.Inputs.AssemblyName, r.Inputs.Folder))]);
+
+    /// <summary>What the XAML files say of their classes, to tell when the type system must be made again.</summary>
+    private string ClassesSaid() =>
+        string.Join('|', files.Values.Where(f => f.Class is not null).Select(f => $"{f.Path}:{f.Class}:{f.Root}").Order(StringComparer.Ordinal));
+
+    /// <summary>The class each XAML file's <c>x:Class</c> names that no C# declares, where the dialect's compiler makes it
+    /// (a XAML-only WPF control, MarkupCompile's class alone): a class of its root element's type, declared at its x:Class.</summary>
+    private List<SourceTypes> XamlClasses(TypeSystem types)
+    {
+        List<SourceTypes> declared = [];
+        if (!Dialect.MakesClasses)
+        {
+            return declared;
+        }
+        foreach (XamlFileSummary file in files.Values)
+        {
+            if (file.Class is not { Length: > 0 } name || file.ClassPlace is not { } place || types.Find(name) is not null
+                || !name.Split('.').All(part => part.Length > 0 && part.All(c => char.IsLetterOrDigit(c) || c == '_')))
+            {
+                continue;
+            }
+            int dot = name.LastIndexOf('.');
+            TypeRef? root = file.Root is { } element
+                ? types.ClrNamespacesOf(element.Uri).Select(n => types.Find(n.Length > 0 ? $"{n}.{element.Name}" : element.Name)).OfType<ClrType>()
+                    .Select(t => TypeRef.Named(t.FullName)).FirstOrDefault()
+                : null;
+            ClrType type = new(dot < 0 ? string.Empty : name[..dot], name[(dot + 1)..], ClrTypeKind.Class, new TypeOrigin(inputs.AssemblyName, null, place),
+                _ => new ClrTypeDetails(root, [], [], [], IsAbstract: false, IsStatic: false, IsPublic: true, HasDefaultConstructor: true, []));
+            declared.Add(SourceTypes.Declaring(file.Path, [type]));
+        }
+        return declared;
     }
 
     private void CollectReferences(ProjectInputs from, HashSet<string> seen)
