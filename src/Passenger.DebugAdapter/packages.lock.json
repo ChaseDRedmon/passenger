@@ -99,7 +99,6 @@
           "Microsoft.CodeAnalysis.CSharp": "[5.9.0, )",
           "Microsoft.Diagnostics.DbgShim": "[9.0.661903, )",
           "Microsoft.Diagnostics.NETCore.Client": "[0.2.661903, )",
-          "NeoSmart.AsyncLock": "[3.2.1, )",
           "Passenger.Core": "[0.1.0, )",
           "Passenger.Dap": "[0.1.0, )",
           "Passenger.Debugger.Interop": "[0.1.0, )",
@@ -162,12 +161,6 @@
           "Microsoft.CodeAnalysis.Common": "5.9.0",
           "Microsoft.DiaSymReader": "2.0.0"
         }
-      },
-      "NeoSmart.AsyncLock": {
-        "type": "CentralTransitive",
-        "requested": "[3.2.1, )",
-        "resolved": "3.2.1",
-        "contentHash": "bYIpqtgA5oZWdSgcsGA4XLkKVYuz6Qc+aEVfTYPOIX2rSFbb8NFxHcBb5V62qio8Q6Au/Xn+7ci86VW9vqIk0w=="
       },
       "ZLinq": {
         "type": "CentralTransitive",

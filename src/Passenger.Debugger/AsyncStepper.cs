@@ -1,4 +1,3 @@
-using NeoSmart.AsyncLock;
 using Passenger.Debugger.Interop;
 
 namespace Passenger.Debugger;
@@ -68,9 +67,9 @@ internal sealed class AsyncStepper
     }
 
     private readonly Dictionary<CORDB_ADDRESS, ModuleInfo> _modules;
+    // Every call comes under the engine's lock (a request or a runtime event at a time), so the stepper needs no lock of its own.
     private AsyncStep? _currentAsyncStep;
     private AsyncBreakpoint? _notifyDebuggerBreakpoint;
-    private readonly AsyncLock _lock2 = new AsyncLock();
 
     public AsyncStepper(Dictionary<CORDB_ADDRESS, ModuleInfo> modules, ManagedDebugger debugger)
     {
@@ -238,83 +237,78 @@ internal sealed class AsyncStepper
                 }
             }
 
-            using (await _lock2.LockAsync())
+            // Clean up any existing async step
+            _currentAsyncStep?.Dispose();
+            _currentAsyncStep = null;
+
+            if (stepType == StepType.StepOut)
             {
-                // Clean up any existing async step
-                _currentAsyncStep?.Dispose();
-                _currentAsyncStep = null;
-
-                if (stepType == StepType.StepOut)
+                // For step-out in async method with await, check if we need NotifyDebuggerOfWaitCompletion
+                ICorDebugValue? builder = ilFrame is not null ? GetAsyncBuilder(ilFrame) : null;
+                if (builder is not null)
                 {
-                    // For step-out in async method with await, check if we need NotifyDebuggerOfWaitCompletion
-                    ICorDebugValue? builder = ilFrame is not null ? GetAsyncBuilder(ilFrame) : null;
-                    if (builder is not null)
+                    // Check if builder is AsyncVoidMethodBuilder
+                    string builderType = ManagedDebugger.GetCorDebugTypeFriendlyName(builder.ExactType);
+                    if (builderType == "System.Runtime.CompilerServices.AsyncVoidMethodBuilder")
                     {
-                        // Check if builder is AsyncVoidMethodBuilder
-                        string builderType = ManagedDebugger.GetCorDebugTypeFriendlyName(builder.ExactType);
-                        if (builderType == "System.Runtime.CompilerServices.AsyncVoidMethodBuilder")
-                        {
-                            // async void method - use normal step-out
-                            return (false, null);
-                        }
-
-                        // Not async void - use NotifyDebuggerOfWaitCompletion magic
-                        bool success = await SetNotificationForWaitCompletion(builder, thread);
-                        if (success)
-                        {
-                            // Setup breakpoint in Task.NotifyDebuggerOfWaitCompletion
-                            bool notifyBpSuccess = SetupNotifyDebuggerOfWaitCompletionBreakpoint();
-                            if (notifyBpSuccess)
-                            {
-                                // Async step-out handled - no need for stepper
-                                return (true, false);
-                            }
-                        }
+                        // async void method - use normal step-out
+                        return (false, null);
                     }
 
-                    // Fall back to normal step-out
-                    return (false, null);
-                }
-
-                // Find next await block after current offset
-                if (ilFrame is null)
-                {
-                    return (false, null);
-                }
-
-                (int pnOffset, CorDebugMappingResult pMappingResult) ipResult = ilFrame.IP;
-                int currentOffset = ipResult.pnOffset;
-
-                ModuleMetadataReader.AsyncAwaitInfo? awaitInfo = FindNextAwaitInfo(asyncInfo, (uint)currentOffset);
-                if (awaitInfo is null)
-                {
-                    // No more await blocks - use simple stepper
-                    return (false, null);
-                }
-
-                // Create yield breakpoint
-                ICorDebugFunctionBreakpoint yieldBreakpoint = ilCode.CreateBreakpoint((int)awaitInfo.YieldOffset);
-                yieldBreakpoint.Activate(true);
-
-                _currentAsyncStep = new AsyncStep
-                {
-                    ThreadId = thread.Id,
-                    InitialStepType = stepType,
-                    ResumeOffset = awaitInfo.ResumeOffset,
-                    Status = AsyncStepStatus.YieldBreakpoint,
-                    Breakpoint = new AsyncBreakpoint
+                    // Not async void - use NotifyDebuggerOfWaitCompletion magic
+                    bool success = await SetNotificationForWaitCompletion(builder, thread);
+                    if (success)
                     {
-                        Breakpoint = yieldBreakpoint,
-                        ModuleAddress = moduleAddress,
-                        MethodToken = methodToken,
-                        ILOffset = awaitInfo.YieldOffset
+                        // Setup breakpoint in Task.NotifyDebuggerOfWaitCompletion
+                        bool notifyBpSuccess = SetupNotifyDebuggerOfWaitCompletionBreakpoint();
+                        if (notifyBpSuccess)
+                        {
+                            // Async step-out handled - no need for stepper
+                            return (true, false);
+                        }
                     }
-                };
+                }
 
-                // Don't set shouldUseSimpleStepper to false - the simple stepper should be created
-                // to handle stepping until the yield breakpoint is reached
-                return (true, true);
+                // Fall back to normal step-out
+                return (false, null);
             }
+
+            // Find next await block after current offset
+            if (ilFrame is null)
+            {
+                return (false, null);
+            }
+
+            int stepFrom = ilFrame.IP.pnOffset;
+            ModuleMetadataReader.AsyncAwaitInfo? awaitInfo = FindNextAwaitInfo(asyncInfo, (uint)stepFrom);
+            if (awaitInfo is null)
+            {
+                // No more await blocks - use simple stepper
+                return (false, null);
+            }
+
+            // Create yield breakpoint
+            ICorDebugFunctionBreakpoint yieldBreakpoint = ilCode.CreateBreakpoint((int)awaitInfo.YieldOffset);
+            yieldBreakpoint.Activate(true);
+
+            _currentAsyncStep = new AsyncStep
+            {
+                ThreadId = thread.Id,
+                InitialStepType = stepType,
+                ResumeOffset = awaitInfo.ResumeOffset,
+                Status = AsyncStepStatus.YieldBreakpoint,
+                Breakpoint = new AsyncBreakpoint
+                {
+                    Breakpoint = yieldBreakpoint,
+                    ModuleAddress = moduleAddress,
+                    MethodToken = methodToken,
+                    ILOffset = awaitInfo.YieldOffset
+                }
+            };
+
+            // Don't set shouldUseSimpleStepper to false - the simple stepper should be created
+            // to handle stepping until the yield breakpoint is reached
+            return (true, true);
         }
         catch (Exception)
         {
@@ -333,66 +327,63 @@ internal sealed class AsyncStepper
     /// <returns>True if breakpoint was handled by async stepper</returns>
     public async Task<(bool HandledByAsyncStepper, bool? ShouldStop)> TryHandleBreakpoint(ICorDebugThread thread, ICorDebugFunctionBreakpoint breakpoint)
     {
-        using (await _lock2.LockAsync())
+        // Check if it's our NotifyDebuggerOfWaitCompletion breakpoint
+        if (_notifyDebuggerBreakpoint is not null &&
+            MatchesBreakpoint(breakpoint, _notifyDebuggerBreakpoint, thread))
         {
-            // Check if it's our NotifyDebuggerOfWaitCompletion breakpoint
-            if (_notifyDebuggerBreakpoint is not null &&
-                MatchesBreakpoint(breakpoint, _notifyDebuggerBreakpoint, thread))
-            {
-                // The task-completion hook was hit during an async step-out operation.
-                _notifyDebuggerBreakpoint?.Dispose();
-                _notifyDebuggerBreakpoint = null;
+            // The task-completion hook was hit during an async step-out operation.
+            _notifyDebuggerBreakpoint?.Dispose();
+            _notifyDebuggerBreakpoint = null;
 
-                // Let the breakpoint handler step into the runtime hook to reach
-                // the awaiting continuation's next user-code location.
-                return (true, true);
-            }
+            // Let the breakpoint handler step into the runtime hook to reach
+            // the awaiting continuation's next user-code location.
+            return (true, true);
+        }
 
-            // Check if we have an active async step
-            if (_currentAsyncStep is null)
+        // Check if we have an active async step
+        if (_currentAsyncStep is null)
+        {
+            return (false, null);
+        }
+
+        // Check if breakpoint matches our async step
+        if (!MatchesBreakpoint(breakpoint, _currentAsyncStep.Breakpoint!, thread))
+        {
+            // Another breakpoint ends the async step only if it stops, which the debugger tells once its condition is tested.
+            return (false, null);
+        }
+
+        // Check if IP matches expected offset
+        ICorDebugILFrame? frame = thread.ActiveFrame as ICorDebugILFrame;
+        if (frame is null)
+        {
+            _currentAsyncStep?.Dispose();
+            _currentAsyncStep = null;
+            return (false, null);
+        }
+
+        (int pnOffset, CorDebugMappingResult pMappingResult) ipResult = frame.IP;
+        if (ipResult.pnOffset != _currentAsyncStep.Breakpoint!.ILOffset)
+        {
+            // Wrong offset - cancel async stepping
+            _currentAsyncStep?.Dispose();
+            _currentAsyncStep = null;
+            return (false, null);
+        }
+
+        if (_currentAsyncStep.Status == AsyncStepStatus.YieldBreakpoint)
+        {
+            if (_currentAsyncStep.ThreadId != thread.Id)
             {
                 return (false, null);
             }
-
-            // Check if breakpoint matches our async step
-            if (!MatchesBreakpoint(breakpoint, _currentAsyncStep.Breakpoint!, thread))
-            {
-                // Another breakpoint ends the async step only if it stops, which the debugger tells once its condition is tested.
-                return (false, null);
-            }
-
-            // Check if IP matches expected offset
-            ICorDebugILFrame? frame = thread.ActiveFrame as ICorDebugILFrame;
-            if (frame is null)
-            {
-                _currentAsyncStep?.Dispose();
-                _currentAsyncStep = null;
-                return (false, null);
-            }
-
-            (int pnOffset, CorDebugMappingResult pMappingResult) ipResult = frame.IP;
-            if (ipResult.pnOffset != _currentAsyncStep.Breakpoint!.ILOffset)
-            {
-                // Wrong offset - cancel async stepping
-                _currentAsyncStep?.Dispose();
-                _currentAsyncStep = null;
-                return (false, null);
-            }
-
-            if (_currentAsyncStep.Status == AsyncStepStatus.YieldBreakpoint)
-            {
-                if (_currentAsyncStep.ThreadId != thread.Id)
-                {
-                    return (false, null);
-                }
-                // Yield breakpoint hit - switch to resume breakpoint
-                return await HandleYieldBreakpoint(thread, frame);
-            }
-            else if (_currentAsyncStep.Status == AsyncStepStatus.ResumeBreakpoint)
-            {
-                // Resume breakpoint hit - check if we should stop
-                return await HandleResumeBreakpoint(thread);
-            }
+            // Yield breakpoint hit - switch to resume breakpoint
+            return await HandleYieldBreakpoint(thread, frame);
+        }
+        else if (_currentAsyncStep.Status == AsyncStepStatus.ResumeBreakpoint)
+        {
+            // Resume breakpoint hit - check if we should stop
+            return await HandleResumeBreakpoint(thread);
         }
 
         return (false, null);
@@ -625,11 +616,8 @@ internal sealed class AsyncStepper
 
     public void ClearActiveAsyncStep()
     {
-        using (_lock2.Lock())
-        {
-            _currentAsyncStep?.Dispose();
-            _currentAsyncStep = null;
-        }
+        _currentAsyncStep?.Dispose();
+        _currentAsyncStep = null;
     }
 
     /// <summary>
@@ -637,13 +625,10 @@ internal sealed class AsyncStepper
     /// </summary>
     public void Disable()
     {
-        using (_lock2.Lock())
-        {
-            _currentAsyncStep?.Dispose();
-            _currentAsyncStep = null;
-            _notifyDebuggerBreakpoint?.Dispose();
-            _notifyDebuggerBreakpoint = null;
-        }
+        _currentAsyncStep?.Dispose();
+        _currentAsyncStep = null;
+        _notifyDebuggerBreakpoint?.Dispose();
+        _notifyDebuggerBreakpoint = null;
     }
 
     public void Dispose()

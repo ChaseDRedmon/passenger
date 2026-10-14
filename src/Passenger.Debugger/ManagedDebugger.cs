@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading.Channels;
-using NeoSmart.AsyncLock;
 using Passenger.Debugger.ExpressionEvaluator.Cil;
 using Passenger.Debugger.Interop;
 using Passenger.Debugger.Models;
@@ -171,7 +170,7 @@ public partial class ManagedDebugger
     internal EvalStatus EvalStatus { get; }
 
     private readonly Channel<CorDebugManagedCallbackEventArgs> _runtimeEventChannel;
-    public readonly AsyncLock DapRequestAndRuntimeEventLock = new();
+    public readonly EngineLock DapRequestAndRuntimeEventLock = new();
 
     public ManagedDebugger(Action<string>? logger = null)
     {
@@ -201,17 +200,14 @@ public partial class ManagedDebugger
         _runtimeEventChannel.Writer.TryWrite(e);
     }
 
+    /// <summary>Handles the runtime's events queued so far, for a request about to run. The caller holds the engine's lock,
+    /// which is not re-entrant: taking it again here would wait for good.</summary>
     public async Task DrainRuntimeEventQueue()
     {
-        // Caller should have obtained this lock, and we are re-entrant here
-        using (await DapRequestAndRuntimeEventLock.LockAsync())
+        ChannelReader<CorDebugManagedCallbackEventArgs> reader = _runtimeEventChannel.Reader;
+        while (reader.TryRead(out CorDebugManagedCallbackEventArgs? callbackEvent))
         {
-            ChannelReader<CorDebugManagedCallbackEventArgs> reader = _runtimeEventChannel.Reader;
-            // Process all immediately available events
-            while (reader.TryRead(out CorDebugManagedCallbackEventArgs? callbackEvent))
-            {
-                await OnAnyEvent(this, callbackEvent).ConfigureAwait(false);
-            }
+            await OnAnyEvent(this, callbackEvent).ConfigureAwait(false);
         }
     }
 

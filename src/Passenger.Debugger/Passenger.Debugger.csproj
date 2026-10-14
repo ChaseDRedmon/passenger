@@ -111,7 +111,6 @@
     <PackageReference Include="MP.Microsoft.CodeAnalysis.CSharp.ExpressionEvaluator.ExpressionCompiler" />
     <PackageReference Include="Microsoft.Diagnostics.DbgShim" />
     <PackageReference Include="Microsoft.Diagnostics.NETCore.Client" />
-    <PackageReference Include="NeoSmart.AsyncLock" />
     <PackageReference Include="ZLinq" />
     <ProjectReference Include="../Passenger.Core/Passenger.Core.csproj" />
     <ProjectReference Include="../Passenger.Debugger.Interop/Passenger.Debugger.Interop.csproj" />
