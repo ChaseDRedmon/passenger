@@ -382,6 +382,16 @@ window or takes the focus; it shows everything but the system's own window chrom
   `src/Passenger.Debugger.Interop` (ICorDebug, IMetaDataImport and dbgshim for the COM source generator),
   `src/Passenger.Debugger` (the engine), `src/Passenger.Dap` (the Debug Adapter Protocol, both ends) and
   `src/Passenger.DebugAdapter` (the engine behind the protocol, its own process, carried under `debugger/`).
+- `src/Passenger.Inspector`: the Live Visual Tree's helper inside an Avalonia app being debugged (Passenger's own, MIT,
+  net8.0, carried under `inspector/`, never put in the app's build): a startup hook `ProjectSession.Inspected` gives only
+  a Debug launch whose build has Avalonia.Base.dll beside it (`DOTNET_STARTUP_HOOKS`, which it takes back out of the
+  environment). It compiles against Avalonia 12's implementation assemblies (the reference ones leave out [PrivateApi]
+  value-store diagnostics) and runs in a load context of its own that takes the app's Avalonia whatever its 12.x; it
+  never touches `Dispatcher.UIThread` before the app makes it, and answers on the app's UI thread over a Unix socket in
+  the temp folder (macOS allows 104 characters). `Protocol.cs` is compiled into both ends, deeper than System.Text.Json's
+  default 64. `App/LiveTree/LiveApp` is Passenger's end (the session's, ended with its debugging); `LiveTreeController`
+  and `LiveTreeView` are the window, which asks nothing while the app is paused. Why a style fails is read from its
+  selector's text (`Selectors.cs`); whether it applies is always Avalonia's answer. Agents' tools ask the same `LiveApp`.
 - `tools/Passenger.Notices`: writes the app's `THIRD-PARTY-NOTICES.txt` (beside `LICENSE.txt` in every build and
   publish, through `WriteNotices` in `Passenger.App.csproj`) from the packages the build copies, the self-contained
   runtime pack, the debugger's and Roslyn's server's `.deps.json`, each package's licence and copyright, and the part
@@ -498,7 +508,9 @@ debugs Passenger.App; it finds its breakpoint by the code `status.Text = why;` i
 that line means changing the test. `TerminalConsoleApp` there needs a real terminal;
 window tests copy it into a folder of their own (`Debuggees.CopyTo`). The protocol tests run one at a time (`DebugSession.Collection`), beside the window tests; one that holds the engine
 to a time runs in `Alone`. `PASSENGER_ENGINE_LOG=FILE` keeps the engine's own log, for the
-tests' sessions and the IDE's alike.
+tests' sessions and the IDE's alike. `LiveTreeTests` debug `tests/Debuggees/LiveTreeApp`, headless, with no project file
+of its own (the test writes one on the tests' own Avalonia version); "click X,Y" typed into its Debug console stands in
+for the pointer.
 
 The MCP server's tests (`McpTests`) are agents using the SDK's own client: one starts `Passenger --mcp` and debugs a
 project through it, others attach to a window with `--mcp-attach` (its sockets under the run's
