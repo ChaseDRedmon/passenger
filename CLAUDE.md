@@ -18,7 +18,8 @@ just run [PATH] [args]     # run the IDE on a folder or file (--file F, --caret 
 just screenshot X.png ...  # the main window drawn off-screen to a PNG, after the steps given
 just publish RID           # self-contained Release build, ReadyToRun (osx-arm64, osx-x64, win-x64, win-arm64)
 just package-mac [RID] [--dry-run]  # artifacts/package/Passenger-macos-arm64.dmg (or -x64), checked mounted; signed
-                           # with PASSENGER_SIGN_IDENTITY and notarized with PASSENGER_NOTARY_PROFILE when set, else ad hoc
+                           # with PASSENGER_SIGN_IDENTITY and notarized with PASSENGER_NOTARY_PROFILE when set, else ad hoc;
+                           # its window's background is tools/dmg-background.svg, drawn by sips at 1x and 2x into one TIFF
 just icons                 # rewrite Theme/Icons.axaml from the list in tools/icons.py (icons from a fixed commit)
 just app-icon              # Passenger.icns, Passenger.ico and passenger.png from Assets/passenger.svg, by sips; fails
                            # unless every size's corners are transparent (never write the three files any other way)
@@ -155,6 +156,21 @@ window or takes the focus; it shows everything but the system's own window chrom
   capabilities take dynamic registration), its diagnostics are one pull, and `RazorHtml` answers what Razor asks the
   client of a file's HTML, since Passenger has no HTML server. A request nothing waits on, sent as a window closes,
   goes through `LanguageServer.Tell`, never awaited on the closing window's thread.
+- `src/Passenger.Host`: MSBuild in a process of its own (net10.0 on the machine's dotnet, one per SDK in
+  `ProjectHosts`, started through ChildProcesses, carried under `host/`), loading the installed SDK's MSBuild (the one
+  the folder's global.json picks) through MSBuildLocator. It answers JSON lines: `evaluate` (the Solution view's
+  projects as a build sees them, `Workspace/ProjectModels`, cached in the folder's `projectModels.json`), `build`
+  (Roslyn's design-time builds, written as its build host writes ProjectFileInfo, `Workspace/ProjectBuilds`, cached
+  Brotli-compressed in `projectBuilds.json`) and `cancel` (a request given up: no more projects started, the build's
+  submissions cancelled, so a left folder never holds the host). Each result carries stamps of what it read
+  (`Stamps.cs`), so a reopen redoes only what changed; the caches are read off the UI thread (`StateDocument.ValueAsync`).
+  The shown file's project and what it references load first (`ProjectSession.ActiveProjectsAsync`).
+  `Passenger.Roslyn.Extension/ProjectLoader.cs` subclasses the server's own `LanguageServerProjectLoader` so the server
+  loads the host's builds (`passenger/loadProjects`, `passenger/projectInfo`, `passenger/projectLoader`), compiled
+  against the server's publicized assemblies (`src/Publicize.targets`, which the debugger imports too); a server
+  without the host builds its projects itself. A file in several projects (a multi-targeted project's) has the
+  editor's target framework switcher (`CodeEditor.ContextLabel`, `MainWindow.TargetFramework.cs`), its requests naming
+  the chosen context (`LspDocument.Context`, Roslyn's `_vs_projectContext`).
 - `src/Passenger.App/CSharp`: the language server in the IDE. `CSharpService` runs Roslyn for the
   folder; `CSharpDocument` gives an open file its semantic colours and diagnostics; `CodeAssist`
   is completion, hover, signature help and the code actions (`app.code.*`), its popups on a layer
@@ -446,6 +462,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   publish, through `WriteNotices` in `Passenger.App.csproj`) from the packages the build copies, the self-contained
   runtime pack, the debugger's and Roslyn's server's `.deps.json`, each package's licence and copyright, and the part
   of THIRD_PARTY_NOTICES.md after its marker line; a licence it cannot write fails the build.
+- `tools/package-mac.sh` and `tools/dmg-layout.py`: the disk image's Finder window is a .DS_Store written as Finder
+  writes one, with no AppleScript: the icons' places and the background (`.background/background.tiff`) named by a
+  Carbon alias made on the image's own read-write mount, since it carries the volume's creation date and the picture's
+  catalog IDs, which the compressed image keeps; `dmg-layout.py check` reads it all back on the mounted image. The
+  picture stays light in either appearance, as Finder draws the names black over a light picture in Dark too.
 - `tools/linux`: what the Linux archive carries beside the app: the launcher, install.sh (per user, `--system`,
   `--uninstall`), the desktop entry and the file types it opens. CI runs the suite on Ubuntu 24.04 too, and installs,
   uses and uninstalls the archive. ClrMD's DAC stays loaded once used (`HeapGraph.Runtime`): unloading it crashed the
