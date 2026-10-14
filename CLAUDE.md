@@ -173,7 +173,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   projects as a build sees them, `Workspace/ProjectModels`, cached in the folder's `projectModels.json`), `build`
   (Roslyn's design-time builds, written as its build host writes ProjectFileInfo, `Workspace/ProjectBuilds`, cached
   Brotli-compressed in `projectBuilds.json`) and `cancel` (a request given up: no more projects started, the build's
-  submissions cancelled, so a left folder never holds the host). Each result carries stamps of what it read
+  submissions cancelled, so a left folder never holds the host) and `inspect` (one project evaluated for the code help
+  in its MSBuild files, `Inspection.cs`: the open files' unsaved text fed to MSBuild in place of the disk's; properties
+  with the places that set them, items, targets, imports, the SDK's frameworks and the evaluation's errors (a skipped
+  import as MSB4019), places by a file table, answered from its cache while the inputs hold). Each result carries stamps of what it read
   (`Stamps.cs`), so a reopen redoes only what changed; the caches are read off the UI thread (`StateDocument.ValueAsync`).
   The shown file's project and what it references load first (`ProjectSession.ActiveProjectsAsync`).
   `Passenger.Roslyn.Extension/ProjectLoader.cs` subclasses the server's own `LanguageServerProjectLoader` so the server
@@ -484,6 +487,25 @@ window or takes the focus; it shows everything but the system's own window chrom
   publish, through `WriteNotices` in `Passenger.App.csproj`) from the packages the build copies, the self-contained
   runtime pack, the debugger's and Roslyn's server's `.deps.json`, each package's licence and copyright, and the part
   of THIRD_PARTY_NOTICES.md after its marker line; a licence it cannot write fails the build.
+- `src/Passenger.App/MSBuild`: code help in project, .props and .targets files. `MSBuildService` is the session's
+  (`ProjectSession.MSBuild`), one `MSBuildDocument` per open MSBuild file, evaluated through its project (itself, the
+  workspace project whose evaluation imports it, a Directory.* file's nearest project, or the one Go to Declaration
+  came from) once typing pauses, on the text as typed. Completion reads the text as typed (`Passenger.Xaml`'s XmlTree)
+  with `MSBuildSchema` (dotnet/msbuild's Core and CommonTypes XSDs, embedded because the SDK lacks them) and the last
+  evaluation that succeeded; package ids, versions and advisories come from the window's NuGet (`NuGetView.FeedAsync`,
+  `VulnerabilitiesAsync`), and under CPM a new PackageReference takes no version while Directory.Packages.props gets
+  its PackageVersion, as one command. Installed MSBuild files (the SDK's, packages') open read-only
+  (`MSBuildFiles.IsInstalled`). `CodeAssist.MSBuild.cs` connects it to completion, the hover card and Go to Declaration.
+- `MainWindow.TitleBar.cs` and `TitleBars`: the toolbar is the main window's title bar, as Rider's header is: always
+  on Windows and macOS, on Linux by Settings' Merge main menu with window title (off by default while it rests on
+  Avalonia's experimental X11 decorations; greyed under WSL, tiling window managers or an unnamed desktop). Windows
+  learns the bar's parts from Avalonia 12's `WindowDecorationProperties.ElementRole` (TitleBar on the toolbar, User on
+  what is on it, Minimize/Maximize/CloseButton on its window buttons), so Windows itself moves, snaps and maximizes the
+  window and shows snap layouts: anything new on the bar goes inside `ToolbarStart` or `ToolbarEnd`, or Windows takes a
+  press on it as the caption's. Linux and macOS move the window through `OnToolbarPressed` (macOS's double click as
+  the system's setting says). The layout follows `TitleBars`, not `IsExtendedIntoWindowDecorations`, so headless
+  pictures show the merged bar; Avalonia's own drawn decorations get the empty `TitleBarDecorations` theme. Only the
+  main window merges.
 - `tools/package-mac.sh` and `tools/dmg-layout.py`: the disk image's Finder window is a .DS_Store written as Finder
   writes one, with no AppleScript: the icons' places and the background (`.background/background.tiff`) named by a
   Carbon alias made on the image's own read-write mount, since it carries the volume's creation date and the picture's
@@ -619,7 +641,12 @@ caption binds a misspelt Name; "rebind" typed into its console makes it fail aga
 `tests/Debuggees/XamlBreakpointsApp` the same way ("paint", "warn" and "rename" typed into its console change Save's
 background and width, the buttons' style class, and the caption's binding). `XamlEditingTests` drive each XAML editing
 tool in an Avalonia app and a WPF app of their own (`AvaloniaGallery`, `WpfGallery`), the MVVM Toolkit stood in by its
-attributes' full names.
+attributes' full names. `ProjectFileHelpTests` drive the MSBuild code help on an SDK-style project and a
+Directory.Packages.props with `StandInFeed`. No test sees the system's window frame: `TitleBarTests` checks the roles
+Windows is asked about through Avalonia's internal `IInputRoot.HitTestChromeElement` and counts moves by
+`MovesStarted`; a real Windows window is checked by hand in the VM (`~/Documents/passenger-vm/handcheck/bar205`). A
+screenshot's `--type` sends its text as one input, so completion opens only when its trigger is typed alone
+(`--type "<" --type "Tar"`).
 `XamlTests`' `AvaloniaApp` makes `dotnet new avalonia.app` from templates installed into the run's own hive
 (`--debug:custom-hive`) and takes Accelerate's DevTools out of it.
 The run's IDE keeps dotnet new templates in its own home (DOTNET_CLI_HOME) on macOS and Linux and in
