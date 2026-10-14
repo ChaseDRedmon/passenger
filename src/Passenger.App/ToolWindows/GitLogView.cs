@@ -448,7 +448,12 @@ public sealed class GitLogView : DockPanel
         subject.Children.Add(new TextBlock { Text = row.Commit.Subject, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis });
         TextBlock author = Muted(row.Commit.Author);
         TextBlock date = Muted(When(row.Commit.Time));
-        Grid line = new() { ColumnDefinitions = new ColumnDefinitions("Auto,*,150,180"), Height = RowHeight };
+        // The author and the date at most 150 and 180 wide, and never more than half of a narrow log between them.
+        Grid line = new() { Height = RowHeight };
+        line.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+        line.ColumnDefinitions.Add(new ColumnDefinition(2, GridUnitType.Star));
+        line.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star) { MaxWidth = 150 });
+        line.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star) { MaxWidth = 180 });
         Grid.SetColumn(subject, 1);
         Grid.SetColumn(author, 2);
         Grid.SetColumn(date, 3);

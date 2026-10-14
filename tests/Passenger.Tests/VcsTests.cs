@@ -1,7 +1,9 @@
 using System.Diagnostics;
 using Avalonia;
+using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
+using Avalonia.VisualTree;
 using Passenger.App;
 using Passenger.App.ToolWindows;
 using Passenger.App.Vcs;
@@ -467,6 +469,24 @@ public sealed class VcsTests : IDisposable
         window.Perform(AppActions.RollbackLines);
         Ui.Landed(() => Text(window) == Original, "the blank lines gone");
         Ui.Landed(() => Marks(window).Count == 0, "the bar gone");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_narrow_logs_rows_keep_room_for_each_commits_subject()
+    {
+        Git("commit", "-q", "--allow-empty", "-m", "Second commit's subject");
+        // As wide as a 1024x768 desktop leaves a maximized window, the Git window under the editors with its branches.
+        MainWindow window = new() { Width = 957, Height = 699 };
+        window.Show();
+        window.OpenFolder(folder);
+        GitLogView log = window.GitLog;
+        window.Perform(AppActions.ShowGit);
+        Ui.Landed(() => log.Rows.Count == 2, "the two commits");
+        TextBlock subject = log.GetVisualDescendants().OfType<TextBlock>().First(t => t.Text == "Second commit's subject");
+        Control row = (Control)subject.GetVisualParent()!.GetVisualParent()!;
+        Assert.True(subject.Bounds.Width >= 100,
+            $"The log's {row.Bounds.Width:0}-wide rows left the subject {subject.Bounds.Width:0} wide, the author and date taking the rest");
         window.Close();
     }
 
