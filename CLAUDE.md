@@ -166,7 +166,26 @@ window or takes the focus; it shows everything but the system's own window chrom
   opens such a file as `aspnetcorerazor`, its colours take the legend Razor registers as it starts (why the client
   capabilities take dynamic registration), its diagnostics are one pull, and `RazorHtml` answers what Razor asks the
   client of a file's HTML, since Passenger has no HTML server. A request nothing waits on, sent as a window closes,
-  goes through `LanguageServer.Tell`, never awaited on the closing window's thread.
+  goes through `LanguageServer.Tell`, never awaited on the closing window's thread. Roslyn reads a column past a line's
+  end as the line's end, so no change is sent between a "\r\n"'s halves: `LspDocument.Unsplit` takes in the half
+  beside it and puts it back. `LanguageSession`/`ServerStart` run a server other than Roslyn: its `LspDocument`s carry
+  a language id and their diagnostics are pushed (`DiagnosticsPushed`) or pulled. `RazorHtml` opens each Razor file's
+  HTML in the HTML server (`LanguageServer.HtmlServer`) as `<uri>__virtual.html` and forwards Razor's HTML questions
+  there, mapping answers' URIs back; a Razor file's pull adds the HTML server's diagnostics on lines its HTML has as the
+  file does. `WebServers.targets` carries the web language servers under `web/`: `WebServers/package.json` pins them
+  and `package-lock.json` everything they bring, each with its sha512; `tools/Passenger.NodePackages` puts them in
+  place at build with no Node.js (cached in `artifacts/node/cache`), leaving out the HTML server's own TypeScript's
+  tsserver, tsc and translations and moving its `lib*.d.ts` to `node_modules/node_modules/typescript/lib`, where the
+  HTML server reads them; SchemaStore schemas go to `web/schemas`. To move a pin: edit package.json, run
+  `npm install --package-lock-only --ignore-scripts` there, then update THIRD_PARTY_NOTICES.md's "Inside web/" table.
+- `src/Passenger.App/Web`: `WebLanguages` is `ProjectSession.Web`, one server per kind (TypeScript over the project's
+  own node_modules/typescript, else Passenger's; HTML; CSS, SCSS and Less; JSON), each run on `NodeRuntime` (Settings'
+  Node.js page, else `Programs.Node()`) through ChildProcesses and started with the first file of its kind; without
+  Node.js, `OpenDocument.Notice` (the editor's banner) and the status bar say why and the file keeps its colours.
+  `WebDocument` is an `IServerDocument`, as `CSharpDocument` is, and `CodeAssist` asks it through `Current`.
+  `JsonSchemas` answers `vscode/content` from the carried schemas, else downloads while Settings' Remote JSON Schemas
+  allows (`PASSENGER_SCHEMAS` points the tests at a dead address). `CodeAssist.Web.cs` gives JSON the Go to Declaration
+  (package.json dependencies) and property Rename its server lacks. Agents' MCP tools don't know web files yet.
 - `src/Passenger.Host`: MSBuild in a process of its own (net10.0 on the machine's dotnet, one per SDK in
   `ProjectHosts`, started through ChildProcesses, carried under `host/`), loading the installed SDK's MSBuild (the one
   the folder's global.json picks) through MSBuildLocator. It answers JSON lines: `evaluate` (the Solution view's
@@ -343,7 +362,13 @@ window or takes the focus; it shows everything but the system's own window chrom
   `TestingPlatformRunner`, which runs it with `--server` through ChildProcesses and speaks the platform's JSON-RPC, one
   request per process; every other to `VsTestRunner`. `TestTree` groups by Rider's Group By levels (`TestGrouping.cs`) and filters by
   outcome and search; code that wants every test asks `TestTree.Methods` (each method once), never `Roots`. The
-  grouping and filters are a folder's `unitTests.json`.
+  grouping and filters are a folder's `unitTests.json`. `TestFrames` gives a run of a project with Avalonia.Headless
+  and xunit v3 beside it the startup hook `src/Passenger.TestFrames` (carried under `testframes/`,
+  `PASSENGER_TEST_FRAMES=1`): when an exception reaches xunit's runner frames on the headless session thread, it adds
+  each shown window's `CaptureRenderedFrame`, popups drawn in, to the test's attachments as a PNG, before Dispose runs.
+  `TestOutcome.Attachments` is read from VSTest's `TestResult.Attachments` and the platform's `attachments.N.uri`/
+  `display-name` properties; `ToolWindows/TestFramesStrip` shows every picture attachment over the details, and
+  `FrameViewer` shows one at its size with zoom.
 - `src/Passenger.App/Navigation`: Recent Files and the Go to popups, `NavigationHistory` (Back and Forward, the places
   edited for Last and Next Edit Location, and those Recent Locations lists, carried through edits) and
   `RecentLocationsPopup`; `Navigator` records the places visited and edited. Base and Derived Symbols use the
@@ -452,7 +477,14 @@ window or takes the focus; it shows everything but the system's own window chrom
   and calls `Breaks.Changed`, on which the IDE sets one function breakpoint per property breakpoint (condition
   `breakpoint == Id && (…)`, the hit count kept in the app). The inspector is never optimized (the debugger reads that
   call's arguments) and its watching code is `[DebuggerNonUserCode]`, shown as external code under Just My Code, so
-  the stop selects the code that set the value.
+  the stop selects the code that set the value. `BindingErrorBreakpoint` is Avalonia Binding Errors ("Any binding
+  error", off until turned on, never removed, kept with the folder): under a debugger the inspector's binding sink calls
+  `Breaks.BindingFailed(BindingError)` (`Breaks.cs`, with `Breaks.Changed`) on each failure, repeats too, on the thread
+  that evaluated it, where the IDE sets one function breakpoint (`Wire.Failed`), sent with the property breakpoints' in
+  one `setFunctionBreakpoints`; its condition and log message say `$bindingError` (rewritten to the parameter). The
+  stop reads `bindingError.Said` (a `BindingFailure` as JSON) in frame 0, selects the first user frame, says the failure
+  in the status bar, annotates the line, lists `$bindingError` in Variables and writes a linked console line. A function
+  breakpoint's binding is told apart by its module, not its base address: the inspector is two modules over one image.
   The engine's lock (`EngineLock`) is held by one request or runtime event at a time and is not re-entrant: code under
   it never takes it again (`DrainRuntimeEventQueue` runs under its caller's hold).
 - The debugger, Passenger's own, started from SharpDbg and ICorDebugSharp (MIT; `THIRD_PARTY_NOTICES.md` says what came from where):
@@ -646,7 +678,14 @@ Directory.Packages.props with `StandInFeed`. No test sees the system's window fr
 Windows is asked about through Avalonia's internal `IInputRoot.HitTestChromeElement` and counts moves by
 `MovesStarted`; a real Windows window is checked by hand in the VM (`~/Documents/passenger-vm/handcheck/bar205`). A
 screenshot's `--type` sends its text as one input, so completion opens only when its trigger is typed alone
-(`--type "<" --type "Tar"`).
+(`--type "<" --type "Tar"`). A test of what reaches the language server fails if the server ended during it
+(`CSharpService.Stopped`), since a server started again is sent the whole file, which hides a drift. `TestFramesTests`
+(fixture `HeadlessTestsFolder`) run an xunit v3 headless project on the platform and one on VSTest
+(`IsTestingPlatformApplication=false`), restored through `AvaloniaApp.UseFeed`. `WebLanguagesTests` need Node.js on
+the PATH and skip, saying why, without it (the TypeScript ones also on a Node.js older than typescript-language-server's
+`engines.node`). `BindingErrorsTests` also debug BindingErrorsApp with Avalonia Binding Errors on. Headless, a window
+never loses activation, so a menu stays open under a dialog, and when the dialog closes the window puts focus back on
+what it remembers, never a menu (a focus scope of its own): `MainWindow.KeepKeys` gives an open menu the keys back.
 `XamlTests`' `AvaloniaApp` makes `dotnet new avalonia.app` from templates installed into the run's own hive
 (`--debug:custom-hive`) and takes Accelerate's DevTools out of it.
 The run's IDE keeps dotnet new templates in its own home (DOTNET_CLI_HOME) on macOS and Linux and in
