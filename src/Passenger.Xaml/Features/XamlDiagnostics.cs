@@ -44,6 +44,7 @@ public static class XamlDiagnostics
         }
         found.AddRange(ThemeVariants.Of(file));
         Dictionary<string, XmlAttribute> named = new(StringComparer.Ordinal);
+        bool islands = file.Tree.Elements.Any(e => e.LocalName == "XData");
         foreach (XmlElement element in file.Tree.Elements)
         {
             if (element.Name.Length == 0 || element.Prefix == "xml")
@@ -57,6 +58,12 @@ public static class XamlDiagnostics
                 continue;
             }
             if (element.Prefix.Length > 0 && (file.KindOf(file.UriOf(element, element.Prefix)) == XamlNamespaceKind.Ignorable || file.IsIgnored(element, element.Prefix)))
+            {
+                continue;
+            }
+            // XAML's own elements (x:Array, x:Static, x:Code), and the XML an x:XData island holds, are no types of the project's.
+            if ((element.LocalName is "Array" or "Static" or "Type" or "Null" or "Reference" or "Code" or "XData" && IsLanguage(file, element))
+                || (islands && element.Ancestors().Any(a => a.LocalName == "XData" && IsLanguage(file, a))))
             {
                 continue;
             }
@@ -87,6 +94,9 @@ public static class XamlDiagnostics
         }
         return found;
     }
+
+    private static bool IsLanguage(XamlFile file, XmlElement element) =>
+        element.Prefix.Length > 0 && file.KindOf(file.UriOf(element, element.Prefix)) == XamlNamespaceKind.Language;
 
     private static int Line(XamlFile file, int offset)
     {
@@ -422,7 +432,8 @@ public static class XamlDiagnostics
             ClrMember? property = file.Types.MembersOf(current).FirstOrDefault(m => m.Kind is MemberKind.Property or MemberKind.Method && !m.IsStatic && m.Name == step);
             if (property is null)
             {
-                if (!current.IsFromSource && current.Kind == ClrTypeKind.Interface)
+                // An interface's members may come from the interfaces it extends, which only a compiler that reads them judges.
+                if (current.Kind == ClrTypeKind.Interface && (!current.IsFromSource || !compiled))
                 {
                     return;
                 }

@@ -152,6 +152,19 @@ public sealed class WpfXamlTests : IClassFixture<WpfXamlTests.Gallery>
         Ui.Run(window, AppActions.Complete);
         Ui.WaitFor(() => window.Assist.CompletionLabels.Any(l => l.StartsWith("clr-namespace:System.Collections.ObjectModel;assembly=", StringComparison.Ordinal)),
             "another assembly's namespace, with its assembly");
+        Ui.Press(window, "ESCAPE");
+
+        // A grid column's binding, and a hierarchical template's own, resolve against the items.
+        window.OpenFile(app.PathOf("ListsWindow.xaml"));
+        Ui.Settle();
+        PlaceAfter(window.EditorArea.CodeEditor, "<DataGridTextColumn Header=\"Name\" Binding=\"{Binding ");
+        Ui.Run(window, AppActions.Complete);
+        Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Age"), "Person's properties, the grid's items'");
+        Assert.DoesNotContain("Roots", window.Assist.CompletionLabels);
+        Ui.Press(window, "ESCAPE");
+        PlaceAfter(window.EditorArea.CodeEditor, "<HierarchicalDataTemplate ItemsSource=\"{Binding ");
+        Ui.Run(window, AppActions.Complete);
+        Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Children"), "Node's properties, the tree's items'");
         window.Close();
     }
 
@@ -163,9 +176,15 @@ public sealed class WpfXamlTests : IClassFixture<WpfXamlTests.Gallery>
         OpenDocument document = window.EditorArea.Active!;
         Assert.True(window.XamlService.For(document)?.IsLoaded, "MainWindow.xaml was not read as WPF's XAML");
         Assert.True(document.Markers.Count == 0, $"The window, which compiles, is marked: {string.Join("; ", document.Markers.Select(m => m.Message))}");
-        window.OpenFile(app.PathOf("App.xaml"));
-        Ui.Settle();
-        Assert.True(window.EditorArea.Active!.Markers.Count == 0, $"App.xaml, which compiles, is marked: {string.Join("; ", window.EditorArea.Active!.Markers.Select(m => m.Message))}");
+        // Nor do a list's, a grid's or a tree's items, bound outside the window's data context, or XAML's own elements.
+        foreach (string other in (string[])["App.xaml", "Themes/Brushes.xaml", "ListsWindow.xaml"])
+        {
+            window.OpenFile(app.PathOf(other));
+            Ui.Settle();
+            OpenDocument opened = window.EditorArea.Active!;
+            Assert.True(window.XamlService.For(opened)?.IsLoaded, $"{other} was not read as WPF's XAML");
+            Assert.True(opened.Markers.Count == 0, $"{other}, which compiles, is marked: {string.Join("; ", opened.Markers.Select(m => m.Message))}");
+        }
 
         window.OpenFile(app.PathOf("MainWindow.xaml"));
         Ui.Settle();
@@ -338,9 +357,130 @@ public sealed class WpfXamlTests : IClassFixture<WpfXamlTests.Gallery>
                 File.WriteAllText(PathOf("App.xaml"), AppXaml);
                 File.WriteAllText(PathOf("MainWindow.xaml"), Window);
                 File.WriteAllText(PathOf("MainWindow.xaml.cs"), CodeBehind);
+                File.WriteAllText(PathOf("ViewModels/ListsViewModel.cs"), ListsViewModel);
+                File.WriteAllText(PathOf("ListsWindow.xaml"), Lists);
+                File.WriteAllText(PathOf("ListsWindow.xaml.cs"), ListsCodeBehind);
             }, Folder);
             Prepare();
         }
+
+        /// <summary>What lists, grids and trees bind: their items, an interface that extends another.</summary>
+        public const string ListsViewModel = """
+            using System.Collections.ObjectModel;
+
+            namespace Gallery.ViewModels;
+
+            public class Node
+            {
+                public string Title { get; set; } = "";
+
+                public ObservableCollection<Node> Children { get; } = [];
+            }
+
+            public interface INamed
+            {
+                string Name { get; }
+            }
+
+            public interface IShopper : INamed
+            {
+                int Visits { get; }
+            }
+
+            public class ListsViewModel
+            {
+                public ObservableCollection<Node> Roots { get; } = [];
+
+                public ObservableCollection<Person> People { get; } = [];
+
+                public IShopper? Shopper { get; set; }
+            }
+
+            """;
+
+        public const string ListsCodeBehind = """
+            using System.Windows;
+
+            namespace Gallery;
+
+            public partial class ListsWindow : Window
+            {
+                public ListsWindow()
+                {
+                    InitializeComponent();
+                }
+            }
+
+            """;
+
+        /// <summary>A window whose bindings are read against items, not its data context: a tree's hierarchical template, a
+        /// data grid's columns and cell template, a list view's grid columns; with an x:Array, an x:XData island and a
+        /// dictionary merged in from WPF's own Aero2 theme, whose keys nothing here reads. MarkupCompile builds it.</summary>
+        public const string Lists = """
+            <Window x:Class="Gallery.ListsWindow"
+                    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+                    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+                    xmlns:vm="clr-namespace:Gallery.ViewModels"
+                    xmlns:sys="clr-namespace:System;assembly=mscorlib"
+                    mc:Ignorable="d"
+                    d:DataContext="{d:DesignInstance vm:ListsViewModel}"
+                    Title="Lists" Height="450" Width="800">
+                <Window.Resources>
+                    <ResourceDictionary>
+                        <ResourceDictionary.MergedDictionaries>
+                            <ResourceDictionary Source="pack://application:,,,/PresentationFramework.Aero2;component/themes/aero2.normalcolor.xaml" />
+                        </ResourceDictionary.MergedDictionaries>
+                        <x:Array x:Key="Sizes" Type="sys:Double">
+                            <sys:Double>10</sys:Double>
+                            <sys:Double>12</sys:Double>
+                        </x:Array>
+                        <XmlDataProvider x:Key="Books" XPath="Books">
+                            <x:XData>
+                                <Books xmlns="">
+                                    <Book Title="Dune" />
+                                </Books>
+                            </x:XData>
+                        </XmlDataProvider>
+                    </ResourceDictionary>
+                </Window.Resources>
+                <UniformGrid Columns="3">
+                    <TreeView ItemsSource="{Binding Roots}">
+                        <TreeView.ItemTemplate>
+                            <HierarchicalDataTemplate ItemsSource="{Binding Children}">
+                                <TextBlock Text="{Binding Title}" />
+                            </HierarchicalDataTemplate>
+                        </TreeView.ItemTemplate>
+                    </TreeView>
+                    <DataGrid ItemsSource="{Binding People}" AutoGenerateColumns="False" Background="{StaticResource {x:Static SystemColors.WindowBrushKey}}">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Name" Binding="{Binding Name}" />
+                            <DataGridTemplateColumn Header="Age">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Age}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <StackPanel>
+                        <ListView ItemsSource="{Binding People}">
+                            <ListView.View>
+                                <GridView>
+                                    <GridViewColumn Header="Age" DisplayMemberBinding="{Binding Age}" />
+                                </GridView>
+                            </ListView.View>
+                        </ListView>
+                        <TextBlock Text="{Binding Shopper.Name}" />
+                        <ComboBox ItemsSource="{StaticResource Sizes}" />
+                        <ListBox ItemsSource="{Binding Source={StaticResource Books}, XPath=Book}" DisplayMemberPath="@Title" />
+                    </StackPanel>
+                </UniformGrid>
+            </Window>
+
+            """;
 
         public const string MainViewModel = """
             using System.Collections.ObjectModel;

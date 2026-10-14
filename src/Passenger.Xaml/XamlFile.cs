@@ -350,9 +350,14 @@ public sealed class XamlFile
     public ClrType? DataTypeAt(XmlElement element, bool inherit = true, bool stopAtTemplates = false, bool? hints = null)
     {
         bool reading = hints ?? !Dialect.CompilesBindings;
+        if (reading && IsColumn(element))
+        {
+            return element.Ancestors().FirstOrDefault(a => a.Attribute("ItemsSource") is not null) is { } items ? ItemsOf(items, stopAtTemplates) : null;
+        }
         for (XmlElement? at = element; at is not null; at = inherit ? at.Parent : null)
         {
-            bool template = at != element && !at.IsPropertyElement && at.LocalName.EndsWith("Template", StringComparison.Ordinal)
+            // A template's own bindings (a HierarchicalDataTemplate's ItemsSource) are its items' too, where hints are read.
+            bool template = (at != element || reading) && !at.IsPropertyElement && at.LocalName.EndsWith("Template", StringComparison.Ordinal)
                 && at.Attribute("DataType") is null && Directive(at, "DataType") is null;
             if (template && reading && ItemTypeOf(at, stopAtTemplates) is { } item)
             {
@@ -437,8 +442,22 @@ public sealed class XamlFile
     /// type of the collection its <c>ItemsSource</c> binds.</summary>
     private ClrType? ItemTypeOf(XmlElement template, bool stopAtTemplates)
     {
-        if (template.Parent is not { IsPropertyElement: true } holder || !holder.LocalName.EndsWith(".ItemTemplate", StringComparison.Ordinal)
-            || holder.Parent is not { } items || items.Attribute("ItemsSource") is not { } source
+        if (template.Parent is not { IsPropertyElement: true } holder)
+        {
+            return null;
+        }
+        // A list's ItemTemplate, or a grid column's cell templates (WPF's DataGridTemplateColumn), whose list is above.
+        XmlElement? items = holder.LocalName.EndsWith(".ItemTemplate", StringComparison.Ordinal) ? holder.Parent
+            : holder.LocalName.EndsWith(".CellTemplate", StringComparison.Ordinal) || holder.LocalName.EndsWith(".CellEditingTemplate", StringComparison.Ordinal)
+                ? holder.Ancestors().FirstOrDefault(a => a.Attribute("ItemsSource") is not null)
+                : null;
+        return items is null ? null : ItemsOf(items, stopAtTemplates);
+    }
+
+    /// <summary>The type of an items control's items: the element type of the collection its <c>ItemsSource</c> binds.</summary>
+    private ClrType? ItemsOf(XmlElement items, bool stopAtTemplates)
+    {
+        if (items.Attribute("ItemsSource") is not { } source
             || MarkupExtension.Parse(Text, source.ValueStart, source.ValueEnd) is not { LocalName: "Binding" or "CompiledBinding" } binding
             || binding.Arguments.Any(a => a.Key is "Source" or "ElementName" or "RelativeSource")
             || (binding.Argument(null) ?? binding.Argument("Path")) is not { Nested: null, Value.Length: > 0 } path
@@ -449,6 +468,12 @@ public sealed class XamlFile
         }
         return ElementTypeOf(collection);
     }
+
+    /// <summary>Whether an element is a column of WPF's grids (DataGrid's, a ListView's GridView's), whose bindings are
+    /// applied to each item, outside the visual tree.</summary>
+    private bool IsColumn(XmlElement element) =>
+        !element.IsPropertyElement && TypeOf(element) is { } type
+        && (Types.IsA(type, "System.Windows.Controls.DataGridColumn") || Types.IsA(type, "System.Windows.Controls.GridViewColumn"));
 
     /// <summary>The type a binding path's last step has, each step a property of the one before; null where a step is not
     /// one (an indexer, an attached property, a current item).</summary>
