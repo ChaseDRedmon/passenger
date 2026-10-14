@@ -16,6 +16,8 @@ public sealed record AppSettings : IStateDocument<AppSettings>
     public const double MaxLineSpacing = 3;
     public const int MinIdleSeconds = 1;
     public const int MaxIdleSeconds = 3600;
+    public const int MinDiscordIdleMinutes = 1;
+    public const int MaxDiscordIdleMinutes = 24 * 60;
     public const int MinConsoleBufferKb = 16;
     public const int MaxConsoleBufferKb = 102_400;
 
@@ -150,6 +152,22 @@ public sealed record AppSettings : IStateDocument<AppSettings>
     /// permissions.</summary>
     public bool McpServer { get; init; }
 
+    /// <summary>Show activity in Discord: the Discord app on this computer shows "Playing Passenger" with Passenger's icon
+    /// and what <see cref="DiscordShows"/> names to whoever can see the person's activity, as the JetBrains IDEs' Discord
+    /// plugins do. Off until the person turns it on.</summary>
+    public bool ShowInDiscord { get; init; }
+
+    /// <summary>What the activity names beyond Passenger: the solution and the file, as pandier's Discord Rich Presence
+    /// plugin's default visibility (Project and Files) does.</summary>
+    public DiscordShown DiscordShows { get; init; } = DiscordShown.SolutionAndFile;
+
+    /// <summary>Whether the activity names only Passenger once no key, click or scroll has come for
+    /// <see cref="DiscordIdleMinutes"/>, as the plugins' idle time does.</summary>
+    public bool DiscordIdle { get; init; } = true;
+
+    /// <summary>Almighty Alpaca's Discord Integration's "Time required before considered idle": 5 minutes, up to a day.</summary>
+    public int DiscordIdleMinutes { get; init; } = 5;
+
     /// <summary>A client's verbose protocol trace: every message to and from the C# language servers, the debugger and
     /// VSTest written to lsp.log, dap.log and vstest.log in the logs folder (<see cref="IdeLog.Traces"/>).</summary>
     public bool TraceProtocols { get; init; }
@@ -178,6 +196,8 @@ public sealed record AppSettings : IStateDocument<AppSettings>
             Theme = Enum.IsDefined(Theme) ? Theme : defaults.Theme,
             ShowBuildResults = Enum.IsDefined(ShowBuildResults) ? ShowBuildResults : defaults.ShowBuildResults,
             DiffHighlighting = Enum.IsDefined(DiffHighlighting) ? DiffHighlighting : defaults.DiffHighlighting,
+            DiscordShows = Enum.IsDefined(DiscordShows) ? DiscordShows : defaults.DiscordShows,
+            DiscordIdleMinutes = Math.Clamp(DiscordIdleMinutes, MinDiscordIdleMinutes, MaxDiscordIdleMinutes),
             EditorFontSize = Math.Clamp(EditorFontSize, MinFontSize, MaxFontSize),
             EditorLineSpacing = Math.Clamp(EditorLineSpacing, MinLineSpacing, MaxLineSpacing),
             TerminalFontSize = Math.Clamp(TerminalFontSize, MinFontSize, MaxFontSize),
@@ -258,4 +278,13 @@ public enum BuildResultsMode
     ForWarningsOrErrors,
     ForErrors,
     Never,
+}
+
+/// <summary>What Discord's activity names beyond Passenger, as the plugins' Application, Project and Project and Files
+/// visibilities do, in the order Settings lists them.</summary>
+public enum DiscordShown
+{
+    PassengerOnly,
+    Solution,
+    SolutionAndFile,
 }

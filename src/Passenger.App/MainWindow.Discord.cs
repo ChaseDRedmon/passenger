@@ -1,0 +1,159 @@
+using System.Diagnostics;
+using Avalonia.Interactivity;
+using Avalonia.Threading;
+using Passenger.App.Discord;
+using Passenger.App.Settings;
+
+namespace Passenger.App;
+
+/// <summary>Discord Rich Presence, as the JetBrains IDEs' Discord plugins give it: while Settings' Show activity in
+/// Discord is on and a solution is open, the person's own window has Discord show Playing Passenger with its icon, the
+/// solution and the file as Settings says, and the time since the solution opened; only Passenger once the person has
+/// been idle a while; nothing once the setting goes off, the solution closes or Passenger quits. No other window (a
+/// test's, an agent's, a screenshot's) reaches Discord.</summary>
+public partial class MainWindow
+{
+    /// <summary>The longest between two looks at whether the person has gone idle.</summary>
+    private static readonly TimeSpan IdleLook = TimeSpan.FromSeconds(15);
+
+    private DiscordPresence? discord;
+    private bool sharesActivity;
+    private string? timedSolution;
+    private DateTimeOffset solutionOpened;
+    private long lastStir = Stopwatch.GetTimestamp();
+    private bool idleInDiscord;
+    private DispatcherTimer? idleWatch;
+
+    /// <summary>Where this window looks for Discord: the system's places, or the one PASSENGER_DISCORD_IPC names; a test
+    /// gives a stand-in of its own.</summary>
+    public DiscordIpc DiscordIpc { get; init; } = DiscordIpc.Default;
+
+    /// <summary>How long without a key, click or scroll before only Passenger shows: Settings' minutes, or a test's own
+    /// time.</summary>
+    public TimeSpan? DiscordIdleAfter { get; init; }
+
+    private void AddDiscord()
+    {
+        // Any key, click, scroll or caret move, in this window or an editor window, is the person at work.
+        AddHandler(KeyDownEvent, (_, _) => Stir(), RoutingStrategies.Tunnel, handledEventsToo: true);
+        AddHandler(PointerPressedEvent, (_, _) => Stir(), RoutingStrategies.Tunnel, handledEventsToo: true);
+        AddHandler(PointerWheelChangedEvent, (_, _) => Stir(), RoutingStrategies.Tunnel, handledEventsToo: true);
+        Editors.CaretMoved += (_, _) => Stir();
+    }
+
+    /// <summary>The person's window shows its activity in Discord while Settings says so (App calls this for it alone, a
+    /// test for its window as the person's).</summary>
+    public void ShowActivityInDiscord()
+    {
+        sharesActivity = true;
+        FollowInDiscord();
+    }
+
+    /// <summary>Gives Discord the activity as the solution, the file and the settings now stand, whenever one changes (the
+    /// window's title follows the same); its presence sends it in its own time, so this costs the UI thread nothing.</summary>
+    private void FollowInDiscord()
+    {
+        string? solution = folder is null ? null : workspace?.OpenedAs ?? folder;
+        if (solution != timedSolution)
+        {
+            timedSolution = solution;
+            solutionOpened = DateTimeOffset.UtcNow;
+        }
+        if (!sharesActivity)
+        {
+            return;
+        }
+        if (!settings.ShowInDiscord)
+        {
+            LetGoOfDiscord();
+            return;
+        }
+        WatchIdle(settings.DiscordIdle);
+        discord ??= new DiscordPresence(DiscordIpc, IdeErrors.Write);
+        discord.Show(ActivityNow());
+    }
+
+    /// <summary>The activity: none without a solution, only Passenger while the person is idle, else what Settings
+    /// chose.</summary>
+    private DiscordActivity? ActivityNow()
+    {
+        if (folder is null)
+        {
+            return null;
+        }
+        if (idleInDiscord)
+        {
+            return new DiscordActivity(null, null, null);
+        }
+        string named = workspace?.Name ?? Path.GetFileName(folder);
+        return settings.DiscordShows switch
+        {
+            DiscordShown.PassengerOnly => new DiscordActivity(null, null, solutionOpened),
+            DiscordShown.Solution => new DiscordActivity(named, null, solutionOpened),
+            _ => new DiscordActivity(named, Editors.Active is { } file ? $"Editing {file.Name}" : null, solutionOpened),
+        };
+    }
+
+    /// <summary>The activity cleared and Discord let go of, as the setting goes off: by the same presence that showed it,
+    /// so a clear never comes after an activity shown once the setting is back on.</summary>
+    private void LetGoOfDiscord()
+    {
+        WatchIdle(false);
+        discord?.Show(null);
+    }
+
+    /// <summary>As the window closes: the activity cleared, which the process waits for (<see cref="Ended"/>) for at most
+    /// the IPC's timeout.</summary>
+    private Task EndDiscord()
+    {
+        sharesActivity = false;
+        WatchIdle(false);
+        Task closing = discord?.CloseAsync() ?? Task.CompletedTask;
+        discord = null;
+        return closing;
+    }
+
+    private TimeSpan IdleAfter => DiscordIdleAfter ?? TimeSpan.FromMinutes(settings.DiscordIdleMinutes);
+
+    /// <summary>Looks every so often at how long it has been since the person did anything, while the idle time is on.</summary>
+    private void WatchIdle(bool on)
+    {
+        if (!on)
+        {
+            idleWatch?.Stop();
+            idleWatch = null;
+            idleInDiscord = false;
+            return;
+        }
+        TimeSpan every = IdleAfter / 4 < IdleLook ? IdleAfter / 4 : IdleLook;
+        if (idleWatch is null)
+        {
+            idleWatch = new DispatcherTimer { Interval = every };
+            idleWatch.Tick += (_, _) => LookForIdle();
+            idleWatch.Start();
+        }
+        else if (idleWatch.Interval != every)
+        {
+            idleWatch.Interval = every;
+        }
+    }
+
+    private void LookForIdle()
+    {
+        if (!idleInDiscord && Stopwatch.GetElapsedTime(lastStir) >= IdleAfter)
+        {
+            idleInDiscord = true;
+            FollowInDiscord();
+        }
+    }
+
+    private void Stir()
+    {
+        lastStir = Stopwatch.GetTimestamp();
+        if (idleInDiscord)
+        {
+            idleInDiscord = false;
+            FollowInDiscord();
+        }
+    }
+}

@@ -36,6 +36,8 @@ public partial class App : Application
                 IdeErrors.Write(updater is null ? $"Updates: this copy only says when a newer release is out: {notUpdating}"
                     : $"Updates: this copy installs updates, in {updater.Installed}");
                 window.WatchForUpdates();
+                // Only the person's window shows its activity in Discord, while Settings says so.
+                window.ShowActivityInDiscord();
             };
             desktop.MainWindow = window;
             if (OperatingSystem.IsMacOS())

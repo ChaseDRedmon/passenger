@@ -44,6 +44,11 @@ public sealed class TestRun : IDisposable
     /// <summary>The IDE's state folder for the whole run.</summary>
     public static string Settings => Path.Combine(Root, "settings");
 
+    /// <summary>Where the run's windows look for Discord (<c>PASSENGER_DISCORD_IPC</c>): a place nothing listens.</summary>
+    public static string DiscordNowhere => OperatingSystem.IsWindows()
+        ? $"{Prefix}{Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture)}-discord-ipc"
+        : Path.Combine(Root, "discord-ipc");
+
     [System.Runtime.CompilerServices.ModuleInitializer]
     internal static void Begin()
     {
@@ -74,6 +79,8 @@ public sealed class TestRun : IDisposable
         // No test reaches GitHub: a window or a Passenger started that checks for updates without a stand-in of its own
         // asks a loopback port nothing listens on.
         Environment.SetEnvironmentVariable(Passenger.App.Updates.ReleaseFeed.Variable, "http://127.0.0.1:9/repos/Zaneris/passenger/releases/latest");
+        // Nor the person's Discord: a window without a stand-in of its own looks where nothing listens.
+        Environment.SetEnvironmentVariable(Passenger.App.Discord.DiscordIpc.Variable, DiscordNowhere);
         // A run stopped before its end (Ctrl+C) leaves nothing either.
         AppDomain.CurrentDomain.ProcessExit += (_, _) => End();
     }

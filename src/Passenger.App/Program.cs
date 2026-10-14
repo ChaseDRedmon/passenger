@@ -29,6 +29,7 @@ internal static class Program
         {
             options = LaunchOptions.Parse(args);
             _ = Updates.ReleaseFeed.Default;
+            _ = Discord.DiscordIpc.Default;
         }
         catch (FormatException error)
         {

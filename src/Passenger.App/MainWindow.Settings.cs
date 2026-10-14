@@ -80,6 +80,7 @@ public partial class MainWindow
         ApplyAnalysis();
         ListenForAgents(next.McpServer);
         WatchUpdates(next.CheckForUpdates);
+        FollowInDiscord();
         IdeLog.Traces = next.TraceProtocols;
         IdeLog.Programs = next.LogEveryProgram;
         if (keepsSettings)

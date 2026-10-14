@@ -369,13 +369,13 @@ public sealed partial class DiskImageUpdater : Updater
         }
     }
 
-    /// <summary>LaunchServices starts the app as a new instance (this one is still ending), with the state folder and
-    /// release feed this one was given, so a Passenger run on its own settings stays on them. The app is launchd's
+    /// <summary>LaunchServices starts the app as a new instance (this one is still ending), with the state folder, release
+    /// feed and Discord this one was given, so a Passenger run on its own settings stays on them. The app is launchd's
     /// child, not Passenger's; open itself ends once it has asked.</summary>
     private static async Task Open(string bundle)
     {
         List<string> arguments = ["-n"];
-        foreach (string variable in (string[])["PASSENGER_SETTINGS", ReleaseFeed.Variable])
+        foreach (string variable in (string[])["PASSENGER_SETTINGS", ReleaseFeed.Variable, Discord.DiscordIpc.Variable])
         {
             if (Environment.GetEnvironmentVariable(variable) is { Length: > 0 } value)
             {

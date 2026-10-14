@@ -24,13 +24,17 @@ public sealed class SettingsDialog : Window
     public const string RunPage = "Run";
     public const string KeymapPage = "Keymap";
     public const string McpPage = "MCP Server";
+    public const string DiscordPage = "Discord";
     public const string DiagnosticsPage = "Diagnostics";
 
     /// <summary>Rider's names for <see cref="BuildResultsMode"/>'s choices, in its order.</summary>
     public static readonly string[] BuildResultsChoices = ["Always", "Only if errors or warnings received", "Only if errors received", "Never"];
 
+    /// <summary>The names of <see cref="DiscordShown"/>'s choices, in its order.</summary>
+    public static readonly string[] DiscordChoices = ["Passenger only", "The solution", "The solution and the file"];
+
     private static readonly string[] Order = [Appearance, SystemPage, UpdatesPage, EditorPage, CodeFoldingPage, PostfixPage, LiveTemplatesPage, BuildPage, RunPage,
-        TerminalPage, McpPage, DiagnosticsPage, KeymapPage];
+        TerminalPage, McpPage, DiscordPage, DiagnosticsPage, KeymapPage];
 
     private readonly Action<AppSettings> apply;
 
@@ -288,6 +292,37 @@ public sealed class SettingsDialog : Window
             "mcp model context protocol agents ai claude codex attach socket",
             "Agents started with passenger --mcp-attach can use this window: read and change files, build, run and debug, use Git, "
             + "NuGet and the terminal. Each agent asks before its first use of a tool that changes something.");
+
+        // The JetBrains Discord plugins' options at their defaults (AppSettings says whose), changed only while it is on.
+        ComboBox shows = new() { ItemsSource = DiscordChoices, SelectedIndex = (int)Working.DiscordShows, Width = 240, IsEnabled = Working.ShowInDiscord };
+        shows.SelectionChanged += (_, _) => Change(s => s with { DiscordShows = (DiscordShown)Math.Max(0, shows.SelectedIndex) });
+        NumericUpDown idleMinutes = Number(Working.DiscordIdleMinutes, AppSettings.MinDiscordIdleMinutes, AppSettings.MaxDiscordIdleMinutes, 1,
+            v => Change(s => s with { DiscordIdleMinutes = (int)v }));
+        idleMinutes.IsEnabled = Working.ShowInDiscord && Working.DiscordIdle;
+        CheckBox whenIdle = Check(Working.DiscordIdle, v =>
+        {
+            Change(s => s with { DiscordIdle = v });
+            idleMinutes.IsEnabled = Working.ShowInDiscord && v;
+        });
+        whenIdle.IsEnabled = Working.ShowInDiscord;
+        CheckBox discord = Check(Working.ShowInDiscord, v =>
+        {
+            Change(s => s with { ShowInDiscord = v });
+            shows.IsEnabled = v;
+            whenIdle.IsEnabled = v;
+            idleMinutes.IsEnabled = v && Working.DiscordIdle;
+        });
+        const string Discord = "discord rich presence activity status playing";
+        Add(DiscordPage, "Show activity in Discord", discord, $"{Discord} friends share game",
+            "Discord shows Playing Passenger with its icon, what is chosen below and how long the solution has been open, to "
+            + "whoever can see your activity. Passenger tells the Discord app on this computer alone.");
+        Add(DiscordPage, "Show", shows, $"{Discord} solution project file name details visibility privacy");
+        Add(DiscordPage, "Only Passenger when idle for", new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            Children = { whenIdle, idleMinutes, new TextBlock { Text = "minutes", VerticalAlignment = VerticalAlignment.Center } },
+        }, $"{Discord} idle inactive away timeout minutes");
 
         // Rider's Help, Diagnostic Tools: what is written where is said under each, the folder being Help, Show Log's.
         Add(DiagnosticsPage, "Trace protocol messages", Check(Working.TraceProtocols, v => Change(s => s with { TraceProtocols = v })),

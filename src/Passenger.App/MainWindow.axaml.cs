@@ -93,6 +93,7 @@ public partial class MainWindow : Window
         AddAbout();
         AddUpdates();
         AddAgents();
+        AddDiscord();
         AddShutdown();
         AddEditorWindows();
         Explorer.FileOpened += (_, path) => OpenFile(path);
@@ -1298,6 +1299,7 @@ public partial class MainWindow : Window
         string? named = folder is null ? null : workspace?.Name ?? Path.GetFileName(folder);
         OpenDocument? shown = Editors.ShownInMain;
         Title = shown is null ? named ?? "Welcome to Passenger" : $"{(named is null ? "" : named + " – ")}{shown.Name}";
+        FollowInDiscord();
     }
 
     /// <summary>The file's language, with the language server's state beside it while it is not ready, or the work it
