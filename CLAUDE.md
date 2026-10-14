@@ -61,8 +61,11 @@ to capture a tool window over its drop place); `--right-click X,Y` opens the men
 clicks the visible control of that x:Name at its centre (a name none has ends it with exit code 2); `--wait MS` gives a
 running program time.
 
-Headless, the dispatcher's timers (the editor's hover, a caret's blink) fire only inside a running dispatcher frame,
-never from running its queued jobs: a wait that needs one pumps a frame (`Screenshot.Pump`, `Ui.WaitFor` in tests).
+Headless, the dispatcher's timers (the editor's hover, a caret's blink) fire inside a running dispatcher frame: a wait
+that needs one pumps a frame (`Screenshot.Pump`, `Ui.WaitFor` in tests). One that has come due also fires while
+`Ui.Settle` runs the queued jobs, so the caret's 530 ms blink redraws the editor during any settle that long: keep what
+a key holds in `BackgroundWork` short (the XAML service waits for typing to pause only in a C# file under a loaded XAML
+project).
 
 Builds land under `artifacts/` (`UseArtifactsOutput`), never beside the sources. Package versions live only in
 `Directory.Packages.props` (Roslyn's server's too, as `RoslynServerVersion`); shared properties only in
@@ -195,7 +198,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   submissions cancelled, so a left folder never holds the host) and `inspect` (one project evaluated for the code help
   in its MSBuild files, `Inspection.cs`: the open files' unsaved text fed to MSBuild in place of the disk's; properties
   with the places that set them, items, targets, imports, the SDK's frameworks and the evaluation's errors (a skipped
-  import as MSB4019), places by a file table, answered from its cache while the inputs hold). Each result carries stamps of what it read
+  import as MSB4019), places by a file table, answered from its cache while the inputs hold). Off Windows a project
+  that references a framework the SDK marks Windows-only and leaves EnableWindowsTargeting unset is loaded again with it
+  as a global property (`WindowsTargeting.cs`), in evaluate, build and inspect alike; Passenger's builds follow
+  (`BuildOutput.WindowsTargeting`, `-p:EnableWindowsTargeting=true`), and Roslyn's server has it in its environment off
+  Windows, since its `dotnet restore` takes no properties; it is never written into a project. Each result carries stamps of what it read
   (`Stamps.cs`), so a reopen redoes only what changed; the caches are read off the UI thread (`StateDocument.ValueAsync`).
   The shown file's project and what it references load first (`ProjectSession.ActiveProjectsAsync`).
   `Passenger.Roslyn.Extension/ProjectLoader.cs` subclasses the server's own `LanguageServerProjectLoader` so the server
@@ -248,7 +255,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`StateStore.Open`), with `layout.json` only the default for a folder with no layout of its own: the app's documents at its top (`settings.json`, `layout.json`,
   `recentSolutions.json`, `updates.json`, `find.json`, `refactorings.json`)
   and each folder's under `workspaces/<name>-<hash>/` (editors and recent files, layout, breakpoints, bookmarks, run
-  configurations, Find in Files' scope, `localHistory/`, the profiler's `snapshots/`). A Passenger that Run, Debug or
+  configurations, Find in Files' scope, `localHistory/`, the profiler's `snapshots/`), with the debugger's decompiled
+  symbols in `cache/symbols/` at the root. A Passenger that Run, Debug or
   Profile launch (Passenger.App, or any program named Passenger) keeps its state in the launcher's `sandbox/`
   (`LaunchPlan.SandboxedState`, as IntelliJ's DevKit sandbox), unless its configuration sets `PASSENGER_SETTINGS`. A
   `StateDocument` is a record that is an `IStateDocument`: its `Upgrades` from each older version and its `Clamped` value;
@@ -340,7 +348,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   through `ConsoleSink`: a frame's output at a time, colour codes stripped whole across reads, the head trimmed past
   Rider's 1024 KB, and what is typed into it sent to the program. A run configuration is data (`RunConfiguration`: the
   folder's own in `runConfigurations.json`, the rest made from the executable projects' launch profiles, those that
-  cannot launch here saying why); `LaunchPlan.ResolveAsync` works one out once, in one MSBuild request, into what Run,
+  cannot launch here saying why: a project whose framework references Microsoft.WindowsDesktop.App runs only on
+  Windows (`ProjectModel.WindowsOnly`), so off Windows the Solution view marks it, `RunConfiguration.WhyNotHere` greys
+  its configurations and `LaunchPlan.ResolveAsync` refuses it before its build); `LaunchPlan.ResolveAsync` works one out once, in one MSBuild request, into what Run,
   Debug, Profile, Hot Reload and a debugged test host start, and `RunConfigurationsDialog` is Run > Edit
   Configurations. A build says what started it (`BuildCause`): explicit builds open the Build window as they start,
   the build before Run, Debug or Profile only with Settings' implicit-build option, a test run's never, and its end
@@ -490,7 +500,19 @@ window or takes the focus; it shows everything but the system's own window chrom
 - The debugger, Passenger's own, started from SharpDbg and ICorDebugSharp (MIT; `THIRD_PARTY_NOTICES.md` says what came from where):
   `src/Passenger.Debugger.Interop` (ICorDebug, IMetaDataImport and dbgshim for the COM source generator),
   `src/Passenger.Debugger` (the engine), `src/Passenger.Dap` (the Debug Adapter Protocol, both ends) and
-  `src/Passenger.DebugAdapter` (the engine behind the protocol, its own process, carried under `debugger/`).
+  `src/Passenger.DebugAdapter` (the engine behind the protocol, its own process, carried under `debugger/`). Before
+  letting a program go (Disconnect without terminating), the engine runs it off any patch or single-step stop and stops
+  it again (`ManagedDebugger_LetGo.cs`): under CET a thread resumes from a breakpoint only through the debugger's
+  out-of-process SetThreadContext, which mscordbi's Detach waits for only once it has answered one such flare, so a
+  first stop after an attach, detached at, would fault (0xC0000409). Symbols for assemblies without their own are
+  decompiled into the folder the adapter is given (`--symbolCache`; the IDE's `DebugSession.SymbolCache`, the state
+  folder's `cache/symbols`) by `Decompilation/SymbolCache`: `NAME/MVID/NAME.<decompiler>-<Format>.pdb` (raise
+  `SymbolCache.Format` when `PortablePdbWriter2`'s output moves), written through a temporary file and renamed, one that
+  does not load deleted and made again once, pruned as the adapter starts (30 days unused, 512 MB, never one used in the
+  last day). A decompile never runs under `EngineLock`: resolveStackFrame takes `SymbolsWantedAt` under it,
+  `DecompileAsync` off it, then the frame under it again; without Just My Code a stop in such an assembly waits as
+  `AfterDecompiling`, dropped if the program was let go. A [DebuggerDisplay] fragment of dotted names that doesn't
+  evaluate is read as the value's property by that metadata name (Roslyn's `{System.Collections.ICollection.Count}`).
 - `src/Passenger.Inspector`: the Live Visual Tree's helper inside an Avalonia app being debugged (Passenger's own, MIT,
   net8.0, carried under `inspector/`, never put in the app's build): a startup hook `ProjectSession.Inspected` gives only
   a Debug launch whose build has Avalonia.Base.dll beside it (`DOTNET_STARTUP_HOOKS`, which it takes back out of the
@@ -506,7 +528,16 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`Driver.cs`: raw input into the window's `ITopLevelImpl.Input` with a mouse device of its own, so the window is never
   activated and the real pointer never moves, waiting for a rendered frame before and after, since hit testing reads
   the last one). `LiveTree/AppQuery` is how an agent names elements (`@id`, type, #name, .class, "text", steps by /,
-  [n]); `LiveApp.Own()` loads the inspector into Passenger itself for `app: ide`, once per process.
+  [n]); `LiveApp.Own()` loads the inspector into Passenger itself for `app: ide`, once per process. Binding values
+  (`BindingValues.cs`, protocol v4 `values`): each element by its XamlSourceInfo place (a root by x:Class), of several
+  instances the one nearest the element chosen in the Live Visual Tree, each binding's path walked from Avalonia's
+  binding expression nodes. Paused, the IDE evaluates `Wire.ReadValues` on the UI thread (the stop's, else the main
+  thread; the startup hook's copy forwards to the inspector's own), the answer an array whose slots the debugger shows
+  as Variables does; running, only for the control chosen, read again on `valuesChanged`.
+  `App/LiveTree/BindingValuesController` shows them after the lines (`OpenDocument.LiveValues`,
+  `LineAnnotationKind.Failed`) and on hover. The runtime evaluates nothing on a UI thread waiting outside .NET, so a
+  stop on another thread shows none, saying so. A stop whose ids came in an unanswered setFunctionBreakpoints waits for
+  that answer (`DebugSession.TakeStopAfter`), so a property or binding-error stop is known as one.
   The inspector also takes Avalonia's logger before the app's Main (`Bindings.cs`, put back over any sink the app sets,
   which is still fed) and tells of each failed binding (`bindingFailed`: control, property, path, message, XAML place,
   and for a member the source's type lacks its nearest members) once, then its count at most every 250 ms. Run gives an
@@ -686,6 +717,12 @@ the PATH and skip, saying why, without it (the TypeScript ones also on a Node.js
 `engines.node`). `BindingErrorsTests` also debug BindingErrorsApp with Avalonia Binding Errors on. Headless, a window
 never loses activation, so a menu stays open under a dialog, and when the dialog closes the window puts focus back on
 what it remembers, never a menu (a focus scope of its own): `MainWindow.KeepKeys` gives an open menu the keys back.
+Read any log the IDE or a server may be writing with sharing (`Ui.Shared`), and a `WaitFor` condition returns false,
+never throws, while what it waits for isn't there yet. `WindowsOnlyProjectsTests` open a dotnet new wpf and winforms app
+(`WpfApp.Create(asMade: true)`, `WpfApp.CreateWindowsForms`) never restored: Passenger restores and builds them itself.
+`DecompiledSymbolsTests` (Alone) give each adapter a cache folder of their own; PassengerCases' `corelib` case stops in
+a callback from List.ForEach, CoreLib's frame below it. `BindingValuesTests` debug `tests/Debuggees/BindingValuesApp`
+("rename" typed into its console renames the customer on the UI thread).
 `XamlTests`' `AvaloniaApp` makes `dotnet new avalonia.app` from templates installed into the run's own hive
 (`--debug:custom-hive`) and takes Accelerate's DevTools out of it.
 The run's IDE keeps dotnet new templates in its own home (DOTNET_CLI_HOME) on macOS and Linux and in
