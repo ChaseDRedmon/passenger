@@ -157,10 +157,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   windows is one `OpenDocument`; the folder keeps the windows in `WorkspaceState.EditorWindows`. Pinned tabs come
   first (`EditorTab.IsPinned`, kept as `KeptTab.Pinned`); `EditorArea.CloseTab` is the one close a person's goes
   through, which Reopen Closed Tab remembers. `EditorArea.Commands` is Rider's global undo: a command that changes
-  several files or moves one (`Commands.Record`, as renames do) is undone and redone whole, asked first. The tab actions are `MainWindow.Tabs.cs`, filling a tab's menu through
-  `EditorArea.TabMenuOpening` with `ActionContext.Tab` naming the tab they act on. `MainWindow.CloseSolution` ends what
-  the folder runs and shows the Welcome screen; `LeaveFolder` is what switching or closing a folder lets go of, so new
-  per-folder state is let go there.
+  several files or moves one (`Commands.Record`, as renames do) is undone and redone whole, asked first. The tab
+  actions are `MainWindow.Tabs.cs`, filling a tab's menu through
+  `EditorArea.TabMenuOpening` with `ActionContext.Tab` naming the tab they act on. `MainWindow.CloseSolution` ends the
+  folder's session and shows the Welcome screen; `LeaveFolder` keeps or closes editors and `EndSession` ends the
+  session, so new per-folder state belongs in `ProjectSession`, made with it and ended in its end.
 - `src/Passenger.App/Docking`: the tool windows' frame, in IntelliJ's six places. `DockHost` is the layout and what
   it keeps; `Stripe`, `ToolPane` and `FloatWindow` (a window of its own that knows nothing of tool windows) are its
   parts. A window moves by dragging a stripe button or a header (`DockDrag` says where it lands); `DragGesture` and
@@ -186,7 +187,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   traces (`TraceProtocols`) and a line for every program started (`LogEveryProgram`; otherwise only failing or slow
   ones); Help | Show Log opens the folder. What the language server says to show reaches the status bar.
 - `src/Passenger.App/Vcs`: Git through the `git` executable (`Git`, porcelain v2), Myers' line diff (`LineDiff`) for
-  the gutter's change bars, and `VcsController`, the window's working tree: status, branch, each open file's bars,
+  the gutter's change bars, and `VcsController`, the folder's working tree (its session's; the Git and Commit views bind to it): status, branch, each open file's bars,
   commit, push, update, checkout and rollback (after which open files take their text from disk); `DiffView` is the
   side-by-side diff and `CommitGraph` the log's lanes. `GitView` is the Git window's content: the Log and a `GitLogView`
   tab per Show History, given a `HistoryScope` (a file followed with `--follow`, a folder, or lines with `-L`), read by
@@ -240,7 +241,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   `MainWindow.NewProject.cs` opens a new solution through `Open` and adds a project through `SolutionEdits`.
 - `src/Passenger.Profiler`: the profiler with no UI. `ProfilingSession` starts a program held at a diagnostic port of
   its own and streams EventPipe to a .nettrace; `Snapshot` reads it (TraceEvent) into call trees and hot spots.
-  `App/Profiling` is the window (`ProfilerView`, `FlameGraph`), `MainWindow.Profiler.cs` the Profile action.
+  `App/Profiling` is the window (`ProfilerView`, `FlameGraph`), `ProfilerCommands` the Profile action.
   `MemorySnapshot` is a heap dump read with ClrMD into `HeapGraph` (roots by dotMemory's kinds, shortest paths, a
   dominator tree for retained bytes); `HeapHistory` follows a run's snapshots' objects through every GC (an EventPipe
   session of the GC's survival and movement events), so `SnapshotComparison` gives new, dead and survived objects;
@@ -281,7 +282,7 @@ window or takes the focus; it shows everything but the system's own window chrom
   grouping and filters are a folder's `unitTests.json`.
 - `src/Passenger.App/Navigation`: Recent Files and the Go to popups, `NavigationHistory` (Back and Forward, the places
   edited for Last and Next Edit Location, and those Recent Locations lists, carried through edits) and
-  `RecentLocationsPopup`; `MainWindow.Places.cs` records the places visited and edited. Base and Derived Symbols use the
+  `RecentLocationsPopup`; `Navigator` records the places visited and edited. Base and Derived Symbols use the
   server's type hierarchy, references and implementations, since Roslyn has no go-to-base request
   (`CSharp/Declarations.cs`). Find in Files is `Navigation/FindInFilesPopup`; Rider's scopes (Solution, Project, Directory, Scope) and file mask are
   `Workspace/SearchScope.cs`, which `MainWindow.Search.cs` turns into files (`ScopeOf` for Solution view rows).
@@ -319,6 +320,13 @@ window or takes the focus; it shows everything but the system's own window chrom
   Settings' Open project in answers. Quit keeps every window's solution for the next start; a window closed alone does
   not. Discord's one presence (the front window's) and the one watch for updates live here. A window's state is its
   own fields, and a static says why it belongs to the process.
+- `src/Passenger.App/ProjectSession.cs`: one open folder's services, made together and ended together: the folder and
+  its solution, the language server, index, watcher, Local History, state, recent files and places, run
+  configurations, the build and run runners, terminal and profiled runs, tests, the debugger and breakpoints, Git and
+  bookmarks. `LeaveAsync` when the window stays (opening another folder waits for it, within the window's limit),
+  `CloseAsync` with the window. The window builds `BuildRunController`, `ProfilerCommands`, `Navigator`, `PopupHost`
+  and `StatusBar` over it, each a file of its own given an explicit parts record; a handler hung on a session acts only
+  while that session is the window's (`Bind`).
 - `src/Passenger.App`: the shell. Explorer, editor tabs, files on disk. Each action is an `IdeAction` (id, title,
   group, menu places, `Run`, `WhyNot`, whether its keys work while the terminal has them) that its feature adds to the
   window's `ActionRegistry`: `MainWindow.Actions.cs` for the window's own, a partial's or controller's `Add…Actions`
@@ -339,7 +347,8 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.App/Mcp`: Passenger as an MCP server (the official C# SDK). `PassengerTools` is every tool, each
   run on the UI thread as the window's own commands are and ended by its `CancellationToken`, answering with what its
   operation returned (`VcsOutcome`, `CommitResult`, `BuildOutcome`, the debugger's `Stop`), never with what the status
-  bar says by then; `McpHost` hosts them
+  bar says by then. The tools reach the folder through the window's `ProjectSession` as each call finds it, and the
+  window only for editors, the terminal, actions, opening and the picture; `McpHost` hosts them
   three ways: `--mcp [FOLDER]` (a headless IDE on standard input and output), a window's own socket under the state
   folder (`AgentSocket`, open only while the person's Enable MCP Server setting is on), and `--mcp-attach [PID]`
   (standard input and output joined to the window over the agent's folder). On a person's window a tool neither
@@ -347,7 +356,7 @@ window or takes the focus; it shows everything but the system's own window chrom
 - Attach to Process: `MainWindow.Attach.cs` (`Debugging/AttachToProcessDialog`, Reattach, the recently attached);
   `Core/DotnetProcesses` lists the .NET programs a debugger can attach to (the runtime's `clr-debug-pipe-*` in TMPDIR
   on macOS and Linux, checked against the process's start; its diagnostic pipe on Windows). An attached session is
-  let go by Detach and by the window's close, never ended by them. On macOS the debugger needs no entitlement and no
+  let go by Detach, by leaving its folder and by the window's close, never ended by them. On macOS the debugger needs no entitlement and no
   get-task-allow on its target: the adapter runs under the machine's dotnet and talks to the runtime through its
   pipes, so the package carries no com.apple.security.cs.debugger.
 - Return values and Smart Step Into: a step over sets a breakpoint after each call in its statement
@@ -423,7 +432,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   screenshot waits for it instead of capturing a half-finished frame: `BackgroundWork.Run` rather than a bare
   `Task.Run` (one that must not hold screenshots says why in a comment), and `Debounce` rather than a
   `DispatcherTimer` for a pause before such work, since a headless timer never fires while a screenshot settles.
-- **One threading rule.** Controls, the documents editors show, controllers and views belong to the UI thread
+- **One threading rule.** Controls, the documents editors show, the window's `ProjectSession` and its parts,
+  controllers and views belong to the UI thread
   (controllers call `UiThread.Check()` in their entry points, which fails at once in a Debug build). The projects
   without UI (Text, Lsp, Dap, Debugger, Profiler) never reference Avalonia, and their events and callbacks come on
   any thread; Editor, Languages and Terminal raise theirs on the UI thread. The App crosses from another thread only through `UiThread`: `Post`, or `Marshal` for a handler given to
@@ -484,7 +494,7 @@ The debugger's tests (`tests/Passenger.Tests/Debugging`) run the adapter from th
 the IDE does, and launch or attach to the programs in `tests/Debuggees`, whose lines and columns (tabs included) they
 stop at: moving a line there means moving the tests that name it. A line breakpoint on a line with a lambda binds inside
 the lambda, so a test stopping at such a statement gives its column. `SelfDebuggingTests` opens this repository and
-debugs Passenger.App; it finds its breakpoint by the code `StatusText.Text = why;` in MainWindow.Actions.cs, so changing
+debugs Passenger.App; it finds its breakpoint by the code `status.Text = why;` in MainWindow.Actions.cs, so changing
 that line means changing the test. `TerminalConsoleApp` there needs a real terminal;
 window tests copy it into a folder of their own (`Debuggees.CopyTo`). The protocol tests run one at a time (`DebugSession.Collection`), beside the window tests; one that holds the engine
 to a time runs in `Alone`. `PASSENGER_ENGINE_LOG=FILE` keeps the engine's own log, for the
