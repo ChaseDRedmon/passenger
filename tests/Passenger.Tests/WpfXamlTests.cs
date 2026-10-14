@@ -13,7 +13,8 @@ namespace Passenger.Tests;
 /// <summary>WPF XAML through the window, on an app made by <c>dotnet new wpf</c> with a view model its window names with
 /// <c>d:DataContext</c>, brushes merged in by App.xaml and a style with triggers: what completion offers, what is marked
 /// as typed and after a build (MarkupCompile's errors), where names lead, and that XAML Preview says WPF has none. Off
-/// Windows the app restores with <c>EnableWindowsTargeting</c>, so the reference assemblies its XAML reads are the same.</summary>
+/// Windows the app says <c>EnableWindowsTargeting</c>, which the SDK gives for building Windows apps elsewhere: the
+/// reference assemblies its XAML reads are the same, and MarkupCompile builds it.</summary>
 public sealed class WpfXamlTests : IClassFixture<WpfXamlTests.Gallery>
 {
     private readonly Gallery app;
@@ -207,7 +208,6 @@ public sealed class WpfXamlTests : IClassFixture<WpfXamlTests.Gallery>
     [AvaloniaFact]
     public void After_a_build_markup_compiles_error_is_marked_on_its_line_and_listed_with_its_code()
     {
-        Assert.SkipWhen(OperatingSystem.IsLinux(), "WPF's MarkupCompile has been tried on Windows and macOS (EnableWindowsTargeting), not on Linux");
         MainWindow window = app.Open(app.PathOf("MainWindow.xaml"));
         CodeEditor editor = window.EditorArea.CodeEditor;
         OpenDocument document = window.EditorArea.Active!;
