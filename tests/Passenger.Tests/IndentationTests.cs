@@ -184,6 +184,31 @@ public sealed class IndentationTests : IDisposable
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void A_xaml_window_whose_attributes_line_up_under_its_tags_is_read_as_its_elements_four_spaces_and_reformat_keeps_them()
+    {
+        // Avalonia's MVVM template's window, as dotnet new writes it: its elements four spaces a level, each tag's
+        // attributes aligned under its first, and a comment's second line aligned under its first's words.
+        const string Template = "<Window xmlns=\"https://github.com/avaloniaui\"\n        xmlns:x=\"http://schemas.microsoft.com/winfx/2006/xaml\"\n"
+            + "        xmlns:vm=\"using:AvApp.ViewModels\"\n        xmlns:d=\"http://schemas.microsoft.com/expression/blend/2008\"\n"
+            + "        xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\"\n        mc:Ignorable=\"d\" d:DesignWidth=\"800\" d:DesignHeight=\"450\"\n"
+            + "        x:Class=\"AvApp.Views.MainWindow\"\n        x:DataType=\"vm:MainViewModel\"\n        Icon=\"/Assets/avalonia-logo.ico\"\n        Title=\"AvApp\">\n\n"
+            + "    <Design.DataContext>\n        <!-- This only sets the DataContext for the previewer in an IDE,\n"
+            + "             to set the actual DataContext for runtime, set the DataContext property in code (look at App.axaml.cs) -->\n"
+            + "        <vm:MainViewModel />\n    </Design.DataContext>\n\n    <TextBox Text=\"{Binding Greeting}\"\n             HorizontalAlignment=\"Center\"\n"
+            + "             VerticalAlignment=\"Center\" />\n\n</Window>\n";
+        Write("MainWindow.axaml", Template);
+        MainWindow window = Open("MainWindow.axaml");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Assert.True(IndentShown(window) == "4 spaces, detected",
+            $"The template's four spaces a level were not found among its aligned attributes, so XAML's default stands: {IndentShown(window)}");
+        Ui.Run(window, AppActions.Reformat);
+        Ui.Settle();
+        Assert.True(Text(editor).Replace("\n\n</Window>", "\n</Window>", StringComparison.Ordinal) == Template.Replace("\n\n</Window>", "\n</Window>", StringComparison.Ordinal),
+            $"Reformat Code indented the template's window otherwise than its own four spaces:\n{Text(editor)}");
+        window.Close();
+    }
+
     private void Write(string name, string text)
     {
         string path = Path.Combine(folder, name);

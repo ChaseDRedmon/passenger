@@ -39,25 +39,33 @@ public static class Indentation
 
     /// <summary>IntelliJ's Detect and use existing file indents: tabs when more lines start with a tab than with
     /// spaces, else the step most changes of indentation between neighbouring lines take, when more than half take it.
-    /// Blank lines and a block comment's aligned <c>*</c> lines say nothing. Null when fewer than
+    /// Blank lines and a block comment's aligned <c>*</c> lines say nothing, nor in <paramref name="markup"/> (XML, XAML)
+    /// a line that begins inside a tag or a comment: attributes aligned under a tag's first, as Avalonia's and WPF's
+    /// templates write them, which IntelliJ's formatter-based detection reads as alignment. Null when fewer than
     /// <paramref name="minimumLines"/> lines are indented, or no step stands out: the file is too small to tell.</summary>
-    public static IndentOptions? Detect(ReadOnlySpan<char> text, int tabWidth, int minimumLines = 2)
+    public static IndentOptions? Detect(ReadOnlySpan<char> text, int tabWidth, int minimumLines = 2, bool markup = false)
     {
         int tabs = 0;
         int spaces = 0;
         Dictionary<int, int> steps = [];
         int? previous = null;
+        MarkupState state = default;
         while (text.Length > 0)
         {
             int feed = text.IndexOf('\n');
             ReadOnlySpan<char> line = feed < 0 ? text : text[..feed];
             text = feed < 0 ? [] : text[(feed + 1)..];
+            bool continued = markup && state.Inside;
+            if (markup)
+            {
+                state.Read(line);
+            }
             int lead = 0;
             while (lead < line.Length && line[lead] is ' ' or '\t')
             {
                 lead++;
             }
-            if (lead == line.Length || line[lead] == '\r')
+            if (lead == line.Length || line[lead] == '\r' || continued)
             {
                 continue;
             }
@@ -96,6 +104,56 @@ public static class Indentation
         }
         (int size, int count) = steps.OrderByDescending(s => s.Value).ThenBy(s => s.Key).Select(s => (s.Key, s.Value)).First();
         return count * 2 > steps.Values.Sum() ? new IndentOptions(size, UseTabs: false, tabWidth) : null;
+    }
+
+    /// <summary>Where a scan of markup is between lines: inside a tag (and a quoted value in it) or a comment.</summary>
+    private struct MarkupState
+    {
+        private bool tag;
+        private bool comment;
+        private char quote;
+
+        public readonly bool Inside => tag || comment;
+
+        public void Read(ReadOnlySpan<char> line)
+        {
+            for (int i = 0; i < line.Length; i++)
+            {
+                char c = line[i];
+                if (comment)
+                {
+                    if (line[i..].StartsWith("-->"))
+                    {
+                        comment = false;
+                        i += 2;
+                    }
+                }
+                else if (quote != '\0')
+                {
+                    quote = c == quote ? '\0' : quote;
+                }
+                else if (tag)
+                {
+                    if (c is '"' or '\'')
+                    {
+                        quote = c;
+                    }
+                    else if (c == '>')
+                    {
+                        tag = false;
+                    }
+                }
+                else if (line[i..].StartsWith("<!--"))
+                {
+                    comment = true;
+                    i += 3;
+                }
+                else if (c == '<')
+                {
+                    tag = true;
+                }
+            }
+        }
     }
 
     /// <summary>A block's indentation as a document's: each level of <paramref name="from"/> one of

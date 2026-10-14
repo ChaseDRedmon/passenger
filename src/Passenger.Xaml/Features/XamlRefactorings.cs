@@ -385,7 +385,7 @@ public static partial class XamlRefactorings
         }
         (string entry, List<TextEdit> declared) = make(tree);
         string eol = text.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
-        string unit = (Indentation.Detect(text, 4) ?? new IndentOptions()).Unit;
+        string unit = (Indentation.Detect(text, 4, markup: true) ?? new IndentOptions()).Unit;
         List<TextEdit> edits = [.. declared];
         if (ContainerOf(root, kind) is not { } container)
         {

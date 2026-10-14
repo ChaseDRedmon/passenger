@@ -24,7 +24,8 @@ public sealed record FileIndent(IndentOptions Options, IndentSource Source, stri
     public static IndentOptions Of(string path, string text)
     {
         IndentOptions language = Language.ForPath(path).Indent;
-        return Choose(Workspace.EditorConfig.For(path), Indentation.Detect(text, language.TabWidth), language).Options;
+        Language of = Language.ForPath(path);
+        return Choose(Workspace.EditorConfig.For(path), of.Detect(text), of.Indent).Options;
     }
 
     /// <summary>Rider's widget's words for the indentation: "Tab", "4 spaces".</summary>

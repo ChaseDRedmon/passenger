@@ -53,7 +53,7 @@ public sealed class OpenDocument : Observable
         EncodingName = file.EncodingName;
         crBreaks = file.CrBreaks;
         Language = Language.ForPath(path);
-        detected = Passenger.Text.Indentation.Detect(file.Text, Language.Indent.TabWidth);
+        detected = Language.Detect(file.Text);
         Conventions = EditorConfig.For(path);
         Indentation = Choose();
         FollowLineEnding(file.Text.Contains('\n', StringComparison.Ordinal));
@@ -718,7 +718,7 @@ public sealed class OpenDocument : Observable
             SetSeparator(SeparatorOf(file));
         }
         // Text written elsewhere may indent otherwise than what it replaced.
-        detected = Passenger.Text.Indentation.Detect(file.Text, Language.Indent.TabWidth);
+        detected = Language.Detect(file.Text);
         Choose(raise: true);
         Raise(nameof(IsModified));
         return true;
@@ -804,6 +804,10 @@ public sealed record Language(string Name, string? LineComment, int IndentSize =
     /// <summary>Whether a pasted block takes the file's indentation: not where indentation is the text's own (Markdown's
     /// code blocks, plain text).</summary>
     public bool ReindentsPaste => Name is not ("Text" or "Markdown");
+
+    /// <summary>The indentation a file's own lines show, read as tags where the language is markup.</summary>
+    public IndentOptions? Detect(ReadOnlySpan<char> text) =>
+        Passenger.Text.Indentation.Detect(text, Indent.TabWidth, markup: Name is "XML" or "HTML");
 
     private static readonly Language Xml = new("XML", null, 2, "<!--", "-->");
 
