@@ -151,6 +151,12 @@ public static class AppActions
     public const string TypeHierarchy = "app.hierarchy.types";
     public const string ShrinkSelection = "app.editor.shrinkSelection";
     public const string ShowExecutionPoint = "app.debug.showExecutionPoint";
+
+    // Rider's XDebugger.AttachToProcess and RiderReattach, on its Visual Studio keymaps' Ctrl+Alt+P (Cmd+Alt+P) and
+    // Alt+Shift+P, and RiderDetachDebuggerAction, after Stop, which no keymap gives keys.
+    public const string AttachToProcess = "app.debug.attachToProcess";
+    public const string ReattachToProcess = "app.debug.reattachToProcess";
+    public const string Detach = "app.debug.detach";
     public const string Evaluate = "app.debug.evaluate";
     public const string AddToWatches = "app.debug.addToWatches";
     public const string ShowContextMenu = "app.contextMenu";
@@ -351,6 +357,8 @@ public static class AppActions
                 .Bind(TypeHierarchy, "meta E , H", "meta E , meta H")
                 .Bind(ShrinkSelection, "meta alt LEFT")
                 .Bind(ShowExecutionPoint, "alt MULTIPLY")
+                .Bind(AttachToProcess, "meta alt P")
+                .Bind(ReattachToProcess, "alt shift P")
                 .Bind(Evaluate, "shift F9")
                 .Bind(ShowContextMenu, "shift F10")
                 .Bind(EditBreakpoint, "alt F9")
@@ -466,6 +474,8 @@ public static class AppActions
             .Bind(TypeHierarchy, "control E , H", "control E , control H")
             .Bind(ShrinkSelection, "control shift W", "shift alt MINUS", "control alt LEFT")
             .Bind(ShowExecutionPoint, "alt MULTIPLY")
+            .Bind(AttachToProcess, "control alt P")
+            .Bind(ReattachToProcess, "alt shift P")
             .Bind(Evaluate, "shift F9")
             .Bind(ShowContextMenu, "shift F10", "CONTEXT_MENU")
             .Bind(EditBreakpoint, "alt F9")

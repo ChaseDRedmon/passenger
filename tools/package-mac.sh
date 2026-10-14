@@ -113,9 +113,12 @@ cat > "$app/Contents/Info.plist" <<EOF
 </plist>
 EOF
 
-# A debugger attaches to and launches other processes, the JIT writes code, and the native libraries (Skia,
-# dbgshim, the pseudo-terminal's shim) are not signed by Passenger's team. Never get-task-allow, which lets anything
-# attach to Passenger itself and which Apple's notary refuses.
+# The JIT writes code, and the native libraries (Skia, dbgshim, the pseudo-terminal's shim) are not signed by
+# Passenger's team. No debugger entitlement (com.apple.security.cs.debugger): the debugger's adapter runs under the
+# machine's dotnet, whose signature is Microsoft's, and reaches a program's runtime, launched or attached to, through the
+# pipes the runtime opens for a debugger in the user's temporary folder, never through the task port the entitlement
+# guards (the system refuses dotnet the one it asks for each session, and nothing is lost, #17). Never get-task-allow,
+# which lets anything attach to Passenger itself and which Apple's notary refuses.
 entitlements="$work/entitlements.plist"
 cat > "$entitlements" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -126,7 +129,6 @@ cat > "$entitlements" <<EOF
     <key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
     <key>com.apple.security.cs.disable-library-validation</key><true/>
     <key>com.apple.security.cs.allow-dyld-environment-variables</key><true/>
-    <key>com.apple.security.cs.debugger</key><true/>
 </dict>
 </plist>
 EOF

@@ -23,6 +23,18 @@ watches and evaluation, and the values each line used drawn after it, as Rider d
 
 ![Stopped at a breakpoint: the line's values after its code, and the Debug window's frames and variables](site/images/debugger.webp)
 
+Run | Attach to Process (Ctrl+Alt+P, ⌘⌥P on a Mac) lists the .NET programs running on your machine, by executable,
+process ID, user and command line, and debugs the one you choose as if Passenger had started it. Run | Detach lets it
+go again, running on, and Reattach to Process (Alt+Shift+P) attaches to the last one again, even started anew. It
+lists programs on .NET Core 3.0 and later, whose runtime opens pipes for a debugger; .NET Framework and Mono are not
+Passenger's.
+
+On a Mac this needs no setup: no Developer Tools access, no debugger entitlement, no signing of yours or the
+program's. The debugger reaches a program's runtime through those pipes, in your temporary folder, not through the
+task port macOS guards, so a program you started in a terminal, one signed under the hardened runtime, and Passenger
+itself attach as a program the debugger starts does. The program has to run as you, with your temporary folder
+(`TMPDIR`), and with its diagnostics on (`DOTNET_EnableDiagnostics` not set to 0).
+
 ### Profiling
 
 A sampling profiler like dotTrace's, over the runtime's EventPipe: a configuration profiled from its first

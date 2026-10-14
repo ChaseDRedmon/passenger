@@ -28,7 +28,7 @@ public static class McpHost
     private const string Instructions =
         "Passenger is a C# IDE. These tools act on its open workspace as its user would: open a folder or solution, ask the C# " +
         "language server about code (diagnostics, symbol_info, definition, usages, rename, code_actions), build, run, and debug " +
-        "(breakpoint_set, debug_start, debug_step, debug_evaluate, debug_variables), and see or drive the window (screenshot, " +
+        "(breakpoint_set, debug_start or debug_attach, debug_step, debug_evaluate, debug_variables), and see or drive the window (screenshot, " +
         "ide_action). Lines and columns count from 1; relative paths are the open folder's. Debugging tools wait for the program " +
         "to stop and say where it is, with the top frame's locals.";
 

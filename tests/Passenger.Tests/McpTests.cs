@@ -110,6 +110,40 @@ public sealed class McpTests : IDisposable
     }
 
     [Fact]
+    public async Task An_agent_attaches_to_a_program_already_running_stops_it_at_a_breakpoint_and_detaches_leaving_it_running()
+    {
+        // Started by the test as a terminal would start it, in its loop when it says so.
+        ProcessStartInfo start = ChildProcesses.Command(Debugging.Helpers.Debuggees.Apphost("LoopingConsoleApp"), ["sleep"]);
+        start.RedirectStandardOutput = true;
+        using Process looping = ChildProcesses.Start(start);
+        try
+        {
+            Assert.Equal("looping", looping.StandardOutput.ReadLine());
+            await using McpClient client = await Start(["--mcp", folder]);
+            JsonElement listed = Assert.Single((await Call(client, "debug_processes")).EnumerateArray(), p => p.GetProperty("processId").GetInt32() == looping.Id);
+            Assert.Equal("LoopingConsoleApp", listed.GetProperty("program").GetString());
+
+            string source = Debugging.Helpers.Debuggees.Source("LoopingConsoleApp", "Program.cs");
+            int line = Debugging.Helpers.Debuggees.Line("LoopingConsoleApp", "turns++;");
+            await Call(client, "breakpoint_set", new() { ["path"] = source, ["line"] = line });
+            JsonElement stop = await Call(client, "debug_attach", new() { ["processId"] = looping.Id });
+            Assert.Equal("paused", stop.GetProperty("state").GetString());
+            Assert.Equal("breakpoint", stop.GetProperty("reason").GetString());
+            Assert.EndsWith($"Program.cs:{line}:5", stop.GetProperty("location").GetString(), StringComparison.Ordinal);
+            Assert.True(long.TryParse(Local(stop, "turns"), out long turns) && turns >= 0, $"The stop's locals had no count of turns: {stop}");
+
+            // Let go, the program runs on in its loop, which the debugger no longer stops.
+            Assert.Equal("Detached from LoopingConsoleApp, which runs on", (await Call(client, "debug_detach")).GetString());
+            Assert.Equal("not debugging", (await Call(client, "debug_state")).GetProperty("state").GetString());
+            Assert.False(looping.WaitForExit(TimeSpan.FromSeconds(2)), "The program the agent detached from ended");
+        }
+        finally
+        {
+            Processes.Kill(looping.Id);
+        }
+    }
+
+    [Fact]
     public async Task An_agent_sets_an_exception_breakpoint_on_a_type_and_the_program_stops_where_that_type_is_thrown()
     {
         Write("Program.cs", "for (int turn = 1; turn <= 2; turn++)\n{\n    try { throw new ArgumentException(\"argument\"); } catch (ArgumentException) { }\n"

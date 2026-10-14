@@ -117,8 +117,8 @@ public sealed class DebugController
             launched: true, inTerminal: inTerminal is not null);
     }
 
-    /// <summary>Attaches the debugger to a running .NET process, its output (if any) in the Console. Null once the session
-    /// is open, else why it could not.</summary>
+    /// <summary>Attaches the debugger to a running .NET process, as Attach to Process does: what it writes goes where it
+    /// always went, as Rider's Console says. Null once the session is open, else why it could not.</summary>
     public Task<string?> AttachAsync(int processId, string name) =>
         OpenAsync((built, log, output) => DebugSession.AttachAsync(processId, Breakpoints, built, log, output), name, launched: false);
 
@@ -145,9 +145,15 @@ public sealed class DebugController
         BuiltLines built = new();
         lines = built;
         view.SetState(DebugState.Starting);
+        view.ShowDetachable(false);
         if (inTerminal)
         {
             view.Console.Append($"{name} runs in the Terminal window, which it reads from and writes to\n");
+        }
+        else if (!launched)
+        {
+            // Rider's words: what a program attached to writes goes where it always went.
+            view.Console.Append("Console output is not available when the debugger is attached to a running process\n");
         }
         Message?.Invoke(this, $"Debugging {name}");
         try
@@ -202,6 +208,26 @@ public sealed class DebugController
         }
     }
 
+    /// <summary>Rider's Detach: the debugger lets go of the program it attached to, which runs on. Null once it has, else why
+    /// it could not (nothing attached to).</summary>
+    public async Task<string?> DetachAsync()
+    {
+        UiThread.Check();
+        if (WhyNotDetach() is { } why)
+        {
+            return why;
+        }
+        await Session!.DetachAsync();
+        return null;
+    }
+
+    /// <summary>Why Detach cannot run now: nothing is being debugged, or the debugger started the program, which ends with
+    /// its session (its input and output are the adapter's).</summary>
+    private string? WhyNotDetach() => !IsDebugging ? NothingDebugged
+        : !Session!.Attached ? "The debugger started this program: Stop ends it, and Detach lets go only of a program attached to"
+        : Session.State == DebugState.Starting ? "The debugger is still taking hold of the program"
+        : null;
+
     /// <summary>Ends the session's program and adapter as the IDE closes (<see cref="DebugSession.CloseAsync"/>).</summary>
     public Task CloseAsync()
     {
@@ -242,6 +268,8 @@ public sealed class DebugController
         Add(AppActions.Evaluate, "Evaluate Expression...", c => view.FocusEvaluate(c.Symbol ?? string.Empty), _ => NotPaused(), new("Run", 1, 8));
         Add(AppActions.AddToWatches, "Add to Watches", c => _ = Evaluate(c.Symbol!, watch: true),
             c => NotPaused() ?? (c.Symbol is { Length: > 0 } ? null : "No expression is at the caret"), null);
+        // In Rider's Run menu after Stop, and on the Debug window's toolbar after it.
+        Add(AppActions.Detach, "Detach", context => _ = DetachAsync(), _ => WhyNotDetach(), new("Run", 0, 8));
         // Rider's toggle: every breakpoint stays as it is, and none stops the program until it is chosen again.
         actions.Add(new IdeAction(AppActions.MuteBreakpoints, "Mute Breakpoints", "Debug", _ => Breakpoints.SetMuted(!Breakpoints.Muted))
         {
@@ -420,6 +448,7 @@ public sealed class DebugController
         }
         view.Console.Flush();
         view.SetState(session.State);
+        view.ShowDetachable(session.Attached && session.State is DebugState.Running or DebugState.Paused);
         // Every stop is new and every run lets the last one's frames and values go: none is asked of again.
         shown++;
         frame = null;
@@ -466,6 +495,7 @@ public sealed class DebugController
         DebugState.Paused when undescribed is { } why => $"{name}: paused on an exception the debugger could not describe ({why})",
         DebugState.Paused => $"{name}: paused ({session.StopReason})",
         DebugState.Running => $"{name}: running",
+        _ when session.Detached => $"Detached from {name}, which runs on",
         _ => session.Failure is { } failure
             ? $"Debugging {name} ended: {failure}"
             : $"Debugging {name} ended{(session.ExitCode is int code ? $" with exit code {code}" : "")}",

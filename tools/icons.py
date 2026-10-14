@@ -58,6 +58,8 @@ ICONS = [
     ("StepInto", "Arrow Step In", "20_regular"),
     ("StepOut", "Arrow Step Out", "20_regular"),
     ("RunToCursor", "Arrow Step In Right", "20_regular"),
+    # Rider's Detach, after Stop: the debugger unplugged, the program left running.
+    ("Detach", "Plug Disconnected", "20_regular"),
     ("Breakpoints", "Record", "20_regular"),
     ("MuteBreakpoints", "Circle Off", "20_regular"),
     ("Evaluate", "Calculator", "20_regular"),

@@ -1067,6 +1067,162 @@ public sealed class DebuggerTests : IDisposable
         }
     }
 
+    /// <summary>A program started outside Passenger, as a terminal starts one, waiting for a line: Attach to Process lists it,
+    /// its process id typed narrows the list to it and Enter attaches; Detach lets it go still waiting, and Reattach to
+    /// Process takes hold of it again; then the line it reads brings it to the breakpoint, and Detach leaves it running on
+    /// past the breakpoint to its end, reading and writing as it would have undebugged.</summary>
+    [AvaloniaFact]
+    public void Attach_to_process_stops_a_program_started_outside_passenger_at_a_breakpoint_it_then_reaches_and_detach_leaves_it_running_to_its_end()
+    {
+        string source = PathNames.Canonical(Debugging.Helpers.Debuggees.Source("ReadsInputConsoleApp", "Program.cs"));
+        int line = Debugging.Helpers.Debuggees.Line("ReadsInputConsoleApp", "Console.WriteLine") - 1;
+        ProcessStartInfo start = ChildProcesses.Command(Debugging.Helpers.Debuggees.Apphost("ReadsInputConsoleApp"), []);
+        start.RedirectStandardInput = true;
+        start.RedirectStandardOutput = true;
+        using Process program = ChildProcesses.Start(start);
+        Task<string> output = program.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);
+        try
+        {
+            MainWindow window = new() { Width = 1200, Height = 800 };
+            window.Show();
+            window.OpenFile(source);
+            Ui.Settle();
+            CodeEditor editor = window.EditorArea.CodeEditor;
+            editor.GoTo(new TextPosition(line, 4));
+            Ui.Run(window, AppActions.ToggleBreakpoint);
+
+            AttachToProcessDialog dialog = OpenAttachToProcess(window);
+            DotnetProcess listed = Assert.Single(dialog.Shown, p => p.Id == program.Id);
+            Assert.Equal(OperatingSystem.IsWindows() ? "ReadsInputConsoleApp.exe" : "ReadsInputConsoleApp", listed.Name);
+            Assert.Contains("ReadsInputConsoleApp", listed.CommandLine, StringComparison.Ordinal);
+            Assert.True(listed.IsMine && listed.User.Length > 0, $"The program the person started was listed as {(listed.IsMine ? "theirs" : "another user's")}, user '{listed.User}'");
+            dialog.KeyTextInput(program.Id.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            Ui.Settle();
+            Assert.Equal([program.Id], dialog.Shown.Select(p => p.Id));
+            dialog.KeyPress(Key.Enter, RawInputModifiers.None, PhysicalKey.None, null);
+            Ui.WaitFor(() => window.Debugger.Session is { State: DebugState.Running }, "the debugger to attach to the program");
+            Assert.Empty(window.OwnedWindows.OfType<AttachToProcessDialog>());
+            Assert.True(window.DockHost.IsShown("debug"), "Attaching left the Debug window closed");
+            Assert.Equal("ReadsInputConsoleApp: running", window.Status);
+
+            // Let go while it waits, it goes on waiting; Reattach to Process takes hold of the same program again.
+            Assert.True(window.Perform(AppActions.Detach), "Detach could not run on the program attached to");
+            Ui.WaitFor(() => !window.Debugger.IsDebugging, "the debugger to let go of the program");
+            Assert.Equal("Detached from ReadsInputConsoleApp, which runs on", window.Status);
+            Assert.False(program.HasExited, "Detach ended the program it let go of");
+            Ui.Run(window, AppActions.ReattachToProcess);
+            Ui.WaitFor(() => window.Debugger.Session is { State: DebugState.Running }, "Reattach to Process to attach to the program again");
+
+            // The line it reads takes it on to the breakpoint, where the stop shows what it read.
+            program.StandardInput.WriteLine("hello");
+            program.StandardInput.Flush();
+            Ui.WaitFor(() => window.Debugger.Session?.State == DebugState.Paused && Value(window, "line") is not null, "the program to stop at the breakpoint");
+            Assert.Equal("\"hello\"", Value(window, "line"));
+            Assert.Contains(new LineMark(line, LineMarkKind.ExecutionPoint), editor.LineMarks);
+
+            // Detach lets it run on past the breakpoint to its end, as it would have run undebugged.
+            Assert.True(window.Perform(AppActions.Detach), "Detach could not run on the paused program");
+            Ui.WaitFor(() => !window.Debugger.IsDebugging, "the debugger to let go of the paused program");
+            Assert.True(program.WaitForExit(TimeSpan.FromSeconds(30)), "The program let go of at its breakpoint never ran on to its end");
+            Assert.Equal(0, program.ExitCode);
+            Assert.Equal("read: hello", output.Result.Trim());
+            Assert.DoesNotContain(editor.LineMarks, m => m.Kind == LineMarkKind.ExecutionPoint);
+            window.Close();
+        }
+        finally
+        {
+            Processes.Kill(program.Id);
+        }
+    }
+
+    /// <summary>Attach to Process lists the .NET programs running and nothing else: not a program with no .NET in it, not
+    /// Passenger itself, and not a process that took the number of a .NET program which crashed and left its debugger
+    /// pipes behind; what the search finds of none says so.</summary>
+    [AvaloniaFact]
+    public void Attach_to_process_lists_dotnet_programs_alone()
+    {
+        using Process other = Debugging.Helpers.Debuggees.NotDotnet();
+        ProcessStartInfo start = ChildProcesses.Command(Debugging.Helpers.Debuggees.Apphost("LoopingConsoleApp"), ["sleep"]);
+        start.RedirectStandardOutput = true;
+        using Process looping = ChildProcesses.Start(start);
+        // What a .NET program that crashed would leave in the temporary folder, under a number the other has since.
+        string left = Path.Combine(Path.GetTempPath(), $"clr-debug-pipe-{other.Id}-1-in");
+        if (!OperatingSystem.IsWindows())
+        {
+            File.WriteAllText(left, string.Empty);
+        }
+        try
+        {
+            Assert.Equal("looping", looping.StandardOutput.ReadLine());
+            MainWindow window = new() { Width = 1200, Height = 800 };
+            window.Show();
+            Ui.Settle();
+            AttachToProcessDialog dialog = OpenAttachToProcess(window);
+            Assert.Contains(dialog.Shown, p => p.Id == looping.Id && p.Program == "LoopingConsoleApp");
+            Assert.DoesNotContain(dialog.Shown, p => p.Id == other.Id);
+            Assert.DoesNotContain(dialog.Shown, p => p.Id == Environment.ProcessId);
+
+            dialog.KeyTextInput(other.Id.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            Ui.Settle();
+            Assert.Empty(dialog.Shown);
+            Assert.Equal($"No .NET process matches '{other.Id}'", dialog.Placeholder);
+            dialog.KeyPress(Key.Escape, RawInputModifiers.None, PhysicalKey.None, null);
+            Ui.Settle();
+            Assert.Empty(window.OwnedWindows.OfType<AttachToProcessDialog>());
+            Assert.False(window.Debugger.IsDebugging, "Cancelling Attach to Process attached to something");
+            window.Close();
+        }
+        finally
+        {
+            File.Delete(left);
+            Processes.Kill(looping.Id);
+            Processes.Kill(other.Id);
+        }
+    }
+
+    /// <summary>A program attached to ran before Passenger did: closing the window lets go of it, as Detach does, and it
+    /// runs on, where a program the debugger started ends with the window.</summary>
+    [AvaloniaFact]
+    public void Closing_the_window_while_attached_lets_go_of_the_program_which_runs_on()
+    {
+        ProcessStartInfo start = ChildProcesses.Command(Debugging.Helpers.Debuggees.Apphost("LoopingConsoleApp"), ["sleep"]);
+        start.RedirectStandardOutput = true;
+        using Process looping = ChildProcesses.Start(start);
+        int adapter = 0;
+        try
+        {
+            Assert.Equal("looping", looping.StandardOutput.ReadLine());
+            MainWindow window = new() { Width = 1200, Height = 800 };
+            window.Show();
+            Ui.Settle();
+            AttachToProcessDialog dialog = OpenAttachToProcess(window);
+            dialog.Choose(looping.Id);
+            dialog.Attach();
+            Ui.WaitFor(() => window.Debugger.Session is { State: DebugState.Running }, "the debugger to attach to the program");
+            adapter = window.Debugger.Session!.AdapterProcessId;
+            window.Close();
+
+            Assert.True(window.Ended?.Wait(MainWindow.EndLimit + TimeSpan.FromSeconds(5)), "The window closed without letting go of what it attached to within its limit");
+            Assert.True(Processes.Gone(adapter), "After the window closed, the debugger went on running");
+            Assert.False(looping.WaitForExit(TimeSpan.FromSeconds(2)), "Closing the window ended a program it had only attached to");
+        }
+        finally
+        {
+            Processes.Kill(looping.Id);
+            Processes.Kill(adapter);
+        }
+    }
+
+    /// <summary>Attach to Process from its keys, once it has listed the programs.</summary>
+    private static AttachToProcessDialog OpenAttachToProcess(MainWindow window)
+    {
+        Ui.Run(window, AppActions.AttachToProcess);
+        AttachToProcessDialog dialog = Assert.Single(window.OwnedWindows.OfType<AttachToProcessDialog>());
+        Ui.WaitFor(() => dialog.Listed.IsCompleted, "Attach to Process to list the .NET programs");
+        Assert.Same(dialog.Search, dialog.FocusManager?.GetFocusedElement());
+        return dialog;
+    }
+
     /// <summary>A configuration that uses the terminal is debugged there: the program starts in a tab of the Terminal window
     /// held until the debugger has hold of it, so a breakpoint on Main's first line stops it before any of it runs, debug
     /// after debug; let go, it reads the key and the line typed into its tab, and its end is told there and in the status

@@ -15,7 +15,7 @@ using Passenger.Editor;
 namespace Passenger.App.ToolWindows;
 
 /// <summary>The Debug tool window, laid out as Rider's: a toolbar down the left (rerun, resume,
-/// pause, stop, then View Breakpoints and Mute Breakpoints), the stepping actions across the top beside the Debugger and Console tabs, and under
+/// pause, stop, detach, then View Breakpoints and Mute Breakpoints), the stepping actions across the top beside the Debugger and Console tabs, and under
 /// Debugger the frames of the chosen thread on the left with the variables of the chosen frame on the
 /// right, an expression to evaluate or watch above them.</summary>
 public sealed class DebugView : DockPanel
@@ -160,6 +160,7 @@ public sealed class DebugView : DockPanel
                 Tool(AppActions.Resume, "Icon.Resume", "Resume Program"),
                 Tool(AppActions.Pause, "Icon.Pause", "Pause Program"),
                 Tool(AppActions.Stop, "Icon.Stop", "Stop"),
+                Tool(AppActions.Detach, "Icon.Detach", "Detach"),
                 new Border { Height = 8 },
                 Tool(AppActions.ViewBreakpoints, "Icon.Breakpoints", "View Breakpoints and Exceptions"),
                 mute,
@@ -254,9 +255,13 @@ public sealed class DebugView : DockPanel
         }
         tools[AppActions.Pause].IsEnabled = state == DebugState.Running;
         tools[AppActions.Stop].IsEnabled = live;
+        tools[AppActions.Detach].IsEnabled &= live;
         evaluate.IsEnabled = paused;
         placeholder.IsVisible = state == DebugState.Ended && Frames.Count == 0;
     }
+
+    /// <summary>Detach is pressed only while the debugger has hold of a program it attached to.</summary>
+    public void ShowDetachable(bool attached) => tools[AppActions.Detach].IsEnabled = attached;
 
     /// <summary>Shows Mute Breakpoints pressed while the breakpoints are muted.</summary>
     public void ShowMuted(bool muted) => mute.IsChecked = muted;

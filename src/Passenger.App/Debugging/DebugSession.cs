@@ -156,6 +156,12 @@ public sealed class DebugSession
 
     public string Program { get; private set; } = string.Empty;
 
+    /// <summary>The debugger attached to a program already running, rather than starting it: one Detach can let go of.</summary>
+    public bool Attached { get; private init; }
+
+    /// <summary>The session ended with Detach: the program runs on without the debugger.</summary>
+    public bool Detached { get; private set; }
+
     /// <summary>The adapter's process, for a test to see it gone.</summary>
     public int AdapterProcessId => adapter.Id;
 
@@ -177,8 +183,8 @@ public sealed class DebugSession
             StopAtEntry = false,
         }, breakpoints, lines, log, output, runInTerminal);
 
-    /// <summary>Starts the adapter and attaches it to a running .NET process (a test host VSTest started), with the
-    /// store's breakpoints, as Attach to Process does.</summary>
+    /// <summary>Starts the adapter and attaches it to a running .NET process (one Attach to Process chose, or a test host
+    /// VSTest started), with the store's breakpoints.</summary>
     public static Task<DebugSession> AttachAsync(int processId, BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output) =>
         StartAsync($"process {processId}", "attach", new AttachArguments { ProcessId = processId, JustMyCode = true }, breakpoints, lines, log, output, null);
 
@@ -186,7 +192,7 @@ public sealed class DebugSession
         Func<RunInTerminalArguments, Task<Run.TerminalRun>>? runInTerminal)
     {
         UiThread.Check();
-        DebugSession session = new(breakpoints, lines, log, output) { Program = program };
+        DebugSession session = new(breakpoints, lines, log, output) { Program = program, Attached = request == "attach" };
         IdeLog.Write(IdeLog.Debugger, $"[{session.connection.Name}] {request} {program}");
         if (runInTerminal is not null)
         {
@@ -306,6 +312,20 @@ public sealed class DebugSession
         End(ExitCode);
     }
 
+    /// <summary>Rider's Detach: the debugger takes its breakpoints out of the program it attached to and lets go of it, and
+    /// the program runs on, from where it was paused if it was; the session ends with the adapter.</summary>
+    public async Task DetachAsync()
+    {
+        UiThread.Check();
+        if (State == DebugState.Ended || disconnected is not null)
+        {
+            return;
+        }
+        Detached = true;
+        await EndProcessesAsync(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(3), terminate: false);
+        End(null);
+    }
+
     /// <summary>Takes the exit code of a program in the terminal, which its tab has once its last output is in, when the
     /// adapter could not tell it.</summary>
     private async Task TerminalEnd(Run.TerminalRun terminal)
@@ -322,21 +342,23 @@ public sealed class DebugSession
     }
 
     /// <summary>Ends the program and the adapter as the IDE closes, on a worker thread, so the process can wait for it
-    /// once the window's loop has stopped; the session's state, which nothing will show, is left as it is.</summary>
+    /// once the window's loop has stopped; the session's state, which nothing will show, is left as it is. A program
+    /// attached to is let go of instead, as Detach does: it ran before the IDE did, and runs on after it.</summary>
     public Task CloseAsync()
     {
         UiThread.Check();
-        return State == DebugState.Ended ? Task.CompletedTask : EndProcessesAsync(TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+        return State == DebugState.Ended ? Task.CompletedTask : EndProcessesAsync(TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2), terminate: !Attached);
     }
 
-    /// <summary>Asks the adapter to end the program and itself, and kills both when they have not gone within this ask's
-    /// limits. It is asked once, by Stop, the program's end or the window's close, whichever comes first: a second
-    /// disconnect waits on an adapter the first has let go. The answer is awaited, and the exit waited for, on the thread
-    /// pool, never failing, so a window gone meanwhile (a test's, its dispatcher with it) leaves no failed request behind.</summary>
-    private Task EndProcessesAsync(TimeSpan answer, TimeSpan exit)
+    /// <summary>Asks the adapter to end the program (or, detaching, to let it go) and itself, and kills the adapter when it
+    /// has not gone within this ask's limits. It is asked once, by Stop, Detach, the program's end or the window's close,
+    /// whichever comes first: a second disconnect waits on an adapter the first has let go. The answer is awaited, and the
+    /// exit waited for, on the thread pool, never failing, so a window gone meanwhile (a test's, its dispatcher with it)
+    /// leaves no failed request behind.</summary>
+    private Task EndProcessesAsync(TimeSpan answer, TimeSpan exit, bool terminate = true)
     {
         // Not held: the window's end waits for these with no UI thread to come back to (MainWindow.Ended).
-        Task asked = disconnected ??= Task.Run(DisconnectAsync);
+        Task asked = disconnected ??= Task.Run(() => DisconnectAsync(terminate));
         return Task.Run(async () =>
         {
             await Task.WhenAny(asked, Task.Delay(answer));
@@ -348,11 +370,11 @@ public sealed class DebugSession
         });
     }
 
-    private async Task DisconnectAsync()
+    private async Task DisconnectAsync(bool terminate)
     {
         try
         {
-            await connection.RequestAsync("disconnect", new DisconnectArguments(TerminateDebuggee: true));
+            await connection.RequestAsync("disconnect", new DisconnectArguments(TerminateDebuggee: terminate));
         }
         catch (DapException)
         {

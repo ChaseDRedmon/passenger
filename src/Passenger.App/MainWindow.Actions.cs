@@ -102,6 +102,7 @@ public partial class MainWindow
         Add(A.FileStructure, "File Structure", "Navigate", _ => ShowFileStructure(), NeedsFile, ("Navigate", 1, 4));
 
         AddBuilding();
+        AddAttaching();
         AddTests();
 
         AddTabActions();
@@ -191,12 +192,16 @@ public partial class MainWindow
 
         Add(A.RunProgram, "Run", "Run", _ => RunSelected(), _ => Unconfigured("run"), ("Run", 0, 0));
         Add(A.Debug, "Debug", "Run", _ => DebugSelected(), _ => Unconfigured("debug"), ("Run", 0, 1));
-        // Rider's Run menu has it after Run and Debug, with no key in its Visual Studio keymaps.
-        Add(A.EditConfigurations, "Edit Configurations...", "Run", _ => ShowRunConfigurations(), NeedsFolder, ("Run", 0, 3));
-        // Rerun runs the last session again, under the debugger when that is how it runs.
-        Add(A.Rerun, "Rerun", "Run", _ =>
+        // Rider's Run menu has it after Run, Debug and Attach to Process, with no key in its Visual Studio keymaps.
+        Add(A.EditConfigurations, "Edit Configurations...", "Run", _ => ShowRunConfigurations(), NeedsFolder, ("Run", 0, 5));
+        // Rerun runs the last session again, under the debugger when that is how it runs, attached again when it was attached.
+        Add(A.Rerun, "Rerun", "Run", c =>
         {
-            if (debug.IsDebugging)
+            if (debug.Session is { } session && session == attachSession)
+            {
+                actions!.Run(A.ReattachToProcess, c);
+            }
+            else if (debug.IsDebugging)
             {
                 DebugSelected();
             }
@@ -204,14 +209,14 @@ public partial class MainWindow
             {
                 RunSelected();
             }
-        }, _ => Unconfigured("run"), ("Run", 0, 4));
+        }, _ => debug.Session is { } session && session == attachSession ? null : Unconfigured("run"), ("Run", 0, 6));
         Add(A.Stop, "Stop", "Run", context =>
         {
             _ = debug.StopAsync();
             runner.Stop();
             terminalRun?.Stop();
             builder.Stop();
-        }, _ => debug.IsDebugging || IsRunning || builder.IsRunning ? null : "Nothing is running", ("Run", 0, 5));
+        }, _ => debug.IsDebugging || IsRunning || builder.IsRunning ? null : "Nothing is running", ("Run", 0, 7));
         Add(A.EditBreakpoint, "Edit Breakpoint...", "Debug", c =>
         {
             int line = c.Caret.Line;

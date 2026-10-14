@@ -96,8 +96,16 @@ public static class Screenshot
                 break;
             case ScriptStep.Key key:
                 RawInputModifiers modifiers = Raw(key.Stroke.Modifiers);
+                // A dialog its key closes (Enter on Attach to Process) takes no release: it has gone.
+                bool closed = false;
+                EventHandler gone = (_, _) => closed = true;
+                window.Closed += gone;
                 window.KeyPress(key.Stroke.Key, modifiers, PhysicalKey.None, null);
-                window.KeyRelease(key.Stroke.Key, modifiers, PhysicalKey.None, null);
+                window.Closed -= gone;
+                if (!closed)
+                {
+                    window.KeyRelease(key.Stroke.Key, modifiers, PhysicalKey.None, null);
+                }
                 break;
             case ScriptStep.Wait wait:
                 Pump(wait.For);

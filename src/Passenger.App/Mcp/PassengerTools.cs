@@ -493,6 +493,41 @@ public sealed partial class PassengerTools(MainWindow window)
         return await AfterResume(TimeSpan.FromSeconds(waitSeconds), cancel);
     });
 
+    [McpServerTool(Name = "debug_processes", Title = "The .NET programs to attach to", ReadOnly = true), Description(
+        "The .NET programs running on this machine that the debugger can attach to, as Run | Attach to Process lists them: each one's process id, " +
+        "executable, program (the .dll the dotnet host runs, else the executable), user and command line.")]
+    public Task<IReadOnlyList<ProcessInfo>> DebugProcesses(CancellationToken cancel = default) => OnUi(cancel, async () =>
+        (IReadOnlyList<ProcessInfo>)[.. (await BackgroundWork.Run(DotnetProcesses.List)).Select(p => new ProcessInfo(p.Id, p.Name, p.Program, p.User, p.CommandLine))]);
+
+    [McpServerTool(Name = "debug_attach", Title = "Attach to a running program", Destructive = true), Description(
+        "Attaches the debugger to a .NET program already running, as Run | Attach to Process does: by its process id, or by its program's name " +
+        "when one running program has it (debug_processes lists them). The breakpoints set (breakpoint_set) apply at once; it waits up to " +
+        "waitSeconds for the program to stop at one, or end, and returns where it is. debug_detach lets it go again, running on; stop ends it.")]
+    public Task<DebugSnapshot> DebugAttach(int? processId = null, [Description("A program's name, as debug_processes gives it")] string? program = null,
+        int waitSeconds = 10, CancellationToken cancel = default) => OnUi(cancel, async () =>
+    {
+        IReadOnlyList<DotnetProcess> running = await BackgroundWork.Run(DotnetProcesses.List);
+        List<DotnetProcess> named = processId is int id ? [.. running.Where(p => p.Id == id)]
+            : program is { Length: > 0 } name ? [.. running.Where(p => p.Program.Equals(name, StringComparison.OrdinalIgnoreCase) || p.Name.Equals(name, StringComparison.OrdinalIgnoreCase))]
+            : throw new ArgumentException("Name the program to attach to by its processId, or by its program's name");
+        DotnetProcess chosen = named switch
+        {
+            [{ } only] => only,
+            [] => throw new InvalidOperationException($"No .NET program {(processId is int pid ? $"with process id {pid}" : $"named {program}")} is running for the debugger to attach to; debug_processes lists those there are"),
+            _ => throw new InvalidOperationException($"{named.Count} running programs are named {program}: name one by its processId ({string.Join(", ", named.Select(p => p.Id))})"),
+        };
+        if (await window.AttachAsync(chosen) is { } problem)
+        {
+            throw new InvalidOperationException(problem);
+        }
+        return await AfterResume(TimeSpan.FromSeconds(waitSeconds), cancel);
+    });
+
+    [McpServerTool(Name = "debug_detach", Title = "Detach", Destructive = false), Description(
+        "Lets go of the program the debugger attached to, as Run | Detach does: its breakpoints are taken out, and it runs on without the debugger.")]
+    public Task<string> DebugDetach(CancellationToken cancel = default) => OnUi(cancel, async () =>
+        await window.Debugger.DetachAsync() is { } problem ? throw new InvalidOperationException(problem) : window.Debugger.Summary ?? "Detached");
+
     [McpServerTool(Name = "debug_state", Title = "Where the debugger is", ReadOnly = true), Description(
         "The debugger's state, and while paused where: the reason, the stopped thread's frames, and the chosen frame's variables.")]
     public Task<DebugSnapshot> GetDebugState(CancellationToken cancel = default) => OnUi(cancel, DebugSnapshotAsync);
@@ -976,6 +1011,9 @@ public sealed record BreakpointInfo(string? Path, int? Line, bool Enabled, strin
     string? Message, string? Exception = null, IReadOnlyList<string>? Scenarios = null);
 
 public sealed record VariableInfo(string Name, string Value, string? Type, int Reference);
+
+/// <summary>A .NET program the debugger can attach to, as Attach to Process lists it.</summary>
+public sealed record ProcessInfo(int ProcessId, string Executable, string Program, string User, string CommandLine);
 
 public sealed record DebugSnapshot(
     string State,
