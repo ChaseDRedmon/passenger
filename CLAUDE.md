@@ -139,7 +139,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   Pull Members Up and Push Members Down: the extension describes what is at the caret, a `RefactoringDialog` asks the
   options, and the answer is applied inside `EditorArea.Commands.Record`, which keeps the files a command creates so
   Undo deletes them. The server's colour and diagnostics refreshes are two
-  events, each refreshing only its own.
+  events, each refreshing only its own. Roslyn sends one toast per project-load batch, so `ProjectLoad.cs` reads its
+  project-system log lines (`Warning/Error while loading P: …`, `Successfully completed load of P`) and `CSharpService`
+  keeps each project's load problems, said in the status bar as a warning or error and listed in Problems' Toolset,
+  Environment tab.
 - `src/Passenger.App/Editors`: `EditorArea` is a tree of splits, each an `EditorGroup` (tabs, find bar, editor); its
   `CodeEditor` and `Active` are the active group's, so code that acts on "the editor" keeps working, and wiring for every
   editor's events goes through `ForEachEditor`, since a split makes a new one. An editor window (Open Tab in New Window,
@@ -195,6 +198,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   ChildProcesses), never logged. `NuGetConfigEditor` changes one nuget.config in place, every other character kept;
   `PackageManager` changes projects through `dotnet add`/`remove package`. `ToolWindows/NuGetView` is the window, its
   Packages and Sources tabs. A run's NuGet is its own on macOS and Linux (DOTNET_CLI_HOME under the run's folder).
+  `VulnerabilityData` reads the VulnerabilityInfo resource of the folder's auditSources (else its enabled sources), as
+  restore's NuGetAudit does; the window marks vulnerable installed versions and offers the lowest that fixes them.
+  `StandInFeed` is the tests' v3 feed on loopback (optional credentials, an advisory resource); tests never reach
+  nuget.org for a package or an advisory.
 - `src/Passenger.App/Discord`: Rich Presence over the Discord app's local IPC, Passenger's own client
   (`DiscordConnection`; `DiscordPresence` on one worker off the UI thread, at most one update every 4 s, a look every
   20 s without Discord). Only the person's window reaches Discord (`ShowActivityInDiscord`, called by App); the test
