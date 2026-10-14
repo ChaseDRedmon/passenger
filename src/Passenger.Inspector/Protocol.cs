@@ -8,7 +8,8 @@ namespace Passenger.Inspector;
 // come and go, picked when the person points at one, bindingFailed as a binding fails (from before hello, as the app starts).
 // An agent's tools ask the same: the windows, the tree with each element's layout and text, a picture the app draws of a
 // window, and input to it as a person's goes. A property breakpoint (Break When Value Changes) asks it to watch an element's
-// property, which stops the debugged app at each change its hit count lets through (PropertyBreaks.cs).
+// property, which stops the debugged app at each change its hit count lets through (PropertyBreaks.cs); in a debugged app each
+// failed binding also calls a method the Avalonia Binding Errors breakpoint stops in (Breaks.cs).
 
 /// <summary>The names both ends agree on.</summary>
 public static class Wire
@@ -37,6 +38,10 @@ public static class Wire
     /// <summary>The method a watched property's change calls (PropertyBreaks.cs), where the debugger's function breakpoint
     /// for each property breakpoint is.</summary>
     public const string Changed = "Passenger.Inspector.Breaks.Changed";
+
+    /// <summary>The method each failed binding calls in a debugged app (Bindings.cs), where the debugger's function breakpoint
+    /// for the Avalonia Binding Errors breakpoint is.</summary>
+    public const string Failed = "Passenger.Inspector.Breaks.BindingFailed";
 
     public const string Hello = "hello";
     public const string TreeChanged = "treeChanged";
@@ -174,7 +179,16 @@ public sealed record Hello(int Protocol, int ProcessId, string? Avalonia, string
 /// Avalonia names it), the member and the type's members nearest it. Id names one failure for the run; it comes again as it
 /// repeats, Count being how many times in all.</summary>
 public sealed record BindingFailure(int Id, string Level, string Control, string Property, string Path, string? ErrorPoint, string Message,
-    SourcePlace? Place, string? Type, string? Member, IReadOnlyList<string> Nearest, int Count);
+    SourcePlace? Place, string? Type, string? Member, IReadOnlyList<string> Nearest, int Count)
+{
+    /// <summary>The type of the control's DataContext as it failed (no namespace), or null for none.</summary>
+    public string? DataContext { get; init; }
+
+    /// <summary>What it binds, the part of its path that failed when not the whole, and why: "TextBlock#Caption.Text to
+    /// Person.Nmae at Nmae: Could not find a matching property accessor for 'Nmae' on 'App.Person'".</summary>
+    [JsonIgnore]
+    public string Description => $"{Control}.{Property} to {Path}{(ErrorPoint is { Length: > 0 } at && at != Path ? $" at {at}" : string.Empty)}: {Message}";
+}
 
 /// <summary>The app's top-level windows (popups among them), each with the visual tree under it.</summary>
 public sealed record AppTree(IReadOnlyList<Element> Roots);
@@ -298,6 +312,7 @@ public static class SetterStates
     MaxDepth = 4096)]
 [JsonSerializable(typeof(Request))]
 [JsonSerializable(typeof(Reply))]
+[JsonSerializable(typeof(BindingFailure))]
 internal sealed partial class WireJson : JsonSerializerContext
 {
 }

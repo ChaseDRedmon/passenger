@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Runtime.CompilerServices;
 using Avalonia;
 using Avalonia.Data;
 using Avalonia.Data.Core;
@@ -110,25 +109,5 @@ internal sealed class PropertyBreaks
                 return string.Empty;
             }
         }
-    }
-}
-
-/// <summary>Where a property breakpoint stops the program: Passenger's debugger sets a function breakpoint here for each
-/// one (<see cref="Wire.Changed"/>), its condition <c>breakpoint == id</c> and the person's own after it, which can read
-/// the parameters (<c>newValue</c>, <c>oldValue</c>, <c>control</c>, <c>property</c>); <c>change</c> is what the IDE says of
-/// the stop.</summary>
-public static class Breaks
-{
-    [DebuggerNonUserCode]
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static void Changed(int breakpoint, AvaloniaObject control, AvaloniaProperty property, object? oldValue, object? newValue, string change)
-    {
-        // Held for the debugger, which reads them where the program stops.
-        GC.KeepAlive(control);
-        GC.KeepAlive(property);
-        GC.KeepAlive(oldValue);
-        GC.KeepAlive(newValue);
-        GC.KeepAlive(change);
-        _ = breakpoint;
     }
 }

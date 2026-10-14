@@ -556,31 +556,9 @@ public sealed class BuildRunController
     {
         if (!placed.TryGetValue((app, failure.Id), out Problem? problem))
         {
-            problem = placed[(app, failure.Id)] = BindingErrors.Problem(failure, failure.Place is { } at ? TextOf(at.File) : null).Problem;
+            problem = placed[(app, failure.Id)] = BindingErrors.Problem(failure, failure.Place is { } at ? BindingErrors.TextOf(at.File, parts.Editors.Documents) : null).Problem;
         }
         return new BindingProblem(failure, problem);
-    }
-
-    /// <summary>A XAML file's text as the editor has it, else as it is on disk, else none.</summary>
-    private TextSnapshot? TextOf(string file)
-    {
-        if (!File.Exists(file))
-        {
-            return null;
-        }
-        string path = PathNames.Canonical(file);
-        if (parts.Editors.Documents.FirstOrDefault(d => PathNames.Same(d.Path, path)) is { } open)
-        {
-            return open.Text.Snapshot;
-        }
-        try
-        {
-            return FileText.Load(path) is { } read ? TextSnapshot.From(read.Text) : null;
-        }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-        {
-            return null;
-        }
     }
 
     /// <summary>The end of the session being debugged; done already when there is none.</summary>

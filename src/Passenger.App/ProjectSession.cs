@@ -64,10 +64,11 @@ public sealed class ProjectSession : IAsyncDisposable
         Builder = new ProcessRunner(setup.Views.Build);
         Runner = new ProcessRunner(setup.Views.Run, takesInput: true);
         Tests = new TestController(setup.Views.TestTree, setup.BuildForTests, () => Projects, line => setup.Views.Build.Append($"{line}\n"));
-        Debug = new DebugController(setup.Editors, setup.Views.Debug) { RunInTerminal = setup.RunForDebugger };
+        Debug = new DebugController(setup.Editors, setup.Views.Debug) { RunInTerminal = setup.RunForDebugger, Folder = folder };
         // Kept with the folder from Keep on, while the window keeps state.
         Debug.Breakpoints.Changed += (_, _) => State?.Breakpoints.Set(Debug.Breakpoints.Capture());
         Debug.Breakpoints.ExceptionsChanged += (_, _) => State?.Breakpoints.Set(Debug.Breakpoints.Capture());
+        Debug.Breakpoints.BindingErrorsChanged += (_, _) => State?.Breakpoints.Set(Debug.Breakpoints.Capture());
         Bookmarks.Changed += (_, _) => State?.Bookmarks.Set(Bookmarks.Capture());
         // What a Git operation changes in the files is one change set of the folder's Local History, under its name.
         Vcs.Activity = name => LocalHistory?.During(name);

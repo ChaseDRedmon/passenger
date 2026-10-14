@@ -4,6 +4,7 @@ using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.VisualTree;
 using Passenger.App;
+using Passenger.App.Debugging;
 using Passenger.App.LiveTree;
 using Passenger.App.ToolWindows;
 using Passenger.Core;
@@ -122,6 +123,182 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void Avalonia_binding_errors_stops_a_debugged_app_where_its_binding_fails_saying_what_failed_and_its_condition_and_log_choose()
+    {
+        MainWindow window = Opened();
+        BreakpointStore store = window.Debugger.Breakpoints;
+        string app = Path.Combine(folder, "App.axaml.cs");
+        string program = Path.Combine(folder, "Program.cs");
+
+        // Off until turned on, by its box in the Breakpoints window, under its own group after the CLR exception breakpoints.
+        Assert.False(store.BindingErrors.Enabled, "Avalonia Binding Errors was on before anything turned it on");
+        Ui.Run(window, AppActions.ViewBreakpoints);
+        BreakpointsWindow breakpoints = Assert.IsType<BreakpointsWindow>(window.Popup);
+        Assert.Equal([ExceptionBreakpoint.AnyException, BindingErrorBreakpoint.AnyBindingError], breakpoints.Listed.Select(b => b.Location));
+        Assert.Contains(breakpoints.GetVisualDescendants().OfType<TextBlock>(), t => t.Text == "Avalonia Binding Errors");
+        Click(window, Row(breakpoints, BindingErrorBreakpoint.AnyBindingError).GetVisualDescendants().OfType<CheckBox>().First());
+        Click(window, Button(breakpoints, "Done"));
+        Assert.True(store.BindingErrors.Enabled, "Its box did not turn Avalonia Binding Errors on");
+
+        // The caption's binding fails as the app gives its window a view model: the stop is there, in the app's own code.
+        Assert.Null(Ui.Await(window.DebugAsync(), "the app to build and start under the debugger", TimeSpan.FromMinutes(4)));
+        DebugStop stop = Stopped(window, "the stop where the window's view model makes the caption's binding fail");
+        AssertAt(stop, app, LineIn(app, "DataContext = new MainViewModel()"));
+        // Said where it is in the XAML, what it binds, its DataContext, the part of the path that failed and why.
+        Assert.Equal((Xaml, Misspelt), (stop.Binding?.Problem.Path, stop.Binding?.Problem.Position));
+        Says(window, $"paused on a binding error at MainWindow.axaml:{Misspelt.Line + 1}: TextBlock#Caption.Text to Nmae (DataContext MainViewModel): "
+            + "Could not find a matching property accessor for 'Nmae' on 'BindingErrorsApp.MainViewModel'");
+        Assert.Contains(window.EditorArea.CodeEditor.LineAnnotations, a => a.Kind == LineAnnotationKind.Exception && a.Text.StartsWith("Binding error at MainWindow.axaml", StringComparison.Ordinal));
+        // $bindingError above the frame's values, as $exception is, opening into the failure.
+        Assert.Equal("\"Nmae\"", Member(window, "$bindingError", "Path"));
+        Assert.Equal("\"Nmae\"", Member(window, "$bindingError", "FailedPart"));
+        Assert.Contains("MainViewModel", Member(window, "$bindingError", "DataContext"), StringComparison.Ordinal);
+        Assert.Contains("TextBlock", Member(window, "$bindingError", "Control"), StringComparison.Ordinal);
+        // Its control's element, where Avalonia records it: the line, and the column of its name.
+        Assert.Equal($"\"MainWindow.axaml:{Line("x:Name=\"Caption\"")}:{File.ReadAllLines(Xaml)[Line("x:Name=\"Caption\"") - 1].IndexOf("TextBlock", StringComparison.Ordinal) + 1}\"",
+            Member(window, "$bindingError", "Xaml"));
+        // The Debug console links the binding's XAML: a click shows the misspelt member.
+        window.BottomPanel.Debug.ShowTab(console: true);
+        OutputView console = window.BottomPanel.Debug.Console;
+        string line = WaitForLine(console, "the Debug console to link the binding that stopped the app", "paused on a binding error");
+        Assert.StartsWith($"MainWindow.axaml({Misspelt.Line + 1},{Misspelt.Column + 1}): paused on a binding error: TextBlock#Caption.Text to Nmae", line, StringComparison.Ordinal);
+        ClickLink(window, console, line);
+        Assert.Equal((Xaml, Misspelt), (window.EditorArea.Active?.Path, window.EditorArea.CodeEditor.CaretPosition));
+        Resume(window);
+
+        // A condition reads the failure: one that holds for none lets the next failure go by, one that holds stops there.
+        Condition(window, "$bindingError.Path == \"Name\"");
+        Say(window, "rebind");
+        Ui.WaitFor(() => Console(window).Contains("Bound again", StringComparison.Ordinal), "the app to bind its window again");
+        Assert.True(window.Debugger.Session?.State == DebugState.Running, $"A condition that held for no failure stopped the app: {window.Status}");
+        Condition(window, " || $bindingError.FailedPart == \"Nmae\"");
+        Say(window, "rebind");
+        stop = Stopped(window, "the stop where rebind makes the caption's binding fail again");
+        AssertAt(stop, program, LineIn(program, "window.DataContext = new MainViewModel();"));
+        Says(window, "paused on a binding error");
+        Resume(window);
+        Ui.WaitFor(() => Console(window).Split("Bound again").Length == 3, "the app to bind its window a second time");
+
+        // Not suspending, it logs its message, which reads the failure, and the app goes on.
+        Ui.Run(window, AppActions.ViewBreakpoints);
+        breakpoints = Assert.IsType<BreakpointsWindow>(window.Popup);
+        Click(window, Row(breakpoints, BindingErrorBreakpoint.AnyBindingError));
+        Click(window, breakpoints.GetVisualDescendants().OfType<CheckBox>().First(c => (c.Content as string) == "Suspend execution"));
+        Click(window, breakpoints.GetVisualDescendants().OfType<TextBox>().First(t => t.PlaceholderText?.StartsWith("Logged on each hit", StringComparison.Ordinal) == true));
+        window.KeyTextInput("{$bindingError.FailedPart} could not be read");
+        Click(window, Button(breakpoints, "Done"));
+        Assert.Equal((false, "{$bindingError.FailedPart} could not be read"), (store.BindingErrors.Suspend, store.BindingErrors.LogMessage));
+        Ui.Settle();
+        Say(window, "rebind");
+        Ui.WaitFor(() => Console(window).Split("Bound again").Length == 4, "the app to bind its window a third time, not stopping");
+        Ui.WaitFor(() => Console(window).Split('\n').Any(l => l.Contains("Nmae", StringComparison.Ordinal) && l.Contains("could not be read", StringComparison.Ordinal)),
+            $"the log message to say what failed:\n{Console(window)}");
+        Assert.True(window.Debugger.Session?.State == DebugState.Running, $"A breakpoint that does not suspend stopped the app: {window.Status}");
+
+        Ui.Run(window, AppActions.Stop);
+        Ui.WaitFor(() => !window.Debugger.IsDebugging, "the debugging to end");
+        window.Close();
+    }
+
+    /// <summary>Text typed after Avalonia Binding Errors' condition in the Breakpoints window.</summary>
+    private static void Condition(MainWindow window, string typed)
+    {
+        Ui.Run(window, AppActions.ViewBreakpoints);
+        BreakpointsWindow breakpoints = Assert.IsType<BreakpointsWindow>(window.Popup);
+        Click(window, Row(breakpoints, BindingErrorBreakpoint.AnyBindingError));
+        Click(window, breakpoints.GetVisualDescendants().OfType<TextBox>().First(t => t.PlaceholderText?.StartsWith("A C# condition", StringComparison.Ordinal) == true));
+        Ui.Press(window, "End");
+        window.KeyTextInput(typed);
+        Click(window, Button(breakpoints, "Done"));
+        Ui.Settle();
+    }
+
+    /// <summary>Waits for the program to stop and the stop to be read, which it returns; a failure says what the console said.</summary>
+    private static DebugStop Stopped(MainWindow window, string what)
+    {
+        try
+        {
+            Ui.WaitFor(() => window.Debugger.Session?.State is DebugState.Paused or DebugState.Ended && (window.Debugger.Stop is { } || window.Debugger.Session.State == DebugState.Ended),
+                what, TimeSpan.FromMinutes(1));
+        }
+        catch (TimeoutException)
+        {
+            string said = Console(window);
+            throw new TimeoutException($"Waited a minute for {what} ({window.Status}; Avalonia Binding Errors {window.Debugger.Breakpoints.BindingErrors.Status}: "
+                + $"{window.Debugger.Breakpoints.BindingErrors.Message}); the console said:\n{said[Math.Max(0, said.Length - 3000)..]}");
+        }
+        return window.Debugger.Stop ?? throw new Xunit.Sdk.XunitException($"The program ended before {what}: {window.Status}");
+    }
+
+    /// <summary>Resumes, and waits for the program to leave its stop.</summary>
+    private static void Resume(MainWindow window)
+    {
+        DebugSession session = window.Debugger.Session!;
+        bool resumed = false;
+        session.StateChanged += (_, _) => resumed |= session.State != DebugState.Paused;
+        Ui.Run(window, AppActions.Resume);
+        Ui.WaitFor(() => resumed, "the program to go on");
+    }
+
+    /// <summary>A stop shown at a line (from zero) of a file.</summary>
+    private static void AssertAt(DebugStop stop, string path, int line) =>
+        Assert.True(stop.Top?.Source?.Path == path && stop.Top.Line == line + 1,
+            $"The stop was shown at {stop.Top?.Source?.Path}:{stop.Top?.Line}, not {path}:{line + 1} "
+            + $"({stop.Reason}; {string.Join(" < ", stop.Frames.Take(12).Select(f => $"{f.Name} {Path.GetFileName(f.Source?.Path)}:{f.Line}"))})");
+
+    /// <summary>A member of a top-level row of Variables, the row opened to show it.</summary>
+    private static string Member(MainWindow window, string row, string name)
+    {
+        DebugView view = window.BottomPanel.Debug;
+        Ui.WaitFor(() => view.Tree.Rows.Any(r => r.Depth == 0 && r.Name == row),
+            $"{row} in Variables, not only {string.Join(", ", view.Tree.Rows.Where(r => r.Depth == 0).Select(r => r.Name))}");
+        VariableNode owner = view.Tree.Rows.First(r => r.Depth == 0 && r.Name == row);
+        if (!owner.IsExpanded)
+        {
+            _ = view.Tree.Expand(owner);
+        }
+        Ui.WaitFor(() => owner.Children?.Any(c => c.Name == name) == true, $"{row}'s {name} in Variables");
+        return owner.Children!.First(c => c.Name == name).Value;
+    }
+
+    /// <summary>A line of the app's input, typed into the Debug window's console.</summary>
+    private static void Say(MainWindow window, string line)
+    {
+        window.ShowToolWindow("debug");
+        window.BottomPanel.Debug.ShowTab(console: true);
+        Ui.Settle();
+        Type(window, window.BottomPanel.Debug.Console, line);
+    }
+
+    private static string Console(MainWindow window)
+    {
+        window.BottomPanel.Debug.Console.Flush();
+        return window.BottomPanel.Debug.Console.Document.Snapshot.ToString();
+    }
+
+    /// <summary>The status bar says something of the stop, once the stop's words are read.</summary>
+    private static void Says(MainWindow window, string text) =>
+        Ui.WaitFor(() => window.Status?.Contains(text, StringComparison.Ordinal) == true, $"the status bar to say \"{text}\", not \"{window.Status}\"", TimeSpan.FromSeconds(20));
+
+    private static ListBoxItem Row(BreakpointsWindow breakpoints, string location) =>
+        breakpoints.GetVisualDescendants().OfType<ListBoxItem>().First(i => (i.Tag as Breakpoint)?.Location == location);
+
+    private static Button Button(Control within, string content) =>
+        within.GetVisualDescendants().OfType<Button>().First(b => (b.Content as string) == content && b.IsEffectivelyVisible);
+
+    private static void Click(MainWindow window, Control control)
+    {
+        Point at = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)
+            ?? throw new InvalidOperationException("The control is not in the window");
+        window.MouseDown(at, Avalonia.Input.MouseButton.Left);
+        window.MouseUp(at, Avalonia.Input.MouseButton.Left);
+        Ui.Settle();
+    }
+
+    /// <summary>The line (from zero) of a file holding some text.</summary>
+    private static int LineIn(string file, string text) => Array.FindIndex(File.ReadAllLines(file), l => l.Contains(text, StringComparison.Ordinal));
+
     /// <summary>The folder opened in a window.</summary>
     private MainWindow Opened()
     {
@@ -132,14 +309,14 @@ public sealed class BindingErrorsTests : IClassFixture<RestoredFolders>, IDispos
         return window;
     }
 
-    /// <summary>The console's line saying the caption's binding failed, once it has it.</summary>
-    private static string WaitForLine(OutputView console, string what)
+    /// <summary>The console's line saying the caption's binding failed (or what else it says), once it has it.</summary>
+    private static string WaitForLine(OutputView console, string what, string saying = "binding error")
     {
         string? line = null;
         Ui.WaitFor(() =>
         {
             console.Flush();
-            line = console.Document.Snapshot.ToString().Split('\n').FirstOrDefault(l => l.Contains("binding error", StringComparison.Ordinal));
+            line = console.Document.Snapshot.ToString().Split('\n').FirstOrDefault(l => l.Contains(saying, StringComparison.Ordinal));
             return line is not null;
         }, what, TimeSpan.FromMinutes(2));
         return line!;

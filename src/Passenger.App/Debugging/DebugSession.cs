@@ -41,9 +41,11 @@ public sealed class DebugSession
     private string? dataSent;
     private readonly Dictionary<int, DataBreakpoint> dataById = [];
 
-    /// <summary>The property breakpoints as last sent, and each by the id the debugger gave its function breakpoint.</summary>
-    private string? propertiesSent;
+    /// <summary>The function breakpoints (the property breakpoints' and Avalonia Binding Errors') as last sent, and the
+    /// breakpoint each is by the id the debugger gave it.</summary>
+    private string functionsSent = string.Empty;
     private readonly Dictionary<int, PropertyBreakpoint> propertyById = [];
+    private int? bindingErrorsId;
 
     private readonly Dictionary<int, LineBreakpoint> byId = [];
     private readonly TaskCompletionSource initialized = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -137,7 +139,8 @@ public sealed class DebugSession
         breakpoints.Changed += OnBreakpointsChanged;
         breakpoints.ExceptionsChanged += OnExceptionsChanged;
         breakpoints.DataChanged += OnDataChanged;
-        breakpoints.PropertiesChanged += OnPropertiesChanged;
+        breakpoints.PropertiesChanged += OnFunctionsChanged;
+        breakpoints.BindingErrorsChanged += OnFunctionsChanged;
     }
 
     public event EventHandler? StateChanged;
@@ -156,6 +159,9 @@ public sealed class DebugSession
 
     /// <summary>The property breakpoint the program stopped at, while paused there.</summary>
     public PropertyBreakpoint? PropertyStop { get; private set; }
+
+    /// <summary>Paused at Avalonia Binding Errors: a binding of the app failed where it stopped.</summary>
+    public bool BindingErrorStop { get; private set; }
 
     /// <summary>Why the debugger can set no data breakpoint where it runs, or null where it can.</summary>
     public string? DataBreakpointsUnavailable { get; private set; } = "The debugger has not started";
@@ -252,6 +258,10 @@ public sealed class DebugSession
                 await session.SendBreakpointsAsync(path);
             }
             await session.SendExceptionBreakpointsAsync();
+            if (session.FunctionSignature().Length > 0)
+            {
+                await session.SendFunctionBreakpointsAsync();
+            }
             await session.connection.RequestAsync("configurationDone", new DapEmpty());
             session.SetState(DebugState.Running);
             return session;
@@ -710,10 +720,15 @@ public sealed class DebugSession
     /// <summary>The property breakpoints that are on; none while muted.</summary>
     private List<PropertyBreakpoint> PropertiesSending() => breakpoints.Muted ? [] : [.. breakpoints.Properties.Where(p => p.Enabled)];
 
-    /// <summary>Sends the property breakpoints, a function breakpoint each on the method the inspector in the app calls at a
-    /// watched property's change, its condition naming the breakpoint first; the hit count is the inspector's, which
-    /// counts only its own property's changes. One whose hit count cannot be read is refused here, as a line's is.</summary>
-    private async Task SendPropertyBreakpointsAsync()
+    /// <summary>Avalonia Binding Errors when it is on; never while muted.</summary>
+    private BindingErrorBreakpoint? BindingErrorsSending() => !breakpoints.Muted && breakpoints.BindingErrors.Enabled ? breakpoints.BindingErrors : null;
+
+    /// <summary>Sends the function breakpoints, which replace those sent before. A property breakpoint is one on the method
+    /// the inspector in the app calls at a watched property's change, its condition naming the breakpoint first; its hit count
+    /// is the inspector's, which counts only its own property's changes, and one the inspector cannot read is refused here, as
+    /// a line's is. Avalonia Binding Errors is one on the method each failed binding calls, its condition and log message
+    /// reading the failure as <c>$bindingError</c>, the method's parameter.</summary>
+    private async Task SendFunctionBreakpointsAsync()
     {
         List<(PropertyBreakpoint, BreakpointStatus, string?)> said = [];
         List<PropertyBreakpoint> sending = [];
@@ -728,20 +743,28 @@ public sealed class DebugSession
                 sending.Add(breakpoint);
             }
         }
-        propertiesSent = PropertySignature();
+        BindingErrorBreakpoint? bindingErrors = BindingErrorsSending();
+        functionsSent = FunctionSignature();
+        List<DapFunctionBreakpoint> requests = [.. sending.Select(p => new DapFunctionBreakpoint(Inspector.Wire.Changed,
+            $"breakpoint == {p.Id}" + (p.Condition is { } condition ? $" && ({condition})" : string.Empty), null, p.LogMessage, p.Suspend))];
+        if (bindingErrors is not null)
+        {
+            requests.Add(new DapFunctionBreakpoint(Inspector.Wire.Failed, BindingErrorTerms(bindingErrors.Condition), bindingErrors.HitCondition,
+                BindingErrorTerms(bindingErrors.LogMessage) ?? (bindingErrors.Suspend ? null : BindingErrorLog), bindingErrors.Suspend));
+        }
         SetBreakpointsResponse response;
         try
         {
-            response = await connection.RequestAsync<SetBreakpointsResponse>("setFunctionBreakpoints", new SetFunctionBreakpointsArguments(
-                [.. sending.Select(p => new DapFunctionBreakpoint(Inspector.Wire.Changed, $"breakpoint == {p.Id}" + (p.Condition is { } condition ? $" && ({condition})" : string.Empty),
-                    null, p.LogMessage, p.Suspend))]));
+            response = await connection.RequestAsync<SetBreakpointsResponse>("setFunctionBreakpoints", new SetFunctionBreakpointsArguments(requests));
         }
         catch (DapException refused)
         {
             breakpoints.ReportProperties([.. said, .. sending.Select(p => (p, BreakpointStatus.Invalid, (string?)refused.Reason))]);
+            breakpoints.ReportBindingErrors(bindingErrors is null ? BreakpointStatus.Unknown : BreakpointStatus.Invalid, bindingErrors is null ? null : refused.Reason);
             return;
         }
         propertyById.Clear();
+        bindingErrorsId = null;
         for (int i = 0; i < Math.Min(sending.Count, response.Breakpoints.Count); i++)
         {
             DapBreakpoint answer = response.Breakpoints[i];
@@ -752,18 +775,47 @@ public sealed class DebugSession
             said.Add((sending[i], answer.Verified ? BreakpointStatus.Bound : answer.Reason == "failed" ? BreakpointStatus.Invalid : BreakpointStatus.Unknown, answer.Message));
         }
         breakpoints.ReportProperties(said);
-    }
-
-    private void OnPropertiesChanged(object? sender, EventArgs e)
-    {
-        // A report from the debugger raises it too: only what changes the request goes back to it.
-        if (State is DebugState.Running or DebugState.Paused && disconnected is null && propertiesSent != PropertySignature())
+        if (bindingErrors is not null && response.Breakpoints.Count > sending.Count)
         {
-            _ = SendPropertyBreakpointsAsync();
+            DapBreakpoint answer = response.Breakpoints[sending.Count];
+            bindingErrorsId = answer.Id;
+            ReportBindingErrors(answer);
+        }
+        else
+        {
+            breakpoints.ReportBindingErrors(BreakpointStatus.Unknown, null);
         }
     }
 
-    private string PropertySignature() => string.Join(';', PropertiesSending().Select(p => $"{p.Id}|{p.Condition}|{p.HitCondition}|{p.LogMessage}|{p.Suspend}"));
+    /// <summary>What a tracepoint of Avalonia Binding Errors with no message of its own logs, as Rider's "Breakpoint reached"
+    /// does for a line's: the failure.</summary>
+    private const string BindingErrorLog = "Avalonia binding error: {bindingError.Description,nq}";
+
+    /// <summary>A condition or log message of Avalonia Binding Errors as the debugger reads it: <c>$bindingError</c>, the name
+    /// Variables shows the failure by, is the parameter of the method it stops in.</summary>
+    private static string? BindingErrorTerms(string? text) => text?.Replace("$bindingError", "bindingError", StringComparison.Ordinal);
+
+    /// <summary>What the debugger said of Avalonia Binding Errors: until an Avalonia app's inspector has loaded, it has nowhere
+    /// to stop, which is no fault of the breakpoint.</summary>
+    private void ReportBindingErrors(DapBreakpoint answer) =>
+        breakpoints.ReportBindingErrors(answer.Verified ? BreakpointStatus.Bound : answer.Reason == "failed" ? BreakpointStatus.Invalid : BreakpointStatus.Unknown,
+            answer.Verified || answer.Reason == "failed" ? answer.Message : NoAvaloniaApp);
+
+    /// <summary>Why Avalonia Binding Errors has not bound in a program the debugger runs.</summary>
+    private const string NoAvaloniaApp = "No Avalonia app has started under the debugger with the Live Visual Tree's inspector, which tells of its failed bindings";
+
+    private void OnFunctionsChanged(object? sender, EventArgs e)
+    {
+        // A report from the debugger raises it too: only what changes the request goes back to it.
+        if (State is DebugState.Running or DebugState.Paused && disconnected is null && functionsSent != FunctionSignature())
+        {
+            _ = SendFunctionBreakpointsAsync();
+        }
+    }
+
+    private string FunctionSignature() =>
+        string.Join(';', PropertiesSending().Select(p => $"{p.Id}|{p.Condition}|{p.HitCondition}|{p.LogMessage}|{p.Suspend}"))
+        + (BindingErrorsSending() is { } b ? $";binding|{b.Condition}|{b.HitCondition}|{b.LogMessage}|{b.Suspend}" : string.Empty);
 
     private string ExceptionSignature() => string.Join(';', ExceptionOptions().Select(s =>
         $"{s.Breakpoint.Type}|{string.Join(',', s.Option.Scenarios ?? [])}|{s.Option.Condition}|{s.Option.HitCondition}|{s.Option.LogMessage}|{s.Option.Suspend}"));
@@ -784,6 +836,7 @@ public sealed class DebugSession
                     ? (watched, stopped.Text)
                     : null;
                 PropertyStop = stopped.Reason == "breakpoint" ? stopped.HitBreakpointIds?.Select(id => propertyById.GetValueOrDefault(id)).FirstOrDefault(p => p is not null) : null;
+                BindingErrorStop = stopped.Reason == "breakpoint" && bindingErrorsId is int failed && stopped.HitBreakpointIds?.Contains(failed) == true;
                 if (runToCursor is { } target)
                 {
                     runToCursor = null;
@@ -804,6 +857,10 @@ public sealed class DebugSession
                 {
                     (BreakpointStatus status, string? message, _) = Status(changed.Breakpoint);
                     breakpoints.ReportProperties([.. breakpoints.Properties.Where(p => p != property).Select(p => (p, p.Status, p.Message)), (property, status, message)]);
+                }
+                else if (changed.Breakpoint.Id is int bound && bound == bindingErrorsId)
+                {
+                    ReportBindingErrors(changed.Breakpoint);
                 }
                 break;
             case "process":
@@ -843,6 +900,7 @@ public sealed class DebugSession
             StopReason = null;
             DataStop = null;
             PropertyStop = null;
+            BindingErrorStop = false;
         }
         State = state;
         StateChanged?.Invoke(this, EventArgs.Empty);
@@ -859,7 +917,8 @@ public sealed class DebugSession
         breakpoints.Changed -= OnBreakpointsChanged;
         breakpoints.ExceptionsChanged -= OnExceptionsChanged;
         breakpoints.DataChanged -= OnDataChanged;
-        breakpoints.PropertiesChanged -= OnPropertiesChanged;
+        breakpoints.PropertiesChanged -= OnFunctionsChanged;
+        breakpoints.BindingErrorsChanged -= OnFunctionsChanged;
         breakpoints.ResetStatus();
         // Each watched a member of one of this session's objects, as Rider's do: none outlives it.
         breakpoints.ClearData();

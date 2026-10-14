@@ -1,10 +1,15 @@
+using System.Text.Json;
 using Avalonia.Threading;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Passenger.App.Editors;
+using Passenger.App.LiveTree;
 using Passenger.App.ToolWindows;
 using Passenger.App.Workspace;
 using Passenger.Core;
 using Passenger.Dap;
 using Passenger.Editor;
+using Passenger.Inspector;
 using Passenger.Text;
 
 namespace Passenger.App.Debugging;
@@ -39,6 +44,14 @@ public sealed class DebugController : IDisposable
 
     /// <summary>What a property breakpoint's stop changed and what changed it, as the inspector in the app said it.</summary>
     private string? propertyChange;
+
+    /// <summary>The failed binding Avalonia Binding Errors stopped at, as the inspector's call there has it, and the frame
+    /// shown at the stop, where its words are written over the line.</summary>
+    private BindingStop? bindingStop;
+    private int? bindingFrame;
+
+    /// <summary>The failed binding the program is paused at, once the stop is read; null otherwise.</summary>
+    public BindingStop? BindingStop => Stop is not null ? bindingStop : null;
 
     /// <summary>Counts the stops shown and the runs between them, so what a stop's requests bring back once the program has
     /// gone on is dropped rather than shown over what is now true.</summary>
@@ -160,6 +173,9 @@ public sealed class DebugController : IDisposable
     /// own), for a configuration that uses the terminal; without it such a program runs in the Console.</summary>
     public Func<string, RunInTerminalArguments, Task<Run.TerminalRun>>? RunInTerminal { get; init; }
 
+    /// <summary>The folder open, which the Debug console names its files from.</summary>
+    public string? Folder { get; init; }
+
     /// <summary>Launches a plan's program under the debugger (after its build), its output in the Debug window's Console,
     /// or in a tab of the Terminal window when its configuration uses the terminal. Null once the session is open (the
     /// program may have ended already), else why it could not.</summary>
@@ -209,6 +225,8 @@ public sealed class DebugController : IDisposable
         frame = null;
         stopException = null;
         undescribed = null;
+        bindingStop = null;
+        bindingFrame = null;
         lastResult = null;
         BuiltLines built = new();
         lines = built;
@@ -643,6 +661,8 @@ public sealed class DebugController : IDisposable
                 editors.CodeEditor.CancelChoices();
                 executionPoint = null;
                 stopException = null;
+                bindingStop = null;
+                bindingFrame = null;
                 UpdateAllMarks();
                 ClearInlineValues();
                 clearing.Start();
@@ -672,6 +692,9 @@ public sealed class DebugController : IDisposable
             $"{name}: Data Breakpoint Hit: {watched.Location} is changed{(change is null ? string.Empty : $" ({change})")}",
         DebugState.Paused when session.PropertyStop is { } property =>
             $"{name}: Property Breakpoint Hit: {property.Location} is changed{(propertyChange is null ? string.Empty : $" ({propertyChange})")}",
+        DebugState.Paused when bindingStop is { } failed =>
+            $"{name}: paused on a binding error{(BindingErrors.Where(failed.Problem) is { } where ? $" at {where}" : string.Empty)}: {BindingErrors.Stopped(failed.Problem.Failure)}",
+        DebugState.Paused when session.BindingErrorStop => $"{name}: paused on a binding error the debugger could not describe",
         DebugState.Paused => $"{name}: paused ({session.StopReason})",
         DebugState.Running => $"{name}: running",
         _ when session.Detached => $"Detached from {name}, which runs on",
@@ -692,15 +715,16 @@ public sealed class DebugController : IDisposable
         stopException = null;
         undescribed = null;
         propertyChange = null;
+        bindingStop = null;
+        bindingFrame = null;
         if (session.PropertyStop is not null)
         {
             try
             {
                 // Said by the inspector's call the debugger stopped in: the values, and what set the new one.
-                if ((await session.StackTraceAsync(thread)).FirstOrDefault() is { } changed
-                    && (await session.EvaluateAsync("change", changed.Id, "watch")).Result is { Length: > 1 } said && said[0] == '"' && said[^1] == '"')
+                if ((await session.StackTraceAsync(thread)).FirstOrDefault() is { } changed)
                 {
-                    propertyChange = said[1..^1].Replace("\\\"", "\"", StringComparison.Ordinal).Replace("\\\\", "\\", StringComparison.Ordinal);
+                    propertyChange = StringValue((await session.EvaluateAsync("change", changed.Id, "watch")).Result);
                 }
             }
             catch (DapException)
@@ -710,6 +734,25 @@ public sealed class DebugController : IDisposable
             if (stop != shown)
             {
                 return;
+            }
+        }
+        if (session.BindingErrorStop)
+        {
+            try
+            {
+                bindingStop = await ReadBindingStop(session, thread);
+            }
+            catch (DapException)
+            {
+                // The stop shows without its words.
+            }
+            if (stop != shown)
+            {
+                return;
+            }
+            if (bindingStop is { } failed)
+            {
+                view.Console.Append(BindingErrors.StopLine(failed.Problem, Folder), error: true);
             }
         }
         if (session.StopReason == "exception")
@@ -740,6 +783,39 @@ public sealed class DebugController : IDisposable
         }
     }
 
+    /// <summary>The failed binding the program stopped at, as the inspector's call the debugger stopped in has it: the failure
+    /// it gives as the protocol writes one, placed in its XAML, and the call's parameter, which Variables shows as
+    /// <c>$bindingError</c>. Null when the call's frame does not say.</summary>
+    private async Task<BindingStop?> ReadBindingStop(DebugSession session, int thread)
+    {
+        if ((await session.StackTraceAsync(thread)).FirstOrDefault() is not { } call)
+        {
+            return null;
+        }
+        EvaluateResponse error = await session.EvaluateAsync("bindingError", call.Id, "watch");
+        if (StringValue((await session.EvaluateAsync("bindingError.Said", call.Id, "watch")).Result) is not { } said)
+        {
+            return null;
+        }
+        BindingFailure? failure;
+        try
+        {
+            failure = JsonSerializer.Deserialize(said, WireJson.Default.BindingFailure);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+        return failure is null ? null : new BindingStop(
+            BindingErrors.Problem(failure, failure.Place is { } at ? BindingErrors.TextOf(at.File, editors.Documents) : null), error.Result, error.Type, error.VariablesReference);
+    }
+
+    /// <summary>A string as the debugger shows one, a C# literal, as it is; null for anything else (an error, null).</summary>
+    public static string? StringValue(string shown) =>
+        shown.Length > 1 && shown[0] == '"' && SyntaxFactory.ParseExpression(shown) is LiteralExpressionSyntax { RawKind: (int)SyntaxKind.StringLiteralExpression } literal
+            ? literal.Token.ValueText
+            : null;
+
     private async Task ChooseThread(int thread)
     {
         if (Session is not { State: DebugState.Paused } session)
@@ -753,23 +829,29 @@ public sealed class DebugController : IDisposable
         {
             return;
         }
-        // A property breakpoint stops in the inspector's call, under Avalonia's: the user's code that set the value is where
-        // it stopped, as Just My Code shows it; with none (a style a pointer set) the call's own frame, whose values say what
-        // changed, but no line of the inspector's.
+        // A property breakpoint, and Avalonia Binding Errors, stop in the inspector's call, under Avalonia's: the user's code
+        // that set the value or made the binding fail is where it stopped, as Just My Code shows it; with none (a style a
+        // pointer set) the call's own frame, whose values say what happened, but no line of the inspector's.
         DapStackFrame? user = stack.FirstOrDefault(f => f.Source?.Path is not null && f.PresentationHint != "subtle");
-        bool property = thread == session.StoppedThread && session.PropertyStop is not null;
-        DapStackFrame? top = property ? user ?? stack.FirstOrDefault() : stack.FirstOrDefault(f => f.Source?.Path is not null) ?? stack.FirstOrDefault();
-        bool shows = !property || top == user;
+        bool inspected = thread == session.StoppedThread && (session.PropertyStop is not null || session.BindingErrorStop);
+        DapStackFrame? top = inspected ? user ?? stack.FirstOrDefault() : stack.FirstOrDefault(f => f.Source?.Path is not null) ?? stack.FirstOrDefault();
+        bool shows = !inspected || top == user;
         executionPoint = thread == session.StoppedThread && shows && top?.Source?.Path is { } path ? (path, top.Line - 1) : executionPoint;
         if (thread == session.StoppedThread)
         {
-            Stop = new DebugStop(thread, session.StopReason, stack, top, stopException?.Text);
+            Stop = new DebugStop(thread, session.StopReason, stack, top, stopException?.Text) { Binding = bindingStop?.Problem };
+            bindingFrame = bindingStop is not null && shows ? top?.Id : null;
         }
         view.ShowFrames(threads, threads.FirstOrDefault(t => t.Id == thread), stack, top);
         UpdateAllMarks();
         if (top is not null)
         {
             await ChooseFrame(top, navigate: shows);
+        }
+        if (thread == session.StoppedThread && !shows && bindingStop?.Problem.Problem is { Path: { } xaml } failedAt && File.Exists(xaml))
+        {
+            // No code of the app's made the binding fail (a template's, a style's): its XAML is where to look.
+            Navigate?.Invoke(this, (xaml, failedAt.Position));
         }
     }
 
@@ -796,6 +878,11 @@ public sealed class DebugController : IDisposable
             return;
         }
         List<VariableNode> rows = [];
+        if (bindingStop is { } failed && Stop is { } stopped && stopped.Frames.Any(f => f.Id == current.Id))
+        {
+            // The failed binding above the frame's own values, where Rider lists $exception: the inspector call's parameter.
+            rows.Add(new VariableNode(BindingStop.Name, failed.Value, failed.Type, failed.Reference, 0, VariableRole.Value));
+        }
         foreach (string watch in watches)
         {
             rows.Add(await Evaluated(session, current, watch, VariableRole.Watch));
@@ -852,7 +939,9 @@ public sealed class DebugController : IDisposable
             IReadOnlyList<LineAnnotation> inline = document.Syntax is { } syntax ? InlineValues.For(syntax.Current, line, values) : [];
             document.LineAnnotations = stopException is { } thrown && thrown.FrameId == current.Id
                 ? [new LineAnnotation(line, thrown.Text, LineAnnotationKind.Exception), .. inline]
-                : inline;
+                : bindingStop is { } failed && bindingFrame == current.Id
+                    ? [new LineAnnotation(line, $"Binding error{(BindingErrors.Where(failed.Problem) is { } where ? $" at {where}" : string.Empty)}: {BindingErrors.Stopped(failed.Problem.Failure)}", LineAnnotationKind.Exception), .. inline]
+                    : inline;
         }
     }
 
@@ -1080,4 +1169,17 @@ public sealed record DataWatchOffer(string Title, string? WhyNot)
 
 /// <summary>A stop as the debugger read it: the thread that stopped and why, its frames (the top one with source among
 /// them), and the exception it stopped on, described as the stop's line shows it.</summary>
-public sealed record DebugStop(int Thread, string? Reason, IReadOnlyList<DapStackFrame> Frames, DapStackFrame? Top, string? Exception);
+public sealed record DebugStop(int Thread, string? Reason, IReadOnlyList<DapStackFrame> Frames, DapStackFrame? Top, string? Exception)
+{
+    /// <summary>The failed binding Avalonia Binding Errors stopped at, placed in its XAML.</summary>
+    public BindingProblem? Binding { get; init; }
+}
+
+/// <summary>A failed binding the program stopped at: the failure placed in its XAML (at the member its path misspells, else
+/// its control's element), and the inspector call's parameter as the debugger shows it, which opens into its parts.</summary>
+public sealed record BindingStop(BindingProblem Problem, string Value, string? Type, int Reference)
+{
+    /// <summary>Its row in Variables, as Rider names the exception stopped at $exception; the breakpoint's condition and log
+    /// message read it by the same name.</summary>
+    public const string Name = "$bindingError";
+}

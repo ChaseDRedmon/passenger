@@ -38,6 +38,51 @@ public static partial class BindingErrors
         ? failure.Message
         : $"{failure.Message.TrimEnd()} Did you mean {string.Join(" or ", failure.Nearest)}?";
 
+    /// <summary>A failure the debugger stopped at (Avalonia Binding Errors), as the Debug console says it, its place first so
+    /// the console links it: "MainWindow.axaml(10,26): paused on a binding error: TextBlock#Caption.Text to Nmae (DataContext
+    /// MainViewModel): Could not find ... Did you mean Name?".</summary>
+    public static string StopLine(BindingProblem problem, string? folder)
+    {
+        Problem at = problem.Problem;
+        string place = at.Path is { } file ? $"{Shown(file, folder)}({at.Position.Line + 1},{at.Position.Column + 1}): " : string.Empty;
+        return $"{place}paused on a binding error: {Stopped(problem.Failure)}\n";
+    }
+
+    /// <summary>What a failure the debugger stopped at binds, the part of its path that failed when not the whole, its
+    /// control's DataContext and why: "TextBlock#Caption.Text to Person.Nmae at Nmae (DataContext MainViewModel): Could not
+    /// find ... Did you mean Name?".</summary>
+    public static string Stopped(BindingFailure failure)
+    {
+        string at = failure.ErrorPoint is { Length: > 0 } point && point != failure.Path ? $" at {point}" : string.Empty;
+        return $"{failure.Control}.{failure.Property} to {failure.Path}{at} (DataContext {failure.DataContext ?? "null"}): {Message(failure)}";
+    }
+
+    /// <summary>Where a problem is, as the status bar names it: "MainWindow.axaml:10".</summary>
+    public static string? Where(BindingProblem problem) =>
+        problem.Problem.Path is { } file ? $"{Path.GetFileName(file)}:{problem.Problem.Position.Line + 1}" : null;
+
+    /// <summary>A XAML file's text as the editor has it, else as it is on disk, else none.</summary>
+    public static TextSnapshot? TextOf(string file, IEnumerable<OpenDocument> documents)
+    {
+        if (!File.Exists(file))
+        {
+            return null;
+        }
+        string path = PathNames.Canonical(file);
+        if (documents.FirstOrDefault(d => PathNames.Same(d.Path, path)) is { } open)
+        {
+            return open.Text.Snapshot;
+        }
+        try
+        {
+            return FileText.Load(path) is { } read ? TextSnapshot.From(read.Text) : null;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
     private static string Shown(string file, string? folder) =>
         folder is not null && PathNames.IsUnder(file, folder) ? Path.GetRelativePath(folder, file) : file;
 

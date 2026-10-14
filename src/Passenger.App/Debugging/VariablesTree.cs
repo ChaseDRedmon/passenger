@@ -21,8 +21,8 @@ public sealed class VariableNode(string name, string value, string? type, int re
     /// <summary>A value a call of the last step returned, listed at the top of the frame's values as Rider lists them.</summary>
     public bool IsReturnValue => Depth == 0 && Role == VariableRole.Value && EvaluateName?.StartsWith("$ReturnValue", StringComparison.Ordinal) == true;
 
-    /// <summary>The exception the program stopped at, $exception.</summary>
-    public bool IsException => Depth == 0 && Role == VariableRole.Value && Name == "$exception";
+    /// <summary>The exception the program stopped at, $exception, or the failed binding, $bindingError.</summary>
+    public bool IsException => Depth == 0 && Role == VariableRole.Value && Name is "$exception" or BindingStop.Name;
 
     /// <summary>The C# that reaches this value from the frame, for Set Value: a local's name, a member after its
     /// object's expression, an element's index after its array's. Null for a row no expression reaches (a

@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using System.Reflection;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Avalonia;
 using Avalonia.Logging;
@@ -8,7 +10,10 @@ namespace Passenger.Inspector;
 /// <summary>The app's failed bindings, as Avalonia logs them in its Binding area: a sink of the inspector's takes Avalonia's
 /// logger from before the app's Main, and again over whichever sink the app sets (its LogToTrace), handing the app's sink
 /// everything it asked for, so the app logs as it always did. Each distinct failure (its control's XAML element, property,
-/// path and message) is sent the first time and its count again as it repeats, a quarter second apart at most.</summary>
+/// path and message) is sent the first time and its count again as it repeats, a quarter second apart at most. In a debugged
+/// app each failure, repeats too, also calls <see cref="Breaks.BindingFailed"/> before Avalonia goes on. Non-user code, so
+/// the stop there shows the app's own code below as where it stopped.</summary>
+[DebuggerNonUserCode]
 internal static partial class Bindings
 {
     /// <summary>How long repeats of a failure gather before their count is sent.</summary>
@@ -78,7 +83,8 @@ internal static partial class Bindings
     private static void Record(LogEventLevel level, object? source, string template, object?[] values)
     {
         Dictionary<string, object?> named = Named(template, values);
-        string property = named.GetValueOrDefault("Property") switch
+        object? bound = named.GetValueOrDefault("Property");
+        string property = bound switch
         {
             AvaloniaProperty { IsAttached: true } attached => $"{Inspector.TypeName(attached.OwnerType)}.{attached.Name}",
             AvaloniaProperty own => own.Name,
@@ -95,9 +101,14 @@ internal static partial class Bindings
             _ => Inspector.TypeName(source.GetType()),
         };
         // Avalonia's attached properties are read on the object's own thread, which is the one logging, in every app.
-        SourcePlace? place = source is AvaloniaObject made && made.CheckAccess() ? Details.Place(made) : null;
+        AvaloniaObject? made = source as AvaloniaObject;
+        bool onItsThread = made?.CheckAccess() == true;
+        SourcePlace? place = onItsThread ? Details.Place(made!) : null;
         string key = $"{place?.File}\n{place?.Line}\n{place?.Column}\n{control}\n{property}\n{path}\n{point}\n{message}";
+        // Under a debugger every failure, a repeat or one past the most counted, calls where Avalonia Binding Errors stops.
+        bool debugged = Debugger.IsAttached;
         BindingFailure? send = null;
+        BindingFailure failure;
         lock (Gate)
         {
             if (Seen.TryGetValue(key, out Failure? known))
@@ -108,18 +119,35 @@ internal static partial class Bindings
                     gathering = true;
                     timer?.Change(Gather, Timeout.InfiniteTimeSpan);
                 }
-                return;
+                failure = known.First with { Count = known.Count };
             }
-            if (Seen.Count >= Most)
+            else if (Seen.Count >= Most && !debugged)
             {
                 return;
             }
-            (string? type, string? member, IReadOnlyList<string> nearest) = Missing(message);
-            BindingFailure first = new(Seen.Count + 1, level.ToString(), control, property, path, point, message, place, type, member, nearest, 1);
-            Seen[key] = new Failure(first) { Count = 1, Sent = 1 };
-            send = first;
+            else
+            {
+                // Past the most counted, a debugged app's failure still stops, without the nearest names to offer.
+                (string? type, string? member, IReadOnlyList<string> nearest) = Seen.Count < Most ? Missing(message) : (null, null, []);
+                failure = new BindingFailure(Seen.Count + 1, level.ToString(), control, property, path, point, message, place, type, member, nearest, 1);
+                if (Seen.Count < Most)
+                {
+                    Seen[key] = new Failure(failure) { Count = 1, Sent = 1 };
+                    send = failure;
+                }
+            }
         }
-        connection?.Send(new Reply { Event = Wire.BindingFailed, Binding = send });
+        if (send is not null)
+        {
+            connection?.Send(new Reply { Event = Wire.BindingFailed, Binding = send });
+        }
+        if (debugged && !stopped)
+        {
+            object? dataContext = onItsThread && made is StyledElement styled ? styled.DataContext : null;
+            failure = failure with { DataContext = dataContext is null ? null : Inspector.TypeName(dataContext.GetType()) };
+            Breaks.BindingFailed(new BindingError(made, bound as AvaloniaProperty, dataContext, failure,
+                JsonSerializer.Serialize(failure, WireJson.Default.BindingFailure)));
+        }
     }
 
     /// <summary>Sends the count of each failure that repeated since it was last sent.</summary>

@@ -96,6 +96,20 @@ public sealed class PropertyBreakpoint(int id, long element, string described, s
     public override string Location { get; } = $"{property} on {described}";
 }
 
+/// <summary>The Avalonia Binding Errors breakpoint, as an exception breakpoint is for exceptions: on, it stops an Avalonia app
+/// being debugged the moment one of its bindings fails, where the app was when it failed (the inspector in the app calls
+/// <see cref="Inspector.Wire.Failed"/> there). Every folder has the one, off until it is turned on, and none removes it.
+/// Its condition and log message read the failure as <c>$bindingError</c>.</summary>
+public sealed class BindingErrorBreakpoint : Breakpoint
+{
+    /// <summary>Its name in the Breakpoints window, under "Avalonia Binding Errors", as "Any exception" is under the CLR's.</summary>
+    public const string AnyBindingError = "Any binding error";
+
+    public BindingErrorBreakpoint() => Enabled = false;
+
+    public override string Location => AnyBindingError;
+}
+
 public enum BreakpointStatus
 {
     /// <summary>No debugger has said, or none is running.</summary>
@@ -114,6 +128,9 @@ public sealed record BreakpointsState : IStateDocument<BreakpointsState>
 
     /// <summary>The CLR exception breakpoints, "Any exception" (no type) among them; none kept is "Any exception" as Rider has it.</summary>
     public List<KeptExceptionBreakpoint>? Exceptions { get; init; }
+
+    /// <summary>The Avalonia Binding Errors breakpoint; none kept is off.</summary>
+    public KeptBindingErrorBreakpoint? BindingErrors { get; init; }
 
     public static IReadOnlyList<Action<JsonObject>> Upgrades { get; } = [StateStore.Unversioned];
 
@@ -154,7 +171,18 @@ public sealed record KeptExceptionBreakpoint(string? Type)
     public bool Unhandled { get; init; } = true;
 }
 
-/// <summary>Every breakpoint: the line breakpoints by file, the CLR exception breakpoints and the session's data breakpoints.
+/// <summary>The Avalonia Binding Errors breakpoint as kept: whether it is on and what it does.</summary>
+public sealed record KeptBindingErrorBreakpoint
+{
+    public bool Enabled { get; init; }
+    public bool Suspend { get; init; } = true;
+    public string? Condition { get; init; }
+    public string? HitCondition { get; init; }
+    public string? LogMessage { get; init; }
+}
+
+/// <summary>Every breakpoint: the line breakpoints by file, the CLR exception breakpoints, Avalonia Binding Errors and the
+/// session's data and property breakpoints.
 /// A breakpoint in an open file moves with the text around it, as Rider's do, so an edit above it leaves it on its line;
 /// one whose line is deleted lands where the deletion did, and two on one line become one. Muted, none of them stops the
 /// program, as Rider's Mute Breakpoints has it, though each keeps whether it is on.</summary>
@@ -180,6 +208,12 @@ public sealed class BreakpointStore
 
     /// <summary>The data breakpoints changed: added, removed, muted, what one does, or what the debugger said.</summary>
     public event EventHandler? DataChanged;
+
+    /// <summary>Avalonia Binding Errors changed: turned on or off, muted, what it does, or what the debugger said.</summary>
+    public event EventHandler? BindingErrorsChanged;
+
+    /// <summary>Avalonia Binding Errors, the folder's one, off until it is turned on.</summary>
+    public BindingErrorBreakpoint BindingErrors { get; } = new();
 
     public IEnumerable<string> Files => byPath.Where(p => p.Value.Count > 0).Select(p => p.Key);
 
@@ -222,6 +256,14 @@ public sealed class BreakpointStore
             HandledInExternalCode = e.Scenarios.HasFlag(ExceptionScenarios.HandledInExternalCode),
             Unhandled = e.Scenarios.HasFlag(ExceptionScenarios.Unhandled),
         })],
+        BindingErrors = new KeptBindingErrorBreakpoint
+        {
+            Enabled = BindingErrors.Enabled,
+            Suspend = BindingErrors.Suspend,
+            Condition = BindingErrors.Condition,
+            HitCondition = BindingErrors.HitCondition,
+            LogMessage = BindingErrors.LogMessage,
+        },
     };
 
     /// <summary>Sets the breakpoints a folder kept, beside those there are; a line with one already keeps it. The exception
@@ -269,10 +311,25 @@ public sealed class BreakpointStore
             }
             ExceptionsChanged?.Invoke(this, EventArgs.Empty);
         }
+        if (kept.BindingErrors is { } bindingErrors)
+        {
+            SetBindingErrors(bindingErrors);
+        }
+    }
+
+    /// <summary>Avalonia Binding Errors as kept, or as a folder's is at first (off).</summary>
+    private void SetBindingErrors(KeptBindingErrorBreakpoint kept)
+    {
+        BindingErrors.Enabled = kept.Enabled;
+        BindingErrors.Suspend = kept.Suspend;
+        BindingErrors.Condition = kept.Condition;
+        BindingErrors.HitCondition = kept.HitCondition;
+        BindingErrors.LogMessage = kept.LogMessage;
+        BindingErrorsChanged?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>Takes every breakpoint away, as another folder opens: each folder's are its own, "Any exception" as Rider
-    /// sets it until the folder says otherwise, and none muted.</summary>
+    /// sets it and Avalonia Binding Errors off until the folder says otherwise, and none muted.</summary>
     public void Clear()
     {
         Muted = false;
@@ -284,6 +341,7 @@ public sealed class BreakpointStore
         exceptions.Clear();
         exceptions.Add(new ExceptionBreakpoint(null));
         ExceptionsChanged?.Invoke(this, EventArgs.Empty);
+        SetBindingErrors(new KeptBindingErrorBreakpoint());
         ClearData();
     }
 
@@ -302,6 +360,7 @@ public sealed class BreakpointStore
         ExceptionsChanged?.Invoke(this, EventArgs.Empty);
         DataChanged?.Invoke(this, EventArgs.Empty);
         PropertiesChanged?.Invoke(this, EventArgs.Empty);
+        BindingErrorsChanged?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>The data breakpoint on what the debugger names by a data id, set as Rider sets one, to stop at every write
@@ -490,7 +549,8 @@ public sealed class BreakpointStore
         Changed?.Invoke(this, path);
     }
 
-    /// <summary>Removes a breakpoint; "Any exception" stays, as in Rider, turned off by its box instead.</summary>
+    /// <summary>Removes a breakpoint; "Any exception" stays, as in Rider, turned off by its box instead, as Avalonia Binding
+    /// Errors is.</summary>
     public void Remove(Breakpoint breakpoint)
     {
         if (breakpoint is LineBreakpoint line && For(line.Path).Remove(line))
@@ -520,6 +580,17 @@ public sealed class BreakpointStore
             sent[i].Message = reports[i].Message;
         }
         Changed?.Invoke(this, path);
+    }
+
+    /// <summary>Records what the debugger said of Avalonia Binding Errors (unknown when it was not sent).</summary>
+    public void ReportBindingErrors(BreakpointStatus status, string? message)
+    {
+        if (BindingErrors.Status == status && BindingErrors.Message == message)
+        {
+            return;
+        }
+        (BindingErrors.Status, BindingErrors.Message) = (status, message);
+        BindingErrorsChanged?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>Records what the debugger said of the exception breakpoints sent, in the order they were sent; those not
@@ -590,6 +661,7 @@ public sealed class BreakpointStore
             }
             ExceptionsChanged?.Invoke(this, EventArgs.Empty);
         }
+        ReportBindingErrors(BreakpointStatus.Unknown, null);
     }
 
     /// <summary>Carries the breakpoints of a file, or of every file in a folder, to where it moved: the debugger hears
@@ -651,6 +723,10 @@ public sealed class BreakpointStore
         else if (breakpoint is PropertyBreakpoint)
         {
             PropertiesChanged?.Invoke(this, EventArgs.Empty);
+        }
+        else if (breakpoint is BindingErrorBreakpoint)
+        {
+            BindingErrorsChanged?.Invoke(this, EventArgs.Empty);
         }
         else
         {
