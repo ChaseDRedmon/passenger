@@ -214,7 +214,14 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
             string answer = (await Call(client, "terminal_run", new() { ["command"] = command })).GetString()!;
             Assert.Contains("42", answer, StringComparison.Ordinal);
             Assert.Contains("Notes.txt", answer, StringComparison.Ordinal);
-            if (!OperatingSystem.IsWindows())
+            if (OperatingSystem.IsWindows())
+            {
+                // PowerShell's history is the run's (HISTFILE), as sh's is: never the person's, which PSReadLine keeps.
+                string history = Path.Combine(TestRun.Root, "history");
+                Assert.True(File.Exists(history) && File.ReadAllText(history).Contains(command, StringComparison.Ordinal),
+                    $"PowerShell kept the command typed into the terminal, {command}, elsewhere than the run's history ({history}): in the person's own");
+            }
+            else
             {
                 // Past the scrollback's limit, where each line printed drops the oldest, a command's answer is still its own.
                 int beyond = global::Passenger.Terminal.TerminalScreen.ScrollbackLimit + 100;

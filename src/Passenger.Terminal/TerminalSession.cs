@@ -202,7 +202,8 @@ public sealed class TerminalSession : IAsyncDisposable
     }
 
     /// <summary>The user's shell as a login shell, as Rider starts it: $SHELL (zsh where unset on macOS, bash on
-    /// Linux); PowerShell on Windows, the newer one when it is installed.</summary>
+    /// Linux); PowerShell on Windows, the newer one when it is installed, keeping its history in HISTFILE when that is
+    /// set, as sh does.</summary>
     public static (string App, string[] Arguments) DefaultShell()
     {
         if (OperatingSystem.IsWindows())
@@ -211,7 +212,12 @@ public sealed class TerminalSession : IAsyncDisposable
                 .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
                 .Select(folder => Path.Combine(folder, "pwsh.exe"))
                 .FirstOrDefault(File.Exists);
-            return (pwsh ?? Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe"), ["-NoLogo"]);
+            string powershell = pwsh ?? Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe");
+            // PSReadLine reads no variable for its history, which a screenshot and a test run move (HISTFILE): it is told
+            // before the first prompt, and so before it reads or writes the person's own.
+            return string.IsNullOrEmpty(Environment.GetEnvironmentVariable("HISTFILE"))
+                ? (powershell, ["-NoLogo"])
+                : (powershell, ["-NoLogo", "-NoExit", "-Command", "try { Set-PSReadLineOption -HistorySavePath $env:HISTFILE } catch { }"]);
         }
         string shell = Environment.GetEnvironmentVariable("SHELL") is { Length: > 0 } own && File.Exists(own)
             ? own
