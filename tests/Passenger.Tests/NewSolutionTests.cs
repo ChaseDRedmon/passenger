@@ -16,7 +16,8 @@ namespace Passenger.Tests;
 /// <summary>Rider's New Solution and Add, New Project, from the templates dotnet new has installed, through the window: the
 /// Welcome screen's New Solution makes a console app with an option changed, opens it, builds it and runs it; a solution
 /// folder's Add, New Project puts a class library in it, the solution file gaining only its lines; a name taken or a
-/// folder not empty is refused with why before anything is made; and the templates listed are dotnet new list's.</summary>
+/// folder not empty is refused with why first; the templates listed are dotnet new list's; and Avalonia's, not installed,
+/// install from the run's own feed and make an Avalonia app, free of Accelerate's tools, that builds and runs.</summary>
 public sealed class NewSolutionTests : IDisposable
 {
     private const string Library = "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n";
@@ -86,6 +87,83 @@ public sealed class NewSolutionTests : IDisposable
         Ui.Press(window, Ui.Shortcut(AppActions.RunProgram));
         Ui.WaitFor(() => Output(window).Contains("Process finished", StringComparison.Ordinal), "the new console app to run to its end", TimeSpan.FromMinutes(2));
         Assert.Contains("Hello, World!", Output(window), StringComparison.Ordinal);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void New_Solution_offers_Avalonias_templates_not_installed_installs_them_and_makes_an_Avalonia_app_that_builds_and_runs()
+    {
+        using IDisposable theme = TestsTheme();
+        // Where the solution goes: Avalonia.Templates from the run's own feed alone, and the app run headless.
+        AvaloniaApp.UseFeed(place);
+        RunsHeadless("Gallery");
+        MainWindow window = Started();
+        Click(window, window.Welcome.NewSolutionButton);
+        NewProjectDialog dialog = Templates(window);
+
+        // Avalonia's kinds are listed though dotnet new has none, after what it has, not installed; so are Rider's offers.
+        string[] avalonia = [.. dialog.Templates.Where(t => t.Pack?.Id == "Avalonia.Templates")
+            .Select(t => $"{t.Name} ({t.ShortName}; {string.Join(',', t.Languages)}){(t.IsSolution ? ", a solution" : string.Empty)}")];
+        Assert.Equal(["Avalonia .NET App (avalonia.app; C#,F#)", "Avalonia .NET MVVM App (avalonia.mvvm; C#,F#)",
+            "Avalonia Cross Platform Application (avalonia.xplat; C#,F#), a solution"], avalonia);
+        Assert.True(dialog.Templates.SkipWhile(t => t.Pack is null).All(t => t.Pack is not null),
+            $"Templates not installed are listed among those installed: [{string.Join(", ", dialog.Templates.Select(t => t.Name))}]");
+        foreach (string riders in (string[])["aspire-starter", "func", "aichatweb"])
+        {
+            Assert.True(dialog.Templates.Any(t => t.ShortNames.Contains(riders)), $"New Solution lists nothing that makes {riders}, which Rider offers to install");
+        }
+        ProjectTemplate app = dialog.Templates.Single(t => t.ShortName == "avalonia.app");
+        Control row = dialog.TemplateRow(app)!;
+        Assert.Contains("Not installed", row.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text));
+
+        // Chosen, it offers to install its package, and nothing can be created from it until then.
+        dialog.Folder = place;
+        Click(dialog, row);
+        Assert.Equal("Avalonia .NET App", dialog.Chosen?.Name);
+        Assert.Contains("dotnet new install Avalonia.Templates", dialog.Offer, StringComparison.Ordinal);
+        Assert.False(dialog.CreateButton.IsEnabled, "Create was offered for a template not installed");
+
+        // Install runs dotnet new install, its output shown, and goes on to the installed template and its options.
+        Click(dialog, dialog.InstallButton);
+        Ui.WaitFor(() => !dialog.IsInstalling, "dotnet new install Avalonia.Templates", TimeSpan.FromMinutes(3));
+        Assert.True(dialog.Problem is null, $"Avalonia's templates did not install: {dialog.Problem}\n{dialog.InstallOutput}");
+        Assert.Contains($"Success: Avalonia.Templates@{AvaloniaApp.TemplatesVersion} installed", dialog.InstallOutput, StringComparison.Ordinal);
+        Assert.True(dialog.Chosen is { Pack: null, ShortName: "avalonia.app" }, $"Once installed, the dialog went on to {dialog.Chosen?.Name} ({dialog.Chosen?.Pack?.Id ?? "installed"})");
+        Assert.Null(dialog.Offer);
+        Assert.True(dialog.CreateButton.IsEnabled, "Create stayed off once the template was installed");
+        Assert.Contains("net10.0", dialog.Chosen!.Frameworks("C#"));
+        Assert.DoesNotContain(dialog.Templates, t => t.Pack?.Id == "Avalonia.Templates");
+
+        // The cross-platform one makes a whole solution, its projects named after it.
+        ProjectTemplate crossPlatform = dialog.Templates.Single(t => t.ShortName == "avalonia.xplat");
+        Assert.True(crossPlatform.IsSolution, "Avalonia's cross-platform template is not taken for the solution it makes");
+        Click(dialog, dialog.TemplateRow(crossPlatform)!);
+        Assert.False(dialog.AsksProjectName, "A solution template asked for a project name");
+        Assert.StartsWith($"dotnet new avalonia.xplat --name {dialog.SolutionName} ", dialog.Command, StringComparison.Ordinal);
+        Click(dialog, dialog.TemplateRow(dialog.Templates.Single(t => t.ShortName == "avalonia.app"))!);
+        Assert.True(dialog.AsksProjectName, "A project template asked for no project name");
+
+        dialog.SolutionName = "Gallery";
+        Click(dialog, dialog.CreateButton);
+        Ui.WaitFor(() => !dialog.IsVisible || dialog.Problem is not null, "dotnet new to make the Avalonia app", TimeSpan.FromMinutes(5));
+        Assert.True(dialog.Problem is null, $"The Avalonia app was not made: {dialog.Problem}");
+
+        // What the template made names none of Avalonia Accelerate's paid tools.
+        string folder = PathNames.Canonical(Path.Combine(place, "Gallery"));
+        string project = Path.Combine(folder, "Gallery", "Gallery.csproj");
+        Assert.True(window.WorkspaceModel?.OpenedAs == Path.Combine(folder, $"Gallery.{dialog.SolutionFormat}"), $"The window opened {window.WorkspaceModel?.OpenedAs ?? "nothing"}");
+        Assert.DoesNotContain("AvaloniaUI.DiagnosticsSupport", File.ReadAllText(project), StringComparison.Ordinal);
+        Assert.DoesNotContain("DeveloperTools", File.ReadAllText(Path.Combine(folder, "Gallery", "Program.cs")), StringComparison.Ordinal);
+        Assert.Contains("<PackageReference Include=\"Avalonia.Desktop\"", File.ReadAllText(project), StringComparison.Ordinal);
+
+        // It builds as it opens, and runs: its window comes up.
+        Ui.WaitFor(() => !window.IsBuilding, "the Avalonia app's build", TimeSpan.FromMinutes(4));
+        Assert.True(File.Exists(Path.Combine(folder, "Gallery", "bin", "Debug", "net10.0", "Gallery.dll")),
+            $"The Avalonia app was not built: {window.Status}\n{window.BottomPanel.Build.Document.Snapshot}");
+        Ui.Press(window, Ui.Shortcut(AppActions.RunProgram));
+        Ui.WaitFor(() => Output(window).Contains("Process finished", StringComparison.Ordinal), "the Avalonia app to run", TimeSpan.FromMinutes(3));
+        Assert.Contains("Gallery is up, showing Welcome to Avalonia!", Output(window), StringComparison.Ordinal);
+        Assert.Contains("Process finished with exit code 0.", Output(window), StringComparison.Ordinal);
         window.Close();
     }
 
@@ -208,14 +286,22 @@ public sealed class NewSolutionTests : IDisposable
         Assert.True(window.Perform(AppActions.NewSolution));
         NewProjectDialog dialog = Templates(window);
         string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        ChildResult listed = Task.Run(() => ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(["new", "list", "--type", "project", "--columns-all"], home), limit: TimeSpan.FromMinutes(3)))
-            .GetAwaiter().GetResult();
-        Assert.True(listed.Succeeded, $"dotnet new list failed:\n{listed.Output}{listed.Error}");
-        // WPF and Windows Forms build on Windows alone, where Rider lists them.
-        List<Listed> expected = [.. Table(listed.Output).Where(t => OperatingSystem.IsWindows() || !t.Tags.Any(tag => tag is "WPF" or "WinForms"))];
-        Assert.True(expected.Count > 0, $"dotnet new list listed no project templates:\n{listed.Output}");
+        List<Listed> expected = [];
+        string said = string.Empty;
+        foreach (string type in (string[])["project", "solution"])
+        {
+            ChildResult listed = Task.Run(() => ChildProcesses.RunAsync(ProjectTemplates.NewCommand(["list", "--type", type, "--columns-all"], home), limit: TimeSpan.FromMinutes(3)))
+                .GetAwaiter().GetResult();
+            // 103: none of the type is installed.
+            Assert.True(listed.Succeeded || (type == "solution" && listed.ExitCode == 103), $"dotnet new list failed:\n{listed.Output}{listed.Error}");
+            // WPF and Windows Forms build on Windows alone, where Rider lists them.
+            expected.AddRange(listed.Succeeded ? Table(listed.Output).Where(t => OperatingSystem.IsWindows() || !t.Tags.Any(tag => tag is "WPF" or "WinForms")) : []);
+            said += listed.Output;
+        }
+        Assert.True(expected.Count > 0, $"dotnet new list listed no project templates:\n{said}");
         List<string> missing = [];
-        List<ProjectTemplate> unmatched = [.. dialog.Templates];
+        // Those not installed, the known packages' kinds dotnet new has not got, are no row of its list.
+        List<ProjectTemplate> unmatched = [.. dialog.Templates.Where(t => t.Pack is null)];
         foreach (Listed row in expected)
         {
             ProjectTemplate? match = unmatched.FirstOrDefault(t => t.ShortNames.SequenceEqual(row.ShortNames) && t.Languages.SequenceEqual(row.Languages)
@@ -231,7 +317,7 @@ public sealed class NewSolutionTests : IDisposable
         }
         Assert.True(missing.Count == 0 && unmatched.Count == 0,
             $"The dialog does not list what dotnet new list reports. Not listed: [{string.Join("; ", missing)}]. Listed but not reported: "
-            + $"[{string.Join("; ", unmatched.Select(t => $"{t.Name} ({string.Join(',', t.ShortNames)}; {string.Join(',', t.Languages)})"))}]\n{listed.Output}");
+            + $"[{string.Join("; ", unmatched.Select(t => $"{t.Name} ({string.Join(',', t.ShortNames)}; {string.Join(',', t.Languages)})"))}]\n{said}");
         Assert.Equal("Console App", dialog.Templates[0].Name);
         dialog.Cancel();
         window.Close();
@@ -275,6 +361,45 @@ public sealed class NewSolutionTests : IDisposable
         Assert.True(dialog.FocusManager?.GetFocusedElement() is TextBox { IsFocused: true } name && TopLevel.GetTopLevel(name) == dialog,
             $"The dialog opened without the name box having the keys: {dialog.FocusManager?.GetFocusedElement()} has them");
         return dialog;
+    }
+
+    /// <summary>Makes the Avalonia app of a name that goes in the test's folder run headless, as Avalonia's own headless
+    /// tests and previewer run an app, through its BuildAvaloniaApp: the folder's Directory.Build.targets (MSBuild's, which
+    /// every project under it takes) gives it Avalonia's headless platform and a Main of its own that says when the app's
+    /// window is up and ends it. So the app opens no window on the screen, and runs where there is none (CI's Linux).</summary>
+    private void RunsHeadless(string name)
+    {
+        Write("Directory.Build.targets", $"""
+            <Project>
+              <PropertyGroup Condition="'$(MSBuildProjectName)' == '{name}'">
+                <StartupObject>Headless</StartupObject>
+              </PropertyGroup>
+              <ItemGroup Condition="'$(MSBuildProjectName)' == '{name}'">
+                <PackageReference Include="Avalonia.Headless" Version="{AvaloniaApp.Version}" />
+                <Compile Include="$(MSBuildThisFileDirectory)Headless.cs" />
+              </ItemGroup>
+            </Project>
+            """);
+        Write("Headless.cs", $$"""
+            using Avalonia;
+            using Avalonia.Controls.ApplicationLifetimes;
+            using Avalonia.Headless;
+            using Avalonia.Threading;
+
+            internal static class Headless
+            {
+                [System.STAThread]
+                public static int Main(string[] args) => {{name}}.Program.BuildAvaloniaApp()
+                    .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false })
+                    .AfterSetup(_ => Dispatcher.UIThread.Post(() =>
+                    {
+                        IClassicDesktopStyleApplicationLifetime desktop = (IClassicDesktopStyleApplicationLifetime)Application.Current!.ApplicationLifetime!;
+                        System.Console.WriteLine($"{desktop.MainWindow?.Title} is up, showing {desktop.MainWindow?.Content}");
+                        desktop.Shutdown();
+                    }))
+                    .StartWithClassicDesktopLifetime(args);
+            }
+            """);
     }
 
     /// <summary>The window a person starts, its state in the test's folder, on the Welcome screen.</summary>

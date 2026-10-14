@@ -5,6 +5,9 @@
     <!-- Roslyn's language server, roslyn-language-server.<rid>: a package per system, downloaded rather than
          referenced (src/Passenger.Lsp/RoslynServer.targets), so its version is a property, not a PackageVersion. -->
     <RoslynServerVersion>5.11.0</RoslynServerVersion>
+    <!-- Avalonia's dotnet new templates, at the Avalonia version below: downloaded for the tests' own local feed, from
+         which they install them without reaching nuget.org (tests/Passenger.Tests/AvaloniaApp.cs). -->
+    <AvaloniaTemplatesVersion>12.1.4</AvaloniaTemplatesVersion>
   </PropertyGroup>
   <ItemGroup>
     <PackageVersion Include="Avalonia" Version="12.1.4" />

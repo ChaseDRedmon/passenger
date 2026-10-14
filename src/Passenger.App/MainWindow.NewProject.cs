@@ -7,8 +7,9 @@ namespace Passenger.App;
 
 /// <summary>Rider's New Solution (File, the Welcome screen, the project widget) and New Project (Add on the solution and a
 /// solution folder in the Solution view, and its keys), both in <see cref="NewProjectDialog"/> from the templates dotnet
-/// new has installed. A new solution opens as the workspace through <see cref="Open"/>, kept in Recent Solutions, and
-/// builds; a new project goes into the open solution, in the solution folder chosen, by <see cref="SolutionEdits"/>.</summary>
+/// new has installed and those of the known packages it can install (<see cref="TemplatePacks"/>). A new solution opens as
+/// the workspace through <see cref="Open"/>, kept in Recent Solutions, and builds; a new project goes into the open
+/// solution, in the solution folder chosen, by <see cref="SolutionEdits"/>.</summary>
 public partial class MainWindow
 {
     private void AddNewProjectActions()

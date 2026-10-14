@@ -31,7 +31,8 @@ public sealed class OutputView : DockPanel
     /// <summary>The console's own edits under way, which are never a Clear.</summary>
     private bool editing;
 
-    public OutputView()
+    /// <param name="toolbar">Whether it has the run toolbar: none for a dialog's console, which its own buttons run.</param>
+    public OutputView(bool toolbar = true)
     {
         Document = new TextDocument();
         Sink = new ConsoleSink(Flush, limit);
@@ -55,15 +56,18 @@ public sealed class OutputView : DockPanel
         rerun.Click += (_, _) => RerunClicked?.Invoke(this, EventArgs.Empty);
         stop.Click += (_, _) => StopClicked?.Invoke(this, EventArgs.Empty);
         clear.Click += (_, _) => Clear();
-        Border toolbar = new()
+        Border tools = new()
         {
             [DockProperty] = Dock.Left,
             Width = 36,
             BorderThickness = new Thickness(0, 0, 1, 0),
             Child = new StackPanel { Spacing = 2, Margin = new Thickness(0, 6), HorizontalAlignment = HorizontalAlignment.Center, Children = { rerun, stop, clear } },
         };
-        toolbar.Bind(Border.BorderBrushProperty, toolbar.GetResourceObservable("Passenger.Divider"));
-        Children.Add(toolbar);
+        tools.Bind(Border.BorderBrushProperty, tools.GetResourceObservable("Passenger.Divider"));
+        if (toolbar)
+        {
+            Children.Add(tools);
+        }
         Children.Add(Editor);
         Editor.ContextMenuRequested += (_, at) => ShowMenu(at);
         // Ahead of the editor's own handling, which a read-only editor gives nothing to.

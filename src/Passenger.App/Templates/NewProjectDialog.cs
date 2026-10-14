@@ -7,6 +7,8 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
+using Passenger.App.Run;
+using Passenger.App.ToolWindows;
 using Passenger.Core;
 using Passenger.Editor;
 
@@ -19,16 +21,17 @@ public sealed record ProjectTarget(string Solution, string? Folder, IReadOnlyLis
 /// <summary>What Create made, canonical: New Solution's solution (null for Add New Project's) and the projects.</summary>
 public sealed record CreatedProjects(string? Solution, IReadOnlyList<string> Projects);
 
-/// <summary>Rider's New Project dialog, for New Solution and Add, New Project: dotnet new's templates down the left; on the
-/// right the names, where it goes (for a solution, whether the project shares its folder, and its format), the target
-/// framework, the language where there is more than C#, and the template's own options. Create refuses a name taken or a
-/// folder not empty, saying why, before anything is made; otherwise it runs dotnet new and closes with what it made
-/// (<see cref="Created"/>). What a Create that failed or was canceled made is removed.</summary>
+/// <summary>Rider's New Project dialog, for New Solution and Add, New Project: dotnet new's templates down the left, then
+/// the known packages' kinds it has not got, each offering to install its package; on the right the names, where it goes,
+/// the target framework, the language, and the template's own options. Create refuses a name taken or a folder not empty,
+/// saying why, before anything is made; otherwise it runs dotnet new, takes Accelerate's tools out of what it made, and
+/// closes with it (<see cref="Created"/>). What a Create that failed or was canceled made is removed.</summary>
 public sealed class NewProjectDialog : Window
 {
     private const double LabelWidth = 170;
 
     private readonly ProjectTarget? target;
+    private readonly string readFrom;
     private readonly ListBox list;
     private readonly TextBlock loading;
     private readonly TextBlock heading;
@@ -38,6 +41,9 @@ public sealed class NewProjectDialog : Window
     private readonly TextBox directory = new() { Classes = { "search" } };
     private readonly CheckBox sameDirectory = new() { Content = "Put solution and project in the same directory" };
     private readonly ComboBox format = new() { MinWidth = 160 };
+    private readonly Control projectRow;
+    private readonly Control sameRow;
+    private readonly Control? formatRow;
     private readonly TextBlock where = new() { Classes = { "muted" }, FontSize = 12, TextWrapping = TextWrapping.Wrap };
     private readonly ComboBox framework = new() { MinWidth = 160 };
     private readonly ComboBox language = new() { MinWidth = 160 };
@@ -45,6 +51,11 @@ public sealed class NewProjectDialog : Window
     private readonly StackPanel options = new() { Spacing = 10 };
     private readonly TextBlock command = new() { Classes = { "muted" }, FontSize = 12, TextWrapping = TextWrapping.Wrap };
     private readonly Control details;
+    private readonly Control offer;
+    private readonly TextBlock offerText = new() { TextWrapping = TextWrapping.Wrap };
+    private readonly TextBlock offerCommand = new() { Classes = { "muted" }, FontSize = 12, TextWrapping = TextWrapping.Wrap };
+    private readonly Button install = new() { Content = "Install", Classes = { "primary" }, MinWidth = 80, HorizontalAlignment = HorizontalAlignment.Left };
+    private readonly OutputView installOutput = new(toolbar: false) { Height = 220, IsVisible = false };
     private readonly ProgressBar bar = new() { IsIndeterminate = true, Height = 4, MinHeight = 4, Width = 160, VerticalAlignment = VerticalAlignment.Center };
     private readonly TextBlock progress = new() { Classes = { "muted" }, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
     private readonly StackPanel working;
@@ -57,8 +68,10 @@ public sealed class NewProjectDialog : Window
     private readonly Dictionary<string, string> byPerson = new(StringComparer.Ordinal);
     private readonly List<(TemplateOption Option, Control Row, Control Editor)> shown = [];
     private TemplateCatalog? catalog;
+    private IReadOnlyList<ProjectTemplate> templates = [];
     private ProjectTemplate? template;
     private CancellationTokenSource? creating;
+    private CancellationTokenSource? installing;
 
     /// <summary>The names the dialog gave last: one that differs is the person's, which a template chosen later keeps.</summary>
     private string solutionGiven = string.Empty;
@@ -83,12 +96,7 @@ public sealed class NewProjectDialog : Window
         list = new ListBox
         {
             Classes = { "tree" },
-            ItemTemplate = new FuncDataTemplate<ProjectTemplate?>((row, _) => row is null ? new Panel() : new TextBlock
-            {
-                Text = row.Name,
-                Padding = new Thickness(10, 6),
-                TextTrimming = TextTrimming.CharacterEllipsis,
-            }, supportsRecycling: false),
+            ItemTemplate = new FuncDataTemplate<ProjectTemplate?>((row, _) => row is null ? new Panel() : Item(row), supportsRecycling: false),
         };
         list.SelectionChanged += (_, _) => Choose(list.SelectedItem as ProjectTemplate);
         loading = new TextBlock { Classes = { "muted" }, Text = "Loading templates...", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(12) };
@@ -112,33 +120,41 @@ public sealed class NewProjectDialog : Window
         language.SelectionChanged += (_, _) => Retarget();
 
         StackPanel fields = new() { Spacing = 10 };
+        projectRow = Row("Project name:", projectName);
+        sameRow = Row(null, sameDirectory);
         if (target is null)
         {
+            formatRow = Row("Solution format:", format);
             fields.Children.Add(Row("Solution name:", solutionName));
-            fields.Children.Add(Row("Project name:", projectName));
+            fields.Children.Add(projectRow);
             fields.Children.Add(Row("Solution directory:", folderRow));
-            fields.Children.Add(Row(null, sameDirectory));
-            fields.Children.Add(Row("Solution format:", format));
+            fields.Children.Add(sameRow);
+            fields.Children.Add(formatRow);
         }
         else
         {
-            fields.Children.Add(Row("Project name:", projectName));
+            fields.Children.Add(projectRow);
             fields.Children.Add(Row("Project directory:", folderRow));
         }
         fields.Children.Add(Row(null, where));
         languageRow = Row("Language:", language);
-        Border rule = new() { Height = 1, Margin = new Thickness(0, 6) };
-        rule.Bind(Border.BackgroundProperty, rule.GetResourceObservable("Passenger.Divider"));
         details = new StackPanel
         {
             Spacing = 10,
-            Children = { rule, Row("Target framework:", framework), languageRow, options, Row(null, command) },
+            Children = { Rule(), Row("Target framework:", framework), languageRow, options, Row(null, command) },
+        };
+        install.Click += (_, _) => _ = InstallAsync();
+        offer = new StackPanel
+        {
+            Spacing = 10,
+            IsVisible = false,
+            Children = { Rule(), offerText, offerCommand, install, installOutput },
         };
         StackPanel right = new()
         {
             Margin = new Thickness(24, 18, 24, 18),
             Spacing = 10,
-            Children = { new StackPanel { Children = { heading, description }, Margin = new Thickness(0, 0, 0, 8) }, fields, details },
+            Children = { new StackPanel { Children = { heading, description }, Margin = new Thickness(0, 0, 0, 8) }, fields, details, offer },
         };
         Border rightPane = new() { Child = new ScrollViewer { Content = right } };
         rightPane.Bind(Border.BackgroundProperty, rightPane.GetResourceObservable("Passenger.Editor.Background"));
@@ -148,7 +164,11 @@ public sealed class NewProjectDialog : Window
         Button cancel = new() { Content = "Cancel", IsCancel = true, MinWidth = 80 };
         cancel.Click += (_, _) => Cancel();
         create.Click += (_, _) => _ = CreateAsync();
-        Closing += (_, _) => creating?.Cancel();
+        Closing += (_, _) =>
+        {
+            creating?.Cancel();
+            installing?.Cancel();
+        };
         StackPanel buttons = new() { Orientation = Orientation.Horizontal, Spacing = 8, Children = { cancel, create } };
         DockPanel bottomRow = new() { Margin = new Thickness(16, 10) };
         DockPanel.SetDock(buttons, Dock.Right);
@@ -165,7 +185,8 @@ public sealed class NewProjectDialog : Window
         root.Children.Add(rightPane);
         Content = root;
         ShowTemplate(null);
-        TemplatesRead = LoadAsync(target is null ? folder : Path.GetDirectoryName(target.Solution)!);
+        readFrom = target is null ? folder : Path.GetDirectoryName(target.Solution)!;
+        TemplatesRead = LoadAsync(null);
         // The name has the keys as the dialog opens, its default chosen to be typed over; again once laid out.
         void FocusName()
         {
@@ -183,8 +204,9 @@ public sealed class NewProjectDialog : Window
     /// <summary>The templates' read, done once they are listed or the dialog says why they could not be.</summary>
     public Task TemplatesRead { get; }
 
-    /// <summary>The templates listed, in Rider's order.</summary>
-    public IReadOnlyList<ProjectTemplate> Templates => catalog?.Templates ?? [];
+    /// <summary>The templates listed, in Rider's order: those installed, and the known packages' kinds dotnet new has not
+    /// got (<see cref="ProjectTemplate.Pack"/>); a solution template in New Solution only.</summary>
+    public IReadOnlyList<ProjectTemplate> Templates => templates;
 
     /// <summary>The template chosen.</summary>
     public ProjectTemplate? Chosen
@@ -196,7 +218,7 @@ public sealed class NewProjectDialog : Window
     /// <summary>The template list's row for one, for a click on it; null when it is not listed.</summary>
     public Control? TemplateRow(ProjectTemplate row)
     {
-        int at = Templates.ToList().IndexOf(row);
+        int at = templates.ToList().IndexOf(row);
         if (at < 0)
         {
             return null;
@@ -217,6 +239,9 @@ public sealed class NewProjectDialog : Window
         get => projectName.Text?.Trim() ?? string.Empty;
         set => projectName.Text = value;
     }
+
+    /// <summary>Whether the project's name is asked: not for a solution template, which names its projects after the solution.</summary>
+    public bool AsksProjectName => projectRow.IsVisible;
 
     /// <summary>The directory the solution's folder (or the project's) is made in.</summary>
     public string Folder
@@ -247,7 +272,27 @@ public sealed class NewProjectDialog : Window
     /// <summary>The command line Create runs for the project, as the dialog shows it.</summary>
     public string Command => command.Text ?? string.Empty;
 
-    /// <summary>Why the last Create was refused or failed, or why the templates could not be read; null when neither.</summary>
+    /// <summary>What the dialog offers for a template not installed (Rider's words for its package, and the command
+    /// Install runs); null when the template chosen is installed.</summary>
+    public string? Offer => offer.IsVisible ? $"{offerText.Text}\n{offerCommand.Text}" : null;
+
+    /// <summary>The Install button, for a click on it.</summary>
+    public Button InstallButton => install;
+
+    /// <summary>What the last install's dotnet new install wrote, as the dialog shows it.</summary>
+    public string InstallOutput
+    {
+        get
+        {
+            installOutput.Flush();
+            return installOutput.Document.Snapshot.ToString();
+        }
+    }
+
+    public bool IsInstalling => installing is not null;
+
+    /// <summary>Why the last Create was refused or failed, why an install failed, or why the templates could not be read;
+    /// null when none.</summary>
     public string? Problem => problem.IsVisible ? problem.Text : null;
 
     public bool IsCreating => creating is not null;
@@ -255,6 +300,9 @@ public sealed class NewProjectDialog : Window
     private bool SolutionNamed => SolutionName.Length > 0 && SolutionName != solutionGiven;
 
     private bool ProjectNamed => ProjectName.Length > 0 && ProjectName != projectGiven;
+
+    /// <summary>The name dotnet new is given: a solution template's is the solution's.</summary>
+    private string NameGiven => template is { IsSolution: true } ? SolutionName : ProjectName;
 
     /// <summary>The Create button, for a click on it.</summary>
     public Button CreateButton => create;
@@ -265,7 +313,7 @@ public sealed class NewProjectDialog : Window
     /// <summary>Create, as its button does: what it makes, or why not, the dialog closing once it is made.</summary>
     public async Task CreateAsync()
     {
-        if (creating is not null || template is null)
+        if (creating is not null || installing is not null || template is null)
         {
             return;
         }
@@ -283,21 +331,19 @@ public sealed class NewProjectDialog : Window
         try
         {
             Directory.CreateDirectory(plan.Root);
-            if (plan.Solution is not null)
+            if (plan.Solution is not null && !template.IsSolution)
             {
                 progress.Text = $"Creating the solution {SolutionName}...";
-                ChildResult solution = await RunAsync(["new", "sln", "--name", SolutionName, "--output", plan.Root, .. FormatArguments()], plan.Root, cancel.Token);
-                if (!solution.Succeeded)
+                if (!await MakeSolutionAsync(plan, existed, cancel.Token))
                 {
-                    await FailedAsync($"The solution could not be created: {ProjectTemplates.Said(solution)}", plan, existed);
                     return;
                 }
             }
-            progress.Text = $"Creating {ProjectName} from {template.Name} (dotnet new {template.ShortName})...";
+            progress.Text = $"Creating {NameGiven} from {template.Name} (dotnet new {template.ShortName})...";
             ChildResult made = await RunAsync(Arguments(plan.ProjectFolder), plan.Root, cancel.Token);
             if (!made.Succeeded)
             {
-                await FailedAsync($"{ProjectName} could not be created: {ProjectTemplates.Said(made)}", plan, existed);
+                await FailedAsync($"{NameGiven} could not be created: {ProjectTemplates.Said(made)}", plan, existed);
                 return;
             }
             List<string> projects = ProjectsIn(plan.ProjectFolder);
@@ -306,7 +352,34 @@ public sealed class NewProjectDialog : Window
                 await FailedAsync($"dotnet new {template.ShortName} made no project in {plan.ProjectFolder}", plan, existed);
                 return;
             }
-            Created = new CreatedProjects(plan.Solution is null ? null : PathNames.Canonical(plan.Solution), projects);
+            await BackgroundWork.Run(() => DeveloperTools.TakeOut(plan.ProjectFolder), cancel.Token);
+            if (Variant().SkipRestoreOption is not null)
+            {
+                // The template's own restore, after the take-out; one that fails, as its own may, leaves the build to say why.
+                foreach (string project in projects)
+                {
+                    progress.Text = $"Restoring {Path.GetFileNameWithoutExtension(project)}...";
+                    Task<ChildResult> restore = ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(["restore", project], plan.Root), limit: TimeSpan.FromMinutes(10), cancel: cancel.Token);
+                    BackgroundWork.Track(restore);
+                    await restore;
+                }
+            }
+            string? madeSolution = plan.Solution;
+            if (template.IsSolution)
+            {
+                // The template's own solution, else one made for what it made, as dotnet new sln would.
+                madeSolution = SolutionIn(plan.Root);
+                if (madeSolution is null)
+                {
+                    progress.Text = $"Creating the solution {SolutionName}...";
+                    if (!await MakeSolutionAsync(plan, existed, cancel.Token))
+                    {
+                        return;
+                    }
+                    madeSolution = plan.Solution;
+                }
+            }
+            Created = new CreatedProjects(madeSolution is null ? null : PathNames.Canonical(madeSolution), projects);
             creating = null;
             Close(Created);
         }
@@ -317,7 +390,7 @@ public sealed class NewProjectDialog : Window
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or TimeoutException)
         {
-            await FailedAsync($"{ProjectName} could not be created: {error.Message}", plan, existed);
+            await FailedAsync($"{NameGiven} could not be created: {error.Message}", plan, existed);
         }
         finally
         {
@@ -326,10 +399,79 @@ public sealed class NewProjectDialog : Window
         }
     }
 
-    /// <summary>Cancel: stops a Create under way, removing what it made, and closes the dialog.</summary>
+    /// <summary>dotnet new sln for the plan's solution; false, what Create made removed and why said, when it failed.</summary>
+    private async Task<bool> MakeSolutionAsync(Plan plan, bool existed, CancellationToken cancel)
+    {
+        ChildResult solution = await RunAsync(["sln", "--name", SolutionName, "--output", plan.Root, .. FormatArguments()], plan.Root, cancel);
+        if (!solution.Succeeded)
+        {
+            await FailedAsync($"The solution could not be created: {ProjectTemplates.Said(solution)}", plan, existed);
+        }
+        return solution.Succeeded;
+    }
+
+    /// <summary>Install, as its button does: dotnet new install of the chosen template's package, its output shown as it
+    /// comes, then the templates read again and the one installed chosen, with its options.</summary>
+    public async Task InstallAsync()
+    {
+        if (template is not { Pack: { } pack } wanted || installing is not null || creating is not null)
+        {
+            return;
+        }
+        using CancellationTokenSource cancel = new();
+        installing = cancel;
+        Fail(null);
+        progress.Text = $"Installing {pack.Id} (dotnet new install {pack.Id})...";
+        Busy(true);
+        installOutput.Clear();
+        installOutput.IsVisible = true;
+        using ProcessRunner runner = new(installOutput);
+        try
+        {
+            if (runner.StartDotnet(ProjectTemplates.New(["install", pack.Id]), InstallFolder()) is { } refused)
+            {
+                Fail($"Installation of {pack.Id} has failed: {refused}");
+                return;
+            }
+            BackgroundWork.Track(runner.Ended);
+            int code;
+            using (cancel.Token.Register(runner.Stop))
+            {
+                code = await runner.Ended;
+            }
+            if (cancel.IsCancellationRequested)
+            {
+                return;
+            }
+            if (code != 0)
+            {
+                Fail($"Installation of {pack.Id} has failed (exit code {code}): its output says why");
+                return;
+            }
+            ProjectTemplates.Forget();
+            progress.Text = "Reading the templates...";
+            await LoadAsync(wanted);
+            if (template is { Pack: not null })
+            {
+                Fail($"{pack.Id} is installed, but dotnet new has no {wanted.Name} ({wanted.ShortName}) from it");
+            }
+        }
+        finally
+        {
+            installing = null;
+            Busy(false);
+        }
+    }
+
+    /// <summary>Where dotnet new install runs, whose NuGet configuration says where the package comes from: the directory
+    /// chosen, else where the templates were read.</summary>
+    private string InstallFolder() => Folder.Length > 0 && Path.IsPathFullyQualified(Folder) && Directory.Exists(Folder) ? Folder : readFrom;
+
+    /// <summary>Cancel: stops a Create or an install under way, removing what a Create made, and closes the dialog.</summary>
     public void Cancel()
     {
         creating?.Cancel();
+        installing?.Cancel();
         Close(null);
     }
 
@@ -346,8 +488,16 @@ public sealed class NewProjectDialog : Window
             return new Plan(project, null, project);
         }
         string root = Path.Combine(folder, SolutionName);
-        return new Plan(root, Path.Combine(root, $"{SolutionName}.{SolutionFormat}"), SameDirectory ? root : Path.Combine(root, ProjectName));
+        string solution = Path.Combine(root, $"{SolutionName}.{SolutionFormat}");
+        return template is { IsSolution: true } ? new Plan(root, solution, root)
+            : new Plan(root, solution, SameDirectory ? root : Path.Combine(root, ProjectName));
     }
+
+    /// <summary>The solution file a solution template made at its top, the one of the solution's name first.</summary>
+    private string? SolutionIn(string root) =>
+        Directory.EnumerateFiles(root).Where(f => Path.GetExtension(f).ToLowerInvariant() is ".sln" or ".slnx")
+            .OrderBy(f => Path.GetFileNameWithoutExtension(f).Equals(SolutionName, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .ThenBy(f => f, StringComparer.Ordinal).FirstOrDefault();
 
     /// <summary>Why Create would make nothing, or null: Rider's reasons for a name, then where it goes, then the options.</summary>
     private string? WhyNot()
@@ -356,11 +506,15 @@ public sealed class NewProjectDialog : Window
         {
             return "Choose a template";
         }
+        if (template.Pack is { } pack)
+        {
+            return $"{template.Name} comes with {pack.Id}, which is not installed: Install it first";
+        }
         if (target is null && NameProblem(SolutionName, "Solution") is { } solution)
         {
             return solution;
         }
-        if (NameProblem(ProjectName, "Project") is { } project)
+        if (!template.IsSolution && NameProblem(ProjectName, "Project") is { } project)
         {
             return project;
         }
@@ -411,15 +565,20 @@ public sealed class NewProjectDialog : Window
         : name is "." or ".." || name.IndexOfAny([.. Path.GetInvalidFileNameChars(), '/', '\\', ':', '*', '?', '"', '<', '>', '|']) >= 0 ? $"{what} name contains invalid characters"
         : null;
 
-    /// <summary>The project's dotnet new command line: its template by short name, name and folder (none in the line the
+    /// <summary>dotnet new's arguments for the project: its template by short name, name and folder (none in the line the
     /// dialog shows), language, framework, and each option enabled and changed from its default.</summary>
     private List<string> Arguments(string? output)
     {
         TemplateVariant variant = Variant();
-        List<string> arguments = ["new", template!.ShortName, "--name", ProjectName];
+        List<string> arguments = [template!.ShortName, "--name", NameGiven];
         if (output is not null)
         {
             arguments.AddRange(["--output", output, "--no-update-check"]);
+            if (variant.SkipRestoreOption is { } skip)
+            {
+                // Restored once Accelerate's tools are out of it, rather than with them.
+                arguments.AddRange([$"--{skip}", "true"]);
+            }
         }
         if (variant.Language is { } chosen)
         {
@@ -444,9 +603,10 @@ public sealed class NewProjectDialog : Window
 
     private TemplateVariant Variant() => template!.Variant(Language, Framework);
 
+    /// <summary>dotnet new with these arguments, in the IDE's hive.</summary>
     private static Task<ChildResult> RunAsync(IEnumerable<string> arguments, string folder, CancellationToken cancel)
     {
-        Task<ChildResult> run = ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(arguments, folder), limit: TimeSpan.FromMinutes(10), cancel: cancel);
+        Task<ChildResult> run = ChildProcesses.RunAsync(ProjectTemplates.NewCommand(arguments, folder), limit: TimeSpan.FromMinutes(10), cancel: cancel);
         BackgroundWork.Track(run);
         return run;
     }
@@ -456,7 +616,7 @@ public sealed class NewProjectDialog : Window
         [.. Directory.EnumerateFiles(folder, "*.*proj", SearchOption.AllDirectories)
             .Where(p => Path.GetExtension(p).ToLowerInvariant() is ".csproj" or ".fsproj" or ".vbproj")
             .Where(p => !Path.GetRelativePath(folder, p).Split(Path.DirectorySeparatorChar).Any(part => part is "bin" or "obj"))
-            .OrderBy(p => Path.GetFileNameWithoutExtension(p).Equals(ProjectName, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .OrderBy(p => Path.GetFileNameWithoutExtension(p).Equals(NameGiven, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
             .ThenBy(p => p, StringComparer.Ordinal)
             .Select(PathNames.Canonical)];
 
@@ -499,30 +659,42 @@ public sealed class NewProjectDialog : Window
         }
     });
 
-    private async Task LoadAsync(string folder)
+    /// <summary>Reads the templates and lists them, the first chosen; after an install, the installed one of the kind that
+    /// was offered (<paramref name="installed"/>).</summary>
+    private async Task LoadAsync(ProjectTemplate? installed)
     {
         try
         {
-            catalog = await BackgroundWork.Run(() => ProjectTemplates.LoadAsync(folder));
+            catalog = await BackgroundWork.Run(() => ProjectTemplates.LoadAsync(readFrom));
         }
         catch (Exception error) when (error is InvalidOperationException or IOException or UnauthorizedAccessException or JsonException
             or TimeoutException or KeyNotFoundException or System.ComponentModel.Win32Exception)
         {
             loading.Text = $"The templates could not be read: {error.Message}";
+            loading.IsVisible = true;
             Fail(loading.Text);
             return;
         }
-        loading.IsVisible = catalog.Templates.Count == 0;
+        templates = [.. catalog.Templates.Where(t => target is null || !t.IsSolution)];
+        loading.IsVisible = templates.Count == 0;
         loading.Text = "dotnet new has no project templates installed";
         setting = true;
         format.ItemsSource = catalog.SolutionFormats.Select(f => $".{f}").ToList();
         format.SelectedIndex = 0;
         setting = false;
-        list.ItemsSource = catalog.Templates;
-        list.SelectedIndex = catalog.Templates.Count > 0 ? 0 : -1;
+        list.ItemsSource = templates;
+        ProjectTemplate? chosen = installed is null ? templates.FirstOrDefault()
+            : templates.FirstOrDefault(t => t.Pack is null && t.IsSolution == installed.IsSolution && t.ShortNames.Contains(installed.ShortName, StringComparer.OrdinalIgnoreCase))
+              ?? templates.FirstOrDefault(t => t.Name == installed.Name);
+        list.SelectedItem = chosen;
+        if (chosen is not null)
+        {
+            list.ScrollIntoView(chosen);
+        }
     }
 
-    /// <summary>A template chosen: its names (unless the person typed their own), languages, frameworks and options.</summary>
+    /// <summary>A template chosen: its names (unless the person typed their own), languages, frameworks and options, or
+    /// for one not installed, the offer of its package.</summary>
     private void Choose(ProjectTemplate? chosen)
     {
         if (ReferenceEquals(chosen, template))
@@ -645,7 +817,7 @@ public sealed class NewProjectDialog : Window
             editor.IsEnabled = ProjectTemplates.IsEnabled(option.EnabledWhen, values);
             row.Opacity = editor.IsEnabled ? 1 : 0.55;
         }
-        command.Text = template is null ? string.Empty : $"dotnet {string.Join(' ', Arguments(null).Select(Quoted))}";
+        command.Text = template is null ? string.Empty : $"dotnet new {string.Join(' ', Arguments(null).Select(Quoted))}";
     }
 
     /// <summary>A name typed: the project's follows the solution's until the person types one of its own.</summary>
@@ -661,7 +833,8 @@ public sealed class NewProjectDialog : Window
     /// <summary>Where Create puts it, as Rider says it under the directory.</summary>
     private void ShowWhere()
     {
-        string? root = Folder.Length > 0 && Path.IsPathFullyQualified(Folder) && (target is not null || SolutionName.Length > 0) && ProjectName.Length > 0
+        string? root = Folder.Length > 0 && Path.IsPathFullyQualified(Folder) && (target is not null || SolutionName.Length > 0)
+            && (template is { IsSolution: true } || ProjectName.Length > 0)
             ? Planned().Root : null;
         string into = target?.Folder is { } folder ? $"the solution folder {folder.Split('/', StringSplitOptions.RemoveEmptyEntries)[^1]}"
             : $"the solution {Path.GetFileNameWithoutExtension(target?.Solution)}";
@@ -674,10 +847,23 @@ public sealed class NewProjectDialog : Window
         }
     }
 
+    /// <summary>The right side for a template: its details once installed, else the offer of its package; a solution
+    /// template asks no project name, nor where its project goes, nor the format of a solution it makes itself.</summary>
     private void ShowTemplate(ProjectTemplate? chosen)
     {
-        details.IsVisible = chosen is not null;
-        create.IsEnabled = chosen is not null;
+        details.IsVisible = chosen is { Pack: null };
+        offer.IsVisible = chosen is { Pack: not null };
+        create.IsEnabled = chosen is { Pack: null } && installing is null && creating is null;
+        bool solution = chosen is { IsSolution: true };
+        projectRow.IsVisible = !solution;
+        sameRow.IsVisible = target is null && !solution;
+        formatRow?.IsVisible = !solution;
+        if (chosen is { Pack: { } pack })
+        {
+            offerText.Text = pack.Offer;
+            offerCommand.Text = $"{pack.Id} is not installed. Install runs dotnet new install {pack.Id}, which takes it from the NuGet feeds this directory uses.";
+            installOutput.IsVisible = false;
+        }
         if (chosen is null)
         {
             heading.Text = target is null ? "New Solution" : "New Project";
@@ -729,16 +915,45 @@ public sealed class NewProjectDialog : Window
     {
         working.IsVisible = busy;
         problem.IsVisible = !busy && problem.Text is not null;
-        create.IsEnabled = !busy && template is not null;
+        create.IsEnabled = !busy && template is { Pack: null };
+        install.IsEnabled = !busy;
         list.IsEnabled = !busy;
         foreach (Control field in (Control[])[solutionName, projectName, directory, browse, sameDirectory, format, framework, language, options])
         {
             field.IsEnabled = !busy;
         }
-        if (!busy)
+        if (!busy && template is not null)
         {
             Enable();
         }
+    }
+
+    /// <summary>A template's row: its name, whole on hover where it is cut short, and for one not installed Rider's word
+    /// for it.</summary>
+    private static Control Item(ProjectTemplate row)
+    {
+        TextBlock name = new() { Text = row.Name, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
+        Border item = new() { Padding = new Thickness(10, 6) };
+        ToolTip.SetTip(item, row.Pack is null ? row.Name : $"{row.Name}, from {row.Pack.Id}, which is not installed");
+        if (row.Pack is null)
+        {
+            item.Child = name;
+            return item;
+        }
+        TextBlock missing = new() { Text = "Not installed", Classes = { "muted" }, FontSize = 11, Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+        DockPanel both = new();
+        DockPanel.SetDock(missing, Dock.Right);
+        both.Children.Add(missing);
+        both.Children.Add(name);
+        item.Child = both;
+        return item;
+    }
+
+    private Control Rule()
+    {
+        Border rule = new() { Height = 1, Margin = new Thickness(0, 6) };
+        rule.Bind(Border.BackgroundProperty, rule.GetResourceObservable("Passenger.Divider"));
+        return rule;
     }
 
     /// <summary>A row of the right side: its label (none for a checkbox, which carries its own) and what sets it.</summary>

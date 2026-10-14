@@ -1,0 +1,58 @@
+using System.Text;
+using System.Text.RegularExpressions;
+
+namespace Passenger.App.Templates;
+
+/// <summary>Takes Avalonia Accelerate's developer tools out of what a template made, as Passenger leads no one into
+/// Accelerate's paid tools (its own Live Visual Tree is there instead): Avalonia 12's templates reference
+/// AvaloniaUI.DiagnosticsSupport and call WithDeveloperTools or AttachDeveloperTools in Debug builds. Only those lines go,
+/// with the #if DEBUG around a call when it held nothing else; the rest of each file stays byte for byte.</summary>
+public static partial class DeveloperTools
+{
+    private static readonly UTF8Encoding Utf8 = new(encoderShouldEmitUTF8Identifier: false);
+
+    [GeneratedRegex("""^[ \t]*<Package(?:Reference|Version)\b[^>]*\bInclude="AvaloniaUI\.DiagnosticsSupport"[^>]*?(?:/>|>.*?</Package(?:Reference|Version)>)[ \t]*(?:\r?\n)?""",
+        RegexOptions.Multiline | RegexOptions.Singleline | RegexOptions.IgnoreCase)]
+    private static partial Regex Package();
+
+    [GeneratedRegex(@"^[ \t]*#if DEBUG[ \t]*\r?\n(?:[ \t]*[^\r\n]*\b(?:WithDeveloperTools|AttachDeveloperTools)\(\)[^\r\n]*\r?\n)+[ \t]*#endif[ \t]*(?:\r?\n)?",
+        RegexOptions.Multiline)]
+    private static partial Regex DebugOnly();
+
+    [GeneratedRegex(@"^[ \t]*(?:\.WithDeveloperTools\(\)|this\.AttachDeveloperTools\(\)(?:[ \t]*\|>[ \t]*ignore)?;?)[ \t]*(?:\r?\n)?", RegexOptions.Multiline)]
+    private static partial Regex Call();
+
+    /// <summary>Takes them out of the projects, package versions and code under a folder (build output aside); the files
+    /// it changed.</summary>
+    public static IReadOnlyList<string> TakeOut(string folder)
+    {
+        List<string> changed = [];
+        foreach (string file in Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories))
+        {
+            if (Path.GetRelativePath(folder, file).Split(Path.DirectorySeparatorChar).Any(part => part is "bin" or "obj"))
+            {
+                continue;
+            }
+            Regex[]? edits = Path.GetExtension(file).ToLowerInvariant() switch
+            {
+                ".csproj" or ".fsproj" or ".vbproj" or ".props" or ".targets" => [Package()],
+                ".cs" or ".fs" or ".vb" => [DebugOnly(), Call()],
+                _ => null,
+            };
+            if (edits is null)
+            {
+                continue;
+            }
+            byte[] bytes = File.ReadAllBytes(file);
+            bool marked = bytes.AsSpan().StartsWith(Encoding.UTF8.Preamble);
+            string text = Utf8.GetString(bytes, marked ? 3 : 0, bytes.Length - (marked ? 3 : 0));
+            string edited = edits.Aggregate(text, (now, edit) => edit.Replace(now, string.Empty));
+            if (edited != text)
+            {
+                File.WriteAllBytes(file, [.. marked ? Encoding.UTF8.Preamble : [], .. Utf8.GetBytes(edited)]);
+                changed.Add(file);
+            }
+        }
+        return changed;
+    }
+}

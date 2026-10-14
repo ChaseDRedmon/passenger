@@ -97,6 +97,8 @@ public sealed class TestRun : IDisposable
         if (OperatingSystem.IsWindows())
         {
             // NuGet reads the user's nuget.config from %APPDATA% there; each test's folder clears its feeds instead.
+            // dotnet new's templates, kept in that home elsewhere, go in a hive of the run's own, apart from AvaloniaApp's.
+            Passenger.App.Templates.ProjectTemplates.Hive = Directory.CreateDirectory(Path.Combine(Root, "dotnet-new")).FullName;
             return;
         }
         string personal = Environment.GetEnvironmentVariable("DOTNET_CLI_HOME") is { Length: > 0 } given ? given : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);

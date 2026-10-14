@@ -27,6 +27,7 @@
     "LiveTreeTests": 90,
     "BindingErrorsTests": 120,
     "RazorTests": 90,
+    "NewSolutionTests": 120,
     "XamlTests": 150
   }
 }

@@ -19,6 +19,12 @@ public sealed record ProjectTemplate(string Name, IReadOnlyList<string> ShortNam
     /// <summary>The name it is created by.</summary>
     public string ShortName => ShortNames[0];
 
+    /// <summary>Whether it makes a whole solution (its type is "solution"), which only New Solution offers.</summary>
+    public bool IsSolution { get; init; }
+
+    /// <summary>The package that brings it when dotnet new has not got it yet; null for an installed template.</summary>
+    public TemplatePack? Pack { get; init; }
+
     /// <summary>Its languages, C# first, as <c>dotnet new list</c> lists them.</summary>
     public IReadOnlyList<string> Languages =>
         [.. Variants.Select(v => v.Language).OfType<string>().Distinct().OrderBy(ProjectTemplates.LanguageOrder).ThenBy(l => l, StringComparer.Ordinal)];
@@ -38,7 +44,11 @@ public sealed record ProjectTemplate(string Name, IReadOnlyList<string> ShortNam
 /// <summary>One template of a group: its language, the frameworks it targets (with the option that sets them) and the
 /// options an IDE shows for it.</summary>
 public sealed record TemplateVariant(string Identity, string? Language, int Precedence, string Description, string? FrameworkOption,
-    IReadOnlyList<string> Frameworks, string? DefaultFramework, IReadOnlyList<TemplateOption> Options);
+    IReadOnlyList<string> Frameworks, string? DefaultFramework, IReadOnlyList<TemplateOption> Options)
+{
+    /// <summary>The option that keeps dotnet new from restoring what it made (skipRestore's), when the template restores.</summary>
+    public string? SkipRestoreOption { get; init; }
+}
 
 public enum TemplateOptionKind
 {
@@ -59,10 +69,11 @@ public sealed record TemplateChoice(string Value, string Label, string? Descript
 /// <summary>Reads the templates from what <c>dotnet new</c> itself keeps: <c>dotnet new list</c> brings its cache of the
 /// installed templates up to date, and the cache (templatecache.json, per SDK under DOTNET_CLI_HOME or the home folder)
 /// has each template's parameters, which its help prints without their display names. An IDE shows the options a
-/// template's ide.host.json makes visible, as Visual Studio and Rider do, read from its package. Read once per SDK.</summary>
+/// template's ide.host.json makes visible, as Visual Studio and Rider do, read from its package. Read once per SDK, and
+/// again after an install; the known packages' kinds dotnet new has not got are offered beside them (<see cref="TemplatePacks"/>).</summary>
 public static class ProjectTemplates
 {
-    private static readonly ConcurrentDictionary<string, Lazy<Task<TemplateCatalog>>> Read = new();
+    private static readonly ConcurrentDictionary<(string Sdk, string? Hive), Lazy<Task<TemplateCatalog>>> Read = new();
 
     private static readonly JsonDocumentOptions Lenient = new() { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
 
@@ -71,6 +82,21 @@ public static class ProjectTemplates
     {
         "name", "type", "language", "Framework", "TargetFrameworkOverride", "skipRestore", "langVersion", "HostIdentifier",
     };
+
+    /// <summary>Where dotnet new keeps the IDE's templates when not in its own home (its <c>--debug:custom-hive</c>): the
+    /// tests' run on Windows, which has no home of its own there; null, as for a person, for dotnet new's own.</summary>
+    public static string? Hive { get; set; }
+
+    /// <summary>The .NET command line's arguments for <c>dotnet new</c> with these, in the IDE's hive.</summary>
+    public static IReadOnlyList<string> New(IEnumerable<string> arguments) =>
+        ["new", .. arguments, .. Hive is { } hive ? ["--debug:custom-hive", hive] : Array.Empty<string>()];
+
+    /// <summary><c>dotnet new</c> with these arguments in a folder, in the IDE's hive.</summary>
+    public static System.Diagnostics.ProcessStartInfo NewCommand(IEnumerable<string> arguments, string folder) =>
+        ChildProcesses.DotnetCommand(New(arguments), folder);
+
+    /// <summary>Lets go of the templates read, once a package is installed, so the next read lists its templates.</summary>
+    public static void Forget() => Read.Clear();
 
     /// <summary>The templates of the SDK a folder builds with (its global.json's), read the first time they are asked for
     /// and kept; a read that fails is tried again next time. Runs <c>dotnet</c>, so never on the window's thread.</summary>
@@ -82,14 +108,15 @@ public static class ProjectTemplates
         {
             throw new InvalidOperationException($"dotnet --version failed: {Said(version)}");
         }
-        Lazy<Task<TemplateCatalog>> once = Read.GetOrAdd(sdk, _ => new Lazy<Task<TemplateCatalog>>(() => ReadAsync(folder, sdk)));
+        (string, string?) key = (sdk, Hive);
+        Lazy<Task<TemplateCatalog>> once = Read.GetOrAdd(key, _ => new Lazy<Task<TemplateCatalog>>(() => ReadAsync(folder, sdk, key.Item2)));
         try
         {
             return await once.Value;
         }
         catch
         {
-            Read.TryRemove(KeyValuePair.Create(sdk, once));
+            Read.TryRemove(KeyValuePair.Create(key, once));
             throw;
         }
     }
@@ -188,10 +215,10 @@ public static class ProjectTemplates
         }
     }
 
-    private static async Task<TemplateCatalog> ReadAsync(string folder, string sdk)
+    private static async Task<TemplateCatalog> ReadAsync(string folder, string sdk, string? custom)
     {
-        string? home = TemplateHome();
-        ChildResult listed = await ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(["new", "list", "--type", "project"], folder), limit: TimeSpan.FromMinutes(3));
+        string? home = custom ?? TemplateHome();
+        ChildResult listed = await ChildProcesses.RunAsync(NewCommand(["list", "--type", "project"], folder), limit: TimeSpan.FromMinutes(3));
         if (!listed.Succeeded)
         {
             throw new InvalidOperationException($"dotnet new list failed: {Said(listed)}");
@@ -200,14 +227,15 @@ public static class ProjectTemplates
         {
             throw new InvalidOperationException("Neither DOTNET_CLI_HOME nor the home folder is set, so dotnet new keeps no templates to read");
         }
-        string hive = Path.Combine(home, ".templateengine", "dotnetcli");
+        // A custom hive is what dotnet new keeps under .templateengine in its home.
+        string hive = custom is null ? Path.Combine(home, ".templateengine", "dotnetcli") : Path.Combine(custom, "dotnetcli");
         string? cache = new[] { Path.Combine(hive, sdk, "templatecache.json"), Path.Combine(hive, "v" + sdk, "templatecache.json") }.FirstOrDefault(File.Exists)
             ?? throw new InvalidOperationException($"dotnet new keeps no templates at {Path.Combine(hive, sdk, "templatecache.json")}");
         using JsonDocument document = await ReadSharedAsync(cache);
         List<JsonElement> all = [.. document.RootElement.GetProperty("TemplateInfo").EnumerateArray()];
         using HostFiles ide = new();
         List<ProjectTemplate> templates = [];
-        foreach (IGrouping<string, JsonElement> group in all.Where(t => Tag(t, "type") == "project" && Usable(t)).GroupBy(t => Text(t, "GroupIdentity") ?? Text(t, "Identity")!))
+        foreach (IGrouping<string, JsonElement> group in all.Where(t => Tag(t, "type") is "project" or "solution" && Usable(t)).GroupBy(t => Text(t, "GroupIdentity") ?? Text(t, "Identity")!))
         {
             List<TemplateVariant> variants = [];
             foreach (JsonElement template in group.OrderByDescending(t => Int(t, "Precedence")).ThenBy(t => LanguageOrder(Tag(t, "language") ?? string.Empty)))
@@ -225,10 +253,12 @@ public static class ProjectTemplates
                 .OrderByDescending(t => Int(t, "Precedence")).ThenBy(t => LanguageOrder(Tag(t, "language") ?? string.Empty)).First();
             string name = Text(newest, "Name") ?? Text(newest, "Identity")!;
             templates.Add(new ProjectTemplate(name, [.. Strings(newest, "ShortNameList")], Text(newest, "Author") ?? string.Empty,
-                [.. Strings(newest, "Classifications")], DefaultName(newest, name), variants));
+                [.. Strings(newest, "Classifications")], DefaultName(newest, name), variants) { IsSolution = Tag(newest, "type") == "solution" });
         }
         (IReadOnlyList<string> formats, string format) = SolutionFormats(all);
-        return new TemplateCatalog(sdk, [.. templates.OrderBy(Rank).ThenBy(t => t.Name, StringComparer.OrdinalIgnoreCase)], formats, format);
+        // Those not installed come after, each package's together, as Rider's offers to install come last.
+        return new TemplateCatalog(sdk,
+            [.. templates.OrderBy(Rank).ThenBy(t => t.Name, StringComparer.OrdinalIgnoreCase), .. TemplatePacks.Offered(templates)], formats, format);
     }
 
     /// <summary>The folder dotnet keeps its templates under for the programs it runs: DOTNET_CLI_HOME, else the home
@@ -354,7 +384,10 @@ public static class ProjectTemplates
             }
         }
         return new TemplateVariant(Text(template, "Identity")!, Tag(template, "language"), Int(template, "Precedence"), Text(template, "Description") ?? string.Empty,
-            frameworkOption, frameworks, defaultFramework, options);
+            frameworkOption, frameworks, defaultFramework, options)
+        {
+            SkipRestoreOption = parameters.ContainsKey("skipRestore") ? LongName(cli, "skipRestore") : null,
+        };
     }
 
     /// <summary>A framework Passenger builds for here: no .NET Framework (net48), and Windows' own only on Windows.</summary>

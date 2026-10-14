@@ -5,20 +5,53 @@ namespace Passenger.Tests;
 
 /// <summary>An Avalonia app as <c>dotnet new avalonia.app</c> makes it, from Avalonia's own templates at the Avalonia
 /// version Passenger uses (so its packages are the ones already restored), installed once per run into the run's own
-/// template hive, never the person's. The template's reference to Avalonia's paid developer tools is taken out, as
-/// nothing of Avalonia Accelerate may be used.</summary>
+/// template hive, never the person's, from the run's own local feed (<see cref="Feed"/>), never nuget.org. The template's
+/// reference to Avalonia's paid developer tools is taken out, as nothing of Avalonia Accelerate may be used.</summary>
 internal static class AvaloniaApp
 {
     private static readonly Lazy<string> Hive = new(Install, LazyThreadSafetyMode.ExecutionAndPublication);
+
+    private static readonly Lazy<string> FeedFolder = new(MakeFeed, LazyThreadSafetyMode.ExecutionAndPublication);
 
     /// <summary>The Avalonia version the tests run on, which the template is asked for.</summary>
     public static string Version { get; } =
         typeof(Avalonia.Controls.Button).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()!.InformationalVersion.Split('+')[0];
 
+    /// <summary>Avalonia.Templates' version, the one the test project downloads (Directory.Packages.props).</summary>
+    public static string TemplatesVersion { get; } = Metadata("AvaloniaTemplatesVersion");
+
+    /// <summary>The run's local feed: a folder of packages holding Avalonia.Templates, copied from the package cache the
+    /// test project's restore downloaded it into.</summary>
+    public static string Feed => Path.Combine(FeedFolder.Value, "packages");
+
+    /// <summary>Writes a nuget.config into a folder that names the run's local feed and no other, so a dotnet new install
+    /// or a restore under it reaches nothing else; the package cache is still the run's.</summary>
+    public static void UseFeed(string folder) => File.WriteAllText(Path.Combine(folder, "nuget.config"), $"""
+        <?xml version="1.0" encoding="utf-8"?>
+        <configuration>
+          <packageSources>
+            <clear />
+            <add key="feed" value="{System.Security.SecurityElement.Escape(Feed)}" />
+          </packageSources>
+        </configuration>
+        """);
+
+    private static string MakeFeed()
+    {
+        string folder = Directory.CreateDirectory(Path.Combine(TestRun.Root, "feed")).FullName;
+        string packages = Directory.CreateDirectory(Path.Combine(folder, "packages")).FullName;
+        string version = TemplatesVersion.ToLowerInvariant();
+        string downloaded = Path.Combine(Metadata("NuGetPackageRoot"), "avalonia.templates", version, $"avalonia.templates.{version}.nupkg");
+        Assert.True(File.Exists(downloaded), $"Avalonia.Templates {TemplatesVersion} is not in the package cache at {downloaded}: restore the tests first");
+        File.Copy(downloaded, Path.Combine(packages, Path.GetFileName(downloaded)), overwrite: true);
+        return folder;
+    }
+
     private static string Install()
     {
         string hive = Directory.CreateDirectory(Path.Combine(TestRun.Root, "templates")).FullName;
-        ChildResult installed = Run(["new", "install", $"Avalonia.Templates::{Version}", "--debug:custom-hive", hive]);
+        UseFeed(FeedFolder.Value);
+        ChildResult installed = Run(["new", "install", $"Avalonia.Templates::{TemplatesVersion}", "--debug:custom-hive", hive], FeedFolder.Value);
         Assert.True(installed.Succeeded, $"Avalonia's templates did not install into the run's own hive (exit code {installed.ExitCode}):\n{installed.Output}{installed.Error}");
         return hive;
     }
@@ -27,7 +60,7 @@ internal static class AvaloniaApp
     public static void Create(string folder, string name)
     {
         ChildResult made = Run(["new", "avalonia.app", "--output", folder, "--name", name, "--framework", "net10.0", "--avalonia-version", Version,
-            "--no-restore", "--no-update-check", "--debug:custom-hive", Hive.Value]);
+            "--no-restore", "--no-update-check", "--debug:custom-hive", Hive.Value], null);
         Assert.True(made.Succeeded, $"dotnet new avalonia.app did not make the test's app (exit code {made.ExitCode}):\n{made.Output}{made.Error}");
         string project = Path.Combine(folder, name + ".csproj");
         string text = File.ReadAllText(project);
@@ -45,6 +78,11 @@ internal static class AvaloniaApp
             && line.Trim() is not ("#if DEBUG" or "#endif"))));
     }
 
-    private static ChildResult Run(IReadOnlyList<string> arguments) =>
-        Task.Run(() => ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(arguments), limit: TimeSpan.FromMinutes(3))).GetAwaiter().GetResult();
+    /// <summary>A value the test project's build put in the assembly (Passenger.Tests.csproj).</summary>
+    private static string Metadata(string key) =>
+        typeof(AvaloniaApp).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().FirstOrDefault(a => a.Key == key)?.Value
+        ?? throw new InvalidOperationException($"The test assembly was built without its {key}");
+
+    private static ChildResult Run(IReadOnlyList<string> arguments, string? folder) =>
+        Task.Run(() => ChildProcesses.RunAsync(ChildProcesses.DotnetCommand(arguments, folder), limit: TimeSpan.FromMinutes(3))).GetAwaiter().GetResult();
 }

@@ -23,6 +23,14 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <!-- Avalonia's templates, restored from nuget.org as every package is and served to the tests from the package cache
+       as a local feed (AvaloniaApp.Feed), so installing them never reaches nuget.org at test time. -->
+  <ItemGroup>
+    <PackageDownload Include="Avalonia.Templates" Version="[$(AvaloniaTemplatesVersion)]" />
+    <AssemblyMetadata Include="NuGetPackageRoot" Value="$(NuGetPackageRoot)" />
+    <AssemblyMetadata Include="AvaloniaTemplatesVersion" Value="$(AvaloniaTemplatesVersion)" />
+  </ItemGroup>
+
   <!-- A test drives the IDE whole or a real process through its real boundary: the entry points a unit test would call
        instead are banned (BannedSymbols.txt), which warnings as errors make a failed build. -->
   <ItemGroup>
