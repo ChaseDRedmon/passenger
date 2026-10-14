@@ -142,14 +142,15 @@ public sealed partial class McpTests
             Assert.StartsWith("Clicked Button#Count", Text(Await(clicking, "the click")), StringComparison.Ordinal);
             Assert.Contains("\"Clicked once\"", Text(Await(Task.Run(() => Call(agent, "app_tree", new() { ["control"] = "#Counter" })), "the counter")), StringComparison.Ordinal);
 
-            // Passenger's own window, the person's: its run configurations' menu opened by name, and closed by a key, asked for first.
+            // Passenger's own window, the person's: its run configurations' menu opened by name, and closed by a key, asked for
+            // first, the menu keeping the keys though the question came between.
             TextBlock project = window.FindControl<TextBlock>("ProjectName")!;
             Assert.Contains($"TextBlock#ProjectName \"{project.Text}\"", Text(Await(Task.Run(() => Call(agent, "app_tree", new() { ["app"] = "ide", ["filter"] = "#ProjectName" })), "Passenger's tree")),
                 StringComparison.Ordinal);
             Await(Task.Run(() => Call(agent, "app_click", new() { ["app"] = "ide", ["control"] = "#RunConfigButton" })), "the click on Passenger's run configurations");
             Dictionary<string, object?> menu = new() { ["app"] = "ide", ["filter"] = "MenuItem \"AgentApp\"" };
             Assert.Contains("MenuItem \"AgentApp\"", Text(Await(Task.Run(() => Call(agent, "app_tree", menu)), "the run configurations' menu")), StringComparison.Ordinal);
-            Task<JsonElement> escaping = Task.Run(() => Call(agent, "app_key", new() { ["app"] = "ide", ["keys"] = "Escape", ["control"] = "MenuItem \"AgentApp\"" }));
+            Task<JsonElement> escaping = Task.Run(() => Call(agent, "app_key", new() { ["app"] = "ide", ["keys"] = "Escape" }));
             Press(Question(window, "the question for the agent's keys"), "Allow");
             string escaped = Text(Await(escaping, "the Escape"));
             string after = Text(Await(Task.Run(() => Call(agent, "app_tree", menu)), "the menu closed"));

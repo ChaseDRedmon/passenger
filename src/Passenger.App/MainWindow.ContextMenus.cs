@@ -1,6 +1,8 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
+using Avalonia.LogicalTree;
+using Avalonia.Threading;
 using Passenger.App.Debugging;
 using Passenger.Editor;
 using E = Passenger.Editor.EditorActions;
@@ -99,19 +101,48 @@ public partial class MainWindow
         }
     }
 
-    /// <summary>Opens a context menu, remembering it while it is open.</summary>
+    /// <summary>Opens a context menu, remembering it while it is open, the keys kept in it (<see cref="KeepKeys"/>).</summary>
     private void Open(ContextMenu menu, Control target)
     {
         OpenContextMenu?.Close();
         OpenContextMenu = menu;
+        Action release = KeepKeys(target, () => menu.IsOpen ? menu : null);
         menu.Closed += (_, _) =>
         {
+            release();
             if (OpenContextMenu == menu)
             {
                 OpenContextMenu = null;
             }
         };
         menu.Open(target);
+    }
+
+    /// <summary>Keeps the keys with a menu while it is open (it takes them as it opens): a window brought back to the front,
+    /// a dialog over it answered (an agent's question), gives its focus back to what had it before the menu, since a menu
+    /// keeps its own, so the menu or its chosen item takes it again. A desktop closes the menu as the dialog takes the
+    /// front; headless, nothing does. Gives what ends the keeping.</summary>
+    private static Action KeepKeys(Control target, Func<MenuBase?> open)
+    {
+        if (TopLevel.GetTopLevel(target) is not WindowBase window)
+        {
+            return () => { };
+        }
+        // Posted: the window puts its own focus back after its Activated.
+        void Back(object? sender, EventArgs e) => Dispatcher.UIThread.Post(() =>
+        {
+            if (open() is not { IsKeyboardFocusWithin: false } menu)
+            {
+                return;
+            }
+            Control? chosen = menu.SelectedIndex >= 0 ? menu.ContainerFromIndex(menu.SelectedIndex) : null;
+            if (chosen?.Focus() != true && !menu.Focus())
+            {
+                menu.GetLogicalChildren().OfType<MenuItem>().FirstOrDefault(i => i.IsEffectivelyEnabled)?.Focus();
+            }
+        });
+        window.Activated += Back;
+        return () => window.Activated -= Back;
     }
 
     /// <summary>A menu item that runs something other than one of the window's actions (a test by name).</summary>

@@ -2,6 +2,7 @@ using System.Windows.Input;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.LogicalTree;
 using Passenger.Editor;
 
 namespace Passenger.App;
@@ -122,6 +123,8 @@ public partial class MainWindow
         {
             flyout.Items.Add(FlyoutEntry(menu, context));
         }
+        Action release = KeepKeys(MenuButton, () => flyout.IsOpen ? flyout.Items.OfType<Control>().FirstOrDefault()?.FindLogicalAncestorOfType<MenuBase>() : null);
+        flyout.Closed += (_, _) => release();
         flyout.ShowAt(MenuButton);
     }
 

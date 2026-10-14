@@ -1,16 +1,18 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
 using Avalonia.VisualTree;
 using Passenger.App;
+using Passenger.App.Run;
 using Passenger.Editor;
 
 namespace Passenger.Tests;
 
 /// <summary>Rider's main menu: its menus in Rider's order from the action catalog, each item with the shortcut the
 /// keymap gives it now and disabled where it cannot run; an item chosen runs its action, an editing one where the focus
-/// is.</summary>
+/// is. The toolbar's menus, opened by a click, take the keys as Rider's popups do.</summary>
 public sealed class MenuTests : IDisposable
 {
     private readonly string folder = TestFolders.Create("menu-");
@@ -107,6 +109,67 @@ public sealed class MenuTests : IDisposable
         window.OpenContextMenu.Close();
         window.Close();
     }
+
+    [AvaloniaFact]
+    public void A_toolbar_menu_opened_by_a_click_takes_the_keys_so_escape_closes_it_and_the_arrows_and_enter_choose()
+    {
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(folder);
+        Ui.Settle();
+        window.SetConfigurations([new RunConfiguration { Name = "First" }, new RunConfiguration { Name = "Second" }], "First");
+        Ui.Settle();
+
+        // The main menu's button is there where the system has no menu bar of its own (not on macOS).
+        string[] widgets = window.FindControl<Button>("MenuButton")!.IsVisible
+            ? ["MenuButton", "ProjectButton", "BranchButton", "RunConfigButton"]
+            : ["ProjectButton", "BranchButton", "RunConfigButton"];
+        foreach (string widget in widgets)
+        {
+            ClickOpen(window, widget);
+            Ui.Press(window, "ESCAPE");
+            Assert.False(MenuOpen(window), $"Escape left the menu a click on {widget} opened still open: it never took the keys");
+
+            // A dialog over the window (an agent's question) answered gives the window back the focus it had before the menu.
+            ClickOpen(window, widget);
+            ConfirmDialog question = new("Allow app_key?", "An agent wants to press keys in Passenger.", "Allow", "Deny");
+            _ = question.ShowDialog<bool>(window);
+            Ui.Settle();
+            question.Close(true);
+            Ui.Settle();
+            Ui.Press(window, "ESCAPE");
+            Assert.False(MenuOpen(window), $"Once a dialog over the window was answered, Escape left the menu a click on {widget} opened still open: the keys went back under it");
+        }
+
+        // The run configurations' menu: Down from nothing chosen goes to the first, Up to the last, and Enter chooses.
+        ClickOpen(window, "RunConfigButton");
+        Ui.Press(window, "DOWN");
+        Ui.Press(window, "DOWN");
+        Ui.Press(window, "ENTER");
+        Assert.False(MenuOpen(window), "Enter on a run configuration left its menu open");
+        Assert.Equal("Second", window.Configuration?.Name);
+        ClickOpen(window, "RunConfigButton");
+        Ui.Press(window, "UP");
+        Ui.Press(window, "UP");
+        Ui.Press(window, "UP");
+        Ui.Press(window, "ENTER");
+        Assert.Equal("First", window.Configuration?.Name);
+        window.Close();
+    }
+
+    /// <summary>A toolbar widget clicked, as a person's pointer clicks it, and its menu waited for.</summary>
+    private static void ClickOpen(MainWindow window, string widget)
+    {
+        Button button = window.FindControl<Button>(widget)!;
+        Point at = button.TranslatePoint(new Point(button.Bounds.Width / 2, button.Bounds.Height / 2), window)!.Value;
+        window.MouseDown(at, MouseButton.Left);
+        window.MouseUp(at, MouseButton.Left);
+        Ui.WaitFor(() => MenuOpen(window), $"the menu of the toolbar's {widget}");
+    }
+
+    /// <summary>Whether a menu is open over the window: a widget's, or the main menu's.</summary>
+    private static bool MenuOpen(MainWindow window) =>
+        window.OpenContextMenu is { IsOpen: true } || window.GetVisualDescendants().OfType<MenuFlyoutPresenter>().Any(p => p.IsEffectivelyVisible);
 
     private static NativeMenu Open(NativeMenu parent, string title) => Ui.Submenu(parent, title);
 
