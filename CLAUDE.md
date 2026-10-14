@@ -222,6 +222,12 @@ window or takes the focus; it shows everything but the system's own window chrom
 - `src/Passenger.Profiler`: the profiler with no UI. `ProfilingSession` starts a program held at a diagnostic port of
   its own and streams EventPipe to a .nettrace; `Snapshot` reads it (TraceEvent) into call trees and hot spots.
   `App/Profiling` is the window (`ProfilerView`, `FlameGraph`), `MainWindow.Profiler.cs` the Profile action.
+  `MemorySnapshot` is a heap dump read with ClrMD into `HeapGraph` (roots by dotMemory's kinds, shortest paths, a
+  dominator tree for retained bytes); `HeapHistory` follows a run's snapshots' objects through every GC (an EventPipe
+  session of the GC's survival and movement events), so `SnapshotComparison` gives new, dead and survived objects;
+  `App/Profiling/MemoryView` is the Memory page. ClrMD 3 finds no statics on .NET 9 and later, so
+  `HeapGraph.StaticBases` reaches ISOSDacInterface14 through ClrMD's private fields: a ClrMD update keeps
+  `MemorySnapshotsTests` passing.
 - `src/Passenger.Terminal`: the terminal. `TerminalScreen` is the VT emulator (no UI), `TerminalView` draws it and
   encodes the keys, `TerminalSession` runs the shell in a pseudo-terminal (Porta.Pty). `MainWindow.Terminal.cs` is its
   tool window and the keys it takes ahead of the IDE's.
@@ -307,6 +313,12 @@ window or takes the focus; it shows everything but the system's own window chrom
   folder (`AgentSocket`, open only while the person's Enable MCP Server setting is on), and `--mcp-attach [PID]`
   (standard input and output joined to the window over the agent's folder). On a person's window a tool neither
   `ReadOnly` nor `Destructive = false` asks them the first time an agent uses it (`ConnectedTool`).
+- Attach to Process: `MainWindow.Attach.cs` (`Debugging/AttachToProcessDialog`, Reattach, the recently attached);
+  `Core/DotnetProcesses` lists the .NET programs a debugger can attach to (the runtime's `clr-debug-pipe-*` in TMPDIR
+  on macOS and Linux, checked against the process's start; its diagnostic pipe on Windows). An attached session is
+  let go by Detach and by the window's close, never ended by them. On macOS the debugger needs no entitlement and no
+  get-task-allow on its target: the adapter runs under the machine's dotnet and talks to the runtime through its
+  pipes, so the package carries no com.apple.security.cs.debugger.
 - `src/Passenger.App/Debugging`: `BreakpointStore` holds line breakpoints by file and Rider's CLR exception
   breakpoints (`ExceptionBreakpoint`; "Any exception" is every folder's and is never removed), kept with the folder;
   `Muted` is Mute Breakpoints, which sends none while on. The engine decides exception breakpoints (`ExceptionRule`)
