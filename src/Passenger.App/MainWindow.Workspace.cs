@@ -124,7 +124,7 @@ public partial class MainWindow
             csharp.StateChanged += (_, _) => LanguageText.Text = LanguageLabel();
             csharp.StateChanged += (_, _) => usages.Refresh();
             csharp.Stopped += (_, message) => StatusText.Text = message;
-            csharp.Said += (_, message) => StatusText.Text = message;
+            csharp.Said += (_, said) => Say(said.Text, said.Severity);
             WatchProblems(csharp);
             csharp.FollowIndent(Editors.Active);
             csharp.Start(opening);
@@ -135,6 +135,7 @@ public partial class MainWindow
         }
         LanguageText.Text = LanguageLabel();
         ShowSolutionProblems();
+        ShowProjectProblems();
     }
 
     /// <summary>Rider names the window's project widget and its title after the solution (or the project opened alone), the

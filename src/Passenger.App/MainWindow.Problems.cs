@@ -11,15 +11,58 @@ using Passenger.Text;
 namespace Passenger.App;
 
 /// <summary>Problems as Rider keeps them: the current file's as they are typed, the solution's with solution-wide
-/// analysis on (the status bar's icon turns it on and off and counts its errors), and the last build's apart.</summary>
+/// analysis on (the status bar's icon turns it on and off and counts its errors), the projects' load problems under
+/// Toolset, Environment, and the last build's apart. A link in a problem (an advisory) opens in the browser.</summary>
 public partial class MainWindow
 {
     private OpenDocument? problemsFile;
 
+    /// <summary>What the status bar says that its icon marks as an error or a warning; another message takes the icon
+    /// away.</summary>
+    private string? marked;
+
     private void AddProblems()
     {
         Editors.ActiveChanged += (_, _) => FollowActiveFile();
+        Bottom.Problems.LinkClicked += (_, link) => Browse(link);
+        StatusText.PropertyChanged += (_, e) =>
+        {
+            if (e.Property == TextBlock.TextProperty && StatusText.Text != marked)
+            {
+                marked = null;
+                StatusIcon.IsVisible = false;
+            }
+        };
         ShowAnalysis();
+    }
+
+    /// <summary>Whether the status bar says an error, a warning or neither, as its icon shows it.</summary>
+    public ProblemSeverity? StatusSeverity => StatusIcon.IsVisible ? (ProblemSeverity?)StatusIcon.Tag : null;
+
+    /// <summary>Says something in the status bar, an error or a warning with its icon, as Rider's status bar shows a
+    /// notification's.</summary>
+    private void Say(string text, ProblemSeverity? severity)
+    {
+        marked = severity is null ? null : text;
+        StatusText.Text = text;
+        if (severity is not { } kind)
+        {
+            StatusIcon.IsVisible = false;
+            return;
+        }
+        bool error = kind == ProblemSeverity.Error;
+        StatusIcon.Bind(PathIcon.DataProperty, StatusIcon.GetResourceObservable(error ? "Icon.Error" : "Icon.Problems"));
+        StatusIcon.Bind(PathIcon.ForegroundProperty, StatusIcon.GetResourceObservable(error ? "Passenger.Editor.Error" : "Passenger.Editor.Warning"));
+        StatusIcon.Tag = kind;
+        StatusIcon.IsVisible = true;
+    }
+
+    /// <summary>Problems' Toolset, Environment: each project's load warnings and errors, under the project, its file the
+    /// place to go to and the advisory or page its message names the link.</summary>
+    private void ShowProjectProblems()
+    {
+        Bottom.Problems.ShowToolset([.. (csharp?.ProjectProblems ?? []).Select(p => new Problem(p.Severity, p.Message, null, p.Project, new TextPosition(0, 0),
+            Path.GetFileNameWithoutExtension(p.Project)) { Link = Problem.LinkIn(p.Message) })]);
     }
 
     /// <summary>Turns solution-wide analysis on or off, as the status bar's icon does, and keeps the choice.</summary>
@@ -44,6 +87,13 @@ public partial class MainWindow
             if (csharp == service)
             {
                 ShowSolutionProblems();
+            }
+        };
+        service.ProjectProblemsChanged += (_, _) =>
+        {
+            if (csharp == service)
+            {
+                ShowProjectProblems();
             }
         };
     }

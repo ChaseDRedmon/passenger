@@ -240,14 +240,14 @@ public sealed class FeedClient
 }
 
 /// <summary>A feed through NuGet's v3 protocol, as the NuGet client finds its way around one: the service index names
-/// the search, the registrations (which say of each version whether it is listed) and the flat container (which lists
-/// unlisted versions too, and is what a feed without registrations offers).</summary>
+/// the search, the registrations (which say of each version whether it is listed), the flat container (which lists
+/// unlisted versions too, and is what a feed without registrations offers) and the known vulnerabilities.</summary>
 public sealed class V3Feed(FeedClient client) : IPackageFeed
 {
     /// <summary>nuget.org's service index.</summary>
     public static readonly Uri NuGetOrg = new("https://api.nuget.org/v3/index.json");
 
-    private (Uri? Search, Uri? Registrations, Uri? Flat)? services;
+    private (Uri? Search, Uri? Registrations, Uri? Flat, Uri? Vulnerabilities)? services;
 
     public string Name => client.Name;
 
@@ -261,7 +261,7 @@ public sealed class V3Feed(FeedClient client) : IPackageFeed
 
     public async Task<IReadOnlyList<string>> VersionsAsync(string id, bool prerelease, CancellationToken cancel)
     {
-        (_, Uri? registrations, Uri? flat) = await ServicesAsync(cancel);
+        (_, Uri? registrations, Uri? flat, _) = await ServicesAsync(cancel);
         IEnumerable<string> versions;
         if (registrations is not null)
         {
@@ -285,6 +285,26 @@ public sealed class V3Feed(FeedClient client) : IPackageFeed
         return [.. versions.Where(v => prerelease || !VersionOrder.IsPrerelease(v)).OrderByDescending(v => v, VersionOrder.Instance)];
     }
 
+    /// <summary>The advisories the feed's VulnerabilityInfo resource gives, by package, as restore's audit reads them: an
+    /// index of pages (a base and the updates since), each a map of lower-case ids to advisories. None from a feed
+    /// without the resource.</summary>
+    public async Task<IReadOnlyDictionary<string, IReadOnlyList<Advisory>>> VulnerabilitiesAsync(CancellationToken cancel)
+    {
+        if ((await ServicesAsync(cancel)).Vulnerabilities is not { } index)
+        {
+            return new Dictionary<string, IReadOnlyList<Advisory>>();
+        }
+        IReadOnlyList<VulnerabilityData.IndexPage> pages = await client.GetJsonAsync<List<VulnerabilityData.IndexPage>>(index, VulnerabilityData.Json, cancel) ?? [];
+        IReadOnlyDictionary<string, IReadOnlyList<Advisory>>[] read = await Task.WhenAll(pages.Select(async page =>
+            VulnerabilityData.Page(await client.GetJsonAsync<Dictionary<string, List<VulnerabilityData.Entry>>>(new Uri(index, page.Id), VulnerabilityData.Json, cancel))));
+        Dictionary<string, IReadOnlyList<Advisory>> merged = new(StringComparer.OrdinalIgnoreCase);
+        foreach ((string id, IReadOnlyList<Advisory> advisories) in read.SelectMany(p => p))
+        {
+            merged[id] = merged.TryGetValue(id, out IReadOnlyList<Advisory>? known) ? [.. known.Concat(advisories).Distinct()] : advisories;
+        }
+        return merged;
+    }
+
     private static string Authors(JsonElement? authors) => authors switch
     {
         { ValueKind: JsonValueKind.Array } list => string.Join(", ", list.EnumerateArray().Select(a => a.GetString())),
@@ -292,7 +312,7 @@ public sealed class V3Feed(FeedClient client) : IPackageFeed
         _ => string.Empty,
     };
 
-    private async Task<(Uri? Search, Uri? Registrations, Uri? Flat)> ServicesAsync(CancellationToken cancel)
+    private async Task<(Uri? Search, Uri? Registrations, Uri? Flat, Uri? Vulnerabilities)> ServicesAsync(CancellationToken cancel)
     {
         if (services is { } known)
         {
@@ -306,7 +326,8 @@ public sealed class V3Feed(FeedClient client) : IPackageFeed
         services = (
             Find("SearchQueryService/3.5.0", "SearchQueryService/3.0.0-rc", "SearchQueryService/3.0.0-beta", "SearchQueryService") is { } search ? new Uri(search) : null,
             Folder(Find("RegistrationsBaseUrl/3.6.0", "RegistrationsBaseUrl/3.4.0", "RegistrationsBaseUrl/3.0.0-rc", "RegistrationsBaseUrl/3.0.0-beta", "RegistrationsBaseUrl")),
-            Folder(Find("PackageBaseAddress/3.0.0")));
+            Folder(Find("PackageBaseAddress/3.0.0")),
+            Find("VulnerabilityInfo/6.7.0") is { } vulnerabilities ? new Uri(vulnerabilities) : null);
         return services.Value;
     }
 

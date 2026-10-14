@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Avalonia.Threading;
+using Passenger.App.Run;
 using Passenger.App.Workspace;
 using Passenger.Core;
 using Passenger.Editor;
@@ -13,9 +14,9 @@ namespace Passenger.App.CSharp;
 /// projects, its state for the status bar, and a <see cref="CSharpDocument"/> for every C# file
 /// open in a tab. Files opened before the server is ready are attached once it is. A server that ends
 /// on its own, or stops answering, is started again with the open files, as Rider restarts its backend, a few times at
-/// most. What the server tells the person (a project that did not load and why) is said in the status bar and the IDE's
-/// log, its errors and warnings logged, its load's progress shown, and each start's phases timed in the log. A UI-thread
-/// object: what the server says from its own threads crosses through <see cref="UiThread"/>.</summary>
+/// most. What the server tells the person (a project that did not load or loaded with warnings, and why) is said in the
+/// status bar and logged, each project's load problems kept for Problems, the load's progress shown, and each start's
+/// phases timed. A UI-thread object: what the server says from its threads crosses through <see cref="UiThread"/>.</summary>
 public sealed class CSharpService : IAsyncDisposable
 {
     /// <summary>How long after an error the server logged a message it shows can be its reason (Roslyn logs a project's
@@ -48,9 +49,30 @@ public sealed class CSharpService : IAsyncDisposable
     /// <summary>The server ended on its own or stopped answering, with what was done about it; raised on the UI thread.</summary>
     public event EventHandler<string>? Stopped;
 
-    /// <summary>What the server tells the person (<c>window/showMessage</c>, Roslyn's toasts), with the reason it logged
-    /// when it says to see the log; raised on the UI thread, for the status bar.</summary>
-    public event EventHandler<string>? Said;
+    /// <summary>What the server tells the person (<c>window/showMessage</c>, Roslyn's toasts), with what it logged when
+    /// it says to see the log (the project and the warning or error it loaded with); raised on the UI thread, for the
+    /// status bar, with whether it is an error or a warning.</summary>
+    public event EventHandler<ServerSaid>? Said;
+
+    /// <summary>The problems the server met loading the projects changed; raised on the UI thread.</summary>
+    public event EventHandler? ProjectProblemsChanged;
+
+    /// <summary>The warnings and errors each project last loaded with, as the server logged them, by project.</summary>
+    public IReadOnlyList<ProjectLoadProblem> ProjectProblems => [.. loadProblems.Values.SelectMany(p => p)];
+
+    /// <summary>What each project's last load reported, by its project file; a project that loads again without any
+    /// problem leaves.</summary>
+    private readonly Dictionary<string, List<ProjectLoadProblem>> loadProblems = new(StringComparer.FromComparison(PathNames.Comparison));
+
+    /// <summary>The problems of the loads under way, in the order they came: one toast says the batch had problems, the
+    /// first project's, so the status bar says the rest when the batch ends.</summary>
+    private readonly List<ProjectLoadProblem> batch = [];
+
+    /// <summary>How many of <see cref="batch"/> the status bar has said.</summary>
+    private int batchSaid;
+
+    /// <summary>The project whose load problem the status bar last named, until it loads without one.</summary>
+    private string? saidProject;
 
     /// <summary>The work the server reports under way (its projects loading), as the status bar shows it: its title and how
     /// far it is; null when there is none.</summary>
@@ -389,6 +411,10 @@ public sealed class CSharpService : IAsyncDisposable
                 long at = Stopwatch.GetTimestamp();
                 UiThread.Post(() => unsaid ??= (message.Message, at));
             }
+            if (LoadReport.Read(message.Message) is { } report)
+            {
+                UiThread.Post(() => OnLoadReport(server, report));
+            }
         };
         server.Shown += (_, message) =>
         {
@@ -398,8 +424,9 @@ public sealed class CSharpService : IAsyncDisposable
         server.Progressed += (_, progress) => UiThread.Post(() => OnProgress(server, progress));
     }
 
-    /// <summary>A message the server shows: in the status bar, where one that says to see the log for the details of an
-    /// error is the error it logged just before (a project that did not load, and why), which the log has as well.</summary>
+    /// <summary>A message the server shows: in the status bar, an error as an error and a warning as a warning. Roslyn's
+    /// toast that there were problems loading a project and to see the log is said as what it logged (the project and
+    /// its warning or error); another that says to see the log for an error is the error it logged just before.</summary>
     private void OnShown(LanguageServer from, LogMessageParams message)
     {
         if (disposed || (session is { } current && current.Server != from))
@@ -408,10 +435,80 @@ public sealed class CSharpService : IAsyncDisposable
         }
         (string Text, long At)? reason = unsaid;
         unsaid = null;
-        Said?.Invoke(this, message.Type == 1 && reason is { } error && Stopwatch.GetElapsedTime(error.At) < ReasonWindow
+        if (message.Type is 1 or 2 && batch.Count > batchSaid)
+        {
+            SayLoadProblems();
+            return;
+        }
+        ProblemSeverity? severity = message.Type switch { 1 => ProblemSeverity.Error, 2 => ProblemSeverity.Warning, _ => null };
+        Said?.Invoke(this, new ServerSaid(message.Type == 1 && reason is { } error && Stopwatch.GetElapsedTime(error.At) < ReasonWindow
             ? Readable(error.Text, workspace?.Folder)
-            : message.Message);
+            : message.Message, severity));
     }
+
+    /// <summary>What the server logged of a project's load: a warning or error replaces what the project's last load
+    /// reported (the first of a batch) or joins it; a load with none takes them away; a batch's end says any problems the
+    /// toast did not.</summary>
+    private void OnLoadReport(LanguageServer from, LoadReport report)
+    {
+        if (disposed || (session is { } current && current.Server != from))
+        {
+            return;
+        }
+        switch (report)
+        {
+            case { Kind: LoadReportKind.Problem, Problem: { } problem }:
+                if (!batch.Any(p => PathNames.Same(p.Project, problem.Project)) || !loadProblems.ContainsKey(problem.Project))
+                {
+                    loadProblems[problem.Project] = [];
+                }
+                if (!loadProblems[problem.Project].Contains(problem))
+                {
+                    loadProblems[problem.Project].Add(problem);
+                }
+                batch.Add(problem);
+                ProjectProblemsChanged?.Invoke(this, EventArgs.Empty);
+                break;
+            case { Kind: LoadReportKind.Loaded, Project: { } project }:
+                if (loadProblems.Remove(project))
+                {
+                    ProjectProblemsChanged?.Invoke(this, EventArgs.Empty);
+                }
+                // The project the status bar named loads cleanly now (its vulnerable package updated): it says so.
+                if (saidProject is { } named && PathNames.Same(named, project))
+                {
+                    saidProject = null;
+                    Said?.Invoke(this, new ServerSaid($"{Shown(project)} loaded without problems", null));
+                }
+                break;
+            case { Kind: LoadReportKind.BatchEnded }:
+                if (batch.Count > batchSaid)
+                {
+                    SayLoadProblems();
+                }
+                batch.Clear();
+                batchSaid = 0;
+                break;
+        }
+    }
+
+    /// <summary>The status bar's word on the batch's load problems: the first error, else the first warning, by project and
+    /// in the server's words, and how many more Problems lists.</summary>
+    private void SayLoadProblems()
+    {
+        batchSaid = batch.Count;
+        ProjectLoadProblem first = batch.OrderBy(p => p.Severity).First();
+        saidProject = first.Project;
+        int more = batch.Distinct().Count() - 1;
+        string kind = first.Severity == ProblemSeverity.Error ? "Error" : "Warning";
+        string rest = more == 0 ? string.Empty : $"{(first.Message.EndsWith('.') ? " " : "; ")}Problems lists {more} more";
+        Said?.Invoke(this, new ServerSaid($"{kind} while loading {Shown(first.Project)}: {first.Message}{rest}", first.Severity));
+    }
+
+    /// <summary>A project as the status bar names it: its path from the open folder, else its file's name.</summary>
+    private string Shown(string project) => workspace is { } open && PathNames.IsUnder(project, open.Folder)
+        ? Path.GetRelativePath(open.Folder, project)
+        : Path.GetFileName(project);
 
     private void OnProgress(LanguageServer from, WorkProgress progress)
     {
@@ -492,6 +589,7 @@ public sealed class CSharpService : IAsyncDisposable
         Progress = null;
         progressTitle = null;
         unsaid = null;
+        ForgetLoadProblems();
         analysing?.Cancel();
         solutionReports.Clear();
         _ = lost.DisposeAsync();
@@ -511,6 +609,19 @@ public sealed class CSharpService : IAsyncDisposable
         restarts.Add(now);
         Stopped?.Invoke(this, $"{what}; starting it again");
         Start(restarting);
+    }
+
+    /// <summary>A server gone: one started again loads every project afresh and reports their problems again.</summary>
+    private void ForgetLoadProblems()
+    {
+        batch.Clear();
+        batchSaid = 0;
+        saidProject = null;
+        if (loadProblems.Count > 0)
+        {
+            loadProblems.Clear();
+            ProjectProblemsChanged?.Invoke(this, EventArgs.Empty);
+        }
     }
 
     private void RefreshAll() => Each(document => document.Refresh());

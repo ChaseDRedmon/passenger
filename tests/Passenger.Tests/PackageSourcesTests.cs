@@ -1,7 +1,3 @@
-using System.IO.Compression;
-using System.Net;
-using System.Net.Sockets;
-using System.Text;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
@@ -27,15 +23,15 @@ public sealed class PackageSourcesTests : IDisposable
     private readonly string folder = TestFolders.Create("sources-");
     private readonly string config;
     private readonly string project;
-    private readonly PrivateFeed feed = new(User, "secret-" + Guid.NewGuid().ToString("N")[..8]);
+    private readonly StandInFeed feed = new(User, "secret-" + Guid.NewGuid().ToString("N")[..8]);
 
     public PackageSourcesTests()
     {
         string local = Path.Combine(folder, "feed");
         Directory.CreateDirectory(local);
-        File.WriteAllBytes(Path.Combine(local, "Passenger.Sample.1.0.0.nupkg"), Package("Passenger.Sample", "1.0.0"));
-        File.WriteAllBytes(Path.Combine(local, "Passenger.Sample.1.1.0.nupkg"), Package("Passenger.Sample", "1.1.0"));
-        File.WriteAllBytes(Path.Combine(local, "Passenger.Other.2.0.0.nupkg"), Package("Passenger.Other", "2.0.0"));
+        File.WriteAllBytes(Path.Combine(local, "Passenger.Sample.1.0.0.nupkg"), StandInFeed.Package("Passenger.Sample", "1.0.0"));
+        File.WriteAllBytes(Path.Combine(local, "Passenger.Sample.1.1.0.nupkg"), StandInFeed.Package("Passenger.Sample", "1.1.0"));
+        File.WriteAllBytes(Path.Combine(local, "Passenger.Other.2.0.0.nupkg"), StandInFeed.Package("Passenger.Other", "2.0.0"));
         feed.Add("Passenger.Private", "3.0.0");
         feed.Add("Passenger.Private", "3.1.0");
         config = Path.Combine(folder, "nuget.config");
@@ -151,8 +147,8 @@ public sealed class PackageSourcesTests : IDisposable
         Assert.True(feed.Requests.Any(r => r.Path == "/flat/passenger.private/3.1.0/passenger.private.3.1.0.nupkg" && r.Authorized),
             "The restore never downloaded the package with the private feed's credentials");
 
-        Assert.DoesNotContain(feed.Password, nuget.Log, StringComparison.Ordinal);
-        Assert.DoesNotContain(feed.Password, Ui.IdeLog(), StringComparison.Ordinal);
+        Assert.DoesNotContain(feed.Password!, nuget.Log, StringComparison.Ordinal);
+        Assert.DoesNotContain(feed.Password!, Ui.IdeLog(), StringComparison.Ordinal);
         window.Close();
     }
 
@@ -303,179 +299,4 @@ public sealed class PackageSourcesTests : IDisposable
 
     private static string? Version(MainWindow window) =>
         window.Projects.SelectMany(p => p.Packages).Where(p => p.Name == "Passenger.Private").Select(p => p.Version).FirstOrDefault();
-
-    /// <summary>A package with nothing in it but its manifest and an empty lib folder, so any framework takes it.</summary>
-    private static byte[] Package(string id, string version)
-    {
-        using MemoryStream bytes = new();
-        using (ZipArchive zip = new(bytes, ZipArchiveMode.Create, leaveOpen: true))
-        {
-            using (StreamWriter spec = new(zip.CreateEntry($"{id}.nuspec").Open()))
-            {
-                spec.Write($"""
-                    <?xml version="1.0" encoding="utf-8"?>
-                    <package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
-                      <metadata>
-                        <id>{id}</id>
-                        <version>{version}</version>
-                        <authors>Passenger Tests</authors>
-                        <description>A package for the tests.</description>
-                      </metadata>
-                    </package>
-                    """);
-            }
-            zip.CreateEntry("lib/netstandard2.0/_._");
-        }
-        return bytes.ToArray();
-    }
-
-    /// <summary>A private NuGet v3 feed on a loopback port: its service index, search and flat container, each answering
-    /// only a request with the Basic credentials it takes (401 and a challenge otherwise, as a real feed asks), and each
-    /// request kept with whether it had them.</summary>
-    private sealed class PrivateFeed : IDisposable
-    {
-        private readonly TcpListener listener = new(IPAddress.Loopback, 0);
-        private readonly CancellationTokenSource end = new();
-        private readonly Dictionary<string, Dictionary<string, byte[]>> packages = new(StringComparer.OrdinalIgnoreCase);
-        private readonly List<(string Path, bool Authorized)> requests = [];
-        private readonly Task accepting;
-        private string accepted;
-
-        public PrivateFeed(string user, string password)
-        {
-            Password = password;
-            accepted = Basic(user, password);
-            listener.Start();
-            Root = $"http://127.0.0.1:{((IPEndPoint)listener.LocalEndpoint).Port}";
-            accepting = Task.Run(AcceptAsync);
-        }
-
-        public string Root { get; }
-
-        public Uri Index => new($"{Root}/v3/index.json");
-
-        public string Password { get; }
-
-        public IReadOnlyList<(string Path, bool Authorized)> Requests
-        {
-            get
-            {
-                lock (requests)
-                {
-                    return [.. requests];
-                }
-            }
-        }
-
-        public void Add(string id, string version) => (packages.TryGetValue(id, out Dictionary<string, byte[]>? versions) ? versions : packages[id] = [])[version] = Package(id, version);
-
-        /// <summary>Takes these credentials from now on, in place of the ones it was made with.</summary>
-        public void Accept(string user, string password) => Volatile.Write(ref accepted, Basic(user, password));
-
-        public void Dispose()
-        {
-            end.Cancel();
-            listener.Stop();
-            accepting.Wait(TimeSpan.FromSeconds(10));
-            end.Dispose();
-        }
-
-        private static string Basic(string user, string password) => "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes($"{user}:{password}"));
-
-        private async Task AcceptAsync()
-        {
-            List<Task> answering = [];
-            try
-            {
-                while (true)
-                {
-                    TcpClient client = await listener.AcceptTcpClientAsync(end.Token);
-                    answering.Add(Task.Run(() => AnswerAsync(client)));
-                }
-            }
-            catch (Exception stopped) when (stopped is OperationCanceledException or SocketException or ObjectDisposedException or InvalidOperationException)
-            {
-                // Disposed.
-            }
-            await Task.WhenAll(answering);
-        }
-
-        private async Task AnswerAsync(TcpClient client)
-        {
-            using (client)
-            {
-                try
-                {
-                    NetworkStream stream = client.GetStream();
-                    byte[] buffer = new byte[16 * 1024];
-                    int read = 0;
-                    while (Encoding.ASCII.GetString(buffer, 0, read).IndexOf("\r\n\r\n", StringComparison.Ordinal) < 0)
-                    {
-                        int more = await stream.ReadAsync(buffer.AsMemory(read), end.Token);
-                        if (more == 0)
-                        {
-                            return;
-                        }
-                        read += more;
-                    }
-                    string[] head = Encoding.ASCII.GetString(buffer, 0, read).Split("\r\n");
-                    string path = head[0].Split(' ')[1];
-                    string? authorization = head.Skip(1).FirstOrDefault(h => h.StartsWith("Authorization:", StringComparison.OrdinalIgnoreCase))?.Split(':', 2)[1].Trim();
-                    bool authorized = authorization == Volatile.Read(ref accepted);
-                    lock (requests)
-                    {
-                        requests.Add((path, authorized));
-                    }
-                    (int status, string type, byte[] body) = authorized ? Route(path) : (401, "text/plain", Encoding.UTF8.GetBytes("Who are you?"));
-                    string reason = status switch { 200 => "OK", 401 => "Unauthorized", _ => "Not Found" };
-                    string challenge = status == 401 ? "WWW-Authenticate: Basic realm=\"private\"\r\n" : string.Empty;
-                    await stream.WriteAsync(Encoding.ASCII.GetBytes(
-                        $"HTTP/1.1 {status} {reason}\r\nContent-Type: {type}\r\nContent-Length: {body.Length}\r\n{challenge}Connection: close\r\n\r\n"), end.Token);
-                    await stream.WriteAsync(body, end.Token);
-                }
-                catch (Exception gone) when (gone is OperationCanceledException or IOException or SocketException or ObjectDisposedException)
-                {
-                    // The client or the stand-in went first.
-                }
-            }
-        }
-
-        private (int Status, string Type, byte[] Body) Route(string path)
-        {
-            const string Json = "application/json";
-            string[] parts = path.Split('?', 2)[0].Trim('/').Split('/');
-            if (path == "/v3/index.json")
-            {
-                return (200, Json, Encoding.UTF8.GetBytes($$"""
-                    {
-                      "version": "3.0.0",
-                      "resources": [
-                        { "@id": "{{Root}}/query", "@type": "SearchQueryService/3.5.0" },
-                        { "@id": "{{Root}}/flat/", "@type": "PackageBaseAddress/3.0.0" }
-                      ]
-                    }
-                    """));
-            }
-            if (parts is ["query"])
-            {
-                string query = System.Web.HttpUtility.ParseQueryString(path.Split('?', 2)[1])["q"] ?? string.Empty;
-                IEnumerable<string> found = packages.Where(p => p.Key.Contains(query, StringComparison.OrdinalIgnoreCase)).Select(p =>
-                {
-                    string newest = p.Value.Keys.OrderByDescending(v => v, VersionOrder.Instance).First();
-                    return $$"""{ "id": "{{p.Key}}", "version": "{{newest}}", "description": "A private package.", "authors": "Private Tests", "totalDownloads": 0 }""";
-                });
-                return (200, Json, Encoding.UTF8.GetBytes($$"""{ "totalHits": {{found.Count()}}, "data": [{{string.Join(", ", found)}}] }"""));
-            }
-            if (parts is ["flat", string id, "index.json"] && packages.TryGetValue(id, out Dictionary<string, byte[]>? versions))
-            {
-                return (200, Json, Encoding.UTF8.GetBytes($$"""{ "versions": [{{string.Join(", ", versions.Keys.Select(v => $"\"{v}\""))}}] }"""));
-            }
-            if (parts is ["flat", string package, string version, string file] && packages.TryGetValue(package, out Dictionary<string, byte[]>? held)
-                && held.TryGetValue(version, out byte[]? bytes) && file == $"{package}.{version}.nupkg".ToLowerInvariant())
-            {
-                return (200, "application/octet-stream", bytes);
-            }
-            return (404, "text/plain", []);
-        }
-    }
 }

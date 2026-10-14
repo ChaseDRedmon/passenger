@@ -11,20 +11,25 @@ using Passenger.Editor;
 
 namespace Passenger.App.ToolWindows;
 
-/// <summary>A package as the NuGet window lists it: what the feeds say of it, the feeds that have it, and the versions
-/// the solution's projects have of it.</summary>
+/// <summary>A package as the NuGet window lists it: what the feeds say of it, the feeds that have it, the versions
+/// the solution's projects have of it, and the known vulnerabilities of those versions.</summary>
 public sealed record PackageRow(string Id, string Version, string Description, string Authors, long Downloads, IReadOnlyDictionary<string, string?> Installed)
 {
     public bool IsInstalled => Installed.Count > 0;
 
     public IReadOnlyList<string> Feeds { get; init; } = [];
+
+    /// <summary>The advisories that affect a version a project has, the gravest first.</summary>
+    public IReadOnlyList<Advisory> Advisories { get; init; } = [];
+
+    public bool IsVulnerable => Advisories.Count > 0;
 }
 
-/// <summary>Rider's NuGet window, its Packages and Sources tabs in its header. Packages: the projects' packages with
-/// nothing typed, else what the feed chosen beside the query finds (All Feeds, or an enabled feed of the folder's
-/// nuget.config files); the chosen package's versions and a row per project to Install, Update or Remove it, through the
-/// .NET command line, whose restore takes it from those feeds with their credentials. Sources: the files and their feeds
-/// (<see cref="NuGetSourcesView"/>).</summary>
+/// <summary>Rider's NuGet window, its Packages and Sources tabs in its header. Packages: the projects' packages with nothing
+/// typed, else what the feed chosen beside the query finds; the chosen package's versions and a row per project to Install,
+/// Update or Remove it through the .NET command line, whose restore uses those feeds and their credentials. A version with
+/// a known vulnerability (the audit's VulnerabilityInfo, as restore reads it) is marked with its advisories, and Update
+/// offers the least version that fixes it. Sources: the files and their feeds (<see cref="NuGetSourcesView"/>).</summary>
 public sealed class NuGetView : DockPanel
 {
     private static readonly TimeSpan Pause = TimeSpan.FromMilliseconds(300);
@@ -51,6 +56,9 @@ public sealed class NuGetView : DockPanel
     private Dictionary<string, IPackageFeed> feeds = new(StringComparer.OrdinalIgnoreCase);
     private IPackageFeed? given;
     private Task? reading;
+
+    /// <summary>The audit's known vulnerabilities, read once the sources are and a listed package is installed.</summary>
+    private Task<VulnerabilityData>? audit;
     private bool choosing;
     private bool busy;
 
@@ -139,6 +147,9 @@ public sealed class NuGetView : DockPanel
 
     /// <summary>Raised after a project's packages changed, so the solution is read again.</summary>
     public event EventHandler? Changed;
+
+    /// <summary>An advisory's link clicked, for the browser.</summary>
+    public event EventHandler<Uri>? LinkClicked;
 
     /// <summary>The Packages and Sources tabs, for the tool window's header.</summary>
     public Control Tabs => tabs;
@@ -273,7 +284,7 @@ public sealed class NuGetView : DockPanel
             {
                 found = [.. installed.OrderBy(p => p.Key, StringComparer.OrdinalIgnoreCase)
                     .Select(p => new PackageRow(p.Key, p.Value.Values.FirstOrDefault(v => v is not null) ?? string.Empty, string.Empty, string.Empty, 0, p.Value))];
-                status.Text = found.Count == 1 ? "1 package installed" : $"{found.Count} packages installed";
+                status.Text = Counted(found, null);
             }
             else
             {
@@ -293,15 +304,19 @@ public sealed class NuGetView : DockPanel
             {
                 return;
             }
-            rows = found;
-            list.ItemsSource = rows;
-            if (chosen is not null && rows.FirstOrDefault(r => r.Id.Equals(chosen, StringComparison.OrdinalIgnoreCase)) is { } again)
+            Task<VulnerabilityData>? auditing = found.Any(r => r.IsInstalled) ? Audit() : null;
+            if (auditing is { IsCompletedSuccessfully: true })
             {
-                list.SelectedIndex = IndexOf(again);
+                found = Marked(found, auditing.Result);
+                if (Query.Trim().Length == 0)
+                {
+                    status.Text = Counted(found, auditing.Result);
+                }
             }
-            else if (rows.Count > 0)
+            List(found, chosen);
+            if (auditing is { IsCompleted: false })
             {
-                list.SelectedIndex = 0;
+                await MarkAsync(auditing, cancel);
             }
         }
         catch (OperationCanceledException) when (cancel.IsCancellationRequested)
@@ -315,6 +330,75 @@ public sealed class NuGetView : DockPanel
                 status.Text = $"{feed.Name} did not answer: {failed.Message}";
             }
         }
+    }
+
+    /// <summary>Shows rows, the package chosen before chosen again, else the first.</summary>
+    private void List(IReadOnlyList<PackageRow> found, string? chosen)
+    {
+        rows = found;
+        list.ItemsSource = rows;
+        if (chosen is not null && rows.FirstOrDefault(r => r.Id.Equals(chosen, StringComparison.OrdinalIgnoreCase)) is { } again)
+        {
+            list.SelectedIndex = IndexOf(again);
+        }
+        else if (rows.Count > 0)
+        {
+            list.SelectedIndex = 0;
+        }
+    }
+
+    /// <summary>The known vulnerabilities, read from the audit's feeds the first time a listed package is installed after
+    /// the sources were read.</summary>
+    private Task<VulnerabilityData> Audit()
+    {
+        IReadOnlyList<FeedSource> audited = sources.Audited;
+        return audit ??= BackgroundWork.Run(() => VulnerabilityData.ReadAsync(audited, CancellationToken.None));
+    }
+
+    /// <summary>The vulnerabilities as far as they are known: none until they are read, or when they could not be.</summary>
+    private VulnerabilityData Known => audit is { IsCompletedSuccessfully: true } read ? read.Result : VulnerabilityData.None;
+
+    /// <summary>Marks the rows shown once the vulnerabilities are known, unless another list took their place.</summary>
+    private async Task MarkAsync(Task<VulnerabilityData> auditing, CancellationTokenSource cancel)
+    {
+        VulnerabilityData known;
+        try
+        {
+            known = await auditing;
+        }
+        catch (Exception failed) when (FeedSet.IsFeedFailure(failed))
+        {
+            known = VulnerabilityData.None;
+        }
+        if (cancel.IsCancellationRequested || asking != cancel)
+        {
+            return;
+        }
+        List(Marked(rows, known), Selected?.Id);
+        if (Query.Trim().Length == 0)
+        {
+            status.Text = Counted(rows, known);
+        }
+    }
+
+    /// <summary>Rows with the advisories that affect the versions their projects have.</summary>
+    private static IReadOnlyList<PackageRow> Marked(IReadOnlyList<PackageRow> found, VulnerabilityData known) =>
+        [.. found.Select(r => r with { Advisories = [.. r.Installed.Values.OfType<string>().Distinct().SelectMany(v => known.Of(r.Id, v)).Distinct().OrderByDescending(a => a.Severity)] })];
+
+    /// <summary>The status over the installed packages: how many, how many have a known vulnerability, and the audit's
+    /// feeds that did not say.</summary>
+    private static string Counted(IReadOnlyList<PackageRow> found, VulnerabilityData? known)
+    {
+        string text = found.Count == 1 ? "1 package installed" : $"{found.Count} packages installed";
+        if (found.Count(r => r.IsVulnerable) is int vulnerable and > 0)
+        {
+            text += vulnerable == 1 ? ", 1 vulnerable" : $", {vulnerable} vulnerable";
+        }
+        if (known?.Failed is { Count: > 0 } failed)
+        {
+            text += $"; vulnerabilities unknown: {string.Join(", ", failed.Select(f => f.Feed))} did not answer";
+        }
+        return text;
     }
 
     /// <summary>The status after a search: Rider's words for feeds that did not answer, else what was found.</summary>
@@ -362,6 +446,7 @@ public sealed class NuGetView : DockPanel
         string was = ChosenFeed;
         sources = loaded;
         feeds = made;
+        audit = null;
         choosing = true;
         try
         {
@@ -485,7 +570,10 @@ public sealed class NuGetView : DockPanel
             return;
         }
         versions = found;
-        ChosenVersion = versions.FirstOrDefault() ?? row.Version;
+        VulnerabilityData known = Known;
+        string? vulnerable = row.Installed.Values.OfType<string>().Where(v => known.Of(row.Id, v).Count > 0).OrderByDescending(v => v, VersionOrder.Instance).FirstOrDefault();
+        string? fix = vulnerable is null ? null : known.FixedVersion(row.Id, vulnerable, versions);
+        ChosenVersion = fix ?? versions.FirstOrDefault() ?? row.Version;
         ComboBox picker = new() { Name = "Versions", ItemsSource = versions, SelectedItem = ChosenVersion, MinWidth = 140 };
         picker.SelectionChanged += (_, _) =>
         {
@@ -514,8 +602,53 @@ public sealed class NuGetView : DockPanel
             from.Bind(TextBlock.ForegroundProperty, from.GetResourceObservable("Passenger.TextMuted"));
             details.Children.Add(from);
         }
+        if (vulnerable is not null)
+        {
+            details.Children.Add(Vulnerability(known.Of(row.Id, vulnerable), vulnerable, fix));
+        }
         details.Children.Add(new StackPanel { Name = "projects", Spacing = 4, Margin = new Thickness(0, 8, 0, 0) });
         ShowProjects(row);
+    }
+
+    /// <summary>Rider's word on a vulnerable version, its advisories each with its severity, and the version that fixes
+    /// them, which the version picker and Update offer.</summary>
+    private Border Vulnerability(IReadOnlyList<Advisory> advisories, string version, string? fix)
+    {
+        PathIcon warning = new() { Width = 14, Height = 14, Margin = new Thickness(0, 1, 8, 0), VerticalAlignment = VerticalAlignment.Top, [DockProperty] = Dock.Left };
+        warning.Bind(PathIcon.DataProperty, warning.GetResourceObservable("Icon.Problems"));
+        warning.Bind(PathIcon.ForegroundProperty, warning.GetResourceObservable("Passenger.Editor.Warning"));
+        StackPanel said = new() { Spacing = 4 };
+        said.Children.Add(new TextBlock
+        {
+            Text = $"Known security vulnerability in {version}. It could be exploited in certain scenarios. See the advisories below for details.",
+            TextWrapping = TextWrapping.Wrap,
+        });
+        foreach (Advisory advisory in advisories)
+        {
+            Button link = new() { Classes = { "link" }, Content = advisory.Url.OriginalString, VerticalAlignment = VerticalAlignment.Center };
+            link.Click += (_, _) => LinkClicked?.Invoke(this, advisory.Url);
+            said.Children.Add(new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 4,
+                Children =
+                {
+                    new TextBlock { Text = "Advisory:", VerticalAlignment = VerticalAlignment.Center },
+                    link,
+                    new TextBlock { Text = $"(Severity: {advisory.Severity})", VerticalAlignment = VerticalAlignment.Center },
+                },
+            });
+        }
+        said.Children.Add(new TextBlock { Text = fix is null ? "No version without a known vulnerability is offered" : $"Fixed in {fix}", FontWeight = FontWeight.SemiBold });
+        Border block = new()
+        {
+            Name = "Vulnerability",
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(10, 8),
+            Child = new DockPanel { Children = { warning, said } },
+        };
+        block.Bind(Border.BackgroundProperty, block.GetResourceObservable("Passenger.Banner"));
+        return block;
     }
 
     private void ShowProjects(PackageRow row)
@@ -529,13 +662,20 @@ public sealed class NuGetView : DockPanel
         foreach (ProjectModel project in projects().Where(p => p.Exists).OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase))
         {
             bool has = row.Installed.TryGetValue(project.Path, out string? at);
+            IReadOnlyList<Advisory> affecting = at is null ? [] : Known.Of(row.Id, at);
             TextBlock version = new() { Text = has ? at ?? "installed" : string.Empty, Width = 110, VerticalAlignment = VerticalAlignment.Center };
-            version.Bind(TextBlock.ForegroundProperty, version.GetResourceObservable("Passenger.TextMuted"));
+            version.Bind(TextBlock.ForegroundProperty, version.GetResourceObservable(affecting.Count > 0 ? "Passenger.Editor.Warning" : "Passenger.TextMuted"));
+            // A slot of its own, so the buttons stand in one column whichever lines have the mark.
+            Panel mark = new() { Width = 14, VerticalAlignment = VerticalAlignment.Center };
+            if (affecting.Count > 0)
+            {
+                mark.Children.Add(Warning($"Known security vulnerability in {at}: {affecting[0].Severity} severity ({affecting[0].Url.OriginalString})"));
+            }
             StackPanel line = new()
             {
                 Orientation = Orientation.Horizontal,
                 Spacing = 8,
-                Children = { new TextBlock { Text = project.Name, Width = 220, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis }, version },
+                Children = { new TextBlock { Text = project.Name, Width = 220, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis }, version, mark },
             };
             if (!has)
             {
@@ -576,6 +716,22 @@ public sealed class NuGetView : DockPanel
         {
             ToolTip.SetTip(line, row.Description);
         }
+        if (row.IsVulnerable)
+        {
+            PathIcon warning = Warning($"Known security vulnerability: {row.Advisories[0].Severity} severity ({row.Advisories[0].Url.OriginalString})");
+            warning.Margin = new Thickness(6, 0, 0, 0);
+            line.Children.Add(warning);
+        }
         return line;
+    }
+
+    /// <summary>The warning a vulnerable version is marked with, saying what it is.</summary>
+    private static PathIcon Warning(string tip)
+    {
+        PathIcon warning = new() { Width = 12, Height = 12, VerticalAlignment = VerticalAlignment.Center };
+        warning.Bind(PathIcon.DataProperty, warning.GetResourceObservable("Icon.Problems"));
+        warning.Bind(PathIcon.ForegroundProperty, warning.GetResourceObservable("Passenger.Editor.Warning"));
+        ToolTip.SetTip(warning, tip);
+        return warning;
     }
 }

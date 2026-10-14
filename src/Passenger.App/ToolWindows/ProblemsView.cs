@@ -10,12 +10,13 @@ using Passenger.App.Run;
 
 namespace Passenger.App.ToolWindows;
 
-/// <summary>Which of Problems' tabs: the current file's, the solution's (with solution-wide analysis on), or the last
-/// build's.</summary>
+/// <summary>Which of Problems' tabs: the current file's, the solution's (with solution-wide analysis on), the projects'
+/// load problems (Rider's Toolset, Environment), or the last build's.</summary>
 public enum ProblemsTab
 {
     File,
     Solution,
+    Toolset,
     Build,
 }
 
@@ -45,8 +46,9 @@ public sealed class ProblemRow(int depth, string label, string? detail, Problem?
 }
 
 /// <summary>Rider's Problems window: the current file's problems as they are typed, the whole solution's with
-/// solution-wide analysis on (by project, then file), and the last build's apart from both, each a tab with its count.
-/// Errors come before warnings; a double-click or Enter goes to a problem.</summary>
+/// solution-wide analysis on (by project, then file), the warnings and errors the projects loaded with (Rider's Toolset,
+/// Environment, by project), and the last build's apart from them, each a tab with its count. Errors come before
+/// warnings; a double-click or Enter goes to a problem, and the web address in its message is a link.</summary>
 public sealed class ProblemsView : DockPanel
 {
     private readonly ObservableCollection<ProblemRow> rows = [];
@@ -55,6 +57,7 @@ public sealed class ProblemsView : DockPanel
     private readonly Dictionary<ProblemsTab, ToggleButton> tabs = [];
     private IReadOnlyList<Problem> file = [];
     private IReadOnlyList<Problem>? solution;
+    private IReadOnlyList<Problem> toolset = [];
     private string? fileName;
 
     public ProblemsView()
@@ -91,8 +94,9 @@ public sealed class ProblemsView : DockPanel
         [
             ListMenus.Item("Go to", "F4", Choose, problem.Path is not null),
             ListMenus.Item("Copy Message", null, () => _ = ListMenus.CopyAsync(this, problem.Message)),
+            ListMenus.Item("Open Link", null, () => LinkClicked?.Invoke(this, problem.Link!), problem.Link is not null),
             new Separator(),
-            ListMenus.Item("Show Context Actions", null, () => FixRequested?.Invoke(this, problem), problem.Path is not null),
+            ListMenus.Item("Show Context Actions", null, () => FixRequested?.Invoke(this, problem), problem.Path is not null && Shown != ProblemsTab.Toolset),
         ]);
         Refresh();
     }
@@ -103,6 +107,9 @@ public sealed class ProblemsView : DockPanel
     /// <summary>A problem chosen to go to.</summary>
     public event EventHandler<Problem>? Chosen;
 
+    /// <summary>A problem's link clicked: the advisory or page its message names, for the browser.</summary>
+    public event EventHandler<Uri>? LinkClicked;
+
     /// <summary>The last build's problems.</summary>
     public ObservableCollection<Problem> Problems { get; } = [];
 
@@ -111,6 +118,9 @@ public sealed class ProblemsView : DockPanel
 
     /// <summary>The solution's problems, or null with solution-wide analysis off.</summary>
     public IReadOnlyList<Problem>? SolutionProblems => solution;
+
+    /// <summary>The warnings and errors the projects loaded with.</summary>
+    public IReadOnlyList<Problem> ToolsetProblems => toolset;
 
     /// <summary>The rows of the tab shown.</summary>
     public IReadOnlyList<ProblemRow> Rows => rows;
@@ -188,6 +198,13 @@ public sealed class ProblemsView : DockPanel
         Refresh();
     }
 
+    /// <summary>The projects' load problems, in Toolset, Environment.</summary>
+    public void ShowToolset(IReadOnlyList<Problem> problems)
+    {
+        toolset = [.. Ordered(problems)];
+        Refresh();
+    }
+
     private static IEnumerable<Problem> Ordered(IEnumerable<Problem> problems) =>
         problems.OrderBy(p => p.Severity).ThenBy(p => p.Path, StringComparer.Ordinal).ThenBy(p => p.Position.Line).ThenBy(p => p.Position.Column);
 
@@ -196,6 +213,7 @@ public sealed class ProblemsView : DockPanel
         tabs[ProblemsTab.File].Content = Titled(fileName is null ? "File" : $"File: {fileName}", file.Count);
         tabs[ProblemsTab.Solution].Content = Titled("Solution", solution?.Count ?? 0);
         tabs[ProblemsTab.Solution].IsVisible = solution is not null;
+        tabs[ProblemsTab.Toolset].Content = Titled("Toolset, Environment", toolset.Count);
         tabs[ProblemsTab.Build].Content = Titled("Build", Problems.Count);
         foreach ((ProblemsTab tab, ToggleButton button) in tabs)
         {
@@ -215,6 +233,17 @@ public sealed class ProblemsView : DockPanel
                 Grouped(solution ?? []);
                 empty.Text = "No problems in the solution";
                 break;
+            case ProblemsTab.Toolset:
+                foreach (IGrouping<string, Problem> project in toolset.GroupBy(p => p.Project ?? string.Empty).OrderBy(g => g.Key, StringComparer.Ordinal))
+                {
+                    rows.Add(new ProblemRow(0, project.Key, Count(project.Count()), null));
+                    foreach (Problem problem in project)
+                    {
+                        rows.Add(new ProblemRow(1, problem.Message, null, problem));
+                    }
+                }
+                empty.Text = "The projects loaded without problems";
+                break;
             default:
                 Grouped(Problems);
                 empty.Text = "No problems from the last build";
@@ -224,6 +253,8 @@ public sealed class ProblemsView : DockPanel
 
         static string Titled(string title, int count) => count == 0 ? title : $"{title}  {count}";
     }
+
+    private static string Count(int count) => count == 1 ? "1 problem" : $"{count} problems";
 
     /// <summary>Problems under their projects and files, as Rider groups the solution's.</summary>
     private void Grouped(IEnumerable<Problem> problems)
@@ -243,8 +274,6 @@ public sealed class ProblemsView : DockPanel
                 }
             }
         }
-
-        static string Count(int count) => count == 1 ? "1 problem" : $"{count} problems";
     }
 
     private void Choose()
@@ -255,7 +284,7 @@ public sealed class ProblemsView : DockPanel
         }
     }
 
-    private static Control Row(ProblemRow? row)
+    private Control Row(ProblemRow? row)
     {
         if (row is null)
         {
@@ -284,7 +313,29 @@ public sealed class ProblemsView : DockPanel
         };
         panel.DetachedFromVisualTree += (_, _) => row.PropertyChanged -= OnMoved;
         panel.Children.Add(icon);
-        panel.Children.Add(new TextBlock { Text = row.Label, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 900 });
+        int at = problem.Link is { } named ? row.Label.IndexOf(named.OriginalString, StringComparison.Ordinal) : -1;
+        if (problem.Link is not { } link || at < 0)
+        {
+            panel.Children.Add(new TextBlock { Text = row.Label, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 900 });
+        }
+        else
+        {
+            // The address where the message has it, in the link colour, the words around it as they are.
+            string address = link.OriginalString;
+            Button open = new() { Classes = { "link" }, Content = address, VerticalAlignment = VerticalAlignment.Center };
+            ToolTip.SetTip(open, $"Open {address} in the browser");
+            open.Click += (_, e) =>
+            {
+                LinkClicked?.Invoke(this, link);
+                e.Handled = true;
+            };
+            panel.Children.Add(new TextBlock { Text = row.Label[..at], VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 700 });
+            panel.Children.Add(open);
+            if (row.Label[(at + address.Length)..] is { Length: > 0 } after)
+            {
+                panel.Children.Add(new TextBlock { Text = after, VerticalAlignment = VerticalAlignment.Center });
+            }
+        }
         panel.Children.Add(detail);
         return panel;
     }

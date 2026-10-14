@@ -6,9 +6,20 @@ using Passenger.Text;
 namespace Passenger.App.Run;
 
 /// <summary>A problem a build or the language server reported: where it is and what it says.</summary>
-public sealed record Problem(ProblemSeverity Severity, string Message, string? Code, string? Path, TextPosition Position, string? Project)
+public sealed partial record Problem(ProblemSeverity Severity, string Message, string? Code, string? Path, TextPosition Position, string? Project)
 {
     public string Where => Path is null ? Project ?? string.Empty : $"{System.IO.Path.GetFileName(Path)}:{Position.Line + 1}:{Position.Column + 1}";
+
+    /// <summary>The page the message points to for more (a vulnerable package's advisory), which Problems links.</summary>
+    public Uri? Link { get; init; }
+
+    /// <summary>The first web address in a message, less the punctuation ending its sentence; null without one.</summary>
+    public static Uri? LinkIn(string message) =>
+        Address().Match(message) is { Success: true } found
+            && Uri.TryCreate(found.Value.TrimEnd('.', ',', ';', ':', ')', ']'), UriKind.Absolute, out Uri? link) ? link : null;
+
+    [GeneratedRegex(@"https?://[^\s""'<>]+")]
+    private static partial Regex Address();
 }
 
 public enum ProblemSeverity
@@ -102,7 +113,8 @@ public static partial class BuildOutput
         int lineNumber = int.TryParse(match.Groups["line"].Value, out int l) ? l - 1 : 0;
         int column = int.TryParse(match.Groups["column"].Value, out int c) ? c - 1 : 0;
         string? project = match.Groups["project"].Success ? System.IO.Path.GetFileNameWithoutExtension(match.Groups["project"].Value) : null;
-        return new Problem(severity, match.Groups["message"].Value.Trim(), match.Groups["code"].Value, path, new TextPosition(lineNumber, column), project);
+        string message = match.Groups["message"].Value.Trim();
+        return new Problem(severity, message, match.Groups["code"].Value, path, new TextPosition(lineNumber, column), project) { Link = Problem.LinkIn(message) };
     }
 
     /// <summary>The location is the parenthesis just before ": error", so the path may hold parentheses of its own

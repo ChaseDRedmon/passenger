@@ -62,11 +62,12 @@ public sealed class PackageSourceSet
     private readonly PackageSourceMapping? mapping;
 
     private PackageSourceSet(string root, IReadOnlyList<ConfigFile> files, IReadOnlyList<FeedSource> feeds, PackageSourceMapping? mapping,
-        IReadOnlyList<(string Feed, IReadOnlyList<string> Patterns)> patterns, string? problem)
+        IReadOnlyList<(string Feed, IReadOnlyList<string> Patterns)> patterns, string? problem, IReadOnlyList<FeedSource>? audits = null)
     {
         Root = root;
         Files = files;
         Feeds = feeds;
+        AuditSources = audits ?? [];
         this.mapping = mapping;
         MappingPatterns = mapping?.IsEnabled == true ? patterns : [];
         Problem = problem;
@@ -85,6 +86,14 @@ public sealed class PackageSourceSet
     public IReadOnlyList<FeedSource> Feeds { get; }
 
     public IEnumerable<FeedSource> Enabled => Feeds.Where(f => f.Enabled);
+
+    /// <summary>The feeds the files' auditSources name, which restore's audit asks for known vulnerabilities in place of
+    /// the package sources; none when no file names any.</summary>
+    public IReadOnlyList<FeedSource> AuditSources { get; }
+
+    /// <summary>Where restore's audit, and so the NuGet window, learns of vulnerable packages: the audit sources, else
+    /// every enabled package source.</summary>
+    public IReadOnlyList<FeedSource> Audited => AuditSources.Count > 0 ? AuditSources : [.. Enabled];
 
     /// <summary>Why the files could not be read as a whole, or null.</summary>
     public string? Problem { get; }
@@ -129,13 +138,20 @@ public sealed class PackageSourceSet
             files.Add(Read(file, place));
         }
         List<FeedSource> feeds = [];
+        List<FeedSource> audits = [];
         try
         {
-            foreach (PackageSource source in new PackageSourceProvider(settings).LoadPackageSources())
+            PackageSourceProvider provider = new(settings);
+            foreach (PackageSource source in provider.LoadPackageSources())
             {
                 feeds.Add(new FeedSource(source.Name, source.Source, source.IsEnabled,
                     files.FirstOrDefault(f => f.Feeds.Any(feed => feed.Name.Equals(source.Name, StringComparison.OrdinalIgnoreCase)))?.Path,
                     source.ProtocolVersion, source.AllowInsecureConnections, source.DisableTLSCertificateValidation, Credentials(source)));
+            }
+            foreach (PackageSource source in provider.LoadAuditSources())
+            {
+                audits.Add(new FeedSource(source.Name, source.Source, true, null, source.ProtocolVersion, source.AllowInsecureConnections,
+                    source.DisableTLSCertificateValidation, Credentials(source)));
             }
         }
         catch (Exception failed) when (failed is NuGetConfigurationException or InvalidOperationException or ArgumentException)
@@ -156,7 +172,7 @@ public sealed class PackageSourceSet
         {
             return new PackageSourceSet(root, files, feeds, null, [], failed.Message);
         }
-        return new PackageSourceSet(root, files, feeds, mapping, patterns, null);
+        return new PackageSourceSet(root, files, feeds, mapping, patterns, null, audits);
     }
 
     /// <summary>A feed's credentials as NuGet would send them; a password NuGet keeps encrypted, which only Windows can

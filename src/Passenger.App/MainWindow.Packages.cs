@@ -22,6 +22,7 @@ public partial class MainWindow
             Menus = [new MenuPlace("Tools", 0, 0)],
         });
         nuget.Changed += (_, _) => ReloadSolution();
+        nuget.LinkClicked += (_, link) => Browse(link);
     }
 
     /// <summary>A nuget.config written, made or deleted on disk: the NuGet window reads its sources again, once it has.</summary>
