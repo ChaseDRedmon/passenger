@@ -219,7 +219,7 @@ public sealed partial class SettingsDialog : Window
             merge.IsEnabled = TitleBars.NotOnThisDesktop is null;
             Add(Appearance, "Merge main menu with window title", merge,
                 "title bar window header toolbar decorations frame caption buttons minimize maximize close system linux",
-                TitleBars.NotOnThisDesktop ?? TitleBars.Experimental);
+                TitleBars.NotOnThisDesktop ?? TitleBars.OwnFrame);
         }
 
         Add(SystemPage, "Reopen projects on startup", Check(Working.ReopenProjectsOnStartup, v => Change(s => s with { ReopenProjectsOnStartup = v })),

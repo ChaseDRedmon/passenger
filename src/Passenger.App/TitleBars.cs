@@ -6,8 +6,9 @@ using Passenger.App.Settings;
 namespace Passenger.App;
 
 /// <summary>Where the main window's toolbar is its title bar, as Rider's main toolbar is: on Windows and macOS always, on
-/// Linux while Settings' Merge main menu with window title is on and the desktop is one IntelliJ merges them on (not under
-/// WSL, a tiling window manager or a desktop that does not say what it is). And what a double click on it does.</summary>
+/// Linux while Settings' Merge main menu with window title is on (as it is at first) and the desktop is one IntelliJ merges
+/// them on (not under WSL, a tiling window manager or a desktop that does not say what it is). And what a double click on
+/// it does.</summary>
 public static partial class TitleBars
 {
     /// <summary>IntelliJ's tiling window managers (X11UiUtil.TILE_WM), by XDG_CURRENT_DESKTOP, where it keeps the system's
@@ -25,9 +26,9 @@ public static partial class TitleBars
     /// <summary>Settings offers the choice on Linux alone, as Rider does: Windows and macOS always merge them.</summary>
     public static bool Offered => !OperatingSystem.IsWindows() && !OperatingSystem.IsMacOS();
 
-    /// <summary>What Settings says under the choice where it can be made: why it starts off.</summary>
-    public const string Experimental = "The window then draws its own frame through Avalonia's experimental window decorations "
-        + "for X11, so this is off until it has been tried on more Linux desktops.";
+    /// <summary>What Settings says under the choice where it can be made: what the window then draws.</summary>
+    public const string OwnFrame = "The window draws its own frame, through Avalonia's window decorations for X11; turn this "
+        + "off to have the window manager's title bar over the toolbar.";
 
     /// <summary>Why this Linux desktop keeps the system's title bar whatever the setting says, in IntelliJ's words for its
     /// reasons; null where the bars merge.</summary>

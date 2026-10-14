@@ -27,9 +27,9 @@ public sealed record AppSettings : IStateDocument<AppSettings>
     public ThemeChoice Theme { get; init; } = ThemeChoice.System;
 
     /// <summary>Rider's "Merge main menu with window title", which Linux alone offers: the toolbar is the window's title bar
-    /// (its window buttons at its right) rather than a strip under the system's. Off, where Rider has it on, while the
-    /// frame it needs is Avalonia's experimental drawn decorations, untried on a Linux desktop.</summary>
-    public bool MergeMainMenuWithWindowTitle { get; init; }
+    /// (its window buttons at its right) rather than a strip under the system's. On at first, as Rider's is: its frame,
+    /// Avalonia's drawn decorations for X11, moves, resizes and maximizes as the window manager's own does on GNOME.</summary>
+    public bool MergeMainMenuWithWindowTitle { get; init; } = true;
 
     public double EditorFontSize { get; init; } = 13;
     public double EditorLineSpacing { get; init; } = 1.2;
