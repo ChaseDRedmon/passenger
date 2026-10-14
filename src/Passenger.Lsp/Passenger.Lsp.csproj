@@ -7,6 +7,13 @@
   <!-- Microsoft's server (MIT, built in the Roslyn repo), one package per platform, copied beside the app under roslyn/;
        RoslynServer.targets finds it. -->
   <Import Project="RoslynServer.targets" />
+  <!-- The servers for JavaScript, TypeScript, HTML, CSS and JSON, npm packages carried under web/; WebServers.targets puts
+       them in place with tools/Passenger.NodePackages, built first and run, never linked. -->
+  <Import Project="WebServers.targets" />
+  <ItemGroup>
+    <ProjectReference Include="../../tools/Passenger.NodePackages/Passenger.NodePackages.csproj" ReferenceOutputAssembly="false" Private="false"
+                      GlobalPropertiesToRemove="RuntimeIdentifier;SelfContained;PublishReadyToRun" />
+  </ItemGroup>
 
   <ItemGroup>
     <!-- Compiled against here alone: a server's failure reaches the app as a LanguageServerFailed, never as one of its exceptions. -->

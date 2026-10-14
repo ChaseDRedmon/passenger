@@ -6,6 +6,11 @@ type="expression"`), which `Passenger.Notices` writes into the app's notices und
 
 - `MIT.txt` and `Apache-2.0.txt`: the SPDX License List 3.29.0, https://github.com/spdx/license-list-data at tag
   v3.29.0 (commit 31ba1a5), `text/MIT.txt` and `text/Apache-2.0.txt`.
+- `ISC.txt`: the same release's `text/ISC.txt`, for an npm package under web/ that states ISC and carries no licence
+  file of its own (boolbase).
+
+An npm package (under web/) that carries its own licence file is written with that file, which holds its copyright; one
+without is written with the text here for the SPDX identifier its package.json states.
 
 The SPDX License List is made by the SPDX project of the Linux Foundation (https://spdx.org/licenses/); each text is the
 licence's own, whose authors publish it for anyone to copy and apply. The notices leave out a template's own placeholder

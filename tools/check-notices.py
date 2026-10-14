@@ -3,7 +3,8 @@
 
 The packages are every one the solution's projects use, transitive ones included (`dotnet list package
 --include-transitive`, so the solution must be restored first), every one Roslyn's language server carries under
-roslyn/ (the .deps.json files in its restored package), and every tool the repository's tool manifest pins
+roslyn/ (the .deps.json files in its restored package), every npm package the web language servers' lock file pins
+(src/Passenger.Lsp/WebServers/package-lock.json, carried under web/), and every tool the repository's tool manifest pins
 (dotnet-tools.json). A package is named in the notices by its id in backticks. CI runs this after its restore;
 `just notices` runs it here.
 """
@@ -74,6 +75,17 @@ def roslyn_packages():
     return used
 
 
+def web_packages():
+    """Each npm package the web language servers' lock file pins, carried under web/."""
+    with open(os.path.join(ROOT, "src", "Passenger.Lsp", "WebServers", "package-lock.json"), encoding="utf-8") as f:
+        packages = json.load(f).get("packages", {})
+    used = {}
+    for place, package in packages.items():
+        if place and not package.get("dev") and not package.get("link"):
+            used.setdefault(place.rsplit("node_modules/", 1)[-1], set()).add("web/")
+    return used
+
+
 def tool_packages():
     """Each package id the tool manifest pins: what the build runs (vpk packs the Windows installer)."""
     with open(os.path.join(ROOT, "dotnet-tools.json"), encoding="utf-8") as f:
@@ -89,7 +101,7 @@ def named_in_notices():
 
 def main():
     used = solution_packages()
-    for package, users in [*roslyn_packages().items(), *tool_packages().items()]:
+    for package, users in [*roslyn_packages().items(), *web_packages().items(), *tool_packages().items()]:
         used.setdefault(package, set()).update(users)
     named = named_in_notices()
     skipped = {package.lower() for package in NOT_SHIPPED}

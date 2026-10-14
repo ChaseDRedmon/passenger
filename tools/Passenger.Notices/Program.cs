@@ -78,6 +78,9 @@ public sealed class Inputs
     /// <summary>The packages the server's .deps.json names whose assemblies Passenger leaves out of roslyn/.</summary>
     public HashSet<string> ServerLeftOut { get; } = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>The node_modules folders of the npm packages carried under web/ (the web language servers).</summary>
+    public List<string> NodeModules { get; } = [];
+
     /// <summary>Further licences carried whole, each as title|path.</summary>
     public List<(string Title, string Path)> Texts { get; } = [];
 
@@ -131,6 +134,9 @@ public sealed class Inputs
                 case "serverLeftOut":
                     inputs.ServerLeftOut.Add(value);
                     break;
+                case "node":
+                    inputs.NodeModules.Add(value);
+                    break;
                 case "text":
                     string[] parts = value.Split('|', 2);
                     inputs.Texts.Add((parts[0], parts[1]));
@@ -154,6 +160,7 @@ public static class Place
     public const string Debugger = "debugger/";
     public const string Host = "host/";
     public const string Server = "roslyn/";
+    public const string Web = "web/";
 }
 
 /// <summary>One package as the notices name it: where it is carried, the copyright its package states, and its licence
@@ -167,7 +174,7 @@ public sealed class Entry(string id, string version)
     /// <summary>The app first, then debugger/, host/ and roslyn/.</summary>
     public SortedSet<string> Places { get; } = new(Comparer<string>.Create((a, b) => Order(a).CompareTo(Order(b))));
 
-    private static int Order(string place) => Array.IndexOf([Place.App, Place.Debugger, Place.Host, Place.Server], place);
+    private static int Order(string place) => Array.IndexOf([Place.App, Place.Debugger, Place.Host, Place.Server, Place.Web], place);
 
     public string Copyright { get; set; } = "";
 
@@ -236,6 +243,13 @@ public static partial class NoticesFile
                 }
             }
         }
+        foreach (string modules in inputs.NodeModules)
+        {
+            foreach (string folder in NpmPackages(modules))
+            {
+                Npm(folder);
+            }
+        }
         if (problems.Count > 0)
         {
             throw new NoticeException(problems);
@@ -251,7 +265,8 @@ public static partial class NoticesFile
             named below, each part under its own licence:
 
             1. Packages: each with where Passenger carries it (the app; its debugger, under debugger/; its project host,
-               under host/; Roslyn's language server, under roslyn/), the copyright its package states, and the full text
+               under host/; Roslyn's language server, under roslyn/; the npm packages of the JavaScript, TypeScript,
+               HTML, CSS and JSON language servers, under web/), the copyright its package states, and the full text
                of its licence.
             2. The notices the packages carry of their own.
             3. Source and assets Passenger copied from other projects, and the licences of its typefaces.
@@ -361,6 +376,66 @@ public static partial class NoticesFile
             }
         }
 
+        // An npm package's entry from its own folder: its package.json's name, version and SPDX licence, the licence file it
+        // carries (whose first copyright line is its copyright; else its author's) or else SPDX's text, and its notice files.
+        void Npm(string folder)
+        {
+            JsonElement package;
+            try
+            {
+                using JsonDocument read = JsonDocument.Parse(File.ReadAllText(Path.Combine(folder, "package.json")));
+                package = read.RootElement.Clone();
+            }
+            catch (Exception error) when (error is IOException or JsonException)
+            {
+                problems.Add($"{folder} has no package.json that reads: {error.Message}");
+                return;
+            }
+            string? name = Field(package, "name");
+            string? version = Field(package, "version");
+            if (name is null || version is null)
+            {
+                problems.Add($"{folder}'s package.json names no name and version");
+                return;
+            }
+            Entry entry = Add(name, version, Place.Web);
+            if (entry.Licence.Length > 0)
+            {
+                return;
+            }
+            string? expression = Field(package, "license");
+            if (expression is null)
+            {
+                problems.Add($"{name} {version} (under web/) states no SPDX licence in its package.json: give the notices its licence's text");
+                return;
+            }
+            string? file = Directory.EnumerateFiles(folder).Select(Path.GetFileName).OfType<string>().Where(f => LicenceName().IsMatch(f)).Order(StringComparer.Ordinal).FirstOrDefault();
+            if (file is not null)
+            {
+                entry.Licence = $"{expression} (its package's {file})";
+                entry.Text = Read(Path.Combine(folder, file));
+            }
+            else if (licences.Expression(expression, out string? missing) is { } written)
+            {
+                (entry.Licence, entry.Text) = written;
+            }
+            else
+            {
+                problems.Add($"{name} {version} (under web/) is under {expression}, carries no licence file, and {missing} has no text in {inputs.Licenses}: add SPDX's text/{missing}.txt there (its README says from where)");
+                return;
+            }
+            string? author = package.TryGetProperty("author", out JsonElement by)
+                ? by.ValueKind == JsonValueKind.Object ? Field(by, "name") : by.ValueKind == JsonValueKind.String ? by.GetString() : null
+                : null;
+            entry.Copyright = file is not null && entry.Text.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => CopyrightLine().IsMatch(l)) is { } line
+                ? OneLine(line.TrimStart('*', ' '))
+                : $"no copyright line; its author: {author ?? "none named"}";
+            foreach (string notice in Directory.EnumerateFiles(folder).Where(f => NoticeName().IsMatch(Path.GetFileName(f))).Order(StringComparer.Ordinal))
+            {
+                entry.Notices.Add((Path.GetFileName(notice), Read(notice)));
+            }
+        }
+
         Entry Add(string id, string version, string place)
         {
             string key = $"{id}/{version}";
@@ -397,6 +472,31 @@ public static partial class NoticesFile
             }
         }
     }
+
+    /// <summary>Every npm package folder under a node_modules folder, nested ones (a package's own node_modules) and
+    /// scoped ones (@vscode/l10n) included.</summary>
+    private static IEnumerable<string> NpmPackages(string modules)
+    {
+        if (!Directory.Exists(modules))
+        {
+            yield break;
+        }
+        foreach (string entry in Directory.EnumerateDirectories(modules).Order(StringComparer.Ordinal))
+        {
+            IEnumerable<string> packages = Path.GetFileName(entry).StartsWith('@') ? Directory.EnumerateDirectories(entry).Order(StringComparer.Ordinal) : [entry];
+            foreach (string package in packages.Where(p => File.Exists(Path.Combine(p, "package.json"))))
+            {
+                yield return package;
+                foreach (string nested in NpmPackages(Path.Combine(package, "node_modules")))
+                {
+                    yield return nested;
+                }
+            }
+        }
+    }
+
+    private static string? Field(JsonElement value, string name) =>
+        value.ValueKind == JsonValueKind.Object && value.TryGetProperty(name, out JsonElement field) && field.ValueKind == JsonValueKind.String ? field.GetString() : null;
 
     /// <summary>THIRD_PARTY_NOTICES.md's "Inside roslyn/" table: each package it names, with the licence and copyright its
     /// row gives. The server's package carries these, but not their nuspecs.</summary>
@@ -456,8 +556,16 @@ public static partial class NoticesFile
 
     private static string Invariant(FormattableString text) => FormattableString.Invariant(text);
 
-    [GeneratedRegex(@"^(third[-_ ]?party[-_ ]?notices?|notices?)(\.(txt|md|rtf))?$", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"^(third[-_ ]?party[-_ ]?notices?(text)?|notices?)(\.(txt|md|rtf))?$", RegexOptions.IgnoreCase)]
     private static partial Regex NoticeName();
+
+    /// <summary>An npm package's licence file: LICENSE, LICENSE.md, License.txt, LICENSE-MIT.txt, LICENCE, COPYING.</summary>
+    [GeneratedRegex(@"^(licen[cs]e|copying)([-.][\w.-]*)?$", RegexOptions.IgnoreCase)]
+    private static partial Regex LicenceName();
+
+    /// <summary>A licence file's copyright line, not a template's placeholder (Apache's "Copyright [yyyy] ...").</summary>
+    [GeneratedRegex(@"^(\*\s*)?Copyright\b(?!.*(\[yyyy\]|\{yyyy\}|<year>))", RegexOptions.None)]
+    private static partial Regex CopyrightLine();
 
     [GeneratedRegex("`([^`]+)`")]
     private static partial Regex Backticked();

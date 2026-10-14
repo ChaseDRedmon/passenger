@@ -103,6 +103,9 @@
     <MSBuild Projects="../Passenger.Lsp/Passenger.Lsp.csproj" Targets="GetRoslynServer" BuildInParallel="$(BuildInParallel)">
       <Output TaskParameter="TargetOutputs" ItemName="NoticesServer" />
     </MSBuild>
+    <MSBuild Projects="../Passenger.Lsp/Passenger.Lsp.csproj" Targets="GetWebServers" BuildInParallel="$(BuildInParallel)">
+      <Output TaskParameter="TargetOutputs" ItemName="NoticesWeb" />
+    </MSBuild>
     <PropertyGroup>
       <NoticesFile>$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(IntermediateOutputPath)', 'THIRD-PARTY-NOTICES.txt'))</NoticesFile>
       <NoticesArguments>$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(IntermediateOutputPath)', 'notices.txt'))</NoticesArguments>
@@ -118,6 +121,7 @@
       <NoticeHostDeps Include="$(ProjectHostFolder)*.deps.json" />
       <NoticesServerPackage Include="@(NoticesServer->WithMetadataValue('Kind', 'package'))" />
       <NoticeServerDeps Include="%(NoticesServerPackage.Folder)**/*.deps.json" />
+      <NoticeWebStamp Include="@(NoticesWeb->'%(Stamp)')" />
       <NoticeText Include="$(NoticesRepository)THIRD_PARTY_NOTICES.md;$(NoticesRepository)LICENSE;$(NoticesRepository)tools/Passenger.Notices/Licenses/*.txt;$(NoticesRepository)src/Passenger.Editor/Fonts/OFL.txt" />
     </ItemGroup>
     <RemoveDuplicates Inputs="@(NoticePackage)">
@@ -135,13 +139,14 @@
       <NoticeLine Include="@(NoticesServerPackage->'server=%(Identity)')" />
       <NoticeLine Include="@(NoticesServerPackage->'serverFolder=%(Folder)')" />
       <NoticeLine Include="@(NoticesServer->WithMetadataValue('Kind', 'leftOut')->'serverLeftOut=%(Identity)')" />
+      <NoticeLine Include="@(NoticesWeb->'node=%(Identity)node_modules')" />
       <NoticeLine Include="text=JetBrains Mono, the editor's typeface, and Inter, the window's (in Avalonia.Fonts.Inter, Copyright (c) 2016 The Inter Project Authors, https://github.com/rsms/inter), are under the SIL Open Font License 1.1, as JetBrains Mono gives it|$(NoticesRepository)src/Passenger.Editor/Fonts/OFL.txt" />
     </ItemGroup>
     <WriteLinesToFile File="$(NoticesArguments)" Lines="@(NoticeLine)" Overwrite="true" WriteOnlyWhenDifferent="true" />
   </Target>
 
   <Target Name="WriteNotices" DependsOnTargets="NoticeInputs"
-          Inputs="$(NoticesArguments);@(NoticesTool);@(NoticeText);@(NoticeDebuggerDeps);@(NoticeHostDeps);@(NoticeServerDeps)" Outputs="$(NoticesFile)">
+          Inputs="$(NoticesArguments);@(NoticesTool);@(NoticeText);@(NoticeDebuggerDeps);@(NoticeHostDeps);@(NoticeServerDeps);@(NoticeWebStamp)" Outputs="$(NoticesFile)">
     <Exec Command="&quot;$(NoticesHost)&quot; &quot;@(NoticesTool)&quot; &quot;$(NoticesArguments)&quot;" />
   </Target>
 

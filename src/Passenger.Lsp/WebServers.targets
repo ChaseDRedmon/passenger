@@ -1,0 +1,72 @@
+<Project>
+  <!-- The language servers for JavaScript, TypeScript, HTML, CSS and JSON (Web/ in the app), carried under web/ beside the
+       app as Roslyn's server is under roslyn/: npm packages, pure JavaScript, so one copy serves every system, run on the
+       machine's Node.js. WebServers/package.json pins them and WebServers/package-lock.json every package they bring,
+       each with its tarball's sha512; tools/Passenger.NodePackages puts them in place at build with no Node.js, each
+       tarball checked against that hash, so a build is the same anywhere and nothing is fetched as the app runs. To move
+       a pin, change package.json, have npm write the lock file again in WebServers/ (npm install with its
+       package-lock-only and ignore-scripts options), and bring THIRD_PARTY_NOTICES.md's "Inside web/" table along. -->
+  <PropertyGroup>
+    <WebServersLock>$(MSBuildThisFileDirectory)WebServers/package-lock.json</WebServersLock>
+    <WebServersRoot>$([MSBuild]::EnsureTrailingSlash('$(ArtifactsPath)'))node/</WebServersRoot>
+    <WebServersFolder>$(WebServersRoot)web/</WebServersFolder>
+    <WebServersStamp>$(WebServersRoot)web.stamp</WebServersStamp>
+    <WebServersArguments>$(WebServersRoot)web.arguments</WebServersArguments>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The HTML server's own TypeScript (4.9.5, which reads a <script>'s JavaScript) needs only its compiler and its lib
+         .d.ts files: its tsserver, tsc and their kin, and its translated messages, are left out, a third of every
+         package's size. The build fails when one of these is no longer there to leave out. -->
+    <WebServersLeftOut Include="node_modules/vscode-langservers-extracted/node_modules/typescript/lib/tsc.js;node_modules/vscode-langservers-extracted/node_modules/typescript/lib/tsserver.js;node_modules/vscode-langservers-extracted/node_modules/typescript/lib/tsserverlibrary.%2A;node_modules/vscode-langservers-extracted/node_modules/typescript/lib/typescriptServices.%2A;node_modules/vscode-langservers-extracted/node_modules/typescript/lib/typingsInstaller.js;node_modules/vscode-langservers-extracted/node_modules/typescript/lib/%2A/diagnosticMessages.generated.json;node_modules/vscode-langservers-extracted/node_modules/typescript/bin/%2A" />
+    <!-- JSON schemas the JSON server is given for the files that name none (package.json, tsconfig.json, appsettings.json,
+         launchSettings.json, global.json) and those they refer to, as SchemaStore publishes them (Web/JsonSchemas.cs). -->
+    <WebServersSchema Include="$(MSBuildThisFileDirectory)WebServers/schemas/*.json" />
+  </ItemGroup>
+
+  <Target Name="FetchWebServers" DependsOnTargets="WriteWebServersArguments"
+          Inputs="$(WebServersLock);$(WebServersArguments);@(NodePackagesTool)" Outputs="$(WebServersStamp)">
+    <PropertyGroup>
+      <NodePackagesHost>$(DOTNET_HOST_PATH)</NodePackagesHost>
+      <NodePackagesHost Condition="'$(NodePackagesHost)' == ''">dotnet</NodePackagesHost>
+    </PropertyGroup>
+    <Exec Command="&quot;$(NodePackagesHost)&quot; &quot;@(NodePackagesTool)&quot; &quot;$(WebServersArguments)&quot;" />
+  </Target>
+
+  <Target Name="WriteWebServersArguments">
+    <Error Condition="'$(ArtifactsPath)' == ''" Text="The web language servers go under the artifacts folder (UseArtifactsOutput), which this build has none of." />
+    <MSBuild Projects="$(MSBuildThisFileDirectory)../../tools/Passenger.NodePackages/Passenger.NodePackages.csproj" Targets="GetTargetPath"
+             RemoveProperties="RuntimeIdentifier;SelfContained;PublishReadyToRun" BuildInParallel="$(BuildInParallel)">
+      <Output TaskParameter="TargetOutputs" ItemName="NodePackagesTool" />
+    </MSBuild>
+    <ItemGroup>
+      <WebServersLine Include="lock=$(WebServersLock)" />
+      <WebServersLine Include="cache=$(WebServersRoot)cache" />
+      <WebServersLine Include="out=$(WebServersFolder)" />
+      <WebServersLine Include="stamp=$(WebServersStamp)" />
+      <WebServersLine Include="@(WebServersLeftOut->'leaveOut=%(Identity)')" />
+    </ItemGroup>
+    <MakeDir Directories="$(WebServersRoot)" />
+    <WriteLinesToFile File="$(WebServersArguments)" Lines="@(WebServersLine)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+  </Target>
+
+  <!-- For the app's notices of what it carries: the folder whose node_modules holds every package under web/, with the
+       stamp written as it was put in place, which the notices are written again after. -->
+  <Target Name="GetWebServers" DependsOnTargets="FetchWebServers" Returns="@(WebServersForNotices)">
+    <ItemGroup>
+      <WebServersForNotices Include="$(WebServersFolder)" Stamp="$(WebServersStamp)" />
+    </ItemGroup>
+  </Target>
+
+  <!-- The servers become this project's output under web/, so every project that references this one (the app, the
+       tests) carries them beside its own binaries, as roslyn/ comes. -->
+  <Target Name="IncludeWebServers" BeforeTargets="AssignTargetPaths" DependsOnTargets="FetchWebServers">
+    <ItemGroup>
+      <WebServersFile Include="$(WebServersFolder)node_modules/**/*" />
+      <None Include="@(WebServersFile)" Link="web/node_modules/%(WebServersFile.RecursiveDir)%(WebServersFile.Filename)%(WebServersFile.Extension)"
+            CopyToOutputDirectory="PreserveNewest" Visible="false" />
+      <None Include="@(WebServersSchema)" Link="web/schemas/%(WebServersSchema.Filename)%(WebServersSchema.Extension)"
+            CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    </ItemGroup>
+  </Target>
+</Project>
