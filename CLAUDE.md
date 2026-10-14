@@ -22,6 +22,8 @@ just package-mac [RID] [--dry-run]  # artifacts/package/Passenger-macos-arm64.dm
 just icons                 # rewrite Theme/Icons.axaml from the list in tools/icons.py (icons from a fixed commit)
 just app-icon              # Passenger.icns, Passenger.ico and passenger.png from Assets/passenger.svg, by sips; fails
                            # unless every size's corners are transparent (never write the three files any other way)
+just package-linux [RID]   # artifacts/package/Passenger-linux-x64.tar.gz (or -arm64): one passenger/ folder (app/,
+                           # the launcher, install.sh, the desktop entry, icon and file types from tools/linux), checked
 just package-win [RID]     # artifacts/package/Passenger-windows-x64.exe (or -arm64), Velopack's per-user installer;
                            # signed on Windows by PASSENGER_SIGNTOOL_PARAMS or PASSENGER_ARTIFACT_SIGNING_METADATA
 just notices               # fail naming any package the solution, Roslyn's server or a dotnet tool carries that the
@@ -107,7 +109,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   `TextMateHighlighter` re-reads only from a changed line until the grammar's state is the same, off the UI thread.
   `Highlighters.For(language, document)` is the one place an editor's colours are chosen. A new grammar is its file,
   its scope in `Grammar.Files`, its language in `Grammar.Languages` and `Workspace/Language.ForPath` (with its
-  comments), and its entry after THIRD_PARTY_NOTICES.md's marker line. `TypeHints` turns Roslyn's type hints
+  comments), and its entry after THIRD_PARTY_NOTICES.md's marker line. Razor's grammar and C#'s (from dotnet/roslyn's
+  Razor tooling) colour Razor files before the server answers, and C#'s colours Markdown's C# blocks. `TypeHints` turns Roslyn's type hints
   into Rider's (after the name, left off where Rider calls the type evident).
   A key costs what it changed, not the file's size: folds (`FoldRegions`) and bracket depths come from the parse
   before through the nodes Roslyn reused, never from a walk of the whole tree, and the server's colours are asked for
@@ -122,7 +125,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   assemblies through `RoslynServer.targets`, carried under `roslyn-extension/` with none of them): the server loads it
   with `--extension`, `server/_vs_activateExtension` registers its handlers, and `LspDocument.ExtensionAsync` sends a
   message through `textDocument/_vs_dipatchExtensionMessage`. A handler reads the server's solution and answers with
-  edits, never changing its workspace.
+  edits, never changing its workspace. Razor (.razor, .cshtml) is the server's own, cohosted in it: `LspDocument.IsRazor`
+  opens such a file as `aspnetcorerazor`, its colours take the legend Razor registers as it starts (why the client
+  capabilities take dynamic registration), its diagnostics are one pull, and `RazorHtml` answers what Razor asks the
+  client of a file's HTML, since Passenger has no HTML server. A request nothing waits on, sent as a window closes,
+  goes through `LanguageServer.Tell`, never awaited on the closing window's thread.
 - `src/Passenger.App/CSharp`: the language server in the IDE. `CSharpService` runs Roslyn for the
   folder; `CSharpDocument` gives an open file its semantic colours and diagnostics; `CodeAssist`
   is completion, hover, signature help and the code actions (`app.code.*`), its popups on a layer
@@ -339,6 +346,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   publish, through `WriteNotices` in `Passenger.App.csproj`) from the packages the build copies, the self-contained
   runtime pack, the debugger's and Roslyn's server's `.deps.json`, each package's licence and copyright, and the part
   of THIRD_PARTY_NOTICES.md after its marker line; a licence it cannot write fails the build.
+- `tools/linux`: what the Linux archive carries beside the app: the launcher, install.sh (per user, `--system`,
+  `--uninstall`), the desktop entry and the file types it opens. CI runs the suite on Ubuntu 24.04 too, and installs,
+  uses and uninstalls the archive. ClrMD's DAC stays loaded once used (`HeapGraph.Runtime`): unloading it crashed the
+  IDE on Linux. Linux's file systems tell letter case apart, so a test of another letter case skips there.
 - `site/`: passenger-ide.net, plain HTML and CSS, deployed to Cloudflare Pages by `.github/workflows/site.yml` on a push that
   touches it. Its downloads are the latest GitHub release's assets, by fixed names (#56); its share card,
   `images/social.png`, is drawn from `tools/social-card.html` (the command is in its first comment).
