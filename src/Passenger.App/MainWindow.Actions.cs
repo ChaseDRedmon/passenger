@@ -47,7 +47,7 @@ public partial class MainWindow
         Docking.ToolWindow? tool = focused is Visual visual
             ? Dock.Windows.FirstOrDefault(w => w.Content == visual || w.Content.IsVisualAncestorOf(visual))
             : null;
-        return new ActionContext(Editors.Active, Editors.CodeEditor, focused, tool, debug.IsDebugging ? debug.Session!.State : null);
+        return new ActionContext(Editors.Active, Editors.CodeEditor, focused, tool, session.Debug.IsDebugging ? session.Debug.Session!.State : null);
     }
 
     private static string? NeedsFile(ActionContext context) => context.File is null ? NoFile : null;
@@ -197,11 +197,11 @@ public partial class MainWindow
         // Rerun runs the last session again, under the debugger when that is how it runs, attached again when it was attached.
         Add(A.Rerun, "Rerun", "Run", c =>
         {
-            if (debug.Session is { } session && session == attachSession)
+            if (session.Debug.Session is { } debugged && debugged == attachSession)
             {
                 actions!.Run(A.ReattachToProcess, c);
             }
-            else if (debug.IsDebugging)
+            else if (session.Debug.IsDebugging)
             {
                 DebugSelected();
             }
@@ -209,16 +209,16 @@ public partial class MainWindow
             {
                 RunSelected();
             }
-        }, _ => debug.Session is { } session && session == attachSession ? null : Unconfigured("run"), ("Run", 0, 6));
+        }, _ => session.Debug.Session is { } debugged && debugged == attachSession ? null : Unconfigured("run"), ("Run", 0, 6));
         Add(A.Stop, "Stop", "Run", _ => buildRun.Stop(), _ => buildRun.WhyNotStop(), ("Run", 0, 7));
         Add(A.EditBreakpoint, "Edit Breakpoint...", "Debug", c =>
         {
             int line = c.Caret.Line;
-            if (debug.Breakpoints.In(c.File!.Path).FirstOrDefault(b => b.Line == line) is not { } editing)
+            if (session.Debug.Breakpoints.In(c.File!.Path).FirstOrDefault(b => b.Line == line) is not { } editing)
             {
                 // Alt+F9 on a line with none sets one to edit, as Rider's Edit Breakpoint does.
-                debug.Breakpoints.Toggle(c.File.Path, line);
-                editing = debug.Breakpoints.In(c.File.Path).First(b => b.Line == line);
+                session.Debug.Breakpoints.Toggle(c.File.Path, line);
+                editing = session.Debug.Breakpoints.In(c.File.Path).First(b => b.Line == line);
             }
             ShowBreakpointPopup(editing);
         }, NeedsFile, ("Run", 2, 2));

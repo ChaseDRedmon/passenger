@@ -10,7 +10,7 @@ using Passenger.Editor;
 namespace Passenger.App.Run;
 
 /// <summary>What a window lends the builds and runs of its sessions: the Build, Run, Problems and Debug windows, its
-/// editors (saved before a build), its tool windows' frame, its settings, the status bar, the debugger, a tab of the
+/// editors (saved before a build), its tool windows' frame, its settings, the status bar, a tab of the
 /// Terminal window for a program that uses one, Rider's Open browser after launch, and its state folder, under which a
 /// Passenger it launches keeps its own (<see cref="LaunchPlan.SandboxedState"/>).</summary>
 public sealed record BuildRunParts(
@@ -19,7 +19,6 @@ public sealed record BuildRunParts(
     DockHost Dock,
     Func<AppSettings> Settings,
     Action<string> Say,
-    Func<DebugController> Debugger,
     Func<string, ProcessStartInfo, Task<TerminalRun>> InTerminal,
     Action<LaunchPlan, Task> OpenBrowser,
     Func<string> StateFolder);
@@ -476,7 +475,7 @@ public sealed class BuildRunController
         parts.Views.Debug.ShowTab(console: true);
         // Before the session clears the Debug window's console, which forgets the links the last one's output had.
         DebugProject = Path.GetDirectoryName(plan.Project);
-        DebugController debug = parts.Debugger();
+        DebugController debug = session.Debug;
         string? refused = await debug.StartAsync(plan);
         if (refused is null)
         {
@@ -506,12 +505,12 @@ public sealed class BuildRunController
     /// <summary>Stop: the debugger's session, the program Run started (in the Run window or the terminal) and the build.</summary>
     public void Stop()
     {
-        _ = parts.Debugger().StopAsync();
+        _ = session.Debug.StopAsync();
         session.Runner.Stop();
         session.InTerminal?.Stop();
         session.Builder.Stop();
     }
 
     /// <summary>Why Stop cannot run now: nothing it stops is running.</summary>
-    public string? WhyNotStop() => parts.Debugger().IsDebugging || IsRunning || session.Builder.IsRunning ? null : "Nothing is running";
+    public string? WhyNotStop() => session.Debug.IsDebugging || IsRunning || session.Builder.IsRunning ? null : "Nothing is running";
 }

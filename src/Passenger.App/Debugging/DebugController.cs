@@ -12,7 +12,7 @@ namespace Passenger.App.Debugging;
 /// <summary>The debugger in the IDE: the breakpoints in the gutter, a session's stops shown where
 /// they are (the execution line, the Debug window's frames and variables), the stepping actions, and
 /// a value when the pointer rests on an expression while paused. A UI-thread object.</summary>
-public sealed class DebugController
+public sealed class DebugController : IDisposable
 {
     private readonly EditorArea editors;
     private readonly DebugView view;
@@ -51,6 +51,12 @@ public sealed class DebugController
     /// that stops again at once replaces them without the panes going blank between.</summary>
     private readonly DispatcherTimer clearing = new() { Interval = TimeSpan.FromMilliseconds(100) };
 
+    /// <summary>Takes this debugger's handlers off the Debug window, which the next session's debugger has from then.</summary>
+    private readonly Action letGo;
+
+    private bool disposed;
+
+    /// <summary>A folder's debugger over the window's editors and Debug window, which it has until it is disposed.</summary>
     public DebugController(EditorArea editors, DebugView view)
     {
         this.editors = editors;
@@ -66,22 +72,62 @@ public sealed class DebugController
         };
         Breakpoints.Changed += (_, path) => UpdateMarks(path);
         Breakpoints.ExceptionsChanged += (_, _) => view.ShowMuted(Breakpoints.Muted);
-        view.ActionRequested += (_, action) => ActionRequested?.Invoke(this, action);
-        view.FrameChosen += (_, chosen) => _ = ChooseFrame(chosen, navigate: true);
-        view.ThreadChosen += (_, thread) => _ = ChooseThread(thread.Id);
-        view.EvaluateRequested += (_, request) => _ = Evaluate(request.Expression, request.Watch);
-        view.SetValueRequested += (_, request) => _ = SetValue(request.Node, request.Value);
-        view.DataWatch = DataWatchAsync;
-        view.DataBreakpointRequested += (_, node) => _ = ToggleDataBreakpointAsync(node);
-        Breakpoints.DataChanged += (_, _) => TellRefusedData();
-        view.WatchRemoved += (_, expression) =>
+        EventHandler<string> asked = (_, action) => ActionRequested?.Invoke(this, action);
+        EventHandler<DapStackFrame> framed = (_, chosen) => _ = ChooseFrame(chosen, navigate: true);
+        EventHandler<DapThread> threaded = (_, thread) => _ = ChooseThread(thread.Id);
+        EventHandler<(string Expression, bool Watch)> evaluated = (_, request) => _ = Evaluate(request.Expression, request.Watch);
+        EventHandler<(VariableNode Node, string Value)> set = (_, request) => _ = SetValue(request.Node, request.Value);
+        EventHandler<VariableNode> watchData = (_, node) => _ = ToggleDataBreakpointAsync(node);
+        EventHandler<string> unwatched = (_, expression) =>
         {
             watches.Remove(expression);
             _ = ShowVariables();
         };
+        view.ActionRequested += asked;
+        view.FrameChosen += framed;
+        view.ThreadChosen += threaded;
+        view.EvaluateRequested += evaluated;
+        view.SetValueRequested += set;
+        view.DataWatch = DataWatchAsync;
+        view.DataBreakpointRequested += watchData;
+        Breakpoints.DataChanged += (_, _) => TellRefusedData();
+        view.WatchRemoved += unwatched;
+        letGo = () =>
+        {
+            view.ActionRequested -= asked;
+            view.FrameChosen -= framed;
+            view.ThreadChosen -= threaded;
+            view.EvaluateRequested -= evaluated;
+            view.SetValueRequested -= set;
+            view.DataBreakpointRequested -= watchData;
+            view.WatchRemoved -= unwatched;
+        };
+        view.ShowMuted(Breakpoints.Muted);
+    }
+
+    /// <summary>Its folder left, the debugger lets go of the Debug window and the open files, its session ended first
+    /// (<see cref="StopAsync"/> or <see cref="CloseAsync"/>): a late word from that session changes nothing shown.</summary>
+    public void Dispose()
+    {
+        UiThread.Check();
+        disposed = true;
+        clearing.Stop();
+        letGo();
+        foreach (OpenDocument document in following.Keys.ToList())
+        {
+            Detach(document);
+        }
     }
 
     public BreakpointStore Breakpoints { get; } = new();
+
+    /// <summary>What the session's program has written, as the Debug window's console shows it now, what is on its way to
+    /// it taken in first: what an agent reads of a debugged program, rather than the window's view.</summary>
+    public TextSnapshot Output()
+    {
+        view.Console.Flush();
+        return view.Console.Document.Snapshot;
+    }
 
     public DebugSession? Session { get; private set; }
 
@@ -241,51 +287,60 @@ public sealed class DebugController
         return Session?.CloseAsync() ?? Task.CompletedTask;
     }
 
-    /// <summary>The debugger's actions, on the active editor's caret and the session. Resume with nothing being debugged
-    /// is the window's Debug, as F5 is in Visual Studio's keymap.</summary>
-    public void AddActions(ActionRegistry actions)
+    /// <summary>Its folder left with the window open: a program the debugger started is stopped, as Stop stops it, and one
+    /// it attached to let go, running on, as the window's close lets it go.</summary>
+    public Task LeaveAsync()
     {
         UiThread.Check();
-        Add(AppActions.ToggleBreakpoint, "Toggle Breakpoint", c => Breakpoints.Toggle(c.File!.Path, c.Caret.Line), NeedsFile, new("Run", 2, 0));
-        Add(AppActions.ToggleBreakpointEnabled, "Toggle Breakpoint Enabled", c => Breakpoints.ToggleEnabled(c.File!.Path, c.Caret.Line), NeedsFile, new("Run", 2, 1));
-        Add(AppActions.Resume, "Resume Program", c =>
+        return WhyNotDetach() is null ? DetachAsync() : StopAsync();
+    }
+
+    /// <summary>The debugger's actions, on the active editor's caret and the session of the debugger <paramref name="current"/>
+    /// gives, the window's session's whichever that is when one runs. Resume with nothing being debugged is the window's
+    /// Debug, as F5 is in Visual Studio's keymap.</summary>
+    public static void AddActions(ActionRegistry actions, Func<DebugController> current)
+    {
+        UiThread.Check();
+        Add(AppActions.ToggleBreakpoint, "Toggle Breakpoint", (d, c) => d.Breakpoints.Toggle(c.File!.Path, c.Caret.Line), (_, c) => NeedsFile(c), new("Run", 2, 0));
+        Add(AppActions.ToggleBreakpointEnabled, "Toggle Breakpoint Enabled", (d, c) => d.Breakpoints.ToggleEnabled(c.File!.Path, c.Caret.Line), (_, c) => NeedsFile(c), new("Run", 2, 1));
+        Add(AppActions.Resume, "Resume Program", (d, c) =>
         {
-            if (!IsDebugging)
+            if (!d.IsDebugging)
             {
                 actions.Run(AppActions.Debug, c);
                 return;
             }
-            _ = ResumeAsync(session => session.ContinueAsync(), "resume");
-        }, c => IsDebugging ? NotPaused() : actions.WhyNot(AppActions.Debug, c), new("Run", 1, 0));
-        Add(AppActions.Pause, "Pause Program", context => _ = Session!.PauseAsync(),
-            _ => !IsDebugging ? NothingDebugged : Session!.State == DebugState.Paused ? "The program is paused already" : null, new("Run", 1, 1));
-        Add(AppActions.StepOver, "Step Over", context => _ = ResumeAsync(session => session.StepOverAsync(), "step over"), _ => NotPaused(), new("Run", 1, 2));
-        Add(AppActions.StepInto, "Step Into", context => _ = ResumeAsync(session => session.StepIntoAsync(), "step into"), _ => NotPaused(), new("Run", 1, 3));
-        Add(AppActions.SmartStepInto, "Smart Step Into", context => _ = SmartStepIntoAsync(), _ => NotPaused(), new("Run", 1, 4));
-        Add(AppActions.StepOut, "Step Out", context => _ = ResumeAsync(session => session.StepOutAsync(), "step out"), _ => NotPaused(), new("Run", 1, 5));
-        Add(AppActions.RunToCursor, "Run to Cursor", c => _ = ResumeAsync(session => session.RunToCursorAsync(c.File!.Path, c.Caret.Line), "run to the cursor"),
-            c => NeedsFile(c) ?? NotPaused(), new("Run", 1, 6));
-        Add(AppActions.SetNextStatement, "Set Next Statement", c => _ = SetNextStatementAsync(Session!, c.File!.Path, c.Caret.Line),
-            c => NeedsFile(c) ?? NotPaused(), new("Run", 1, 7));
-        Add(AppActions.ShowExecutionPoint, "Show Execution Point", _ =>
+            _ = d.ResumeAsync(session => session.ContinueAsync(), "resume");
+        }, (d, c) => d.IsDebugging ? d.NotPaused() : actions.WhyNot(AppActions.Debug, c), new("Run", 1, 0));
+        Add(AppActions.Pause, "Pause Program", (d, c) => _ = d.Session!.PauseAsync(),
+            (d, _) => !d.IsDebugging ? NothingDebugged : d.Session!.State == DebugState.Paused ? "The program is paused already" : null, new("Run", 1, 1));
+        Add(AppActions.StepOver, "Step Over", (d, c) => _ = d.ResumeAsync(session => session.StepOverAsync(), "step over"), (d, _) => d.NotPaused(), new("Run", 1, 2));
+        Add(AppActions.StepInto, "Step Into", (d, c) => _ = d.ResumeAsync(session => session.StepIntoAsync(), "step into"), (d, _) => d.NotPaused(), new("Run", 1, 3));
+        Add(AppActions.SmartStepInto, "Smart Step Into", (d, c) => _ = d.SmartStepIntoAsync(), (d, _) => d.NotPaused(), new("Run", 1, 4));
+        Add(AppActions.StepOut, "Step Out", (d, c) => _ = d.ResumeAsync(session => session.StepOutAsync(), "step out"), (d, _) => d.NotPaused(), new("Run", 1, 5));
+        Add(AppActions.RunToCursor, "Run to Cursor", (d, c) => _ = d.ResumeAsync(session => session.RunToCursorAsync(c.File!.Path, c.Caret.Line), "run to the cursor"),
+            (d, c) => NeedsFile(c) ?? d.NotPaused(), new("Run", 1, 6));
+        Add(AppActions.SetNextStatement, "Set Next Statement", (d, c) => _ = d.SetNextStatementAsync(d.Session!, c.File!.Path, c.Caret.Line),
+            (d, c) => NeedsFile(c) ?? d.NotPaused(), new("Run", 1, 7));
+        Add(AppActions.ShowExecutionPoint, "Show Execution Point", (d, _) =>
         {
-            (string path, int line) = executionPoint!.Value;
-            Navigate?.Invoke(this, (path, new TextPosition(Current(path, line), 0)));
-        }, _ => NotPaused() ?? (executionPoint is null ? "Where the program is paused has no source" : null), new("Run", 1, 8));
-        Add(AppActions.Evaluate, "Evaluate Expression...", c => view.FocusEvaluate(c.Symbol ?? string.Empty), _ => NotPaused(), new("Run", 1, 9));
-        Add(AppActions.AddToWatches, "Add to Watches", c => _ = Evaluate(c.Symbol!, watch: true),
-            c => NotPaused() ?? (c.Symbol is { Length: > 0 } ? null : "No expression is at the caret"), null);
+            (string path, int line) = d.executionPoint!.Value;
+            d.Navigate?.Invoke(d, (path, new TextPosition(d.Current(path, line), 0)));
+        }, (d, _) => d.NotPaused() ?? (d.executionPoint is null ? "Where the program is paused has no source" : null), new("Run", 1, 8));
+        Add(AppActions.Evaluate, "Evaluate Expression...", (d, c) => d.view.FocusEvaluate(c.Symbol ?? string.Empty), (d, _) => d.NotPaused(), new("Run", 1, 9));
+        Add(AppActions.AddToWatches, "Add to Watches", (d, c) => _ = d.Evaluate(c.Symbol!, watch: true),
+            (d, c) => d.NotPaused() ?? (c.Symbol is { Length: > 0 } ? null : "No expression is at the caret"), null);
         // In Rider's Run menu after Stop, and on the Debug window's toolbar after it.
-        Add(AppActions.Detach, "Detach", context => _ = DetachAsync(), _ => WhyNotDetach(), new("Run", 0, 8));
+        Add(AppActions.Detach, "Detach", (d, c) => _ = d.DetachAsync(), (d, _) => d.WhyNotDetach(), new("Run", 0, 8));
         // Rider's toggle: every breakpoint stays as it is, and none stops the program until it is chosen again.
-        actions.Add(new IdeAction(AppActions.MuteBreakpoints, "Mute Breakpoints", "Debug", _ => Breakpoints.SetMuted(!Breakpoints.Muted))
+        actions.Add(new IdeAction(AppActions.MuteBreakpoints, "Mute Breakpoints", "Debug", _ => current().Breakpoints.SetMuted(!current().Breakpoints.Muted))
         {
             Menus = [new("Run", 2, 4)],
-            IsChecked = _ => Breakpoints.Muted,
+            IsChecked = _ => current().Breakpoints.Muted,
         });
 
-        void Add(string id, string title, Action<ActionContext> run, Func<ActionContext, string?> whyNot, MenuPlace? menu) =>
-            actions.Add(new IdeAction(id, title, "Debug", run) { WhyNot = whyNot, Menus = menu is null ? [] : [menu] });
+        void Add(string id, string title, Action<DebugController, ActionContext> run, Func<DebugController, ActionContext, string?> whyNot, MenuPlace? menu) =>
+            actions.Add(new IdeAction(id, title, "Debug", c => run(current(), c)) { WhyNot = c => whyNot(current(), c), Menus = menu is null ? [] : [menu] });
     }
 
     private const string NothingDebugged = "Nothing is being debugged";
@@ -515,7 +570,7 @@ public sealed class DebugController
 
     private async Task OnStateChanged(DebugSession session)
     {
-        if (session != Session)
+        if (session != Session || disposed)
         {
             return;
         }

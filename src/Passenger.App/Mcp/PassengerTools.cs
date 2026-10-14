@@ -354,7 +354,7 @@ public sealed partial class PassengerTools(MainWindow window)
     {
         Session.Runner.Stop();
         Session.InTerminal?.Stop();
-        await window.Debugger.StopAsync();
+        await Session.Debug.StopAsync();
         return "Stopped";
     });
 
@@ -386,10 +386,10 @@ public sealed partial class PassengerTools(MainWindow window)
         if (debug)
         {
             // A debugged test that stops is the agent's to look at: the stop comes back, the run goes on after it.
-            await Until(() => run.IsCompleted || window.Debugger.Session is { State: DebugState.Paused }, TimeSpan.FromMinutes(5), cancel);
+            await Until(() => run.IsCompleted || Session.Debug.Session is { State: DebugState.Paused }, TimeSpan.FromMinutes(5), cancel);
             if (!run.IsCompleted)
             {
-                await Until(() => window.Debugger.Stop is not null, TimeSpan.FromSeconds(5), cancel);
+                await Until(() => Session.Debug.Stop is not null, TimeSpan.FromSeconds(5), cancel);
                 return TestInfo(tests) with { Debugger = await DebugSnapshotAsync() };
             }
         }
@@ -440,7 +440,7 @@ public sealed partial class PassengerTools(MainWindow window)
             "it is handled (handledInUserCode, handledInExternalCode, unhandled); it stops when one of each holds")] IReadOnlyList<string>? scenarios = null,
         CancellationToken cancel = default) => OnUi(cancel, () =>
     {
-        BreakpointStore store = window.Debugger.Breakpoints;
+        BreakpointStore store = Session.Debug.Breakpoints;
         if (exception is { Length: > 0 })
         {
             ExceptionBreakpoint breakpoint = store.FindException(exception) ?? store.AddException(exception);
@@ -467,7 +467,7 @@ public sealed partial class PassengerTools(MainWindow window)
     public Task<IReadOnlyList<BreakpointInfo>> RemoveBreakpoint(string? path = null, int? line = null,
         [Description("An exception type's full name, in place of a path and line")] string? exception = null, CancellationToken cancel = default) => OnUi(cancel, () =>
     {
-        BreakpointStore store = window.Debugger.Breakpoints;
+        BreakpointStore store = Session.Debug.Breakpoints;
         if (exception is { Length: > 0 })
         {
             if (store.FindException(exception) is { IsAny: false } breakpoint)
@@ -540,7 +540,7 @@ public sealed partial class PassengerTools(MainWindow window)
     [McpServerTool(Name = "debug_detach", Title = "Detach", Destructive = false), Description(
         "Lets go of the program the debugger attached to, as Run | Detach does: its breakpoints are taken out, and it runs on without the debugger.")]
     public Task<string> DebugDetach(CancellationToken cancel = default) => OnUi(cancel, async () =>
-        await window.Debugger.DetachAsync() is { } problem ? throw new InvalidOperationException(problem) : window.Debugger.Summary ?? "Detached");
+        await Session.Debug.DetachAsync() is { } problem ? throw new InvalidOperationException(problem) : Session.Debug.Summary ?? "Detached");
 
     [McpServerTool(Name = "debug_state", Title = "Where the debugger is", ReadOnly = true), Description(
         "The debugger's state, and while paused where: the reason, the stopped thread's frames, and the chosen frame's variables.")]
@@ -581,7 +581,7 @@ public sealed partial class PassengerTools(MainWindow window)
     public Task<DebugSnapshot> DebugSetNextStatement(string path, int line, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         DebugSession session = Paused();
-        if (await window.Debugger.SetNextStatementAsync(session, Resolve(path), line - 1) is { } problem)
+        if (await Session.Debug.SetNextStatementAsync(session, Resolve(path), line - 1) is { } problem)
         {
             throw new InvalidOperationException(problem);
         }
@@ -623,7 +623,7 @@ public sealed partial class PassengerTools(MainWindow window)
         DebugSession session = Paused();
         DapStackFrame chosen = (await Stack(session))[frame];
         SetExpressionResponse set = await session.SetExpressionAsync(expression, value, chosen.Id);
-        await window.Debugger.RefreshAsync();
+        await Session.Debug.RefreshAsync();
         return new VariableInfo(expression, set.Value, set.Type, set.VariablesReference);
     });
 
@@ -639,7 +639,7 @@ public sealed partial class PassengerTools(MainWindow window)
         "What the debugged program has written, the last lines of it: the Debug window's console, or, for a configuration that uses the " +
         "terminal, its tab of the Terminal window as it shows now, scrollback and screen.")]
     public Task<string> DebugOutput(int lines = 200, CancellationToken cancel = default) => OnUi(cancel, () => Task.FromResult(
-        window.Debugger.Session?.Terminal is { } inTerminal ? Tail(inTerminal.Session, lines) : Tail(window.BottomPanel.Debug.Console, lines)));
+        Session.Debug.Session?.Terminal is { } inTerminal ? Tail(inTerminal.Session, lines) : Tail(Session.Debug.Output(), lines)));
 
     // The IDE itself
 
@@ -705,9 +705,9 @@ public sealed partial class PassengerTools(MainWindow window)
     /// <summary>Waits for the program to stop or end after it was set going, then says where it is.</summary>
     private async Task<DebugSnapshot> AfterResume(TimeSpan limit, CancellationToken cancel)
     {
-        await Until(() => window.Debugger.Session is not { State: DebugState.Running or DebugState.Starting }, limit, cancel);
+        await Until(() => Session.Debug.Session is not { State: DebugState.Running or DebugState.Starting }, limit, cancel);
         // A stop is read (its frames, the exception it is on) a moment after the state says paused.
-        await Until(() => window.Debugger.Session is not { State: DebugState.Paused } || window.Debugger.Stop is not null, TimeSpan.FromSeconds(5), cancel);
+        await Until(() => Session.Debug.Session is not { State: DebugState.Paused } || Session.Debug.Stop is not null, TimeSpan.FromSeconds(5), cancel);
         return await DebugSnapshotAsync();
     }
 
@@ -715,7 +715,7 @@ public sealed partial class PassengerTools(MainWindow window)
     /// it read with the top frame's locals.</summary>
     private async Task<DebugSnapshot> DebugSnapshotAsync()
     {
-        DebugController debugger = window.Debugger;
+        DebugController debugger = Session.Debug;
         if (debugger.Session is not { } session || session.State == DebugState.Ended)
         {
             return new DebugSnapshot("not debugging", null, null, [], [], debugger.Session?.ExitCode, debugger.Summary);
@@ -777,7 +777,7 @@ public sealed partial class PassengerTools(MainWindow window)
     private static async Task<IReadOnlyList<DapStackFrame>> Stack(DebugSession session) =>
         await session.StackTraceAsync(session.StoppedThread ?? throw new InvalidOperationException("No thread is stopped"));
 
-    private DebugSession Debugged() => window.Debugger.Session is { State: not DebugState.Ended } session
+    private DebugSession Debugged() => Session.Debug.Session is { State: not DebugState.Ended } session
         ? session
         : throw new InvalidOperationException("Nothing is being debugged; debug_start starts it");
 
@@ -795,15 +795,15 @@ public sealed partial class PassengerTools(MainWindow window)
     }
 
     private IReadOnlyList<BreakpointInfo> Breakpoints(string? path) =>
-        [.. (path is null ? window.Debugger.Breakpoints.All : window.Debugger.Breakpoints.In(path))
+        [.. (path is null ? Session.Debug.Breakpoints.All : Session.Debug.Breakpoints.In(path))
             .Select(b => new BreakpointInfo(Relative(b.Path), b.Line + 1, b.Enabled, b.Status.ToString().ToLowerInvariant(), b.Condition, b.HitCondition, b.LogMessage, b.Suspend, b.Message))];
 
     private IReadOnlyList<BreakpointInfo> DataBreakpoints() =>
-        [.. window.Debugger.Breakpoints.Data.Select(b => new BreakpointInfo(null, null, b.Enabled, b.Status.ToString().ToLowerInvariant(), b.Condition, b.HitCondition,
+        [.. Session.Debug.Breakpoints.Data.Select(b => new BreakpointInfo(null, null, b.Enabled, b.Status.ToString().ToLowerInvariant(), b.Condition, b.HitCondition,
             b.LogMessage, b.Suspend, b.Message, Data: b.Location))];
 
     private IReadOnlyList<BreakpointInfo> ExceptionBreakpoints() =>
-        [.. window.Debugger.Breakpoints.Exceptions.Select(b => new BreakpointInfo(null, null, b.Enabled, b.Status.ToString().ToLowerInvariant(), b.Condition, b.HitCondition,
+        [.. Session.Debug.Breakpoints.Exceptions.Select(b => new BreakpointInfo(null, null, b.Enabled, b.Status.ToString().ToLowerInvariant(), b.Condition, b.HitCondition,
             b.LogMessage, b.Suspend, b.Message, b.Location, ExceptionScenarioNames.Of(b.Scenarios)))];
 
     /// <summary>A line breakpoint's file and line from zero, as an agent names them.</summary>
@@ -958,7 +958,7 @@ public sealed partial class PassengerTools(MainWindow window)
             session.CSharp is not { } csharp ? "none" : csharp.IsReady ? "ready" : csharp.State,
             [.. Editors.Documents.Select(d => Relative(d.Path) + (d.IsModified ? " (unsaved)" : ""))],
             active is null ? null : $"{Relative(active.Path)}:{caret!.Value.Line + 1}:{caret.Value.Column + 1}",
-            window.Debugger.Session?.State.ToString().ToLowerInvariant() ?? "not debugging");
+            Session.Debug.Session?.State.ToString().ToLowerInvariant() ?? "not debugging");
     }
 
     /// <summary>A path an agent gave, from the open folder unless rooted, as the IDE names it (in any letter case).</summary>
@@ -981,12 +981,6 @@ public sealed partial class PassengerTools(MainWindow window)
             all.RemoveAt(all.Count - 1);
         }
         return string.Join('\n', all.Skip(Math.Max(0, all.Count - lines)));
-    }
-
-    private static string Tail(ToolWindows.OutputView console, int lines)
-    {
-        console.Flush();
-        return Tail(console.Document.Snapshot, lines);
     }
 
     /// <summary>A console's last lines.</summary>

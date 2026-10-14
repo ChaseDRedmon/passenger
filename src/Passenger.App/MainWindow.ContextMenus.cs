@@ -59,7 +59,7 @@ public partial class MainWindow
             items.Add(Command($"Run '{name}' Until Failure", () => RunTestsAt(test.Type, test.Method, debug: false, untilFailure: true)));
         }
         Add(separator);
-        if (debug.Session is { State: DebugState.Paused })
+        if (session.Debug.Session is { State: DebugState.Paused })
         {
             Add(Item(A.RunToCursor), Item(A.SetNextStatement), Item(A.Evaluate), Item(A.AddToWatches), separator);
         }

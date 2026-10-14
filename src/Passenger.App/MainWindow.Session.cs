@@ -39,13 +39,13 @@ public partial class MainWindow
     public Task WorkspaceRead => session.WorkspaceRead;
 
     /// <summary>What a session of this window is made with: its editors, where it keeps state, how it watches folders, the
-    /// warm server it may take up, its consoles and tests tree, and a test run's build, which the session's builds and runs
-    /// make.</summary>
+    /// warm server it may take up, its consoles, Debug window and tests tree, a test run's build (which the session's builds
+    /// and runs make), and the Terminal tab the debugger asks for.</summary>
     private SessionSetup Setup() => new(Editors, StateFolder, HistoryKeeping, Watching, () => settings.SolutionWideAnalysis, WarmServer, Bottom,
-        cancel => buildRun.BuildAsync(BuildCause.Tests, cancel));
+        cancel => buildRun.BuildAsync(BuildCause.Tests, cancel), RunForDebugger);
 
     /// <summary>What the builds and runs of this window's sessions show themselves in and start with.</summary>
-    private BuildRunParts BuildRunParts() => new(Bottom, Editors, Dock, () => settings, text => status.Text = text, () => debug, ShowInTerminal,
+    private BuildRunParts BuildRunParts() => new(Bottom, Editors, Dock, () => settings, text => status.Text = text, ShowInTerminal,
         OpenBrowserOnceListening, () => StateFolder);
 
     /// <summary>Opens a folder, or a solution (.sln, .slnx) or C# project (.csproj) over its folder, as the workspace; what
@@ -160,17 +160,14 @@ public partial class MainWindow
         ProjectSession leaving = session;
         IdeErrors.Write($"Closed {leaving.Folder}");
         nuget?.StopChange();
-        Task debugging = debug.StopAsync();
         Task terminals = Task.CompletedTask;
         if (terminal is { Tabs.Count: > 0 })
         {
             Dock.Hide("terminal");
             terminals = terminal.CloseAllAsync();
         }
-        ending = leaving.LeaveAsync(("the debugger", debugging), ("the terminal", terminals));
+        ending = leaving.LeaveAsync(("the terminal", terminals));
         Bind(ProjectSession.None(Setup()));
-        // The session gone keeps nothing more: what clearing these changes is written nowhere.
-        debug.Breakpoints.Clear();
         localHistoryView?.CloseAll();
         Explorer.Unload();
     }
@@ -186,10 +183,11 @@ public partial class MainWindow
         {
             if (session == next)
             {
-                StopButton.IsVisible = debug.IsDebugging || buildRun.IsRunning;
+                StopButton.IsVisible = next.Debug.IsDebugging || buildRun.IsRunning;
             }
         };
         BindTests(next);
+        BindDebug(next);
         BindVcs(next);
         BindBookmarks(next);
         // Files open as it binds (a file opened with no folder) are its too.
@@ -197,7 +195,7 @@ public partial class MainWindow
         {
             next.Attach(document);
         }
-        StopButton.IsVisible = debug.IsDebugging || buildRun.IsRunning;
+        StopButton.IsVisible = next.Debug.IsDebugging || buildRun.IsRunning;
         // The last folder's build said nothing of this one.
         Bottom.Problems.ForgetBuild();
         if (Dock["problems"] is { } problemsWindow)
@@ -241,6 +239,41 @@ public partial class MainWindow
         RunConfigName.Text = next.Configurations.Chosen?.Name ?? "No configurations";
         agentSocket?.Describe(next.Folder);
         OnCSharpChanged(next.CSharp);
+    }
+
+    /// <summary>A session's debugger in the window: what it asks to run, what it says, where it stops and the toolbar's
+    /// Stop, while it is the window's.</summary>
+    private void BindDebug(ProjectSession next)
+    {
+        Debugging.DebugController debugger = next.Debug;
+        debugger.ActionRequested += (_, action) =>
+        {
+            if (session == next)
+            {
+                Request(action);
+            }
+        };
+        debugger.Message += (_, message) =>
+        {
+            if (session == next)
+            {
+                status.Text = message;
+            }
+        };
+        debugger.Navigate += (_, target) =>
+        {
+            if (session == next)
+            {
+                ShowStop(target.Path, target.Position);
+            }
+        };
+        debugger.StateChanged += (_, _) =>
+        {
+            if (session == next)
+            {
+                OnDebugStateChanged();
+            }
+        };
     }
 
     /// <summary>A new language server (or none) for the open folder: the status bar, the usages and Problems follow it.</summary>

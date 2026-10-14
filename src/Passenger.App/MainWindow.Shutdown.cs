@@ -30,7 +30,6 @@ public partial class MainWindow
         nuget?.StopChange();
         _ = terminal?.CloseAllAsync();
         Ended = session.CloseAsync(
-            ("the debugger", debug.CloseAsync()),
             ("the solution left before", ending),
             ("Discord", EndDiscord()));
     }

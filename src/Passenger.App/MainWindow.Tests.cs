@@ -64,8 +64,8 @@ public partial class MainWindow
                 Bottom.Tests.Status = message;
             }
         };
-        tests.LaunchUnderDebugger = LaunchTestHost;
-        tests.AttachDebugger = AttachTestHost;
+        tests.LaunchUnderDebugger = start => LaunchTestHost(next.Debug, start);
+        tests.AttachDebugger = processId => AttachTestHost(next.Debug, processId);
         // Rider's system labels: a test run's end.
         tests.Ran += (_, passed) => next.LocalHistory?.Label(passed ? "Tests Passed" : "Tests Failed", system: true);
     }
@@ -226,7 +226,7 @@ public partial class MainWindow
 
     /// <summary>A test host a runner would start, started under the debugger as a plan of its own (the runner built it, and
     /// its environment has the test project's launch profile's); its process for the runner to talk to.</summary>
-    private async Task<int> LaunchTestHost(Testing.TestHostStart start)
+    private async Task<int> LaunchTestHost(Debugging.DebugController debug, Testing.TestHostStart start)
     {
         LaunchPlan plan = new()
         {
@@ -238,26 +238,26 @@ public partial class MainWindow
         };
         ShowToolWindow("debug");
         string? problem = await debug.StartAsync(plan);
-        if (debug.Session is not { } session)
+        if (debug.Session is not { } host)
         {
             throw new InvalidOperationException(problem ?? "The debugger could not start the test host");
         }
-        return await session.ProcessStarted.WaitAsync(TimeSpan.FromSeconds(30));
+        return await host.ProcessStarted.WaitAsync(TimeSpan.FromSeconds(30));
     }
 
     /// <summary>A test host a runner started itself, attached to: true once the debugger has hold of it.</summary>
-    private async Task<bool> AttachTestHost(int processId)
+    private async Task<bool> AttachTestHost(Debugging.DebugController debug, int processId)
     {
         ShowToolWindow("debug");
         await debug.AttachAsync(processId, "Tests");
-        if (debug.Session is not { } session)
+        if (debug.Session is not { } host)
         {
             return false;
         }
         // VSTest runs the tests the moment this says yes: it waits until the debugger has hold of the test host.
         try
         {
-            if (await session.ProcessStarted.WaitAsync(TimeSpan.FromSeconds(30)) == processId)
+            if (await host.ProcessStarted.WaitAsync(TimeSpan.FromSeconds(30)) == processId)
             {
                 return true;
             }

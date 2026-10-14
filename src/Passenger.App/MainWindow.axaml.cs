@@ -40,9 +40,9 @@ public partial class MainWindow : Window
 
     /// <summary>Going to places in the code, and back.</summary>
     private readonly Navigation.Navigator navigator;
+
     private readonly CodeAssist assist;
     private readonly UsageHighlighting usages;
-    private readonly DebugController debug;
     private readonly Testing.TestGutter testGutter;
     private readonly Passenger.App.Explorer.ExplorerView Explorer = new();
     private readonly ToolWindows.ToolViews Bottom = new();
@@ -60,7 +60,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         session = ProjectSession.None(Setup());
         status = new StatusBar(StatusText, StatusIcon, CaretText, IndentText, LanguageText, LineSeparatorButton, LineEndingText, EncodingButton, EncodingText);
-        popups = new PopupHost(Overlay, OverlayHost, Editors, () => Debugger.Breakpoints);
+        popups = new PopupHost(Overlay, OverlayHost, Editors, () => session.Debug.Breakpoints);
         navigator = new Navigation.Navigator(new Navigation.NavigatorParts(Editors, () => session, popups, status, path => OpenFile(path), TextOf));
         if (OperatingSystem.IsMacOS())
         {
@@ -126,30 +126,22 @@ public partial class MainWindow : Window
         };
         Editors.CaretMoved += (_, _) => UpdateCaret();
         Editors.SaveFailed += (_, problem) => status.Text = problem;
-        Editors.Opened += (_, document) =>
-        {
-            session.Attach(document);
-            debug?.Attach(document);
-        };
-        Editors.Closed += (_, document) =>
-        {
-            session.Detach(document);
-            debug?.Detach(document);
-        };
+        Editors.Opened += (_, document) => session.Attach(document);
+        Editors.Closed += (_, document) => session.Detach(document);
         Editors.ForEachEditor(editor => editor.ProblemsRequested += (_, _) => ShowToolWindow("problems"));
         // IntelliJ's words for its caret limit.
         Editors.ForEachEditor(editor => editor.CaretLimitReached += (_, _) =>
             status.Text = string.Create(CultureInfo.InvariantCulture, $"Cannot create more than {SelectionSet.MaxCount:N0} carets"));
         Editors.ForEachEditor(editor => editor.ExecutionPointDragged += (_, line) =>
         {
-            if (Editors.Active is { } active && debug?.Session is { State: DebugState.Paused } session)
+            if (Editors.Active is { } active && session.Debug.Session is { State: DebugState.Paused } paused)
             {
-                _ = debug.SetNextStatementAsync(session, active.Path, line);
+                _ = session.Debug.SetNextStatementAsync(paused, active.Path, line);
             }
         });
         Editors.ForEachEditor(editor => editor.GutterClicked += (_, click) =>
         {
-            if (Editors.Active is not { } active || debug is null)
+            if (Editors.Active is not { } active)
             {
                 return;
             }
@@ -172,7 +164,7 @@ public partial class MainWindow : Window
             if (click.Context)
             {
                 // A right-click on a breakpoint opens its properties, as in Rider.
-                if (debug.Breakpoints.In(active.Path).FirstOrDefault(b => b.Line == click.Line) is { } breakpoint)
+                if (session.Debug.Breakpoints.In(active.Path).FirstOrDefault(b => b.Line == click.Line) is { } breakpoint)
                 {
                     ShowBreakpointPopup(breakpoint);
                 }
@@ -183,11 +175,11 @@ public partial class MainWindow : Window
             }
             else if (click.Modifiers.HasFlag(KeyModifiers.Shift))
             {
-                debug.Breakpoints.ToggleTracepoint(active.Path, click.Line);
+                session.Debug.Breakpoints.ToggleTracepoint(active.Path, click.Line);
             }
             else
             {
-                debug.Breakpoints.Toggle(active.Path, click.Line);
+                session.Debug.Breakpoints.Toggle(active.Path, click.Line);
             }
         });
         assist = new CodeAssist(Editors, Editors.AssistLayer, () => session.CSharp);
@@ -203,7 +195,6 @@ public partial class MainWindow : Window
                 NavigateTo(path, problem.Position);
             }
         };
-        debug = new DebugController(Editors, Bottom.Debug) { RunInTerminal = RunForDebugger };
         testGutter = new Testing.TestGutter(Bottom.TestTree);
         Bind(session);
         Bottom.Build.RerunClicked += (_, _) => buildRun.Rebuild();
@@ -223,14 +214,10 @@ public partial class MainWindow : Window
             NavigateTo(row.Path, row.Position);
             Request(AppActions.FindUsages);
         };
-        debug.ActionRequested += (_, action) => Request(action);
-        debug.Message += (_, message) => status.Text = message;
-        debug.Navigate += (_, target) => ShowStop(target.Path, target.Position);
-        debug.StateChanged += (_, _) => OnDebugStateChanged();
-        assist.DebuggerValue = debug.ValueAt;
+        assist.DebuggerValue = (offset, cancel) => session.Debug.ValueAt(offset, cancel);
         assist.AddActions(actions!);
         usages.AddActions(actions!);
-        debug.AddActions(actions!);
+        DebugController.AddActions(actions!, () => session.Debug);
         AddFind();
         AddProblems();
         AddContextMenus();
@@ -414,7 +401,7 @@ public partial class MainWindow : Window
     /// <summary>The tool windows' views: Build, Run, Debug, Unit Tests, Problems.</summary>
     public ToolWindows.ToolViews BottomPanel => Bottom;
 
-    public DebugController Debugger => debug;
+    public DebugController Debugger => session.Debug;
 
     /// <summary>The open folder, canonical, or null before one is opened.</summary>
     public string? Folder => session.Folder;
@@ -470,7 +457,7 @@ public partial class MainWindow : Window
 
     private void OnDebugStateChanged()
     {
-        StopButton.IsVisible = debug.IsDebugging || buildRun.IsRunning;
+        StopButton.IsVisible = session.Debug.IsDebugging || buildRun.IsRunning;
     }
 
     /// <summary>Opens a tool window in its place ("debug", "build", "tests"...), as its stripe button does.</summary>
@@ -539,8 +526,6 @@ public partial class MainWindow : Window
             Dock.Apply(store.Layout.Value);
         }
         Dock.LayoutChanged += (_, _) => KeepDock();
-        debug.Breakpoints.Changed += (_, _) => session.State?.Breakpoints.Set(debug.Breakpoints.Capture());
-        debug.Breakpoints.ExceptionsChanged += (_, _) => session.State?.Breakpoints.Set(debug.Breakpoints.Capture());
         findSettings = store.Find.Value;
         assist.RenameSettings = store.Refactorings.Value;
         assist.RenameSettingsChanged += (_, _) => state?.Refactorings.Set(assist.RenameSettings);
@@ -628,7 +613,6 @@ public partial class MainWindow : Window
             Dock.Apply(state.Layout.Value);
         }
         // Before the folder's documents are this window's, so what restoring them changes is not written back.
-        debug.Breakpoints.Restore(opening.Breakpoints.Value);
         RestoreUnitTests(opening.UnitTests.Value);
         GitBranches.Favorites = opening.GitBranches.Value;
         session.Keep(opening);
@@ -707,7 +691,7 @@ public partial class MainWindow : Window
     {
         CodeEditor editor = Editors.CodeEditor;
         Point at = popups.PointIn(editor, editor.GutterPoint(breakpoint.Line)) ?? new Point(100, 100);
-        Debugging.BreakpointPopup popup = new(breakpoint, debug.Breakpoints, actions!.Shortcut(AppActions.ViewBreakpoints));
+        Debugging.BreakpointPopup popup = new(breakpoint, session.Debug.Breakpoints, actions!.Shortcut(AppActions.ViewBreakpoints));
         popup.Closed += (_, more) =>
         {
             popups.Close();
@@ -723,7 +707,7 @@ public partial class MainWindow : Window
     /// <summary>The Breakpoints window, a breakpoint chosen in it.</summary>
     public void ShowBreakpoints(Debugging.Breakpoint? chosen)
     {
-        Debugging.BreakpointsWindow window = new(debug.Breakpoints, chosen, ExceptionTypesAsync);
+        Debugging.BreakpointsWindow window = new(session.Debug.Breakpoints, chosen, ExceptionTypesAsync);
         window.Closed += (_, show) =>
         {
             popups.Close();

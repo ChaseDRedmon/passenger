@@ -1,4 +1,5 @@
 using Passenger.App.CSharp;
+using Passenger.App.Debugging;
 using Passenger.App.Editors;
 using Passenger.App.History;
 using Passenger.App.Navigation;
@@ -16,7 +17,8 @@ namespace Passenger.App;
 
 /// <summary>What a window lends each session it makes: its editors (whose open files the session's services follow), where
 /// its state and Local History are kept, how folders are watched, the warm language server a test's windows share, the
-/// consoles and tests tree its runners and test runner write to, and the build a test run starts with.</summary>
+/// consoles, Debug window and tests tree its runners, debugger and test runner write to, the build a test run starts with,
+/// and the tab of the Terminal window a program the debugger launches there runs in.</summary>
 public sealed record SessionSetup(
     EditorArea Editors,
     string StateFolder,
@@ -25,15 +27,16 @@ public sealed record SessionSetup(
     Func<bool> SolutionWide,
     WarmServer? WarmServer,
     ToolViews Views,
-    Func<CancellationToken, Task<BuildOutcome>> BuildForTests);
+    Func<CancellationToken, Task<BuildOutcome>> BuildForTests,
+    Func<string, Dap.RunInTerminalArguments, Task<TerminalRun>> RunForDebugger);
 
 /// <summary>One folder or solution open in a window, or a window's nothing before one opens: what the folder has (its
-/// solution read, its files indexed and watched, Local History, run configurations, bookmarks, the last build's problems,
-/// recent files and the places Back goes to, what it keeps in the store) and what it runs (the language server, Git, its
-/// builds and programs, one in the terminal, the profiler's run, its tests), made as the folder opens and ended together
-/// as it is left (<see cref="LeaveAsync"/>) or its window closes (<see cref="CloseAsync"/>), so nothing of one folder
-/// outlives it into the next. The window builds its controllers over the session it has and binds its views to it. A
-/// UI-thread object.</summary>
+/// solution read, its files indexed and watched, Local History, run configurations, breakpoints, bookmarks, the last
+/// build's problems, recent files and the places Back goes to, what it keeps in the store) and what it runs (the language
+/// server, Git, its builds and programs, one in the terminal, the debugger, the profiler's run, its tests), made as the
+/// folder opens and ended together as it is left (<see cref="LeaveAsync"/>) or its window closes (<see cref="CloseAsync"/>),
+/// so nothing of one folder outlives it into the next. The window builds its controllers over the session it has and binds
+/// its views to it. A UI-thread object.</summary>
 public sealed class ProjectSession : IAsyncDisposable
 {
     /// <summary>How many recently opened files Go to File offers before anything is typed.</summary>
@@ -55,7 +58,10 @@ public sealed class ProjectSession : IAsyncDisposable
         Builder = new ProcessRunner(setup.Views.Build);
         Runner = new ProcessRunner(setup.Views.Run, takesInput: true);
         Tests = new TestController(setup.Views.TestTree, setup.BuildForTests, () => Projects, line => setup.Views.Build.Append($"{line}\n"));
+        Debug = new DebugController(setup.Editors, setup.Views.Debug) { RunInTerminal = setup.RunForDebugger };
         // Kept with the folder from Keep on, while the window keeps state.
+        Debug.Breakpoints.Changed += (_, _) => State?.Breakpoints.Set(Debug.Breakpoints.Capture());
+        Debug.Breakpoints.ExceptionsChanged += (_, _) => State?.Breakpoints.Set(Debug.Breakpoints.Capture());
         Bookmarks.Changed += (_, _) => State?.Bookmarks.Set(Bookmarks.Capture());
         // What a Git operation changes in the files is one change set of the folder's Local History, under its name.
         Vcs.Activity = name => LocalHistory?.During(name);
@@ -162,6 +168,9 @@ public sealed class ProjectSession : IAsyncDisposable
     /// <summary>The folder's unit tests: those its test projects declare, their runs and their results.</summary>
     public TestController Tests { get; }
 
+    /// <summary>The folder's debugger, its breakpoints with it.</summary>
+    public DebugController Debug { get; }
+
     /// <summary>The folder's Git working tree, once its lookup (<see cref="Start"/>) has found one.</summary>
     public VcsController Vcs { get; } = new();
 
@@ -180,11 +189,13 @@ public sealed class ProjectSession : IAsyncDisposable
     /// <summary>Whether the session has been left, or its window closed.</summary>
     public bool IsEnded => ending is not null;
 
-    /// <summary>The folder's documents from now on: what the store kept of the folder's own (its configurations, Find in
-    /// Files' scope, unloaded projects, folds and recent files) taken first, so restoring them writes nothing back.</summary>
+    /// <summary>The folder's documents from now on: what the store kept of the folder's own (its breakpoints, bookmarks,
+    /// configurations, Find in Files' scope, unloaded projects, folds and recent files) taken first, so restoring them writes
+    /// nothing back.</summary>
     public void Keep(ProjectState kept)
     {
         UiThread.Check();
+        Debug.Breakpoints.Restore(kept.Breakpoints.Value);
         Bookmarks.Restore(kept.Bookmarks.Value);
         FindScope = kept.Find.Value;
         WorkspaceState workspace = kept.Workspace.Value;
@@ -212,10 +223,12 @@ public sealed class ProjectSession : IAsyncDisposable
         }
     }
 
-    /// <summary>A file the editor opened: the language server and Git follow it, its gutter showing their marks.</summary>
+    /// <summary>A file the editor opened: the language server, the debugger and Git follow it, its gutter showing their
+    /// marks.</summary>
     public void Attach(OpenDocument document)
     {
         CSharp?.Attach(document);
+        Debug.Attach(document);
         Vcs.Attach(document);
     }
 
@@ -223,14 +236,16 @@ public sealed class ProjectSession : IAsyncDisposable
     public void Detach(OpenDocument document)
     {
         CSharp?.Detach(document);
+        Debug.Detach(document);
         Vcs.Detach(document);
     }
 
-    /// <summary>A file or folder moved: its bookmarks, Git, the recent files, the places and Local History follow it, and
-    /// the language server knows an open file at its new path.</summary>
+    /// <summary>A file or folder moved: its bookmarks and breakpoints, Git, the recent files, the places and Local History
+    /// follow it, and the language server knows an open file at its new path.</summary>
     public void Moved(FileMove move)
     {
         Bookmarks.Move(move.From, move.To);
+        Debug.Breakpoints.Move(move.From, move.To);
         Vcs.Moved(move.From, move.To);
         Navigation.Move(move.From, move.To);
         LocalHistory?.Moved(move.From, move.To);
@@ -354,10 +369,11 @@ public sealed class ProjectSession : IAsyncDisposable
         CSharpChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    /// <summary>Leaves the folder while its window stays: everything it runs ends, and the task finishes once each end has
-    /// landed (a stopped build's outcome, a killed program's exit, said in the window's views before another folder takes
-    /// them) and the session has let go of the window's consoles, or <see cref="MainWindow.EndLimit"/> after, each late one
-    /// named in the log. What else ends with it (the window's debugger, its terminals) is waited for alike.</summary>
+    /// <summary>Leaves the folder while its window stays: everything it runs ends (a program the debugger attached to is
+    /// let go, running on, as the window's close lets it go), and the task finishes once each end has landed (a stopped
+    /// build's outcome, a killed program's exit, said in the window's views before another folder takes them) and the
+    /// session has let go of the window's views, or <see cref="MainWindow.EndLimit"/> after, each late one named in the
+    /// log. What else ends with it (the folder's terminals, the window's) is waited for alike.</summary>
     public Task LeaveAsync(params (string What, Task Ending)[] with)
     {
         UiThread.Check();
@@ -365,7 +381,7 @@ public sealed class ProjectSession : IAsyncDisposable
         {
             return ending;
         }
-        List<(string What, Task Ending)> parts = [.. with];
+        List<(string What, Task Ending)> parts = [.. with, ("the debugger", Debug.LeaveAsync())];
         // Their ends are posted to the window's thread, which carries on while it waits.
         if (Builder.IsRunning)
         {
@@ -400,7 +416,7 @@ public sealed class ProjectSession : IAsyncDisposable
         {
             return ending;
         }
-        ending = Within(MainWindow.EndLimit, Folder, End([.. with]));
+        ending = Within(MainWindow.EndLimit, Folder, End([.. with, ("the debugger", Debug.CloseAsync())]));
         LetGo();
         return ending;
     }
@@ -427,16 +443,18 @@ public sealed class ProjectSession : IAsyncDisposable
         return parts;
     }
 
-    /// <summary>The session lets go of the window's consoles and open files, which the next session's runners and Git take.</summary>
+    /// <summary>The session lets go of the window's consoles, Debug window and open files, which the next session's runners,
+    /// debugger and Git take.</summary>
     private void LetGo()
     {
         Builder.Dispose();
         Runner.Dispose();
+        Debug.Dispose();
         Vcs.Dispose();
     }
 
     /// <summary>Waits for what is ending, for at most the limit, naming in the log what had not ended by then.</summary>
-    internal static Task Within(TimeSpan limit, string? folder, IReadOnlyList<(string What, Task Ending)> parts)
+    private static Task Within(TimeSpan limit, string? folder, IReadOnlyList<(string What, Task Ending)> parts)
     {
         if (parts.All(p => p.Ending.IsCompleted))
         {

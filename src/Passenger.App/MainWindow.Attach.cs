@@ -61,16 +61,16 @@ public partial class MainWindow
     {
         UiThread.Check();
         using IDisposable held = BackgroundWork.Scope();
-        if (debug.Session is { Attached: true, State: not Debugging.DebugState.Ended })
+        if (session.Debug.Session is { Attached: true, State: not Debugging.DebugState.Ended })
         {
-            await debug.DetachAsync();
+            await session.Debug.DetachAsync();
         }
         attachedTo.RemoveAll(p => Same(p, process));
         attachedTo.Add(process);
         ShowToolWindow("debug");
         Bottom.Debug.ShowTab(console: false);
-        string? refused = await debug.AttachAsync(process.Id, process.Program);
-        attachSession = debug.Session;
+        string? refused = await session.Debug.AttachAsync(process.Id, process.Program);
+        attachSession = session.Debug.Session;
         return refused;
     }
 
