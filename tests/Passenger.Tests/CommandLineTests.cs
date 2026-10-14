@@ -38,6 +38,7 @@ public sealed class CommandLineTests : IDisposable
     [InlineData("--screenshot out.png --crop 0,0,2000,100", "--crop 0,0,2000,100 reaches past the 1600x1000 window")]
     [InlineData("--screenshot out.png --click 1600,10", "--click 1600,10 is outside the 1600x1000 window")]
     [InlineData("--screenshot out.png --key 1000", "--key takes a keystroke such as cmd+shift+L, not '1000': unknown key '1000'")]
+    [InlineData("--screenshot out.png --click-name Run.Button", "--click-name takes a control's x:Name, not 'Run.Button'")]
     [InlineData("--screenshot out.png --file Typo.cs", "--file 'Typo.cs' does not exist")]
     [InlineData("--screenshot out.png --file sub", "--file 'sub' is a folder; a folder to open is the PATH")]
     [InlineData("--screenshot missing/out.png", "--screenshot 'missing/out.png' would be written to a folder that does not exist")]
@@ -71,6 +72,18 @@ public sealed class CommandLineTests : IDisposable
         // A PNG's width and height are the IHDR chunk's first words, big-endian, after the signature and the chunk's head.
         byte[] png = await File.ReadAllBytesAsync(Path.Combine(folder, "out.png"), TestContext.Current.CancellationToken);
         Assert.Equal((400, 250), (BinaryPrimitives.ReadInt32BigEndian(png.AsSpan(16)), BinaryPrimitives.ReadInt32BigEndian(png.AsSpan(20))));
+    }
+
+    [Fact]
+    public async Task A_screenshot_step_clicks_a_control_by_its_name_and_a_name_no_shown_control_has_ends_it_with_exit_code_2()
+    {
+        (int code, string error) = await Run(". --click-name RunConfigButton --size 800x500 --scale 1 --screenshot out.png");
+        Assert.True(code == 0 && File.Exists(Path.Combine(folder, "out.png")), $"The screenshot after a click on RunConfigButton was not taken: exit code {code}\n{error}");
+
+        (code, error) = await Run(". --click-name Nothing --screenshot nothing.png");
+        Assert.True(code == 2 && error.Contains("screenshot: --click-name Nothing: no control named Nothing is shown in the window", StringComparison.Ordinal)
+            && !File.Exists(Path.Combine(folder, "nothing.png")),
+            $"A click on a name no control has was to end the screenshot with exit code 2 saying so; it exited {code} and wrote:\n{error}");
     }
 
     [AvaloniaFact]

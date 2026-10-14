@@ -15,10 +15,10 @@ namespace Passenger.App;
 public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, TextPosition? Caret, ThemeChoice? Theme, ScreenshotOptions? Screenshot)
 {
     /// <summary>The flags that may be given more than once: each is one more file or one more step.</summary>
-    private static readonly HashSet<string> Repeatable = ["--file", "--type", "--key", "--click", "--double-click", "--right-click", "--drag", "--drag-hold", "--hover", "--wait", "--open"];
+    private static readonly HashSet<string> Repeatable = ["--file", "--type", "--key", "--click", "--click-name", "--double-click", "--right-click", "--drag", "--drag-hold", "--hover", "--wait", "--open"];
 
     /// <summary>What only a screenshot takes: its window, its picture and the steps before it.</summary>
-    private static readonly HashSet<string> ScreenshotOnly = ["--size", "--scale", "--crop", "--type", "--key", "--click", "--double-click", "--right-click", "--drag", "--drag-hold", "--hover", "--wait", "--open"];
+    private static readonly HashSet<string> ScreenshotOnly = ["--size", "--scale", "--crop", "--type", "--key", "--click", "--click-name", "--double-click", "--right-click", "--drag", "--drag-hold", "--hover", "--wait", "--open"];
 
     /// <summary>A screenshot's longest side in pixels: a frame 16384 pixels square is already a gigabyte, and the headless
     /// window draws none at 24000.</summary>
@@ -157,6 +157,12 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
                     {
                         Button = flag == "--right-click" ? MouseButton.Right : MouseButton.Left,
                     });
+                    break;
+                case "--click-name":
+                    string controlName = Value(args, ref i, flag);
+                    steps.Add(controlName.Length > 0 && controlName.All(c => char.IsLetterOrDigit(c) || c == '_')
+                        ? new ScriptStep.ClickNamed(controlName)
+                        : throw new FormatException($"--click-name takes a control's x:Name, not '{controlName}'"));
                     break;
                 case "--drag" or "--drag-hold":
                     string dragText = Value(args, ref i, flag);
@@ -388,6 +394,10 @@ public abstract record ScriptStep
     {
         public MouseButton Button { get; init; } = MouseButton.Left;
     }
+
+    /// <summary>A click at the centre of the control of an x:Name shown in the window, as an agent's app_click finds it by
+    /// name rather than by a point read off a picture.</summary>
+    public sealed record ClickNamed(string Name) : ScriptStep;
 
     /// <summary>The left button pressed at one point and moved to another, let go there unless the capture is to show
     /// the drag itself (a tool window over its drop place).</summary>

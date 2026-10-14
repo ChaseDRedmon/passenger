@@ -5,6 +5,7 @@ using Avalonia.Input;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using Passenger.Editor;
 
 namespace Passenger.App;
@@ -31,7 +32,18 @@ public static class Screenshot
 
         MainWindow window = new() { Width = options.Size.Width, Height = options.Size.Height, Autosaves = false };
         window.SetRenderScaling(options.Scale);
-        bool settled = Prepare(window, launch, options.Steps);
+        bool settled;
+        try
+        {
+            settled = Prepare(window, launch, options.Steps);
+        }
+        catch (StepRefused refused)
+        {
+            PassengerApp.Quit();
+            PassengerApp.End();
+            Console.Error.WriteLine($"screenshot: {refused.Message}");
+            return 2;
+        }
 
         // A diff or a dialog the steps opened is what the person would be looking at, drawn at the window's scale.
         Avalonia.Controls.Window front = window.Frontmost;
@@ -141,8 +153,30 @@ public static class Screenshot
                     window.MouseUp(click.At, click.Button, RawInputModifiers.None);
                 }
                 break;
+            case ScriptStep.ClickNamed named:
+                Point centre = Centre(window, named.Name);
+                // The pointer goes there first, as a person's does, so the control is under it as it is pressed.
+                window.MouseMove(centre, RawInputModifiers.None);
+                Take(window, new ScriptStep.Click(centre, 1));
+                break;
         }
     }
+
+    /// <summary>The centre of the control of a name shown in a window, the window's own before a template's part of that
+    /// name; a name no control shown has is refused, since a step that clicks nothing would picture the wrong thing.</summary>
+    private static Point Centre(Avalonia.Controls.Window window, string name)
+    {
+        Avalonia.Controls.Control control = window.GetVisualDescendants().OfType<Avalonia.Controls.Control>()
+            .Where(c => c.Name == name && c.IsEffectivelyVisible && c.Bounds.Width > 0 && c.Bounds.Height > 0)
+            .OrderBy(c => c.TemplatedParent is null ? 0 : 1)
+            .FirstOrDefault()
+            ?? throw new StepRefused($"--click-name {name}: no control named {name} is shown in the window");
+        return control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)
+            ?? throw new StepRefused($"--click-name {name}: {name} is not in the window");
+    }
+
+    /// <summary>A step the window cannot take as asked, which ends the screenshot with exit code 2 and why.</summary>
+    private sealed class StepRefused(string message) : Exception(message);
 
     /// <summary>Runs the dispatcher's loop for a while: its timers (the editor's hover, a caret's blink)
     /// fire only inside a running frame, which running the queued jobs alone never is.</summary>
