@@ -19,9 +19,17 @@ public static class HotReloadHandlers
     public static readonly IReadOnlyList<string> All = [Start, Emit, Commit, Discard, End];
 }
 
-/// <summary>A debugging session's start: the edits the debugged runtime can take, as it names them ("Baseline",
-/// "AddMethodToExistingType", ...), the solution as the server has it now being what was built.</summary>
-public sealed record HotReloadStart([property: JsonPropertyName("capabilities")] IReadOnlyList<string> Capabilities);
+/// <summary>A debugging session's start, at its first edit: the edits the debugged runtime can take, as it names them
+/// ("Baseline", "AddMethodToExistingType", ...), and the files edited so far as they were before (as built), which Roslyn
+/// takes once their checksums match the build's PDB; every other file is as built.</summary>
+public sealed record HotReloadStart(
+    [property: JsonPropertyName("capabilities")] IReadOnlyList<string> Capabilities,
+    [property: JsonPropertyName("originals")] IReadOnlyList<HotReloadOriginal> Originals);
+
+/// <summary>A file's text before the session's first edit to it.</summary>
+public sealed record HotReloadOriginal(
+    [property: JsonPropertyName("path")] string Path,
+    [property: JsonPropertyName("text")] string Text);
 
 /// <summary>The session started, by its number, or why none did.</summary>
 public sealed record HotReloadStarted(
@@ -51,7 +59,8 @@ public sealed record HotReloadEmit(
     [property: JsonPropertyName("capabilities")] IReadOnlyList<string> Capabilities,
     [property: JsonPropertyName("modules")] IReadOnlyList<Guid> Modules,
     [property: JsonPropertyName("activeStatements")] IReadOnlyList<HotReloadActiveStatement> ActiveStatements,
-    [property: JsonPropertyName("locked")] IReadOnlyList<HotReloadLockedModule> Locked);
+    [property: JsonPropertyName("locked")] IReadOnlyList<HotReloadLockedModule> Locked,
+    [property: JsonPropertyName("originals")] IReadOnlyList<HotReloadOriginal> Originals);
 
 /// <summary>A module the program has loaded whose code its runtime will not let be edited, and why (optimized code).</summary>
 public sealed record HotReloadLockedModule(

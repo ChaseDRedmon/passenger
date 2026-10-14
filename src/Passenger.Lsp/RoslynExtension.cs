@@ -74,6 +74,16 @@ public static class RoslynExtension
         return Answer<T>(answer, handler);
     }
 
+    /// <summary>A message to one of the extension's workspace handlers that nothing waits on (one sent as a session or a
+    /// window ends): sent through <see cref="LanguageServer.Tell"/>, dropped when the server is gone.</summary>
+    internal static void TellWorkspace(LanguageServer server, string handler, object message)
+    {
+        if (server.ExtensionProblem is null)
+        {
+            server.Tell("workspace/_vs_dispatchExtensionMessage", new DispatchWorkspaceMessageParams(handler, JsonSerializer.Serialize(message, message.GetType())));
+        }
+    }
+
     /// <summary>A handler's answer read from the server's reply, or the failure it carries.</summary>
     private static T Answer<T>(JsonElement answer, string handler)
     {

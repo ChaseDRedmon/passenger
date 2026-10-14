@@ -200,6 +200,9 @@ public sealed class RoslynSession : IAsyncDisposable, IDocumentHost
     public Task<T> ExtensionAsync<T>(string handler, object message, CancellationToken cancel = default) =>
         RoslynExtension.AskWorkspaceAsync<T>(Server, handler, message, cancel);
 
+    /// <summary>A message to Passenger's extension about the solution that nothing waits on, as a debugging session ends.</summary>
+    public void TellExtension(string handler, object message) => RoslynExtension.TellWorkspace(Server, handler, message);
+
     public async Task<IReadOnlyList<SymbolInformation>> SymbolsAsync(string query, CancellationToken cancel = default) =>
         await Server.RequestAsync<List<SymbolInformation>>("workspace/symbol", new WorkspaceSymbolParams(query), cancel) ?? [];
 

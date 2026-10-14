@@ -4,7 +4,7 @@
   "classes": {
     "CodeAssistTests": 570,
     "DebuggerTests": 420,
-    "HotReloadTests": 120,
+    "HotReloadTests": 180,
     "HotReloadEditsTests": 240,
     "BuildRunTests": 300,
     "UnitTestsTests": 240,

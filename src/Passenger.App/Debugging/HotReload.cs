@@ -61,29 +61,45 @@ public sealed class HotReload
     /// <summary>Why Hot Reload stopped for the session: the runtime refused an update part way.</summary>
     private string? stopped;
 
-    private HotReload(DebugSession debug, Func<RoslynSession?> server)
+    /// <summary>Each file's text before the session's first edit to it (the build's), and those Roslyn has been given.</summary>
+    private readonly Dictionary<string, string> originals = new(StringComparer.Ordinal);
+    private readonly HashSet<string> given = new(StringComparer.Ordinal);
+
+    /// <summary>Hot Reload for a session just launched. Roslyn's session begins at the first edit (most sessions have none,
+    /// and its start reads every document), given each edited file's text from before its edits, the build's.</summary>
+    public HotReload(DebugSession debug, Func<RoslynSession?> server)
     {
         this.debug = debug;
         this.server = server;
     }
 
-    /// <summary>Starts Hot Reload for a session just launched: Roslyn's Edit and Continue session begins on the solution as
-    /// the server has it now, which is what was just built.</summary>
-    public static HotReload Start(DebugSession debug, Func<RoslynSession?> server)
-    {
-        UiThread.Check();
-        HotReload hotReload = new(debug, server);
-        hotReload.starting = hotReload.StartAsync();
-        return hotReload;
-    }
-
     /// <summary>Whether the files have been edited since the launch or the last update applied.</summary>
     public bool Changed { get; set; }
+
+    /// <summary>A C# file edited while the program runs: its text before its first edit is kept, and Roslyn's session begins.</summary>
+    public void Edited(string path, TextSnapshot before)
+    {
+        UiThread.Check();
+        Changed = true;
+        if (!originals.ContainsKey(path))
+        {
+            originals[path] = before.ToString();
+        }
+        starting ??= StartAsync();
+    }
 
     /// <summary>Why Apply Changes cannot run now, or null when it can.</summary>
     public string? WhyNot => stopped is not null ? stopped
         : debug.State is not (DebugState.Running or DebugState.Paused) ? "The program is not running"
         : null;
+
+    /// <summary>The files' texts from before their edits that Roslyn has not been given yet, marked given.</summary>
+    private List<HotReloadOriginal> Ungiven()
+    {
+        List<HotReloadOriginal> ungiven = [.. originals.Where(o => !given.Contains(o.Key)).Select(o => new HotReloadOriginal(o.Key, o.Value))];
+        given.UnionWith(ungiven.Select(o => o.Path));
+        return ungiven;
+    }
 
     private async Task<string?> StartAsync()
     {
@@ -93,7 +109,7 @@ public sealed class HotReload
         }
         try
         {
-            HotReloadStarted started = await roslyn.ExtensionAsync<HotReloadStarted>(HotReloadHandlers.Start, new HotReloadStart([]));
+            HotReloadStarted started = await roslyn.ExtensionAsync<HotReloadStarted>(HotReloadHandlers.Start, new HotReloadStart([], Ungiven()));
             if (started.Problem is { } problem)
             {
                 return problem;
@@ -119,9 +135,11 @@ public sealed class HotReload
         {
             return new HotReloadOutcome(HotReloadResult.Failed, why);
         }
-        if ((starting is null ? "Hot Reload did not start" : await starting) is not null)
+        starting ??= StartAsync();
+        if (await starting is not null)
         {
-            // The server may have been loading at the launch: Roslyn checks edited files against the PDB's checksums.
+            // The server may have been loading at the first edit: Roslyn checks edited files against the PDB's checksums.
+            given.Clear();
             starting = StartAsync();
             if (await starting is { } notStarted)
             {
@@ -153,7 +171,8 @@ public sealed class HotReload
                 [.. state.Modules.Where(m => m.Editable).Select(m => m.Mvid)],
                 [.. state.ActiveStatements.Select(s => new HotReloadActiveStatement(s.Module, s.Token, s.Version, s.ILOffset, s.Document,
                     s.StartLine, s.StartColumn, s.EndLine, s.EndColumn, s.Flags))],
-                [.. state.Modules.Where(m => !m.Editable).Select(m => new HotReloadLockedModule(m.Mvid, m.WhyNot ?? $"{m.Name} cannot be edited"))]));
+                [.. state.Modules.Where(m => !m.Editable).Select(m => new HotReloadLockedModule(m.Mvid, m.WhyNot ?? $"{m.Name} cannot be edited"))],
+                Ungiven()));
         }
         catch (LanguageServerFailed failed)
         {
@@ -225,7 +244,7 @@ public sealed class HotReload
         if (id is int session && startedOn is { } roslyn)
         {
             id = null;
-            _ = TellAsync(roslyn, HotReloadHandlers.End, session);
+            roslyn.TellExtension(HotReloadHandlers.End, new HotReloadSessionMessage(session));
         }
     }
 

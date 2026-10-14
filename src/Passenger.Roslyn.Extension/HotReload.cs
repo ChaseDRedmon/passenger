@@ -4,6 +4,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Contracts.EditAndContinue;
 using Microsoft.CodeAnalysis.EditAndContinue;
 using Microsoft.CodeAnalysis.Extensions;
+using Microsoft.CodeAnalysis.Text;
 
 namespace Passenger.Roslyn.Extension;
 
@@ -38,10 +39,10 @@ public sealed class EndHotReload : IExtensionWorkspaceMessageHandler<HotReloadSe
 }
 
 /// <summary>Edit and Continue through the server's own service (Roslyn's EditAndContinueService, the one dotnet watch and
-/// Visual Studio drive), over the solution the server has open: a session per debugging session, started on the solution
-/// as built, each emit comparing the solution as it is now with what was built and applied since. The debugger is
-/// Passenger's, so the service hears of it through <see cref="Debugger"/>: the runtime's capabilities, the modules loaded and
-/// the active statements, all as Passenger's last message said them.</summary>
+/// Visual Studio drive), over the solution the server has open: a session per debugging session, started at its first
+/// edit, each emit comparing the solution now with what was built (an edited file's build text found by its PDB checksum,
+/// <see cref="Originals"/>) and applied since. The debugger is Passenger's: the runtime's capabilities, the modules loaded
+/// and the active statements are as Passenger's last message said them (<see cref="Debugger"/>).</summary>
 internal static class HotReload
 {
     private static readonly ConcurrentDictionary<int, Session> sessions = new();
@@ -53,11 +54,23 @@ internal static class HotReload
             return new HotReloadStarted(0, "the C# language server has no Edit and Continue service");
         }
         IEditAndContinueService service = workspace.Service;
+        // The files edited before the session began are taken back to their texts before (the build's), its baseline.
+        foreach (HotReloadOriginal original in message.Originals)
+        {
+            ImmutableArray<DocumentId> ids = solution.GetDocumentIdsWithFilePath(original.Path);
+            if (!ids.IsEmpty && solution.GetDocument(ids[0]) is { } document)
+            {
+                SourceText now = await document.GetTextAsync(cancel).ConfigureAwait(false);
+                solution = solution.WithDocumentText(ids, SourceText.From(original.Text, now.Encoding, now.ChecksumAlgorithm));
+            }
+        }
         // Every document's text read now, as dotnet watch's start does: the session compares later snapshots with these.
         await EditAndContinueService.HydrateDocumentsAsync(solution, cancel).ConfigureAwait(false);
         Debugger debugger = new([.. message.Capabilities]);
-        DebuggingSessionId id = service.StartDebuggingSession(solution, debugger, NullPdbMatchingSourceTextProvider.Instance, reportDiagnostics: false);
-        sessions[id.Ordinal] = new Session(service, id, debugger) { Committed = solution };
+        Originals originals = new();
+        originals.Take(message.Originals);
+        DebuggingSessionId id = service.StartDebuggingSession(solution, debugger, originals, reportDiagnostics: false);
+        sessions[id.Ordinal] = new Session(service, id, debugger, originals) { Committed = solution };
         return new HotReloadStarted(id.Ordinal, null);
     }
 
@@ -75,6 +88,7 @@ internal static class HotReload
             }
         }
         session.Debugger.Take(message);
+        session.Originals.Take(message.Originals);
         // A new edit session, which reads the active statements again: paused, Edit and Continue; running, Hot Reload.
         session.Service.BreakStateOrCapabilitiesChanged(session.Id, message.Paused);
         EmitSolutionUpdateResults results = await session.Service.EmitSolutionUpdateAsync(session.Id, solution,
@@ -224,17 +238,53 @@ internal static class HotReload
             a.NewSpan.StartLine, a.NewSpan.StartColumn, a.NewSpan.EndLine, a.NewSpan.EndColumn))],
         [.. update.RequiredCapabilities]);
 
-    private sealed class Session(IEditAndContinueService service, DebuggingSessionId id, Debugger debugger)
+    private sealed class Session(IEditAndContinueService service, DebuggingSessionId id, Debugger debugger, Originals originals)
     {
         public IEditAndContinueService Service { get; } = service;
         public DebuggingSessionId Id { get; } = id;
         public Debugger Debugger { get; } = debugger;
+        public Originals Originals { get; } = originals;
 
         /// <summary>The solution as last committed (as built, at first): what the files changed since are measured from.</summary>
         public Solution Committed { get; set; } = null!;
 
         /// <summary>The solution of the update emitted and not yet committed or discarded.</summary>
         public Solution? Pending { get; set; }
+    }
+
+    /// <summary>The files' texts before the session's first edit to each, as Passenger kept them: the build's, which Roslyn
+    /// asks for once a file's text in the solution no longer matches its checksum in the build's PDB. Given only when the
+    /// text's bytes (UTF-8, with or without its byte order mark) hash to that checksum.</summary>
+    private sealed class Originals : IPdbMatchingSourceTextProvider
+    {
+        private readonly ConcurrentDictionary<string, string> texts = new(StringComparer.OrdinalIgnoreCase);
+
+        public void Take(IEnumerable<HotReloadOriginal> originals)
+        {
+            foreach (HotReloadOriginal original in originals)
+            {
+                texts.TryAdd(original.Path, original.Text);
+            }
+        }
+
+        public ValueTask<string?> TryGetMatchingSourceTextAsync(string filePath, ImmutableArray<byte> requiredChecksum, SourceHashAlgorithm checksumAlgorithm, CancellationToken cancellationToken)
+        {
+            if (!texts.TryGetValue(filePath, out string? text))
+            {
+                return ValueTask.FromResult<string?>(null);
+            }
+            byte[] bytes = System.Text.Encoding.UTF8.GetBytes(text);
+            byte[] marked = [.. System.Text.Encoding.UTF8.Preamble, .. bytes];
+            return ValueTask.FromResult(Hash(bytes, checksumAlgorithm).SequenceEqual(requiredChecksum) || Hash(marked, checksumAlgorithm).SequenceEqual(requiredChecksum)
+                ? text
+                : null);
+        }
+
+        private static byte[] Hash(byte[] bytes, SourceHashAlgorithm algorithm) => algorithm switch
+        {
+            SourceHashAlgorithm.Sha1 => System.Security.Cryptography.SHA1.HashData(bytes),
+            _ => System.Security.Cryptography.SHA256.HashData(bytes),
+        };
     }
 
     /// <summary>Passenger's debugger as the service asks of it, answered from what Passenger's last emit said.</summary>

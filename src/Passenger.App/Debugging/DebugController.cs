@@ -385,8 +385,7 @@ public sealed class DebugController : IDisposable
                 }
             });
             Session = session;
-            // Begun as the program starts, on the solution as just built, which Roslyn measures every later edit from.
-            hotReload = hotReloadOn ? HotReload.Start(session, Server) : null;
+            hotReload = hotReloadOn ? new HotReload(session, Server) : null;
             view.Tree.Load = reference => session.VariablesAsync(reference);
             if (launched && !inTerminal)
             {
@@ -679,7 +678,7 @@ public sealed class DebugController : IDisposable
             lines?.Follow(document.Path, change);
             if (hotReload is not null && change.Edits.Count > 0 && Path.GetExtension(document.Path).ToLowerInvariant() is ".cs" or ".razor" or ".cshtml")
             {
-                hotReload.Changed = true;
+                hotReload.Edited(document.Path, change.Before);
             }
             Breakpoints.Follow(document.Path, change);
             FollowStop(document, change);
