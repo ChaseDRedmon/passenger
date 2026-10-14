@@ -16,6 +16,7 @@
     "SolutionFoldersTests": 120,
     "Debugging.ExceptionTests": 120,
     "RefactoringDialogsTests": 120,
+    "DataBreakpointTests": 120,
     "TypeRenameTests": 90,
     "SolutionViewTests": 90,
     "Debugging.StuckEvaluationTests": 90,

@@ -244,11 +244,11 @@ public sealed class BreakpointPopup : UserControl
     }
 }
 
-/// <summary>Rider's Breakpoints window: the line breakpoints under ".NET Line Breakpoints" and the exception breakpoints
-/// under "CLR Exception Breakpoints" ("Any exception" first), each turned on or off by its box, and the chosen one's
-/// properties beside the list. + adds an exception breakpoint by its type, offering the exception types that match what
-/// is typed (Rider's Add CLR Exception Breakpoints); − removes the chosen one. Double-click (or Go to Source) shows a
-/// line breakpoint's line.</summary>
+/// <summary>Rider's Breakpoints window: the line breakpoints under ".NET Line Breakpoints", the session's data breakpoints
+/// under "Data Breakpoints" and the exception breakpoints under "CLR Exception Breakpoints" ("Any exception" first), each
+/// turned on or off by its box, and the chosen one's properties beside the list. + adds an exception breakpoint by its
+/// type, offering the exception types that match what is typed (Rider's Add CLR Exception Breakpoints); − removes the
+/// chosen one. Double-click (or Go to Source) shows a line breakpoint's line.</summary>
 public sealed class BreakpointsWindow : UserControl
 {
     private readonly BreakpointStore store;
@@ -522,6 +522,14 @@ public sealed class BreakpointsWindow : UserControl
         {
             list.Items.Add(Group(".NET Line Breakpoints"));
             foreach (LineBreakpoint breakpoint in lines)
+            {
+                list.Items.Add(Item(breakpoint));
+            }
+        }
+        if (store.Data.Count > 0)
+        {
+            list.Items.Add(Group("Data Breakpoints"));
+            foreach (DataBreakpoint breakpoint in store.Data)
             {
                 list.Items.Add(Item(breakpoint));
             }

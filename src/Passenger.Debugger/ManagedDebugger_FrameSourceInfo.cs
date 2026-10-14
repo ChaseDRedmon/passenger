@@ -44,7 +44,7 @@ public partial class ManagedDebugger
 
         if (module.MetadataReader.HasSymbols)
         {
-            int ilOffset = ilFrame.IP.pnOffset;
+            int ilOffset = WrittenAt(frame) ?? ilFrame.IP.pnOffset;
             mdMethodDef methodToken = function.Token;
             (string sourceFilePath, int startLine, int endLine, int startColumn, int endColumn)? sourceInfo = module.MetadataReader.GetSourceLocationForOffset(methodToken, ilOffset);
             if (sourceInfo is not null)

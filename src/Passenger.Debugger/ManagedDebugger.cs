@@ -310,6 +310,7 @@ public partial class ManagedDebugger
                 case ExceptionCorDebugManagedCallbackEventArgs a: HandleException(sender, a); break;
                 case Exception2CorDebugManagedCallbackEventArgs a: await HandleException2(sender, a).ConfigureAwait(false); break;
                 case DeferredExceptionStop a: await StopAtExceptionIfHit(a).ConfigureAwait(false); break;
+                case DataBreakpointCorDebugManagedCallbackEventArgs a: await HandleDataBreakpoint(a).ConfigureAwait(false); break;
                 case EvalCompleteCorDebugManagedCallbackEventArgs or EvalExceptionCorDebugManagedCallbackEventArgs when IsAbandonedEvaluationsEnd(e): LetGoAbandonedEvaluation(e); break;
                 case EvalCompleteCorDebugManagedCallbackEventArgs or EvalExceptionCorDebugManagedCallbackEventArgs: break; // don't continue on these, as they are being used for expression evaluation
                 default:
@@ -420,6 +421,7 @@ public partial class ManagedDebugger
             _variableManager.ClearAndDisposeHandleValues();
             _frameReferenceManager.Clear();
             _stepInTargets.Clear();
+            _writtenAt = null;
         }
         if (!EvalStatus.IsRunning && (TakeDeferredEvent() || TakePendingPause()))
         {
@@ -437,7 +439,7 @@ public partial class ManagedDebugger
     /// an event that comes meanwhile, which the runtime had on its way as a pause stopped the program, waits until then.</summary>
     private bool _stopShown;
 
-    private void ReportStop(int threadId, string reason, string? filePath = null, int line = 0, int column = 0, IReadOnlyList<int>? hitBreakpointIds = null)
+    private void ReportStop(int threadId, string reason, string? filePath = null, int line = 0, int column = 0, IReadOnlyList<int>? hitBreakpointIds = null, string? text = null)
     {
         // A step's calls' values are shown at its own stop; one that stops anywhere else stops showing them.
         EndReturnWatch();
@@ -447,7 +449,7 @@ public partial class ManagedDebugger
             ForgetReturnedValues();
         }
         _stopShown = true;
-        OnStopped?.Invoke(new StopInfo(threadId, reason, filePath, line, column, hitBreakpointIds));
+        OnStopped?.Invoke(new StopInfo(threadId, reason, filePath, line, column, hitBreakpointIds, text));
     }
 
     /// <summary>Hands the first event put off during an evaluation to the event loop in place of a continue, the process
@@ -921,6 +923,8 @@ public partial class ManagedDebugger
             }
         }
         _breakpointManager.Clear();
+        // Before the program is let go: a debug register left set would end it at the next write it watched.
+        ForgetDataBreakpoints(exited);
 
         _asyncStepper?.Dispose();
         _asyncStepper = null;
@@ -1028,8 +1032,9 @@ public partial class ManagedDebugger
     }
 }
 
-/// <summary>Where a stop is, when the debugger can say: the client need not ask before showing it.</summary>
-public sealed record StopInfo(int ThreadId, string Reason, string? FilePath, int Line, int Column, IReadOnlyList<int>? HitBreakpointIds);
+/// <summary>Where a stop is, when the debugger can say: the client need not ask before showing it. A data breakpoint's says
+/// what the write changed.</summary>
+public sealed record StopInfo(int ThreadId, string Reason, string? FilePath, int Line, int Column, IReadOnlyList<int>? HitBreakpointIds, string? Text = null);
 
 internal sealed class EvalStatus
 {

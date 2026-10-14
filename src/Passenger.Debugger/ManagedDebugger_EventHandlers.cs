@@ -26,6 +26,11 @@ public partial class ManagedDebugger
         ICorDebugThread corThread = createThreadCorDebugManagedCallbackEventArgs.Thread;
         NoteMainThread(corThread);
         _threads[corThread.Id] = new ThreadInfo(corThread);
+        if (_dataSlots.Any(slot => slot is not null))
+        {
+            // A thread made since a data breakpoint was set watches what the others do.
+            ApplyDataRegisters(corThread.Id);
+        }
         OnThreadStarted?.Invoke(corThread.Id);
         Continue(clearVariables: false);
     }

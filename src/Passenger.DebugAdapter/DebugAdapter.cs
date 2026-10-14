@@ -77,6 +77,18 @@ public sealed class DebugAdapter
         connection.Handle<SetBreakpointsArguments, SetBreakpointsResponse>("setBreakpoints", SetBreakpoints);
         connection.Handle<SetFunctionBreakpointsArguments, SetBreakpointsResponse>("setFunctionBreakpoints", SetFunctionBreakpoints);
         connection.Handle<SetExceptionBreakpointsArguments, SetExceptionBreakpointsResponse>("setExceptionBreakpoints", SetExceptionBreakpoints);
+        connection.Handle<DataBreakpointInfoArguments, DataBreakpointInfoResponse>("dataBreakpointInfo", async arguments =>
+        {
+            DataBreakpointAnswer answer = await Locked(() => debugger.DataBreakpointInfo(arguments.VariablesReference, arguments.Name));
+            return new DataBreakpointInfoResponse
+            {
+                DataId = answer.DataId,
+                Description = answer.Description,
+                AccessTypes = answer.DataId is null ? null : ["write"],
+                CanPersist = false,
+            };
+        });
+        connection.Handle<SetDataBreakpointsArguments, SetDataBreakpointsResponse>("setDataBreakpoints", SetDataBreakpoints);
         connection.Handle<DapEmpty, ThreadsResponse>("threads", async _ =>
         {
             List<(int id, string name)> threads = await Locked(() => debugger.GetThreads());
@@ -200,6 +212,7 @@ public sealed class DebugAdapter
             connection.SendEvent("stopped", new StoppedEvent
             {
                 Reason = StopReason(stop.Reason),
+                Text = stop.Text,
                 ThreadId = stop.ThreadId,
                 AllThreadsStopped = true,
                 HitBreakpointIds = stop.HitBreakpointIds,
@@ -252,6 +265,8 @@ public sealed class DebugAdapter
             SupportsExceptionOptions = true,
             SupportsStepInTargetsRequest = true,
             SupportsGotoTargetsRequest = true,
+            SupportsDataBreakpoints = ManagedDebugger.DataBreakpointsUnavailable is null,
+            DataBreakpointsUnavailable = ManagedDebugger.DataBreakpointsUnavailable,
             ExceptionBreakpointFilters =
             [
                 new DapExceptionFilter("all", "All Exceptions", Default: false),
@@ -380,6 +395,26 @@ public sealed class DebugAdapter
                 string.IsNullOrEmpty(option.LogMessage) ? null : option.LogMessage,
                 option.Suspend ?? string.IsNullOrEmpty(option.LogMessage));
         }
+    }
+
+    /// <summary>The data breakpoints, each watching for a write: a write access alone is this debugger's, as the runtime's.</summary>
+    private async Task<SetDataBreakpointsResponse> SetDataBreakpoints(SetDataBreakpointsArguments arguments)
+    {
+        List<DataBreakpointRequest> requests = [];
+        foreach (DapDataBreakpoint breakpoint in arguments.Breakpoints ?? [])
+        {
+            if (breakpoint.AccessType is not (null or "write"))
+            {
+                throw new InvalidOperationException($"A data breakpoint here stops at a write, not a {breakpoint.AccessType}");
+            }
+            requests.Add(new DataBreakpointRequest(breakpoint.DataId,
+                string.IsNullOrWhiteSpace(breakpoint.Condition) ? null : breakpoint.Condition,
+                string.IsNullOrWhiteSpace(breakpoint.HitCondition) ? null : breakpoint.HitCondition,
+                string.IsNullOrEmpty(breakpoint.LogMessage) ? null : breakpoint.LogMessage,
+                breakpoint.Suspend ?? string.IsNullOrEmpty(breakpoint.LogMessage)));
+        }
+        List<DataBreakpointResult> results = await Locked(() => debugger.SetDataBreakpoints(requests));
+        return new SetDataBreakpointsResponse([.. results.Select(r => new DapBreakpoint { Id = r.Id, Verified = r.Verified, Message = r.Message, Reason = r.Verified ? null : "failed" })]);
     }
 
     private async Task<ExceptionInfoResponse> ExceptionInfo(ThreadArguments arguments)

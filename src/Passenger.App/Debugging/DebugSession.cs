@@ -34,6 +34,10 @@ public sealed class DebugSession
     /// <summary>The exception breakpoints as last sent.</summary>
     private string? exceptionsSent;
 
+    /// <summary>The data breakpoints as last sent, and each by the id the debugger gave it.</summary>
+    private string? dataSent;
+    private readonly Dictionary<int, DataBreakpoint> dataById = [];
+
     private readonly Dictionary<int, LineBreakpoint> byId = [];
     private readonly TaskCompletionSource initialized = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Queue<string> errors = new();
@@ -124,6 +128,7 @@ public sealed class DebugSession
         };
         breakpoints.Changed += OnBreakpointsChanged;
         breakpoints.ExceptionsChanged += OnExceptionsChanged;
+        breakpoints.DataChanged += OnDataChanged;
     }
 
     public event EventHandler? StateChanged;
@@ -133,8 +138,15 @@ public sealed class DebugSession
     /// <summary>The thread that stopped, while paused.</summary>
     public int? StoppedThread { get; private set; }
 
-    /// <summary>Why it stopped (breakpoint, step, exception, pause, entry), while paused.</summary>
+    /// <summary>Why it stopped (breakpoint, step, exception, pause, entry, data breakpoint), while paused.</summary>
     public string? StopReason { get; private set; }
+
+    /// <summary>The data breakpoint the program stopped at, while paused there, and what the write changed ("Previous
+    /// Value: 1, New Value: 2").</summary>
+    public (DataBreakpoint Breakpoint, string? Change)? DataStop { get; private set; }
+
+    /// <summary>Why the debugger can set no data breakpoint where it runs, or null where it can.</summary>
+    public string? DataBreakpointsUnavailable { get; private set; } = "The debugger has not started";
 
     public int? ExitCode { get; private set; }
 
@@ -207,7 +219,7 @@ public sealed class DebugSession
         session.connection.Start();
         try
         {
-            await session.connection.RequestAsync<DapCapabilities>("initialize", new InitializeArguments
+            DapCapabilities capabilities = await session.connection.RequestAsync<DapCapabilities>("initialize", new InitializeArguments
             {
                 ClientId = "passenger",
                 ClientName = "Passenger",
@@ -218,6 +230,8 @@ public sealed class DebugSession
                 SupportsVariableType = true,
                 SupportsRunInTerminalRequest = runInTerminal is not null,
             });
+            session.DataBreakpointsUnavailable = capabilities.SupportsDataBreakpoints == true ? null
+                : capabilities.DataBreakpointsUnavailable ?? "The debugger sets no data breakpoints";
             await session.connection.RequestAsync(request, arguments);
             await session.initialized.Task.WaitAsync(TimeSpan.FromSeconds(30));
             foreach (string path in breakpoints.Files)
@@ -517,6 +531,11 @@ public sealed class DebugSession
     /// <summary>Set Next Statement: the paused thread goes on from a target; it stops there anew.</summary>
     public Task GotoAsync(int thread, GotoTarget target) => connection.RequestAsync<object>("goto", new GotoArguments(thread, target.Id));
 
+    /// <summary>Whether a data breakpoint can watch a member of a value (by the reference its members were listed by, and its
+    /// name there), and what it would watch, or why none can.</summary>
+    public Task<DataBreakpointInfoResponse> DataBreakpointInfoAsync(int variablesReference, string name) =>
+        connection.RequestAsync<DataBreakpointInfoResponse>("dataBreakpointInfo", new DataBreakpointInfoArguments(name, variablesReference));
+
     /// <summary>An expression's value in a frame; context is watch, hover or repl.</summary>
     public Task<EvaluateResponse> EvaluateAsync(string expression, int? frameId, string context) =>
         connection.RequestAsync<EvaluateResponse>("evaluate", new EvaluateArguments(expression, frameId, context));
@@ -633,6 +652,48 @@ public sealed class DebugSession
         }
     }
 
+    /// <summary>The data breakpoints that are on; none while muted.</summary>
+    private List<DataBreakpoint> DataSending() => breakpoints.Muted ? [] : [.. breakpoints.Data.Where(d => d.Enabled)];
+
+    /// <summary>Sends the data breakpoints, and records what the debugger made of each.</summary>
+    private async Task SendDataBreakpointsAsync()
+    {
+        List<DataBreakpoint> sending = DataSending();
+        dataSent = DataSignature();
+        SetDataBreakpointsResponse response;
+        try
+        {
+            response = await connection.RequestAsync<SetDataBreakpointsResponse>("setDataBreakpoints",
+                new SetDataBreakpointsArguments([.. sending.Select(d => new DapDataBreakpoint(d.DataId, "write", d.Condition, d.HitCondition, d.LogMessage, d.Suspend))]));
+        }
+        catch (DapException refused)
+        {
+            // A refusal of the whole request leaves none of them watching, each saying why.
+            breakpoints.ReportData([.. sending.Select(_ => (BreakpointStatus.Invalid, (string?)refused.Reason))], sending);
+            return;
+        }
+        dataById.Clear();
+        for (int i = 0; i < Math.Min(sending.Count, response.Breakpoints.Count); i++)
+        {
+            if (response.Breakpoints[i].Id is int id)
+            {
+                dataById[id] = sending[i];
+            }
+        }
+        breakpoints.ReportData([.. response.Breakpoints.Select(b => (b.Verified ? BreakpointStatus.Bound : BreakpointStatus.Invalid, b.Message))], sending);
+    }
+
+    private void OnDataChanged(object? sender, EventArgs e)
+    {
+        // A report from the debugger raises it too: only what changes the request goes back to it.
+        if (State is DebugState.Running or DebugState.Paused && disconnected is null && DataBreakpointsUnavailable is null && dataSent != DataSignature())
+        {
+            _ = SendDataBreakpointsAsync();
+        }
+    }
+
+    private string DataSignature() => string.Join(';', DataSending().Select(d => $"{d.DataId}|{d.Condition}|{d.HitCondition}|{d.LogMessage}|{d.Suspend}"));
+
     private string ExceptionSignature() => string.Join(';', ExceptionOptions().Select(s =>
         $"{s.Breakpoint.Type}|{string.Join(',', s.Option.Scenarios ?? [])}|{s.Option.Condition}|{s.Option.HitCondition}|{s.Option.LogMessage}|{s.Option.Suspend}"));
 
@@ -648,6 +709,9 @@ public sealed class DebugSession
                 stops++;
                 StoppedThread = stopped.ThreadId;
                 StopReason = stopped.Reason;
+                DataStop = stopped.Reason == "data breakpoint" && stopped.HitBreakpointIds?.Select(id => dataById.GetValueOrDefault(id)).FirstOrDefault(d => d is not null) is { } watched
+                    ? (watched, stopped.Text)
+                    : null;
                 if (runToCursor is { } target)
                 {
                     runToCursor = null;
@@ -700,6 +764,7 @@ public sealed class DebugSession
         {
             StoppedThread = null;
             StopReason = null;
+            DataStop = null;
         }
         State = state;
         StateChanged?.Invoke(this, EventArgs.Empty);
@@ -715,7 +780,10 @@ public sealed class DebugSession
         IdeLog.Write(IdeLog.Debugger, $"[{connection.Name}] Ended debugging {Program}{(ExitCode is { } code ? $": exit code {code}" : string.Empty)}{(Failure is { } failed ? $": {failed}" : string.Empty)}");
         breakpoints.Changed -= OnBreakpointsChanged;
         breakpoints.ExceptionsChanged -= OnExceptionsChanged;
+        breakpoints.DataChanged -= OnDataChanged;
         breakpoints.ResetStatus();
+        // Each watched a member of one of this session's objects, as Rider's do: none outlives it.
+        breakpoints.ClearData();
         SetState(DebugState.Ended);
         _ = connection.DisposeAsync();
     }

@@ -37,6 +37,10 @@ public sealed record DapCapabilities
     public bool? SupportsExceptionOptions { get; init; }
     public bool? SupportsStepInTargetsRequest { get; init; }
     public bool? SupportsGotoTargetsRequest { get; init; }
+    public bool? SupportsDataBreakpoints { get; init; }
+
+    /// <summary>Passenger's own: why the debugger can set no data breakpoint where it runs, when it cannot.</summary>
+    public string? DataBreakpointsUnavailable { get; init; }
     public IReadOnlyList<DapExceptionFilter>? ExceptionBreakpointFilters { get; init; }
 }
 
@@ -99,6 +103,35 @@ public sealed record DapBreakpoint
 public sealed record DapFunctionBreakpoint(string Name, string? Condition = null, string? HitCondition = null, string? LogMessage = null);
 
 public sealed record SetFunctionBreakpointsArguments(IReadOnlyList<DapFunctionBreakpoint>? Breakpoints);
+
+/// <summary>Whether a data breakpoint can watch a member of a container (an object's field or property, an array's element)
+/// by the container's variables reference and the member's name as the variables request named it.</summary>
+public sealed record DataBreakpointInfoArguments(string Name, int? VariablesReference = null, int? FrameId = null);
+
+public sealed record DataBreakpointInfoResponse
+{
+    /// <summary>What a data breakpoint on it would watch, or null when none can: <see cref="Description"/> says why.</summary>
+    public string? DataId { get; init; }
+
+    /// <summary>What it is, or why no data breakpoint can watch it.</summary>
+    public string Description { get; init; } = string.Empty;
+
+    /// <summary>read, write or readWrite: this debugger stops at a write alone.</summary>
+    public IReadOnlyList<string>? AccessTypes { get; init; }
+
+    /// <summary>Whether it could outlive the session: a member of one object never can.</summary>
+    public bool? CanPersist { get; init; }
+}
+
+/// <summary>A data breakpoint as asked for: the data it watches (a dataBreakpointInfo's dataId), a condition and hit count, and,
+/// Passenger's own as on a line breakpoint, a message to log and whether a hit stops the program.</summary>
+public sealed record DapDataBreakpoint(string DataId, string? AccessType = null, string? Condition = null, string? HitCondition = null, string? LogMessage = null, bool? Suspend = null);
+
+/// <summary>Every data breakpoint there is to be: those not named any more are let go.</summary>
+public sealed record SetDataBreakpointsArguments(IReadOnlyList<DapDataBreakpoint>? Breakpoints);
+
+/// <summary>What the debugger made of each data breakpoint, in the order asked.</summary>
+public sealed record SetDataBreakpointsResponse(IReadOnlyList<DapBreakpoint> Breakpoints);
 
 /// <summary>The exception breakpoints: filters, filters with a condition (a list of types, ! before it for every type but
 /// those), and exception options, one for each of Rider's CLR exception breakpoints. A client that sends exception options,
@@ -354,6 +387,9 @@ public sealed record StoppedEvent
     /// <summary>step, breakpoint, exception, pause, entry, goto, function breakpoint, data breakpoint.</summary>
     public string Reason { get; init; } = "unknown";
     public string? Description { get; init; }
+
+    /// <summary>More on the stop: at a data breakpoint, the value it watches before and after the write.</summary>
+    public string? Text { get; init; }
     public int? ThreadId { get; init; }
     public bool? AllThreadsStopped { get; init; }
     public IReadOnlyList<int>? HitBreakpointIds { get; init; }

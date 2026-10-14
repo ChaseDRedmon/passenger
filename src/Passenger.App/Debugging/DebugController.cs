@@ -44,6 +44,9 @@ public sealed class DebugController
     /// <summary>The session's name, as the status bar names it ("Tests", a run configuration's).</summary>
     private string name = string.Empty;
 
+    /// <summary>The data breakpoints whose refusal the status bar has said, so it says each once.</summary>
+    private readonly HashSet<DataBreakpoint> refusalsTold = [];
+
     /// <summary>Clears the last stop's frames and values a moment after the program goes on, as Rider's views do: a step
     /// that stops again at once replaces them without the panes going blank between.</summary>
     private readonly DispatcherTimer clearing = new() { Interval = TimeSpan.FromMilliseconds(100) };
@@ -68,6 +71,9 @@ public sealed class DebugController
         view.ThreadChosen += (_, thread) => _ = ChooseThread(thread.Id);
         view.EvaluateRequested += (_, request) => _ = Evaluate(request.Expression, request.Watch);
         view.SetValueRequested += (_, request) => _ = SetValue(request.Node, request.Value);
+        view.DataWatch = DataWatchAsync;
+        view.DataBreakpointRequested += (_, node) => _ = ToggleDataBreakpointAsync(node);
+        Breakpoints.DataChanged += (_, _) => TellRefusedData();
         view.WatchRemoved += (_, expression) =>
         {
             watches.Remove(expression);
@@ -569,6 +575,8 @@ public sealed class DebugController
         DebugState.Starting => $"Debugging {name}",
         DebugState.Paused when stopException is { } thrown => $"{name}: paused on {thrown.Text}",
         DebugState.Paused when undescribed is { } why => $"{name}: paused on an exception the debugger could not describe ({why})",
+        DebugState.Paused when session.DataStop is ({ } watched, var change) =>
+            $"{name}: Data Breakpoint Hit: {watched.Location} is changed{(change is null ? string.Empty : $" ({change})")}",
         DebugState.Paused => $"{name}: paused ({session.StopReason})",
         DebugState.Running => $"{name}: running",
         _ when session.Detached => $"Detached from {name}, which runs on",
@@ -756,6 +764,89 @@ public sealed class DebugController
         }
     }
 
+    /// <summary>Why no data breakpoint can watch a row of Variables that is no member of a value: a local, a watch, a result.</summary>
+    public const string NotAMember = "A data breakpoint watches a field or property of an object, or an element of an array, and this is neither";
+
+    /// <summary>What Rider's Set Data Breakpoint offers on a row of Variables, the debugger asked: to set one, to remove the
+    /// one set on it (Remove Data Breakpoint), or neither and why (the system, the kind of member, the program running).</summary>
+    public async Task<DataWatchOffer> DataWatchAsync(VariableNode node)
+    {
+        UiThread.Check();
+        (DataBreakpointInfoResponse? info, string? whyNot) = await DataInfoAsync(node);
+        return info?.DataId is { } dataId && Breakpoints.FindData(dataId) is not null
+            ? new DataWatchOffer(DataWatchOffer.Remove, null)
+            : new DataWatchOffer(DataWatchOffer.Set, whyNot);
+    }
+
+    /// <summary>Sets a data breakpoint on a row of Variables, or removes the one set on it, as Rider's Set Data Breakpoint
+    /// and Remove Data Breakpoint do; why it cannot is said in the status bar.</summary>
+    public async Task ToggleDataBreakpointAsync(VariableNode node)
+    {
+        UiThread.Check();
+        // Held until the breakpoint is in the store, so a picture taken after the choice shows it.
+        using IDisposable held = Editor.BackgroundWork.Scope();
+        (DataBreakpointInfoResponse? info, string? whyNot) = await DataInfoAsync(node);
+        if (info?.DataId is not { } dataId)
+        {
+            Message?.Invoke(this, $"Set Data Breakpoint: {whyNot}");
+            return;
+        }
+        if (Breakpoints.FindData(dataId) is { } set)
+        {
+            Breakpoints.Remove(set);
+            return;
+        }
+        Breakpoints.AddData(dataId, DataLocation(node));
+    }
+
+    /// <summary>What the debugger says of watching a row: its answer, or why it was not asked or could not answer.</summary>
+    private async Task<(DataBreakpointInfoResponse? Info, string? WhyNot)> DataInfoAsync(VariableNode node)
+    {
+        if (Session is not { State: DebugState.Paused } session)
+        {
+            return (null, NotPaused() ?? "The program is not paused");
+        }
+        if (session.DataBreakpointsUnavailable is { } unavailable)
+        {
+            return (null, unavailable);
+        }
+        // The value the row is a member of, by the reference its members were listed by; a frame's own rows have none.
+        if (node.Parent is not { Reference: > 0, Role: not VariableRole.Scope } owner)
+        {
+            return (null, NotAMember);
+        }
+        try
+        {
+            DataBreakpointInfoResponse info = await session.DataBreakpointInfoAsync(owner.Reference, node.Name);
+            return (info, info.DataId is null ? info.Description : null);
+        }
+        catch (DapException error)
+        {
+            return (null, error.Reason);
+        }
+    }
+
+    /// <summary>A watched member as Rider's Data Breakpoint Hit names it: the member on its object, and the object's type.</summary>
+    private static string DataLocation(VariableNode node)
+    {
+        VariableNode owner = node.Parent is { Name: "Raw View", Parent: { } viewed } ? viewed : node.Parent!;
+        string what = owner.Expression ?? owner.Name;
+        return owner.Type is { Length: > 0 } type ? $"{node.Name} on {what} ({type})" : $"{node.Name} on {what}";
+    }
+
+    /// <summary>Says in the status bar, once each, why the debugger refused a data breakpoint (a fifth one, say).</summary>
+    private void TellRefusedData()
+    {
+        refusalsTold.IntersectWith(Breakpoints.Data);
+        foreach (DataBreakpoint refused in Breakpoints.Data.Where(d => d is { Status: BreakpointStatus.Invalid, Message: not null }))
+        {
+            if (refusalsTold.Add(refused))
+            {
+                Message?.Invoke(this, $"Data breakpoint on {refused.Location}: {refused.Message}");
+            }
+        }
+    }
+
     /// <summary>Shows the chosen frame's variables and inline values again, as a value changed.</summary>
     public Task RefreshAsync() => ShowVariables();
 
@@ -851,6 +942,14 @@ public sealed class DebugController
 
     /// <summary>The built line a line of a file has, while a session runs.</summary>
     private int Built(string path, int line) => lines?.ToBuilt(path, line) ?? line;
+}
+
+/// <summary>What Set Data Breakpoint offers on a row of Variables: its title (Rider's Set Data Breakpoint, or Remove Data
+/// Breakpoint on a member watched), and why it cannot be chosen when it cannot.</summary>
+public sealed record DataWatchOffer(string Title, string? WhyNot)
+{
+    public const string Set = "Set Data Breakpoint";
+    public const string Remove = "Remove Data Breakpoint";
 }
 
 /// <summary>A stop as the debugger read it: the thread that stopped and why, its frames (the top one with source among

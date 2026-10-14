@@ -391,7 +391,7 @@ public partial class ManagedDebugger
             Continue(clearVariables: true);
             return;
         }
-        if (StepOutToManagedCode(thread))
+        if (StepOutToManagedCode(thread) || StepPastWrite(thread, type))
         {
             return;
         }

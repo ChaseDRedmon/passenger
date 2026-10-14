@@ -472,10 +472,11 @@ public sealed partial class PassengerTools(MainWindow window)
     });
 
     [McpServerTool(Name = "breakpoints", Title = "Every breakpoint", ReadOnly = true), Description(
-        "Every breakpoint: the line breakpoints, then the CLR exception breakpoints (\"Any exception\" among them) with their scenarios, " +
-        "each with whether the running debugger took it. While Mute Breakpoints (ide_action app.debug.muteBreakpoints) is on, none stops.")]
+        "Every breakpoint: the line breakpoints, then the session's data breakpoints (set from Variables' Set Data Breakpoint), then the CLR " +
+        "exception breakpoints (\"Any exception\" among them) with their scenarios, each with whether the running debugger took it. While Mute " +
+        "Breakpoints (ide_action app.debug.muteBreakpoints) is on, none stops.")]
     public Task<IReadOnlyList<BreakpointInfo>> ListBreakpoints(CancellationToken cancel = default) =>
-        OnUi(cancel, () => Task.FromResult<IReadOnlyList<BreakpointInfo>>([.. Breakpoints(null), .. ExceptionBreakpoints()]));
+        OnUi(cancel, () => Task.FromResult<IReadOnlyList<BreakpointInfo>>([.. Breakpoints(null), .. DataBreakpoints(), .. ExceptionBreakpoints()]));
 
     [McpServerTool(Name = "debug_start", Title = "Debug a configuration", Destructive = true), Description(
         "Builds and launches a run configuration (the chosen one if none is named) under the debugger, as Debug (Alt+F5) does, then " +
@@ -783,6 +784,10 @@ public sealed partial class PassengerTools(MainWindow window)
         [.. (path is null ? window.Debugger.Breakpoints.All : window.Debugger.Breakpoints.In(path))
             .Select(b => new BreakpointInfo(Relative(b.Path), b.Line + 1, b.Enabled, b.Status.ToString().ToLowerInvariant(), b.Condition, b.HitCondition, b.LogMessage, b.Suspend, b.Message))];
 
+    private IReadOnlyList<BreakpointInfo> DataBreakpoints() =>
+        [.. window.Debugger.Breakpoints.Data.Select(b => new BreakpointInfo(null, null, b.Enabled, b.Status.ToString().ToLowerInvariant(), b.Condition, b.HitCondition,
+            b.LogMessage, b.Suspend, b.Message, Data: b.Location))];
+
     private IReadOnlyList<BreakpointInfo> ExceptionBreakpoints() =>
         [.. window.Debugger.Breakpoints.Exceptions.Select(b => new BreakpointInfo(null, null, b.Enabled, b.Status.ToString().ToLowerInvariant(), b.Condition, b.HitCondition,
             b.LogMessage, b.Suspend, b.Message, b.Location, ExceptionScenarioNames.Of(b.Scenarios)))];
@@ -1006,9 +1011,10 @@ public sealed record BuildResult(bool Succeeded, string Outcome, int Errors, int
 
 public sealed record RunResult(bool StillRunning, int? ExitCode, string Status, string Output);
 
-/// <summary>A breakpoint as an agent reads it: a line breakpoint's path and line, or an exception breakpoint's type and scenarios.</summary>
+/// <summary>A breakpoint as an agent reads it: a line breakpoint's path and line, an exception breakpoint's type and scenarios,
+/// or what a data breakpoint watches ("count on counter (Counter)").</summary>
 public sealed record BreakpointInfo(string? Path, int? Line, bool Enabled, string Status, string? Condition, string? HitCondition, string? LogMessage, bool Suspend,
-    string? Message, string? Exception = null, IReadOnlyList<string>? Scenarios = null);
+    string? Message, string? Exception = null, IReadOnlyList<string>? Scenarios = null, string? Data = null);
 
 public sealed record VariableInfo(string Name, string Value, string? Type, int Reference);
 

@@ -61,6 +61,18 @@ public sealed class ExceptionBreakpoint(string? type) : Breakpoint
     public override string Location => Type ?? AnyException;
 }
 
+/// <summary>Rider's data breakpoint (Set Data Breakpoint on a member in Variables): a field, an auto-property or an array
+/// element of one object, watched for a write that changes it. It lasts as long as its session, as Rider's do, the object
+/// being that session's alone, so no folder keeps it.</summary>
+public sealed class DataBreakpoint(string dataId, string location) : Breakpoint
+{
+    /// <summary>What the debugger named the data watched by.</summary>
+    public string DataId { get; } = dataId;
+
+    /// <summary>The member, and the object it is of with its type: "count on counter (Counter)", Rider's words.</summary>
+    public override string Location { get; } = location;
+}
+
 public enum BreakpointStatus
 {
     /// <summary>No debugger has said, or none is running.</summary>
@@ -116,20 +128,24 @@ public sealed record KeptExceptionBreakpoint(string? Type)
     public bool Unhandled { get; init; } = true;
 }
 
-/// <summary>Every breakpoint: the line breakpoints by file, and the CLR exception breakpoints. A breakpoint in an open file
-/// moves with the text around it, as Rider's do, so an edit above it leaves it on its line; one whose line is deleted lands
-/// where the deletion did, and two on one line become one. Muted, none of them stops the program, as Rider's Mute
-/// Breakpoints has it, though each keeps whether it is on.</summary>
+/// <summary>Every breakpoint: the line breakpoints by file, the CLR exception breakpoints and the session's data breakpoints.
+/// A breakpoint in an open file moves with the text around it, as Rider's do, so an edit above it leaves it on its line;
+/// one whose line is deleted lands where the deletion did, and two on one line become one. Muted, none of them stops the
+/// program, as Rider's Mute Breakpoints has it, though each keeps whether it is on.</summary>
 public sealed class BreakpointStore
 {
     private readonly Dictionary<string, List<LineBreakpoint>> byPath = new(StringComparer.Ordinal);
     private readonly List<ExceptionBreakpoint> exceptions = [new(null)];
+    private readonly List<DataBreakpoint> data = [];
 
     /// <summary>A file's breakpoints changed: added, removed, moved, muted, or the debugger said something.</summary>
     public event EventHandler<string>? Changed;
 
     /// <summary>The exception breakpoints changed: added, removed, muted, what one does, or what the debugger said.</summary>
     public event EventHandler? ExceptionsChanged;
+
+    /// <summary>The data breakpoints changed: added, removed, muted, what one does, or what the debugger said.</summary>
+    public event EventHandler? DataChanged;
 
     public IEnumerable<string> Files => byPath.Where(p => p.Value.Count > 0).Select(p => p.Key);
 
@@ -138,6 +154,9 @@ public sealed class BreakpointStore
 
     /// <summary>The exception breakpoints: "Any exception" first, then the types in the order they were added.</summary>
     public IReadOnlyList<ExceptionBreakpoint> Exceptions => exceptions;
+
+    /// <summary>The data breakpoints of the session, in the order they were set.</summary>
+    public IReadOnlyList<DataBreakpoint> Data => data;
 
     /// <summary>Rider's Mute Breakpoints: none stops the program, nor logs, until they are unmuted.</summary>
     public bool Muted { get; private set; }
@@ -230,6 +249,7 @@ public sealed class BreakpointStore
         exceptions.Clear();
         exceptions.Add(new ExceptionBreakpoint(null));
         ExceptionsChanged?.Invoke(this, EventArgs.Empty);
+        ClearData();
     }
 
     /// <summary>Mutes every breakpoint, or unmutes them, as Rider's Mute Breakpoints toggles.</summary>
@@ -245,6 +265,34 @@ public sealed class BreakpointStore
             Changed?.Invoke(this, path);
         }
         ExceptionsChanged?.Invoke(this, EventArgs.Empty);
+        DataChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>The data breakpoint on what the debugger names by a data id, set as Rider sets one, to stop at every write
+    /// that changes it; the one there is already when there is.</summary>
+    public DataBreakpoint AddData(string dataId, string location)
+    {
+        if (FindData(dataId) is { } existing)
+        {
+            return existing;
+        }
+        DataBreakpoint added = new(dataId, location);
+        data.Add(added);
+        DataChanged?.Invoke(this, EventArgs.Empty);
+        return added;
+    }
+
+    /// <summary>The data breakpoint on what the debugger names by a data id, if one is set.</summary>
+    public DataBreakpoint? FindData(string dataId) => data.FirstOrDefault(d => d.DataId == dataId);
+
+    /// <summary>Lets the data breakpoints go, as their session ends.</summary>
+    public void ClearData()
+    {
+        if (data.Count > 0)
+        {
+            data.Clear();
+            DataChanged?.Invoke(this, EventArgs.Empty);
+        }
     }
 
     /// <summary>Sets a breakpoint on a line, or removes the one there.</summary>
@@ -348,6 +396,10 @@ public sealed class BreakpointStore
         {
             ExceptionsChanged?.Invoke(this, EventArgs.Empty);
         }
+        else if (breakpoint is DataBreakpoint watched && data.Remove(watched))
+        {
+            DataChanged?.Invoke(this, EventArgs.Empty);
+        }
     }
 
     /// <summary>Records what the debugger said of a file's breakpoints, in the order they were sent.</summary>
@@ -383,6 +435,26 @@ public sealed class BreakpointStore
             }
             return -1;
         }
+    }
+
+    /// <summary>Records what the debugger said of the data breakpoints sent, in the order they were sent; those not sent (off,
+    /// or muted) go back to unknown.</summary>
+    public void ReportData(IReadOnlyList<(BreakpointStatus Status, string? Message)> reports, IReadOnlyList<DataBreakpoint> sent)
+    {
+        foreach (DataBreakpoint breakpoint in data)
+        {
+            int at = -1;
+            for (int i = 0; i < sent.Count; i++)
+            {
+                if (ReferenceEquals(sent[i], breakpoint))
+                {
+                    at = i;
+                    break;
+                }
+            }
+            (breakpoint.Status, breakpoint.Message) = at >= 0 && at < reports.Count ? reports[at] : (BreakpointStatus.Unknown, null);
+        }
+        DataChanged?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>Forgets what the last debugger said, when its session ends.</summary>
@@ -461,6 +533,10 @@ public sealed class BreakpointStore
         if (breakpoint is LineBreakpoint line)
         {
             Changed?.Invoke(this, line.Path);
+        }
+        else if (breakpoint is DataBreakpoint)
+        {
+            DataChanged?.Invoke(this, EventArgs.Empty);
         }
         else
         {

@@ -8,15 +8,14 @@ public sealed class DataBreakpointCorDebugManagedCallbackEventArgs : CorDebugMan
 
     public ICorDebugThread Thread { get; }
 
-    public byte Context { get; }
+    /// <summary>The thread's CONTEXT as the runtime caught the write, copied: the runtime's own lasts only for the callback,
+    /// and the event is handled after it returns.</summary>
+    public byte[] Context { get; }
 
-    public uint ContextSize { get; }
-
-    public DataBreakpointCorDebugManagedCallbackEventArgs(ICorDebugProcess pProcess, ICorDebugThread pThread, byte pContext, uint contextSize)
+    public DataBreakpointCorDebugManagedCallbackEventArgs(ICorDebugProcess pProcess, ICorDebugThread pThread, byte[] context)
     {
         Process = pProcess;
         Thread = pThread;
-        Context = pContext;
-        ContextSize = contextSize;
+        Context = context;
     }
 }

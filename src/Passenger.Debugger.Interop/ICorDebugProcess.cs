@@ -120,8 +120,10 @@ public partial interface ICorDebugProcess : ICorDebugController
     /// <para>The data returned is a context structure for the current platform. Just as with the Win32 <c>GetThreadContext</c> method, the caller should initialize the <c>context</c> parameter before calling this method.</para>
     /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugprocess-getthreadcontext-method">Microsoft Learn</see>.</para>
     /// </remarks>
+    /// <para>The context is passed as memory the caller aligns as the platform's CONTEXT is (16 bytes on x64), which a
+    /// managed array is not.</para>
     [PreserveSig]
-    int TryGetThreadContext(uint threadID, uint contextSize, [In][Out][MarshalUsing(CountElementName = "contextSize")] byte[] context);
+    int TryGetThreadContext(uint threadID, uint contextSize, nint context);
 
     /// <summary>
     /// <para>Sets the context for the given thread in this process.</para>
@@ -143,7 +145,7 @@ public partial interface ICorDebugProcess : ICorDebugController
     /// <para>Documentation adapted from <see href="https://learn.microsoft.com/dotnet/core/unmanaged-api/debugging/icordebug/icordebugprocess-setthreadcontext-method">Microsoft Learn</see>.</para>
     /// </remarks>
     [PreserveSig]
-    int TrySetThreadContext(uint threadID, uint contextSize, [In][MarshalUsing(CountElementName = "contextSize")] byte[] context);
+    int TrySetThreadContext(uint threadID, uint contextSize, nint context);
 
     /// <summary>
     /// <para>Reads a specified area of memory for this process.</para>

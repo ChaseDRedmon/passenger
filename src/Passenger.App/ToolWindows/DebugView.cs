@@ -193,6 +193,12 @@ public sealed class DebugView : DockPanel
     /// <summary>Set Value: a row's new value typed in its place (a C# expression), Enter pressed.</summary>
     public event EventHandler<(VariableNode Node, string Value)>? SetValueRequested;
 
+    /// <summary>Set Data Breakpoint, or Remove Data Breakpoint, chosen on a row.</summary>
+    public event EventHandler<VariableNode>? DataBreakpointRequested;
+
+    /// <summary>What Set Data Breakpoint offers on a row, the debugger asked: the menu's item says so once it answers.</summary>
+    public Func<VariableNode, Task<DataWatchOffer>>? DataWatch { get; set; }
+
     /// <summary>Starts typing over the selected row's value, as F2 does: Rider's Set Value.</summary>
     public bool EditSelectedValue()
     {
@@ -353,7 +359,8 @@ public sealed class DebugView : DockPanel
     }
 
     /// <summary>Rider's Variables and Watches menu: Set Value, Copy Value and Copy Name, Add to Watches, Inspect (the
-    /// value evaluated on its own, to open), and Remove Watch for a watch.</summary>
+    /// value evaluated on its own, to open), Remove Watch for a watch, and last, as Rider adds it, Set Data Breakpoint
+    /// (Remove Data Breakpoint on a member watched), greyed with why where it cannot be set.</summary>
     private IReadOnlyList<Control> VariablesMenu()
     {
         if (variables.SelectedItem is not VariableNode node)
@@ -374,7 +381,28 @@ public sealed class DebugView : DockPanel
             items.Add(new Separator());
             items.Add(ListMenus.Item("Remove Watch", "Delete", () => WatchRemoved?.Invoke(this, node.Name)));
         }
+        if (DataWatch is { } offer)
+        {
+            MenuItem watch = ListMenus.Item(DataWatchOffer.Set, null, () => DataBreakpointRequested?.Invoke(this, node), enabled: false);
+            ToolTip.SetShowOnDisabled(watch, true);
+            items.Add(new Separator());
+            items.Add(watch);
+            _ = Offer(watch, offer(node));
+            // Asked again each time the menu opens: the row may have been watched, or let go, since it was chosen.
+            watch.AttachedToVisualTree += (_, _) => _ = Offer(watch, offer(node));
+        }
         return items;
+    }
+
+    /// <summary>Shows on the menu's item what the debugger said can be done with the row: held until then, so a picture
+    /// taken as the menu opens shows its answer.</summary>
+    private static async Task Offer(MenuItem item, Task<DataWatchOffer> asked)
+    {
+        using IDisposable held = BackgroundWork.Scope();
+        DataWatchOffer offered = await asked;
+        item.Header = offered.Title;
+        item.IsEnabled = offered.WhyNot is null;
+        ToolTip.SetTip(item, offered.WhyNot);
     }
 
     /// <summary>Rider's Frames menu: Copy Stack, every frame a line, and Go to Source for the one chosen.</summary>
