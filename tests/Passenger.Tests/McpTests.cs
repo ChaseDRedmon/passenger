@@ -65,6 +65,10 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
         }
         TestFolders.Delete(folder);
         TestFolders.Delete(settings);
+        foreach (string made in madeFolders)
+        {
+            TestFolders.Delete(made);
+        }
     }
 
     [Fact]

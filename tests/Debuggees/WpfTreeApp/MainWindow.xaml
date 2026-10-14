@@ -1,0 +1,24 @@
+<Window x:Class="WpfTreeApp.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="WPF Tree App" Width="480" Height="440" FontSize="15">
+    <StackPanel x:Name="Panel" Margin="12">
+        <TextBlock x:Name="Greeting" Style="{StaticResource Title}" Text="{Binding Greeting}" />
+        <TextBlock x:Name="Caption"
+                   Foreground="SteelBlue"
+                   Text="{Binding Nmae}" />
+        <StackPanel Orientation="Horizontal" Margin="0,8">
+            <Button x:Name="Count" Content="Count" Click="OnCount" />
+            <Button x:Name="Delete" Content="Delete" Background="Tomato" />
+        </StackPanel>
+        <TextBlock x:Name="Counter" Text="Not clicked yet" />
+        <TextBox x:Name="NameBox" KeyDown="OnNameKey" />
+        <TextBlock x:Name="Hello" Text="Nobody greeted" />
+        <ComboBox x:Name="Colour" SelectedIndex="0">
+            <ComboBoxItem Content="Red" />
+            <ComboBoxItem Content="Green" />
+            <ComboBoxItem Content="Blue" />
+        </ComboBox>
+        <ListBox x:Name="List" Height="90" />
+    </StackPanel>
+</Window>

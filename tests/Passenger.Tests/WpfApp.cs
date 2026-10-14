@@ -24,13 +24,42 @@ internal static class WpfApp
     /// <summary>A Windows Forms app as dotnet new winforms makes it, without restoring it, on the same reference pack.</summary>
     public static void CreateWindowsForms(string folder, string name) => Make("winforms", folder, name, asMade: true);
 
-    private static void Make(string template, string folder, string name, bool asMade)
+    /// <summary>The project file of a WPF app of tests/Debuggees (WpfTreeApp), which has none of its own, written into its
+    /// folder: a Windows app for the test project's own target, restoring from the run's local feed alone. Its path.</summary>
+    public static string Project(string folder, string name)
+    {
+        AddToFeed(Pinned());
+        AvaloniaApp.UseFeed(folder);
+        string project = Path.Combine(folder, name + ".csproj");
+        File.WriteAllText(project, $"""
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <OutputType>WinExe</OutputType>
+                <TargetFramework>{Framework}-windows</TargetFramework>
+                <UseWPF>true</UseWPF>
+                <Nullable>enable</Nullable>
+                <ImplicitUsings>enable</ImplicitUsings>
+              </PropertyGroup>
+            </Project>
+
+            """);
+        return project;
+    }
+
+    /// <summary>The reference pack's version Directory.Packages.props pins, checked against the one this SDK's WPF takes.</summary>
+    private static string Pinned()
     {
         string pinned = AvaloniaApp.Metadata("WindowsDesktopRefVersion");
         string needed = AvaloniaApp.Metadata("SdkWindowsDesktopRefVersion");
         Assert.True(pinned == needed, $"This SDK's WPF for {Framework} takes Microsoft.WindowsDesktop.App.Ref {needed}, but Directory.Packages.props "
             + $"pins WindowsDesktopRefVersion {pinned}, so the WPF app's restore would find no pack in the run's local feed: pin {needed} and restore "
             + "(dotnet restore Passenger.slnx --force-evaluate)");
+        return pinned;
+    }
+
+    private static void Make(string template, string folder, string name, bool asMade)
+    {
+        string pinned = Pinned();
         ChildResult made = Run(["new", template, "--output", folder, "--name", name, "--framework", Framework, "--no-restore", "--no-update-check",
             "--debug:custom-hive", Hive.Value]);
         Assert.True(made.Succeeded, $"dotnet new {template} did not make the test's app (exit code {made.ExitCode}):\n{made.Output}{made.Error}");
