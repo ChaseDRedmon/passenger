@@ -45,6 +45,8 @@ public sealed partial class McpTests
     public async Task An_agent_runs_an_avalonia_app_sees_it_clicks_its_button_types_into_it_scrolls_it_and_reads_its_failed_bindings()
     {
         await using McpClient client = await Start(["--mcp", appFolder]);
+        JsonElement built = await Call(client, "build");
+        Assert.True(built.GetProperty("succeeded").GetBoolean(), $"The app did not build: {built}");
         JsonElement ran = await Call(client, "run", new() { ["waitSeconds"] = 0 });
         Assert.True(ran.GetProperty("stillRunning").GetBoolean(), $"The app ended as it started: {ran}");
 
@@ -78,6 +80,14 @@ public sealed partial class McpTests
         await Call(client, "app_key", new() { ["keys"] = "Enter" });
         Assert.Contains("\"Hello, Ada\"", Text(await Call(client, "app_tree", new() { ["control"] = "#Greeting" })), StringComparison.Ordinal);
         Assert.Contains("it shows \"Grace\"", Text(await Call(client, "app_type", new() { ["control"] = "#NameBox", ["text"] = "Grace", ["replace"] = true })), StringComparison.Ordinal);
+
+        // A drop-down's list opens as a window of its own over the app's, where the agent picks from it.
+        await Call(client, "app_click", new() { ["control"] = "#Colour" });
+        JsonElement popup = Assert.Single((await Call(client, "app_windows")).GetProperty("windows").EnumerateArray(), w => w.TryGetProperty("owner", out _));
+        Assert.Equal(("PopupRoot", main.GetProperty("id").GetString()), (popup.GetProperty("type").GetString(), popup.GetProperty("owner").GetString()));
+        string picked = Text(await Call(client, "app_click", new() { ["control"] = "ComboBoxItem \"Blue\"" }));
+        string colour = Text(await Call(client, "app_tree", new() { ["filter"] = "#Colour" }));
+        Assert.True(colour.Contains("ComboBox#Colour \"Blue\"", StringComparison.Ordinal), $"Blue, clicked in the drop-down ({picked}), is not chosen: {colour}");
 
         // An item scrolled out of view is refused, saying so; the wheel over the list brings the list along.
         CallToolResult hidden = await Result(client, "app_click", new() { ["control"] = "\"Item 30\"" });

@@ -75,7 +75,8 @@ internal static class Pictures
             PixelSize its = new(Math.Max(1, (int)Math.Ceiling(popup.ClientSize.Width * scale)), Math.Max(1, (int)Math.Ceiling(popup.ClientSize.Height * scale)));
             using RenderTargetBitmap drawn = new(its, new Vector(96 * scale, 96 * scale));
             drawn.Render(popup);
-            context.DrawImage(drawn, new Rect(at, popup.ClientSize));
+            // The source in the bitmap's pixels: by its size in units, a scaled window's popup would be drawn magnified.
+            context.DrawImage(drawn, new Rect(0, 0, its.Width, its.Height), new Rect(at, popup.ClientSize));
         }
     }
 

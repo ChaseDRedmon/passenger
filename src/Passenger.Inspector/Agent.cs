@@ -83,11 +83,18 @@ public static class Agent
         Reply reply;
         try
         {
-            reply = await dispatcher.InvokeAsync(() => inspector.Handle(request));
-            if (request.Method == Wire.Input)
+            bool input = request.Method == Wire.Input;
+            if (input)
             {
-                // Answered once what the input set going has been laid out, so what the agent looks at next shows it.
-                await dispatcher.InvokeAsync(() => { }, DispatcherPriority.Background);
+                // Hit testing reads the scene as last rendered, so what changed since (a popup just opened) is drawn first,
+                // as a person sees it before clicking.
+                await dispatcher.InvokeAsync(inspector.RenderedAsync);
+            }
+            reply = await dispatcher.InvokeAsync(() => inspector.Handle(request));
+            if (input)
+            {
+                // Answered once what the input set going is laid out and drawn, so what the agent looks at next shows it.
+                await dispatcher.InvokeAsync(inspector.RenderedAsync);
             }
         }
         catch (Exception error)

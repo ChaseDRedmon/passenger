@@ -75,6 +75,22 @@ internal sealed class Inspector
         }
     }
 
+    /// <summary>Done once Avalonia has rendered its next frame, whose scene hit testing reads (a popup just opened is in it
+    /// only then), or after a moment when nothing renders.</summary>
+    public async Task RenderedAsync()
+    {
+        if (TopLevels().FirstOrDefault() is not { } top)
+        {
+            return;
+        }
+        TaskCompletionSource rendered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        top.RequestAnimationFrame(_ => rendered.TrySetResult());
+        await Task.WhenAny(rendered.Task, Task.Delay(FrameLimit));
+    }
+
+    /// <summary>How long input waits for a frame before going on without: an app whose windows render nothing.</summary>
+    private static readonly TimeSpan FrameLimit = TimeSpan.FromMilliseconds(500);
+
     /// <summary>Passenger has gone: nothing of the inspector's is left in the app's windows.</summary>
     public void Stop()
     {

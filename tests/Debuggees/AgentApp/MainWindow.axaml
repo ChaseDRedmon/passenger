@@ -6,7 +6,7 @@
     <StackPanel x:Name="Panel" Margin="12" Spacing="8">
         <TextBlock x:Name="Counter" Text="Not clicked yet" />
         <Button x:Name="Count" Content="Count" Click="OnCount" />
-        <TextBox x:Name="NameBox" Watermark="Your name" KeyDown="OnNameKey" />
+        <TextBox x:Name="NameBox" PlaceholderText="Your name" KeyDown="OnNameKey" />
         <TextBlock x:Name="Greeting" Text="Nobody greeted" />
         <TextBlock x:Name="Caption" Text="{Binding Nmae}" />
         <ComboBox x:Name="Colour" SelectedIndex="0">
