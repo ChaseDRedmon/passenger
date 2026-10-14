@@ -1132,23 +1132,40 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         int adapter = 0;
         try
         {
-            Task ended;
-            (debuggee, adapter, ended) = await HeadlessUnitTestSession.GetOrStartForAssembly(typeof(DebuggerTests).Assembly).Dispatch(() =>
+            // A failure comes back as the run's answer: thrown, it would end this test on the window's thread (below).
+            (int Program, int Debugger, Task? Ended, Exception? Failed) run = await HeadlessUnitTestSession.GetOrStartForAssembly(typeof(DebuggerTests).Assembly).Dispatch(() =>
             {
-                // As every window test starts (WindowTestsStartIdle): with no work held by one before it.
+                // As every window test starts and ends (TestsLeaveNothingBehind), its window closed however the run ends.
                 BackgroundWork.Forget();
-                MainWindow window = Open();
-                Ui.Run(window, AppActions.Debug);
-                int program = Processes.WrittenId(started, "the program to run under the debugger");
-                Ui.WaitFor(() => window.Debugger.Session is { State: DebugState.Running }, "the session to say the program runs");
-                int debugger = window.Debugger.Session!.AdapterProcessId;
-                // A program stopped where it stands is one the debugger cannot end: it answers neither Stop nor the
-                // window's close, which kills both once its limit has passed.
-                Processes.Suspend(program, "The program");
-                window.Perform(AppActions.Stop);
-                window.Close();
-                return (program, debugger, window.Ended ?? throw new InvalidOperationException("The window closed with no end to wait for"));
+                OpenWindows.Watch();
+                try
+                {
+                    MainWindow window = Open();
+                    Ui.Run(window, AppActions.Debug);
+                    int program = Processes.WrittenId(started, "the program to run under the debugger");
+                    Ui.WaitFor(() => window.Debugger.Session is { State: DebugState.Running }, "the session to say the program runs");
+                    int debugger = window.Debugger.Session!.AdapterProcessId;
+                    // A program stopped where it stands is one the debugger cannot end: it answers neither Stop nor the
+                    // window's close, which kills both once its limit has passed.
+                    Processes.Suspend(program, "The program");
+                    window.Perform(AppActions.Stop);
+                    window.Close();
+                    return (program, debugger, window.Ended, (Exception?)null);
+                }
+                catch (Exception failed)
+                {
+                    OpenWindows.CloseAll();
+                    return (0, 0, null, failed);
+                }
             }, TestContext.Current.CancellationToken);
+            // Off the window's thread, where the session ends a run: a test ending there holds it in the runner's wait for the next.
+            await Task.Yield();
+            if (run.Failed is not null)
+            {
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(run.Failed);
+            }
+            (debuggee, adapter) = (run.Program, run.Debugger);
+            Task ended = run.Ended ?? throw new InvalidOperationException("The window closed with no end to wait for");
 
             Assert.True(await Task.WhenAny(ended, Task.Delay(MainWindow.EndLimit + TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken)) == ended,
                 "The window closed without ending what it started within its limit, so the IDE's process would not end");
