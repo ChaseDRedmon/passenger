@@ -50,6 +50,8 @@ public sealed partial class SettingsDialog
 
         // XAML Styler's, which Rider has from that plugin: attributes in its rule groups' order, and empty elements closed.
         TextBox order = new() { Classes = { "search" }, Text = Groups(now.AttributeOrder), AcceptsReturn = true, Width = 420, Height = 210, IsEnabled = now.ReorderAttributes };
+        // A group longer than the box scrolls into view rather than being cut at its edge.
+        ScrollViewer.SetHorizontalScrollBarVisibility(order, Avalonia.Controls.Primitives.ScrollBarVisibility.Auto);
         order.TextChanged += (_, _) => Set(x => x with { AttributeOrder = string.Join("; ", (order.Text ?? string.Empty).Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)) });
         Add(XamlCodeStylePage, "Reorder attributes", Check(now.ReorderAttributes, v =>
         {

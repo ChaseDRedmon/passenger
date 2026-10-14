@@ -26,8 +26,8 @@ public abstract class RefactoringDialog : Window
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Chrome"));
 
-        NextButton = new Button { Content = "Next", IsDefault = true, Classes = { "primary" }, MinWidth = 80 };
-        Button cancel = new() { Content = "Cancel", IsCancel = true, MinWidth = 80 };
+        NextButton = new Button { Content = "Next", IsDefault = true, Classes = { "primary" } };
+        Button cancel = new() { Content = "Cancel", IsCancel = true };
         NextButton.Click += (_, _) => _ = Next();
         cancel.Click += (_, _) => Close(false);
         problem.Bind(TextBlock.ForegroundProperty, problem.GetResourceObservable("Passenger.Editor.Error"));
@@ -45,13 +45,12 @@ public abstract class RefactoringDialog : Window
         Border top = new() { BorderThickness = new Thickness(0, 0, 0, 1), Child = header };
         top.Bind(Border.BorderBrushProperty, top.GetResourceObservable("Passenger.Divider"));
 
-        DockPanel bottomBar = new() { Margin = new Thickness(20, 10, 20, 12) };
-        StackPanel buttons = new() { Orientation = Orientation.Horizontal, Spacing = 8, Children = { cancel, NextButton } };
+        DockPanel bottomBar = new();
+        StackPanel buttons = DialogFooter.Of(NextButton, cancel);
         DockPanel.SetDock(buttons, Dock.Right);
         bottomBar.Children.Add(buttons);
         bottomBar.Children.Add(problem);
-        Border bottom = new() { BorderThickness = new Thickness(0, 1, 0, 0), Child = bottomBar };
-        bottom.Bind(Border.BorderBrushProperty, bottom.GetResourceObservable("Passenger.Divider"));
+        Border bottom = new() { Classes = { "footerBar" }, Child = bottomBar };
 
         DockPanel root = new();
         DockPanel.SetDock(top, Dock.Top);

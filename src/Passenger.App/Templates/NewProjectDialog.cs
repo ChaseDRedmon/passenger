@@ -64,7 +64,7 @@ public sealed class NewProjectDialog : Window
     private readonly TextBlock progress = new() { Classes = { "muted" }, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
     private readonly StackPanel working;
     private readonly TextBlock problem = new() { TextWrapping = TextWrapping.Wrap, IsVisible = false, VerticalAlignment = VerticalAlignment.Center };
-    private readonly Button create = new() { Content = "Create", IsDefault = true, Classes = { "primary" }, MinWidth = 80, IsEnabled = false };
+    private readonly Button create = new() { Content = "Create", IsDefault = true, Classes = { "primary" }, IsEnabled = false };
     private readonly Button browse = new() { Content = "Browse...", Margin = new Thickness(8, 0, 0, 0) };
 
     /// <summary>The shown options' values, and those the person set, which another template with the option keeps.</summary>
@@ -198,7 +198,7 @@ public sealed class NewProjectDialog : Window
 
         problem.Bind(TextBlock.ForegroundProperty, problem.GetResourceObservable("Passenger.Editor.Error"));
         working = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, IsVisible = false, Children = { bar, progress } };
-        Button cancel = new() { Content = "Cancel", IsCancel = true, MinWidth = 80 };
+        Button cancel = new() { Content = "Cancel", IsCancel = true };
         cancel.Click += (_, _) => Cancel();
         create.Click += (_, _) => _ = CreateAsync();
         Closing += (_, _) =>
@@ -210,13 +210,12 @@ public sealed class NewProjectDialog : Window
         Action changed = () => _ = RefreshAsync();
         ProjectTemplates.Changed += changed;
         Closed += (_, _) => ProjectTemplates.Changed -= changed;
-        StackPanel buttons = new() { Orientation = Orientation.Horizontal, Spacing = 8, Children = { cancel, create } };
-        DockPanel bottomRow = new() { Margin = new Thickness(16, 10) };
+        StackPanel buttons = DialogFooter.Of(create, cancel);
+        DockPanel bottomRow = new();
         DockPanel.SetDock(buttons, Dock.Right);
         bottomRow.Children.Add(buttons);
         bottomRow.Children.Add(new Panel { Margin = new Thickness(0, 0, 16, 0), Children = { problem, working } });
-        Border bottom = new() { BorderThickness = new Thickness(0, 1, 0, 0), Child = bottomRow };
-        bottom.Bind(Border.BorderBrushProperty, bottom.GetResourceObservable("Passenger.Divider"));
+        Border bottom = new() { Classes = { "footerBar" }, Child = bottomRow };
 
         DockPanel root = new();
         DockPanel.SetDock(bottom, Dock.Bottom);
@@ -1161,7 +1160,7 @@ public sealed class NewProjectDialog : Window
     private Control Rule()
     {
         Border rule = new() { Height = 1, Margin = new Thickness(0, 6) };
-        rule.Bind(Border.BackgroundProperty, rule.GetResourceObservable("Passenger.Divider"));
+        rule.Bind(Border.BackgroundProperty, rule.GetResourceObservable("Passenger.Separator"));
         return rule;
     }
 

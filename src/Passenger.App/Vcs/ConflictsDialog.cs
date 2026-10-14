@@ -82,12 +82,10 @@ public sealed class ConflictsDialog : Window
         }, RoutingStrategies.Tunnel);
         Border table = new()
         {
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(4),
+            Classes = { "framed" },
             ClipToBounds = true,
             Child = new DockPanel { Children = { underHeader, list } },
         };
-        table.Bind(Border.BorderBrushProperty, table.GetResourceObservable("Passenger.Divider"));
 
         acceptYours = ActionButton("Accept Yours", () => AcceptAsync(yours: true));
         acceptTheirs = ActionButton("Accept Theirs", () => AcceptAsync(yours: false));
@@ -99,13 +97,12 @@ public sealed class ConflictsDialog : Window
             Margin = new Thickness(12, 0, 0, 0),
             Children = { acceptYours, acceptTheirs, mergeButton },
         };
-        Button close = new() { Content = "Close", IsCancel = true, MinWidth = 90, HorizontalContentAlignment = HorizontalAlignment.Center };
+        Button close = new() { Content = "Close", IsCancel = true };
         close.Click += (_, _) => Close();
         StackPanel bottom = new()
         {
             [DockPanel.DockProperty] = Avalonia.Controls.Dock.Bottom,
-            Orientation = Orientation.Horizontal,
-            HorizontalAlignment = HorizontalAlignment.Right,
+            Classes = { "footer" },
             Margin = new Thickness(0, 12, 0, 0),
             Children = { close },
         };
@@ -250,7 +247,8 @@ public sealed class ConflictsDialog : Window
 
     private static Button ActionButton(string label, Func<Task> run)
     {
-        Button button = new() { Content = label, MinWidth = 120, HorizontalContentAlignment = HorizontalAlignment.Center };
+        // The column's buttons one width, the widest's, as Rider's Conflicts dialog has them.
+        Button button = new() { Content = label, MinWidth = 120, HorizontalAlignment = HorizontalAlignment.Stretch };
         button.Click += (_, _) => _ = run();
         return button;
     }

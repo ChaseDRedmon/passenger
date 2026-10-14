@@ -118,8 +118,8 @@ public sealed partial class SettingsDialog
             ContextMenu menu = new();
             menu.Opening += (_, _) => FillEditShortcuts(action.Id, menu);
             row.ContextMenu = menu;
-            row.DoubleTapped += (_, _) => OpenEditShortcuts(action.Id, menu, row);
-            edit.Click += (_, _) => OpenEditShortcuts(action.Id, menu, edit);
+            row.DoubleTapped += (_, _) => OpenEditShortcuts(action.Id, menu, row, row);
+            edit.Click += (_, _) => OpenEditShortcuts(action.Id, menu, row, edit);
             keymapRows[action.Id] = new ActionRow(action.Id, row, (TextBlock)row.Children[0], keys);
         }
         ShowShortcuts();
@@ -152,14 +152,11 @@ public sealed partial class SettingsDialog
         {
             Width = 320,
             Padding = new Thickness(12, 10, 12, 12),
-            CornerRadius = new CornerRadius(6),
-            BorderThickness = new Thickness(1),
+            Classes = { "popup" },
             Child = new StackPanel { Spacing = 8, Children = { title, filterKeys } },
         };
         // Tab goes round the popup's own fields, never on to the page under it.
         KeyboardNavigation.SetTabNavigation(popup, KeyboardNavigationMode.Cycle);
-        popup.Bind(Border.BackgroundProperty, popup.GetResourceObservable("Passenger.Chrome"));
-        popup.Bind(Border.BorderBrushProperty, popup.GetResourceObservable("Passenger.FieldBorder"));
         popup.AddHandler(KeyDownEvent, (_, e) =>
         {
             // Escape, and Enter once a keystroke is in, close it as they close Rider's; the shortcut stays the filter.
@@ -221,10 +218,22 @@ public sealed partial class SettingsDialog
         }
     }
 
-    private void OpenEditShortcuts(string action, ContextMenu menu, Control at)
+    /// <summary>The row's Edit Shortcuts menu, under what was clicked (the row, or its ⋮): Avalonia opens a menu only on
+    /// the control it belongs to, the row, so the ⋮ is where it is placed, until it closes.</summary>
+    private void OpenEditShortcuts(string action, ContextMenu menu, Control row, Control at)
     {
         FillEditShortcuts(action, menu);
-        menu.Open(at);
+        menu.PlacementTarget = at;
+        menu.Placement = PlacementMode.BottomEdgeAlignedLeft;
+        menu.Closed += Reset;
+        menu.Open(row);
+
+        void Reset(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+        {
+            menu.Closed -= Reset;
+            menu.ClearValue(ContextMenu.PlacementTargetProperty);
+            menu.ClearValue(ContextMenu.PlacementProperty);
+        }
     }
 
     /// <summary>The shortcuts a change gives the other actions: each one's list without the shortcuts that clash with

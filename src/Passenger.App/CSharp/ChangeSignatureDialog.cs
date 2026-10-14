@@ -59,16 +59,13 @@ public sealed class ChangeSignatureDialog : RefactoringDialog
         headerFrame.Bind(Border.BorderBrushProperty, headerFrame.GetResourceObservable("Passenger.Divider"));
         Border tableFrame = new()
         {
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(4),
+            Classes = { "framed" },
             ClipToBounds = true,
             Child = new DockPanel { Children = { Docked(headerFrame, Dock.Top), new ScrollViewer { Content = table, MaxHeight = 220, MinHeight = 120 } } },
         };
-        tableFrame.Bind(Border.BorderBrushProperty, tableFrame.GetResourceObservable("Passenger.FieldBorder"));
         tableFrame.Bind(Border.BackgroundProperty, tableFrame.GetResourceObservable("Passenger.Editor.Background"));
 
-        Border previewFrame = new() { BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4), Padding = new Thickness(10, 8), Child = preview };
-        previewFrame.Bind(Border.BorderBrushProperty, previewFrame.GetResourceObservable("Passenger.FieldBorder"));
+        Border previewFrame = new() { Classes = { "framed" }, Padding = new Thickness(10, 8), Child = preview };
         previewFrame.Bind(Border.BackgroundProperty, previewFrame.GetResourceObservable("Passenger.Editor.Background"));
 
         for (int i = 0; i < signature.Parameters.Count; i++)

@@ -57,22 +57,15 @@ public sealed class AddReferenceDialog : Window
         };
         list.SelectedItem = choices.FirstOrDefault(c => c.CanChoose);
         list.AddHandler(KeyDownEvent, OnListKeyDown, RoutingStrategies.Tunnel);
-        Border rows = new() { BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4), Child = list };
-        rows.Bind(Border.BorderBrushProperty, rows.GetResourceObservable("Passenger.Divider"));
+        Border rows = new() { Classes = { "framed" }, Child = list };
 
-        Button ok = new() { Content = "OK", IsDefault = true, Classes = { "primary" }, MinWidth = 80, HorizontalContentAlignment = HorizontalAlignment.Center };
-        Button cancel = new() { Content = "Cancel", IsCancel = true, MinWidth = 80, HorizontalContentAlignment = HorizontalAlignment.Center };
+        Button ok = new() { Content = "OK", IsDefault = true, Classes = { "primary" } };
+        Button cancel = new() { Content = "Cancel", IsCancel = true };
         ok.Click += (_, _) => Accept();
         cancel.Click += (_, _) => Close(null);
-        StackPanel buttons = new()
-        {
-            [DockPanel.DockProperty] = Dock.Bottom,
-            Orientation = Orientation.Horizontal,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            Spacing = 8,
-            Margin = new Thickness(0, 12, 0, 0),
-            Children = { cancel, ok },
-        };
+        StackPanel buttons = DialogFooter.Of(ok, cancel);
+        buttons.Margin = new Thickness(0, 12, 0, 0);
+        DockPanel.SetDock(buttons, Dock.Bottom);
         TextBlock heading = new()
         {
             [DockPanel.DockProperty] = Dock.Top,

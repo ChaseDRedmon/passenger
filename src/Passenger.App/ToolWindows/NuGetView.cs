@@ -713,7 +713,7 @@ public sealed class NuGetView : DockPanel
 
     private Button Action(string label, Func<Task<bool>> run)
     {
-        Button button = new() { Content = label, Padding = new Thickness(10, 3), IsEnabled = !busy };
+        Button button = new() { Content = label, IsEnabled = !busy };
         button.Click += (_, _) => _ = run();
         return button;
     }

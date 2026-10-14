@@ -94,7 +94,7 @@ public sealed class FindInFilesPopup : UserControl
         if (replace)
         {
             replacement = new TextBox { Classes = { "search" }, PlaceholderText = "Replacement" };
-            Button all = new() { Content = "Replace All", Classes = { "primary" }, Padding = new Thickness(12, 4), Margin = new Thickness(6, 0, 0, 0) };
+            Button all = new() { Content = "Replace All", Classes = { "primary" }, Margin = new Thickness(6, 0, 0, 0) };
             all.Click += (_, _) => RequestReplace();
             DockPanel row = new() { Margin = new Thickness(10, 0, 10, 6) };
             DockPanel.SetDock(all, Dock.Right);

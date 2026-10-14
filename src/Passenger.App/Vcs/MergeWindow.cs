@@ -37,8 +37,8 @@ public sealed class MergeWindow : Window
         apply.Classes.Add("primary");
         buttons = [acceptLeft, acceptRight, cancel, apply];
         DockPanel bottom = new() { Margin = new Thickness(12, 10) };
-        StackPanel sides = new() { Orientation = Orientation.Horizontal, Spacing = 8, Children = { acceptLeft, acceptRight } };
-        StackPanel close = new() { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right, Children = { cancel, apply } };
+        StackPanel sides = new() { Classes = { "footer" }, Children = { acceptLeft, acceptRight } };
+        StackPanel close = DialogFooter.Of(apply, cancel);
         DockPanel.SetDock(sides, Avalonia.Controls.Dock.Left);
         bottom.Children.Add(sides);
         bottom.Children.Add(close);
@@ -151,7 +151,7 @@ public sealed class MergeWindow : Window
 
     private static Button Action(string label, Func<Task> run)
     {
-        Button button = new() { Content = label, MinWidth = 90, HorizontalContentAlignment = HorizontalAlignment.Center };
+        Button button = new() { Content = label };
         button.Click += (_, _) => _ = run();
         return button;
     }

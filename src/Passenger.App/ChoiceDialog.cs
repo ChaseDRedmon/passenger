@@ -20,13 +20,7 @@ public sealed class ChoiceDialog : Window
 
         Button cancel = new() { Content = "Cancel", IsCancel = true };
         cancel.Click += (_, _) => Close(null);
-        StackPanel buttons = new()
-        {
-            Orientation = Orientation.Horizontal,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            Spacing = 8,
-            Children = { cancel },
-        };
+        StackPanel buttons = new() { Classes = { "footer" }, Children = { cancel } };
         for (int i = 0; i < choices.Count; i++)
         {
             string choice = choices[i];

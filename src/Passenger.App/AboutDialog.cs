@@ -80,13 +80,7 @@ public sealed class AboutDialog : Window
                         facts,
                     },
                 },
-                new StackPanel
-                {
-                    Orientation = Orientation.Horizontal,
-                    HorizontalAlignment = HorizontalAlignment.Right,
-                    Spacing = 8,
-                    Children = { copy, close },
-                },
+                DialogFooter.Of(close, null, copy),
             },
         };
 

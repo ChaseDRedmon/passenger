@@ -103,6 +103,13 @@ public static class Screenshot
                 Take(window.Frontmost, step);
             }
             settled &= Settle();
+            // A dialog the step opened is drawn at the window's scale from the start: scaled later, it would find what is
+            // under the pointer again at the pointer's place divided by the scale, and light that up.
+            if (window.Frontmost is { } front && front != window && front.RenderScaling != window.RenderScaling)
+            {
+                front.SetRenderScaling(window.RenderScaling);
+                settled &= Settle();
+            }
         }
         return settled;
     }

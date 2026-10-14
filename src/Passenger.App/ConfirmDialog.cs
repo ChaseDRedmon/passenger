@@ -39,13 +39,7 @@ public sealed class ConfirmDialog : Window
         {
             body.Children.Add(detail);
         }
-        body.Children.Add(new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            Spacing = 8,
-            Children = { cancel, confirm },
-        });
+        body.Children.Add(DialogFooter.Of(confirm, cancel));
         Content = body;
     }
 }

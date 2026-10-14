@@ -1,7 +1,88 @@
 <Styles xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <!-- The shell's controls over the Fluent theme. Fluent paints a button's hover and press on its
-         content presenter, so each state is restyled there. -->
+         content presenter, so each state is restyled there. A later style wins over an earlier one, so the base
+         styles come first and a class's style after them says only how it differs. -->
+
+    <Styles.Resources>
+        <!-- Rider's new UI rounds a button, a text field and a combo box alike (Button.arc and Component.arc 8, a 4 px
+             radius), a toolbar's buttons and tabs more, and a popup's frame most. -->
+        <CornerRadius x:Key="Passenger.ControlRadius">4</CornerRadius>
+        <CornerRadius x:Key="Passenger.ToolRadius">6</CornerRadius>
+        <CornerRadius x:Key="Passenger.PopupRadius">8</CornerRadius>
+        <!-- Fluent's controls Passenger leaves as they are (check boxes, number boxes, menus) read Fluent's radii. -->
+        <StaticResource x:Key="ControlCornerRadius" ResourceKey="Passenger.ControlRadius" />
+        <StaticResource x:Key="OverlayCornerRadius" ResourceKey="Passenger.PopupRadius" />
+        <!-- A button, a field and a drop-down are one height, Rider's 28, so a row of them shares its edges. -->
+        <x:Double x:Key="Passenger.ControlHeight">28</x:Double>
+    </Styles.Resources>
+
+    <!-- A button: its content centred (Fluent leaves it at the left of a button wider than it, as a dialog's footer
+         makes each), Rider's height and side padding, the shared radius. One that reads as text (crumb, link,
+         statusItem) says otherwise in its own style, as the small square ones (tool, tabClose) say their size. -->
+    <Style Selector="Button">
+        <Setter Property="MinHeight" Value="{DynamicResource Passenger.ControlHeight}" />
+        <Setter Property="Padding" Value="14,0" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="CornerRadius" Value="{DynamicResource Passenger.ControlRadius}" />
+    </Style>
+    <!-- A dialog's buttons at its foot (DialogFooter), each as wide as the others at the least. -->
+    <Style Selector="StackPanel.footer">
+        <Setter Property="Orientation" Value="Horizontal" />
+        <Setter Property="Spacing" Value="8" />
+        <Setter Property="HorizontalAlignment" Value="Right" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <Style Selector="StackPanel.footer > Button">
+        <Setter Property="MinWidth" Value="80" />
+    </Style>
+    <!-- The bar a dialog's footer stands in under its page, on the chrome as Settings' is, a divider above it. -->
+    <Style Selector="Border.footerBar">
+        <Setter Property="Background" Value="{DynamicResource Passenger.Chrome}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Passenger.Divider}" />
+        <Setter Property="BorderThickness" Value="0,1,0,0" />
+        <Setter Property="Padding" Value="16,10" />
+    </Style>
+    <!-- A list, table or text in a page, framed as a field is: a frame in the divider's colour vanishes on the editor's
+         background in dark. -->
+    <Style Selector="Border.framed">
+        <Setter Property="BorderBrush" Value="{DynamicResource Passenger.FieldBorder}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="{DynamicResource Passenger.ControlRadius}" />
+    </Style>
+    <Style Selector="TextBox">
+        <Setter Property="CornerRadius" Value="{DynamicResource Passenger.ControlRadius}" />
+    </Style>
+    <!-- A drop-down framed as a field and as tall, its text inset as a field's (Fluent's is taller and its frame
+         brighter). -->
+    <Style Selector="ComboBox">
+        <Setter Property="MinHeight" Value="{DynamicResource Passenger.ControlHeight}" />
+        <Setter Property="Padding" Value="10,0,0,0" />
+        <Setter Property="CornerRadius" Value="{DynamicResource Passenger.ControlRadius}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Passenger.FieldBorder}" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="ComboBox:pointerover /template/ Border#Background">
+        <Setter Property="BorderBrush" Value="{DynamicResource Passenger.FieldBorder}" />
+    </Style>
+    <!-- A number box likewise: its text box no taller than the box, its buttons' edges a field's. -->
+    <Style Selector="NumericUpDown">
+        <Setter Property="MinHeight" Value="{DynamicResource Passenger.ControlHeight}" />
+        <Setter Property="Padding" Value="10,4,6,4" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Passenger.FieldBorder}" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+    <Style Selector="NumericUpDown /template/ ButtonSpinner#PART_Spinner">
+        <Setter Property="MinHeight" Value="{DynamicResource Passenger.ControlHeight}" />
+    </Style>
+    <Style Selector="NumericUpDown /template/ TextBox#PART_TextBox">
+        <Setter Property="MinHeight" Value="0" />
+    </Style>
+    <!-- An unticked box's edge a field's, where Fluent's is far brighter than the fields beside it. -->
+    <Style Selector="CheckBox:unchecked /template/ Border#NormalRectangle">
+        <Setter Property="BorderBrush" Value="{DynamicResource Passenger.FieldBorder}" />
+    </Style>
 
     <Style Selector="TextBlock.muted">
         <Setter Property="Foreground" Value="{DynamicResource Passenger.TextMuted}" />
@@ -63,7 +144,7 @@
         <Setter Property="Height" Value="24" />
         <Setter Property="MinWidth" Value="0" />
         <Setter Property="Padding" Value="6,0" />
-        <Setter Property="CornerRadius" Value="5" />
+        <Setter Property="CornerRadius" Value="{DynamicResource Passenger.ToolRadius}" />
         <Setter Property="BorderThickness" Value="0" />
         <Setter Property="Background" Value="Transparent" />
         <Setter Property="FontSize" Value="12" />
@@ -91,7 +172,7 @@
          its size. -->
     <Style Selector="Button.frame">
         <Setter Property="Padding" Value="5" />
-        <Setter Property="CornerRadius" Value="6" />
+        <Setter Property="CornerRadius" Value="{DynamicResource Passenger.ToolRadius}" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="BorderBrush" Value="{DynamicResource Passenger.Divider}" />
         <Setter Property="Background" Value="Transparent" />
@@ -117,7 +198,7 @@
         <Setter Property="Width" Value="30" />
         <Setter Property="Height" Value="30" />
         <Setter Property="Padding" Value="0" />
-        <Setter Property="CornerRadius" Value="6" />
+        <Setter Property="CornerRadius" Value="{DynamicResource Passenger.ToolRadius}" />
         <Setter Property="BorderThickness" Value="0" />
         <Setter Property="Background" Value="Transparent" />
         <Setter Property="HorizontalContentAlignment" Value="Center" />
@@ -135,9 +216,9 @@
 
     <!-- A toolbar widget (a name and a chevron) or a toolbar icon button. -->
     <Style Selector="Button.widget">
-        <Setter Property="Height" Value="28" />
+        <Setter Property="Height" Value="{DynamicResource Passenger.ControlHeight}" />
         <Setter Property="Padding" Value="8,0" />
-        <Setter Property="CornerRadius" Value="6" />
+        <Setter Property="CornerRadius" Value="{DynamicResource Passenger.ToolRadius}" />
         <Setter Property="BorderThickness" Value="0" />
         <Setter Property="Background" Value="Transparent" />
         <Setter Property="Foreground" Value="{DynamicResource Passenger.Text}" />
@@ -145,9 +226,9 @@
     </Style>
     <Style Selector="Button.tool">
         <Setter Property="Width" Value="30" />
-        <Setter Property="Height" Value="28" />
+        <Setter Property="Height" Value="{DynamicResource Passenger.ControlHeight}" />
         <Setter Property="Padding" Value="0" />
-        <Setter Property="CornerRadius" Value="6" />
+        <Setter Property="CornerRadius" Value="{DynamicResource Passenger.ToolRadius}" />
         <Setter Property="BorderThickness" Value="0" />
         <Setter Property="Background" Value="Transparent" />
         <Setter Property="HorizontalContentAlignment" Value="Center" />
@@ -203,10 +284,10 @@
     <!-- A toolbar toggle (Mute Breakpoints): a tool button that stays pressed while it is on. -->
     <Style Selector="ToggleButton.tool">
         <Setter Property="Width" Value="30" />
-        <Setter Property="Height" Value="28" />
+        <Setter Property="Height" Value="{DynamicResource Passenger.ControlHeight}" />
         <Setter Property="MinWidth" Value="0" />
         <Setter Property="Padding" Value="0" />
-        <Setter Property="CornerRadius" Value="6" />
+        <Setter Property="CornerRadius" Value="{DynamicResource Passenger.ToolRadius}" />
         <Setter Property="BorderThickness" Value="0" />
         <Setter Property="Background" Value="Transparent" />
         <Setter Property="HorizontalContentAlignment" Value="Center" />
@@ -241,8 +322,9 @@
     <!-- A status bar item that does something on a click, framed only under the pointer. -->
     <Style Selector="Button.statusItem">
         <Setter Property="Height" Value="22" />
+        <Setter Property="MinHeight" Value="0" />
         <Setter Property="Padding" Value="6,0" />
-        <Setter Property="CornerRadius" Value="4" />
+        <Setter Property="HorizontalContentAlignment" Value="Left" />
         <Setter Property="BorderThickness" Value="0" />
         <Setter Property="Background" Value="Transparent" />
         <Setter Property="VerticalContentAlignment" Value="Center" />
@@ -268,6 +350,8 @@
     <Style Selector="ListBox.tree ListBoxItem">
         <Setter Property="Padding" Value="6,0" />
         <Setter Property="MinHeight" Value="24" />
+        <!-- A row's words midway down its band, where Fluent would leave a line shorter than the row at its top. -->
+        <Setter Property="VerticalContentAlignment" Value="Center" />
         <Setter Property="CornerRadius" Value="4" />
         <Setter Property="Foreground" Value="{DynamicResource Passenger.Text}" />
     </Style>
@@ -280,6 +364,13 @@
     </Style>
     <Style Selector="ListBox.tree ListBoxItem:selected:pointerover /template/ ContentPresenter#PART_ContentPresenter">
         <Setter Property="Background" Value="{DynamicResource Passenger.RowSelected}" />
+    </Style>
+    <!-- Settings' pages under its search field: the band as wide as the field, a page's name where the field's text starts. -->
+    <Style Selector="ListBox.pages">
+        <Setter Property="Padding" Value="10,0" />
+    </Style>
+    <Style Selector="ListBox.pages ListBoxItem">
+        <Setter Property="Padding" Value="11,0" />
     </Style>
 
     <!-- An editor tab: the active one underlined in the accent, a modified one with a dot that turns
@@ -318,6 +409,7 @@
     <Style Selector="Button.tabClose">
         <Setter Property="Width" Value="16" />
         <Setter Property="Height" Value="16" />
+        <Setter Property="MinHeight" Value="0" />
         <Setter Property="Padding" Value="0" />
         <Setter Property="CornerRadius" Value="3" />
         <Setter Property="BorderThickness" Value="0" />
@@ -343,6 +435,7 @@
     <Style Selector="Button.tabPin">
         <Setter Property="Width" Value="16" />
         <Setter Property="Height" Value="16" />
+        <Setter Property="MinHeight" Value="0" />
         <Setter Property="Padding" Value="0" />
         <Setter Property="CornerRadius" Value="3" />
         <Setter Property="BorderThickness" Value="0" />
@@ -358,22 +451,31 @@
     <!-- A search field (the find bar, Go to File): flat, the chrome's own colour, an accent edge when
          focused, and room at its right for toggles drawn inside it. -->
     <Style Selector="TextBox.search">
-        <Setter Property="MinHeight" Value="28" />
-        <Setter Property="CornerRadius" Value="5" />
+        <Setter Property="MinHeight" Value="{DynamicResource Passenger.ControlHeight}" />
+        <!-- Fluent's padding would make it a pixel taller than the buttons and drop-downs beside it. -->
+        <Setter Property="Padding" Value="10,4,6,4" />
         <Setter Property="VerticalContentAlignment" Value="Center" />
+        <!-- Its own height in a row beside something taller (a check box), not stretched to that one's. -->
+        <Setter Property="VerticalAlignment" Value="Center" />
         <Setter Property="FontSize" Value="13" />
     </Style>
-    <!-- Fluent turns a focused field black (white in light); Rider's keeps its own ground and gains the accent edge. -->
-    <Style Selector="TextBox.search:focus /template/ Border#PART_BorderElement">
-        <Setter Property="Background" Value="{DynamicResource Passenger.Field}" />
-        <Setter Property="BorderBrush" Value="{DynamicResource Passenger.Accent}" />
+    <!-- A field of several lines starts its text at its top, not halfway down. -->
+    <Style Selector="TextBox.search[AcceptsReturn=True]">
+        <Setter Property="VerticalContentAlignment" Value="Top" />
+        <Setter Property="VerticalAlignment" Value="Stretch" />
+    </Style>
+    <Style Selector="TextBox.search /template/ Border#PART_BorderElement">
+        <Setter Property="BorderBrush" Value="{DynamicResource Passenger.FieldBorder}" />
     </Style>
     <Style Selector="TextBox.search:pointerover /template/ Border#PART_BorderElement">
         <Setter Property="Background" Value="{DynamicResource Passenger.Field}" />
         <Setter Property="BorderBrush" Value="{DynamicResource Passenger.FieldBorder}" />
     </Style>
-    <Style Selector="TextBox.search /template/ Border#PART_BorderElement">
-        <Setter Property="BorderBrush" Value="{DynamicResource Passenger.FieldBorder}" />
+    <!-- Fluent turns a focused field black (white in light); Rider's keeps its own ground and gains the accent edge.
+         After the field's own edge, which would otherwise win and leave the focused field's edge grey. -->
+    <Style Selector="TextBox.search:focus /template/ Border#PART_BorderElement">
+        <Setter Property="Background" Value="{DynamicResource Passenger.Field}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Passenger.Accent}" />
     </Style>
     <Style Selector="TextBox.search:focus">
         <Setter Property="Foreground" Value="{DynamicResource Passenger.Text}" />
@@ -405,7 +507,7 @@
     <!-- A table's drop-down cell (a parameter's modifier): flat as the text cells beside it until the pointer is over it. -->
     <Style Selector="ComboBox.cell">
         <Setter Property="MinHeight" Value="28" />
-        <Setter Property="Height" Value="28" />
+        <Setter Property="Height" Value="{DynamicResource Passenger.ControlHeight}" />
         <Setter Property="Padding" Value="8,0,4,0" />
         <Setter Property="FontSize" Value="13" />
         <Setter Property="Background" Value="Transparent" />
@@ -421,7 +523,7 @@
         <Setter Property="Height" Value="22" />
         <Setter Property="MinWidth" Value="0" />
         <Setter Property="Padding" Value="0" />
-        <Setter Property="CornerRadius" Value="4" />
+        <Setter Property="CornerRadius" Value="{DynamicResource Passenger.ControlRadius}" />
         <Setter Property="BorderThickness" Value="0" />
         <Setter Property="Background" Value="Transparent" />
         <Setter Property="HorizontalContentAlignment" Value="Center" />
@@ -446,11 +548,10 @@
     <!-- A drop-down as tall as a search field beside it (Find in Files' scope and mask); an editable one's text centred
          in it, where Fluent's taller text box would put it at the top. -->
     <Style Selector="ComboBox.compact">
-        <Setter Property="MinHeight" Value="28" />
-        <Setter Property="Height" Value="28" />
+        <Setter Property="MinHeight" Value="{DynamicResource Passenger.ControlHeight}" />
+        <Setter Property="Height" Value="{DynamicResource Passenger.ControlHeight}" />
         <Setter Property="FontSize" Value="12" />
         <Setter Property="Padding" Value="8,0,4,0" />
-        <Setter Property="CornerRadius" Value="5" />
         <Setter Property="VerticalContentAlignment" Value="Center" />
     </Style>
     <Style Selector="ComboBox.compact /template/ TextBox#PART_EditableTextBox">
@@ -464,7 +565,7 @@
         <Setter Property="Background" Value="{DynamicResource Passenger.Chrome}" />
         <Setter Property="BorderBrush" Value="{DynamicResource Passenger.Selected}" />
         <Setter Property="BorderThickness" Value="1" />
-        <Setter Property="CornerRadius" Value="8" />
+        <Setter Property="CornerRadius" Value="{DynamicResource Passenger.PopupRadius}" />
         <Setter Property="BoxShadow" Value="0 10 30 0 #70000000" />
     </Style>
 
@@ -482,7 +583,7 @@
     <Style Selector="ToggleButton.panelTab">
         <Setter Property="Height" Value="24" />
         <Setter Property="Padding" Value="10,0" />
-        <Setter Property="CornerRadius" Value="5" />
+        <Setter Property="CornerRadius" Value="{DynamicResource Passenger.ToolRadius}" />
         <Setter Property="BorderThickness" Value="0" />
         <Setter Property="Background" Value="Transparent" />
         <Setter Property="FontSize" Value="13" />
@@ -502,11 +603,9 @@
         <Setter Property="Foreground" Value="{DynamicResource Passenger.Text}" />
     </Style>
 
-    <!-- The one emphasised action on a page. -->
+    <!-- The one emphasised action on a page: only its colours differ, so it is the size and shape of the buttons beside
+         it. -->
     <Style Selector="Button.primary">
-        <Setter Property="Padding" Value="16,7" />
-        <Setter Property="CornerRadius" Value="6" />
-        <Setter Property="BorderThickness" Value="0" />
         <Setter Property="Background" Value="{DynamicResource Passenger.Accent}" />
         <Setter Property="Foreground" Value="{DynamicResource Passenger.AccentText}" />
     </Style>
@@ -525,6 +624,7 @@
         <Setter Property="BorderThickness" Value="0" />
         <Setter Property="Padding" Value="2,0" />
         <Setter Property="MinHeight" Value="0" />
+        <Setter Property="HorizontalContentAlignment" Value="Left" />
         <Setter Property="FontSize" Value="12" />
         <Setter Property="VerticalAlignment" Value="Center" />
         <Setter Property="Foreground" Value="{DynamicResource Passenger.TextMuted}" />
@@ -540,6 +640,7 @@
         <Setter Property="BorderThickness" Value="0" />
         <Setter Property="Padding" Value="0" />
         <Setter Property="MinHeight" Value="0" />
+        <Setter Property="HorizontalContentAlignment" Value="Left" />
         <Setter Property="Cursor" Value="Hand" />
         <Setter Property="Foreground" Value="{DynamicResource Passenger.Link}" />
     </Style>

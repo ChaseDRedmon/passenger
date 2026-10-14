@@ -74,7 +74,7 @@ public sealed class LiveTemplatesPane : DockPanel
         BothButton = Use("Both", TemplateUse.Both);
         MnemonicBox = new TextBox { Classes = { "search" }, Width = 44 };
         MnemonicBox.TextChanged += (_, _) => Mnemonic();
-        EditVariablesButton = new Button { Content = "Edit variables", Padding = new Thickness(10, 3) };
+        EditVariablesButton = new Button { Content = "Edit variables" };
         EditVariablesButton.Click += (_, _) => _ = EditVariables();
         TextBox = new TextBox
         {
@@ -111,8 +111,7 @@ public sealed class LiveTemplatesPane : DockPanel
         form = editor;
 
         StackPanel tools = new() { Orientation = Orientation.Horizontal, Spacing = 2, Margin = new Thickness(0, 0, 0, 4), Children = { NewButton, CloneButton, DeleteButton, RestoreButton } };
-        Border framed = new() { BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4), Child = list };
-        framed.Bind(Border.BorderBrushProperty, framed.GetResourceObservable("Passenger.Divider"));
+        Border framed = new() { Classes = { "framed" }, Child = list };
         DockPanel left = new() { Width = 260 };
         SetDock(tools, Dock.Top);
         left.Children.Add(tools);

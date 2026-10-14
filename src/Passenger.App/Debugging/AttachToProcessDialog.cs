@@ -86,27 +86,19 @@ public sealed class AttachToProcessDialog : Window
         empty = new TextBlock { Classes = { "muted" }, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Text = "Looking for .NET processes…" };
         Border table = new()
         {
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(4),
+            Classes = { "framed" },
             ClipToBounds = true,
             Child = new DockPanel { Children = { headerFrame, new Panel { Children = { rows, empty } } } },
         };
-        table.Bind(Border.BorderBrushProperty, table.GetResourceObservable("Passenger.FieldBorder"));
         table.Bind(Border.BackgroundProperty, table.GetResourceObservable("Passenger.Editor.Background"));
 
-        attach = new Button { Content = "Attach with .NET Debugger", Classes = { "primary" }, IsEnabled = false, MinWidth = 80, HorizontalContentAlignment = HorizontalAlignment.Center };
-        Button cancel = new() { Content = "Cancel", IsCancel = true, MinWidth = 80, HorizontalContentAlignment = HorizontalAlignment.Center };
+        attach = new Button { Content = "Attach with .NET Debugger", Classes = { "primary" }, IsEnabled = false };
+        Button cancel = new() { Content = "Cancel", IsCancel = true };
         attach.Click += (_, _) => Attach();
         cancel.Click += (_, _) => Close(null);
-        StackPanel buttons = new()
-        {
-            [DockPanel.DockProperty] = Dock.Bottom,
-            Orientation = Orientation.Horizontal,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            Spacing = 8,
-            Margin = new Thickness(0, 12, 0, 0),
-            Children = { cancel, attach },
-        };
+        StackPanel buttons = DialogFooter.Of(attach, cancel);
+        buttons.Margin = new Thickness(0, 12, 0, 0);
+        DockPanel.SetDock(buttons, Dock.Bottom);
         Content = new DockPanel { Margin = new Thickness(16), Children = { top, buttons, table } };
         Opened += (_, _) => Dispatcher.UIThread.Post(() =>
         {

@@ -78,7 +78,6 @@ public sealed class RunConfigurationsDialog : Window
         AddVariableButton = new Button
         {
             Content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Children = { Glyph("Icon.Add"), new TextBlock { Text = "Add variable" } } },
-            Padding = new Thickness(8, 3),
         };
         NameBox.TextChanged += (_, _) => Edit(c => c with { Name = NameBox.Text?.Trim() ?? string.Empty });
         ProjectBox.SelectionChanged += (_, _) => Edit(c => ProjectBox.SelectedItem is ProjectModel project ? c with { Project = project.Path, Framework = string.Empty, LaunchProfile = string.Empty } : c, reshow: true);
@@ -93,9 +92,9 @@ public sealed class RunConfigurationsDialog : Window
         BrowserUrlBox.TextChanged += (_, _) => Edit(c => c with { BrowserUrl = BrowserUrlBox.Text?.Trim() ?? string.Empty });
         AddVariableButton.Click += (_, _) => AddVariable(string.Empty, string.Empty, focus: true);
 
-        OkButton = new Button { Content = "OK", IsDefault = true, Classes = { "primary" }, MinWidth = 80 };
-        Button cancel = new() { Content = "Cancel", IsCancel = true, MinWidth = 80 };
-        Button applyButton = new() { Content = "Apply", MinWidth = 80 };
+        OkButton = new Button { Content = "OK", IsDefault = true, Classes = { "primary" } };
+        Button cancel = new() { Content = "Cancel", IsCancel = true };
+        Button applyButton = new() { Content = "Apply" };
         OkButton.Click += (_, _) => Ok();
         cancel.Click += (_, _) => Close(false);
         applyButton.Click += (_, _) => Apply();
@@ -135,13 +134,12 @@ public sealed class RunConfigurationsDialog : Window
         };
         editorPane.Bind(Border.BackgroundProperty, editorPane.GetResourceObservable("Passenger.Editor.Background"));
 
-        DockPanel bottomBar = new() { Margin = new Thickness(16, 10) };
-        StackPanel buttons = new() { Orientation = Orientation.Horizontal, Spacing = 8, Children = { cancel, applyButton, OkButton } };
+        DockPanel bottomBar = new();
+        StackPanel buttons = DialogFooter.Of(OkButton, cancel, applyButton);
         DockPanel.SetDock(buttons, Dock.Right);
         bottomBar.Children.Add(buttons);
         bottomBar.Children.Add(problem);
-        Border bottom = new() { BorderThickness = new Thickness(0, 1, 0, 0), Child = bottomBar };
-        bottom.Bind(Border.BorderBrushProperty, bottom.GetResourceObservable("Passenger.Divider"));
+        Border bottom = new() { Classes = { "footerBar" }, Child = bottomBar };
 
         DockPanel root = new();
         DockPanel.SetDock(bottom, Dock.Bottom);

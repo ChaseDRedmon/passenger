@@ -45,8 +45,8 @@ public sealed class ExtractInterfaceDialog : RefactoringDialog
             members.Add((member, box));
             list.Children.Add(box);
         }
-        SelectAllButton = new Button { Content = "Select All", Padding = new Thickness(10, 3) };
-        SelectNoneButton = new Button { Content = "Select None", Padding = new Thickness(10, 3) };
+        SelectAllButton = new Button { Content = "Select All" };
+        SelectNoneButton = new Button { Content = "Select None" };
         SelectAllButton.Click += (_, _) => Check(true);
         SelectNoneButton.Click += (_, _) => Check(false);
 
@@ -56,12 +56,10 @@ public sealed class ExtractInterfaceDialog : RefactoringDialog
         DockPanel.SetDock(titleFrame, Dock.Top);
         Border listFrame = new()
         {
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(4),
+            Classes = { "framed" },
             ClipToBounds = true,
             Child = new DockPanel { Children = { titleFrame, new ScrollViewer { Content = list, MaxHeight = 240, MinHeight = 100 } } },
         };
-        listFrame.Bind(Border.BorderBrushProperty, listFrame.GetResourceObservable("Passenger.FieldBorder"));
         listFrame.Bind(Border.BackgroundProperty, listFrame.GetResourceObservable("Passenger.Editor.Background"));
 
         Options = new StackPanel

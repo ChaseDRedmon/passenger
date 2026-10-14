@@ -75,7 +75,7 @@ public sealed class FeedDialog : Window
                 fields,
                 saved,
                 problem,
-                new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Spacing = 8, Children = { cancel, ok } },
+                DialogFooter.Of(ok, cancel),
             },
         };
         Opened += (_, _) => Dispatcher.UIThread.Post(() => (feed is null ? url : name).Focus(), DispatcherPriority.Loaded);

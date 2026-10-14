@@ -29,8 +29,8 @@ public sealed class KeyboardShortcutDialog : Window
 
         Keys = new ShortcutPanel("Second stroke:");
         Keys.Changed += (_, _) => Update();
-        OkButton = new Button { Content = "OK", IsDefault = true, Classes = { "primary" }, MinWidth = 80, IsEnabled = false };
-        Button cancel = new() { Content = "Cancel", IsCancel = true, MinWidth = 80 };
+        OkButton = new Button { Content = "OK", IsDefault = true, Classes = { "primary" }, IsEnabled = false };
+        Button cancel = new() { Content = "Cancel", IsCancel = true };
         OkButton.Click += (_, _) =>
         {
             if (Keys.Shortcut is { } shortcut)
@@ -63,17 +63,17 @@ public sealed class KeyboardShortcutDialog : Window
                 Named(action, where),
                 Keys,
                 conflictsPanel,
-                new StackPanel
-                {
-                    Orientation = Orientation.Horizontal,
-                    HorizontalAlignment = HorizontalAlignment.Right,
-                    Spacing = 8,
-                    Margin = new Thickness(0, 6, 0, 0),
-                    Children = { cancel, OkButton },
-                },
+                Footer(),
             },
         };
         Opened += (_, _) => Dispatcher.UIThread.Post(() => Keys.First.Focus(), DispatcherPriority.Loaded);
+
+        StackPanel Footer()
+        {
+            StackPanel footer = DialogFooter.Of(OkButton, cancel);
+            footer.Margin = new Thickness(0, 6, 0, 0);
+            return footer;
+        }
     }
 
     /// <summary>The first and second keystrokes' fields and the box between them.</summary>

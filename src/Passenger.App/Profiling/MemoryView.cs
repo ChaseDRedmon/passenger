@@ -513,7 +513,7 @@ public sealed class MemoryView : DockPanel
 
     private Button Action(string label, Action run)
     {
-        Button button = new() { Content = label, Padding = new Thickness(10, 3), VerticalAlignment = VerticalAlignment.Center };
+        Button button = new() { Content = label, VerticalAlignment = VerticalAlignment.Center };
         button.Click += (_, _) => run();
         actions.Children.Add(button);
         return button;

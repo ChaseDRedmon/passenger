@@ -45,8 +45,7 @@ public sealed class PostfixTemplatesPane : DockPanel
         tree.ItemsSource = (PostfixTemplate?[])[null, .. PostfixTemplates.All];
         tree.SelectionChanged += (_, _) => Describe();
 
-        Border framed = new() { BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4), Child = tree, Width = 300 };
-        framed.Bind(Border.BorderBrushProperty, framed.GetResourceObservable("Passenger.Divider"));
+        Border framed = new() { Classes = { "framed" }, Child = tree, Width = 300 };
         about = new StackPanel
         {
             Spacing = 6,
@@ -133,12 +132,17 @@ public sealed class PostfixTemplatesPane : DockPanel
             line.Children.Add(new TextBlock { Text = Language, FontWeight = FontWeight.SemiBold, VerticalAlignment = VerticalAlignment.Center });
             return line;
         }
-        CheckBox on = new() { IsChecked = IsOn(template), VerticalAlignment = VerticalAlignment.Center };
+        CheckBox on = new() { IsChecked = IsOn(template), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0) };
         on.IsCheckedChanged += (_, _) => Turn([template], on.IsChecked == true);
-        line.Children.Add(on);
-        line.Children.Add(new TextBlock { Text = "." + template.Name, FontFamily = Fonts.Mono, FontSize = 12.5, VerticalAlignment = VerticalAlignment.Center });
-        line.Children.Add(new TextBlock { Text = template.Example, Classes = { "muted" }, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis });
-        return line;
+        TextBlock name = new() { Text = "." + template.Name, FontFamily = Fonts.Mono, FontSize = 12.5, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0) };
+        SetDock(on, Dock.Left);
+        SetDock(name, Dock.Left);
+        // The example takes what the row leaves, so a long one ends in an ellipsis rather than cut at the frame.
+        return new DockPanel
+        {
+            Margin = line.Margin,
+            Children = { on, name, new TextBlock { Text = template.Example, Classes = { "muted" }, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis } },
+        };
     }
 
     private static TextBox Code() => new() { IsReadOnly = true, FontFamily = Fonts.Mono, FontSize = 12.5, Classes = { "search" }, Focusable = false };

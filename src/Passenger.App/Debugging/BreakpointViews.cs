@@ -636,8 +636,7 @@ public sealed class BreakpointsWindow : UserControl
 
     private static Border Framed(Control content)
     {
-        Border frame = new() { BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4), Child = content };
-        frame.Bind(Border.BorderBrushProperty, frame.GetResourceObservable("Passenger.Divider"));
+        Border frame = new() { Classes = { "framed" }, Child = content };
         return frame;
     }
 

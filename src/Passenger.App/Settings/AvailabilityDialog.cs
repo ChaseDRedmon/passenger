@@ -29,13 +29,12 @@ public sealed class AvailabilityDialog : Window
             boxes[place] = box;
             places.Children.Add(box);
         }
-        OkButton = new Button { Content = "OK", IsDefault = true, Classes = { "primary" }, MinWidth = 80 };
-        Button cancel = new() { Content = "Cancel", IsCancel = true, MinWidth = 80 };
+        OkButton = new Button { Content = "OK", IsDefault = true, Classes = { "primary" } };
+        Button cancel = new() { Content = "Cancel", IsCancel = true };
         OkButton.Click += (_, _) => Close(true);
         cancel.Click += (_, _) => Close(false);
-        StackPanel buttons = new() { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Spacing = 8, Margin = new Thickness(16, 10), Children = { cancel, OkButton } };
-        Border bottom = new() { BorderThickness = new Thickness(0, 1, 0, 0), Child = buttons };
-        bottom.Bind(Border.BorderBrushProperty, bottom.GetResourceObservable("Passenger.Divider"));
+        StackPanel buttons = DialogFooter.Of(OkButton, cancel);
+        Border bottom = new() { Classes = { "footerBar" }, Child = buttons };
         DockPanel root = new();
         DockPanel.SetDock(bottom, Dock.Bottom);
         root.Children.Add(bottom);

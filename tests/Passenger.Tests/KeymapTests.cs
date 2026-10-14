@@ -39,7 +39,7 @@ public sealed class KeymapTests : IDisposable
         try
         {
             SettingsDialog dialog = Settings(window, "split right");
-            KeyboardShortcutDialog keys = AddKeyboardShortcut(dialog, AppActions.SplitRight);
+            KeyboardShortcutDialog keys = AddKeyboardShortcut(dialog, AppActions.SplitRight, byItsButton: true);
             Ui.Press(keys, $"{Cmd} K");
             Assert.Equal(Keystroke.Parse($"{Cmd} K").Display(), keys.Keys.First.Text);
             Assert.True(keys.OkButton.IsEnabled, "OK stays disabled with a keystroke pressed");
@@ -291,16 +291,30 @@ public sealed class KeymapTests : IDisposable
         return dialog;
     }
 
-    /// <summary>Rider's Add Keyboard Shortcut, from an action's Edit Shortcuts: its dialog, once the first keystroke's field
-    /// has the keys.</summary>
-    private static KeyboardShortcutDialog AddKeyboardShortcut(SettingsDialog settings, string action)
+    /// <summary>Rider's Add Keyboard Shortcut, from an action's Edit Shortcuts (its row's right-click, or the ⋮ beside its
+    /// shortcuts): its dialog, held to the dialogs' look, once the first keystroke's field has the keys.</summary>
+    private static KeyboardShortcutDialog AddKeyboardShortcut(SettingsDialog settings, string action, bool byItsButton = false)
     {
-        Ui.ChooseFromMenu(settings.KeymapRow(action), "Add Keyboard Shortcut");
+        if (byItsButton)
+        {
+            Control row = settings.KeymapRow(action);
+            Button edit = row.GetVisualDescendants().OfType<Button>().Single(b => ToolTip.GetTip(b) as string == "Edit Shortcuts");
+            Click(settings, edit);
+            ContextMenu menu = row.ContextMenu!;
+            Assert.True(menu.IsOpen, "The ⋮ beside an action's shortcuts opened no Edit Shortcuts menu");
+            menu.Items.OfType<MenuItem>().First(i => (string?)i.Header == "Add Keyboard Shortcut").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
+            menu.Close();
+            Ui.Settle();
+        }
+        else
+        {
+            Ui.ChooseFromMenu(settings.KeymapRow(action), "Add Keyboard Shortcut");
+        }
         Ui.WaitFor(() => settings.OwnedWindows.OfType<KeyboardShortcutDialog>().Any(w => w.IsVisible), "the Keyboard Shortcut dialog");
         KeyboardShortcutDialog dialog = settings.OwnedWindows.OfType<KeyboardShortcutDialog>().Single(w => w.IsVisible);
         Assert.Equal("Keyboard Shortcut", dialog.Title);
         Ui.WaitFor(() => dialog.Keys.First.IsFocused, "the first keystroke's field to take the keys");
-        return dialog;
+        return DialogButtonsTests.Check(dialog);
     }
 
     /// <summary>Find Actions by Shortcut clicked: its popup, once its first field has the keys.</summary>
@@ -317,7 +331,7 @@ public sealed class KeymapTests : IDisposable
         ConfirmDialog warning = settings.OwnedWindows.OfType<ConfirmDialog>().Single(w => w.IsVisible);
         Assert.Equal("Warning", warning.Title);
         Assert.Contains(warning.GetVisualDescendants().OfType<TextBlock>(), t => t.Text == Warning);
-        return warning;
+        return DialogButtonsTests.Check(warning);
     }
 
     /// <summary>An action's Edit Shortcuts menu, by its items' headers, as a right-click opens it.</summary>

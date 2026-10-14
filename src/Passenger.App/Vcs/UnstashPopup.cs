@@ -166,7 +166,7 @@ public sealed class UnstashPopup : UserControl
 
     private static Button Action(string label, Func<Task> run, bool primary = false)
     {
-        Button button = new() { Content = label, Padding = new Thickness(12, 4) };
+        Button button = new() { Content = label };
         if (primary)
         {
             button.Classes.Add("primary");

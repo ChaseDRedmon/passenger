@@ -10,6 +10,9 @@
             <SolidColorBrush x:Key="Passenger.FieldBorder" Color="#4E5157" />
             <SolidColorBrush x:Key="Passenger.DropZone" Color="#3D7BF5" Opacity="0.18" />
             <SolidColorBrush x:Key="Passenger.Divider" Color="#1E1F22" />
+            <!-- A rule between groups inside a page (Rider's Separator.separatorColor), which shows on the field's colour where
+                 the Divider, the field's own colour in dark, does not. -->
+            <SolidColorBrush x:Key="Passenger.Separator" Color="#393B40" />
             <SolidColorBrush x:Key="Passenger.Text" Color="#DFE1E5" />
             <SolidColorBrush x:Key="Passenger.TextMuted" Color="#868A91" />
             <SolidColorBrush x:Key="Passenger.Icon" Color="#CED0D6" />
@@ -194,6 +197,7 @@
             <SolidColorBrush x:Key="Passenger.FieldBorder" Color="#C9CCD6" />
             <SolidColorBrush x:Key="Passenger.DropZone" Color="#3D7BF5" Opacity="0.14" />
             <SolidColorBrush x:Key="Passenger.Divider" Color="#EBECF0" />
+            <SolidColorBrush x:Key="Passenger.Separator" Color="#EBECF0" />
             <SolidColorBrush x:Key="Passenger.Text" Color="#1E1F22" />
             <SolidColorBrush x:Key="Passenger.TextMuted" Color="#6C707E" />
             <SolidColorBrush x:Key="Passenger.Icon" Color="#6C707E" />

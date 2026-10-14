@@ -91,15 +91,15 @@ public sealed partial class SettingsDialog : Window
         AddOptions(actions.Keymap);
         search = new TextBox { Classes = { "search" }, PlaceholderText = "Search settings", Margin = new Thickness(10, 10, 10, 6) };
         search.TextChanged += (_, _) => Filter();
-        pages = new ListBox { Classes = { "tree" } };
+        pages = new ListBox { Classes = { "tree", "pages" } };
         pages.SelectionChanged += (_, _) => ShowPage();
         heading = new TextBlock { FontSize = 16, FontWeight = FontWeight.SemiBold, Margin = new Thickness(0, 0, 0, 14) };
         body = new StackPanel { Spacing = 12 };
-        nothing = new TextBlock { Classes = { "muted" }, Text = "Nothing matches", IsVisible = false, Margin = new Thickness(12) };
+        nothing = new TextBlock { Classes = { "muted" }, Text = "Nothing matches", IsVisible = false, Margin = new Thickness(21, 4) };
 
-        Button ok = new() { Content = "OK", IsDefault = true, Classes = { "primary" }, MinWidth = 80 };
-        Button cancel = new() { Content = "Cancel", IsCancel = true, MinWidth = 80 };
-        Button applyButton = new() { Content = "Apply", MinWidth = 80 };
+        Button ok = new() { Content = "OK", IsDefault = true, Classes = { "primary" } };
+        Button cancel = new() { Content = "Cancel", IsCancel = true };
+        Button applyButton = new() { Content = "Apply" };
         ok.Click += (_, _) => Ok();
         cancel.Click += (_, _) => Close(false);
         applyButton.Click += (_, _) => Apply();
@@ -110,16 +110,8 @@ public sealed partial class SettingsDialog : Window
         left.Children.Add(new Panel { Children = { pages, nothing } });
         Border leftPane = new() { BorderThickness = new Thickness(0, 0, 1, 0), Child = left };
         leftPane.Bind(Border.BorderBrushProperty, leftPane.GetResourceObservable("Passenger.Divider"));
-        StackPanel buttons = new()
-        {
-            Orientation = Orientation.Horizontal,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            Spacing = 8,
-            Margin = new Thickness(16, 10),
-            Children = { cancel, applyButton, ok },
-        };
-        Border bottom = new() { BorderThickness = new Thickness(0, 1, 0, 0), Child = buttons };
-        bottom.Bind(Border.BorderBrushProperty, bottom.GetResourceObservable("Passenger.Divider"));
+        StackPanel buttons = DialogFooter.Of(ok, cancel, applyButton);
+        Border bottom = new() { Classes = { "footerBar" }, Child = buttons };
         DockPanel right = new() { Margin = new Thickness(20, 16, 20, 0) };
         DockPanel.SetDock(heading, Dock.Top);
         DockPanel.SetDock(pageTop, Dock.Top);
@@ -434,7 +426,23 @@ public sealed partial class SettingsDialog : Window
     /// does; a keymap row names its action.</summary>
     private Control Add(string page, string label, Control editor, string keywords, string? note = null, string? action = null)
     {
-        TextBlock name = new() { Text = label, Width = 220, TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center };
+        // A gutter keeps a wrapped label off its editor; beside an editor of several lines (a list of choices, a text of
+        // several lines) the label stands level with its first line, as Rider's do.
+        double firstLine = editor switch
+        {
+            TextBox { AcceptsReturn: true } => 5,
+            StackPanel { Orientation: Orientation.Vertical, Children: [RadioButton, ..] } => 6,
+            _ => -1,
+        };
+        TextBlock name = new()
+        {
+            Text = label,
+            Width = 220,
+            Padding = new Thickness(0, 0, 16, 0),
+            TextWrapping = TextWrapping.Wrap,
+            VerticalAlignment = firstLine < 0 ? VerticalAlignment.Center : VerticalAlignment.Top,
+            Margin = new Thickness(0, Math.Max(0, firstLine), 0, 0),
+        };
         Control row = new StackPanel { Orientation = Orientation.Horizontal, Children = { name, editor } };
         if (note is not null)
         {

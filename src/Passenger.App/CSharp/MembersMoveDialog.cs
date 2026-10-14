@@ -75,12 +75,10 @@ public sealed class MembersMoveDialog : RefactoringDialog
         }
         Border tableFrame = new()
         {
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(4),
+            Classes = { "framed" },
             ClipToBounds = true,
             Child = new DockPanel { Children = { headerFrame, new ScrollViewer { Content = rows, MaxHeight = 260, MinHeight = 100 } } },
         };
-        tableFrame.Bind(Border.BorderBrushProperty, tableFrame.GetResourceObservable("Passenger.FieldBorder"));
         tableFrame.Bind(Border.BackgroundProperty, tableFrame.GetResourceObservable("Passenger.Editor.Background"));
         options.Children.Add(new TextBlock { Text = up ? "Members to pull up:" : "Members to push down:" });
         options.Children.Add(tableFrame);

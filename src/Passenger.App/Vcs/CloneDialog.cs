@@ -77,7 +77,7 @@ public sealed partial class CloneDialog : Window
                 fields,
                 working,
                 problem,
-                new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Spacing = 8, Children = { cancel, clone } },
+                DialogFooter.Of(clone, cancel),
             },
         };
         ShowDestination();
