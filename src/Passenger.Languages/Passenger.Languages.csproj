@@ -13,7 +13,8 @@
     <ProjectReference Include="../Passenger.Text/Passenger.Text.csproj" />
   </ItemGroup>
 
-  <!-- VS Code's TextMate grammars, unchanged (THIRD_PARTY_NOTICES.md says where each came from), read by their file name. -->
+  <!-- VS Code's TextMate grammars and dotnet/roslyn's Razor and C# ones, unchanged (THIRD_PARTY_NOTICES.md says where each
+       came from), read by their file name. -->
   <ItemGroup>
     <EmbeddedResource Include="TextMate/Grammars/*.json" LogicalName="Grammars/%(Filename)%(Extension)" />
   </ItemGroup>

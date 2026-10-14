@@ -100,6 +100,7 @@ internal static class ScopeColours
         ("constant.character.escape.markdown", TokenKind.Text),
 
         // A fenced block in a language with a grammar here is that language from plain text up; another stays code.
+        ("meta.embedded.block.csharp", TokenKind.Text),
         ("meta.embedded.block.css", TokenKind.Text),
         ("meta.embedded.block.dockerfile", TokenKind.Text),
         ("meta.embedded.block.html", TokenKind.Text),

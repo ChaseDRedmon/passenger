@@ -751,6 +751,7 @@ public sealed record Language(string Name, string? LineComment, int IndentSize =
         return System.IO.Path.GetExtension(path).ToLowerInvariant() switch
         {
             ".cs" or ".csx" => new Language("C#", "//", 4, "/*", "*/"),
+            ".razor" or ".cshtml" => new Language("Razor", null, 4, "@*", "*@"),
             ".csproj" or ".fsproj" or ".vbproj" or ".proj" or ".props" or ".targets" or ".xml" or ".axaml" or ".xaml" or ".slnx"
                 or ".resx" or ".config" or ".nuspec" or ".manifest" or ".runsettings" or ".xsd" or ".xslt" or ".xsl" or ".svg"
                 or ".plist" or ".storyboard" => Xml,

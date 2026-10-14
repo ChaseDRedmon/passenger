@@ -10,9 +10,10 @@ using TextMateSharp.Themes;
 
 namespace Passenger.Languages.TextMate;
 
-/// <summary>A language's TextMate grammar (VS Code's, carried in this assembly under <c>TextMate/Grammars</c>) with the
-/// grammars it embeds, in a registry of its own: TextMateSharp compiles rules as it meets them and keeps no lock, so
-/// everything done with one language's rules holds <see cref="Gate"/>, and two languages never share any.</summary>
+/// <summary>A language's TextMate grammar (VS Code's, or Razor's and C#'s from dotnet/roslyn, carried in this assembly
+/// under <c>TextMate/Grammars</c>) with the grammars it embeds, in a registry of its own: TextMateSharp compiles rules as
+/// it meets them and keeps no lock, so everything done with one language's rules holds <see cref="Gate"/>, and two
+/// languages never share any.</summary>
 internal sealed class Grammar
 {
     /// <summary>Each scope a grammar here names, by its file.</summary>
@@ -28,6 +29,8 @@ internal sealed class Grammar
         ["source.ts"] = "TypeScript.tmLanguage.json",
         ["source.shell"] = "shell-unix-bash.tmLanguage.json",
         ["source.dockerfile"] = "docker.tmLanguage.json",
+        ["text.aspnetcorerazor"] = "aspnetcorerazor.tmLanguage.json",
+        ["source.cs"] = "csharp.tmLanguage.json",
     };
 
     /// <summary>The grammar each language the IDE names is coloured by, and whether its tags pair.</summary>
@@ -43,6 +46,7 @@ internal sealed class Grammar
         ["TypeScript"] = ("source.ts", Tags.None),
         ["Shell"] = ("source.shell", Tags.None),
         ["Dockerfile"] = ("source.dockerfile", Tags.None),
+        ["Razor"] = ("text.aspnetcorerazor", Tags.Html),
     };
 
     private static readonly Dictionary<string, Lazy<Grammar>> Loaded = [];

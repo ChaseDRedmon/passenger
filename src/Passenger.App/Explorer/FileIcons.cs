@@ -42,7 +42,7 @@ public static class FileIcons
         ".xml" or ".axaml" or ".xaml" or ".resx" or ".config" or ".manifest" => "Xml",
         ".json" => "Json",
         ".md" => "Markdown",
-        ".js" or ".ts" or ".py" or ".sh" or ".rs" or ".go" or ".css" or ".html" => "Code",
+        ".js" or ".ts" or ".py" or ".sh" or ".rs" or ".go" or ".css" or ".html" or ".razor" or ".cshtml" => "Code",
         _ => "Plain",
     };
 
