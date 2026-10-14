@@ -99,6 +99,7 @@ public partial class MainWindow : Window
         AddDiscord();
         AddShutdown();
         AddEditorWindows();
+        AddPreview();
         Explorer.FileOpened += (_, path) => OpenFile(path);
         Editors.ActiveChanged += (_, _) => FollowInExplorer();
         Structure.Follow(() => Editors.Active is { } shown

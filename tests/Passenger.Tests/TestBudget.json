@@ -26,6 +26,7 @@
     "MemorySnapshotsTests": 90,
     "LiveTreeTests": 90,
     "BindingErrorsTests": 120,
-    "RazorTests": 90
+    "RazorTests": 90,
+    "XamlTests": 150
   }
 }

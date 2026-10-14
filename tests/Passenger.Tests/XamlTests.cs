@@ -492,6 +492,59 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
     }
 
     /// <summary>The one marker over a stretch of the text.</summary>
+    [AvaloniaFact]
+    public void The_preview_draws_a_window_from_the_last_build_follows_its_text_as_it_is_typed_and_draws_styles_as_their_PreviewWith()
+    {
+        MainWindow window = app.Open(app.PathOf("MainWindow.axaml"));
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        OpenDocument document = window.EditorArea.Active!;
+        Ui.Run(window, AppActions.Build);
+        Ui.Settle();
+        Ui.Run(window, AppActions.FindAction);
+        Passenger.App.Navigation.ActionPopup popup = Assert.IsType<Passenger.App.Navigation.ActionPopup>(window.Popup);
+        popup.Query = "xaml preview";
+        Ui.Settle();
+        Assert.Equal(AppActions.XamlPreview, popup.Rows[0].Id);
+        Ui.Press(window, "ENTER");
+        Ui.Settle();
+        Passenger.App.Xaml.XamlPreview preview = window.PreviewOf(document) ?? throw new InvalidOperationException("XAML Preview showed no preview beside the file");
+        Ui.WaitFor(() => preview.Frame is not null, "the previewer's first frame", TimeSpan.FromSeconds(60));
+        Ui.Settle();
+        Assert.Null(preview.Error);
+        // Drawn at the size the window's design-time width and height give it.
+        Assert.Equal(new PixelSize(800, 450), preview.Frame!.PixelSize);
+        Avalonia.Controls.Image frame = window.PreviewPaneOf(document)!.Frame;
+        // A point of the panel below its children, where its background shows.
+        Color Below() => Ui.Pixel(window, frame.TranslatePoint(new Point(400, 300), window) ?? throw new InvalidOperationException("The preview's frame is not on the window"));
+        Color orange = Color.Parse("#E2A33F");
+        Assert.NotEqual(orange, Below());
+
+        PlaceAfter(editor, "<StackPanel");
+        window.KeyTextInput(" Background=\"#E2A33F\"");
+        Ui.WaitFor(() => Below() == orange, "the preview drawing the panel's new background once typing paused", TimeSpan.FromSeconds(30));
+
+        // XAML that does not load leaves the last frame up, the host's reason over it.
+        Replace(editor, "</StackPanel>", "</StackPane>");
+        Ui.WaitFor(() => preview.Error is not null, "the previewer saying why the XAML did not load", TimeSpan.FromSeconds(30));
+        Assert.Contains("line 14", preview.Error, StringComparison.Ordinal);
+        Assert.Equal(orange, Below());
+        Replace(editor, "</StackPane>", "</StackPanel>");
+        Ui.WaitFor(() => preview.Error is null, "the error gone once the XAML loads again", TimeSpan.FromSeconds(30));
+
+        // Styles preview as their Design.PreviewWith: the file shown is the one previewed.
+        string styles = app.PathOf("Styles/Buttons.axaml");
+        File.WriteAllText(styles, Gallery.Buttons);
+        window.OpenFile(styles);
+        Ui.Settle();
+        OpenDocument shown = window.EditorArea.Active!;
+        Passenger.App.Xaml.XamlPreview styled = window.PreviewOf(shown) ?? throw new InvalidOperationException("The styles opened while previewing showed no preview");
+        Ui.WaitFor(() => styled.Frame is not null, "the styles' preview", TimeSpan.FromSeconds(60));
+        Avalonia.Controls.Image button = window.PreviewPaneOf(shown)!.Frame;
+        Ui.WaitFor(() => button.TranslatePoint(new Point(24, styled.FrameSize.Height / 2), window) is { } inside && Ui.Pixel(window, inside) == orange,
+            "the button Design.PreviewWith holds drawn in the style's colour", TimeSpan.FromSeconds(30));
+        window.Close();
+    }
+
     private static Marker MarkerOn(CodeEditor editor, OpenDocument document, string stretch)
     {
         string text = editor.Document.Snapshot.ToString();
@@ -612,6 +665,22 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
                     <FluentTheme />
                 </Application.Styles>
             </Application>
+
+            """;
+
+        /// <summary>Styles that preview as the button their Design.PreviewWith holds, in the style's colour.</summary>
+        public const string Buttons = """
+            <Styles xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+                <Design.PreviewWith>
+                    <Border Padding="20">
+                        <Button Classes="warm" Content="Warm" />
+                    </Border>
+                </Design.PreviewWith>
+                <Style Selector="Button.warm">
+                    <Setter Property="Background" Value="#E2A33F" />
+                </Style>
+            </Styles>
 
             """;
 

@@ -248,6 +248,7 @@ public partial class MainWindow
         RunConfigName.Text = next.Configurations.Chosen?.Name ?? "No configurations";
         agentSocket?.Describe(next.Folder);
         OnCSharpChanged(next.CSharp);
+        BindPreviews(next);
     }
 
     /// <summary>A session's debugger in the window: what it asks to run, what it says, where it stops and the toolbar's

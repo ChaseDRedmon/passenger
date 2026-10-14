@@ -27,6 +27,9 @@ public sealed record ProjectInputs(
     /// <summary>The version of each package its restore resolved, by id.</summary>
     public IReadOnlyDictionary<string, string> PackageVersions { get; init; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>Where each package its restore resolved is, by id: the folder of its version in the package cache.</summary>
+    public IReadOnlyDictionary<string, string> PackageFolders { get; init; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>A property as the project sets it: its own file's, else the nearest Directory.Build.props' above it; null
     /// when neither sets it plainly (without other properties in it).</summary>
     public string? PropertyValue(string name)
@@ -96,6 +99,7 @@ public sealed record ProjectInputs(
             ImplicitUsingsOf(assets), assets, packages)
         {
             PackageVersions = read?.Versions ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+            PackageFolders = read?.Folders ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
         };
     }
 
@@ -203,7 +207,7 @@ public sealed record ProjectInputs(
     }
 
     private sealed record Assets(string Framework, List<string> Compile, List<string> Projects, List<string> FrameworkReferences, List<string> Packages,
-        Dictionary<string, string> Versions);
+        Dictionary<string, string> Versions, Dictionary<string, string> Folders);
 
     private static Assets? ReadAssets(string path)
     {
@@ -228,6 +232,7 @@ public sealed record ProjectInputs(
             List<string> projects = [];
             List<string> packages = [];
             Dictionary<string, string> versions = new(StringComparer.OrdinalIgnoreCase);
+            Dictionary<string, string> found = new(StringComparer.OrdinalIgnoreCase);
             foreach (JsonProperty library in target.Value.EnumerateObject())
             {
                 string type = library.Value.TryGetProperty("type", out JsonElement kind) ? kind.GetString() ?? string.Empty : string.Empty;
@@ -249,6 +254,10 @@ public sealed record ProjectInputs(
                 if (idAndVersion.Length > 1)
                 {
                     versions[idAndVersion[0]] = idAndVersion[1];
+                }
+                if (packageFolders.Select(f => Path.Combine(f, relative)).FirstOrDefault(Directory.Exists) is { } inCache)
+                {
+                    found[idAndVersion[0]] = inCache;
                 }
                 if (!library.Value.TryGetProperty("compile", out JsonElement assets))
                 {
@@ -283,7 +292,7 @@ public sealed record ProjectInputs(
                     break;
                 }
             }
-            return new Assets(framework, compile, projects, frameworkReferences, packages, versions);
+            return new Assets(framework, compile, projects, frameworkReferences, packages, versions, found);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException)
         {

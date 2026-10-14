@@ -212,6 +212,10 @@ public static class AppActions
     public const string DecreaseFontSize = "app.editor.decreaseFontSize";
     public const string ResetFontSize = "app.editor.resetFontSize";
 
+    // The XAML previewer beside the editor, under View; Rider's Avalonia previewer is the editor's own split, with no action
+    // of its keymaps.
+    public const string XamlPreview = "app.editor.xamlPreview";
+
     // Rider's Close Solution (CloseProject) and Restore Default Layout (RiderRestoreDefaultLayout, in Window > Layout
     // Settings): no keys there either; both Visual Studio keymaps take IntelliJ's Shift+F12 off its layout action.
     public const string CloseSolution = "app.closeSolution";

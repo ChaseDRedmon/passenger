@@ -46,6 +46,9 @@ public sealed class EditorGroup : DockPanel
     private readonly ObservableCollection<EditorTab> tabs = [];
     private readonly Dictionary<OpenDocument, (SelectionSet Selections, Vector Scroll)> views = [];
     private readonly Border tabBar;
+    private readonly Grid body;
+    private HairlineDivider? divider;
+    private Control? side;
     private readonly Border banner;
     private readonly TextBlock bannerText;
     private EditorTab? active;
@@ -85,7 +88,10 @@ public sealed class EditorGroup : DockPanel
         Children.Add(tabBar);
         Children.Add(banner);
         Children.Add(Find);
-        Children.Add(Editor);
+        // The editor beside a pane of its file's own (a XAML file's preview), divided by a hairline that resizes them.
+        body = new Grid { ColumnDefinitions = new ColumnDefinitions("*,0,0") };
+        body.Children.Add(Editor);
+        Children.Add(body);
         // The group the person works in is the area's active one.
         Editor.GotFocus += (_, _) => area.SetActiveGroup(this);
         Editor.SelectionChanged += (_, _) =>
@@ -114,6 +120,44 @@ public sealed class EditorGroup : DockPanel
     private event EventHandler? CurrentChanged;
 
     public CodeEditor Editor { get; }
+
+    /// <summary>A pane beside the editor for the file it shows (a XAML file's preview), half the group's width at first and
+    /// resized by the hairline between them; null for none.</summary>
+    public Control? Side
+    {
+        get => side;
+        set
+        {
+            if (value == side)
+            {
+                return;
+            }
+            if (side is not null)
+            {
+                body.Children.Remove(side);
+            }
+            if (value is null)
+            {
+                body.Children.Remove(divider!);
+                divider = null;
+                body.ColumnDefinitions = new ColumnDefinitions("*,0,0");
+            }
+            else if (divider is null)
+            {
+                // A divider only while there is a pane to divide from, so the splits' own are the only ones otherwise.
+                divider = new HairlineDivider(GridResizeDirection.Columns) { [Grid.ColumnProperty] = 1 };
+                body.Children.Add(divider);
+                body.ColumnDefinitions = new ColumnDefinitions("*,1,*");
+            }
+            side = value;
+            if (value is not null)
+            {
+                // Another file's pane takes the place the last one was given.
+                Grid.SetColumn(value, 2);
+                body.Children.Add(value);
+            }
+        }
+    }
     public FindBar Find { get; }
     public IReadOnlyList<EditorTab> Tabs => tabs;
     public OpenDocument? Active => active?.Document;

@@ -89,6 +89,9 @@ public sealed class BuildRunController
     /// <summary>A program started or ended, or a launch was refused: the toolbar's Stop follows.</summary>
     public event EventHandler? RunningChanged;
 
+    /// <summary>A build ended, how it did said; after its caller has heard.</summary>
+    public event EventHandler<BuildOutcome>? BuildFinished;
+
     /// <summary>How a run that ended is named, in the status bar and to an agent.</summary>
     public static string RunEnded(string name, int code) => $"{name} exited with code {code}";
 
@@ -250,6 +253,7 @@ public sealed class BuildRunController
         try
         {
             then?.Invoke(outcome);
+            BuildFinished?.Invoke(this, outcome);
         }
         finally
         {
