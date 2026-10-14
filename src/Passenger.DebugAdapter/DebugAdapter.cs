@@ -342,8 +342,7 @@ public sealed class DebugAdapter
             bool hotReload = arguments.HotReload ?? false;
             if (hotReload)
             {
-                // The runtime's own switch for code that may change (unoptimized modules get Edit and Continue), as dotnet
-                // watch and Visual Studio set it; one the launch gives is kept.
+                // The runtime's own switch for code that may change, as dotnet watch sets it; a launch's own is kept.
                 environment.TryAdd("DOTNET_MODIFIABLE_ASSEMBLIES", "debug");
             }
             LaunchInfo launch = new()

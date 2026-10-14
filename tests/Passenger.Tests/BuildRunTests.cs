@@ -130,8 +130,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
             Ui.WaitFor(() => Output(window).Contains("after the edit", StringComparison.Ordinal), "the edit to reach the program", TimeSpan.FromMinutes(1));
             Assert.True(window.Runner.IsRunning);
 
-            // Apply Hot Reload Changes, on the Run window while dotnet watch runs it, saves the edits and says what dotnet watch
-            // made of them.
+            // Apply Hot Reload Changes, in the Run window under dotnet watch, saves and says what dotnet watch made of it.
             Assert.True(window.BottomPanel.Run.ShowsHotReload, "The Run window should offer Apply Hot Reload Changes under dotnet watch");
             at = program.Text.Snapshot.ToString().IndexOf("after the edit", StringComparison.Ordinal);
             window.EditorArea.CodeEditor.ApplyEdits([new TextEdit(at, "after the edit".Length, "applied again")]);

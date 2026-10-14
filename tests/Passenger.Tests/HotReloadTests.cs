@@ -146,8 +146,7 @@ public sealed class HotReloadTests : IClassFixture<RestoredFolders>, IDisposable
             Paused(window, "the program to stop in Greet");
             CodeEditor editor = window.EditorArea.CodeEditor;
 
-            // A statement added after the one paused at: Step Over applies the edit first, then runs the paused statement
-            // in the new code and stops at the added one.
+            // Step Over applies the edit, runs the paused statement in the new code and stops at the one added after it.
             Replace(window, "        Console.WriteLine($\"Hello {i}\");", "        Console.WriteLine($\"Howdy {i}\");\n        Console.WriteLine(\"added\");");
             Ui.Run(window, AppActions.StepOver);
             Ui.WaitFor(() => window.Debugger.LastApplied is not null && editor.LineMarks.Any(m => m.Kind == LineMarkKind.ExecutionPoint && m.Line == 5),

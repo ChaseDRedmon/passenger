@@ -205,8 +205,8 @@ public sealed class DebugController : IDisposable
     /// changes.</summary>
     public string? WhyNotApply() => !IsDebugging ? NothingDebugged
         : hotReload is null ? (Session!.Attached
-            ? "Hot Reload applies changes to a program the debugger launched with Hot Reload while debugging on"
-            : "This program was launched with Hot Reload while debugging off (Settings, Debugger)")
+            ? "Hot Reload applies changes to a program the debugger launched, not to one it attached to"
+            : "This program was launched with Hot Reload when debugging off (Settings, Hot Reload)")
         : hotReload.WhyNot;
 
     /// <summary>Rider's Apply Hot Reload Changes: the edits since the launch or the last apply, applied to the program
@@ -529,16 +529,15 @@ public sealed class DebugController : IDisposable
     private string? NotPaused() => !IsDebugging ? NothingDebugged : Session!.State != DebugState.Paused ? "The program is not paused" : null;
 
     /// <summary>Sets the paused program going as an action asks. One the debugger refuses leaves it paused where it was,
-    /// the Debug window as it was, and the reason in the status bar.</summary>
+    /// the Debug window as it was, and the reason in the status bar. Edits made while it was paused are applied first, as
+    /// Rider's "Changes will be applied on the next step or resume": one that needs a restart restarts it (or asks, as
+    /// Settings says); one that does not compile is left, and the program goes on in the code it has, never stranded.</summary>
     private async Task ResumeAsync(Func<DebugSession, Task> resume, string action)
     {
         if (Session is not { } session)
         {
             return;
         }
-        // Rider's "Changes will be applied on the next step or resume": edits made while paused go first. An edit that needs a
-        // restart restarts the program (or asks, as Settings says); one that does not compile is left, and the program goes
-        // on running the code it has, rather than staying stranded at the stop.
         if (HotReload is { Changed: true } && WhyNotApply() is null && session.State == DebugState.Paused)
         {
             if (await ApplyChangesAsync() is { Result: HotReloadResult.RestartNeeded } outcome && await RestartAsked(outcome))

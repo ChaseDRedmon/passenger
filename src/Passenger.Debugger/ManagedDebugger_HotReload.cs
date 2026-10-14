@@ -23,12 +23,11 @@ public sealed record ModuleUpdate(Guid Module, string Name, byte[] Metadata, byt
 /// <summary>What became of one module's update: applied (or, its module not yet loaded, held for its load), or why not.</summary>
 public sealed record ModuleApplied(Guid Module, string Name, bool Applied, string? Message);
 
-/// <summary>Hot Reload under the debugger (Edit and Continue): each of the user's modules has the runtime's Edit and Continue
-/// turned on as it loads (ICorDebugModule2.SetJITCompilerFlags, in its load callback, the one time the runtime allows it),
-/// an update is applied with ICorDebugModule2.ApplyChanges while the program is held (a running one is stopped for it and
-/// goes on), the module's debug information takes the update's (<see cref="ModuleMetadataReader.AddGeneration"/>), and a
-/// frame still in a method's old code moves to the new code at the statement Roslyn says it became, when the runtime offers
-/// (FunctionRemapOpportunity). The runtime's own capabilities are read from its CoreLib, never assumed.</summary>
+/// <summary>Hot Reload under the debugger (Edit and Continue): the user's modules get Edit and Continue in their load
+/// callbacks (SetJITCompilerFlags), an update is applied with ICorDebugModule2.ApplyChanges while the program is held (a
+/// running one stopped for it), the module's debug information takes the update's (<see cref="ModuleMetadataReader.AddGeneration"/>),
+/// and a frame in a method's old code moves to the statement Roslyn says it became (FunctionRemapOpportunity). The runtime's
+/// capabilities are read from its CoreLib, never assumed.</summary>
 public partial class ManagedDebugger
 {
     /// <summary>Whether the launch asked for Hot Reload: the user's modules get Edit and Continue as they load.</summary>
@@ -223,8 +222,7 @@ public partial class ManagedDebugger
         {
             return new ModuleApplied(update.Module, update.Name, false, module.WhyNotEditable ?? $"{module.ModuleName} cannot be edited");
         }
-        // mscordbi applies the update to its own copy of the metadata too, which it reads only when first asked for it, and
-        // dereferences without a look (CordbModule::ApplyChanges): asked for here, so it is there.
+        // mscordbi updates its own copy of the metadata, made when first asked for, which CordbModule::ApplyChanges assumes.
         if (module.Module.TryGetMetaDataInterface(out IMetaDataImport? _) is not Cor.S_OK)
         {
             return new ModuleApplied(update.Module, update.Name, false, $"The runtime would not give the debugger {module.ModuleName}'s metadata, which an update changes");
@@ -338,8 +336,7 @@ public partial class ManagedDebugger
                 && module.MetadataReader.Points(token, (int)to).FirstOrDefault(p => !p.IsHidden && p.StartLine == went.StartLine + 1 && p.StartColumn == went.StartColumn + 1) is { Document: not null } there
                 && remap.Thread.ActiveFrame is ICorDebugILFrame2 frame)
             {
-                // A step under way steps the old code's frame, which the remap ends: its stepper goes first, and is made
-                // again once the frame runs the new code (FunctionRemapComplete).
+                // A step's stepper is the old frame's: it goes first, and is made again at FunctionRemapComplete.
                 if (_stepper is not null && _stepping is (int stepping, _) && stepping == remap.Thread.Id)
                 {
                     _stepper.TryDeactivate();

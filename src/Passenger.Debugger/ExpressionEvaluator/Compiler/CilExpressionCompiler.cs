@@ -286,8 +286,7 @@ internal sealed class CilExpressionCompiler(ManagedDebugger debugger)
             Guid generationId;
             if (moduleInfo.CurrentMetadata is { } updated)
             {
-                // Hot Reload changed the module: its metadata as the updates made it (the image's storage is the build's),
-                // each update's a generation of its own.
+                // Hot Reload changed the module: its metadata as the updates made it, each update a generation of its own.
                 pointer = System.Runtime.InteropServices.Marshal.UnsafeAddrOfPinnedArrayElement(updated, 0);
                 size = updated.Length;
                 generationId = new Guid([.. BitConverter.GetBytes(moduleInfo.MetadataReader.Generations), .. new byte[12]]);
@@ -364,8 +363,7 @@ internal sealed class CilExpressionCompiler(ManagedDebugger debugger)
             : (StandaloneSignatureHandle)MetadataTokens.Handle(frame.Function.LocalVarSigToken);
         ImmutableArray<LocalInfo<TypeSymbol>> localInfo = metadataDecoder.GetLocalInfo(localSignature);
         int ilOffset = EvaluationContextBase.NormalizeILOffset((uint)frame.IP.pnOffset);
-        // The frame's version of the method: Hot Reload's update that last changed it reads from that update's PDB delta,
-        // which Roslyn's reader maps the method into (its EncMap).
+        // The frame's version of the method, read from the PDB delta of the update that made it, as Roslyn's reader reads one.
         int version = ModuleMetadataReader.VersionOf(frame) ?? 1;
         MetadataReader? pdbReader = moduleInfo.MetadataReader.DebugOf(methodToken, version)?.Reader;
         MethodDebugInfo<TypeSymbol, LocalSymbol> debugInfo = pdbReader is null

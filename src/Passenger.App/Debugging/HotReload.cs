@@ -121,8 +121,7 @@ public sealed class HotReload
         }
         if ((starting is null ? "Hot Reload did not start" : await starting) is not null)
         {
-            // The server may still have been loading as the program launched: its session starts now, on the solution as
-            // it is, whose edited files Roslyn checks against the build's own (their checksums in its PDB).
+            // The server may have been loading at the launch: Roslyn checks edited files against the PDB's checksums.
             starting = StartAsync();
             if (await starting is { } notStarted)
             {
