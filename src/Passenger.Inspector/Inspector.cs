@@ -27,6 +27,7 @@ internal sealed class Inspector
     private readonly List<IDisposable> handlers = [];
     private readonly Picker picker;
     private readonly Driver driver;
+    private readonly PropertyBreaks breaks = new();
     private long next;
     private bool told;
 
@@ -62,6 +63,7 @@ internal sealed class Inspector
                     ? new Reply { Id = request.Id, Picture = Pictures.Take(shown, request) }
                     : Gone(request),
                 Wire.Input => new Reply { Id = request.Id, Done = driver.Do(request.Input ?? throw new Refusal("No input was given")) },
+                Wire.Watch => Done(request, () => Watch(request)),
                 _ => new Reply { Id = request.Id, Error = $"The inspector does not know '{request.Method}'" },
             };
         }
@@ -94,6 +96,7 @@ internal sealed class Inspector
     /// <summary>Passenger has gone: nothing of the inspector's is left in the app's windows.</summary>
     public void Stop()
     {
+        breaks.Stop();
         picker.Choose(false);
         picker.Outline(null);
         foreach (IDisposable handler in handlers)
@@ -103,6 +106,19 @@ internal sealed class Inspector
     }
 
     private static Reply Gone(Request request) => new() { Id = request.Id, Error = "That element is no longer in the app" };
+
+    /// <summary>A property breakpoint's watch begun (again, with its hit count) or ended.</summary>
+    private void Watch(Request request)
+    {
+        int breakpoint = request.Breakpoint ?? throw new Refusal("No property breakpoint was named");
+        if (request.On == false)
+        {
+            breaks.Unwatch(breakpoint);
+            return;
+        }
+        Visual element = Find(request.Element) ?? throw new Refusal("That element is no longer in the app");
+        breaks.Watch(breakpoint, element, request.Property ?? throw new Refusal("No property was named"), request.HitCondition);
+    }
 
     private static Reply Done(Request request, Action action)
     {

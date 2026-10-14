@@ -8,6 +8,9 @@
     <!-- The oldest .NET an Avalonia 12 app runs on, so it loads into any of them. -->
     <TargetFramework>net8.0</TargetFramework>
     <RootNamespace>Passenger.Inspector</RootNamespace>
+    <!-- Never optimized, a Release build as a Debug one: the debugger reads a property breakpoint's arguments where the app
+         stops (its condition's, what changed), which optimized code need not keep. -->
+    <Optimize>false</Optimize>
   </PropertyGroup>
 
   <ItemGroup>
@@ -19,5 +22,10 @@
     <Reference Include="$(PkgAvalonia)/lib/net8.0/Avalonia.Controls.dll" Private="false" />
     <Reference Include="$(PkgAvalonia)/lib/net8.0/Avalonia.Markup.dll" Private="false" />
     <Reference Include="$(PkgAvalonia)/lib/net8.0/Avalonia.Markup.Xaml.dll" Private="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- A property breakpoint's hit count is kept here, where its changes are seen, in the debugger's own words. -->
+    <Compile Include="../Passenger.Dap/HitCondition.cs" Link="HitCondition.cs" />
   </ItemGroup>
 </Project>

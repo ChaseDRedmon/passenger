@@ -7,13 +7,14 @@ namespace Passenger.Inspector;
 // (Reply); the app also tells without being asked (a Reply with an Event): hello once its UI runs, treeChanged as controls
 // come and go, picked when the person points at one, bindingFailed as a binding fails (from before hello, as the app starts).
 // An agent's tools ask the same: the windows, the tree with each element's layout and text, a picture the app draws of a
-// window, and input to it as a person's goes.
+// window, and input to it as a person's goes. A property breakpoint (Break When Value Changes) asks it to watch an element's
+// property, which stops the debugged app at each change its hit count lets through (PropertyBreaks.cs).
 
 /// <summary>The names both ends agree on.</summary>
 public static class Wire
 {
     /// <summary>Bumped by a change either end must know of: a hello of another version is refused, saying so.</summary>
-    public const int Version = 2;
+    public const int Version = 3;
 
     /// <summary>The app's environment: the socket's path, where it connects.</summary>
     public const string SocketVariable = "PASSENGER_INSPECTOR";
@@ -31,6 +32,11 @@ public static class Wire
     public const string Windows = "windows";
     public const string Capture = "capture";
     public const string Input = "input";
+    public const string Watch = "watch";
+
+    /// <summary>The method a watched property's change calls (PropertyBreaks.cs), where the debugger's function breakpoint
+    /// for each property breakpoint is.</summary>
+    public const string Changed = "Passenger.Inspector.Breaks.Changed";
 
     public const string Hello = "hello";
     public const string TreeChanged = "treeChanged";
@@ -40,10 +46,19 @@ public static class Wire
 }
 
 /// <summary>What Passenger asks: the windows' tree, an element's details, Select Element on or off, an element outlined in
-/// the app (none to take the outline away), the windows alone, a picture of a window (or of the element's part of it), or
-/// input to the app.</summary>
+/// the app (none to take the outline away), the windows alone, a picture of a window (or of the element's part of it),
+/// input to the app, or a property breakpoint's watch on an element's property (On false to end it).</summary>
 public sealed record Request(int Id, string Method, long? Element = null, bool? On = null)
 {
+    /// <summary>With Watch: the property, by the name the element's details list it under (Owner.Name when attached).</summary>
+    public string? Property { get; init; }
+
+    /// <summary>With Watch: the property breakpoint's number, which the debugger's condition on its stop names.</summary>
+    public int? Breakpoint { get; init; }
+
+    /// <summary>With Watch: the breakpoint's hit count ("==2", ">3", "%2"), counted where the changes are seen.</summary>
+    public string? HitCondition { get; init; }
+
     /// <summary>With Tree: each element's place in its window, its text, and whether it is disabled, focused or out of view.</summary>
     public bool? Layout { get; init; }
 
