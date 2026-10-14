@@ -133,7 +133,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   (the server's definition and references, the removal from `SafeDeletion`) and the server's Introduce Field,
   Introduce Parameter and Encapsulate Field under Rider's names. `TypeRename` renames a type with the files named after
   it (their name up to the first dot), from Rename, the Solution view's Rename of a file and MCP's `rename`; Rename's
-  options are the store's `refactorings.json`. `CodeAssist.Dialogs.cs` is Change Signature, Extract Interface, Move,
+  options are the store's `refactorings.json`. `LiveTemplates` is the built-in live and surround templates and Rider's
+  macros; `TemplateSet` is the set in force (the settings' `TemplateChange`s, each a built-in's difference keyed by the
+  shortcut it ships with, over the built-ins), which `ApplySettings` hands to `CodeAssist.Templates`. `CodeAssist.Dialogs.cs` is Change Signature, Extract Interface, Move,
   Pull Members Up and Push Members Down: the extension describes what is at the caret, a `RefactoringDialog` asks the
   options, and the answer is applied inside `EditorArea.Commands.Record`, which keeps the files a command creates so
   Undo deletes them. The server's colour and diagnostics refreshes are two
@@ -186,9 +188,13 @@ window or takes the focus; it shows everything but the system's own window chrom
   `MainWindow.Conflicts.cs` wires them with Continue Rebase and the aborts, and `vcs_status`/`vcs_resolve` give an
   agent the same. A file moved through `EditorArea.MoveFile` takes its index entry with it, as git mv does. `MainWindow.Vcs.cs` is the branch widget, the Commit and Git
   windows' places (`ToolWindows/CommitView`, `GitLogView`) and the `app.vcs.*` actions.
-- `src/Passenger.App/Packages`: NuGet. `IPackageFeed` is nuget.org's v3 search and flat container (`NuGetOrgFeed`) or a
-  folder of .nupkg files (`FolderFeed`, what the tests use offline); `PackageManager` changes projects through
-  `dotnet add`/`remove package`. `ToolWindows/NuGetView` is the window.
+- `src/Passenger.App/Packages`: NuGet. `PackageSourceSet` reads the folder's nuget.config files through
+  NuGet.Configuration as restore does (feeds, credentials, packageSourceMapping); `FeedSet` searches All Feeds or one,
+  over `V3Feed`, `V2Feed` and `FolderFeed` (what the tests use offline); each HTTP feed's requests go through
+  `FeedClient`, with its own credentials or else `CredentialProviders` (NuGet's plugin protocol, through
+  ChildProcesses), never logged. `NuGetConfigEditor` changes one nuget.config in place, every other character kept;
+  `PackageManager` changes projects through `dotnet add`/`remove package`. `ToolWindows/NuGetView` is the window, its
+  Packages and Sources tabs. A run's NuGet is its own on macOS and Linux (DOTNET_CLI_HOME under the run's folder).
 - `src/Passenger.App/Settings`: `AppSettings` (the store's `settings.json`) and Rider's searchable `SettingsDialog`;
   `MainWindow.Settings.cs` applies them live. A new setting is a property, an option row in the dialog, a line in
   `ApplySettings`, and its range in `Clamped` when it has one.
@@ -235,7 +241,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   object model. `TestFinder` shows a solution's tests from code as it opens, before any build: test projects' files
   parsed off the UI thread, an open file's from its own parse (`TestsAtCaret.Read` is the one reading of a file's
   tests), changed ones through the folder watcher; discovery and runs merge into those rows by id.
-  `MainWindow.Tests.cs` wires it. `TestTree` groups by Rider's Group By levels (`TestGrouping.cs`) and filters by
+  `MainWindow.Tests.cs` wires it. `TestRunners` sends each built assembly to its runner: a Testing Platform application
+  (its `Microsoft.Testing.Platform.Application` assembly metadata: xUnit v3, MSTest's runner, TUnit) to
+  `TestingPlatformRunner`, which runs it with `--server` through ChildProcesses and speaks the platform's JSON-RPC, one
+  request per process; every other to `VsTestRunner`. `TestTree` groups by Rider's Group By levels (`TestGrouping.cs`) and filters by
   outcome and search; code that wants every test asks `TestTree.Methods` (each method once), never `Roots`. The
   grouping and filters are a folder's `unitTests.json`.
 - `src/Passenger.App/Navigation`: Recent Files and the Go to popups, `NavigationHistory` (Back and Forward, the places
