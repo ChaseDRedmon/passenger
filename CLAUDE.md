@@ -173,7 +173,9 @@ window or takes the focus; it shows everything but the system's own window chrom
   (`StateStore.Open`), with `layout.json` only the default for a folder with no layout of its own: the app's documents at its top (`settings.json`, `layout.json`,
   `recentSolutions.json`, `updates.json`, `find.json`, `refactorings.json`)
   and each folder's under `workspaces/<name>-<hash>/` (editors and recent files, layout, breakpoints, bookmarks, run
-  configurations, Find in Files' scope, `localHistory/`, the profiler's `snapshots/`). A
+  configurations, Find in Files' scope, `localHistory/`, the profiler's `snapshots/`). A Passenger that Run, Debug or
+  Profile launch (Passenger.App, or any program named Passenger) keeps its state in the launcher's `sandbox/`
+  (`LaunchPlan.SandboxedState`, as IntelliJ's DevKit sandbox), unless its configuration sets `PASSENGER_SETTINGS`. A
   `StateDocument` is a record that is an `IStateDocument`: its `Upgrades` from each older version and its `Clamped` value;
   it is written debounced off the UI thread through a temporary file, merged over the file so values it does not know
   stay (and an entry another window removed stays removed), and a file that does not read is set aside as `.bad` and logged. New state is a document there, never a file of
@@ -359,6 +361,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   `Muted` is Mute Breakpoints, which sends none while on. The engine decides exception breakpoints (`ExceptionRule`)
   when the runtime reports a handler found or an exception unhandled, the stack still at the throw ("user code" is a
   Just My Code frame); they cross the protocol as DAP `exceptionOptions` with Passenger's own scenarios and conditions.
+  An evaluation the runtime won't start where the thread is stopped (a pause in optimized or native code) is
+  `EvalRefusedException`; a value shown by its ToString then shows its type.
 - The debugger, Passenger's own, started from SharpDbg and ICorDebugSharp (MIT; `THIRD_PARTY_NOTICES.md` says what came from where):
   `src/Passenger.Debugger.Interop` (ICorDebug, IMetaDataImport and dbgshim for the COM source generator),
   `src/Passenger.Debugger` (the engine), `src/Passenger.Dap` (the Debug Adapter Protocol, both ends) and
@@ -473,7 +477,9 @@ more than 1.5 nodes a processor running machine-wide): a test that needs one wai
 The debugger's tests (`tests/Passenger.Tests/Debugging`) run the adapter from the tests' own `debugger/` folder, as
 the IDE does, and launch or attach to the programs in `tests/Debuggees`, whose lines and columns (tabs included) they
 stop at: moving a line there means moving the tests that name it. A line breakpoint on a line with a lambda binds inside
-the lambda, so a test stopping at such a statement gives its column. `TerminalConsoleApp` there needs a real terminal;
+the lambda, so a test stopping at such a statement gives its column. `SelfDebuggingTests` opens this repository and
+debugs Passenger.App; it finds its breakpoint by the code `StatusText.Text = why;` in MainWindow.Actions.cs, so changing
+that line means changing the test. `TerminalConsoleApp` there needs a real terminal;
 window tests copy it into a folder of their own (`Debuggees.CopyTo`). The protocol tests run one at a time (`DebugSession.Collection`), beside the window tests; one that holds the engine
 to a time runs in `Alone`. `PASSENGER_ENGINE_LOG=FILE` keeps the engine's own log, for the
 tests' sessions and the IDE's alike.
