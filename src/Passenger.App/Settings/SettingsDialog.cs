@@ -342,13 +342,14 @@ public sealed partial class SettingsDialog : Window
         Add(BuildPage, "Showing build results after build completed", results,
             "build tool window results after completed finished failed errors warnings always never toolset presentation");
 
-        Add(RunPage, "Hot Reload on save", Check(Working.HotReload, v => Change(s => s with { HotReload = v })), "dotnet watch apply changes edit continue running");
         // Rider's Build, Execution, Deployment | Hot Reload, with Visual Studio's apply on save and dotnet watch's restart.
-        Add(HotReloadPage, "Enable Hot Reload when debugging (Edit and Continue)", Check(Working.HotReloadWhileDebugging, v => Change(s => s with { HotReloadWhileDebugging = v })),
+        Add(HotReloadPage, "Hot Reload when debugging (Edit and Continue)", Check(Working.HotReloadWhileDebugging, v => Change(s => s with { HotReloadWhileDebugging = v })),
             "hot reload edit and continue enc debug apply changes paused running alt f10");
-        Add(HotReloadPage, "Apply changes on file save while debugging", Check(Working.HotReloadOnSave, v => Change(s => s with { HotReloadOnSave = v })),
+        Add(HotReloadPage, "Hot Reload when running (dotnet watch)", Check(Working.HotReload, v => Change(s => s with { HotReload = v })),
+            "hot reload dotnet watch run apply changes on save running without debugging");
+        Add(HotReloadPage, "Apply changes when a file is saved", Check(Working.HotReloadOnSave, v => Change(s => s with { HotReloadOnSave = v })),
             "hot reload save apply changes debug edit and continue");
-        Add(HotReloadPage, "Always restart when a change cannot be applied (rude edit)", Check(Working.RestartOnRudeEdit, v => Change(s => s with { RestartOnRudeEdit = v })),
+        Add(HotReloadPage, "Always restart for a change it cannot apply", Check(Working.RestartOnRudeEdit, v => Change(s => s with { RestartOnRudeEdit = v })),
             "hot reload rude edit restart ask always never dotnet watch");
         NumericUpDown buffer = Number(Working.ConsoleBufferKb, AppSettings.MinConsoleBufferKb, AppSettings.MaxConsoleBufferKb, 64, v => Change(s => s with { ConsoleBufferKb = (int)v }));
         Add(RunPage, "Console buffer size", new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { buffer, new TextBlock { Text = "KB", VerticalAlignment = VerticalAlignment.Center } } },

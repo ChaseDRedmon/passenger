@@ -1,5 +1,6 @@
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
+using Avalonia.VisualTree;
 using Passenger.App;
 using Passenger.App.Debugging;
 using Passenger.Core;
@@ -235,6 +236,85 @@ public sealed class HotReloadTests : IClassFixture<RestoredFolders>, IDisposable
         {
             End(window);
         }
+    }
+
+    [AvaloniaFact]
+    public void With_always_restart_off_a_rude_edit_asks_as_dotnet_watch_asks_and_never_stops_the_asking()
+    {
+        File.WriteAllText(GreeterPath, "static class Greeter\n{\n    static int count;\n\n    public static void Greet(int i)\n    {\n        count++;\n        Console.WriteLine($\"Hello {i} ({count})\");\n    }\n}\n");
+        MainWindow window = Open();
+        window.ApplySettings(window.Settings with { RestartOnRudeEdit = false });
+        try
+        {
+            Ui.Run(window, AppActions.Debug);
+            Ui.WaitFor(() => Output(window).Contains("Hello 2", StringComparison.Ordinal), "the program to greet");
+            DebugSession first = window.Debugger.Session!;
+            window.OpenFile(GreeterPath);
+            Replace(window, "static int count;", "static long count;");
+
+            Ui.Run(window, AppActions.ApplyHotReloadChanges);
+            ChoiceDialog asked = Asked(window);
+            Assert.Contains(MainWindow.RestartQuestion, Said(asked), StringComparison.Ordinal);
+            Assert.Contains("Updating the type of field requires restarting the application", Said(asked), StringComparison.Ordinal);
+            Press(asked, "No");
+            Assert.Same(first, window.Debugger.Session);
+            Assert.Equal(DebugState.Running, first.State);
+            Assert.Null(window.LastHotReloadRestart);
+
+            // Asked again at the next Apply, until Never, which leaves the program as it is for the rest of its session.
+            Ui.Run(window, AppActions.ApplyHotReloadChanges);
+            Press(Asked(window), "Never");
+            HotReloadOutcome told = window.Debugger.LastApplied!;
+            Ui.Run(window, AppActions.ApplyHotReloadChanges);
+            Ui.WaitFor(() => window.Debugger.LastApplied != told, "the third Apply to say what it came to");
+            Ui.Settle();
+            Assert.Empty(window.OwnedWindows.OfType<ChoiceDialog>());
+            Assert.Same(first, window.Debugger.Session);
+            Assert.Equal(HotReloadResult.RestartNeeded, window.Debugger.LastApplied!.Result);
+        }
+        finally
+        {
+            window.ApplySettings(window.Settings with { RestartOnRudeEdit = true });
+            End(window);
+        }
+    }
+
+    [AvaloniaFact]
+    public void With_apply_on_save_a_saved_edit_reaches_the_debugged_program()
+    {
+        MainWindow window = Open();
+        window.ApplySettings(window.Settings with { HotReloadOnSave = true });
+        try
+        {
+            Ui.Run(window, AppActions.Debug);
+            Ui.WaitFor(() => Output(window).Contains("Hello 2", StringComparison.Ordinal), "the program to greet");
+            window.OpenFile(GreeterPath);
+            Replace(window, "Hello", "Saved");
+            Ui.Run(window, AppActions.Save);
+            Ui.WaitFor(() => Output(window).Contains("Saved", StringComparison.Ordinal), $"the saved edit to reach the program ({Output(window)})");
+            Assert.Equal(HotReloadResult.Applied, window.Debugger.LastApplied!.Result);
+        }
+        finally
+        {
+            window.ApplySettings(window.Settings with { HotReloadOnSave = false });
+            End(window);
+        }
+    }
+
+    private static ChoiceDialog Asked(MainWindow window)
+    {
+        Ui.WaitFor(() => window.OwnedWindows.OfType<ChoiceDialog>().Any(), "Hot Reload to ask whether to restart");
+        return window.OwnedWindows.OfType<ChoiceDialog>().Single();
+    }
+
+    private static string Said(Avalonia.Controls.Window dialog) =>
+        string.Join('\n', dialog.GetVisualDescendants().OfType<Avalonia.Controls.TextBlock>().Select(t => t.Text));
+
+    private static void Press(Avalonia.Controls.Window dialog, string button)
+    {
+        Avalonia.Controls.Button pressed = dialog.GetVisualDescendants().OfType<Avalonia.Controls.Button>().First(b => (string?)b.Content == button);
+        pressed.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+        Ui.Settle();
     }
 
     /// <summary>Waits for the program to stop and the stop to be shown, its file brought forward, before the test types.</summary>
