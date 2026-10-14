@@ -142,6 +142,27 @@ public sealed class TypeRenameTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void A_form_renamed_with_its_class_in_the_solution_view_takes_the_files_nested_under_it_along()
+    {
+        Write("Form1.cs", "namespace Shop;\n\npublic partial class Form1\n{\n    public int Width;\n}\n");
+        Write("Form1.Designer.cs", "namespace Shop;\n\npublic partial class Form1\n{\n    public int Height;\n}\n");
+        Write("Form1.resx", "<root />\n");
+        MainWindow window = Open("Till.cs");
+        Choose(window, Path.Combine(folder, "Form1.cs"));
+        Ui.Press(window, "F2");
+        NamePopup popup = Assert.IsType<NamePopup>(window.Popup);
+        Assert.True(popup.Option?.IsChecked == true, "Renaming Form1.cs did not offer to rename the class Form1 with it");
+        window.KeyTextInput("Window1.cs");
+        Ui.Press(window, "ENTER");
+        Ui.WaitFor(() => !window.IsPopupOpen, $"the rename to finish: {popup.Problem}");
+
+        Assert.Equal(["Window1.Designer.cs", "Window1.cs", "Window1.resx"], Directory.GetFiles(folder, "Window1*").Select(Path.GetFileName).Order(StringComparer.Ordinal));
+        Assert.Empty(Directory.GetFiles(folder, "Form1*"));
+        Assert.Contains("public partial class Window1", File.ReadAllText(Path.Combine(folder, "Window1.Designer.cs")), StringComparison.Ordinal);
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Every_part_of_a_partial_class_in_a_file_named_after_it_is_renamed_with_it_and_a_part_named_otherwise_is_not()
     {
         Write("Basket.cs", "namespace Shop;\n\npublic partial class Basket\n{\n    public int Count;\n}\n");

@@ -737,6 +737,7 @@ public partial class MainWindow : Window
         {
             Action = AppActions.FocusExplorer,
             HeaderTools = Explorer.TakeHeaderTools(),
+            Options = Explorer.Options,
             Chosen = () => Explorer.SelectedNodes,
             Activate = () =>
             {

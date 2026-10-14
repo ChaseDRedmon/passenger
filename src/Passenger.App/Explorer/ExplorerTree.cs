@@ -21,9 +21,9 @@ public enum NodeKind
 }
 
 /// <summary>The Explorer's tree, in either of Rider's two views: the Solution (its folders with their files, and projects,
-/// each project's dependencies and its files) or the File System. Flattened into the rows currently
-/// visible, so a virtualizing list draws only what is on screen; a node's children are made the first
-/// time it opens.</summary>
+/// each project's dependencies and its files, a file's dependents nested under it, <see cref="FileNesting"/>) or the File
+/// System. Flattened into the rows currently visible, so a virtualizing list draws only what is on screen; a node's
+/// children are made the first time it opens.</summary>
 public sealed class ExplorerTree
 {
     /// <summary>Never listed: version control's own store, which nobody edits by hand.</summary>
@@ -289,12 +289,19 @@ public sealed class ExplorerTree
         return node;
     }
 
+    /// <summary>Rider's "Show files with the same names as nested": a project's files nest by Rider's rules as well as
+    /// by what the project says they depend on.</summary>
+    public bool NestFiles { get; set; } = true;
+
+    /// <summary>How a project's files nest under one another: by its DependentUpon, and by Rider's rules when asked.</summary>
+    private sealed record Nesting(ProjectModel Project, bool ByName);
+
     private ExplorerNode Project(ProjectModel project, int depth) => Unloaded.Contains(project.Path)
         ? new(NodeKind.Project, project.Name, project.Path, depth, dimmed: true, null, "(unloaded)")
         : new(NodeKind.Project, project.Name, project.Path, depth, !project.Exists, node =>
         {
             List<ExplorerNode> children = [Dependencies(project, node.Depth + 1)];
-            children.AddRange(Contents(project.Folder, node.Depth + 1, dimmed: false, skip: project.Path));
+            children.AddRange(Contents(project.Folder, node.Depth + 1, dimmed: false, skip: project.Path, new Nesting(project, NestFiles)));
             return children;
         }, project.TargetFrameworks.Count > 0 ? string.Join(", ", project.TargetFrameworks) : null);
 
@@ -312,30 +319,50 @@ public sealed class ExplorerTree
     private static ExplorerNode Leaf(NodeKind kind, string name, string? detail, int depth, ProjectModel owner, string? referenced = null) =>
         new(kind, name, null, depth, false, null, detail) { Owner = owner.Path, Referenced = referenced };
 
-    private static ExplorerNode Folder(string path, int depth, bool dimmed) =>
+    private static ExplorerNode Folder(string path, int depth, bool dimmed, Nesting? nesting = null) =>
         new(NodeKind.Folder, Path.GetFileName(path) is { Length: > 0 } name ? name : path, path, depth, dimmed,
-            node => Contents(path, node.Depth + 1, node.IsDimmed, skip: null));
+            node => Contents(path, node.Depth + 1, node.IsDimmed, skip: null, nesting));
 
     /// <summary>A folder's entries, folders first, a save's temporary file left out (nothing reads the folder again once
-    /// the save is done); a project hides its own build output and file.</summary>
-    private static List<ExplorerNode> Contents(string folder, int depth, bool dimmed, string? skip)
+    /// the save is done); a project hides its own build output and file, and nests its files under those they belong to.</summary>
+    private static List<ExplorerNode> Contents(string folder, int depth, bool dimmed, string? skip, Nesting? nesting)
     {
+        List<FileSystemInfo> entries;
         try
         {
-            return new DirectoryInfo(folder).EnumerateFileSystemInfos()
+            entries = [.. new DirectoryInfo(folder).EnumerateFileSystemInfos()
                 .Where(e => !Hidden.Contains(e.Name) && !(e is FileInfo && FileText.IsSaving(e.Name)))
                 .Where(e => skip is null || (e.FullName != skip && !(e is DirectoryInfo && e.Name is "bin" or "obj")))
                 .OrderBy(e => e is FileInfo)
-                .ThenBy(e => e.Name, StringComparer.OrdinalIgnoreCase)
-                .Select(e => e is DirectoryInfo
-                    ? Folder(e.FullName, depth, dimmed || Excluded.Contains(e.Name))
-                    : new ExplorerNode(NodeKind.File, e.Name, e.FullName, depth, dimmed, null))
-                .ToList();
+                .ThenBy(e => e.Name, StringComparer.OrdinalIgnoreCase)];
         }
         catch (Exception error) when (error is UnauthorizedAccessException or IOException)
         {
             return [];
         }
+        IReadOnlyDictionary<string, string> parents = nesting is null
+            ? new Dictionary<string, string>()
+            : FileNesting.Parents([.. entries.OfType<FileInfo>().Select(e => e.FullName)], nesting.Project, nesting.ByName);
+        List<ExplorerNode> nodes = [];
+        foreach (FileSystemInfo entry in entries)
+        {
+            if (entry is DirectoryInfo)
+            {
+                nodes.Add(Folder(entry.FullName, depth, dimmed || Excluded.Contains(entry.Name), nesting));
+            }
+            else if (!parents.ContainsKey(entry.FullName))
+            {
+                List<string> nested = [.. entries.Where(e => parents.TryGetValue(e.FullName, out string? parent) && parent == entry.FullName).Select(e => e.FullName)];
+                nodes.Add(nested.Count == 0
+                    ? new ExplorerNode(NodeKind.File, entry.Name, entry.FullName, depth, dimmed, null)
+                    : new ExplorerNode(NodeKind.File, entry.Name, entry.FullName, depth, dimmed, node =>
+                        [.. nested.Select(n => new ExplorerNode(NodeKind.File, Path.GetFileName(n), n, node.Depth + 1, dimmed, null))])
+                    {
+                        Nested = string.Join('/', nested.Select(Path.GetFileName)),
+                    });
+            }
+        }
+        return nodes;
     }
 
     /// <summary>A node's descendants as rows, in order, through every node already open.</summary>
@@ -395,6 +422,9 @@ public sealed class ExplorerNode : Observable
     /// <summary>The project a project reference names.</summary>
     public string? Referenced { get; init; }
 
+    /// <summary>The names of the files nested under a file, which make it another row when they change.</summary>
+    internal string? Nested { get; init; }
+
     /// <summary>Cut and waiting to be pasted, which dims it.</summary>
     public bool IsCut
     {
@@ -439,12 +469,14 @@ public sealed class ExplorerNode : Observable
         {
             return false;
         }
-        Dictionary<string, ExplorerNode> before = children.ToDictionary(c => $"{c.Kind}/{c.Path ?? c.Name}");
-        List<ExplorerNode> fresh = [.. load(this).Select(c => before.TryGetValue($"{c.Kind}/{c.Path ?? c.Name}", out ExplorerNode? kept) ? kept : c)];
+        Dictionary<string, ExplorerNode> before = children.ToDictionary(Identity);
+        List<ExplorerNode> fresh = [.. load(this).Select(c => before.TryGetValue(Identity(c), out ExplorerNode? kept) ? kept : c)];
         bool same = fresh.Count == children.Count && fresh.SequenceEqual(children);
         children = fresh;
         return !same;
     }
+
+    private static string Identity(ExplorerNode node) => $"{node.Kind}/{node.Path ?? node.Name}/{node.Nested}";
 
     public bool IsExpanded
     {
@@ -488,7 +520,7 @@ public sealed class ExplorerNode : Observable
     public Geometry Icon => FileIcons.For(this);
     public IBrush IconBrush => FileIcons.BrushFor(this);
 
-    /// <summary>Whether a path lies under this node: inside its folder, or its project's folder.</summary>
+    /// <summary>Whether a path lies under this node: inside its folder, or its project's folder, or nested under its file.</summary>
     public bool Contains(string path)
     {
         string? folder = Kind switch
@@ -499,7 +531,7 @@ public sealed class ExplorerNode : Observable
         };
         if (folder is null)
         {
-            return Kind == NodeKind.SolutionFolder && (Children?.Any(c => c.Path == path || c.Contains(path)) ?? false);
+            return Kind is NodeKind.SolutionFolder or NodeKind.File && (Children?.Any(c => c.Path == path || c.Contains(path)) ?? false);
         }
         return PathNames.IsUnder(path, folder);
     }

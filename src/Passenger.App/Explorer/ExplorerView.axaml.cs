@@ -428,6 +428,41 @@ public partial class ExplorerView : UserControl
 
     private void OnViewSwitchClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e) => Show(!Tree.IsSolutionView);
 
+    /// <summary>Rider's "Show files with the same names as nested": the Solution view nests by Rider's rules as well as
+    /// by DependentUpon; the rows are made again as it changes, those open kept open.</summary>
+    public bool NestFiles
+    {
+        get => Tree.NestFiles;
+        set
+        {
+            if (Tree.NestFiles == value)
+            {
+                return;
+            }
+            Tree.NestFiles = value;
+            if (Tree.Root is not null)
+            {
+                Refresh();
+            }
+        }
+    }
+
+    /// <summary>File Nesting... chosen in the Explorer's options: the window asks how files nest.</summary>
+    public event EventHandler? NestingAsked;
+
+    /// <summary>The Explorer's own items atop its header's options, as Rider's Solution view has them: Appearance, with
+    /// File Nesting... while the Solution view shows (Rider's ConfigureFilesNestingAction, which only it supports).</summary>
+    public IReadOnlyList<Control> Options()
+    {
+        if (!Tree.IsSolutionView)
+        {
+            return [];
+        }
+        MenuItem nesting = new() { Header = "File Nesting..." };
+        nesting.Click += (_, _) => NestingAsked?.Invoke(this, EventArgs.Empty);
+        return [new MenuItem { Header = "Appearance", Items = { nesting } }];
+    }
+
     /// <summary>Gives the tree the keys on its chosen row (the first when none is), as Rider's Project view takes them: the
     /// view itself cannot take the focus, only a row.</summary>
     public void FocusRows()
@@ -564,8 +599,13 @@ public partial class ExplorerView : UserControl
         {
             return null;
         }
-        ExplorerNode? target = row.Kind == NodeKind.File ? Holder(row) : row;
-        if (target is null or { Kind: NodeKind.File } || target.Into is not { } into)
+        // A file's folder holds what is dropped on it, past the file a nested one is shown under.
+        ExplorerNode? target = row;
+        while (target is { Kind: NodeKind.File })
+        {
+            target = Holder(target);
+        }
+        if (target?.Into is not { } into)
         {
             return null;
         }

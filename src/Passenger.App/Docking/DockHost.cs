@@ -113,6 +113,9 @@ public sealed class DockHost : Grid
     /// <summary>The window shown last, which Shift+Escape hides.</summary>
     public ToolWindow? Active { get; private set; }
 
+    /// <summary>A window header's options menu while it is open.</summary>
+    public MenuFlyout? OpenOptions { get; internal set; }
+
     /// <summary>A window was moved, shown, hidden or resized: the layout to keep has changed.</summary>
     public event EventHandler? LayoutChanged;
 

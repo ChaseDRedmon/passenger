@@ -188,6 +188,11 @@ public sealed record AppSettings : IStateDocument<AppSettings>
     /// in the file while the popup is open; the popup's toggle changes it.</summary>
     public bool ChangePopupWords { get; init; } = true;
 
+    /// <summary>Rider's "Show files with the same names as nested" (its application's Rider.UseFileNestingRules): the
+    /// Solution view nests files by Rider's rules (Counter.razor.cs under Counter.razor), on until the Explorer's File
+    /// Nesting... turns it off.</summary>
+    public bool NestFiles { get; init; } = true;
+
     public static IReadOnlyList<Action<JsonObject>> Upgrades { get; } = [StateStore.Unversioned];
 
     /// <summary>A hand-edited or later build's value this build cannot use is brought into range, or back to its default;

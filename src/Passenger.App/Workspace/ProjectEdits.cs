@@ -4,12 +4,12 @@ using Passenger.Core;
 
 namespace Passenger.App.Workspace;
 
-/// <summary>Rider's Add Reference and Remove on a project reference, made to the project file's text: a reference goes
-/// beside the project's others, or in an item group of its own before &lt;/Project&gt;, written as dotnet add reference
-/// writes it (relative, with backslashes); taking it out takes the group it leaves empty, so the file is as it was. The
-/// rest of the file keeps its bytes, its byte order mark, line endings and indentation: dotnet add reference reformats
-/// what it writes back. Paths are canonical. Each returns null when it was done, else why not; a file that cannot be
-/// read or written throws.</summary>
+/// <summary>Rider's Add Reference and Remove on a project reference, and its items following a file moved, made to the
+/// project file's text: a reference goes beside the project's others, or in an item group of its own before
+/// &lt;/Project&gt;, written as dotnet add reference writes it (relative, with backslashes); taking it out takes the group
+/// it leaves empty, so the file is as it was. The rest of the file keeps its bytes, its byte order mark, line endings and
+/// indentation: dotnet add reference reformats what it writes back. Paths are canonical. A reference's edit returns null
+/// when it was done, else why not; a file that cannot be read or written throws.</summary>
 public static partial class ProjectEdits
 {
     public static string? AddReference(string project, string referenced)
@@ -69,6 +69,52 @@ public static partial class ProjectEdits
         return null;
     }
 
+    /// <summary>The project following files and folders that moved or were renamed, as Rider's project model does: an
+    /// item that names a file by itself (its Include or Update, no wildcards) names where it went, and a DependentUpon or
+    /// LastGenOutput naming one (relative to its item's folder) names it there. Whether the file changed.</summary>
+    public static bool MoveItems(string project, IReadOnlyList<(string From, string To)> moves)
+    {
+        ProjectText file = new(project);
+        string folder = Path.GetDirectoryName(project)!;
+        // A file moved, or one inside a folder that was.
+        string Moved(string path) => moves.FirstOrDefault(m => PathNames.Within(path, m.From)) is { From: not null } move ? PathNames.Moved(path, move.From, move.To) : path;
+        List<(int Start, int End)> comments = [.. Comment().Matches(file.Text).Select(m => (m.Index, m.Index + m.Length))];
+        string text = ItemElement().Replace(file.Text, item =>
+        {
+            string items = item.Groups["items"].Value;
+            if (comments.Any(c => item.Index >= c.Start && item.Index < c.End) || items.IndexOfAny(['*', '?', ';', '$', '@', '%']) >= 0)
+            {
+                return item.Value;
+            }
+            string was = Path.GetFullPath(Path.Combine(folder, items.Replace('\\', '/')));
+            string now = Moved(was);
+            // What the item names beside it, relative to its folder: where that is now, from where the item is now.
+            string element = RelatedName().Replace(item.Value, related =>
+            {
+                Capture value = related.Groups["value"];
+                string named = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(was)!, value.Value.Trim().Replace('\\', '/')));
+                string target = Moved(named);
+                return target == named && now == was ? related.Value
+                    : Spliced(related, value, Written(Path.GetRelativePath(Path.GetDirectoryName(now)!, target), value.Value));
+            });
+            return now == was ? element : ItemAttribute().Replace(element, attribute =>
+                Spliced(attribute, attribute.Groups["items"], Written(Path.GetRelativePath(folder, now), items)), 1);
+        });
+        if (text == file.Text)
+        {
+            return false;
+        }
+        file.Write(text);
+        return true;
+    }
+
+    /// <summary>A path as a project writes it, with the separators the value it replaces had.</summary>
+    private static string Written(string relative, string was) => was.Contains('\\') ? relative.Replace('/', '\\') : relative.Replace('\\', '/');
+
+    /// <summary>A match's text with one of its groups' text replaced.</summary>
+    private static string Spliced(Match match, Capture group, string replacement) =>
+        string.Concat(match.Value.AsSpan(0, group.Index - match.Index), replacement, match.Value.AsSpan(group.Index - match.Index + group.Length));
+
     /// <summary>The line or lines a span stands on, their indentation and line break included, when nothing else is on
     /// them; the span alone otherwise.</summary>
     private static (int Start, int End) WholeLines(string text, int start, int end)
@@ -117,6 +163,17 @@ public static partial class ProjectEdits
 
     [GeneratedRegex(@"<ItemGroup\b(?<attributes>[^>]*?)>(?<body>.*?)</ItemGroup\s*>", RegexOptions.Singleline)]
     private static partial Regex ItemGroup();
+
+    /// <summary>An item that names files: its start tag's Include or Update, and its end.</summary>
+    [GeneratedRegex(@"<(?<tag>[A-Za-z_][\w.-]*)(?=[^>]*\b(?:Include|Update)\s*=)[^>]*?\b(?:Include|Update)\s*=\s*""(?<items>[^""]*)""[^>]*?(?:/>|>.*?</\k<tag>\s*>)", RegexOptions.Singleline)]
+    private static partial Regex ItemElement();
+
+    [GeneratedRegex(@"\b(?:Include|Update)\s*=\s*""(?<items>[^""]*)""")]
+    private static partial Regex ItemAttribute();
+
+    /// <summary>A file an item names beside it: what it depends on, or what generates from it, as an attribute or an element.</summary>
+    [GeneratedRegex(@"\b(?:DependentUpon|LastGenOutput)\s*=\s*""(?<value>[^""]+)""|<(?<name>DependentUpon|LastGenOutput)>(?<value>[^<]+)</\k<name>\s*>")]
+    private static partial Regex RelatedName();
 
     [GeneratedRegex(@"<!--.*?-->", RegexOptions.Singleline)]
     private static partial Regex Comment();

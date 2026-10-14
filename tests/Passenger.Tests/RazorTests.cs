@@ -13,10 +13,12 @@ using Passenger.Text;
 
 namespace Passenger.Tests;
 
-/// <summary>Razor through the window, on a Blazor app made by <c>dotnet new blazor</c> with a component of its own and a
-/// Razor Page: a component's colours and its errors, completion of components, their parameters, HTML's elements and
-/// the C#, go to declaration from a tag, rename across markup and code, and a Razor Page's errors and completion, all
-/// from Roslyn's server with Razor cohosted in it. Each test opens its own window, so its own server.</summary>
+/// <summary>Razor through the window, on a Blazor app made by <c>dotnet new blazor</c> with components of its own (one
+/// with its code in a code-behind, Tally.razor.cs, and no <c>@code</c>) and a Razor Page: a component's colours and its
+/// errors, completion of components, their parameters, HTML's elements and the C#, go to declaration from a tag, rename
+/// across markup and code, the code-behind's members completed, checked, found and renamed from the markup and back, and a
+/// Razor Page's errors and completion, all from Roslyn's server with Razor cohosted in it. Each test opens its own
+/// window, so its own server.</summary>
 public sealed class RazorTests : IClassFixture<RazorTests.Blazor>
 {
     private readonly Blazor app;
@@ -187,6 +189,113 @@ public sealed class RazorTests : IClassFixture<RazorTests.Blazor>
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void A_components_markup_completes_its_code_behinds_members_and_parameters_and_shows_one_misspelt_as_an_error()
+    {
+        MainWindow window = app.Open("Components/Pages/Tally.razor");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        OpenDocument document = window.EditorArea.Active!;
+        Ui.WaitFor(() => KindOf(editor, "clicks") == TokenKind.Field, "the code-behind's field in the markup coloured as a field");
+        Assert.Equal(TokenKind.Method, KindOf(editor, "AddClick"));
+        Assert.Equal(TokenKind.Property, KindOf(editor, "Start"));
+        Assert.DoesNotContain(document.Markers, m => m.Kind == MarkerKind.Error);
+
+        // A name the code-behind does not have is an error where the markup uses it, and none once it is put right.
+        int used = editor.Document.Snapshot.ToString().IndexOf("@clicks", StringComparison.Ordinal) + 1;
+        editor.ApplyEdits([new TextEdit(used, "clicks".Length, "clciks")]);
+        Ui.WaitFor(() => document.Markers.Any(m => m.Kind == MarkerKind.Error), "the squiggle under the code-behind's field misspelt in the markup");
+        Marker error = Assert.Single(document.Markers, m => m.Kind == MarkerKind.Error);
+        Assert.Equal("clciks", editor.Document.Snapshot.GetText(error.Range.Start, error.Range.Length));
+        Assert.StartsWith("CS0103:", error.Message, StringComparison.Ordinal);
+        editor.ApplyEdits([new TextEdit(used, "clciks".Length, "clicks")]);
+        Ui.WaitFor(() => !document.Markers.Any(m => m.Kind == MarkerKind.Error), "the squiggle to go once the field's name is put right");
+
+        PlaceAfter(editor, "<p>Clicks: @clicks</p>\n");
+        window.KeyTextInput("<p>@");
+        Ui.Settle();
+        window.KeyTextInput("cli");
+        Ui.WaitFor(() => window.Assist.CompletionLabels.FirstOrDefault() == "clicks", "the code-behind's field among what the markup's C# offers");
+        Ui.Press(window, "ENTER");
+        Assert.Equal("<p>@clicks", editor.Document.Snapshot.GetLineText(5));
+        window.KeyTextInput(" @");
+        Ui.Settle();
+        window.KeyTextInput("Add");
+        Ui.WaitFor(() => window.Assist.CompletionLabels.FirstOrDefault() == "AddClick", "the code-behind's method among what the markup's C# offers");
+        Ui.Press(window, "ESCAPE");
+
+        // Another component's markup completes the code-behind's parameter where it uses the component.
+        window.OpenFile(app.PathOf("Components/Pages/Home.razor"));
+        Ui.Settle();
+        editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "<Greeting Name=\"Ada\" />\n");
+        window.KeyTextInput("<Tally ");
+        Ui.Run(window, AppActions.Complete);
+        Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Start"), "the code-behind's [Parameter] among the component's attributes");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Go_to_declaration_from_the_markup_opens_the_code_behind_at_the_member()
+    {
+        MainWindow window = app.Open("Components/Pages/Tally.razor");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Ui.WaitFor(() => KindOf(editor, "AddClick") == TokenKind.Method, "the server's colours on the markup");
+        PlaceAfter(editor, "@onclick=\"AddC");
+        Ui.Press(window, Ui.Shortcut(AppActions.GoToDeclaration));
+        Ui.WaitFor(() => window.EditorArea.Active?.Name == "Tally.razor.cs", "the code-behind opened at the method");
+        Assert.Equal(new TextPosition(11, "    private void ".Length), window.EditorArea.CodeEditor.CaretPosition);
+
+        // And from the markup's C# expression to the field.
+        window.OpenFile(app.PathOf("Components/Pages/Tally.razor"));
+        Ui.Settle();
+        PlaceAfter(window.EditorArea.CodeEditor, "@cli");
+        Ui.Press(window, Ui.Shortcut(AppActions.GoToDeclaration));
+        Ui.WaitFor(() => window.EditorArea.Active?.Name == "Tally.razor.cs", "the code-behind opened at the field");
+        Assert.Equal(new TextPosition(9, "    private int ".Length), window.EditorArea.CodeEditor.CaretPosition);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Renaming_a_code_behinds_member_renames_it_in_the_markup_and_renaming_it_in_the_markup_renames_it_in_the_code_behind()
+    {
+        MainWindow window = app.Open("Components/Pages/Tally.razor.cs");
+        try
+        {
+            window.OpenFile(app.PathOf("Components/Pages/Tally.razor"));
+            Ui.Settle();
+            OpenDocument markup = window.EditorArea.Active!;
+            window.OpenFile(app.PathOf("Components/Pages/Tally.razor.cs"));
+            Ui.Settle();
+            CodeEditor editor = window.EditorArea.CodeEditor;
+            PlaceAfter(editor, "private int cli");
+            Ui.Run(window, AppActions.Rename);
+            Ui.WaitFor(() => window.Assist.Renaming == "clicks", "the rename box on the field");
+            window.KeyTextInput("taps");
+            Ui.Press(window, "ENTER");
+            Ui.WaitFor(() => markup.Text.Snapshot.ToString().Contains("<p>Clicks: @taps</p>", StringComparison.Ordinal),
+                "the markup that shows the field to show it by its new name");
+            Assert.Contains("taps++;", editor.Document.Snapshot.ToString(), StringComparison.Ordinal);
+
+            window.OpenFile(app.PathOf("Components/Pages/Tally.razor"));
+            Ui.Settle();
+            OpenDocument code = window.EditorArea.Documents.First(d => d.Name == "Tally.razor.cs");
+            PlaceAfter(window.EditorArea.CodeEditor, "@onclick=\"AddC");
+            Ui.Run(window, AppActions.Rename);
+            Ui.WaitFor(() => window.Assist.Renaming == "AddClick", "the rename box on the method in the markup");
+            window.KeyTextInput("Tap");
+            Ui.Press(window, "ENTER");
+            Ui.WaitFor(() => code.Text.Snapshot.ToString().Contains("private void Tap()", StringComparison.Ordinal),
+                "the code-behind to declare the method by the name given in the markup");
+            Assert.Contains("@onclick=\"Tap\"", markup.Text.Snapshot.ToString(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            window.Close();
+            File.WriteAllText(app.PathOf("Components/Pages/Tally.razor"), BlazorApp.TallyMarkup);
+            File.WriteAllText(app.PathOf("Components/Pages/Tally.razor.cs"), BlazorApp.TallyCode);
+        }
+    }
+
     private static void PlaceAfter(CodeEditor editor, string text)
     {
         int at = editor.Document.Snapshot.ToString().IndexOf(text, StringComparison.Ordinal);
@@ -228,6 +337,8 @@ public sealed class RazorTests : IClassFixture<RazorTests.Blazor>
                 Write("Components/Greeting.razor",
                     "<p>Hello, @Name!</p>\n\n@code {\n    [Parameter]\n    public string Name { get; set; } = \"\";\n\n    [Parameter]\n    public int Times { get; set; }\n}\n");
                 Write("Components/Pages/Home.razor", "@page \"/\"\n\n<PageTitle>Home</PageTitle>\n\n<Greeting Name=\"Ada\" />\n");
+                Write("Components/Pages/Tally.razor", BlazorApp.TallyMarkup);
+                Write("Components/Pages/Tally.razor.cs", BlazorApp.TallyCode);
                 Write("Pages/Hello.cshtml", "@page\n@model Shop.Pages.HelloModel\n\n<h1>@Model.Greeting</h1>\n<p>@Model.Cont</p>\n");
                 Write("Pages/Hello.cshtml.cs",
                     "using Microsoft.AspNetCore.Mvc.RazorPages;\n\nnamespace Shop.Pages;\n\npublic class HelloModel : PageModel\n{\n"
@@ -262,8 +373,8 @@ public sealed class RazorTests : IClassFixture<RazorTests.Blazor>
 }
 
 /// <summary>A Blazor app debugged from the window: breakpoints in a page's <c>@code</c> block and on the C# in its markup
-/// bind through the line directives Razor's generated C# carries, and stop the app when the page is asked for. Run with
-/// the debugger's own tests, one at a time.</summary>
+/// bind through the line directives Razor's generated C# carries, and one in a component's code-behind binds as any C#
+/// does, each stopping the app when the page is asked for. Run with the debugger's own tests, one at a time.</summary>
 [Collection(Debugging.Helpers.DebugSession.Collection)]
 public sealed class RazorDebuggingTests : IDisposable
 {
@@ -281,6 +392,8 @@ public sealed class RazorDebuggingTests : IDisposable
             BlazorApp.Create(folder);
             File.WriteAllText(Path.Combine(folder, "Components/Pages/Visits.razor"),
                 "@page \"/visits\"\n\n<p>Visits: @visits</p>\n\n@code {\n    private int visits;\n\n    protected override void OnInitialized()\n    {\n        visits = 41 + 1;\n    }\n}\n");
+            File.WriteAllText(Path.Combine(folder, "Components/Pages/Tally.razor"), BlazorApp.TallyMarkup);
+            File.WriteAllText(Path.Combine(folder, "Components/Pages/Tally.razor.cs"), BlazorApp.TallyCode);
             File.WriteAllText(Path.Combine(folder, "Properties/launchSettings.json"),
                 $"{{ \"profiles\": {{ \"http\": {{ \"commandName\": \"Project\", \"launchBrowser\": true, \"applicationUrl\": \"http://localhost:{port}\", "
                 + "\"environmentVariables\": { \"ASPNETCORE_ENVIRONMENT\": \"Development\" } } } }");
@@ -330,11 +443,53 @@ public sealed class RazorDebuggingTests : IDisposable
         Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
         window.Close();
     }
+
+    [AvaloniaFact]
+    public void A_breakpoint_in_a_components_code_behind_stops_the_app_as_the_page_is_asked_for()
+    {
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        window.OpenFolder(folder);
+        string code = Path.Combine(PathNames.Canonical(folder), "Components/Pages/Tally.razor.cs");
+        window.OpenFile(code);
+        Ui.Settle();
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        editor.GoTo(new TextPosition(18, 8));
+        Ui.Run(window, AppActions.ToggleBreakpoint);
+        Assert.Contains(new LineMark(18, LineMarkKind.Breakpoint), editor.LineMarks);
+
+        Ui.Run(window, AppActions.Debug);
+        Ui.WaitFor(() => window.Browsed.Count > 0, "the app to listen at its launch profile's address", TimeSpan.FromMinutes(4));
+        using HttpClient client = new() { Timeout = TimeSpan.FromMinutes(3) };
+        Task<string> page = Task.Run(() => client.GetStringAsync($"http://localhost:{port}/tally"));
+        Ui.WaitFor(() => window.Debugger.Session?.State == DebugState.Paused, "the app to stop at the breakpoint in the code-behind as the page is asked for");
+        Ui.WaitFor(() => editor.LineMarks.Contains(new LineMark(18, LineMarkKind.ExecutionPoint)), "the stop shown on the code-behind's line");
+        Assert.Equal(code, window.EditorArea.Active?.Path);
+        Assert.Contains(new LineMark(18, LineMarkKind.BreakpointBound), editor.LineMarks);
+        Assert.Contains("OnInitialized", window.BottomPanel.Debug.Frames[0].Name, StringComparison.Ordinal);
+        Assert.False(page.IsCompleted, "The page came back while the app was stopped in its code-behind");
+
+        Ui.Run(window, AppActions.Resume);
+        string html = Ui.Await(page, "the page once the app goes on");
+        Assert.Contains("Clicks: 42", html, StringComparison.Ordinal);
+
+        Ui.Run(window, AppActions.Stop);
+        Ui.WaitFor(() => !window.Debugger.IsDebugging, "the session to end");
+        window.Close();
+    }
 }
 
 /// <summary>A Blazor Web App as <c>dotnet new blazor</c> makes it (named Shop, for .NET 10, without HTTPS), in a folder.</summary>
 internal static class BlazorApp
 {
+    /// <summary>A component whose code is all in its code-behind, Tally.razor.cs, its markup without <c>@code</c>.</summary>
+    public const string TallyMarkup = "@page \"/tally\"\n\n<h1>Tally from @Start</h1>\n\n<p>Clicks: @clicks</p>\n\n<button class=\"btn btn-primary\" @onclick=\"AddClick\">Add</button>\n";
+
+    /// <summary>The component's partial class: a parameter, a field and a method the markup uses, and its initialization.</summary>
+    public const string TallyCode = "using Microsoft.AspNetCore.Components;\n\nnamespace Shop.Components.Pages;\n\npublic partial class Tally\n{\n"
+        + "    [Parameter]\n    public int Start { get; set; }\n\n    private int clicks;\n\n    private void AddClick()\n    {\n        clicks++;\n    }\n\n"
+        + "    protected override void OnInitialized()\n    {\n        clicks = Start + 41 + 1;\n    }\n}\n";
+
     public static void Create(string folder)
     {
         ChildResult made = Task.Run(() => ChildProcesses.RunAsync(

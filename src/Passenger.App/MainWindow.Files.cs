@@ -21,7 +21,19 @@ public partial class MainWindow
         Explorer.ActionRequested += (_, asked) => _ = ExplorerActionAsync(asked.Action, asked.Node);
         Explorer.Dropped += (_, dropped) => _ = DropAsync(dropped);
         Explorer.CanPaste = () => held is not null;
+        Explorer.NestingAsked += (_, _) => _ = AskNestingAsync();
         Editors.Moved += (_, move) => OnFileMoved(move);
+    }
+
+    /// <summary>Rider's File Nesting, over the window: its "Show files with the same names as nested" is the setting every
+    /// Solution view nests by.</summary>
+    private async Task AskNestingAsync()
+    {
+        FileNestingDialog dialog = new(settings.NestFiles);
+        if (await dialog.ShowDialog<bool>(this))
+        {
+            ApplySettings(settings with { NestFiles = dialog.Nest });
+        }
     }
 
     private async Task ExplorerActionAsync(ExplorerAction action, ExplorerNode node)
@@ -332,8 +344,11 @@ public partial class MainWindow
             {
                 moves.AddRange(parts.Files.Where(f => f != path).Select(f => (f, TypeRename.Renamed(f, renamed))));
             }
+            // The files nested under it go with it too (Form1.resx with Form1.cs), those that are parts of the type once.
+            moves.AddRange(WithDependents(path, name).Where(d => !moves.Any(m => m.From == d.From)));
             List<string> dropped = [];
-            int files = TypeRename.Apply(Editors, made, moves, $"Rename {type.Name} to {renamed}", asked, dropped);
+            int files = TypeRename.Apply(Editors, made, moves, $"Rename {type.Name} to {renamed}", asked, dropped,
+                recording => FollowInProjects([.. moves.Select(m => (m.From, PathNames.Canonical(m.To)))], recording));
             FilesChanged();
             Explorer.Reveal(PathNames.Canonical(target));
             StatusText.Text = $"Renamed {Path.GetFileName(path)} to {name}, and {type.Name} to {renamed} in {files} file{(files == 1 ? "" : "s")}"
@@ -355,8 +370,10 @@ public partial class MainWindow
         }
     }
 
-    /// <summary>Renames a file or folder in place. Its open files keep their tabs, splits and undo, saved first, and
-    /// its bookmarks and breakpoints go with it. Undo in the Solution view renames it back, as Rider's does.</summary>
+    /// <summary>Renames a file or folder in place, and the files nested under a file with it, as Rider's rename of a
+    /// project item renames its dependents (Counter.razor.cs going with Counter.razor). Its open files keep their tabs,
+    /// splits and undo, saved first, its bookmarks and breakpoints go with it, and its project's items follow it. Undo in
+    /// the Solution view renames it back, as Rider's does.</summary>
     public string? Rename(string path, string name)
     {
         if (Invalid(name) is { } problem)
@@ -368,20 +385,34 @@ public partial class MainWindow
         {
             return null;
         }
-        if ((File.Exists(target) || Directory.Exists(target)) && !string.Equals(target, path, StringComparison.OrdinalIgnoreCase))
+        List<(string From, string To)> moves = [(path, target), .. WithDependents(path, name)];
+        if (moves.FirstOrDefault(m => (File.Exists(m.To) || Directory.Exists(m.To)) && !string.Equals(m.To, m.From, StringComparison.OrdinalIgnoreCase)) is { To: not null } taken)
         {
-            return $"{name} is already there";
+            return $"{Path.GetFileName(taken.To)} is already there";
         }
-        using (Editors.Commands.Record($"Rename {Path.GetFileName(path)} to {name}"))
+        using (CommandHistory.Recording recording = Editors.Commands.Record($"Rename {Path.GetFileName(path)} to {name}"))
         {
-            if (Editors.MoveFile(path, target) is { } failed)
+            foreach ((string from, string to) in moves)
             {
-                return failed;
+                if (Editors.MoveFile(from, to) is { } failed)
+                {
+                    return failed;
+                }
+            }
+            if (FollowInProjects([.. moves.Select(m => (m.From, PathNames.Canonical(m.To)))], recording) is { } unfollowed)
+            {
+                StatusText.Text = unfollowed;
             }
         }
         Explorer.Reveal(PathNames.Canonical(target));
         return null;
     }
+
+    /// <summary>Where the files nested under a file go as it takes a new name: beside it, named after it.</summary>
+    private IEnumerable<(string From, string To)> WithDependents(string path, string name) =>
+        DependentsOf(path)
+            .Select(d => (d, Path.Combine(Path.GetDirectoryName(d)!, FileNesting.Renamed(d, Path.GetFileName(path), name))))
+            .Where(d => d.Item1 != d.Item2);
 
     /// <summary>A file or folder moved, by a rename here or a code fix: what knows a file by its path follows it. The
     /// language server knows one by its URI, so each open file is closed there and opened at the new one.</summary>

@@ -49,6 +49,10 @@ public sealed class ToolWindow(string id, string title, string icon, Control con
     /// <summary>Controls of its own for its header, after its title (the Explorer's view switch).</summary>
     public Control? HeaderTools { get; init; }
 
+    /// <summary>Menu items of its own atop its header's options, as IntelliJ puts a tool window's (the Explorer's
+    /// Appearance), made as the menu opens.</summary>
+    public Func<IReadOnlyList<Control>>? Options { get; init; }
+
     /// <summary>The id of the action that shows it, if there is one (its shortcut is the button's tip): the dock adds it
     /// to the window's actions, to run from anywhere, the terminal too.</summary>
     public string? Action { get; init; }

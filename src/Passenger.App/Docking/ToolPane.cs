@@ -21,7 +21,13 @@ internal sealed class ToolPane : DockPanel
         this.host = host;
         Button options = HeaderButton("Icon.More", "Options");
         Button hide = HeaderButton("Icon.Minimize", "Hide (⇧⎋)");
-        options.Click += (_, _) => OptionsMenu().ShowAt(options);
+        options.Click += (_, _) =>
+        {
+            MenuFlyout menu = OptionsMenu();
+            host.OpenOptions = menu;
+            menu.Closed += (_, _) => host.OpenOptions = host.OpenOptions == menu ? null : host.OpenOptions;
+            menu.ShowAt(options);
+        };
         hide.Click += (_, _) =>
         {
             if (Window is { } window)
@@ -155,6 +161,14 @@ internal sealed class ToolPane : DockPanel
                 host.Hide(window.Id);
             }
         };
+        if (Window?.Options?.Invoke() is { Count: > 0 } own)
+        {
+            foreach (Control item in own)
+            {
+                menu.Items.Add(item);
+            }
+            menu.Items.Add(new Separator());
+        }
         menu.Items.Add(mode);
         menu.Items.Add(move);
         menu.Items.Add(maximize);

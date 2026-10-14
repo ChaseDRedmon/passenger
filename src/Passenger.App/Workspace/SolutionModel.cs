@@ -195,7 +195,9 @@ public sealed record SolutionItem(string Name, string Path) : SolutionEntry(Name
     }
 }
 
-/// <summary>One project, from its project file's own declarations.</summary>
+/// <summary>One project, from its project file's own declarations: among them the items it says depend on another file
+/// (DependentUpon), each as its Include or Update (relative to the project, wildcards and all) with the file it names
+/// (relative to the item's folder), which the Solution view nests.</summary>
 public sealed record ProjectModel(
     string Path,
     string Name,
@@ -204,7 +206,8 @@ public sealed record ProjectModel(
     IReadOnlyList<(string Name, string? Version)> Packages,
     IReadOnlyList<string> ProjectReferences,
     bool Exists,
-    bool DeclaredTest = false) : SolutionEntry(Name)
+    bool DeclaredTest = false,
+    IReadOnlyList<(string Items, string Parent)>? Dependents = null) : SolutionEntry(Name)
 {
     /// <summary>VSTest's test SDK and adapters, and what makes a Microsoft.Testing.Platform application: xUnit v3's packages,
     /// TUnit's, and the platform's own build package.</summary>
@@ -235,6 +238,47 @@ public sealed record ProjectModel(
     /// nested project's files are its own; null when none does. Paths are canonical, as the projects' are.</summary>
     public static ProjectModel? Owning(IEnumerable<ProjectModel> projects, string path) =>
         projects.Where(p => PathNames.Within(path, p.Folder)).MaxBy(p => p.Folder.Length);
+
+    /// <summary>The file a file of the project depends on, as the last item naming it says (an Update after an Include,
+    /// as MSBuild applies them); null when none does.</summary>
+    public string? DependentUponOf(string file)
+    {
+        if (Dependents is not { Count: > 0 } || !PathNames.IsUnder(file, Folder))
+        {
+            return null;
+        }
+        string relative = System.IO.Path.GetRelativePath(Folder, file).Replace('\\', '/');
+        for (int at = Dependents.Count - 1; at >= 0; at--)
+        {
+            (string items, string parent) = Dependents[at];
+            if (items.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Any(item => Matches(item, relative)))
+            {
+                return System.IO.Path.GetFullPath(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(file)!, parent.Replace('\\', '/')));
+            }
+        }
+        return null;
+    }
+
+    /// <summary>Whether an item's Include or Update names a path of the project: by itself, or by MSBuild's wildcards
+    /// (<c>*</c> and <c>?</c> in a name, <c>**</c> for any folders), as the file system's case would.</summary>
+    private static bool Matches(string item, string relative)
+    {
+        string pattern = item.Replace('\\', '/');
+        if (pattern.StartsWith("./", StringComparison.Ordinal))
+        {
+            pattern = pattern[2..];
+        }
+        if (!pattern.Contains('*') && !pattern.Contains('?'))
+        {
+            return string.Equals(pattern, relative, PathNames.Comparison);
+        }
+        string expression = "^" + Regex.Escape(pattern)
+            .Replace(@"\*\*/", "(.*/)?", StringComparison.Ordinal)
+            .Replace(@"\*\*", ".*", StringComparison.Ordinal)
+            .Replace(@"\*", "[^/]*", StringComparison.Ordinal)
+            .Replace(@"\?", "[^/]", StringComparison.Ordinal) + "$";
+        return Regex.IsMatch(relative, expression, PathNames.Comparison == StringComparison.OrdinalIgnoreCase ? RegexOptions.IgnoreCase : RegexOptions.None);
+    }
 
     /// <summary>Reads a project file, its path (and those it references) as the file system names them.</summary>
     internal static ProjectModel Load(string path)
@@ -292,7 +336,14 @@ public sealed record ProjectModel(
         bool test = string.Equals(Property("IsTestProject"), "true", StringComparison.OrdinalIgnoreCase)
             || sdks.Contains("MSTest.Sdk", StringComparer.OrdinalIgnoreCase)
             || shared.Any(props => props.Descendants().Any(e => e.Name.LocalName == "PackageReference" && TestPackages.Contains(e.Attribute("Include")?.Value ?? string.Empty)));
-        return new ProjectModel(path, name, outputType, frameworks, packages, references, true, test);
+        // DependentUpon as an attribute or an element, on an item of the project's own groups.
+        List<(string, string)> dependents = [.. project.Descendants()
+            .Where(e => e.Parent?.Name.LocalName == "ItemGroup")
+            .Select(e => (Items: (e.Attribute("Include") ?? e.Attribute("Update"))?.Value,
+                Parent: (e.Attribute("DependentUpon")?.Value ?? e.Elements().FirstOrDefault(c => c.Name.LocalName == "DependentUpon")?.Value)?.Trim()))
+            .Where(i => !string.IsNullOrWhiteSpace(i.Items) && !string.IsNullOrEmpty(i.Parent))
+            .Select(i => (i.Items!, i.Parent!))];
+        return new ProjectModel(path, name, outputType, frameworks, packages, references, true, test, dependents);
     }
 
     /// <summary>The SDKs a project names, without their versions: Sdk="A;B/1.0" on the project, &lt;Sdk Name&gt; and &lt;Import Sdk&gt;.</summary>

@@ -10,7 +10,8 @@ namespace Passenger.App;
 /// or copied are pasted into a folder or a project's (a cut once, dimmed until then), or dragged onto one to move them
 /// (copied with the platform's copy key held). A copy into its own folder asks the copy's name, as Rider's Duplicate does,
 /// and a name already taken there asks whether to replace what has it. A move carries its open files' tabs, undo and
-/// carets, saved first as Rider's paste saves them, and what knows a file by its path follows it.</summary>
+/// carets, saved first as Rider's paste saves them, and what knows a file by its path follows it, its project's items too.
+/// A file's dependents, nested under it in the Solution view, go where it goes.</summary>
 public partial class MainWindow
 {
     /// <summary>What Cut or Copy last put on the clipboard, whose text is their paths: a Paste finds them only while the
@@ -29,7 +30,8 @@ public partial class MainWindow
         }
         string text = string.Join(Environment.NewLine, paths);
         held = (paths, cut, text);
-        Explorer.Tree.SetCut(cut ? paths : []);
+        // What is nested under a file cut goes with it, so it dims with it.
+        Explorer.Tree.SetCut(cut ? [.. paths, .. paths.SelectMany(DependentsOf)] : []);
         if (Clipboard is { } clipboard)
         {
             await Avalonia.Input.Platform.ClipboardExtensions.SetTextAsync(clipboard, text);
@@ -78,9 +80,16 @@ public partial class MainWindow
     public async Task<IReadOnlyList<string>> PutAsync(IReadOnlyList<string> paths, string into, bool copy)
     {
         into = PathNames.Canonical(into);
+        // A file's dependents go with it, renamed as a copy's name asks; one chosen with its parent goes as the parent's.
+        Dictionary<string, IReadOnlyList<string>> following = new(StringComparer.Ordinal);
+        foreach (string path in paths)
+        {
+            following.TryAdd(path, DependentsOf(path));
+        }
         List<string> put = [];
+        List<(string From, string To)> moved = [];
         List<string> refused = [];
-        foreach (string source in paths)
+        foreach (string source in paths.Where(p => !following.Values.Any(d => d.Contains(p))))
         {
             string name = Path.GetFileName(source);
             if (!File.Exists(source) && !Directory.Exists(source))
@@ -102,20 +111,33 @@ public partial class MainWindow
                 }
                 target = Path.Combine(into, other);
             }
-            else if (File.Exists(target) || Directory.Exists(target))
+            List<(string From, string To)> going = [(source, target), .. following[source]
+                .Select(d => (d, Path.Combine(into, FileNesting.Renamed(d, name, Path.GetFileName(target)))))
+                .Where(d => !PathNames.Same(d.Item1, d.Item2))];
+            foreach ((string from, string to) in going)
             {
-                if (!await Confirm("Files Already Exist", $"{name} with the same name already exists in '{Path.GetFileName(into)}'. Replace?", "Replace")
-                    || !await DeleteAsync(target, asked: true))
+                if (await PutOneAsync(from, to, into, copy) is { } problem)
                 {
+                    if (problem.Length > 0)
+                    {
+                        refused.Add(problem);
+                    }
+                    if (from == source)
+                    {
+                        break;
+                    }
                     continue;
                 }
+                put.Add(PathNames.Canonical(to));
+                if (!copy)
+                {
+                    moved.Add((from, PathNames.Canonical(to)));
+                }
             }
-            if ((copy ? CopyOnDisk(source, target) : Editors.MoveFile(source, target)) is { } problem)
-            {
-                refused.Add($"{name} could not be {(copy ? "copied" : "moved")}: {problem}");
-                continue;
-            }
-            put.Add(PathNames.Canonical(target));
+        }
+        if (FollowInProjects(moved) is { } unfollowed)
+        {
+            refused.Add(unfollowed);
         }
         if (put.Count > 0)
         {
@@ -127,6 +149,49 @@ public partial class MainWindow
         }
         StatusText.Text = string.Join("; ", refused);
         return put;
+    }
+
+    /// <summary>Moves or copies one file or folder to where it goes, replacing what has its name there once the person
+    /// agrees; null once it is there, else why not ("" when they would not replace).</summary>
+    private async Task<string?> PutOneAsync(string source, string target, string into, bool copy)
+    {
+        string name = Path.GetFileName(source);
+        if (!PathNames.Same(target, source) && (File.Exists(target) || Directory.Exists(target)))
+        {
+            if (!await Confirm("Files Already Exist", $"{Path.GetFileName(target)} with the same name already exists in '{Path.GetFileName(into)}'. Replace?", "Replace")
+                || !await DeleteAsync(target, asked: true))
+            {
+                return string.Empty;
+            }
+        }
+        return (copy ? CopyOnDisk(source, target) : Editors.MoveFile(source, target)) is { } problem
+            ? $"{name} could not be {(copy ? "copied" : "moved")}: {problem}"
+            : null;
+    }
+
+    /// <summary>The files nested under one in the Solution view, by its project's DependentUpon and, while nesting by
+    /// name is on, by Rider's rules: what goes where it goes. None for a file in no project.</summary>
+    private IReadOnlyList<string> DependentsOf(string path) =>
+        File.Exists(path) && ProjectOf(PathNames.Canonical(path)) is { } project ? FileNesting.DependentsOf(PathNames.Canonical(path), project, settings.NestFiles) : [];
+
+    /// <summary>The projects' items follow the files moved (an Update naming one, a DependentUpon naming its parent), as
+    /// Rider's project model does, each project file watched first when a command is recording, for its undo. Null once
+    /// they do, else why a project could not.</summary>
+    private string? FollowInProjects(IReadOnlyList<(string From, string To)> moved, CommandHistory.Recording? recording = null)
+    {
+        foreach (ProjectModel project in Projects.Where(p => p.Exists && moved.Any(m => PathNames.IsUnder(m.From, p.Folder))).ToList())
+        {
+            recording?.Watch(project.Path);
+            try
+            {
+                ProjectEdits.MoveItems(project.Path, moved);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                return $"{Path.GetFileName(project.Path)} could not follow the files moved: {error.Message}";
+            }
+        }
+        return null;
     }
 
     private static string? Taken(string into, string name) =>
