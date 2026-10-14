@@ -137,7 +137,8 @@ public sealed class FileNestingTests : IDisposable
         string project = File.ReadAllText(At("Shop.csproj"));
         Assert.True(project == Project.Replace("Shapes.", "Figures.", StringComparison.Ordinal),
             $"The project did not follow Shapes.cs and Shapes.Circle.cs to their new names ({window.Status}):\n{project}");
-        Ui.WaitFor(() => Holder(window, At("Figures.Circle.cs")).Path == At("Figures.cs"), "Figures.Circle.cs nested under Figures.cs once the project is read again");
+        Ui.WaitFor(() => Shows(window, At("Figures.Circle.cs")) && Holder(window, At("Figures.Circle.cs")).Path == At("Figures.cs"),
+            "Figures.Circle.cs nested under Figures.cs once the project is read again");
 
         // Undo takes the files and the project back together, asked first.
         Choose(window, At("Figures.cs"));
@@ -191,6 +192,15 @@ public sealed class FileNestingTests : IDisposable
         Ui.Settle();
         return window.ExplorerView.Tree.Rows.FirstOrDefault(r => r.Path == path)
             ?? throw new Xunit.Sdk.XunitException($"The Explorer does not show {path}: [{string.Join(", ", window.ExplorerView.Tree.Rows.Select(r => r.Name))}]");
+    }
+
+    /// <summary>Whether the Explorer shows a file, opened down to it: not yet while the project as read before a rename
+    /// still stands, which names the old files.</summary>
+    private static bool Shows(MainWindow window, string path)
+    {
+        window.ExplorerView.Reveal(path);
+        Ui.Settle();
+        return window.ExplorerView.Tree.Rows.Any(r => r.Path == path);
     }
 
     /// <summary>The row a file's row is shown under: the nearest above it that is less deep.</summary>
