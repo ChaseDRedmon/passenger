@@ -53,6 +53,17 @@ public partial class MainWindow
         };
     }
 
+    /// <summary>Asks for the outline again as the language server's state changes (the files connected, the projects
+    /// loaded) while the path has none for the file shown: asked before the server had the file, it found none, and the
+    /// path would name no member until the next edit.</summary>
+    private void OutlineWhenUnseen()
+    {
+        if (Editors.Active is { } document && outlined != document.Path)
+        {
+            _ = OutlineAsync();
+        }
+    }
+
     private async Task OutlineAsync()
     {
         int asked = ++outlining;
