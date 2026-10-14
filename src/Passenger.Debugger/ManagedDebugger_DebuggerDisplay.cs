@@ -111,12 +111,19 @@ public partial class ManagedDebugger
         {
             CompiledExpressionEvaluationContext context = new(thread, threadId, frameStackDepth, target);
             using EvaluationResult result = await _expressionEvaluator!.Evaluate(expression, context);
+            // "nq" (no quotes) and "raw" (as it is, which CoreLib's spans use for their ToString()) show a string bare.
+            bool quoted = !specifiers.Contains("nq") && !specifiers.Contains("raw");
+            if ((result.Error is not null || result.Value is null) && target is not null && IsDottedName(expression)
+                && await target.GetPropertyValue(ProcessRuntimeEventsUntilEvalEvent, EvalStatus, GetIlFrameForThreadIdAndStackDepth(threadId, frameStackDepth), expression) is { } implemented)
+            {
+                // Roslyn's own types name an explicitly implemented property by its metadata name (System.Collections.ICollection.Count).
+                FormattedValue shown = await FormatCorDebugValueAsync(ResolveCorDebugValue(implemented), threadId, frameStackDepth, quoted, nesting + 1);
+                return (shown.Value, shown.ResultIsError);
+            }
             if (result.Error is not null || result.Value is null)
             {
                 return ($"<error: {ShortError(result.Error)}>", true);
             }
-            // "nq" (no quotes) and "raw" (as it is, which CoreLib's spans use for their ToString()) show a string bare.
-            bool quoted = !specifiers.Contains("nq") && !specifiers.Contains("raw");
             FormattedValue formatted = await FormatCorDebugValueAsync(ResolveCorDebugValue(result.Value), threadId, frameStackDepth, quoted, nesting + 1);
             return (formatted.Value, formatted.ResultIsError);
         }
@@ -124,6 +131,13 @@ public partial class ManagedDebugger
         {
             return ($"<error: {ShortError(error.Message)}>", true);
         }
+    }
+
+    /// <summary>Whether a fragment is names joined by dots, as an explicitly implemented member's full name is.</summary>
+    private static bool IsDottedName(string expression)
+    {
+        string[] parts = expression.Split('.');
+        return parts.Length > 1 && parts.All(p => p.Length > 0 && (char.IsLetter(p[0]) || p[0] == '_') && p.All(c => char.IsLetterOrDigit(c) || c == '_'));
     }
 
     /// <summary>The compiler's message without its code: "The name 'x' does not exist in the current context".</summary>
