@@ -244,6 +244,51 @@ public sealed class XamlService : IDisposable
         }
     }
 
+    /// <summary>The XAML file whose <c>x:Class</c> is a class, in the project of a C# file of it: an open one's text first,
+    /// else the files on disk; null for none.</summary>
+    public string? ClassFile(string className, string near)
+    {
+        UiThread.Check();
+        foreach (XamlDocument document in documents.Values)
+        {
+            if (document.Document.Text.Snapshot.ToString().Contains($"Class=\"{className}\"", StringComparison.Ordinal))
+            {
+                return document.Document.Path;
+            }
+        }
+        if (ProjectFile(near) is not { } project)
+        {
+            return null;
+        }
+        Stack<string> waiting = new([Path.GetDirectoryName(project)!]);
+        while (waiting.Count > 0)
+        {
+            string folder = waiting.Pop();
+            try
+            {
+                foreach (string file in Directory.EnumerateFiles(folder).Where(IsXaml))
+                {
+                    if (File.ReadAllText(file).Contains($"Class=\"{className}\"", StringComparison.Ordinal))
+                    {
+                        return PathNames.Canonical(file);
+                    }
+                }
+                foreach (string sub in Directory.EnumerateDirectories(folder))
+                {
+                    if (Path.GetFileName(sub) is not ("bin" or "obj") && !Path.GetFileName(sub).StartsWith('.'))
+                    {
+                        waiting.Push(sub);
+                    }
+                }
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                // A folder that cannot be read holds no XAML to go to.
+            }
+        }
+        return null;
+    }
+
     /// <summary>A file's project: the nearest folder at or above it with a C# project file.</summary>
     private static string? ProjectFile(string path)
     {

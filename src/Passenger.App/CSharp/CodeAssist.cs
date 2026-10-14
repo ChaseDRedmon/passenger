@@ -244,7 +244,7 @@ public sealed partial class CodeAssist
             new("Refactor", 0, 0));
         // IntelliJ's RefactoringMenu: Rename and Change Signature, the Extract and Introduce actions, Inline; Move and Safe
         // Delete; Pull Members Up and Push Members Down, with Encapsulate Field, which Rider adds last.
-        Code(AppActions.Rename, "Rename...", _ => ShowRename(), new("Refactor", 1, 0));
+        Code(AppActions.Rename, "Rename...", _ => ShowRename(), new("Refactor", 1, 0), xaml: true);
         Code(AppActions.ChangeSignature, "Change Signature...", context => _ = ChangeSignature(), new("Refactor", 1, 1));
         Code(AppActions.ExtractMethod, "Extract Method...", context => _ = Refactor(a => a.Title == "Extract method", "Extract Method", renameMethod: true),
             new("Refactor", 1, 2));
@@ -261,7 +261,7 @@ public sealed partial class CodeAssist
         Code(AppActions.PushMembersDown, "Push Members Down...", context => _ = MoveMembers(up: false), new("Refactor", 3, 1));
         Code(AppActions.EncapsulateField, "Encapsulate Field...", context => _ = Refactor(EncapsulateField), new("Refactor", 3, 2));
         // Rider's order in Navigate: Declaration, Derived Symbols, Implementation(s), Type Declaration, Base Symbols.
-        Code(AppActions.GoToDeclaration, "Go to Declaration", context => _ = GoToDefinition(Caret), new("Navigate", 2, 0));
+        Code(AppActions.GoToDeclaration, "Go to Declaration", context => _ = GoToDefinition(Caret), new("Navigate", 2, 0), xaml: true);
         Code(AppActions.DerivedSymbols, "Derived Symbols", context => _ = GoToRelated("Derived Symbols", Caret, DerivedSymbolsAsync, "No derived symbols found"),
             new("Navigate", 2, 1));
         Code(AppActions.GoToImplementation, "Go to Implementation", context => _ = GoToImplementation(Caret), new("Navigate", 2, 2));
@@ -269,7 +269,7 @@ public sealed partial class CodeAssist
             context => _ = GoToRelated("Type Declaration", Caret, async (lsp, at) => [.. (await lsp.TypeDefinitionAsync(at)).Select(l => new Target(l))],
                 "Cannot find a type declaration to go to"), new("Navigate", 2, 3));
         Code(AppActions.BaseSymbols, "Base Symbols", context => _ = GoToRelated("Base Symbols", Caret, BaseSymbolsAsync, "No base symbols found"), new("Navigate", 2, 4));
-        Code(AppActions.FindUsages, "Find Usages", context => _ = FindUsages(Caret), new("Navigate", 2, 5));
+        Code(AppActions.FindUsages, "Find Usages", context => _ = FindUsages(Caret), new("Navigate", 2, 5), xaml: true);
         Code(AppActions.ParameterInfo, "Parameter Info", context => _ = ShowSignature(), new("View", 1, 2));
         Code(AppActions.NextError, "Next Highlighted Error", _ => StepToMarker(forward: true), new("Navigate", 3, 0), server: false);
         Code(AppActions.PreviousError, "Previous Highlighted Error", _ => StepToMarker(forward: false), new("Navigate", 3, 1), server: false);
@@ -751,6 +751,13 @@ public sealed partial class CodeAssist
         {
             hoverCard.AddCode(debuggerValue);
         }
+        else if (XamlCurrent is { } xaml)
+        {
+            if (await XamlDescription(xaml, offset) is { } described && !cancel.IsCancellationRequested)
+            {
+                hoverCard.AddCode(described);
+            }
+        }
         else if (Current?.Lsp is { } lsp)
         {
             try
@@ -1081,6 +1088,11 @@ public sealed partial class CodeAssist
 
     private void ShowRename()
     {
+        if (XamlCurrent is { } xaml && editors.Active is { } shown)
+        {
+            _ = Carried("Rename", () => XamlRename(xaml, shown), closeModal: false);
+            return;
+        }
         if (Ask("Rename") is null || editors.Active is not { } document)
         {
             return;
@@ -1173,13 +1185,24 @@ public sealed partial class CodeAssist
 
     private async Task GoToDefinitionCore(int offset)
     {
+        if (XamlCurrent is { } xaml)
+        {
+            await XamlGoTo(xaml, offset);
+            return;
+        }
         if (Ask("Go to Declaration") is not { } lsp)
         {
             return;
         }
         try
         {
-            Go(await lsp.DefinitionAsync(offset), offset, "Declarations", "Cannot find a declaration to go to");
+            IReadOnlyList<LspLocation> found = await lsp.DefinitionAsync(offset);
+            if (NamedElementOf(found, offset) is { } element)
+            {
+                await Arrive(element);
+                return;
+            }
+            Go(found, offset, "Declarations", "Cannot find a declaration to go to");
         }
         catch (LanguageServerFailed failed)
         {
@@ -1362,6 +1385,11 @@ public sealed partial class CodeAssist
 
     private async Task FindUsagesCore(int offset)
     {
+        if (XamlCurrent is { } xaml)
+        {
+            await XamlUsages(xaml, offset);
+            return;
+        }
         if (Ask("Find Usages") is not { } lsp)
         {
             return;
@@ -1605,9 +1633,12 @@ public sealed partial class CodeAssist
     /// <summary>What a modal's answer does (a fix chosen, a new name), carried out as background work. A failure of the
     /// server's, or an edit the disk refused, is said in the status bar, should the work not say it itself; anything else
     /// is the IDE's own bug, reported as an IDE error rather than lost in the event's handler.</summary>
-    private async Task Carried(string what, Func<Task> done)
+    private async Task Carried(string what, Func<Task> done, bool closeModal = true)
     {
-        CloseModal();
+        if (closeModal)
+        {
+            CloseModal();
+        }
         BackgroundWork.Begin();
         try
         {

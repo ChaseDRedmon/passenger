@@ -201,6 +201,102 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void Go_to_declaration_from_xaml_opens_a_controls_class_a_resources_definition_and_a_bound_property()
+    {
+        MainWindow window = app.Open(app.PathOf("MainWindow.axaml"));
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "x:Class=\"Gallery.Main");
+        Ui.Run(window, AppActions.GoToDeclaration);
+        Ui.Settle();
+        Assert.Equal("MainWindow.axaml.cs", window.EditorArea.Active?.Name);
+        Assert.Contains("public partial class |MainWindow", CaretLine(window.EditorArea.CodeEditor), StringComparison.Ordinal);
+
+        window.OpenFile(app.PathOf("MainWindow.axaml"));
+        Ui.Settle();
+        editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "<Butt");
+        Ui.Run(window, AppActions.QuickDocumentation);
+        Ui.WaitFor(() => window.Assist.HoverText is not null, "the card describing the tag's type");
+        Assert.Equal("class Avalonia.Controls.Button : ContentControl", window.Assist.HoverText);
+        Ui.Press(window, "ESCAPE");
+        Ui.Run(window, AppActions.GoToDeclaration);
+        Ui.Settle();
+        // Avalonia's own Button, decompiled from the package's assembly, read-only, at the class.
+        OpenDocument library = window.EditorArea.Active!;
+        Assert.Equal("Avalonia.Controls.Button.cs", library.Name);
+        Assert.True(library.IsReadOnly, "the library's code opened editable");
+        Assert.Contains("class |Button", CaretLine(window.EditorArea.CodeEditor), StringComparison.Ordinal);
+
+        window.OpenFile(app.PathOf("MainWindow.axaml"));
+        Ui.Settle();
+        editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "{StaticResource Acc");
+        Ui.Run(window, AppActions.GoToDeclaration);
+        // A key the theme's dark and light dictionaries both define: a place to choose for each.
+        Ui.WaitFor(() => window.Assist.Offered.Count == 2, "Accent's dark and light definitions to choose from");
+        Assert.Equal(["Accent (Dark) in Palette.axaml", "Accent (Light) in Palette.axaml"], window.Assist.Offered);
+        Ui.Press(window, "DOWN");
+        Ui.Press(window, "ENTER");
+        Ui.Settle();
+        Assert.Equal("Palette.axaml", window.EditorArea.Active?.Name);
+        Assert.Contains("<SolidColorBrush x:Key=\"|Accent\" Color=\"#3574F0\" />", CaretLine(window.EditorArea.CodeEditor), StringComparison.Ordinal);
+
+        window.OpenFile(app.PathOf("MainWindow.axaml"));
+        Ui.Settle();
+        editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "{Binding Gree");
+        Ui.Run(window, AppActions.GoToDeclaration);
+        Ui.Settle();
+        Assert.Equal("MainViewModel.cs", window.EditorArea.Active?.Name);
+        Assert.Contains("public string |Greeting", CaretLine(window.EditorArea.CodeEditor), StringComparison.Ordinal);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void An_elements_name_renames_with_its_code_behinds_uses_and_go_to_declaration_from_the_code_lands_on_it()
+    {
+        MainWindow window = app.Open(app.PathOf("MainWindow.axaml.cs"));
+        CodeEditor code = window.EditorArea.CodeEditor;
+        // The field Avalonia's generator makes for the button leads to its name in the XAML.
+        PlaceAfter(code, "        G");
+        Ui.Run(window, AppActions.GoToDeclaration);
+        Ui.Settle();
+        Assert.Equal("MainWindow.axaml", window.EditorArea.Active?.Name);
+        CodeEditor xaml = window.EditorArea.CodeEditor;
+        Assert.Contains("<Button Name=\"|Go\"", CaretLine(xaml), StringComparison.Ordinal);
+
+        Ui.Run(window, AppActions.FindUsages);
+        Ui.Settle();
+        Ui.WaitFor(() => window.Find.Rows.Count > 0, "the usages in the Find window");
+        IReadOnlyList<string> found = [.. window.Find.Rows.Where(r => r.Usage is not null).Select(r => r.Label)];
+        Assert.Contains(found, f => f.Contains("Go.Content = \"Start\";", StringComparison.Ordinal));
+        Assert.Contains(found, f => f.Contains("{Binding #Go.Content}", StringComparison.Ordinal));
+
+        Ui.Run(window, AppActions.Rename);
+        Ui.WaitFor(() => window.Assist.Renaming == "Go", "the rename box on the button's name");
+        window.KeyTextInput("Start");
+        Ui.Press(window, "ENTER");
+        OpenDocument behind = window.EditorArea.Documents.First(d => d.Name == "MainWindow.axaml.cs");
+        Ui.WaitFor(() => behind.Text.Snapshot.ToString().Contains("Start.Content = \"Start\";", StringComparison.Ordinal), "the code-behind's use renamed with it");
+        string renamed = window.EditorArea.Documents.First(d => d.Name == "MainWindow.axaml").Text.Snapshot.ToString();
+        Assert.Contains("<Button Name=\"Start\"", renamed, StringComparison.Ordinal);
+        Assert.Contains("{Binding #Start.Content}", renamed, StringComparison.Ordinal);
+        Assert.DoesNotContain("Name=\"Go\"", renamed, StringComparison.Ordinal);
+        // One command, undone whole, asked first as Rider asks of a change to more than one file.
+        List<string> asked = [];
+        window.Confirm = (title, text, _) =>
+        {
+            asked.Add(text);
+            return Task.FromResult(true);
+        };
+        Ui.Run(window, EditorActions.Undo);
+        Ui.Settle();
+        Assert.Equal(["Undo Rename Go to Start? It changes MainWindow.axaml.cs and MainWindow.axaml."], asked);
+        Assert.Contains("Go.Content = \"Start\";", behind.Text.Snapshot.ToString(), StringComparison.Ordinal);
+        window.Close();
+    }
+
     /// <summary>The one marker over a stretch of the text.</summary>
     private static Marker MarkerOn(CodeEditor editor, OpenDocument document, string stretch)
     {
@@ -260,6 +356,7 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
                 File.WriteAllBytes(PathOf("Assets/logo.png"), [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
                 File.WriteAllText(PathOf("App.axaml"), AppXaml);
                 File.WriteAllText(PathOf("MainWindow.axaml"), Window);
+                File.WriteAllText(PathOf("MainWindow.axaml.cs"), CodeBehind);
             }, Folder);
             Prepare();
         }
@@ -324,6 +421,23 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
 
             """;
 
+        /// <summary>The window's code-behind, using the field Avalonia's generator makes for the button named Go.</summary>
+        public const string CodeBehind = """
+            using Avalonia.Controls;
+
+            namespace Gallery;
+
+            public partial class MainWindow : Window
+            {
+                public MainWindow()
+                {
+                    InitializeComponent();
+                    Go.Content = "Start";
+                }
+            }
+
+            """;
+
         public const string Window = """
             <Window xmlns="https://github.com/avaloniaui"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -337,6 +451,7 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
                 <StackPanel Margin="12" Spacing="8">
                     <TextBlock Name="Title" Text="{Binding Greeting}" />
                     <Button Name="Go" Content="Go" Background="{StaticResource Accent}" />
+                    <TextBlock Text="{Binding #Go.Content}" />
                 </StackPanel>
             </Window>
 

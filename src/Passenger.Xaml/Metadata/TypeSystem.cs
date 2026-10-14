@@ -13,6 +13,7 @@ public sealed class TypeSystem
     private readonly Dictionary<string, List<ClrType>> nestedIn = new(StringComparer.Ordinal);
     private readonly List<XmlnsDefinition> definitions = [];
     private readonly Dictionary<string, string> prefixes = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, IReadOnlyList<SourcePlace>> parts = new(StringComparer.Ordinal);
     private readonly IReadOnlyList<string> globalUsings;
 
     public TypeSystem(IReadOnlyList<AssemblyTypes> assemblies, IReadOnlyList<SourceTypes> sources, string assemblyName, IReadOnlyList<string>? implicitUsings = null)
@@ -35,6 +36,7 @@ public sealed class TypeSystem
         foreach (IGrouping<string, ClrType> parts in sources.SelectMany(s => s.Types).GroupBy(t => t.FullName, StringComparer.Ordinal))
         {
             ClrType type = parts.Count() == 1 ? parts.First() : Merged([.. parts]);
+            this.parts[type.FullName] = [.. parts.Select(p => p.Origin.Place).OfType<SourcePlace>()];
             if (byName.TryGetValue(type.FullName, out ClrType? metadata))
             {
                 Unindex(metadata);
@@ -67,6 +69,9 @@ public sealed class TypeSystem
     public IEnumerable<ClrType> All => byName.Values;
 
     public ClrType? Find(string fullName) => byName.GetValueOrDefault(fullName);
+
+    /// <summary>Where the project's C# declares a type, each part of a partial one (a code-behind and its other files).</summary>
+    public IReadOnlyList<SourcePlace> PlacesOf(string fullName) => parts.GetValueOrDefault(fullName) ?? [];
 
     /// <summary>The top-level types of a CLR namespace.</summary>
     public IReadOnlyList<ClrType> InNamespace(string clrNamespace) => byNamespace.TryGetValue(clrNamespace, out List<ClrType>? types) ? types : [];
