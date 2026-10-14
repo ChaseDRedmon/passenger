@@ -195,9 +195,16 @@ window or takes the focus; it shows everything but the system's own window chrom
   ChildProcesses), never logged. `NuGetConfigEditor` changes one nuget.config in place, every other character kept;
   `PackageManager` changes projects through `dotnet add`/`remove package`. `ToolWindows/NuGetView` is the window, its
   Packages and Sources tabs. A run's NuGet is its own on macOS and Linux (DOTNET_CLI_HOME under the run's folder).
+- `src/Passenger.App/Discord`: Rich Presence over the Discord app's local IPC, Passenger's own client
+  (`DiscordConnection`; `DiscordPresence` on one worker off the UI thread, at most one update every 4 s, a look every
+  20 s without Discord). Only the person's window reaches Discord (`ShowActivityInDiscord`, called by App); the test
+  run points `PASSENGER_DISCORD_IPC` at a place of its own where nothing listens.
 - `src/Passenger.App/Settings`: `AppSettings` (the store's `settings.json`) and Rider's searchable `SettingsDialog`;
   `MainWindow.Settings.cs` applies them live. A new setting is a property, an option row in the dialog, a line in
-  `ApplySettings`, and its range in `Clamped` when it has one.
+  `ApplySettings`, and its range in `Clamped` when it has one. `SettingsDialog.Keymap.cs` is the Keymap page: Rider's
+  Edit Shortcuts menu, the Keyboard Shortcut dialog (chords) and Find Actions by Shortcut; `Keymap.Conflicts` is Rider's
+  conflict rule, and a conflict is removed, never kept, since a shortcut runs one action. A chord can't be a native
+  macOS menu key equivalent; in-window menus show it as text.
 - `src/Passenger.App/Updates`: the update check and the update. `Releases` asks GitHub's releases/latest (a GET naming
   Passenger and its version, nothing else) and offers a release newer than `Product.Version`, never a draft or
   pre-release; its files download over HTTPS only (`Downloads.cs`), checked against the SHA-256 the same release gives.
