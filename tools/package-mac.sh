@@ -214,16 +214,35 @@ fi
 
 # Beside the app, a link to /Applications to drag it onto, Passenger's icon for the volume, and the window Finder opens
 # on it (tools/dmg-layout.py). The volume's name carries the version, as the file's name cannot.
+volume_name="Passenger $version"
 ln -s /Applications "$stage/Applications"
 cp "$root/src/Passenger.App/Assets/Passenger.icns" "$stage/.VolumeIcon.icns"
-python3 -I "$root/tools/dmg-layout.py" "$stage/.DS_Store"
+# The window's picture, an arrow from the app to Applications (#188): tools/dmg-background.svg drawn by sips at its size
+# and at twice it, each from the SVG as `just app-icon` draws the icons, joined by tiffutil into one TIFF that Finder
+# shows at the screen's scale. sips says nothing in its exit status of a file it skipped, so the picture's absence
+# says it.
+background="$root/tools/dmg-background.svg"
+size=$(sed -n 's/^<svg [^>]*width="\([0-9]*\)" height="\([0-9]*\)".*/\1 \2/p' "$background")
+[ -n "$size" ] || fail "tools/dmg-background.svg names no width and height in pixels on its <svg>"
+width=${size% *}
+height=${size#* }
+mkdir "$stage/.background"
+for scale in 1 2; do
+    picture="$work/background@${scale}x.png"
+    sips -s format png -z $((height * scale)) $((width * scale)) "$background" --out "$picture" >/dev/null || true
+    [ -s "$picture" ] || fail "sips drew no ${scale}x picture of $background (does this macOS's sips read SVG?)"
+done
+tiffutil -cathidpicheck "$work/background@1x.png" "$work/background@2x.png" -out "$stage/.background/background.tiff"
 # fseventsd logs nothing on a volume whose .fseventsd holds no_log, so the read-write mount leaves no log in the image.
 mkdir "$stage/.fseventsd"
 touch "$stage/.fseventsd/no_log"
-hdiutil create -volname "Passenger $version" -srcfolder "$stage" -fs HFS+ -format UDRW -ov "$work/image.dmg" -quiet
+hdiutil create -volname "$volume_name" -srcfolder "$stage" -fs HFS+ -format UDRW -ov "$work/image.dmg" -quiet
 attach "$work/image.dmg" -readwrite
 # The volume's top folder says it has an icon of its own (Finder's kHasCustomIcon), which hdiutil does not copy.
 xattr -wx com.apple.FinderInfo 0000000000000000040000000000000000000000000000000000000000000000 "$mount"
+# Written on the volume itself, since the picture's alias names the volume's creation date and the catalog IDs the
+# volume gave the picture and its folder, which the compressed image keeps.
+python3 -I "$root/tools/dmg-layout.py" write "$mount" "$volume_name"
 detach
 # LZMA: about a quarter smaller than zlib or LZFSE (ULFO) to download; macOS reads it from 10.15, and the app needs 13.
 hdiutil convert "$work/image.dmg" -format ULMO -o "$image" -quiet
@@ -237,18 +256,22 @@ if [ -n "$profile" ]; then
 fi
 
 # The image as a person gets it: compressed and whole, mounted read-only, Passenger.app beside the Applications link
-# under Passenger's icon, the app's signature whole and without get-task-allow, its version and the volume's the
-# package's, Roslyn's server, the debugger's adapter, the licence and the notices in it, and every Mach-O file built for
-# the image's processor (a file built only for the other would make macOS run the app through Rosetta, or not at all).
+# under Passenger's icon and over the window's picture, which the .DS_Store names, the app's signature whole and without
+# get-task-allow, its version and the volume's the package's, Roslyn's server, the debugger's adapter, the licence and
+# the notices in it, and every Mach-O file built for the image's processor (a file built only for the other would make
+# macOS run the app through Rosetta, or not at all).
 hdiutil verify -quiet "$image"
 format=$(hdiutil imageinfo "$image" 2>/dev/null | sed -n 's/^Format: //p')
 [ "$format" = ULMO ] || fail "the image's format is '$format', not ULMO"
 attach "$image" -readonly
 shipped="$mount/Passenger.app"
 volume=$(diskutil info "$mount" | sed -n 's/^ *Volume Name: *//p')
-[ "$volume" = "Passenger $version" ] || fail "the image's volume is named '$volume', not 'Passenger $version'"
+[ "$volume" = "$volume_name" ] || fail "the image's volume is named '$volume', not '$volume_name'"
 [ "$(readlink "$mount/Applications")" = /Applications ] || fail "the image has no link to /Applications beside the app"
 xattr -px com.apple.FinderInfo "$mount" | grep -q '^00 00 00 00 00 00 00 00 04' || fail "the image's volume has no icon of its own"
+# The picture in .background, of the window's size and twice it, and the .DS_Store's alias to it naming this volume,
+# its creation date and the picture's catalog IDs and paths, so that Finder finds it once a Mac mounts it in /Volumes.
+python3 -I "$root/tools/dmg-layout.py" check "$mount" "$volume_name"
 [ "$(ls -A "$mount/.fseventsd")" = no_log ] || fail "the image carries the event log of its read-write mount"
 codesign --verify --deep --strict "$shipped"
 if codesign -d --entitlements - --xml "$shipped" 2>/dev/null | grep -q get-task-allow; then
