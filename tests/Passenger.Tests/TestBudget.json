@@ -36,6 +36,7 @@
     "XamlTests": 150,
     "WpfXamlTests": 90,
     "WindowsOnlyProjectsTests": 90,
+    "WpfPreviewTests": 90,
     "XamlEditingTests": 120,
     "ProjectFileHelpTests": 90
   }
