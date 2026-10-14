@@ -528,8 +528,31 @@ public sealed class UpdatesTests : IDisposable
         }
         finally
         {
-            Tool("/usr/bin/hdiutil", "detach", volume, "-force", "-quiet");
+            Detach(volume);
         }
+    }
+
+    /// <summary>Unmounts the test's volume. The system's own readers of new files (Spotlight, the code-signing checks)
+    /// can hold a volume just written busy for a moment, which even a forced detach refuses (exit code 16): tried again
+    /// for up to 10 s, then failed naming what holds it.</summary>
+    private static void Detach(string volume)
+    {
+        ChildResult detached;
+        for (int attempt = 1; ; attempt++)
+        {
+            detached = Task.Run(() => ChildProcesses.RunAsync(ChildProcesses.Command("/usr/bin/hdiutil", ["detach", volume, "-force", "-quiet"]), limit: TimeSpan.FromMinutes(1))).GetAwaiter().GetResult();
+            if (detached.Succeeded)
+            {
+                return;
+            }
+            if (attempt == 10)
+            {
+                break;
+            }
+            Thread.Sleep(1000);
+        }
+        ChildResult holders = Task.Run(() => ChildProcesses.RunAsync(ChildProcesses.Command("/usr/sbin/lsof", ["+D", volume]), limit: TimeSpan.FromMinutes(1))).GetAwaiter().GetResult();
+        Assert.Fail($"The test's volume {volume} could not be detached (hdiutil exited with code {detached.ExitCode}: {detached.Error.Trim()}); what has files open on it:\n{holders.Output}");
     }
 
     /// <summary>The person's window as the app makes it, its settings kept in the test's state folder, asking the stand-in;
