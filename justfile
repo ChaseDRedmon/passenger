@@ -25,7 +25,7 @@ screenshot path *args:
     dotnet run --project {{app}} -- --screenshot {{path}} {{args}}
 
 # A self-contained Release build for one platform, precompiled with ReadyToRun for startup:
-# just publish osx-arm64 | osx-x64 | win-x64 | win-arm64
+# just publish osx-arm64 | osx-x64 | win-x64 | win-arm64 | linux-x64 | linux-arm64
 publish rid:
     dotnet publish {{app}} -c Release -r {{rid}} --self-contained -p:PublishReadyToRun=true
 
@@ -48,6 +48,13 @@ package-win rid="win-x64":
 [windows]
 package-win rid="win-x64":
     $sh = (Get-Command sh -ErrorAction SilentlyContinue).Source; if (-not $sh) { $sh = Join-Path (Split-Path (Split-Path (Get-Command git).Source)) 'bin\sh.exe' }; & $sh tools/package-win.sh {{rid}}
+
+# Passenger for Linux as site/linux.html describes it: one passenger/ folder (the app, its launcher, install.sh and the
+# desktop entry with its icon) in artifacts/package/Passenger-linux-x64.tar.gz or -arm64.tar.gz, unpacked and checked.
+# On Linux or macOS: just package-linux [linux-x64|linux-arm64]
+[unix]
+package-linux rid="linux-x64":
+    tools/package-linux.sh {{rid}}
 
 # Passenger's own icons (Passenger.icns, passenger.png, Passenger.ico) from Assets/passenger.svg; macOS, by sips.
 app-icon:

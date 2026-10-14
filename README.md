@@ -1,6 +1,7 @@
 # Passenger
 
-An IDE for C# and modern .NET, inspired by JetBrains Rider, written in C# with Avalonia. Windows and macOS first.
+An IDE for C# and modern .NET, inspired by JetBrains Rider, written in C# with Avalonia. Windows and macOS first, with
+builds for Linux ([how to install them](https://passenger-ide.net/linux)).
 
 **[passenger-ide.net](https://passenger-ide.net)**: what it does, downloads, and how to connect a coding agent.
 
@@ -66,9 +67,10 @@ You need the .NET 11 SDK (the release candidate works until it ships in November
 just build                 # Debug build; warnings are errors
 just run                   # run it
 just screenshot shell.png  # draw the main window to a PNG off-screen (--size 1600x1000 --scale 2)
-just publish osx-arm64     # a self-contained Release build (osx-x64, win-x64, win-arm64 too)
+just publish osx-arm64     # a self-contained Release build (osx-x64, win-x64, win-arm64, linux-x64, linux-arm64 too)
 just package-mac           # the macOS disk image (or osx-x64); signed with PASSENGER_SIGN_IDENTITY, else ad hoc
 just package-win win-x64   # the Windows installer (or win-arm64), unsigned unless tools/package-win.sh's variables sign it
+just package-linux         # the Linux archive with its install.sh (linux-x64, or linux-arm64), as site/linux.html uses it
 just notices               # fail naming any package THIRD_PARTY_NOTICES.md does not name
 ```
 
@@ -96,8 +98,8 @@ only once you turn on Settings | MCP Server | Enable MCP Server, through a conne
 the first time an agent wants to change anything.
 
 Tell your agent to start Passenger with `--mcp-attach`, and it joins the window you have open. Passenger is
-`/Applications/Passenger.app/Contents/MacOS/Passenger` on a Mac and `%LOCALAPPDATA%\PassengerIDE\current\Passenger.exe`
-on Windows. For a Passenger of the agent's own, with no window, use `--mcp` and the folder or solution instead.
+`/Applications/Passenger.app/Contents/MacOS/Passenger` on a Mac, `%LOCALAPPDATA%\PassengerIDE\current\Passenger.exe`
+on Windows, and `~/.local/bin/passenger` on Linux (`/usr/local/bin/passenger` when installed for everyone). For a Passenger of the agent's own, with no window, use `--mcp` and the folder or solution instead.
 
 ```sh
 # Claude Code

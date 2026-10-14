@@ -198,6 +198,10 @@ public static class ChildProcesses
         }
     }
 
+    /// <summary>What an action that reveals a file calls the program it opens: the Finder, Explorer, or on Linux whichever
+    /// file manager the desktop has, which IntelliJ names "File Manager" when it cannot tell.</summary>
+    public static string FileManager { get; } = OperatingSystem.IsMacOS() ? "Finder" : OperatingSystem.IsWindows() ? "Explorer" : "File Manager";
+
     /// <summary>Shows a file or folder in the Finder (in Explorer on Windows, its folder in the file manager elsewhere).
     /// The file manager is the person's, not a child: it is never ended with the IDE.</summary>
     public static void Reveal(string path)

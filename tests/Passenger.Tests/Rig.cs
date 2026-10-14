@@ -455,8 +455,13 @@ public static class Ui
     {
         Keystroke stroke = Keystroke.Parse(keys.Replace('+', ' '));
         RawInputModifiers modifiers = Raw(stroke.Modifiers);
+        bool shown = window.IsVisible;
         window.KeyPress(stroke.Key, modifiers, PhysicalKey.None, null);
-        window.KeyRelease(stroke.Key, modifiers, PhysicalKey.None, null);
+        // A press that closed its window (a dialog's Enter, done at once) leaves the release nowhere to go.
+        if (!shown || window.IsVisible)
+        {
+            window.KeyRelease(stroke.Key, modifiers, PhysicalKey.None, null);
+        }
         Settle();
     }
 

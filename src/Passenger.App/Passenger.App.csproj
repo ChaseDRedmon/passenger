@@ -11,7 +11,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- The window's icon; Passenger.icns is the macOS bundle's (tools/package-mac.sh), both from Assets/passenger.svg. -->
+    <!-- The window's icon (X11's too); Passenger.icns is the macOS bundle's (tools/package-mac.sh), both from
+         Assets/passenger.svg, which with passenger.png is the Linux desktop entry's (tools/package-linux.sh). -->
     <AvaloniaResource Include="Assets/passenger.png" />
   </ItemGroup>
 

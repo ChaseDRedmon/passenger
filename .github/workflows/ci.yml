@@ -1,8 +1,8 @@
 # Every push to main and every pull request: the solution built (warnings are errors) and every test run, on macOS
-# (arm64) and Windows, as `just build` and `just test` run them (test.yml, which a release runs first too); the macOS
-# disk images made and checked, as `just package-mac` makes them; the Windows installer built, installed, used and
-# uninstalled, as `just package-win` builds it; and on Linux, the solution restored from nothing and every package
-# checked against THIRD_PARTY_NOTICES.md. Every restore is locked to the packages.lock.json files (GitHub sets CI,
+# (arm64), Windows and Linux, as `just build` and `just test` run them (test.yml, which a release runs first too); the
+# macOS disk images made and checked, as `just package-mac` makes them; the Windows installer and the Linux archive
+# built, installed, used and uninstalled, as `just package-win` and `just package-linux` build them; and on Linux, the
+# solution restored from nothing and every package checked against THIRD_PARTY_NOTICES.md. Every restore is locked to the packages.lock.json files (GitHub sets CI,
 # which Directory.Build.props makes RestoreLockedMode). Actions are pinned to a release's commit.
 name: CI
 
@@ -168,6 +168,131 @@ jobs:
         with:
           name: Passenger-windows-x64
           path: artifacts/package/Passenger-windows-x64.exe
+          retention-days: 7
+
+  # #57: the Linux archive as `just package-linux` makes and checks it, installed by its install.sh as site/linux.html
+  # says (for one person, then for everyone), an agent debugging a project through each install's Passenger (so its
+  # Roslyn server and debugger run from the install, read-only to the person in /opt), then uninstalled, with what each
+  # step must leave checked. The desktop entry is checked as desktops read it, and the file types it opens in the shared
+  # MIME database and the desktop's cache of what opens each.
+  archive:
+    name: Linux archive (x64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      # The whole history: tools/package-linux.sh names the version by the commit's tags.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      # .NET 10 for the test's project, as in the test job.
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+          dotnet-version: 10.0.x
+
+      # What site/linux.html asks a person to install, and the desktop's own tools that read what install.sh adds.
+      - name: The libraries Passenger needs, and the desktop's tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends file git libx11-6 libice6 libsm6 libfontconfig1 \
+            desktop-file-utils shared-mime-info
+
+      # The test job's packages, when it has saved them; this job saves none of its own.
+      - name: Restore cached NuGet packages
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('global.json', '**/Directory.Packages.props', '**/Directory.Build.props', '**/*.csproj', '**/packages.lock.json') }}
+          restore-keys: nuget-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Make and check the archive
+        run: tools/package-linux.sh linux-x64
+
+      - name: Build the tests
+        run: dotnet build tests/Passenger.Tests
+
+      # A person's state, which the uninstall must leave, is there before the install, as it is for one who reinstalls.
+      - name: Install for one person
+        run: |
+          state=$HOME/.local/share/Passenger
+          mkdir -p "$state"
+          echo "a person's state" > "$state/kept-by-uninstall.txt"
+          mkdir -p "$RUNNER_TEMP/download"
+          tar -C "$RUNNER_TEMP/download" -xzf artifacts/package/Passenger-linux-x64.tar.gz
+          "$RUNNER_TEMP/download/passenger/install.sh"
+          opt=$HOME/.local/opt/passenger
+          for path in "$opt/passenger" "$opt/app/Passenger" "$opt/app/roslyn" "$opt/app/roslyn-extension" "$opt/app/debugger" \
+            "$HOME/.local/share/icons/hicolor/256x256/apps/io.github.zaneris.passenger.png" \
+            "$HOME/.local/share/icons/hicolor/scalable/apps/io.github.zaneris.passenger.svg"; do
+            [ -e "$path" ] || { echo "::error::The install has no $path"; exit 1; }
+          done
+          [ "$(readlink -f "$HOME/.local/bin/passenger")" = "$opt/passenger" ] || { echo "::error::~/.local/bin/passenger does not lead to the install"; exit 1; }
+          entry=$HOME/.local/share/applications/io.github.zaneris.passenger.desktop
+          desktop-file-validate "$entry"
+          grep -qx "Exec=\"$opt/passenger\" %f" "$entry" || { echo "::error::The menu entry does not start the install's launcher"; cat "$entry"; exit 1; }
+          for type in sln slnx csproj; do
+            grep -qx "[0-9]*:application/x-ms-$type:\*\.$type" "$HOME/.local/share/mime/globs2" \
+              || { echo "::error::The shared MIME database does not know a .$type file as application/x-ms-$type"; exit 1; }
+            grep -q "^application/x-ms-$type=.*io\.github\.zaneris\.passenger\.desktop" "$HOME/.local/share/applications/mimeinfo.cache" \
+              || { echo "::error::Passenger is not among the programs that open .$type"; exit 1; }
+          done
+
+      - name: An agent debugs through the Passenger installed for one person
+        run: |
+          export PASSENGER_EXECUTABLE=$HOME/.local/bin/passenger
+          dotnet test tests/Passenger.Tests --no-build --filter "FullyQualifiedName~McpTests.An_agent_with_a_windowless_Passenger_finds_code_reads_its_warnings_and_debugs_it" --blame-hang-timeout 10m --blame-hang-dump-type none
+
+      - name: Uninstall for one person
+        if: ${{ !cancelled() }}
+        run: |
+          "$HOME/.local/opt/passenger/install.sh" --uninstall
+          left=
+          for path in "$HOME/.local/opt/passenger" "$HOME/.local/bin/passenger" \
+            "$HOME/.local/share/applications/io.github.zaneris.passenger.desktop" \
+            "$HOME/.local/share/icons/hicolor/256x256/apps/io.github.zaneris.passenger.png" \
+            "$HOME/.local/share/icons/hicolor/scalable/apps/io.github.zaneris.passenger.svg" \
+            "$HOME/.local/share/mime/packages/io.github.zaneris.passenger.xml"; do
+            if [ -e "$path" ] || [ -L "$path" ]; then left="$left $path"; fi
+          done
+          [ -z "$left" ] || { echo "::error::The uninstall left$left"; exit 1; }
+          [ -f "$HOME/.local/share/Passenger/kept-by-uninstall.txt" ] || { echo "::error::The uninstall took the person's state"; exit 1; }
+
+      - name: Install for everyone
+        run: |
+          sudo "$RUNNER_TEMP/download/passenger/install.sh" --system
+          for path in /opt/passenger/app/Passenger /usr/local/bin/passenger /usr/share/applications/io.github.zaneris.passenger.desktop \
+            /usr/share/icons/hicolor/256x256/apps/io.github.zaneris.passenger.png /usr/share/mime/packages/io.github.zaneris.passenger.xml; do
+            [ -e "$path" ] || { echo "::error::The install for everyone has no $path"; exit 1; }
+          done
+          owned=$(find /opt/passenger ! -user root | head -n 3)
+          [ -z "$owned" ] || { echo "::error::The install for everyone has files not root's: $owned"; exit 1; }
+          desktop-file-validate /usr/share/applications/io.github.zaneris.passenger.desktop
+
+      - name: An agent debugs through the Passenger installed for everyone
+        run: |
+          export PASSENGER_EXECUTABLE=/usr/local/bin/passenger
+          dotnet test tests/Passenger.Tests --no-build --filter "FullyQualifiedName~McpTests.An_agent_with_a_windowless_Passenger_finds_code_reads_its_warnings_and_debugs_it" --blame-hang-timeout 10m --blame-hang-dump-type none
+
+      - name: Uninstall for everyone
+        if: ${{ !cancelled() }}
+        run: |
+          sudo /opt/passenger/install.sh --uninstall --system
+          left=
+          for path in /opt/passenger /usr/local/bin/passenger /usr/share/applications/io.github.zaneris.passenger.desktop \
+            /usr/share/icons/hicolor/256x256/apps/io.github.zaneris.passenger.png \
+            /usr/share/icons/hicolor/scalable/apps/io.github.zaneris.passenger.svg /usr/share/mime/packages/io.github.zaneris.passenger.xml; do
+            if [ -e "$path" ] || [ -L "$path" ]; then left="$left $path"; fi
+          done
+          [ -z "$left" ] || { echo "::error::The uninstall for everyone left$left"; exit 1; }
+
+      # For trying a pull request's archive by hand; not a release (#56).
+      - name: Upload the archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: Passenger-linux-x64
+          path: artifacts/package/Passenger-linux-x64.tar.gz
+          compression-level: 0
           retention-days: 7
 
   # #57's first step: the solution restores on Linux, in locked mode, with no package cache, so every package is

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -60,6 +61,9 @@ internal sealed class HeapGraph
 {
     /// <summary>A reference held by a dependent handle (ConditionalWeakTable) rather than a field.</summary>
     public const int DependentOffset = -1;
+
+    /// <summary>Each DAC a dump was read through, by its path, loaded once more so it is never unloaded (<see cref="Runtime"/>).</summary>
+    private static readonly ConcurrentDictionary<string, IntPtr> KeptDacs = new(StringComparer.Ordinal);
 
     public required ulong[] Address { get; init; }
     public required int[] Type { get; init; }
@@ -131,7 +135,7 @@ internal sealed class HeapGraph
         {
             throw new InvalidOperationException("The dump has no .NET runtime in it");
         }
-        using ClrRuntime runtime = target.ClrVersions[0].CreateRuntime();
+        using ClrRuntime runtime = Runtime(target.ClrVersions[0]);
         ClrHeap heap = runtime.Heap;
         if (!heap.CanWalkHeap)
         {
@@ -145,6 +149,30 @@ internal sealed class HeapGraph
         graph.Walked = walked;
         graph.Analysed = clock.Elapsed - walked;
         return graph;
+    }
+
+    /// <summary>The runtime in a dump, read through its DAC, which on macOS and Linux stays loaded for the IDE's life.
+    /// ClrMD unloads the DAC with the runtime it read, but the DAC's platform layer leaves a thread-local destructor that
+    /// the system runs as each thread that used it ends: from unmapped memory, once unloaded, which ended the IDE on Linux
+    /// (SIGSEGV) a while after a snapshot, when the thread pool let that thread go.</summary>
+    private static ClrRuntime Runtime(ClrInfo clr)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return clr.CreateRuntime();
+        }
+        OSPlatform platform = OperatingSystem.IsMacOS() ? OSPlatform.OSX : OSPlatform.Linux;
+        // The program's own runtime folder's DAC, chosen as ClrMD chooses it (version unchecked): one it downloads is not kept.
+        string? dac = clr.DebuggingLibraries
+            .Where(l => l.Kind == DebugLibraryKind.Dac && l.Platform == platform && l.TargetArchitecture == RuntimeInformation.ProcessArchitecture)
+            .Select(l => l.FileName)
+            .FirstOrDefault(f => Path.IsPathFullyQualified(f) && File.Exists(f));
+        if (dac is null)
+        {
+            return clr.CreateRuntime();
+        }
+        KeptDacs.GetOrAdd(dac, NativeLibrary.Load);
+        return clr.CreateRuntime(dac, ignoreMismatch: true);
     }
 
     /// <summary>A dump's walk: the objects and references as found, then the roots, then what is reachable.</summary>

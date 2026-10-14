@@ -12,14 +12,17 @@ using Passenger.Text;
 
 namespace Passenger.Tests;
 
-/// <summary>A file is one file however its path is spelled. A repository opened by a lower-case path (on Windows also by
-/// its 8.3 short names, elsewhere through a link) shows its changed file coloured, diffs the open file itself, commits it
-/// and binds a breakpoint in it, as Git, MSBuild and the debugger name it by the disk's own names; a project the solution
-/// names in other letter case than its folder is the one its files build in and take their namespace from; a sibling
-/// folder whose name begins with the open folder's is not inside it. Debugged, so run with the debugger's tests.</summary>
+/// <summary>A file is one file however its path is spelled. A repository opened by a lower-case path where case is ignored
+/// (on Windows also by its 8.3 short names, elsewhere through a link) shows its changed file coloured, diffs the open file
+/// itself, commits it and binds a breakpoint in it, as Git, MSBuild and the debugger name it by the disk's own names; a
+/// project the solution names in other letter case than its folder is the one its files build in and take their namespace
+/// from; a sibling folder whose name begins with the open folder's is not inside it. Run with the debugger's tests.</summary>
 [Collection(Debugging.Helpers.DebugSession.Collection)]
 public sealed class PathsTests : IDisposable
 {
+    /// <summary>Why a spelling in other letter case is not tried on Linux.</summary>
+    private const string CaseTold = "Linux's file systems tell letter case apart, so a path in other letter case is another path, which is not there";
+
     private readonly string root = PathNames.Canonical(TestFolders.Create("paths-"));
 
     public enum Spelling
@@ -35,6 +38,7 @@ public sealed class PathsTests : IDisposable
     [InlineData(Spelling.ShortNames)]
     public void A_repository_opened_by_another_spelling_of_its_path_colours_diffs_debugs_and_commits_its_changed_file(Spelling spelling)
     {
+        Assert.SkipWhen(spelling == Spelling.LowerCase && PathNames.Comparison == StringComparison.Ordinal, CaseTold);
         // A name with a space, which Windows gives an 8.3 name of its own.
         string repository = Path.Combine(root, "Shop Repository");
         Write(repository, ".gitignore", "bin/\nobj/\n");
@@ -94,6 +98,7 @@ public sealed class PathsTests : IDisposable
     [AvaloniaFact]
     public void A_project_the_solution_names_in_other_letter_case_than_its_folder_builds_from_its_file_and_gives_new_classes_its_namespace()
     {
+        Assert.SkipWhen(PathNames.Comparison == StringComparison.Ordinal, CaseTold);
         string folder = Path.Combine(root, "Store");
         // The solution has the project's folder in lower case, which builds alike where case is ignored.
         Write(folder, "Store.slnx", "<Solution>\n  <Project Path=\"src/shop/Shop.csproj\" />\n</Solution>\n");

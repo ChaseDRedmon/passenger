@@ -1,11 +1,13 @@
-# A release (#56): a vX.Y.Z tag pushed runs every test on macOS and Windows (test.yml), then makes the macOS disk
-# images (tools/package-mac.sh) and the Windows installers (tools/package-win.sh) at the tag's version, checks that each
-# build says that version, and publishes them as the tag's GitHub release with SHA256SUMS, notes from the tag
-# (tools/release-notes.sh) and Velopack's update feed for each Windows channel. The site's download buttons take
-# releases/latest/download/NAME, so the installers' names never change: Passenger-macos-arm64.dmg,
-# Passenger-macos-x64.dmg, Passenger-windows-x64.exe and Passenger-windows-arm64.exe. There are no Linux tarballs yet
-# (#57): a Linux publish builds, but nobody has run one, and the launcher and install.sh that site/linux.html describes
-# do not exist; the site says a release without them has no Linux build.
+# A release (#56): a vX.Y.Z tag pushed runs every test on macOS, Windows and Linux (test.yml), then makes the macOS disk
+# images (tools/package-mac.sh), the Windows installers (tools/package-win.sh) and the Linux archives
+# (tools/package-linux.sh, #57) at the tag's version, checks that each build says that version, and publishes them as
+# the tag's GitHub release with SHA256SUMS, notes from the tag (tools/release-notes.sh) and Velopack's update feed for
+# each Windows channel. The site's download buttons and site/linux.html take releases/latest/download/NAME, and an
+# installed Passenger's update check looks for its own system's by name (Updates/Releases.cs), so the packages' names
+# never change: Passenger-macos-arm64.dmg, Passenger-macos-x64.dmg, Passenger-windows-x64.exe,
+# Passenger-windows-arm64.exe, Passenger-linux-x64.tar.gz and Passenger-linux-arm64.tar.gz. A Linux archive is one
+# passenger/ folder with its install.sh, as site/linux.html tells people to use it; it is not signed, and Passenger on
+# Linux does not update itself: its update notice downloads the newer archive, whose install.sh replaces the old.
 #
 # Signed only when the repository's secrets hold the credentials, and otherwise unsigned, as the owner decided the MVP
 # may ship (#34, #36):
@@ -103,9 +105,9 @@ jobs:
     needs: version
     uses: ./.github/workflows/test.yml
 
-  # Each system's package as `just package-mac` and `just package-win` make it, with the Developer ID or the Windows
-  # signature when the secrets hold one. The x64 disk image is cross-published on the arm64 runner and the arm64
-  # installer on the x64 one, as CI does.
+  # Each system's package as `just package-mac`, `just package-win` and `just package-linux` make it, with the Developer
+  # ID or the Windows signature when the secrets hold one. The x64 disk image is cross-published on the arm64 runner, and
+  # the arm64 installer and archive on x64 ones, as CI does.
   package:
     name: Package (${{ matrix.rid }})
     needs: [version, test]
@@ -122,6 +124,10 @@ jobs:
             os: windows-latest
           - rid: win-arm64
             os: windows-latest
+          - rid: linux-x64
+            os: ubuntu-24.04
+          - rid: linux-arm64
+            os: ubuntu-24.04
     runs-on: ${{ matrix.os }}
     # Apple's notary can take a while with each of the two submissions an image makes.
     timeout-minutes: 120
@@ -266,6 +272,17 @@ jobs:
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
         run: tools/package-win.sh "$RID"
 
+      # What site/linux.html asks a person to install, with which the script's check runs the x64 archive's app.
+      - name: The libraries Passenger needs on Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends file libx11-6 libice6 libsm6 libfontconfig1
+
+      - name: Make and check the archive
+        if: runner.os == 'Linux'
+        run: tools/package-linux.sh "$RID"
+
       # The version Product reads (About, the log, the update check) is the tag's, as the build stamped it into the
       # informational version with the commit: "1.2.0+<commit>", which FileVersionInfo gives as the product version.
       - name: The build says the tag's version
@@ -292,6 +309,9 @@ jobs:
             win-*)
               cp "artifacts/package/Passenger-windows-${RID#win-}.exe" "artifacts/package/$RID/velopack/releases.$RID.json" \
                 "artifacts/package/$RID/velopack/PassengerIDE-$VERSION-$RID-full.nupkg" artifacts/release/
+              ;;
+            linux-*)
+              cp "artifacts/package/Passenger-linux-${RID#linux-}.tar.gz" artifacts/release/
               ;;
           esac
           ls -l artifacts/release
@@ -340,7 +360,9 @@ jobs:
       - name: Check the release's files
         working-directory: release/assets
         run: |
-          expected="Passenger-macos-arm64.dmg
+          expected="Passenger-linux-arm64.tar.gz
+          Passenger-linux-x64.tar.gz
+          Passenger-macos-arm64.dmg
           Passenger-macos-x64.dmg
           Passenger-windows-arm64.exe
           Passenger-windows-x64.exe

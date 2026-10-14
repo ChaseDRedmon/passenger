@@ -1,6 +1,6 @@
-# The solution built (warnings are errors) and every test run, on macOS (arm64) and Windows, as `just build` and
-# `just test` run them: CI's (ci.yml) for every push to main and every pull request, and a release's (release.yml)
-# before it packages anything. Every restore is locked to the packages.lock.json files (GitHub sets CI, which
+# The solution built (warnings are errors) and every test run, on macOS (arm64), Windows and Linux (Ubuntu LTS, x64), as
+# `just build` and `just test` run them: CI's (ci.yml) for every push to main and every pull request, and a release's
+# (release.yml) before it packages anything. Every restore is locked to the packages.lock.json files (GitHub sets CI, which
 # Directory.Build.props makes RestoreLockedMode). Actions are pinned to a release's commit.
 name: Test
 
@@ -28,6 +28,8 @@ jobs:
             os: macos-latest
           - name: Windows (x64)
             os: windows-latest
+          - name: Linux (x64)
+            os: ubuntu-24.04
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     defaults:
@@ -65,6 +67,14 @@ jobs:
           sudo dseditgroup -o edit -a "$USER" -t user _developer
           sudo dscacheutil -flushcache
           sudo security authorizationdb write system.privilege.taskport is-developer
+
+      # What site/linux.html asks a person to install: Git, the window's X11 libraries, and fontconfig, which Skia draws
+      # the headless tests' text with too.
+      - name: The libraries Passenger needs on Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends git libx11-6 libice6 libsm6 libfontconfig1
 
       - name: Restore cached NuGet packages
         id: nuget

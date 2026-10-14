@@ -63,7 +63,7 @@ public sealed class WelcomeView : UserControl
         ListMenus.Attach(list, () => list.SelectedItem is not RecentRow chosen ? [] :
         [
             ListMenus.Item("Open", "Enter", () => Chosen?.Invoke(this, chosen)),
-            ListMenus.Item(OperatingSystem.IsMacOS() ? "Reveal in Finder" : "Show in Explorer", null, () => ChildProcesses.Reveal(chosen.Path), !chosen.Missing),
+            ListMenus.Item(OperatingSystem.IsMacOS() ? "Reveal in Finder" : $"Show in {ChildProcesses.FileManager}", null, () => ChildProcesses.Reveal(chosen.Path), !chosen.Missing),
             ListMenus.Item("Copy Path", null, () => _ = ListMenus.CopyAsync(this, chosen.Path)),
             new Separator(),
             ListMenus.Item("Remove from Recent Solutions", OperatingSystem.IsMacOS() ? "Back" : "Delete", () => RemoveRequested?.Invoke(this, chosen)),

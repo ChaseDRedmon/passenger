@@ -12,7 +12,7 @@ public partial class MainWindow
         IdeErrors.Raised += OnIdeError;
         Closed += (_, _) => IdeErrors.Raised -= OnIdeError;
         ShowErrorCount();
-        actions!.Add(new IdeAction(AppActions.ShowLog, OperatingSystem.IsMacOS() ? "Show Log in Finder" : "Show Log in Explorer", "Help", _ => ErrorsPopup.ShowLog())
+        actions!.Add(new IdeAction(AppActions.ShowLog, $"Show Log in {Core.ChildProcesses.FileManager}", "Help", _ => ErrorsPopup.ShowLog())
         {
             Menus = [new MenuPlace("Help", 1, 0)],
         });

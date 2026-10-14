@@ -49,7 +49,7 @@ public sealed class ErrorsPopup : UserControl
             IdeErrors.Clear();
             Done?.Invoke(this, EventArgs.Empty);
         };
-        Button log = new() { Content = OperatingSystem.IsMacOS() ? "Show Log in Finder" : "Show Log in Explorer" };
+        Button log = new() { Content = $"Show Log in {Core.ChildProcesses.FileManager}" };
         log.Click += (_, _) => ShowLog();
         Button close = new() { Content = "Close", Classes = { "primary" }, IsDefault = true };
         close.Click += (_, _) => Done?.Invoke(this, EventArgs.Empty);

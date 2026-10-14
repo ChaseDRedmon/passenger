@@ -102,6 +102,9 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
     [AvaloniaFact]
     public void A_commit_character_types_the_chosen_item_before_it_and_the_items_documentation_shows_beside_the_list()
     {
+        Assert.SkipWhen(project.ReferencePackDownloaded,
+            "No installed .NET SDK has the net10.0 reference pack the newest SDK targets, so restore took it from NuGet, whose "
+            + "package carries no documentation for completion to show (install the .NET 10 SDK of that version)");
         MainWindow window = project.Open("Program.cs");
         CodeEditor editor = window.EditorArea.CodeEditor;
         PlaceAfter(editor, "static void Main()\n    {\n");
@@ -1843,6 +1846,12 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
         }
 
         public string PathOf(string name) => Path.Combine(folder, name);
+
+        /// <summary>Whether restore downloaded .NET's reference pack, as it does when no installed SDK has the version the
+        /// newest SDK targets for net10.0: the package has no IntelliSense files beside its assemblies, which the SDK's own
+        /// copy has, so no documentation shows for .NET's types.</summary>
+        public bool ReferencePackDownloaded =>
+            File.ReadAllText(PathOf("obj/project.assets.json")).Contains("\"name\": \"Microsoft.NETCore.App.Ref\"", StringComparison.Ordinal);
 
         /// <summary>A window on the project with a file open, once C# is ready. The tests share the project, so a
         /// window never saves what its test typed.</summary>

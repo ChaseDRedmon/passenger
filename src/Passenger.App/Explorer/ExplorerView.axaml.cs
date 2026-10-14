@@ -297,7 +297,7 @@ public partial class ExplorerView : UserControl
         {
             menu.Items.Add(Item("Copy Path", ExplorerAction.CopyPath));
             MenuItem openIn = new() { Header = "Open In" };
-            openIn.Items.Add(Item(OperatingSystem.IsMacOS() ? "Finder" : "Explorer", ExplorerAction.Reveal));
+            openIn.Items.Add(Item(ChildProcesses.FileManager, ExplorerAction.Reveal));
             openIn.Items.Add(Item("Terminal", ExplorerAction.OpenInTerminal));
             menu.Items.Add(openIn);
         }

@@ -18,7 +18,7 @@
          only what it names. -->
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
     <RestoreLockedMode Condition="'$(CI)' == 'true'">true</RestoreLockedMode>
-    <!-- The systems Passenger is published for (just publish, tools/package-mac.sh), so each lock file holds their
+    <!-- The systems Passenger is published for (just publish, tools/package-*.sh), so each lock file holds their
          packages too: a publish for one restores what is locked rather than writing new lock files, which CI's locked
          restore would refuse. Their runtime and host packs download only for a publish, never for a build for this
          machine, and ASP.NET Core's, which nothing here uses, never. A publish also builds every library for its system,

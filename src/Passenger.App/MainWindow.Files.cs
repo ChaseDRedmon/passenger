@@ -504,8 +504,12 @@ public static class Trash
             }
             return;
         }
-        string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        string bin = Folder ?? (OperatingSystem.IsMacOS() ? Path.Combine(home, ".Trash") : Path.Combine(home, ".local", "share", "Trash", "files"));
+        if (OperatingSystem.IsLinux() && Folder is null)
+        {
+            MoveToFreedesktopTrash(path);
+            return;
+        }
+        string bin = Folder ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".Trash");
         Directory.CreateDirectory(bin);
         string name = Path.GetFileName(path);
         string target = Path.Combine(bin, name);
@@ -514,6 +518,58 @@ public static class Trash
         {
             target = Path.Combine(bin, $"{Path.GetFileNameWithoutExtension(name)} {DateTime.Now:HH-mm-ss-fff}{Path.GetExtension(name)}");
         }
+        MoveTo(path, target);
+    }
+
+    /// <summary>The freedesktop.org Trash in the person's data folder (~/.local/share/Trash), as Linux's file managers
+    /// keep it: the item in files/ under a name of its own, beside a record in info/ of where it was and when it went,
+    /// from which they put it back. A folder on another file system is refused, as a move across them cannot be made.</summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("linux")]
+    private static void MoveToFreedesktopTrash(string path)
+    {
+        const UnixFileMode Private = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
+        string trash = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Trash");
+        Directory.CreateDirectory(trash, Private);
+        string files = Directory.CreateDirectory(Path.Combine(trash, "files"), Private).FullName;
+        string info = Directory.CreateDirectory(Path.Combine(trash, "info"), Private).FullName;
+        string full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        string name = Path.GetFileName(full);
+        string where = string.Join('/', full.Split('/').Select(Uri.EscapeDataString));
+        for (int copy = 1; ; copy++)
+        {
+            string kept = copy == 1 ? name : $"{name}.{copy}";
+            string target = Path.Combine(files, kept);
+            string record = Path.Combine(info, kept + ".trashinfo");
+            if (Path.Exists(target))
+            {
+                continue;
+            }
+            // Made only when no record has the name, so two programs trashing at once never share one.
+            try
+            {
+                using FileStream claimed = new(record, FileMode.CreateNew, FileAccess.Write);
+                using StreamWriter writer = new(claimed);
+                writer.Write($"[Trash Info]\nPath={where}\nDeletionDate={DateTime.Now:yyyy-MM-ddTHH:mm:ss}\n");
+            }
+            catch (IOException) when (File.Exists(record))
+            {
+                continue;
+            }
+            try
+            {
+                MoveTo(full, target);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                File.Delete(record);
+                throw;
+            }
+            return;
+        }
+    }
+
+    private static void MoveTo(string path, string target)
+    {
         if (Directory.Exists(path))
         {
             Directory.Move(path, target);

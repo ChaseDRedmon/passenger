@@ -74,7 +74,8 @@ tar -xzf Passenger-linux-$arch.tar.gz</pre>
     <h2>3. Install</h2>
 <pre>./passenger/install.sh</pre>
     <p>For you alone, with no root needed. It copies Passenger to <code>~/.local/opt/passenger</code>, links
-        <code>~/.local/bin/passenger</code>, and adds Passenger to your applications menu with its icon. If
+        <code>~/.local/bin/passenger</code>, and adds Passenger to your applications menu with its icon, as one of the
+        programs that open <code>.sln</code>, <code>.slnx</code> and <code>.csproj</code> files. If
         <code>~/.local/bin</code> is not on your PATH yet, add it:</p>
 <pre>echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.profile</pre>
     <p>For everyone on the machine, run it with <code>sudo ./passenger/install.sh --system</code>, which uses
@@ -83,8 +84,10 @@ tar -xzf Passenger-linux-$arch.tar.gz</pre>
 <pre>passenger ~/src/MySolution</pre>
 
     <h2>Updating</h2>
-    <p>Download and unpack the newer release, then run its <code>install.sh</code> as before. It replaces the old files
-        and keeps your settings.</p>
+    <p>Passenger says when a newer release is out (Help | Check for Updates asks at once), and its notice links the
+        archive for your machine. It does not install updates itself on Linux: unpack the newer archive and run its
+        <code>install.sh</code> as before (with <code>sudo</code> and <code>--system</code> if that is how you installed
+        it). It replaces the old files and keeps your settings.</p>
 
     <h2>Uninstalling</h2>
 <pre>~/.local/opt/passenger/install.sh --uninstall
@@ -94,13 +97,21 @@ sudo /opt/passenger/install.sh --uninstall --system</pre>
 
     <h2>If something goes wrong</h2>
     <ul>
+        <li><strong>The window does not open:</strong> run <code>passenger</code> from a shell to see why, and check the
+            libraries in step 1; <code>install.sh</code> names any of them it finds missing.</li>
         <li><strong>C# has colour but no completion or errors:</strong> Passenger could not start Roslyn's language server.
             Check that <code>dotnet --list-sdks</code> shows a version 10 or later SDK.</li>
+        <li><strong>Started from the applications menu, Passenger finds no <code>dotnet</code> or <code>git</code>:</strong>
+            it takes the PATH your login shell sets, as a terminal would, so add their folders to it in your shell's
+            profile (<code>~/.profile</code>, <code>~/.bashrc</code> or <code>~/.zshrc</code>), or set
+            <code>DOTNET_ROOT</code> there.</li>
+        <li><strong>Changes made outside Passenger go unseen:</strong> the inotify watches your programs share have run out.
+            Passenger says so when it happens, with the command that raises the limit.</li>
         <li><strong>Attach to Process is refused:</strong> most distributions only let a debugger attach to its own child
             processes. Debugging a program Passenger starts works as it is; to attach to one it did not start, allow it
             until the next restart with <code>sudo sysctl kernel.yama.ptrace_scope=0</code>.</li>
-        <li><strong>The window does not open:</strong> run <code>passenger</code> from a shell to see why, and check the
-            libraries in step 1.</li>
+        <li><strong>To report a problem,</strong> Help | Show Log in File Manager opens Passenger's logs, in
+            <code>~/.local/share/Passenger/logs</code>; <code>passenger.log</code> there says what went wrong.</li>
     </ul>
 </main>
 

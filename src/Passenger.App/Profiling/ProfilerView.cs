@@ -158,7 +158,7 @@ public sealed class ProfilerView : DockPanel
         keptSummary = new TextBlock { Margin = new Thickness(12, 8), TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center };
         Button reveal = new()
         {
-            Content = OperatingSystem.IsMacOS() ? "Reveal in Finder" : "Show in Explorer",
+            Content = OperatingSystem.IsMacOS() ? "Reveal in Finder" : $"Show in {Core.ChildProcesses.FileManager}",
             Padding = new Thickness(10, 3),
             Margin = new Thickness(0, 0, 12, 0),
             VerticalAlignment = VerticalAlignment.Center,
