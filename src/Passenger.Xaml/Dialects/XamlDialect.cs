@@ -11,6 +11,7 @@ public enum XamlPropertyKind
     Styled,
     Direct,
     Attached,
+    Dependency,
 }
 
 /// <summary>A property an element can set, as an attribute or a property element: its name, the type that declares it,
@@ -20,6 +21,9 @@ public sealed record XamlProperty(string Name, ClrType Owner, TypeRef ValueType,
     ClrMember? Setter = null, bool IsCollection = false)
 {
     public bool IsAttached => Kind == XamlPropertyKind.Attached;
+
+    /// <summary>A property XAML reads but cannot set (WPF's <c>IsMouseOver</c>), which only a trigger names.</summary>
+    public bool IsReadOnly { get; init; }
 
     /// <summary>What go to declaration lands on: the CLR property, else the framework's field, else the setter.</summary>
     public ClrMember? Declaration => ClrProperty ?? Field ?? Setter;
@@ -63,6 +67,24 @@ public abstract class XamlDialect
     /// <summary>The markup extensions its compiler knows by name though no type is written for them, beyond x:'s.</summary>
     public virtual IReadOnlyList<string> IntrinsicExtensions => [];
 
+    /// <summary>The markup extensions of XAML's own namespace it takes (<c>x:Static</c>, <c>x:Type</c>).</summary>
+    public virtual IReadOnlyList<string> LanguageExtensions { get; } = ["Static", "Type", "Null", "Array", "Reference"];
+
+    /// <summary>Whether its compiler compiles bindings against <c>x:DataType</c> (Avalonia's), which <c>x:DataType</c> and
+    /// <c>x:CompileBindings</c> are for.</summary>
+    public virtual bool CompilesBindings => false;
+
+    /// <summary>The markup extensions of the designer's namespace its designer reads (WPF's <c>d:DesignInstance</c>).</summary>
+    public virtual IReadOnlyList<string> DesignerExtensions => [];
+
+    /// <summary>The project file's item types that embed an asset a XAML value can name (Avalonia's
+    /// <c>AvaloniaResource</c>, WPF's <c>Resource</c>).</summary>
+    public virtual IReadOnlyList<string> AssetItems => [];
+
+    /// <summary>The xmlns a CLR namespace is written as, of an assembly not the project's own when one is named.</summary>
+    public virtual string ClrNamespaceUri(string clrNamespace, string? assembly) =>
+        assembly is null ? $"clr-namespace:{clrNamespace}" : $"clr-namespace:{clrNamespace};assembly={assembly}";
+
     /// <summary>The properties a type's elements can set (not attached ones), its bases' included, by name.</summary>
     public IReadOnlyList<XamlProperty> PropertiesOf(TypeSystem types, ClrType type) =>
         kept.GetValue(types, _ => new Answers()).Properties.GetOrAdd(type, t => ReadProperties(types, t));
@@ -74,7 +96,8 @@ public abstract class XamlDialect
     public XamlProperty? Property(TypeSystem types, ClrType type, string name) =>
         PropertiesOf(types, type).FirstOrDefault(p => p.Name == name);
 
-    public XamlProperty? Attached(TypeSystem types, ClrType owner, string name) =>
+    /// <summary>An attached property by its owner, as the dialect's compiler looks one up.</summary>
+    public virtual XamlProperty? Attached(TypeSystem types, ClrType owner, string name) =>
         AttachedOf(types, owner).FirstOrDefault(p => p.Name == name);
 
     /// <summary>The events a type's elements can name a handler for.</summary>

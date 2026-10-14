@@ -26,8 +26,12 @@ public sealed record XamlFileSummary(string Path, string? Class, IReadOnlyList<R
     IReadOnlyList<(string Name, TextRange Range, string Element)> Names, IReadOnlyList<string> StyleClasses, bool IsApplication,
     IReadOnlyList<ThemeGroup> ThemeGroups)
 {
+    /// <summary>Whether it merges in a dictionary of an assembly outside the solution (a library's theme), whose keys are
+    /// not known here.</summary>
+    public bool ForeignIncludes { get; init; }
+
     /// <summary>What the summary says, as one string, to tell whether a new one says anything new.</summary>
-    public string Signature => signature ??= string.Join('|', [Class ?? string.Empty, IsApplication.ToString(),
+    public string Signature => signature ??= string.Join('|', [Class ?? string.Empty, IsApplication.ToString(), ForeignIncludes.ToString(),
         .. Resources.Select(r => $"{r.Key}:{r.ElementName}:{r.Variant}:{r.Colour}:{r.KeyRange.Start}:{r.ElementRange.End}"),
         .. Includes, .. Names.Select(n => $"{n.Name}:{n.Element}"), .. StyleClasses, .. ThemeGroups.Select(g => string.Join(',', g.Variants))]);
 
@@ -41,6 +45,7 @@ public sealed record XamlFileSummary(string Path, string? Class, IReadOnlyList<R
         List<(string, TextRange, string)> names = [];
         HashSet<string> classes = new(StringComparer.Ordinal);
         List<ThemeGroup> groups = [];
+        bool foreign = false;
         Dictionary<XmlElement, string> languagePrefixes = [];
         foreach (XmlElement element in tree.Elements)
         {
@@ -57,10 +62,18 @@ public sealed record XamlFileSummary(string Path, string? Class, IReadOnlyList<R
                 List<string> variants = [.. element.Children.Select(c => x is null ? null : c.Attribute($"{x}:Key")?.Value).OfType<string>()];
                 groups.Add(new ThemeGroup(TextRange.FromBounds(element.Start, element.End), variants));
             }
-            if (element.LocalName is "ResourceInclude" or "MergeResourceInclude" or "StyleInclude" && element.Attribute("Source") is { } source
-                && resolve(source.Value, path) is { } included)
+            // Avalonia's includes, and WPF's merged dictionary by its Source.
+            if (element.LocalName is "ResourceInclude" or "MergeResourceInclude" or "StyleInclude" or "ResourceDictionary" && element.Attribute("Source") is { } source
+                && source.Value.Length > 0 && !source.Value.TrimStart().StartsWith('{'))
             {
-                includes.Add(included);
+                if (resolve(source.Value, path) is { } included)
+                {
+                    includes.Add(included);
+                }
+                else
+                {
+                    foreign = true;
+                }
             }
             XmlAttribute? named = (x is not null ? element.Attribute($"{x}:Name") : null) ?? (element.IsPropertyElement ? null : element.Attribute("Name"));
             if (named is { } name && name.Value.Length > 0)
@@ -79,7 +92,7 @@ public sealed record XamlFileSummary(string Path, string? Class, IReadOnlyList<R
         XmlElement? root = tree.Root;
         string? rootPrefix = root is null ? null : LanguagePrefix(root, languagePrefixes);
         string? @class = root is not null && rootPrefix is not null ? root.Attribute($"{rootPrefix}:Class")?.Value : null;
-        return new XamlFileSummary(path, @class, resources, includes, names, [.. classes], root?.LocalName == "Application", groups);
+        return new XamlFileSummary(path, @class, resources, includes, names, [.. classes], root?.LocalName == "Application", groups) { ForeignIncludes = foreign };
     }
 
     /// <summary>The prefix XAML's language namespace has at an element, found once per element.</summary>
@@ -210,10 +223,10 @@ public sealed class XamlProject
     public XamlFileSummary? Application => Files.Values.FirstOrDefault(f => f.IsApplication);
 
     /// <summary>Whether a <c>{Binding}</c> compiles by default: the project's <c>AvaloniaUseCompiledBindingsByDefault</c>,
-    /// else Avalonia's own default, on from Avalonia 12.</summary>
-    public bool CompilesBindings => compiles ??= Inputs.PropertyValue("AvaloniaUseCompiledBindingsByDefault") is { } set
+    /// else Avalonia's own default, on from Avalonia 12; never in a dialect that compiles no binding (WPF's).</summary>
+    public bool CompilesBindings => compiles ??= Dialect.CompilesBindings && (Inputs.PropertyValue("AvaloniaUseCompiledBindingsByDefault") is { } set
         ? string.Equals(set, "true", StringComparison.OrdinalIgnoreCase)
-        : Inputs.PackageVersions.TryGetValue("Avalonia", out string? version) && int.TryParse(version.Split('.')[0], System.Globalization.CultureInfo.InvariantCulture, out int major) && major >= 12;
+        : Inputs.PackageVersions.TryGetValue("Avalonia", out string? version) && int.TryParse(version.Split('.')[0], System.Globalization.CultureInfo.InvariantCulture, out int major) && major >= 12);
 
     private bool? compiles;
 
@@ -225,11 +238,27 @@ public sealed class XamlProject
     }
 
     /// <summary>The file an include's or asset's <c>Source</c> names from a file: <c>avares://Assembly/path</c> of this
-    /// project or one it references, a path from the project's folder (<c>/Theme/Tokens.axaml</c>), or one from the file's
-    /// own folder. Null for one in no project here, or an assembly's own resource.</summary>
+    /// project or one it references, WPF's <c>pack://application:,,,/</c> and <c>/Assembly;component/path</c> likewise, a
+    /// path from the project's folder (<c>/Theme/Tokens.axaml</c>), or one from the file's own folder. Null for one in no
+    /// project here, or an assembly's own resource.</summary>
     public string? ResolveSource(string source, string fromFile)
     {
         string value = source.Trim();
+        const string Pack = "pack://application:,,,";
+        if (value.StartsWith(Pack, StringComparison.OrdinalIgnoreCase))
+        {
+            value = "/" + value[Pack.Length..].TrimStart('/');
+        }
+        int component = value.StartsWith('/') ? value.IndexOf(";component/", StringComparison.OrdinalIgnoreCase) : -1;
+        if (component > 0)
+        {
+            // /Assembly[;Version][;Key];component/path
+            string named = value[1..component].Split(';')[0];
+            string inside = Uri.UnescapeDataString(value[(component + ";component/".Length)..]);
+            string? folder = string.Equals(named, AssemblyName, StringComparison.OrdinalIgnoreCase) ? Folder
+                : Referenced.FirstOrDefault(r => string.Equals(r.AssemblyName, named, StringComparison.OrdinalIgnoreCase)).Folder;
+            return folder is null ? null : Path.GetFullPath(Path.Combine(folder, inside));
+        }
         if (value.StartsWith("avares://", StringComparison.Ordinal))
         {
             string rest = value["avares://".Length..];

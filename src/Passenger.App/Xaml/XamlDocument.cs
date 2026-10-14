@@ -13,7 +13,7 @@ namespace Passenger.App.Xaml;
 /// the project as it stands, for completion and the rest as it is typed, and its problems marked once typing pauses,
 /// with the XAML compiler's from the last build on their lines until those lines change. The project's load may still be
 /// under way as the file opens; what is asked meanwhile waits for it, and a file of a project whose XAML Passenger does
-/// not read (no Avalonia) answers nothing.</summary>
+/// not read (neither Avalonia's nor WPF's) answers nothing.</summary>
 public sealed class XamlDocument : IDisposable
 {
     /// <summary>How long typing pauses before the file is checked again.</summary>
@@ -160,11 +160,12 @@ public sealed class XamlDocument : IDisposable
         return end > at ? TextRange.FromBounds(at, end) : TextRange.FromBounds(start, Math.Max(start, line.End));
     }
 
-    /// <summary>A compiler's message without the place it repeats at its end (Avalonia's "Line 8, position 6.").</summary>
+    /// <summary>A compiler's message without the place it repeats at its end (Avalonia's "Line 8, position 6.", WPF's
+    /// MarkupCompile's "Line 8 Position 6.").</summary>
     private static string Plain(string message)
     {
         int at = message.LastIndexOf(" Line ", StringComparison.Ordinal);
-        return at > 0 && message.IndexOf(", position ", at, StringComparison.Ordinal) > at ? message[..at].TrimEnd() : message;
+        return at > 0 && message.IndexOf(" position ", at, StringComparison.OrdinalIgnoreCase) > at ? message[..at].TrimEnd() : message;
     }
 
     private void OnChanged(object? sender, DocumentChangedEventArgs e)

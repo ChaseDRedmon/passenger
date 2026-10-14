@@ -64,6 +64,12 @@ public sealed class XamlPreview : IDisposable
             Say("Previews are for the XAML of an Avalonia project");
             return;
         }
+        if (builder.Dialect is not Passenger.Xaml.Dialects.AvaloniaDialect)
+        {
+            // WPF's designer is Visual Studio's own, and nothing open-source draws WPF: said in its place, rather than a pane that never draws.
+            Say($"{builder.Dialect.Name} XAML has no preview: its designer belongs to Visual Studio, and nothing open-source draws {builder.Dialect.Name}");
+            return;
+        }
         ProjectInputs inputs = builder.Current.Inputs;
         if (Output(inputs) is not { } built)
         {

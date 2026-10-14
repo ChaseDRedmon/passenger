@@ -7,7 +7,7 @@ using Passenger.Xaml.Projects;
 
 namespace Passenger.App.Xaml;
 
-/// <summary>XAML for a folder's session: each project with XAML Passenger reads (an Avalonia project) loaded the first time one of
+/// <summary>XAML for a folder's session: each project with XAML Passenger reads (an Avalonia or WPF project) loaded the first time one of
 /// its files opens, wholly off the UI thread (its project file and restore read, its assemblies and C#), and kept current
 /// as its C# and XAML change (typed in an open file, or written on disk); every open XAML file given a
 /// <see cref="XamlDocument"/>. A UI-thread object: the loads and reads run on the thread pool, each project's builder

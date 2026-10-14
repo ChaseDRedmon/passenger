@@ -343,25 +343,165 @@ public sealed class XamlFile
     }
 
     /// <summary>The type a binding at an element resolves its path against: the nearest <c>x:DataType</c> above it (a data
-    /// template's <c>DataType</c> too), as Avalonia's compiled bindings do.</summary>
-    public ClrType? DataTypeAt(XmlElement element, bool inherit = true, bool stopAtTemplates = false)
+    /// template's <c>DataType</c> too), as Avalonia's compiled bindings do. In a dialect that compiles no binding (WPF's),
+    /// unless <paramref name="hints"/> says otherwise, also what says a data context's type, as WPF's designer and Rider
+    /// read it: <c>d:DataContext</c>'s <c>d:DesignInstance</c>, a <c>DataContext</c> property element's object, a
+    /// <c>DataContext</c> bound to a path of the one above, and a template's items, from its control's <c>ItemsSource</c>.</summary>
+    public ClrType? DataTypeAt(XmlElement element, bool inherit = true, bool stopAtTemplates = false, bool? hints = null)
     {
+        bool reading = hints ?? !Dialect.CompilesBindings;
         for (XmlElement? at = element; at is not null; at = inherit ? at.Parent : null)
         {
+            bool template = at != element && !at.IsPropertyElement && at.LocalName.EndsWith("Template", StringComparison.Ordinal)
+                && at.Attribute("DataType") is null && Directive(at, "DataType") is null;
+            if (template && reading && ItemTypeOf(at, stopAtTemplates) is { } item)
+            {
+                return item;
+            }
             // A template with no data type of its own is bound to what it is applied to, which no x:DataType above it says.
-            if (stopAtTemplates && at != element && !at.IsPropertyElement && at.LocalName.EndsWith("Template", StringComparison.Ordinal)
-                && at.Attribute("DataType") is null && Directive(at, "DataType") is null)
+            if (stopAtTemplates && template)
+            {
+                return null;
+            }
+            // Nor is what a style or a resource is applied to.
+            if (stopAtTemplates && reading && at != element && (at.IsPropertyElement ? at.LocalName.EndsWith(".Resources", StringComparison.Ordinal) : at.LocalName == "Style"))
             {
                 return null;
             }
             XmlAttribute? named = at.Attributes.FirstOrDefault(a => a.LocalName == "DataType" && a.Prefix.Length > 0 && KindOf(UriOf(at, a.Prefix)) == XamlNamespaceKind.Language);
-            if (named is null && !at.IsPropertyElement && at.LocalName is "DataTemplate" or "TreeDataTemplate")
+            if (named is null && !at.IsPropertyElement && at.LocalName is "DataTemplate" or "TreeDataTemplate" or "HierarchicalDataTemplate")
             {
                 named = at.Attribute("DataType");
             }
             if (named is not null)
             {
                 return TypeFromValue(at, named.Value);
+            }
+            if (reading && !at.IsPropertyElement && DataContextOf(at, stopAtTemplates) is { Says: true } context)
+            {
+                return context.Type;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>The type a binding in an attribute resolves against: its element's, but for the element's own
+    /// <c>DataContext</c> in a dialect that compiles no binding, which binds against the one above.</summary>
+    public ClrType? DataTypeOf(XmlAttribute attribute, bool stopAtTemplates = false)
+    {
+        if (attribute.Name == "DataContext" && !Dialect.CompilesBindings)
+        {
+            return attribute.Owner.Parent is { } parent ? DataTypeAt(parent, stopAtTemplates: stopAtTemplates) : null;
+        }
+        return DataTypeAt(attribute.Owner, stopAtTemplates: stopAtTemplates);
+    }
+
+    /// <summary>What an element says its data context is: whether it sets one, and its type when that is known.</summary>
+    private (bool Says, ClrType? Type) DataContextOf(XmlElement element, bool stopAtTemplates)
+    {
+        foreach (XmlAttribute attribute in element.Attributes)
+        {
+            if (attribute.LocalName == "DataContext" && attribute.Prefix.Length > 0 && UriOf(element, attribute.Prefix) == XamlDialect.DesignerUri)
+            {
+                if (MarkupExtension.Parse(Text, attribute.ValueStart, attribute.ValueEnd) is { LocalName: "DesignInstance" } design
+                    && (design.Argument("Type") ?? design.Argument(null)) is { } named)
+                {
+                    string type = named.Nested is { LocalName: "Type" } nested ? nested.Argument(null)?.Value ?? string.Empty : named.Value;
+                    return (true, ResolveType(element, type.Trim()));
+                }
+                return (true, null);
+            }
+        }
+        foreach (XmlElement child in element.Children)
+        {
+            if (child.IsPropertyElement && child.LocalName.EndsWith(".DataContext", StringComparison.Ordinal))
+            {
+                return (true, child.Children.FirstOrDefault(c => !c.IsPropertyElement) is { } made ? TypeOf(made) : null);
+            }
+        }
+        if (element.Attribute("DataContext") is not { } set)
+        {
+            return (false, null);
+        }
+        if (MarkupExtension.Parse(Text, set.ValueStart, set.ValueEnd) is { LocalName: "Binding" or "CompiledBinding" } binding
+            && !binding.Arguments.Any(a => a.Key is "Source" or "ElementName" or "RelativeSource")
+            && element.Parent is { } parent && DataTypeAt(parent, stopAtTemplates: stopAtTemplates) is { } outer)
+        {
+            string path = (binding.Argument(null) ?? binding.Argument("Path"))?.Value.Trim() ?? ".";
+            return (true, path is "" or "." ? outer : Types.Resolve(PathType(outer, path)));
+        }
+        return (true, null);
+    }
+
+    /// <summary>The type of the items a template inside an items control's <c>ItemTemplate</c> is applied to: the element
+    /// type of the collection its <c>ItemsSource</c> binds.</summary>
+    private ClrType? ItemTypeOf(XmlElement template, bool stopAtTemplates)
+    {
+        if (template.Parent is not { IsPropertyElement: true } holder || !holder.LocalName.EndsWith(".ItemTemplate", StringComparison.Ordinal)
+            || holder.Parent is not { } items || items.Attribute("ItemsSource") is not { } source
+            || MarkupExtension.Parse(Text, source.ValueStart, source.ValueEnd) is not { LocalName: "Binding" or "CompiledBinding" } binding
+            || binding.Arguments.Any(a => a.Key is "Source" or "ElementName" or "RelativeSource")
+            || (binding.Argument(null) ?? binding.Argument("Path")) is not { Nested: null, Value.Length: > 0 } path
+            || DataTypeAt(items, stopAtTemplates: stopAtTemplates) is not { } context
+            || PathType(context, path.Value.Trim()) is not { } collection)
+        {
+            return null;
+        }
+        return ElementTypeOf(collection);
+    }
+
+    /// <summary>The type a binding path's last step has, each step a property of the one before; null where a step is not
+    /// one (an indexer, an attached property, a current item).</summary>
+    public TypeRef? PathType(ClrType start, string path)
+    {
+        ClrType current = start;
+        TypeRef? last = null;
+        foreach (string step in path.Split('.'))
+        {
+            string name = step.Trim();
+            if (last is not null)
+            {
+                if (Types.Resolve(last) is not { } next)
+                {
+                    return null;
+                }
+                current = next;
+            }
+            if (name.Length == 0 || name.IndexOfAny(['[', '(', '/', '!', '#', '$', '^']) >= 0
+                || Types.MembersOf(current).FirstOrDefault(m => m.Kind == MemberKind.Property && !m.IsStatic && m.Name == name) is not { } property)
+            {
+                return null;
+            }
+            last = property.Type;
+        }
+        return last;
+    }
+
+    /// <summary>What a collection's type holds: an array's element, a generic collection's last argument
+    /// (<c>ObservableCollection&lt;Person&gt;</c>), or what the collection type's own bases and interfaces hold.</summary>
+    public ClrType? ElementTypeOf(TypeRef collection)
+    {
+        if (collection.IsArray)
+        {
+            return Types.Resolve(collection with { IsArray = false });
+        }
+        if (collection.Arguments.Count > 0)
+        {
+            return Types.Resolve(collection.Arguments[^1]);
+        }
+        if (Types.Resolve(collection) is not { } resolved)
+        {
+            return null;
+        }
+        foreach (ClrType at in Types.SelfAndBases(resolved).Take(8))
+        {
+            foreach (TypeRef named in at.Base is { } baseType ? [baseType, .. at.Interfaces] : at.Interfaces)
+            {
+                if (named.Arguments.Count == 1 && (named.Name.EndsWith("IEnumerable`1", StringComparison.Ordinal) || named.Name.EndsWith("Collection`1", StringComparison.Ordinal)
+                    || named.Name.EndsWith("List`1", StringComparison.Ordinal)))
+                {
+                    return Types.Resolve(named.Arguments[0]);
+                }
             }
         }
         return null;
@@ -392,7 +532,7 @@ public sealed class XamlFile
             }
             switch (at.LocalName)
             {
-                case "ControlTheme" or "Style" when at.Attribute("TargetType") is { } target:
+                case "ControlTheme" or "Style" or "ControlTemplate" when at.Attribute("TargetType") is { } target:
                     return TypeFromValue(at, target.Value);
                 case "Style" when at.Attribute("Selector") is { } selector:
                     if (Selectors.TargetOf(this, at, selector.Value) is { } selected)
@@ -403,6 +543,26 @@ public sealed class XamlFile
             }
         }
         return null;
+    }
+
+    /// <summary>The type a setter's or trigger's property belongs to: the element its <c>TargetName</c> or <c>SourceName</c>
+    /// names in its template (WPF's), else its style's or template's target.</summary>
+    public ClrType? SetterTargetAt(XmlElement setter)
+    {
+        if ((setter.Attribute("TargetName") ?? setter.Attribute("SourceName")) is { Value.Length: > 0 } named)
+        {
+            return ElementNamed(setter, named.Value) is { } element ? ObjectOf(element) : null;
+        }
+        return StyleTargetAt(setter);
+    }
+
+    /// <summary>The element a name names from somewhere: in the nearest template around it (a template is a namescope of
+    /// its own), else in the file.</summary>
+    public XmlElement? ElementNamed(XmlElement from, string name)
+    {
+        XmlElement? scope = from.Ancestors().FirstOrDefault(a => !a.IsPropertyElement && a.LocalName.EndsWith("Template", StringComparison.Ordinal));
+        IEnumerable<XmlElement> candidates = scope is not null ? scope.DescendantsAndSelf() : Tree.Elements;
+        return candidates.FirstOrDefault(e => NameAttribute(e) is { } attribute && attribute.Value == name);
     }
 
     /// <summary>The elements named with <c>x:Name</c> or <c>Name</c>, with their names, in document order.</summary>

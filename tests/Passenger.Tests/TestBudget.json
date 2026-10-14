@@ -28,6 +28,7 @@
     "BindingErrorsTests": 120,
     "RazorTests": 90,
     "NewSolutionTests": 120,
-    "XamlTests": 150
+    "XamlTests": 150,
+    "WpfXamlTests": 90
   }
 }

@@ -30,6 +30,10 @@ public sealed record ProjectInputs(
     /// <summary>Where each package its restore resolved is, by id: the folder of its version in the package cache.</summary>
     public IReadOnlyDictionary<string, string> PackageFolders { get; init; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>The shared frameworks its restore says it references, a profile's own name kept
+    /// (<c>Microsoft.NETCore.App</c>, <c>Microsoft.WindowsDesktop.App.WPF</c>).</summary>
+    public IReadOnlyList<string> FrameworkReferences { get; init; } = [];
+
     /// <summary>A property as the project sets it: its own file's, else the nearest Directory.Build.props' above it; null
     /// when neither sets it plainly (without other properties in it).</summary>
     public string? PropertyValue(string name)
@@ -68,12 +72,9 @@ public sealed record ProjectInputs(
             references.AddRange(read.Compile);
             projectReferences.AddRange(read.Projects.Select(p => Path.GetFullPath(Path.Combine(folder, p))));
             packages.AddRange(read.Packages);
-            if (dotnetRoot is not null)
+            foreach (string shared in read.FrameworkReferences)
             {
-                foreach (string pack in read.FrameworkReferences)
-                {
-                    references.AddRange(FrameworkAssemblies(dotnetRoot, pack, read.Framework));
-                }
+                references.AddRange(FrameworkAssemblies(dotnetRoot, read, shared));
             }
         }
         // The project file's own references, should the project not be restored yet.
@@ -95,11 +96,13 @@ public sealed record ProjectInputs(
                 packages.Add(id);
             }
         }
-        return new ProjectInputs(projectPath, assemblyName, framework, references, projectReferences, SourceFilesOf(folder),
+        // Two profiles of one framework (WPF's and Windows Forms') share its pack.
+        return new ProjectInputs(projectPath, assemblyName, framework, [.. references.Distinct(StringComparer.Ordinal)], projectReferences, SourceFilesOf(folder),
             ImplicitUsingsOf(assets), assets, packages)
         {
             PackageVersions = read?.Versions ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
             PackageFolders = read?.Folders ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+            FrameworkReferences = read?.FrameworkReferences ?? [],
         };
     }
 
@@ -207,7 +210,15 @@ public sealed record ProjectInputs(
     }
 
     private sealed record Assets(string Framework, List<string> Compile, List<string> Projects, List<string> FrameworkReferences, List<string> Packages,
-        Dictionary<string, string> Versions, Dictionary<string, string> Folders);
+        Dictionary<string, string> Versions, Dictionary<string, string> Folders)
+    {
+        /// <summary>The package folders the restore used, nearest first.</summary>
+        public IReadOnlyList<string> PackageFolders { get; init; } = [];
+
+        /// <summary>The packs the restore downloaded rather than found beside the SDK, by id and version
+        /// (<c>Microsoft.WindowsDesktop.App.Ref</c> on a system without it).</summary>
+        public IReadOnlyList<(string Id, string Version)> Downloads { get; init; } = [];
+    }
 
     private static Assets? ReadAssets(string path)
     {
@@ -281,6 +292,7 @@ public sealed record ProjectInputs(
                 }
             }
             List<string> frameworkReferences = [];
+            List<(string, string)> downloads = [];
             if (root.TryGetProperty("project", out JsonElement project) && project.TryGetProperty("frameworks", out JsonElement frameworks))
             {
                 foreach (JsonProperty tfm in frameworks.EnumerateObject())
@@ -289,10 +301,21 @@ public sealed record ProjectInputs(
                     {
                         frameworkReferences.AddRange(named.EnumerateObject().Select(f => f.Name));
                     }
+                    if (tfm.Value.TryGetProperty("downloadDependencies", out JsonElement downloaded) && downloaded.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (JsonElement dependency in downloaded.EnumerateArray())
+                        {
+                            if (dependency.TryGetProperty("name", out JsonElement id) && dependency.TryGetProperty("version", out JsonElement range)
+                                && id.GetString() is { } name && range.GetString() is { } bounds)
+                            {
+                                downloads.Add((name, bounds.Trim('[', ']', '(', ')').Split(',')[0].Trim()));
+                            }
+                        }
+                    }
                     break;
                 }
             }
-            return new Assets(framework, compile, projects, frameworkReferences, packages, versions, found);
+            return new Assets(framework, compile, projects, frameworkReferences, packages, versions, found) { PackageFolders = packageFolders, Downloads = downloads };
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException)
         {
@@ -308,12 +331,27 @@ public sealed record ProjectInputs(
         return version.Success ? $"net{version.Groups[1].Value}" : target;
     }
 
-    /// <summary>A framework's reference assemblies (<c>packs/Microsoft.NETCore.App.Ref/10.0.x/ref/net10.0/</c>): the newest
-    /// pack of the target's major version, else the newest of any.</summary>
-    private static IEnumerable<string> FrameworkAssemblies(string dotnetRoot, string framework, string target)
+    /// <summary>A framework's reference assemblies: the pack the restore downloaded into a package folder, else the SDK's
+    /// own (<c>packs/Microsoft.NETCore.App.Ref/10.0.x/ref/net10.0/</c>), the newest of the target's major version, else the
+    /// newest of any. A profile shares its framework's pack (<c>Microsoft.WindowsDesktop.App.WPF</c>'s is
+    /// <c>Microsoft.WindowsDesktop.App.Ref</c>), and a target's platform is not part of the pack's folder.</summary>
+    private static IEnumerable<string> FrameworkAssemblies(string? dotnetRoot, Assets read, string framework)
     {
-        string packs = Path.Combine(dotnetRoot, "packs", framework + ".Ref");
-        if (!Directory.Exists(packs))
+        string pack = (framework.StartsWith("Microsoft.WindowsDesktop.App", StringComparison.Ordinal) ? "Microsoft.WindowsDesktop.App" : framework) + ".Ref";
+        string target = Regex.Match(read.Framework, @"^net\d+\.\d+").Value is { Length: > 0 } bare ? bare : read.Framework;
+        foreach ((string id, string version) in read.Downloads.Where(d => string.Equals(d.Id, pack, StringComparison.OrdinalIgnoreCase)))
+        {
+            foreach (string folder in read.PackageFolders)
+            {
+                string reference = Path.Combine(folder, id.ToLowerInvariant(), version.ToLowerInvariant(), "ref", target);
+                if (Directory.Exists(reference))
+                {
+                    return Directory.EnumerateFiles(reference, "*.dll");
+                }
+            }
+        }
+        string packs = dotnetRoot is null ? string.Empty : Path.Combine(dotnetRoot, "packs", pack);
+        if (dotnetRoot is null || !Directory.Exists(packs))
         {
             return [];
         }

@@ -167,7 +167,7 @@ public static class XamlDiagnostics
         }
         if (MarkupExtension.Parse(file.Text, attribute.ValueStart, attribute.ValueEnd) is { } extension)
         {
-            Extension(file, element, extension, found);
+            Extension(file, attribute, extension, found);
             return;
         }
         if (meaning.Property is { } property)
@@ -175,10 +175,15 @@ public static class XamlDiagnostics
             Value(file, attribute, property, found);
         }
         Asset(file, attribute, found);
-        if (element.LocalName == "Setter" && attribute.Name == "Property" && file.StyleTargetAt(element) is { } target
+        if (attribute.Name == "Property" && XamlCompletion.IsSetterOrTrigger(element) && file.SetterTargetAt(element) is { } target
             && XamlCompletion.SetterProperty(file, element) is null)
         {
             found.Add(new XamlDiagnostic(attribute.ValueRange, XamlSeverity.Error, $"Cannot resolve property '{attribute.Value}' on {target.Name}"));
+        }
+        if (attribute.Name is "TargetName" or "SourceName" && XamlCompletion.IsSetterOrTrigger(element) && attribute.Value.Length > 0
+            && file.ElementNamed(element, attribute.Value) is null)
+        {
+            found.Add(new XamlDiagnostic(attribute.ValueRange, XamlSeverity.Error, $"Cannot resolve element '{attribute.Value}'"));
         }
         if (element.LocalName == "Style" && attribute.Name == "Selector")
         {
@@ -192,7 +197,7 @@ public static class XamlDiagnostics
     private static void Asset(XamlFile file, XmlAttribute attribute, List<XamlDiagnostic> found)
     {
         string value = attribute.Value.Trim();
-        bool named = value.StartsWith("avares://", StringComparison.Ordinal)
+        bool named = value.StartsWith("avares://", StringComparison.Ordinal) || value.StartsWith("pack://application:", StringComparison.OrdinalIgnoreCase)
             || (attribute.Name is "Source" or "Icon" && value.Length > 0 && !value.Contains("://", StringComparison.Ordinal));
         if (!named)
         {
@@ -275,10 +280,12 @@ public static class XamlDiagnostics
             }
             return;
         }
-        if (type.Name is "Avalonia.Media.IBrush" or "Avalonia.Media.Brush" or "Avalonia.Media.ISolidColorBrush" or "Avalonia.Media.SolidColorBrush" or "Avalonia.Media.Color")
+        if (type.Name is "Avalonia.Media.IBrush" or "Avalonia.Media.Brush" or "Avalonia.Media.ISolidColorBrush" or "Avalonia.Media.SolidColorBrush" or "Avalonia.Media.Color"
+            or "System.Windows.Media.Brush" or "System.Windows.Media.SolidColorBrush" or "System.Windows.Media.Color")
         {
-            // rgb(), hsl() and hsv() are Avalonia's too, left to its own parser.
-            if (KnownColours.Parse(value) is null && !value.Contains('(', StringComparison.Ordinal))
+            // rgb(), hsl() and hsv() are Avalonia's too, left to its own parser, as are WPF's sc# and ContextColor.
+            if (KnownColours.Parse(value) is null && !value.Contains('(', StringComparison.Ordinal) && !value.StartsWith("sc#", StringComparison.OrdinalIgnoreCase)
+                && !value.StartsWith("ContextColor", StringComparison.OrdinalIgnoreCase))
             {
                 found.Add(new XamlDiagnostic(attribute.ValueRange, XamlSeverity.Error, $"'{value}' is not a colour"));
             }
@@ -298,9 +305,15 @@ public static class XamlDiagnostics
         }
     }
 
-    private static void Extension(XamlFile file, XmlElement element, MarkupExtension extension, List<XamlDiagnostic> found)
+    private static void Extension(XamlFile file, XmlAttribute attribute, MarkupExtension extension, List<XamlDiagnostic> found)
     {
+        XmlElement element = attribute.Owner;
         if (extension.Name.Length == 0)
+        {
+            return;
+        }
+        // The designer's own (d:DesignInstance) are read at design time only.
+        if (extension.Prefix.Length > 0 && (file.KindOf(file.UriOf(element, extension.Prefix)) == XamlNamespaceKind.Ignorable || file.IsIgnored(element, extension.Prefix)))
         {
             return;
         }
@@ -315,7 +328,7 @@ public static class XamlDiagnostics
         {
             if (argument.Nested is { } nested)
             {
-                Extension(file, element, nested, found);
+                Extension(file, attribute, nested, found);
             }
         }
         switch (extension.LocalName)
@@ -324,7 +337,7 @@ public static class XamlDiagnostics
                 Resource(file, key, dynamic: extension.LocalName == "DynamicResource", found);
                 break;
             case "Binding" or "CompiledBinding" when !language:
-                Binding(file, element, extension, found);
+                Binding(file, attribute, extension, found);
                 break;
             case "Type" when language && extension.Argument(null) is { Nested: null, Value.Length: > 0 } named && file.ResolveType(element, named.Value) is null:
                 found.Add(new XamlDiagnostic(named.ValueRange, XamlSeverity.Error, $"Cannot resolve symbol '{named.Value}'"));
@@ -362,6 +375,12 @@ public static class XamlDiagnostics
         {
             return;
         }
+        // A dictionary merged in from a library's assembly may define it, which nothing here can read; and a WPF library's
+        // XAML takes its resources from the application that uses it.
+        if (project.ResourceScopes(own).Any(s => s.ForeignIncludes) || (file.Dialect is WpfDialect && project.Application is null))
+        {
+            return;
+        }
         found.Add(new XamlDiagnostic(key.ValueRange, dynamic ? XamlSeverity.Warning : XamlSeverity.Error, $"Resource '{key.Value}' is not found"));
     }
 
@@ -371,10 +390,14 @@ public static class XamlDiagnostics
         project.Files.Values.Any(f => f.Resources.Any(r => r.Key == key));
 
     /// <summary>A compiled binding's path, read against the data type in scope: each step a property of the one before.
-    /// A path from another source (an element, a relative source, a converter's own) is the compiler's to judge.</summary>
-    private static void Binding(XamlFile file, XmlElement element, MarkupExtension binding, List<XamlDiagnostic> found)
+    /// A path from another source (an element, a relative source, a converter's own) is the compiler's to judge. In a
+    /// dialect that compiles no binding (WPF's), a path its data context's known type lacks is warned of, as Rider warns:
+    /// it fails only as the app runs.</summary>
+    private static void Binding(XamlFile file, XmlAttribute attribute, MarkupExtension binding, List<XamlDiagnostic> found)
     {
-        if (binding.LocalName == "Binding" && !CompilesBindings(file, element))
+        XmlElement element = attribute.Owner;
+        bool compiled = file.Dialect.CompilesBindings;
+        if (compiled && binding.LocalName == "Binding" && !CompilesBindings(file, element))
         {
             return;
         }
@@ -383,12 +406,12 @@ public static class XamlDiagnostics
             return;
         }
         MarkupArgument? path = binding.Argument(null) ?? binding.Argument("Path");
-        if (path is null || path.Nested is not null || path.Value.Length == 0 || file.DataTypeAt(element, stopAtTemplates: true) is not { } type)
+        if (path is null || path.Nested is not null || path.Value.Length == 0 || file.DataTypeOf(attribute, stopAtTemplates: true) is not { } type)
         {
             return;
         }
         string text = path.Value.TrimStart('!');
-        if (text.Length == 0 || text == "." || text.IndexOfAny(['$', '#', '^', '(', '[', ' ']) >= 0)
+        if (text.Length == 0 || text == "." || text.IndexOfAny(['$', '#', '^', '(', '[', ' ', '/']) >= 0)
         {
             return;
         }
@@ -403,7 +426,9 @@ public static class XamlDiagnostics
                 {
                     return;
                 }
-                found.Add(new XamlDiagnostic(new TextRange(at, step.Length), XamlSeverity.Error, $"Cannot resolve property '{step}' on {current.Name}"));
+                found.Add(compiled
+                    ? new XamlDiagnostic(new TextRange(at, step.Length), XamlSeverity.Error, $"Cannot resolve property '{step}' on {current.Name}")
+                    : new XamlDiagnostic(new TextRange(at, step.Length), XamlSeverity.Warning, $"Cannot resolve property '{step}' in data context of type {current.Name}"));
                 return;
             }
             if (file.Types.Resolve(property.Type) is not { } next || next.FullName == "System.Object")

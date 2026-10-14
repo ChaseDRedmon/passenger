@@ -107,11 +107,11 @@ public static class XamlCompletion
             ClrType? owner = file.ResolveType(element, typed[..dot]);
             if (owner is not null)
             {
-                foreach (XamlProperty property in file.Dialect.PropertiesOf(file.Types, owner))
+                foreach (XamlProperty property in file.Dialect.PropertiesOf(file.Types, owner).Where(p => !p.IsReadOnly))
                 {
                     items.Add(new XamlItem(property.Name, XamlItemKind.Property, property.Name, property.ValueType.Display));
                 }
-                foreach (XamlProperty property in file.Dialect.AttachedOf(file.Types, owner))
+                foreach (XamlProperty property in file.Dialect.AttachedOf(file.Types, owner).Where(p => !p.IsReadOnly))
                 {
                     items.Add(new XamlItem(property.Name, XamlItemKind.AttachedProperty, property.Name, property.ValueType.Display));
                 }
@@ -157,7 +157,7 @@ public static class XamlCompletion
         if (scope is not null && file.ObjectOf(scope) is { } parentType && !scope.IsPropertyElement)
         {
             string owner = scope.Name;
-            foreach (XamlProperty property in file.Dialect.PropertiesOf(file.Types, parentType))
+            foreach (XamlProperty property in file.Dialect.PropertiesOf(file.Types, parentType).Where(p => !p.IsReadOnly))
             {
                 if (property.IsCollection || !IsSimple(file, property))
                 {
@@ -180,14 +180,19 @@ public static class XamlCompletion
         return file.Types.Resolve(value) is { Kind: ClrTypeKind.Enum or ClrTypeKind.Struct };
     }
 
-    /// <summary>The types an xmlns URI's namespaces hold that pass a test.</summary>
+    /// <summary>The types an xmlns URI's namespaces hold that pass a test: for a URI the assemblies map, those of the
+    /// assembly that maps each namespace, as a definition maps its own (WPF's maps System.Diagnostics for its trace
+    /// sources, not every assembly's diagnostics types).</summary>
     private static IEnumerable<ClrType> TypesOf(XamlFile file, string? uri, Func<ClrType, bool> keep)
     {
+        HashSet<(string, string)>? mapped = uri is not null && file.KindOf(uri) == XamlNamespaceKind.Mapped
+            ? [.. file.Types.XmlnsDefinitions.Where(d => d.Uri == uri).Select(d => (d.ClrNamespace, d.AssemblyName))]
+            : null;
         foreach (string clr in file.ClrNamespacesOf(uri))
         {
             foreach (ClrType type in file.Types.InNamespace(clr))
             {
-                if ((type.IsPublic || type.IsFromSource) && keep(type))
+                if ((type.IsPublic || type.IsFromSource) && (mapped is null || mapped.Contains((clr, type.Origin.AssemblyName))) && keep(type))
                 {
                     yield return type;
                 }
@@ -215,7 +220,7 @@ public static class XamlCompletion
             switch (file.KindOf(uri))
             {
                 case XamlNamespaceKind.Language:
-                    foreach ((string name, string about) in Directives(element))
+                    foreach ((string name, string about) in Directives(file, element))
                     {
                         if (!present.Contains($"{prefix}:{name}"))
                         {
@@ -233,7 +238,7 @@ public static class XamlCompletion
                     // prefix:Owner.Property is written with its dot; before it, the prefix's types that have attached properties.
                     foreach (ClrType owner in TypesOf(file, uri, t => file.Dialect.AttachedOf(file.Types, t).Count > 0))
                     {
-                        foreach (XamlProperty attached in file.Dialect.AttachedOf(file.Types, owner))
+                        foreach (XamlProperty attached in file.Dialect.AttachedOf(file.Types, owner).Where(p => !p.IsReadOnly))
                         {
                             string label = $"{owner.Name}.{attached.Name}";
                             items.Add(Attribute(label, XamlItemKind.AttachedProperty, attached.ValueType.Display, hasValue, Reopens(file, attached)));
@@ -249,13 +254,18 @@ public static class XamlCompletion
             ClrType? owner = file.ResolveType(element, typed[..dot]);
             if (owner is not null)
             {
-                foreach (XamlProperty attached in file.Dialect.AttachedOf(file.Types, owner))
+                foreach (XamlProperty attached in file.Dialect.AttachedOf(file.Types, owner).Where(p => !p.IsReadOnly))
                 {
                     items.Add(Attribute(attached.Name, XamlItemKind.AttachedProperty, attached.ValueType.Display, hasValue, Reopens(file, attached)));
                 }
+                // WPF's attached events (Mouse.MouseDown).
+                foreach (ClrMember @event in file.Dialect.EventsOf(file.Types, owner).Where(e => e.IsStatic))
+                {
+                    items.Add(Attribute(@event.Name, XamlItemKind.Event, @event.Type.Display, hasValue, reopen: file.ClassType is not null));
+                }
                 if (file.ObjectOf(element) is { } self && file.Types.IsA(self, owner.FullName))
                 {
-                    foreach (XamlProperty property in file.Dialect.PropertiesOf(file.Types, owner))
+                    foreach (XamlProperty property in file.Dialect.PropertiesOf(file.Types, owner).Where(p => !p.IsReadOnly))
                     {
                         items.Add(Attribute(property.Name, XamlItemKind.Property, property.ValueType.Display, hasValue, Reopens(file, property)));
                     }
@@ -268,7 +278,7 @@ public static class XamlCompletion
         {
             foreach (XamlProperty property in file.Dialect.PropertiesOf(file.Types, type))
             {
-                if (!present.Contains(property.Name) && !(property.IsCollection && property.Name is not "Classes"))
+                if (!present.Contains(property.Name) && !property.IsReadOnly && !(property.IsCollection && property.Name is not "Classes"))
                 {
                     items.Add(Attribute(property.Name, XamlItemKind.Property, property.ValueType.Display, hasValue, Reopens(file, property)));
                 }
@@ -290,7 +300,7 @@ public static class XamlCompletion
             }
             foreach (ClrType owner in TypesOf(file, uri, t => file.Dialect.AttachedOf(file.Types, t).Count > 0))
             {
-                foreach (XamlProperty attached in file.Dialect.AttachedOf(file.Types, owner))
+                foreach (XamlProperty attached in file.Dialect.AttachedOf(file.Types, owner).Where(p => !p.IsReadOnly))
                 {
                     string label = $"{(prefix.Length > 0 ? prefix + ":" : string.Empty)}{owner.Name}.{attached.Name}";
                     if (!present.Contains(label))
@@ -304,7 +314,7 @@ public static class XamlCompletion
         {
             if (file.KindOf(uri) == XamlNamespaceKind.Language)
             {
-                foreach ((string name, string about) in Directives(element))
+                foreach ((string name, string about) in Directives(file, element))
                 {
                     string label = $"{prefix}:{name}";
                     if (!present.Contains(label))
@@ -328,20 +338,32 @@ public static class XamlCompletion
     private static XamlItem Attribute(string name, XamlItemKind kind, string? detail, bool hasValue, bool reopen = false) =>
         hasValue ? new XamlItem(name, kind, name, detail) : new XamlItem(name, kind, $"{name}=\"$0\"", detail, IsSnippet: true, Reopen: reopen);
 
-    /// <summary>XAML's directives an element can carry: <c>x:Class</c> only on the root.</summary>
-    private static IEnumerable<(string Name, string About)> Directives(XmlElement element)
+    /// <summary>XAML's directives an element can carry: <c>x:Class</c> only on the root, the compiled bindings' only in a
+    /// dialect that compiles them.</summary>
+    private static IEnumerable<(string Name, string About)> Directives(XamlFile file, XmlElement element)
     {
         if (element.Parent is null)
         {
             yield return ("Class", "The code-behind's class");
             yield return ("ClassModifier", "The class's access");
+            if (!file.Dialect.CompilesBindings)
+            {
+                yield return ("Subclass", "The class the markup makes, deriving from x:Class");
+            }
         }
         yield return ("Name", "A field for the element in the code-behind");
         yield return ("Key", "The resource's key");
-        yield return ("DataType", "The type bindings resolve against");
-        yield return ("CompileBindings", "Whether bindings compile");
+        if (file.Dialect.CompilesBindings)
+        {
+            yield return ("DataType", "The type bindings resolve against");
+            yield return ("CompileBindings", "Whether bindings compile");
+        }
         yield return ("FieldModifier", "The named field's access");
         yield return ("Shared", "Whether the resource is shared");
+        if (!file.Dialect.CompilesBindings)
+        {
+            yield return ("Uid", "The element's localization id");
+        }
     }
 
     /// <summary>Whether a property's value has choices worth listing once its quotes are in.</summary>
@@ -398,17 +420,22 @@ public static class XamlCompletion
         {
             return Selector(file, attribute, offset);
         }
-        if (attribute.Name == "Property" && element.LocalName == "Setter")
+        if (attribute.Name == "Property" && IsSetterOrTrigger(element))
         {
             return SetterProperties(file, element, attribute.ValueStart);
         }
-        if (attribute.Name == "Value" && element.LocalName == "Setter" && SetterProperty(file, element) is { } set)
+        if (attribute.Name == "Value" && IsSetterOrTrigger(element) && SetterProperty(file, element) is { } set)
         {
             return ValuesOf(file, element, attribute, file.Dialect.ValueTypeOf(set.ValueType), offset);
         }
-        if (attribute.Name is "Source" or "Icon" || before.StartsWith("avares://", StringComparison.Ordinal) || before.StartsWith('/'))
+        if (attribute.Name is "TargetName" or "SourceName" && IsSetterOrTrigger(element))
         {
-            return Assets(file, attribute, offset, xamlOnly: element.LocalName is "ResourceInclude" or "MergeResourceInclude" or "StyleInclude");
+            return NamesFrom(file, element, attribute.ValueStart);
+        }
+        if (attribute.Name is "Source" or "Icon" || before.StartsWith("avares://", StringComparison.Ordinal) || before.StartsWith("pack://", StringComparison.Ordinal)
+            || before.StartsWith('/'))
+        {
+            return Assets(file, attribute, offset, xamlOnly: element.LocalName is "ResourceInclude" or "MergeResourceInclude" or "StyleInclude" or "ResourceDictionary");
         }
         if (meaning.Property is { } property)
         {
@@ -437,7 +464,7 @@ public static class XamlCompletion
             }
             return new XamlCompletionList(attribute.ValueStart, items);
         }
-        if (name.EndsWith(".AvaloniaProperty", StringComparison.Ordinal))
+        if (name.EndsWith(".AvaloniaProperty", StringComparison.Ordinal) || name == "System.Windows.DependencyProperty")
         {
             return SetterProperties(file, element, attribute.ValueStart);
         }
@@ -482,12 +509,15 @@ public static class XamlCompletion
         return new XamlCompletionList(start, items, ":.");
     }
 
-    /// <summary>An xmlns value: <c>using:</c> each CLR namespace (the project's own first), and the URIs the assemblies map.</summary>
+    /// <summary>An xmlns value: each CLR namespace as the dialect writes one (Avalonia's <c>using:</c>, WPF's
+    /// <c>clr-namespace:</c> with another assembly's name), and the URIs the assemblies map.</summary>
     private static XamlCompletionList Namespaces(XamlFile file, XmlAttribute attribute)
     {
         List<XamlItem> items = [];
-        HashSet<string> own = new(file.Types.All.Where(t => t.IsFromSource).Select(t => t.Namespace), StringComparer.Ordinal);
-        foreach (string uri in file.Types.XmlnsDefinitions.Select(d => d.Uri).Distinct(StringComparer.Ordinal))
+        HashSet<string> source = new(file.Types.All.Where(t => t.IsFromSource).Select(t => t.Namespace), StringComparer.Ordinal);
+        HashSet<string> own = new(file.Types.All.Where(t => t.IsFromSource && t.Origin.AssemblyName == file.Types.AssemblyName).Select(t => t.Namespace), StringComparer.Ordinal);
+        HashSet<string> known = [XamlDialect.XamlUri, XamlDialect.DesignerUri, XamlDialect.CompatibilityUri];
+        foreach (string uri in file.Types.XmlnsDefinitions.Select(d => d.Uri).Distinct(StringComparer.Ordinal).Where(u => !known.Contains(u)))
         {
             items.Add(new XamlItem(uri, XamlItemKind.Namespace, uri, "xmlns"));
         }
@@ -496,9 +526,11 @@ public static class XamlCompletion
         items.Add(new XamlItem(XamlDialect.CompatibilityUri, XamlItemKind.Namespace, XamlDialect.CompatibilityUri, "Markup compatibility"));
         foreach (string clr in file.Types.Namespaces)
         {
-            items.Add(new XamlItem($"using:{clr}", XamlItemKind.Namespace, $"using:{clr}", own.Contains(clr) ? "This project" : "CLR namespace"));
+            string? assembly = own.Contains(clr) ? null : file.Types.InNamespace(clr).FirstOrDefault()?.Origin.AssemblyName;
+            string uri = file.Dialect.ClrNamespaceUri(clr, assembly);
+            items.Add(new XamlItem(uri, XamlItemKind.Namespace, uri, source.Contains(clr) ? "This project" : "CLR namespace"));
         }
-        return new XamlCompletionList(attribute.ValueStart, items, ":./-");
+        return new XamlCompletionList(attribute.ValueStart, items, ":./-;=");
     }
 
     /// <summary>The code-behind's methods an event can call.</summary>
@@ -521,7 +553,12 @@ public static class XamlCompletion
     private static IEnumerable<string> StyleClasses(XamlFile file) =>
         file.Project.Files.Values.SelectMany(f => f.StyleClasses).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal);
 
-    /// <summary>The setter's property: its <c>Property</c> on the style's target type, or an attached one's owner.</summary>
+    /// <summary>Whether an element names a property of its style's or template's target with <c>Property</c>: a setter, or
+    /// one of WPF's triggers and a multi-trigger's conditions.</summary>
+    public static bool IsSetterOrTrigger(XmlElement element) => !element.IsPropertyElement && element.LocalName is "Setter" or "Trigger" or "Condition" or "EventTrigger";
+
+    /// <summary>The setter's property: its <c>Property</c> on the style's target type (or the element its
+    /// <c>TargetName</c> names), or an attached one's owner.</summary>
     public static XamlProperty? SetterProperty(XamlFile file, XmlElement setter)
     {
         if (setter.Attribute("Property") is not { } named)
@@ -534,18 +571,31 @@ public static class XamlCompletion
         {
             return file.Dialect.Attached(file.Types, owner, value[(dot + 1)..]) ?? file.Dialect.Property(file.Types, owner, value[(dot + 1)..]);
         }
-        return file.StyleTargetAt(setter) is { } target ? file.Dialect.Property(file.Types, target, value) : null;
+        return file.SetterTargetAt(setter) is { } target ? file.Dialect.Property(file.Types, target, value) : null;
     }
 
+    /// <summary>The properties a setter sets, or a trigger watches (a read-only one too, <c>IsMouseOver</c>).</summary>
     private static XamlCompletionList? SetterProperties(XamlFile file, XmlElement setter, int start)
     {
-        if (file.StyleTargetAt(setter) is not { } target)
+        if (file.SetterTargetAt(setter) is not { } target)
         {
             return null;
         }
-        List<XamlItem> items = [.. file.Dialect.PropertiesOf(file.Types, target).Where(p => !p.IsCollection)
+        bool watched = setter.LocalName != "Setter";
+        // WPF's setters and triggers name dependency properties alone.
+        bool registered = file.Dialect is WpfDialect;
+        List<XamlItem> items = [.. file.Dialect.PropertiesOf(file.Types, target).Where(p => !p.IsCollection && (watched || !p.IsReadOnly) && !(registered && p.Kind == XamlPropertyKind.Clr))
             .Select(p => new XamlItem(p.Name, XamlItemKind.Property, p.Name, p.ValueType.Display))];
         return new XamlCompletionList(start, items);
+    }
+
+    /// <summary>The names a setter's <c>TargetName</c> or a trigger's <c>SourceName</c> can give: those of its template.</summary>
+    private static XamlCompletionList NamesFrom(XamlFile file, XmlElement from, int start)
+    {
+        XmlElement? scope = from.Ancestors().FirstOrDefault(a => !a.IsPropertyElement && a.LocalName.EndsWith("Template", StringComparison.Ordinal));
+        IEnumerable<string> names = scope is null ? file.Names.Select(n => n.Name)
+            : scope.DescendantsAndSelf().Select(e => file.NameAttribute(e)?.Value).OfType<string>().Where(n => n.Length > 0);
+        return new XamlCompletionList(start, [.. names.Distinct(StringComparer.Ordinal).Select(n => new XamlItem(n, XamlItemKind.ElementName, n))]);
     }
 
     private static XamlCompletionList? Selector(XamlFile file, XmlAttribute attribute, int offset)
@@ -596,20 +646,38 @@ public static class XamlCompletion
         List<XamlItem> items = [];
         IEnumerable<string> own = project.Assets.Concat(project.Files.Keys.Select(f => Path.GetRelativePath(project.Folder, f).Replace('\\', '/')))
             .Distinct(StringComparer.Ordinal);
+        string folder = Path.GetDirectoryName(file.Path) ?? project.Folder;
         foreach (string asset in own)
         {
             if (xamlOnly && !IsXaml(asset))
             {
                 continue;
             }
-            string full = $"avares://{project.AssemblyName}/{asset}";
-            items.Add(new XamlItem(full, XamlItemKind.Asset, full, Path.GetFileName(asset)));
+            if (file.Dialect is AvaloniaDialect)
+            {
+                string full = $"avares://{project.AssemblyName}/{asset}";
+                items.Add(new XamlItem(full, XamlItemKind.Asset, full, Path.GetFileName(asset)));
+            }
+            else
+            {
+                // WPF's: a path from the file's folder, or with a pack URI from the project's.
+                string relative = Path.GetRelativePath(folder, Path.Combine(project.Folder, asset)).Replace('\\', '/');
+                if (relative != Path.GetFileName(file.Path))
+                {
+                    items.Add(new XamlItem(relative, XamlItemKind.Asset, relative, Path.GetFileName(asset)));
+                }
+                if (typed.StartsWith("pack:", StringComparison.Ordinal))
+                {
+                    string pack = $"pack://application:,,,/{asset}";
+                    items.Add(new XamlItem(pack, XamlItemKind.Asset, pack, Path.GetFileName(asset)));
+                }
+            }
             if (typed.StartsWith('/'))
             {
                 items.Add(new XamlItem("/" + asset, XamlItemKind.Asset, "/" + asset, Path.GetFileName(asset)));
             }
         }
-        return new XamlCompletionList(attribute.ValueStart, items, "/:.-#");
+        return new XamlCompletionList(attribute.ValueStart, items, "/:.-#,");
 
         static bool IsXaml(string path) => Path.GetExtension(path).ToLowerInvariant() is ".axaml" or ".xaml" or ".paml";
     }
@@ -630,6 +698,10 @@ public static class XamlCompletion
         ClrType? type = file.ResolveType(element, extension.Name, extension: true);
         string local = extension.LocalName;
         MarkupArgument? argument = extension.ArgumentAt(offset);
+        if (local == "DesignInstance" && extension.Prefix.Length > 0 && file.UriOf(element, extension.Prefix) == XamlDialect.DesignerUri)
+        {
+            return DesignInstance(file, element, extension, argument, offset);
+        }
         bool inKey = argument is { Key: not null } && offset <= argument.KeyEnd;
         int valueStart = argument is null ? offset : inKey ? argument.KeyStart : argument.ValueStart;
         // An argument begun after a comma or a space is either a positional value or a key; both are offered.
@@ -641,7 +713,7 @@ public static class XamlCompletion
         }
         if (argument is { Key: { } key } named)
         {
-            return ArgumentValue(file, element, type, key, named.ValueStart, offset);
+            return ArgumentValue(file, attribute, type, key, named.ValueStart, offset);
         }
         bool first = argument?.Index == 0 || (argument is null && !extension.Arguments.Any(a => a.Key is null));
         List<XamlItem> items = [];
@@ -651,7 +723,7 @@ public static class XamlCompletion
                 items.AddRange(ResourceKeys(file, dynamic: local == "DynamicResource"));
                 return new XamlCompletionList(valueStart, items, ".");
             case "Binding" or "CompiledBinding" or "ReflectionBinding" or "TemplateBinding" when positional:
-                ClrType? source = local == "TemplateBinding" ? file.StyleTargetAt(element) : file.DataTypeAt(element);
+                ClrType? source = local == "TemplateBinding" ? file.StyleTargetAt(element) : file.DataTypeOf(attribute);
                 XamlCompletionList? path = BindingPath(file, element, source, valueStart, offset, local == "TemplateBinding");
                 if (path is null)
                 {
@@ -663,8 +735,37 @@ public static class XamlCompletion
                 return Statics(file, element, valueStart, offset);
             case "Type" when first:
                 return TypeNames(file, element, valueStart, t => t.Arity == 0);
+            case "Reference" when first:
+                return new XamlCompletionList(valueStart, [.. file.Names.Select(n => n.Name).Distinct(StringComparer.Ordinal).Select(n => new XamlItem(n, XamlItemKind.ElementName, n))]);
+            case "RelativeSource" when first && type is not null && file.Types.MembersOf(type).FirstOrDefault(m => m.Kind == MemberKind.Property && m.Name == "Mode") is { } mode
+                && file.Types.Resolve(mode.Type) is { Kind: ClrTypeKind.Enum } modes:
+                // WPF's {RelativeSource FindAncestor, AncestorType=...}: its mode first.
+                return new XamlCompletionList(valueStart, [.. modes.Members.Where(m => m.Kind == MemberKind.Field && m.IsStatic).Select(m => new XamlItem(m.Name, XamlItemKind.EnumValue, m.Name, modes.Name)),
+                    .. offset == valueStart ? Keys(file, type) : []]);
         }
         return new XamlCompletionList(valueStart, Keys(file, type));
+    }
+
+    /// <summary>WPF's <c>{d:DesignInstance Type=vm:MainViewModel, IsDesignTimeCreatable=True}</c>: its type, positional or
+    /// as <c>Type=</c>, and its other arguments, which the designer's assembly declares and no reference holds.</summary>
+    private static XamlCompletionList DesignInstance(XamlFile file, XmlElement element, MarkupExtension extension, MarkupArgument? argument, int offset)
+    {
+        IReadOnlyList<XamlItem> keys = [.. ((string[])["Type", "IsDesignTimeCreatable", "CreateList"]).Select(k => new XamlItem(k + "=", XamlItemKind.Property, k + "=", "DesignInstance", Reopen: true))];
+        if (argument is { Key: not null } keyed && offset <= keyed.KeyEnd)
+        {
+            return new XamlCompletionList(keyed.KeyStart, keys);
+        }
+        if (argument is { Key: "IsDesignTimeCreatable" or "CreateList" } flag)
+        {
+            return Booleans(flag.ValueStart);
+        }
+        int start = argument?.ValueStart ?? offset;
+        if (argument is null or { Key: null or "Type" })
+        {
+            XamlCompletionList types = TypeNames(file, element, start, t => t.Arity == 0 && t.Kind is ClrTypeKind.Class or ClrTypeKind.Struct or ClrTypeKind.Interface);
+            return argument is null && extension.Arguments.Count > 0 ? new XamlCompletionList(start, keys) : types;
+        }
+        return new XamlCompletionList(start, keys);
     }
 
     /// <summary>The named arguments an extension takes: its type's settable properties, as <c>Key=</c>.</summary>
@@ -679,7 +780,7 @@ public static class XamlCompletion
             .Select(n => new XamlItem(n + "=", XamlItemKind.Property, n + "=", type.Name, Reopen: true))];
     }
 
-    private static XamlCompletionList? ArgumentValue(XamlFile file, XmlElement element, ClrType? type, string key, int start, int offset)
+    private static XamlCompletionList? ArgumentValue(XamlFile file, XmlAttribute attribute, ClrType? type, string key, int start, int offset)
     {
         if (type is null)
         {
@@ -691,11 +792,11 @@ public static class XamlCompletion
         }
         if (key == "Path" && type.Name is "Binding" or "CompiledBindingExtension" or "ReflectionBindingExtension")
         {
-            return BindingPath(file, element, file.DataTypeAt(element), start, offset, template: false);
+            return BindingPath(file, attribute.Owner, file.DataTypeOf(attribute), start, offset, template: false);
         }
         if (key is "AncestorType" or "DataType")
         {
-            return TypeNames(file, element, start, t => t.Arity == 0);
+            return TypeNames(file, attribute.Owner, start, t => t.Arity == 0);
         }
         ClrMember? property = file.Types.MembersOf(type).FirstOrDefault(m => m.Kind == MemberKind.Property && m.Name == key);
         if (property is null)
@@ -721,10 +822,15 @@ public static class XamlCompletion
         {
             if (file.KindOf(uri) == XamlNamespaceKind.Language)
             {
-                foreach (string intrinsic in (string[])["Static", "Type", "Null", "True", "False"])
+                foreach (string intrinsic in file.Dialect.LanguageExtensions)
                 {
                     items.Add(new XamlItem($"{prefix}:{intrinsic}", XamlItemKind.Extension, $"{prefix}:{intrinsic}", "XAML"));
                 }
+                continue;
+            }
+            if (uri == XamlDialect.DesignerUri)
+            {
+                items.AddRange(file.Dialect.DesignerExtensions.Select(d => new XamlItem($"{prefix}:{d}", XamlItemKind.Extension, $"{prefix}:{d}", "Designer")));
                 continue;
             }
             foreach (ClrType type in TypesOf(file, uri, t => file.Dialect.IsMarkupExtension(file.Types, t)))

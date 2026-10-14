@@ -22,6 +22,15 @@ public sealed class AvaloniaDialect : XamlDialect
 
     public override IReadOnlyList<string> Extensions { get; } = [".axaml", ".paml", ".xaml"];
 
+    public override IReadOnlyList<string> LanguageExtensions { get; } = ["Static", "Type", "Null", "True", "False"];
+
+    public override bool CompilesBindings => true;
+
+    public override IReadOnlyList<string> AssetItems { get; } = ["AvaloniaResource"];
+
+    /// <summary>Avalonia's own form, <c>using:</c>, whatever assembly holds the namespace.</summary>
+    public override string ClrNamespaceUri(string clrNamespace, string? assembly) => $"using:{clrNamespace}";
+
     /// <summary>The bindings Avalonia's compiler takes in braces, whose types are no <c>…Extension</c>.</summary>
     private static readonly HashSet<string> Bindings = new(StringComparer.Ordinal)
     {

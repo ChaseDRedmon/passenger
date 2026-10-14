@@ -545,13 +545,13 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
         window.Close();
     }
 
-    private static Marker MarkerOn(CodeEditor editor, OpenDocument document, string stretch)
+    internal static Marker MarkerOn(CodeEditor editor, OpenDocument document, string stretch)
     {
         string text = editor.Document.Snapshot.ToString();
         return Assert.Single(document.Markers, m => m.Range.End <= text.Length && text[m.Range.Start..m.Range.End] == stretch);
     }
 
-    private static void Replace(CodeEditor editor, string what, string with)
+    internal static void Replace(CodeEditor editor, string what, string with)
     {
         int at = editor.Document.Snapshot.ToString().IndexOf(what, StringComparison.Ordinal);
         Assert.True(at >= 0, $"'{what}' is not in the file");
@@ -575,10 +575,10 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
     }
 
     /// <summary>The caret's line with a bar where the caret is.</summary>
-    private static string CaretLine(CodeEditor editor) =>
+    internal static string CaretLine(CodeEditor editor) =>
         editor.Document.Snapshot.GetLineText(editor.CaretPosition.Line).Insert(editor.CaretPosition.Column, "|");
 
-    private static void PlaceAfter(CodeEditor editor, string text)
+    internal static void PlaceAfter(CodeEditor editor, string text)
     {
         int at = editor.Document.Snapshot.ToString().IndexOf(text, StringComparison.Ordinal);
         Assert.True(at >= 0, $"'{text}' is not in the file");

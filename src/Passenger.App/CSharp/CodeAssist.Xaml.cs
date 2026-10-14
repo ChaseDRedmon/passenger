@@ -338,7 +338,7 @@ public sealed partial class CodeAssist
     }
 
     /// <summary>Find Usages in XAML: an element's name where the file names it and where its code-behind uses the field
-    /// Avalonia makes for it; a resource key where any of the project's XAML uses it.</summary>
+    /// Avalonia or WPF makes for it; a resource key where any of the project's XAML uses it.</summary>
     private async Task XamlUsages(XamlDocument xaml, int offset)
     {
         if (await XamlSymbolAt(xaml, offset, "No usages found") is not { } found)
@@ -380,9 +380,9 @@ public sealed partial class CodeAssist
         UsagesFound?.Invoke(this, ($"Usages of {symbol.Name}", usages));
     }
 
-    /// <summary>The code-behind's uses of the field Avalonia's generator makes for a named element: the server's references
-    /// from a mention of the name in a file of the <c>x:Class</c> whose definition is that generated field, its generated
-    /// declaration and uses left out.</summary>
+    /// <summary>The code-behind's uses of the field Avalonia's generator or WPF's MarkupCompile makes for a named element:
+    /// the server's references from a mention of the name in a file of the <c>x:Class</c> whose definition is that
+    /// generated field, its generated declaration and uses left out.</summary>
     private async Task<IReadOnlyList<LspLocation>> CodeBehindUses(XamlFile file, string name)
     {
         if (service()?.Session is not { IsLoaded: true } session || file.ClassName is not { } className)
@@ -402,11 +402,11 @@ public sealed partial class CodeAssist
                 {
                     LspDocument server = open is not null && service()?.For(open)?.Lsp is { } attached ? attached : shown = session.Open(path, new TextDocument(text));
                     IReadOnlyList<LspLocation> definitions = await server.DefinitionAsync(mention.Index);
-                    if (!definitions.Any(d => IsGenerated(d, className)))
+                    if (!definitions.Any(d => IsGenerated(d, className, file.Path)))
                     {
                         continue;
                     }
-                    return [.. (await server.ReferencesAsync(mention.Index)).Where(r => !IsGenerated(r, className))];
+                    return [.. (await server.ReferencesAsync(mention.Index)).Where(r => !IsGenerated(r, className, file.Path))];
                 }
                 catch (LanguageServerFailed)
                 {
@@ -421,9 +421,19 @@ public sealed partial class CodeAssist
         return [];
     }
 
-    /// <summary>Whether a place is in the C# Avalonia's generator wrote for a class's XAML (its <c>Class.g.cs</c>).</summary>
-    private static bool IsGenerated(LspLocation place, string className) =>
-        !place.Uri.StartsWith("file:", StringComparison.OrdinalIgnoreCase) && place.Uri.Contains(className + ".g.cs", StringComparison.Ordinal);
+    /// <summary>Whether a place is in the C# made for a class's XAML: Avalonia's generator's <c>Class.g.cs</c>, or the
+    /// <c>obj/…/File.g.cs</c> (<c>.g.i.cs</c> at design time) WPF's MarkupCompile writes for the XAML file.</summary>
+    private static bool IsGenerated(LspLocation place, string className, string xamlPath)
+    {
+        if (!place.Uri.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
+        {
+            return place.Uri.Contains(className + ".g.cs", StringComparison.Ordinal);
+        }
+        string path = DocumentUris.ToPath(place.Uri);
+        string stem = Path.GetFileNameWithoutExtension(xamlPath);
+        return Path.GetFileName(path) is { } name && (name.Equals(stem + ".g.cs", StringComparison.OrdinalIgnoreCase) || name.Equals(stem + ".g.i.cs", StringComparison.OrdinalIgnoreCase))
+            && path.Replace('\\', '/').Contains("/obj/", StringComparison.OrdinalIgnoreCase);
+    }
 
     /// <summary>Rename in XAML: an element's name, where the file names it and where its code-behind uses its field, as one
     /// command undone whole.</summary>
@@ -545,25 +555,28 @@ public sealed partial class CodeAssist
         return XamlNavigation.Describe(found.File, found.Symbol);
     }
 
-    /// <summary>A C# definition that lands in the field Avalonia's generator made for a named element goes to the element's
-    /// name in its XAML instead, as Rider's does; null for any other.</summary>
+    /// <summary>A C# definition that lands in the field Avalonia's generator or WPF's MarkupCompile made for a named element
+    /// goes to the element's name in its XAML instead, as Rider's does; null for any other.</summary>
     private XamlTarget? NamedElementOf(IReadOnlyList<LspLocation> definitions, int offset)
     {
         foreach (LspLocation place in definitions)
         {
+            if (editors.Active is not { } active)
+            {
+                continue;
+            }
+            string? xaml;
             if (place.Uri.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
             {
-                continue;
+                xaml = MarkupCompiled(DocumentUris.ToPath(place.Uri), place.Range.Start.Line);
             }
-            Match generated = GeneratedFile().Match(Uri.UnescapeDataString(place.Uri));
-            if (!generated.Success || editors.Active is not { } active)
+            else
             {
-                continue;
+                Match generated = GeneratedFile().Match(Uri.UnescapeDataString(place.Uri));
+                xaml = generated.Success ? Xaml?.Invoke()?.ClassFile(generated.Groups["class"].Value, active.Path) : null;
             }
-            string className = generated.Groups["class"].Value;
             string name = NameAt(offset);
-            if (Xaml?.Invoke()?.ClassFile(className, active.Path) is { } xaml
-                && Regex.Match(ReadOpenOrDisk(xaml), $@"\b(?:x:)?Name\s*=\s*""(?<name>{Regex.Escape(name)})""") is { Success: true } found)
+            if (xaml is not null && Regex.Match(ReadOpenOrDisk(xaml), $@"\b(?:x:)?Name\s*=\s*""(?<name>{Regex.Escape(name)})""") is { Success: true } found)
             {
                 int start = found.Groups["name"].Index;
                 return new XamlTarget(XamlTargetKind.Element, name) { Path = xaml, Range = new TextRange(start, name.Length) };
@@ -571,6 +584,31 @@ public sealed partial class CodeAssist
         }
         return null;
     }
+
+    /// <summary>The XAML file a line of the C# WPF's MarkupCompile wrote (<c>obj/…/MainWindow.g.cs</c>, or the design-time
+    /// <c>.g.i.cs</c>) was made from: the file its nearest <c>#line</c> above names; null for a file that is not one.</summary>
+    private static string? MarkupCompiled(string path, int line)
+    {
+        string name = Path.GetFileName(path);
+        if (!(name.EndsWith(".g.cs", StringComparison.OrdinalIgnoreCase) || name.EndsWith(".g.i.cs", StringComparison.OrdinalIgnoreCase))
+            || !path.Replace('\\', '/').Contains("/obj/", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+        string[] lines = ReadText(path).Split('\n');
+        for (int at = Math.Min(line, lines.Length - 1); at >= 0; at--)
+        {
+            if (LineDirective().Match(lines[at]) is { Success: true } directive)
+            {
+                string xaml = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(path)!, directive.Groups["file"].Value.Replace('\\', Path.DirectorySeparatorChar)));
+                return File.Exists(xaml) ? Passenger.Core.PathNames.Canonical(xaml) : null;
+            }
+        }
+        return null;
+    }
+
+    [GeneratedRegex(@"^\s*#line\s+\d+\s+""(?<file>[^""]+\.xaml)""")]
+    private static partial Regex LineDirective();
 
     private string ReadOpenOrDisk(string path) => editors.Documents.FirstOrDefault(d => d.Path == path)?.Text.Snapshot.ToString() ?? ReadText(path);
 

@@ -290,7 +290,9 @@ public sealed class AssemblyTypes
                 string name = reader.GetString(method.Name);
                 bool isStatic = (method.Attributes & MethodAttributes.Static) != 0;
                 bool constructor = name == ".ctor";
-                if (!constructor && !(isStatic && (name.StartsWith("Get", StringComparison.Ordinal) || name.StartsWith("Set", StringComparison.Ordinal))))
+                // Of the other methods, only an attached property's getter and setter and an attached event's adder are XAML's.
+                if (!constructor && !(isStatic && (name.StartsWith("Get", StringComparison.Ordinal) || name.StartsWith("Set", StringComparison.Ordinal)
+                    || (name.StartsWith("Add", StringComparison.Ordinal) && name.EndsWith("Handler", StringComparison.Ordinal)))))
                 {
                     continue;
                 }

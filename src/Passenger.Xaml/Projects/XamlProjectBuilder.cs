@@ -34,15 +34,26 @@ public sealed class XamlProjectBuilder
 
     public string Folder => inputs.Folder;
 
-    /// <summary>A builder for a project whose XAML Passenger reads (an Avalonia project), or null for another.</summary>
+    /// <summary>A builder for a project whose XAML Passenger reads (an Avalonia or WPF project), or null for another.</summary>
     public static XamlProjectBuilder? For(string projectPath, string? dotnetRoot)
     {
         ProjectInputs inputs = ProjectInputs.Read(projectPath, dotnetRoot);
         return DialectOf(inputs) is { } dialect ? new XamlProjectBuilder(inputs, dialect, dotnetRoot) : null;
     }
 
-    /// <summary>The dialect a project's XAML is in, by the framework it references; null for none Passenger reads.</summary>
-    public static XamlDialect? DialectOf(ProjectInputs inputs) => inputs.Uses("Avalonia") ? AvaloniaDialect.Instance : null;
+    /// <summary>The dialect a project's XAML is in, by the framework it references: Avalonia's for a project that references
+    /// its package, WPF's for one whose restore references WPF's shared framework (<c>UseWPF</c>, which the project file
+    /// says before a restore); null for any other (MAUI, WinUI), whose XAML Passenger does not read.</summary>
+    public static XamlDialect? DialectOf(ProjectInputs inputs)
+    {
+        if (inputs.Uses("Avalonia"))
+        {
+            return AvaloniaDialect.Instance;
+        }
+        bool wpf = inputs.FrameworkReferences.Any(f => f is "Microsoft.WindowsDesktop.App.WPF" or "Microsoft.WindowsDesktop.App")
+            || string.Equals(inputs.PropertyValue("UseWPF"), "true", StringComparison.OrdinalIgnoreCase);
+        return wpf ? WpfDialect.Instance : null;
+    }
 
     /// <summary>Whether a file is one of the project's XAML files.</summary>
     public bool Owns(string path) =>
@@ -67,7 +78,7 @@ public sealed class XamlProjectBuilder
                 sources[read.Path] = read;
             }
             files.Clear();
-            assets = Dialect is AvaloniaDialect ? inputs.Items("AvaloniaResource") : [];
+            assets = [.. Dialect.AssetItems.SelectMany(inputs.Items).Distinct(StringComparer.Ordinal)];
             List<string> xaml = [.. XamlFilesUnder(inputs.Folder)];
             XamlProject shell = Make();
             foreach (string path in xaml)

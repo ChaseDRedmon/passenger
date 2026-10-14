@@ -136,7 +136,7 @@ public static class XamlNavigation
         XmlElement element = attribute.Owner;
         if (MarkupExtension.Parse(file.Text, attribute.ValueStart, attribute.ValueEnd) is { } root)
         {
-            return Extension(file, element, root.InnermostAt(offset), offset);
+            return Extension(file, attribute, root.InnermostAt(offset), offset);
         }
         XamlAttributeMeaning meaning = file.MeaningOf(attribute);
         TextRange whole = attribute.ValueRange;
@@ -165,9 +165,13 @@ public static class XamlNavigation
         {
             return new XamlSymbol(whole, value, [MemberTarget(handler)]);
         }
-        if (element.LocalName == "Setter" && attribute.Name == "Property" && XamlCompletion.SetterProperty(file, element) is { } set)
+        if (attribute.Name == "Property" && XamlCompletion.IsSetterOrTrigger(element) && XamlCompletion.SetterProperty(file, element) is { } set)
         {
             return new XamlSymbol(whole, set.Name, [MemberTarget(set)]);
+        }
+        if (IsNameReference(attribute) && file.ElementNamed(element, value) is { } target && file.NameAttribute(target) is { } targetName)
+        {
+            return new XamlSymbol(whole, value, [new XamlTarget(XamlTargetKind.Element, value) { Path = file.Path, Range = targetName.ValueRange }]) { Named = targetName };
         }
         if (element.LocalName == "Style" && attribute.Name == "Selector")
         {
@@ -196,8 +200,9 @@ public static class XamlNavigation
             Named = attribute,
         };
 
-    private static XamlSymbol? Extension(XamlFile file, XmlElement element, MarkupExtension extension, int offset)
+    private static XamlSymbol? Extension(XamlFile file, XmlAttribute attribute, MarkupExtension extension, int offset)
     {
+        XmlElement element = attribute.Owner;
         if (offset >= extension.NameStart && offset <= extension.NameEnd)
         {
             return file.ResolveType(element, extension.Name, extension: true) is { } type
@@ -214,8 +219,10 @@ public static class XamlNavigation
             case "StaticResource" or "DynamicResource" when argument.Key is null:
                 return Resource(file, argument);
             case "Binding" or "CompiledBinding" or "ReflectionBinding" or "TemplateBinding" when argument.Key is null or "Path":
-                return BindingStep(file, element, extension, argument, offset);
+                return BindingStep(file, attribute, extension, argument, offset);
             case "Binding" or "CompiledBinding" or "ReflectionBinding" when argument.Key == "ElementName":
+                return ElementNamed(file, argument.Value, argument.ValueRange);
+            case "Reference" when argument.Key is null or "Name" && extension.Prefix.Length > 0 && file.KindOf(file.UriOf(element, extension.Prefix)) == XamlNamespaceKind.Language:
                 return ElementNamed(file, argument.Value, argument.ValueRange);
             case "Type" when argument.Key is null && file.ResolveType(element, argument.Value) is { } type:
                 return new XamlSymbol(argument.ValueRange, type.Name, [TypeTarget(type)]);
@@ -264,9 +271,9 @@ public static class XamlNavigation
 
     /// <summary>The step of a binding's path the caret is on, resolved from the data type through the steps before it;
     /// a <c>#name</c> step, the element named so.</summary>
-    private static XamlSymbol? BindingStep(XamlFile file, XmlElement element, MarkupExtension binding, MarkupArgument path, int offset)
+    private static XamlSymbol? BindingStep(XamlFile file, XmlAttribute attribute, MarkupExtension binding, MarkupArgument path, int offset)
     {
-        ClrType? type = binding.LocalName == "TemplateBinding" ? file.StyleTargetAt(element) : file.DataTypeAt(element);
+        ClrType? type = binding.LocalName == "TemplateBinding" ? file.StyleTargetAt(attribute.Owner) : file.DataTypeOf(attribute);
         string text = path.Value;
         int at = 0;
         while (at < text.Length && text[at] == '!')
@@ -377,7 +384,7 @@ public static class XamlNavigation
                 {
                     continue;
                 }
-                if (attribute == file.NameAttribute(element))
+                if (attribute == file.NameAttribute(element) || IsNameReference(attribute))
                 {
                     if (attribute.Value == name)
                     {
@@ -408,7 +415,7 @@ public static class XamlNavigation
                 Uses(nested, name, uses);
                 continue;
             }
-            if (argument.Key == "ElementName" && argument.Value == name)
+            if ((argument.Key == "ElementName" || (extension.LocalName == "Reference" && argument.Key is null or "Name")) && argument.Value == name)
             {
                 uses.Add(argument.ValueRange);
             }
@@ -424,6 +431,11 @@ public static class XamlNavigation
             }
         }
     }
+
+    /// <summary>Whether an attribute's value is an element's name: WPF's setter <c>TargetName</c>, a trigger's
+    /// <c>SourceName</c>, an animation's <c>Storyboard.TargetName</c>.</summary>
+    private static bool IsNameReference(XmlAttribute attribute) =>
+        attribute.Name is "Storyboard.TargetName" || (attribute.Name is "TargetName" or "SourceName" && XamlCompletion.IsSetterOrTrigger(attribute.Owner));
 
     /// <summary>Where a XAML text uses a resource key, in a <c>StaticResource</c> or <c>DynamicResource</c>.</summary>
     public static IReadOnlyList<TextRange> ResourceUses(XmlTree tree, string key)
