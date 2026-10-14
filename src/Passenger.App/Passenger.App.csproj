@@ -48,6 +48,12 @@
     <ProjectReference Include="../Passenger.Dap/Passenger.Dap.csproj" />
     <!-- Built first and carried, never linked: the adapter runs in its own process. -->
     <ProjectReference Include="../Passenger.DebugAdapter/Passenger.DebugAdapter.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <!-- Built first and carried under inspector/, never linked: an Avalonia app Passenger debugs loads it (LiveTree/LiveApp.cs).
+         It is built once for every platform, as Avalonia's assemblies it is compiled against are the same on each. -->
+    <ProjectReference Include="../Passenger.Inspector/Passenger.Inspector.csproj" ReferenceOutputAssembly="false" Private="false"
+                      GlobalPropertiesToRemove="RuntimeIdentifier;SelfContained;PublishReadyToRun" />
+    <!-- What Passenger and the inspector say to each other, one definition for both ends. -->
+    <Compile Include="../Passenger.Inspector/Protocol.cs" Link="LiveTree/InspectorProtocol.cs" />
   </ItemGroup>
 
   <!-- TraceEvent's props give a build its Windows natives under x86/, amd64/ and arm64/: msdia140 (the DIA SDK, for
@@ -122,6 +128,20 @@
   <Target Name="IncludeNotices" BeforeTargets="AssignTargetPaths" DependsOnTargets="WriteNotices">
     <ItemGroup>
       <None Include="$(NoticesFile)" Link="THIRD-PARTY-NOTICES.txt" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    </ItemGroup>
+  </Target>
+
+  <!-- The inspector becomes this project's output under inspector/, as the debug adapter's does under debugger/: its own
+       assembly alone, since the app it loads into brings the Avalonia it uses. -->
+  <Target Name="IncludeInspector" BeforeTargets="AssignTargetPaths">
+    <MSBuild Projects="../Passenger.Inspector/Passenger.Inspector.csproj" Targets="GetTargetPath"
+             RemoveProperties="RuntimeIdentifier;SelfContained;PublishReadyToRun" BuildInParallel="$(BuildInParallel)">
+      <Output TaskParameter="TargetOutputs" ItemName="InspectorAssembly" />
+    </MSBuild>
+    <ItemGroup>
+      <InspectorFile Include="@(InspectorAssembly->'%(RootDir)%(Directory)%(Filename).dll');@(InspectorAssembly->'%(RootDir)%(Directory)%(Filename).pdb')" />
+      <None Include="@(InspectorFile)" Link="inspector/%(InspectorFile.Filename)%(InspectorFile.Extension)"
+            CopyToOutputDirectory="PreserveNewest" Visible="false" />
     </ItemGroup>
   </Target>
 

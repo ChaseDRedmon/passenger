@@ -7,6 +7,7 @@
     <Project Path="src/Passenger.Debugger/Passenger.Debugger.csproj" />
     <Project Path="src/Passenger.Debugger.Interop/Passenger.Debugger.Interop.csproj" />
     <Project Path="src/Passenger.Editor/Passenger.Editor.csproj" />
+    <Project Path="src/Passenger.Inspector/Passenger.Inspector.csproj" />
     <Project Path="src/Passenger.Languages/Passenger.Languages.csproj" />
     <Project Path="src/Passenger.Lsp/Passenger.Lsp.csproj" />
     <Project Path="src/Passenger.Profiler/Passenger.Profiler.csproj" />
