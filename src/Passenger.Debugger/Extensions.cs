@@ -214,7 +214,8 @@ public static class Extensions
     }
 
     /// <summary>How long code the debugger runs in the program (a getter, a watch's call) may take before
-    /// it is stopped, so one that never returns cannot hang the debugger (upstream #30).</summary>
+    /// it is stopped, so one that never returns cannot hang the debugger (upstream #30). A static of the adapter's
+    /// process, one per debug session whichever window started it.</summary>
     public static TimeSpan EvaluationTimeout { get; set; } = TimeSpan.FromSeconds(5);
 
     private static async Task<ICorDebugValue?> RunEvalAsync(ICorDebugEval eval, Func<Task<CorDebugManagedCallbackEventArgs>> processEventsUntilEvalEventFunc, EvalStatus evalStatus, bool throwOnException, Action startEval, Func<EvalCompleteCorDebugManagedCallbackEventArgs, ICorDebugValue?> onComplete)

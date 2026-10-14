@@ -5,8 +5,8 @@ namespace Passenger.App.Welcome;
 
 /// <summary>The folders and solutions opened lately, as Rider's recentSolutions.xml keeps them, by path (a solution file, a
 /// project opened alone, or a folder without either, canonical): what the Welcome screen and File, Recent Solutions list,
-/// and the one reopened on start. Kept by path rather than as a list, so two windows' openings and removals merge entry
-/// by entry.</summary>
+/// and those a start reopens, each still open in a window as Passenger last quit. Kept by path rather than as a list, so
+/// two windows' openings and removals merge entry by entry.</summary>
 public sealed record RecentSolutionsState : IStateDocument<RecentSolutionsState>
 {
     /// <summary>How many are kept, the oldest dropped past it, as IntelliJ's recent projects are.</summary>
@@ -14,21 +14,61 @@ public sealed record RecentSolutionsState : IStateDocument<RecentSolutionsState>
 
     public Dictionary<string, RecentSolution> Solutions { get; init; } = [];
 
-    public static IReadOnlyList<Action<JsonObject>> Upgrades { get; } = [StateStore.Unversioned];
+    /// <summary>Version 2 marks the solutions open: a build before it reopened the newest alone, which is marked.</summary>
+    public static IReadOnlyList<Action<JsonObject>> Upgrades { get; } = [StateStore.Unversioned, MarkNewestOpen];
 
     /// <summary>The newest first, each with its path.</summary>
     public IReadOnlyList<(string Path, RecentSolution Entry)> Newest() =>
         [.. Solutions.OrderByDescending(s => s.Value.Opened).ThenBy(s => s.Key, StringComparer.Ordinal).Select(s => (s.Key, s.Value))];
 
-    /// <summary>With a path opened now, newest of all even on a clock that has not moved since the last.</summary>
+    /// <summary>Those a window had open as Passenger last quit, or has open now, the oldest first, as Rider's Reopen
+    /// projects on startup reopens them, the newest last and so in front.</summary>
+    public IReadOnlyList<(string Path, RecentSolution Entry)> StillOpen() => [.. Newest().Where(s => s.Entry.Open).Reverse()];
+
+    /// <summary>With a path opened now, newest of all even on a clock that has not moved since the last, and open.</summary>
     public RecentSolutionsState Opened(string path, string name, DateTimeOffset now)
     {
         DateTimeOffset latest = Solutions.Values.Select(s => s.Opened).DefaultIfEmpty(DateTimeOffset.MinValue).Max();
         Dictionary<string, RecentSolution> next = new(Solutions)
         {
-            [path] = new RecentSolution { Name = name, Opened = now > latest ? now : latest.AddTicks(1) },
+            [path] = new RecentSolution { Name = name, Opened = now > latest ? now : latest.AddTicks(1), Open = true },
         };
         return this with { Solutions = Kept(next) };
+    }
+
+    /// <summary>With a path no window has open any longer (its window closed alone, or another workspace opened in it), so
+    /// a start leaves it closed; kept among the recent ones.</summary>
+    public RecentSolutionsState Closed(string path)
+    {
+        if (!Solutions.TryGetValue(path, out RecentSolution? entry) || !entry.Open)
+        {
+            return this;
+        }
+        return this with { Solutions = new(Solutions) { [path] = entry with { Open = false } } };
+    }
+
+    private static void MarkNewestOpen(JsonObject document)
+    {
+        if (document["solutions"] is not JsonObject solutions)
+        {
+            return;
+        }
+        JsonObject? newest = null;
+        DateTimeOffset latest = DateTimeOffset.MinValue;
+        foreach ((string _, JsonNode? entry) in solutions)
+        {
+            if (entry is JsonObject each && each["opened"] is JsonValue opened && opened.TryGetValue(out string? text)
+                && DateTimeOffset.TryParse(text, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out DateTimeOffset when)
+                && when >= latest)
+            {
+                latest = when;
+                newest = each;
+            }
+        }
+        if (newest is not null)
+        {
+            newest["open"] = true;
+        }
     }
 
     public RecentSolutionsState Without(string path)
@@ -49,12 +89,15 @@ public sealed record RecentSolutionsState : IStateDocument<RecentSolutionsState>
         all.Count <= Limit ? all : all.OrderByDescending(s => s.Value.Opened).Take(Limit).ToDictionary(s => s.Key, s => s.Value);
 }
 
-/// <summary>One recent folder or solution: its name as the window showed it, and when it was last opened.</summary>
+/// <summary>One recent folder or solution: its name as the window showed it, when it was last opened, and whether a window
+/// still had it open as Passenger last quit (Rider's opened).</summary>
 public sealed record RecentSolution
 {
     public string Name { get; init; } = string.Empty;
 
     public DateTimeOffset Opened { get; init; }
+
+    public bool Open { get; init; }
 }
 
 /// <summary>A recent folder or solution as a list shows it: where it is, its name, its path with the home folder as ~,

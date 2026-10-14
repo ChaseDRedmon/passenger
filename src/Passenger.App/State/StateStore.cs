@@ -15,16 +15,24 @@ namespace Passenger.App.State;
 
 /// <summary>The IDE's own state, in one folder: the app's documents at its top (the settings, the layout a folder
 /// without its own opens on, the recent solutions, the release last announced, Find in Files' mask, Rename's options), and each
-/// folder's under <c>workspaces/&lt;name&gt;-&lt;hash&gt;/</c>, as Rider keeps a project's workspace.xml. Only the window
-/// a person uses keeps one; a headless IDE starts on the defaults.</summary>
+/// folder's under <c>workspaces/&lt;name&gt;-&lt;hash&gt;/</c>, as Rider keeps a project's workspace.xml. Only the windows
+/// a person uses keep one, all of a process's windows over the same folder sharing it (<see cref="Open"/>), so each
+/// document is held once and what one window keeps another reads at once; a headless IDE starts on the defaults.</summary>
 public sealed class StateStore
 {
-    private readonly Dictionary<string, ProjectState> projects = new(StringComparer.Ordinal);
+    /// <summary>The stores open in this process by their folder: the person's windows share theirs, and a test's windows
+    /// the one it names. UI thread only.</summary>
+    private static readonly Dictionary<string, StateStore> Shared = new(StringComparer.Ordinal);
 
-    public StateStore(string root)
+    private readonly Dictionary<string, ProjectState> projects = new(StringComparer.Ordinal);
+    private readonly string key;
+    private int users;
+
+    private StateStore(string root, string key)
     {
         Root = root;
-        Settings = new(Path.Combine(root, "settings.json"));
+        this.key = key;
+        Settings = SettingsStore.Kept(new StateDocument<AppSettings>(Path.Combine(root, "settings.json")));
         Layout = new(Path.Combine(root, "layout.json"));
         Recent = new(Path.Combine(root, "recentSolutions.json"));
         Updates = new(Path.Combine(root, "updates.json"));
@@ -39,7 +47,39 @@ public sealed class StateStore
 
     public string Root { get; }
 
-    public StateDocument<AppSettings> Settings { get; }
+    /// <summary>The settings every window keeping its state here follows.</summary>
+    public SettingsStore Settings { get; }
+
+    /// <summary>The store of a state folder, shared by every window of this process that keeps its state there; let go
+    /// with <see cref="Release"/>.</summary>
+    public static StateStore Open(string root)
+    {
+        UiThread.Check();
+        string key = Path.GetFullPath(root);
+        if (!Shared.TryGetValue(key, out StateStore? store))
+        {
+            store = new StateStore(root, key);
+            Shared[key] = store;
+        }
+        store.users++;
+        return store;
+    }
+
+    /// <summary>A window's hold let go: the last one writes what is waiting and stops watching the settings.</summary>
+    public void Release()
+    {
+        UiThread.Check();
+        if (--users > 0)
+        {
+            return;
+        }
+        Flush();
+        Settings.Dispose();
+        if (Shared.TryGetValue(key, out StateStore? open) && open == this)
+        {
+            Shared.Remove(key);
+        }
+    }
 
     /// <summary>The tool windows' layout as it was changed last, which a folder with none of its own opens on.</summary>
     public StateDocument<DockLayout> Layout { get; }

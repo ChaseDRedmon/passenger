@@ -105,7 +105,8 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
     }
 
     /// <summary>A file about to be written by a save, so a folder watcher takes it for the change it is rather than a
-    /// new file (a save writes a temporary file beside it and moves it over).</summary>
+    /// new file (a save writes a temporary file beside it and moves it over). The process's, as saves come from any
+    /// window: each window's watcher and each folder's Local History tell their own by its path.</summary>
     public static event Action<string>? Writing;
 
     /// <summary>A file a save wrote, once it holds the bytes written: its path as given, what it held before (null when

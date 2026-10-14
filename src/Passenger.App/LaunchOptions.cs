@@ -15,10 +15,10 @@ namespace Passenger.App;
 public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, TextPosition? Caret, ThemeChoice? Theme, ScreenshotOptions? Screenshot)
 {
     /// <summary>The flags that may be given more than once: each is one more file or one more step.</summary>
-    private static readonly HashSet<string> Repeatable = ["--file", "--type", "--key", "--click", "--double-click", "--right-click", "--drag", "--drag-hold", "--hover", "--wait"];
+    private static readonly HashSet<string> Repeatable = ["--file", "--type", "--key", "--click", "--double-click", "--right-click", "--drag", "--drag-hold", "--hover", "--wait", "--open"];
 
     /// <summary>What only a screenshot takes: its window, its picture and the steps before it.</summary>
-    private static readonly HashSet<string> ScreenshotOnly = ["--size", "--scale", "--crop", "--type", "--key", "--click", "--double-click", "--right-click", "--drag", "--drag-hold", "--hover", "--wait"];
+    private static readonly HashSet<string> ScreenshotOnly = ["--size", "--scale", "--crop", "--type", "--key", "--click", "--double-click", "--right-click", "--drag", "--drag-hold", "--hover", "--wait", "--open"];
 
     /// <summary>A screenshot's longest side in pixels: a frame 16384 pixels square is already a gigabyte, and the headless
     /// window draws none at 24000.</summary>
@@ -136,6 +136,12 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
                     break;
                 case "--wait":
                     steps.Add(new ScriptStep.Wait(TimeSpan.FromMilliseconds(Number(flag, Value(args, ref i, flag), "milliseconds", 1, 600_000))));
+                    break;
+                case "--open":
+                    string opened = Value(args, ref i, flag);
+                    steps.Add(new ScriptStep.Open(Directory.Exists(opened) || (File.Exists(opened) && WorkspaceModel.Opens(opened))
+                        ? Path.GetFullPath(opened)
+                        : throw new FormatException($"--open takes a folder, a solution (.sln, .slnx) or a C# project (.csproj), not '{opened}'")));
                     break;
                 case "--hover":
                     string hoverText = Value(args, ref i, flag);
@@ -392,6 +398,10 @@ public abstract record ScriptStep
 
     /// <summary>Time for what the screenshot does not wait on by itself: a program running.</summary>
     public sealed record Wait(TimeSpan For) : ScriptStep;
+
+    /// <summary>A folder, solution or project opened as File, Open opens the one chosen: with one open already, Open
+    /// Solution asks where (Settings' default), and a window of its own opens on New Window.</summary>
+    public sealed record Open(string Path) : ScriptStep;
 }
 
 /// <summary>How the command line asks for the Model Context Protocol server.</summary>

@@ -1,13 +1,18 @@
 namespace Passenger.App;
 
 /// <summary>One entry of a menu: an action (titled as it is registered), a submenu, a separator, or a submenu the window
-/// lists as it opens (View's Tool Windows, File's Recent Solutions).</summary>
+/// lists as it opens (View's Tool Windows, File's Recent Solutions), or such a list in its menu's own place (Window's open
+/// solution windows).</summary>
 public sealed record MenuEntry(string? Action, string? Title = null, IReadOnlyList<MenuEntry>? Items = null)
 {
     public bool IsSeparator => Action is null && Items is null && Title is null;
 
     /// <summary>A submenu of what the window has as it opens, named by its title.</summary>
     public bool IsListed => Action is null && Items is null && Title is not null;
+
+    /// <summary>A list whose items stand in its menu itself rather than in a submenu, as Rider's Open Solution Windows
+    /// group at the Window menu's end.</summary>
+    public bool Inline { get; init; }
 }
 
 /// <summary>Rider's main menu: File, Edit, View, Navigate, Code, Refactor, Build, Run, Tests, Tools, Git, Window and Help,
@@ -19,11 +24,17 @@ public static class MainMenu
     public const string ToolWindows = "Tool Windows";
     public const string RecentSolutions = "Recent Solutions";
 
+    /// <summary>Rider's name for the Window menu's list of the project windows open (its OpenProjectWindows group).</summary>
+    public const string OpenSolutionWindows = "Open Solution Windows";
+
     /// <summary>The menus, in Rider's order.</summary>
     public static IReadOnlyList<string> Titles { get; } = ["File", "Edit", "View", "Navigate", "Code", "Refactor", "Build", "Run", "Tests", "Tools", "Git", "Window", "Help"];
 
     /// <summary>The submenus the window lists as each opens.</summary>
-    private static readonly string[] Listed = [ToolWindows, RecentSolutions];
+    private static readonly string[] Listed = [ToolWindows, RecentSolutions, OpenSolutionWindows];
+
+    /// <summary>The lists whose items stand in their menu's own place.</summary>
+    private static readonly string[] Inlined = [OpenSolutionWindows];
 
     /// <summary>The submenus, each where its parent lists it.</summary>
     private static readonly MenuPlace[] Submenus =
@@ -39,6 +50,7 @@ public static class MainMenu
         new("Code/Folding", 3, 0),
         new("Window/Layout Settings", 0, 0),
         new("Window/Editor Tabs", 1, 0),
+        new("Window/" + OpenSolutionWindows, 4, 0),
     ];
 
     private static readonly MenuEntry Separator = new(null);
@@ -55,12 +67,13 @@ public static class MainMenu
         IEnumerable<(int Group, int Order, MenuEntry Entry)> actions = placed.Where(p => p.Place.Path == path)
             .Select(p => (p.Place.Group, p.Place.Order, new MenuEntry(p.Id)));
         IEnumerable<(int Group, int Order, MenuEntry Entry)> submenus = Submenus.Where(s => s.Path[..Math.Max(0, s.Path.LastIndexOf('/'))] == path)
-            .Select(s => (s.Group, s.Order, Listed.Contains(Name(s.Path)) ? new MenuEntry(null, Name(s.Path)) : Menu(s.Path, placed)));
+            .Select(s => (s.Group, s.Order, Listed.Contains(Name(s.Path)) ? new MenuEntry(null, Name(s.Path)) { Inline = Inlined.Contains(Name(s.Path)) } : Menu(s.Path, placed)));
         List<MenuEntry> items = [];
         int? group = null;
         foreach ((int Group, int Order, MenuEntry Entry) item in actions.Concat(submenus).OrderBy(i => i.Group).ThenBy(i => i.Order))
         {
-            if (group is { } before && before != item.Group)
+            // A list in its menu's place brings its own separator, there only while it lists something.
+            if (group is { } before && before != item.Group && !item.Entry.Inline)
             {
                 items.Add(Separator);
             }

@@ -5,7 +5,8 @@ namespace Passenger.Debugger.ExpressionEvaluator.Cil;
 internal sealed class CilValue
 {
     /// <summary>The debuggee's pointer size, for native integers: its runtime's, set when CoreLib loads,
-    /// not the debugger's own (a 32-bit program under a 64-bit debugger).</summary>
+    /// not the debugger's own (a 32-bit program under a 64-bit debugger). A static of the adapter's process, which
+    /// debugs one program: each debug session, in any window, starts an adapter of its own.</summary>
     public static int PointerSize { get; set; } = IntPtr.Size;
 
     private CilValue(object? value, ICorDebugValue? corValue, ICilLocation? location = null, ICilLocation? sourceLocation = null)

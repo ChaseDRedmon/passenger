@@ -6,7 +6,9 @@ namespace Passenger.App;
 /// <summary>Rider's IDE Internal Errors: an exception that escapes on the UI thread or from a task nobody awaited is
 /// written to the log in the settings folder (<c>logs/passenger.log</c>, Rider's idea.log, through <see cref="IdeLog"/>)
 /// and shown in the status bar, and the IDE keeps running. Repeats of one error are one entry with its count, and the list
-/// holds Rider's hundred. Avalonia's warnings and errors, and the programs the IDE runs that fail, go to the log.</summary>
+/// holds Rider's hundred. Avalonia's warnings and errors, and the programs the IDE runs that fail, go to the log. The
+/// process's, as Rider's MessagePool is the application's: an error caught on the one UI thread or a task is no one
+/// window's, so every window counts the same list, and the window in front says it.</summary>
 public static class IdeErrors
 {
     /// <summary>The different errors listed at most, as Rider's MessagePool: past it, they are only in the log.</summary>

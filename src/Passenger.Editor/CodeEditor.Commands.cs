@@ -7,8 +7,8 @@ namespace Passenger.Editor;
 
 public sealed partial class CodeEditor
 {
-    /// <summary>Text the last whole-line copy put on the clipboard, shared by every editor: pasting
-    /// exactly that text pastes it as lines, above the caret's line.</summary>
+    /// <summary>Text the last whole-line copy put on the clipboard, shared by every editor of every window, as the
+    /// clipboard it marks is the system's: pasting exactly that text pastes it as lines, above the caret's line.</summary>
     private static string? lineCopy;
 
     /// <summary>Runs an action from <see cref="EditorActions"/>; <paramref name="extend"/> makes a

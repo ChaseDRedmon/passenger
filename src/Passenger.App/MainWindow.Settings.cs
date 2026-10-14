@@ -1,14 +1,16 @@
 using Avalonia.Interactivity;
-using Avalonia.Styling;
 using Passenger.App.Settings;
 using Passenger.Editor;
 
 namespace Passenger.App;
 
-/// <summary>The window's settings: applied the moment they change (the theme, every editor, the terminal), and kept
-/// only by the window a person uses.</summary>
+/// <summary>The window's settings: those of the process's store it follows (<see cref="SettingsStore"/>), shared with every
+/// window keeping its state in the same folder, or its own while it keeps none; each change, here or in another window,
+/// is followed the moment it lands (every editor, the terminal, the consoles, the menus' shortcuts, agents, updates,
+/// Discord). The theme, the keymap and the logs' switches the store puts in force once for the process.</summary>
 public partial class MainWindow
 {
+    private SettingsStore settingsStore = SettingsStore.Unkept();
     private AppSettings settings = new();
     private bool keepsSettings;
 
@@ -18,6 +20,15 @@ public partial class MainWindow
     private void AddSettings()
     {
         Editors.ForEachEditor(editor => ApplyTo(editor, settings));
+        settingsStore.Changed += OnSettingsChanged;
+        Closed += (_, _) =>
+        {
+            settingsStore.Changed -= OnSettingsChanged;
+            if (!settingsStore.IsKept)
+            {
+                settingsStore.Dispose();
+            }
+        };
         // macOS has Settings in the application menu, as Rider's there.
         actions!.Add(new IdeAction(AppActions.ShowSettings, "Settings...", "IDE", _ => ShowSettings())
         {
@@ -25,33 +36,36 @@ public partial class MainWindow
         });
     }
 
-    /// <summary>The window a person uses opens on the settings they left (in its <see cref="StateFolder"/>) and keeps
-    /// each change; headless ones keep the defaults.</summary>
+    /// <summary>The window a person uses follows the settings kept in its <see cref="StateFolder"/>, which every other
+    /// window keeping its state there follows too, and opens on them; headless ones keep the defaults.</summary>
     public void KeepSettings()
     {
-        AppSettings kept = Store().Settings.Value;
+        SettingsStore kept = Store().Settings;
+        if (kept == settingsStore)
+        {
+            return;
+        }
+        settingsStore.Changed -= OnSettingsChanged;
+        settingsStore.Dispose();
+        settingsStore = kept;
+        kept.Changed += OnSettingsChanged;
         keepsSettings = true;
-        ApplySettings(kept, theme: true);
+        kept.PutInForce();
+        Follow(kept.Value);
     }
 
-    /// <summary>Puts settings in force, and keeps them when this window keeps its settings. The theme changes only when
-    /// its setting does (or the person's settings are first read), so one named on the command line stands.</summary>
-    public void ApplySettings(AppSettings next) => ApplySettings(next, theme: false);
+    /// <summary>Puts settings in force: what they change from this window's is put over the settings every window
+    /// following them has, and kept when they are kept.</summary>
+    public void ApplySettings(AppSettings next) => settingsStore.Apply(settings, next);
 
-    private void ApplySettings(AppSettings next, bool theme)
+    private void OnSettingsChanged(object? sender, SettingsChange change) => Follow(change.After);
+
+    /// <summary>The window's share of settings come into force: each editor's, the terminal's, the consoles', the menus'
+    /// shortcuts and the rest that is this window's.</summary>
+    private void Follow(AppSettings next)
     {
         AppSettings before = settings;
         settings = next;
-        if (Avalonia.Application.Current is { } app && (theme || next.Theme != before.Theme))
-        {
-            app.RequestedThemeVariant = next.Theme switch
-            {
-                ThemeChoice.Dark => ThemeVariant.Dark,
-                ThemeChoice.Light => ThemeVariant.Light,
-                _ => ThemeVariant.Default,
-            };
-        }
-        AppActions.UserShortcuts = next.Shortcuts;
         keys.Keymap = AppActions.Keymap();
         keys.Reset();
         if (menuBar is not null)
@@ -81,18 +95,12 @@ public partial class MainWindow
         ListenForAgents(next.McpServer);
         WatchUpdates(next.CheckForUpdates);
         FollowInDiscord();
-        IdeLog.Traces = next.TraceProtocols;
-        IdeLog.Programs = next.LogEveryProgram;
-        if (keepsSettings)
-        {
-            state!.Settings.Set(next);
-        }
     }
 
     /// <summary>Settings (Ctrl+Alt+S, Cmd+, on the Mac), over this window until OK or Cancel.</summary>
     public SettingsDialog ShowSettings()
     {
-        SettingsDialog dialog = new(settings, actions!, ApplySettings);
+        SettingsDialog dialog = new(settings, actions!, (from, to) => settingsStore.Apply(from, to));
         _ = dialog.ShowDialog(this);
         return dialog;
     }

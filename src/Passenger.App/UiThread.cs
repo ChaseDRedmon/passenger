@@ -8,6 +8,7 @@ namespace Passenger.App;
 /// to <see cref="IdeErrors"/> instead of ending the IDE. Controllers and views are UI-thread objects.</summary>
 public static class UiThread
 {
+    /// <summary>The process's one UI thread's dispatcher, every window's.</summary>
     private static volatile Dispatcher? owner;
 
     /// <summary>Takes the calling thread's dispatcher as the one work from other threads goes to, as each window does.

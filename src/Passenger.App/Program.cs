@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using Avalonia;
-using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Styling;
 using Velopack;
 
@@ -12,7 +11,8 @@ internal static class Program
     /// first act, since a static initializer would run only when something first read it.</summary>
     public static long StartedAt { get; private set; }
 
-    /// <summary>What the command line asked to open, for the window the desktop lifetime makes.</summary>
+    /// <summary>What the command line asked to open, for the first window the desktop lifetime makes. The process's, as
+    /// its command line is: the windows opened after it open what the person chooses.</summary>
     public static LaunchOptions Options { get; private set; } = LaunchOptions.Empty;
 
     [STAThread]
@@ -50,14 +50,11 @@ internal static class Program
         {
             return Apart(() => Screenshot.Run(options, screenshot));
         }
-        IClassicDesktopStyleApplicationLifetime? desktop = null;
         int code = BuildAvaloniaApp()
             .AfterSetup(builder => ApplyTheme(builder.Instance!, options.Theme))
-            .StartWithClassicDesktopLifetime(args, lifetime => desktop = lifetime);
-        // What the window ended (the debugger, Roslyn) has a moment; then an update made ready installs, last of all.
-        MainWindow? closed = desktop?.MainWindow as MainWindow;
-        closed?.Ended?.Wait();
-        closed?.InstallUpdate();
+            .StartWithClassicDesktopLifetime(args);
+        // What the windows ended (debuggers, Roslyn's servers) has a moment; then an update made ready installs, last of all.
+        PassengerApp.End();
         return code;
     }
 

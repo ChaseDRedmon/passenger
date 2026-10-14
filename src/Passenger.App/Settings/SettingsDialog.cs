@@ -30,13 +30,22 @@ public sealed partial class SettingsDialog : Window
     /// <summary>Rider's names for <see cref="BuildResultsMode"/>'s choices, in its order.</summary>
     public static readonly string[] BuildResultsChoices = ["Always", "Only if errors or warnings received", "Only if errors received", "Never"];
 
+    /// <summary>Rider's names for <see cref="OpenProjectIn"/>'s choices, in its order.</summary>
+    public static readonly (OpenProjectIn Choice, string Name)[] OpenProjectChoices =
+        [(OpenProjectIn.NewWindow, "New window"), (OpenProjectIn.CurrentWindow, "Current window"), (OpenProjectIn.Ask, "Ask")];
+
     /// <summary>The names of <see cref="DiscordShown"/>'s choices, in its order.</summary>
     public static readonly string[] DiscordChoices = ["Passenger only", "The solution", "The solution and the file"];
 
     private static readonly string[] Order = [Appearance, SystemPage, UpdatesPage, EditorPage, CodeFoldingPage, PostfixPage, LiveTemplatesPage, BuildPage, RunPage,
         TerminalPage, McpPage, DiscordPage, DiagnosticsPage, KeymapPage];
 
-    private readonly Action<AppSettings> apply;
+    /// <summary>Puts what the options changed in force: from the settings as they were applied last, to the options'.</summary>
+    private readonly Action<AppSettings, AppSettings> apply;
+
+    /// <summary>The settings as the dialog opened on them or last applied them, which what is changed since is told
+    /// from, so another window's change meanwhile is not undone.</summary>
+    private AppSettings applied;
 
     /// <summary>The window's actions, which the keymap page lists.</summary>
     private readonly ActionRegistry actions;
@@ -50,11 +59,12 @@ public sealed partial class SettingsDialog : Window
     /// <summary>What a page keeps above its options as they scroll (the Keymap page's toolbar).</summary>
     private readonly Decorator pageTop = new();
 
-    public SettingsDialog(AppSettings current, ActionRegistry actions, Action<AppSettings> apply)
+    public SettingsDialog(AppSettings current, ActionRegistry actions, Action<AppSettings, AppSettings> apply)
     {
         this.apply = apply;
         this.actions = actions;
         Working = current;
+        applied = current;
         Title = "Settings";
         Width = 980;
         Height = 700;
@@ -77,7 +87,7 @@ public sealed partial class SettingsDialog : Window
         Button applyButton = new() { Content = "Apply", MinWidth = 80 };
         ok.Click += (_, _) => Ok();
         cancel.Click += (_, _) => Close(false);
-        applyButton.Click += (_, _) => apply(Working);
+        applyButton.Click += (_, _) => Apply();
 
         DockPanel left = new() { Width = 240 };
         DockPanel.SetDock(search, Dock.Top);
@@ -145,8 +155,15 @@ public sealed partial class SettingsDialog : Window
     /// <summary>OK: the settings applied, and the dialog closed.</summary>
     public void Ok()
     {
-        apply(Working);
+        Apply();
         Close(true);
+    }
+
+    /// <summary>Apply: what the options changed put in force, the dialog kept open.</summary>
+    public void Apply()
+    {
+        apply(applied, Working);
+        applied = Working;
     }
 
     /// <summary>Changes one setting, as its option does.</summary>
@@ -191,6 +208,22 @@ public sealed partial class SettingsDialog : Window
 
         Add(SystemPage, "Reopen projects on startup", Check(Working.ReopenProjectsOnStartup, v => Change(s => s with { ReopenProjectsOnStartup = v })),
             "reopen last solution project folder startup start launch welcome screen recent");
+        // Rider's Project section's radio buttons, in its order and words.
+        StackPanel openIn = new() { Orientation = Orientation.Horizontal, Spacing = 16 };
+        foreach ((OpenProjectIn choice, string name) in OpenProjectChoices)
+        {
+            RadioButton radio = new() { Content = name, GroupName = "openProjectIn", IsChecked = Working.OpenProjectIn == choice };
+            radio.IsCheckedChanged += (_, _) =>
+            {
+                if (radio.IsChecked == true)
+                {
+                    Change(s => s with { OpenProjectIn = choice });
+                }
+            };
+            openIn.Children.Add(radio);
+        }
+        Add(SystemPage, "Open project in", openIn,
+            "open solution project folder new window current window this window ask confirm where frame");
         Add(SystemPage, "Save when leaving the IDE", Check(Working.SaveOnDeactivation, v => Change(s => s with { SaveOnDeactivation = v })),
             "autosave files switching to a different application or the built-in terminal focus frame deactivation");
         NumericUpDown seconds = Number(Working.IdleSeconds, AppSettings.MinIdleSeconds, AppSettings.MaxIdleSeconds, 1, v => Change(s => s with { IdleSeconds = (int)v }));

@@ -256,8 +256,11 @@ public partial class MainWindow : Window
         AddFind();
         AddProblems();
         AddContextMenus();
+        AddProjectWindows();
         AddMainMenu();
         UpdateStatus();
+        // Last, so the process hears of its closing once what it started is ending (Ended).
+        PassengerApp.Add(this);
     }
 
     /// <summary>The C# service for the open folder, or null when it has no projects.</summary>
@@ -271,12 +274,22 @@ public partial class MainWindow : Window
     public FileIndex FileIndex => index;
 
     /// <summary>Opens what the command line named: a folder, solution or project, files in it, a caret position. Named
-    /// nothing, the window that keeps state reopens what was opened last, or shows the Welcome screen.</summary>
+    /// nothing, what the system handed Passenger as it started (a solution double-clicked in the Finder), else the
+    /// window that keeps state reopens what was open as Passenger last quit, or shows the Welcome screen.</summary>
     public void Start(LaunchOptions options)
     {
+        started = true;
+        IReadOnlyList<string> handed = PassengerApp.TakePending();
         if ((options.Workspace ?? options.Folder) is { } path)
         {
-            OpenFolder(path);
+            PassengerApp.OpenProject(path, OpenTarget.ThisWindow, this);
+        }
+        else if (handed.Count > 0)
+        {
+            foreach (string named in handed)
+            {
+                Open(named);
+            }
         }
         else if (options.Files.Count == 0)
         {
@@ -778,7 +791,8 @@ public partial class MainWindow : Window
     /// as a test names a fresh one without changing the process's environment, which the programs it starts inherit.</summary>
     public string StateFolder { get; init; } = State.StateStore.DefaultRoot;
 
-    /// <summary>The store of the window a person uses, made the first time it keeps something; null in a headless one.</summary>
+    /// <summary>The store of the window a person uses, the process's for its state folder, taken the first time it keeps
+    /// something; null in a headless one.</summary>
     private State.StateStore? state;
 
     /// <summary>The open folder's documents in the store, while this window keeps them.</summary>
@@ -786,11 +800,18 @@ public partial class MainWindow : Window
 
     private bool keepsWorkspace;
 
+    /// <summary>Whether the window keeps its layout and its folders' state (the person's windows), which a window opened
+    /// from it does too.</summary>
+    public bool KeepsLayout => keepsWorkspace;
+
+    /// <summary>Whether the window follows and keeps the settings in its state folder (the person's windows).</summary>
+    public bool KeepsSettings => keepsSettings;
+
     private State.StateStore Store()
     {
         if (state is null)
         {
-            state = new State.StateStore(StateFolder);
+            state = State.StateStore.Open(StateFolder);
             // The last changes are written as the window closes, since the process will not wait for their timers.
             Closing += (_, _) =>
             {
@@ -801,6 +822,7 @@ public partial class MainWindow : Window
                 }
                 state.Flush();
             };
+            Closed += (_, _) => state.Release();
         }
         return state;
     }
@@ -829,9 +851,14 @@ public partial class MainWindow : Window
             return;
         }
         State.ProjectState opening = state!.Project(folder);
+        // The folder's own layout, else the one changed last in any window, which a folder new to Passenger opens on.
         if (opening.Layout.IsKept)
         {
             Dock.Apply(opening.Layout.Value);
+        }
+        else if (state.Layout.IsKept)
+        {
+            Dock.Apply(state.Layout.Value);
         }
         // Before the folder's documents are this window's, so what restoring them changes is not written back.
         debug.Breakpoints.Restore(opening.Breakpoints.Value);

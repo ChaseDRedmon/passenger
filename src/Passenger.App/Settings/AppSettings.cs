@@ -117,6 +117,10 @@ public sealed record AppSettings : IStateDocument<AppSettings>
     /// opened last, rather than the Welcome screen.</summary>
     public bool ReopenProjectsOnStartup { get; init; } = true;
 
+    /// <summary>Rider's "Open project in": where a solution or folder opened from a window that has one goes, a window of
+    /// its own, that window's place, or asked each time (Open Solution's This Window and New Window), as Rider's default.</summary>
+    public OpenProjectIn OpenProjectIn { get; init; } = OpenProjectIn.Ask;
+
     /// <summary>Rider's Check IDE updates: the person's window asks GitHub for Passenger's latest release as it starts and
     /// once a day, and an installed Passenger downloads a newer one to install as it restarts. Off, nothing is asked unless
     /// Help, Check for Updates is chosen, and nothing is downloaded at all.</summary>
@@ -197,6 +201,7 @@ public sealed record AppSettings : IStateDocument<AppSettings>
             ShowBuildResults = Enum.IsDefined(ShowBuildResults) ? ShowBuildResults : defaults.ShowBuildResults,
             DiffHighlighting = Enum.IsDefined(DiffHighlighting) ? DiffHighlighting : defaults.DiffHighlighting,
             DiscordShows = Enum.IsDefined(DiscordShows) ? DiscordShows : defaults.DiscordShows,
+            OpenProjectIn = Enum.IsDefined(OpenProjectIn) ? OpenProjectIn : defaults.OpenProjectIn,
             DiscordIdleMinutes = Math.Clamp(DiscordIdleMinutes, MinDiscordIdleMinutes, MaxDiscordIdleMinutes),
             EditorFontSize = Math.Clamp(EditorFontSize, MinFontSize, MaxFontSize),
             EditorLineSpacing = Math.Clamp(EditorLineSpacing, MinLineSpacing, MaxLineSpacing),
@@ -278,6 +283,15 @@ public enum BuildResultsMode
     ForWarningsOrErrors,
     ForErrors,
     Never,
+}
+
+/// <summary>Rider's choices for "Open project in" (its GeneralSettings' confirmOpenNewProject), in the order its System
+/// Settings lists them.</summary>
+public enum OpenProjectIn
+{
+    NewWindow,
+    CurrentWindow,
+    Ask,
 }
 
 /// <summary>What Discord's activity names beyond Passenger, as the plugins' Application, Project and Project and Files

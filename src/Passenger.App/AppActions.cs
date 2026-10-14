@@ -20,6 +20,11 @@ public static class AppActions
     public const string NewProject = "app.newProject";
     public const string Exit = "app.exit";
 
+    // Rider's NextProjectWindow and PreviousProjectWindow (Next and Previous Solution Window), whose keys its Visual Studio
+    // keymaps take from their parents: Mac OS X 10.5+'s and $default's.
+    public const string NextProjectWindow = "app.nextProjectWindow";
+    public const string PreviousProjectWindow = "app.previousProjectWindow";
+
     // Rider's File Encoding (ChangeFileEncodingAction) and Line Separators (ConvertTo*LineSeparators), which its keymaps
     // give no keys.
     public const string FileEncoding = "app.fileEncoding";
@@ -258,7 +263,8 @@ public static class AppActions
     public const string PutLabel = "app.localHistory.putLabel";
 
     /// <summary>The person's own shortcuts over the Visual Studio keymap's, by action (an empty list unbinds it), as
-    /// Settings keeps them.</summary>
+    /// Settings keeps them. The process's, as Rider's keymap is the application's: every window has the one keymap,
+    /// which the settings' store puts in force (<see cref="Settings.SettingsStore"/>).</summary>
     public static IReadOnlyDictionary<string, string[]> UserShortcuts
     {
         get => userShortcuts;
@@ -419,7 +425,9 @@ public static class AppActions
                 .Bind(PreviousError, "alt PAGE_UP")
                 .Bind(OpenInNewWindow, "shift F4")
                 .Bind(SoftWrap, "meta E , W", "meta E , meta W")
-                .Bind(ShowWhitespaces, "meta R , W", "meta R , meta W");
+                .Bind(ShowWhitespaces, "meta R , W", "meta R , meta W")
+                .Bind(NextProjectWindow, "meta alt BACK_QUOTE")
+                .Bind(PreviousProjectWindow, "meta shift alt BACK_QUOTE");
         }
         return keymap
             .Bind(Open, "control O")
@@ -535,6 +543,8 @@ public static class AppActions
             .Bind(PreviousError, "alt PAGE_UP")
             .Bind(OpenInNewWindow, "shift F4")
             .Bind(SoftWrap, "control E , W", "control E , control W")
-            .Bind(ShowWhitespaces, "control R , W", "control R , control W");
+            .Bind(ShowWhitespaces, "control R , W", "control R , control W")
+            .Bind(NextProjectWindow, "control alt CLOSE_BRACKET")
+            .Bind(PreviousProjectWindow, "control alt OPEN_BRACKET");
     }
 }

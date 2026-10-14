@@ -18,7 +18,8 @@ namespace Passenger.App.Mcp;
 /// IDE the person is looking at. Each connection is a server of its own over the same tools.</summary>
 public static class McpHost
 {
-    /// <summary>The IDE has no window, only the headless platform's (whose frames a screenshot takes).</summary>
+    /// <summary>The IDE has no window, only the headless platform's (whose frames a screenshot takes). The process's, as
+    /// the platform is: <c>--mcp</c> runs on the headless one alone.</summary>
     public static bool IsHeadless { get; private set; }
 
     /// <summary>Where windows listen, one socket each: in the IDE's state folder (PASSENGER_SETTINGS moves it), which
@@ -95,9 +96,9 @@ public static class McpHost
         });
         // The UI thread runs the dispatcher's loop, timers and all, until the agent goes.
         Dispatcher.UIThread.MainLoop(done.Token);
-        // What the agent left running (a program, a debugger) ends with the window, as it does with the person's.
-        window.Close();
-        window.Ended?.Wait();
+        // What the agent left running (a program, a debugger) ends with the windows, as it does with the person's.
+        PassengerApp.Quit();
+        PassengerApp.End();
         return 0;
     }
 

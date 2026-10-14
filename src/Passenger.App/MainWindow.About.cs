@@ -23,16 +23,19 @@ public partial class MainWindow
     }
 
     /// <summary>macOS's application menu, as Rider's: About Passenger and Check for Updates, then Settings (Cmd+,); the
-    /// system adds Services, Hide and Quit after them.</summary>
+    /// system adds Services, Hide and Quit after them. The process has the one, made from its first window, and each item
+    /// runs in the window in front.</summary>
     public NativeMenu ApplicationMenu()
     {
-        NativeMenuItem about = new("About Passenger") { Command = new MenuCommand(() => Request(AppActions.About)) };
-        NativeMenuItem updates = new("Check for Updates...") { Command = new MenuCommand(() => Request(AppActions.CheckForUpdates)) };
+        NativeMenuItem about = new("About Passenger") { Command = new MenuCommand(() => InFront().Request(AppActions.About)) };
+        NativeMenuItem updates = new("Check for Updates...") { Command = new MenuCommand(() => InFront().Request(AppActions.CheckForUpdates)) };
         NativeMenuItem settings = new("Settings...")
         {
             Gesture = new KeyGesture(Key.OemComma, KeyModifiers.Meta),
-            Command = new MenuCommand(() => Request(AppActions.ShowSettings)),
+            Command = new MenuCommand(() => InFront().Request(AppActions.ShowSettings)),
         };
         return new NativeMenu { Items = { about, updates, new NativeMenuItemSeparator(), settings } };
+
+        MainWindow InFront() => PassengerApp.Front is { IsVisible: true } front ? front : this;
     }
 }

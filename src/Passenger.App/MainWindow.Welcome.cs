@@ -8,8 +8,9 @@ namespace Passenger.App;
 
 /// <summary>Opening a workspace: File, Open (a solution or project) and Open Folder, and the recent folders, solutions and
 /// projects, kept in the store's recentSolutions.json by the window a person uses as each opens, listed by the Welcome
-/// screen (in the editor area while nothing is open), File, Recent Solutions and the toolbar's project widget, and the last
-/// reopened on a start that names nothing, as Rider's Reopen projects on startup. Clone Repository is beside them.</summary>
+/// screen (in the editor area while nothing is open), File, Recent Solutions and the toolbar's project widget, and those
+/// open as Passenger quit reopened on a start that names nothing, as Rider's Reopen projects on startup. Each opens here or
+/// in a window of its own (MainWindow.ProjectWindows). Clone Repository is beside them.</summary>
 public partial class MainWindow
 {
     private readonly WelcomeView welcome = new();
@@ -37,9 +38,10 @@ public partial class MainWindow
         });
     }
 
-    /// <summary>Opens what File, Open or Open Folder chose: a solution (.sln, .slnx) or C# project (.csproj) as the workspace
-    /// over its folder, or a folder. Null once it is open, else why not (it is not there, or is another kind of file), which
-    /// the status bar and the Welcome screen say.</summary>
+    /// <summary>Opens what File, Open or Open Folder chose (or the recent solutions, the system, a new solution or a clone):
+    /// a solution (.sln, .slnx) or C# project (.csproj) as the workspace over its folder, or a folder, in this window or
+    /// another as Settings says or the person answers (<see cref="Asking"/>). Null once it is open or asked where, else why
+    /// not (it is not there, or is another kind of file), which the status bar and the Welcome screen say.</summary>
     public string? Open(string path)
     {
         string full = PathNames.Canonical(path);
@@ -52,7 +54,7 @@ public partial class MainWindow
             StatusText.Text = why;
             return why;
         }
-        OpenFolder(full);
+        OpenChosen(full);
         return null;
     }
 
@@ -85,19 +87,34 @@ public partial class MainWindow
         }
     }
 
-    /// <summary>Rider's project widget: New Solution, Open, Open Folder and Clone Repository, then the recent ones to
-    /// open.</summary>
-    private void ShowProjectMenu()
+    /// <summary>Rider's project widget: New Solution, Open, Open Folder and Clone Repository, then with another window open
+    /// the Open Solutions (this one checked), then the Recent Solutions to open.</summary>
+    public ContextMenu ShowProjectMenu()
     {
         ActionContext context = actions!.Context();
         List<Control> items = [.. ((string[])[AppActions.NewSolution, AppActions.Open, AppActions.OpenFolder, AppActions.CloneRepository]).Select(id => FlyoutEntry(new MenuEntry(id), context))];
+        IReadOnlyList<ListedItem> windows = SolutionWindows();
+        if (windows.Count > 1)
+        {
+            items.Add(new Separator());
+            items.Add(Heading("Open Solutions"));
+            items.AddRange(windows.Select(FlyoutListed));
+        }
         IReadOnlyList<(string Title, Action Open)> recent = RecentMenu();
         if (recent.Count > 0)
         {
             items.Add(new Separator());
+            if (windows.Count > 1)
+            {
+                items.Add(Heading(MainMenu.RecentSolutions));
+            }
             items.AddRange(recent.Select(r => Command(r.Title, r.Open)));
         }
-        Open(new ContextMenu { ItemsSource = items }, ProjectButton);
+        ContextMenu menu = new() { ItemsSource = items };
+        Open(menu, ProjectButton);
+        return menu;
+
+        static MenuItem Heading(string text) => new() { Header = text, IsEnabled = false };
     }
 
     /// <summary>The recent folders, solutions and projects, the newest first, each marked when it is gone from disk; none in
@@ -139,28 +156,36 @@ public partial class MainWindow
         {
             return;
         }
+        RememberOpen(workspace.OpenedAs);
         state!.Recent.Set(state.Recent.Value.Opened(workspace.OpenedAs, workspace.Name, DateTimeOffset.UtcNow));
         ShowRecent();
     }
 
     private void ShowRecent() => welcome.Show(RecentSolutions);
 
-    /// <summary>Started with nothing named, the window that keeps state opens what was opened last, unless the setting
-    /// says not to; one gone from disk is left on the Welcome screen, marked, with why.</summary>
+    /// <summary>Started with nothing named, the window that keeps state reopens what was open as Passenger last quit, as
+    /// Rider's Reopen projects on startup does unless the setting says not to: the oldest here and each other in a window of
+    /// its own, the newest last and so in front. One gone from disk is left on the Welcome screen, marked, with why.</summary>
     private void ReopenLast()
     {
-        if (!settings.ReopenProjectsOnStartup || RecentSolutions.FirstOrDefault() is not { } last)
+        if (!settings.ReopenProjectsOnStartup || !keepsWorkspace)
         {
             return;
         }
-        if (last.Missing)
+        bool here = true;
+        foreach ((string path, RecentSolution entry) in state!.Recent.Value.StillOpen())
         {
-            string gone = $"{last.Name} was not reopened: {last.Shown} no longer exists";
-            StatusText.Text = gone;
-            welcome.Say(gone);
-            return;
+            RecentRow row = RecentRow.Of(path, entry);
+            if (row.Missing)
+            {
+                string gone = $"{row.Name} was not reopened: {row.Shown} no longer exists";
+                StatusText.Text = gone;
+                welcome.Say(gone);
+                continue;
+            }
+            PassengerApp.OpenProject(path, here ? OpenTarget.ThisWindow : OpenTarget.NewWindow, this);
+            here = false;
         }
-        OpenFolder(last.Path);
     }
 
     /// <summary>Clone Repository: the dialog over this window, and the clone opened once it is made.</summary>
@@ -171,7 +196,7 @@ public partial class MainWindow
         {
             if (dialog.Cloned is { } cloned)
             {
-                OpenFolder(cloned);
+                Open(cloned);
             }
         };
         _ = dialog.ShowDialog(this);
@@ -187,8 +212,9 @@ public partial class MainWindow
         return lastFolder is not null && Directory.Exists(lastFolder) ? lastFolder : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
     }
 
-    /// <summary>File, Recent Solutions: each but the one open, newest first, by name and where it is.</summary>
+    /// <summary>File, Recent Solutions: each but those open in a window, newest first, by name and where it is.</summary>
     private IReadOnlyList<(string Title, Action Open)> RecentMenu() =>
-        [.. RecentSolutions.Where(r => folder is null || !(PathNames.Same(r.Path, folder) || PathNames.Same(r.Path, workspace?.OpenedAs ?? string.Empty)))
+        [.. RecentSolutions.Where(r => !PassengerApp.Windows.Append(this).Distinct().Any(w => w.Folder is { } open
+                && (PathNames.Same(r.Path, open) || PathNames.Same(r.Path, w.WorkspaceModel?.OpenedAs ?? string.Empty))))
             .Select(r => ($"{r.Name} – {r.Shown}", (Action)(() => OpenRecent(r.Path))))];
 }

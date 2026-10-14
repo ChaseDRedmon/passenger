@@ -10,6 +10,7 @@ namespace Passenger.App.Debugging;
 /// solution's own, its classes named for exceptions as the language server finds them.</summary>
 public static class ExceptionTypes
 {
+    /// <summary>The runtime's, read once for the process: the machine's dotnet is every window's.</summary>
     private static Task<IReadOnlyList<string>>? runtime;
 
     /// <summary>The runtime's exception types by full name, in order; none when no runtime can be read.</summary>

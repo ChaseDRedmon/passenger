@@ -44,9 +44,15 @@ public partial class MainWindow
     public ReleaseFeed Releases { get; init; } = ReleaseFeed.Default;
 
     /// <summary>How this copy installs a newer release, or null for one that only says it is out: every window but the
-    /// person's own (App gives it this copy's), and theirs too when Passenger runs from anywhere its installer or disk
-    /// image did not put it.</summary>
-    public Updater? SelfUpdate { get; init; }
+    /// person's own (App gives it this copy's, which the window after it takes as it closes), and theirs too when
+    /// Passenger runs from anywhere its installer or disk image did not put it.</summary>
+    public Updater? SelfUpdate
+    {
+        get => selfUpdate;
+        init => selfUpdate = value;
+    }
+
+    private Updater? selfUpdate;
 
     /// <summary>The newer release the status bar shows, its version and what its link opens, or null while it shows
     /// none.</summary>
@@ -70,7 +76,8 @@ public partial class MainWindow
         {
             updateTimer?.Stop();
             updatesEnd.Cancel();
-            if (readyRelease is { } ready)
+            // Closed alone, another window open takes the watch over, and with it the update made ready (PassengerApp).
+            if (readyRelease is { } ready && !HandsOnUpdates())
             {
                 IdeErrors.Write($"Updates: closing with Passenger {ready.Version} ready to install{(restartToUpdate ? ", to start it again" : string.Empty)}");
                 if (keepsSettings)
@@ -87,6 +94,7 @@ public partial class MainWindow
     /// how the update the last session installed went.</summary>
     public void WatchForUpdates()
     {
+        PassengerApp.WatchUpdatesIn(this);
         watchesUpdates = true;
         SayInstalled();
         if (!settings.CheckForUpdates)
@@ -94,6 +102,30 @@ public partial class MainWindow
             // Off: nothing left from a session it was on in installs.
             Discard();
         }
+        WatchUpdates(settings.CheckForUpdates);
+    }
+
+    /// <summary>Whether the window closing hands its watch for updates to another window open, rather than installing
+    /// what it made ready as Passenger ends: it closes alone, not as Passenger quits.</summary>
+    internal bool HandsOnUpdates() =>
+        !quitting && !PassengerApp.Quitting && PassengerApp.Windows.Any(w => w != this && w.IsVisible);
+
+    /// <summary>The process's one watch for updates, taken from the window that had it as that one closed with this one
+    /// open: its way of installing and the update it made ready, which this window offers and installs as Passenger ends,
+    /// and the checks, the first now.</summary>
+    internal void TakeOverUpdates(MainWindow from)
+    {
+        if (!IsVisible)
+        {
+            return;
+        }
+        selfUpdate ??= from.selfUpdate;
+        if (from.readyRelease is { } ready && selfUpdate is not null)
+        {
+            readyRelease = ready;
+            ShowReady(ready);
+        }
+        watchesUpdates = true;
         WatchUpdates(settings.CheckForUpdates);
     }
 
@@ -271,8 +303,8 @@ public partial class MainWindow
         }
     }
 
-    /// <summary>Closes the window to install the update and start it, as the person chose; a window that does not close
-    /// (a file it could not save) installs nothing.</summary>
+    /// <summary>Quits Passenger, every window closing, to install the update and start it, as the person chose; a window
+    /// that does not close (a file it could not save) installs nothing yet.</summary>
     private void RestartToUpdate()
     {
         if (readyRelease is null || SelfUpdate is not { } updater)
@@ -284,9 +316,9 @@ public partial class MainWindow
             StatusText.Text = $"Another Passenger is open from {updater.Installed}: close it, then restart to update";
             return;
         }
+        // Every window closes, as Passenger restarts; one that will not keeps the update for the next end.
         restartToUpdate = true;
-        Close();
-        if (IsVisible)
+        if (!PassengerApp.Quit())
         {
             restartToUpdate = false;
         }

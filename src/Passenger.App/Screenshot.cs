@@ -56,9 +56,9 @@ public static class Screenshot
         }
 
         double elapsed = Stopwatch.GetElapsedTime(Program.StartedAt).TotalMilliseconds;
-        // A program or a build the steps started ends with the window, as it does with the person's.
-        window.Close();
-        window.Ended?.Wait();
+        // A program or a build the steps started ends with the windows, as it does with the person's.
+        PassengerApp.Quit();
+        PassengerApp.End();
         if (!settled)
         {
             // The picture is kept to show what was still going on, but it is not the settled window.
@@ -80,8 +80,16 @@ public static class Screenshot
         settled &= Settle();
         foreach (ScriptStep step in steps)
         {
-            // A dialog a step opened takes the next ones, as it takes a person's keys and clicks.
-            Take(window.Frontmost, step);
+            if (step is ScriptStep.Open open)
+            {
+                // As File, Open's panel hands the window what was chosen.
+                window.Open(open.Path);
+            }
+            else
+            {
+                // A dialog a step opened takes the next ones, as it takes a person's keys and clicks.
+                Take(window.Frontmost, step);
+            }
             settled &= Settle();
         }
         return settled;

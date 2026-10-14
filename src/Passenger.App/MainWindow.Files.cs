@@ -487,7 +487,8 @@ public partial class MainWindow
 /// <summary>The platform's Trash (the Recycle Bin on Windows), where a deleted file can still be found.</summary>
 public static class Trash
 {
-    /// <summary>A folder to use as the Trash instead of the platform's (tests, which leave the person's alone).</summary>
+    /// <summary>A folder to use as the Trash instead of the platform's (tests, which leave the person's alone). The
+    /// process's, as the system's Trash is every window's.</summary>
     public static string? Folder { get; set; }
 
     public static void Move(string path)

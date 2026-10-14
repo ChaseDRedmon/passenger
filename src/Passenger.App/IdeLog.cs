@@ -7,7 +7,9 @@ namespace Passenger.App;
 /// <summary>The IDE's logs folder, Rider's log directory, which Help, Show Log opens: <c>passenger.log</c> (Rider's
 /// idea.log), each C# language server's own log under <c>roslyn/</c>, <c>dap.log</c> for the debugger, <c>vstest.log</c>
 /// for the test runner, and with <see cref="Traces"/> on <c>lsp.log</c>. A line is queued from any thread and written by
-/// the log's own thread, so no caller waits on the disk; each file is rotated by size, a dozen kept.</summary>
+/// the log's own thread, so no caller waits on the disk; each file is rotated by size, a dozen kept. The process's, as
+/// Rider's idea.log is: every window writes the same files, a line naming the folder where that matters (Opened, a
+/// language server's start), and each language server writes a log of its own, named for its process.</summary>
 public static class IdeLog
 {
     /// <summary>The IDE's own log: errors, what the servers and programs it runs said went wrong, startup times.</summary>

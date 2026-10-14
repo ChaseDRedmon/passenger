@@ -85,7 +85,8 @@ public sealed class LanguageServer : IAsyncDisposable
     public event EventHandler<WorkProgress>? Progressed;
 
     /// <summary>Where every message to and from every server goes while set, with the server's process and an arrow
-    /// for its direction ("-->" to the server); called on the connection's threads. Settings' Trace protocol messages.</summary>
+    /// for its direction ("-->" to the server); called on the connection's threads. Settings' Trace protocol messages,
+    /// the process's as every window's servers write the one lsp.log.</summary>
     public static Action<int, string>? Trace { get; set; }
 
     /// <summary>Roslyn has finished loading the projects it was asked to open; raised on any thread.</summary>

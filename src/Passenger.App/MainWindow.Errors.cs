@@ -18,10 +18,14 @@ public partial class MainWindow
         });
     }
 
+    /// <summary>Every window counts it; the one in front says it, where the person looks.</summary>
     private void OnIdeError(object? sender, IdeError error)
     {
         ShowErrorCount();
-        StatusText.Text = $"IDE error: {error.Message}";
+        if (PassengerApp.Front is not { IsVisible: true } front || front == this)
+        {
+            StatusText.Text = $"IDE error: {error.Message}";
+        }
     }
 
     /// <summary>The different errors listed, a repeat counting once; more past the list's limit, which only the log has.</summary>

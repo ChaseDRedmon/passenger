@@ -5,7 +5,8 @@ namespace Passenger.Editor;
 /// <summary>Counts background work still to land on the UI thread, so a screenshot can wait for it
 /// rather than capture a half-finished frame. Anything that runs off the UI thread and changes what
 /// is drawn enters here, best through <see cref="Scope"/>, <see cref="Track"/> or <see cref="Run{T}(Func{T}, CancellationToken)"/>,
-/// which no path out can forget.</summary>
+/// which no path out can forget. The process's, as its one UI thread is: with several windows a screenshot or a test
+/// waits for all of their work, which can only make it wait longer, never take a frame half-finished.</summary>
 public static class BackgroundWork
 {
     /// <summary>The count of holds in the low half, and in the high half the generation they belong to, which

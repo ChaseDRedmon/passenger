@@ -9,8 +9,9 @@ namespace Passenger.App;
 /// <summary>Discord Rich Presence, as the JetBrains IDEs' Discord plugins give it: while Settings' Show activity in
 /// Discord is on and a solution is open, the person's own window has Discord show Playing Passenger with its icon, the
 /// solution and the file as Settings says, and the time since the solution opened; only Passenger once the person has
-/// been idle a while; nothing once the setting goes off, the solution closes or Passenger quits. No other window (a
-/// test's, an agent's, a screenshot's) reaches Discord.</summary>
+/// been idle a while; nothing once the setting goes off, the solution closes or Passenger quits. Of several of the
+/// person's windows, the one in front alone gives Discord its activity, through the one presence they share
+/// (<see cref="PassengerApp"/>). No other window (a test's, an agent's, a screenshot's) reaches Discord.</summary>
 public partial class MainWindow
 {
     /// <summary>The longest between two looks at whether the person has gone idle.</summary>
@@ -50,8 +51,10 @@ public partial class MainWindow
     }
 
     /// <summary>Gives Discord the activity as the solution, the file and the settings now stand, whenever one changes (the
-    /// window's title follows the same); its presence sends it in its own time, so this costs the UI thread nothing.</summary>
-    private void FollowInDiscord()
+    /// window's title follows the same) and as the window comes in front; its presence sends it in its own time, so this
+    /// costs the UI thread nothing. Of several windows, the one Discord shows (<see cref="PassengerApp.ShowsInDiscord"/>)
+    /// gives it its own.</summary>
+    internal void FollowInDiscord()
     {
         string? solution = folder is null ? null : workspace?.OpenedAs ?? folder;
         if (solution != timedSolution)
@@ -69,7 +72,13 @@ public partial class MainWindow
             return;
         }
         WatchIdle(settings.DiscordIdle);
-        discord ??= new DiscordPresence(DiscordIpc, IdeErrors.Write);
+        (PassengerApp.ShowsInDiscord(DiscordIpc) ?? this).ShowInDiscord();
+    }
+
+    /// <summary>This window's activity, in place of whatever Discord showed.</summary>
+    private void ShowInDiscord()
+    {
+        discord ??= PassengerApp.Presence(DiscordIpc);
         discord.Show(ActivityNow());
     }
 
@@ -102,15 +111,15 @@ public partial class MainWindow
         discord?.Show(null);
     }
 
-    /// <summary>As the window closes: the activity cleared, which the process waits for (<see cref="Ended"/>) for at most
-    /// the IPC's timeout.</summary>
+    /// <summary>As the window closes: the window in front after it shows its activity, or with none left the activity is
+    /// cleared, which the process waits for (<see cref="Ended"/>) for at most the IPC's timeout.</summary>
     private Task EndDiscord()
     {
+        bool shared = sharesActivity;
         sharesActivity = false;
         WatchIdle(false);
-        Task closing = discord?.CloseAsync() ?? Task.CompletedTask;
         discord = null;
-        return closing;
+        return shared ? PassengerApp.LetGoOfDiscord(DiscordIpc) : Task.CompletedTask;
     }
 
     private TimeSpan IdleAfter => DiscordIdleAfter ?? TimeSpan.FromMinutes(settings.DiscordIdleMinutes);

@@ -95,6 +95,35 @@ public sealed class UpdatesTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void A_second_solution_window_asks_for_no_release_of_its_own_and_takes_the_watch_over_as_the_first_closes()
+    {
+        using IDisposable theme = TestsTheme();
+        github.Answer = Release($"v{Bumped(1, 0)}");
+        string shop = TestFolders.Create("updates-shop-");
+        string bank = TestFolders.Create("updates-bank-");
+        MainWindow window = Started();
+        window.OpenFolder(shop);
+        window.WatchForUpdates();
+        Ui.Settle();
+        Assert.True(github.Requests.Count == 1, $"The window asked for the latest release {github.Requests.Count} times as it started, not once");
+
+        // Another solution in a window of its own: the process has asked already.
+        window.ApplySettings(window.Settings with { OpenProjectIn = Passenger.App.Settings.OpenProjectIn.NewWindow });
+        Assert.Null(window.Open(bank));
+        Ui.Settle();
+        MainWindow second = Assert.Single(PassengerApp.Windows, w => w != window);
+        Assert.True(github.Requests.Count == 1, $"Two windows of one Passenger asked for the latest release {github.Requests.Count} times, not once");
+
+        // The first closing alone, the second takes the watch over, asking once itself.
+        window.Close();
+        Ui.Settle();
+        Assert.True(github.Requests.Count == 2, $"The window left did not take the watch for updates over: {github.Requests.Count} requests");
+        second.Close();
+        TestFolders.Delete(shop);
+        TestFolders.Delete(bank);
+    }
+
+    [AvaloniaFact]
     public void The_same_version_an_older_one_a_pre_release_or_a_draft_says_nothing_and_Check_for_Updates_says_up_to_date()
     {
         using IDisposable theme = TestsTheme();

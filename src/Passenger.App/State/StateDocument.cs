@@ -105,6 +105,41 @@ public sealed class StateDocument<T> where T : class, IStateDocument<T>, new()
     /// not wait for a timer.</summary>
     public void Flush() => Write();
 
+    /// <summary>Reads the file again, once a change still waiting is written: what another Passenger wrote since comes
+    /// in. A file gone or not reading leaves the value as it is (this is no first read, which sets a bad one aside).
+    /// Whether the value changed.</summary>
+    public bool Reread()
+    {
+        Load();
+        Write();
+        lock (writing)
+        {
+            if (readOnly || !File.Exists(Path))
+            {
+                return false;
+            }
+            T read;
+            try
+            {
+                read = (Upgraded(File.ReadAllText(Path)).Document.Deserialize<T>(StateFile.Options) ?? throw new JsonException("it holds null")).Clamped();
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException || StateFile.DoesNotRead(error))
+            {
+                return false;
+            }
+            string text = JsonSerializer.Serialize(read, StateFile.Options);
+            known = text;
+            if (text == latest)
+            {
+                return false;
+            }
+            latest = text;
+            value = read;
+            kept = true;
+            return true;
+        }
+    }
+
     private void Load()
     {
         // The value and what was set last are the UI thread's; only the writing crosses to another.
@@ -301,6 +336,17 @@ internal static class StateFile
         JsonObject written = new() { ["version"] = version };
         MergeInto(written, disk, known is null ? [] : (JsonObject)JsonNode.Parse(known)!, (JsonObject)JsonNode.Parse(mine)!, nested: false);
         return written;
+    }
+
+    /// <summary>A value with what changed between two others put over it, value by value as a file's merge does: what a
+    /// window changed from the settings it had, over the settings as they are now.</summary>
+    public static T Merged<T>(T now, T from, T to) where T : class, IStateDocument<T>, new()
+    {
+        JsonObject merged = [];
+        MergeInto(merged, Node(now), Node(from), Node(to), nested: false);
+        return (merged.Deserialize<T>(Options) ?? new T()).Clamped();
+
+        static JsonObject Node(T value) => (JsonObject)JsonSerializer.SerializeToNode(value, Options)!;
     }
 
     /// <summary>Merges one object's values. In an object inside the document (a dictionary: shortcuts, recent solutions),

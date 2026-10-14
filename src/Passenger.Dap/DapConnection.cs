@@ -48,7 +48,8 @@ public sealed class DapConnection : IAsyncDisposable
 
     /// <summary>Where every message each connection sends or reads goes while set, with the connection's <see cref="Name"/>
     /// and the message after an arrow for its direction ("-->" sent); called on the connection's threads. The IDE's
-    /// Trace protocol messages setting; an adapter never sets it.</summary>
+    /// Trace protocol messages setting, the process's as every window's sessions write the one dap.log; an adapter
+    /// never sets it.</summary>
     public static Action<string, string>? Trace { get; set; }
 
     /// <summary>What a trace calls this connection (the adapter's process).</summary>

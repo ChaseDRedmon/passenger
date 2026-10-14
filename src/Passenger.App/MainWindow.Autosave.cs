@@ -81,6 +81,8 @@ public partial class MainWindow
             e.Cancel = true;
             return;
         }
+        // The application menu's Quit and the system's shutdown close every window, each keeping its solution to reopen.
+        quitting = e.CloseReason is WindowCloseReason.ApplicationShutdown or WindowCloseReason.OSShutdown;
         base.OnClosing(e);
     }
 

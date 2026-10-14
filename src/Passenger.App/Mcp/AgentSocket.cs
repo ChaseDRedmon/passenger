@@ -9,6 +9,7 @@ namespace Passenger.App.Mcp;
 /// folder written beside it for <c>--mcp-attach</c> to choose by. Closing it ends every agent's connection.</summary>
 public sealed class AgentSocket : IDisposable
 {
+    /// <summary>The sockets the process has opened, every window's, which number each one's name apart.</summary>
     private static int opened;
 
     private readonly MainWindow window;

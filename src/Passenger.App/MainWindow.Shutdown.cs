@@ -81,6 +81,7 @@ public partial class MainWindow
             return unsaved;
         }
         Remember();
+        ForgetOpen();
         if (keepsWorkspace)
         {
             KeepDock();

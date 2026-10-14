@@ -55,9 +55,9 @@ public partial class MainWindow
             listed.NeedsUpdate += (_, _) =>
             {
                 listed.Items.Clear();
-                foreach ((string title, Action run) in Listed(entry.Title!))
+                foreach (ListedItem item in Listed(entry.Title!))
                 {
-                    listed.Items.Add(new NativeMenuItem(title) { Command = new MenuCommand(run) });
+                    listed.Items.Add(NativeListed(item));
                 }
                 if (listed.Items.Count == 0)
                 {
@@ -69,10 +69,17 @@ public partial class MainWindow
         if (entry.Items is { } items)
         {
             NativeMenu menu = new();
+            List<InlineList> inline = [];
             foreach (MenuEntry item in items)
             {
+                if (item is { IsListed: true, Inline: true })
+                {
+                    inline.Add(new InlineList(item.Title!, menu.Items.Count));
+                    continue;
+                }
                 menu.Items.Add(NativeEntry(item, context));
             }
+            FillInline(menu, inline);
             menu.NeedsUpdate += (_, _) =>
             {
                 ActionContext now = actions!.Context();
@@ -83,6 +90,7 @@ public partial class MainWindow
                     item.Header = listed.TitleWhere(now);
                     item.IsChecked = listed.IsChecked?.Invoke(now) == true;
                 }
+                FillInline(menu, inline);
             };
             return new NativeMenuItem(entry.Title!) { Menu = menu };
         }
@@ -117,13 +125,59 @@ public partial class MainWindow
         flyout.ShowAt(MenuButton);
     }
 
-    /// <summary>What a listed submenu holds as it opens: every tool window the dock has, or the recent solutions.</summary>
-    private IReadOnlyList<(string Title, Action Run)> Listed(string submenu) => submenu switch
+    /// <summary>What a listed submenu holds as it opens: every tool window the dock has, the recent solutions, or the
+    /// solution windows open.</summary>
+    private IReadOnlyList<ListedItem> Listed(string submenu) => submenu switch
     {
-        MainMenu.ToolWindows => [.. Dock.Windows.OrderBy(w => w.Title, StringComparer.Ordinal).Select(w => (w.Title, (Action)(() => ShowToolWindow(w.Id))))],
-        MainMenu.RecentSolutions => RecentMenu(),
+        MainMenu.ToolWindows => [.. Dock.Windows.OrderBy(w => w.Title, StringComparer.Ordinal).Select(w => new ListedItem(w.Title, () => ShowToolWindow(w.Id)))],
+        MainMenu.RecentSolutions => [.. RecentMenu().Select(r => new ListedItem(r.Title, r.Open))],
+        MainMenu.OpenSolutionWindows => SolutionWindows(),
         _ => throw new InvalidOperationException($"No window lists a submenu called {submenu}"),
     };
+
+    private static NativeMenuItem NativeListed(ListedItem item) => new(item.Title)
+    {
+        Command = new MenuCommand(item.Run),
+        ToggleType = item.Checked is null ? MenuItemToggleType.None : MenuItemToggleType.Radio,
+        IsChecked = item.Checked == true,
+    };
+
+    /// <summary>The lists that stand in a native menu's own place, filled again as it opens: what each held taken out, and
+    /// what it holds now put in after a separator, those after it moving along.</summary>
+    private void FillInline(NativeMenu menu, List<InlineList> lists)
+    {
+        int moved = 0;
+        foreach (InlineList list in lists)
+        {
+            list.Start += moved;
+            for (int i = 0; i < list.Count; i++)
+            {
+                menu.Items.RemoveAt(list.Start);
+            }
+            IReadOnlyList<ListedItem> items = Listed(list.Title);
+            List<NativeMenuItemBase> now = items.Count == 0 ? [] : [new NativeMenuItemSeparator(), .. items.Select(NativeListed)];
+            for (int i = 0; i < now.Count; i++)
+            {
+                menu.Items.Insert(list.Start + i, now[i]);
+            }
+            moved += now.Count - list.Count;
+            list.Count = now.Count;
+        }
+    }
+
+    /// <summary>A menu item a list gives: its title, what choosing it does, and whether it is the one checked (null for a
+    /// list that checks none).</summary>
+    private sealed record ListedItem(string Title, Action Run, bool? Checked = null);
+
+    /// <summary>Where an inline list's items stand in their native menu, and how many there are.</summary>
+    private sealed class InlineList(string title, int start)
+    {
+        public string Title { get; } = title;
+
+        public int Start { get; set; } = start;
+
+        public int Count { get; set; }
+    }
 
     /// <summary>An entry of a menu in the window (the menu button's, a context menu): its action's title and one-key
     /// shortcut, or its chord where it has none, disabled where it cannot run in the context the menu opened in, and run
@@ -137,11 +191,9 @@ public partial class MainWindow
         if (entry.IsListed)
         {
             MenuItem listed = new() { Header = entry.Title };
-            foreach ((string title, Action run) in Listed(entry.Title!))
+            foreach (ListedItem item in Listed(entry.Title!))
             {
-                MenuItem item = new() { Header = title };
-                item.Click += (_, _) => run();
-                listed.Items.Add(item);
+                listed.Items.Add(FlyoutListed(item));
             }
             listed.IsEnabled = listed.Items.Count > 0;
             return listed;
@@ -151,6 +203,19 @@ public partial class MainWindow
             MenuItem menu = new() { Header = entry.Title };
             foreach (MenuEntry item in items)
             {
+                if (item is { IsListed: true, Inline: true })
+                {
+                    IReadOnlyList<ListedItem> listed = Listed(item.Title!);
+                    if (listed.Count > 0)
+                    {
+                        menu.Items.Add(new Separator());
+                        foreach (ListedItem each in listed)
+                        {
+                            menu.Items.Add(FlyoutListed(each));
+                        }
+                    }
+                    continue;
+                }
                 menu.Items.Add(FlyoutEntry(item, context));
             }
             return menu;
@@ -169,6 +234,18 @@ public partial class MainWindow
         }
         actionItem.Click += (_, _) => RunFromMenu(action.Id, context);
         return actionItem;
+    }
+
+    private static MenuItem FlyoutListed(ListedItem listed)
+    {
+        MenuItem item = new()
+        {
+            Header = listed.Title,
+            ToggleType = listed.Checked is null ? MenuItemToggleType.None : MenuItemToggleType.Radio,
+            IsChecked = listed.Checked == true,
+        };
+        item.Click += (_, _) => listed.Run();
+        return item;
     }
 
     /// <summary>A chord in an item's shortcut column, as Rider's own menus show one ("⌘E, C"): a KeyGesture holds one

@@ -122,6 +122,35 @@ public sealed class DiscordTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void Of_two_solution_windows_the_one_in_front_alone_shows_its_activity_and_the_other_takes_over_as_it_closes()
+    {
+        discord.Start();
+        string bank = Directory.CreateDirectory(Path.Combine(folder, "Bank")).FullName;
+        File.WriteAllText(Path.Combine(bank, "Three.cs"), "class Three { }\n");
+        MainWindow window = Started();
+        SetShown(window, true);
+        WaitForActivity(a => (string?)a?["details"] == "Shop", "the first window's solution");
+
+        // Another solution in a window of its own, in front: its activity, through the one connection.
+        window.ApplySettings(window.Settings with { OpenProjectIn = OpenProjectIn.NewWindow });
+        Assert.Null(window.Open(bank));
+        Ui.Settle();
+        MainWindow second = Assert.Single(PassengerApp.Windows, w => w != window);
+        WaitForActivity(a => (string?)a?["details"] == "Bank", "the solution of the window in front");
+        PassengerApp.BringForward(window);
+        WaitForActivity(a => (string?)a?["details"] == "Shop", "the first window's solution once it is in front again");
+        Assert.True(discord.Connections == 1, $"Two windows reached Discord {discord.Connections} times, not once between them");
+
+        // The one in front closing, the other's activity shows, still on the one connection; the last closing clears it.
+        window.Close();
+        WaitForActivity(a => (string?)a?["details"] == "Bank", "the remaining window's solution once the one in front closed");
+        Assert.Equal(0, discord.Ended);
+        second.Close();
+        Ui.WaitFor(() => discord.Ended == 1, "Discord to be let go of as the last window closed", TimeSpan.FromSeconds(3));
+        Assert.True(Activities().Last() is null, "Passenger quit without clearing its activity");
+    }
+
+    [AvaloniaFact]
     public void Closing_the_solution_or_Passenger_clears_the_activity()
     {
         discord.Start();

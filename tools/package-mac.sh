@@ -93,6 +93,9 @@ dotnet publish "$root/src/Passenger.App" -c Release -r "$rid" --self-contained -
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp -R "$publish/." "$app/Contents/MacOS/"
 cp "$root/src/Passenger.App/Assets/Passenger.icns" "$app/Contents/Resources/Passenger.icns"
+# The document types are what the Finder's Open With and a drop on the Dock's icon offer Passenger: solutions and C#
+# projects (by extension, having no system type) and folders, never claimed as their default. macOS hands them to the
+# Passenger running, which opens each in a window (PassengerApp.OpenFromSystem), rather than starting another.
 cat > "$app/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -109,6 +112,27 @@ cat > "$app/Contents/Info.plist" <<EOF
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key><string>Solution File</string>
+            <key>CFBundleTypeExtensions</key><array><string>sln</string><string>slnx</string></array>
+            <key>CFBundleTypeRole</key><string>Editor</string>
+            <key>LSHandlerRank</key><string>Alternate</string>
+        </dict>
+        <dict>
+            <key>CFBundleTypeName</key><string>C# Project File</string>
+            <key>CFBundleTypeExtensions</key><array><string>csproj</string></array>
+            <key>CFBundleTypeRole</key><string>Editor</string>
+            <key>LSHandlerRank</key><string>Alternate</string>
+        </dict>
+        <dict>
+            <key>CFBundleTypeName</key><string>Folder</string>
+            <key>LSItemContentTypes</key><array><string>public.folder</string></array>
+            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>LSHandlerRank</key><string>None</string>
+        </dict>
+    </array>
 </dict>
 </plist>
 EOF

@@ -793,6 +793,34 @@ public sealed class McpTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void An_agent_attaches_to_the_second_solution_window_of_one_Passenger_by_its_folder()
+    {
+        string other = TestFolders.Create("mcp-second-");
+        File.WriteAllText(Path.Combine(other, "Notes.txt"), "notes\n");
+        MainWindow first = new() { Width = 1200, Height = 800, StateFolder = settings };
+        first.Show();
+        first.KeepLayout();
+        first.KeepSettings();
+        first.Start(LaunchOptions.Empty with { Folder = folder });
+        Ui.Settle();
+        first.ApplySettings(first.Settings with { McpServer = true, OpenProjectIn = OpenProjectIn.NewWindow });
+
+        // File, Open of another folder, in a window of its own as Settings says: it lets agents in as the first does.
+        Assert.Null(first.Open(other));
+        Ui.Settle();
+        MainWindow second = Assert.Single(PassengerApp.Windows, w => w != first);
+        Assert.Equal(PathNames.Canonical(other), second.Folder);
+        Assert.True(first.AgentSocket is not null && second.AgentSocket is not null && first.AgentSocket != second.AgentSocket,
+            $"Each solution window of the one Passenger was to listen for agents on a socket of its own: {first.AgentSocket}, {second.AgentSocket}");
+
+        // An agent started in either's folder reaches that window.
+        Assert.Equal(second.Folder, AttachedFolder(other));
+        Assert.Equal(first.Folder, AttachedFolder(folder));
+        second.Close();
+        first.Close();
+    }
+
+    [AvaloniaFact]
     public void Each_window_has_its_own_socket_and_an_agent_attaches_to_the_one_over_its_folder()
     {
         string other = TestFolders.Create("mcp-other-");

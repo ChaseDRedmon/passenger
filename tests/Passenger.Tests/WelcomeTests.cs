@@ -147,6 +147,7 @@ public sealed class WelcomeTests : IDisposable
         Assert.Equal([$"{Name(alpha)} – {RecentRow.Home(PathNames.Canonical(alpha))}"], items.Select(i => i.Header));
         items[0].Command!.Execute(null);
         Ui.Settle();
+        InThisWindow(window);
         Assert.Equal(PathNames.Canonical(alpha), window.Folder);
 
         // The folder's own recent files came back with it, the one shown first.
@@ -177,10 +178,12 @@ public sealed class WelcomeTests : IDisposable
         // With another folder open, File, Recent Solutions lists B as itself, newest first, and opens it as B again.
         window.Open(beta);
         Ui.Settle();
+        InThisWindow(window);
         NativeMenuItem[] items = [.. Ui.Submenu(Ui.Submenu(window.MenuBar, "File"), MainMenu.RecentSolutions).Items.OfType<NativeMenuItem>()];
         Assert.Equal([$"B – {RecentRow.Home(b)}", $"A – {RecentRow.Home(a)}"], items.Select(i => i.Header));
         items[0].Command!.Execute(null);
         Ui.Settle();
+        InThisWindow(window);
         OpenedAs(window, b, "B", ["AppB"]);
         window.Close();
 
@@ -423,6 +426,16 @@ public sealed class WelcomeTests : IDisposable
     }
 
     private static string Name(string folder) => Path.GetFileName(folder);
+
+    /// <summary>Rider's Open Solution question, asked as another folder or solution opens over the one open, answered This
+    /// Window by its button.</summary>
+    private static void InThisWindow(MainWindow window)
+    {
+        OpenProjectDialog asked = window.Asking ?? throw new InvalidOperationException("Opening another folder over one open did not ask where");
+        Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(asked).OfType<Button>().First(b => (string?)b.Content == OpenProjectDialog.ThisWindow)
+            .RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Ui.Settle();
+    }
 
     /// <summary>A folder named A holding A.sln (AppA), B.slnx (AppB) and, beside them, the project Tool.csproj.</summary>
     private string Solutions()
