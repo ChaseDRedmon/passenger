@@ -115,6 +115,21 @@ window or takes the focus; it shows everything but the system's own window chrom
   A key costs what it changed, not the file's size: folds (`FoldRegions`) and bracket depths come from the parse
   before through the nodes Roslyn reused, never from a walk of the whole tree, and the server's colours are asked for
   the screen's lines first and the whole file only once typing stops.
+- `src/Passenger.Xaml`: Passenger's own XAML core, no UI and no Avalonia, which WPF (#187) shares: `Syntax` (XmlTree and
+  MarkupExtension, positions kept, tolerant of half-typed markup), `Metadata` (a TypeSystem over the project's
+  assemblies through System.Reflection.Metadata and its C# through Roslyn's parser), `Projects` (ProjectInputs reads
+  project.assets.json; XamlProjectBuilder keeps a project's types and XAML under its own lock), `Dialects`
+  (AvaloniaDialect) and `Features` (XamlCompletion, XamlDiagnostics, XamlNavigation, ThemeVariants, Colours). Not
+  Avalonia.Ide.CompletionEngine, which is archived, predates Avalonia 12 and went with AvaloniaVS into Accelerate.
+  `src/Passenger.App/Xaml`: `XamlService` is the session's (`ProjectSession.Xaml`), one `XamlDocument` per open XAML
+  file, projects read off the UI thread, told each build's AVLN problems; `LibrarySources` decompiles a library's
+  type read-only; `SourceLink` fetches a theme's XAML through its PDB's Source Link from symbols.nuget.org (whose
+  request needs the `SymbolChecksum` header; tests point `PASSENGER_SYMBOLS` at a dead loopback address).
+  `XamlPreview`/`XamlPreviewPane` run Avalonia.Designer.HostApp (MIT) from the project's own Avalonia package through
+  ChildProcesses over Avalonia.Remote.Protocol, restarted by `BuildRunController.BuildFinished`; frames are bitmaps at
+  96 DPI sized by the host's scale, and the host's viewport resize requests go unanswered (answering made it ask again
+  in a loop). `dotnet new avalonia.app` adds Accelerate's DevTools (`AvaloniaUI.DiagnosticsSupport`,
+  `.WithDeveloperTools()`), which Passenger never adds or relies on.
 - `src/Passenger.Lsp`: the Language Server Protocol client (StreamJsonRpc over stdio) and the
   Roslyn language server it runs, downloaded per platform at build and copied beside the app under
   `roslyn/`, less the four Visual Studio assemblies it never loads (`RoslynServerLeftOut`; the build fails if the
@@ -520,6 +535,8 @@ tests' sessions and the IDE's alike. `LiveTreeTests` debug `tests/Debuggees/Live
 of its own (the test writes one on the tests' own Avalonia version); "click X,Y" typed into its Debug console stands in
 for the pointer. `BindingErrorsTests` run and debug `tests/Debuggees/BindingErrorsApp` (written the same way), whose
 caption binds a misspelt Name; "rebind" typed into its console makes it fail again.
+`XamlTests`' `AvaloniaApp` makes `dotnet new avalonia.app` from templates installed into the run's own hive
+(`--debug:custom-hive`) and takes Accelerate's DevTools out of it.
 
 The MCP server's tests (`McpTests`) are agents using the SDK's own client: one starts `Passenger --mcp` and debugs a
 project through it, others attach to a window with `--mcp-attach` (its sockets under the run's
