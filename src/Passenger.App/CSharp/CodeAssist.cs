@@ -556,7 +556,12 @@ public sealed partial class CodeAssist
         string typed = text.GetText(open.Start, caret - open.Start);
         // A web server's items may replace what came before the name (TypeScript's the member's dot), there as it asked.
         string lead = open.Lead;
-        bool led = lead.Length > 0 && typed.StartsWith(lead, StringComparison.Ordinal) && typed[lead.Length..].All(IsWordChar);
+        int skip = 0;
+        while (skip < lead.Length && !IsWordChar(lead[skip]))
+        {
+            skip++;
+        }
+        bool led = skip > 0 && typed.StartsWith(lead[..skip], StringComparison.Ordinal) && typed[skip..].All(IsWordChar);
         if (!led && !typed.All(IsWordChar))
         {
             CloseCompletion();
@@ -565,7 +570,7 @@ public sealed partial class CodeAssist
         // An MSBuild list keeps its own order among names that match alike (the common properties first), not the shortest.
         int alike = msbuildOffered.Count > 0 ? 1000 : 1;
         List<CompletionRow> rows = open.Items
-            .Select(item => (item, score: Score(led && item.FilterText is null ? typed[lead.Length..] : typed, item.FilterText ?? item.Label)))
+            .Select(item => (item, score: Score(led && item.FilterText is null ? typed[skip..] : typed, item.FilterText ?? item.Label)))
             .Where(x => x.score is not null)
             .OrderByDescending(x => x.score / alike)
             .ThenByDescending(x => x.item.Preselect == true)

@@ -49,6 +49,10 @@ public sealed class Inputs
     public string Stamp { get; private set; } = "";
     public List<string> LeftOut { get; } = [];
 
+    /// <summary>Files moved where a package looks for them rather than where npm lays them (a glob, and the folder they go
+    /// to, both from the folder the packages go in).</summary>
+    public List<(string Glob, string To)> Moved { get; } = [];
+
     public static Inputs Read(string path)
     {
         Inputs inputs = new();
@@ -76,6 +80,14 @@ public sealed class Inputs
                     break;
                 case "leaveOut":
                     inputs.LeftOut.Add(value.Replace('\\', '/'));
+                    break;
+                case "move":
+                    string[] parts = value.Replace('\\', '/').Split('|', 2);
+                    if (parts.Length != 2)
+                    {
+                        throw new PackageException($"{path}: move takes a glob and the folder its files go to, as glob|folder, not '{value}'");
+                    }
+                    inputs.Moved.Add((parts[0], parts[1]));
                     break;
                 default:
                     throw new PackageException($"{path}: '{line[..equals]}' is not something this tool reads");
@@ -112,7 +124,7 @@ public static class Packages
         string staging = inputs.Out.TrimEnd('/', '\\') + ".new";
         // Two builds at once (a solution's and a publish's) take turns, the second finding the packages in place.
         await using FileStream turn = await TakeTurnAsync(inputs.Out.TrimEnd('/', '\\') + ".lock");
-        string stamp = Stamp(lockBytes, inputs.LeftOut);
+        string stamp = Stamp(lockBytes, inputs);
         if (File.Exists(inputs.Stamp) && await File.ReadAllTextAsync(inputs.Stamp) == stamp && Directory.Exists(inputs.Out))
         {
             return;
@@ -142,6 +154,7 @@ public static class Packages
             await UnpackAsync(tarballs[i], Path.Combine(staging, packages[i].Place), packages[i]);
         }
         LeaveOut(staging, inputs.LeftOut);
+        Move(staging, inputs.Moved);
         if (File.Exists(inputs.Stamp))
         {
             File.Delete(inputs.Stamp);
@@ -207,9 +220,9 @@ public static class Packages
     private static string? Text(JsonElement value, string name) =>
         value.TryGetProperty(name, out JsonElement text) && text.ValueKind == JsonValueKind.String ? text.GetString() : null;
 
-    /// <summary>What the folder was made from: the lock file's hash and the files left out, which a build compares.</summary>
-    private static string Stamp(byte[] lockFile, IReadOnlyList<string> leftOut) =>
-        $"{Convert.ToHexStringLower(SHA256.HashData(lockFile))}\n{string.Join('\n', leftOut)}\n";
+    /// <summary>What the folder was made from: the lock file's hash and the files left out and moved, which a build compares.</summary>
+    private static string Stamp(byte[] lockFile, Inputs inputs) =>
+        $"{Convert.ToHexStringLower(SHA256.HashData(lockFile))}\n{string.Join('\n', inputs.LeftOut)}\n{string.Join('\n', inputs.Moved.Select(m => $"{m.Glob}|{m.To}"))}\n";
 
     private static async Task<FileStream> TakeTurnAsync(string path)
     {
@@ -311,19 +324,41 @@ public static class Packages
     /// a glob that names nothing is stale and fails.</summary>
     private static void LeaveOut(string folder, IReadOnlyList<string> globs)
     {
-        string[] files = [.. Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories).Select(f => Path.GetRelativePath(folder, f).Replace('\\', '/'))];
         foreach (string glob in globs)
         {
-            Regex pattern = new("^" + Regex.Escape(glob).Replace(@"\*\*/", "(.*/)?", StringComparison.Ordinal).Replace(@"\*", "[^/]*", StringComparison.Ordinal) + "$");
-            string[] matched = [.. files.Where(f => pattern.IsMatch(f))];
-            if (matched.Length == 0)
-            {
-                throw new PackageException($"no package carries {glob}, which is left out: the packages have changed, so check what is left out again");
-            }
-            foreach (string file in matched)
+            foreach (string file in Matching(folder, glob, "left out"))
             {
                 File.Delete(Path.Combine(folder, file));
             }
         }
+    }
+
+    /// <summary>Moves the files the globs name into the folders given (from the folder): where a package reads them, its
+    /// own path to them wrong for npm's layout. A glob that names nothing is stale and fails.</summary>
+    private static void Move(string folder, IReadOnlyList<(string Glob, string To)> moves)
+    {
+        foreach ((string glob, string to) in moves)
+        {
+            string target = Path.Combine(folder, to);
+            Directory.CreateDirectory(target);
+            foreach (string file in Matching(folder, glob, "moved"))
+            {
+                File.Move(Path.Combine(folder, file), Path.Combine(target, Path.GetFileName(file)));
+            }
+        }
+    }
+
+    /// <summary>The files under the folder a glob names ('/' between parts, '*' within a part, '**' across them), from it.</summary>
+    private static string[] Matching(string folder, string glob, string what)
+    {
+        Regex pattern = new("^" + Regex.Escape(glob).Replace(@"\*\*/", "(.*/)?", StringComparison.Ordinal).Replace(@"\*", "[^/]*", StringComparison.Ordinal) + "$");
+        string[] matched = [.. Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories)
+            .Select(f => Path.GetRelativePath(folder, f).Replace('\\', '/'))
+            .Where(f => pattern.IsMatch(f))];
+        if (matched.Length == 0)
+        {
+            throw new PackageException($"no package carries {glob}, which is {what}: the packages have changed, so check what is {what} again");
+        }
+        return matched;
     }
 }

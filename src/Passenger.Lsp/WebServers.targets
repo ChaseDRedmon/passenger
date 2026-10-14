@@ -19,6 +19,10 @@
          .d.ts files: its tsserver, tsc and their kin, and its translated messages, are left out, a third of every
          package's size. The build fails when one of these is no longer there to leave out. -->
     <WebServersLeftOut Include="node_modules/vscode-langservers-extracted/node_modules/typescript/lib/tsc.js;node_modules/vscode-langservers-extracted/node_modules/typescript/lib/tsserver.js;node_modules/vscode-langservers-extracted/node_modules/typescript/lib/tsserverlibrary.%2A;node_modules/vscode-langservers-extracted/node_modules/typescript/lib/typescriptServices.%2A;node_modules/vscode-langservers-extracted/node_modules/typescript/lib/typingsInstaller.js;node_modules/vscode-langservers-extracted/node_modules/typescript/lib/%2A/diagnosticMessages.generated.json;node_modules/vscode-langservers-extracted/node_modules/typescript/bin/%2A" />
+    <!-- That TypeScript's lib .d.ts files (a script's ES2020 and the DOM) go where the HTML server reads them: its own
+         folder's ../../node_modules/typescript/lib, VS Code's layout, which under node_modules is node_modules/node_modules;
+         nothing else reads them. -->
+    <WebServersMoved Include="node_modules/vscode-langservers-extracted/node_modules/typescript/lib/lib%2A.d.ts|node_modules/node_modules/typescript/lib" />
     <!-- JSON schemas the JSON server is given for the files that name none (package.json, tsconfig.json, appsettings.json,
          launchSettings.json, global.json) and those they refer to, as SchemaStore publishes them (Web/JsonSchemas.cs). -->
     <WebServersSchema Include="$(MSBuildThisFileDirectory)WebServers/schemas/*.json" />
@@ -45,6 +49,7 @@
       <WebServersLine Include="out=$(WebServersFolder)" />
       <WebServersLine Include="stamp=$(WebServersStamp)" />
       <WebServersLine Include="@(WebServersLeftOut->'leaveOut=%(Identity)')" />
+      <WebServersLine Include="@(WebServersMoved->'move=%(Identity)')" />
     </ItemGroup>
     <MakeDir Directories="$(WebServersRoot)" />
     <WriteLinesToFile File="$(WebServersArguments)" Lines="@(WebServersLine)" Overwrite="true" WriteOnlyWhenDifferent="true" />

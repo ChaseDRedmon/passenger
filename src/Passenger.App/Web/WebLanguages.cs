@@ -126,7 +126,7 @@ public sealed class WebLanguages : IAsyncDisposable
         }
         else if (server.Problem is { } problem)
         {
-            document.Notice = Notice(language.Kind, problem);
+            document.Notice = Notice(language.LanguageId, problem);
         }
         else
         {
@@ -298,15 +298,28 @@ public sealed class WebLanguages : IAsyncDisposable
     {
         server.Problem = problem;
         server.State = label;
-        foreach (OpenDocument open in documents.Where(d => d.Value.Kind == server.Kind).Select(d => d.Key))
+        foreach ((OpenDocument open, WebDocument features) in documents.Where(d => d.Value.Kind == server.Kind))
         {
-            open.Notice = Notice(server.Kind, problem);
+            open.Notice = Notice(features.LanguageId, problem);
         }
         StateChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    private static string Notice(WebServerKind kind, string problem) =>
-        $"{Name(kind)} has its colours only: {problem}.";
+    /// <summary>The banner over a file whose server cannot run, in the file's own language.</summary>
+    private static string Notice(string languageId, string problem) =>
+        $"{Spoken(languageId)} has its colours only: {problem}.";
+
+    /// <summary>A server's language as a person names it.</summary>
+    private static string Spoken(string languageId) => languageId switch
+    {
+        "typescript" or "typescriptreact" => "TypeScript",
+        "javascript" or "javascriptreact" => "JavaScript",
+        "html" => "HTML",
+        "css" => "CSS",
+        "scss" => "SCSS",
+        "less" => "Less",
+        _ => "JSON",
+    };
 
     /// <summary>The script of a server's package that runs it.</summary>
     private static string Script(WebServerKind kind) => kind switch

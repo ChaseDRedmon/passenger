@@ -11,7 +11,7 @@ namespace Passenger.App.CSharp;
 
 /// <summary>A card over the editor: hover information, a diagnostic's message, a signature. Code is
 /// set in the editor's font, prose in the interface's, a problem in its severity's colour.</summary>
-internal sealed class InfoCard : Border
+internal sealed partial class InfoCard : Border
 {
     // Styled as the Border it is, so the theme's Border.popup reaches it.
     protected override Type StyleKeyOverride => typeof(Border);
@@ -87,10 +87,10 @@ internal sealed class InfoCard : Border
         }
     }
 
-    /// <summary>Markdown's emphasis and escapes taken out, leaving the words.</summary>
-    private static string Plain(string line) => line
-        .Replace("**", string.Empty)
-        .Replace("__", string.Empty)
+    /// <summary>Markdown's emphasis, escapes, images and links' addresses taken out, leaving the words.</summary>
+    private static string Plain(string line) => MarkdownItalic().Replace(MarkdownLink().Replace(Imageless(line), "$1")
+            .Replace("**", string.Empty)
+            .Replace("__", string.Empty), "$1$2")
         .Replace("`", string.Empty)
         .Replace("\\", string.Empty)
         .Replace("&nbsp;", " ")
@@ -100,6 +100,25 @@ internal sealed class InfoCard : Border
 
     internal static IBrush Brush(string key) =>
         Application.Current is { } app && app.TryFindResource(key, app.ActualThemeVariant, out object? value) && value is IBrush brush ? brush : Brushes.Gray;
+
+    /// <summary>A line without its images, and without the space one began it with.</summary>
+    private static string Imageless(string line)
+    {
+        string without = MarkdownImage().Replace(line, string.Empty);
+        return without.Length != line.Length && line.TrimStart().StartsWith("![", StringComparison.Ordinal) ? without.TrimStart() : without;
+    }
+
+    /// <summary>Markdown's _italic_ and *italic* (TypeScript's *@param*), shown as their words.</summary>
+    [System.Text.RegularExpressions.GeneratedRegex(@"(?<!\w)_([^_\n]+)_(?!\w)|(?<![\w*])\*(\S(?:[^*\n]*\S)?)\*(?![\w*])")]
+    private static partial System.Text.RegularExpressions.Regex MarkdownItalic();
+
+    /// <summary>A Markdown image, which a card of text cannot show (the CSS server's Baseline icon, a data URI): left out.</summary>
+    [System.Text.RegularExpressions.GeneratedRegex(@"!\[[^\]]*\]\([^)]*\)")]
+    private static partial System.Text.RegularExpressions.Regex MarkdownImage();
+
+    /// <summary>A Markdown link, shown as its words (the CSS server's MDN Reference).</summary>
+    [System.Text.RegularExpressions.GeneratedRegex(@"\[([^\]]+)\]\([^)\s]*\)")]
+    private static partial System.Text.RegularExpressions.Regex MarkdownLink();
 }
 
 /// <summary>One completion row: the badge for its kind (a coloured letter, as Rider's are), its

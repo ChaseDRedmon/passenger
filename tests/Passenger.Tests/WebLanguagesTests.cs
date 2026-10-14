@@ -116,6 +116,14 @@ public sealed class WebLanguagesTests : IClassFixture<WebLanguagesTests.Shop>
             Ui.Run(window, AppActions.Reformat);
             Ui.WaitFor(() => shown.Document.Snapshot.ToString().Contains("export const spaced = sumOf([]);", StringComparison.Ordinal),
                 "the statement laid out by TypeScript's formatter");
+
+            PlaceAfter(shown, "export function sumO");
+            Ui.Run(window, AppActions.FindUsages);
+            Passenger.App.ToolWindows.FindView find = window.Find;
+            Ui.WaitFor(() => find.Rows.Count(r => r.Usage is not null) >= 4, "the function's usages, in both files, in the Find window");
+            string[] usages = [.. find.Rows.Where(r => r.Usage is not null).Select(r => r.Label)];
+            Assert.Contains("const sum: number = sumOf(items);", usages);
+            Assert.Contains("import { Item, sumOf } from \"./items\";", usages);
         }
         finally
         {
@@ -287,7 +295,7 @@ public sealed class WebLanguagesTests : IClassFixture<WebLanguagesTests.Shop>
             Ui.Settle();
             CodeEditor editor = window.EditorArea.CodeEditor;
             Ui.WaitFor(() => window.EditorArea.ActiveGroup.BannerText is not null, "the banner over the script");
-            Assert.Equal($"TypeScript has its colours only: there is no Node.js at {missing}, which Settings | Languages & Frameworks | Node.js names.",
+            Assert.Equal($"JavaScript has its colours only: there is no Node.js at {missing}, which Settings | Languages & Frameworks | Node.js names.",
                 window.EditorArea.ActiveGroup.BannerText);
             Assert.Equal("JavaScript · no Node.js", window.LanguageShown);
             Assert.Equal(TokenKind.Keyword, KindOf(editor, "function"));
