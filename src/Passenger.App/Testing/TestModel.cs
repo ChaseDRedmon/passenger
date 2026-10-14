@@ -68,8 +68,29 @@ public sealed record TestOutcome(TestItem Test, TestState State, TimeSpan Durati
     /// <summary>What the test wrote.</summary>
     public string? Output { get; init; }
 
+    /// <summary>The files its result carries: what the test attached (xunit's AddAttachment, MSTest's AddResultFile, NUnit's
+    /// AddTestAttachment), and the frames of a failing headless test's windows (<see cref="TestFrames"/>).</summary>
+    public IReadOnlyList<TestAttachment> Attachments { get; init; } = [];
+
     /// <summary>The row this result is of, the test's own or one its run made; null for the method itself.</summary>
     public string? Row => Test.Row ?? (DisplayName is { } shown ? TestItem.RowOf(Test.FullyQualifiedName, shown) : null);
+}
+
+/// <summary>A file a test's result carries, by the name the test gave it, where its runner wrote it.</summary>
+public sealed record TestAttachment(string Name, string Path)
+{
+    private static readonly string[] Pictures = [".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"];
+
+    /// <summary>A picture the Unit Tests window shows as a frame of the result (a PNG of a window, as a rule).</summary>
+    public bool IsPicture => Pictures.Contains(System.IO.Path.GetExtension(Path), StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>An attachment as a runner names it: a file URI or a path.</summary>
+    public static TestAttachment Of(string name, string uriOrPath)
+    {
+        // Only a written URI is read as one: a path with % or # in it is a path.
+        string path = uriOrPath.StartsWith("file:", StringComparison.OrdinalIgnoreCase) && Uri.TryCreate(uriOrPath, UriKind.Absolute, out Uri? uri) ? uri.LocalPath : uriOrPath;
+        return new TestAttachment(name.Length > 0 ? name : System.IO.Path.GetFileName(path), path);
+    }
 }
 
 /// <summary>A test host a runner would start, to be started under the debugger instead.</summary>

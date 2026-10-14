@@ -149,12 +149,21 @@ public sealed class TestNode : Observable
         _ => Children.SelectMany(c => c.Methods),
     };
 
-    /// <summary>What the details pane shows: each result's outcome, message, stack and output.</summary>
+    /// <summary>What the details pane shows: each result's outcome, message, stack, output and the files it carries.</summary>
     public string Details => string.Join("\n\n", results.Select(r =>
     {
-        string header = results.Count > 1 ? $"{r.Row ?? r.DisplayName ?? r.Test.DisplayName}: {r.State}" : r.State.ToString();
-        return string.Join('\n', new[] { header, r.Message, r.StackTrace, r.Output is { } output ? $"Output:\n{output.TrimEnd()}" : null }.Where(t => !string.IsNullOrWhiteSpace(t)));
+        string header = results.Count > 1 ? $"{ResultName(r)}: {r.State}" : r.State.ToString();
+        string? attachments = r.Attachments.Count > 0 ? $"Attachments:\n{string.Join('\n', r.Attachments.Select(a => $"  {a.Name}: {a.Path}"))}" : null;
+        return string.Join('\n', new[] { header, r.Message, r.StackTrace, r.Output is { } output ? $"Output:\n{output.TrimEnd()}" : null, attachments }.Where(t => !string.IsNullOrWhiteSpace(t)));
     }));
+
+    /// <summary>The pictures its results carry, the frames of a failing headless test's windows among them, in its results'
+    /// order, each with the result it is of.</summary>
+    public IReadOnlyList<(TestOutcome Result, TestAttachment Frame)> Frames =>
+        [.. results.SelectMany(r => r.Attachments.Where(a => a.IsPicture).Select(a => (r, a)))];
+
+    /// <summary>A result's name among a method's several: its data row's.</summary>
+    internal static string ResultName(TestOutcome result) => result.Row ?? result.DisplayName ?? result.Test.DisplayName;
 
     /// <summary>Where the code or a runner says it is: the code's, which follows typing, over the last build's.</summary>
     private TestItem? Located => FromCode ?? Item ?? Items.FirstOrDefault(i => i.Path is not null);

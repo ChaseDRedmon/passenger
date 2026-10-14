@@ -265,6 +265,7 @@ public sealed class TestingPlatformRunner : ITestRunner
                 Message = node.Message,
                 StackTrace = node.StackTrace,
                 Output = node.Output,
+                Attachments = node.Attachments,
             }
             : null;
     }
@@ -317,6 +318,10 @@ public sealed class TestingPlatformRunner : ITestRunner
         public string? Output { get; init; }
         public TimeSpan Duration { get; init; }
 
+        /// <summary>The files its result carries, each a node's FileArtifactProperty, which the platform writes as
+        /// "attachments.N.uri" (the file's path) and "attachments.N.display-name" (the test's name for it).</summary>
+        public IReadOnlyList<TestAttachment> Attachments { get; init; } = [];
+
         /// <summary>An attempt that a retry of the same test follows, so not its result.</summary>
         public bool Superseded { get; init; }
 
@@ -347,7 +352,18 @@ public sealed class TestingPlatformRunner : ITestRunner
                 Output = output.Length > 0 ? output : null,
                 Duration = Number(node, "time.duration-ms") is { } ms and >= 0 ? TimeSpan.FromMilliseconds(ms) : TimeSpan.Zero,
                 Superseded = node["retry.is-superseded"] is JsonValue superseded && superseded.TryGetValue(out bool later) && later,
+                Attachments = AttachmentsOf(node),
             };
+        }
+
+        private static List<TestAttachment> AttachmentsOf(JsonObject node)
+        {
+            List<TestAttachment> read = [];
+            for (int at = 0; Text(node, $"attachments.{at}.uri") is { Length: > 0 } file; at++)
+            {
+                read.Add(TestAttachment.Of(Text(node, $"attachments.{at}.display-name") ?? string.Empty, file));
+            }
+            return read;
         }
 
         /// <summary>A node's traits: each an object of one name and its value (a category alone has none, and is a

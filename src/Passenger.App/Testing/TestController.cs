@@ -210,8 +210,10 @@ public sealed class TestController : IAsyncDisposable
             void Apply(IReadOnlyList<TestOutcome> outcomes) => Tree.Apply(outcomes.Where(applied.Add));
             RunSummary? summary = null;
             // Each test project's tests run with its launch profile's environment, so projects whose differ run apart.
+            Dictionary<string, IReadOnlyDictionary<string, string>> environments = tests.Select(t => t.Project).Distinct(StringComparer.Ordinal)
+                .ToDictionary(p => p, EnvironmentOf, StringComparer.Ordinal);
             foreach (IGrouping<string, (TestItem Test, IReadOnlyDictionary<string, string> Environment)> group in tests
-                .Select(t => (Test: t, Environment: EnvironmentOf(t.Project)))
+                .Select(t => (Test: t, Environment: environments[t.Project]))
                 .GroupBy(t => string.Join('\n', t.Environment.Select(v => $"{v.Key}={v.Value}")), StringComparer.Ordinal))
             {
                 if (summary is { Canceled: true })
@@ -440,12 +442,17 @@ public sealed class TestController : IAsyncDisposable
     }
 
     /// <summary>The environment a test project's tests run with: its first launch profile that runs the project, its
-    /// variables, as Rider's VSTest runner gives a test project's launchSettings.json to its test host.</summary>
-    private IReadOnlyDictionary<string, string> EnvironmentOf(string project) =>
-        resolved?.Assemblies.FirstOrDefault(a => a.Project.Path == project)?.Project is { } built
+    /// variables, as Rider's VSTest runner gives a test project's launchSettings.json to its test host; and for a project
+    /// testing Avalonia headless under xunit v3, the hook that draws a failing test's windows into its result.</summary>
+    private IReadOnlyDictionary<string, string> EnvironmentOf(string project)
+    {
+        List<TestAssembly> its = [.. resolved?.Assemblies.Where(a => a.Project.Path == project) ?? []];
+        IReadOnlyDictionary<string, string> environment = its.FirstOrDefault()?.Project is { } built
             && Run.LaunchProfile.Read(built).FirstOrDefault(p => p.RunsProject) is { } profile
             ? profile.EnvironmentVariables
             : new Dictionary<string, string>();
+        return its.Any(a => TestFrames.Draws(a.Path)) ? TestFrames.With(environment) : environment;
+    }
 
     private static string Tally(IReadOnlyList<TestNode> methods, RunSummary summary)
     {

@@ -87,6 +87,31 @@
         <Setter Property="Height" Value="12" />
     </Style>
 
+    <!-- A frame of a test's result in the Unit Tests window: a thumbnail of the window as the test failed, which opens it at
+         its size. -->
+    <Style Selector="Button.frame">
+        <Setter Property="Padding" Value="5" />
+        <Setter Property="CornerRadius" Value="6" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Passenger.Divider}" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.Text}" />
+        <Setter Property="VerticalAlignment" Value="Top" />
+    </Style>
+    <Style Selector="Button.frame:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource Passenger.Hover}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Passenger.Divider}" />
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.Text}" />
+    </Style>
+    <Style Selector="Button.frame:pressed /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource Passenger.Selected}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Passenger.Divider}" />
+    </Style>
+    <Style Selector="Button.frame:disabled /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Passenger.Divider}" />
+    </Style>
+
     <!-- A stripe button: an icon down the window's edge that opens a tool window. -->
     <Style Selector="ToggleButton.stripe">
         <Setter Property="Width" Value="30" />

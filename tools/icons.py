@@ -113,6 +113,11 @@ ICONS = [
     # The Live Visual Tree: its window's tree of controls, and Select Element, a control picked in the app.
     ("LiveTree", "Organization", "20_regular"),
     ("SelectElement", "Select Object", "20_regular"),
+    # A test frame's viewer, as Rider's image editor: Zoom In, Zoom Out, Actual Size and Fit Zoom to Window.
+    ("ZoomIn", "Zoom In", "20_regular"),
+    ("ZoomOut", "Zoom Out", "20_regular"),
+    ("ActualSize", "Ratio One To One", "20_regular"),
+    ("ZoomFit", "Zoom Fit", "20_regular"),
 ]
 
 

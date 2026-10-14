@@ -21,6 +21,7 @@
     "SolutionViewTests": 90,
     "Debugging.StuckEvaluationTests": 90,
     "TestingPlatformTests": 90,
+    "TestFramesTests": 90,
     "LiveTemplatesTests": 90,
     "Debugging.PauseTests": 90,
     "MemorySnapshotsTests": 90,

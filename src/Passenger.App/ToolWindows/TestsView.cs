@@ -16,7 +16,8 @@ namespace Passenger.App.ToolWindows;
 
 /// <summary>Rider's Unit Tests window: the tests grouped as its Group By chooses (by project and namespace at first), then
 /// by class and method, a theory's data rows under it, each marked with how it last ran and how long it took; the chosen
-/// one's message, stack trace (its frames links to their lines) and output beside the tree; above it Rider's toolbar
+/// one's message, stack trace (its frames links to their lines), output and attachments beside the tree, the pictures among
+/// them (a failing headless test's windows) as thumbnails over it; above it Rider's toolbar
 /// (Expand All, Collapse All, Group By, a filter for each outcome with how many tests have it, the search) and the run's
 /// tally; and while there are none, why. Double-click or F4 goes to a test's source.</summary>
 public sealed class TestsView : DockPanel
@@ -124,10 +125,11 @@ public sealed class TestsView : DockPanel
 
         Grid split = new() { ColumnDefinitions = new ColumnDefinitions("2*,1,3*") };
         HairlineDivider divider = new(GridResizeDirection.Columns) { [Grid.ColumnProperty] = 1 };
-        Grid.SetColumn(details, 2);
+        DockPanel.SetDock(Frames, Dock.Top);
+        DockPanel result = new() { [Grid.ColumnProperty] = 2, Children = { Frames, details } };
         split.Children.Add(new Panel { Children = { tree, placeholder } });
         split.Children.Add(divider);
-        split.Children.Add(details);
+        split.Children.Add(result);
 
         // Rider's toolbar above the tree: what changes the tree, then a filter for each outcome; its search on the right.
         PathIcon magnifier = new() { Width = 14, Height = 14, Margin = new Thickness(8, 0, 0, 0) };
@@ -206,6 +208,9 @@ public sealed class TestsView : DockPanel
     /// <summary>The chosen row's results: its message, stack trace and output.</summary>
     public CodeEditor Details => details;
 
+    /// <summary>The pictures the chosen row's results carry, above its details: a failing headless test's windows.</summary>
+    public TestFramesStrip Frames { get; } = new();
+
     /// <summary>The details' file locations and web addresses; its folders are where a relative path is looked for.</summary>
     public ConsoleLinks Links { get; } = new();
 
@@ -252,13 +257,16 @@ public sealed class TestsView : DockPanel
         if (tree.SelectedItem is not TestNode node)
         {
             Show(string.Empty);
+            Frames.Show(string.Empty, []);
             return;
         }
         if (node.Kind is TestNodeKind.Method or TestNodeKind.Row)
         {
             Show(node.Details);
+            Frames.Show(node.Name, node.Frames);
             return;
         }
+        Frames.Show(string.Empty, []);
         // A test under two categories is one failure.
         IEnumerable<TestNode> failing = node.Methods.Where(m => m.State == TestState.Failed).DistinctBy(m => m.Identity);
         List<TestNode> failed = [.. failing.Take(GroupDetailsLimit + 1)];

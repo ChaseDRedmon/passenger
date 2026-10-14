@@ -258,6 +258,9 @@ public sealed class VsTestRunner : ITestRunner
         Message = result.ErrorMessage,
         StackTrace = result.ErrorStackTrace,
         Output = string.Concat(result.Messages.Select(m => m.Text)) is { Length: > 0 } output ? output : null,
+        // An adapter writes each attachment to a file and names it by a URI, the test's name for it as its description.
+        Attachments = [.. result.Attachments.SelectMany(set => set.Attachments).Select(a =>
+            TestAttachment.Of(a.Description ?? string.Empty, a.Uri.IsAbsoluteUri && a.Uri.IsFile ? a.Uri.LocalPath : a.Uri.OriginalString))],
     };
 
     private static TestState StateOf(VsOutcome outcome) => outcome switch
