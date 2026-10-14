@@ -189,7 +189,7 @@ public partial class MainWindow : Window
                 session.Debug.Breakpoints.Toggle(active.Path, click.Line);
             }
         });
-        assist = new CodeAssist(Editors, Editors.AssistLayer, () => session.CSharp) { Xaml = () => session.Xaml };
+        assist = new CodeAssist(Editors, Editors.AssistLayer, () => session.CSharp) { Xaml = () => session.Xaml, MSBuild = () => session.MSBuild };
         assist.Navigate += (_, target) => NavigateTo(target.Path, target.Position);
         assist.Message += (_, message) => status.Text = message;
         assist.FilesChanged += (_, _) => FilesChanged();

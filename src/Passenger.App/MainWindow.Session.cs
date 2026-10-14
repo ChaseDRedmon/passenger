@@ -220,6 +220,15 @@ public partial class MainWindow
                 status.Text = message;
             }
         };
+        next.MSBuild.Message += (_, message) =>
+        {
+            if (session == next)
+            {
+                status.Text = message;
+            }
+        };
+        next.MSBuild.Feed = () => NuGet.FeedAsync(null);
+        next.MSBuild.Vulnerabilities = NuGet.VulnerabilitiesAsync;
         next.WorkspaceChanged += (_, _) =>
         {
             if (session == next)

@@ -355,6 +355,24 @@ public sealed class NuGetView : DockPanel
         return audit ??= BackgroundWork.Run(() => VulnerabilityData.ReadAsync(audited, CancellationToken.None));
     }
 
+    /// <summary>The known vulnerabilities of the folder's audit feeds, read once its sources are (an agent or a project
+    /// file's code help may ask before the window was ever shown); none when no feed could say.</summary>
+    public async Task<VulnerabilityData> VulnerabilitiesAsync()
+    {
+        if (sources == PackageSourceSet.None || sources.Root != (root() ?? string.Empty))
+        {
+            await ReloadSourcesAsync(list: false);
+        }
+        try
+        {
+            return await Audit();
+        }
+        catch (Exception failed) when (FeedSet.IsFeedFailure(failed))
+        {
+            return VulnerabilityData.None;
+        }
+    }
+
     /// <summary>The vulnerabilities as far as they are known: none until they are read, or when they could not be.</summary>
     private VulnerabilityData Known => audit is { IsCompletedSuccessfully: true } read ? read.Result : VulnerabilityData.None;
 

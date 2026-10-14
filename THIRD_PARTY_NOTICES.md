@@ -333,6 +333,39 @@ defaults, its `AttributeOrderingRuleGroups` in `src/XamlStyler/Options/StylerOpt
 (https://github.com/Xavalon/XamlStyler), as are the names of the options Passenger shares with it (Enable attribute
 reordering, Remove ending tag of empty element); (c) Xavalon. All rights reserved., under the Apache License 2.0 below.
 
+## MSBuild's schemas
+
+`src/Passenger.App/MSBuild/Schemas/` holds `Microsoft.Build.Core.xsd` and `Microsoft.Build.CommonTypes.xsd`, MSBuild's own
+schemas of its elements, properties, items, metadata and tasks (`src/MSBuild/MSBuild/` of https://github.com/dotnet/msbuild
+at commit 7af2a3b, October 14, 2026), unchanged. The app embeds them for the code help in project files, which offers and
+describes what they declare; the .NET SDK does not carry them.
+
+```
+The MIT License (MIT)
+
+Copyright (c) .NET Foundation and contributors
+
+All rights reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ## TextMate grammars
 
 `src/Passenger.Languages/TextMate/Grammars/` holds the TextMate grammars that colour the files beside the C#, each a

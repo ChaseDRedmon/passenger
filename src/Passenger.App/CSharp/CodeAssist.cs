@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
 using Passenger.App.Editors;
+using Passenger.App.MSBuild;
 using Passenger.App.Workspace;
 using Passenger.App.Xaml;
 using Passenger.Core;
@@ -115,6 +116,9 @@ public sealed partial class CodeAssist
     /// <summary>The completion list's labels, in order, while it shows.</summary>
     public IReadOnlyList<string> CompletionLabels => completion.IsVisible ? [.. completion.Rows.Select(r => r.Item.Label)] : [];
 
+    /// <summary>The completion list's rows, in order, each with the detail it shows on its right, while it shows.</summary>
+    public IReadOnlyList<(string Label, string Detail)> CompletionDetails => completion.IsVisible ? [.. completion.Rows.Select(r => (r.Item.Label, r.Detail))] : [];
+
     /// <summary>What the hover card says while it shows, null otherwise.</summary>
     public string? HoverText => hoverCard.IsVisible ? hoverCard.Text : null;
 
@@ -225,7 +229,7 @@ public sealed partial class CodeAssist
     public void AddActions(ActionRegistry actions)
     {
         // Rider's Code, Code Completion: Basic, then Complete Current Statement after a separator.
-        Code(AppActions.Complete, "Basic Completion", context => _ = StartCompletion(null), new("Code/Code Completion", 0, 0), xaml: true);
+        Code(AppActions.Complete, "Basic Completion", context => _ = StartCompletion(null), new("Code/Code Completion", 0, 0), xaml: true, msbuild: true);
         Code(AppActions.CompleteStatement, "Complete Current Statement", _ => CompleteStatement(), new("Code/Code Completion", 1, 0), server: false, syntax: true);
         // Passenger's own fixes first, which a file the server does not read (a XAML file) may have too.
         actions.Add(new IdeAction(AppActions.QuickFix, "Show Context Actions", "Code", context => _ = ShowFixes())
@@ -273,7 +277,7 @@ public sealed partial class CodeAssist
             Menus = [new("Refactor", 4, 1)],
         });
         // Rider's order in Navigate: Declaration, Derived Symbols, Implementation(s), Type Declaration, Base Symbols.
-        Code(AppActions.GoToDeclaration, "Go to Declaration", context => _ = GoToDefinition(Caret), new("Navigate", 2, 0), xaml: true);
+        Code(AppActions.GoToDeclaration, "Go to Declaration", context => _ = GoToDefinition(Caret), new("Navigate", 2, 0), xaml: true, msbuild: true);
         Code(AppActions.DerivedSymbols, "Derived Symbols", context => _ = GoToRelated("Derived Symbols", Caret, DerivedSymbolsAsync, "No derived symbols found"),
             new("Navigate", 2, 1));
         Code(AppActions.GoToImplementation, "Go to Implementation", context => _ = GoToImplementation(Caret), new("Navigate", 2, 2));
@@ -287,8 +291,8 @@ public sealed partial class CodeAssist
         Code(AppActions.PreviousError, "Previous Highlighted Error", _ => StepToMarker(forward: false), new("Navigate", 3, 1), server: false);
         Code(AppActions.QuickDocumentation, "Quick Documentation", context => _ = ShowHover(Caret, Editor.PointOf(Caret)), new("View", 1, 1), server: false);
 
-        void Code(string id, string title, Action<ActionContext> run, MenuPlace menu, bool server = true, bool syntax = false, bool xaml = false, bool markup = false) =>
-            actions.Add(new IdeAction(id, title, "Code", run) { WhyNot = context => WhyNot(context, server, syntax, xaml, markup), Menus = [menu] });
+        void Code(string id, string title, Action<ActionContext> run, MenuPlace menu, bool server = true, bool syntax = false, bool xaml = false, bool markup = false, bool msbuild = false) =>
+            actions.Add(new IdeAction(id, title, "Code", run) { WhyNot = context => WhyNot(context, server, syntax, xaml, markup, msbuild), Menus = [menu] });
     }
 
     private int Caret => Editor.Selections.Primary.Caret;
@@ -303,11 +307,12 @@ public sealed partial class CodeAssist
 
     /// <summary>Why an action cannot run: no file; for one that asks the server, none for the file; for one that edits by
     /// the file's syntax, a file not C# or one that cannot be edited. One that also edits XAML (<paramref name="markup"/>)
-    /// takes any XAML file that can be edited.</summary>
-    private string? WhyNot(ActionContext context, bool server, bool syntax = false, bool xaml = false, bool markup = false) =>
+    /// takes any XAML file that can be edited; XAML and MSBuild files answer those they say they do.</summary>
+    private string? WhyNot(ActionContext context, bool server, bool syntax = false, bool xaml = false, bool markup = false, bool msbuild = false) =>
         context.File is null ? "No file is open"
         : markup && XamlService.IsXaml(context.File.Path) ? (context.Editor.IsReadOnly ? "The file is read-only" : null)
         : xaml && XamlOf(context.File) is { } markupFile && (markupFile.IsLoaded || !markupFile.Loaded.IsCompleted) ? null
+        : msbuild && MSBuildOf(context.File) is not null ? null
         : syntax && context.File.Syntax is null ? "The file is not C#"
         : syntax && context.Editor.IsReadOnly ? "The file is read-only"
         : !server || Current is not null ? null
@@ -381,6 +386,14 @@ public sealed partial class CodeAssist
     private void AfterTyped(string text)
     {
         char last = text[^1];
+        if (MSBuildCurrent is not null)
+        {
+            if (MSBuildTrigger(text) || (IsIdentifierChar(last) && !char.IsDigit(last) && WordStart(Editor.Selections.Primary.Caret) == Editor.Selections.Primary.Caret - 1))
+            {
+                _ = StartCompletion(null);
+            }
+            return;
+        }
         if (XamlCurrent is not null)
         {
             if (XamlTrigger(text) || (IsIdentifierChar(last) && !char.IsDigit(last) && WordStart(Editor.Selections.Primary.Caret) == Editor.Selections.Primary.Caret - 1))
@@ -434,6 +447,11 @@ public sealed partial class CodeAssist
 
     private async Task StartCompletionCore(string? trigger, bool incomplete)
     {
+        if (MSBuildCurrent is { } msbuild)
+        {
+            await StartMSBuildCompletion(msbuild);
+            return;
+        }
         if (XamlCurrent is { } xaml)
         {
             await StartXamlCompletion(xaml);
@@ -510,10 +528,12 @@ public sealed partial class CodeAssist
             CloseCompletion();
             return;
         }
+        // An MSBuild list keeps its own order among names that match alike (the common properties first), not the shortest.
+        int alike = msbuildOffered.Count > 0 ? 1000 : 1;
         List<CompletionRow> rows = open.Items
             .Select(item => (item, score: Score(typed, item.FilterText ?? item.Label)))
             .Where(x => x.score is not null)
-            .OrderByDescending(x => x.score)
+            .OrderByDescending(x => x.score / alike)
             .ThenByDescending(x => x.item.Preselect == true)
             .ThenBy(x => x.item.SortText ?? x.item.Label, StringComparer.Ordinal)
             .Take(200)
@@ -554,6 +574,13 @@ public sealed partial class CodeAssist
             int from = open.Start;
             CloseCompletion();
             CommitXaml(xamlItem, from);
+            return;
+        }
+        if (msbuildOffered.TryGetValue(row.Item, out MSBuildItem? msbuildItem))
+        {
+            int from = open.Start;
+            CloseCompletion();
+            CommitMSBuild(msbuildItem, from);
             return;
         }
         if (Current?.Lsp is not { } lsp)
@@ -662,6 +689,7 @@ public sealed partial class CodeAssist
         describing?.Cancel();
         open = null;
         xamlOffered.Clear();
+        msbuildOffered.Clear();
         completion.IsVisible = false;
         itemCard.IsVisible = false;
     }
@@ -672,6 +700,11 @@ public sealed partial class CodeAssist
     {
         describing?.Cancel();
         itemCard.IsVisible = false;
+        if (completion.IsVisible && completion.Selected is { } chosen && msbuildOffered.TryGetValue(chosen.Item, out MSBuildItem? described))
+        {
+            DescribeMSBuild(described);
+            return;
+        }
         if (!completion.IsVisible || completion.Selected is not { } row || Current?.Lsp is not { } lsp)
         {
             return;
@@ -727,7 +760,12 @@ public sealed partial class CodeAssist
         card.Measure(Size.Infinity);
         double left = Canvas.GetLeft(beside);
         double width = card.DesiredSize.Width;
-        double x = left + beside.Bounds.Width + 4;
+        // A popup just shown has no bounds until the next layout: its measure says how wide it will be.
+        if (beside.Bounds.Width == 0)
+        {
+            beside.Measure(Size.Infinity);
+        }
+        double x = left + (beside.Bounds.Width > 0 ? beside.Bounds.Width : beside.DesiredSize.Width) + 4;
         if (x + width > layer.Bounds.Width && left - width - 4 >= 0)
         {
             x = left - width - 4;
@@ -779,6 +817,10 @@ public sealed partial class CodeAssist
             {
                 hoverCard.AddCode(described);
             }
+        }
+        else if (MSBuildCurrent is { } msbuild)
+        {
+            await MSBuildHover(msbuild, offset, cancel.Token);
         }
         else if (Current?.Lsp is { } lsp)
         {
@@ -1212,6 +1254,11 @@ public sealed partial class CodeAssist
 
     private async Task GoToDefinitionCore(int offset)
     {
+        if (MSBuildCurrent is { } msbuild)
+        {
+            await MSBuildGoTo(msbuild, offset);
+            return;
+        }
         if (XamlCurrent is { } xaml)
         {
             await XamlGoTo(xaml, offset);
@@ -1798,7 +1845,8 @@ public sealed partial class CodeAssist
 
     /// <summary>A character of the word a completion list narrows by: an identifier's, and in a Razor file a markup
     /// name's too (<c>@onclick</c>, <c>data-enhance-nav</c>, <c>@bind:after</c>).</summary>
-    private bool IsWordChar(char c) => IsIdentifierChar(c) || (c is '@' or '-' or ':' && InRazor) || (xamlOffered.Count > 0 && xamlWordCharacters.Contains(c));
+    private bool IsWordChar(char c) => IsIdentifierChar(c) || (c is '@' or '-' or ':' && InRazor) || (xamlOffered.Count > 0 && xamlWordCharacters.Contains(c))
+        || (msbuildOffered.Count > 0 && msbuildWordCharacters.Contains(c));
 
     /// <summary>Where a Razor list's word starts when its items say no range: back over an identifier, then over as much of
     /// a markup name before it as some item begins with, so <c>data-en</c> is replaced whole by <c>data-enhance-nav</c>

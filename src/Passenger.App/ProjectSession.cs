@@ -72,6 +72,7 @@ public sealed class ProjectSession : IAsyncDisposable
         // What a Git operation changes in the files is one change set of the folder's Local History, under its name.
         Vcs.Activity = name => LocalHistory?.During(name);
         Models.Changed += (_, changed) => OnEvaluated(changed);
+        MSBuild = new MSBuild.MSBuildService(() => Folder, () => Workspace);
         DesignTimeBuilds = new ProjectBuilds(LoadOrderAsync, () => Workspace is { } open ? ProjectModels.Properties(open) : new Dictionary<string, string>());
     }
 
@@ -234,6 +235,9 @@ public sealed class ProjectSession : IAsyncDisposable
     /// <summary>The XAML of the folder's projects, read by Passenger's own XAML for each XAML file open.</summary>
     public Xaml.XamlService Xaml { get; } = new();
 
+    /// <summary>The code help in the folder's project, .props and .targets files, from MSBuild's evaluation in the project host.</summary>
+    public MSBuild.MSBuildService MSBuild { get; }
+
     /// <summary>A language server started (or none, after one ended) in place of the one before.</summary>
     public event EventHandler? CSharpChanged;
 
@@ -329,6 +333,7 @@ public sealed class ProjectSession : IAsyncDisposable
         bool tests = !before.Projects.Where(p => p.IsTestProject).Select(p => p.Path).SequenceEqual(Workspace.Projects.Where(p => p.IsTestProject).Select(p => p.Path));
         bool packages = before.Projects.Zip(Workspace.Projects).Any(p => changed.Contains(p.First.Path) && !p.First.Packages.SequenceEqual(p.Second.Packages));
         ProjectsEvaluated?.Invoke(this, new EvaluatedProjects([.. Workspace.Projects.Where(p => changed.Contains(p.Path))], tests, packages));
+        MSBuild.ProjectsEvaluated();
         TimeSolutionView();
     }
 
@@ -385,6 +390,7 @@ public sealed class ProjectSession : IAsyncDisposable
     {
         CSharp?.Attach(document);
         Xaml.Attach(document);
+        MSBuild.Attach(document);
         Debug.Attach(document);
         Vcs.Attach(document);
     }
@@ -394,6 +400,7 @@ public sealed class ProjectSession : IAsyncDisposable
     {
         CSharp?.Detach(document);
         Xaml.Detach(document);
+        MSBuild.Detach(document);
         Debug.Detach(document);
         Vcs.Detach(document);
     }
@@ -417,6 +424,8 @@ public sealed class ProjectSession : IAsyncDisposable
             CSharp?.Attach(document);
             Xaml.Detach(document);
             Xaml.Attach(document);
+            MSBuild.Detach(document);
+            MSBuild.Attach(document);
         }
     }
 
@@ -610,6 +619,7 @@ public sealed class ProjectSession : IAsyncDisposable
         parts.Add(("the language server", CSharp?.DisposeAsync().AsTask() ?? Task.CompletedTask));
         CSharp = null;
         Xaml.Dispose();
+        MSBuild.Dispose();
         return parts;
     }
 

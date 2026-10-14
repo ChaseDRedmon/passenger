@@ -14,6 +14,9 @@
     <!-- The window's icon (X11's too); Passenger.icns is the macOS bundle's (tools/package-mac.sh), both from
          Assets/passenger.svg, which with passenger.png is the Linux desktop entry's (tools/package-linux.sh). -->
     <AvaloniaResource Include="Assets/passenger.png" />
+    <!-- MSBuild's own schemas (dotnet/msbuild, MIT), which the .NET SDK does not carry: the elements, properties, items,
+         metadata and tasks the code help in project files offers and describes (MSBuild/MSBuildSchema.cs). -->
+    <EmbeddedResource Include="MSBuild/Schemas/*.xsd" LogicalName="MSBuild/%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>
