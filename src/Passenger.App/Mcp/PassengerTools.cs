@@ -17,10 +17,21 @@ namespace Passenger.App.Mcp;
 /// the language server's knowledge of the code, builds and runs, the debugger, and the IDE itself
 /// (screenshots, actions, typing), each run on the UI thread as the window's own commands are. Lines and
 /// columns count from one, as an editor shows them; a relative path is the open folder's. A tool not ReadOnly says
-/// whether it is Destructive: a person's window asks before an agent first uses one that is not declared harmless.</summary>
+/// whether it is Destructive: a person's window asks before an agent first uses one that is not declared harmless.
+/// What a folder has and runs a tool asks of the window's session (<see cref="ProjectSession"/>) as the call finds it, and
+/// what it starts it starts through the session's controllers; the window itself only for what is the window's: opening
+/// a folder in it, its editors, its terminal, its actions and what it draws. No tool reads the status bar.</summary>
 public sealed partial class PassengerTools(MainWindow window)
 {
     private static readonly TimeSpan ServerLimit = TimeSpan.FromSeconds(120);
+
+    /// <summary>The folder open in the window as this call finds it: an agent's Open makes another.</summary>
+    private ProjectSession Session => window.Session;
+
+    /// <summary>The session's builds, runs and debug launches as the window shows them.</summary>
+    private BuildRunController Builds => window.Builds;
+
+    private Passenger.App.Editors.EditorArea Editors => window.EditorArea;
 
     private const string Arguments = "The program's command line, in place of the configuration's (a launch profile's commandLineArgs)";
 
@@ -39,7 +50,7 @@ public sealed partial class PassengerTools(MainWindow window)
         }
         else if (File.Exists(full))
         {
-            if (window.Folder is null)
+            if (Session.Folder is null)
             {
                 await window.OpenFolder(Path.GetDirectoryName(full)!).WaitAsync(cancel);
             }
@@ -53,7 +64,7 @@ public sealed partial class PassengerTools(MainWindow window)
             throw new FileNotFoundException($"No folder or file at {full}");
         }
         // A folder without a solution has its projects once the walk for them lands.
-        await window.WorkspaceRead.WaitAsync(cancel);
+        await Session.WorkspaceRead.WaitAsync(cancel);
         await Task.Yield();
         return Snapshot();
     });
@@ -87,8 +98,8 @@ public sealed partial class PassengerTools(MainWindow window)
     [McpServerTool(Name = "save_all", Title = "Save every file", Destructive = false), Description("Saves every open file with unsaved changes.")]
     public Task<string> SaveAll(CancellationToken cancel = default) => OnUi(cancel, () =>
     {
-        int unsaved = window.EditorArea.Documents.Count(d => d.IsModified);
-        window.EditorArea.SaveAll();
+        int unsaved = Editors.Documents.Count(d => d.IsModified);
+        Editors.SaveAll();
         return Task.FromResult(unsaved == 0 ? "Nothing to save" : $"Saved {unsaved} file{(unsaved == 1 ? "" : "s")}");
     });
 
@@ -140,7 +151,7 @@ public sealed partial class PassengerTools(MainWindow window)
     {
         (OpenDocument document, LspDocument lsp) = await Code(path, cancel);
         int offset = Offset(document, line, column);
-        LanguageServer server = window.CSharpService?.Session?.Server ?? throw new InvalidOperationException("C# is not ready");
+        LanguageServer server = Session.CSharp?.Session?.Server ?? throw new InvalidOperationException("C# is not ready");
         bool calls = direction is "callers" or "callees";
         if (!calls && direction is not ("supertypes" or "subtypes"))
         {
@@ -175,16 +186,16 @@ public sealed partial class PassengerTools(MainWindow window)
     {
         (OpenDocument document, LspDocument lsp) = await Code(path, cancel);
         int offset = Offset(document, line, column);
-        (string Type, IReadOnlyList<string> Files)? named = window.CSharpService?.Session?.Folder is { } folder
-            ? await TypeRename.NamedAsync(window.EditorArea, folder, lsp, offset) : null;
+        (string Type, IReadOnlyList<string> Files)? named = Session.CSharp?.Session?.Folder is { } folder
+            ? await TypeRename.NamedAsync(Editors, folder, lsp, offset) : null;
         if (await lsp.RenameAsync(offset, newName) is not { } edit)
         {
             return "This can't be renamed";
         }
         IReadOnlyList<string> files = [.. Shapes.WorkspaceEdit(edit).Select(f => DocumentUris.ToPath(f.Uri)).Distinct()];
         List<(string From, string To)> moves = renameFiles && named is { } type ? [.. type.Files.Select(f => (f, TypeRename.Renamed(f, newName)))] : [];
-        TypeRename.Apply(window.EditorArea, edit, moves, $"Rename {named?.Type ?? "symbol"} to {newName}", null, []);
-        window.EditorArea.SaveAll();
+        TypeRename.Apply(Editors, edit, moves, $"Rename {named?.Type ?? "symbol"} to {newName}", null, []);
+        Editors.SaveAll();
         string renamed = moves.Count > 0 ? $"; renamed {string.Join(", ", moves.Select(m => $"{Relative(m.From)} to {Relative(m.To)}"))}" : string.Empty;
         return $"Renamed in {files.Count} file{(files.Count == 1 ? "" : "s")}: {string.Join(", ", files.Select(Relative))}{renamed}";
     });
@@ -224,8 +235,8 @@ public sealed partial class PassengerTools(MainWindow window)
         {
             return $"{what} changes nothing it can apply{unrun}";
         }
-        int files = WorkspaceEdits.Apply(window.EditorArea, edit);
-        window.EditorArea.SaveAll();
+        int files = WorkspaceEdits.Apply(Editors, edit);
+        Editors.SaveAll();
         return $"Applied {what} to {files} file{(files == 1 ? "" : "s")}{unrun}";
     });
 
@@ -248,7 +259,7 @@ public sealed partial class PassengerTools(MainWindow window)
         {
             return "Not reformatted: the file was edited while the language server worked on it";
         }
-        WorkspaceEdits.ApplyTo(window.EditorArea, document, placed);
+        WorkspaceEdits.ApplyTo(Editors, document, placed);
         document.Save();
         return edits.Count == 0 ? "Already formatted" : $"Reformatted ({edits.Count} edits)";
     });
@@ -301,7 +312,7 @@ public sealed partial class PassengerTools(MainWindow window)
     public Task<BuildResult> Build(CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         // The build goes on without an agent that gives up on it, shown in the Build window.
-        BuildOutcome built = await window.BuildAsync().WaitAsync(cancel);
+        BuildOutcome built = await Builds.BuildAsync(BuildCause.Explicit, CancellationToken.None).WaitAsync(cancel);
         IReadOnlyList<Finding> problems = [.. built.Problems.Select(p => new Finding(
             p.Severity == ProblemSeverity.Error ? "error" : "warning", p.Code, p.Message, p.Path is { } at ? Relative(at) : p.Project, p.Position.Line + 1, p.Position.Column + 1))];
         return new BuildResult(built.Succeeded, built.Message, problems.Count(p => p.Severity == "error"), problems.Count(p => p.Severity == "warning"), problems, string.Join('\n', built.Output));
@@ -318,12 +329,13 @@ public sealed partial class PassengerTools(MainWindow window)
         int waitSeconds = 30, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         Choose(configuration);
-        string name = window.Configuration?.Name ?? string.Empty;
-        if (await window.RunAsync(arguments).WaitAsync(cancel) is { } refused)
+        string name = Session.Configurations.Chosen?.Name ?? string.Empty;
+        BuildRunController builds = Builds;
+        if (await builds.RunAsync(arguments).WaitAsync(cancel) is { } refused)
         {
             throw new InvalidOperationException(refused);
         }
-        Task<int> ended = window.RunEnd;
+        Task<int> ended = builds.RunEnd;
         try
         {
             await ended.WaitAsync(TimeSpan.FromSeconds(Math.Max(0, waitSeconds)), cancel);
@@ -333,15 +345,15 @@ public sealed partial class PassengerTools(MainWindow window)
             // Still running when the wait is up: the answer says so, and the program goes on.
         }
         int? code = ended.IsCompletedSuccessfully ? ended.Result : null;
-        string output = window.RunInTerminal is { } inTerminal ? Tail(inTerminal.Session, 200) : Tail(window.BottomPanel.Run, 200);
+        string output = Session.InTerminal is { } inTerminal ? Tail(inTerminal.Session, 200) : Tail(Session.Runner.Shown(), 200);
         return new RunResult(code is null, code, code is int exit ? BuildRunController.RunEnded(name, exit) : $"Running {name}", output);
     });
 
     [McpServerTool(Name = "stop", Title = "Stop", Destructive = false), Description("Stops whatever is running or being debugged, as Stop does.")]
     public Task<string> Stop(CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
-        window.Runner.Stop();
-        window.RunInTerminal?.Stop();
+        Session.Runner.Stop();
+        Session.InTerminal?.Stop();
         await window.Debugger.StopAsync();
         return "Stopped";
     });
@@ -356,8 +368,8 @@ public sealed partial class PassengerTools(MainWindow window)
         [Description("Part of a test's full name: a method, a class, a namespace")] string? filter = null,
         bool debug = false, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
-        string folder = window.Folder ?? throw new InvalidOperationException("No folder is open");
-        Testing.TestController tests = window.Tests;
+        string folder = Session.Folder ?? throw new InvalidOperationException("No folder is open");
+        Testing.TestController tests = Session.Tests;
         List<Testing.TestNode> Matching() =>
             [.. tests.Tree.Methods.Where(m => m.FullName is { } name && name.Contains(filter!, StringComparison.Ordinal))];
         // A test the code's reading does not know (an attribute of the project's own) is found by a runner.
@@ -391,7 +403,7 @@ public sealed partial class PassengerTools(MainWindow window)
     [McpServerTool(Name = "tests_list", Title = "The unit tests", ReadOnly = true), Description(
         "Every test the Unit Tests window shows (found in the test projects' code, and by the runner once built), each with its state from the " +
         "last run: passed, failed, skipped, notRun.")]
-    public Task<IReadOnlyList<TestInfoRow>> TestsList(CancellationToken cancel = default) => OnUi(cancel, () => Task.FromResult((IReadOnlyList<TestInfoRow>)[.. window.Tests.Tree.Methods
+    public Task<IReadOnlyList<TestInfoRow>> TestsList(CancellationToken cancel = default) => OnUi(cancel, () => Task.FromResult((IReadOnlyList<TestInfoRow>)[.. Session.Tests.Tree.Methods
         .Select(m => new TestInfoRow(TestName(m), m.State.ToString().ToLowerInvariant(), m.Path is { } at ? $"{Relative(at)}:{m.Line}" : null))]));
 
     private TestRunInfo TestInfo(Testing.TestController tests)
@@ -488,7 +500,7 @@ public sealed partial class PassengerTools(MainWindow window)
         int waitSeconds = 60, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
         Choose(configuration);
-        if (await window.DebugAsync(arguments).WaitAsync(cancel) is { } problem)
+        if (await Builds.DebugAsync(arguments).WaitAsync(cancel) is { } problem)
         {
             throw new InvalidOperationException(problem);
         }
@@ -549,7 +561,7 @@ public sealed partial class PassengerTools(MainWindow window)
     [McpServerTool(Name = "debug_pause", Title = "Pause", Destructive = false), Description("Pauses the running program wherever it is.")]
     public Task<DebugSnapshot> DebugPause(int waitSeconds = 10, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
-        DebugSession session = Session();
+        DebugSession session = Debugged();
         await session.PauseAsync();
         await Until(() => session.State != DebugState.Running, TimeSpan.FromSeconds(waitSeconds), cancel);
         return await DebugSnapshotAsync();
@@ -582,7 +594,7 @@ public sealed partial class PassengerTools(MainWindow window)
         "terminal, types it into the program's tab of the Terminal window, Enter for the newline. The program reads it when it next reads.")]
     public Task<string> DebugInput(string text, [Description("End the line with a newline")] bool newline = true, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
-        DebugSession session = Session();
+        DebugSession session = Debugged();
         if (session.Terminal is { } inTerminal)
         {
             inTerminal.Session.Write(newline ? text + "\r" : text);
@@ -658,12 +670,12 @@ public sealed partial class PassengerTools(MainWindow window)
         "Types text into the active editor at its caret, as the keyboard would (typing a closing bracket over one already there, and so on).")]
     public Task<string> Type(string text, CancellationToken cancel = default) => OnUi(cancel, () =>
     {
-        if (window.EditorArea.Active is null)
+        if (Editors.Active is null)
         {
             throw new InvalidOperationException("No file is open in the editor");
         }
-        window.EditorArea.CodeEditor.Type(text);
-        return Task.FromResult($"Typed at {window.EditorArea.CodeEditor.CaretPosition.Line + 1}:{window.EditorArea.CodeEditor.CaretPosition.Column + 1}");
+        Editors.CodeEditor.Type(text);
+        return Task.FromResult($"Typed at {Editors.CodeEditor.CaretPosition.Line + 1}:{Editors.CodeEditor.CaretPosition.Column + 1}");
     });
 
     // The work behind them
@@ -765,19 +777,20 @@ public sealed partial class PassengerTools(MainWindow window)
     private static async Task<IReadOnlyList<DapStackFrame>> Stack(DebugSession session) =>
         await session.StackTraceAsync(session.StoppedThread ?? throw new InvalidOperationException("No thread is stopped"));
 
-    private DebugSession Session() => window.Debugger.Session is { State: not DebugState.Ended } session
+    private DebugSession Debugged() => window.Debugger.Session is { State: not DebugState.Ended } session
         ? session
         : throw new InvalidOperationException("Nothing is being debugged; debug_start starts it");
 
-    private DebugSession Paused() => Session() is { State: DebugState.Paused } session
+    private DebugSession Paused() => Debugged() is { State: DebugState.Paused } session
         ? session
         : throw new InvalidOperationException("The program is running; debug_pause stops it where it is");
 
     private void Choose(string? configuration)
     {
-        if (configuration is not null && !window.SelectConfiguration(configuration))
+        RunConfigurations configurations = Session.Configurations;
+        if (configuration is not null && !configurations.Select(configuration))
         {
-            throw new InvalidOperationException($"No run configuration '{configuration}'; there are: {string.Join(", ", window.Configurations.Select(c => c.Name))}");
+            throw new InvalidOperationException($"No run configuration '{configuration}'; there are: {string.Join(", ", configurations.All.Select(c => c.Name))}");
         }
     }
 
@@ -803,7 +816,7 @@ public sealed partial class PassengerTools(MainWindow window)
         (OpenDocument document, LspDocument lsp) = await Code(path, cancel);
         int offset = Offset(document, line, column);
         int end = endLine is { } last ? Offset(document, last, endColumn ?? 1) : offset;
-        CSharpDocument? csharp = window.CSharpService?.For(document);
+        CSharpDocument? csharp = Session.CSharp?.For(document);
         IReadOnlyList<Diagnostic> here = [.. (csharp?.Diagnostics ?? []).Where(d => d.Range.Start.Line <= line - 1 && line - 1 <= d.Range.End.Line)];
         IReadOnlyList<CodeAction> actions = await lsp.CodeActionsAsync(TextRange.FromBounds(Math.Min(offset, end), Math.Max(offset, end)), here);
         return (lsp, [.. actions.Where(a => a.Disabled is null)]);
@@ -812,14 +825,15 @@ public sealed partial class PassengerTools(MainWindow window)
     /// <summary>The language server, once it has loaded the workspace.</summary>
     private async Task<RoslynSession> Server(CancellationToken cancel)
     {
-        if (window.CSharpService is null)
+        if (Session.CSharp is null)
         {
             throw new InvalidOperationException("No C# language server runs for this folder");
         }
-        await Until(() => window.CSharpService.IsReady, ServerLimit, cancel);
-        return window.CSharpService is { IsReady: true, Session: { } session }
-            ? session
-            : throw new TimeoutException($"The language server has not loaded the workspace ({window.CSharpService.State})");
+        // The session's server, which starts again when its projects change: each look is at the one there is then.
+        await Until(() => Session.CSharp?.IsReady != false, ServerLimit, cancel);
+        return Session.CSharp is { IsReady: true, Session: { } server }
+            ? server
+            : throw new TimeoutException($"The language server has not loaded the workspace ({Session.CSharp?.State ?? "none"})");
     }
 
     /// <summary>A file opened as the editor would, with the language server's document for it once the
@@ -827,20 +841,20 @@ public sealed partial class PassengerTools(MainWindow window)
     private async Task<(OpenDocument Document, LspDocument Lsp)> Code(string path, CancellationToken cancel)
     {
         OpenDocument document = Document(path);
-        if (window.CSharpService is null)
+        if (Session.CSharp is null)
         {
             throw new InvalidOperationException("No C# language server runs for this folder");
         }
         // Answers before the server has loaded the solution come from a file it knows alone, and are wrong.
-        await Until(() => window.CSharpService.IsReady && window.CSharpService.For(document)?.Lsp is not null, ServerLimit, cancel);
-        return (document, window.CSharpService.For(document)?.Lsp
-            ?? throw new TimeoutException($"The language server has not loaded {Path.GetFileName(document.Path)} ({window.CSharpService.State})"));
+        await Until(() => Session.CSharp is not { } csharp || csharp.IsReady && csharp.For(document)?.Lsp is not null, ServerLimit, cancel);
+        return (document, Session.CSharp?.For(document)?.Lsp
+            ?? throw new TimeoutException($"The language server has not loaded {Path.GetFileName(document.Path)} ({Session.CSharp?.State ?? "none"})"));
     }
 
     private OpenDocument Document(string path)
     {
         string full = Resolve(path);
-        if (window.EditorArea.Documents.FirstOrDefault(d => d.Path == full) is { } open)
+        if (Editors.Documents.FirstOrDefault(d => d.Path == full) is { } open)
         {
             return open;
         }
@@ -848,7 +862,7 @@ public sealed partial class PassengerTools(MainWindow window)
         {
             throw new FileNotFoundException($"{full} could not be opened: {problem}");
         }
-        return window.EditorArea.Documents.FirstOrDefault(d => d.Path == full)
+        return Editors.Documents.FirstOrDefault(d => d.Path == full)
             ?? throw new FileNotFoundException($"{full} is not open in the editor");
     }
 
@@ -869,10 +883,10 @@ public sealed partial class PassengerTools(MainWindow window)
     /// each file read once: a symbol used thousands of times in a large solution never holds the person's window.</summary>
     private Task<IReadOnlyList<(string Path, string Text)>> Lines(IReadOnlyList<(string Uri, int Line)> places, CancellationToken cancel)
     {
-        string? folder = window.Folder;
+        string? folder = Session.Folder;
         // An editor's snapshot is immutable, so an open file's lines (unsaved edits and all) are read off the UI thread too.
         Dictionary<string, TextSnapshot> open = new(StringComparer.Ordinal);
-        foreach (OpenDocument document in window.EditorArea.Documents)
+        foreach (OpenDocument document in Editors.Documents)
         {
             open.TryAdd(document.Path, document.Text.Snapshot);
         }
@@ -932,31 +946,31 @@ public sealed partial class PassengerTools(MainWindow window)
 
     private Workspace Snapshot()
     {
-        OpenDocument? active = window.EditorArea.Active;
-        TextPosition? caret = active is null ? null : window.EditorArea.CodeEditor.CaretPosition;
+        ProjectSession session = Session;
+        OpenDocument? active = Editors.Active;
+        TextPosition? caret = active is null ? null : Editors.CodeEditor.CaretPosition;
         return new Workspace(
-            window.Folder,
-            window.Solution?.Path,
-            [.. (window.WorkspaceModel?.Projects ?? []).Select(p => new ProjectInfo(p.Name, Relative(p.Path), p.OutputType, p.TargetFrameworks))],
-            [.. window.Configurations.Select(c => c.Name)],
-            window.Configuration?.Name,
-            window.CSharpService is null ? "none" : window.CSharpService.IsReady ? "ready" : window.CSharpService.State,
-            [.. window.EditorArea.Documents.Select(d => Relative(d.Path) + (d.IsModified ? " (unsaved)" : ""))],
+            session.Folder,
+            session.Solution?.Path,
+            [.. (session.Workspace?.Projects ?? []).Select(p => new ProjectInfo(p.Name, Relative(p.Path), p.OutputType, p.TargetFrameworks))],
+            [.. session.Configurations.All.Select(c => c.Name)],
+            session.Configurations.Chosen?.Name,
+            session.CSharp is not { } csharp ? "none" : csharp.IsReady ? "ready" : csharp.State,
+            [.. Editors.Documents.Select(d => Relative(d.Path) + (d.IsModified ? " (unsaved)" : ""))],
             active is null ? null : $"{Relative(active.Path)}:{caret!.Value.Line + 1}:{caret.Value.Column + 1}",
             window.Debugger.Session?.State.ToString().ToLowerInvariant() ?? "not debugging");
     }
 
     /// <summary>A path an agent gave, from the open folder unless rooted, as the IDE names it (in any letter case).</summary>
     private string Resolve(string path) =>
-        PathNames.Canonical(Path.IsPathRooted(path) || window.Folder is null ? path : Path.Combine(window.Folder, path));
+        PathNames.Canonical(Path.IsPathRooted(path) || Session.Folder is not { } folder ? path : Path.Combine(folder, path));
 
-    private string Relative(string path) => Relative(window.Folder, path);
+    private string Relative(string path) => Relative(Session.Folder, path);
 
     private static string Relative(string? folder, string path) => folder is not null && PathNames.IsUnder(path, folder)
         ? Path.GetRelativePath(folder, path)
         : path;
 
-    /// <summary>A console's last lines, with what is on its way to it.</summary>
     /// <summary>The last lines of a terminal's scrollback and screen, as a program in it left them.</summary>
     private static string Tail(global::Passenger.Terminal.TerminalSession terminal, int lines)
     {
@@ -972,7 +986,12 @@ public sealed partial class PassengerTools(MainWindow window)
     private static string Tail(ToolWindows.OutputView console, int lines)
     {
         console.Flush();
-        TextSnapshot text = console.Document.Snapshot;
+        return Tail(console.Document.Snapshot, lines);
+    }
+
+    /// <summary>A console's last lines.</summary>
+    private static string Tail(TextSnapshot text, int lines)
+    {
         int first = Math.Max(0, text.LineCount - lines);
         return text.GetText(text.GetLineStart(first), text.Length - text.GetLineStart(first));
     }

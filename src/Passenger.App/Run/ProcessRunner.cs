@@ -46,6 +46,14 @@ public sealed class ProcessRunner : IDisposable
 
     public TextDocument Output => console.Document;
 
+    /// <summary>What the console shows of the process now, what is on its way to it taken in first: what an agent reads of
+    /// a run, rather than the window's view of it.</summary>
+    public TextSnapshot Shown()
+    {
+        console.Flush();
+        return console.Document.Snapshot;
+    }
+
     /// <summary>From the start until <see cref="Exited"/> is raised, so nothing starts again before whoever waits hears the end.</summary>
     public bool IsRunning => running;
 

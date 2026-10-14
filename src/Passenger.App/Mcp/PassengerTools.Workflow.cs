@@ -71,7 +71,7 @@ public sealed partial class PassengerTools
         string name = Relative(full).Replace('\\', '/');
         await window.Vcs.Opened;
         string head = await window.Vcs.HeadTextAsync(full) ?? string.Empty;
-        TextSnapshot? open = window.EditorArea.Documents.FirstOrDefault(d => d.Path == full)?.Text.Snapshot;
+        TextSnapshot? open = Editors.Documents.FirstOrDefault(d => d.Path == full)?.Text.Snapshot;
         // Reading and comparing a large file would hold the person's window: the thread pool does both.
         string diff = await BackgroundWork.Run(() => LineDiff.Unified(head, open?.ToString() ?? (File.Exists(full) ? File.ReadAllText(full) : string.Empty), name), cancel);
         return diff.Length == 0 ? "No changes" : diff;
@@ -167,7 +167,7 @@ public sealed partial class PassengerTools
             {
                 throw new InvalidOperationException($"No stash {index}; there are {before.Count}");
             }
-            window.EditorArea.SaveAll();
+            Editors.SaveAll();
             VcsOutcome done = action switch
             {
                 "push" => await vcs.StashAsync(message),
@@ -208,7 +208,7 @@ public sealed partial class PassengerTools
         List<string> said = [];
         manager.Line += (_, line) => said.Add(line);
         bool done = await manager.InstallAsync(chosen.Path, id, at);
-        window.ReloadSolution();
+        Session.ReadAgain();
         return done ? $"{id} {at} is in {chosen.Name}" : throw new InvalidOperationException(string.Join('\n', said.TakeLast(15)));
     });
 
@@ -220,7 +220,7 @@ public sealed partial class PassengerTools
         List<string> said = [];
         manager.Line += (_, line) => said.Add(line);
         bool done = await manager.RemoveAsync(chosen.Path, id);
-        window.ReloadSolution();
+        Session.ReadAgain();
         return done ? $"{id} is out of {chosen.Name}" : throw new InvalidOperationException(string.Join('\n', said.TakeLast(15)));
     });
 
@@ -243,7 +243,7 @@ public sealed partial class PassengerTools
         {
             throw new InvalidOperationException(problem);
         }
-        Passenger.Profiler.ProfilingSession running = window.Profiling!;
+        Passenger.Profiler.ProfilingSession running = Session.Profiling!;
         IReadOnlyList<HeapTypeInfo>? heap = null;
         if (seconds is { } limit)
         {
@@ -371,7 +371,7 @@ public sealed partial class PassengerTools
 
     private ProjectModel Project(string project)
     {
-        IReadOnlyList<ProjectModel> projects = window.Projects;
+        IReadOnlyList<ProjectModel> projects = Session.Projects;
         string full = Resolve(project);
         return projects.FirstOrDefault(p => p.Path == full || p.Name.Equals(project, StringComparison.OrdinalIgnoreCase))
             ?? throw new ArgumentException($"No project {project}; the folder has {string.Join(", ", projects.Select(p => p.Name))}");
