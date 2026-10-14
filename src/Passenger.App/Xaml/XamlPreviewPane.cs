@@ -22,6 +22,7 @@ public sealed class XamlPreviewPane : DockPanel
     private readonly Border edge;
     private readonly TextBlock waiting;
     private TopLevel? shownOn;
+    private Rect? outlined;
 
     public XamlPreviewPane(XamlPreview preview)
     {
@@ -51,7 +52,7 @@ public sealed class XamlPreviewPane : DockPanel
         errorBar.Bind(Border.BorderBrushProperty, errorBar.GetResourceObservable("Passenger.Divider"));
         image = new Image { Stretch = Stretch.Fill };
         // The element at the caret, drawn over the frame in the frame's own units, so it shrinks with it.
-        outline = new Border { BorderThickness = new Thickness(2), IsVisible = false, IsHitTestVisible = false };
+        outline = new Border { BorderThickness = new Thickness(OutlineWidth), IsVisible = false, IsHitTestVisible = false };
         outline.Bind(Border.BorderBrushProperty, outline.GetResourceObservable("Passenger.Accent"));
         marks = new Canvas { IsHitTestVisible = false, Children = { outline } };
         Panel framed = new() { Children = { image, marks } };
@@ -101,8 +102,11 @@ public sealed class XamlPreviewPane : DockPanel
     /// <summary>The outline of the element at the caret, for tests to find on the window.</summary>
     public Control Outline => outline;
 
-    /// <summary>The box outlined, in the frame's units; null while none is.</summary>
-    public Rect? Outlined => outline.IsVisible ? new Rect(Canvas.GetLeft(outline), Canvas.GetTop(outline), outline.Width, outline.Height) : null;
+    /// <summary>The element's box outlined, in the frame's units; null while none is.</summary>
+    public Rect? Outlined => outline.IsVisible ? outlined : null;
+
+    /// <summary>How far the outline stands outside the box it outlines.</summary>
+    public const double OutlineWidth = 2;
 
     /// <summary>The error shown over the frame, for tests; null while there is none.</summary>
     public string? ErrorShown => errorBar.IsVisible ? error.Text : null;
@@ -115,11 +119,13 @@ public sealed class XamlPreviewPane : DockPanel
             outline.IsVisible = false;
             return;
         }
+        // Around the box rather than on its edge, so it shows on an element drawn in the accent's own colour.
         Rect box = element.Box;
-        Canvas.SetLeft(outline, box.X);
-        Canvas.SetTop(outline, box.Y);
-        outline.Width = Math.Max(box.Width, 1);
-        outline.Height = Math.Max(box.Height, 1);
+        outlined = box;
+        Canvas.SetLeft(outline, box.X - OutlineWidth);
+        Canvas.SetTop(outline, box.Y - OutlineWidth);
+        outline.Width = box.Width + (2 * OutlineWidth);
+        outline.Height = box.Height + (2 * OutlineWidth);
         outline.IsVisible = true;
     }
 

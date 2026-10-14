@@ -16,8 +16,8 @@ namespace Passenger.Tests;
 /// <summary>WPF's previewer through the window, on Windows: <see cref="WpfXamlTests"/>' <c>dotnet new wpf</c> app (App.xaml's
 /// merged brushes and heading style, a <c>d:DataContext</c> view model, a button template drawing its background) built and
 /// previewed: the window with App.xaml's resources, an edit followed, broken XAML's error with its line over the last frame,
-/// a user control at its design size with its design-time data, an element chosen by a click or the caret. Elsewhere they
-/// skip, as WPF draws only on Windows (<see cref="WpfXamlTests"/> checks what the pane says there).</summary>
+/// a user control at its design size with its design-time data and inside a window, an element chosen by a click or the
+/// caret. Elsewhere they skip, as WPF draws only on Windows (<see cref="WpfXamlTests"/> checks what the pane says there).</summary>
 public sealed class WpfPreviewTests : IClassFixture<WpfPreviewTests.Gallery>
 {
     private const string OnlyOnWindows = "WPF draws only on Windows, so its previewer runs only there";
@@ -105,41 +105,87 @@ public sealed class WpfPreviewTests : IClassFixture<WpfPreviewTests.Gallery>
     }
 
     [AvaloniaFact]
-    public void Clicking_an_element_in_the_preview_selects_its_start_tag_and_the_caret_outlines_its_element()
+    public void A_user_control_draws_its_own_xaml_in_a_window_that_uses_it_and_one_with_no_code_behind_draws_nothing_as_the_app_does()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), OnlyOnWindows);
+        app.Write("Tile.xaml", Tile);
+        app.Write("Tile.xaml.cs", TileCodeBehind);
+        app.Write("Badge.xaml", Badge);
+        string tiles = app.Write("Tiles.xaml", Tiles);
+        MainWindow window = app.Open(tiles);
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        OpenDocument document = window.EditorArea.Active!;
+        XamlPreview preview = Previewed(window, document);
+        Assert.Null(preview.Error);
+        XamlPreviewPane pane = window.PreviewPaneOf(document)!;
+
+        // The tile's constructor loads its own XAML from the build, as the app's does: its cream border and its text.
+        PreviewElement tile = ElementOf(preview, editor, "<local:Tile");
+        Assert.True(tile.Box.Height > 20, $"The tile is drawn {tile.Box.Height} high: its own XAML did not load");
+        Point inside = pane.Frame.TranslatePoint(new Point(tile.Box.Right - 6, tile.Box.Bottom - 4), window)!.Value;
+        Assert.Equal(Color.Parse("#FFF4E0"), Ui.Pixel(window, inside));
+
+        // Nothing calls a XAML-only control's InitializeComponent (MarkupCompile makes no constructor), so the app draws it
+        // empty, and so does its preview.
+        PreviewElement badge = ElementOf(preview, editor, "<local:Badge");
+        Assert.Equal(0, badge.Box.Height);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void The_caret_outlines_its_element_from_the_first_frame_and_clicking_an_element_in_the_preview_selects_its_start_tag()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), OnlyOnWindows);
         MainWindow window = app.Open(app.PathOf("MainWindow.xaml"));
         CodeEditor editor = window.EditorArea.CodeEditor;
         OpenDocument document = window.EditorArea.Active!;
+        PlaceAfter(editor, "<Button x:Name=\"G");
         XamlPreview preview = Previewed(window, document);
         XamlPreviewPane pane = window.PreviewPaneOf(document)!;
+        Point OnWindow(Point inFrame) => pane.Frame.TranslatePoint(inFrame, window) ?? throw new InvalidOperationException("The preview's frame is not on the window");
 
+        // The caret was in the button's tag before the frame came: the first frame outlines it, around its box, so the
+        // outline shows beside a button of the accent's own colour.
         PreviewElement button = ElementOf(preview, editor, "<Button x:Name=\"Go\"");
-        Point at = pane.Frame.TranslatePoint(new Point(button.Box.X + 24, button.Box.Center.Y), window)!.Value;
+        Assert.Equal(button.Box, pane.Outlined);
+        OutlineAround(window, pane, button);
+        Point beside = OnWindow(new Point(button.Box.X - (XamlPreviewPane.OutlineWidth / 2), button.Box.Center.Y));
+        Color outlined = Ui.Pixel(window, beside);
+
+        // A click on the heading selects its start tag, the caret at its start, and outlines it.
+        PreviewElement heading = ElementOf(preview, editor, "<TextBlock Style=\"{StaticResource Heading}\"");
+        Point at = OnWindow(new Point(heading.Box.X + 24, heading.Box.Center.Y));
         window.MouseDown(at, MouseButton.Left);
         window.MouseUp(at, MouseButton.Left);
         Ui.Settle();
         string text = editor.Document.Snapshot.ToString();
-        int start = text.IndexOf("<Button x:Name=\"Go\"", StringComparison.Ordinal);
+        int start = text.IndexOf("<TextBlock Style=\"{StaticResource Heading}\"", StringComparison.Ordinal);
         int end = text.IndexOf("/>", start, StringComparison.Ordinal) + 2;
         Assert.Equal(new Selection(end, start), editor.Selections.Primary with { PreferredX = double.NaN });
-        Assert.Equal(button.Box, pane.Outlined);
-
-        // The caret in another element's tag outlines that one, where the frame draws it.
-        PlaceAfter(editor, "<TextBlock Style=\"{StaticResource Heading}\" Te");
-        Ui.Settle();
-        PreviewElement heading = ElementOf(preview, editor, "<TextBlock Style=\"{StaticResource Heading}\"");
         Assert.Equal(heading.Box, pane.Outlined);
-        Assert.True(pane.Outline.IsVisible, "The outline is not shown");
-        Point drawn = pane.Outline.TranslatePoint(default, window)!.Value;
-        Point expected = pane.Frame.TranslatePoint(heading.Box.TopLeft, window)!.Value;
-        Assert.True(Math.Abs(drawn.X - expected.X) < 1 && Math.Abs(drawn.Y - expected.Y) < 1, $"The outline is drawn at {drawn}, the heading at {expected}");
+        OutlineAround(window, pane, heading);
+        Assert.NotEqual(outlined, Ui.Pixel(window, beside));
 
-        // In the window's resources, which draw nothing of their own, the window itself is outlined.
+        // The caret in another element's tag outlines that one; in the window's resources, which draw nothing of their
+        // own, the window itself.
+        PlaceAfter(editor, "<ListBox ItemsSource");
+        Ui.Settle();
+        PreviewElement list = ElementOf(preview, editor, "<ListBox ItemsSource");
+        Assert.Equal(list.Box, pane.Outlined);
+        OutlineAround(window, pane, list);
         PlaceAfter(editor, "<Window.Resources>");
         Ui.Settle();
         Assert.Equal(ElementOf(preview, editor, "<Window x:Class").Box, pane.Outlined);
         window.Close();
+    }
+
+    /// <summary>The outline is drawn on the window just around an element's box.</summary>
+    private static void OutlineAround(MainWindow window, XamlPreviewPane pane, PreviewElement element)
+    {
+        Assert.True(pane.Outline.IsVisible, "The outline is not shown");
+        Point drawn = pane.Outline.TranslatePoint(default, window)!.Value;
+        Point expected = pane.Frame.TranslatePoint(element.Box.TopLeft - new Vector(XamlPreviewPane.OutlineWidth, XamlPreviewPane.OutlineWidth), window)!.Value;
+        Assert.True(Math.Abs(drawn.X - expected.X) < 1 && Math.Abs(drawn.Y - expected.Y) < 1, $"The outline is drawn at {drawn}, around the element at {expected}");
     }
 
     /// <summary>The project built, XAML Preview turned on through Find Action, and its first frame drawn.</summary>
@@ -194,6 +240,58 @@ public sealed class WpfPreviewTests : IClassFixture<WpfPreviewTests.Gallery>
                 </StackPanel>
             </Border>
         </UserControl>
+
+        """;
+
+    /// <summary>A user control with its code-behind, whose constructor loads its XAML.</summary>
+    private const string Tile = """
+        <UserControl x:Class="Gallery.Tile"
+                     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+            <Border Background="#FFF4E0" Padding="10">
+                <TextBlock Text="A tile, its own XAML" />
+            </Border>
+        </UserControl>
+
+        """;
+
+    private const string TileCodeBehind = """
+        using System.Windows.Controls;
+
+        namespace Gallery;
+
+        public partial class Tile : UserControl
+        {
+            public Tile()
+            {
+                InitializeComponent();
+            }
+        }
+
+        """;
+
+    /// <summary>A user control with no code-behind: MarkupCompile's class, with no constructor to load its XAML.</summary>
+    private const string Badge = """
+        <UserControl x:Class="Gallery.Badge"
+                     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+            <Border Background="#E2A33F" Height="20" />
+        </UserControl>
+
+        """;
+
+    /// <summary>A window using both.</summary>
+    private const string Tiles = """
+        <Window x:Class="Gallery.Tiles"
+                xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                xmlns:local="clr-namespace:Gallery"
+                Title="Tiles" Height="300" Width="400">
+            <StackPanel Margin="12">
+                <local:Tile />
+                <local:Badge Margin="0,8" />
+            </StackPanel>
+        </Window>
 
         """;
 
