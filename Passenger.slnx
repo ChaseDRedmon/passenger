@@ -16,6 +16,7 @@
     <Project Path="src/Passenger.Terminal/Passenger.Terminal.csproj" />
     <Project Path="src/Passenger.TestFrames/Passenger.TestFrames.csproj" />
     <Project Path="src/Passenger.Text/Passenger.Text.csproj" />
+    <Project Path="src/Passenger.WpfPreview/Passenger.WpfPreview.csproj" />
     <Project Path="src/Passenger.Xaml/Passenger.Xaml.csproj" />
   </Folder>
   <Folder Name="/tests/">

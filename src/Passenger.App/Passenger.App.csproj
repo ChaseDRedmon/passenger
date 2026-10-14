@@ -75,6 +75,13 @@
     <!-- The host's messages, one definition for both ends. -->
     <Compile Include="../Passenger.Host/Protocol.cs" Link="Workspace/HostProtocol.cs" />
     <Compile Include="../Passenger.Host/Stamps.cs" Link="Workspace/HostStamps.cs" />
+    <!-- Built first and carried under wpfpreview/ on Windows, never linked: WPF's previewer runs in its own process on a
+         WPF project's own runtime (Xaml/WpfPreviewHost.cs). It is built everywhere, as WPF compiles anywhere
+         (EnableWindowsTargeting), and for none of the systems the app is published for. -->
+    <ProjectReference Include="../Passenger.WpfPreview/Passenger.WpfPreview.csproj" ReferenceOutputAssembly="false" Private="false"
+                      SkipGetTargetFrameworkProperties="true" GlobalPropertiesToRemove="RuntimeIdentifier;SelfContained;PublishReadyToRun;TargetFramework" />
+    <!-- The previewer's messages, one definition for both ends. -->
+    <Compile Include="../Passenger.WpfPreview/Protocol.cs" Link="Xaml/WpfPreviewProtocol.cs" />
   </ItemGroup>
 
   <!-- TraceEvent's props give a build its Windows natives under x86/, amd64/ and arm64/: msdia140 (the DIA SDK, for
@@ -183,6 +190,24 @@
     <ItemGroup>
       <TestFramesFile Include="@(TestFramesAssembly->'%(RootDir)%(Directory)%(Filename).dll');@(TestFramesAssembly->'%(RootDir)%(Directory)%(Filename).pdb')" />
       <None Include="@(TestFramesFile)" Link="testframes/%(TestFramesFile.Filename)%(TestFramesFile.Extension)"
+            CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    </ItemGroup>
+  </Target>
+
+  <!-- WPF's previewer becomes this project's output under wpfpreview/ when the app is built or published for Windows, the
+       one system WPF draws on: its assembly and runtime configuration, as it carries no package. -->
+  <Target Name="IncludeWpfPreview" BeforeTargets="AssignTargetPaths"
+          Condition="('$(RuntimeIdentifier)' == '' And $([MSBuild]::IsOSPlatform('Windows'))) Or $(RuntimeIdentifier.StartsWith('win-'))">
+    <MSBuild Projects="../Passenger.WpfPreview/Passenger.WpfPreview.csproj" Targets="GetTargetPath"
+             RemoveProperties="RuntimeIdentifier;SelfContained;PublishReadyToRun;TargetFramework" BuildInParallel="$(BuildInParallel)">
+      <Output TaskParameter="TargetOutputs" ItemName="WpfPreviewAssembly" />
+    </MSBuild>
+    <PropertyGroup>
+      <WpfPreviewFolder>@(WpfPreviewAssembly->'%(RootDir)%(Directory)')</WpfPreviewFolder>
+    </PropertyGroup>
+    <ItemGroup>
+      <WpfPreviewFile Include="$(WpfPreviewFolder)Passenger.WpfPreview.*" Exclude="$(WpfPreviewFolder)*.runtimeconfig.dev.json" />
+      <None Include="@(WpfPreviewFile)" Link="wpfpreview/%(WpfPreviewFile.Filename)%(WpfPreviewFile.Extension)"
             CopyToOutputDirectory="PreserveNewest" Visible="false" />
     </ItemGroup>
   </Target>
