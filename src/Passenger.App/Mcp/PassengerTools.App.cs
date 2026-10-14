@@ -294,14 +294,33 @@ public sealed partial class PassengerTools
         {
             [LiveApp only] => only,
             [LiveApp run, LiveApp debug] => throw new ArgumentException($"Run's {run.Name} and Debug's {debug.Name} are both running: name one with app (run or debug)"),
-            _ => throw new InvalidOperationException(new[] { Session.LiveApp, Session.RunApp }.OfType<LiveApp>().FirstOrDefault(a => a.State == LiveAppState.Refused) is { } refused
-                ? refused.Problem ?? $"{refused.Name} cannot be inspected"
-                : Builds.IsRunning || Session.Debug.IsDebugging
-                    ? "What is running is not an Avalonia app Passenger inspects (it has no Avalonia.Base.dll beside it, or Hot Reload runs it)"
-                    : new[] { Session.LiveApp, Session.RunApp }.OfType<LiveApp>().FirstOrDefault() is { } ended
-                        ? $"{ended.Name} has ended: run or debug_start starts it again, or name app ide for Passenger's own windows"
-                        : "No Avalonia app is running: run or debug_start one (Avalonia 12), or name app ide for Passenger's own windows"),
+            _ => throw new InvalidOperationException(WhyNoneRuns()),
         };
+    }
+
+    /// <summary>Why no app is there to inspect. The app of a Run or Debug still winding down has ended once its inspector
+    /// has gone, though its runner has not yet heard the process end (on Windows the socket closes first).</summary>
+    private string WhyNoneRuns()
+    {
+        LiveApp[] apps = [.. new[] { Session.LiveApp, Session.RunApp }.OfType<LiveApp>()];
+        if (apps.FirstOrDefault(a => a.State == LiveAppState.Refused) is { } refused)
+        {
+            return refused.Problem ?? $"{refused.Name} cannot be inspected";
+        }
+        LiveApp? launched = (Session.Debug.IsDebugging ? Session.LiveApp : null) ?? (Builds.IsRunning ? Session.RunApp : null);
+        if (launched is { State: LiveAppState.Ended })
+        {
+            return Ended(launched);
+        }
+        if (Builds.IsRunning || Session.Debug.IsDebugging)
+        {
+            return "What is running is not an Avalonia app Passenger inspects (it has no Avalonia.Base.dll beside it, or Hot Reload runs it)";
+        }
+        return apps.FirstOrDefault() is { } ended
+            ? Ended(ended)
+            : "No Avalonia app is running: run or debug_start one (Avalonia 12), or name app ide for Passenger's own windows";
+
+        static string Ended(LiveApp app) => $"{app.Name} has ended: run or debug_start starts it again, or name app ide for Passenger's own windows";
     }
 
     /// <summary>The app's tree, flattened, and the window named (else the app's first, or for Passenger's own the window this
