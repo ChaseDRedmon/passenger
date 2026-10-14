@@ -142,7 +142,7 @@ public sealed class ProjectEvaluationTests : IDisposable
         Ui.Settle();
         Assert.True(window.CSharpService?.Session is not null, "No language server started");
         // The order the server took them in, as its log says it finished (or failed) each: unrestored, they load with errors.
-        string log = File.ReadAllText(Directory.EnumerateFiles(Passenger.App.CSharp.CSharpService.LogFolder, $"server-*-{window.CSharpService!.Session!.Server.ProcessId}.log").Single());
+        string log = Ui.Shared(Directory.EnumerateFiles(Passenger.App.CSharp.CSharpService.LogFolder, $"server-*-{window.CSharpService!.Session!.Server.ProcessId}.log").Single());
         int At(string project) => log.IndexOf(Path.Combine(project, project + ".csproj"), StringComparison.Ordinal) is >= 0 and var at ? at
             : throw new InvalidOperationException($"The language server's log says nothing of {project}:\n{log}");
         Assert.True(Math.Max(At("App"), At("Core")) < Math.Min(At("Reports"), At("Admin")),
