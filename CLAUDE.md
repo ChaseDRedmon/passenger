@@ -169,7 +169,8 @@ window or takes the focus; it shows everything but the system's own window chrom
   each window back where `Dock.Add` put it. A new tool window is a view and
   one `Dock.Add` in `MainWindow.AddToolWindows`.
 - `src/Passenger.App/State`: the IDE's own state, in one `StateStore` under `PASSENGER_SETTINGS` or the user's local
-  application data, kept only by the person's window: the app's documents at its top (`settings.json`, `layout.json`,
+  application data, kept only by the person's window, shared by every window of the process that keeps state there
+  (`StateStore.Open`), with `layout.json` only the default for a folder with no layout of its own: the app's documents at its top (`settings.json`, `layout.json`,
   `recentSolutions.json`, `updates.json`, `find.json`, `refactorings.json`)
   and each folder's under `workspaces/<name>-<hash>/` (editors and recent files, layout, breakpoints, bookmarks, run
   configurations, Find in Files' scope, `localHistory/`, the profiler's `snapshots/`). A
@@ -214,8 +215,10 @@ window or takes the focus; it shows everything but the system's own window chrom
   20 s without Discord). Only the person's window reaches Discord (`ShowActivityInDiscord`, called by App); the test
   run points `PASSENGER_DISCORD_IPC` at a place of its own where nothing listens.
 - `src/Passenger.App/Settings`: `AppSettings` (the store's `settings.json`) and Rider's searchable `SettingsDialog`;
-  `MainWindow.Settings.cs` applies them live. A new setting is a property, an option row in the dialog, a line in
-  `ApplySettings`, and its range in `Clamped` when it has one. `SettingsDialog.Keymap.cs` is the Keymap page: Rider's
+  `SettingsStore` holds them once per process: a change reads settings.json again, puts over it only what changed and
+  raises `Changed`, which every window follows (`MainWindow.Follow`), the file watched for other Passengers. A new
+  setting is a property, an option row in the dialog, a line in `MainWindow.Follow` (the window's side) or
+  `SettingsStore.InForce` (the process's), and its range in `Clamped` when it has one. `SettingsDialog.Keymap.cs` is the Keymap page: Rider's
   Edit Shortcuts menu, the Keyboard Shortcut dialog (chords) and Find Actions by Shortcut; `Keymap.Conflicts` is Rider's
   conflict rule, and a conflict is removed, never kept, since a shortcut runs one action. A chord can't be a native
   macOS menu key equivalent; in-window menus show it as text.
@@ -286,6 +289,11 @@ window or takes the focus; it shows everything but the system's own window chrom
   change, or the `VcsController.Activity` name), files opened, `EditorArea.MoveFile` and Explorer deletes, off the UI
   thread; it prunes to Rider's 5 days of activity and a size cap (`HistoryKeeping`). `LocalHistoryView` is the tool
   window, reusing `DiffView` on the file's document. A test that deletes through the IDE sets `Trash.Folder`.
+- `Explorer/FileNesting` nests a project's files in the Solution view by Rider's rules (its
+  `ProjectViewNestingRulesProvider`s, chained as IntelliJ's `FileNestingBuilder` does), the project's `DependentUpon`,
+  and `appsettings.*.json`; File Nesting… in the Explorer's options turns the rules off (`AppSettings.NestFiles`). A
+  rename, move or copy takes a file's dependents along, and `ProjectEdits.MoveItems` makes the project's `Include`,
+  `DependentUpon` and `LastGenOutput` follow. A tool window's own header ⋮ items are `ToolWindow.Options`.
 - `src/Passenger.App/Workspace`: `SolutionModel` reads solutions and projects for the Explorer's Solution view, and
   `SolutionEdits` is every change to a .sln or .slnx (solution folders, the files they list, projects in and out): a
   .sln line by line and a .slnx through XDocument with its whitespace kept, so the rest of the file stays byte for byte
@@ -302,6 +310,13 @@ window or takes the focus; it shows everything but the system's own window chrom
   Encoding / Line Separators change them (`MainWindow.FileProperties.cs`), each one undoable step, a choice winning
   over .editorconfig's while the file is open. `FileEncoding` lists the encodings; `EncodingChange` weighs Reload
   against Convert as Rider's EncodingUtil does.
+- `src/Passenger.App/PassengerApp.cs`: the process root. Its project windows (a folder or solution each), the one in
+  front, and the one `OpenProject(path, ThisWindow | NewWindow)` that a start, Open, the recent solutions, the Welcome
+  screen, the Window menu, the system's file activation (`App.OnActivated`) and `--mcp` go through; `NewWindow` makes a
+  window as the one it is opened from. `MainWindow.Open` asks Rider's Open Solution (`OpenProjectDialog`) unless
+  Settings' Open project in answers. Quit keeps every window's solution for the next start; a window closed alone does
+  not. Discord's one presence (the front window's) and the one watch for updates live here. A window's state is its
+  own fields, and a static says why it belongs to the process.
 - `src/Passenger.App`: the shell. Explorer, editor tabs, files on disk. Each action is an `IdeAction` (id, title,
   group, menu places, `Run`, `WhyNot`, whether its keys work while the terminal has them) that its feature adds to the
   window's `ActionRegistry`: `MainWindow.Actions.cs` for the window's own, a partial's or controller's `Add…Actions`
@@ -333,6 +348,12 @@ window or takes the focus; it shows everything but the system's own window chrom
   let go by Detach and by the window's close, never ended by them. On macOS the debugger needs no entitlement and no
   get-task-allow on its target: the adapter runs under the machine's dotnet and talks to the runtime through its
   pipes, so the package carries no com.apple.security.cs.debugger.
+- Return values and Smart Step Into: a step over sets a breakpoint after each call in its statement
+  (`ICorDebugCode3.GetReturnValueLiveOffset`) and keeps each value by a strong handle (a value type boxed by an eval,
+  after which the step's stepper is made anew, since an eval mid-step loses it); `$ReturnValue`/`$ReturnValueN` are
+  expression-compiler aliases, as `$exception` is, typed by the program's own assemblies. Smart Step Into matches the
+  statement's IL calls to its Roslyn syntax by name, in order, and steps over it with a breakpoint at the chosen
+  method's first line; the editor's choice mode is `CodeEditor.Choices`.
 - `src/Passenger.App/Debugging`: `BreakpointStore` holds line breakpoints by file and Rider's CLR exception
   breakpoints (`ExceptionBreakpoint`; "Any exception" is every folder's and is never removed), kept with the folder;
   `Muted` is Mute Breakpoints, which sends none while on. The engine decides exception breakpoints (`ExceptionRule`)
@@ -440,7 +461,8 @@ more than 1.5 nodes a processor running machine-wide): a test that needs one wai
 
 The debugger's tests (`tests/Passenger.Tests/Debugging`) run the adapter from the tests' own `debugger/` folder, as
 the IDE does, and launch or attach to the programs in `tests/Debuggees`, whose lines and columns (tabs included) they
-stop at: moving a line there means moving the tests that name it. `TerminalConsoleApp` there needs a real terminal;
+stop at: moving a line there means moving the tests that name it. A line breakpoint on a line with a lambda binds inside
+the lambda, so a test stopping at such a statement gives its column. `TerminalConsoleApp` there needs a real terminal;
 window tests copy it into a folder of their own (`Debuggees.CopyTo`). They run one at a time (`DebugSession.Collection`). `PASSENGER_ENGINE_LOG=FILE` keeps the engine's own log, for the
 tests' sessions and the IDE's alike.
 
