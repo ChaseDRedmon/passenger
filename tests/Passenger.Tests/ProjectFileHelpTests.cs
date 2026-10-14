@@ -1,0 +1,414 @@
+using Avalonia.Headless;
+using Avalonia.Headless.XUnit;
+using Passenger.App;
+using Passenger.App.Explorer;
+using Passenger.App.Run;
+using Passenger.App.Workspace;
+using Passenger.Core;
+using Passenger.Editor;
+using Passenger.Text;
+
+namespace Passenger.Tests;
+
+/// <summary>Code help in project files, as Rider gives it, through the window: an SDK-style project and a
+/// Directory.Packages.props complete their elements, properties and values, package ids and versions from the folder's
+/// feed (a stand-in on loopback, never nuget.org), paths and the names MSBuild's evaluation knows; the card over a name
+/// says its evaluated value and where it was set; Go to Declaration goes where a property, target or import is defined,
+/// the SDK's own targets read-only; the evaluation's errors and a vulnerable package are marked on their lines and listed in
+/// Problems; and a project file saved has the Solution view show what it says now.</summary>
+public sealed class ProjectFileHelpTests : IDisposable
+{
+    private const string Advisory = "https://github.com/advisories/GHSA-pass-0000-test";
+
+    /// <summary>A project with a property of its own over the SDK's, a condition on a property Directory.Build.props sets,
+    /// a package at a vulnerable version, an import of its own and one of a file not there, and a target after Build.</summary>
+    private const string Project = """
+        <Project Sdk="Microsoft.NET.Sdk">
+          <PropertyGroup>
+            <OutputType>Exe</OutputType>
+          </PropertyGroup>
+          <PropertyGroup Condition="'$(ShopLogs)' == 'true'">
+            <DefineConstants>$(DefineConstants);LOGS</DefineConstants>
+          </PropertyGroup>
+          <ItemGroup>
+            <PackageReference Include="Passenger.Vulnerable" Version="1.0.0" />
+            <ProjectReference Include="../" />
+          </ItemGroup>
+          <Import Project="Shared.targets" />
+          <Import Project="Missing.targets" />
+          <Target Name="Shout" DependsOnTargets="Build">
+            <Message Text="Built $(TargetFramework)" Importance="high" />
+          </Target>
+        </Project>
+
+        """;
+
+    private const string BuildProps = """
+        <Project>
+          <PropertyGroup>
+            <TargetFramework>net10.0</TargetFramework>
+            <ShopLogs>true</ShopLogs>
+            <SampleVersion>2.0.0</SampleVersion>
+          </PropertyGroup>
+        </Project>
+
+        """;
+
+    private readonly string folder = PathNames.Canonical(TestFolders.Create("projectfiles-"));
+    private readonly StandInFeed feed = new();
+
+    public ProjectFileHelpTests()
+    {
+        feed.Add("Passenger.Vulnerable", "1.0.0");
+        feed.Add("Passenger.Vulnerable", "1.0.1");
+        feed.Add("Passenger.Vulnerable", "1.1.0");
+        feed.Add("Passenger.Sample", "2.0.0");
+        feed.Add("Passenger.Other", "3.0.0");
+        feed.Advise("Passenger.Vulnerable", 1, Advisory, "[1.0.0, 1.0.1)");
+        // Only the stand-in, for packages and for the audit, and restores kept out of the person's package cache.
+        Write("nuget.config", $"""
+            <?xml version="1.0" encoding="utf-8"?>
+            <configuration>
+              <packageSources>
+                <clear />
+                <add key="stand-in" value="{feed.Index}" protocolVersion="3" allowInsecureConnections="true" />
+              </packageSources>
+              <auditSources>
+                <clear />
+                <add key="stand-in" value="{feed.Index}" allowInsecureConnections="true" />
+              </auditSources>
+              <config>
+                <add key="globalPackagesFolder" value="packages" />
+              </config>
+            </configuration>
+            """);
+        Write("Shop.slnx", "<Solution>\n  <Project Path=\"App/App.csproj\" />\n  <Project Path=\"Core/Core.csproj\" />\n</Solution>\n");
+        Write("Directory.Build.props", BuildProps);
+        Write("App/App.csproj", Project);
+        Write("App/Shared.targets", "<Project>\n  <Target Name=\"Greet\" BeforeTargets=\"Build\" />\n</Project>\n");
+        Write("App/Program.cs", "System.Console.WriteLine(\"Shop\");\n");
+        Write("Core/Core.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n</Project>\n");
+        Write("Core/Store.cs", "class Store\n{\n}\n");
+    }
+
+    public void Dispose()
+    {
+        feed.Dispose();
+        TestFolders.Delete(folder);
+    }
+
+    [AvaloniaFact]
+    public void A_project_file_completes_its_properties_their_values_paths_and_the_names_its_evaluation_knows()
+    {
+        MainWindow window = Open("App/App.csproj");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "<OutputType>Exe</OutputType>");
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("<");
+        Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("TargetFramework"), "the properties a PropertyGroup takes after a tag's '<'");
+        Assert.Equal(["TargetFramework", "TargetFrameworks", "OutputType", "Nullable", "ImplicitUsings"], window.Assist.CompletionLabels.Take(5));
+        // A property's value now is beside it, as the evaluation has it from Directory.Build.props.
+        Assert.Contains(("TargetFramework", "net10.0"), window.Assist.CompletionDetails);
+        window.KeyTextInput("Nul");
+        Ui.Settle();
+        Assert.Equal("Nullable", window.Assist.CompletionLabels.FirstOrDefault());
+        Assert.StartsWith("Set the nullable annotations and warnings context", window.Assist.ItemDocumentation);
+        Ui.Press(window, "ENTER");
+        Assert.EndsWith("<Nullable>|</Nullable>", CaretLine(editor), StringComparison.Ordinal);
+        Ui.WaitFor(() => window.Assist.CompletionLabels.Count > 0, "Nullable's values offered between its tags");
+        Assert.Equal(["enable", "disable", "warnings", "annotations"], window.Assist.CompletionLabels);
+        Ui.Press(window, "ENTER");
+        Assert.EndsWith("<Nullable>enable|</Nullable>", CaretLine(editor), StringComparison.Ordinal);
+
+        // Those the project's own files set are offered too, Directory.Build.props' among them.
+        PlaceAfter(editor, "<Nullable>enable</Nullable>");
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("<");
+        Ui.WaitFor(() => window.Assist.CompletionLabels.Count > 0, "the properties offered again");
+        window.KeyTextInput("Shop");
+        Ui.Settle();
+        Assert.Equal(("ShopLogs", "true"), window.Assist.CompletionDetails.FirstOrDefault());
+        Ui.Press(window, "ESCAPE");
+
+        // A property in a condition: the names the evaluation knows, a property of Directory.Build.props among them.
+        PlaceAfter(editor, "'$(Shop");
+        Ui.Run(window, AppActions.Complete);
+        Ui.WaitFor(() => window.Assist.CompletionLabels.Count > 0, "the properties offered after '$('");
+        Assert.Equal(("ShopLogs", "true"), window.Assist.CompletionDetails[0]);
+        Ui.Press(window, "ESCAPE");
+
+        // A project reference's path, a folder at a time from the project's own.
+        PlaceAfter(editor, "<ProjectReference Include=\"../");
+        Ui.Run(window, AppActions.Complete);
+        Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Core"), "the folders beside the project's");
+        window.KeyTextInput("Co");
+        Ui.Settle();
+        Ui.Press(window, "ENTER");
+        Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Core.csproj"), "the project in the folder chosen");
+        Assert.DoesNotContain("Store.cs", window.Assist.CompletionLabels);
+        Ui.Press(window, "ENTER");
+        Assert.Contains("<ProjectReference Include=\"../Core/Core.csproj|\" />", CaretLine(editor), StringComparison.Ordinal);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_package_reference_completes_ids_and_versions_from_the_folders_feed_and_a_vulnerable_version_is_marked()
+    {
+        MainWindow window = Open("App/App.csproj");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        OpenDocument document = window.EditorArea.Active!;
+        Ui.WaitFor(() => document.Markers.Any(m => m.Message.StartsWith("NU1902", StringComparison.Ordinal)), "the vulnerable package's warning");
+        Marker vulnerable = MarkerOn(editor, document, "1.0.0");
+        Assert.Equal(MarkerKind.Warning, vulnerable.Kind);
+        Assert.Equal($"NU1902: Package 'Passenger.Vulnerable' 1.0.0 has a known moderate severity vulnerability, {Advisory}", vulnerable.Message);
+        Ui.WaitFor(() => window.BottomPanel.Problems.FileProblems.Any(p => p.Severity == ProblemSeverity.Warning && p.Message.Contains("Passenger.Vulnerable", StringComparison.Ordinal)),
+            "Problems listing the vulnerable package");
+
+        // The versions the feed has, newest first, the vulnerable one saying so.
+        PlaceAfter(editor, "Include=\"Passenger.Vulnerable\" Version=\"");
+        Ui.Run(window, AppActions.Complete);
+        Ui.WaitFor(() => window.Assist.CompletionLabels.Count == 3, "the package's three versions");
+        Assert.Equal([("1.1.0", ""), ("1.0.1", ""), ("1.0.0", "Moderate severity vulnerability")], window.Assist.CompletionDetails);
+        Ui.Press(window, "ESCAPE");
+
+        // A new reference: the item, then its id from the feed, which goes in with the feed's latest version.
+        PlaceAfter(editor, "<ProjectReference Include=\"../\" />");
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("<");
+        Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("PackageReference"), "the item types an ItemGroup takes");
+        window.KeyTextInput("PackageRef");
+        Ui.Settle();
+        Ui.Press(window, "ENTER");
+        Assert.EndsWith("<PackageReference Include=\"|\" />", CaretLine(editor), StringComparison.Ordinal);
+        Ui.WaitFor(() => window.Assist.CompletionLabels.Count == 3, "the feed's packages offered for the reference's Include");
+        window.KeyTextInput("Sam");
+        Ui.Settle();
+        Assert.Equal(("Passenger.Sample", "2.0.0"), window.Assist.CompletionDetails[0]);
+        Ui.Press(window, "ENTER");
+        Assert.EndsWith("<PackageReference Include=\"Passenger.Sample|\" Version=\"2.0.0\" />", CaretLine(editor), StringComparison.Ordinal);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void The_card_over_a_name_says_its_evaluated_value_and_where_it_was_set_and_go_to_declaration_goes_there()
+    {
+        MainWindow window = Open("App/App.csproj");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "'$(Shop");
+        Ui.Run(window, AppActions.QuickDocumentation);
+        Ui.WaitFor(() => window.Assist.HoverText is not null, "the card over the property");
+        Assert.Equal("ShopLogs = true\nMSBuild property, set in Directory.Build.props, line 4", window.Assist.HoverText);
+        Ui.Press(window, "ESCAPE");
+        PlaceAfter(editor, "<Output");
+        Ui.Run(window, AppActions.QuickDocumentation);
+        Ui.WaitFor(() => window.Assist.HoverText is not null, "the card over the project's own property");
+        Assert.StartsWith("OutputType = Exe\nMSBuild property, set in App.csproj, line 3 (over ", window.Assist.HoverText);
+        Assert.EndsWith("earlier definition)\nType of output to generate (WinExe, Exe, or Library)", window.Assist.HoverText);
+        Ui.Press(window, "ESCAPE");
+
+        // From a property to where it is set.
+        PlaceAfter(editor, "'$(Shop");
+        Ui.Run(window, AppActions.GoToDeclaration);
+        Ui.Settle();
+        Assert.Equal("Directory.Build.props", window.EditorArea.Active?.Name);
+        Assert.Equal("    |<ShopLogs>true</ShopLogs>", CaretLine(window.EditorArea.CodeEditor));
+
+        // From an import to its file.
+        window.OpenFile(Path.Combine(folder, "App", "App.csproj"));
+        Ui.Settle();
+        editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "<Import Project=\"Sha");
+        Ui.Run(window, AppActions.GoToDeclaration);
+        Ui.Settle();
+        Assert.Equal("Shared.targets", window.EditorArea.Active?.Name);
+
+        // From a target into the SDK's own targets, which open read-only.
+        window.OpenFile(Path.Combine(folder, "App", "App.csproj"));
+        Ui.Settle();
+        editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "DependsOnTargets=\"Bui");
+        Ui.Run(window, AppActions.QuickDocumentation);
+        Ui.WaitFor(() => window.Assist.HoverText is not null, "the card over the target");
+        Assert.StartsWith("Target Build\nMSBuild target, defined in Microsoft.Common.CurrentVersion.targets, line ", window.Assist.HoverText);
+        Ui.Press(window, "ESCAPE");
+        Ui.Run(window, AppActions.GoToDeclaration);
+        Ui.Settle();
+        OpenDocument targets = window.EditorArea.Active!;
+        Assert.Equal("Microsoft.Common.CurrentVersion.targets", targets.Name);
+        Assert.True(targets.IsReadOnly, "the SDK's targets opened editable");
+        Assert.Equal("  |<Target", CaretLine(window.EditorArea.CodeEditor));
+        Assert.Contains("Name=\"Build\"", targets.Text.Snapshot.GetLineText(window.EditorArea.CodeEditor.CaretPosition.Line + 1), StringComparison.Ordinal);
+        // In the SDK's file the card still knows the project's values, gone into from it.
+        PlaceAfter(window.EditorArea.CodeEditor, "\"$(BuildDepends");
+        Ui.Run(window, AppActions.QuickDocumentation);
+        Ui.WaitFor(() => window.Assist.HoverText is not null, "the card over the SDK's property");
+        Assert.StartsWith("BuildDependsOn = ", window.Assist.HoverText);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void The_evaluations_errors_are_marked_on_their_lines_as_typed_and_listed_in_problems()
+    {
+        MainWindow window = Open("App/App.csproj");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        OpenDocument document = window.EditorArea.Active!;
+        Ui.WaitFor(() => document.Markers.Any(m => m.Kind == MarkerKind.Error), "the import that is not there marked");
+        Marker missing = MarkerOn(editor, document, "Missing.targets");
+        Assert.StartsWith("MSB4019: The imported project \"", missing.Message);
+        Assert.EndsWith("Missing.targets\" was not found. Confirm that the expression in the Import declaration \"Missing.targets\" is correct, and that the file exists on disk.",
+            missing.Message);
+        Ui.WaitFor(() => window.BottomPanel.Problems.FileProblems.Any(p => p.Severity == ProblemSeverity.Error && p.Message.StartsWith("MSB4019", StringComparison.Ordinal)),
+            "Problems listing the import not found");
+
+        // A malformed condition, as typed: the evaluation stops there, and says so on it.
+        Replace(editor, "'$(ShopLogs)' == 'true'", "'$(ShopLogs)' ==");
+        Ui.WaitFor(() => document.Markers.Any(m => m.Message.StartsWith("MSB4092", StringComparison.Ordinal)), "the malformed condition marked");
+        Marker condition = MarkerOn(editor, document, "'$(ShopLogs)' ==");
+        Assert.Equal(MarkerKind.Error, condition.Kind);
+        Assert.StartsWith("MSB4092: An unexpected token", condition.Message);
+        Replace(editor, "'$(ShopLogs)' ==", "'$(ShopLogs)' == 'true'");
+        Ui.WaitFor(() => !document.Markers.Any(m => m.Message.StartsWith("MSB4092", StringComparison.Ordinal)), "the condition put right no longer marked");
+
+        // An SDK that is not there.
+        Replace(editor, "Sdk=\"Microsoft.NET.Sdk\"", "Sdk=\"Microsoft.NET.Sdk.Nowhere\"");
+        Ui.WaitFor(() => document.Markers.Any(m => m.Message.StartsWith("MSB4236", StringComparison.Ordinal)), "the unknown SDK marked");
+        Assert.Equal("MSB4236: The SDK 'Microsoft.NET.Sdk.Nowhere' specified could not be found.", MarkerOn(editor, document, "Microsoft.NET.Sdk.Nowhere").Message);
+        Ui.WaitFor(() => window.BottomPanel.Problems.FileProblems.Count(p => p.Severity == ProblemSeverity.Error) == 1, "Problems listing the one error the evaluation stopped on");
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Directory_packages_props_completes_versions_marks_a_vulnerable_one_and_takes_a_new_references_version()
+    {
+        Write("Directory.Packages.props", """
+            <Project>
+              <PropertyGroup>
+                <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+              </PropertyGroup>
+              <ItemGroup>
+                <PackageVersion Include="Passenger.Sample" Version="$(SampleVersion)" />
+                <PackageVersion Include="Passenger.Vulnerable" Version="1.0.0" />
+              </ItemGroup>
+            </Project>
+
+            """);
+        Write("App/App.csproj", Project.Replace(" Version=\"1.0.0\"", string.Empty, StringComparison.Ordinal));
+        MainWindow window = Open("Directory.Packages.props");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        OpenDocument props = window.EditorArea.Active!;
+        Ui.WaitFor(() => props.Markers.Any(m => m.Message.StartsWith("NU1902", StringComparison.Ordinal)), "the vulnerable version's warning");
+        Assert.Equal(MarkerKind.Warning, MarkerOn(editor, props, "1.0.0").Kind);
+        Ui.WaitFor(() => window.BottomPanel.Problems.FileProblems.Count == 1, "Problems listing the vulnerable version");
+
+        PlaceAfter(editor, "<PackageVersion Include=\"Passenger.Vulnerable\" Version=\"");
+        Ui.Run(window, AppActions.Complete);
+        Ui.WaitFor(() => window.Assist.CompletionLabels.Count == 3, "the package's versions");
+        Assert.Equal(["1.1.0", "1.0.1", "1.0.0"], window.Assist.CompletionLabels);
+        Ui.Press(window, "ESCAPE");
+
+        PlaceAfter(editor, "<PackageVersion Include=\"Passenger.Vul");
+        Ui.Run(window, AppActions.QuickDocumentation);
+        Ui.WaitFor(() => window.Assist.HoverText is not null, "the card over the central version");
+        Assert.Equal($"PackageVersion Passenger.Vulnerable\nVersion = 1.0.0\nPackage 'Passenger.Vulnerable' 1.0.0 has a known moderate severity vulnerability, {Advisory}\n"
+            + "MSBuild item, 2 PackageVersion items in the project\nA package's version under central package management (Directory.Packages.props), which the projects' PackageReference items take",
+            window.Assist.HoverText);
+        Ui.Press(window, "ESCAPE");
+
+        PlaceAfter(editor, "Version=\"$(SampleVer");
+        Ui.Run(window, AppActions.QuickDocumentation);
+        Ui.WaitFor(() => window.Assist.HoverText is not null, "the card over the property the version reads");
+        Assert.Equal("SampleVersion = 2.0.0\nMSBuild property, set in Directory.Build.props, line 5", window.Assist.HoverText);
+        Ui.Press(window, "ESCAPE");
+        Ui.Run(window, AppActions.GoToDeclaration);
+        Ui.Settle();
+        Assert.Equal("Directory.Build.props", window.EditorArea.Active?.Name);
+        Assert.Equal("    |<SampleVersion>2.0.0</SampleVersion>", CaretLine(window.EditorArea.CodeEditor));
+
+        // A reference added under central package management names no version: Directory.Packages.props takes it, in order.
+        window.OpenFile(Path.Combine(folder, "App", "App.csproj"));
+        Ui.Settle();
+        editor = window.EditorArea.CodeEditor;
+        OpenDocument project = window.EditorArea.Active!;
+        Ui.WaitFor(() => project.Markers.Any(m => m.Message.StartsWith("NU1902", StringComparison.Ordinal)), "the reference to the vulnerable central version warned of");
+        Assert.Equal(MarkerKind.Warning, MarkerOn(editor, project, "Passenger.Vulnerable").Kind);
+        PlaceAfter(editor, "<ProjectReference Include=\"../\" />");
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("<");
+        Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("PackageReference"), "the item types an ItemGroup takes");
+        window.KeyTextInput("PackageRef");
+        Ui.Settle();
+        Ui.Press(window, "ENTER");
+        Ui.WaitFor(() => window.Assist.CompletionLabels.Count == 3, "the feed's packages");
+        window.KeyTextInput("Oth");
+        Ui.Settle();
+        Ui.Press(window, "ENTER");
+        Assert.EndsWith("<PackageReference Include=\"Passenger.Other|\" />", CaretLine(editor), StringComparison.Ordinal);
+        Assert.Contains("""
+                <PackageVersion Include="Passenger.Other" Version="3.0.0" />
+                <PackageVersion Include="Passenger.Sample" Version="$(SampleVersion)" />
+            """.ReplaceLineEndings("\n"), props.Text.Snapshot.ToString(), StringComparison.Ordinal);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_project_file_saved_has_the_solution_view_and_the_language_server_take_what_it_says_now()
+    {
+        MainWindow window = Open("App/App.csproj", autosaves: true);
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Assert.DoesNotContain("Passenger.Sample", Children(window, "Dependencies"));
+        Assert.True(window.CSharpService?.Session is not null, "No language server started");
+        string log = Directory.EnumerateFiles(Passenger.App.CSharp.CSharpService.LogFolder, $"server-*-{window.CSharpService!.Session!.Server.ProcessId}.log").Single();
+        int Loads() => Ui.Shared(log).Split('\n').Count(l => l.Contains("Completed (re)load of all projects", StringComparison.Ordinal));
+        int before = Loads();
+        PlaceAfter(editor, "<ProjectReference Include=\"../\" />");
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("<PackageReference Include=\"Passenger.Sample\" Version=\"2.0.0\" />");
+        Ui.Press(window, "ESCAPE");
+        Ui.Run(window, AppActions.Save);
+        Ui.WaitFor(() => window.ExplorerView.Tree.Rows.Any(r => r.Name == "Passenger.Sample"), "the Dependencies to show the package the saved project references");
+        Assert.Contains(("Passenger.Sample", "2.0.0"), Children(window, "Dependencies").Select(name => (name, Row(window, name).Detail)));
+        Ui.WaitFor(() => Loads() > before, "the language server to load the saved project again");
+        window.Close();
+    }
+
+    private MainWindow Open(string file, bool autosaves = false)
+    {
+        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = autosaves };
+        window.Show();
+        window.OpenFolder(Path.Combine(folder, "Shop.slnx"));
+        window.OpenFile(Path.Combine(folder, file));
+        Ui.Settle();
+        return window;
+    }
+
+    private static List<string> Children(MainWindow window, string name)
+    {
+        ExplorerTree tree = window.ExplorerView.Tree;
+        if (tree.Rows.FirstOrDefault(r => r.Kind == NodeKind.Project && r.Name == "App") is { IsExpanded: false } project)
+        {
+            tree.Expand(project);
+        }
+        ExplorerNode row = Row(window, name);
+        tree.Expand(row);
+        return [.. (row.Children ?? []).Select(c => c.Name)];
+    }
+
+    private static ExplorerNode Row(MainWindow window, string name) =>
+        window.ExplorerView.Tree.Rows.FirstOrDefault(r => r.Name == name)
+            ?? throw new InvalidOperationException($"The Explorer shows no {name}: [{string.Join(", ", window.ExplorerView.Tree.Rows.Select(r => r.Name))}]");
+
+    private static string CaretLine(CodeEditor editor) => XamlTests.CaretLine(editor);
+
+    private static void PlaceAfter(CodeEditor editor, string text) => XamlTests.PlaceAfter(editor, text);
+
+    private static void Replace(CodeEditor editor, string what, string with) => XamlTests.Replace(editor, what, with);
+
+    private static Marker MarkerOn(CodeEditor editor, OpenDocument document, string stretch) => XamlTests.MarkerOn(editor, document, stretch);
+
+    private void Write(string relative, string text)
+    {
+        string path = Path.Combine(folder, relative);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, text);
+    }
+}
