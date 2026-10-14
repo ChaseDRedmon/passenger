@@ -419,9 +419,7 @@ public partial class MainWindow
     /// language server knows one by its URI, so each open file is closed there and opened at the new one.</summary>
     private void OnFileMoved(FileMove move)
     {
-        bookmarks.Move(move.From, move.To);
         debug.Breakpoints.Move(move.From, move.To);
-        vcs.Moved(move.From, move.To);
         session.Moved(move);
         FilesChanged();
     }
@@ -497,7 +495,7 @@ public partial class MainWindow
         {
             session.Index.Build(folder);
         }
-        _ = vcs.RefreshAsync();
+        _ = session.Vcs.RefreshAsync();
     }
 
     private static string? Invalid(string name) =>

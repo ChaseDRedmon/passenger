@@ -11,14 +11,14 @@ namespace Passenger.App.ToolWindows;
 /// (or Compare) again for the same thing goes back to its tab; a tab's × closes it.</summary>
 public sealed class GitView : DockPanel
 {
-    private readonly VcsController vcs;
+    private VcsController vcs;
     private readonly List<(HistoryScope? Scope, string Title, GitLogView View, Control Body)> histories = [];
     private readonly StackPanel tabs = new() { Orientation = Orientation.Horizontal, Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
     private readonly ContentControl body = new();
 
-    public GitView(VcsController vcs)
+    public GitView(VcsController git)
     {
-        this.vcs = vcs;
+        vcs = git;
         Log = Take(new GitLogView(vcs));
         Shown = Log;
         Children.Add(body);
@@ -92,6 +92,19 @@ public sealed class GitView : DockPanel
             Grid.SetRow(text, row);
             return text;
         }
+    }
+
+    /// <summary>Shows another folder's working tree from now on, its session's in place of the last's: the histories and
+    /// comparisons opened for the last one close, and the Log reads the new one's.</summary>
+    public void Bind(VcsController next)
+    {
+        foreach (GitLogView open in histories.Select(h => h.View).ToList())
+        {
+            Close(open);
+        }
+        vcs = next;
+        Log.Bind(next);
+        Show(Log);
     }
 
     /// <summary>Closes a history's tab, as its × does; the tab before it is shown when it was.</summary>

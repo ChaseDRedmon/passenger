@@ -23,7 +23,7 @@ public sealed partial class PassengerTools
         "vcs_resolve resolves them.")]
     public Task<VcsStatus> VcsStatus(CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
-        VcsController vcs = window.Vcs;
+        VcsController vcs = Session.Vcs;
         await vcs.Opened;
         await vcs.RefreshAsync();
         if (vcs.Repository is null)
@@ -44,7 +44,7 @@ public sealed partial class PassengerTools
     public Task<string> VcsResolve(string path, [Description("yours or theirs; or leave it out and give text")] string? take = null,
         [Description("The file's merged text, in place of take")] string? text = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
-        VcsController vcs = window.Vcs;
+        VcsController vcs = Session.Vcs;
         await vcs.Opened;
         await vcs.RefreshAsync();
         string full = Resolve(path);
@@ -70,8 +70,8 @@ public sealed partial class PassengerTools
     {
         string full = Resolve(path);
         string name = Relative(full).Replace('\\', '/');
-        await window.Vcs.Opened;
-        string head = await window.Vcs.HeadTextAsync(full) ?? string.Empty;
+        await Session.Vcs.Opened;
+        string head = await Session.Vcs.HeadTextAsync(full) ?? string.Empty;
         TextSnapshot? open = Editors.Documents.FirstOrDefault(d => d.Path == full)?.Text.Snapshot;
         // Reading and comparing a large file would hold the person's window: the thread pool does both.
         string diff = await BackgroundWork.Run(() => LineDiff.Unified(head, open?.ToString() ?? (File.Exists(full) ? File.ReadAllText(full) : string.Empty), name), cancel);
@@ -84,7 +84,7 @@ public sealed partial class PassengerTools
         "naming git's reason, the commit made all the same.")]
     public Task<string> VcsCommit(string message, IReadOnlyList<string>? paths = null, bool amend = false, bool push = false, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
-        VcsController vcs = window.Vcs;
+        VcsController vcs = Session.Vcs;
         await vcs.Opened;
         await vcs.RefreshAsync();
         IReadOnlyList<FileChange> chosen = paths is null
@@ -113,8 +113,8 @@ public sealed partial class PassengerTools
         [Description("The first line of the file's to follow, from 1")] int? startLine = null,
         [Description("The last line, from 1")] int? endLine = null, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
-        await window.Vcs.Opened;
-        Git repository = window.Vcs.Repository ?? throw new InvalidOperationException("The folder is not in a Git repository");
+        await Session.Vcs.Opened;
+        Git repository = Session.Vcs.Repository ?? throw new InvalidOperationException("The folder is not in a Git repository");
         int most = Math.Clamp(count, 1, 500);
         (int, int)? lines = (startLine, endLine) switch
         {
@@ -142,7 +142,7 @@ public sealed partial class PassengerTools
         "Checks out a branch (with create, a new one from the head), as the branch menu does; open files take what is on disk after.")]
     public Task<string> VcsCheckout(string branch, bool create = false, CancellationToken cancel = default) => OnUi(cancel, async () =>
     {
-        VcsController vcs = window.Vcs;
+        VcsController vcs = Session.Vcs;
         await vcs.Opened;
         VcsOutcome switched = create ? await vcs.NewBranchAsync(branch) : await vcs.CheckoutAsync(branch);
         if (switched.Problem is { } failed)
@@ -158,7 +158,7 @@ public sealed partial class PassengerTools
         + "changes back in the files; pop drops it after), drop (throw stash index away).")]
     public Task<IReadOnlyList<StashSummary>> VcsStash(string action = "list", string message = "", int index = 0, CancellationToken cancel = default) => OnUi<IReadOnlyList<StashSummary>>(cancel, async () =>
     {
-        VcsController vcs = window.Vcs;
+        VcsController vcs = Session.Vcs;
         await vcs.Opened;
         if (action != "list")
         {

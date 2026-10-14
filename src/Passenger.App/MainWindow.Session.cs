@@ -74,6 +74,10 @@ public partial class MainWindow
             EndSession();
         }
         Autosave();
+        // The session with no folder ends too, what it ran with it (a program attached to with no folder open); the files
+        // open in it stay, the new session's.
+        Task none = session.LeaveAsync();
+        ending = ending.IsCompleted ? none : Task.WhenAll(ending, none);
         int open = ++opens;
         if (ending.IsCompleted)
         {
@@ -125,7 +129,6 @@ public partial class MainWindow
         Bottom.Debug.Clear();
         Bind(opened);
         Explorer.Load(opened.Workspace!);
-        _ = vcs.OpenAsync(folder);
         opened.Start(walk: withSolution is null);
         FindTests();
         Editors.ShowFolderHint(folder);
@@ -168,10 +171,8 @@ public partial class MainWindow
         Bind(ProjectSession.None(Setup()));
         // The session gone keeps nothing more: what clearing these changes is written nowhere.
         debug.Breakpoints.Clear();
-        bookmarks.Clear();
         localHistoryView?.CloseAll();
         Explorer.Unload();
-        _ = vcs.CloseAsync();
     }
 
     /// <summary>The window's views and controllers follow a session from now: what it says reaches them while it is the
@@ -189,6 +190,13 @@ public partial class MainWindow
             }
         };
         BindTests(next);
+        BindVcs(next);
+        BindBookmarks(next);
+        // Files open as it binds (a file opened with no folder) are its too.
+        foreach (Workspace.OpenDocument document in Editors.Documents)
+        {
+            next.Attach(document);
+        }
         StopButton.IsVisible = debug.IsDebugging || buildRun.IsRunning;
         // The last folder's build said nothing of this one.
         Bottom.Problems.ForgetBuild();

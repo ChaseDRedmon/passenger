@@ -7,8 +7,9 @@ namespace Passenger.App.Vcs;
 
 /// <summary>The open folder's Git working tree as the window shows it: the branch, the changed files, each open file's
 /// change bars against the last commit, and committing, pushing, switching branches and rolling back, after which the
-/// open files take what is on disk again. A UI-thread object.</summary>
-public sealed class VcsController
+/// open files take what is on disk again. Its folder's session's: disposed with it, it lets go of the open files. A
+/// UI-thread object.</summary>
+public sealed class VcsController : IDisposable
 {
     /// <summary>How long typing pauses before a file's change bars are worked out again.</summary>
     private static readonly TimeSpan MarksDelay = TimeSpan.FromMilliseconds(120);
@@ -159,6 +160,18 @@ public sealed class VcsController
         textsRead = false;
         moves.Clear();
         return RefreshAsync();
+    }
+
+    /// <summary>Its folder left, it follows the open files no more (their change bars and blame), and a lookup still under
+    /// way is dropped; the views that showed it take the next folder's.</summary>
+    public void Dispose()
+    {
+        UiThread.Check();
+        opened++;
+        foreach (OpenDocument document in documents.Keys.ToList())
+        {
+            Detach(document);
+        }
     }
 
     /// <summary>Makes the folder a working tree (Rider's Create Git Repository).</summary>

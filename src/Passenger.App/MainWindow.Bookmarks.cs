@@ -4,20 +4,21 @@ using Passenger.Text;
 
 namespace Passenger.App;
 
-/// <summary>The window's bookmarks: Toggle Bookmark on the caret's line, Next and Previous across files, the Bookmarks
-/// window, and every open file's ribbons kept to the store.</summary>
+/// <summary>The window's bookmarks, the open folder's (its session's <see cref="ProjectSession.Bookmarks"/>): Toggle
+/// Bookmark on the caret's line, Next and Previous across files, the Bookmarks window, and every open file's ribbons.</summary>
 public partial class MainWindow
 {
-    private readonly BookmarkStore bookmarks = new();
+    private ToolWindows.BookmarksView? bookmarksView;
 
-    public BookmarkStore Bookmarks => bookmarks;
+    /// <summary>The open folder's bookmarks.</summary>
+    public BookmarkStore Bookmarks => session.Bookmarks;
 
     private void AddBookmarks()
     {
-        ToolWindows.BookmarksView view = new(bookmarks, (path, line) =>
+        bookmarksView = new(session.Bookmarks, (path, line) =>
             Editors.Documents.FirstOrDefault(d => d.Path == path) is { } open && line < open.Text.Snapshot.LineCount ? open.Text.Snapshot.GetLineText(line) : string.Empty);
-        view.GoToRequested += (_, bookmark) => NavigateTo(bookmark.Path, new TextPosition(bookmark.Line, 0));
-        Dock.Add(new Docking.ToolWindow("bookmarks", "Bookmarks", "Icon.Bookmark", view, Docking.ToolAnchor.LeftBottom)
+        bookmarksView.GoToRequested += (_, bookmark) => NavigateTo(bookmark.Path, new TextPosition(bookmark.Line, 0));
+        Dock.Add(new Docking.ToolWindow("bookmarks", "Bookmarks", "Icon.Bookmark", bookmarksView, Docking.ToolAnchor.LeftBottom)
         {
             Action = AppActions.ShowBookmarks,
             Menus = [new MenuPlace("Navigate/Bookmarks", 0, 3)],
@@ -25,22 +26,36 @@ public partial class MainWindow
         AddBookmarkActions();
         Editors.Opened += (_, document) =>
         {
-            document.Bookmarks = bookmarks.LinesIn(document.Path);
-            document.Text.Changed += (_, change) => bookmarks.Follow(document.Path, change);
+            document.Bookmarks = session.Bookmarks.LinesIn(document.Path);
+            document.Text.Changed += (_, change) => session.Bookmarks.Follow(document.Path, change);
         };
-        bookmarks.Changed += (_, path) =>
+    }
+
+    /// <summary>A session's bookmarks in the Bookmarks window and the open files' ribbons, while it is the window's.</summary>
+    private void BindBookmarks(ProjectSession next)
+    {
+        bookmarksView?.Bind(next.Bookmarks);
+        next.Bookmarks.Changed += (_, path) =>
         {
+            if (session != next)
+            {
+                return;
+            }
             foreach (OpenDocument document in Editors.Documents.Where(d => d.Path == path))
             {
-                document.Bookmarks = bookmarks.LinesIn(path);
+                document.Bookmarks = next.Bookmarks.LinesIn(path);
             }
         };
+        foreach (OpenDocument document in Editors.Documents)
+        {
+            document.Bookmarks = next.Bookmarks.LinesIn(document.Path);
+        }
     }
 
     /// <summary>Toggle Bookmark on the caret's line, and Next and Previous Bookmark from it through every file.</summary>
     private void AddBookmarkActions()
     {
-        actions!.Add(new IdeAction(AppActions.ToggleBookmark, "Toggle Bookmark", "Bookmarks", context => bookmarks.Toggle(context.File!.Path, context.Caret.Line))
+        actions!.Add(new IdeAction(AppActions.ToggleBookmark, "Toggle Bookmark", "Bookmarks", context => session.Bookmarks.Toggle(context.File!.Path, context.Caret.Line))
         {
             WhyNot = NeedsFile,
             Menus = [new MenuPlace("Navigate/Bookmarks", 0, 0)],
@@ -50,11 +65,11 @@ public partial class MainWindow
 
         void Step(string id, string title, int step) => actions.Add(new IdeAction(id, title, "Bookmarks", context =>
         {
-            Bookmark next = bookmarks.Next(context.File?.Path, context.File is null ? -1 : context.Caret.Line, step)!;
+            Bookmark next = session.Bookmarks.Next(context.File?.Path, context.File is null ? -1 : context.Caret.Line, step)!;
             NavigateTo(next.Path, new TextPosition(next.Line, 0));
         })
         {
-            WhyNot = _ => bookmarks.All.Count == 0 ? "No bookmarks" : null,
+            WhyNot = _ => session.Bookmarks.All.Count == 0 ? "No bookmarks" : null,
             Menus = [new MenuPlace("Navigate/Bookmarks", 0, step > 0 ? 1 : 2)],
         });
     }

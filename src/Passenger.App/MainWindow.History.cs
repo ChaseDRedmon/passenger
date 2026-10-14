@@ -24,14 +24,14 @@ public partial class MainWindow
             _ = ShowSelectionHistoryAsync(context.File!.Path, first, last);
         })
         {
-            WhyNot = context => NeedsFolder(context) ?? (vcs.Repository is null ? NoRepository : NeedsFile(context)),
+            WhyNot = context => NeedsFolder(context) ?? (session.Vcs.Repository is null ? NoRepository : NeedsFile(context)),
             Menus = [new MenuPlace("Git", 2, 6)],
         });
 
         void Add(string id, string title, Action<ActionContext> run, int order, bool fileOnly) =>
             actions!.Add(new IdeAction(id, title, "Git", run)
             {
-                WhyNot = context => NeedsFolder(context) ?? (vcs.Repository is null ? NoRepository : WhyNoTarget(context, fileOnly)),
+                WhyNot = context => NeedsFolder(context) ?? (session.Vcs.Repository is null ? NoRepository : WhyNoTarget(context, fileOnly)),
                 Menus = [new MenuPlace("Git", 2, order)],
             });
     }
@@ -115,7 +115,7 @@ public partial class MainWindow
     /// Git has no history to show, an <see cref="InvalidOperationException"/> says why.</summary>
     public async Task<HistoryScope> HistoryScopeAsync(string path, (int First, int Last)? lines = null)
     {
-        if (vcs.Repository is not { } repository)
+        if (session.Vcs.Repository is not { } repository)
         {
             throw new InvalidOperationException(NoRepository);
         }
@@ -134,8 +134,8 @@ public partial class MainWindow
         }
         // The editor's lines are the last commit's once the changes above them are taken back.
         OpenDocument? open = Editors.Documents.FirstOrDefault(d => d.Path == path);
-        FileDiff? diff = open is not null ? await vcs.DiffAsync(open) : null;
-        if (diff is null && open is null && await vcs.HeadTextAsync(path) is { } head && File.Exists(path) && FileText.Load(path)?.Text is { } saved)
+        FileDiff? diff = open is not null ? await session.Vcs.DiffAsync(open) : null;
+        if (diff is null && open is null && await session.Vcs.HeadTextAsync(path) is { } head && File.Exists(path) && FileText.Load(path)?.Text is { } saved)
         {
             TextSnapshot text = new TextDocument(saved).Snapshot;
             diff = await BackgroundWork.Run(() => FileDiff.Compare(head, text));
@@ -152,13 +152,13 @@ public partial class MainWindow
     /// opens its text of the file beside the file's.</summary>
     public async Task<ChoicePopup?> ShowCompareWithBranchAsync(string path)
     {
-        if (vcs.Repository is not { } repository)
+        if (session.Vcs.Repository is not { } repository)
         {
             status.Text = NoRepository;
             return null;
         }
         IReadOnlyList<GitRef> refs = await repository.RefNamesAsync();
-        string? current = vcs.Branch;
+        string? current = session.Vcs.Branch;
         ChoicePopup popup = new($"Compare {Path.GetFileName(path)} with Branch or Tag", "Search for branches and tags",
             [.. refs.Select(r => new Choice(r.Name, r.Kind switch
             {
@@ -188,7 +188,7 @@ public partial class MainWindow
         {
             return null;
         }
-        IReadOnlyList<HistoryCommit> history = await vcs.Repository!.HistoryAsync(scope);
+        IReadOnlyList<HistoryCommit> history = await session.Vcs.Repository!.HistoryAsync(scope);
         ChoicePopup popup = new($"Compare {Path.GetFileName(path)} with Revision", "Search by message, author or hash",
             [.. history.Select(h => new Choice(h.Commit.Subject, $"{h.Commit.Short}  {h.Commit.Author}  {ToolWindows.GitLogView.When(h.Commit.Time)}", h))],
             history.Count == 0 ? $"Git has no history of {Path.GetFileName(path)}" : "No revision matches");
@@ -208,7 +208,7 @@ public partial class MainWindow
     /// <paramref name="then"/> (where it was in that version), the right side the open file's own text when it is open.</summary>
     public async Task<DiffWindow?> CompareWithAsync(string path, string revision, string version, string then)
     {
-        if (vcs.Repository is not { } repository)
+        if (session.Vcs.Repository is not { } repository)
         {
             status.Text = NoRepository;
             return null;

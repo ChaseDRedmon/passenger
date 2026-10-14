@@ -73,7 +73,7 @@ public partial class MainWindow
         }
         if (changes.Paths.Count > 0 || changes.Git)
         {
-            _ = vcs.RefreshAsync();
+            _ = session.Vcs.RefreshAsync();
         }
     }
 

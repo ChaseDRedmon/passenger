@@ -9,17 +9,17 @@ using Passenger.App.Navigation;
 namespace Passenger.App.ToolWindows;
 
 /// <summary>Rider's Bookmarks window: every bookmark with its file, line and the line's text, in the order they were
-/// set; a double-click or Enter goes there, Delete takes it away.</summary>
+/// set; a double-click or Enter goes there, Delete takes it away. It shows the open folder's (<see cref="Bind"/>).</summary>
 public sealed class BookmarksView : DockPanel
 {
-    private readonly BookmarkStore store;
+    private BookmarkStore store;
     private readonly Func<string, int, string> lineText;
     private readonly ListBox list;
     private readonly TextBlock placeholder;
 
-    public BookmarksView(BookmarkStore store, Func<string, int, string> lineText)
+    public BookmarksView(BookmarkStore bookmarks, Func<string, int, string> lineText)
     {
-        this.store = store;
+        store = bookmarks;
         this.lineText = lineText;
         list = new ListBox
         {
@@ -43,7 +43,7 @@ public sealed class BookmarksView : DockPanel
         placeholder = new TextBlock { Text = "Toggle Bookmark marks the caret's line", HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
         placeholder.Bind(TextBlock.ForegroundProperty, placeholder.GetResourceObservable("Passenger.TextMuted"));
         Children.Add(new Panel { Children = { list, placeholder } });
-        store.Changed += (_, _) => Refresh();
+        store.Changed += OnChanged;
         ListMenus.Attach(list, () => list.SelectedItem is not Bookmark chosen ? [] :
         [
             ListMenus.Item("Go to", "F4", Go),
@@ -54,6 +54,17 @@ public sealed class BookmarksView : DockPanel
 
     /// <summary>A bookmark to go to.</summary>
     public event EventHandler<Bookmark>? GoToRequested;
+
+    /// <summary>Shows another folder's bookmarks from now on, its session's in place of the last's.</summary>
+    public void Bind(BookmarkStore next)
+    {
+        store.Changed -= OnChanged;
+        store = next;
+        store.Changed += OnChanged;
+        Refresh();
+    }
+
+    private void OnChanged(object? sender, string path) => Refresh();
 
     public IReadOnlyList<Bookmark> Rows => list.ItemsSource as IReadOnlyList<Bookmark> ?? [];
 

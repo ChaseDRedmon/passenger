@@ -128,12 +128,12 @@ public partial class MainWindow : Window
         Editors.SaveFailed += (_, problem) => status.Text = problem;
         Editors.Opened += (_, document) =>
         {
-            session.CSharp?.Attach(document);
+            session.Attach(document);
             debug?.Attach(document);
         };
         Editors.Closed += (_, document) =>
         {
-            session.CSharp?.Detach(document);
+            session.Detach(document);
             debug?.Detach(document);
         };
         Editors.ForEachEditor(editor => editor.ProblemsRequested += (_, _) => ShowToolWindow("problems"));
@@ -541,7 +541,6 @@ public partial class MainWindow : Window
         Dock.LayoutChanged += (_, _) => KeepDock();
         debug.Breakpoints.Changed += (_, _) => session.State?.Breakpoints.Set(debug.Breakpoints.Capture());
         debug.Breakpoints.ExceptionsChanged += (_, _) => session.State?.Breakpoints.Set(debug.Breakpoints.Capture());
-        bookmarks.Changed += (_, _) => session.State?.Bookmarks.Set(bookmarks.Capture());
         findSettings = store.Find.Value;
         assist.RenameSettings = store.Refactorings.Value;
         assist.RenameSettingsChanged += (_, _) => state?.Refactorings.Set(assist.RenameSettings);
@@ -630,7 +629,6 @@ public partial class MainWindow : Window
         }
         // Before the folder's documents are this window's, so what restoring them changes is not written back.
         debug.Breakpoints.Restore(opening.Breakpoints.Value);
-        bookmarks.Restore(opening.Bookmarks.Value);
         RestoreUnitTests(opening.UnitTests.Value);
         GitBranches.Favorites = opening.GitBranches.Value;
         session.Keep(opening);

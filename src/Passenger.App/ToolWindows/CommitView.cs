@@ -55,7 +55,7 @@ public sealed class CommitGroup(string name, IReadOnlyList<CommitRow> rows) : Ob
 /// file's merge; Rollback puts the chosen ones back.</summary>
 public sealed class CommitView : DockPanel
 {
-    private readonly VcsController vcs;
+    private VcsController vcs;
     private readonly ObservableCollection<object> rows = [];
     private readonly Dictionary<string, bool> chosen = [];
     private readonly ListBox list;
@@ -69,9 +69,9 @@ public sealed class CommitView : DockPanel
     /// <summary>The merge's message the box was given, taken away again if the merge ends some other way.</summary>
     private string? prefilled;
 
-    public CommitView(VcsController vcs)
+    public CommitView(VcsController git)
     {
-        this.vcs = vcs;
+        vcs = git;
         list = new ListBox
         {
             Classes = { "tree" },
@@ -233,10 +233,25 @@ public sealed class CommitView : DockPanel
         Children.Add(top);
         Children.Add(bottom);
         Children.Add(new Panel { Children = { list, placeholder } });
-        vcs.Changed += (_, _) => Fill();
-        vcs.BusyChanged += (_, _) => UpdateButtons();
+        vcs.Changed += OnChanged;
+        vcs.BusyChanged += OnBusyChanged;
         Fill();
     }
+
+    /// <summary>Lists another folder's changes from now on, its session's working tree in place of the last's.</summary>
+    public void Bind(VcsController next)
+    {
+        vcs.Changed -= OnChanged;
+        vcs.BusyChanged -= OnBusyChanged;
+        vcs = next;
+        vcs.Changed += OnChanged;
+        vcs.BusyChanged += OnBusyChanged;
+        Fill();
+    }
+
+    private void OnChanged(object? sender, EventArgs e) => Fill();
+
+    private void OnBusyChanged(object? sender, EventArgs e) => UpdateButtons();
 
     /// <summary>The Merge Conflicts group's Resolve link: the Conflicts dialog.</summary>
     public event EventHandler? ResolveRequested;

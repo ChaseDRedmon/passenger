@@ -6,6 +6,7 @@ using Passenger.App.Run;
 using Passenger.App.State;
 using Passenger.App.Testing;
 using Passenger.App.ToolWindows;
+using Passenger.App.Vcs;
 using Passenger.App.Workspace;
 using Passenger.Core;
 using Passenger.Editor;
@@ -27,11 +28,12 @@ public sealed record SessionSetup(
     Func<CancellationToken, Task<BuildOutcome>> BuildForTests);
 
 /// <summary>One folder or solution open in a window, or a window's nothing before one opens: what the folder has (its
-/// solution read, its files indexed and watched, Local History, run configurations, the last build's problems, recent files
-/// and the places Back goes to, what it keeps in the store) and what it runs (the language server, its builds and programs,
-/// one in the terminal, the profiler's run, its tests), made as the folder opens and ended together as it is left
-/// (<see cref="LeaveAsync"/>) or its window closes (<see cref="CloseAsync"/>), so nothing of one folder outlives it into
-/// the next. The window builds its controllers over the session it has and binds its views to it. A UI-thread object.</summary>
+/// solution read, its files indexed and watched, Local History, run configurations, bookmarks, the last build's problems,
+/// recent files and the places Back goes to, what it keeps in the store) and what it runs (the language server, Git, its
+/// builds and programs, one in the terminal, the profiler's run, its tests), made as the folder opens and ended together
+/// as it is left (<see cref="LeaveAsync"/>) or its window closes (<see cref="CloseAsync"/>), so nothing of one folder
+/// outlives it into the next. The window builds its controllers over the session it has and binds its views to it. A
+/// UI-thread object.</summary>
 public sealed class ProjectSession : IAsyncDisposable
 {
     /// <summary>How many recently opened files Go to File offers before anything is typed.</summary>
@@ -53,6 +55,10 @@ public sealed class ProjectSession : IAsyncDisposable
         Builder = new ProcessRunner(setup.Views.Build);
         Runner = new ProcessRunner(setup.Views.Run, takesInput: true);
         Tests = new TestController(setup.Views.TestTree, setup.BuildForTests, () => Projects, line => setup.Views.Build.Append($"{line}\n"));
+        // Kept with the folder from Keep on, while the window keeps state.
+        Bookmarks.Changed += (_, _) => State?.Bookmarks.Set(Bookmarks.Capture());
+        // What a Git operation changes in the files is one change set of the folder's Local History, under its name.
+        Vcs.Activity = name => LocalHistory?.During(name);
     }
 
     /// <summary>A window's session with no folder open: files may still be open, alone.</summary>
@@ -156,6 +162,11 @@ public sealed class ProjectSession : IAsyncDisposable
     /// <summary>The folder's unit tests: those its test projects declare, their runs and their results.</summary>
     public TestController Tests { get; }
 
+    /// <summary>The folder's Git working tree, once its lookup (<see cref="Start"/>) has found one.</summary>
+    public VcsController Vcs { get; } = new();
+
+    public BookmarkStore Bookmarks { get; } = new();
+
     /// <summary>The language server on the folder's projects, or null for a folder with none (or no folder).</summary>
     public CSharpService? CSharp { get; private set; }
 
@@ -174,6 +185,7 @@ public sealed class ProjectSession : IAsyncDisposable
     public void Keep(ProjectState kept)
     {
         UiThread.Check();
+        Bookmarks.Restore(kept.Bookmarks.Value);
         FindScope = kept.Find.Value;
         WorkspaceState workspace = kept.Workspace.Value;
         foreach (string project in workspace.UnloadedProjects)
@@ -200,10 +212,26 @@ public sealed class ProjectSession : IAsyncDisposable
         }
     }
 
-    /// <summary>A file or folder moved: the recent files, the places and Local History follow it, and the language server
-    /// knows an open file at its new path.</summary>
+    /// <summary>A file the editor opened: the language server and Git follow it, its gutter showing their marks.</summary>
+    public void Attach(OpenDocument document)
+    {
+        CSharp?.Attach(document);
+        Vcs.Attach(document);
+    }
+
+    /// <summary>A file the editor closed, which they follow no more.</summary>
+    public void Detach(OpenDocument document)
+    {
+        CSharp?.Detach(document);
+        Vcs.Detach(document);
+    }
+
+    /// <summary>A file or folder moved: its bookmarks, Git, the recent files, the places and Local History follow it, and
+    /// the language server knows an open file at its new path.</summary>
     public void Moved(FileMove move)
     {
+        Bookmarks.Move(move.From, move.To);
+        Vcs.Moved(move.From, move.To);
         Navigation.Move(move.From, move.To);
         LocalHistory?.Moved(move.From, move.To);
         for (int i = 0; i < recent.Count; i++)
@@ -247,10 +275,11 @@ public sealed class ProjectSession : IAsyncDisposable
         }
     }
 
-    /// <summary>Starts what a folder runs once the window has bound its views to the session: the language server, and for
-    /// a folder without a solution the walk for its projects.</summary>
+    /// <summary>Starts what a folder runs once the window has bound its views to the session: Git's lookup, the language
+    /// server, and for a folder without a solution the walk for its projects.</summary>
     public void Start(bool walk)
     {
+        _ = Vcs.OpenAsync(Folder!);
         StartCSharp();
         if (walk)
         {
@@ -398,11 +427,12 @@ public sealed class ProjectSession : IAsyncDisposable
         return parts;
     }
 
-    /// <summary>The session lets go of the window's consoles, which the next session's runners write to.</summary>
+    /// <summary>The session lets go of the window's consoles and open files, which the next session's runners and Git take.</summary>
     private void LetGo()
     {
         Builder.Dispose();
         Runner.Dispose();
+        Vcs.Dispose();
     }
 
     /// <summary>Waits for what is ending, for at most the limit, naming in the log what had not ended by then.</summary>

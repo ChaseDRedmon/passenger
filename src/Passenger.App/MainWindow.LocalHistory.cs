@@ -61,8 +61,7 @@ public partial class MainWindow
             Menus = [new MenuPlace(LocalHistoryMenu, 1, 2)],
         });
         Editors.Opened += (_, document) => LookAt(document);
-        // Rider's system activities: a Git operation's changes, a refactoring's (a test run's label is the session's tests').
-        vcs.Activity = name => session.LocalHistory?.During(name);
+        // Rider's system activities: a refactoring's (a Git operation's, and a test run's label, are the session's own).
         // Another action since (a quick fix) is not the refactoring, though it may edit files the same way.
         actions.Running += (_, action) => refactoring = action.Menus.Any(m => m.Path == "Refactor") ? action.Title.TrimEnd('.') : null;
         // What a refactoring writes to files not open is one change set under its name; a quick fix's is not named.

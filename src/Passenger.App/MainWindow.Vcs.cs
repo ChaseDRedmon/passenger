@@ -13,7 +13,6 @@ namespace Passenger.App;
 /// every editor, the Explorer's colours, and the change actions (next and previous change, Rollback Lines).</summary>
 public partial class MainWindow
 {
-    private readonly VcsController vcs = new();
     private ToolWindows.CommitView? commitView;
     private ToolWindows.GitView? gitView;
 
@@ -23,8 +22,8 @@ public partial class MainWindow
     /// <summary>The Git tool window: its Log and the histories Show History opened beside it.</summary>
     public ToolWindows.GitView GitWindow => gitView!;
 
-    /// <summary>The open folder's version control.</summary>
-    public VcsController Vcs => vcs;
+    /// <summary>The open folder's version control, its session's.</summary>
+    public VcsController Vcs => session.Vcs;
 
     /// <summary>The window in front: the last diff or dialog opened over this one and still open (or over that, as the
     /// merge window opens over the Conflicts dialog), else the editor window the person works in, else this.</summary>
@@ -60,14 +59,14 @@ public partial class MainWindow
 
     private void AddVcs()
     {
-        commitView = new ToolWindows.CommitView(vcs);
+        commitView = new ToolWindows.CommitView(session.Vcs);
         Dock.Add(new Docking.ToolWindow("commit", "Commit", "Icon.Commit", commitView, Docking.ToolAnchor.LeftTop)
         {
             Action = AppActions.ShowCommit,
             ActionTitle = "Commit Tool Window",
             Menus = [new MenuPlace("Git", 3, 0)],
         });
-        gitView = new ToolWindows.GitView(vcs);
+        gitView = new ToolWindows.GitView(session.Vcs);
         Dock.Add(new Docking.ToolWindow("git", "Git", "Icon.Branch", gitView, Docking.ToolAnchor.BottomLeft)
         {
             Action = AppActions.ShowGit,
@@ -87,36 +86,65 @@ public partial class MainWindow
         commitView.IgnoreRequested += (_, path) => Ignore(path);
         gitView.NewBranchRequested += (_, commit) =>
         {
-            NamePopup popup = new($"New Branch from {commit.Short}", string.Empty, async name => (await vcs.NewBranchAtAsync(name, commit.Hash)).Problem);
+            NamePopup popup = new($"New Branch from {commit.Short}", string.Empty, async name => (await session.Vcs.NewBranchAtAsync(name, commit.Hash)).Problem);
             popup.Done += (_, _) => popups.Close();
             popups.Show(popup);
         };
         gitView.ResetRequested += async (_, reset) =>
         {
             if (reset.Mode == ResetMode.Hard && !await Confirm("Reset Current Branch to Here",
-                $"Move {vcs.Branch ?? "HEAD"} to {reset.Commit.Short} and drop every change since, committed or not?", "Reset"))
+                $"Move {session.Vcs.Branch ?? "HEAD"} to {reset.Commit.Short} and drop every change since, committed or not?", "Reset"))
             {
                 return;
             }
-            await vcs.ResetAsync(reset.Commit.Hash, reset.Mode);
+            await session.Vcs.ResetAsync(reset.Commit.Hash, reset.Mode);
         };
-        Explorer.IsVersioned = path => vcs.Repository?.IsInside(path) == true;
-        vcs.SaveFirst = () => Editors.SaveAll();
-        vcs.Message += (_, message) => status.Text = message;
-        vcs.Changed += (_, _) => OnVcsChanged();
-        Editors.Opened += (_, document) => vcs.Attach(document);
-        Editors.Closed += (_, document) => vcs.Detach(document);
+        Explorer.IsVersioned = path => session.Vcs.Repository?.IsInside(path) == true;
         // Back from another program, the open files take what it changed on disk, and Git is read again (Rider's
         // synchronize on frame activation).
         Activated += (_, _) =>
         {
-            vcs.ReloadOpenFiles();
-            _ = vcs.RefreshAsync();
+            session.Vcs.ReloadOpenFiles();
+            _ = session.Vcs.RefreshAsync();
         };
+    }
+
+    /// <summary>A session's Git in the window: its Commit and Git windows, what it says in the status bar, the branch
+    /// widget and the Explorer's colours, and its Conflicts dialog, while it is the window's. One left takes its dialog.</summary>
+    private void BindVcs(ProjectSession next)
+    {
+        conflictsDialog?.Close();
+        VcsController vcs = next.Vcs;
+        commitView?.Bind(vcs);
+        gitView?.Bind(vcs);
+        vcs.SaveFirst = () => Editors.SaveAll();
+        vcs.Message += (_, message) =>
+        {
+            if (session == next)
+            {
+                status.Text = message;
+            }
+        };
+        vcs.Changed += (_, _) =>
+        {
+            if (session == next)
+            {
+                OnVcsChanged();
+            }
+        };
+        vcs.ConflictsFound += (_, _) =>
+        {
+            if (session == next)
+            {
+                ShowConflicts();
+            }
+        };
+        OnVcsChanged();
     }
 
     private void OnVcsChanged()
     {
+        VcsController vcs = session.Vcs;
         BranchName.Text = vcs.Repository is null ? "Version control" : vcs.Branch ?? "Detached HEAD";
         ToolTip.SetTip(BranchButton, vcs.Repository is null ? "Version control" : $"Git branch: {BranchName.Text}");
         Explorer.Tree.SetChanges(vcs.Changes.Where(c => c.Kind is not ChangeKind.Deleted).ToDictionary(c => c.Path, c => c.Kind));
@@ -150,11 +178,11 @@ public partial class MainWindow
             }
             return item;
         }
-        if (vcs.Repository is null)
+        if (session.Vcs.Repository is null)
         {
             if (Folder is { } open)
             {
-                menu.Items.Add(Item("Create Git Repository...", () => _ = vcs.InitAsync(open)));
+                menu.Items.Add(Item("Create Git Repository...", () => _ = session.Vcs.InitAsync(open)));
             }
             else
             {
@@ -172,11 +200,11 @@ public partial class MainWindow
         menu.Items.Add(Action(AppActions.Unstash));
         menu.Items.Add(new Separator());
         menu.Items.Add(new MenuItem { Header = "Local", IsEnabled = false });
-        foreach (string branch in await vcs.Repository.BranchesAsync())
+        foreach (string branch in await session.Vcs.Repository.BranchesAsync())
         {
             string chosen = branch;
-            MenuItem item = Item(branch == vcs.Branch ? $"{branch}  (current)" : branch, () => _ = vcs.CheckoutAsync(chosen));
-            item.IsEnabled = branch != vcs.Branch;
+            MenuItem item = Item(branch == session.Vcs.Branch ? $"{branch}  (current)" : branch, () => _ = session.Vcs.CheckoutAsync(chosen));
+            item.IsEnabled = branch != session.Vcs.Branch;
             menu.Items.Add(item);
         }
         Open(menu, BranchButton);
@@ -185,12 +213,12 @@ public partial class MainWindow
     /// <summary>Stash Changes: what is open saved first, then every change put away under the message given.</summary>
     public NamePopup? ShowStash()
     {
-        if (vcs.Repository is null)
+        if (session.Vcs.Repository is null)
         {
             status.Text = "The folder is not in a Git repository";
             return null;
         }
-        NamePopup popup = new("Stash Changes", string.Empty, async message => (await vcs.StashAsync(message)).Problem);
+        NamePopup popup = new("Stash Changes", string.Empty, async message => (await session.Vcs.StashAsync(message)).Problem);
         popup.Done += (_, _) => popups.Close();
         popups.Show(popup);
         return popup;
@@ -199,13 +227,13 @@ public partial class MainWindow
     /// <summary>Unstash Changes: the stashes to pop, apply or drop (once the person agrees).</summary>
     public async Task<UnstashPopup?> ShowUnstashAsync()
     {
-        if (vcs.Repository is null)
+        if (session.Vcs.Repository is null)
         {
             status.Text = "The folder is not in a Git repository";
             return null;
         }
-        UnstashPopup popup = new(await vcs.StashesAsync(), async (stash, pop) => (await vcs.UnstashAsync(stash, pop)).Succeeded,
-            async stash => (await vcs.DropStashAsync(stash)).Succeeded, (title, text, yes) => Confirm(title, text, yes));
+        UnstashPopup popup = new(await session.Vcs.StashesAsync(), async (stash, pop) => (await session.Vcs.UnstashAsync(stash, pop)).Succeeded,
+            async stash => (await session.Vcs.DropStashAsync(stash)).Succeeded, (title, text, yes) => Confirm(title, text, yes));
         popup.Done += (_, _) =>
         {
             // Escape may have closed it while a pop ran, and another popup taken its place since.
@@ -221,7 +249,7 @@ public partial class MainWindow
     /// <summary>Create New Branch: from the head, checked out at once, as Rider's is.</summary>
     public void ShowNewBranch()
     {
-        NamePopup popup = new("Create New Branch", string.Empty, async name => (await vcs.NewBranchAsync(name)).Problem);
+        NamePopup popup = new("Create New Branch", string.Empty, async name => (await session.Vcs.NewBranchAsync(name)).Problem);
         popup.Done += (_, _) => popups.Close();
         popups.Show(popup);
     }
@@ -231,7 +259,7 @@ public partial class MainWindow
     /// they change.</summary>
     public async Task<DiffWindow?> ShowDiffAsync(string path)
     {
-        if (vcs.Repository is null)
+        if (session.Vcs.Repository is null)
         {
             status.Text = "The folder is not in a Git repository";
             return null;
@@ -239,9 +267,9 @@ public partial class MainWindow
         OpenDocument? open = Editors.Documents.FirstOrDefault(d => d.Path == path);
         TextDocument mine = open?.Text ?? new TextDocument(File.Exists(path) ? FileText.Load(path)?.Text ?? string.Empty : string.Empty);
         // An open file's differences are its change bars' own when they are of its text now.
-        if (open is null || await vcs.DiffAsync(open) is not { } diff)
+        if (open is null || await session.Vcs.DiffAsync(open) is not { } diff)
         {
-            string head = await vcs.HeadTextAsync(path) ?? string.Empty;
+            string head = await session.Vcs.HeadTextAsync(path) ?? string.Empty;
             TextSnapshot text = mine.Snapshot;
             diff = await BackgroundWork.Run(() => FileDiff.Compare(head, text));
         }
@@ -311,7 +339,7 @@ public partial class MainWindow
     /// <summary>What a commit did to a file: its first parent's text beside its own, both read-only.</summary>
     public async Task<DiffWindow?> ShowCommitDiffAsync(CommitInfo commit, FileChange file)
     {
-        if (vcs.Repository is not { } repository)
+        if (session.Vcs.Repository is not { } repository)
         {
             return null;
         }
@@ -349,7 +377,7 @@ public partial class MainWindow
         FileDiff? diff;
         using (BackgroundWork.Scope())
         {
-            diff = await vcs.DiffAsync(document);
+            diff = await session.Vcs.DiffAsync(document);
         }
         if (diff is null || Editors.Active != document)
         {
@@ -413,12 +441,12 @@ public partial class MainWindow
     /// <summary>Annotate with Git Blame, or Close Annotations when the file shows them or is about to.</summary>
     public async Task ToggleAnnotationsAsync(OpenDocument document)
     {
-        if (vcs.IsAnnotated(document))
+        if (session.Vcs.IsAnnotated(document))
         {
-            vcs.CloseAnnotations(document);
+            session.Vcs.CloseAnnotations(document);
             return;
         }
-        if (!await vcs.AnnotateAsync(document))
+        if (!await session.Vcs.AnnotateAsync(document))
         {
             status.Text = $"{document.Name} is not tracked by Git";
         }
@@ -427,7 +455,7 @@ public partial class MainWindow
     /// <summary>A click on a line's annotation: its commit, chosen in the Git window's log.</summary>
     private async Task ShowBlamedCommitAsync(OpenDocument document, int line)
     {
-        if (vcs.BlameOf(document) is not { } lines || line >= lines.Count || !lines[line].IsCommitted)
+        if (session.Vcs.BlameOf(document) is not { } lines || line >= lines.Count || !lines[line].IsCommitted)
         {
             return;
         }
@@ -441,7 +469,7 @@ public partial class MainWindow
     private void ShowGutterMenu(CodeEditor editor, OpenDocument document)
     {
         ContextMenu menu = new();
-        MenuItem annotate = new() { Header = vcs.IsAnnotated(document) ? "Close Annotations" : "Annotate with Git Blame", IsEnabled = vcs.Repository is not null };
+        MenuItem annotate = new() { Header = session.Vcs.IsAnnotated(document) ? "Close Annotations" : "Annotate with Git Blame", IsEnabled = session.Vcs.Repository is not null };
         annotate.Click += (_, _) => _ = ToggleAnnotationsAsync(document);
         menu.Items.Add(annotate);
         menu.Open(editor);
@@ -456,12 +484,12 @@ public partial class MainWindow
             // Rider saves every file before a commit, so the window lists what the editors show.
             Editors.SaveAll();
             ShowToolWindow("commit");
-            _ = vcs.RefreshAsync();
+            _ = session.Vcs.RefreshAsync();
             commitView!.FocusMessage();
         }, new("Git", 0, 0));
-        Add(AppActions.Push, "Push...", context => _ = vcs.PushAsync(), new("Git", 0, 1));
-        Add(AppActions.UpdateProject, "Update Project...", context => _ = vcs.UpdateAsync(), new("Git", 0, 2));
-        Add(AppActions.Fetch, "Fetch", context => _ = vcs.FetchAsync(), new("Git", 0, 3));
+        Add(AppActions.Push, "Push...", context => _ = session.Vcs.PushAsync(), new("Git", 0, 1));
+        Add(AppActions.UpdateProject, "Update Project...", context => _ = session.Vcs.UpdateAsync(), new("Git", 0, 2));
+        Add(AppActions.Fetch, "Fetch", context => _ = session.Vcs.FetchAsync(), new("Git", 0, 3));
         Add(AppActions.Branches, "Branches...", _ => ShowBranches(), new("Git", 0, 4));
         Add(AppActions.Stash, "Stash Changes...", _ => ShowStash(), new("Git", 1, 0));
         Add(AppActions.Unstash, "Unstash Changes...", context => _ = ShowUnstashAsync(), new("Git", 1, 1));
@@ -474,7 +502,7 @@ public partial class MainWindow
         void Add(string id, string title, Action<ActionContext> run, MenuPlace menu, bool onFile = false) =>
             actions!.Add(new IdeAction(id, title, "Git", run)
             {
-                WhyNot = context => NeedsFolder(context) ?? (vcs.Repository is null ? NoRepository : onFile ? NeedsFile(context) : null),
+                WhyNot = context => NeedsFolder(context) ?? (session.Vcs.Repository is null ? NoRepository : onFile ? NeedsFile(context) : null),
                 Menus = [menu],
             });
     }
@@ -494,9 +522,9 @@ public partial class MainWindow
         string text = added
             ? $"Roll back the changes to {what}? New files are deleted, and this cannot be undone."
             : $"Roll back the changes to {what}? This cannot be undone.";
-        if (await ConfirmAsync("Rollback Changes", text, "Rollback", ToolWindows.CommitView.FileList(changes, vcs.Repository)))
+        if (await ConfirmAsync("Rollback Changes", text, "Rollback", ToolWindows.CommitView.FileList(changes, session.Vcs.Repository)))
         {
-            await vcs.RollbackAsync(changes);
+            await session.Vcs.RollbackAsync(changes);
         }
     }
 
@@ -532,7 +560,7 @@ public partial class MainWindow
             // A comparison of a text edited while it ran says nothing of where the change is now: the newer is compared.
             do
             {
-                diff = await vcs.DiffAsync(document);
+                diff = await session.Vcs.DiffAsync(document);
             }
             while (diff is not null && !ReferenceEquals(diff.Text, document.Text.Snapshot) && Editors.Active == document);
         }
@@ -551,7 +579,7 @@ public partial class MainWindow
     /// <summary>Rider's Add to .gitignore: the file's path from the repository's top, a line of its .gitignore.</summary>
     private void Ignore(string path)
     {
-        if (vcs.Repository is not { } repository)
+        if (session.Vcs.Repository is not { } repository)
         {
             return;
         }
@@ -560,6 +588,6 @@ public partial class MainWindow
         string before = File.Exists(ignore) ? File.ReadAllText(ignore) : string.Empty;
         File.WriteAllText(ignore, before + (before.Length > 0 && !before.EndsWith('\n') ? "\n" : string.Empty) + line + "\n");
         status.Text = $"Added {line} to .gitignore";
-        _ = vcs.RefreshAsync();
+        _ = session.Vcs.RefreshAsync();
     }
 }

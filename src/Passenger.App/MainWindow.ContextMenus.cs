@@ -66,7 +66,7 @@ public partial class MainWindow
         Add(Item(A.ToggleBreakpoint));
         // Rider's Local History submenu, before its Git one.
         Add(separator, Sub("Local History", Item(A.ShowLocalHistory), separator, Item(A.ShowProjectHistory), Item(A.RecentChanges), Item(A.PutLabel)));
-        if (vcs.Repository is not null)
+        if (session.Vcs.Repository is not null)
         {
             Add(Sub("Git", Item(A.Annotate), Item(A.ShowDiff), Item(A.CompareWithRevision), Item(A.CompareWithBranch), separator,
                 Item(A.ShowHistory), Item(A.ShowHistoryForSelection), separator, Item(A.RollbackLines)));

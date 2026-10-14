@@ -44,7 +44,7 @@ public partial class MainWindow
             RefKind.Remote => from.Name[(from.Name.IndexOf('/', StringComparison.Ordinal) + 1)..],
             _ => string.Empty,
         };
-        NamePopup popup = new($"Create Branch from {from.Name}", initial, async name => (await vcs.NewBranchFromAsync(name.Trim(), from)).Problem);
+        NamePopup popup = new($"Create Branch from {from.Name}", initial, async name => (await session.Vcs.NewBranchFromAsync(name.Trim(), from)).Problem);
         popup.Done += (_, _) => popups.Close();
         popups.Show(popup);
         return popup;
@@ -57,7 +57,7 @@ public partial class MainWindow
         {
             string renamed = name.Trim();
             bool followed = GitLog.BranchFilter == branch.Ref.FullName;
-            VcsOutcome outcome = await vcs.RenameBranchAsync(branch, renamed);
+            VcsOutcome outcome = await session.Vcs.RenameBranchAsync(branch, renamed);
             if (outcome.Succeeded && followed)
             {
                 GitLog.FilterBranch(branch with { Ref = branch.Ref with { FullName = $"refs/heads/{renamed}", Name = renamed } });
@@ -74,10 +74,10 @@ public partial class MainWindow
     public async Task<VcsOutcome?> DeleteBranchAsync(BranchInfo branch)
     {
         bool force = false;
-        if (branch.Kind == RefKind.Local && !await vcs.IsMergedAsync(branch))
+        if (branch.Kind == RefKind.Local && !await session.Vcs.IsMergedAsync(branch))
         {
             if (!await Confirm("Branch Was Not Fully Merged",
-                $"The branch {branch.Name} was not fully merged to {vcs.Branch ?? "HEAD"}. Delete it and its unmerged commits?", "Delete"))
+                $"The branch {branch.Name} was not fully merged to {session.Vcs.Branch ?? "HEAD"}. Delete it and its unmerged commits?", "Delete"))
             {
                 return null;
             }
@@ -87,15 +87,15 @@ public partial class MainWindow
         {
             return null;
         }
-        return await vcs.DeleteRefAsync(branch, force, GitBranches.Remotes);
+        return await session.Vcs.DeleteRefAsync(branch, force, GitBranches.Remotes);
     }
 
     /// <summary>Rider's Compare with Current: a tab of the Git window with the commits the branch has that the current one
     /// lacks above, and those it lacks below.</summary>
     public GitLogView CompareWithCurrent(BranchInfo branch)
     {
-        string current = vcs.Branch ?? "HEAD";
-        string currentRef = vcs.Branch is { } name ? $"refs/heads/{name}" : "HEAD";
+        string current = session.Vcs.Branch ?? "HEAD";
+        string currentRef = session.Vcs.Branch is { } name ? $"refs/heads/{name}" : "HEAD";
         ShowToolWindow("git");
         return GitWindow.ShowCompare(new LogRange(currentRef, current, branch.Ref.FullName, branch.Name), new LogRange(branch.Ref.FullName, branch.Name, currentRef, current));
     }
@@ -104,12 +104,12 @@ public partial class MainWindow
     /// opening as the branch has it beside the file.</summary>
     public async Task<ChangesWindow?> ShowWorkingTreeDiffAsync(BranchInfo branch)
     {
-        if (vcs.Repository is not { } repository)
+        if (session.Vcs.Repository is not { } repository)
         {
             status.Text = NoRepository;
             return null;
         }
-        IReadOnlyList<FileChange> files = await vcs.ChangesSinceAsync(branch);
+        IReadOnlyList<FileChange> files = await session.Vcs.ChangesSinceAsync(branch);
         ChangesWindow window = new(branch.Name, files, repository);
         window.DiffRequested += (_, change) => _ = CompareWithAsync(change.Path, branch.Ref.FullName, branch.Name, change.From ?? change.Path);
         window.Show(this);

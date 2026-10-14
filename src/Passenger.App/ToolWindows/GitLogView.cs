@@ -23,7 +23,7 @@ public sealed class GitLogView : DockPanel
     private const double LaneWidth = 12;
     private const double RowHeight = 24;
 
-    private readonly VcsController vcs;
+    private VcsController vcs;
     private IReadOnlyList<GraphRow> rows = [];
     private readonly ObservableCollection<FileChange> files = [];
     private readonly ListBox list;
@@ -47,9 +47,9 @@ public sealed class GitLogView : DockPanel
 
     /// <param name="scope">What Show History lists the commits of, or null for the Log of every branch.</param>
     /// <param name="range">The commits of one branch another lacks, for Compare with Current.</param>
-    public GitLogView(VcsController vcs, HistoryScope? scope = null, LogRange? range = null)
+    public GitLogView(VcsController git, HistoryScope? scope = null, LogRange? range = null)
     {
-        this.vcs = vcs;
+        vcs = git;
         Scope = scope;
         Range = range;
         list = new ListBox
@@ -225,6 +225,19 @@ public sealed class GitLogView : DockPanel
 
     /// <summary>A history's tab closed: it stops following the history.</summary>
     public void Close() => vcs.HistoryChanged -= onHistoryChanged;
+
+    /// <summary>The Log follows another folder's working tree from now on, its session's in place of the last's: every
+    /// branch again, read again when shown.</summary>
+    public void Bind(VcsController next)
+    {
+        Close();
+        vcs = next;
+        vcs.HistoryChanged += onHistoryChanged;
+        Branches?.Bind(next);
+        (BranchFilter, BranchFilterName) = (null, null);
+        branchFilter.IsVisible = false;
+        onHistoryChanged(this, EventArgs.Empty);
+    }
 
     /// <summary>A file of a commit whose change to show: the commit and the file.</summary>
     public event EventHandler<(CommitInfo Commit, FileChange File)>? DiffRequested;

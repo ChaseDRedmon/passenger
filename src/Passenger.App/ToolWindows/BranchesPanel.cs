@@ -75,7 +75,7 @@ public sealed class BranchesPanel : DockPanel
     /// <summary>Rider's predefined favourites (GitBranchManager's default branch names).</summary>
     private static readonly string[] Predefined = ["refs/heads/master", "refs/heads/main", "refs/remotes/origin/master", "refs/remotes/origin/main"];
 
-    private readonly VcsController vcs;
+    private VcsController vcs;
     private readonly ListBox list;
     private readonly TextBox search;
     private readonly Dictionary<string, bool> expanded = [];
@@ -84,9 +84,9 @@ public sealed class BranchesPanel : DockPanel
     private IReadOnlyList<BranchNode> rows = [];
     private int loads;
 
-    public BranchesPanel(VcsController vcs)
+    public BranchesPanel(VcsController git)
     {
-        this.vcs = vcs;
+        vcs = git;
         list = new ListBox
         {
             Classes = { "tree" },
@@ -240,6 +240,9 @@ public sealed class BranchesPanel : DockPanel
 
     /// <summary>A name as Rider's menus quote it.</summary>
     private static string Quoted(string name) => $"'{(name.Length > 40 ? name[..37] + "..." : name)}'";
+
+    /// <summary>Lists another folder's branches from now on, its session's working tree in place of the last's.</summary>
+    public void Bind(VcsController next) => vcs = next;
 
     /// <summary>Reads the branches again and shows them, the choice and what is open kept.</summary>
     public async Task LoadAsync()
