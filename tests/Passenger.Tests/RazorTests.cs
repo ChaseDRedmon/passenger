@@ -374,8 +374,8 @@ public sealed class RazorTests : IClassFixture<RazorTests.Blazor>
 
 /// <summary>A Blazor app debugged from the window: breakpoints in a page's <c>@code</c> block and on the C# in its markup
 /// bind through the line directives Razor's generated C# carries, and one in a component's code-behind binds as any C#
-/// does, each stopping the app when the page is asked for. Run with the debugger's own tests, one at a time.</summary>
-[Collection(Debugging.Helpers.DebugSession.Collection)]
+/// does, each stopping the app when the page is asked for. Debugged, so run alone.</summary>
+[Collection(Alone.Name)]
 public sealed class RazorDebuggingTests : IDisposable
 {
     private readonly string folder = TestFolders.Create("razor-debug-");

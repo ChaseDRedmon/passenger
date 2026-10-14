@@ -16,8 +16,8 @@ namespace Passenger.Tests;
 /// (on Windows also by its 8.3 short names, elsewhere through a link) shows its changed file coloured, diffs the open file
 /// itself, commits it and binds a breakpoint in it, as Git, MSBuild and the debugger name it by the disk's own names; a
 /// project the solution names in other letter case than its folder is the one its files build in and take their namespace
-/// from; a sibling folder whose name begins with the open folder's is not inside it. Run with the debugger's tests.</summary>
-[Collection(Debugging.Helpers.DebugSession.Collection)]
+/// from; a sibling folder whose name begins with the open folder's is not inside it. Debugged, so run alone.</summary>
+[Collection(Alone.Name)]
 public sealed class PathsTests : IDisposable
 {
     /// <summary>Why a spelling in other letter case is not tried on Linux.</summary>

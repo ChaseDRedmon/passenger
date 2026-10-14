@@ -19,7 +19,7 @@ namespace Passenger.Tests;
 /// following, its uses changing and Git seeing a rename; Rename on the file in the Solution view offers to rename the
 /// class with it; a file named otherwise keeps its name; and Undo takes the whole rename back at once, asked first, as
 /// Rider's undo of a change to more than one file is.</summary>
-public sealed class TypeRenameTests : IDisposable
+public sealed class TypeRenameTests : IClassFixture<RestoredFolders>, IDisposable
 {
     private const string Order = "namespace Shop;\n\npublic class Order\n{\n    public int Total;\n}\n";
 
@@ -27,18 +27,19 @@ public sealed class TypeRenameTests : IDisposable
 
     private const string Shapes = "namespace Shop;\n\npublic class Circle\n{\n}\n\npublic class Square\n{\n    public Circle Inside() => new Circle();\n}\n";
 
-    private readonly string folder = PathNames.Canonical(TestFolders.Create("type-rename-"));
+    private readonly string folder;
 
-    public TypeRenameTests() => TestFolders.Prepare(() =>
+    public TypeRenameTests(RestoredFolders folders) => folder = PathNames.Canonical(folders.Take("type-rename-", made =>
     {
-        Write("Shop.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
-        Write(".gitignore", "bin/\nobj/\n");
-        Write("Order.cs", Order);
-        Write("Till.cs", Till);
-        Write("Shapes.cs", Shapes);
-        TestGit.Init(folder);
-        Restore.Run(folder);
-    }, folder);
+        string project = PathNames.Canonical(made);
+        Write(project, "Shop.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+        Write(project, ".gitignore", "bin/\nobj/\n");
+        Write(project, "Order.cs", Order);
+        Write(project, "Till.cs", Till);
+        Write(project, "Shapes.cs", Shapes);
+        TestGit.Init(project);
+        return project;
+    }));
 
     public void Dispose() => TestFolders.Delete(folder);
 
@@ -338,5 +339,7 @@ public sealed class TypeRenameTests : IDisposable
 
     private string Git(params string[] arguments) => TestGit.Run(folder, arguments);
 
-    private void Write(string relative, string text) => File.WriteAllText(Path.Combine(folder, relative), text);
+    private void Write(string relative, string text) => Write(folder, relative, text);
+
+    private static void Write(string folder, string relative, string text) => File.WriteAllText(Path.Combine(folder, relative), text);
 }

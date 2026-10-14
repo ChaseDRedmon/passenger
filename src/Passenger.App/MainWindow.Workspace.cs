@@ -120,7 +120,7 @@ public partial class MainWindow
         csharp = null;
         if (workspace is { } opening && (opening.Solution is not null || opening.Projects.Count > 0))
         {
-            csharp = new CSharpService();
+            csharp = new CSharpService(WarmServer);
             csharp.StateChanged += (_, _) => LanguageText.Text = LanguageLabel();
             csharp.StateChanged += (_, _) => usages.Refresh();
             csharp.Stopped += (_, message) => StatusText.Text = message;

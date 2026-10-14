@@ -10,7 +10,8 @@ namespace Passenger.Tests;
 
 /// <summary>Rider's Navigate actions past Declaration, on a real project with the language server: Type Declaration, Base
 /// Symbols and Derived Symbols with their choosers, and the places the IDE keeps as a person works: Recent Locations with
-/// each place's code, Last and Next Edit Location, Recently Changed Files. Each test opens its own window.</summary>
+/// each place's code, Last and Next Edit Location, Recently Changed Files. Each test opens its own window, on the server
+/// the last one left running (<see cref="SharedProject"/>).</summary>
 public sealed class GoToTests : IClassFixture<GoToTests.Project>
 {
     /// <summary>Lines from zero, as the editor counts them.</summary>
@@ -62,7 +63,11 @@ public sealed class GoToTests : IClassFixture<GoToTests.Project>
 
     private readonly Project project;
 
-    public GoToTests(Project project) => this.project = project;
+    public GoToTests(Project project)
+    {
+        this.project = project;
+        project.Reset();
+    }
 
     [AvaloniaFact]
     public void Type_declaration_from_a_variable_goes_to_the_class_it_holds_not_to_where_the_variable_is_declared()
@@ -294,35 +299,20 @@ public sealed class GoToTests : IClassFixture<GoToTests.Project>
         Ui.Settle();
     }
 
-    public sealed class Project : IDisposable
+    /// <summary>The shapes and a program using them, restored once for every test, and the warm server they share on it.</summary>
+    public sealed class Project : SharedProject
     {
-        private readonly string folder = TestFolders.Create("goto-");
-
         public Project()
+            : base("goto-")
         {
             File.WriteAllText(PathOf("Shapes.csproj"),
                 "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
             File.WriteAllText(PathOf("Shapes.cs"), Shapes);
             File.WriteAllText(PathOf("Program.cs"), Program);
-            TestFolders.Prepare(() => Restore.Run(folder), folder);
+            Prepare();
         }
 
-        public string PathOf(string name) => Path.Combine(folder, name);
-
-        /// <summary>A window on the project with a file open, once C# is ready. The tests share the project, so a window
-        /// never saves what its test typed.</summary>
-        public MainWindow Open(string file)
-        {
-            MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false };
-            window.Show();
-            window.OpenFolder(folder);
-            window.OpenFile(file);
-            window.EditorArea.CodeEditor.Focus();
-            Ui.Settle();
-            Assert.True(window.CSharpService?.IsReady, window.CSharpService?.State);
-            return window;
-        }
-
-        public void Dispose() => TestFolders.Delete(folder);
+        /// <summary>A window on the project with a file open and its editor focused, once C# is ready.</summary>
+        public MainWindow Open(string file) => Open(file, window => window.EditorArea.CodeEditor.Focus());
     }
 }

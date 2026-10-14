@@ -21,7 +21,11 @@ public sealed class LiveTemplatesTests : IClassFixture<LiveTemplatesTests.Projec
     private readonly Project project;
     private readonly string settings = TestFolders.Create("settings-");
 
-    public LiveTemplatesTests(Project project) => this.project = project;
+    public LiveTemplatesTests(Project project)
+    {
+        this.project = project;
+        project.Reset();
+    }
 
     public void Dispose() => TestFolders.Delete(settings);
 
@@ -304,10 +308,11 @@ public sealed class LiveTemplatesTests : IClassFixture<LiveTemplatesTests.Projec
         Ui.Settle();
     }
 
-    /// <summary>A window that keeps its settings in the test's own folder, on the project with a file open once C# is ready.</summary>
+    /// <summary>A window that keeps its settings in the test's own folder, on the project with a file open once C# is ready,
+    /// on the server the class's last window left running.</summary>
     private MainWindow Open(string file)
     {
-        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false, StateFolder = settings };
+        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false, StateFolder = settings, WarmServer = project.Server };
         window.Show();
         window.KeepSettings();
         window.OpenFolder(project.Folder);
@@ -317,21 +322,19 @@ public sealed class LiveTemplatesTests : IClassFixture<LiveTemplatesTests.Projec
         return window;
     }
 
-    /// <summary>A small console project on disk, restored once for every test; a window never saves what its test typed.</summary>
-    public sealed class Project : IDisposable
+    /// <summary>A small console project on disk, restored once for every test, and the warm server they share on it; a
+    /// window never saves what its test typed.</summary>
+    public sealed class Project : SharedProject
     {
         public Project()
+            : base("templates-")
         {
-            File.WriteAllText(Path.Combine(Folder, "Templates.csproj"),
+            File.WriteAllText(PathOf("Templates.csproj"),
                 "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
-            File.WriteAllText(Path.Combine(Folder, "Program.cs"), "class Program\n{\n    static void Main()\n    {\n        int sum = Sum.Of();\n    }\n}\n");
-            File.WriteAllText(Path.Combine(Folder, "Sum.cs"), "using System;\n\nstatic class Sum\n{\n    public static int Of()\n    {\n        int total = 0;\n        return total;\n    }\n}\n");
-            File.WriteAllText(Path.Combine(Folder, "Pair.cs"), "class Pair\n{\n    public int First;\n\n    public int Both(Pair other)\n    {\n        int count = 2;\n        return count;\n    }\n}\n");
-            TestFolders.Prepare(() => Restore.Run(Folder), Folder);
+            File.WriteAllText(PathOf("Program.cs"), "class Program\n{\n    static void Main()\n    {\n        int sum = Sum.Of();\n    }\n}\n");
+            File.WriteAllText(PathOf("Sum.cs"), "using System;\n\nstatic class Sum\n{\n    public static int Of()\n    {\n        int total = 0;\n        return total;\n    }\n}\n");
+            File.WriteAllText(PathOf("Pair.cs"), "class Pair\n{\n    public int First;\n\n    public int Both(Pair other)\n    {\n        int count = 2;\n        return count;\n    }\n}\n");
+            Prepare();
         }
-
-        public string Folder { get; } = TestFolders.Create("templates-");
-
-        public void Dispose() => TestFolders.Delete(Folder);
     }
 }

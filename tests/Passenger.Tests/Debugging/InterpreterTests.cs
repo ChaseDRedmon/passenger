@@ -6,7 +6,7 @@ namespace Passenger.Tests.Debugging;
 
 /// <summary>Expressions the debugger's IL interpreter evaluates without running the program's code,
 /// in the shapes upstream SharpDbg's #30 lists as wrong.</summary>
-[Collection(DebugSession.Collection)]
+[Collection(Alone.Name)]
 public class InterpreterTests(ITestOutputHelper testOutputHelper)
 {
     [Fact]

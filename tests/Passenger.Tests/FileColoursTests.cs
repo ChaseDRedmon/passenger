@@ -18,6 +18,7 @@ namespace Passenger.Tests;
 /// the colours right however far a comment or a code fence it opens or closes reaches; Comment with Line Comment and
 /// with Block Comment write each language's own comments; a tag's name lights up with its pair's; and a key in a long
 /// file costs the lines it changed.</summary>
+[Collection(Alone.Name)]
 public sealed class FileColoursTests : IDisposable
 {
     private const string Project = """

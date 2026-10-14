@@ -23,7 +23,11 @@ public sealed class CaretHighlightsTests : IClassFixture<CaretHighlightsTests.Pr
 
     private readonly Project project;
 
-    public CaretHighlightsTests(Project project) => this.project = project;
+    public CaretHighlightsTests(Project project)
+    {
+        this.project = project;
+        project.Reset();
+    }
 
     [AvaloniaFact]
     public void Resting_the_caret_on_a_local_highlights_its_writes_and_reads_and_marks_them_on_the_scrollbar()
@@ -237,34 +241,17 @@ public sealed class CaretHighlightsTests : IClassFixture<CaretHighlightsTests.Pr
             ? solid.Color
             : throw new InvalidOperationException($"The {window.ActualThemeVariant} theme has no {key}");
 
-    /// <summary>A small project on disk, restored once for every test.</summary>
-    public sealed class Project : IDisposable
+    /// <summary>A small project on disk, restored once for every test, and the warm server they share on it.</summary>
+    public sealed class Project : SharedProject
     {
-        private readonly string folder = TestFolders.Create("caret-highlights-");
-
         public Project()
+            : base("caret-highlights-")
         {
             File.WriteAllText(PathOf("Sample.csproj"),
                 "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Library</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
             File.WriteAllText(PathOf("Totals.cs"), Totals);
             File.WriteAllText(PathOf("Braces.cs"), Braces);
-            TestFolders.Prepare(() => Restore.Run(folder), folder);
+            Prepare();
         }
-
-        public string PathOf(string name) => Path.Combine(folder, name);
-
-        /// <summary>A window on the project with a file open, once C# is ready; it never saves what its test typed.</summary>
-        public MainWindow Open(string file)
-        {
-            MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false };
-            window.Show();
-            window.OpenFolder(folder);
-            window.OpenFile(file);
-            Ui.Settle();
-            Assert.True(window.CSharpService?.IsReady, window.CSharpService?.State);
-            return window;
-        }
-
-        public void Dispose() => TestFolders.Delete(folder);
     }
 }

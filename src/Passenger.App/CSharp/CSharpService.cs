@@ -30,10 +30,18 @@ public sealed class CSharpService : IAsyncDisposable
 
     private readonly Dictionary<OpenDocument, CSharpDocument> documents = [];
     private readonly List<DateTime> restarts = [];
+    private readonly WarmServer? warm;
+
+    /// <summary>What this service hung on its server's events, undone when the server is kept for another window.</summary>
+    private readonly List<Action> unhooks = [];
     private RoslynSession? session;
     private CancellationTokenSource? starting;
     private WorkspaceModel? workspace;
     private bool disposed;
+
+    /// <summary>A service that starts its own server and ends it with itself, or, given a <see cref="WarmServer"/>, takes
+    /// up the server kept there and leaves its own there as it ends.</summary>
+    public CSharpService(WarmServer? warm = null) => this.warm = warm;
 
     /// <summary>The state changed (starting, loading projects, ready, failed); raised on the UI thread.</summary>
     public event EventHandler? StateChanged;
@@ -303,8 +311,9 @@ public sealed class CSharpService : IAsyncDisposable
 
     public CSharpDocument? For(OpenDocument document) => documents.GetValueOrDefault(document);
 
-    /// <summary>Lets the open files go and ends the server. The server's end (shutdown, exit, a kill when it will not go)
-    /// runs on a worker thread, so the process can wait for it once the window's loop has stopped.</summary>
+    /// <summary>Lets the open files go and ends the server, or with a <see cref="WarmServer"/> leaves a loaded one there,
+    /// its files closed and nothing of this service's hung on it. The server's end (shutdown, exit, a kill when it will
+    /// not go) runs on a worker thread, so the process can wait for it once the window's loop has stopped.</summary>
     public ValueTask DisposeAsync()
     {
         UiThread.Check();
@@ -317,8 +326,38 @@ public sealed class CSharpService : IAsyncDisposable
         }
         documents.Clear();
         RoslynSession? ending = session;
+        Unhook();
+        // Kept only once its projects loaded cleanly: load problems it said, a window taking it up would never hear.
+        if (warm is not null && ending is { IsLoaded: true } && !ending.Server.HasExited && loadProblems.Count == 0 && batch.Count == 0)
+        {
+            return new ValueTask(warm.Keep(ending));
+        }
         // Not held: the window's end waits for it with no UI thread to come back to (MainWindow.Ended).
         return ending is null ? ValueTask.CompletedTask : new ValueTask(Task.Run(() => ending.DisposeAsync().AsTask()));
+    }
+
+    /// <summary>Remembers how to take one of this service's handlers off its server again; from the UI thread, or the
+    /// server's own as it starts.</summary>
+    private void Hook(Action unhook)
+    {
+        lock (unhooks)
+        {
+            unhooks.Add(unhook);
+        }
+    }
+
+    private void Unhook()
+    {
+        Action[] all;
+        lock (unhooks)
+        {
+            all = [.. unhooks];
+            unhooks.Clear();
+        }
+        foreach (Action unhook in all)
+        {
+            unhook();
+        }
     }
 
     private async Task Run(WorkspaceModel opening, CancellationToken cancel)
@@ -335,23 +374,46 @@ public sealed class CSharpService : IAsyncDisposable
             {
                 options[name] = value;
             }
-            // Started on a worker: the process, its log and the wait for its answer are no work for the window's thread.
-            RoslynSession started = await BackgroundWork.Run(() => RoslynSession.StartAsync(opening.Folder, solution, projects, logs, cancel, options, Hear), cancel);
-            if (cancel.IsCancellationRequested)
+            RoslynSession started;
+            string loading = solution is not null ? Path.GetFileName(solution) : $"{projects.Length} project{(projects.Length == 1 ? "" : "s")}";
+            if (warm?.Take(opening.Folder, solution, projects, options) is { } taken)
             {
-                // Disposed, or started again, just as this server started: nothing else will end it.
-                await started.DisposeAsync();
-                return;
+                started = taken;
+                Hear(started.Server);
+                IdeErrors.Write($"C# language server (process {started.Server.ProcessId}) taken up warm for {opening.Folder}, {loading} loaded");
             }
-            string loading = started.Solution is { } named ? Path.GetFileName(named) : $"{projects.Length} project{(projects.Length == 1 ? "" : "s")}";
-            IdeErrors.Write($"C# language server (process {started.Server.ProcessId}) started for {opening.Folder} in {Since(began)}, loading {loading}");
-            _ = TimeFirstColoursAsync(started, began);
+            else
+            {
+                // Started on a worker: the process, its log and the wait for its answer are no work for the window's thread.
+                started = await BackgroundWork.Run(() => RoslynSession.StartAsync(opening.Folder, solution, projects, logs, cancel, options, Hear), cancel);
+                if (cancel.IsCancellationRequested)
+                {
+                    // Disposed, or started again, just as this server started: nothing else will end it.
+                    await started.DisposeAsync();
+                    return;
+                }
+                IdeErrors.Write($"C# language server (process {started.Server.ProcessId}) started for {opening.Folder} in {Since(began)}, loading {loading}");
+                _ = TimeFirstColoursAsync(started, began);
+            }
             TaskCompletionSource loaded = new(TaskCreationOptions.RunContinuationsAsynchronously);
-            started.Loaded += (_, _) => loaded.TrySetResult();
-            started.Server.ColoursRefreshRequested += (_, _) => UiThread.Post(() => Each(document => document.RefreshColours()));
-            started.Server.DiagnosticsRefreshRequested += (_, _) => UiThread.Post(() => Each(document => document.RefreshDiagnostics()));
-            started.Server.Exited += (_, why) => UiThread.Post(() => OnExited(started, why));
-            started.Server.NotResponding += (_, why) => UiThread.Post(() => OnNotResponding(started, why));
+            EventHandler onLoaded = (_, _) => loaded.TrySetResult();
+            EventHandler onColours = (_, _) => UiThread.Post(() => Each(document => document.RefreshColours()));
+            EventHandler onDiagnostics = (_, _) => UiThread.Post(() => Each(document => document.RefreshDiagnostics()));
+            EventHandler<string> onExited = (_, why) => UiThread.Post(() => OnExited(started, why));
+            EventHandler<string> onHung = (_, why) => UiThread.Post(() => OnNotResponding(started, why));
+            started.Loaded += onLoaded;
+            started.Server.ColoursRefreshRequested += onColours;
+            started.Server.DiagnosticsRefreshRequested += onDiagnostics;
+            started.Server.Exited += onExited;
+            started.Server.NotResponding += onHung;
+            Hook(() =>
+            {
+                started.Loaded -= onLoaded;
+                started.Server.ColoursRefreshRequested -= onColours;
+                started.Server.DiagnosticsRefreshRequested -= onDiagnostics;
+                started.Server.Exited -= onExited;
+                started.Server.NotResponding -= onHung;
+            });
             session = started;
             if (told != startedWith)
             {
@@ -397,11 +459,11 @@ public sealed class CSharpService : IAsyncDisposable
         }
     }
 
-    /// <summary>Listens to a server as it starts, before it is asked to load anything; on the server's thread, where its
-    /// errors and warnings go to the log at once and only what the window shows crosses to it.</summary>
+    /// <summary>Listens to a server as it starts, before it is asked to load anything (or as a warm one is taken up); on the
+    /// server's thread, where its errors and warnings go to the log at once and only what the window shows crosses to it.</summary>
     private void Hear(LanguageServer server)
     {
-        server.Logged += (_, message) =>
+        EventHandler<LogMessageParams> logged = (_, message) =>
         {
             if (message.Type is 1 or 2)
             {
@@ -417,12 +479,21 @@ public sealed class CSharpService : IAsyncDisposable
                 UiThread.Post(() => OnLoadReport(server, report));
             }
         };
-        server.Shown += (_, message) =>
+        EventHandler<LogMessageParams> shown = (_, message) =>
         {
             IdeErrors.Write($"C# language server (process {server.ProcessId}) says: {message.Message}");
             UiThread.Post(() => OnShown(server, message));
         };
-        server.Progressed += (_, progress) => UiThread.Post(() => OnProgress(server, progress));
+        EventHandler<WorkProgress> progressed = (_, progress) => UiThread.Post(() => OnProgress(server, progress));
+        server.Logged += logged;
+        server.Shown += shown;
+        server.Progressed += progressed;
+        Hook(() =>
+        {
+            server.Logged -= logged;
+            server.Shown -= shown;
+            server.Progressed -= progressed;
+        });
     }
 
     /// <summary>A message the server shows: in the status bar, an error as an error and a warning as a warning. Roslyn's

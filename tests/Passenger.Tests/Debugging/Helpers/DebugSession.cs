@@ -13,8 +13,10 @@ namespace Passenger.Tests.Debugging.Helpers;
 /// breakpoint changes queue in the order they came, for the tests to wait on one at a time.</summary>
 public sealed class DebugSession : IDisposable
 {
-    /// <summary>The debugger's tests run one at a time, as their upstream's did: each debuggee waits on
-    /// timings (a suspended start, a breakpoint's binding) that a machine busy with others stretches.</summary>
+    /// <summary>The debug adapter's protocol tests run one at a time, as their upstream's did: each debuggee waits on
+    /// timings (a suspended start, a breakpoint's binding) that a machine busy with others stretches. Beside the window
+    /// tests, one at a time themselves, their adapter and small debuggee are what the run can bear; a protocol test
+    /// that holds the engine to a time runs alone (<see cref="Alone"/>).</summary>
     public const string Collection = "Debugger";
 
     private static readonly TimeSpan EventLimit = TimeSpan.FromSeconds(60);
@@ -149,6 +151,7 @@ public sealed class DebugSession : IDisposable
     private T Answer<T>(string command, Task<T> answer, TimeSpan? limit)
     {
         TimeSpan most = limit ?? RequestLimit;
+        Observe(answer);
         try
         {
             return answer.WaitAsync(most, TestContext.Current.CancellationToken).GetAwaiter().GetResult();
@@ -392,11 +395,18 @@ public sealed class DebugSession : IDisposable
         }
     }
 
+    /// <summary>A request given up on (its wait ran out, or the session ended first) fails when the adapter goes: seen here,
+    /// that failure never reaches the IDE's catcher of tasks nobody awaited, which would fail the window test beside.</summary>
+    private static void Observe(Task request) => request.ContinueWith(failed => _ = failed.Exception, CancellationToken.None,
+        TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+
     public void Dispose()
     {
         try
         {
-            Connection.RequestAsync("disconnect", new DisconnectArguments(TerminateDebuggee: terminateDebuggee)).Wait(TimeSpan.FromSeconds(10));
+            Task disconnect = Connection.RequestAsync("disconnect", new DisconnectArguments(TerminateDebuggee: terminateDebuggee));
+            Observe(disconnect);
+            disconnect.Wait(TimeSpan.FromSeconds(10));
         }
         catch (AggregateException)
         {

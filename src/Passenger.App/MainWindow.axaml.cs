@@ -792,6 +792,11 @@ public partial class MainWindow : Window
     /// as a test names a fresh one without changing the process's environment, which the programs it starts inherit.</summary>
     public string StateFolder { get; init; } = State.StateStore.DefaultRoot;
 
+    /// <summary>Where the window leaves its language server running as it closes, and takes one up from as it opens the
+    /// same solution, rather than end it and start another: a test class's windows on one project share a warm server
+    /// this way. None in the IDE, whose windows end their server with them.</summary>
+    public WarmServer? WarmServer { get; init; }
+
     /// <summary>The store of the window a person uses, the process's for its state folder, taken the first time it keeps
     /// something; null in a headless one.</summary>
     private State.StateStore? state;

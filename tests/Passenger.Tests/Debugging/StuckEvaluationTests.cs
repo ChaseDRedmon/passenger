@@ -6,7 +6,7 @@ namespace Passenger.Tests.Debugging;
 /// <summary>An evaluation that cannot be stopped (a getter blocked reading input, outside the runtime): the debugger
 /// takes the program back, as Visual Studio and Rider do, so it is paused as the IDE shows it, its stop still there to
 /// read, with no property getter run until it goes on, and it steps and continues as from any stop.</summary>
-[Collection(DebugSession.Collection)]
+[Collection(Alone.Name)]
 public class StuckEvaluationTests(ITestOutputHelper testOutputHelper)
 {
     private const string Stop = "Console.WriteLine($\"before {before}\");";

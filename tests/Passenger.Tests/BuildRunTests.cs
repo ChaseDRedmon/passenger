@@ -14,18 +14,18 @@ namespace Passenger.Tests;
 
 /// <summary>Building and running a solution from the window, with the platform's own shortcuts: the
 /// build's errors arrive in Problems where they point, and a run's output in the Run window.</summary>
-public sealed class BuildRunTests : IDisposable
+public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
 {
-    private readonly string folder = TestFolders.Create("build-");
+    private readonly string folder;
 
-    public BuildRunTests()
+    public BuildRunTests(RestoredFolders folders) => folder = folders.Take("build-", made =>
     {
-        Write("Sample.slnx", "<Solution>\n  <Folder Name=\"/src/\">\n    <Project Path=\"src/Hello/Hello.csproj\" />\n  </Folder>\n</Solution>\n");
-        Write("src/Hello/Hello.csproj",
+        Write(made, "Sample.slnx", "<Solution>\n  <Folder Name=\"/src/\">\n    <Project Path=\"src/Hello/Hello.csproj\" />\n  </Folder>\n</Solution>\n");
+        Write(made, "src/Hello/Hello.csproj",
             "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
-        Write("src/Hello/Program.cs", "Console.WriteLine(\"Hello from the run\");\n");
-        TestFolders.Prepare(() => Restore.Run(Path.Combine(folder, "Sample.slnx")), folder);
-    }
+        Write(made, "src/Hello/Program.cs", "Console.WriteLine(\"Hello from the run\");\n");
+        return Path.Combine(made, "Sample.slnx");
+    });
 
     public void Dispose() => TestFolders.Delete(folder);
 
@@ -967,7 +967,9 @@ public sealed class BuildRunTests : IDisposable
         Write("src/Tools/Tool.cs", "public static class Tool\n{\n    public static int Count => 3;\n}\n");
     }
 
-    private void Write(string relative, string text)
+    private void Write(string relative, string text) => Write(folder, relative, text);
+
+    private static void Write(string folder, string relative, string text)
     {
         string path = Path.Combine(folder, relative);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);

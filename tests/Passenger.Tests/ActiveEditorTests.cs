@@ -21,6 +21,7 @@ namespace Passenger.Tests;
 /// masks say), each row from a word, the line's later rows from its indent, its number beside its first row only, and
 /// every key, click and mark finding the row it is on; Show Whitespaces' dots and arrows; and Increase, Decrease and Reset
 /// Font Size and Cmd+wheel (Ctrl+wheel elsewhere) changing the font Settings keeps.</summary>
+[Collection(Alone.Name)]
 public sealed class ActiveEditorTests : IDisposable
 {
     /// <summary>Sixty words of six letters, a space between each: a line that wraps in any editor this wide.</summary>

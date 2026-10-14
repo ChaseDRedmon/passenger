@@ -14,6 +14,7 @@ namespace Passenger.Tests;
 /// dead and survived, however the GC moved what lived on), a type's objects opened to the shortest paths that keep them
 /// from the GC roots with each root's kind and what they retain, and a heap of a million objects read, compared and opened
 /// while the window goes on answering.</summary>
+[Collection(Alone.Name)]
 public sealed class MemorySnapshotsTests : IDisposable
 {
     private readonly string folder = TestFolders.Create("memory-");

@@ -14,7 +14,7 @@ namespace Passenger.Tests;
 /// <summary>Rider's refactorings that ask their options in a dialog, each through its own keys and its dialog's controls on
 /// a real project, computed by Passenger's extension in the real language server: Change Signature, Extract Interface,
 /// Move to Another File and Move to Namespace. Each leaves a project that builds, and Undo takes each back whole.</summary>
-public sealed class RefactoringDialogsTests : IDisposable
+public sealed class RefactoringDialogsTests : IClassFixture<RestoredFolders>, IDisposable
 {
     private const string Calc = "namespace Shop;\n\npublic static class Calc\n{\n    public static int Scale(int value, int factor, int unused) => value * factor;\n\n"
         + "    public static int Twice(int value) => Scale(value, 2, 0);\n}\n";
@@ -38,22 +38,20 @@ public sealed class RefactoringDialogsTests : IDisposable
 
     private const string Cat = "namespace Shop;\n\npublic class Cat : Animal\n{\n    public bool Purrs => true;\n}\n";
 
-    private readonly string folder = PathNames.Canonical(TestFolders.Create("refactorings-"));
+    private readonly string folder;
 
-    public RefactoringDialogsTests() => TestFolders.Prepare(() =>
+    public RefactoringDialogsTests(RestoredFolders folders) => folder = PathNames.Canonical(folders.Take("refactorings-", made =>
     {
-        Write("Shop.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n    <Nullable>enable</Nullable>\n  </PropertyGroup>\n</Project>\n");
-        Write("Calc.cs", Calc);
-        Write("Till.cs", Till);
-        Write("Order.cs", Order);
-        Write("OrderBook.cs", OrderBook);
-        Write("Report.cs", Report);
-        Write("Shapes.cs", Shapes);
-        Write("Animal.cs", Animal);
-        Write("Dog.cs", Dog);
-        Write("Cat.cs", Cat);
-        Restore.Run(folder);
-    }, folder);
+        string project = PathNames.Canonical(made);
+        File.WriteAllText(Path.Combine(project, "Shop.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n    <Nullable>enable</Nullable>\n  </PropertyGroup>\n</Project>\n");
+        (string Name, string Text)[] files = [("Calc.cs", Calc), ("Till.cs", Till), ("Order.cs", Order), ("OrderBook.cs", OrderBook),
+            ("Report.cs", Report), ("Shapes.cs", Shapes), ("Animal.cs", Animal), ("Dog.cs", Dog), ("Cat.cs", Cat)];
+        foreach ((string name, string text) in files)
+        {
+            File.WriteAllText(Path.Combine(project, name), text);
+        }
+        return project;
+    }));
 
     public void Dispose() => TestFolders.Delete(folder);
 
@@ -332,6 +330,4 @@ public sealed class RefactoringDialogsTests : IDisposable
     }
 
     private string PathOf(string name) => Path.Combine(folder, name);
-
-    private void Write(string name, string text) => File.WriteAllText(PathOf(name), text);
 }

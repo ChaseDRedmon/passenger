@@ -15,7 +15,11 @@ public sealed class CodeEditsTests : IClassFixture<CodeEditsTests.Project>
 {
     private readonly Project project;
 
-    public CodeEditsTests(Project project) => this.project = project;
+    public CodeEditsTests(Project project)
+    {
+        this.project = project;
+        project.Reset();
+    }
 
     private const string TwoLines = "total += 1;\n        total += 2;";
 
@@ -347,12 +351,12 @@ public sealed class CodeEditsTests : IClassFixture<CodeEditsTests.Project>
         Ui.Settle();
     }
 
-    /// <summary>A small console project on disk, restored once for every test; a window never saves what its test typed.</summary>
-    public sealed class Project : IDisposable
+    /// <summary>A small console project on disk, restored once for every test, and the warm server they share on it; a
+    /// window never saves what its test typed.</summary>
+    public sealed class Project : SharedProject
     {
-        private readonly string folder = TestFolders.Create("edits-");
-
         public Project()
+            : base("edits-")
         {
             File.WriteAllText(PathOf("Edits.csproj"),
                 "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
@@ -365,23 +369,7 @@ public sealed class CodeEditsTests : IClassFixture<CodeEditsTests.Project>
                 + "    public static int Unused(int value) => value + 1;\n\n    public static int Four() => Twice(2);\n}\n");
             File.WriteAllText(PathOf("Scale.cs"), "static class Scale\n{\n    public static int Kilo(int value)\n    {\n        return value * 1024;\n    }\n\n    public static int Two() => Kilo(2);\n}\n");
             File.WriteAllText(PathOf("Counter.cs"), "class Counter\n{\n    public int count;\n\n    public void Add() => count++;\n}\n");
-            TestFolders.Prepare(() => Restore.Run(folder), folder);
+            Prepare();
         }
-
-        public string PathOf(string name) => Path.Combine(folder, name);
-
-        /// <summary>A window on the project with a file open, once C# is ready.</summary>
-        public MainWindow Open(string file)
-        {
-            MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false };
-            window.Show();
-            window.OpenFolder(folder);
-            window.OpenFile(file);
-            Ui.Settle();
-            Assert.True(window.CSharpService?.IsReady, window.CSharpService?.State);
-            return window;
-        }
-
-        public void Dispose() => TestFolders.Delete(folder);
     }
 }

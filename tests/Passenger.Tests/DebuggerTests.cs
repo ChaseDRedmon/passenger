@@ -16,20 +16,24 @@ namespace Passenger.Tests;
 
 /// <summary>Debugging from the window, as a person does it: F9 on a line, Alt+F5, the stop shown where
 /// it is with its values, then stepping, resuming and stopping with the keys Rider's keymap gives
-/// them. Run with the debugger's own tests, one at a time.</summary>
-[Collection(Debugging.Helpers.DebugSession.Collection)]
-public sealed class DebuggerTests : IDisposable
+/// them. Debugged, and the console's answers timed, so run alone.</summary>
+[Collection(Alone.Name)]
+public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
 {
-    private readonly string folder = TestFolders.Create("debug-");
+    private readonly string folder;
     private readonly string program;
 
-    public DebuggerTests()
+    public DebuggerTests(RestoredFolders folders)
     {
-        Write("Sum.csproj",
-            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
-        program = Write("Program.cs",
-            "int total = 0;\nfor (int i = 1; i <= 3; i++)\n{\n    total += i;\n}\nConsole.WriteLine($\"total {total}\");\n");
-        TestFolders.Prepare(() => Restore.Run(folder), folder);
+        folder = folders.Take("debug-", made =>
+        {
+            File.WriteAllText(Path.Combine(made, "Sum.csproj"),
+                "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
+            File.WriteAllText(Path.Combine(made, "Program.cs"),
+                "int total = 0;\nfor (int i = 1; i <= 3; i++)\n{\n    total += i;\n}\nConsole.WriteLine($\"total {total}\");\n");
+            return made;
+        });
+        program = Path.Combine(PathNames.Canonical(folder), "Program.cs");
     }
 
     public void Dispose() => TestFolders.Delete(folder);
@@ -1210,6 +1214,8 @@ public sealed class DebuggerTests : IDisposable
         Task<string> output = program.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);
         try
         {
+            // Running, as a program a person attaches to is: its runtime has opened what a debugger attaches through.
+            Ui.WaitFor(() => DotnetProcesses.List().Any(p => p.Id == program.Id), "the program's runtime to start");
             MainWindow window = new() { Width = 1200, Height = 800 };
             window.Show();
             window.OpenFile(source);

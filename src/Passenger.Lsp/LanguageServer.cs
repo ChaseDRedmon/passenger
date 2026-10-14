@@ -128,6 +128,18 @@ public sealed class LanguageServer : IAsyncDisposable
     /// changed and asks for it again. A server that has stopped is not told: one started again reads its options afresh.</summary>
     public void SetOption(string name, object? value) => SetOptions(new Dictionary<string, object?> { [name] = value });
 
+    /// <summary>The options set on the server as it stands: those it started with and every change since.</summary>
+    public IReadOnlyDictionary<string, object?> Options
+    {
+        get
+        {
+            lock (options)
+            {
+                return new Dictionary<string, object?>(options, StringComparer.Ordinal);
+            }
+        }
+    }
+
     /// <summary>Changes several of the server's options at once, which it asks for again once.</summary>
     public void SetOptions(IReadOnlyDictionary<string, object?> changed)
     {

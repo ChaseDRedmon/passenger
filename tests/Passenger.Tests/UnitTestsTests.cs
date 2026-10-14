@@ -20,23 +20,27 @@ namespace Passenger.Tests;
 /// it opens and follows them as they are typed, Run All finds and runs a project's tests and marks each where the code
 /// put it, Run Tests at the caret runs that test alone, and Debug Tests stops at a breakpoint inside one. The project is
 /// xUnit's, run through the SDK's own VSTest.</summary>
-[Collection(Debugging.Helpers.DebugSession.Collection)]
-public sealed class UnitTestsTests : IDisposable
+[Collection(Alone.Name)]
+public sealed class UnitTestsTests : IClassFixture<RestoredFolders>, IDisposable
 {
-    private readonly string folder = TestFolders.Create("tests-");
+    private readonly string folder;
     private readonly string source;
 
-    public UnitTestsTests()
+    public UnitTestsTests(RestoredFolders restored)
     {
-        Write("Sums.Tests.csproj",
-            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n" +
-            "  <ItemGroup>\n    <PackageReference Include=\"Microsoft.NET.Test.Sdk\" Version=\"18.10.1\" />\n    <PackageReference Include=\"xunit\" Version=\"2.9.3\" />\n" +
-            "    <PackageReference Include=\"xunit.runner.visualstudio\" Version=\"3.1.5\" />\n  </ItemGroup>\n</Project>\n");
-        source = Write("SumTests.cs",
-            "using Xunit;\n\nnamespace Sums.Tests;\n\npublic class SumTests\n{\n    [Fact]\n    public void Two_and_two_make_four()\n    {\n        int sum = 2 + 2;\n        Assert.Equal(4, sum);\n    }\n\n" +
-            "    [Fact]\n    public void Two_and_two_make_five()\n    {\n        Assert.Equal(5, 2 + 2);\n    }\n\n    [Theory]\n    [InlineData(1, 2)]\n    [InlineData(2, 4)]\n    public void Doubles(int value, int twice) => Assert.Equal(twice, value * 2);\n\n" +
-            "    [Fact(Skip = \"later\")]\n    public void Not_yet() { }\n}\n");
-        TestFolders.Prepare(() => Restore.Run(folder), folder);
+        folder = restored.Take("tests-", made =>
+        {
+            File.WriteAllText(Path.Combine(made, "Sums.Tests.csproj"),
+                "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n" +
+                "  <ItemGroup>\n    <PackageReference Include=\"Microsoft.NET.Test.Sdk\" Version=\"18.10.1\" />\n    <PackageReference Include=\"xunit\" Version=\"2.9.3\" />\n" +
+                "    <PackageReference Include=\"xunit.runner.visualstudio\" Version=\"3.1.5\" />\n  </ItemGroup>\n</Project>\n");
+            File.WriteAllText(Path.Combine(made, "SumTests.cs"),
+                "using Xunit;\n\nnamespace Sums.Tests;\n\npublic class SumTests\n{\n    [Fact]\n    public void Two_and_two_make_four()\n    {\n        int sum = 2 + 2;\n        Assert.Equal(4, sum);\n    }\n\n" +
+                "    [Fact]\n    public void Two_and_two_make_five()\n    {\n        Assert.Equal(5, 2 + 2);\n    }\n\n    [Theory]\n    [InlineData(1, 2)]\n    [InlineData(2, 4)]\n    public void Doubles(int value, int twice) => Assert.Equal(twice, value * 2);\n\n" +
+                "    [Fact(Skip = \"later\")]\n    public void Not_yet() { }\n}\n");
+            return made;
+        });
+        source = Path.Combine(PathNames.Canonical(folder), "SumTests.cs");
     }
 
     private readonly List<string> folders = [];

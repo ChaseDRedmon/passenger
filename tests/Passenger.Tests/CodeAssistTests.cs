@@ -15,12 +15,18 @@ using Passenger.Text;
 namespace Passenger.Tests;
 
 /// <summary>The language server's help through the whole window, on a real project: completion as
-/// you type, go to definition, rename. Each test opens its own window, so its own server.</summary>
+/// you type, go to definition, rename. Each test opens its own window, on the server the last one left running, warm, and
+/// on the project as written (<see cref="SharedProject"/>).</summary>
+[Collection(Alone.Name)]
 public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
 {
     private readonly Project project;
 
-    public CodeAssistTests(Project project) => this.project = project;
+    public CodeAssistTests(Project project)
+    {
+        this.project = project;
+        project.Reset();
+    }
 
     [AvaloniaFact]
     public void Go_to_symbol_finds_a_member_in_another_file_by_name_and_goes_to_it()
@@ -374,8 +380,7 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
         string separator = ((char)0x2028).ToString();
         string paragraph = ((char)0x2029).ToString();
         string next = ((char)0x85).ToString();
-        string path = project.PathOf("Mixed.cs");
-        File.WriteAllText(path, $"static class Mixed\n{{\n    /* Pasted:{separator}one,\r\ntwo,{next}three. */\n    public static int Value()\n    {{\n        int total = 1;\n          return total;\n    }}\n}}\n");
+        string path = project.Write("Mixed.cs", $"static class Mixed\n{{\n    /* Pasted:{separator}one,\r\ntwo,{next}three. */\n    public static int Value()\n    {{\n        int total = 1;\n          return total;\n    }}\n}}\n");
         MainWindow? window = null;
         try
         {
@@ -1043,7 +1048,7 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
     {
         string foo = project.PathOf("Foo.cs");
         string bar = project.PathOf("Bar.cs");
-        File.WriteAllText(foo, "class Bar\n{\n}\n");
+        project.Write("Foo.cs", "class Bar\n{\n}\n");
         MainWindow window = project.Open("Foo.cs");
         try
         {
@@ -1516,8 +1521,7 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
         text.Append("    public static void Last()\n    {\n        Console\n    }\n}\n");
         string source = text.ToString();
         Assert.True(source.Count(c => c == '\n') > 20_000);
-        string path = project.PathOf("Long.cs");
-        File.WriteAllText(path, source);
+        string path = project.Write("Long.cs", source);
         MainWindow? window = null;
         try
         {
@@ -1561,8 +1565,7 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
     public void Semantic_colours_in_a_file_of_twenty_thousand_lines_land_without_decoding_it_on_the_UI_thread_and_stay_on_their_words()
     {
         string source = TwentyThousandLines();
-        string path = project.PathOf("Coloured.cs");
-        File.WriteAllText(path, source);
+        string path = project.Write("Coloured.cs", source);
         MainWindow? window = null;
         try
         {
@@ -1645,8 +1648,7 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
     public void Squiggles_in_a_file_of_twenty_thousand_lines_stay_on_their_words_as_lines_go_in_above_and_a_key_reads_only_what_it_changed()
     {
         string source = TwentyThousandLines();
-        string path = project.PathOf("Squiggled.cs");
-        File.WriteAllText(path, source);
+        string path = project.Write("Squiggled.cs", source);
         MainWindow? window = null;
         try
         {
@@ -1713,8 +1715,7 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
     public void Typing_with_pauses_in_a_file_of_twenty_thousand_lines_asks_for_the_screens_colours_and_the_whole_files_once_it_stops()
     {
         string source = TwentyThousandLines();
-        string path = project.PathOf("Paused.cs");
-        File.WriteAllText(path, source);
+        string path = project.Write("Paused.cs", source);
         MainWindow? window = null;
         int whole = 0;
         int screens = 0;
@@ -1806,12 +1807,11 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
         editor.Selections = SelectionSet.Single(at + text.Length);
     }
 
-    /// <summary>A small console project on disk, restored once for every test.</summary>
-    public sealed class Project : IDisposable
+    /// <summary>A small console project on disk, restored once for every test, and the warm server they share on it.</summary>
+    public sealed class Project : SharedProject
     {
-        private readonly string folder = TestFolders.Create("assist-");
-
         public Project()
+            : base("assist-")
         {
             File.WriteAllText(PathOf("Sample.csproj"),
                 "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
@@ -1842,30 +1842,13 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
                 + "        var (first, second) = (total, \"two\");\n        return first + second.Length + kept.Count;\n    }\n\n"
                 + "    private static int Count(List<int> values) => values.Count;\n}\n");
             File.WriteAllText(PathOf("Messy.cs"), "using System.Text;\nusing System;\nusing System.Collections.Generic;\n\nstatic class Messy\n{\n    public static int Count()\n    {\n          List<string> names = [];\n        Console.WriteLine(names.Count);\n      return names.Count;\n    }\n}\n");
-            TestFolders.Prepare(() => Restore.Run(folder), folder);
+            Prepare();
         }
-
-        public string PathOf(string name) => Path.Combine(folder, name);
 
         /// <summary>Whether restore downloaded .NET's reference pack, as it does when no installed SDK has the version the
         /// newest SDK targets for net10.0: the package has no IntelliSense files beside its assemblies, which the SDK's own
         /// copy has, so no documentation shows for .NET's types.</summary>
         public bool ReferencePackDownloaded =>
             File.ReadAllText(PathOf("obj/project.assets.json")).Contains("\"name\": \"Microsoft.NETCore.App.Ref\"", StringComparison.Ordinal);
-
-        /// <summary>A window on the project with a file open, once C# is ready. The tests share the project, so a
-        /// window never saves what its test typed.</summary>
-        public MainWindow Open(string file)
-        {
-            MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false };
-            window.Show();
-            window.OpenFolder(folder);
-            window.OpenFile(file);
-            Ui.Settle();
-            Assert.True(window.CSharpService?.IsReady, window.CSharpService?.State);
-            return window;
-        }
-
-        public void Dispose() => TestFolders.Delete(folder);
     }
 }

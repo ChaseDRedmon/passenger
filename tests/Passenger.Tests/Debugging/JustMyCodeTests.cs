@@ -7,7 +7,7 @@ namespace Passenger.Tests.Debugging;
 /// ([DebuggerStepThrough], [DebuggerNonUserCode], [DebuggerHidden]) is passed over by Step Into, and
 /// a catch in it leaves an exception unhandled by the user, as Visual Studio and Rider treat them
 /// (upstream SharpDbg #52 and #49).</summary>
-[Collection(DebugSession.Collection)]
+[Collection(Alone.Name)]
 public class JustMyCodeTests(ITestOutputHelper testOutputHelper)
 {
     private static string Source => Debuggees.Source("PassengerCases", "Program.cs");

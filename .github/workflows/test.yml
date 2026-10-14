@@ -31,7 +31,7 @@ jobs:
           - name: Linux (x64)
             os: ubuntu-24.04
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 70
     defaults:
       run:
         shell: bash
@@ -111,17 +111,23 @@ jobs:
             exit 1
           fi
 
-      # A test hung for 10 minutes is stopped and named, rather than holding the job to its timeout. On a failure the
+      # A test hung for 10 minutes is stopped and named, rather than holding the job to its timeout. Each test class's
+      # time goes in the run's summary (tools/test-times.py), a class over its budget is a warning, and the run over
+      # tests/Passenger.Tests/TestBudget.json's minutes fails, with the table that says where the time went; the step's
+      # timeout is above that budget, so a slow run is failed by it rather than ended with no table. On a failure the
       # failed tests are listed last, as annotations and in the run's summary.
       - name: Test
         shell: pwsh
-        timeout-minutes: 40
+        timeout-minutes: 50
         run: |
           dotnet test tests/Passenger.Tests --no-build --results-directory TestResults `
             --logger trx --logger "console;verbosity=normal" `
             --blame-hang-timeout 10m --blame-hang-dump-type none
           $code = $LASTEXITCODE
-          if ($code -eq 0) { exit 0 }
+          $python = if ($IsWindows) { 'python' } else { 'python3' }
+          & $python -I tools/test-times.py TestResults --budget tests/Passenger.Tests/TestBudget.json
+          $budget = $LASTEXITCODE
+          if ($code -eq 0) { exit $budget }
           $failed = @(Get-ChildItem TestResults -Recurse -Filter *.trx -ErrorAction SilentlyContinue | ForEach-Object {
             ([xml](Get-Content -Raw $_.FullName)).TestRun.Results.UnitTestResult |
               Where-Object { $_ -and $_.outcome -notin 'Passed', 'NotExecuted' }

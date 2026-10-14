@@ -11,20 +11,25 @@ namespace Passenger.Tests;
 /// <summary>Run configurations as Rider's Edit Configurations makes them: one added in the dialog runs with what was
 /// typed there and is there when the folder opens again; a generated one is changed by copying it, and stays as its
 /// project makes it; one removed is gone for good. The dialog opens from the Run menu's action and the toolbar's chooser.</summary>
-public sealed class RunConfigurationsTests : IDisposable
+public sealed class RunConfigurationsTests : IClassFixture<RestoredFolders>, IDisposable
 {
-    private readonly string folder = TestFolders.Create("configs-");
+    private readonly string folder;
     private readonly string settings = TestFolders.Create("settings-");
     private readonly string project;
 
-    public RunConfigurationsTests()
+    public RunConfigurationsTests(RestoredFolders folders)
     {
-        Write("Hello/Hello.csproj",
-            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
-        Write("Hello/Program.cs",
-            "Console.WriteLine($\"{Environment.GetEnvironmentVariable(\"GREETING\")} [{string.Join(\"|\", args)}] in {Environment.CurrentDirectory}\");\n");
+        string made = string.Empty;
+        TestFolders.Prepare(() => made = folders.Take("configs-", root =>
+        {
+            Write(root, "Hello/Hello.csproj",
+                "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
+            Write(root, "Hello/Program.cs",
+                "Console.WriteLine($\"{Environment.GetEnvironmentVariable(\"GREETING\")} [{string.Join(\"|\", args)}] in {Environment.CurrentDirectory}\");\n");
+            return Path.Combine(root, "Hello");
+        }), settings);
+        folder = made;
         project = PathNames.Canonical(Path.Combine(folder, "Hello"));
-        TestFolders.Prepare(() => Restore.Run(Path.Combine(folder, "Hello")), folder);
     }
 
     public void Dispose()
@@ -315,7 +320,9 @@ public sealed class RunConfigurationsTests : IDisposable
         Ui.Settle();
     }
 
-    private void Write(string relative, string text)
+    private void Write(string relative, string text) => Write(folder, relative, text);
+
+    private static void Write(string folder, string relative, string text)
     {
         string path = Path.Combine(folder, relative);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);

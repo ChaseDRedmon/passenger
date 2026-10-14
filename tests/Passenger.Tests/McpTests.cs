@@ -16,8 +16,8 @@ namespace Passenger.Tests;
 /// that joins the window a person is using (<c>--mcp-attach</c>) and changes what they see, once the
 /// person lets agents in, asking them before it first changes anything. Every exchange with Passenger has a time limit,
 /// and one that runs out or fails ends the test naming it and quoting what Passenger said meanwhile.</summary>
-[Collection(Debugging.Helpers.DebugSession.Collection)]
-public sealed class McpTests : IDisposable
+[Collection(Alone.Name)]
+public sealed class McpTests : IClassFixture<RestoredFolders>, IDisposable
 {
     /// <summary>The build's, beside the tests, or an installed copy that PASSENGER_EXECUTABLE names: CI's installer job
     /// has an agent debug through the Passenger its Windows installer installed.</summary>
@@ -25,20 +25,25 @@ public sealed class McpTests : IDisposable
         ? installed
         : Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "Passenger.exe" : "Passenger");
 
-    private readonly string folder = TestFolders.Create("mcp-");
+    private readonly string folder;
     private readonly string settings = TestFolders.Create("agents-");
     private readonly List<string> errors = [];
     private readonly List<Process> passengers = [];
 
-    public McpTests()
+    public McpTests(RestoredFolders folders)
     {
-        Write("Sum.csproj",
-            "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
-        Write("Program.cs",
-            "int total = 0;\nfor (int i = 1; i <= 3; i++)\n{\n    total += Helper.Twice(i);\n}\nConsole.WriteLine($\"total {total}\");\nthrow new InvalidOperationException(\"the end\");\n");
-        Write("Helper.cs",
-            "static class Helper\n{\n    public static int Twice(int value)\n    {\n        int unused = 1;\n        return value * 2;\n    }\n}\n");
-        TestFolders.Prepare(() => Restore.Run(folder), folder, settings);
+        string made = string.Empty;
+        TestFolders.Prepare(() => made = folders.Take("mcp-", project =>
+        {
+            File.WriteAllText(Path.Combine(project, "Sum.csproj"),
+                "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n</Project>\n");
+            File.WriteAllText(Path.Combine(project, "Program.cs"),
+                "int total = 0;\nfor (int i = 1; i <= 3; i++)\n{\n    total += Helper.Twice(i);\n}\nConsole.WriteLine($\"total {total}\");\nthrow new InvalidOperationException(\"the end\");\n");
+            File.WriteAllText(Path.Combine(project, "Helper.cs"),
+                "static class Helper\n{\n    public static int Twice(int value)\n    {\n        int unused = 1;\n        return value * 2;\n    }\n}\n");
+            return project;
+        }), settings);
+        folder = made;
     }
 
     public void Dispose()

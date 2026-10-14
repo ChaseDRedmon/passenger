@@ -21,6 +21,7 @@ namespace Passenger.Tests;
 /// idle; nothing once the setting goes off, the solution closes or Passenger quits. With no Discord one line says so, and
 /// Discord is found when it starts. A stand-in listens in each test's own place, and the run points
 /// <c>PASSENGER_DISCORD_IPC</c> where nothing listens, so no window reaches the person's Discord.</summary>
+[Collection(Alone.Name)]
 public sealed class DiscordTests : IDisposable
 {
     private const string Show = "Show activity in Discord";

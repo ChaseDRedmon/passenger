@@ -20,6 +20,7 @@ namespace Passenger.Tests;
 /// stay text, accents and emoji take the columns the shell counts, lines reflow as it resizes, and a place or a selection
 /// holds as output streams. A run configuration that uses the terminal runs its program in a tab of its own, which reads
 /// what is typed there and draws as it likes, and which Stop ends with all it started.</summary>
+[Collection(Alone.Name)]
 public sealed class TerminalTests
 {
     [AvaloniaFact]

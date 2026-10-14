@@ -255,7 +255,9 @@ public static class OpenWindows
 
     /// <summary>Closes every window still open, the last opened first, waits for what each started to end (its own limit
     /// kills what will not), then for their background work to land, which a dispatcher that never runs again could not
-    /// let go. Whether it all landed: work that never does, the next window test lets go of as it starts.</summary>
+    /// let go. A window its test left open (one that failed) leaves no warm server for the next test: the one it would
+    /// keep is ended with the rest. Whether it all landed: work that never does, the next window test lets go of as it
+    /// starts.</summary>
     public static bool CloseAll()
     {
         if (!Dispatcher.UIThread.CheckAccess())
@@ -270,9 +272,9 @@ public static class OpenWindows
             if (last.IsVisible)
             {
                 last.Close();
-                if (last is Passenger.App.MainWindow { Ended: { } ended })
+                if (last is Passenger.App.MainWindow { Ended: { } ended } closed)
                 {
-                    ending.Add(ended);
+                    ending.Add(closed.WarmServer is { } warm ? ended.ContinueWith(_ => warm.Drop(), TaskScheduler.Default).Unwrap() : ended);
                 }
             }
         }
@@ -788,6 +790,56 @@ public static class Restore
 
     /// <summary>The restore, waited for off the UI thread, whose continuations would otherwise wait on it.</summary>
     public static Passenger.Core.ChildResult Run(string target) => Task.Run(() => RunAsync(target)).GetAwaiter().GetResult();
+}
+
+/// <summary>A test class's folders, each made as its constructor would make it and restored at its own path, a few at a
+/// time: the first test of a few waits for their restores together rather than each test for its own. Every test still
+/// has a fresh folder of its own, which its class removes; those no test took go with the class (a class fixture).</summary>
+public sealed class RestoredFolders : IDisposable
+{
+    /// <summary>How many are made and restored at once.</summary>
+    private const int Batch = 4;
+
+    private readonly Queue<string> ready = new();
+
+    /// <summary>A folder whose name starts with <paramref name="name"/>, written by <paramref name="write"/> (which gives what
+    /// to restore in it) and restored; from a test class's constructor, before its test begins making folders of its own.</summary>
+    public string Take(string name, Func<string, string> write)
+    {
+        if (ready.Count == 0)
+        {
+            List<string> made = [];
+            try
+            {
+                List<string> targets = [];
+                for (int i = 0; i < Batch; i++)
+                {
+                    string folder = TestFolders.Create(name);
+                    made.Add(folder);
+                    targets.Add(write(folder));
+                }
+                Task.Run(() => Task.WhenAll(targets.Select(Restore.RunAsync))).GetAwaiter().GetResult();
+            }
+            catch
+            {
+                foreach (string folder in made)
+                {
+                    TestFolders.Delete(folder);
+                }
+                throw;
+            }
+            made.ForEach(ready.Enqueue);
+        }
+        return ready.Dequeue();
+    }
+
+    public void Dispose()
+    {
+        while (ready.TryDequeue(out string? folder))
+        {
+            TestFolders.Delete(folder);
+        }
+    }
 }
 
 /// <summary>Git as the tests' fixtures run it: as the IDE runs it (<see cref="Passenger.Core.ChildProcesses"/>, so none of a

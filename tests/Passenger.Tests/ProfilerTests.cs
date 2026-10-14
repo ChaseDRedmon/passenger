@@ -8,6 +8,7 @@ namespace Passenger.Tests;
 /// instruction to its end, its busy method on the main thread's hot path, its allocations and collections listed, and a
 /// .NET program it starts runs free rather than held at the profiler's port; one that never reaches the profiler is said
 /// to, and a running one's heap is counted by type.</summary>
+[Collection(Alone.Name)]
 public sealed class ProfilerTests : IDisposable
 {
     private readonly string folder = TestFolders.Create("profile-");

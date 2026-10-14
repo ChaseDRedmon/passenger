@@ -14,29 +14,34 @@ namespace Passenger.Tests;
 /// the platform's own protocol: an xUnit v3 project and an MSTest project on MSTest's runner show their tests from code,
 /// Run All runs them in their own programs and marks each, a theory's rows land under it, Debug Tests stops at a
 /// breakpoint in one, Stop ends a run and its test host, and a solution with a VSTest project too shows and runs both.</summary>
-[Collection(Debugging.Helpers.DebugSession.Collection)]
-public sealed class TestingPlatformTests : IDisposable
+[Collection(Alone.Name)]
+public sealed class TestingPlatformTests : IClassFixture<RestoredFolders>, IDisposable
 {
     /// <summary>xUnit v3 on the platform alone: its own program, with no test SDK or VSTest adapter.</summary>
     private const string XunitProject =
         "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n    <OutputType>Exe</OutputType>\n" +
         "    <ImplicitUsings>enable</ImplicitUsings>\n  </PropertyGroup>\n  <ItemGroup>\n    <PackageReference Include=\"xunit.v3\" Version=\"4.0.2\" />\n  </ItemGroup>\n</Project>\n";
 
-    private readonly string folder = PathNames.Canonical(TestFolders.Create("mtp-"));
+    private readonly string folder;
     private readonly string source;
     private readonly List<string> folders = [];
 
-    public TestingPlatformTests()
+    public TestingPlatformTests(RestoredFolders restored)
     {
-        Write(folder, "Sums.Tests.csproj", XunitProject);
-        source = Write(folder, "SumTests.cs",
-            "using Xunit;\n\nnamespace Sums.Tests;\n\npublic class SumTests(ITestOutputHelper output)\n{\n" +
-            "    [Fact]\n    public void Two_and_two_make_four()\n    {\n        output.WriteLine(\"adding two and two\");\n        int sum = 2 + 2;\n        Assert.Equal(4, sum);\n    }\n\n" +
-            "    [Fact]\n    public void Two_and_two_make_five()\n    {\n        Assert.Equal(5, 2 + 2);\n    }\n\n" +
-            "    [Theory]\n    [InlineData(1, 2)]\n    [InlineData(2, 4)]\n    public void Doubles(int value, int twice) => Assert.Equal(twice, value * 2);\n\n" +
-            "    [Fact(Skip = \"later\")]\n    public void Not_yet() { }\n\n" +
-            "    [Fact]\n    public void Takes_a_while() => Thread.Sleep(80);\n}\n");
-        TestFolders.Prepare(() => Restore.Run(folder), folder);
+        folder = PathNames.Canonical(restored.Take("mtp-", made =>
+        {
+            string project = PathNames.Canonical(made);
+            Write(project, "Sums.Tests.csproj", XunitProject);
+            Write(project, "SumTests.cs",
+                "using Xunit;\n\nnamespace Sums.Tests;\n\npublic class SumTests(ITestOutputHelper output)\n{\n" +
+                "    [Fact]\n    public void Two_and_two_make_four()\n    {\n        output.WriteLine(\"adding two and two\");\n        int sum = 2 + 2;\n        Assert.Equal(4, sum);\n    }\n\n" +
+                "    [Fact]\n    public void Two_and_two_make_five()\n    {\n        Assert.Equal(5, 2 + 2);\n    }\n\n" +
+                "    [Theory]\n    [InlineData(1, 2)]\n    [InlineData(2, 4)]\n    public void Doubles(int value, int twice) => Assert.Equal(twice, value * 2);\n\n" +
+                "    [Fact(Skip = \"later\")]\n    public void Not_yet() { }\n\n" +
+                "    [Fact]\n    public void Takes_a_while() => Thread.Sleep(80);\n}\n");
+            return project;
+        }));
+        source = Path.Combine(folder, "SumTests.cs");
     }
 
     public void Dispose()
