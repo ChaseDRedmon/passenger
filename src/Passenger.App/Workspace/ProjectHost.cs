@@ -162,6 +162,27 @@ public sealed class ProjectHost : IAsyncDisposable
             id = ++next;
             pending[id] = new Pending(answered, partial);
         }
+        Send(id, method, parameters);
+        // Given up by the caller, the host is told to end the request, and what it still sends of it is dropped.
+        using (cancel.Register(() =>
+        {
+            int cancelling;
+            lock (pending)
+            {
+                pending.Remove(id);
+                cancelling = ++next;
+            }
+            answered.TrySetCanceled(cancel);
+            Send(cancelling, HostMethods.Cancel, new CancelParams(id));
+        }))
+        {
+            return await answered.Task;
+        }
+    }
+
+    /// <summary>A request on its way to the host, whose answer, if any, is matched by its id.</summary>
+    private void Send(int id, string method, object parameters)
+    {
         string line = JsonSerializer.Serialize(new HostRequest(id, method, JsonSerializer.SerializeToElement(parameters, parameters.GetType(), HostJson.Options)), HostJson.Options);
         try
         {
@@ -174,18 +195,6 @@ public sealed class ProjectHost : IAsyncDisposable
         catch (Exception error) when (error is IOException or ObjectDisposedException or InvalidOperationException)
         {
             Fail($"the project host could not be asked: {error.Message}");
-        }
-        // Given up by the caller, the host's work goes on and its answer is dropped as it comes.
-        using (cancel.Register(() =>
-        {
-            lock (pending)
-            {
-                pending.Remove(id);
-            }
-            answered.TrySetCanceled(cancel);
-        }))
-        {
-            return await answered.Task;
         }
     }
 

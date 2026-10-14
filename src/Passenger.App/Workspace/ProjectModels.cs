@@ -8,11 +8,11 @@ using Passenger.Host;
 namespace Passenger.App.Workspace;
 
 /// <summary>A window's projects as MSBuild evaluates them, in the project host (<see cref="ProjectHosts"/>): the folder's
-/// cache of its last evaluations at once (<see cref="ProjectModelCache"/>, kept by a window that keeps state), then each
-/// project whose inputs changed since, or that was never evaluated, evaluated again, the active file's first, each landing
-/// on the UI thread as it comes (<see cref="Changed"/>), as background work a screenshot or a test waits for. One round of
-/// checks and evaluations runs at a time; one asked for meanwhile follows it, and finds by the stamps whatever changed
-/// while the first ran. A UI-thread object.</summary>
+/// cache of its last evaluations first (<see cref="ProjectModelCache"/>, kept by a window that keeps state, read off the UI
+/// thread), then each project whose inputs changed since, or that was never evaluated, evaluated again, the active file's
+/// first, each landing on the UI thread as it comes (<see cref="Changed"/>), as background work a screenshot or a test
+/// waits for. One round of checks and evaluations runs at a time; one asked for meanwhile follows it, and finds by the
+/// stamps whatever changed while the first ran. A UI-thread object.</summary>
 public sealed class ProjectModels
 {
     private readonly Dictionary<string, EvaluatedProject> known = new(StringComparer.Ordinal);
@@ -29,6 +29,12 @@ public sealed class ProjectModels
 
     /// <summary>The workspace and active file to follow once the round running ends.</summary>
     private (WorkspaceModel Workspace, string? Active)? wanted;
+
+    /// <summary>The cache's read under way, which the first round waits for, so it evaluates only what changed since.</summary>
+    private Task reading = Task.CompletedTask;
+
+    /// <summary>Ends the folder's round in the host as the folder is let go, so the next folder's work need not wait.</summary>
+    private CancellationTokenSource ending = new();
 
     private int posting;
 
@@ -57,20 +63,40 @@ public sealed class ProjectModels
         return done;
     }
 
-    /// <summary>Takes up a folder, with the store's cache of its evaluations when the window keeps one.</summary>
+    /// <summary>Takes up a folder, with the store's cache of its evaluations when the window keeps one, which lands as
+    /// <see cref="Changed"/> once read.</summary>
     public void Open(string opened, StateDocument<ProjectModelCache>? cache)
     {
         UiThread.Check();
         Close();
         folder = opened;
         kept = cache;
-        if (cache?.Value is { } value)
+        if (cache is not null)
         {
-            sdk = value.Sdk;
-            foreach ((string path, EvaluatedProject project) in value.Projects)
-            {
-                known[path] = project;
-            }
+            idle = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            reading = TakeCacheAsync(generation, cache);
+        }
+    }
+
+    private async Task TakeCacheAsync(int mine, StateDocument<ProjectModelCache> cache)
+    {
+        ProjectModelCache value = await cache.ValueAsync();
+        if (mine != generation)
+        {
+            return;
+        }
+        sdk = value.Sdk;
+        foreach ((string path, EvaluatedProject project) in value.Projects)
+        {
+            known[path] = project;
+        }
+        if (value.Projects.Count > 0)
+        {
+            Changed?.Invoke(this, [.. value.Projects.Keys]);
+        }
+        if (running != generation)
+        {
+            Next();
         }
     }
 
@@ -78,6 +104,9 @@ public sealed class ProjectModels
     public void Close()
     {
         UiThread.Check();
+        ending.Cancel();
+        ending = new CancellationTokenSource();
+        reading = Task.CompletedTask;
         generation++;
         running = -1;
         wanted = null;
@@ -122,7 +151,8 @@ public sealed class ProjectModels
         }
         wanted = (workspace, active);
         IsComplete = workspace.Projects.Where(p => p.Exists).All(p => known.TryGetValue(p.Path, out EvaluatedProject? e) && e.Complete);
-        if (running != generation)
+        // Until the cache is read, which follows what is wanted then.
+        if (running != generation && reading.IsCompleted)
         {
             Next();
         }
@@ -152,7 +182,7 @@ public sealed class ProjectModels
             }
         }
         BackgroundWork.Begin();
-        _ = RoundAsync(generation, folder, projects, before, Properties(next.Workspace));
+        _ = RoundAsync(generation, folder, projects, before, Properties(next.Workspace), ending.Token);
     }
 
     /// <summary>The workspace's projects, the active file's first.</summary>
@@ -197,7 +227,8 @@ public sealed class ProjectModels
         return properties;
     }
 
-    private async Task RoundAsync(int mine, string following, List<string> projects, Dictionary<string, EvaluatedProject> before, Dictionary<string, string> properties)
+    private async Task RoundAsync(int mine, string following, List<string> projects, Dictionary<string, EvaluatedProject> before, Dictionary<string, string> properties,
+        CancellationToken cancel)
     {
         long began = Stopwatch.GetTimestamp();
         try
@@ -226,12 +257,16 @@ public sealed class ProjectModels
                 {
                     UiThread.Post(Land);
                 }
-            });
+            }, cancel);
             if (mine == generation)
             {
                 Keep(projects);
                 IdeErrors.Write($"Project host (process {host.ProcessId}) evaluated {stale.Count} of the {projects.Count} projects of {following} in {done.Seconds:0.00} s, {Stopwatch.GetElapsedTime(began).TotalSeconds:0.00} s after they were checked");
             }
+        }
+        catch (OperationCanceledException) when (cancel.IsCancellationRequested)
+        {
+            // The folder was let go: the host was told to end its round.
         }
         catch (Exception error) when (error is ProjectHostFailed or IOException or UnauthorizedAccessException)
         {

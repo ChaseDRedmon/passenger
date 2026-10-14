@@ -4,6 +4,7 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using Passenger.Editor;
 
 namespace Passenger.App.State;
 
@@ -140,21 +141,51 @@ public sealed class StateDocument<T> where T : class, IStateDocument<T>, new()
         }
     }
 
+    /// <summary>The value, read off the UI thread the first time and taken in on it, for a document large enough that
+    /// reading it there would hold the window up (a solution's project caches, megabytes each).</summary>
+    public async Task<T> ValueAsync()
+    {
+        UiThread.Check();
+        if (value is null)
+        {
+            (T Value, bool Kept, string Known) read = await BackgroundWork.Run(ReadNow);
+            if (value is null)
+            {
+                Take(read);
+            }
+        }
+        return value!;
+    }
+
     private void Load()
     {
         // The value and what was set last are the UI thread's; only the writing crosses to another.
         UiThread.Check();
-        if (value is not null)
+        if (value is null)
         {
-            return;
+            Take(ReadNow());
         }
+    }
+
+    /// <summary>The file's value as read and clamped, whether one was kept, and its text: on any thread.</summary>
+    private (T Value, bool Kept, string Known) ReadNow()
+    {
         lock (writing)
         {
             string? file = File.Exists(Path) ? Path : formerly is not null && File.Exists(formerly) ? formerly : null;
             T? read = file is null ? null : Read(file);
-            kept = read is not null;
-            value = (read ?? new T()).Clamped();
-            known = JsonSerializer.Serialize(value, StateFile.Options);
+            T clamped = (read ?? new T()).Clamped();
+            return (clamped, read is not null, JsonSerializer.Serialize(clamped, StateFile.Options));
+        }
+    }
+
+    private void Take((T Value, bool Kept, string Known) read)
+    {
+        lock (writing)
+        {
+            kept = read.Kept;
+            value = read.Value;
+            known = read.Known;
             latest = known;
         }
     }

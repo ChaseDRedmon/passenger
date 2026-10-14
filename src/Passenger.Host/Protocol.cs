@@ -33,6 +33,11 @@ public static class HostMethods
     /// <summary><see cref="BuildParams"/>: a <see cref="BuiltProject"/> partial per project as its design-time build ends,
     /// then <see cref="BuildDone"/>.</summary>
     public const string Build = "build";
+
+    /// <summary><see cref="CancelParams"/>: ends a request still running (an evaluation or a build round) that the app gave
+    /// up on, so the host's one build session is free for the next folder's; answered once it is asked, the request
+    /// itself answering that it was cancelled once it has stopped.</summary>
+    public const string Cancel = "cancel";
 }
 
 public static class HostJson
@@ -100,6 +105,9 @@ public sealed record PackageDependency(string Name, string? Version, bool Implic
 /// <summary>A file of the project: its item type, full path, its Link (where it shows when it lives elsewhere) and the file
 /// it depends on, relative to its own folder, as MSBuild's DependentUpon is.</summary>
 public sealed record EvaluatedItem(string Type, string Path, string? Link = null, string? DependentUpon = null);
+
+/// <summary>The request to end, by its id.</summary>
+public sealed record CancelParams(int Request);
 
 /// <summary>Projects to build at design time, with the global properties (the solution's, Roslyn's server's own).</summary>
 public sealed record BuildParams(IReadOnlyList<string> Projects, IReadOnlyDictionary<string, string> Properties);

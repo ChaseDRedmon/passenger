@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
 
@@ -9,6 +10,9 @@ namespace Passenger.Host;
 public sealed class Server(TextWriter protocol, HostReady ready)
 {
     private readonly object writing = new();
+
+    /// <summary>The requests that can be cancelled, while they run, by id.</summary>
+    private readonly ConcurrentDictionary<int, CancellationTokenSource> cancellable = new();
 
     public void Run(TextReader input)
     {
@@ -41,21 +45,38 @@ public sealed class Server(TextWriter protocol, HostReady ready)
 
     private async Task Handle(HostRequest request)
     {
+        using CancellationTokenSource cancel = new();
+        cancellable[request.Id] = cancel;
         try
         {
             object result = request.Method switch
             {
                 HostMethods.Sdk => Sdk(Read<SdkParams>(request)),
-                HostMethods.Evaluate => Evaluate(request.Id, Read<EvaluateParams>(request)),
-                HostMethods.Build => await Build(request.Id, Read<BuildParams>(request)),
+                HostMethods.Evaluate => Evaluate(request.Id, Read<EvaluateParams>(request), cancel.Token),
+                HostMethods.Build => await Build(request.Id, Read<BuildParams>(request), cancel.Token),
+                HostMethods.Cancel => Cancel(Read<CancelParams>(request)),
                 _ => throw new InvalidOperationException($"the host has no method {request.Method}"),
             };
             Write(new HostReply { Id = request.Id, Result = JsonSerializer.SerializeToElement(result, result.GetType(), HostJson.Options) });
         }
         catch (Exception error)
         {
-            Write(new HostReply { Id = request.Id, Error = error.Message });
+            Write(new HostReply { Id = request.Id, Error = error is OperationCanceledException ? "cancelled" : error.Message });
         }
+        finally
+        {
+            cancellable.TryRemove(request.Id, out _);
+        }
+    }
+
+    private bool Cancel(CancelParams asked)
+    {
+        if (cancellable.TryGetValue(asked.Request, out CancellationTokenSource? running))
+        {
+            running.Cancel();
+            return true;
+        }
+        return false;
     }
 
     private static T Read<T>(HostRequest request) =>
@@ -64,7 +85,7 @@ public sealed class Server(TextWriter protocol, HostReady ready)
     private SdkAnswer Sdk(SdkParams asked) =>
         Sdks.For(asked.Folder, out string? problem) is { } sdk ? new SdkAnswer(sdk.MSBuildPath, null) : new SdkAnswer(null, problem);
 
-    private EvaluateDone Evaluate(int id, EvaluateParams asked)
+    private EvaluateDone Evaluate(int id, EvaluateParams asked, CancellationToken cancel)
     {
         long began = Stopwatch.GetTimestamp();
         int count = 0;
@@ -72,11 +93,11 @@ public sealed class Server(TextWriter protocol, HostReady ready)
         {
             Interlocked.Increment(ref count);
             Write(new HostReply { Id = id, Partial = JsonSerializer.SerializeToElement(evaluated, HostJson.Options) });
-        });
+        }, cancel);
         return new EvaluateDone(count, Stopwatch.GetElapsedTime(began).TotalSeconds);
     }
 
-    private async Task<BuildDone> Build(int id, BuildParams asked)
+    private async Task<BuildDone> Build(int id, BuildParams asked, CancellationToken cancel)
     {
         long began = Stopwatch.GetTimestamp();
         int count = 0;
@@ -84,7 +105,7 @@ public sealed class Server(TextWriter protocol, HostReady ready)
         {
             Interlocked.Increment(ref count);
             Write(new HostReply { Id = id, Partial = JsonSerializer.SerializeToElement(built, HostJson.Options) });
-        });
+        }, cancel);
         return new BuildDone(count, Stopwatch.GetElapsedTime(began).TotalSeconds);
     }
 

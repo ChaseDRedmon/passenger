@@ -103,12 +103,12 @@ public sealed class ProjectEvaluationTests : IDisposable
         second.Show();
         second.KeepLayout();
         second.OpenFolder(Path.Combine(folder, "Shop.slnx"));
-        // Before anything the window started has landed: what the Solution view shows is the cache's.
-        Assert.Equal(["Dependencies", "Shared", "Program.cs"], Children(second, "App"));
-        Assert.Contains("Serilog", Children(second, "Dependencies"));
+        // The cache is read off the window's thread, its tree shown as it lands; no project was evaluated for it.
         Ui.Settle();
         Assert.True(second.Session.Models.Evaluations == 0,
             $"Opened again with nothing changed, the folder had {second.Session.Models.Evaluations} project(s) evaluated again rather than shown from the cache");
+        Assert.Equal(["Dependencies", "Shared", "Program.cs"], Children(second, "App"));
+        Assert.Contains("Serilog", Children(second, "Dependencies"));
 
         // A file a project's wildcard takes in, made while it was closed, has that project evaluated again as it opens.
         second.Close();

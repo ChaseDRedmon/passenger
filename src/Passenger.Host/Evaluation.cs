@@ -30,11 +30,12 @@ internal static class Evaluation
 
     private static StringComparison PathComparison => OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
 
-    public static void Run(EvaluateParams asked, Action<EvaluatedProject> evaluated)
+    /// <summary>Evaluates the projects asked, handing each over as it is done; cancelled, it starts no other project.</summary>
+    public static void Run(EvaluateParams asked, Action<EvaluatedProject> evaluated, CancellationToken cancel)
     {
         using ProjectCollection collection = new(asked.Properties.ToDictionary(p => p.Key, p => p.Value), loggers: null, ToolsetDefinitionLocations.Default);
         EvaluationContext context = EvaluationContext.Create(EvaluationContext.SharingPolicy.Shared);
-        ParallelOptions parallel = new() { MaxDegreeOfParallelism = Environment.ProcessorCount };
+        ParallelOptions parallel = new() { MaxDegreeOfParallelism = Environment.ProcessorCount, CancellationToken = cancel };
         ConcurrentDictionary<string, (EvaluatedProject Outer, IReadOnlyList<string> Frameworks)> targeted = new(PathComparer);
         // Load-balanced, so each worker takes the next project in the order asked: the active file's first.
         Parallel.ForEach(Partitioner.Create(asked.Projects.ToArray(), loadBalance: true), parallel, path =>

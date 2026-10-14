@@ -48,9 +48,11 @@ internal static class DesignTimeBuilds
 
     private static StringComparison PathComparison => OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
 
-    public static async Task Run(BuildParams asked, Action<BuiltProject> built)
+    /// <summary>Builds the projects asked, handing each over as it is built. Cancelled, it starts no other project and
+    /// cancels the builds running, so the session ends at once for the next request's.</summary>
+    public static async Task Run(BuildParams asked, Action<BuiltProject> built, CancellationToken cancel)
     {
-        await Session.WaitAsync().ConfigureAwait(false);
+        await Session.WaitAsync(cancel).ConfigureAwait(false);
         try
         {
             Dictionary<string, string> global = new(Defaults, StringComparer.OrdinalIgnoreCase);
@@ -70,7 +72,8 @@ internal static class DesignTimeBuilds
             BuildManager.DefaultBuildManager.BeginBuild(parameters);
             try
             {
-                await Parallel.ForEachAsync(asked.Projects, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
+                using CancellationTokenRegistration stopping = cancel.Register(BuildManager.DefaultBuildManager.CancelAllSubmissions);
+                await Parallel.ForEachAsync(asked.Projects, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount, CancellationToken = cancel },
                     async (path, _) => built(await Build(path, collection, context, global, diagnostics).ConfigureAwait(false))).ConfigureAwait(false);
             }
             finally

@@ -116,6 +116,49 @@ public sealed class LanguageServerProjectsTests : IClassFixture<RestoredFolders>
         Ui.Settle();
     }
 
+    [AvaloniaFact]
+    public void Leaving_a_folder_whose_projects_are_still_being_built_lets_the_next_folders_builds_start_at_once()
+    {
+        // A project whose design-time build waits three minutes, as a large solution's round goes on for minutes.
+        string slow = PathNames.Canonical(TestFolders.Create("slow-"));
+        string quick = PathNames.Canonical(TestFolders.Create("quick-"));
+        try
+        {
+            Write(slow, "Slow/Slow.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net11.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+            Write(slow, "Slow/Slow.cs", "class Slow\n{\n}\n");
+            Write(slow, "Directory.Build.targets", """
+                <Project>
+                  <Target Name="Wait" BeforeTargets="CoreCompile" Condition="'$(DesignTimeBuild)' == 'true'">
+                    <Exec Condition="'$(OS)' != 'Windows_NT'" Command="echo begun &gt; built.started; sleep 180" />
+                    <Exec Condition="'$(OS)' == 'Windows_NT'" Command="powershell -NoProfile -Command &quot;Set-Content -Path built.started -Value begun; Start-Sleep -Seconds 180&quot;" />
+                  </Target>
+                </Project>
+                """);
+            Write(quick, "Quick/Quick.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net11.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n");
+            Write(quick, "Quick/Quick.cs", "class Quick\n{\n}\n");
+            Restore.Run(Path.Combine(slow, "Slow", "Slow.csproj"));
+            Restore.Run(Path.Combine(quick, "Quick", "Quick.csproj"));
+
+            MainWindow window = new() { Width = 1200, Height = 800 };
+            window.Show();
+            window.OpenFolder(slow);
+            // Pumped, not settled: the language server's requests about the open file wait for its load, as long as the build.
+            Ui.PumpUntil(() => File.Exists(Path.Combine(slow, "Slow", "built.started")), "the slow project's design-time build to begin", TimeSpan.FromMinutes(2));
+
+            // The host builds one round at a time: the slow folder's must end as it is left, or the next waits minutes.
+            window.OpenFolder(quick);
+            Ui.PumpUntil(() => window.Session.DesignTimeBuilds.Builds == 1,
+                "the next folder's project built at design time, which waits behind the round of the folder left unless that round ended",
+                TimeSpan.FromSeconds(60));
+            window.Close();
+        }
+        finally
+        {
+            TestFolders.Delete(slow);
+            TestFolders.Delete(quick);
+        }
+    }
+
     private static bool Missing(MainWindow window, OpenDocument document) =>
         window.CSharpService?.For(document)?.Diagnostics.Any(d => d.Code?.ToString() == "CS0103" && d.Message.Contains("Missing", StringComparison.Ordinal)) == true;
 

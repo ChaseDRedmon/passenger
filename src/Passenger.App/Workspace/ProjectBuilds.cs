@@ -33,6 +33,12 @@ public sealed class ProjectBuilds
     private int generation;
     private bool building;
 
+    /// <summary>The cache's read under way, off the UI thread, which what the server asks first waits for.</summary>
+    private Task<ProjectBuildCache>? reading;
+
+    /// <summary>Ends the folder's round in the host as the folder is let go, so the next folder's builds need not wait.</summary>
+    private CancellationTokenSource ending = new();
+
     /// <param name="projects">The open workspace's projects to load, those of the file shown (and those it references)
     /// apart, asked on the UI thread as the server is ready for them.</param>
     /// <param name="solution">The global properties the open solution gives its projects, as a build of it would.</param>
@@ -50,21 +56,36 @@ public sealed class ProjectBuilds
     /// builds none as it opens.</summary>
     public int Builds { get; private set; }
 
-    /// <summary>Takes up a folder, with the store's cache of its builds when the window keeps one.</summary>
+    /// <summary>Takes up a folder, with the store's cache of its builds when the window keeps one, read off the UI thread
+    /// as the folder opens.</summary>
     public void Open(string opened, StateDocument<ProjectBuildCache>? cache)
     {
         UiThread.Check();
         Close();
         folder = opened;
         kept = cache;
-        if (cache?.Value is { } value)
+        reading = cache?.ValueAsync();
+    }
+
+    /// <summary>The cache, once read, in what the builds know.</summary>
+    private async Task TakeCacheAsync()
+    {
+        if (reading is not { } pending)
         {
-            sdk = value.Sdk;
-            builtUnder = value.Solution;
-            foreach ((string path, KeptBuild build) in value.Projects)
-            {
-                known[path] = build;
-            }
+            return;
+        }
+        int mine = generation;
+        ProjectBuildCache value = await pending;
+        if (mine != generation || reading != pending)
+        {
+            return;
+        }
+        reading = null;
+        sdk = value.Sdk;
+        builtUnder = value.Solution;
+        foreach ((string path, KeptBuild build) in value.Projects)
+        {
+            known[path] = build;
         }
     }
 
@@ -72,6 +93,9 @@ public sealed class ProjectBuilds
     public void Close()
     {
         UiThread.Check();
+        ending.Cancel();
+        ending = new CancellationTokenSource();
+        reading = null;
         generation++;
         folder = null;
         kept = null;
@@ -92,6 +116,7 @@ public sealed class ProjectBuilds
     private async Task<(IReadOnlyList<ProjectToOpen> First, IReadOnlyList<ProjectToOpen> Later)?> ProjectsAsync()
     {
         int mine = generation;
+        await TakeCacheAsync();
         (IReadOnlyList<string> first, IReadOnlyList<string> all) = await projects();
         List<string> rest = [.. all.Where(p => !first.Contains(p, StringComparer.Ordinal))];
         string? host = await HostSdkAsync();
@@ -163,6 +188,7 @@ public sealed class ProjectBuilds
     /// <summary>One project's builds as the server asks for them: those kept when they stand, else built now.</summary>
     private async Task<ProjectInfoResult> InfoAsync(string path)
     {
+        await TakeCacheAsync();
         if (!waiting.ContainsKey(path) && known.TryGetValue(path, out KeptBuild? held) && await Task.Run(() => held.Inputs.All(Stamps.Holds)))
         {
             return new ProjectInfoResult(held.Read(), null, Said(held.Diagnostics));
@@ -205,24 +231,28 @@ public sealed class ProjectBuilds
         };
         // Not background work: nothing drawn waits on it but the language server's load, which a screenshot does not wait
         // for either, and a large solution's round takes minutes.
-        _ = RoundAsync(generation, folder, round, properties);
+        _ = RoundAsync(generation, folder, round, properties, ending.Token);
     }
 
     /// <summary>The solution the projects are built under now, by the path its global properties give.</summary>
     private string? Under() => solution().GetValueOrDefault("SolutionPath");
 
-    private async Task RoundAsync(int mine, string following, List<string> round, Dictionary<string, string> properties)
+    private async Task RoundAsync(int mine, string following, List<string> round, Dictionary<string, string> properties, CancellationToken cancel)
     {
         long began = Stopwatch.GetTimestamp();
         try
         {
             ProjectHost host = await Task.Run(() => ProjectHosts.ForAsync(following));
-            BuildDone done = await host.BuildAsync(round, properties, built => UiThread.Post(() => Land(mine, built)));
+            BuildDone done = await host.BuildAsync(round, properties, built => UiThread.Post(() => Land(mine, built)), cancel);
             if (mine == generation)
             {
                 IdeErrors.Write($"Project host (process {host.ProcessId}) built {done.Built} projects of {following} at design time in {done.Seconds:0.00} s, {Stopwatch.GetElapsedTime(began).TotalSeconds:0.00} s after they were asked for");
                 Keep();
             }
+        }
+        catch (OperationCanceledException) when (cancel.IsCancellationRequested)
+        {
+            // The folder was let go: the host was told to end its round.
         }
         catch (Exception error) when (error is ProjectHostFailed or IOException or UnauthorizedAccessException)
         {
