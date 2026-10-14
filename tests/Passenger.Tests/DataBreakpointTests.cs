@@ -156,9 +156,13 @@ public sealed class DataBreakpointTests : IClassFixture<RestoredFolders>, IDispo
         Ui.Press(window, "Escape");
         Assert.Empty(window.Debugger.Breakpoints.Data);
 
+        // Paused until the debugger answers the resume, which no background work waits for: only a state after it counts.
+        DebugSession session = window.Debugger.Session!;
+        bool resumed = false;
+        session.StateChanged += (_, _) => resumed |= session.State != DebugState.Paused;
         Ui.Run(window, AppActions.Resume);
-        Ui.WaitFor(() => window.Debugger.Session?.State is DebugState.Ended or DebugState.Paused, "the program to run to its end");
-        Assert.True(window.Debugger.Session?.State == DebugState.Ended, $"Removed, the data breakpoint still stopped the program: {window.Status}");
+        Ui.WaitFor(() => resumed && session.State is DebugState.Ended or DebugState.Paused, "the program to run to its end");
+        Assert.True(session.State == DebugState.Ended, $"Removed, the data breakpoint still stopped the program: {window.Status}");
         Assert.Contains("count 3", window.BottomPanel.Debug.Console.Document.Snapshot.ToString(), StringComparison.Ordinal);
         window.Close();
     }
