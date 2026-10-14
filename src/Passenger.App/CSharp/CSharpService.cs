@@ -47,6 +47,18 @@ public sealed class CSharpService : IAsyncDisposable
     /// the file shown's and those it references, so that file's answers come first.</summary>
     public Func<Task<IReadOnlyList<string>>>? FirstProjects { get; set; }
 
+    /// <summary>The projects' design-time builds, made by the project host: a server with Passenger's project loader loads
+    /// its projects from these rather than building them itself.</summary>
+    public IProjectFeed? Feed { get; set; }
+
+    /// <summary>Has the server load projects again whose files or imports changed (a Directory.Build.props edited), which
+    /// it watches only in part; one that builds its own projects finds what it watches itself.</summary>
+    public void Reload(IReadOnlyList<string> projects)
+    {
+        UiThread.Check();
+        session?.Reload(projects);
+    }
+
     /// <summary>The state changed (starting, loading projects, ready, failed); raised on the UI thread.</summary>
     public event EventHandler? StateChanged;
 
@@ -384,6 +396,11 @@ public sealed class CSharpService : IAsyncDisposable
             {
                 started = taken;
                 Hear(started.Server);
+                // What it asks for from now on is this window's to answer.
+                if (started.Fed)
+                {
+                    started.Server.Feed = Feed;
+                }
                 IdeErrors.Write($"C# language server (process {started.Server.ProcessId}) taken up warm for {opening.Folder}, {loading} loaded");
             }
             else
@@ -398,7 +415,8 @@ public sealed class CSharpService : IAsyncDisposable
                     }
                     return named;
                 }) : null;
-                started = await BackgroundWork.Run(() => RoslynSession.StartAsync(opening.Folder, solution, projects, logs, cancel, options, Hear, first), cancel);
+                IProjectFeed? feed = Feed;
+                started = await BackgroundWork.Run(() => RoslynSession.StartAsync(opening.Folder, solution, projects, logs, cancel, options, Hear, first, feed), cancel);
                 if (cancel.IsCancellationRequested)
                 {
                     // Disposed, or started again, just as this server started: nothing else will end it.

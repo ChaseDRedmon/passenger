@@ -29,6 +29,10 @@ public static class HostMethods
     /// <summary><see cref="EvaluateParams"/>: an <see cref="EvaluatedProject"/> partial per project as each is evaluated,
     /// then <see cref="EvaluateDone"/>.</summary>
     public const string Evaluate = "evaluate";
+
+    /// <summary><see cref="BuildParams"/>: a <see cref="BuiltProject"/> partial per project as its design-time build ends,
+    /// then <see cref="BuildDone"/>.</summary>
+    public const string Build = "build";
 }
 
 public static class HostJson
@@ -96,6 +100,19 @@ public sealed record PackageDependency(string Name, string? Version, bool Implic
 /// <summary>A file of the project: its item type, full path, its Link (where it shows when it lives elsewhere) and the file
 /// it depends on, relative to its own folder, as MSBuild's DependentUpon is.</summary>
 public sealed record EvaluatedItem(string Type, string Path, string? Link = null, string? DependentUpon = null);
+
+/// <summary>Projects to build at design time, with the global properties (the solution's, Roslyn's server's own).</summary>
+public sealed record BuildParams(IReadOnlyList<string> Projects, IReadOnlyDictionary<string, string> Properties);
+
+public sealed record BuildDone(int Built, double Seconds);
+
+/// <summary>A project's design-time builds as Roslyn's server takes them (a JSON array of its ProjectFileInfo, one a target
+/// framework), what they read (the project file, its imports outside the SDK and package folders, its packages' assets,
+/// its folders), and why they failed, when they did; with the errors and warnings the builds logged.</summary>
+public sealed record BuiltProject(string Path, string Infos, IReadOnlyList<Stamp> Inputs, string? Problem, IReadOnlyList<BuildDiagnostic>? Diagnostics = null);
+
+/// <summary>An error or warning a design-time build logged, with the project file it was logged for.</summary>
+public sealed record BuildDiagnostic(bool Error, string Message, string Project);
 
 /// <summary>A file's last write (UTC ticks) and length, 0 and -1 for one not there; for a folder, the hash of its names and
 /// how many (<see cref="Stamps.Folder"/>).</summary>

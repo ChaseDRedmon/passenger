@@ -135,7 +135,7 @@ public sealed class StateStore
 
 /// <summary>A folder's documents: what its window had open, its layout, breakpoints, bookmarks, run configurations,
 /// Find in Files' scope, the Unit Tests window's grouping and outcomes, the Git log's favourite branches, and its projects
-/// as MSBuild last evaluated them.</summary>
+/// as MSBuild last evaluated and built them at design time.</summary>
 public sealed class ProjectState
 {
     internal ProjectState(string root, string folder)
@@ -151,6 +151,7 @@ public sealed class ProjectState
         UnitTests = new(Path.Combine(Folder, "unitTests.json"));
         GitBranches = new(Path.Combine(Folder, "gitBranches.json"));
         ProjectModels = new(Path.Combine(Folder, "projectModels.json"));
+        ProjectBuilds = new(Path.Combine(Folder, "projectBuilds.json"));
     }
 
     /// <summary>The folder the documents are in.</summary>
@@ -188,9 +189,13 @@ public sealed class ProjectState
     /// <summary>The folder's projects as MSBuild last evaluated them, which it opens on.</summary>
     public StateDocument<ProjectModelCache> ProjectModels { get; }
 
+    /// <summary>The folder's projects' design-time builds, which Roslyn's server loads them from.</summary>
+    public StateDocument<ProjectBuildCache> ProjectBuilds { get; }
+
     public void Flush()
     {
         ProjectModels.Flush();
+        ProjectBuilds.Flush();
         Workspace.Flush();
         Layout.Flush();
         Breakpoints.Flush();

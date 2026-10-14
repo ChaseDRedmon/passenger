@@ -72,6 +72,7 @@ public sealed class ProjectSession : IAsyncDisposable
         // What a Git operation changes in the files is one change set of the folder's Local History, under its name.
         Vcs.Activity = name => LocalHistory?.During(name);
         Models.Changed += (_, changed) => OnEvaluated(changed);
+        DesignTimeBuilds = new ProjectBuilds(LoadOrderAsync, () => Workspace is { } open ? ProjectModels.Properties(open) : new Dictionary<string, string>());
     }
 
     /// <summary>A window's session with no folder open: files may still be open, alone.</summary>
@@ -93,6 +94,8 @@ public sealed class ProjectSession : IAsyncDisposable
         // A folder without a solution has no projects until the walk for them lands: none to load, run or build meanwhile.
         session.reads++;
         session.Models.Open(folder, kept?.ProjectModels);
+        // Its projects' design-time builds as kept, which its language server loads them from.
+        session.DesignTimeBuilds.Open(folder, kept?.ProjectBuilds);
         session.openedAt = System.Diagnostics.Stopwatch.GetTimestamp();
         session.Workspace = session.Models.Apply(withSolution ?? new WorkspaceModel(folder, null, []));
         session.TimeSolutionView();
@@ -241,6 +244,16 @@ public sealed class ProjectSession : IAsyncDisposable
     /// <summary>The folder's projects as MSBuild evaluates them, in the project host.</summary>
     public ProjectModels Models { get; } = new();
 
+    /// <summary>The folder's projects as the project host builds them at design time, which the language server loads.</summary>
+    public ProjectBuilds DesignTimeBuilds { get; }
+
+    /// <summary>The projects the language server loads, those it loads first (<see cref="ActiveProjectsAsync"/>) apart.</summary>
+    private async Task<(IReadOnlyList<string> First, IReadOnlyList<string> All)> LoadOrderAsync()
+    {
+        IReadOnlyList<string> first = await ActiveProjectsAsync();
+        return (first, [.. Projects.Where(p => p.Exists).Select(p => p.Path).Distinct(StringComparer.Ordinal)]);
+    }
+
     /// <summary>Projects evaluated (or evaluated again) landed in the workspace: what the Solution view shows of them, and
     /// whether which projects hold tests or what packages they reference changed.</summary>
     public event EventHandler<EvaluatedProjects>? ProjectsEvaluated;
@@ -310,6 +323,9 @@ public sealed class ProjectSession : IAsyncDisposable
         }
         Workspace = Models.Apply(before);
         Configurations.Configure(Projects);
+        // A project evaluated again, its file or what it imports changed: the language server loads it again too, as it
+        // watches only some of what a project imports.
+        CSharp?.Reload([.. before.Projects.Where(p => changed.Contains(p.Path) && p.Evaluated is { Complete: true }).Select(p => p.Path).Distinct(StringComparer.Ordinal)]);
         bool tests = !before.Projects.Where(p => p.IsTestProject).Select(p => p.Path).SequenceEqual(Workspace.Projects.Where(p => p.IsTestProject).Select(p => p.Path));
         bool packages = before.Projects.Zip(Workspace.Projects).Any(p => changed.Contains(p.First.Path) && !p.First.Packages.SequenceEqual(p.Second.Packages));
         ProjectsEvaluated?.Invoke(this, new EvaluatedProjects([.. Workspace.Projects.Where(p => changed.Contains(p.Path))], tests, packages));
@@ -506,7 +522,7 @@ public sealed class ProjectSession : IAsyncDisposable
         CSharp = null;
         if (!IsEnded && Workspace is { } opening && (opening.Solution is not null || opening.Projects.Count > 0))
         {
-            CSharp = new CSharpService(setup.WarmServer) { SolutionWide = setup.SolutionWide(), FirstProjects = ActiveProjectsAsync };
+            CSharp = new CSharpService(setup.WarmServer) { SolutionWide = setup.SolutionWide(), FirstProjects = ActiveProjectsAsync, Feed = DesignTimeBuilds.Feed };
             CSharpChanged?.Invoke(this, EventArgs.Empty);
             CSharp.Start(opening);
             foreach (OpenDocument open in setup.Editors.Documents)
@@ -578,6 +594,7 @@ public sealed class ProjectSession : IAsyncDisposable
     {
         State = null;
         Models.Close();
+        DesignTimeBuilds.Close();
         Watcher?.Dispose();
         LocalHistory?.Release();
         // A build stopped now says so with nothing of this folder's in Problems, which another folder's take next.

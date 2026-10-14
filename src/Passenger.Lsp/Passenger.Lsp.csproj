@@ -19,6 +19,7 @@
                       GlobalPropertiesToRemove="RuntimeIdentifier;SelfContained;PublishReadyToRun" />
     <!-- The extension's messages, one definition for both ends. -->
     <Compile Include="../Passenger.Roslyn.Extension/Messages.cs" Link="RefactoringMessages.cs" />
+    <Compile Include="../Passenger.Roslyn.Extension/ProjectMessages.cs" Link="ProjectMessages.cs" />
   </ItemGroup>
 
   <!-- For the app's notices of what it carries: the server's package folder (Kind package, with the folder it runs from

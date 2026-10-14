@@ -92,6 +92,9 @@ public sealed class LanguageServer : IAsyncDisposable
     /// <summary>Roslyn has finished loading the projects it was asked to open; raised on any thread.</summary>
     public event EventHandler? ProjectsLoaded;
 
+    /// <summary>Where Passenger's project loader in the server gets the projects' design-time builds it asks for.</summary>
+    public IProjectFeed? Feed { get; set; }
+
     /// <summary>The server's colours moved in a way only it knows (a project reloaded, a file changed elsewhere): the
     /// semantic tokens should be asked for again. Raised on any thread.</summary>
     public event EventHandler? ColoursRefreshRequested;
@@ -734,6 +737,14 @@ public sealed class LanguageServer : IAsyncDisposable
 
         [JsonRpcMethod("workspace/projectInitializationComplete")]
         public void ProjectsLoaded(JsonElement? message = null) => Owner?.ProjectsLoaded?.Invoke(Owner, EventArgs.Empty);
+
+        /// <summary>Passenger's project loader in the server asking for a project's design-time builds, from the client's
+        /// feed (its project host's builds); awaited apart from the messages that follow, which go on being handled.</summary>
+        [JsonRpcMethod(Roslyn.Extension.ProjectMethods.Info)]
+        public async Task<Roslyn.Extension.ProjectInfoResult> ProjectInfo(Roslyn.Extension.ProjectInfoParams asked) =>
+            Owner?.Feed is { } feed
+                ? await feed.InfoAsync(asked.Path, CancellationToken.None).ConfigureAwait(false)
+                : new Roslyn.Extension.ProjectInfoResult(null, "Passenger has no design-time builds to give");
 
         [JsonRpcMethod("workspace/semanticTokens/refresh")]
         public object? RefreshTokens(JsonElement? request = null)

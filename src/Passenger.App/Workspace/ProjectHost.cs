@@ -142,6 +142,13 @@ public sealed class ProjectHost : IAsyncDisposable
             partial => evaluated(partial.Deserialize<EvaluatedProject>(HostJson.Options)!), cancel)).Deserialize<EvaluateDone>(HostJson.Options)
             ?? throw new ProjectHostFailed("the project host gave no answer for its evaluation");
 
+    /// <summary>Builds projects at design time, as Roslyn's server would, handing each over as its builds end, on the
+    /// reader's thread; done once every one has been.</summary>
+    public async Task<BuildDone> BuildAsync(IReadOnlyList<string> projects, IReadOnlyDictionary<string, string> properties, Action<BuiltProject> built, CancellationToken cancel = default) =>
+        (await AskAsync(HostMethods.Build, new BuildParams(projects, properties),
+            partial => built(partial.Deserialize<BuiltProject>(HostJson.Options)!), cancel)).Deserialize<BuildDone>(HostJson.Options)
+            ?? throw new ProjectHostFailed("the project host gave no answer for its builds");
+
     private async Task<JsonElement> AskAsync(string method, object parameters, Action<JsonElement>? partial, CancellationToken cancel)
     {
         TaskCompletionSource<JsonElement> answered = new(TaskCreationOptions.RunContinuationsAsynchronously);

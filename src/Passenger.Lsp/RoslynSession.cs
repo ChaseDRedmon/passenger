@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Passenger.Roslyn.Extension;
 using Passenger.Text;
 
 namespace Passenger.Lsp;
@@ -65,9 +66,11 @@ public sealed class RoslynSession : IAsyncDisposable
     /// of the load (a project that did not load, its progress) is heard from the start.</param>
     /// <param name="first">Asked as the server is ready to open them: the projects to open before the rest (the active
     /// file's and those it references), which the server loads alone, so the file being worked on is answered for first.</param>
+    /// <param name="feed">The client's design-time builds of the projects: with one, a server that has Passenger's project
+    /// loader loads the projects from them rather than building each itself.</param>
     public static async Task<RoslynSession> StartAsync(string folder, string? solution, IReadOnlyList<string> projects, string logFolder,
         CancellationToken cancel = default, IReadOnlyDictionary<string, object?>? options = null, Action<LanguageServer>? started = null,
-        Func<Task<IReadOnlyList<string>>>? first = null)
+        Func<Task<IReadOnlyList<string>>>? first = null, IProjectFeed? feed = null)
     {
         LanguageServer server = await LanguageServer.StartRoslynAsync(folder, logFolder, cancel, options).ConfigureAwait(false);
         RoslynSession session = new(server, folder, solution, projects);
@@ -75,13 +78,30 @@ public sealed class RoslynSession : IAsyncDisposable
         {
             cancel.ThrowIfCancellationRequested();
             started?.Invoke(server);
+            if (feed is not null && await HasLoaderAsync(server, cancel).ConfigureAwait(false) && await feed.ProjectsAsync(cancel).ConfigureAwait(false) is { } fed)
+            {
+                server.Feed = feed;
+                session.Fed = true;
+                (IReadOnlyList<ProjectToOpen> before, IReadOnlyList<ProjectToOpen> rest) = fed;
+                if (before.Count > 0)
+                {
+                    session.opens = 2;
+                    await server.NotifyAsync(ProjectMethods.Load, new LoadProjectsParams(before, solution)).ConfigureAwait(false);
+                    _ = session.OpenRestAsync(() => server.NotifyAsync(ProjectMethods.Load, new LoadProjectsParams(rest, solution)));
+                    return session;
+                }
+                await server.NotifyAsync(ProjectMethods.Load, new LoadProjectsParams(rest, solution)).ConfigureAwait(false);
+                return session;
+            }
             IReadOnlyList<string> ahead = first is null ? [] : await first().ConfigureAwait(false);
             if (ahead.Count > 0)
             {
                 session.opens = 2;
                 await server.NotifyAsync("project/open", new OpenProjectParams([.. ahead.Select(DocumentUris.FromPath)])).ConfigureAwait(false);
                 // The rest once those have loaded: opened at once, the server would take them all in one batch.
-                _ = session.OpenRestAsync(solution, projects);
+                _ = session.OpenRestAsync(() => solution is not null
+                    ? server.NotifyAsync("solution/open", new OpenSolutionParams(DocumentUris.FromPath(solution)))
+                    : server.NotifyAsync("project/open", new OpenProjectParams([.. projects.Select(DocumentUris.FromPath)])));
                 return session;
             }
             if (solution is not null)
@@ -101,9 +121,9 @@ public sealed class RoslynSession : IAsyncDisposable
         return session;
     }
 
-    /// <summary>Opens the solution (or the projects) once the projects opened first have loaded; a server gone meanwhile
-    /// opens nothing more.</summary>
-    private async Task OpenRestAsync(string? solution, IReadOnlyList<string> projects)
+    /// <summary>Opens the rest of the solution once the projects opened first have loaded; a server gone meanwhile opens
+    /// nothing more.</summary>
+    private async Task OpenRestAsync(Func<Task> open)
     {
         try
         {
@@ -115,18 +135,38 @@ public sealed class RoslynSession : IAsyncDisposable
         }
         try
         {
-            if (solution is not null)
-            {
-                await Server.NotifyAsync("solution/open", new OpenSolutionParams(DocumentUris.FromPath(solution))).ConfigureAwait(false);
-            }
-            else
-            {
-                await Server.NotifyAsync("project/open", new OpenProjectParams([.. projects.Select(DocumentUris.FromPath)])).ConfigureAwait(false);
-            }
+            await open().ConfigureAwait(false);
         }
         catch (LanguageServerFailed)
         {
             // Gone: a server started again opens everything afresh.
+        }
+    }
+
+    /// <summary>Whether the server has Passenger's project loader (the extension composed with it), which answers so.</summary>
+    private static async Task<bool> HasLoaderAsync(LanguageServer server, CancellationToken cancel)
+    {
+        try
+        {
+            return await server.RequestAsync<bool>(ProjectMethods.Ready, new { }, cancel).ConfigureAwait(false);
+        }
+        catch (LanguageServerFailed)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Whether the server loads its projects from the client's design-time builds (<see cref="IProjectFeed"/>)
+    /// rather than building them itself.</summary>
+    public bool Fed { get; private set; }
+
+    /// <summary>Has a server fed by the client load projects again, from the design-time builds it asks for: their files
+    /// or what they import changed, which the server watches only in part.</summary>
+    public void Reload(IReadOnlyList<string> projects)
+    {
+        if (Fed && projects.Count > 0)
+        {
+            Server.Notify(ProjectMethods.Load, new LoadProjectsParams([.. projects.Select(p => new ProjectToOpen(p, null))], Solution));
         }
     }
 

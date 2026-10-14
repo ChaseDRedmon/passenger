@@ -1,8 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- Passenger's refactorings that take options (Change Signature, Extract Interface, Move Type), computed inside
-       Roslyn's language server, which loads this assembly as an extension and runs its message handlers over the solution
-       it has open. It is compiled against the very assemblies the shipped server carries, never a package of its own, so
-       it calls the API the server runs; it carries none of them, since the server's must be the ones it uses. -->
+  <!-- Passenger's extension to Roslyn's language server, which loads this assembly as an extension: the refactorings that
+       take options (Change Signature, Extract Interface, Move Type), computed by its message handlers over the solution
+       the server has open, and the server's projects loaded from Passenger's project host (ProjectLoader.cs), the server
+       composing this assembly's MEF parts with its own. It is compiled against the very assemblies the shipped server
+       carries, never a package of its own, so it calls the API the server runs; it carries none of them, since the
+       server's must be the ones it uses. -->
   <PropertyGroup>
     <!-- The server's: the extension runs in its process, on whichever runtime runs it. -->
     <TargetFramework>net10.0</TargetFramework>
@@ -16,7 +18,24 @@
   <Target Name="ReferenceRoslynServer" BeforeTargets="ResolveAssemblyReferences" DependsOnTargets="FindRoslynServer">
     <ItemGroup>
       <RoslynServerAssembly Include="Microsoft.CodeAnalysis;Microsoft.CodeAnalysis.CSharp;Microsoft.CodeAnalysis.Workspaces;Microsoft.CodeAnalysis.CSharp.Workspaces;Microsoft.CodeAnalysis.ExternalAccess.Extensions" />
+      <!-- The project system the loader joins: the server's own, kept internal, made public to compile against below. -->
+      <RoslynServerAssembly Include="Microsoft.CodeAnalysis.LanguageServer;Microsoft.CodeAnalysis.LanguageServer.Protocol;Microsoft.CodeAnalysis.Workspaces.MSBuild;Microsoft.CodeAnalysis.Workspaces.MSBuild.Contracts;Microsoft.Extensions.Logging.Abstractions;System.Composition.AttributedModel" />
       <Reference Include="@(RoslynServerAssembly->'$(RoslynServerFolder)%(Identity).dll')" Private="false" />
     </ItemGroup>
   </Target>
+
+  <!-- The server's project loader, its LSP services and handlers, and the build host's contracts are internal to it. -->
+  <ItemGroup>
+    <Publicize Include="Microsoft.CodeAnalysis.LanguageServer" IncludeCompilerGeneratedMembers="false" />
+    <Publicize Include="Microsoft.CodeAnalysis.LanguageServer.Protocol" IncludeCompilerGeneratedMembers="false" />
+    <Publicize Include="Microsoft.CodeAnalysis.Workspaces.MSBuild" IncludeCompilerGeneratedMembers="false" />
+    <Publicize Include="Microsoft.CodeAnalysis.Workspaces.MSBuild.Contracts" IncludeCompilerGeneratedMembers="false" />
+    <Publicize Include="Microsoft.CodeAnalysis.Workspaces" IncludeCompilerGeneratedMembers="false" />
+  </ItemGroup>
+
+  <Import Project="../Publicize.targets" />
+
+  <ItemGroup>
+    <PackageReference Include="Krafs.Publicizer" PrivateAssets="all" IncludeAssets="runtime; build; native; contentfiles; analyzers; buildtransitive" />
+  </ItemGroup>
 </Project>

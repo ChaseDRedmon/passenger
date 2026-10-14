@@ -39,7 +39,7 @@ public sealed class Server(TextWriter protocol, HostReady ready)
         }
     }
 
-    private void Handle(HostRequest request)
+    private async Task Handle(HostRequest request)
     {
         try
         {
@@ -47,6 +47,7 @@ public sealed class Server(TextWriter protocol, HostReady ready)
             {
                 HostMethods.Sdk => Sdk(Read<SdkParams>(request)),
                 HostMethods.Evaluate => Evaluate(request.Id, Read<EvaluateParams>(request)),
+                HostMethods.Build => await Build(request.Id, Read<BuildParams>(request)),
                 _ => throw new InvalidOperationException($"the host has no method {request.Method}"),
             };
             Write(new HostReply { Id = request.Id, Result = JsonSerializer.SerializeToElement(result, result.GetType(), HostJson.Options) });
@@ -73,6 +74,18 @@ public sealed class Server(TextWriter protocol, HostReady ready)
             Write(new HostReply { Id = id, Partial = JsonSerializer.SerializeToElement(evaluated, HostJson.Options) });
         });
         return new EvaluateDone(count, Stopwatch.GetElapsedTime(began).TotalSeconds);
+    }
+
+    private async Task<BuildDone> Build(int id, BuildParams asked)
+    {
+        long began = Stopwatch.GetTimestamp();
+        int count = 0;
+        await DesignTimeBuilds.Run(asked, built =>
+        {
+            Interlocked.Increment(ref count);
+            Write(new HostReply { Id = id, Partial = JsonSerializer.SerializeToElement(built, HostJson.Options) });
+        });
+        return new BuildDone(count, Stopwatch.GetElapsedTime(began).TotalSeconds);
     }
 
     private void Write(HostReply reply)
