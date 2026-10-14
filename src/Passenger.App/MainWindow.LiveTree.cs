@@ -13,5 +13,12 @@ public partial class MainWindow
     /// <summary>The Avalonia app the Live Visual Tree follows, or null.</summary>
     public LiveApp? LiveApp => liveTree!.App;
 
-    private void AddLiveTree() => liveTree = new LiveTreeController(new LiveTreeParts(Dock, actions!, text => status.Text = text, NavigateTo));
+    /// <summary>A debugged app's binding values in its .axaml files.</summary>
+    private BindingValuesController? bindingValues;
+
+    private void AddLiveTree()
+    {
+        liveTree = new LiveTreeController(new LiveTreeParts(Dock, actions!, text => status.Text = text, NavigateTo));
+        bindingValues = new BindingValuesController(Editors, liveTree);
+    }
 }

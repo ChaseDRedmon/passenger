@@ -19,6 +19,7 @@ public sealed class OpenDocument : Observable
     private string? projectContext;
     private IReadOnlyList<LineMark> lineMarks = [];
     private IReadOnlyList<LineAnnotation> lineAnnotations = [];
+    private IReadOnlyList<LineAnnotation> liveValues = [];
     private IReadOnlyList<InlayHint> inlayHints = [];
     private IReadOnlyList<TestMark> testMarks = [];
     private IReadOnlyList<ColourMark> colourMarks = [];
@@ -214,6 +215,17 @@ public sealed class OpenDocument : Observable
         get => lineAnnotations;
         set => Set(ref lineAnnotations, value);
     }
+
+    /// <summary>A debugged Avalonia app's values after an .axaml file's lines: each binding's value on the control it is read
+    /// for (LiveTree/BindingValues), shown after <see cref="LineAnnotations"/>.</summary>
+    public IReadOnlyList<LineAnnotation> LiveValues
+    {
+        get => liveValues;
+        set => Set(ref liveValues, value);
+    }
+
+    /// <summary>What its editors show after its lines: the debugger's annotations, then the app's live values.</summary>
+    public IReadOnlyList<LineAnnotation> ShownAnnotations => liveValues.Count == 0 ? lineAnnotations : [.. lineAnnotations, .. liveValues];
 
     /// <summary>Whether the editors showing the file wrap its lines at their width: Settings' soft wrap masks decide as it
     /// opens, View, Active Editor, Soft-Wrap after.</summary>

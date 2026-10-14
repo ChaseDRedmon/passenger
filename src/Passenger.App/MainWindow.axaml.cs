@@ -212,7 +212,9 @@ public partial class MainWindow : Window
             NavigateTo(row.Path, row.Position);
             Request(AppActions.FindUsages);
         };
-        assist.DebuggerValue = (offset, cancel) => session.Debug.ValueAt(offset, cancel);
+        assist.DebuggerValue = async (offset, cancel) => Editors.Active is { } shown && Debugging.XamlBreakpoints.Compiled(shown.Path)
+            ? bindingValues!.HoverAt(shown, offset)
+            : await session.Debug.ValueAt(offset, cancel) is { } value ? new DebuggerHover(value) : null;
         // A running app's failed binding is offered its source's nearest members, at the member its XAML names.
         assist.EditorFixes = (file, offset) => Passenger.App.LiveTree.BindingErrors.Fixes(file, offset, session.FailedBindings.Select(b => b.Failure));
         assist.AddActions(actions!);

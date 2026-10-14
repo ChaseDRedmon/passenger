@@ -1,0 +1,29 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:BindingValuesApp"
+        x:Class="BindingValuesApp.MainWindow"
+        x:DataType="local:MainViewModel"
+        x:CompileBindings="False"
+        Title="{Binding Title}" Width="480" Height="320">
+    <StackPanel x:Name="Panel" Margin="12" Spacing="8">
+        <TextBlock x:Name="Customer" Text="{Binding Customer.Name}" />
+        <TextBlock x:Name="Orders" Text="{CompiledBinding Customer.Orders}" />
+        <TextBlock x:Name="Broken" Text="{Binding Nmae}" />
+        <ContentControl x:Name="Badge" Content="VIP" Background="Gold">
+            <ContentControl.Template>
+                <ControlTemplate>
+                    <Border Background="{TemplateBinding Background}">
+                        <TextBlock Text="{TemplateBinding Content}" />
+                    </Border>
+                </ControlTemplate>
+            </ContentControl.Template>
+        </ContentControl>
+        <ItemsControl ItemsSource="{Binding Tags}">
+            <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="x:String">
+                    <TextBlock Text="{Binding}" />
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </ItemsControl>
+    </StackPanel>
+</Window>

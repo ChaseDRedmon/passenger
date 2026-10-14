@@ -232,7 +232,7 @@ public sealed class EditorGroup : DockPanel
         Editor.SetFoldRegions(document.FoldRegions);
         Editor.SetInlayHints(document.InlayHints);
         Editor.SetLineMarks(document.LineMarks);
-        Editor.SetLineAnnotations(document.LineAnnotations);
+        Editor.SetLineAnnotations(document.ShownAnnotations);
         Editor.SetTestMarks(document.TestMarks);
         Editor.SetColourMarks(document.ColourMarks);
         Editor.SetChangeMarks(document.ChangeMarks);
@@ -362,8 +362,8 @@ public sealed class EditorGroup : DockPanel
             case nameof(OpenDocument.LineMarks):
                 Editor.SetLineMarks(document.LineMarks);
                 break;
-            case nameof(OpenDocument.LineAnnotations):
-                Editor.SetLineAnnotations(document.LineAnnotations);
+            case nameof(OpenDocument.LineAnnotations) or nameof(OpenDocument.LiveValues):
+                Editor.SetLineAnnotations(document.ShownAnnotations);
                 break;
             case nameof(OpenDocument.Markers):
                 Editor.SetMarkers(document.Markers);

@@ -68,6 +68,22 @@ public sealed class LiveTreeController
     /// <summary>The app the window follows, or null.</summary>
     public LiveApp? App => app;
 
+    /// <summary>The control chosen in the tree (by the inspector's id for it), or null: what an .axaml file's binding values
+    /// are read for (<see cref="BindingValuesController"/>).</summary>
+    public long? Chosen => chosen;
+
+    /// <summary>Another control was chosen, or none is now.</summary>
+    public event EventHandler? ChosenChanged;
+
+    private void Choose(long? id)
+    {
+        if (chosen != id)
+        {
+            chosen = id;
+            ChosenChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
     /// <summary>The window follows a session from now: the app its debugger launches, and whether that app is paused.</summary>
     public void Bind(ProjectSession next)
     {
@@ -217,7 +233,7 @@ public sealed class LiveTreeController
             app.Picked -= OnPicked;
         }
         app = next;
-        chosen = null;
+        Choose(null);
         treeAsks++;
         detailAsks++;
         // A new app's inspector watches nothing yet.
@@ -389,7 +405,7 @@ public sealed class LiveTreeController
             }
             else
             {
-                chosen = null;
+                Choose(null);
                 View.ShowDetails(null, "The control chosen has left the app.");
             }
         }
@@ -399,7 +415,7 @@ public sealed class LiveTreeController
     public async Task ChooseAsync(long id)
     {
         UiThread.Check();
-        chosen = id;
+        Choose(id);
         await ShowDetailsAsync(id);
         if (app is { State: LiveAppState.Connected } live && !Paused)
         {
@@ -486,7 +502,7 @@ public sealed class LiveTreeController
         View.SelectElement.IsChecked = false;
         if (id is long element)
         {
-            chosen = element;
+            Choose(element);
             parts.Dock.Show(window.Id);
             _ = RefreshAsync();
         }

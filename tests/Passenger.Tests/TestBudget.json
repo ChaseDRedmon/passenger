@@ -28,6 +28,7 @@
     "LiveTreeTests": 90,
     "XamlBreakpointsTests": 90,
     "BindingErrorsTests": 150,
+    "BindingValuesTests": 120,
     "RazorTests": 90,
     "WebLanguagesTests": 120,
     "NewSolutionTests": 120,

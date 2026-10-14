@@ -461,8 +461,9 @@ public sealed partial class CodeEditor
         foreach (LineAnnotation annotation in annotations)
         {
             bool exception = annotation.Kind == LineAnnotationKind.Exception;
-            TextLine text = labels.Get((annotation.Text, exception ? -4 : -3), () =>
-                Format(annotation.Text, [], exception ? annotationRuns.Exception : annotationRuns.Value));
+            bool error = exception || annotation.Kind == LineAnnotationKind.Failed;
+            TextLine text = labels.Get((annotation.Text, error ? -4 : -3), () =>
+                Format(annotation.Text, [], error ? annotationRuns.Exception : annotationRuns.Value));
             double top = y + (metrics.LineHeight - text.Height) / 2;
             if (exception)
             {

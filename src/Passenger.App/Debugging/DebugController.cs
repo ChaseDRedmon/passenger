@@ -1152,6 +1152,16 @@ public sealed class DebugController : IDisposable
         }
     }
 
+    /// <summary>Where a built line (from zero) of a file is now, while a session runs: what the program's records of its build
+    /// (an app's XAML places) are read against.</summary>
+    public int CurrentLine(string path, int line) => Current(path, line);
+
+    /// <summary>The built line a line (from zero) of a file has, while a session runs.</summary>
+    public int BuiltLine(string path, int line) => Built(path, line);
+
+    /// <summary>Whether a line (from zero) of a file is the build's, rather than written since the session began.</summary>
+    public bool IsBuiltLine(string path, int line) => lines?.IsBuilt(path, line) ?? true;
+
     /// <summary>Where a built line of a file is now, while a session runs.</summary>
     private int Current(string path, int line) => lines?.ToCurrent(path, line) ?? line;
 

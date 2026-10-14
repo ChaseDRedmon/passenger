@@ -148,8 +148,8 @@ public sealed partial class CodeAssist
     public event EventHandler? RenameSettingsChanged;
 
     /// <summary>While the debugger is paused, the value of what the pointer rests on, which the hover
-    /// card shows instead of the symbol's description, as Rider does.</summary>
-    public Func<int, CancellationToken, Task<string?>>? DebuggerValue { get; set; }
+    /// card shows instead of the symbol's description, as Rider does; in a debugged app's .axaml file, a binding's.</summary>
+    public Func<int, CancellationToken, Task<DebuggerHover?>>? DebuggerValue { get; set; }
 
     private CodeEditor Editor => editors.CodeEditor;
 
@@ -847,14 +847,21 @@ public sealed partial class CodeAssist
                 _ => null,
             });
         }
-        string? debuggerValue = DebuggerValue is { } value ? await value(offset, cancel.Token) : null;
+        DebuggerHover? debuggerValue = DebuggerValue is { } value ? await value(offset, cancel.Token) : null;
         if (cancel.IsCancellationRequested)
         {
             return;
         }
         if (debuggerValue is not null)
         {
-            hoverCard.AddCode(debuggerValue);
+            if (debuggerValue.Problem is { } problem)
+            {
+                hoverCard.AddText(problem, InfoCard.Brush("Passenger.Editor.Error"));
+            }
+            if (debuggerValue.Code.Length > 0)
+            {
+                hoverCard.AddCode(debuggerValue.Code);
+            }
         }
         else if (XamlCurrent is { } xaml)
         {
@@ -2018,3 +2025,7 @@ public sealed partial class CodeAssist
         return end > caret && caret <= asked.Length ? asked.GetText(caret, end - caret) : string.Empty;
     }
 }
+
+/// <summary>What the debugger's hover card says of what the pointer rests on: its value as code, and what went wrong reading
+/// it (a binding that failed), said first in the error colour.</summary>
+public sealed record DebuggerHover(string Code, string? Problem = null);

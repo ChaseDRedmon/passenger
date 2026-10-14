@@ -539,6 +539,19 @@ public sealed partial class CodeEditor : Control
     /// row soft wrap makes of it.</summary>
     public int RowsShown => RowCount;
 
+    /// <summary>The first and last lines (from zero) the rows on screen show, for a host that works only on what is seen.</summary>
+    public (int First, int Last) LinesShown
+    {
+        get
+        {
+            int count = document.Snapshot.LineCount;
+            int firstRow = Math.Max(0, (int)(scroll.Y / metrics.LineHeight));
+            int lastRow = Math.Max(firstRow, (int)((scroll.Y + Math.Max(Bounds.Height, metrics.LineHeight)) / metrics.LineHeight));
+            RowMap rows = Rows;
+            return (Math.Clamp(rows.LineOfRow(firstRow).Line, 0, Math.Max(0, count - 1)), Math.Clamp(rows.LineOfRow(lastRow).Line, 0, Math.Max(0, count - 1)));
+        }
+    }
+
     public void ScrollTo(Vector offset)
     {
         double maxY = Math.Max(0, (RowCount - 1) * metrics.LineHeight);

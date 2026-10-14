@@ -139,6 +139,9 @@ public sealed class LiveApp : IDisposable
     /// <summary>Select Element ended: the element the person pointed at, or null when they pressed Escape.</summary>
     public event EventHandler<long?>? Picked;
 
+    /// <summary>A property whose binding the last values read showed has changed in the app since.</summary>
+    public event EventHandler? ValuesChanged;
+
     /// <summary>A binding failed in the app, for the first time or again (<see cref="BindingFailedEventArgs.Times"/> since
     /// it was last told), from before its UI is up until it ends.</summary>
     public event EventHandler<BindingFailedEventArgs>? BindingFailed;
@@ -219,6 +222,11 @@ public sealed class LiveApp : IDisposable
 
     /// <summary>A property breakpoint's watch ended.</summary>
     public Task UnwatchAsync(int breakpoint) => AskAsync(new Request(0, Wire.Watch, On: false) { Breakpoint = breakpoint });
+
+    /// <summary>A XAML file's bindings read with their values while the app runs, whose properties the app watches from now
+    /// (<see cref="ValuesChanged"/>).</summary>
+    public async Task<XamlValues> ValuesAsync(XamlRead read) =>
+        (await AskAsync(new Request(0, Wire.Values) { Xaml = read })).Values ?? throw new LiveAppException($"{Name} read no bindings");
 
     /// <summary>Input to the app, as a person gives it, answered once it has been handled and laid out.</summary>
     public async Task<InputDone> InputAsync(InputAction input) =>
@@ -393,6 +401,9 @@ public sealed class LiveApp : IDisposable
                 break;
             case Wire.TreeChanged:
                 TreeChanged?.Invoke(this, EventArgs.Empty);
+                break;
+            case Wire.ValuesChanged:
+                ValuesChanged?.Invoke(this, EventArgs.Empty);
                 break;
             case Wire.Picked:
                 Picked?.Invoke(this, reply.Element);

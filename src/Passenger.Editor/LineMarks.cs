@@ -43,6 +43,9 @@ public enum LineAnnotationKind
 
     /// <summary>The exception the debugger stopped on, at the line that threw it: in the error colour.</summary>
     Exception,
+
+    /// <summary>A value that could not be read, as a binding that failed: in the error colour, on no ground, as it is no stop's reason.</summary>
+    Failed,
 }
 
 /// <summary>Text drawn after a line's (from zero) code, part of no document: never selected, copied or
