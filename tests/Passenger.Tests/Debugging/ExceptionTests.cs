@@ -4,7 +4,8 @@ using Passenger.Tests.Debugging.Helpers;
 
 namespace Passenger.Tests.Debugging;
 
-[Collection(DebugSession.Collection)]
+// Its stops read the exception's text by an evaluation the engine holds to 5 s, which a loaded machine can outrun.
+[Collection(Alone.Name)]
 public class ExceptionTests(ITestOutputHelper testOutputHelper)
 {
     [Fact]
