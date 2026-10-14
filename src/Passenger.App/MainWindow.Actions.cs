@@ -93,13 +93,13 @@ public partial class MainWindow
         Add(A.ExtendSelection, "Extend Selection", "Editor", _ => ExtendSelection(), NeedsFile, ("Edit", 2, 1));
         Add(A.ShrinkSelection, "Shrink Selection", "Editor", _ => ShrinkSelection(), NeedsFile, ("Edit", 2, 2));
 
-        Add(A.Back, "Back", "Navigate", _ => StepHistory(-1), menu: ("Navigate", 0, 0));
-        Add(A.Forward, "Forward", "Navigate", _ => StepHistory(1), menu: ("Navigate", 0, 1));
-        Add(A.GoToEverything, "Search Everywhere", "Navigate", _ => ShowSymbols("Go to Everything", "A type, member or file", SearchEverything), NeedsFolder, ("Navigate", 1, 0));
-        Add(A.GoToFile, "Go to File", "Navigate", _ => ShowGoToFile(), NeedsFolder, ("Navigate", 1, 1));
-        Add(A.GoToSymbol, "Go to Symbol", "Navigate", _ => ShowSymbols("Go to Symbol", "A type or member, by name or CamelHumps", SearchSymbols), NeedsFolder, ("Navigate", 1, 2));
-        Add(A.GoToLine, "Go to Line:Column", "Navigate", _ => ShowGoToLine(), NeedsFile, ("Navigate", 1, 3));
-        Add(A.FileStructure, "File Structure", "Navigate", _ => ShowFileStructure(), NeedsFile, ("Navigate", 1, 4));
+        Add(A.Back, "Back", "Navigate", _ => navigator.StepHistory(-1), menu: ("Navigate", 0, 0));
+        Add(A.Forward, "Forward", "Navigate", _ => navigator.StepHistory(1), menu: ("Navigate", 0, 1));
+        Add(A.GoToEverything, "Search Everywhere", "Navigate", _ => navigator.ShowGoToEverything(), NeedsFolder, ("Navigate", 1, 0));
+        Add(A.GoToFile, "Go to File", "Navigate", _ => navigator.ShowGoToFile(), NeedsFolder, ("Navigate", 1, 1));
+        Add(A.GoToSymbol, "Go to Symbol", "Navigate", _ => navigator.ShowGoToSymbol(), NeedsFolder, ("Navigate", 1, 2));
+        Add(A.GoToLine, "Go to Line:Column", "Navigate", _ => navigator.ShowGoToLine(), NeedsFile, ("Navigate", 1, 3));
+        Add(A.FileStructure, "File Structure", "Navigate", _ => navigator.ShowFileStructure(), NeedsFile, ("Navigate", 1, 4));
 
         AddBuilding();
         AddAttaching();

@@ -37,6 +37,9 @@ public partial class MainWindow : Window
 
     /// <summary>What the last action came to, and the file shown's place and properties.</summary>
     private readonly StatusBar status;
+
+    /// <summary>Going to places in the code, and back.</summary>
+    private readonly Navigation.Navigator navigator;
     private readonly CodeAssist assist;
     private readonly UsageHighlighting usages;
     private readonly DebugController debug;
@@ -55,8 +58,10 @@ public partial class MainWindow : Window
     {
         UiThread.Own();
         InitializeComponent();
-        status = new StatusBar(StatusText, StatusIcon, CaretText, IndentText, LanguageText, LineSeparatorButton, LineEndingText, EncodingButton, EncodingText);
         session = ProjectSession.None(Setup());
+        status = new StatusBar(StatusText, StatusIcon, CaretText, IndentText, LanguageText, LineSeparatorButton, LineEndingText, EncodingButton, EncodingText);
+        popups = new PopupHost(Overlay, OverlayHost, Editors, () => Debugger.Breakpoints);
+        navigator = new Navigation.Navigator(new Navigation.NavigatorParts(Editors, () => session, popups, status, path => OpenFile(path), TextOf));
         if (OperatingSystem.IsMacOS())
         {
             // The toolbar is the title bar on macOS, as in Rider. Windows keeps the system's title bar
@@ -108,7 +113,6 @@ public partial class MainWindow : Window
                 Structure.Invalidate();
             }
         };
-        Editors.Opened += (_, document) => document.Text.Changed += (_, change) => session.Navigation.Follow(document.Path, change);
         Editors.ActiveChanged += (_, _) => UpdateStatus();
         Editors.ActiveChanged += (_, _) => session.CSharp?.FollowIndent(Editors.Active);
         // The indent widget and the line break follow a file's .editorconfig changed, or its save.
@@ -200,7 +204,6 @@ public partial class MainWindow : Window
             }
         };
         debug = new DebugController(Editors, Bottom.Debug) { RunInTerminal = RunForDebugger };
-        popups = new PopupHost(Overlay, OverlayHost, Editors, () => debug.Breakpoints);
         testGutter = new Testing.TestGutter(Bottom.TestTree);
         Bind(session);
         Bottom.Build.RerunClicked += (_, _) => buildRun.Rebuild();
@@ -657,70 +660,8 @@ public partial class MainWindow : Window
 
     private void OnStopClicked(object? sender, RoutedEventArgs e) => Request(AppActions.Stop);
 
-    /// <summary>Goes to a file and position (go to definition, a usage), remembering where it came
-    /// from for Back.</summary>
-    public void NavigateTo(string path, TextPosition position)
-    {
-        Navigation.HistoryPlace? from = Here();
-        OpenFile(path);
-        // Opened files are known by their canonical path: the one given may run through a symlink (macOS's /var).
-        if (Editors.Active is { } active && active.Path == PathNames.Canonical(path))
-        {
-            Editors.CodeEditor.GoTo(position);
-            // Only a move to another line or file is a place to come back to, as in IntelliJ.
-            if (from is not null && Here() is { } to && (to.Path != from.Path || to.Line != from.Line))
-            {
-                session.Navigation.Left(from);
-            }
-        }
-    }
-
-    /// <summary>The caret's place in the file shown, as the navigation history keeps it.</summary>
-    private Navigation.HistoryPlace? Here()
-    {
-        if (Editors.Active is not { } active)
-        {
-            return null;
-        }
-        int caret = Editors.CodeEditor.Selections.Primary.Caret;
-        return new Navigation.HistoryPlace(active.Path, caret, active.Text.Snapshot.GetLineFromOffset(caret));
-    }
-
-    /// <summary>Back (a step of -1) or Forward (1): the caret goes to the place the history gives.</summary>
-    private void StepHistory(int step)
-    {
-        Navigation.HistoryPlace? here = Here();
-        Navigation.HistoryPlace? target = step < 0 ? session.Navigation.Back(here, Reachable) : session.Navigation.Forward(here, Reachable);
-        if (target is null)
-        {
-            return;
-        }
-        OpenFile(target.Path);
-        if (Editors.Active is { } active && active.Path == target.Path)
-        {
-            Editors.CodeEditor.GoTo(active.Text.Snapshot.GetPosition(Math.Min(target.Offset, active.Text.Snapshot.Length)));
-        }
-
-        bool Reachable(string path) => Editors.Documents.Any(d => d.Path == path) || File.Exists(path);
-    }
-
-    private void ShowGoToFile()
-    {
-        if (Folder is null)
-        {
-            return;
-        }
-        Navigation.GoToFilePopup popup = new(session.Index, session.RecentFiles.Skip(Editors.Active is null ? 0 : 1).ToList());
-        popup.Done += (_, path) =>
-        {
-            popups.Close();
-            if (path is not null)
-            {
-                OpenFile(path);
-            }
-        };
-        popups.Show(popup);
-    }
+    /// <summary>Goes to a file and position (go to definition, a usage), remembering where it came from for Back.</summary>
+    public void NavigateTo(string path, TextPosition position) => navigator.NavigateTo(path, position);
 
     /// <summary>The actions run from Find Action, the latest first, which it lists before anything is typed.</summary>
     private readonly List<string> recentActions = [];
@@ -743,183 +684,6 @@ public partial class MainWindow : Window
             if (recentActions.Count > 10)
             {
                 recentActions.RemoveAt(recentActions.Count - 1);
-            }
-        };
-        popups.Show(popup);
-    }
-
-    private void ShowSymbols(string title, string placeholder, Func<string, CancellationToken, Task<IReadOnlyList<Navigation.SymbolRow>>> search)
-    {
-        if (Folder is null)
-        {
-            return;
-        }
-        Navigation.SymbolPopup popup = new(title, placeholder, search, SelectedWord());
-        popup.Done += (_, row) =>
-        {
-            popups.Close();
-            if (row is not null)
-            {
-                NavigateTo(row.Path, row.Position);
-            }
-        };
-        popups.Show(popup);
-    }
-
-    /// <summary>What a symbol search starts from: the editor's selection, if it is one word, as Rider seeds it.</summary>
-    private string? SelectedWord()
-    {
-        if (Editors.Active is null)
-        {
-            return null;
-        }
-        Selection primary = Editors.CodeEditor.Selections.Primary;
-        string selected = primary.IsEmpty ? string.Empty : Editors.CodeEditor.Document.Snapshot.GetText(primary.Start, primary.Length);
-        return selected.Length is > 0 and < 80 && selected.All(c => char.IsLetterOrDigit(c) || c == '_') ? selected : null;
-    }
-
-    private async Task<IReadOnlyList<Navigation.SymbolRow>> SearchSymbols(string query, CancellationToken cancel)
-    {
-        if (query.Trim().Length == 0)
-        {
-            return [];
-        }
-        CSharpService? csharp = session.CSharp;
-        if (csharp?.Session is not { IsLoaded: true } server)
-        {
-            throw new Lsp.LanguageServerFailed(csharp is null ? "no C# language server runs for this folder" : $"the C# language server is not ready: {csharp.State}");
-        }
-        IReadOnlyList<Lsp.SymbolInformation> found = await server.SymbolsAsync(query.Trim(), cancel);
-        return [.. found.Take(200).Select(SymbolRowOf)];
-    }
-
-    /// <summary>Go to Everything: types first, then files, then members, as Rider orders them; the recent files
-    /// before anything is typed.</summary>
-    private async Task<IReadOnlyList<Navigation.SymbolRow>> SearchEverything(string query, CancellationToken cancel)
-    {
-        string root = session.Index.Root ?? Folder ?? string.Empty;
-        if (query.Trim().Length == 0)
-        {
-            return [.. session.RecentFiles.Skip(Editors.Active is null ? 0 : 1).Select(path => FileRow(Path.GetRelativePath(root, path)))];
-        }
-        IReadOnlyList<Navigation.SymbolRow> symbols = [];
-        try
-        {
-            symbols = session.CSharp?.Session is { IsLoaded: true } ? await SearchSymbols(query, cancel) : [];
-        }
-        catch (Lsp.LanguageServerFailed)
-        {
-            // The files still match without the server.
-        }
-        IEnumerable<Navigation.SymbolRow> files = session.Index.Search(query).Take(20).Select(FileRow);
-        static bool IsType(int kind) => kind is 5 or 10 or 11 or 23;
-        return [.. symbols.Where(r => IsType(r.Kind)), .. files, .. symbols.Where(r => !IsType(r.Kind))];
-
-        Navigation.SymbolRow FileRow(string relative) =>
-            new(Path.GetFileName(relative), null, Path.GetDirectoryName(relative), Navigation.SymbolRow.FileKind, Path.Combine(root, relative), new TextPosition(0, 0));
-    }
-
-    private Navigation.SymbolRow SymbolRowOf(Lsp.SymbolInformation symbol)
-    {
-        string path = Lsp.DocumentUris.ToPath(symbol.Location.Uri);
-        string where = Folder is { } root && PathNames.IsUnder(path, root) ? Path.GetRelativePath(root, path) : Path.GetFileName(path);
-        Lsp.LspPosition start = symbol.Location.Range.Start;
-        return new Navigation.SymbolRow(symbol.Name, Container(symbol.ContainerName), $"{where}:{start.Line + 1}", symbol.Kind, path, new TextPosition(start.Line, start.Character));
-    }
-
-    /// <summary>Roslyn's container ("in Greeter (project Greetings (net10.0))") as Rider names it: the type, or the
-    /// project for a type.</summary>
-    private static string? Container(string? container)
-    {
-        if (string.IsNullOrEmpty(container))
-        {
-            return null;
-        }
-        System.Text.RegularExpressions.Match match = System.Text.RegularExpressions.Regex.Match(container, @"^(in )?(?<owner>.*?)\s*\(?project (?<project>[^()]+?)\s*(\([^)]*\))?\)?$");
-        if (!match.Success)
-        {
-            return container;
-        }
-        string owner = match.Groups["owner"].Value.Trim();
-        return owner.Length > 0 ? owner : match.Groups["project"].Value.Trim();
-    }
-
-    /// <summary>Rider's File Structure: the active file's types and members, indented, filtered as typed with the
-    /// containers of what matches kept.</summary>
-    private void ShowFileStructure()
-    {
-        if (Editors.Active is not { } active || session.CSharp?.For(active)?.Lsp is null)
-        {
-            status.Text = "File Structure needs a C# file the language server has open";
-            return;
-        }
-        IReadOnlyList<Navigation.SymbolRow>? outline = null;
-        int caretLine = Editors.CodeEditor.CaretPosition.Line;
-        Navigation.SymbolPopup popup = new($"File Structure: {active.Name}", "Filter by name, CamelHumps too", async (query, cancel) =>
-        {
-            // The server's document now: one started again while the popup is open has a new one.
-            Lsp.LspDocument lsp = session.CSharp?.For(active)?.Lsp ?? throw new Lsp.LanguageServerFailed("the C# language server is not running");
-            outline ??= ToolWindows.StructureView.Flatten(await lsp.OutlineAsync(cancel), 0, active.Path, Lsp.ServerLines.Of(lsp.Text.Snapshot));
-            return FilterOutline(outline, query.Trim());
-        })
-        {
-            // The innermost member the caret is in, as Rider's popup opens on it.
-            Initial = rows => rows.Select((row, i) => (row, i)).LastOrDefault(p => p.row.Spans(caretLine), (null!, 0)).Item2,
-        };
-        popup.Done += (_, row) =>
-        {
-            popups.Close();
-            if (row is not null)
-            {
-                NavigateTo(row.Path, row.Position);
-            }
-        };
-        popups.Show(popup);
-    }
-
-    private static IReadOnlyList<Navigation.SymbolRow> FilterOutline(IReadOnlyList<Navigation.SymbolRow> outline, string query)
-    {
-        if (query.Length == 0)
-        {
-            return outline;
-        }
-        List<Navigation.SymbolRow> shown = [];
-        List<Navigation.SymbolRow> path = [];
-        foreach (Navigation.SymbolRow row in outline)
-        {
-            while (path.Count > 0 && path[^1].Depth >= row.Depth)
-            {
-                path.RemoveAt(path.Count - 1);
-            }
-            bool matches = row.Name.Contains(query, StringComparison.OrdinalIgnoreCase) || FuzzyMatch.Score(query, row.Name) is not null;
-            if (matches)
-            {
-                // The containers of a match stay, so it reads in its place.
-                foreach (Navigation.SymbolRow container in path.Where(c => !shown.Contains(c)))
-                {
-                    shown.Add(container);
-                }
-                shown.Add(row);
-            }
-            path.Add(row);
-        }
-        return shown;
-    }
-
-    private void ShowGoToLine()
-    {
-        if (Editors.Active is null)
-        {
-            return;
-        }
-        CodeEditor editor = Editors.CodeEditor;
-        Navigation.GoToLinePopup popup = new(editor.CaretPosition, editor.Document.Snapshot.LineCount);
-        popup.Done += (_, position) =>
-        {
-            popups.Close();
-            if (position is { } at)
-            {
-                editor.GoTo(at);
             }
         };
         popups.Show(popup);
