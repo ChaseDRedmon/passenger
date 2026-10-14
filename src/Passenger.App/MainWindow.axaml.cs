@@ -80,6 +80,7 @@ public partial class MainWindow : Window
         AddPlaces();
         AddHierarchy();
         AddFileOperations();
+        AcceptDrops(this);
         AddFileProperties();
         AddTargetFramework();
         AddAutosave();

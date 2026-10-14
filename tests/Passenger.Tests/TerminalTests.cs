@@ -401,6 +401,29 @@ public sealed class TerminalTests
     }
 
     [AvaloniaFact]
+    public void A_file_dropped_on_the_terminal_is_typed_as_its_path_quoted_for_the_shell()
+    {
+        string folder = TestFolders.Create("terminal-");
+        try
+        {
+            // A space and a quote in its name, which the shell would split or end its word at, unquoted.
+            string dropped = Path.Combine(folder, "it's here.txt");
+            File.WriteAllText(dropped, "dropped-42\n");
+            (MainWindow window, TerminalSession shell) = Open(folder, OperatingSystem.IsWindows() ? "cmd.exe" : "/bin/sh");
+            window.KeyTextInput(OperatingSystem.IsWindows() ? "type " : "cat ");
+            Ui.Drop(window, window.TerminalPanel.View, dropped);
+            Ui.Press(window, "ENTER");
+            WaitForLine(shell, "dropped-42", "the dropped file read by the shell from its path, quoted as one word");
+            Assert.True(window.EditorArea.Documents.Count == 0, "The file dropped on the terminal opened in the editor too");
+            window.Close();
+        }
+        finally
+        {
+            TestFolders.Delete(folder);
+        }
+    }
+
+    [AvaloniaFact]
     public void A_decomposed_accent_shows_on_its_letter_in_one_cell_and_copies_with_it()
     {
         if (OperatingSystem.IsWindows())

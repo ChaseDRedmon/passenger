@@ -35,5 +35,6 @@ public partial class MainWindow
             }, DispatcherPriority.Background);
         };
         popups.Attach(editors);
+        AcceptDrops(window);
     }
 }

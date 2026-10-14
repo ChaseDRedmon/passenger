@@ -2,12 +2,13 @@ using System.Text;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Passenger.App;
+using Passenger.Core;
 using Passenger.Editor;
 
 namespace Passenger.Tests;
 
-/// <summary>Files through the whole window: opened from a folder, edited, saved with the platform's
-/// own Save shortcut, and written back the way they were stored, or as UTF-8 when that would lose a character.</summary>
+/// <summary>Files through the whole window: opened from a folder or dropped from the file manager, edited, saved with the
+/// platform's own Save shortcut, and written back the way they were stored, or as UTF-8 when that would lose a character.</summary>
 public sealed class FileTests : IDisposable
 {
     private readonly string folder = TestFolders.Create("test-");
@@ -83,6 +84,24 @@ public sealed class FileTests : IDisposable
         window.OpenFile("image.png");
         Ui.Settle();
         Assert.Null(window.EditorArea.Active);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Files_dropped_from_the_file_manager_open_in_the_editor_and_a_folder_dropped_on_the_Welcome_screen_opens()
+    {
+        File.WriteAllText(Path.Combine(folder, "One.cs"), "class One { }\n");
+        File.WriteAllText(Path.Combine(folder, "notes.txt"), "notes\n");
+        MainWindow window = new() { Width = 1200, Height = 800 };
+        window.Show();
+        Ui.Settle();
+
+        Ui.Drop(window, window.EditorArea, folder);
+        Assert.True(window.Folder == PathNames.Canonical(folder), $"The folder dropped on the Welcome screen opened {window.Folder ?? "nothing"}");
+
+        Ui.Drop(window, window.EditorArea, Path.Combine(folder, "One.cs"), Path.Combine(folder, "notes.txt"));
+        Assert.Equal(["One.cs", "notes.txt"], window.EditorArea.Documents.Select(d => d.Name));
+        Assert.Equal("notes.txt", window.EditorArea.Active?.Name);
         window.Close();
     }
 

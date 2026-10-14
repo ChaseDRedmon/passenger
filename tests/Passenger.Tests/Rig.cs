@@ -624,6 +624,27 @@ public static class Ui
         return text.Result;
     }
 
+    /// <summary>Files dragged from the system's file manager onto the middle of a control and dropped there, as the
+    /// platform delivers such a drag (an enter, a move, the drop).</summary>
+    public static void Drop(TopLevel window, Control onto, params string[] paths)
+    {
+        DataTransfer data = new();
+        foreach (string path in paths)
+        {
+            // The items a platform's drag carries, made by the window's own storage provider.
+            Avalonia.Platform.Storage.IStorageItem? item = Directory.Exists(path)
+                ? Await(window.StorageProvider.TryGetFolderFromPathAsync(new Uri(path)), $"the folder {path}")
+                : Await(window.StorageProvider.TryGetFileFromPathAsync(new Uri(path)), $"the file {path}");
+            data.Add(DataTransferItem.CreateFile(item ?? throw new InvalidOperationException($"The window's storage has no {path}")));
+        }
+        Point at = onto.TranslatePoint(new Point(onto.Bounds.Width / 2, onto.Bounds.Height / 2), window)
+            ?? throw new InvalidOperationException("The control is not in the window.");
+        window.DragDrop(at, Avalonia.Input.Raw.RawDragEventType.DragEnter, data, DragDropEffects.Copy, RawInputModifiers.None);
+        window.DragDrop(at, Avalonia.Input.Raw.RawDragEventType.DragOver, data, DragDropEffects.Copy, RawInputModifiers.None);
+        window.DragDrop(at, Avalonia.Input.Raw.RawDragEventType.Drop, data, DragDropEffects.Copy, RawInputModifiers.None);
+        Settle();
+    }
+
     /// <summary>The IDE's log as a person opening it would find it: what was queued for it written first, and read sharing
     /// the file with the log's own thread, which may be writing to it (Windows refuses a reader that does not share).</summary>
     public static string IdeLog()
