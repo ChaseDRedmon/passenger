@@ -31,7 +31,7 @@ jobs:
           - name: Linux (x64)
             os: ubuntu-24.04
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 70
+    timeout-minutes: 90
     defaults:
       run:
         shell: bash
@@ -118,7 +118,7 @@ jobs:
       # failed tests are listed last, as annotations and in the run's summary.
       - name: Test
         shell: pwsh
-        timeout-minutes: 50
+        timeout-minutes: 65
         run: |
           dotnet test tests/Passenger.Tests --no-build --results-directory TestResults `
             --logger trx --logger "console;verbosity=normal" `

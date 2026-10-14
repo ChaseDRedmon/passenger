@@ -484,7 +484,7 @@ from `SharedProject`: its windows share one warm language server (`MainWindow.Wa
 written before each test, and a file a test adds goes through `project.Write`. A class whose tests each restore a fresh
 folder takes it from `RestoredFolders`. CI's Test step writes each class's time into the run's summary
 (`tools/test-times.py` over the .trx, budgets in `tests/Passenger.Tests/TestBudget.json`): a class over its seconds
-warns, and a run over its 40 minutes fails. Raise a budget knowing why. The run sets its own nice value to 0 when it starts below it (GitHub's macOS
+warns, and a run over its 55 minutes fails (raised from 40 when GitHub's runners took 41–45 and Windows hit its step limit). Raise a budget knowing why. The run sets its own nice value to 0 when it starts below it (GitHub's macOS
 runner starts at −10), since MSBuild keeps no idle node at any other; a test that needs one skips, saying why, when
 the run is above 0 and cannot come down (`Nice`). MSBuild itself sometimes keeps no node (a race as a build ends, or
 more than 1.5 nodes a processor running machine-wide): a test that needs one waits for the count
