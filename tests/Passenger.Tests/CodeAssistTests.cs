@@ -138,6 +138,73 @@ public sealed class CodeAssistTests : IClassFixture<CodeAssistTests.Project>
         window.Close();
     }
 
+    [AvaloniaFact]
+    public void A_member_chosen_from_the_list_a_dot_opened_with_nothing_typed_leaves_the_caret_after_it()
+    {
+        MainWindow window = project.Open("Program.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "int result = Helper.Twice(2);");
+        editor.Focus();
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("System.Console");
+        window.KeyTextInput(".");
+        Ui.WaitFor(() => window.Assist.CompletionLabels.FirstOrDefault() == "BackgroundColor", "Console's members after its dot, BackgroundColor first");
+
+        Ui.Press(window, "ENTER");
+        Ui.Settle();
+        window.KeyTextInput(" = System.ConsoleColor.DarkBlue;");
+        string line = editor.Document.Snapshot.GetLineText(editor.CaretPosition.Line);
+        Assert.True(line == "        System.Console.BackgroundColor = System.ConsoleColor.DarkBlue;",
+            $"What was typed after choosing BackgroundColor with nothing typed after the dot did not follow it: '{line}'");
+        Assert.Equal(line.Length, editor.CaretPosition.Column);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void An_extension_method_chosen_after_a_dot_adds_its_using_above_and_leaves_the_caret_after_the_method()
+    {
+        MainWindow window = project.Open("Program.cs");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        PlaceAfter(editor, "int result = Helper.Twice(2);");
+        editor.Focus();
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("int[] numbers = [3, 1, 2];");
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("int largest = numbers");
+        // Roslyn lists the methods of namespaces not imported once it has indexed them, so the dot is typed again until it has.
+        Ui.WaitFor(() =>
+        {
+            if (window.Assist.CompletionLabels.Contains("Max"))
+            {
+                return true;
+            }
+            Ui.Press(window, "ESCAPE");
+            if (editor.Document.Snapshot.ToString().Contains("numbers.", StringComparison.Ordinal))
+            {
+                Ui.Press(window, "BACK_SPACE");
+            }
+            Screenshot.Pump(TimeSpan.FromMilliseconds(250));
+            window.KeyTextInput(".");
+            Ui.Settle();
+            return false;
+        }, "LINQ's Max, of a namespace Program.cs does not import, among the array's members");
+        for (int down = window.Assist.CompletionLabels.ToList().IndexOf("Max"); down > 0; down--)
+        {
+            Ui.Press(window, "DOWN");
+        }
+
+        Ui.Press(window, "ENTER");
+        Ui.Settle();
+        window.KeyTextInput("();");
+        string text = editor.Document.Snapshot.ToString();
+        Assert.True(text.StartsWith("using System.Linq;\n", StringComparison.Ordinal), $"Choosing Max did not add the using it needs above:\n{text}");
+        string line = editor.Document.Snapshot.GetLineText(editor.CaretPosition.Line);
+        Assert.True(line == "        int largest = numbers.Max();",
+            $"What was typed after choosing Max, its using added above, did not follow it: '{line}'\n{text}");
+        Assert.Equal(line.Length, editor.CaretPosition.Column);
+        window.Close();
+    }
+
     /// <summary>What Roslyn's server package carries under Visual Studio's terms rather than an open-source licence and
     /// Passenger.Lsp.csproj leaves out of roslyn/ (RoslynServerLeftOut), since nothing Passenger asks of the server loads them.</summary>
     private static readonly string[] LeftOut =

@@ -673,6 +673,7 @@ public sealed partial class CodeAssist
             caret += tail.Length;
         }
         string insert = item.TextEdit?.NewText ?? item.TextEditText ?? item.InsertText ?? item.Label;
+        TextRange final = new(insert.Length, 0);
         if (item.InsertTextFormat == 2)
         {
             // A snippet (Razor's attribute="$0", a component with its required parameters): its places are Tab's to visit.
@@ -683,17 +684,46 @@ public sealed partial class CodeAssist
                 return;
             }
             insert = snippet.Text;
+            final = snippet.End;
         }
-        List<Passenger.Text.TextEdit> edits = [new Passenger.Text.TextEdit(start, Math.Max(0, caret - start), insert)];
+        int replaced = Math.Max(start, caret);
+        List<Passenger.Text.TextEdit> edits = [new Passenger.Text.TextEdit(start, replaced - start, insert)];
         if (item.AdditionalTextEdits is { Count: > 0 } extra && WorkspaceEdits.Carried(asked, extra, indent) is { } placed)
         {
             edits.AddRange(placed.Where(e => e.End <= start || e.Start >= caret));
         }
-        Editor.ApplyEdits(Indentation.Fit(document.Snapshot, LineEndings.Fit(document.Snapshot, edits, document.LineEnding), indent));
+        string eol = document.LineEnding;
+        List<Passenger.Text.TextEdit> fitted = Indentation.Fit(document.Snapshot, LineEndings.Fit(document.Snapshot, edits, eol), indent);
+        int after = ItemEnd(fitted, start, replaced);
+        Selection landing = new(after - LineEndings.In(insert[final.Start..], eol).Length, after - LineEndings.In(insert[final.End..], eol).Length);
+        int at = Editor.Selections.Primary.Caret;
+        // Said, since an item put in with nothing typed is an insertion at the caret, which stays before it; a commit character's caret is past it.
+        Editor.ApplyEdits(fitted, at >= start && at <= replaced ? SelectionSet.Single(landing) : null);
         if (item.Command is { } command)
         {
             Message?.Invoke(this, NotRun(item.Label, command));
         }
+    }
+
+    /// <summary>Where the item put in place of <paramref name="start"/> to <paramref name="end"/> ends once the fitted
+    /// edits are made: the end of the edit holding it (fitting may widen it or join an edit touching it), moved on by the
+    /// edits before it (a using added above), or the item's own end when it changed nothing.</summary>
+    private static int ItemEnd(IReadOnlyList<Passenger.Text.TextEdit> fitted, int start, int end)
+    {
+        int shift = 0;
+        foreach (Passenger.Text.TextEdit edit in fitted)
+        {
+            if (edit.Start <= start && edit.End >= end)
+            {
+                return edit.Start + shift + edit.Text.Length;
+            }
+            if (edit.Start >= end)
+            {
+                break;
+            }
+            shift += edit.Text.Length - edit.Length;
+        }
+        return end + shift;
     }
 
     /// <summary>A completion whose code the server writes whole (an override's body, the async an await needs in its

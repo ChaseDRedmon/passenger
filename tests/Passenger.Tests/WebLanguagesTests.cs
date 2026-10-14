@@ -157,6 +157,20 @@ public sealed class WebLanguagesTests : IClassFixture<WebLanguagesTests.Shop>
             window.KeyTextInput("4px");
             Assert.Equal("    border-radius: 4px;", editor.Document.Snapshot.GetLineText(line));
 
+            // A value chosen from the list its colon opened, with nothing typed, goes in with the caret after it.
+            Ui.Press(window, "END");
+            Ui.Press(window, "ENTER");
+            window.KeyTextInput("display");
+            window.KeyTextInput(":");
+            Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("flex"), "display's values after its colon");
+            for (int down = window.Assist.CompletionLabels.ToList().IndexOf("flex"); down > 0; down--)
+            {
+                Ui.Press(window, "DOWN");
+            }
+            Ui.Press(window, "ENTER");
+            window.KeyTextInput(";");
+            Assert.Equal("    display:flex;", editor.Document.Snapshot.GetLineText(editor.CaretPosition.Line));
+
             PlaceAfter(editor, "border-radius: 4px;");
             editor.ApplyEdits([new TextEdit(editor.Selections.Primary.Caret, 0, "\n    colr: red;")]);
             Ui.WaitFor(() => document.Markers.Any(m => m.Kind == MarkerKind.Warning), "the warning under the property CSS has not");
