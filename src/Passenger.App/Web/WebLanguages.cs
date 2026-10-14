@@ -713,6 +713,11 @@ public sealed class WebLanguages : IAsyncDisposable
             }
         }
         servers.Clear();
+        // Done at once with nothing running, so the folder opened next opens as the call that left this one returns.
+        if (closing.Count == 0 && linter.IsCompleted && formatter.IsCompleted)
+        {
+            return ValueTask.CompletedTask;
+        }
         // Not held: the window's end waits for it with no UI thread to come back to.
         return new ValueTask(Task.Run(() => Task.WhenAll([linter, formatter, .. closing.Select(s => s.DisposeAsync().AsTask())])));
     }
