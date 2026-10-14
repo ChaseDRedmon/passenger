@@ -25,8 +25,11 @@ public enum LineMarkKind
 
 /// <summary>A mark on a line (from zero) of the document the editor shows. A breakpoint with a condition or
 /// hit count shows a question mark on its dot, one that does not stop (a tracepoint) is amber, and a muted one is grey,
-/// as Rider draws breakpoints while Mute Breakpoints is on.</summary>
-public readonly record struct LineMark(int Line, LineMarkKind Kind, bool Conditional = false, bool Tracepoint = false, bool Muted = false);
+/// as Rider draws breakpoints while Mute Breakpoints is on. A breakpoint on part of its line (an XAML attribute, as Rider's
+/// inline breakpoints) has that <see cref="Range"/> tinted rather than the whole line, and its dot only where the line has
+/// no breakpoint of its own.</summary>
+public readonly record struct LineMark(int Line, LineMarkKind Kind, bool Conditional = false, bool Tracepoint = false, bool Muted = false,
+    TextRange? Range = null);
 
 /// <summary>A press on a line's number (from zero), with the keys held and where it was (in the editor's
 /// coordinates); <see cref="Context"/> for a right-click, which asks for the breakpoint's properties.</summary>

@@ -25,6 +25,7 @@
     "Debugging.PauseTests": 90,
     "MemorySnapshotsTests": 90,
     "LiveTreeTests": 90,
+    "XamlBreakpointsTests": 90,
     "BindingErrorsTests": 120,
     "RazorTests": 90,
     "NewSolutionTests": 120,

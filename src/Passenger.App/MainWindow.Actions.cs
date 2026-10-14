@@ -214,11 +214,20 @@ public partial class MainWindow
         Add(A.EditBreakpoint, "Edit Breakpoint...", "Debug", c =>
         {
             int line = c.Caret.Line;
-            if (session.Debug.Breakpoints.In(c.File!.Path).FirstOrDefault(b => b.Line == line) is not { } editing)
+            string? attribute = Debugging.DebugController.AttributeAtCaret(c);
+            IReadOnlyList<Debugging.LineBreakpoint> here = session.Debug.Breakpoints.In(c.File!.Path);
+            if ((here.FirstOrDefault(b => b.Line == line && b.Attribute == attribute) ?? here.FirstOrDefault(b => b.Line == line)) is not { } editing)
             {
-                // Alt+F9 on a line with none sets one to edit, as Rider's Edit Breakpoint does.
-                session.Debug.Breakpoints.Toggle(c.File.Path, line);
-                editing = session.Debug.Breakpoints.In(c.File.Path).First(b => b.Line == line);
+                // Alt+F9 on a line with none sets one to edit, as Rider's Edit Breakpoint does: on an XAML attribute, its own.
+                if (attribute is not null)
+                {
+                    session.Debug.Breakpoints.ToggleAttribute(c.File.Path, line, attribute);
+                }
+                else
+                {
+                    session.Debug.Breakpoints.Toggle(c.File.Path, line);
+                }
+                editing = session.Debug.Breakpoints.In(c.File.Path).First(b => b.Line == line && b.Attribute == attribute);
             }
             ShowBreakpointPopup(editing);
         }, NeedsFile, ("Run", 2, 2));

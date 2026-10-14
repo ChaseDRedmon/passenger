@@ -92,6 +92,16 @@ public sealed partial class CodeEditor
                 {
                     context.FillRectangle(tint, new Rect(gutter, y, size.Width - gutter, lineHeight));
                 }
+                else if (marks.Parts.TryGetValue(line, out List<LineMark>? parts))
+                {
+                    foreach (LineMark part in parts)
+                    {
+                        if (Tinted(part))
+                        {
+                            FillRange(context, view, gaps, from, y, part.Range!.Value, palette.BreakpointLine);
+                        }
+                    }
+                }
                 DrawUsages(context, view, gaps, from, y);
                 if (braced is { } pair)
                 {
@@ -586,8 +596,11 @@ public sealed partial class CodeEditor
     /// that is off or cannot bind.</summary>
     private IBrush? LineTint(VisibleMarks marks, int line) =>
         marks.Executing.Contains(line) ? palette.ExecutionLine
-        : marks.Breakpoints.TryGetValue(line, out LineMark mark) && !mark.Tracepoint && !mark.Muted && mark.Kind is LineMarkKind.Breakpoint or LineMarkKind.BreakpointBound ? palette.BreakpointLine
+        : marks.Breakpoints.TryGetValue(line, out LineMark mark) && mark.Range is null && Tinted(mark) ? palette.BreakpointLine
         : null;
+
+    /// <summary>Whether a breakpoint tints what it is on: one that stops and can, Rider's red.</summary>
+    private static bool Tinted(LineMark mark) => !mark.Tracepoint && !mark.Muted && mark.Kind is LineMarkKind.Breakpoint or LineMarkKind.BreakpointBound;
 
     /// <summary>The marks on the lines a frame draws, looked up once per frame.</summary>
     private sealed class VisibleMarks
@@ -603,8 +616,14 @@ public sealed partial class CodeEditor
                 if (mark.Kind == LineMarkKind.ExecutionPoint)
                 {
                     Executing.Add(mark.Line);
+                    continue;
                 }
-                else
+                if (mark.Range is not null)
+                {
+                    (Parts.TryGetValue(mark.Line, out List<LineMark>? parts) ? parts : Parts[mark.Line] = []).Add(mark);
+                }
+                // The line's own breakpoint gives the dot over one on a part of it.
+                if (!Breakpoints.TryGetValue(mark.Line, out LineMark there) || (there.Range is not null && mark.Range is null))
                 {
                     Breakpoints[mark.Line] = mark;
                 }
@@ -614,6 +633,9 @@ public sealed partial class CodeEditor
         public HashSet<int> Executing { get; } = [];
 
         public Dictionary<int, LineMark> Breakpoints { get; } = [];
+
+        /// <summary>The breakpoints on parts of lines, by line.</summary>
+        public Dictionary<int, List<LineMark>> Parts { get; } = [];
     }
 
     /// <summary>A breakpoint's dot, centred at a point: filled when set, with a tick once bound, a

@@ -82,6 +82,8 @@ public sealed class BreakpointProperties : UserControl
         enabled.IsChecked = breakpoint.Enabled;
         suspend.IsChecked = breakpoint.Suspend;
         condition.Text = breakpoint.Condition ?? string.Empty;
+        // A property breakpoint's condition reads the change it stops at.
+        condition.PlaceholderText = breakpoint is PropertyBreakpoint ? "A C# condition: newValue != oldValue" : "A C# condition: count > 2";
         hitCount.Text = breakpoint.HitCondition ?? string.Empty;
         log.Text = breakpoint.LogMessage ?? string.Empty;
         suspendIf.IsVisible = breakpoint is ExceptionBreakpoint;
@@ -244,9 +246,10 @@ public sealed class BreakpointPopup : UserControl
     }
 }
 
-/// <summary>Rider's Breakpoints window: the line breakpoints under ".NET Line Breakpoints", the session's data breakpoints
-/// under "Data Breakpoints" and the exception breakpoints under "CLR Exception Breakpoints" ("Any exception" first), each
-/// turned on or off by its box, and the chosen one's properties beside the list. + adds an exception breakpoint by its
+/// <summary>Rider's Breakpoints window: the line breakpoints (XAML's among them) under ".NET Line Breakpoints", the
+/// session's data breakpoints under "Data Breakpoints", its property breakpoints under "Avalonia Property Breakpoints" and
+/// the exception breakpoints under "CLR Exception Breakpoints" ("Any exception" first), each turned on or off by its box,
+/// and the chosen one's properties beside the list. + adds an exception breakpoint by its
 /// type, offering the exception types that match what is typed (Rider's Add CLR Exception Breakpoints); − removes the
 /// chosen one. Double-click (or Go to Source) shows a line breakpoint's line.</summary>
 public sealed class BreakpointsWindow : UserControl
@@ -530,6 +533,14 @@ public sealed class BreakpointsWindow : UserControl
         {
             list.Items.Add(Group("Data Breakpoints"));
             foreach (DataBreakpoint breakpoint in store.Data)
+            {
+                list.Items.Add(Item(breakpoint));
+            }
+        }
+        if (store.Properties.Count > 0)
+        {
+            list.Items.Add(Group("Avalonia Property Breakpoints"));
+            foreach (PropertyBreakpoint breakpoint in store.Properties)
             {
                 list.Items.Add(Item(breakpoint));
             }

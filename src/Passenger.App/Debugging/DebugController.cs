@@ -37,6 +37,9 @@ public sealed class DebugController : IDisposable
     /// <summary>Why the exception the program stopped on could not be described, when it could not.</summary>
     private string? undescribed;
 
+    /// <summary>What a property breakpoint's stop changed and what changed it, as the inspector in the app said it.</summary>
+    private string? propertyChange;
+
     /// <summary>Counts the stops shown and the runs between them, so what a stop's requests bring back once the program has
     /// gone on is dropped rather than shown over what is now true.</summary>
     private int shown;
@@ -165,14 +168,27 @@ public sealed class DebugController : IDisposable
         Func<RunInTerminalArguments, Task<Run.TerminalRun>>? inTerminal = plan.Console == Run.ConsoleKind.Terminal && RunInTerminal is { } run
             ? arguments => run(plan.Name, arguments)
             : null;
-        return OpenAsync((built, log, output) => DebugSession.LaunchAsync(plan, Breakpoints, built, log, output, inTerminal), plan.Name,
+        return OpenAsync((built, log, output) => DebugSession.LaunchAsync(plan, Breakpoints, built, log, output, inTerminal, ColumnOf), plan.Name,
             launched: true, inTerminal: inTerminal is not null);
+    }
+
+    /// <summary>The column a breakpoint asks the debugger for: in Avalonia XAML, its attribute's or its line's first name's
+    /// in the file's text (an open file's as it is now, else as saved); none elsewhere.</summary>
+    private int? ColumnOf(LineBreakpoint breakpoint)
+    {
+        if (!XamlBreakpoints.Compiled(breakpoint.Path))
+        {
+            return null;
+        }
+        TextSnapshot? text = editors.Documents.FirstOrDefault(d => d.Path == breakpoint.Path)?.Text.Snapshot
+            ?? (File.Exists(breakpoint.Path) ? TextSnapshot.From(File.ReadAllText(breakpoint.Path)) : null);
+        return text is null ? null : XamlBreakpoints.Column(text, breakpoint.Line, breakpoint.Attribute);
     }
 
     /// <summary>Attaches the debugger to a running .NET process, as Attach to Process does: what it writes goes where it
     /// always went, as Rider's Console says. Null once the session is open, else why it could not.</summary>
     public Task<string?> AttachAsync(int processId, string name) =>
-        OpenAsync((built, log, output) => DebugSession.AttachAsync(processId, Breakpoints, built, log, output), name, launched: false);
+        OpenAsync((built, log, output) => DebugSession.AttachAsync(processId, Breakpoints, built, log, output, ColumnOf), name, launched: false);
 
     /// <summary>Starts a session, its output in the Console; a program it launched reads what is typed there, as in
     /// Rider's Debug console (one attached to has an input of its own, and one in the terminal reads the terminal's).</summary>
@@ -301,7 +317,18 @@ public sealed class DebugController : IDisposable
     public static void AddActions(ActionRegistry actions, Func<DebugController> current)
     {
         UiThread.Check();
-        Add(AppActions.ToggleBreakpoint, "Toggle Breakpoint", (d, c) => d.Breakpoints.Toggle(c.File!.Path, c.Caret.Line), (_, c) => NeedsFile(c), new("Run", 2, 0));
+        Add(AppActions.ToggleBreakpoint, "Toggle Breakpoint", (d, c) =>
+        {
+            // On an Avalonia XAML attribute, the attribute's own: it stops as that property is set.
+            if (AttributeAtCaret(c) is { } attribute)
+            {
+                d.Breakpoints.ToggleAttribute(c.File!.Path, c.Caret.Line, attribute);
+            }
+            else
+            {
+                d.Breakpoints.Toggle(c.File!.Path, c.Caret.Line);
+            }
+        }, (_, c) => NeedsFile(c), new("Run", 2, 0));
         Add(AppActions.ToggleBreakpointEnabled, "Toggle Breakpoint Enabled", (d, c) => d.Breakpoints.ToggleEnabled(c.File!.Path, c.Caret.Line), (_, c) => NeedsFile(c), new("Run", 2, 1));
         Add(AppActions.Resume, "Resume Program", (d, c) =>
         {
@@ -346,6 +373,12 @@ public sealed class DebugController : IDisposable
     private const string NothingDebugged = "Nothing is being debugged";
 
     private static string? NeedsFile(ActionContext context) => context.File is null ? "No file is open" : null;
+
+    /// <summary>The Avalonia XAML attribute the caret is on, whose own breakpoint Toggle Breakpoint sets; null elsewhere.</summary>
+    public static string? AttributeAtCaret(ActionContext context) =>
+        context.File is { } file && XamlBreakpoints.Compiled(file.Path)
+            ? XamlBreakpoints.AttributeAt(file.Text.Snapshot, file.Text.Snapshot.GetOffset(context.Caret))
+            : null;
 
     /// <summary>Why a step cannot go now: nothing is being debugged, or the program runs.</summary>
     private string? NotPaused() => !IsDebugging ? NothingDebugged : Session!.State != DebugState.Paused ? "The program is not paused" : null;
@@ -488,6 +521,11 @@ public sealed class DebugController : IDisposable
             lines?.Follow(document.Path, change);
             Breakpoints.Follow(document.Path, change);
             FollowStop(document, change);
+            if (Breakpoints.In(document.Path).Any(b => b.Attribute is not null))
+            {
+                // An attribute's tint goes where the attribute now is, which an edit inside its line moves.
+                UpdateMarks(document);
+            }
         };
         following[document] = follow;
         document.Text.Changed += follow;
@@ -632,6 +670,8 @@ public sealed class DebugController : IDisposable
         DebugState.Paused when undescribed is { } why => $"{name}: paused on an exception the debugger could not describe ({why})",
         DebugState.Paused when session.DataStop is ({ } watched, var change) =>
             $"{name}: Data Breakpoint Hit: {watched.Location} is changed{(change is null ? string.Empty : $" ({change})")}",
+        DebugState.Paused when session.PropertyStop is { } property =>
+            $"{name}: Property Breakpoint Hit: {property.Location} is changed{(propertyChange is null ? string.Empty : $" ({propertyChange})")}",
         DebugState.Paused => $"{name}: paused ({session.StopReason})",
         DebugState.Running => $"{name}: running",
         _ when session.Detached => $"Detached from {name}, which runs on",
@@ -651,6 +691,27 @@ public sealed class DebugController : IDisposable
         int stop = shown;
         stopException = null;
         undescribed = null;
+        propertyChange = null;
+        if (session.PropertyStop is not null)
+        {
+            try
+            {
+                // Said by the inspector's call the debugger stopped in: the values, and what set the new one.
+                if ((await session.StackTraceAsync(thread)).FirstOrDefault() is { } changed
+                    && (await session.EvaluateAsync("change", changed.Id, "watch")).Result is { Length: > 1 } said && said[0] == '"' && said[^1] == '"')
+                {
+                    propertyChange = said[1..^1].Replace("\\\"", "\"", StringComparison.Ordinal).Replace("\\\\", "\\", StringComparison.Ordinal);
+                }
+            }
+            catch (DapException)
+            {
+                // The stop shows without its words.
+            }
+            if (stop != shown)
+            {
+                return;
+            }
+        }
         if (session.StopReason == "exception")
         {
             try
@@ -692,8 +753,14 @@ public sealed class DebugController : IDisposable
         {
             return;
         }
-        DapStackFrame? top = stack.FirstOrDefault(f => f.Source?.Path is not null) ?? stack.FirstOrDefault();
-        executionPoint = thread == session.StoppedThread && top?.Source?.Path is { } path ? (path, top.Line - 1) : executionPoint;
+        // A property breakpoint stops in the inspector's call, under Avalonia's: the user's code that set the value is where
+        // it stopped, as Just My Code shows it; with none (a style a pointer set) the call's own frame, whose values say what
+        // changed, but no line of the inspector's.
+        DapStackFrame? user = stack.FirstOrDefault(f => f.Source?.Path is not null && f.PresentationHint != "subtle");
+        bool property = thread == session.StoppedThread && session.PropertyStop is not null;
+        DapStackFrame? top = property ? user ?? stack.FirstOrDefault() : stack.FirstOrDefault(f => f.Source?.Path is not null) ?? stack.FirstOrDefault();
+        bool shows = !property || top == user;
+        executionPoint = thread == session.StoppedThread && shows && top?.Source?.Path is { } path ? (path, top.Line - 1) : executionPoint;
         if (thread == session.StoppedThread)
         {
             Stop = new DebugStop(thread, session.StopReason, stack, top, stopException?.Text);
@@ -702,7 +769,7 @@ public sealed class DebugController : IDisposable
         UpdateAllMarks();
         if (top is not null)
         {
-            await ChooseFrame(top, navigate: true);
+            await ChooseFrame(top, navigate: shows);
         }
     }
 
@@ -963,6 +1030,7 @@ public sealed class DebugController : IDisposable
         bool debugging = IsDebugging;
         // Muted, a breakpoint shows as Rider's muted ones do, grey whatever the debugger said of it.
         bool muted = Breakpoints.Muted;
+        TextSnapshot text = document.Text.Snapshot;
         List<LineMark> marks = [.. Breakpoints.In(document.Path).Select(b => new LineMark(b.Line, b switch
         {
             { Enabled: false } => LineMarkKind.BreakpointDisabled,
@@ -970,7 +1038,10 @@ public sealed class DebugController : IDisposable
             { Status: BreakpointStatus.Bound } when debugging => LineMarkKind.BreakpointBound,
             { Status: BreakpointStatus.Invalid } when debugging => LineMarkKind.BreakpointInvalid,
             _ => LineMarkKind.Breakpoint,
-        }, Conditional: b.Condition is not null || b.HitCondition is not null, Tracepoint: !b.Suspend, Muted: muted))];
+        }, Conditional: b.Condition is not null || b.HitCondition is not null, Tracepoint: !b.Suspend, Muted: muted,
+            // An attribute's breakpoint tints the attribute, as Rider's inline breakpoints tint what they are on; nothing once
+            // the attribute is edited away.
+            Range: b.Attribute is { } attribute ? XamlBreakpoints.AttributeRange(text, b.Line, attribute) ?? new TextRange(0, 0) : null))];
         if (executionPoint is { } point && point.Path == document.Path)
         {
             marks.Add(new LineMark(Current(point.Path, point.Line), LineMarkKind.ExecutionPoint));

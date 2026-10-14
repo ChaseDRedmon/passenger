@@ -1,0 +1,24 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:XamlBreakpointsApp"
+        x:Class="XamlBreakpointsApp.MainWindow"
+        x:DataType="local:MainViewModel"
+        Title="XAML Breakpoints" Width="480" Height="320">
+    <Window.Styles>
+        <Style Selector="Button.danger">
+            <Setter Property="Foreground" Value="Red" />
+        </Style>
+    </Window.Styles>
+    <StackPanel x:Name="Panel" Margin="12" Spacing="8">
+        <TextBlock x:Name="Caption" Text="{Binding Caption}" />
+        <Button x:Name="Save" Content="Save" Background="Orange" />
+        <Button x:Name="Delete" Content="Delete" />
+        <ItemsControl ItemsSource="{Binding Items}">
+            <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="x:String">
+                    <local:Row Text="{Binding}" />
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </ItemsControl>
+    </StackPanel>
+</Window>

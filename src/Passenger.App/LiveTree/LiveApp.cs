@@ -212,6 +212,14 @@ public sealed class LiveApp : IDisposable
     public async Task<Picture> CaptureAsync(long element, double? scale, Box? area) =>
         (await AskAsync(new Request(0, Wire.Capture, element) { Scale = scale, Area = area })).Picture ?? throw new LiveAppException($"{Name} drew nothing");
 
+    /// <summary>A property breakpoint's watch on an element's property, its hit count counted in the app, in place of what
+    /// that breakpoint watched before.</summary>
+    public Task WatchAsync(int breakpoint, long element, string property, string? hitCondition) =>
+        AskAsync(new Request(0, Wire.Watch, element, On: true) { Breakpoint = breakpoint, Property = property, HitCondition = hitCondition });
+
+    /// <summary>A property breakpoint's watch ended.</summary>
+    public Task UnwatchAsync(int breakpoint) => AskAsync(new Request(0, Wire.Watch, On: false) { Breakpoint = breakpoint });
+
     /// <summary>Input to the app, as a person gives it, answered once it has been handled and laid out.</summary>
     public async Task<InputDone> InputAsync(InputAction input) =>
         (await AskAsync(new Request(0, Wire.Input) { Input = input })).Done ?? throw new LiveAppException($"{Name} did not say what the input did");

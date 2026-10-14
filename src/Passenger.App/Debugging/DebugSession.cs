@@ -29,6 +29,9 @@ public sealed class DebugSession
     private readonly DapConnection connection;
     private readonly BreakpointStore breakpoints;
     private readonly BuiltLines lines;
+
+    /// <summary>The column (from one) a breakpoint asks for, in XAML (<see cref="XamlBreakpoints.Column"/>); null for its line.</summary>
+    private readonly Func<LineBreakpoint, int?> columns;
     private readonly Dictionary<string, string> sent = new(StringComparer.Ordinal);
 
     /// <summary>The exception breakpoints as last sent.</summary>
@@ -37,6 +40,10 @@ public sealed class DebugSession
     /// <summary>The data breakpoints as last sent, and each by the id the debugger gave it.</summary>
     private string? dataSent;
     private readonly Dictionary<int, DataBreakpoint> dataById = [];
+
+    /// <summary>The property breakpoints as last sent, and each by the id the debugger gave its function breakpoint.</summary>
+    private string? propertiesSent;
+    private readonly Dictionary<int, PropertyBreakpoint> propertyById = [];
 
     private readonly Dictionary<int, LineBreakpoint> byId = [];
     private readonly TaskCompletionSource initialized = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -59,10 +66,11 @@ public sealed class DebugSession
     /// <summary>The adapter's one disconnect, once asked: nothing more is asked of it, since it may go before answering.</summary>
     private Task? disconnected;
 
-    private DebugSession(BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output)
+    private DebugSession(BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output, Func<LineBreakpoint, int?>? columns)
     {
         this.breakpoints = breakpoints;
         this.lines = lines;
+        this.columns = columns ?? (_ => null);
         // The log is called from the adapter's error stream and the connection's own threads: each line lands on the UI's.
         log = UiThread.Marshal(log);
         string path = Path.Combine(AppContext.BaseDirectory, "debugger", "Passenger.DebugAdapter.dll");
@@ -129,6 +137,7 @@ public sealed class DebugSession
         breakpoints.Changed += OnBreakpointsChanged;
         breakpoints.ExceptionsChanged += OnExceptionsChanged;
         breakpoints.DataChanged += OnDataChanged;
+        breakpoints.PropertiesChanged += OnPropertiesChanged;
     }
 
     public event EventHandler? StateChanged;
@@ -144,6 +153,9 @@ public sealed class DebugSession
     /// <summary>The data breakpoint the program stopped at, while paused there, and what the write changed ("Previous
     /// Value: 1, New Value: 2").</summary>
     public (DataBreakpoint Breakpoint, string? Change)? DataStop { get; private set; }
+
+    /// <summary>The property breakpoint the program stopped at, while paused there.</summary>
+    public PropertyBreakpoint? PropertyStop { get; private set; }
 
     /// <summary>Why the debugger can set no data breakpoint where it runs, or null where it can.</summary>
     public string? DataBreakpointsUnavailable { get; private set; } = "The debugger has not started";
@@ -183,7 +195,7 @@ public sealed class DebugSession
     /// <paramref name="output"/> on the connection's thread, in order. With <paramref name="runInTerminal"/> the program
     /// runs in the terminal it starts, which the adapter asks for (runInTerminal), and its output goes there.</summary>
     public static Task<DebugSession> LaunchAsync(Run.LaunchPlan plan, BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output,
-        Func<RunInTerminalArguments, Task<Run.TerminalRun>>? runInTerminal = null) =>
+        Func<RunInTerminalArguments, Task<Run.TerminalRun>>? runInTerminal = null, Func<LineBreakpoint, int?>? columns = null) =>
         StartAsync(plan.Built ?? plan.Program, "launch", new LaunchArguments
         {
             Program = plan.Program,
@@ -193,18 +205,19 @@ public sealed class DebugSession
             Console = runInTerminal is null ? "internalConsole" : "integratedTerminal",
             JustMyCode = true,
             StopAtEntry = false,
-        }, breakpoints, lines, log, output, runInTerminal);
+        }, breakpoints, lines, log, output, runInTerminal, columns);
 
     /// <summary>Starts the adapter and attaches it to a running .NET process (one Attach to Process chose, or a test host
     /// VSTest started), with the store's breakpoints.</summary>
-    public static Task<DebugSession> AttachAsync(int processId, BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output) =>
-        StartAsync($"process {processId}", "attach", new AttachArguments { ProcessId = processId, JustMyCode = true }, breakpoints, lines, log, output, null);
+    public static Task<DebugSession> AttachAsync(int processId, BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output,
+        Func<LineBreakpoint, int?>? columns = null) =>
+        StartAsync($"process {processId}", "attach", new AttachArguments { ProcessId = processId, JustMyCode = true }, breakpoints, lines, log, output, null, columns);
 
     private static async Task<DebugSession> StartAsync(string program, string request, object arguments, BreakpointStore breakpoints, BuiltLines lines, Action<string> log, Action<OutputEvent> output,
-        Func<RunInTerminalArguments, Task<Run.TerminalRun>>? runInTerminal)
+        Func<RunInTerminalArguments, Task<Run.TerminalRun>>? runInTerminal, Func<LineBreakpoint, int?>? columns)
     {
         UiThread.Check();
-        DebugSession session = new(breakpoints, lines, log, output) { Program = program, Attached = request == "attach" };
+        DebugSession session = new(breakpoints, lines, log, output, columns) { Program = program, Attached = request == "attach" };
         IdeLog.Write(IdeLog.Debugger, $"[{session.connection.Name}] {request} {program}");
         if (runInTerminal is not null)
         {
@@ -574,7 +587,7 @@ public sealed class DebugSession
         IEnumerable<LineBreakpoint> sending = breakpoints.Muted ? [] : breakpoints.In(path).Where(b => b.Enabled);
         List<LineBreakpoint> built = [.. sending.Where(b => lines.IsBuilt(path, b.Line))];
         List<LineBreakpoint> unbuilt = [.. sending.Where(b => !lines.IsBuilt(path, b.Line))];
-        List<DapSourceBreakpoint> requests = [.. built.Select(b => new DapSourceBreakpoint(lines.ToBuilt(path, b.Line) + 1, Condition: b.Condition, HitCondition: b.HitCondition, LogMessage: b.LogMessage, Suspend: b.Suspend))];
+        List<DapSourceBreakpoint> requests = [.. built.Select(b => new DapSourceBreakpoint(lines.ToBuilt(path, b.Line) + 1, columns(b), b.Condition, b.HitCondition, b.LogMessage, b.Suspend))];
         if (runToCursor is { } target && target.Path == path && requests.All(r => r.Line != target.Line + 1))
         {
             requests.Add(new DapSourceBreakpoint(target.Line + 1));
@@ -616,7 +629,7 @@ public sealed class DebugSession
     /// <summary>What a file's breakpoints ask of the debugger, at their built lines, to tell a change worth sending.</summary>
     private string Signature(string path) => breakpoints.Muted ? "muted" :
         string.Join(';', breakpoints.In(path).Where(b => b.Enabled).Select(b =>
-            $"{(lines.IsBuilt(path, b.Line) ? $"{lines.ToBuilt(path, b.Line)}" : $"new {b.Line}")}|{b.Condition}|{b.HitCondition}|{b.LogMessage}|{b.Suspend}"));
+            $"{(lines.IsBuilt(path, b.Line) ? $"{lines.ToBuilt(path, b.Line)}" : $"new {b.Line}")}:{b.Attribute}|{b.Condition}|{b.HitCondition}|{b.LogMessage}|{b.Suspend}"));
 
     /// <summary>The exception breakpoints that are on, as the protocol's exception options; none while muted, so no exception
     /// stops the program, not even one left unhandled.</summary>
@@ -694,6 +707,64 @@ public sealed class DebugSession
 
     private string DataSignature() => string.Join(';', DataSending().Select(d => $"{d.DataId}|{d.Condition}|{d.HitCondition}|{d.LogMessage}|{d.Suspend}"));
 
+    /// <summary>The property breakpoints that are on; none while muted.</summary>
+    private List<PropertyBreakpoint> PropertiesSending() => breakpoints.Muted ? [] : [.. breakpoints.Properties.Where(p => p.Enabled)];
+
+    /// <summary>Sends the property breakpoints, a function breakpoint each on the method the inspector in the app calls at a
+    /// watched property's change, its condition naming the breakpoint first; the hit count is the inspector's, which
+    /// counts only its own property's changes. One whose hit count cannot be read is refused here, as a line's is.</summary>
+    private async Task SendPropertyBreakpointsAsync()
+    {
+        List<(PropertyBreakpoint, BreakpointStatus, string?)> said = [];
+        List<PropertyBreakpoint> sending = [];
+        foreach (PropertyBreakpoint breakpoint in PropertiesSending())
+        {
+            if (breakpoint.HitCondition is { } hits && !HitCondition.TryParse(hits, out _, out string? problem))
+            {
+                said.Add((breakpoint, BreakpointStatus.Invalid, problem));
+            }
+            else
+            {
+                sending.Add(breakpoint);
+            }
+        }
+        propertiesSent = PropertySignature();
+        SetBreakpointsResponse response;
+        try
+        {
+            response = await connection.RequestAsync<SetBreakpointsResponse>("setFunctionBreakpoints", new SetFunctionBreakpointsArguments(
+                [.. sending.Select(p => new DapFunctionBreakpoint(Inspector.Wire.Changed, $"breakpoint == {p.Id}" + (p.Condition is { } condition ? $" && ({condition})" : string.Empty),
+                    null, p.LogMessage, p.Suspend))]));
+        }
+        catch (DapException refused)
+        {
+            breakpoints.ReportProperties([.. said, .. sending.Select(p => (p, BreakpointStatus.Invalid, (string?)refused.Reason))]);
+            return;
+        }
+        propertyById.Clear();
+        for (int i = 0; i < Math.Min(sending.Count, response.Breakpoints.Count); i++)
+        {
+            DapBreakpoint answer = response.Breakpoints[i];
+            if (answer.Id is int id)
+            {
+                propertyById[id] = sending[i];
+            }
+            said.Add((sending[i], answer.Verified ? BreakpointStatus.Bound : answer.Reason == "failed" ? BreakpointStatus.Invalid : BreakpointStatus.Unknown, answer.Message));
+        }
+        breakpoints.ReportProperties(said);
+    }
+
+    private void OnPropertiesChanged(object? sender, EventArgs e)
+    {
+        // A report from the debugger raises it too: only what changes the request goes back to it.
+        if (State is DebugState.Running or DebugState.Paused && disconnected is null && propertiesSent != PropertySignature())
+        {
+            _ = SendPropertyBreakpointsAsync();
+        }
+    }
+
+    private string PropertySignature() => string.Join(';', PropertiesSending().Select(p => $"{p.Id}|{p.Condition}|{p.HitCondition}|{p.LogMessage}|{p.Suspend}"));
+
     private string ExceptionSignature() => string.Join(';', ExceptionOptions().Select(s =>
         $"{s.Breakpoint.Type}|{string.Join(',', s.Option.Scenarios ?? [])}|{s.Option.Condition}|{s.Option.HitCondition}|{s.Option.LogMessage}|{s.Option.Suspend}"));
 
@@ -712,6 +783,7 @@ public sealed class DebugSession
                 DataStop = stopped.Reason == "data breakpoint" && stopped.HitBreakpointIds?.Select(id => dataById.GetValueOrDefault(id)).FirstOrDefault(d => d is not null) is { } watched
                     ? (watched, stopped.Text)
                     : null;
+                PropertyStop = stopped.Reason == "breakpoint" ? stopped.HitBreakpointIds?.Select(id => propertyById.GetValueOrDefault(id)).FirstOrDefault(p => p is not null) : null;
                 if (runToCursor is { } target)
                 {
                     runToCursor = null;
@@ -727,6 +799,11 @@ public sealed class DebugSession
                 if (changed.Breakpoint.Id is int id && byId.TryGetValue(id, out LineBreakpoint? breakpoint))
                 {
                     breakpoints.Report(breakpoint.Path, [Status(changed.Breakpoint)], [breakpoint]);
+                }
+                else if (changed.Breakpoint.Id is int functionId && propertyById.TryGetValue(functionId, out PropertyBreakpoint? property))
+                {
+                    (BreakpointStatus status, string? message, _) = Status(changed.Breakpoint);
+                    breakpoints.ReportProperties([.. breakpoints.Properties.Where(p => p != property).Select(p => (p, p.Status, p.Message)), (property, status, message)]);
                 }
                 break;
             case "process":
@@ -765,6 +842,7 @@ public sealed class DebugSession
             StoppedThread = null;
             StopReason = null;
             DataStop = null;
+            PropertyStop = null;
         }
         State = state;
         StateChanged?.Invoke(this, EventArgs.Empty);
@@ -781,6 +859,7 @@ public sealed class DebugSession
         breakpoints.Changed -= OnBreakpointsChanged;
         breakpoints.ExceptionsChanged -= OnExceptionsChanged;
         breakpoints.DataChanged -= OnDataChanged;
+        breakpoints.PropertiesChanged -= OnPropertiesChanged;
         breakpoints.ResetStatus();
         // Each watched a member of one of this session's objects, as Rider's do: none outlives it.
         breakpoints.ClearData();

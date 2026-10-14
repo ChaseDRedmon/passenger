@@ -142,6 +142,7 @@ public sealed class LiveTreeView : DockPanel
                 GoToRequested?.Invoke(this, place);
             }
         };
+        ToolWindows.ListMenus.Attach(properties, PropertyMenu);
         styles = new StackPanel { Margin = new Thickness(10, 4, 10, 10), Spacing = 10 };
         layout = new StackPanel { Margin = new Thickness(10, 4, 10, 10), Spacing = 8 };
         pages = new Panel
@@ -179,6 +180,50 @@ public sealed class LiveTreeView : DockPanel
 
     /// <summary>A link to XAML followed: a control's element, a style's selector, a setter.</summary>
     public event EventHandler<SourcePlace>? GoToRequested;
+
+    /// <summary>Break When Value Changes chosen on a property of the chosen control: its breakpoint to set, or to take away.</summary>
+    public event EventHandler<PropertyValue>? BreakRequested;
+
+    /// <summary>Whether a property of the chosen control has a property breakpoint, which its row shows.</summary>
+    public Func<PropertyValue, bool>? Watched { get; set; }
+
+    /// <summary>Why no property breakpoint can be set now, or null when one can.</summary>
+    public Func<string?>? WhyNotBreak { get; set; }
+
+    /// <summary>The Properties page's list, whose rows' menu offers Break When Value Changes.</summary>
+    public ListBox PropertyList => properties;
+
+    /// <summary>The Properties page's rows again, as their breakpoints changed.</summary>
+    public void RefreshProperties()
+    {
+        PropertyValue? kept = properties.SelectedItem as PropertyValue;
+        ShowProperties();
+        properties.SelectedItem = kept is null ? null : PropertyRows.FirstOrDefault(p => p.Name == kept.Name);
+    }
+
+    /// <summary>The menu of a property's row: Visual Studio's Break When Value Changes (checked while it has one), and Go to
+    /// Source where its value is written.</summary>
+    private IReadOnlyList<Control> PropertyMenu()
+    {
+        if (properties.SelectedItem is not PropertyValue value)
+        {
+            return [];
+        }
+        MenuItem watch = ToolWindows.ListMenus.Item(BreakWhenValueChanges, null, () => BreakRequested?.Invoke(this, value), enabled: WhyNotBreak?.Invoke() is null);
+        watch.ToggleType = MenuItemToggleType.CheckBox;
+        watch.IsChecked = Watched?.Invoke(value) == true;
+        ToolTip.SetTip(watch, WhyNotBreak?.Invoke() ?? "Stop the app wherever this property of this control is changed: a style, a binding, code or an animation");
+        ToolTip.SetShowOnDisabled(watch, true);
+        List<Control> items = [watch];
+        if (value.Place is { } place)
+        {
+            items.Add(ToolWindows.ListMenus.Item("Go to Source", null, () => GoToRequested?.Invoke(this, place)));
+        }
+        return items;
+    }
+
+    /// <summary>The menu item's words, Visual Studio's for a data breakpoint.</summary>
+    public const string BreakWhenValueChanges = "Break When Value Changes";
 
     /// <summary>Select Element, pressed while it is on.</summary>
     public ToggleButton SelectElement { get; }
@@ -491,8 +536,18 @@ public sealed class LiveTreeView : DockPanel
     private Control PropertyRow(PropertyValue value)
     {
         Grid grid = new() { ColumnDefinitions = new ColumnDefinitions("11*,9*"), RowDefinitions = new RowDefinitions("Auto,Auto"), Margin = new Thickness(8, 3) };
-        TextBlock name = new() { Text = value.Name, TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 0, 8, 0) };
-        ToolTip.SetTip(name, $"{value.Name} ({value.Type}, from {value.Owner})");
+        TextBlock label = new() { Text = value.Name, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
+        DockPanel name = new() { Margin = new Thickness(0, 0, 8, 0), Children = { label } };
+        if (Watched?.Invoke(value) == true)
+        {
+            // A breakpoint's dot, as the editor's gutter draws one, before a property that stops the app when it changes.
+            Avalonia.Controls.Shapes.Ellipse dot = new() { Width = 8, Height = 8, Margin = new Thickness(0, 0, 5, 0), VerticalAlignment = VerticalAlignment.Center };
+            dot.Bind(Avalonia.Controls.Shapes.Shape.FillProperty, dot.GetResourceObservable("Passenger.Editor.Breakpoint"));
+            ToolTip.SetTip(dot, $"The app stops wherever {value.Name} is changed");
+            DockPanel.SetDock(dot, Dock.Left);
+            name.Children.Insert(0, dot);
+        }
+        ToolTip.SetTip(label, $"{value.Name} ({value.Type}, from {value.Owner})");
         TextBlock shown = new() { Text = value.Value, FontFamily = Fonts.Mono, FontSize = 12, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
         ToolTip.SetTip(shown, value.Value);
         Grid.SetColumn(shown, 1);

@@ -451,10 +451,13 @@ public sealed partial class PassengerTools(MainWindow window)
         "(\"==3\", \">=2\", \"%2\") if given, or changes those of the one already there. A logMessage (\"count is {count}\") is written to " +
         "the program's output on each hit; with suspend false the breakpoint is a tracepoint and the program runs on. An exception " +
         "breakpoint stops in the scenarios given, Rider's Suspend If: thrownInUserCode, thrownInExternalCode, handledInUserCode, " +
-        "handledInExternalCode, unhandled (a new one on a type in all of them, as Rider sets it). Bound at once while debugging.")]
+        "handledInExternalCode, unhandled (a new one on a type in all of them, as Rider sets it). Bound at once while debugging. In Avalonia " +
+        "XAML (.axaml) a line's breakpoint stops where the first element or attribute written on it is made or set, and one with an attribute " +
+        "(as written on that line: Background, Grid.Row) where that property is set as its element is made.")]
     public Task<IReadOnlyList<BreakpointInfo>> SetBreakpoint(
         string? path = null,
         int? line = null,
+        [Description("In .axaml, an attribute on the line, by its name as written, for a breakpoint on it alone")] string? attribute = null,
         [Description("An exception type's full name, or \"Any exception\", for an exception breakpoint in place of a path and line")] string? exception = null,
         string? condition = null,
         string? hitCondition = null,
@@ -476,19 +479,16 @@ public sealed partial class PassengerTools(MainWindow window)
             return Task.FromResult(ExceptionBreakpoints());
         }
         (string full, int at) = LinePlace(path, line);
-        if (store.In(full).FirstOrDefault(b => b.Line == at) is not { } set)
-        {
-            store.Toggle(full, at);
-            set = store.In(full).First(b => b.Line == at);
-        }
+        LineBreakpoint set = store.Set(full, at, attribute is { Length: > 0 } ? attribute : null);
         store.Update(set, enabled: true, suspend, condition, hitCondition, logMessage);
         return Task.FromResult(Breakpoints(full));
     });
 
     [McpServerTool(Name = "breakpoint_remove", Title = "Remove a breakpoint", Destructive = false), Description(
-        "Removes the breakpoint on a line, or the exception breakpoint on an exception type (\"Any exception\" is never removed: " +
-        "breakpoint_set turns it off with its scenarios, or the person's Breakpoints window).")]
+        "Removes the breakpoint on a line (or on an .axaml attribute of it), or the exception breakpoint on an exception type (\"Any " +
+        "exception\" is never removed: breakpoint_set turns it off with its scenarios, or the person's Breakpoints window).")]
     public Task<IReadOnlyList<BreakpointInfo>> RemoveBreakpoint(string? path = null, int? line = null,
+        [Description("In .axaml, the attribute whose breakpoint to remove")] string? attribute = null,
         [Description("An exception type's full name, in place of a path and line")] string? exception = null, CancellationToken cancel = default) => OnUi(cancel, () =>
     {
         BreakpointStore store = Session.Debug.Breakpoints;
@@ -501,7 +501,8 @@ public sealed partial class PassengerTools(MainWindow window)
             return Task.FromResult(ExceptionBreakpoints());
         }
         (string full, int at) = LinePlace(path, line);
-        if (store.In(full).FirstOrDefault(b => b.Line == at) is { } set)
+        string? on = attribute is { Length: > 0 } ? attribute : null;
+        if (store.In(full).FirstOrDefault(b => b.Line == at && b.Attribute == on) is { } set)
         {
             store.Remove(set);
         }
@@ -509,7 +510,8 @@ public sealed partial class PassengerTools(MainWindow window)
     });
 
     [McpServerTool(Name = "breakpoints", Title = "Every breakpoint", ReadOnly = true), Description(
-        "Every breakpoint: the line breakpoints, then the session's data breakpoints (set from Variables' Set Data Breakpoint), then the CLR " +
+        "Every breakpoint: the line breakpoints (an .axaml one on an attribute naming it), then the session's data breakpoints (set from " +
+        "Variables' Set Data Breakpoint) and Avalonia property breakpoints (the Live Visual Tree's Break When Value Changes), then the CLR " +
         "exception breakpoints (\"Any exception\" among them) with their scenarios, each with whether the running debugger took it. While Mute " +
         "Breakpoints (ide_action app.debug.muteBreakpoints) is on, none stops.")]
     public Task<IReadOnlyList<BreakpointInfo>> ListBreakpoints(CancellationToken cancel = default) =>
@@ -826,11 +828,14 @@ public sealed partial class PassengerTools(MainWindow window)
 
     private IReadOnlyList<BreakpointInfo> Breakpoints(string? path) =>
         [.. (path is null ? Session.Debug.Breakpoints.All : Session.Debug.Breakpoints.In(path))
-            .Select(b => new BreakpointInfo(Relative(b.Path), b.Line + 1, b.Enabled, b.Status.ToString().ToLowerInvariant(), b.Condition, b.HitCondition, b.LogMessage, b.Suspend, b.Message))];
+            .Select(b => new BreakpointInfo(Relative(b.Path), b.Line + 1, b.Enabled, b.Status.ToString().ToLowerInvariant(), b.Condition, b.HitCondition, b.LogMessage, b.Suspend, b.Message,
+                Attribute: b.Attribute))];
 
     private IReadOnlyList<BreakpointInfo> DataBreakpoints() =>
         [.. Session.Debug.Breakpoints.Data.Select(b => new BreakpointInfo(null, null, b.Enabled, b.Status.ToString().ToLowerInvariant(), b.Condition, b.HitCondition,
-            b.LogMessage, b.Suspend, b.Message, Data: b.Location))];
+            b.LogMessage, b.Suspend, b.Message, Data: b.Location)),
+         .. Session.Debug.Breakpoints.Properties.Select(b => new BreakpointInfo(null, null, b.Enabled, b.Status.ToString().ToLowerInvariant(), b.Condition, b.HitCondition,
+            b.LogMessage, b.Suspend, b.Message, Property: b.Location))];
 
     private IReadOnlyList<BreakpointInfo> ExceptionBreakpoints() =>
         [.. Session.Debug.Breakpoints.Exceptions.Select(b => new BreakpointInfo(null, null, b.Enabled, b.Status.ToString().ToLowerInvariant(), b.Condition, b.HitCondition,
@@ -1058,7 +1063,7 @@ public sealed record RunResult(bool StillRunning, int? ExitCode, string Status, 
 /// <summary>A breakpoint as an agent reads it: a line breakpoint's path and line, an exception breakpoint's type and scenarios,
 /// or what a data breakpoint watches ("count on counter (Counter)").</summary>
 public sealed record BreakpointInfo(string? Path, int? Line, bool Enabled, string Status, string? Condition, string? HitCondition, string? LogMessage, bool Suspend,
-    string? Message, string? Exception = null, IReadOnlyList<string>? Scenarios = null, string? Data = null);
+    string? Message, string? Exception = null, IReadOnlyList<string>? Scenarios = null, string? Data = null, string? Attribute = null, string? Property = null);
 
 public sealed record VariableInfo(string Name, string Value, string? Type, int Reference);
 

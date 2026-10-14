@@ -31,13 +31,17 @@ public abstract class Breakpoint
     public abstract string Location { get; }
 }
 
-/// <summary>A line breakpoint (lines from zero).</summary>
-public sealed class LineBreakpoint(string path, int line) : Breakpoint
+/// <summary>A line breakpoint (lines from zero); in Avalonia XAML, on one attribute of the line when it names one
+/// (<see cref="XamlBreakpoints"/>), as Rider's inline breakpoints are on one lambda of theirs.</summary>
+public sealed class LineBreakpoint(string path, int line, string? attribute = null) : Breakpoint
 {
     public string Path { get; internal set; } = path;
     public int Line { get; internal set; } = line;
 
-    public override string Location => $"{System.IO.Path.GetFileName(Path)}:{Line + 1}";
+    /// <summary>The XAML attribute it is on, by its name as written, or null for its whole line.</summary>
+    public string? Attribute { get; } = attribute;
+
+    public override string Location => $"{System.IO.Path.GetFileName(Path)}:{Line + 1}{(Attribute is { } on ? $" {on}" : string.Empty)}";
 }
 
 /// <summary>Rider's CLR exception breakpoint: an exception type by its full name, or Rider's "Any exception", which every
@@ -73,6 +77,25 @@ public sealed class DataBreakpoint(string dataId, string location) : Breakpoint
     public override string Location { get; } = location;
 }
 
+/// <summary>A property breakpoint, the Live Visual Tree's Break When Value Changes: an Avalonia property of one element of
+/// the app being debugged, which stops the app in the code that changes it (a style's, a binding's, code-behind's, an
+/// animation's), as a data breakpoint does for a field. It lasts as long as its session, as data breakpoints do, the
+/// element being that run's alone. Its condition is C# over the change: <c>newValue</c>, <c>oldValue</c>, <c>control</c>.</summary>
+public sealed class PropertyBreakpoint(int id, long element, string described, string property) : Breakpoint
+{
+    /// <summary>Its number in the session, which the inspector in the app and the debugger's condition name it by.</summary>
+    public int Id { get; } = id;
+
+    /// <summary>The element's id in the Live Visual Tree.</summary>
+    public long Element { get; } = element;
+
+    /// <summary>The property, by the name the element's details list it under (Owner.Name when attached).</summary>
+    public string Property { get; } = property;
+
+    /// <summary>"Background on Button#Save".</summary>
+    public override string Location { get; } = $"{property} on {described}";
+}
+
 public enum BreakpointStatus
 {
     /// <summary>No debugger has said, or none is running.</summary>
@@ -103,9 +126,12 @@ public sealed record BreakpointsState : IStateDocument<BreakpointsState>
     };
 }
 
-/// <summary>A breakpoint as kept: its file, its line from zero and what it does, but nothing a debugger said of it.</summary>
+/// <summary>A breakpoint as kept: its file, its line from zero (and XAML attribute) and what it does, but nothing a
+/// debugger said of it.</summary>
 public sealed record KeptBreakpoint(string Path, int Line)
 {
+    public string? Attribute { get; init; }
+
     public bool Enabled { get; init; } = true;
     public bool Suspend { get; init; } = true;
     public string? Condition { get; init; }
@@ -137,9 +163,17 @@ public sealed class BreakpointStore
     private readonly Dictionary<string, List<LineBreakpoint>> byPath = new(StringComparer.Ordinal);
     private readonly List<ExceptionBreakpoint> exceptions = [new(null)];
     private readonly List<DataBreakpoint> data = [];
+    private readonly List<PropertyBreakpoint> properties = [];
+    private int lastProperty;
 
     /// <summary>A file's breakpoints changed: added, removed, moved, muted, or the debugger said something.</summary>
     public event EventHandler<string>? Changed;
+
+    /// <summary>The property breakpoints changed: added, removed, muted, what one does, or what the debugger said.</summary>
+    public event EventHandler? PropertiesChanged;
+
+    /// <summary>The property breakpoints of the session, in the order they were set.</summary>
+    public IReadOnlyList<PropertyBreakpoint> Properties => properties;
 
     /// <summary>The exception breakpoints changed: added, removed, muted, what one does, or what the debugger said.</summary>
     public event EventHandler? ExceptionsChanged;
@@ -168,6 +202,7 @@ public sealed class BreakpointStore
     {
         Breakpoints = [.. All.Select(b => new KeptBreakpoint(b.Path, b.Line)
         {
+            Attribute = b.Attribute,
             Enabled = b.Enabled,
             Suspend = b.Suspend,
             Condition = b.Condition,
@@ -196,9 +231,9 @@ public sealed class BreakpointStore
         foreach (IGrouping<string, KeptBreakpoint> file in kept.Breakpoints.GroupBy(b => b.Path))
         {
             List<LineBreakpoint> list = For(file.Key);
-            foreach (KeptBreakpoint breakpoint in file.Where(b => list.All(there => there.Line != b.Line)))
+            foreach (KeptBreakpoint breakpoint in file.Where(b => list.All(there => there.Line != b.Line || there.Attribute != b.Attribute)))
             {
-                list.Add(new LineBreakpoint(breakpoint.Path, breakpoint.Line)
+                list.Add(new LineBreakpoint(breakpoint.Path, breakpoint.Line, breakpoint.Attribute)
                 {
                     Enabled = breakpoint.Enabled,
                     Suspend = breakpoint.Suspend,
@@ -207,7 +242,7 @@ public sealed class BreakpointStore
                     LogMessage = breakpoint.LogMessage,
                 });
             }
-            list.Sort((a, b) => a.Line.CompareTo(b.Line));
+            Sort(list);
             Changed?.Invoke(this, file.Key);
         }
         if (kept.Exceptions is { } keptExceptions)
@@ -266,6 +301,7 @@ public sealed class BreakpointStore
         }
         ExceptionsChanged?.Invoke(this, EventArgs.Empty);
         DataChanged?.Invoke(this, EventArgs.Empty);
+        PropertiesChanged?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>The data breakpoint on what the debugger names by a data id, set as Rider sets one, to stop at every write
@@ -285,7 +321,7 @@ public sealed class BreakpointStore
     /// <summary>The data breakpoint on what the debugger names by a data id, if one is set.</summary>
     public DataBreakpoint? FindData(string dataId) => data.FirstOrDefault(d => d.DataId == dataId);
 
-    /// <summary>Lets the data breakpoints go, as their session ends.</summary>
+    /// <summary>Lets the data and property breakpoints go, as their session ends.</summary>
     public void ClearData()
     {
         if (data.Count > 0)
@@ -293,23 +329,92 @@ public sealed class BreakpointStore
             data.Clear();
             DataChanged?.Invoke(this, EventArgs.Empty);
         }
+        if (properties.Count > 0)
+        {
+            properties.Clear();
+            PropertiesChanged?.Invoke(this, EventArgs.Empty);
+        }
     }
 
-    /// <summary>Sets a breakpoint on a line, or removes the one there.</summary>
+    /// <summary>The property breakpoint on a property of an element of the app (by its Live Visual Tree id), set to stop at
+    /// every change; the one there is already when there is.</summary>
+    public PropertyBreakpoint AddProperty(long element, string described, string property)
+    {
+        if (FindProperty(element, property) is { } existing)
+        {
+            return existing;
+        }
+        PropertyBreakpoint added = new(++lastProperty, element, described, property);
+        properties.Add(added);
+        PropertiesChanged?.Invoke(this, EventArgs.Empty);
+        return added;
+    }
+
+    /// <summary>The property breakpoint on a property of an element, if one is set.</summary>
+    public PropertyBreakpoint? FindProperty(long element, string property) =>
+        properties.FirstOrDefault(p => p.Element == element && p.Property == property);
+
+    /// <summary>Records what the debugger said of the property breakpoints; those it was not asked of (off, or muted) go
+    /// back to unknown.</summary>
+    public void ReportProperties(IReadOnlyList<(PropertyBreakpoint Breakpoint, BreakpointStatus Status, string? Message)> reports)
+    {
+        foreach (PropertyBreakpoint breakpoint in properties)
+        {
+            (breakpoint.Status, breakpoint.Message) = reports.FirstOrDefault(r => ReferenceEquals(r.Breakpoint, breakpoint)) is { Breakpoint: not null } said
+                ? (said.Status, said.Message)
+                : (BreakpointStatus.Unknown, null);
+        }
+        PropertiesChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>Sets a breakpoint on a line, or removes those there (its XAML attributes' too, as a click in Rider's gutter
+    /// takes a line's inline breakpoints away).</summary>
     public void Toggle(string path, int line)
     {
         List<LineBreakpoint> list = For(path);
-        if (list.FirstOrDefault(b => b.Line == line) is { } existing)
+        if (list.RemoveAll(b => b.Line == line) == 0)
+        {
+            list.Add(new LineBreakpoint(path, line));
+            Sort(list);
+        }
+        Changed?.Invoke(this, path);
+    }
+
+    /// <summary>Sets a breakpoint on a XAML attribute of a line, or removes the one there; the line's own and its other
+    /// attributes' stay.</summary>
+    public void ToggleAttribute(string path, int line, string attribute)
+    {
+        List<LineBreakpoint> list = For(path);
+        if (list.FirstOrDefault(b => b.Line == line && b.Attribute == attribute) is { } existing)
         {
             list.Remove(existing);
         }
         else
         {
-            list.Add(new LineBreakpoint(path, line));
-            list.Sort((a, b) => a.Line.CompareTo(b.Line));
+            list.Add(new LineBreakpoint(path, line, attribute));
+            Sort(list);
         }
         Changed?.Invoke(this, path);
     }
+
+    /// <summary>The breakpoint on a line, or on a XAML attribute of it, set if there is none.</summary>
+    public LineBreakpoint Set(string path, int line, string? attribute = null)
+    {
+        List<LineBreakpoint> list = For(path);
+        if (list.FirstOrDefault(b => b.Line == line && b.Attribute == attribute) is { } existing)
+        {
+            return existing;
+        }
+        LineBreakpoint added = new(path, line, attribute);
+        list.Add(added);
+        Sort(list);
+        Changed?.Invoke(this, path);
+        return added;
+    }
+
+    /// <summary>A file's breakpoints in order: by line, a line's own before its attributes'.</summary>
+    private static void Sort(List<LineBreakpoint> list) =>
+        list.Sort((a, b) => a.Line != b.Line ? a.Line.CompareTo(b.Line) : (a.Attribute is null ? 0 : 1).CompareTo(b.Attribute is null ? 0 : 1));
 
     /// <summary>Turns a line's breakpoint off or back on, keeping it; sets one if there is none.</summary>
     public void ToggleEnabled(string path, int line)
@@ -381,7 +486,7 @@ public sealed class BreakpointStore
         LineBreakpoint tracepoint = new(path, line) { Suspend = false };
         List<LineBreakpoint> list = For(path);
         list.Add(tracepoint);
-        list.Sort((a, b) => a.Line.CompareTo(b.Line));
+        Sort(list);
         Changed?.Invoke(this, path);
     }
 
@@ -399,6 +504,10 @@ public sealed class BreakpointStore
         else if (breakpoint is DataBreakpoint watched && data.Remove(watched))
         {
             DataChanged?.Invoke(this, EventArgs.Empty);
+        }
+        else if (breakpoint is PropertyBreakpoint property && properties.Remove(property))
+        {
+            PropertiesChanged?.Invoke(this, EventArgs.Empty);
         }
     }
 
@@ -521,7 +630,8 @@ public sealed class BreakpointStore
         }
         if (moved)
         {
-            List<LineBreakpoint> unique = [.. list.GroupBy(b => b.Line).Select(g => g.First()).OrderBy(b => b.Line)];
+            List<LineBreakpoint> unique = [.. list.GroupBy(b => (b.Line, b.Attribute)).Select(g => g.First())];
+            Sort(unique);
             list.Clear();
             list.AddRange(unique);
             Changed?.Invoke(this, path);
@@ -537,6 +647,10 @@ public sealed class BreakpointStore
         else if (breakpoint is DataBreakpoint)
         {
             DataChanged?.Invoke(this, EventArgs.Empty);
+        }
+        else if (breakpoint is PropertyBreakpoint)
+        {
+            PropertiesChanged?.Invoke(this, EventArgs.Empty);
         }
         else
         {
