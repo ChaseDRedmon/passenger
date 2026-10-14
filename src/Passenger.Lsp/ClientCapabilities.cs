@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace Passenger.Lsp;
 
@@ -85,4 +86,18 @@ public static class ClientCapabilities
       }
     }
     """).RootElement.Clone();
+
+    /// <summary>What Passenger tells the web language servers (TypeScript's, and VS Code's for HTML, CSS and JSON): the
+    /// same, but completion takes snippets (the JSON server offers no completion to a client without them, and the
+    /// others write an attribute's or a property's value with the caret inside), and a document's colours are asked for.</summary>
+    public static readonly JsonElement Web = WebCapabilities();
+
+    private static JsonElement WebCapabilities()
+    {
+        JsonNode capabilities = JsonNode.Parse(Value.GetRawText())!;
+        capabilities["textDocument"]!["completion"]!["completionItem"]!["snippetSupport"] = true;
+        capabilities["textDocument"]!["colorProvider"] = new JsonObject { ["dynamicRegistration"] = false };
+        capabilities["textDocument"]!["publishDiagnostics"]!["versionSupport"] = true;
+        return JsonDocument.Parse(capabilities.ToJsonString()).RootElement.Clone();
+    }
 }

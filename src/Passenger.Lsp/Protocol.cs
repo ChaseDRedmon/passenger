@@ -62,7 +62,10 @@ public sealed record MarkupContent(string Kind, string Value);
 
 public sealed record WorkspaceFolder(string Uri, string Name);
 
-public sealed record InitializeParams(int ProcessId, string RootUri, IReadOnlyList<WorkspaceFolder> WorkspaceFolders, JsonElement Capabilities, string Locale = "en");
+/// <summary>What the client tells a server as it starts; <see cref="InitializationOptions"/> are the server's own (the JSON
+/// server's schema protocols, the TypeScript server's preferences), none for Roslyn.</summary>
+public sealed record InitializeParams(int ProcessId, string RootUri, IReadOnlyList<WorkspaceFolder> WorkspaceFolders, JsonElement Capabilities, string Locale = "en",
+    object? InitializationOptions = null);
 
 /// <summary>One project a document is compiled in, as Visual Studio's protocol extension names it: a target framework
 /// of a multi-targeted project each, or Roslyn's Miscellaneous Files for a file in no project it has loaded. A request
@@ -328,6 +331,13 @@ public sealed class DocumentDiagnosticReport
 }
 
 public sealed record PublishDiagnosticsParams(string Uri, int? Version, IReadOnlyList<Diagnostic> Diagnostics);
+
+/// <summary>A colour a server finds in a document (a CSS colour), its components from 0 to 1.</summary>
+public sealed record ColorInformation(LspRange Range, LspColor Color);
+
+public sealed record LspColor(double Red, double Green, double Blue, double Alpha);
+
+public sealed record DocumentColorParams(TextDocumentIdentifier TextDocument);
 
 // Messages from the server
 

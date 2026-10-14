@@ -81,7 +81,7 @@ public sealed class EditorGroup : DockPanel
         tabBar.Bind(Border.BackgroundProperty, tabBar.GetResourceObservable("Passenger.Chrome"));
         tabBar.Bind(Border.BorderBrushProperty, tabBar.GetResourceObservable("Passenger.Divider"));
         // Rider's editor notification: what a file is when it is not the project's own.
-        bannerText = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0), FontSize = 12 };
+        bannerText = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0), FontSize = 12, TextTrimming = TextTrimming.CharacterEllipsis };
         banner = new Border { [DockProperty] = Dock.Top, Height = 28, IsVisible = false, BorderThickness = new Thickness(0, 0, 0, 1), Child = bannerText };
         banner.Bind(Border.BackgroundProperty, banner.GetResourceObservable("Passenger.Banner"));
         banner.Bind(Border.BorderBrushProperty, banner.GetResourceObservable("Passenger.Divider"));
@@ -240,12 +240,24 @@ public sealed class EditorGroup : DockPanel
         Editor.SetBookmarks(document.Bookmarks);
         Editor.ContextLabel = ContextShown(document);
         Editor.IsReadOnly = document.IsReadOnly;
-        banner.IsVisible = document.IsReadOnly;
-        bannerText.Text = document.Origin;
+        ShowBanner(document);
         Find.Attach(Editor);
         Editor.IsVisible = true;
         tabBar.IsVisible = true;
     }
+
+    /// <summary>The banner over the file: where a read-only file comes from, and what its notice says.</summary>
+    private void ShowBanner(OpenDocument document)
+    {
+        string[] said = [.. new[] { document.IsReadOnly ? document.Origin : null, document.Notice }.OfType<string>()];
+        banner.IsVisible = said.Length > 0;
+        bannerText.Text = string.Join("  ·  ", said);
+        // Narrower than the banner's words, the editor shows the rest when the pointer rests on it.
+        ToolTip.SetTip(banner, said.Length > 0 ? bannerText.Text : null);
+    }
+
+    /// <summary>What the banner over the file shown says, null while it shows none.</summary>
+    public string? BannerText => banner.IsVisible ? bannerText.Text : null;
 
     /// <summary>Takes a file's tab away; the group shows its neighbour, or nothing when it was the last.</summary>
     public void Remove(OpenDocument document)
@@ -355,6 +367,9 @@ public sealed class EditorGroup : DockPanel
                 break;
             case nameof(OpenDocument.Markers):
                 Editor.SetMarkers(document.Markers);
+                break;
+            case nameof(OpenDocument.Notice):
+                ShowBanner(document);
                 break;
             case nameof(OpenDocument.InlayHints):
                 Editor.SetInlayHints(document.InlayHints);

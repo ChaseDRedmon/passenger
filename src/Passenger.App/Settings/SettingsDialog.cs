@@ -23,6 +23,8 @@ public sealed partial class SettingsDialog : Window
     public const string TerminalPage = "Terminal";
     public const string BuildPage = "Build";
     public const string RunPage = "Run";
+    public const string NodePage = "Node.js";
+    public const string SchemasPage = "Remote JSON Schemas";
     public const string KeymapPage = "Keymap";
     public const string McpPage = "MCP Server";
     public const string DiscordPage = "Discord";
@@ -39,7 +41,7 @@ public sealed partial class SettingsDialog : Window
     public static readonly string[] DiscordChoices = ["Passenger only", "The solution", "The solution and the file"];
 
     private static readonly string[] Order = [Appearance, SystemPage, UpdatesPage, EditorPage, CodeFoldingPage, PostfixPage, XamlCodeStylePage, LiveTemplatesPage,
-        BuildPage, RunPage, TerminalPage, McpPage, DiscordPage, DiagnosticsPage, KeymapPage];
+        BuildPage, RunPage, NodePage, SchemasPage, TerminalPage, McpPage, DiscordPage, DiagnosticsPage, KeymapPage];
 
     /// <summary>Rider's names for Attributes format's choices, in <see cref="Passenger.Xaml.Features.XamlAttributeStyle"/>'s order.</summary>
     public static readonly string[] AttributeStyles = ["On single line", "First attribute on single line", "Each attribute on separate lines", "Do not touch"];
@@ -341,6 +343,20 @@ public sealed partial class SettingsDialog : Window
         NumericUpDown buffer = Number(Working.ConsoleBufferKb, AppSettings.MinConsoleBufferKb, AppSettings.MaxConsoleBufferKb, 64, v => Change(s => s with { ConsoleBufferKb = (int)v }));
         Add(RunPage, "Console buffer size", new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { buffer, new TextBlock { Text = "KB", VerticalAlignment = VerticalAlignment.Center } } },
             "console cycle buffer size output limit lines run debug build kb");
+
+        // Rider's Languages & Frameworks, Node.js: the interpreter, the PATH's when none is named.
+        string? onPath = Passenger.Core.Programs.Node();
+        TextBox node = new() { Classes = { "search" }, Text = Working.NodeInterpreter ?? string.Empty, PlaceholderText = onPath ?? "Not found on the PATH", Width = 320 };
+        node.TextChanged += (_, _) => Change(s => s with { NodeInterpreter = string.IsNullOrWhiteSpace(node.Text) ? null : node.Text.Trim() });
+        Add(NodePage, "Node interpreter", node, "node nodejs interpreter javascript typescript html css json language server npm path",
+            "The Node.js the JavaScript, TypeScript, HTML, CSS and JSON language servers run on. Empty, it is the first on the PATH, "
+            + "as the login shell finds it. Without one, those files keep their colours only.");
+        // Rider's Languages & Frameworks, Schemas and DTDs, Remote JSON Schemas.
+        Add(SchemasPage, "Allow downloading JSON Schemas from remote sources", Check(Working.DownloadJsonSchemas, v => Change(s => s with { DownloadJsonSchemas = v })),
+            "json schema schemas remote download web http https schemastore $schema validation completion",
+            "A JSON file that names a schema on the web ($schema) has it downloaded to check and complete it. package.json, "
+            + "tsconfig.json, jsconfig.json, appsettings.json, launchSettings.json and global.json use the schemas Passenger "
+            + "carries from SchemaStore, which are never downloaded.");
 
         Add(TerminalPage, "Font size", Number(Working.TerminalFontSize, AppSettings.MinFontSize, AppSettings.MaxFontSize, 1, v => Change(s => s with { TerminalFontSize = v })), "font size shell");
         (string shell, _) = Passenger.Terminal.TerminalSession.DefaultShell();

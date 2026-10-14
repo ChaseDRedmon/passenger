@@ -42,8 +42,18 @@ public sealed class LanguageServer : IAsyncDisposable
 
     private readonly Dictionary<string, object?> options;
 
-    private LanguageServer(Process process, JsonRpc rpc, ClientTarget client, ServerLog log, string logFolder, IReadOnlyDictionary<string, object?>? options)
+    /// <summary>What <c>workspace/configuration</c> answers for a section, for a server that is not Roslyn; null for
+    /// Roslyn's options (<see cref="Option"/>).</summary>
+    private readonly Func<string?, object?>? configure;
+
+    /// <summary>What <c>vscode/content</c> answers (a JSON schema by its URI); null for a server that asks none.</summary>
+    private readonly Func<string, CancellationToken, Task<string>>? content;
+
+    private LanguageServer(Process process, JsonRpc rpc, ClientTarget client, ServerLog log, string logFolder, IReadOnlyDictionary<string, object?>? options,
+        Func<string?, object?>? configure = null, Func<string, CancellationToken, Task<string>>? content = null)
     {
+        this.configure = configure;
+        this.content = content;
         this.options = new Dictionary<string, object?>(options ?? new Dictionary<string, object?>(), StringComparer.Ordinal);
         this.process = process;
         this.rpc = rpc;
@@ -103,6 +113,25 @@ public sealed class LanguageServer : IAsyncDisposable
     /// asking a long file's colours again costs the server a second. Raised on any thread.</summary>
     public event EventHandler? DiagnosticsRefreshRequested;
 
+    /// <summary>A document's diagnostics, as a server that pushes them sends them (<c>textDocument/publishDiagnostics</c>:
+    /// TypeScript's); raised on any thread.</summary>
+    public event EventHandler<PublishDiagnosticsParams>? DiagnosticsPublished;
+
+    /// <summary>The TypeScript server says which TypeScript it runs: its version, and where it is from (<c>workspace</c>,
+    /// the project's own node_modules; <c>bundled</c>, the one carried beside it). Raised on any thread.</summary>
+    public event EventHandler<(string Version, string? Source)>? TypeScriptVersion;
+
+    /// <summary>The TypeScript the server last said it runs, null until it has (or for another server).</summary>
+    public (string Version, string? Source)? TypeScript { get; private set; }
+
+    /// <summary>Where Razor's questions about a Razor file's HTML go (<see cref="RazorHtml"/>): the HTML language server,
+    /// started if it is not yet, or null while there is none, when Passenger answers what it can itself.</summary>
+    public Func<CancellationToken, Task<LanguageServer?>>? HtmlServer
+    {
+        get => client.Html.Server;
+        set => client.Html.Server = value;
+    }
+
     public string LogFolder { get; }
 
     /// <summary>Why Passenger's extension to the server (<see cref="RoslynExtension"/>) cannot be asked, or null when every
@@ -123,6 +152,10 @@ public sealed class LanguageServer : IAsyncDisposable
 
     /// <summary>Lets go of what Razor gave the client of a closed Razor file's HTML.</summary>
     internal void ForgetRazorHtml(string path) => client.Html.Forget(path);
+
+    /// <summary>The HTML server's diagnostics of a Razor file's HTML, on the lines it has as the file does.</summary>
+    internal Task<IReadOnlyList<Diagnostic>> RazorHtmlDiagnosticsAsync(string path, string text, CancellationToken cancel) =>
+        client.Html.DiagnosticsAsync(path, text, cancel);
 
     /// <summary>The sources that answer for the whole workspace (<c>workspace/diagnostic</c>), as well as for one document.</summary>
     public IReadOnlyList<string?> WorkspaceDiagnosticSources => client.WorkspaceDiagnosticSources;
@@ -217,6 +250,42 @@ public sealed class LanguageServer : IAsyncDisposable
         // The dotnet restore Roslyn runs leaves its MSBuild node in the server's process group, which a restart ends: a
         // build of the IDE's that took that node up would lose it midway, so a server's nodes are its own.
         start.Environment["MSBUILDNODEHANDSHAKESALT"] += $"-server-{Interlocked.Increment(ref started)}";
+        LanguageServer server2 = await StartCoreAsync(start, folder, logFolder, ClientCapabilities.Value, null, options, null, null, cancel).ConfigureAwait(false);
+        try
+        {
+            try
+            {
+                server2.ExtensionProblem = await RoslynExtension.ActivateAsync(server2, cancel).ConfigureAwait(false);
+            }
+            catch (LanguageServerFailed failed)
+            {
+                // The server runs on without it; only the refactorings that ask it say why.
+                server2.ExtensionProblem = $"the C# language server did not activate Passenger's extension: {failed.Reason}";
+            }
+        }
+        catch
+        {
+            // A start given up (another folder opened) leaves no server behind.
+            server2.Abandon();
+            throw;
+        }
+        return server2;
+    }
+
+    /// <summary>Starts a language server other than Roslyn (a web language's, on Node.js), initializes it for a folder
+    /// with the capabilities and options it is given, and returns once it has said what it can do. Cancelled or failed,
+    /// it leaves no process behind.</summary>
+    public static Task<LanguageServer> StartAsync(ServerStart start, CancellationToken cancel)
+    {
+        Directory.CreateDirectory(start.LogFolder);
+        return StartCoreAsync(start.Process, start.Folder, start.LogFolder, start.Capabilities, start.InitializationOptions, null,
+            start.Configuration ?? (_ => null), start.Content, cancel);
+    }
+
+    private static async Task<LanguageServer> StartCoreAsync(ProcessStartInfo start, string folder, string logFolder, JsonElement capabilities,
+        object? initializationOptions, IReadOnlyDictionary<string, object?>? options, Func<string?, object?>? configure,
+        Func<string, CancellationToken, Task<string>>? content, CancellationToken cancel)
+    {
         start.RedirectStandardInput = true;
         start.RedirectStandardOutput = true;
         start.RedirectStandardError = true;
@@ -244,14 +313,15 @@ public sealed class LanguageServer : IAsyncDisposable
         // a progress report handled after its end would leave the load showing, an error logged after its toast unread.
         JsonRpc rpc = new(handler) { SynchronizationContext = new Microsoft.VisualStudio.Threading.NonConcurrentSynchronizationContext(sticky: false) };
         rpc.AddLocalRpcTarget(client, new JsonRpcTargetOptions { UseSingleObjectParameterDeserialization = true });
-        LanguageServer server2 = new(process, rpc, client, log, logFolder, options);
+        LanguageServer server2 = new(process, rpc, client, log, logFolder, options, configure, content);
         client.Owner = server2;
         rpc.StartListening();
 
         try
         {
             string root = DocumentUris.FromPath(folder);
-            InitializeParams initialize = new(Environment.ProcessId, root, [new WorkspaceFolder(root, Path.GetFileName(folder))], ClientCapabilities.Value);
+            InitializeParams initialize = new(Environment.ProcessId, root, [new WorkspaceFolder(root, Path.GetFileName(folder))], capabilities,
+                InitializationOptions: initializationOptions);
             // Given up at once, not cancelled (whose $/cancelRequest can fail unobserved as the connection goes): it fails with the connection, unseen.
             Task<JsonElement> answer = rpc.InvokeWithParameterObjectAsync<JsonElement>("initialize", initialize, CancellationToken.None);
             _ = answer.ContinueWith(t => _ = t.Exception, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
@@ -263,24 +333,11 @@ public sealed class LanguageServer : IAsyncDisposable
             }
             cancel.ThrowIfCancellationRequested();
             await rpc.NotifyWithParameterObjectAsync("initialized", new { }).ConfigureAwait(false);
-            try
-            {
-                server2.ExtensionProblem = await RoslynExtension.ActivateAsync(server2, cancel).ConfigureAwait(false);
-            }
-            catch (LanguageServerFailed failed)
-            {
-                // The server runs on without it; only the refactorings that ask it say why.
-                server2.ExtensionProblem = $"the C# language server did not activate Passenger's extension: {failed.Reason}";
-            }
         }
         catch (Exception error)
         {
             // A start given up (another folder opened) or failed leaves no server behind, nor its log held open.
-            server2.disposing = true;
-            server2.watch.Dispose();
-            rpc.Dispose();
-            End(process);
-            log.Dispose();
+            server2.Abandon();
             if (server2.Failure("initialize", error, cancel) is { } failed)
             {
                 throw failed;
@@ -289,6 +346,29 @@ public sealed class LanguageServer : IAsyncDisposable
         }
         return server2;
     }
+
+    /// <summary>Ends a server whose start was given up or failed, at once, with its log: there is no shutdown to ask it for.</summary>
+    private void Abandon()
+    {
+        disposing = true;
+        watch.Dispose();
+        rpc.Dispose();
+        End(process);
+        log.Dispose();
+    }
+
+    /// <summary>Whether the server said it answers a request (its capability for it, such as <c>renameProvider</c>, there
+    /// and not false).</summary>
+    public bool Provides(string capability) =>
+        Capabilities.ValueKind == JsonValueKind.Object && Capabilities.TryGetProperty(capability, out JsonElement value)
+        && value.ValueKind is not (JsonValueKind.False or JsonValueKind.Null or JsonValueKind.Undefined);
+
+    /// <summary>The characters after which the server offers completion unasked (<c>completionProvider.triggerCharacters</c>).</summary>
+    public IReadOnlyList<string> CompletionTriggers =>
+        Capabilities.ValueKind == JsonValueKind.Object && Capabilities.TryGetProperty("completionProvider", out JsonElement provider)
+        && provider.ValueKind == JsonValueKind.Object && provider.TryGetProperty("triggerCharacters", out JsonElement triggers) && triggers.ValueKind == JsonValueKind.Array
+            ? [.. triggers.EnumerateArray().Where(t => t.ValueKind == JsonValueKind.String).Select(t => t.GetString()!)]
+            : [];
 
     /// <summary>Ends a server that never finished starting, at once: there is no shutdown to ask it for.</summary>
     private static void End(Process process)
@@ -682,10 +762,80 @@ public sealed class LanguageServer : IAsyncDisposable
         public void ShowToast(ShowToastParams toast) => ShowMessage(new LogMessageParams(toast.MessageType, toast.Message));
 
         /// <summary>Roslyn asks for each option as <c>csharp|group.name</c> or <c>group.name</c>; the ones named in
-        /// <see cref="Settings"/> are answered, the rest left to the server's defaults.</summary>
+        /// <see cref="Settings"/> are answered, the rest left to the server's defaults. Another server's sections
+        /// (<c>css</c>, <c>html</c>, <c>typescript</c>) are answered as it was started to answer them.</summary>
         [JsonRpcMethod("workspace/configuration")]
-        public object?[] Configuration(ConfigurationParams request) =>
-            [.. request.Items.Select(item => item.Section is { } section ? Owner?.Option(section[(section.LastIndexOfAny(['.', '|']) + 1)..]) : null)];
+        public object?[] Configuration(ConfigurationParams request) => Owner?.configure is { } configure
+            ? [.. request.Items.Select(item => configure(item.Section))]
+            : [.. request.Items.Select(item => item.Section is { } section ? Owner?.Option(section[(section.LastIndexOfAny(['.', '|']) + 1)..]) : null)];
+
+        /// <summary>A document's diagnostics from a server that pushes them.</summary>
+        [JsonRpcMethod("textDocument/publishDiagnostics")]
+        public void PublishDiagnostics(PublishDiagnosticsParams published)
+        {
+            if (Owner is { } owner)
+            {
+                owner.DiagnosticsPublished?.Invoke(owner, published);
+            }
+        }
+
+        /// <summary>Content the server cannot fetch itself (the JSON server's schemas by their URI, which it is told to leave
+        /// to the client); asked of the client's answer, awaited apart from the messages that follow.</summary>
+        [JsonRpcMethod("vscode/content")]
+        public async Task<string> Content(JsonElement asked)
+        {
+            string? uri = asked.ValueKind switch
+            {
+                JsonValueKind.String => asked.GetString(),
+                JsonValueKind.Array when asked.GetArrayLength() > 0 && asked[0].ValueKind == JsonValueKind.String => asked[0].GetString(),
+                JsonValueKind.Object when asked.TryGetProperty("uri", out JsonElement named) && named.ValueKind == JsonValueKind.String => named.GetString(),
+                _ => null,
+            };
+            if (uri is null || Owner?.content is not { } content)
+            {
+                throw new LocalRpcException($"Passenger has no content for {uri ?? asked.ToString()}") { ErrorCode = -32603 };
+            }
+            try
+            {
+                return await content(uri, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception error) when (error is not LocalRpcException)
+            {
+                // The server says so where the file names the schema.
+                throw new LocalRpcException(error.Message) { ErrorCode = -32603 };
+            }
+        }
+
+        /// <summary>A question for the person with choices (the TypeScript server's, of a version it cannot use): none chosen,
+        /// what it said is logged.</summary>
+        [JsonRpcMethod("window/showMessageRequest")]
+        public object? ShowMessageRequest(LogMessageParams message)
+        {
+            LogMessage(message);
+            return null;
+        }
+
+        [JsonRpcMethod("window/showDocument")]
+        public object ShowDocument(JsonElement? request = null) => new { success = false };
+
+        /// <summary>An edit a server's own command would make: Passenger applies what its commands answer itself, and runs
+        /// none that only edit this way.</summary>
+        [JsonRpcMethod("workspace/applyEdit")]
+        public object ApplyEdit(JsonElement? request = null) => new { applied = false, failureReason = "Passenger does not run commands that edit through the server" };
+
+        /// <summary>The TypeScript server's word on which TypeScript it runs, the project's own or the one Passenger carries.</summary>
+        [JsonRpcMethod("$/typescriptVersion")]
+        public void TypeScriptVersion(JsonElement version)
+        {
+            Owner?.log.Write($"{DateTime.Now:HH:mm:ss.fff} TypeScript {version}");
+            if (Owner is { } owner && version.ValueKind == JsonValueKind.Object && version.TryGetProperty("version", out JsonElement number)
+                && number.ValueKind == JsonValueKind.String)
+            {
+                string? source = version.TryGetProperty("source", out JsonElement from) && from.ValueKind == JsonValueKind.String ? from.GetString() : null;
+                owner.TypeScript = (number.GetString()!, source);
+                owner.TypeScriptVersion?.Invoke(owner, (number.GetString()!, source));
+            }
+        }
 
         [JsonRpcMethod("client/registerCapability")]
         public object? RegisterCapability(RegistrationParams request)
@@ -772,29 +922,33 @@ public sealed class LanguageServer : IAsyncDisposable
         }
 
         /// <summary>A Razor file's HTML, which Razor sends before it asks HTML's answer at a place in it: the requests below,
-        /// each as Razor received it wrapped with the file and its HTML's checksum (<see cref="RazorHtml"/>). A list answers
-        /// empty, so Razor goes on with its own part (the C#'s formatting, its components' completion); one answer null.</summary>
+        /// each as Razor received it wrapped with the file and its HTML's checksum (<see cref="RazorHtml"/>). Each goes to
+        /// the HTML server when there is one; without it, a list answers empty, so Razor goes on with its own part (the C#'s
+        /// formatting, its components' completion), and one answers null. Awaited apart from the messages that follow.</summary>
         [JsonRpcMethod("razor/updateHtml")]
-        public object? UpdateHtml(JsonElement update)
+        public async Task<object?> UpdateHtml(JsonElement update)
         {
-            Html.Update(update);
+            await Html.UpdateAsync(update).ConfigureAwait(false);
             return null;
         }
 
         [JsonRpcMethod("textDocument/completion")]
-        public object HtmlCompletion(JsonElement forwarded) => Html.Completion(forwarded);
+        public async Task<object> HtmlCompletion(JsonElement forwarded) =>
+            await Html.ForwardAsync("textDocument/completion", forwarded).ConfigureAwait(false) is { ValueKind: JsonValueKind.Object or JsonValueKind.Array } answer
+                ? answer : Html.Completion(forwarded);
 
         [JsonRpcMethod("completionItem/resolve")]
-        public JsonElement? HtmlCompletionResolve(JsonElement forwarded) => Asked(forwarded);
+        public async Task<JsonElement?> HtmlCompletionResolve(JsonElement forwarded) =>
+            await Html.ForwardAsync("completionItem/resolve", forwarded).ConfigureAwait(false) ?? Asked(forwarded);
 
         [JsonRpcMethod("codeAction/resolve")]
         public JsonElement? HtmlCodeActionResolve(JsonElement forwarded) => Asked(forwarded);
 
         [JsonRpcMethod("textDocument/formatting")]
-        public object[] HtmlFormatting(JsonElement? forwarded = null) => [];
+        public Task<object> HtmlFormatting(JsonElement forwarded) => List("textDocument/formatting", forwarded);
 
         [JsonRpcMethod("textDocument/rangeFormatting")]
-        public object[] HtmlRangeFormatting(JsonElement? forwarded = null) => [];
+        public Task<object> HtmlRangeFormatting(JsonElement forwarded) => List("textDocument/rangeFormatting", forwarded);
 
         [JsonRpcMethod("textDocument/onTypeFormatting")]
         public object[] HtmlOnTypeFormatting(JsonElement? forwarded = null) => [];
@@ -803,25 +957,28 @@ public sealed class LanguageServer : IAsyncDisposable
         public object[] HtmlCodeActions(JsonElement? forwarded = null) => [];
 
         [JsonRpcMethod("textDocument/documentHighlight")]
-        public object[] HtmlHighlights(JsonElement? forwarded = null) => [];
+        public Task<object> HtmlHighlights(JsonElement forwarded) => List("textDocument/documentHighlight", forwarded);
+
+        [JsonRpcMethod("textDocument/references")]
+        public Task<object> HtmlReferences(JsonElement forwarded) => List("textDocument/references", forwarded);
 
         [JsonRpcMethod("textDocument/foldingRange")]
-        public object[] HtmlFolds(JsonElement? forwarded = null) => [];
+        public Task<object> HtmlFolds(JsonElement forwarded) => List("textDocument/foldingRange", forwarded);
 
         [JsonRpcMethod("textDocument/documentColor")]
-        public object[] HtmlColours(JsonElement? forwarded = null) => [];
+        public Task<object> HtmlColours(JsonElement forwarded) => List("textDocument/documentColor", forwarded);
 
         [JsonRpcMethod("textDocument/colorPresentation")]
-        public object[] HtmlColourPresentations(JsonElement? forwarded = null) => [];
+        public Task<object> HtmlColourPresentations(JsonElement forwarded) => List("textDocument/colorPresentation", forwarded);
 
         [JsonRpcMethod("textDocument/hover")]
-        public object? HtmlHover(JsonElement? forwarded = null) => null;
+        public Task<JsonElement?> HtmlHover(JsonElement forwarded) => Html.ForwardAsync("textDocument/hover", forwarded);
 
         [JsonRpcMethod("textDocument/signatureHelp")]
-        public object? HtmlSignatureHelp(JsonElement? forwarded = null) => null;
+        public Task<JsonElement?> HtmlSignatureHelp(JsonElement forwarded) => Html.ForwardAsync("textDocument/signatureHelp", forwarded);
 
         [JsonRpcMethod("textDocument/definition")]
-        public object? HtmlDefinition(JsonElement? forwarded = null) => null;
+        public Task<JsonElement?> HtmlDefinition(JsonElement forwarded) => Html.ForwardAsync("textDocument/definition", forwarded);
 
         [JsonRpcMethod("textDocument/implementation")]
         public object? HtmlImplementation(JsonElement? forwarded = null) => null;
@@ -830,13 +987,17 @@ public sealed class LanguageServer : IAsyncDisposable
         public object? HtmlPrepareRename(JsonElement? forwarded = null) => null;
 
         [JsonRpcMethod("textDocument/rename")]
-        public object? HtmlRename(JsonElement? forwarded = null) => null;
+        public Task<JsonElement?> HtmlRename(JsonElement forwarded) => Html.ForwardAsync("textDocument/rename", forwarded);
 
         [JsonRpcMethod("textDocument/linkedEditingRange")]
         public object? HtmlLinkedEditing(JsonElement? forwarded = null) => null;
 
         [JsonRpcMethod("textDocument/_vs_onAutoInsert")]
         public object? HtmlAutoInsert(JsonElement? forwarded = null) => null;
+
+        /// <summary>A forwarded request whose answer is a list: the HTML server's, or none.</summary>
+        private async Task<object> List(string method, JsonElement forwarded) =>
+            await Html.ForwardAsync(method, forwarded).ConfigureAwait(false) is { ValueKind: JsonValueKind.Array } answer ? answer : Array.Empty<object>();
 
         /// <summary>The request Razor wrapped, which a resolve answers unchanged: HTML has nothing to add to it.</summary>
         private static JsonElement? Asked(JsonElement forwarded) =>

@@ -29,6 +29,7 @@
     "XamlBreakpointsTests": 90,
     "BindingErrorsTests": 150,
     "RazorTests": 90,
+    "WebLanguagesTests": 120,
     "NewSolutionTests": 120,
     "XamlTests": 150,
     "WpfXamlTests": 90,

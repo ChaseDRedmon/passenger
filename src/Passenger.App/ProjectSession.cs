@@ -20,7 +20,8 @@ namespace Passenger.App;
 /// <summary>What a window lends each session it makes: its editors (whose open files the session's services follow), where
 /// its state and Local History are kept, how folders are watched, the warm language server a test's windows share, the
 /// consoles, Debug window and tests tree its runners, debugger and test runner write to, the build a test run starts with,
-/// and the tab of the Terminal window a program the debugger launches there runs in.</summary>
+/// the tab of the Terminal window a program the debugger launches there runs in, and the settings as they stand (the
+/// Node.js the web language servers run on, whether remote JSON schemas are downloaded).</summary>
 public sealed record SessionSetup(
     EditorArea Editors,
     string StateFolder,
@@ -30,7 +31,8 @@ public sealed record SessionSetup(
     WarmServer? WarmServer,
     ToolViews Views,
     Func<CancellationToken, Task<BuildOutcome>> BuildForTests,
-    Func<string, Dap.RunInTerminalArguments, Task<TerminalRun>> RunForDebugger);
+    Func<string, Dap.RunInTerminalArguments, Task<TerminalRun>> RunForDebugger,
+    Func<Settings.AppSettings> Settings);
 
 /// <summary>Projects whose evaluation landed, as the workspace now has them, and whether which projects hold tests, or what
 /// packages the projects reference, changed with them.</summary>
@@ -104,6 +106,7 @@ public sealed class ProjectSession : IAsyncDisposable
         session.Configurations.Configure(session.Projects);
         session.Index.Build(folder);
         session.Watcher = new FolderWatcher(folder, setup.Watching);
+        session.Web = new Web.WebLanguages(folder, setup.Settings().NodeInterpreter, () => setup.Settings().DownloadJsonSchemas);
         return session;
     }
 
@@ -238,6 +241,10 @@ public sealed class ProjectSession : IAsyncDisposable
 
     /// <summary>The code help in the folder's project, .props and .targets files, from MSBuild's evaluation in the project host.</summary>
     public MSBuild.MSBuildService MSBuild { get; }
+
+    /// <summary>JavaScript, TypeScript, HTML, CSS and JSON for the folder's files, each kind's language server started as
+    /// its first file opens; null with no folder.</summary>
+    public Web.WebLanguages? Web { get; private set; }
 
     /// <summary>A language server started (or none, after one ended) in place of the one before.</summary>
     public event EventHandler? CSharpChanged;
@@ -390,6 +397,7 @@ public sealed class ProjectSession : IAsyncDisposable
     public void Attach(OpenDocument document)
     {
         CSharp?.Attach(document);
+        Web?.Attach(document);
         Xaml.Attach(document);
         MSBuild.Attach(document);
         Debug.Attach(document);
@@ -400,6 +408,7 @@ public sealed class ProjectSession : IAsyncDisposable
     public void Detach(OpenDocument document)
     {
         CSharp?.Detach(document);
+        Web?.Detach(document);
         Xaml.Detach(document);
         MSBuild.Detach(document);
         Debug.Detach(document);
@@ -423,6 +432,8 @@ public sealed class ProjectSession : IAsyncDisposable
         {
             CSharp?.Detach(document);
             CSharp?.Attach(document);
+            Web?.Detach(document);
+            Web?.Attach(document);
             Xaml.Detach(document);
             Xaml.Attach(document);
             MSBuild.Detach(document);
@@ -532,7 +543,14 @@ public sealed class ProjectSession : IAsyncDisposable
         CSharp = null;
         if (!IsEnded && Workspace is { } opening && (opening.Solution is not null || opening.Projects.Count > 0))
         {
-            CSharp = new CSharpService(setup.WarmServer) { SolutionWide = setup.SolutionWide(), FirstProjects = ActiveProjectsAsync, Feed = DesignTimeBuilds.Feed };
+            CSharp = new CSharpService(setup.WarmServer)
+            {
+                SolutionWide = setup.SolutionWide(),
+                FirstProjects = ActiveProjectsAsync,
+                Feed = DesignTimeBuilds.Feed,
+                // Razor's HTML is the HTML server's to answer.
+                HtmlServer = Web is { } web ? web.HtmlAsync : null,
+            };
             CSharpChanged?.Invoke(this, EventArgs.Empty);
             CSharp.Start(opening);
             foreach (OpenDocument open in setup.Editors.Documents)
@@ -619,6 +637,8 @@ public sealed class ProjectSession : IAsyncDisposable
         parts.Add(("the test runner", Tests.DisposeAsync().AsTask()));
         parts.Add(("the language server", CSharp?.DisposeAsync().AsTask() ?? Task.CompletedTask));
         CSharp = null;
+        parts.Add(("the web language servers", Web?.DisposeAsync().AsTask() ?? Task.CompletedTask));
+        Web = null;
         Xaml.Dispose();
         MSBuild.Dispose();
         return parts;

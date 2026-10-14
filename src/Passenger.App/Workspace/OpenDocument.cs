@@ -116,6 +116,16 @@ public sealed class OpenDocument : Observable
         set => Set(ref markers, value);
     }
 
+    private string? notice;
+
+    /// <summary>What the editor's banner says of the file beyond where it comes from: why its language server cannot run
+    /// for it (no Node.js), as Rider's editor notifications say it; null for nothing.</summary>
+    public string? Notice
+    {
+        get => notice;
+        set => Set(ref notice, value);
+    }
+
     /// <summary>The projects the language server compiles the file in (a target framework of a multi-targeted project
     /// each), by the server's names for them; none while it has not said, or for a file it does not know.</summary>
     public IReadOnlyList<string> ProjectContexts

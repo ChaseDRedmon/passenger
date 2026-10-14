@@ -12,7 +12,7 @@ namespace Passenger.App.CSharp;
 /// Between pulls the markers move with the text, so a squiggle never drifts off its code. Of one server only: a server
 /// started again gives every open file a new one (<see cref="CSharpService"/>), so what asks the server for a file asks
 /// <see cref="CSharpService.For"/> each time rather than keep this or its <see cref="Lsp"/>.</summary>
-public sealed class CSharpDocument : IDisposable
+public sealed class CSharpDocument : IServerDocument, IDisposable
 {
     /// <summary>How long typing must pause before diagnostics are asked for again.</summary>
     private static readonly TimeSpan Settle = TimeSpan.FromMilliseconds(600);
@@ -196,28 +196,7 @@ public sealed class CSharpDocument : IDisposable
     private void OnSaved(object? sender, EventArgs e) => Lsp?.Saved();
 
     /// <summary>The diagnostics pulled, each on the server's lines where its range has been carried to.</summary>
-    private Diagnostic[] Placed()
-    {
-        ServerLines lines = ServerLines.Of(document.Text.Snapshot);
-        int length = lines.Text.Length;
-        Diagnostic[] moved = new Diagnostic[pulled.Length];
-        for (int i = 0; i < pulled.Length; i++)
-        {
-            Diagnostic diagnostic = pulled[i];
-            TextRange now = ranges[i];
-            moved[i] = new Diagnostic
-            {
-                Range = new LspRange(lines.PositionOf(Math.Min(now.Start, length)), lines.PositionOf(Math.Min(now.End, length))),
-                Severity = diagnostic.Severity,
-                Code = diagnostic.Code,
-                Source = diagnostic.Source,
-                Message = diagnostic.Message,
-                Tags = diagnostic.Tags,
-                Data = diagnostic.Data,
-            };
-        }
-        return moved;
-    }
+    private Diagnostic[] Placed() => DiagnosticMarks.Placed(document.Text.Snapshot, pulled, ranges);
 
     private void Pull(TimeSpan delay)
     {
@@ -247,9 +226,9 @@ public sealed class CSharpDocument : IDisposable
             }
             ServerLines lines = ServerLines.Of(document.Text.Snapshot);
             pulled = [.. found];
-            ranges = [.. pulled.Select(d => Offsets(lines, d.Range))];
+            ranges = [.. pulled.Select(d => DiagnosticMarks.Offsets(lines, d.Range))];
             placed = found;
-            document.Markers = pulled.Select((d, i) => Marker(d, ranges[i])).OfType<Marker>().ToList();
+            document.Markers = pulled.Select((d, i) => DiagnosticMarks.Marker(d, ranges[i])).OfType<Marker>().ToList();
             service.FileProblemsChanged();
             (IReadOnlyList<LspInlayHint> hints, int hinted) = await lsp.InlayHintsAsync(cancel);
             if (!cancel.IsCancellationRequested && hinted == document.Text.Version)
@@ -307,30 +286,4 @@ public sealed class CSharpDocument : IDisposable
     private static readonly System.Text.RegularExpressions.Regex Directive =
         new(@"^\s*@(page|layout|inherits|implements|namespace|attribute|typeparam|rendermode|preservewhitespace|model|inject|section)\b");
 
-    /// <summary>What a diagnostic draws as: errors, warnings and information squiggled; code the
-    /// compiler calls unnecessary faded; the server's quieter hints left off the page.</summary>
-    private static Marker? Marker(Diagnostic diagnostic, TextRange range)
-    {
-        bool unnecessary = diagnostic.Tags?.Contains(1) == true;
-        MarkerKind? kind = diagnostic.Severity switch
-        {
-            1 => MarkerKind.Error,
-            2 => unnecessary ? MarkerKind.Unnecessary : MarkerKind.Warning,
-            3 => unnecessary ? MarkerKind.Unnecessary : MarkerKind.Info,
-            _ => unnecessary ? MarkerKind.Unnecessary : null,
-        };
-        if (kind is not { } k)
-        {
-            return null;
-        }
-        string code = diagnostic.Code?.ToString() is { Length: > 0 } c ? $"{c}: " : string.Empty;
-        return new Marker(range, k, code + diagnostic.Message);
-    }
-
-    /// <summary>A range of the server's as offsets in the text it was given for, never ending before it starts.</summary>
-    private static TextRange Offsets(ServerLines lines, LspRange range)
-    {
-        int start = lines.OffsetOf(range.Start);
-        return TextRange.FromBounds(start, Math.Max(start, lines.OffsetOf(range.End)));
-    }
 }

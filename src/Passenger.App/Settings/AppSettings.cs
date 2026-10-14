@@ -157,6 +157,14 @@ public sealed record AppSettings : IStateDocument<AppSettings>
     /// <summary>The terminal's shell, or null for the user's own login shell.</summary>
     public string? TerminalShell { get; init; }
 
+    /// <summary>Rider's Languages &amp; Frameworks, Node.js, Node interpreter: the Node.js the JavaScript, TypeScript, HTML,
+    /// CSS and JSON language servers run on, or null for the first on the PATH as the login shell finds it.</summary>
+    public string? NodeInterpreter { get; init; }
+
+    /// <summary>Rider's Remote JSON Schemas, "Allow downloading JSON Schemas from remote sources": a JSON file's own
+    /// <c>$schema</c> on the web is downloaded to check and complete it. Those Passenger carries never are.</summary>
+    public bool DownloadJsonSchemas { get; init; } = true;
+
     /// <summary>Rider's Enable MCP Server: agents reach the window through its socket (<c>passenger --mcp-attach</c>).
     /// Off until the person turns it on, since any program running as them could then act with the IDE's
     /// permissions.</summary>
@@ -227,6 +235,7 @@ public sealed record AppSettings : IStateDocument<AppSettings>
             LiveTemplates = (LiveTemplates ?? []).Where(t => t.Value is not null).ToDictionary(t => t.Key, t => t.Value.Clamped()),
             PostfixTemplates = PostfixTemplates ?? [],
             TerminalShell = string.IsNullOrWhiteSpace(TerminalShell) ? null : TerminalShell,
+            NodeInterpreter = string.IsNullOrWhiteSpace(NodeInterpreter) ? null : NodeInterpreter.Trim(),
             SoftWrapFiles = SoftWrapFiles ?? defaults.SoftWrapFiles,
             XamlFormat = (XamlFormat ?? defaults.XamlFormat).Clamped(),
         };

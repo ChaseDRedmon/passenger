@@ -95,6 +95,7 @@ public partial class MainWindow
             terminal.Shell = null;
         }
         ApplyAnalysis();
+        session.Web?.UseNode(next.NodeInterpreter);
         ListenForAgents(next.McpServer);
         WatchUpdates(next.CheckForUpdates);
         FollowInDiscord();

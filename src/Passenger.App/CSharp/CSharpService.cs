@@ -51,6 +51,10 @@ public sealed class CSharpService : IAsyncDisposable
     /// its projects from these rather than building them itself.</summary>
     public IProjectFeed? Feed { get; set; }
 
+    /// <summary>The HTML language server, which Razor's questions about a Razor file's HTML go to (the folder's web
+    /// languages'); null for Passenger's own few answers.</summary>
+    public Func<CancellationToken, Task<LanguageServer?>>? HtmlServer { get; set; }
+
     /// <summary>Has the server load projects again whose files or imports changed (a Directory.Build.props edited), which
     /// it watches only in part; one that builds its own projects finds what it watches itself.</summary>
     public void Reload(IReadOnlyList<string> projects)
@@ -441,8 +445,11 @@ public sealed class CSharpService : IAsyncDisposable
             started.Server.ProjectsLoaded += onProjects;
             started.Server.Exited += onExited;
             started.Server.NotResponding += onHung;
+            started.Server.HtmlServer = HtmlServer;
             Hook(() =>
             {
+                // A server kept for another window asks that window's HTML server, or none.
+                started.Server.HtmlServer = null;
                 started.Loaded -= onLoaded;
                 started.Server.ColoursRefreshRequested -= onColours;
                 started.Server.DiagnosticsRefreshRequested -= onDiagnostics;

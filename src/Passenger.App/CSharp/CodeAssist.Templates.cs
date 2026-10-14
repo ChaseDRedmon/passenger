@@ -22,7 +22,7 @@ public sealed partial class CodeAssist
     /// abbreviation and may go here, becomes the template. Whether one did.</summary>
     private bool TryExpandTemplate()
     {
-        if (Current is null || Editor.Selections.HasMultiple || !Editor.Selections.Primary.IsEmpty)
+        if (Current is null || WebCurrent is not null || Editor.Selections.HasMultiple || !Editor.Selections.Primary.IsEmpty)
         {
             return false;
         }

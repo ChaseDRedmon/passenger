@@ -42,7 +42,7 @@ public partial class MainWindow
     /// warm server it may take up, its consoles, Debug window and tests tree, a test run's build (which the session's builds
     /// and runs make), and the Terminal tab the debugger asks for.</summary>
     private SessionSetup Setup() => new(Editors, StateFolder, HistoryKeeping, Watching, () => settings.SolutionWideAnalysis, WarmServer, Bottom,
-        cancel => buildRun.BuildAsync(BuildCause.Tests, cancel), RunForDebugger);
+        cancel => buildRun.BuildAsync(BuildCause.Tests, cancel), RunForDebugger, () => settings);
 
     /// <summary>What the builds and runs of this window's sessions show themselves in and start with.</summary>
     private BuildRunParts BuildRunParts() => new(Bottom, Editors, Dock, () => settings, text => status.Text = text, ShowInTerminal,
@@ -229,6 +229,23 @@ public partial class MainWindow
         };
         next.MSBuild.Feed = () => NuGet.FeedAsync(null);
         next.MSBuild.Vulnerabilities = NuGet.VulnerabilitiesAsync;
+        if (next.Web is { } web)
+        {
+            web.StateChanged += (_, _) =>
+            {
+                if (session == next)
+                {
+                    status.ShowLanguage(LanguageLabel());
+                }
+            };
+            web.Stopped += (_, message) =>
+            {
+                if (session == next)
+                {
+                    status.Text = message;
+                }
+            };
+        }
         next.WorkspaceChanged += (_, _) =>
         {
             if (session == next)

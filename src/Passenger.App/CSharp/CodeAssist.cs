@@ -153,13 +153,22 @@ public sealed partial class CodeAssist
 
     private CodeEditor Editor => editors.CodeEditor;
 
-    private CSharpDocument? Current => editors.Active is { } active ? service()?.For(active) : null;
+    /// <summary>The shown file's share of its language server: C#'s or Razor's, else a web language's.</summary>
+    private IServerDocument? Current => editors.Active is { } active ? service()?.For(active) ?? (IServerDocument?)WebOf(active) : null;
+
+    /// <summary>The window's JavaScript, TypeScript, HTML, CSS and JSON, for a web file shown.</summary>
+    public Func<Web.WebLanguages?>? Web { get; set; }
+
+    private Web.WebDocument? WebOf(OpenDocument document) => Web?.Invoke()?.For(document);
+
+    /// <summary>The shown file's web language document, null for a file of none.</summary>
+    private Web.WebDocument? WebCurrent => editors.Active is { } active ? WebOf(active) : null;
 
     /// <summary>The shown file's syntax as it stands, the one parse of it everything shares; null for a file not C#.</summary>
     private ParsedText? Syntax => editors.Active?.Syntax?.Current;
 
     /// <summary>The server's document for the file shown, asked for each time it is used, since a server started again
-    /// has a new one: null for a file that is not C#, and, said in the status bar for a command
+    /// has a new one: null for a file no server reads, and, said in the status bar for a command
     /// (<paramref name="what"/>), while the server cannot take it.</summary>
     private LspDocument? Ask(string? what = null)
     {
@@ -167,17 +176,28 @@ public sealed partial class CodeAssist
         {
             return null;
         }
-        if (current.Lsp is null && what is not null && service() is { } csharp)
+        if (current.Lsp is null && what is not null)
         {
-            Message?.Invoke(this, csharp.Unready(what));
+            if (current is Web.WebDocument && Web?.Invoke() is { } web && editors.Active is { } shown)
+            {
+                Message?.Invoke(this, web.Unready(what, shown));
+            }
+            else if (service() is { } csharp)
+            {
+                Message?.Invoke(this, csharp.Unready(what));
+            }
         }
         return current.Lsp;
     }
 
     /// <summary>An open file's server document as it is now, for what the person chose from an answer (a fix, a new
     /// name): the server that answered may have been started again while they chose.</summary>
-    private LspDocument Now(OpenDocument document) => service()?.For(document)?.Lsp ?? throw new LanguageServerFailed(
-        service() is { } csharp ? $"the C# language server is not ready: {csharp.State}" : "no C# language server runs for this folder");
+    private LspDocument Now(OpenDocument document) => service()?.For(document)?.Lsp ?? WebOf(document)?.Lsp ?? throw new LanguageServerFailed(
+        WebOf(document) is not null ? "its language server is not running"
+        : service() is { } csharp ? $"the C# language server is not ready: {csharp.State}" : "no C# language server runs for this folder");
+
+    /// <summary>The folder the open file's places are named from: the C# server's, else the web servers'.</summary>
+    private string? Root => service()?.Session?.Folder ?? Web?.Invoke()?.Folder;
 
     /// <summary>Says in the status bar why a command got nothing from the server.</summary>
     private void Failed(string what, LanguageServerFailed failed) => Message?.Invoke(this, $"{what} failed: {failed.Reason}");
@@ -402,6 +422,11 @@ public sealed partial class CodeAssist
             }
             return;
         }
+        if (WebCurrent is { } web)
+        {
+            AfterTypedInWeb(web, text);
+            return;
+        }
         if (last == '.' || (InRazor && last is '<' or '@'))
         {
             // In a Razor file, as in Rider, a tag's '<' lists the elements and components, and '@' Razor's directives and the C#.
@@ -466,6 +491,7 @@ public sealed partial class CodeAssist
         CancellationTokenSource cancel = new();
         completing = cancel;
         int caret = Editor.Selections.Primary.Caret;
+        TextSnapshot asked = Editor.Document.Snapshot;
         try
         {
             (CompletionList? list, _) = await lsp.CompletionAsync(caret, trigger, cancel.Token, incomplete);
@@ -477,13 +503,14 @@ public sealed partial class CodeAssist
                 }
                 return;
             }
+            Web.WebDocument? web = WebCurrent;
             int start = list.Items.FirstOrDefault(i => i.TextEdit is not null)?.TextEdit is { } edit
                 ? lsp.OffsetOf(edit.Range.Start)
-                : lsp.IsRazor ? RazorWordStart(caret, list.Items) : WordStart(caret);
-            // Rider lists the live templates that may go here with the server's items, ahead of a keyword they share.
+                : lsp.IsRazor ? RazorWordStart(caret, list.Items) : web is not null ? WebWordStart(web, caret) : WordStart(caret);
+            // Rider lists the live templates that may go here with the server's items, ahead of a keyword they share: C#'s.
             TemplateScope scope = Syntax is { } syntax ? TemplateScopes.At(syntax, caret).Scope : TemplateScope.None;
             templatesOffered.Clear();
-            foreach (LiveTemplate template in Templates.In(scope))
+            foreach (LiveTemplate template in web is null ? Templates.In(scope) : [])
             {
                 templatesOffered[new CompletionItem { Label = template.Abbreviation, Kind = 15, Detail = template.Description, SortText = "!" + template.Abbreviation }] = template;
             }
@@ -494,7 +521,11 @@ public sealed partial class CodeAssist
                 postfixOffered[new CompletionItem { Label = postfix.Name, Kind = 15, Detail = postfix.Example, SortText = "~" + postfix.Name }] = (postfix, target);
             }
             open = new Completion([.. list.Items, .. templatesOffered.Keys, .. postfixOffered.Keys], Math.Min(start, Editor.Selections.Primary.Caret),
-                list.ItemDefaults?.CommitCharacters ?? [], list.IsIncomplete);
+                list.ItemDefaults?.CommitCharacters ?? [], list.IsIncomplete)
+            {
+                Tail = web is not null ? Tail(asked, list.Items, caret) : string.Empty,
+                Lead = web is not null && start < caret && caret <= asked.Length ? asked.GetText(start, caret - start) : string.Empty,
+            };
             Filter();
         }
         catch (OperationCanceledException)
@@ -523,7 +554,10 @@ public sealed partial class CodeAssist
             return;
         }
         string typed = text.GetText(open.Start, caret - open.Start);
-        if (!typed.All(IsWordChar))
+        // A web server's items may replace what came before the name (TypeScript's the member's dot), there as it asked.
+        string lead = open.Lead;
+        bool led = lead.Length > 0 && typed.StartsWith(lead, StringComparison.Ordinal) && typed[lead.Length..].All(IsWordChar);
+        if (!led && !typed.All(IsWordChar))
         {
             CloseCompletion();
             return;
@@ -531,7 +565,7 @@ public sealed partial class CodeAssist
         // An MSBuild list keeps its own order among names that match alike (the common properties first), not the shortest.
         int alike = msbuildOffered.Count > 0 ? 1000 : 1;
         List<CompletionRow> rows = open.Items
-            .Select(item => (item, score: Score(typed, item.FilterText ?? item.Label)))
+            .Select(item => (item, score: Score(led && item.FilterText is null ? typed[lead.Length..] : typed, item.FilterText ?? item.Label)))
             .Where(x => x.score is not null)
             .OrderByDescending(x => x.score / alike)
             .ThenByDescending(x => x.item.Preselect == true)
@@ -588,6 +622,7 @@ public sealed partial class CodeAssist
             return;
         }
         int start = open.Start;
+        string tail = open.Tail;
         CloseCompletion();
         CompletionItem item = row.Item;
         if (templatesOffered.TryGetValue(item, out LiveTemplate? chosen))
@@ -627,6 +662,11 @@ public sealed partial class CodeAssist
         }
         start = asked.MapOffset(start);
         int caret = Math.Min(asked.MapOffset(typed), Editor.Document.Snapshot.Length);
+        // What the item replaces after the caret, still there (a JSON string's closing quote): it goes with the name typed.
+        if (tail.Length > 0 && caret + tail.Length <= Editor.Document.Snapshot.Length && Editor.Document.Snapshot.GetText(caret, tail.Length) == tail)
+        {
+            caret += tail.Length;
+        }
         string insert = item.TextEdit?.NewText ?? item.TextEditText ?? item.InsertText ?? item.Label;
         if (item.InsertTextFormat == 2)
         {
@@ -1162,14 +1202,20 @@ public sealed partial class CodeAssist
             _ = Carried("Rename", () => XamlRename(xaml, shown), closeModal: false);
             return;
         }
+        if (WebCurrent is { Lsp: not null } own && !own.Provides("renameProvider") && editors.Active is { } json)
+        {
+            ShowWebRename(own, json);
+            return;
+        }
         if (Ask("Rename") is null || editors.Active is not { } document)
         {
             return;
         }
         TextSnapshot text = Editor.Document.Snapshot;
         int caret = Editor.Selections.Primary.Caret;
-        TextRange word = TextNavigation.WordAt(text, caret);
-        if (word.Length == 0 || !TextNavigation.IsWordChar(text[word.Start]))
+        // A web language's names run on through its own characters: CSS's --accent, JavaScript's $el.
+        TextRange word = WebCurrent is { } web ? WebWordAt(web, caret) : TextNavigation.WordAt(text, caret);
+        if (word.Length == 0 || !(TextNavigation.IsWordChar(text[word.Start]) || (WebCurrent is { } named && IsWebWordChar(named, text[word.Start]))))
         {
             return;
         }
@@ -1222,7 +1268,7 @@ public sealed partial class CodeAssist
         BackgroundWork.Begin();
         try
         {
-            if (service()?.Session?.Folder is { } folder && await TypeRename.NamedAsync(editors, folder, Now(document), offset) is { Files.Count: > 0 } named
+            if (WebOf(document) is null && service()?.Session?.Folder is { } folder && await TypeRename.NamedAsync(editors, folder, Now(document), offset) is { Files.Count: > 0 } named
                 && modal == box)
             {
                 box.OfferFiles(named.Files, RenameSettings.RenameFiles);
@@ -1262,6 +1308,11 @@ public sealed partial class CodeAssist
         if (XamlCurrent is { } xaml)
         {
             await XamlGoTo(xaml, offset);
+            return;
+        }
+        if (WebCurrent is { Lsp: not null } web && !web.Provides("definitionProvider"))
+        {
+            await WebGoTo(web, offset);
             return;
         }
         if (Ask("Go to Declaration") is not { } lsp)
@@ -1464,6 +1515,11 @@ public sealed partial class CodeAssist
             await XamlUsages(xaml, offset);
             return;
         }
+        if (WebCurrent is { Lsp: not null } web && !web.Provides("referencesProvider"))
+        {
+            Message?.Invoke(this, $"Find Usages finds nothing in {editors.Active?.Name}: its language server has no usages to find");
+            return;
+        }
         if (Ask("Find Usages") is not { } lsp)
         {
             return;
@@ -1511,7 +1567,7 @@ public sealed partial class CodeAssist
     /// and line with its line of code beside it.</summary>
     private void Pick(string title, IReadOnlyList<LspLocation> locations, int offset, IReadOnlyList<string?>? names = null)
     {
-        string root = service()?.Session?.Folder ?? string.Empty;
+        string root = Root ?? string.Empty;
         List<Choice> choices = locations.Select((l, i) =>
         {
             string path = DocumentUris.ToPath(l.Uri);
@@ -1846,7 +1902,8 @@ public sealed partial class CodeAssist
     /// <summary>A character of the word a completion list narrows by: an identifier's, and in a Razor file a markup
     /// name's too (<c>@onclick</c>, <c>data-enhance-nav</c>, <c>@bind:after</c>).</summary>
     private bool IsWordChar(char c) => IsIdentifierChar(c) || (c is '@' or '-' or ':' && InRazor) || (xamlOffered.Count > 0 && xamlWordCharacters.Contains(c))
-        || (msbuildOffered.Count > 0 && msbuildWordCharacters.Contains(c));
+        || (msbuildOffered.Count > 0 && msbuildWordCharacters.Contains(c))
+        || (WebCurrent is { } web && IsWebWordChar(web, c));
 
     /// <summary>Where a Razor list's word starts when its items say no range: back over an identifier, then over as much of
     /// a markup name before it as some item begins with, so <c>data-en</c> is replaced whole by <c>data-enhance-nav</c>
@@ -1934,5 +1991,25 @@ public sealed partial class CodeAssist
     /// began.</summary>
     /// <summary>An open completion list: its items, where the name it completes starts, the characters that commit an
     /// item that names none of its own, and whether the server left items out until more is typed.</summary>
-    private sealed record Completion(IReadOnlyList<CompletionItem> Items, int Start, IReadOnlyList<string> CommitCharacters, bool IsIncomplete);
+    private sealed record Completion(IReadOnlyList<CompletionItem> Items, int Start, IReadOnlyList<string> CommitCharacters, bool IsIncomplete)
+    {
+        /// <summary>The text after the caret a web server's items replace as well (a JSON string's closing quote, the rest
+        /// of a CSS name the caret is inside), as it stood when the list was asked for; empty for none.</summary>
+        public string Tail { get; init; } = string.Empty;
+
+        /// <summary>The text before the caret a web server's items replace, from <see cref="Start"/>, as it stood when the
+        /// list was asked for (TypeScript's member dot, a JSON string's opening quote); empty for none.</summary>
+        public string Lead { get; init; } = string.Empty;
+    }
+
+    /// <summary>The text after the caret a list's items replace, by the first item's range: past the caret, unlike Roslyn's.</summary>
+    private static string Tail(TextSnapshot asked, IReadOnlyList<CompletionItem> items, int caret)
+    {
+        if (items.FirstOrDefault(i => i.TextEdit is not null)?.TextEdit is not { } edit)
+        {
+            return string.Empty;
+        }
+        int end = Math.Min(ServerLines.Of(asked).OffsetOf(edit.Range.End), asked.Length);
+        return end > caret && caret <= asked.Length ? asked.GetText(caret, end - caret) : string.Empty;
+    }
 }

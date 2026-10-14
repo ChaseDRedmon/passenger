@@ -81,6 +81,8 @@ public sealed class TestRun : IDisposable
         Environment.SetEnvironmentVariable(Passenger.App.Updates.ReleaseFeed.Variable, "http://127.0.0.1:9/repos/Zaneris/passenger/releases/latest");
         // Nor NuGet's symbol server: a theme's sources asked for without a stand-in of the test's come from where nothing listens.
         Environment.SetEnvironmentVariable(Passenger.App.Xaml.SourceLink.Variable, "http://127.0.0.1:9/");
+        // Nor the web for a JSON schema a file names: those Passenger does not carry are asked of where nothing listens.
+        Environment.SetEnvironmentVariable(Passenger.App.Web.JsonSchemas.Variable, "http://127.0.0.1:9/");
         // Nor the person's Discord: a window without a stand-in of its own looks where nothing listens.
         Environment.SetEnvironmentVariable(Passenger.App.Discord.DiscordIpc.Variable, DiscordNowhere);
         // A run stopped before its end (Ctrl+C) leaves nothing either.

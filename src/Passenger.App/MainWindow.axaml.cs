@@ -180,7 +180,7 @@ public partial class MainWindow : Window
                 session.Debug.Breakpoints.Toggle(active.Path, click.Line);
             }
         });
-        assist = new CodeAssist(Editors, Editors.AssistLayer, () => session.CSharp) { Xaml = () => session.Xaml, MSBuild = () => session.MSBuild };
+        assist = new CodeAssist(Editors, Editors.AssistLayer, () => session.CSharp) { Xaml = () => session.Xaml, MSBuild = () => session.MSBuild, Web = () => session.Web };
         assist.Navigate += (_, target) => NavigateTo(target.Path, target.Position);
         assist.Message += (_, message) => status.Text = message;
         assist.FilesChanged += (_, _) => FilesChanged();
@@ -415,6 +415,10 @@ public partial class MainWindow : Window
     /// <summary>The status bar's text, which says what the last action came to, for the person. What an operation came to
     /// is its own answer (a build's outcome, a commit's), never this, which anything may have replaced since.</summary>
     public string? Status => status.Text;
+
+    /// <summary>What the status bar's language widget says: the file's language, and what its language server is waiting
+    /// on or runs (C# loading, no Node.js, the TypeScript in use).</summary>
+    public string? LanguageShown => LanguageText.Text;
 
     /// <summary>Builds the solution (or, with none, the folder's projects), as Build does; <paramref name="then"/> hears how
     /// it ended.</summary>
@@ -754,6 +758,11 @@ public partial class MainWindow : Window
     private string LanguageLabel()
     {
         string language = Editors.Active?.Language.Name ?? string.Empty;
+        if (Editors.Active is { } active && Web.WebLanguages.LanguageOf(active.Path) is not null)
+        {
+            // A web file's server, not C#'s, is what it waits on.
+            return (session.Web?.StateOf(active) ?? session.Web?.DetailOf(active)) is { Length: > 0 } said ? $"{language} · {said}" : language;
+        }
         CSharpService? csharp = session.CSharp;
         string? shown = csharp?.Progress ?? (csharp is { IsReady: false, State: { Length: > 0 } state } ? state : null);
         if (shown is not null)
