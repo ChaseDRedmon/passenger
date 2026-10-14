@@ -140,7 +140,20 @@ public partial class ModuleMetadataReader : IDisposable
         int StartColumn,
         int EndColumn,
         string DocumentPath
-    );
+    )
+    {
+        /// <summary>Where the breakpoint goes in the IL: its sequence point's own offset, or for a point the JIT maps no
+        /// code to (Avalonia's XAML compiler writes them mid-expression) the nearest before it that it does map.</summary>
+        public int BindOffset { get; init; } = ILOffset;
+
+        /// <summary>Whether a frame stopped here shows this place rather than its IL offset's sequence point: bound short of
+        /// its point, or an XAML attribute with no point of its own.</summary>
+        public bool Placed => BindOffset != ILOffset || Attributed;
+
+        /// <summary>An XAML attribute's setter that XamlIl compiled under the point of its element (or of an attribute before
+        /// it): bound at that point, and shown at the attribute.</summary>
+        public bool Attributed { get; init; }
+    }
 
     /// <summary>
     /// Information about an await block in an async method

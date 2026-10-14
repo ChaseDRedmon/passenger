@@ -77,6 +77,11 @@ public partial class ManagedDebugger
     /// thread is, which is past it and often the next statement's start; until the program goes on.</summary>
     private (int ThreadId, StackRange Frame, int ILOffset)? _writtenAt;
 
+    /// <summary>A line breakpoint's stop where its IL offset's sequence point is not its own (bound short of its point, where
+    /// the JIT maps code, or at an XAML attribute's setter run under its element's point): the frame is shown where the
+    /// breakpoint is, until the program goes on.</summary>
+    private (int ThreadId, StackRange Frame, ModuleMetadataReader.ResolvedBreakpoint Place)? _stoppedShort;
+
     /// <summary>Whether a member of a container (an object's field or property, an array's element, by the variables
     /// reference its members were listed by and its name there) can be watched; its data's id when it can.</summary>
     public DataBreakpointAnswer DataBreakpointInfo(int? variablesReference, string name)
@@ -540,6 +545,10 @@ public partial class ManagedDebugger
 
     /// <summary>The IL offset a frame is shown at: the statement that wrote, for the frame a data breakpoint stopped in.</summary>
     private int? WrittenAt(ICorDebugFrame frame) => _writtenAt is { } written && RangeOf(frame) == written.Frame ? written.ILOffset : null;
+
+    /// <summary>Where a breakpoint is, for the frame it stopped in when that is not its IL offset's sequence point.</summary>
+    private ModuleMetadataReader.ResolvedBreakpoint? StoppedShortAt(ICorDebugFrame frame) =>
+        _stoppedShort is { } held && RangeOf(frame) == held.Frame ? held.Place : null;
 
     /// <summary>A step from a data breakpoint's stop, shown at the statement that wrote while the thread is already at the
     /// next statement's start: the rest of the statement has run, so Step Over and Step Into end where the thread is,

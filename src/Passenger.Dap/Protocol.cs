@@ -100,7 +100,8 @@ public sealed record DapBreakpoint
     public int? Offset { get; init; }
 }
 
-public sealed record DapFunctionBreakpoint(string Name, string? Condition = null, string? HitCondition = null, string? LogMessage = null);
+/// <summary>A function breakpoint as asked for; <c>Suspend</c> is Passenger's own, as a line breakpoint's is.</summary>
+public sealed record DapFunctionBreakpoint(string Name, string? Condition = null, string? HitCondition = null, string? LogMessage = null, bool? Suspend = null);
 
 public sealed record SetFunctionBreakpointsArguments(IReadOnlyList<DapFunctionBreakpoint>? Breakpoints);
 

@@ -111,7 +111,7 @@ public class BreakpointManager
         }
     }
 
-    public BreakpointInfo CreateFunctionBreakpoint(string functionName, string? condition = null, string? hitCondition = null, string? logMessage = null)
+    public BreakpointInfo CreateFunctionBreakpoint(string functionName, string? condition = null, string? hitCondition = null, string? logMessage = null, bool? suspend = null)
     {
         lock (_lock)
         {
@@ -122,7 +122,7 @@ public class BreakpointManager
                 Condition = string.IsNullOrWhiteSpace(condition) ? null : condition,
                 HitCondition = string.IsNullOrWhiteSpace(hitCondition) ? null : hitCondition,
                 LogMessage = string.IsNullOrEmpty(logMessage) ? null : logMessage,
-                Suspend = string.IsNullOrEmpty(logMessage),
+                Suspend = suspend ?? string.IsNullOrEmpty(logMessage),
             };
             _breakpoints[bp.Id] = bp;
             return bp;

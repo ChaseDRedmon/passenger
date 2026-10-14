@@ -15,7 +15,7 @@ using ZLinq;
 namespace Passenger.Debugger;
 
 public record BreakpointRequest(int Line, string? Condition = null, string? HitCondition = null, int? Column = null, string? LogMessage = null, bool? Suspend = null);
-public record FunctionBreakpointRequest(string Name, string? Condition = null, string? HitCondition = null, string? LogMessage = null);
+public record FunctionBreakpointRequest(string Name, string? Condition = null, string? HitCondition = null, string? LogMessage = null, bool? Suspend = null);
 public record ExceptionBreakpointRequest(ExceptionBreakpointFilter Filter, string? Condition = null);
 public enum ExceptionBreakpointFilter { All, UserUnhandled }
 
@@ -501,7 +501,7 @@ public partial class ManagedDebugger
         List<BreakpointManager.BreakpointInfo> result = new List<BreakpointManager.BreakpointInfo>();
         foreach (FunctionBreakpointRequest request in breakpoints)
         {
-            BreakpointManager.BreakpointInfo bp = _breakpointManager.CreateFunctionBreakpoint(request.Name, request.Condition, request.HitCondition, request.LogMessage);
+            BreakpointManager.BreakpointInfo bp = _breakpointManager.CreateFunctionBreakpoint(request.Name, request.Condition, request.HitCondition, request.LogMessage, request.Suspend);
             if (bp.HitCondition is { } hits && !Passenger.Dap.HitCondition.TryParse(hits, out _, out string? problem))
             {
                 bp.Message = problem;
@@ -723,7 +723,9 @@ public partial class ManagedDebugger
             int? kickoffMethodToken = module.MetadataReader.GetStateMachineKickoffMethodToken(function.Token);
             stackFrameInfo.Name = GetMethodFormattedName(module, kickoffMethodToken ?? function.Token, ilFrame.TypeParameters);
             SourceInfo? sourceInfo = GetSourceInfoAtFrame(ilFrame, decompileIfNeeded);
-            stackFrameInfo.IsUserCode = module.IsUserCode;
+            // A method its own code says is not the user's ([DebuggerNonUserCode], [DebuggerStepThrough], [DebuggerHidden]) is
+            // shown as external code is, as Just My Code passes over it.
+            stackFrameInfo.IsUserCode = module.IsUserCode && !(_justMyCode && module.MetadataReader.IsNonUserCode(function.Token));
             stackFrameInfo.IsResolved = module.MetadataReader.HasSymbols;
             if (sourceInfo is not null)
             {

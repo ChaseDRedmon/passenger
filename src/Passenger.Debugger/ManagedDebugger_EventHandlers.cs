@@ -403,6 +403,10 @@ public partial class ManagedDebugger
         {
             throw new UnreachableException("Breakpoint was not resolved from PDB - this should never happen, as source breakpoints are only bound to resolved source locations");
         }
+        if (resolvedBreakpoint.Placed && corThread.ActiveFrame is { } shortOf && RangeOf(shortOf) is { } shortRange)
+        {
+            _stoppedShort = (corThread.Id, shortRange, resolvedBreakpoint);
+        }
 
         ReportStop(corThread.Id, "breakpoint", managedBreakpoint.FilePath, resolvedBreakpoint.StartLine, resolvedBreakpoint.StartColumn, [managedBreakpoint.Id]);
     }

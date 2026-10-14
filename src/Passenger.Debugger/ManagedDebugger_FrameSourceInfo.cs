@@ -42,6 +42,10 @@ public partial class ManagedDebugger
             }
         }
 
+        if (module.MetadataReader.HasSymbols && StoppedShortAt(frame) is { } placed)
+        {
+            return new SourceInfo(placed.DocumentPath, placed.StartLine, placed.EndLine, placed.StartColumn, placed.EndColumn, null);
+        }
         if (module.MetadataReader.HasSymbols)
         {
             int ilOffset = WrittenAt(frame) ?? ilFrame.IP.pnOffset;

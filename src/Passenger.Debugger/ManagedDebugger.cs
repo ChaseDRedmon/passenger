@@ -422,6 +422,7 @@ public partial class ManagedDebugger
             _frameReferenceManager.Clear();
             _stepInTargets.Clear();
             _writtenAt = null;
+            _stoppedShort = null;
         }
         if (!EvalStatus.IsRunning && (TakeDeferredEvent() || TakePendingPause()))
         {
@@ -664,8 +665,8 @@ public partial class ManagedDebugger
             ICorDebugCode ilCode = function.ILCode;
 
             // Create a breakpoint at the resolved IL offset
-            ICorDebugFunctionBreakpoint corBreakpoint = TryGetEntryBreakpoint(targetModule.BaseAddress, resolved.MethodToken, resolved.ILOffset)
-                ?? ilCode.CreateBreakpoint(resolved.ILOffset);
+            ICorDebugFunctionBreakpoint corBreakpoint = TryGetEntryBreakpoint(targetModule.BaseAddress, resolved.MethodToken, resolved.BindOffset)
+                ?? ilCode.CreateBreakpoint(resolved.BindOffset);
             if (corBreakpoint != _entryBreakpoint?.CorBreakpoint)
             {
                 corBreakpoint.Activate(true);
@@ -682,7 +683,8 @@ public partial class ManagedDebugger
             bp.ModuleBaseAddress = targetModule.BaseAddress;
             bp.Message = null;
 
-            _logger?.Invoke($"Breakpoint bound at {bp.FilePath}:{bp.Line} -> resolved to line {resolved.StartLine}, IL offset {resolved.ILOffset} in method 0x{resolved.MethodToken:X}");
+            _logger?.Invoke($"Breakpoint bound at {bp.FilePath}:{bp.Line} -> resolved to line {resolved.StartLine}, IL offset {resolved.ILOffset}"
+                + (resolved.BindOffset != resolved.ILOffset ? $" (bound at {resolved.BindOffset}, where the JIT maps code)" : string.Empty) + $" in method 0x{resolved.MethodToken:X}");
             return true;
         }
         catch (Exception ex)

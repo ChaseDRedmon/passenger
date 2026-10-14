@@ -1,5 +1,6 @@
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
+using Passenger.Debugger.ExpressionEvaluator.Cil;
 
 namespace Passenger.Debugger;
 public partial class ModuleMetadataReader
@@ -56,7 +57,129 @@ public partial class ModuleMetadataReader
             .Select(h => CollectCandidate(h, documentHandle, line, column))
             .OfType<MethodCandidate>()
             .ToList();
+        bool rewritten = IsRewrittenDocument(documentHandle);
+        if (rewritten && column is int requested && !candidates.Any(c => c.CoversLine) && UnpointedAttribute(documentHandle, new LineCol(line, requested)) is { } setter)
+        {
+            ResolvedBreakpoint attributed = new(setter.Token, setter.Point.Offset, line, line, requested, requested, reader.GetString(reader.GetDocument(documentHandle).Name)) { Attributed = true };
+            return attributed with { BindOffset = JitBoundaryAtOrBefore(attributed.MethodToken, attributed.ILOffset) };
+        }
+        ResolvedBreakpoint? resolved = Resolve(candidates, rewritten);
+        return resolved is not null && rewritten ? resolved with { BindOffset = JitBoundaryAtOrBefore(resolved.MethodToken, resolved.ILOffset) } : resolved;
+    }
 
+    /// <summary>Where the setter of an XAML attribute that XamlIl gave no point of its own runs: XamlX keeps one point
+    /// pending, so of a tag's attributes about every other one has none, its setter run under its element's point again,
+    /// which comes in the IL right after the point of the attribute before it. That point is the one written last before the
+    /// attribute (a template's builder's over the template's own, which begins its method); the point after it in the IL
+    /// when that goes back to the element, else it itself. Null when nothing is written before the attribute.</summary>
+    private (int Token, SequencePoint Point)? UnpointedAttribute(DocumentHandle document, LineCol requested)
+    {
+        MetadataReader reader = _pdbMetadataReader!;
+        (int Token, SequencePoint Point)? prior = null;
+        foreach (MethodDebugInformationHandle handle in reader.MethodDebugInformation)
+        {
+            MethodDebugInformation info = reader.GetMethodDebugInformation(handle);
+            if (info.SequencePointsBlob.IsNil)
+            {
+                continue;
+            }
+            foreach (SequencePoint point in info.GetSequencePoints())
+            {
+                LineCol at = point.Start();
+                if (point.IsHidden || (point.Document.IsNil ? info.Document : point.Document) != document || at > requested)
+                {
+                    continue;
+                }
+                if (prior is not { } best || at > best.Point.Start() || (at == best.Point.Start() && point.Offset < best.Point.Offset))
+                {
+                    prior = (MetadataTokens.GetToken(handle.ToDefinitionHandle()), point);
+                }
+            }
+        }
+        if (prior is not { } found)
+        {
+            return null;
+        }
+        SequencePoint? next = VisibleSequencePoints(found.Token).FirstOrDefault(p => p.Offset > found.Point.Offset) is { IsHidden: false } after && after.Offset > found.Point.Offset ? after : null;
+        return next is { } back && back.Start() < found.Point.Start() ? (found.Token, back) : found;
+    }
+
+    /// <summary>Whether a document's sequence points were written by a rewriter of the compiled IL rather than a compiler:
+    /// Avalonia's XAML compiler (XamlIl, through Cecil) names no language for the .axaml files it maps its code to, and
+    /// places a point at each element and attribute, mid-expression, where C#'s compiler places them where the stack is
+    /// empty.</summary>
+    private bool IsRewrittenDocument(DocumentHandle document)
+    {
+        MetadataReader reader = _pdbMetadataReader!;
+        GuidHandle language = reader.GetDocument(document).Language;
+        return language.IsNil || reader.GetGuid(language) == Guid.Empty;
+    }
+
+    /// <summary>The nearest IL offset at or before <paramref name="offset"/> that CoreCLR's JIT maps to native code for a
+    /// debugger: the method's start, a nop, or the instruction after a call (its call-site boundaries; it also maps where the
+    /// stack is empty, which needs no move). A breakpoint anywhere else binds and is never hit. The instructions passed over
+    /// call nothing, so the program stops in the same state, only those pushes before. Never moved back over a branch's
+    /// target or a jump away, where another path would miss it; then the offset is kept as it is.</summary>
+    internal int JitBoundaryAtOrBefore(int methodToken, int offset)
+    {
+        if (_peReader is null)
+        {
+            return offset;
+        }
+        MethodDefinition method = _peMetadataReader.GetMethodDefinition(MetadataTokens.MethodDefinitionHandle(methodToken));
+        if (method.RelativeVirtualAddress == 0 || _peReader.GetMethodBody(method.RelativeVirtualAddress).GetILBytes() is not { } il)
+        {
+            return offset;
+        }
+        IReadOnlyList<CilInstruction> instructions;
+        try
+        {
+            instructions = CilInstructionDecoder.Decode(il);
+        }
+        catch (NotSupportedException)
+        {
+            return offset;
+        }
+        HashSet<int> targets = [];
+        foreach (CilInstruction instruction in instructions)
+        {
+            switch (instruction.Operand)
+            {
+                case int target when instruction.OpCode.OperandType is System.Reflection.Emit.OperandType.InlineBrTarget or System.Reflection.Emit.OperandType.ShortInlineBrTarget:
+                    targets.Add(target);
+                    break;
+                case int[] cases:
+                    targets.UnionWith(cases);
+                    break;
+            }
+        }
+        int at = instructions.Count - 1;
+        while (at >= 0 && instructions[at].Offset > offset)
+        {
+            at--;
+        }
+        if (at < 0 || instructions[at].Offset != offset)
+        {
+            return offset;
+        }
+        for (int i = at; i >= 0; i--)
+        {
+            CilInstruction here = instructions[i];
+            if (i == 0 || here.Code == ILOpCode.Nop || instructions[i - 1].Code is ILOpCode.Call or ILOpCode.Callvirt or ILOpCode.Newobj or ILOpCode.Calli)
+            {
+                return here.Offset;
+            }
+            if (targets.Contains(here.Offset) || instructions[i - 1].Code is ILOpCode.Br or ILOpCode.Br_s or ILOpCode.Leave or ILOpCode.Leave_s
+                or ILOpCode.Ret or ILOpCode.Throw or ILOpCode.Rethrow or ILOpCode.Endfinally or ILOpCode.Jmp)
+            {
+                return offset;
+            }
+        }
+        return offset;
+    }
+
+    private ResolvedBreakpoint? Resolve(List<MethodCandidate> candidates, bool rewritten)
+    {
         List<MethodCandidate> covering = candidates.Where(c => c.CoversLine).ToList();
 
         if (covering.Count == 0)
@@ -83,6 +206,14 @@ public partial class ModuleMetadataReader
         if (primary.Count == 1)
         {
             return NewResolvedBreakpoint(primary[0].Token, primary[0].CoveringSp!.Value, primary[0].DocPath);
+        }
+
+        if (rewritten)
+        {
+            // XamlIl maps a template's root element twice: where the template is made (its deferred content, mid-method)
+            // and where it builds its content, the method its point begins. The builder's runs for each control made.
+            MethodCandidate builder = primary.MinBy(c => c.CoveringSp!.Value.Offset)!;
+            return NewResolvedBreakpoint(builder.Token, builder.CoveringSp!.Value, builder.DocPath);
         }
 
         // https://github.com/Samsung/netcoredbg/blob/8b8b22200fecdb1aec5f47af63215462d8c79a4b/src/managed/SymbolReader.cs#L801-L817
