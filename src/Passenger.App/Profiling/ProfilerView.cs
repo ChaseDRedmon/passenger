@@ -39,8 +39,9 @@ public sealed class TreeRow(CallNode node, int depth, ObservableCollection<TreeR
 
 /// <summary>The profiler's tool window, as dotTrace's in Rider: while a run goes, its time and Get Snapshot (which ends
 /// the run and leaves the program going) and Kill; then the snapshot as a call tree by thread with the hot path opened,
-/// the hot spots by their own time, or a flame graph. A double-click on a method goes to its source. The Snapshots page
-/// lists the open folder's earlier runs, as Rider's Recent Snapshots does.</summary>
+/// the hot spots by their own time, or a flame graph. A double-click on a method goes to its source. The Memory page is
+/// dotMemory's (<see cref="MemoryView"/>); the Snapshots page lists the open folder's earlier runs, as Rider's Recent
+/// Snapshots does.</summary>
 public sealed class ProfilerView : DockPanel
 {
     private readonly ObservableCollection<TreeRow> rows = [];
@@ -53,9 +54,7 @@ public sealed class ProfilerView : DockPanel
     private readonly TextBlock collectionsSummary;
     private readonly ListBox collections;
     private readonly DockPanel garbage;
-    private readonly DockPanel memory;
-    private readonly ListBox heapTypes;
-    private readonly TextBlock memorySummary;
+    private readonly MemoryView memory;
     private readonly Button heap;
     private readonly FlameGraph flame;
     private readonly ScrollViewer flameScroll;
@@ -139,16 +138,7 @@ public sealed class ProfilerView : DockPanel
         DockPanel.SetDock(collectionsSummary, Dock.Top);
         garbage.Children.Add(collectionsSummary);
         garbage.Children.Add(collections);
-        heapTypes = new ListBox
-        {
-            Classes = { "tree" },
-            ItemTemplate = new FuncDataTemplate<HeapType>((type, _) => type is null ? new TextBlock() : HeapRow(type), supportsRecycling: false),
-        };
-        memorySummary = new TextBlock { Margin = new Thickness(12, 8), TextWrapping = TextWrapping.Wrap };
-        memory = new DockPanel();
-        DockPanel.SetDock(memorySummary, Dock.Top);
-        memory.Children.Add(memorySummary);
-        memory.Children.Add(heapTypes);
+        memory = new MemoryView();
         flame = new FlameGraph();
         flameScroll = new ScrollViewer { Content = flame, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
         kept = new ListBox
@@ -239,18 +229,20 @@ public sealed class ProfilerView : DockPanel
     /// <summary>Get Memory Snapshot pressed: the running program's heap to read.</summary>
     public event EventHandler? MemoryRequested;
 
-    /// <summary>The last memory snapshot shown, or null.</summary>
+    /// <summary>The last memory snapshot taken, or null.</summary>
     public MemorySnapshot? Memory { get; private set; }
 
-    /// <summary>The Memory page's types as listed.</summary>
-    public IReadOnlyList<HeapType> HeapTypes => heapTypes.ItemsSource as IReadOnlyList<HeapType> ?? [];
+    /// <summary>The Memory page: the run's memory snapshots, their comparisons and object sets.</summary>
+    public MemoryView MemoryPage => memory;
 
-    /// <summary>Shows a memory snapshot on the Memory page.</summary>
+    /// <summary>The Memory page's types as listed.</summary>
+    public IReadOnlyList<HeapType> HeapTypes => memory.TypeRows;
+
+    /// <summary>Lists a memory snapshot on the Memory page and shows it.</summary>
     public void ShowMemory(MemorySnapshot snapshot)
     {
         Memory = snapshot;
-        heapTypes.ItemsSource = snapshot.Types;
-        memorySummary.Text = $"{snapshot.Objects:N0} objects, {snapshot.Bytes / 1048576.0:N1} MB live, in {snapshot.Types.Count:N0} types (read in {snapshot.Took.TotalSeconds:0.0} s)";
+        memory.Add(snapshot);
         pages[5].IsEnabled = true;
         ShowPage(5);
     }
@@ -305,24 +297,6 @@ public sealed class ProfilerView : DockPanel
             Height = 22,
             Margin = new Thickness(6, 0),
             Children = { when, size, new TextBlock { Text = program, VerticalAlignment = VerticalAlignment.Center, FontWeight = FontWeight.SemiBold } },
-        };
-    }
-
-    private Control HeapRow(HeapType type)
-    {
-        long whole = Memory?.Bytes ?? 0;
-        TextBlock size = Muted($"{(whole > 0 ? 100.0 * type.Bytes / whole : 0),5:0.0}%  {type.Bytes / 1048576.0,8:N2} MB", 170);
-        size.FontFamily = CSharp.Fonts.Mono;
-        size.FontSize = 12;
-        TextBlock count = Muted($"{type.Count,9:N0}", 90);
-        count.FontFamily = CSharp.Fonts.Mono;
-        count.FontSize = 12;
-        return new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Height = 22,
-            Margin = new Thickness(6, 0),
-            Children = { size, count, new TextBlock { Text = type.Name, VerticalAlignment = VerticalAlignment.Center, FontWeight = FontWeight.SemiBold, Margin = new Thickness(10, 0, 0, 0) } },
         };
     }
 

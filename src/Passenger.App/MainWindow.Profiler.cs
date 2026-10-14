@@ -181,7 +181,8 @@ public partial class MainWindow
         }
     }
 
-    /// <summary>Get Memory Snapshot: the running program's heap by type, on the Memory page; the run goes on.</summary>
+    /// <summary>Get Memory Snapshot: the running program's heap, listed on the Memory page with the run's earlier ones to
+    /// compare it with; the run goes on.</summary>
     public async Task<MemorySnapshot?> MemorySnapshotAsync()
     {
         if (profiling is not { } run)
@@ -195,10 +196,11 @@ public partial class MainWindow
         {
             MemorySnapshot heap = await run.TakeMemorySnapshotAsync();
             profilerView!.ShowMemory(heap);
-            StatusText.Text = $"Memory snapshot of {profilingName}: {heap.Objects:N0} objects, {heap.Bytes / 1048576.0:N1} MB";
+            StatusText.Text = $"{heap.Name} of {profilingName}: {heap.Objects:N0} objects, {heap.Bytes / 1048576.0:N1} MB";
             return heap;
         }
-        catch (Exception error) when (error is InvalidOperationException or IOException or ServerNotAvailableException)
+        catch (Exception error) when (error is InvalidOperationException or IOException or ServerNotAvailableException or DiagnosticsClientException
+            or TimeoutException or HeapUnreadableException)
         {
             StatusText.Text = $"No memory snapshot: {error.Message}";
             return null;

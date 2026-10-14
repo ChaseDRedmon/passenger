@@ -1,30 +1,61 @@
-using System.Diagnostics;
-using Microsoft.Diagnostics.NETCore.Client;
-using Microsoft.Diagnostics.Runtime;
-
 namespace Passenger.Profiler;
 
 /// <summary>A type on the heap: how many objects of it live, and the bytes they take themselves (shallow, as dotMemory's
 /// first view has them).</summary>
-public sealed record HeapType(string Name, int Count, long Bytes);
+public sealed record HeapType(string Name, int Count, long Bytes)
+{
+    internal int Index { get; init; }
+}
 
-/// <summary>What a program's heap held at a moment, as dotMemory's snapshot: every live object's type, counted and
-/// sized. The runtime writes a dump of the heap through its diagnostic port (createdump, so no debugger attaches) and
-/// ClrMD reads it; the dump, as large as the heap, is deleted once read.</summary>
+/// <summary>What a program's heap held at a moment, as dotMemory's snapshot: every object a GC root keeps alive, by type.
+/// The runtime writes a dump of the heap through its
+/// diagnostic port (createdump, so no debugger attaches) and ClrMD reads it; the dump, as large as the heap, is deleted
+/// once read. Snapshots of one run can be compared, object by object.</summary>
 public sealed class MemorySnapshot
 {
-    private MemorySnapshot(IReadOnlyList<HeapType> types, long bytes, int objects, TimeSpan took)
+    private readonly IReadOnlyDictionary<int, Identity> earlier;
+
+    internal MemorySnapshot(object run, int number, DateTime taken, HeapGraph graph, TimeSpan took, string phases, IReadOnlyDictionary<int, Identity> earlier)
     {
-        Types = types;
-        Bytes = bytes;
-        Objects = objects;
+        Run = run;
+        Number = number;
+        Taken = taken;
+        Graph = graph;
         Took = took;
+        Phases = phases;
+        this.earlier = earlier;
+        int[] counts = new int[graph.Types.Length];
+        long[] bytes = new long[graph.Types.Length];
+        for (int i = 0; i < graph.Count; i++)
+        {
+            counts[graph.Type[i]]++;
+            bytes[graph.Type[i]] += graph.Size[i];
+        }
+        List<HeapType> types = [];
+        for (int t = 0; t < counts.Length; t++)
+        {
+            if (counts[t] > 0)
+            {
+                types.Add(new HeapType(graph.Types[t].Name, counts[t], bytes[t]) { Index = t });
+            }
+        }
+        Types = [.. types.OrderByDescending(t => t.Bytes).ThenBy(t => t.Name, StringComparer.Ordinal)];
+        Bytes = bytes.Sum();
+        Objects = graph.Count;
     }
+
+    /// <summary>Which of the run's snapshots this is, from 1.</summary>
+    public int Number { get; }
+
+    /// <summary>"Snapshot #2", as dotMemory names them.</summary>
+    public string Name => $"Snapshot #{Number}";
+
+    public DateTime Taken { get; }
 
     /// <summary>The types, the most bytes first.</summary>
     public IReadOnlyList<HeapType> Types { get; }
 
-    /// <summary>The heap's live objects together, in bytes.</summary>
+    /// <summary>The live objects together, in bytes.</summary>
     public long Bytes { get; }
 
     public int Objects { get; }
@@ -32,48 +63,57 @@ public sealed class MemorySnapshot
     /// <summary>How long the dump and its reading took, the program held for the dump's part.</summary>
     public TimeSpan Took { get; }
 
-    /// <summary>Takes a snapshot of a running .NET program's heap.</summary>
-    public static Task<MemorySnapshot> TakeAsync(int processId, CancellationToken cancellation = default) => Task.Run(() =>
+    /// <summary>What the time went on: the dump, and its reading.</summary>
+    public string Phases { get; }
+
+    internal HeapGraph Graph { get; }
+
+    /// <summary>The run it was taken in: only snapshots of one run can be compared.</summary>
+    internal object Run { get; }
+
+    /// <summary>Every object of a type, as an object set.</summary>
+    public ObjectSet ObjectsOf(HeapType type)
     {
-        Stopwatch clock = Stopwatch.StartNew();
-        string dump = Path.Combine(Path.GetTempPath(), $"passenger-heap-{processId}-{Guid.NewGuid().ToString("N")[..8]}.dmp");
-        try
+        List<int> found = [];
+        for (int i = 0; i < Graph.Count; i++)
         {
-            new DiagnosticsClient(processId).WriteDump(DumpType.WithHeap, dump, logDumpGeneration: false);
-            cancellation.ThrowIfCancellationRequested();
-            using DataTarget target = DataTarget.LoadDump(dump);
-            if (target.ClrVersions.Length == 0)
+            if (Graph.Type[i] == type.Index)
             {
-                throw new InvalidOperationException("The dump has no .NET runtime in it");
-            }
-            using ClrRuntime runtime = target.ClrVersions[0].CreateRuntime();
-            Dictionary<string, (int Count, long Bytes)> types = new(StringComparer.Ordinal);
-            long bytes = 0;
-            int objects = 0;
-            foreach (ClrObject item in runtime.Heap.EnumerateObjects())
-            {
-                if (item.Type is not { } type || item.IsFree)
-                {
-                    continue;
-                }
-                long size = (long)item.Size;
-                string name = type.Name ?? "(unnamed)";
-                (int Count, long Bytes) so = types.GetValueOrDefault(name);
-                types[name] = (so.Count + 1, so.Bytes + size);
-                bytes += size;
-                objects++;
-            }
-            return new MemorySnapshot([.. types.Select(t => new HeapType(t.Key, t.Value.Count, t.Value.Bytes)).OrderByDescending(t => t.Bytes)], bytes, objects, clock.Elapsed);
-        }
-        finally
-        {
-            try
-            {
-                File.Delete(dump);
-            }
-            catch (IOException)
-            {
+                found.Add(i);
             }
         }
-    }, cancellation);
+        return new ObjectSet(this, type.Name, [.. found]);
+    }
+
+    /// <summary>Why this snapshot and another cannot be compared object by object, or null when they can.</summary>
+    public string? WhyNotComparable(MemorySnapshot other)
+    {
+        if (other == this)
+        {
+            return $"{Name} is the snapshot itself";
+        }
+        if (other.Run != Run)
+        {
+            return $"{Name} and {other.Name} are of different runs: objects are told apart only within one";
+        }
+        (MemorySnapshot older, MemorySnapshot newer) = other.Number < Number ? (other, this) : (this, other);
+        return newer.earlier.ContainsKey(older.Number) ? null
+            : $"The objects of {older.Name} could not be followed to {newer.Name}: the program's collections were not all seen";
+    }
+
+    /// <summary>Compares this snapshot with another of the run, the older to the newer, type by type: dotMemory's new,
+    /// dead and survived objects. Matching every object takes a while on a large heap: call it off the UI thread.</summary>
+    public SnapshotComparison CompareWith(MemorySnapshot other)
+    {
+        if (WhyNotComparable(other) is { } why)
+        {
+            throw new InvalidOperationException(why);
+        }
+        (MemorySnapshot older, MemorySnapshot newer) = other.Number < Number ? (other, this) : (this, other);
+        return new SnapshotComparison(older, newer, newer.earlier[older.Number]);
+    }
 }
+
+/// <summary>How the objects of an earlier snapshot are found in a later one: each one's index there, or -1 when it died,
+/// and why the matching may be off, if it may.</summary>
+internal sealed record Identity(int[] Later, string? Inexact);

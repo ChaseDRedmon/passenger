@@ -33,6 +33,7 @@ public sealed class ProfilingSession : IAsyncDisposable
     private readonly string port;
     private readonly Stopwatch clock = Stopwatch.StartNew();
     private int stopped;
+    private HeapHistory? heapHistory;
 
     private ProfilingSession(Process process, DiagnosticsClientConnector connector, EventPipeSession session, Task copying, Task reading, string trace, string port)
     {
@@ -311,9 +312,17 @@ public sealed class ProfilingSession : IAsyncDisposable
         return await Task.Run(() => Snapshot.Read(TracePath), cancellation);
     }
 
-    /// <summary>What the program's heap holds now, as dotMemory's Get Snapshot; the run goes on.</summary>
-    public Task<MemorySnapshot> TakeMemorySnapshotAsync(CancellationToken cancellation = default) =>
-        process.HasExited ? throw new InvalidOperationException("The program has ended; a memory snapshot needs it running") : MemorySnapshot.TakeAsync(process.Id, cancellation);
+    /// <summary>What the program's heap holds now, as dotMemory's Get Snapshot, comparable object by object with the
+    /// run's earlier ones; the run goes on.</summary>
+    public Task<MemorySnapshot> TakeMemorySnapshotAsync(CancellationToken cancellation = default)
+    {
+        if (process.HasExited)
+        {
+            throw new InvalidOperationException("The program has ended; a memory snapshot needs it running");
+        }
+        heapHistory ??= new HeapHistory(process.Id);
+        return heapHistory.TakeAsync(cancellation);
+    }
 
     /// <summary>Finishes when the program has ended, by itself or killed, and what it wrote has been read: all of it, unless
     /// something it started holds its output on past a moment.</summary>
@@ -328,6 +337,10 @@ public sealed class ProfilingSession : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        if (heapHistory is not null)
+        {
+            await heapHistory.DisposeAsync();
+        }
         session.Dispose();
         await connector.DisposeAsync();
         RemovePort(port);
