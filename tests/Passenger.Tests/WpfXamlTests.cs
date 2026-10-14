@@ -12,7 +12,8 @@ namespace Passenger.Tests;
 
 /// <summary>WPF XAML through the window, on an app made by <c>dotnet new wpf</c> with a view model its window names with
 /// <c>d:DataContext</c>, brushes merged in by App.xaml and a style with triggers: what completion offers, what is marked
-/// as typed and after a build (MarkupCompile's errors), where names lead, and that XAML Preview says WPF has none. Off
+/// as typed and after a build (MarkupCompile's errors), where names lead, and that XAML Preview off Windows says WPF
+/// previews only there (<see cref="WpfPreviewTests"/> preview it on Windows). Off
 /// Windows the app says <c>EnableWindowsTargeting</c>, which the SDK gives for building Windows apps elsewhere: the
 /// reference assemblies its XAML reads are the same, and MarkupCompile builds it.</summary>
 public sealed class WpfXamlTests : IClassFixture<WpfXamlTests.Gallery>
@@ -321,8 +322,9 @@ public sealed class WpfXamlTests : IClassFixture<WpfXamlTests.Gallery>
     }
 
     [AvaloniaFact]
-    public void Xaml_preview_on_a_wpf_file_says_wpf_has_none_where_the_preview_would_be()
+    public void Xaml_preview_on_a_wpf_file_off_windows_says_where_the_preview_would_be_that_wpf_previews_only_on_windows()
     {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "WPF previews on Windows: WpfPreviewTests draw it there");
         MainWindow window = app.Open(app.PathOf("MainWindow.xaml"));
         OpenDocument document = window.EditorArea.Active!;
         Ui.Run(window, AppActions.FindAction);
@@ -333,8 +335,8 @@ public sealed class WpfXamlTests : IClassFixture<WpfXamlTests.Gallery>
         Ui.Press(window, "ENTER");
         Ui.Settle();
         Passenger.App.Xaml.XamlPreview preview = window.PreviewOf(document) ?? throw new InvalidOperationException("XAML Preview showed nothing beside the WPF file");
-        Ui.WaitFor(() => preview.Status.StartsWith("WPF XAML has no preview", StringComparison.Ordinal), "the note that WPF has no preview");
-        Assert.Equal("WPF XAML has no preview: its designer belongs to Visual Studio, and nothing open-source draws WPF", preview.Status);
+        Ui.WaitFor(() => preview.Status.StartsWith("WPF XAML previews only", StringComparison.Ordinal), "the note that WPF previews only on Windows");
+        Assert.Equal("WPF XAML previews only on Windows, where WPF draws", preview.Status);
         Assert.Null(preview.Frame);
         Assert.Null(preview.Error);
         window.Close();
@@ -347,21 +349,24 @@ public sealed class WpfXamlTests : IClassFixture<WpfXamlTests.Gallery>
         public Gallery()
             : base("wpf-")
         {
-            TestFolders.Prepare(() =>
-            {
-                WpfApp.Create(Folder, "Gallery");
-                Directory.CreateDirectory(PathOf("ViewModels"));
-                Directory.CreateDirectory(PathOf("Themes"));
-                File.WriteAllText(PathOf("ViewModels/MainViewModel.cs"), MainViewModel);
-                File.WriteAllText(PathOf("Themes/Brushes.xaml"), Brushes);
-                File.WriteAllText(PathOf("App.xaml"), AppXaml);
-                File.WriteAllText(PathOf("MainWindow.xaml"), Window);
-                File.WriteAllText(PathOf("MainWindow.xaml.cs"), CodeBehind);
-                File.WriteAllText(PathOf("ViewModels/ListsViewModel.cs"), ListsViewModel);
-                File.WriteAllText(PathOf("ListsWindow.xaml"), Lists);
-                File.WriteAllText(PathOf("ListsWindow.xaml.cs"), ListsCodeBehind);
-            }, Folder);
+            TestFolders.Prepare(() => Make(Folder), Folder);
             Prepare();
+        }
+
+        /// <summary>Makes the app in a folder, not yet restored.</summary>
+        internal static void Make(string folder)
+        {
+            WpfApp.Create(folder, "Gallery");
+            Directory.CreateDirectory(Path.Combine(folder, "ViewModels"));
+            Directory.CreateDirectory(Path.Combine(folder, "Themes"));
+            File.WriteAllText(Path.Combine(folder, "ViewModels/MainViewModel.cs"), MainViewModel);
+            File.WriteAllText(Path.Combine(folder, "Themes/Brushes.xaml"), Brushes);
+            File.WriteAllText(Path.Combine(folder, "App.xaml"), AppXaml);
+            File.WriteAllText(Path.Combine(folder, "MainWindow.xaml"), Window);
+            File.WriteAllText(Path.Combine(folder, "MainWindow.xaml.cs"), CodeBehind);
+            File.WriteAllText(Path.Combine(folder, "ViewModels/ListsViewModel.cs"), ListsViewModel);
+            File.WriteAllText(Path.Combine(folder, "ListsWindow.xaml"), Lists);
+            File.WriteAllText(Path.Combine(folder, "ListsWindow.xaml.cs"), ListsCodeBehind);
         }
 
         /// <summary>What lists, grids and trees bind: their items, an interface that extends another.</summary>

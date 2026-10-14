@@ -8,9 +8,11 @@ using A = Passenger.App.AppActions;
 
 namespace Passenger.App;
 
-/// <summary>The XAML previewer beside the editor, as Rider's Avalonia previewer splits it: View, XAML Preview shows each editor group's XAML file of an Avalonia project with its design view to its right, Avalonia's own
-/// previewer drawing it from the project's last build and following the text as typing pauses. A file's preview runs
-/// while the file is open and the preview on; it ends as either goes.</summary>
+/// <summary>The XAML previewer beside the editor, as Rider's Avalonia previewer splits it: View, XAML Preview shows each
+/// editor group's XAML file of an Avalonia or WPF project with its design view to its right, drawn from the project's last
+/// build by its framework's previewer and following the text as typing pauses. Where the previewer places the file's
+/// elements (WPF's), a click on one selects its start tag in the editor and the element at the caret is outlined. A file's
+/// preview runs while the file is open and the preview on; it ends as either goes.</summary>
 public partial class MainWindow
 {
     /// <summary>How long typing pauses before the previewer is sent the text.</summary>
@@ -33,12 +35,13 @@ public partial class MainWindow
         actions!.Add(new IdeAction(A.XamlPreview, "XAML Preview", "Editor", _ => TogglePreview())
         {
             WhyNot = context => context.File is null ? "No file is open"
-                : session.Xaml.For(context.File) is null ? "The previewer is for the XAML of an Avalonia project" : null,
+                : session.Xaml.For(context.File) is null ? "The previewer is for the XAML of an Avalonia or WPF project" : null,
             IsChecked = _ => previewing,
             Menus = [new MenuPlace("View", 4, 0)],
         });
         Editors.ActiveChanged += (_, _) => FollowPreviews();
         Editors.Closed += (_, document) => EndPreview(document);
+        Editors.ForEachEditor(editor => editor.SelectionChanged += (_, _) => OutlineAtCaret(editor));
         Closed += (_, _) =>
         {
             foreach (OpenDocument document in previews.Keys.ToList())
@@ -103,6 +106,8 @@ public partial class MainWindow
         }
         XamlPreview preview = new(document);
         XamlPreviewPane pane = new(preview);
+        pane.ElementChosen += (_, element) => ChooseInEditor(pane, element);
+        preview.Changed += (_, _) => OutlineAtCaret(pane, preview);
         Debounce typing = new(PreviewSettle, () =>
         {
             preview.Update();
@@ -113,6 +118,36 @@ public partial class MainWindow
         previews[shown] = (preview, pane, typing, changed);
         _ = preview.StartAsync();
         return pane;
+    }
+
+    /// <summary>The element at the caret of an editor beside a preview, outlined in its frame.</summary>
+    private void OutlineAtCaret(CodeEditor editor)
+    {
+        if (previews.Count > 0 && Editors.Groups.FirstOrDefault(g => g.Editor == editor) is { Side: XamlPreviewPane pane, Active: { } shown }
+            && previews.TryGetValue(shown, out var kept) && kept.Pane == pane)
+        {
+            pane.ShowOutline(kept.Preview.ElementAround(editor.Selections.Primary.Caret));
+        }
+    }
+
+    /// <summary>A preview's frame or elements changed: the element at its editor's caret outlined again.</summary>
+    private void OutlineAtCaret(XamlPreviewPane pane, XamlPreview preview)
+    {
+        foreach (EditorGroup group in Editors.Groups.Where(g => g.Side == pane))
+        {
+            pane.ShowOutline(preview.ElementAround(group.Editor.Selections.Primary.Caret));
+        }
+    }
+
+    /// <summary>An element clicked in a preview: its start tag selected in the editor beside it, the caret at its start.</summary>
+    private void ChooseInEditor(XamlPreviewPane pane, PreviewElement element)
+    {
+        if (Editors.Groups.FirstOrDefault(g => g.Side == pane) is not { } group)
+        {
+            return;
+        }
+        group.Editor.Selections = SelectionSet.Single(new Selection(element.Tag.End, element.Tag.Start));
+        group.Editor.Focus();
     }
 
     /// <summary>A build that succeeded is what each preview draws from then on.</summary>

@@ -38,6 +38,9 @@ public sealed class XamlDocument : IDisposable
 
     public OpenDocument Document { get; }
 
+    /// <summary>The session's XAML, which knows the other open files.</summary>
+    internal XamlService Service => service;
+
     internal XamlLoading Loading { get; private set; }
 
     /// <summary>The project's first read, which a test or a screenshot waits for; its answer null for a project whose

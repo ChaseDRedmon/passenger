@@ -1,0 +1,279 @@
+using System.Diagnostics;
+using System.Net;
+using System.Net.Sockets;
+using Avalonia;
+using Avalonia.Media.Imaging;
+using Avalonia.Platform;
+using Avalonia.Remote.Protocol;
+using Avalonia.Remote.Protocol.Designer;
+using Avalonia.Remote.Protocol.Viewport;
+using RemoteFormat = Avalonia.Remote.Protocol.Viewport.PixelFormat;
+using Passenger.Core;
+using Passenger.Xaml.Projects;
+
+namespace Passenger.App.Xaml;
+
+/// <summary>An Avalonia file's design view, as Avalonia's own previewer draws it: the project's
+/// Avalonia.Designer.HostApp (in its Avalonia package, MIT) run through ChildProcesses on the project's last build, its
+/// frames sent over Avalonia.Remote.Protocol to a port of Passenger's on loopback, and the file's text as it stands sent
+/// to it as it is typed. The host honours what Avalonia's design-time support says (d:DesignWidth, Design.DataContext,
+/// Design.PreviewWith). A UI-thread object: the protocol's messages cross to it through <see cref="UiThread"/>.</summary>
+internal sealed class AvaloniaPreviewHost : IPreviewHost
+{
+    private readonly XamlPreview preview;
+    private readonly string output;
+    private readonly Queue<string> said = new();
+    private IDisposable? listening;
+    private IAvaloniaRemoteTransportConnection? connection;
+    private Process? host;
+    private bool disposed;
+    private Stopwatch? starting;
+    private bool empty;
+    private double drawnAt;
+
+    private AvaloniaPreviewHost(XamlPreview preview, string output)
+    {
+        this.preview = preview;
+        this.output = output;
+    }
+
+    /// <summary>Starts the host on the project's last build; null, having said why, when there is none to start.</summary>
+    public static AvaloniaPreviewHost? Start(XamlPreview preview, ProjectInputs inputs)
+    {
+        if (XamlPreview.Output(inputs) is not { } built)
+        {
+            preview.Say($"Build {Path.GetFileNameWithoutExtension(inputs.ProjectPath)} to preview its XAML: the previewer draws its last build");
+            return null;
+        }
+        if (HostApp(inputs) is not { } designer)
+        {
+            preview.Say("The project's Avalonia package has no previewer (tools/…/designer/Avalonia.Designer.HostApp.dll)");
+            return null;
+        }
+        AvaloniaPreviewHost started = new(preview, built);
+        try
+        {
+            started.Run(designer);
+            return started;
+        }
+        catch (Exception error) when (error is SocketException or IOException or System.ComponentModel.Win32Exception or FileNotFoundException)
+        {
+            started.Dispose();
+            preview.Say($"The previewer could not start: {error.Message}");
+            return null;
+        }
+    }
+
+    private void Run(string designer)
+    {
+        int port = FreePort();
+        listening = new BsonTcpTransport().Listen(IPAddress.Loopback, port, UiThread.Marshal<IAvaloniaRemoteTransportConnection>(Connected));
+        string folder = Path.GetDirectoryName(output)!;
+        string name = Path.GetFileNameWithoutExtension(output);
+        ProcessStartInfo start = ChildProcesses.DotnetCommand(["exec", "--runtimeconfig", Path.Combine(folder, name + ".runtimeconfig.json"),
+            "--depsfile", Path.Combine(folder, name + ".deps.json"), designer, "--transport", $"tcp-bson://127.0.0.1:{port}/", "--method", "avalonia-remote",
+            "--session-id", Guid.NewGuid().ToString("N"), output], folder);
+        start.RedirectStandardOutput = true;
+        start.RedirectStandardError = true;
+        Process started = ChildProcesses.Start(start);
+        host = started;
+        started.OutputDataReceived += (_, e) => Heard(e.Data);
+        started.ErrorDataReceived += (_, e) => Heard(e.Data);
+        started.Exited += (_, _) => UiThread.Post(() => Ended(started));
+        started.BeginOutputReadLine();
+        started.BeginErrorReadLine();
+        starting = Stopwatch.StartNew();
+        preview.Say($"Starting the previewer on {Path.GetFileName(output)}…");
+        preview.Hold();
+    }
+
+    public void Update()
+    {
+        if (connection is not { } open || disposed)
+        {
+            return;
+        }
+        preview.Hold();
+        _ = open.Send(new UpdateXamlMessage { Xaml = preview.Document.Document.Text.Snapshot.ToString(), AssemblyPath = output, XamlFileProjectPath = preview.ProjectPath() });
+    }
+
+    public void Rescale(double scaling)
+    {
+        if (connection is { } open && !disposed)
+        {
+            _ = open.Send(new ClientRenderInfoMessage { DpiX = 96 * scaling, DpiY = 96 * scaling });
+        }
+    }
+
+    private void Connected(IAvaloniaRemoteTransportConnection opened)
+    {
+        if (disposed)
+        {
+            opened.Dispose();
+            return;
+        }
+        connection = opened;
+        opened.OnMessage += (_, message) => UiThread.Post(() => Received(opened, message));
+        opened.OnException += (_, error) => UiThread.Post(() => preview.Say($"The previewer's connection failed: {error.Message}"));
+        opened.Start();
+        double dpi = 96 * preview.Scaling;
+        _ = opened.Send(new ClientSupportedPixelFormatsMessage { Formats = [RemoteFormat.Bgra8888, RemoteFormat.Rgba8888] });
+        _ = opened.Send(new ClientRenderInfoMessage { DpiX = dpi, DpiY = dpi });
+        Update();
+    }
+
+    private void Received(IAvaloniaRemoteTransportConnection from, object message)
+    {
+        if (disposed || from != connection)
+        {
+            return;
+        }
+        switch (message)
+        {
+            case RequestViewportResizeMessage resize:
+                // Only said, never answered: an allocation in reply lays a root sized to its content out again, which asks
+                // again, frame after frame. A root of no size (hidden, or empty with no design size) is never drawn.
+                empty = resize.Width < 1 || resize.Height < 1;
+                break;
+            case UpdateXamlResultMessage result:
+                preview.Error = result.Error is { Length: > 0 } ? Describe(result) : null;
+                if (preview.Error is not null)
+                {
+                    preview.Let();
+                }
+                else if (preview.Frame is null || Math.Abs(drawnAt - (96 * preview.Scaling)) > 0.5)
+                {
+                    // The host's window takes its scale from what arrives once it exists; a reload keeps the one it had.
+                    double scale = 96 * preview.Scaling;
+                    _ = from.Send(new ClientRenderInfoMessage { DpiX = scale, DpiY = scale });
+                }
+                preview.Status = preview.Error is null ? "Live" : "The XAML did not load";
+                if (preview.Error is null && empty)
+                {
+                    preview.Frame = null;
+                    preview.Status = "Nothing to draw: the root is 0 × 0 (hidden, or sized to content with none and no d:DesignWidth and d:DesignHeight)";
+                    preview.Let();
+                }
+                preview.Tell();
+                break;
+            case FrameMessage frame:
+                Draw(frame);
+                if (starting is { } clock)
+                {
+                    starting = null;
+                    IdeErrors.Write($"Preview of {Path.GetFileName(preview.Document.Document.Path)}: first frame {frame.Width}x{frame.Height} after {clock.ElapsedMilliseconds} ms");
+                }
+                _ = from.Send(new FrameReceivedMessage { SequenceId = frame.SequenceId });
+                preview.Status = "Live";
+                preview.Tell();
+                preview.Let();
+                break;
+        }
+    }
+
+    /// <summary>A frame's pixels in a bitmap the pane shows, row by row as its stride lays them out.</summary>
+    private void Draw(FrameMessage frame)
+    {
+        if (frame.Width <= 0 || frame.Height <= 0 || frame.Data is null)
+        {
+            return;
+        }
+        Avalonia.Platform.PixelFormat format = frame.Format == RemoteFormat.Rgba8888 ? Avalonia.Platform.PixelFormat.Rgba8888 : Avalonia.Platform.PixelFormat.Bgra8888;
+        WriteableBitmap bitmap = new(new PixelSize(frame.Width, frame.Height), new Vector(96, 96), format, AlphaFormat.Premul);
+        using (ILockedFramebuffer target = bitmap.Lock())
+        {
+            int row = frame.Width * 4;
+            for (int y = 0; y < frame.Height; y++)
+            {
+                System.Runtime.InteropServices.Marshal.Copy(frame.Data, y * frame.Stride, target.Address + (y * target.RowBytes), row);
+            }
+        }
+        preview.Frame = bitmap;
+        drawnAt = frame.DpiX;
+        preview.FrameSize = new Size(frame.Width * 96 / frame.DpiX, frame.Height * 96 / frame.DpiY);
+    }
+
+    /// <summary>What the host said of a XAML it could not load, with the line it names.</summary>
+    private static string Describe(UpdateXamlResultMessage result)
+    {
+        if (result.Exception is { } details)
+        {
+            string where = details.LineNumber is { } line ? $" (line {line}{(details.LinePosition is { } column ? $", column {column}" : string.Empty)})" : string.Empty;
+            return $"{details.ExceptionType}: {details.Message}{where}";
+        }
+        return result.Error.Split('\n')[0].Trim();
+    }
+
+    /// <summary>A line the host printed, kept for what is said if it ends.</summary>
+    private void Heard(string? line)
+    {
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            return;
+        }
+        lock (said)
+        {
+            said.Enqueue(line);
+            while (said.Count > 5)
+            {
+                said.Dequeue();
+            }
+        }
+    }
+
+    private void Ended(Process ended)
+    {
+        if (disposed || ended != host)
+        {
+            return;
+        }
+        string last;
+        lock (said)
+        {
+            last = said.LastOrDefault() ?? "it said nothing";
+        }
+        preview.Let();
+        preview.Say($"The previewer ended: {last}");
+    }
+
+    /// <summary>Avalonia's previewer host in the project's Avalonia package: the newest of its tools/ frameworks that is not
+    /// newer than the project's.</summary>
+    private static string? HostApp(ProjectInputs inputs)
+    {
+        if (!inputs.PackageFolders.TryGetValue("Avalonia", out string? package) || !Directory.Exists(Path.Combine(package, "tools")))
+        {
+            return null;
+        }
+        Version target = XamlPreview.Framework(inputs.TargetFramework) ?? new Version(99, 0);
+        return Directory.EnumerateDirectories(Path.Combine(package, "tools"))
+            .Select(d => (Folder: d, Version: XamlPreview.Framework(Path.GetFileName(d))))
+            .Where(d => d.Version is not null && d.Version <= target)
+            .OrderByDescending(d => d.Version)
+            .Select(d => Path.Combine(d.Folder, "designer", "Avalonia.Designer.HostApp.dll"))
+            .FirstOrDefault(File.Exists);
+    }
+
+    private static int FreePort()
+    {
+        TcpListener free = new(IPAddress.Loopback, 0);
+        free.Start();
+        int port = ((IPEndPoint)free.LocalEndpoint).Port;
+        free.Stop();
+        return port;
+    }
+
+    public void Dispose()
+    {
+        disposed = true;
+        connection?.Dispose();
+        connection = null;
+        listening?.Dispose();
+        listening = null;
+        if (host is { } running)
+        {
+            host = null;
+            ChildProcesses.Kill(running);
+            running.Dispose();
+        }
+    }
+}

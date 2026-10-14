@@ -55,6 +55,13 @@ public sealed class XamlService : IDisposable
 
     public IReadOnlyCollection<XamlDocument> Documents => documents.Values;
 
+    /// <summary>An open XAML file's text as it stands, by its path; null when it is not open.</summary>
+    public TextSnapshot? OpenText(string path)
+    {
+        UiThread.Check();
+        return documents.Keys.FirstOrDefault(d => PathNames.Same(d.Path, path))?.Text.Snapshot;
+    }
+
     /// <summary>Gives an open XAML file of a C# project its share of the project's XAML, and follows an open C# file as it
     /// is typed, so the XAML naming its types sees them.</summary>
     public void Attach(OpenDocument document)
