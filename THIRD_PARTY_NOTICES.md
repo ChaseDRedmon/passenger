@@ -325,6 +325,14 @@ dealings in these Data Files or Software without prior written
 authorization of the copyright holder.
 ```
 
+## XAML Styler
+
+The attribute ordering rule groups Reformat Code puts XAML's attributes in when asked
+(`XamlFormatSettings.DefaultAttributeOrder` in `src/Passenger.Xaml/Features/XamlFormatSettings.cs`) are XAML Styler's
+defaults, its `AttributeOrderingRuleGroups` in `src/XamlStyler/Options/StylerOptions.cs`
+(https://github.com/Xavalon/XamlStyler), as are the names of the options Passenger shares with it (Enable attribute
+reordering, Remove ending tag of empty element); (c) Xavalon. All rights reserved., under the Apache License 2.0 below.
+
 ## TextMate grammars
 
 `src/Passenger.Languages/TextMate/Grammars/` holds the TextMate grammars that colour the files beside the C#, each a

@@ -19,8 +19,15 @@ public sealed record XamlDiagnostic(TextRange Range, XamlSeverity Severity, stri
 }
 
 /// <summary>A quick fix: its title, the file it changes, and its edits made from that file's text as it is when the fix
-/// is chosen.</summary>
-public sealed record XamlFix(string Title, string Path, Func<string, IReadOnlyList<TextEdit>> Edits);
+/// is chosen; with what its list says beside its title, and the other files it changes or makes with it.</summary>
+public sealed record XamlFix(string Title, string Path, Func<string, IReadOnlyList<TextEdit>> Edits)
+{
+    /// <summary>What the list of fixes says beside it; the file it changes when null.</summary>
+    public string? Detail { get; init; }
+
+    /// <summary>The files it changes or makes beyond <see cref="Path"/>, made with it as one command.</summary>
+    public IReadOnlyList<XamlFileChange> Others { get; init; } = [];
+}
 
 /// <summary>The problems Avalonia's XAML compiler would find, found as the file is typed: markup that is not
 /// well-formed, an undeclared prefix, a type, property, event handler, markup extension or directive nothing resolves, a
@@ -315,7 +322,7 @@ public static class XamlDiagnostics
         }
     }
 
-    private static void Extension(XamlFile file, XmlAttribute attribute, MarkupExtension extension, List<XamlDiagnostic> found)
+    private static void Extension(XamlFile file, XmlAttribute attribute, MarkupExtension extension, List<XamlDiagnostic> found, string? within = null)
     {
         XmlElement element = attribute.Owner;
         if (extension.Name.Length == 0)
@@ -338,13 +345,13 @@ public static class XamlDiagnostics
         {
             if (argument.Nested is { } nested)
             {
-                Extension(file, attribute, nested, found);
+                Extension(file, attribute, nested, found, argument.Key);
             }
         }
         switch (extension.LocalName)
         {
             case "StaticResource" or "DynamicResource" when extension.Argument(null) is { Nested: null, Value.Length: > 0 } key:
-                Resource(file, key, dynamic: extension.LocalName == "DynamicResource", found);
+                Resource(file, key, dynamic: extension.LocalName == "DynamicResource", found, converter: within == "Converter");
                 break;
             case "Binding" or "CompiledBinding" when !language:
                 Binding(file, attribute, extension, found);
@@ -368,8 +375,9 @@ public static class XamlDiagnostics
     }
 
     /// <summary>A resource key nothing the file reaches defines: an error for a static resource, which Avalonia looks up
-    /// once and must find; a warning for a dynamic one, which may come later (a theme the app loads).</summary>
-    private static void Resource(XamlFile file, MarkupArgument key, bool dynamic, List<XamlDiagnostic> found)
+    /// once and must find; a warning for a dynamic one, which may come later (a theme the app loads). A binding's
+    /// converter nothing defines offers to create its class and resource.</summary>
+    private static void Resource(XamlFile file, MarkupArgument key, bool dynamic, List<XamlDiagnostic> found, bool converter = false)
     {
         XamlProject project = file.Project;
         XamlFileSummary own = project.Files.TryGetValue(file.Path, out XamlFileSummary? summary) ? summary : XamlFileSummary.Of(file.Path, file.Tree, project.ResolveSource);
@@ -391,7 +399,10 @@ public static class XamlDiagnostics
         {
             return;
         }
-        found.Add(new XamlDiagnostic(key.ValueRange, dynamic ? XamlSeverity.Warning : XamlSeverity.Error, $"Resource '{key.Value}' is not found"));
+        found.Add(new XamlDiagnostic(key.ValueRange, dynamic ? XamlSeverity.Warning : XamlSeverity.Error, $"Resource '{key.Value}' is not found")
+        {
+            Fixes = converter && CreateFromUsage.Converter(file, key.Value) is { } create ? [create] : [],
+        });
     }
 
     /// <summary>Whether any of the project's XAML files defines a key, where a file this one reaches only through code
@@ -427,8 +438,10 @@ public static class XamlDiagnostics
         }
         int at = path.ValueStart + (path.Value.Length - text.Length);
         ClrType current = type;
-        foreach (string step in text.Split('.'))
+        string[] steps = text.Split('.');
+        for (int i = 0; i < steps.Length; i++)
         {
+            string step = steps[i];
             ClrMember? property = file.Types.MembersOf(current).FirstOrDefault(m => m.Kind is MemberKind.Property or MemberKind.Method && !m.IsStatic && m.Name == step);
             if (property is null)
             {
@@ -437,9 +450,13 @@ public static class XamlDiagnostics
                 {
                     return;
                 }
+                // Rider's create from usage: the property on the type, typed as the binding's target reads it when it is the last step.
+                IReadOnlyList<XamlFix> fixes = CreateFromUsage.Property(file, current, step, attribute, last: i == steps.Length - 1 && binding.Argument("Converter") is null) is { } create
+                    ? [create]
+                    : [];
                 found.Add(compiled
-                    ? new XamlDiagnostic(new TextRange(at, step.Length), XamlSeverity.Error, $"Cannot resolve property '{step}' on {current.Name}")
-                    : new XamlDiagnostic(new TextRange(at, step.Length), XamlSeverity.Warning, $"Cannot resolve property '{step}' in data context of type {current.Name}"));
+                    ? new XamlDiagnostic(new TextRange(at, step.Length), XamlSeverity.Error, $"Cannot resolve property '{step}' on {current.Name}") { Fixes = fixes }
+                    : new XamlDiagnostic(new TextRange(at, step.Length), XamlSeverity.Warning, $"Cannot resolve property '{step}' in data context of type {current.Name}") { Fixes = fixes });
                 return;
             }
             if (file.Types.Resolve(property.Type) is not { } next || next.FullName == "System.Object")
