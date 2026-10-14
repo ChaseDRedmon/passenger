@@ -175,6 +175,14 @@ public sealed class XamlProject
 
     public XamlFileSummary? Application => Files.Values.FirstOrDefault(f => f.IsApplication);
 
+    /// <summary>Whether a <c>{Binding}</c> compiles by default: the project's <c>AvaloniaUseCompiledBindingsByDefault</c>,
+    /// else Avalonia's own default, on from Avalonia 12.</summary>
+    public bool CompilesBindings => compiles ??= Inputs.PropertyValue("AvaloniaUseCompiledBindingsByDefault") is { } set
+        ? string.Equals(set, "true", StringComparison.OrdinalIgnoreCase)
+        : Inputs.PackageVersions.TryGetValue("Avalonia", out string? version) && int.TryParse(version.Split('.')[0], System.Globalization.CultureInfo.InvariantCulture, out int major) && major >= 12;
+
+    private bool? compiles;
+
     /// <summary>A project with its file at <paramref name="path"/> summarised afresh (an open file's text as it stands).</summary>
     public XamlProject With(XamlFileSummary summary)
     {

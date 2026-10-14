@@ -127,6 +127,16 @@ public sealed class XamlService : IDisposable
         }
     }
 
+    /// <summary>A build ended: each open XAML file takes the XAML compiler's problems in it, in place of the last build's.</summary>
+    public void Built(IReadOnlyList<Run.Problem> problems)
+    {
+        UiThread.Check();
+        foreach (XamlDocument document in documents.Values)
+        {
+            document.Built(problems.Where(p => p.Path is { } path && PathNames.Same(path, document.Document.Path)));
+        }
+    }
+
     /// <summary>The load of the project a XAML file is in, begun if it has not been; null for a file in no C# project.
     /// Whether the project's XAML is one Passenger reads is learned off the UI thread, as the load begins.</summary>
     private XamlLoading? ProjectOf(string path)

@@ -1,6 +1,9 @@
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Passenger.App;
+using Passenger.App.Run;
+using Passenger.App.Workspace;
+using Passenger.Core;
 using Passenger.Editor;
 using Passenger.Text;
 
@@ -124,6 +127,92 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
         Ui.Run(window, AppActions.Complete);
         Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("EditorArea"), "Passenger's own controls, from its C#, under their prefix");
         window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_misspelt_property_enum_value_resource_and_binding_path_are_marked_as_typed_listed_in_problems_and_go_once_put_right()
+    {
+        MainWindow window = app.Open(app.PathOf("MainWindow.axaml"));
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        OpenDocument document = window.EditorArea.Active!;
+        Assert.Empty(document.Markers);
+        PlaceAfter(editor, "<Button Name=\"Go\" Content=\"Go\"");
+        window.KeyTextInput(" Foregrund=\"Red\" HorizontalAlignment=\"Centre\"");
+        Replace(editor, "{Binding Greeting}", "{Binding Greting}");
+        Replace(editor, "{StaticResource Accent}", "{StaticResource Acent}");
+        Ui.WaitFor(() => document.Markers.Count(m => m.Kind == MarkerKind.Error) == 4, "the four mistakes marked as errors once typing paused");
+        Assert.Equal("Cannot resolve property 'Foregrund' on Button", MarkerOn(editor, document, "Foregrund").Message);
+        Assert.Equal("'Centre' is not a value of HorizontalAlignment", MarkerOn(editor, document, "Centre").Message);
+        Assert.Equal("Cannot resolve property 'Greting' on MainViewModel", MarkerOn(editor, document, "Greting").Message);
+        Assert.Equal("Resource 'Acent' is not found", MarkerOn(editor, document, "Acent").Message);
+        Ui.WaitFor(() => window.BottomPanel.Problems.FileProblems.Count == 4, "Problems listing the file's four errors");
+        Assert.All(window.BottomPanel.Problems.FileProblems, p => Assert.Equal(ProblemSeverity.Error, p.Severity));
+
+        Replace(editor, "Foregrund", "Foreground");
+        Replace(editor, "Greting", "Greeting");
+        Ui.WaitFor(() => document.Markers.Count == 2, "the two put right no longer marked");
+        Assert.DoesNotContain(document.Markers, m => m.Message.Contains("Foregrund", StringComparison.Ordinal));
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void After_a_build_the_xaml_compilers_error_is_marked_on_its_line_and_listed_with_its_code()
+    {
+        MainWindow window = app.Open(app.PathOf("MainWindow.axaml"));
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        OpenDocument document = window.EditorArea.Active!;
+        // A number the compiler reads: checked by the build alone.
+        PlaceAfter(editor, "<TextBlock Name=\"Title\"");
+        window.KeyTextInput(" Width=\"wide\"");
+        Ui.Settle();
+        Assert.Empty(document.Markers);
+        Ui.Run(window, AppActions.Build);
+        Ui.Settle();
+        Problem built = Assert.Single(window.BottomPanel.Problems.Problems, p => p.Code == "AVLN1000");
+        Assert.Equal(PathNames.Canonical(app.PathOf("MainWindow.axaml")), built.Path);
+        Assert.Equal(editor.Document.Snapshot.GetLineFromOffset(editor.Document.Snapshot.ToString().IndexOf("Width=\"wide\"", StringComparison.Ordinal)), built.Position.Line);
+        Marker marked = MarkerOn(editor, document, "Width");
+        Assert.Equal(MarkerKind.Error, marked.Kind);
+        Assert.Equal("AVLN1000: The input string 'wide' was not in a correct format.", marked.Message);
+
+        // The line edited, the build's word on it is the build's, no longer this text's.
+        Replace(editor, "\"wide\"", "\"120\"");
+        Ui.Settle();
+        Assert.Empty(document.Markers);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void Passengers_own_xaml_which_compiles_is_marked_with_no_problem()
+    {
+        MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false };
+        window.Show();
+        string[] files = [.. Directory.EnumerateFiles(Path.Combine(Repository, "src", "Passenger.App"), "*.axaml", SearchOption.AllDirectories).Order(StringComparer.Ordinal)];
+        Assert.True(files.Length >= 9, $"Passenger.App has only {files.Length} XAML files");
+        foreach (string file in files)
+        {
+            window.OpenFile(file);
+            Ui.Settle();
+            OpenDocument document = window.EditorArea.Active!;
+            Assert.True(window.XamlService.For(document)?.IsLoaded, $"{Path.GetFileName(file)} was not read as XAML");
+            Assert.True(document.Markers.Count == 0,
+                $"{Path.GetFileName(file)}, which compiles, is marked: {string.Join("; ", document.Markers.Select(m => $"{document.Text.Snapshot.GetPosition(m.Range.Start).Line + 1}: {m.Message}"))}");
+        }
+        window.Close();
+    }
+
+    /// <summary>The one marker over a stretch of the text.</summary>
+    private static Marker MarkerOn(CodeEditor editor, OpenDocument document, string stretch)
+    {
+        string text = editor.Document.Snapshot.ToString();
+        return Assert.Single(document.Markers, m => m.Range.End <= text.Length && text[m.Range.Start..m.Range.End] == stretch);
+    }
+
+    private static void Replace(CodeEditor editor, string what, string with)
+    {
+        int at = editor.Document.Snapshot.ToString().IndexOf(what, StringComparison.Ordinal);
+        Assert.True(at >= 0, $"'{what}' is not in the file");
+        editor.ApplyEdits([new TextEdit(at, what.Length, with)]);
     }
 
     /// <summary>The repository the tests were built from.</summary>

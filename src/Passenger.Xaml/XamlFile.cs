@@ -45,6 +45,9 @@ public enum XamlAttributeKind
     /// <summary>In an ignorable namespace (<c>d:DesignWidth</c>, <c>mc:Ignorable</c>).</summary>
     Ignorable,
 
+    /// <summary>A style class an Avalonia element has while its value is true (<c>Classes.selected="{Binding}"</c>).</summary>
+    StyleClass,
+
     /// <summary>Nothing the element's type or its namespaces have.</summary>
     Unknown,
 }
@@ -284,6 +287,10 @@ public sealed class XamlFile
             if (owner is null)
             {
                 return new XamlAttributeMeaning(XamlAttributeKind.Unknown);
+            }
+            if (owner.FullName == "Avalonia.Controls.Classes")
+            {
+                return new XamlAttributeMeaning(XamlAttributeKind.StyleClass, Owner: owner);
             }
             if (Dialect.Attached(Types, owner, name) is { } attachedProperty)
             {

@@ -24,6 +24,28 @@ public sealed record ProjectInputs(
     /// <summary>Whether the project references a package, by its id.</summary>
     public bool Uses(string package) => Packages.Contains(package, StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>The version of each package its restore resolved, by id.</summary>
+    public IReadOnlyDictionary<string, string> PackageVersions { get; init; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>A property as the project sets it: its own file's, else the nearest Directory.Build.props' above it; null
+    /// when neither sets it plainly (without other properties in it).</summary>
+    public string? PropertyValue(string name)
+    {
+        if (Property(Load(ProjectPath), name) is { } own)
+        {
+            return own;
+        }
+        for (DirectoryInfo? at = new(Folder); at is not null; at = at.Parent)
+        {
+            string props = Path.Combine(at.FullName, "Directory.Build.props");
+            if (File.Exists(props))
+            {
+                return Property(Load(props), name);
+            }
+        }
+        return null;
+    }
+
     /// <summary>Reads a project's inputs; <paramref name="dotnetRoot"/> is the folder of the <c>dotnet</c> that builds it,
     /// whose <c>packs/</c> hold the framework's reference assemblies.</summary>
     public static ProjectInputs Read(string projectPath, string? dotnetRoot)
@@ -36,7 +58,8 @@ public sealed record ProjectInputs(
         List<string> projectReferences = [];
         List<string> packages = [];
         string? framework = null;
-        if (assets is not null && ReadAssets(assets) is { } read)
+        Assets? read = assets is null ? null : ReadAssets(assets);
+        if (read is not null)
         {
             framework = read.Framework;
             references.AddRange(read.Compile);
@@ -70,7 +93,10 @@ public sealed record ProjectInputs(
             }
         }
         return new ProjectInputs(projectPath, assemblyName, framework, references, projectReferences, SourceFilesOf(folder),
-            ImplicitUsingsOf(assets), assets, packages);
+            ImplicitUsingsOf(assets), assets, packages)
+        {
+            PackageVersions = read?.Versions ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+        };
     }
 
     /// <summary>The files an item type of the project file includes (<c>AvaloniaResource</c>), its globs expanded and its
@@ -176,7 +202,8 @@ public sealed record ProjectInputs(
         return null;
     }
 
-    private sealed record Assets(string Framework, List<string> Compile, List<string> Projects, List<string> FrameworkReferences, List<string> Packages);
+    private sealed record Assets(string Framework, List<string> Compile, List<string> Projects, List<string> FrameworkReferences, List<string> Packages,
+        Dictionary<string, string> Versions);
 
     private static Assets? ReadAssets(string path)
     {
@@ -200,6 +227,7 @@ public sealed record ProjectInputs(
             List<string> compile = [];
             List<string> projects = [];
             List<string> packages = [];
+            Dictionary<string, string> versions = new(StringComparer.OrdinalIgnoreCase);
             foreach (JsonProperty library in target.Value.EnumerateObject())
             {
                 string type = library.Value.TryGetProperty("type", out JsonElement kind) ? kind.GetString() ?? string.Empty : string.Empty;
@@ -216,7 +244,12 @@ public sealed record ProjectInputs(
                     }
                     continue;
                 }
-                packages.Add(library.Name.Split('/')[0]);
+                string[] idAndVersion = library.Name.Split('/');
+                packages.Add(idAndVersion[0]);
+                if (idAndVersion.Length > 1)
+                {
+                    versions[idAndVersion[0]] = idAndVersion[1];
+                }
                 if (!library.Value.TryGetProperty("compile", out JsonElement assets))
                 {
                     continue;
@@ -250,7 +283,7 @@ public sealed record ProjectInputs(
                     break;
                 }
             }
-            return new Assets(framework, compile, projects, frameworkReferences, packages);
+            return new Assets(framework, compile, projects, frameworkReferences, packages, versions);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException)
         {

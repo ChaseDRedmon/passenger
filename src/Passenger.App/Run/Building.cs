@@ -118,7 +118,8 @@ public static partial class BuildOutput
     }
 
     /// <summary>The location is the parenthesis just before ": error", so the path may hold parentheses of its own
-    /// ("Shop (copy)", "C:\Program Files (x86)").</summary>
-    [GeneratedRegex(@"^\s*(?<file>.*?)(?:\((?<line>\d+)(?:,(?<column>\d+))?(?:[-,]\d+)*\))?\s*:\s*(?<severity>error|warning)\s+(?<code>[A-Za-z]+\d+)\s*:\s*(?<message>.*?)(?:\s+\[(?<project>[^\]]+)\])?\s*$")]
+    /// ("Shop (copy)", "C:\Program Files (x86)"); MSBuild's subcategory may stand before the category (Avalonia's XAML
+    /// compiler's "Avalonia error AVLN2000").</summary>
+    [GeneratedRegex(@"^\s*(?<file>.*?)(?:\((?<line>\d+)(?:,(?<column>\d+))?(?:[-,]\d+)*\))?\s*:\s*(?:[A-Za-z][\w.]*\s+)?(?<severity>error|warning)\s+(?<code>[A-Za-z]+\d+)\s*:\s*(?<message>.*?)(?:\s+\[(?<project>[^\]]+)\])?\s*$")]
     private static partial Regex Diagnostic();
 }

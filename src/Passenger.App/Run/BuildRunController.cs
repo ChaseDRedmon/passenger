@@ -241,6 +241,7 @@ public sealed class BuildRunController
         building = null;
         parts.Views.Build.SetRunning(false);
         ShowProblems();
+        session.Xaml.Built(session.Problems);
         parts.Say(outcome.Message);
         if (ShowsBuildResults(outcome))
         {
