@@ -62,11 +62,11 @@ public sealed partial class McpTests
         Assert.True((await Call(client, "run", new() { ["waitSeconds"] = 0, ["hotReload"] = true })).GetProperty("stillRunning").GetBoolean());
         // dotnet watch watches once it has loaded the project, which is after the program has started.
         string output = string.Empty;
-        for (int i = 0; i < 240 && !(output.Contains("before the edit", StringComparison.Ordinal) && output.Contains("Waiting for changes", StringComparison.Ordinal)); i++)
+        await Waiting.UntilAsync(async () =>
         {
-            await Task.Delay(500, Cancel);
             output = (await Call(client, "run_output", new() { ["lines"] = 100000 })).GetString()!;
-        }
+            return output.Contains("before the edit", StringComparison.Ordinal) && output.Contains("Waiting for changes", StringComparison.Ordinal);
+        }, TimeSpan.FromMinutes(2), Cancel, TimeSpan.FromMilliseconds(500));
         Assert.True(output.Contains("Waiting for changes", StringComparison.Ordinal), $"dotnet watch never watched the program:\n{output[..Math.Min(output.Length, 3000)]}");
 
         await Call(client, "open_file", new() { ["path"] = "Program.cs", ["line"] = 9, ["column"] = 51 });
@@ -74,11 +74,11 @@ public sealed partial class McpTests
         JsonElement applied = await Call(client, "hot_reload");
         Assert.True(applied.GetProperty("result").GetString() == "applied" && applied.GetProperty("said").GetString()!.Contains("dotnet watch applied the changes", StringComparison.Ordinal),
             $"dotnet watch did not apply the saved edit: {applied}\n{(await Call(client, "run_output")).GetString()}");
-        for (int i = 0; i < 60 && !output.Contains("before the edit, edited", StringComparison.Ordinal); i++)
+        await Waiting.UntilAsync(async () =>
         {
-            await Task.Delay(500, Cancel);
             output = (await Call(client, "run_output")).GetString()!;
-        }
+            return output.Contains("before the edit, edited", StringComparison.Ordinal);
+        }, TimeSpan.FromSeconds(30), Cancel, TimeSpan.FromMilliseconds(500));
         Assert.True(output.Contains("before the edit, edited", StringComparison.Ordinal), $"The running program never ran the edit:\n{output[Math.Max(0, output.Length - 3000)..]}");
         await Call(client, "stop");
     }

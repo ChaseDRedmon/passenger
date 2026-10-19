@@ -116,12 +116,8 @@ public sealed partial class McpTests
 
         // Once it has ended, the tools say so (a moment after Stop, as the app goes).
         await Call(client, "stop");
-        CallToolResult gone = await Result(client, "app_tree");
-        for (int i = 0; i < 50 && gone.IsError != true; i++)
-        {
-            await Task.Delay(200, Cancel);
-            gone = await Result(client, "app_tree");
-        }
+        CallToolResult gone = null!;
+        await Waiting.UntilAsync(async () => (gone = await Result(client, "app_tree")).IsError == true, TimeSpan.FromSeconds(10), Cancel, TimeSpan.FromMilliseconds(200));
         Assert.True(gone.IsError, "The tree of an app that has ended was answered");
         Assert.Contains("AgentApp has ended", Text(gone), StringComparison.Ordinal);
     }

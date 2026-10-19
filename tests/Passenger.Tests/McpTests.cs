@@ -57,7 +57,7 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
             foreach (Process passenger in passengers)
             {
                 EndInput(passenger);
-                if (!passenger.WaitForExit(MainWindow.EndLimit + TimeSpan.FromSeconds(5)))
+                if (!passenger.WaitForExit(MainWindow.EndLimit + TimeSpan.FromSeconds(5).Scaled()))
                 {
                     ChildProcesses.Kill(passenger);
                 }
@@ -265,8 +265,8 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
             program = await held;
 
             Assert.Equal("Stopped", (await Call(client, "stop")).GetString());
-            Assert.True(await Task.WhenAny(debugging, Task.Delay(TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken)) == debugging,
-                $"debug_start still waited for the program 15 s after the agent's stop{Said()}");
+            Assert.True(await Waiting.Within(debugging, TimeSpan.FromSeconds(15), TestContext.Current.CancellationToken),
+                $"debug_start still waited for the program {TimeSpan.FromSeconds(15).Scaled().TotalSeconds} s after the agent's stop{Said()}");
             CallToolResult stopped = await debugging;
             Assert.True(stopped.IsError == true && Words(stopped).Contains("Debugging Sum: Held was stopped as it started", StringComparison.Ordinal),
                 $"debug_start, stopped as it started, answered: {Words(stopped)}");
@@ -932,7 +932,7 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
             {
                 await client.DisposeAsync();
                 client = null;
-                Assert.True(passenger.WaitForExit(MainWindow.EndLimit + TimeSpan.FromSeconds(5)), "Passenger did not end once its agent left");
+                Assert.True(passenger.WaitForExit(MainWindow.EndLimit + TimeSpan.FromSeconds(5).Scaled()), "Passenger did not end once its agent left");
             }
             string[] running = [.. left.Where(id => !Processes.Gone(id)).Select(Processes.Describe)];
             Assert.True(running.Length == 0, $"After Passenger {(killed ? "was killed" : "ended")}, {running.Length} of the {left.Count} processes its build left went on:\n{string.Join('\n', running)}");
@@ -965,13 +965,8 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
     /// no build could leave a node to see end.</summary>
     private static async Task UntilMSBuildKeepsNodes()
     {
-        DateTime until = DateTime.UtcNow + TimeSpan.FromMinutes(2);
-        (int counted, int most) = Processes.MSBuildNodesCounted();
-        while (counted > most && DateTime.UtcNow < until)
-        {
-            await Task.Delay(500);
-            (counted, most) = Processes.MSBuildNodesCounted();
-        }
+        (int counted, int most) = (0, 0);
+        await Waiting.UntilAsync(() => ((counted, most) = Processes.MSBuildNodesCounted()).counted <= most, TimeSpan.FromMinutes(2), every: TimeSpan.FromMilliseconds(500));
         Assert.SkipWhen(counted > most,
             $"MSBuild keeps no node for the next build while it counts more than {most} nodes (the MSBuild executable's, which its server starts), and {counted} still ran after two minutes");
     }
@@ -1345,7 +1340,7 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
                 {
                     window.KeyTextInput("x");
                     typed++;
-                    Screenshot.Pump(TimeSpan.FromMilliseconds(50));
+                    Ui.Hold(TimeSpan.FromMilliseconds(50), "a pause between keys, as a person types");
                 }
                 waits.Stop();
                 longest = waits.Longest;
@@ -1422,7 +1417,7 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
 
     /// <summary>Longer than any one exchange may take, for a wait on an agent's calls, whose own limits fail first and
     /// name the call.</summary>
-    private static readonly TimeSpan AgentLimit = TimeSpan.FromMinutes(6);
+    private static readonly TimeSpan AgentLimit = TimeSpan.FromMinutes(6).Scaled();
 
     private static CancellationToken Cancel => TestContext.Current.CancellationToken;
 
@@ -1659,6 +1654,7 @@ public sealed partial class McpTests : IClassFixture<RestoredFolders>, IClassFix
     {
         CancellationToken given = giveUp?.Token ?? default;
         using CancellationTokenSource timer = CancellationTokenSource.CreateLinkedTokenSource(Cancel, given);
+        limit = limit.Scaled();
         timer.CancelAfter(limit);
         try
         {

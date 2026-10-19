@@ -282,14 +282,10 @@ public sealed partial class McpTests
     /// <summary>Waits off the UI thread for a condition, failing with what Passenger said meanwhile.</summary>
     private async Task Until(Func<bool> condition, string what)
     {
-        DateTime end = DateTime.UtcNow + TimeSpan.FromMinutes(2);
-        while (!condition())
+        TimeSpan limit = TimeSpan.FromMinutes(2);
+        if (!await Waiting.UntilAsync(condition, limit, Cancel, TimeSpan.FromMilliseconds(100)))
         {
-            if (DateTime.UtcNow > end)
-            {
-                throw new TimeoutException($"Waited 120 s for {what}.{Said()}");
-            }
-            await Task.Delay(100, Cancel);
+            throw new TimeoutException($"Waited {limit.Scaled().TotalSeconds} s for {what}.{Said()}");
         }
     }
 }
