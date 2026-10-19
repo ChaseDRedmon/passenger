@@ -778,7 +778,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
     [AvaloniaFact]
     public void Each_launch_profile_is_a_run_configuration_whose_arguments_and_environment_the_program_gets_in_the_projects_folder()
     {
-        Write("src/Hello/Program.cs", "Console.WriteLine($\"{Environment.GetEnvironmentVariable(\"GREETING\")} [{string.Join(\"|\", args)}] in {Environment.CurrentDirectory}\");\n");
+        Write("src/Hello/Program.cs", "Console.WriteLine($\"{Environment.GetEnvironmentVariable(\"GREETING\")} [{string.Join(\"|\", args)}] in {Environment.CurrentDirectory}.\");\n");
         Write("src/Hello/Properties/launchSettings.json", """
             {
               // Comments and trailing commas, as Visual Studio writes them.
@@ -792,7 +792,7 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
         // A profile that runs something else (a container here) is listed, as Rider lists it, and says why it does not run.
         Assert.Equal(["Hello: Greet", "Hello: Docker"], window.Configurations.Select(c => c.Name));
         // A profile that names no working folder runs in the project's, as Run, Debug and Profile all do (one LaunchPlan).
-        Assert.Contains($"Hi [--name|Ada Lovelace] in {Passenger.Core.PathNames.Canonical(Path.Combine(folder, "src", "Hello"))}", RunToEnd(window), StringComparison.Ordinal);
+        Assert.Contains($"Hi [--name|Ada Lovelace] in {Passenger.Core.PathNames.Canonical(Path.Combine(folder, "src", "Hello"))}.", RunToEnd(window), StringComparison.Ordinal);
 
         // Arguments given for one run replace the profile's, and its environment stays.
         Ui.Launched(window, window.RunAsync("one \"two three\""), "the run to start", TimeSpan.FromMinutes(2));
