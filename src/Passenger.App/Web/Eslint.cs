@@ -268,15 +268,40 @@ public sealed class EslintService : IAsyncDisposable
     private void Hear(LanguageSession started)
     {
         LanguageServer server = started.Server;
+        // Touched only by the server's messages, which come one at a time in order: its catch-all's first line, held for the
+        // error it introduces, and whether the error was a missing configuration, for the file's status that follows.
+        string? introduced = null;
+        bool configMissing = false;
         server.Logged += (_, message) =>
         {
-            if (message.Type is 1 or 2)
+            if (message.Type is not (1 or 2))
             {
-                IdeErrors.Write($"ESLint language server (process {server.ProcessId}) {(message.Type == 1 ? "error" : "warning")}: {message.Message}");
+                return;
             }
+            if (message.Message == UnexpectedError)
+            {
+                introduced = message.Message;
+                return;
+            }
+            string said = introduced is null ? message.Message : $"{introduced} {message.Message}";
+            introduced = null;
+            if (IsConfigMissing(message.Message))
+            {
+                configMissing = true;
+                return;
+            }
+            IdeErrors.Write($"ESLint language server (process {server.ProcessId}) {(message.Type == 1 ? "error" : "warning")}: {said}");
         };
         server.Shown += (_, message) => IdeErrors.Write($"ESLint language server (process {server.ProcessId}) says: {message.Message}");
-        server.Said += (_, message) => UiThread.Post(() => Heard(started, message));
+        server.Said += (_, message) =>
+        {
+            bool unconfigured = false;
+            if (message.Method == "eslint/status")
+            {
+                (unconfigured, configMissing) = (configMissing, false);
+            }
+            UiThread.Post(() => Heard(started, message, unconfigured));
+        };
         server.DiagnosticsRefreshRequested += (_, _) => UiThread.Post(() =>
         {
             if (session == started)
@@ -306,8 +331,25 @@ public sealed class EslintService : IAsyncDisposable
         });
     }
 
-    /// <summary>One of the server's own messages: a rule's page to open, or a file it cannot check, said once.</summary>
-    private void Heard(LanguageSession from, ServerMessage message)
+    /// <summary>The first line vscode-eslint's catch-all writes before the error's stack, as a message of its own.</summary>
+    private const string UnexpectedError = "An unexpected error occurred:";
+
+    /// <summary>Whether what the server logged is ESLint's flat configuration not found (ESLint 9 on: its
+    /// config-file-missing, which vscode-eslint, knowing only eslintrc's no-config-found, takes for a failure): a project
+    /// with eslint installed and no configuration, which is an answer for the status bar, not an error for the log.</summary>
+    private static bool IsConfigMissing(string logged)
+    {
+        string first = logged.Split('\n', 2)[0].Trim();
+        foreach (string lead in (string[])["An unexpected error occurred: ", "Error: "])
+        {
+            first = first.StartsWith(lead, StringComparison.Ordinal) ? first[lead.Length..] : first;
+        }
+        return first.StartsWith("Could not find config file", StringComparison.Ordinal);
+    }
+
+    /// <summary>One of the server's own messages: a rule's page to open, or a file it cannot check, said once; a file's
+    /// status after its configuration was not found (<paramref name="unconfigured"/>) is said as eslint/noConfig is.</summary>
+    private void Heard(LanguageSession from, ServerMessage message, bool unconfigured)
     {
         if (session != from)
         {
@@ -324,6 +366,9 @@ public sealed class EslintService : IAsyncDisposable
                 break;
             case "eslint/noConfig" when said.Add(message.Method + Document()):
                 Message?.Invoke(this, $"ESLint: no configuration found for {Document() ?? "the file"}, so it is not checked");
+                break;
+            case "eslint/status" when unconfigured && Text("uri") is { } uri && Path.GetFileName(DocumentUris.ToPath(uri)) is { } name && said.Add("eslint/noConfig" + name):
+                Message?.Invoke(this, $"ESLint: no configuration found for {name}, so it is not checked");
                 break;
             case "eslint/noLibrary" when said.Add(message.Method + Document()):
                 Message?.Invoke(this, $"ESLint: the eslint package could not be loaded for {Document() ?? "the file"}");

@@ -76,6 +76,31 @@ public sealed class EslintPrettierTests : IClassFixture<EslintPrettierTests.Proj
     }
 
     [AvaloniaFact]
+    public void A_project_with_eslint_and_no_configuration_says_so_in_the_status_bar_and_logs_no_error()
+    {
+        Project.SkipWithoutNode();
+        File.Delete(Path.Combine(project.Folder, "eslint.config.js"));
+        IdeErrors.Flush();
+        int logged = Ui.Shared(IdeErrors.LogPath).Length;
+        MainWindow window = project.Open("src/app.js");
+        try
+        {
+            // The server logs what it found before it tells the file's status, which the status bar says.
+            Ui.WaitFor(() => window.Status == "ESLint: no configuration found for app.js, so it is not checked", "the status bar to say app.js has no ESLint configuration");
+            IdeErrors.Flush();
+            string log = Ui.Shared(IdeErrors.LogPath);
+            string since = log.Length >= logged ? log[logged..] : log;
+            Assert.False(since.Contains("Could not find config file", StringComparison.Ordinal) || since.Contains("An unexpected error occurred", StringComparison.Ordinal),
+                $"A project with eslint and no configuration put an ESLint error in passenger.log: {string.Join('\n', since.Split('\n').Where(l => l.Contains("ESLint", StringComparison.Ordinal)).Take(5))}");
+        }
+        finally
+        {
+            window.Close();
+            project.Reset();
+        }
+    }
+
+    [AvaloniaFact]
     public void Fix_ESLint_Problems_fixes_the_whole_file_and_a_save_fixes_first_when_Settings_ask_and_Disabled_takes_ESLints_problems_away()
     {
         Project.SkipWithoutNode();
