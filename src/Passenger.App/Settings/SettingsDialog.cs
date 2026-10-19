@@ -393,8 +393,10 @@ public sealed partial class SettingsDialog : Window
         const string Discord = "discord rich presence activity status playing";
         Add(DiscordPage, "Show activity in Discord", discord, $"{Discord} friends share game",
             "Discord shows Playing Passenger with its icon, what is chosen below and how long the solution has been open, to "
-            + "whoever can see your activity. Passenger tells the Discord app on this computer alone.");
-        Add(DiscordPage, "Show", shows, $"{Discord} solution project file name details visibility privacy");
+            + "whoever can see your activity. Passenger tells the Discord app on this computer alone. Off, it tells Discord nothing.");
+        Add(DiscordPage, "Show", shows, $"{Discord} solution project file name details visibility privacy",
+            "Passenger only: that you are using Passenger, and nothing of your work. The solution: its name too. The solution and "
+            + "the file: the name of the file you are editing as well. Whoever can see your Discord activity sees these names.");
         Add(DiscordPage, "Only Passenger when idle for", new StackPanel
         {
             Orientation = Orientation.Horizontal,

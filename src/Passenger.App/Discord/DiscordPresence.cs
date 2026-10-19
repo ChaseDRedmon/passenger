@@ -4,8 +4,8 @@ using System.Threading.Channels;
 
 namespace Passenger.App.Discord;
 
-/// <summary>What the activity names beyond Passenger itself: the solution (Discord's details line), the file (its state
-/// line) and when the solution opened (its elapsed time), each left out when not shown.</summary>
+/// <summary>The activity's lines and time: Discord's details line (the solution, or Passenger's own words), its state line
+/// (the file, or Passenger's own words) and when the solution opened (its elapsed time), each left out when not shown.</summary>
 public sealed record DiscordActivity(string? Details, string? State, DateTimeOffset? Started);
 
 /// <summary>Passenger's Rich Presence in the Discord app on this computer: Passenger's icon and button with what
@@ -21,7 +21,17 @@ public sealed class DiscordPresence(DiscordIpc ipc, Action<string> log)
     /// <summary>The application's art asset of Passenger's 1024-pixel icon.</summary>
     public const string LargeImage = "passenger-1024";
 
-    public const string LargeText = "Passenger";
+    // Passenger's own words, the site's, wherever the activity names nothing of the work.
+
+    /// <summary>The icon's hover text, whatever the activity names.</summary>
+    public const string LargeText = "Passenger: an IDE for C# and .NET, open to your coding agent";
+
+    /// <summary>The details line of an activity that names nothing of the work (Passenger only, or idle).</summary>
+    public const string OwnDetails = "An IDE for C# and .NET";
+
+    /// <summary>The state line of an activity that names nothing of the work.</summary>
+    public const string OwnState = "Open source · Windows, macOS and Linux";
+
     public const string ButtonLabel = "Get Passenger";
     public const string ButtonUrl = "https://passenger-ide.net";
 

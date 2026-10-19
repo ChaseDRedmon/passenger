@@ -223,12 +223,12 @@ public sealed record AppSettings : IStateDocument<AppSettings>
 
     /// <summary>Show activity in Discord: the Discord app on this computer shows "Playing Passenger" with Passenger's icon
     /// and what <see cref="DiscordShows"/> names to whoever can see the person's activity, as the JetBrains IDEs' Discord
-    /// plugins do. Off until the person turns it on.</summary>
-    public bool ShowInDiscord { get; init; }
+    /// plugins do. On at first, naming nothing of the work; off, Discord is told nothing at all.</summary>
+    public bool ShowInDiscord { get; init; } = true;
 
-    /// <summary>What the activity names beyond Passenger: the solution and the file, as pandier's Discord Rich Presence
-    /// plugin's default visibility (Project and Files) does.</summary>
-    public DiscordShown DiscordShows { get; init; } = DiscordShown.SolutionAndFile;
+    /// <summary>What the activity names beyond Passenger: nothing at first (Passenger's own words and how long the solution
+    /// has been open); the solution, or the solution and the file, only as the person chooses.</summary>
+    public DiscordShown DiscordShows { get; init; } = DiscordShown.PassengerOnly;
 
     /// <summary>Whether the activity names only Passenger once no key, click or scroll has come for
     /// <see cref="DiscordIdleMinutes"/>, as the plugins' idle time does.</summary>
@@ -262,7 +262,20 @@ public sealed record AppSettings : IStateDocument<AppSettings>
     /// style), which Reformat Code lays out Avalonia's and WPF's XAML by, a file's .editorconfig over it.</summary>
     public Passenger.Xaml.Features.XamlFormatSettings XamlFormat { get; init; } = new();
 
-    public static IReadOnlyList<Action<JsonObject>> Upgrades { get; } = [StateStore.Unversioned];
+    public static IReadOnlyList<Action<JsonObject>> Upgrades { get; } = [StateStore.Unversioned, DiscordOnNamingNothing];
+
+    /// <summary>Version 1 to 2, Discord's activity on at first and naming nothing of the work: a file whose activity was not
+    /// turned on holds the old defaults (off, the solution and the file), written with whatever else was changed, so it
+    /// comes up on, naming only Passenger; one the person had turned on keeps what they chose.</summary>
+    private static void DiscordOnNamingNothing(JsonObject settings)
+    {
+        if (settings["showInDiscord"] is JsonValue shown && shown.TryGetValue(out bool on) && on)
+        {
+            return;
+        }
+        settings["showInDiscord"] = true;
+        settings["discordShows"] = nameof(DiscordShown.PassengerOnly);
+    }
 
     /// <summary>A hand-edited or later build's value this build cannot use is brought into range, or back to its default;
     /// a shortcut that does not parse is the keymap's to pass over.</summary>

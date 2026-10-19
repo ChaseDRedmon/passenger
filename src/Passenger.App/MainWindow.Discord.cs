@@ -7,9 +7,10 @@ using Passenger.App.Settings;
 namespace Passenger.App;
 
 /// <summary>Discord Rich Presence, as the JetBrains IDEs' Discord plugins give it: while Settings' Show activity in
-/// Discord is on and a solution is open, the person's own window has Discord show Playing Passenger with its icon, the
-/// solution and the file as Settings says, and the time since the solution opened; only Passenger once the person has
-/// been idle a while; nothing once the setting goes off, the solution closes or Passenger quits. Of several of the
+/// Discord is on (as it is at first) and a solution is open, the person's own window has Discord show Playing Passenger
+/// with its icon, Passenger's own words or, as the person chooses, the solution and the file, and the time since the
+/// solution opened; only Passenger once the person has been idle a while; nothing once the setting goes off, the
+/// solution closes or Passenger quits. Of several of the
 /// person's windows, the one in front alone gives Discord its activity, through the one presence they share
 /// (<see cref="PassengerApp"/>). No other window (a test's, an agent's, a screenshot's) reaches Discord.</summary>
 public partial class MainWindow
@@ -82,8 +83,8 @@ public partial class MainWindow
         discord.Show(ActivityNow());
     }
 
-    /// <summary>The activity: none without a solution, only Passenger while the person is idle, else what Settings
-    /// chose.</summary>
+    /// <summary>The activity: none without a solution, only Passenger (in its own words) while the person is idle, else
+    /// what Settings chose.</summary>
     private DiscordActivity? ActivityNow()
     {
         if (Folder is null)
@@ -92,12 +93,12 @@ public partial class MainWindow
         }
         if (idleInDiscord)
         {
-            return new DiscordActivity(null, null, null);
+            return new DiscordActivity(DiscordPresence.OwnDetails, DiscordPresence.OwnState, null);
         }
         string named = session.Workspace?.Name ?? Path.GetFileName(Folder);
         return settings.DiscordShows switch
         {
-            DiscordShown.PassengerOnly => new DiscordActivity(null, null, solutionOpened),
+            DiscordShown.PassengerOnly => new DiscordActivity(DiscordPresence.OwnDetails, DiscordPresence.OwnState, solutionOpened),
             DiscordShown.Solution => new DiscordActivity(named, null, solutionOpened),
             _ => new DiscordActivity(named, Editors.Active is { } file ? $"Editing {file.Name}" : null, solutionOpened),
         };

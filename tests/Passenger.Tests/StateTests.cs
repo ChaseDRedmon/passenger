@@ -51,7 +51,7 @@ public sealed class StateTests : IDisposable
         window.ApplySettings(window.Settings with { EditorFontSize = 15 });
         window.Close();
         JsonObject written = Read(file);
-        Assert.Equal(1, (int)written["version"]!);
+        Assert.Equal(AppSettings.Upgrades.Count, (int)written["version"]!);
         Assert.Equal(15, (double)written["editorFontSize"]!);
         Assert.Equal(cut, File.ReadAllText(file + ".bad"));
         Assert.Empty(Directory.GetFiles(settings, "*.tmp"));
