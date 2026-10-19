@@ -91,6 +91,31 @@ public sealed class LocalHistoryTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void A_diff_of_a_file_that_fits_opens_at_its_top_though_its_change_is_near_its_end()
+    {
+        string lines = string.Concat(Enumerable.Range(1, 20).Select(i => $"// line {i}\n"));
+        Write("Notes.cs", lines);
+        MainWindow window = Open("Notes.cs");
+        Save(window, 17, 3, "changed ");
+        Save(window, 18, 3, "changed ");
+        ChooseFromEditorMenu(window, "Local History", "Show History...");
+        HistoryTab history = window.LocalHistoryWindow.Shown!;
+        Ui.Landed(() => history.Rows.Count == 2, "the two saves");
+        // Maximized, the window has room for the whole file; the older version's diff opens in that room.
+        window.DockHost.ToggleMaximize(window.DockHost.Windows.Single(w => w.Id == "localHistory"));
+        Ui.Settle();
+        history.Select(history.Rows[1]);
+        Ui.Landed(() => history.Diff?.Left.Document.Snapshot.ToString() == lines, "the file before its first save");
+
+        // The whole file fits the pane, so it opens at its top, its first line whole under the header, as Rider's does.
+        Passenger.Editor.CodeEditor right = history.Diff!.Right;
+        Assert.True(right.Document.Snapshot.LineCount * right.LineHeight <= right.Bounds.Height, "The test's file is taller than the diff's pane");
+        Assert.True(right.ScrollOffset.Y == 0 && history.Diff.Left.ScrollOffset.Y == 0,
+            $"The diff of a file that fits opens scrolled {right.ScrollOffset.Y:0.#} px down, its first line under the header");
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Revert_puts_a_version_back_as_one_undoable_step_and_a_diffs_arrow_puts_back_one_change()
     {
         string shop = Write("Shop.cs", Original);

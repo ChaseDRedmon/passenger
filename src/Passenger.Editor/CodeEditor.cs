@@ -362,8 +362,11 @@ public sealed partial class CodeEditor : Control
             pendingEnd = true;
             return;
         }
-        double bottom = RowCount * metrics.LineHeight - Viewport.Height + horizontal.DesiredSize.Height;
-        ScrollTo(new Vector(0, Math.Max(0, bottom)));
+        // Output that fits stays at its top, its first line whole under the pane's header; longer output ends clear of
+        // the sideways bar drawn over the view's foot.
+        double height = RowCount * metrics.LineHeight;
+        double bottom = height <= Viewport.Height ? 0 : height - Viewport.Height + horizontal.DesiredSize.Height;
+        ScrollTo(new Vector(0, bottom));
     }
 
     /// <summary>When set, the editor resolves its own key presses; an IDE leaves it null and sends
@@ -466,8 +469,10 @@ public sealed partial class CodeEditor : Control
             return;
         }
         double y = RowOfOffset(document.Snapshot, offset, LeansBack(offset)).Row * metrics.LineHeight;
+        // A text that fits stays at its top, its first line whole under what stands above it (a diff's header).
+        bool fits = RowCount * metrics.LineHeight <= Viewport.Height - horizontal.DesiredSize.Height;
         double lastAtFoot = Math.Max(0, RowCount * metrics.LineHeight - Viewport.Height);
-        ScrollTo(new Vector(scroll.X, Math.Min(y - Viewport.Height / 3, lastAtFoot)));
+        ScrollTo(new Vector(scroll.X, fits ? 0 : Math.Min(y - Viewport.Height / 3, lastAtFoot)));
         Reveal(offset);
     }
 
