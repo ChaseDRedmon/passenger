@@ -64,6 +64,15 @@ public partial class MainWindow
                 Bottom.Tests.Status = message;
             }
         };
+        // The Unit Tests window's Stop has something to end only while a run (or a look for the tests) goes on.
+        tests.BusyChanged += (_, _) =>
+        {
+            if (session == next)
+            {
+                Bottom.Tests.IsRunning = tests.IsBusy;
+            }
+        };
+        Bottom.Tests.IsRunning = tests.IsBusy;
         tests.LaunchUnderDebugger = start => LaunchTestHost(next.Debug, start);
         tests.AttachDebugger = processId => AttachTestHost(next.Debug, processId);
         // Rider's system labels: a test run's end.

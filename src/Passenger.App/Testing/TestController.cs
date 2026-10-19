@@ -63,7 +63,24 @@ public sealed class TestController : IAsyncDisposable
     /// <summary>The tests the code declares, which the tree shows before any build.</summary>
     public TestFinder Finder { get; } = new();
 
-    public bool IsBusy { get; private set; }
+    /// <summary>Finding or running tests, the build before included: what Stop ends.</summary>
+    public bool IsBusy
+    {
+        get => busy;
+        private set
+        {
+            if (busy != value)
+            {
+                busy = value;
+                BusyChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    private bool busy;
+
+    /// <summary>Raised when <see cref="IsBusy"/> changes, for the Unit Tests window's Stop.</summary>
+    public event EventHandler? BusyChanged;
 
     /// <summary>The last run's tally, for the window's status line.</summary>
     public string Summary { get; private set; } = string.Empty;

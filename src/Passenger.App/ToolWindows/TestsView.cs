@@ -42,6 +42,7 @@ public sealed class TestsView : DockPanel
     private readonly TextBlock placeholder;
     private readonly TextBox search;
     private readonly Button groupBy;
+    private readonly Button stop;
     private readonly ToggleButton all;
     private readonly TextBlock allCount;
     private readonly Dictionary<TestState, (ToggleButton Button, TextBlock Count)> filters = [];
@@ -182,6 +183,8 @@ public sealed class TestsView : DockPanel
         topBar.Bind(Border.BorderBrushProperty, topBar.GetResourceObservable("Passenger.Divider"));
         ShowFilters();
         ShowPlaceholder();
+        stop = ActionTool(AppActions.StopTests, "Icon.Stop", "Stop");
+        stop.IsEnabled = false;
         StackPanel left = new()
         {
             Spacing = 2,
@@ -193,7 +196,7 @@ public sealed class TestsView : DockPanel
                 ActionTool(AppActions.RunTests, "Icon.RunOutline", "Run Selected Tests"),
                 ActionTool(AppActions.DebugTests, "Icon.Debug", "Debug Selected Tests"),
                 ActionTool(AppActions.RerunFailedTests, "Icon.Rerun", "Rerun Failed Tests"),
-                ActionTool(AppActions.StopTests, "Icon.Stop", "Stop"),
+                stop,
             },
         };
         Border leftBar = new() { [DockProperty] = Dock.Left, Width = 36, BorderThickness = new Thickness(0, 0, 1, 0), Child = left };
@@ -249,6 +252,13 @@ public sealed class TestsView : DockPanel
     {
         get => status.Text ?? string.Empty;
         set => status.Text = value;
+    }
+
+    /// <summary>Tests are being found or run: Stop has something to end, and is disabled while it has not, as Rider's is.</summary>
+    public bool IsRunning
+    {
+        get => stop.IsEnabled;
+        set => stop.IsEnabled = value;
     }
 
     /// <summary>The chosen row's details: a method's results, or the failures under a group, the first hundred of them.</summary>

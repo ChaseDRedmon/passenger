@@ -416,14 +416,23 @@ public sealed class UnitTestsTests : IClassFixture<RestoredFolders>, IDisposable
             "            Thread.Sleep(TimeSpan.FromMinutes(5));\n            yield return new object[] { 1 };\n        }\n    }\n\n" +
             "    [Theory]\n    [MemberData(nameof(Rows))]\n    public void Slow(int value) => Assert.Equal(1, value);\n}\n");
         MainWindow window = Open();
+        // With no run going on, Stop has nothing to end: its button is disabled and looks it, and its action says why.
+        Assert.True(window.Perform(AppActions.ShowTests));
+        Ui.Settle();
+        Button stop = StopButton(window);
+        Assert.False(stop.IsEffectivelyEnabled, "The Unit Tests window's Stop could be pressed with no run going on");
+        Assert.True(stop.GetVisualDescendants().OfType<PathIcon>().Single().Opacity < 1, "The Unit Tests window's Stop looked ready to press with no run going on");
+        Assert.False(window.Perform(AppActions.StopTests), "Stop Unit Tests ran with no run going on");
 
         Assert.True(window.Perform(AppActions.RunAllTests));
         Assert.True(window.IsBuilding, "Run All did not build first");
+        Assert.True(stop.IsEffectivelyEnabled, "The Unit Tests window's Stop was disabled while Run All built");
         // The build's dotnet command starts once the project host has held its design-time builds off.
         Ui.PumpUntil(() => window.Builder.ProcessId is not null, "the build's dotnet command to start");
         int? build = window.Builder.ProcessId;
         Assert.True(window.Perform(AppActions.StopTests));
         Ui.WaitFor(() => !window.Tests.IsBusy, "the run to stop while it builds");
+        Assert.False(stop.IsEffectivelyEnabled, "The Unit Tests window's Stop could still be pressed once the run it stopped had ended");
         Assert.False(window.IsBuilding);
         Assert.True(build is not { } building || Processes.Gone(building), "The build went on after Stop");
         Assert.Equal("Build stopped", window.BottomPanel.Tests.Status);
@@ -946,6 +955,10 @@ public sealed class UnitTestsTests : IClassFixture<RestoredFolders>, IDisposable
 
     private static TestNode? Method(MainWindow window, string name) =>
         window.Tests.Tree.Roots.SelectMany(r => r.Methods).FirstOrDefault(m => m.Name == name);
+
+    /// <summary>The Unit Tests window's Stop, on its toolbar.</summary>
+    private static Button StopButton(MainWindow window) =>
+        window.BottomPanel.Tests.GetVisualDescendants().OfType<Button>().Single(b => ToolTip.GetTip(b) is string tip && tip.StartsWith("Stop", StringComparison.Ordinal));
 
     private MainWindow Open()
     {
