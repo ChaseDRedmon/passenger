@@ -152,6 +152,15 @@ public static class WorkspaceEdits
     /// ones before it leave. The open files a rename moves are saved now, so one that cannot be stops it here too.</summary>
     private static string? Refusal(EditorArea editors, IReadOnlyList<FileEdits> changes)
     {
+        // A read-only file not open would be refused halfway through, the files before it already written.
+        foreach (FileEdits change in changes.Where(c => c.Operation is null))
+        {
+            string path = DocumentUris.ToPath(change.Uri);
+            if (editors.Documents.All(d => d.Path != path) && FileText.IsReadOnly(path))
+            {
+                return $"{Path.GetFileName(path)} is read-only";
+            }
+        }
         Dictionary<string, bool> there = [];
         bool Exists(string path) => there.TryGetValue(path, out bool known) ? known : File.Exists(path) || Directory.Exists(path);
         foreach (Resource resource in changes.Select(c => c.Operation).OfType<JsonElement>().Select(Resource.Read))

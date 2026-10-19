@@ -86,6 +86,7 @@ public partial class MainWindow : Window
         AddFileProperties();
         AddTargetFramework();
         AddAutosave();
+        AddReadOnly();
         AddConflicts();
         AddErrors();
         AddAbout();

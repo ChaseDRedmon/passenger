@@ -74,16 +74,19 @@ public partial class MainWindow
     }
 
     /// <summary>Saves before anything else hears of the close, so the language server and the rest go only once the
-    /// edits are on disk; a file that cannot be written keeps the window open, its edits with it.</summary>
+    /// edits are on disk; a file that cannot be written keeps the window open, its edits with it, and asks whether to make
+    /// it writable or close without it (<see cref="CloseUnsavedAsync"/>).</summary>
     protected override void OnClosing(WindowClosingEventArgs e)
     {
-        if (!Autosave())
+        bool quit = quitWhenDecided || e.CloseReason is WindowCloseReason.ApplicationShutdown or WindowCloseReason.OSShutdown;
+        if (Autosaves && !(Editors.SaveAll(new HashSet<OpenDocument>(conflicted.Concat(leftUnsaved))) && conflicted.Count == 0))
         {
             e.Cancel = true;
+            _ = CloseUnsavedAsync(quit);
             return;
         }
         // The application menu's Quit and the system's shutdown close every window, each keeping its solution to reopen.
-        quitting = e.CloseReason is WindowCloseReason.ApplicationShutdown or WindowCloseReason.OSShutdown;
+        quitting = quit;
         base.OnClosing(e);
     }
 
@@ -113,6 +116,8 @@ public partial class MainWindow
         {
             BackgroundWork.End();
         }
+        // Not held while the person is asked, so a screenshot or a test finds the question.
+        await SaveReadOnlyAsync(saving);
     }
 
     /// <summary>Saves every changed file but those awaiting a File Cache Conflict answer, unless this window does not

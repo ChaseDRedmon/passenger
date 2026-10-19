@@ -1,6 +1,7 @@
 using System.Text;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
+using Avalonia.VisualTree;
 using Passenger.App;
 using Passenger.Core;
 using Passenger.Editor;
@@ -210,6 +211,91 @@ public sealed class FileTests : IDisposable
         Assert.Contains("everyone allow read", Run("ls", "-le", path), StringComparison.Ordinal);
         Assert.True(File.GetCreationTimeUtc(path) == created, $"The save made the file anew: created {File.GetCreationTimeUtc(path):u}, not {created:u}");
         window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_read_only_file_is_never_written_by_a_save_and_its_first_edit_and_each_save_ask_to_make_it_writable()
+    {
+        // As Perforce or TFVC leave a file not checked out: macOS and Linux would let a save move a new file over it.
+        string path = Path.Combine(folder, "Locked.cs");
+        File.WriteAllText(path, "class Locked { }\n");
+        File.SetAttributes(path, FileAttributes.ReadOnly);
+        MainWindow window = Open();
+        List<string> asked = [];
+        bool agree = false;
+        window.Confirm = (title, text, yes) =>
+        {
+            asked.Add($"{title}: {text} [{yes}]");
+            return Task.FromResult(agree);
+        };
+
+        Edit(window, "Locked.cs", "public ");
+        Assert.Equal(["Clear Read-Only Status: Locked.cs is read-only, so its changes cannot be saved. Make it writable? [Make Writable]"], asked);
+        Assert.Equal("Locked.cs is read-only: its changes are not saved", window.Status);
+
+        // Kept read-only, a save leaves the file as it was, and asks again.
+        Ui.Press(window, Ui.Shortcut(AppActions.Save));
+        Ui.WaitFor(() => asked.Count == 2, "Save to ask again");
+        Assert.Equal("class Locked { }\n", File.ReadAllText(path));
+        Assert.True(new FileInfo(path).IsReadOnly, "The save made the read-only file writable");
+        Assert.True(window.EditorArea.Active!.IsModified, "The read-only file's changes were taken for saved");
+
+        // Made writable, it is saved.
+        agree = true;
+        Ui.Press(window, Ui.Shortcut(AppActions.Save));
+        Ui.WaitFor(() => !window.EditorArea.Active!.IsModified, "the save once the file is writable");
+        Assert.Equal("public class Locked { }\n", File.ReadAllText(path));
+        Assert.False(new FileInfo(path).IsReadOnly);
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_window_closed_with_a_read_only_files_changes_asks_and_closes_with_the_file_made_writable_or_left_as_it_was()
+    {
+        string path = Path.Combine(folder, "Locked.cs");
+        File.WriteAllText(path, "class Locked { }\n");
+        File.SetAttributes(path, FileAttributes.ReadOnly);
+
+        // Closed without saving: the file stays as it was, read-only.
+        MainWindow window = Open();
+        window.Confirm = (_, _, _) => Task.FromResult(false);
+        Edit(window, "Locked.cs", "public ");
+        window.Close();
+        ChoiceDialog asked = Asked(window);
+        Assert.Contains("Locked.cs (read-only)", asked.GetVisualDescendants().OfType<Avalonia.Controls.TextBlock>().Select(t => t.Text).OfType<string>().Single(t => t.Contains("could not be saved", StringComparison.Ordinal)), StringComparison.Ordinal);
+        Press(asked, "Cancel");
+        Assert.True(window.IsVisible, "Cancel closed the window, and the file's changes with it");
+        window.Close();
+        Press(Asked(window), "Close Without Saving");
+        Ui.WaitFor(() => !window.IsVisible, "the window to close without the file's changes");
+        Assert.Equal("class Locked { }\n", File.ReadAllText(path));
+        Assert.True(new FileInfo(path).IsReadOnly);
+
+        // Made writable: saved as the window closes.
+        window = Open();
+        window.Confirm = (_, _, _) => Task.FromResult(false);
+        Edit(window, "Locked.cs", "public ");
+        window.Close();
+        Press(Asked(window), "Make Writable");
+        Ui.WaitFor(() => !window.IsVisible, "the window to close once the file was saved");
+        Assert.Equal("public class Locked { }\n", File.ReadAllText(path));
+        Assert.False(new FileInfo(path).IsReadOnly);
+    }
+
+    /// <summary>The question a window closed with changes it cannot save asks, held to the dialogs' rules.</summary>
+    private static ChoiceDialog Asked(MainWindow window)
+    {
+        Ui.WaitFor(() => window.OwnedWindows.OfType<ChoiceDialog>().Any(), "the window to ask about the changes it cannot save");
+        ChoiceDialog asked = DialogButtonsTests.Check(window.OwnedWindows.OfType<ChoiceDialog>().Single());
+        Assert.Equal("Clear Read-Only Status", asked.Title);
+        return asked;
+    }
+
+    private static void Press(Avalonia.Controls.Window dialog, string button)
+    {
+        Avalonia.Controls.Button pressed = dialog.GetVisualDescendants().OfType<Avalonia.Controls.Button>().First(b => (string?)b.Content == button);
+        pressed.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Avalonia.Controls.Button.ClickEvent));
+        Ui.Settle();
     }
 
     /// <summary>What a program of the system says, failing when it fails.</summary>

@@ -160,6 +160,32 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
         Write(path, [], bytes, null);
     }
 
+    /// <summary>Whether a file (through a symlink, its target) is there and marked read-only, as Perforce and TFVC mark a
+    /// file not checked out: by its read-only attribute on Windows, by its write permission for this user elsewhere. No
+    /// write of Passenger's replaces one (<see cref="ReadOnlyFileException"/>).</summary>
+    public static bool IsReadOnly(string path)
+    {
+        try
+        {
+            return new FileInfo(Target(path)) is { Exists: true, IsReadOnly: true };
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Rider's Clear Read-Only Status using the file system: the attribute cleared on Windows, and elsewhere the
+    /// owner given write permission, as IntelliJ's File.setWritable does.</summary>
+    public static void MakeWritable(string path)
+    {
+        string target = Target(path);
+        File.SetAttributes(target, File.GetAttributes(target) & ~FileAttributes.ReadOnly);
+    }
+
+    private static string Target(string path) =>
+        new FileInfo(path).LinkTarget is not null ? File.ResolveLinkTarget(path, returnFinalTarget: true)?.FullName ?? path : path;
+
     /// <param name="encoding">What the text was written in; null for bytes put back as a file had them.</param>
     private static void Write(string path, byte[] preamble, byte[] body, Encoding? encoding)
     {
@@ -168,6 +194,11 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
         if (!there)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+        }
+        else if (new FileInfo(target) is { Exists: true, IsReadOnly: true })
+        {
+            // A move over it would replace it on macOS and Linux, where only its folder's permissions are asked.
+            throw new ReadOnlyFileException(path);
         }
         byte[]? before = Wrote is not null && there ? Before(target) : null;
         string temporary = target + SaveSuffix;
@@ -290,4 +321,11 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
         (bom == HasBom && encoding.CodePage == Encoding.CodePage) || Bytes(encoding, bom).AsSpan().SequenceEqual(Bytes(Encoding, HasBom));
 
     private byte[] Bytes(Encoding encoding, bool bom) => [.. bom ? Preamble(encoding) : [], .. encoding.GetBytes(Text)];
+}
+
+/// <summary>A write refused because the file is read-only (<see cref="FileText.IsReadOnly"/>), which only the person's
+/// Clear Read-Only Status makes writable: an IOException, so every writer's failure says it.</summary>
+public sealed class ReadOnlyFileException(string path) : IOException($"{Path.GetFileName(path)} is read-only")
+{
+    public string FilePath { get; } = path;
 }
