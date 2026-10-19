@@ -45,6 +45,8 @@ public partial class App : Application
             window.KeepSettings();
             // A theme named on the command line is the run's, over the one kept.
             Program.ApplyTheme(this, Program.Options);
+            // Its default size is a large screen's: on a smaller one it opens inside the working area, centred.
+            window.FitToScreen(keepPlace: false);
             window.Opened += (_, _) =>
             {
                 // The first of a start's phases in the log, as Rider's idea.log begins with its build and runtime.

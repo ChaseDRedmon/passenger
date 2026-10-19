@@ -313,6 +313,40 @@ public sealed class UiRulesTests : IDisposable
         }
     }
 
+    /// <summary>A window opens inside the working area of a screen smaller than its default size, as Rider's does: the
+    /// Windows VM's (1500 by 830 at 200%, under its taskbar) opened one partly off the screen, its close button and the
+    /// Debug window's foot under the taskbar. Centred when new; one placed past the area's edge is brought onto it.</summary>
+    [AvaloniaFact]
+    public void A_window_opens_inside_a_small_screens_working_area_centred_and_one_placed_past_its_edge_is_brought_onto_it()
+    {
+        PixelRect area = new(0, 0, 3000, 1660);
+        MainWindow window = new() { Autosaves = false };
+        MainWindow placed = new() { Autosaves = false, Width = 2400, Height = 1400, Position = new PixelPoint(2900, 1500) };
+        try
+        {
+            window.FitWithin(area, 2, keepPlace: false);
+            window.Show();
+            placed.FitWithin(area, 2, keepPlace: true);
+            placed.Show();
+            Ui.Settle();
+            foreach ((MainWindow shown, string what) in (IEnumerable<(MainWindow, string)>)[(window, "A new window"), (placed, "A window placed past the screen's edge")])
+            {
+                PixelRect at = new(shown.Position, PixelSize.FromSize(shown.ClientSize, 2));
+                Assert.True(area.Contains(at), $"{what} opened at {at}, {shown.ClientSize} large, past the screen's working area {area}");
+                Assert.True(shown.ClientSize.Width >= MainWindow.SmallestWidth && shown.ClientSize.Height >= MainWindow.SmallestHeight,
+                    $"{what} opened {shown.ClientSize} large, under the window's smallest");
+            }
+            PixelRect centred = new(window.Position, PixelSize.FromSize(window.ClientSize, 2));
+            Assert.True(Math.Abs(centred.Center.X - area.Center.X) <= 2 && Math.Abs(centred.Center.Y - area.Center.Y) <= 2,
+                $"A new window opened at {centred}, not centred on the screen's working area {area}");
+        }
+        finally
+        {
+            window.Close();
+            placed.Close();
+        }
+    }
+
     [AvaloniaFact]
     public void At_the_smallest_width_the_status_bars_path_never_draws_under_its_widgets()
     {

@@ -114,6 +114,8 @@ public static class PassengerApp
             WindowStartupLocation = WindowStartupLocation.Manual,
             Position = like.Position + new PixelPoint(Cascade, Cascade),
         };
+        // Cascaded from the one it is opened from, yet never past the edge of that one's screen.
+        window.FitToScreen(keepPlace: true);
         if (like.KeepsLayout)
         {
             window.KeepLayout();
