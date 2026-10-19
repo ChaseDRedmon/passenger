@@ -51,15 +51,21 @@ public sealed partial record LaunchPlan
     public string ProgramName => System.IO.Path.GetFileNameWithoutExtension(Built ?? Program);
 
     /// <summary>Null when the plan can launch now, its build done: else that the build made no program (unless what starts
-    /// it builds it), or that the working folder is gone ("Could not run Hello: its working folder ... does not exist").</summary>
+    /// it builds it), or that the working folder is gone ("Could not run Hello: its working folder ... does not exist"),
+    /// unless what starts it builds it there (<see cref="WorksWhereBuilt"/>).</summary>
     public string? WhyNot(string verb, bool built = true)
     {
         if (built && Built is { } file && !File.Exists(file))
         {
             return $"Could not {verb} {ProgramName}: {System.IO.Path.GetFileName(file)} has not been built";
         }
-        return Directory.Exists(WorkingDirectory) ? null : $"Could not {verb} {ProgramName}: its working folder {WorkingDirectory} does not exist";
+        return Directory.Exists(WorkingDirectory) || (!built && WorksWhereBuilt) ? null
+            : $"Could not {verb} {ProgramName}: its working folder {WorkingDirectory} does not exist";
     }
+
+    /// <summary>Whether the program runs in the folder its build puts it in, which a project never built lacks until its
+    /// first build makes it (dotnet watch's, for a run with Hot Reload).</summary>
+    public bool WorksWhereBuilt => Built is { } file && System.IO.Path.GetDirectoryName(file) is { } output && PathNames.Same(output, WorkingDirectory);
 
     /// <summary>Works out what a configuration launches among the open folder's projects, asking MSBuild where the project
     /// builds (and any property its values name), which needs no build. A Passenger it launches keeps its state in the

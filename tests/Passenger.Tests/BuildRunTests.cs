@@ -150,9 +150,11 @@ public sealed class BuildRunTests : IClassFixture<RestoredFolders>, IDisposable
         {
             window.OpenFile(Path.Combine(folder, "src", "Hello", "Program.cs"));
             Ui.Settle();
+            // Never built: the output folder, the program's working folder, is left for dotnet watch's first build to make.
+            TestFolders.Delete(Path.Combine(folder, "src", "Hello", "bin"));
             window.Perform(AppActions.RunProgram);
             // dotnet watch watches once it has loaded the project, which is after the program has started.
-            Ui.WaitFor(() => Output(window).Contains("before the edit", StringComparison.Ordinal) && Output(window).Contains("Waiting for changes", StringComparison.Ordinal),
+            WaitWatched(window, () => Output(window).Contains("before the edit", StringComparison.Ordinal) && Output(window).Contains("Waiting for changes", StringComparison.Ordinal),
                 "the program to run under dotnet watch", TimeSpan.FromMinutes(2));
 
             // The method's new body is the one the running loop calls next, with no restart.

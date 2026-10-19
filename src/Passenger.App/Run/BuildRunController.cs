@@ -389,6 +389,10 @@ public sealed class BuildRunController
             {
                 return Said(why);
             }
+            if (watched && MakeWorkingFolder(plan) is { } unmade)
+            {
+                return Said(unmade);
+            }
             ran = chosen.Name;
             RunProject = Path.GetDirectoryName(plan.Project);
             string running = watched ? $"Running {chosen.Name} with Hot Reload: a save applies its changes" : $"Running {chosen.Name}";
@@ -429,6 +433,21 @@ public sealed class BuildRunController
         finally
         {
             launching = false;
+        }
+    }
+
+    /// <summary>dotnet watch starts in the program's working folder, which its first build makes for a project never built:
+    /// made first, as that build would. Null once it is there, else why it could not be.</summary>
+    private static string? MakeWorkingFolder(LaunchPlan plan)
+    {
+        try
+        {
+            Directory.CreateDirectory(plan.WorkingDirectory);
+            return null;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return $"Could not run {plan.ProgramName}: its working folder {plan.WorkingDirectory} could not be made: {error.Message}";
         }
     }
 

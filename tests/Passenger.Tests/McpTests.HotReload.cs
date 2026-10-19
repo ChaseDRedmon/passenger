@@ -56,6 +56,9 @@ public sealed partial class McpTests
         File.WriteAllText(Path.Combine(folder, "Program.cs"),
             "while (true)\n{\n    Console.WriteLine(Talk.Say());\n    Thread.Sleep(200);\n}\n\nstatic class Talk\n{\n    public static string Say() => \"before the edit\";\n}\n");
         await using McpClient client = await Start(["--mcp", folder]);
+        // Never built, as on CI, where run comes first: the output folder the design-time build made goes, for dotnet watch's to make.
+        Assert.Contains((await Call(client, "find_symbol", new() { ["query"] = "Talk" })).EnumerateArray(), s => s.GetProperty("path").GetString() == "Program.cs");
+        TestFolders.Delete(Path.Combine(folder, "bin"));
         Assert.True((await Call(client, "run", new() { ["waitSeconds"] = 0, ["hotReload"] = true })).GetProperty("stillRunning").GetBoolean());
         // dotnet watch watches once it has loaded the project, which is after the program has started.
         string output = string.Empty;
