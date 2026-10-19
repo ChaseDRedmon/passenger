@@ -270,10 +270,10 @@ public sealed class FolderWatchTests : IDisposable
         window.Perform(AppActions.Save);
         Assert.Equal([0xEF, 0xBB, 0xBF, .. Encoding.UTF8.GetBytes("public class One { }\n")], File.ReadAllBytes(path));
 
-        // A Latin-1 file converted to UTF-8 elsewhere is saved as UTF-8 from then on.
+        // An 8-bit file converted to UTF-8 elsewhere is saved as UTF-8 from then on.
         window.OpenFile("Two.cs");
         Ui.Settle();
-        Assert.Equal("ISO-8859-1", EncodingShown(window));
+        Assert.Equal("windows-1252", EncodingShown(window));
         File.WriteAllBytes(Path.Combine(folder, "Two.cs"), Encoding.UTF8.GetBytes("// Café\n"));
         Ui.WaitFor(() => EncodingShown(window) == "UTF-8", "the status bar to show the file converted on disk");
         Type(window, "// señor ");

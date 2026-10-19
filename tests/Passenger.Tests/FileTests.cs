@@ -43,32 +43,38 @@ public sealed class FileTests : IDisposable
     }
 
     [AvaloniaFact]
-    public void A_character_Latin_1_cannot_hold_typed_into_a_Latin_1_file_is_never_saved_as_a_question_mark()
+    public void A_Windows_1252_file_shows_its_quotes_dashes_and_euro_and_a_character_it_cannot_hold_is_warned_of_then_saved_as_UTF_8()
     {
+        // "// “Café” – 5 € — prices" in Windows-1252: its quotes, dashes and euro are bytes 0x80–0x9F, which Latin-1
+        // reads as control characters.
         string path = Path.Combine(folder, "Prices.cs");
-        File.WriteAllBytes(path, Encoding.Latin1.GetBytes("// Café prices\nclass Prices { }\n"));
+        File.WriteAllBytes(path, [.. "// "u8, 0x93, .. "Caf"u8, 0xE9, 0x94, .. " "u8, 0x96, .. " 5 "u8, 0x80, .. " "u8, 0x97, .. " prices\nclass Prices { }\n"u8]);
         MainWindow window = Open();
         window.OpenFile("Prices.cs");
         Ui.Settle();
-        Assert.Equal("ISO-8859-1", EncodingShown(window));
+        Assert.Equal("// “Café” – 5 € — prices\nclass Prices { }\n", window.EditorArea.CodeEditor.Document.Snapshot.ToString());
+        Assert.Equal("windows-1252", EncodingShown(window));
 
-        // A character Latin-1 holds leaves the file Latin-1.
-        window.EditorArea.CodeEditor.Selections = Text.SelectionSet.Single("// Café".Length);
+        // A character it holds leaves the file Windows-1252, byte for byte where it was not edited.
+        window.EditorArea.CodeEditor.Selections = Text.SelectionSet.Single("// “Café”".Length);
         window.KeyTextInput(" señor");
         Ui.Settle();
+        Assert.Null(window.EditorArea.ActiveGroup.BannerText);
         Ui.Press(window, Ui.Shortcut(AppActions.Save));
-        Assert.Equal(Encoding.Latin1.GetBytes("// Café señor prices\nclass Prices { }\n"), File.ReadAllBytes(path));
-        Assert.Equal("ISO-8859-1", EncodingShown(window));
+        Assert.Equal([.. "// "u8, 0x93, .. "Caf"u8, 0xE9, 0x94, .. " se"u8, 0xF1, .. "or "u8, 0x96, .. " 5 "u8, 0x80, .. " "u8, 0x97, .. " prices\nclass Prices { }\n"u8], File.ReadAllBytes(path));
+        Assert.Equal("windows-1252", EncodingShown(window));
 
-        // One it cannot hold: the file is written as UTF-8 with every character, and the status bar says so.
-        window.KeyTextInput(" € → 🚀");
+        // One it cannot hold is said over the editor before any save, as the save will write the file as UTF-8.
+        window.KeyTextInput(" → 🚀");
         Ui.Settle();
+        Assert.Equal("windows-1252 cannot hold '→': the next save writes Prices.cs as UTF-8", window.EditorArea.ActiveGroup.BannerText);
         Ui.Press(window, Ui.Shortcut(AppActions.Save));
         byte[] saved = File.ReadAllBytes(path);
-        Assert.False(Array.IndexOf(saved, (byte)'?') >= 0, "A character Latin-1 cannot hold was saved as a question mark");
-        Assert.Equal("// Café señor € → 🚀 prices\nclass Prices { }\n", new UTF8Encoding(false, throwOnInvalidBytes: true).GetString(saved));
+        Assert.False(Array.IndexOf(saved, (byte)'?') >= 0, "A character Windows-1252 cannot hold was saved as a question mark");
+        Assert.Equal("// “Café” señor → 🚀 – 5 € — prices\nclass Prices { }\n", new UTF8Encoding(false, throwOnInvalidBytes: true).GetString(saved));
         Assert.Equal("UTF-8", EncodingShown(window));
-        Assert.Equal("Prices.cs was saved as UTF-8: ISO-8859-1 cannot hold '€'", window.Status);
+        Assert.Equal("Prices.cs was saved as UTF-8: windows-1252 cannot hold '→'", window.Status);
+        Assert.Null(window.EditorArea.ActiveGroup.BannerText);
         Assert.False(window.EditorArea.Active!.IsModified);
         window.Close();
     }

@@ -17,10 +17,37 @@ public sealed record FileEncoding(string Name, int CodePage, bool Bom = false)
     public static FileEncoding Utf16 { get; } = new("UTF-16 LE", 1200, Bom: true);
     public static FileEncoding Utf16BigEndian { get; } = new("UTF-16 BE", 1201, Bom: true);
     public static FileEncoding Latin1 { get; } = new("ISO-8859-1", 28591);
+    public static FileEncoding Windows1252 { get; } = new("windows-1252", 1252);
 
     /// <summary>What the widget lists first: the Unicode encodings and the common Western ones.</summary>
     public static IReadOnlyList<FileEncoding> First { get; } =
-        [Utf8, Utf8Bom, Utf16, Utf16BigEndian, Latin1, new("windows-1252", 1252), new("US-ASCII", 20127)];
+        [Utf8, Utf8Bom, Utf16, Utf16BigEndian, Latin1, Windows1252, new("US-ASCII", 20127)];
+
+    private static FileEncoding? eightBit;
+
+    /// <summary>What a file whose bytes are not UTF-8 is read in when nothing names another: the system's ANSI code page
+    /// on Windows (a single-byte one), else windows-1252, as Roslyn reads such a source file. Never Latin-1, which reads
+    /// 1252's quotes, dashes and € (0x80–0x9F) as control characters, written back as UTF-8 controls once the file can
+    /// no longer be Latin-1.</summary>
+    public static FileEncoding EightBit => eightBit ??= SystemEightBit() ?? Windows1252;
+
+    private static FileEncoding? SystemEightBit()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return null;
+        }
+        try
+        {
+            // Code page 0 is the system's ANSI code page, which the code pages' provider knows on Windows alone.
+            Encoding system = Encoding.GetEncoding(0);
+            return system.IsSingleByte && system.CodePage is not (65001 or 20127) ? Of(system, false) : null;
+        }
+        catch (Exception missing) when (missing is NotSupportedException or ArgumentException)
+        {
+            return null;
+        }
+    }
 
     /// <summary>What the widget's More lists, by name: those of other scripts that this system's .NET has.</summary>
     public static IReadOnlyList<FileEncoding> More => more ??= [.. Others.Where(e => e.Available).OrderBy(e => e.Name, StringComparer.OrdinalIgnoreCase)];

@@ -93,40 +93,41 @@ public sealed class FilePropertiesTests : IDisposable
     }
 
     [AvaloniaFact]
-    public void A_Windows_1252_file_reloaded_as_windows_1252_shows_its_letters_and_is_saved_in_it()
+    public void A_Windows_1252_file_opens_showing_its_letters_and_shows_control_characters_only_once_reloaded_as_ISO_8859_1()
     {
-        // "Œuvre: “café” for 5 €" in Windows-1252, which is not UTF-8 and so first reads as Latin-1.
+        // "Œuvre: “café” for 5 €" in Windows-1252, which is not UTF-8 and so reads in the 8-bit encoding a file of no
+        // other is read in: windows-1252 (on Windows the system's code page, 1252 on a Western one).
         string path = Path.Combine(folder, "Menu.txt");
         byte[] bytes = [0x8C, .. "uvre: "u8, 0x93, .. "caf"u8, 0xE9, 0x94, .. " for 5 "u8, 0x80, .. "\n"u8];
         File.WriteAllBytes(path, bytes);
         MainWindow window = Open("Menu.txt");
-        Assert.Equal("ISO-8859-1", Shown(window, "EncodingText"));
-        Assert.Equal("\u008Cuvre: \u0093café\u0094 for 5 \u0080\n", Text(window));
-
-        Click(window, "EncodingButton");
-        Assert.Contains("windows-1252", Items(window.OpenContextMenu!));
-        Assert.Contains("ISO-8859-1 (checked)", Items(window.OpenContextMenu!));
-        Choose(window, "windows-1252");
-        Answer(window, "Menu.txt: Reload or Convert to windows-1252", "Reload");
-        Assert.Equal("Œuvre: “café” for 5 €\n", Text(window));
         Assert.Equal("windows-1252", Shown(window, "EncodingText"));
-        Assert.False(window.EditorArea.Active!.IsModified, "The file was only read again, yet its tab says it has unsaved changes");
-        Assert.Equal(bytes, File.ReadAllBytes(path));
+        Assert.Equal("Œuvre: “café” for 5 €\n", Text(window));
 
         // Saved, it stays Windows-1252, with no question of a change on disk.
         window.EditorArea.CodeEditor.Selections = Passenger.Text.SelectionSet.Single("Œuvre".Length);
         window.KeyTextInput(" ž");
         Ui.Press(window, Ui.Shortcut(AppActions.Save));
         Assert.Empty(window.OwnedWindows);
-        Assert.Equal([0x8C, .. "uvre "u8, 0x9E, .. ": "u8, 0x93, .. "caf"u8, 0xE9, 0x94, .. " for 5 "u8, 0x80, .. "\n"u8], File.ReadAllBytes(path));
-        Assert.Equal("windows-1252", Shown(window, "EncodingText"));
+        byte[] saved = [0x8C, .. "uvre "u8, 0x9E, .. ": "u8, 0x93, .. "caf"u8, 0xE9, 0x94, .. " for 5 "u8, 0x80, .. "\n"u8];
+        Assert.Equal(saved, File.ReadAllBytes(path));
 
-        // Undo, twice, reads it as it was before: Latin-1.
+        // Latin-1, chosen, reads those bytes as the control characters they are in it, leaving the file as it is.
+        Click(window, "EncodingButton");
+        Assert.Contains("ISO-8859-1", Items(window.OpenContextMenu!));
+        Assert.Contains("windows-1252 (checked)", Items(window.OpenContextMenu!));
+        Choose(window, "ISO-8859-1");
+        Answer(window, "Menu.txt: Reload or Convert to ISO-8859-1", "Reload");
+        Assert.Equal("\u008Cuvre \u009E: \u0093café\u0094 for 5 \u0080\n", Text(window));
+        Assert.Equal("ISO-8859-1", Shown(window, "EncodingText"));
+        Assert.False(window.EditorArea.Active!.IsModified, "The file was only read again, yet its tab says it has unsaved changes");
+        Assert.Equal(saved, File.ReadAllBytes(path));
+
+        // Undo reads it as it was before: Windows-1252.
         window.EditorArea.CodeEditor.Focus();
         Ui.Run(window, EditorActions.Undo);
-        Ui.Run(window, EditorActions.Undo);
-        Assert.Equal("ISO-8859-1", Shown(window, "EncodingText"));
-        Assert.StartsWith("\u008Cuvre: ", Text(window), StringComparison.Ordinal);
+        Assert.Equal("windows-1252", Shown(window, "EncodingText"));
+        Assert.Equal("Œuvre ž: “café” for 5 €\n", Text(window));
         window.Close();
     }
 
@@ -202,12 +203,19 @@ public sealed class FilePropertiesTests : IDisposable
     [AvaloniaFact]
     public void An_editorconfigs_end_of_line_and_charset_show_on_the_widgets_and_a_choice_against_them_outlasts_a_save()
     {
-        Write(".editorconfig", "root = true\n\n[*]\nend_of_line = lf\ncharset = utf-8\n");
+        Write(".editorconfig", "root = true\n\n[*]\nend_of_line = lf\ncharset = utf-8\n\n[Three.cs]\ncharset = latin1\n");
         string path = Write("One.cs", "class One\n{\n}\n");
         File.WriteAllBytes(Path.Combine(folder, "Two.cs"), Encoding.Latin1.GetBytes("// Café\r\n"));
+        File.WriteAllBytes(Path.Combine(folder, "Three.cs"), [.. "// Caf"u8, 0xE9, 0x80, .. "\n"u8]);
         MainWindow window = Open("Two.cs");
         Assert.StartsWith("Line Separator: \\r\\n\nThe next save makes it LF, as the .editorconfig asks: end_of_line = lf in ", Tip(window, "LineSeparatorButton"), StringComparison.Ordinal);
-        Assert.StartsWith("File Encoding: ISO-8859-1\nThe next save makes it UTF-8, as the .editorconfig asks: charset = utf-8 in ", Tip(window, "EncodingButton"), StringComparison.Ordinal);
+        Assert.StartsWith("File Encoding: windows-1252\nThe next save makes it UTF-8, as the .editorconfig asks: charset = utf-8 in ", Tip(window, "EncodingButton"), StringComparison.Ordinal);
+
+        // An 8-bit file its .editorconfig says is Latin-1 is read so, as Rider reads one in the encoding configured for it.
+        window.OpenFile("Three.cs");
+        Ui.Settle();
+        Assert.Equal("// Café\u0080\n", Text(window));
+        Assert.StartsWith("File Encoding: ISO-8859-1\nAs the .editorconfig asks: charset = latin1 in ", Tip(window, "EncodingButton"), StringComparison.Ordinal);
 
         window.OpenFile("One.cs");
         Ui.Settle();

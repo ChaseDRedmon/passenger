@@ -79,8 +79,48 @@ public sealed class OpenDocument : Observable
                 }
                 FoldRegions = moved;
             }
+            FollowHeld(change.Edits);
             Raise(nameof(IsModified));
         };
+    }
+
+    private string? encodingWarning;
+
+    /// <summary>What the editor's banner says once the text holds a character the file's encoding cannot (windows-1252
+    /// has no '→'): that the next save writes the file as UTF-8, said before that save changes every other non-ASCII
+    /// byte of it. Null while the encoding holds the whole text.</summary>
+    public string? EncodingWarning
+    {
+        get => encodingWarning;
+        private set => Set(ref encodingWarning, value);
+    }
+
+    /// <summary>Follows whether the encoding holds the text: only what an edit put in while it does, the whole text while
+    /// it does not (so taking the character out again takes the warning away) or when <paramref name="edits"/> is null.</summary>
+    private void FollowHeld(IReadOnlyList<TextEdit>? edits)
+    {
+        if (Encoding is UTF8Encoding or UnicodeEncoding or UTF32Encoding)
+        {
+            EncodingWarning = null;
+            return;
+        }
+        string? unheld = null;
+        if (encodingWarning is null && edits is not null)
+        {
+            foreach (TextEdit edit in edits)
+            {
+                if (edit.Text.Length > 0 && FileText.Unheld(Encoding, edit.Text) is { } first)
+                {
+                    unheld = first;
+                    break;
+                }
+            }
+        }
+        else
+        {
+            unheld = FileText.Unheld(Encoding, Text.Snapshot.ToString());
+        }
+        EncodingWarning = unheld is null ? null : $"{EncodingName} cannot hold '{unheld}': the next save writes {Name} as UTF-8";
     }
 
     /// <summary>Raised after a save, so the language server hears of it.</summary>
@@ -506,6 +546,7 @@ public sealed class OpenDocument : Observable
         // The widgets' tips name the choices as well.
         Raise(nameof(LineEnding));
         Raise(nameof(EncodingName));
+        FollowHeld(null);
     }
 
     private void MarkSavedIfOnDisk()
@@ -785,6 +826,8 @@ public sealed class OpenDocument : Observable
     {
         (FileText written, string? converted) = write;
         StoreAs(written);
+        // Written, the text is in the encoding it was written in.
+        EncodingWarning = null;
         Text.MarkSaved();
         Raise(nameof(IsModified));
         Saved?.Invoke(this, EventArgs.Empty);
@@ -810,6 +853,8 @@ public sealed class OpenDocument : Observable
         HasBom = file.HasBom;
         EncodingName = file.EncodingName;
         Raise(nameof(EncodingName));
+        // The file may be stored otherwise under unsaved edits (a conversion on disk).
+        FollowHeld(null);
     }
 }
 

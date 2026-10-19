@@ -24,11 +24,13 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
 
     /// <summary>Reads a file as text, or returns null for one that looks binary. A BOM says its encoding; without one it is
     /// read in <paramref name="chosen"/> (one the person chose for it) when that reads every byte, else as UTF-8 if it
-    /// decodes as UTF-8 and Latin-1 otherwise, which reads every byte.</summary>
-    public static FileText? Load(string path, Encoding? chosen = null) => FromBytes(Read(path), chosen);
+    /// decodes as UTF-8, and otherwise in the 8-bit encoding its .editorconfig's <c>charset</c> names (latin1), else the
+    /// system's (<see cref="FileEncoding.EightBit"/>): Rider reads bytes that are not UTF-8 in the encoding configured.</summary>
+    public static FileText? Load(string path, Encoding? chosen = null) => FromBytes(Read(path), chosen, () => EditorConfig.For(path).Charset);
 
-    /// <summary>A file's bytes as text, as <see cref="Load"/> reads them (Local History's versions of a file).</summary>
-    public static FileText? FromBytes(byte[] bytes, Encoding? chosen = null)
+    /// <summary>A file's bytes as text, as <see cref="Load"/> reads them (Local History's versions of a file):
+    /// <paramref name="configured"/> is the encoding its .editorconfig names, asked only of bytes that are not UTF-8.</summary>
+    public static FileText? FromBytes(byte[] bytes, Encoding? chosen = null, Func<FileEncoding?>? configured = null)
     {
         if (Bom(bytes) is { } bom)
         {
@@ -48,7 +50,9 @@ public sealed record FileText(string Text, Encoding Encoding, bool HasBom, bool 
         }
         catch (DecoderFallbackException)
         {
-            return Held(Encoding.Latin1.GetString(bytes), Encoding.Latin1, false);
+            Encoding eightBit = configured?.Invoke() is { IsUnicode: false } named ? named.Encoding : FileEncoding.EightBit.Encoding;
+            // Latin-1 reads every byte, for one the 8-bit encoding has no character for.
+            return Strict(eightBit, bytes) is { } text ? Held(text, eightBit, false) : Held(Encoding.Latin1.GetString(bytes), Encoding.Latin1, false);
         }
     }
 

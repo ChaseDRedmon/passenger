@@ -270,10 +270,11 @@ public sealed class EditorGroup : DockPanel
         tabBar.IsVisible = true;
     }
 
-    /// <summary>The banner over the file: where a read-only file comes from, and what its notice says.</summary>
+    /// <summary>The banner over the file: where a read-only file comes from, what its notice says, and what its next save
+    /// does to how it is stored.</summary>
     private void ShowBanner(OpenDocument document)
     {
-        string[] said = [.. new[] { document.IsReadOnly ? document.Origin : null, document.Notice }.OfType<string>()];
+        string[] said = [.. new[] { document.IsReadOnly ? document.Origin : null, document.Notice, document.EncodingWarning }.OfType<string>()];
         banner.IsVisible = said.Length > 0;
         bannerText.Text = string.Join("  ·  ", said);
         // Narrower than the banner's words, the editor shows the rest when the pointer rests on it.
@@ -400,7 +401,7 @@ public sealed class EditorGroup : DockPanel
             case nameof(OpenDocument.Markers):
                 Editor.SetMarkers(document.Markers);
                 break;
-            case nameof(OpenDocument.Notice) or nameof(OpenDocument.NoticeAction):
+            case nameof(OpenDocument.Notice) or nameof(OpenDocument.NoticeAction) or nameof(OpenDocument.EncodingWarning):
                 ShowBanner(document);
                 break;
             case nameof(OpenDocument.InlayHints):
