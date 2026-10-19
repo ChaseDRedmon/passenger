@@ -21,6 +21,10 @@ internal sealed class Stripe : Border
     private readonly ToolAnchor lower;
     private readonly ToolAnchor bottom;
     private readonly Rectangle gap;
+    private readonly ToggleButton more;
+
+    /// <summary>The buttons the stripe has no room for, hidden behind More.</summary>
+    private readonly List<ToggleButton> cut = [];
 
     /// <summary>The keymap the tips' shortcuts were read from: once the person's shortcuts change, they are read again.</summary>
     private Keymap? tipsFrom;
@@ -40,10 +44,18 @@ internal sealed class Stripe : Border
         // Wide apart and drawn plainly, so the upper and lower windows read as two places, not one list.
         gap = new Rectangle { Height = 1, Width = 22, Margin = new Thickness(0, 12) };
         gap.Bind(Shape.FillProperty, gap.GetResourceObservable("Passenger.StripeSeparator"));
-        StackPanel sides = new() { [DockPanel.DockProperty] = Dock.Top, Children = { groups[upper], gap, groups[lower] } };
+        // A window too short for every button puts the last ones behind More (the bottom group's first, then the lower
+        // side's), as Rider's stripe puts what it has no room for behind its More Tool Windows button.
+        PathIcon dots = new();
+        dots.Bind(PathIcon.DataProperty, dots.GetResourceObservable("Icon.More"));
+        more = new ToggleButton { Classes = { "stripe" }, Content = dots, IsVisible = false, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 4, 0, 0) };
+        ToolTip.SetTip(more, "More Tool Windows");
+        more.Click += (_, _) => ShowMore();
+        StackPanel sides = new() { [DockPanel.DockProperty] = Dock.Top, Children = { groups[upper], gap, groups[lower], more } };
         groups[bottom].VerticalAlignment = VerticalAlignment.Bottom;
         groups[bottom][DockPanel.DockProperty] = Dock.Bottom;
         Child = new DockPanel { Margin = new Thickness(0, 6), Children = { sides, groups[bottom] } };
+        SizeChanged += (_, _) => FitButtons();
         BorderThickness = border;
         this.Bind(BackgroundProperty, this.GetResourceObservable("Passenger.Chrome"));
         this.Bind(BorderBrushProperty, this.GetResourceObservable("Passenger.Divider"));
@@ -74,6 +86,7 @@ internal sealed class Stripe : Border
             }
         }
         gap.IsVisible = groups[upper].Children.Count > 0 && groups[lower].Children.Count > 0;
+        FitButtons();
     }
 
     /// <summary>The group a point (in the stripe's coordinates) is over: the bottom group's at or below it, the
@@ -156,4 +169,82 @@ internal sealed class Stripe : Border
     }
 
     private static StackPanel Group() => new() { Spacing = 4, HorizontalAlignment = HorizontalAlignment.Center };
+
+    /// <summary>The windows whose buttons the stripe has no room for, which More lists.</summary>
+    public IReadOnlyList<ToolWindow> Overflowing => [.. cut.Select(button => buttons.First(b => b.Value == button).Key)];
+
+    /// <summary>Whether More shows, for the windows the stripe has no room for.</summary>
+    public bool ShowsMore => more.IsVisible;
+
+    /// <summary>Hides the last buttons while the stripe is too short for them all, More in their place: worked out from the
+    /// buttons' own sizes (every one a stripe button's), not from a layout, so hiding one never asks for another pass.</summary>
+    private void FitButtons()
+    {
+        // The least room left between the sides' buttons and the bottom group's.
+        const double Apart = 12;
+        double button = more.Height;
+        double spacing = groups[upper].Spacing;
+        double room = Bounds.Height - Child!.Margin.Top - Child.Margin.Bottom - Apart;
+        if (room <= 0 || double.IsNaN(button))
+        {
+            return;
+        }
+        List<ToggleButton>[] lists = [[.. groups[upper].Children.OfType<ToggleButton>()], [.. groups[lower].Children.OfType<ToggleButton>()],
+            [.. groups[bottom].Children.OfType<ToggleButton>()]];
+        int[] shown = [.. lists.Select(l => l.Count)];
+        double Height(bool withMore) => shown.Sum(n => n == 0 ? 0 : (n * (button + spacing)) - spacing)
+            + (shown[0] > 0 && shown[1] > 0 ? gap.Margin.Top + gap.Height + gap.Margin.Bottom : 0) + (withMore ? more.Margin.Top + button : 0);
+        bool overflowing = Height(false) > room;
+        // The bottom group's last buttons go first, then the lower side's, then the upper's, its first always kept.
+        while (overflowing && Height(true) > room && (shown[2] > 0 || shown[1] > 0 || shown[0] > 1))
+        {
+            int from = shown[2] > 0 ? 2 : shown[1] > 0 ? 1 : 0;
+            shown[from]--;
+        }
+        cut.Clear();
+        for (int g = 0; g < lists.Length; g++)
+        {
+            for (int i = 0; i < lists[g].Count; i++)
+            {
+                bool hidden = i >= shown[g];
+                if (hidden)
+                {
+                    cut.Add(lists[g][i]);
+                }
+                if (lists[g][i].IsVisible == hidden)
+                {
+                    lists[g][i].IsVisible = !hidden;
+                }
+            }
+        }
+        gap.IsVisible = shown[0] > 0 && shown[1] > 0;
+        if (more.IsVisible != overflowing)
+        {
+            more.IsVisible = overflowing;
+        }
+    }
+
+    /// <summary>More's menu: the windows the stripe has no room for, each shown or hidden by a click as its button would.</summary>
+    private void ShowMore()
+    {
+        more.IsChecked = false;
+        // Level with the button, beside the stripe and into the window: right of the left one, left of the right one.
+        bool left = upper == ToolAnchor.LeftTop;
+        double at = more.TranslatePoint(default, this)?.X ?? 0;
+        ContextMenu menu = new()
+        {
+            Placement = left ? PlacementMode.RightEdgeAlignedTop : PlacementMode.LeftEdgeAlignedTop,
+            PlacementRect = left ? new Rect(0, 0, Bounds.Width - at, more.Bounds.Height) : new Rect(-at, 0, at + more.Bounds.Width, more.Bounds.Height),
+        };
+        foreach (ToolWindow window in Overflowing)
+        {
+            PathIcon glyph = new();
+            glyph.Bind(PathIcon.DataProperty, glyph.GetResourceObservable(window.Icon));
+            MenuItem item = new() { Header = window.Title, Icon = glyph, ToggleType = MenuItemToggleType.CheckBox, IsChecked = window.IsShown };
+            string id = window.Id;
+            item.Click += (_, _) => host.Toggle(id);
+            menu.Items.Add(item);
+        }
+        menu.Open(more);
+    }
 }

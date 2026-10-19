@@ -17,7 +17,8 @@ namespace Passenger.Tests;
 /// open, as <see cref="DialogButtonsTests.Check"/> holds every dialog's buttons: a menu's current value checked and still
 /// enabled (MenuChoice); every tool window's tabs one look (ToolTabs, Shell.axaml's panelTab); every popup's width from
 /// one scale, its title one size and its rows one height (PopupFrame); a menu opening against its widget; Rider's
-/// scrollbars, thin and arrowless; the open editor tab's ×; and Rider's focus ring.</summary>
+/// scrollbars, thin and arrowless; the open editor tab's ×; Rider's focus ring; and the window at half a 1366-wide screen
+/// with nothing cut that Rider would not cut, a stripe putting what has no room behind More.</summary>
 public sealed class UiRulesTests : IDisposable
 {
     private readonly string folder = TestFolders.Create("ui-rules-");
@@ -208,6 +209,63 @@ public sealed class UiRulesTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void At_half_a_1366_wide_screen_the_window_cuts_nothing_and_a_stripe_too_short_puts_the_rest_behind_More()
+    {
+        MainWindow window = Open(683, 768);
+        try
+        {
+            window.OpenFile(Path.Combine(folder, "Program.cs"));
+            Ui.Settle();
+            Assert.True(Math.Abs(window.Bounds.Width - 683) < 0.5, $"The window is {window.Bounds.Width:0.#} wide at half a 1366-wide screen: its least width is wider");
+            Control end = Named<Control>(window, "ToolbarEnd");
+            Control start = Named<Control>(window, "ToolbarStart");
+            foreach (Button button in end.GetVisualDescendants().OfType<Button>().Where(b => b.IsVisible))
+            {
+                Rect at = Placed(window, button);
+                Assert.True(at.Right <= window.Bounds.Width + 0.5, $"The toolbar's {ToolTip.GetTip(button)} is cut off at the window's right edge");
+            }
+            Assert.True(Placed(window, start).Right <= Placed(window, end).Left + 0.5,
+                "The toolbar's project and branch widgets run under its run widget, where Rider's give way, ending in an ellipsis");
+            TextBlock project = Named<TextBlock>(window, "ProjectName");
+            Assert.True(project.TextTrimming == TextTrimming.CharacterEllipsis, "The project's name is cut rather than ending in an ellipsis");
+            StripeButtonsFit(window);
+            Assert.True(window.EditorArea.Bounds.Width > 200, $"The editor keeps {window.EditorArea.Bounds.Width:0.#} px beside the tool windows");
+
+            // NuGet's search, feeds, Prerelease and Refresh stand inside its window, the search and the count giving way.
+            Assert.True(window.Perform(AppActions.ShowNuGet), "NuGet did not show");
+            Ui.Settle();
+            CheckBox prerelease = window.DockHost.GetVisualDescendants().OfType<CheckBox>().First(c => c.Content as string == "Prerelease" && c.IsEffectivelyVisible);
+            Rect nuget = Placed(window, prerelease.FindAncestorOfType<Passenger.App.ToolWindows.NuGetView>()!);
+            foreach (Control part in ((Panel)prerelease.Parent!).Children.Where(c => c.IsVisible))
+            {
+                Rect at = Placed(window, part);
+                Assert.True(at.Right <= nuget.Right + 0.5 && at.Width > 0, $"NuGet's {part.GetType().Name} is cut off at its window's right edge ({at.Right:0.#} past {nuget.Right:0.#})");
+            }
+
+            // A window too short for every stripe button puts the rest behind More, which lists them.
+            window.Height = 500;
+            window.Width = MainWindow.SmallestWidth;
+            Ui.Settle();
+            StripeButtonsFit(window);
+            ToggleButton more = window.DockHost.GetVisualDescendants().OfType<ToggleButton>().First(b => ToolTip.GetTip(b) as string == "More Tool Windows" && b.IsEffectivelyVisible);
+            string[] hidden = [.. window.DockHost.GetVisualDescendants().OfType<ToggleButton>().Where(b => b.Tag is string && !b.IsVisible).Select(b => (string)b.Tag!)];
+            Assert.NotEmpty(hidden);
+            Point centre = more.TranslatePoint(new Point(more.Bounds.Width / 2, more.Bounds.Height / 2), window)!.Value;
+            window.MouseDown(centre, MouseButton.Left);
+            window.MouseUp(centre, MouseButton.Left);
+            Ui.Settle();
+            ContextMenu menu = window.GetVisualDescendants().OfType<ContextMenu>().FirstOrDefault(m => m.IsOpen)
+                ?? throw new Xunit.Sdk.XunitException("More opened no menu of the tool windows it holds");
+            Assert.Equal(hidden.Length, menu.Items.Count);
+            menu.Close();
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
     public void Focus_is_Rider_s_rounded_ring_centred_on_what_has_the_keys_a_check_box_s_round_its_box_alone()
     {
         string other = TestFolders.Create("ui-rules-other-");
@@ -254,6 +312,18 @@ public sealed class UiRulesTests : IDisposable
         {
             window.Close();
             TestFolders.Delete(other);
+        }
+    }
+
+    /// <summary>Each stripe button shown lies wholly inside its stripe, above the status bar.</summary>
+    private static void StripeButtonsFit(MainWindow window)
+    {
+        Rect dock = Placed(window, window.DockHost);
+        foreach (ToggleButton button in window.DockHost.GetVisualDescendants().OfType<ToggleButton>().Where(b => b.Classes.Contains("stripe") && b.IsEffectivelyVisible))
+        {
+            Rect at = Placed(window, button);
+            Assert.True(at.Top >= dock.Top - 0.5 && at.Bottom <= dock.Bottom + 0.5,
+                $"The stripe's {ToolTip.GetTip(button)} button is cut off at {at.Bottom:0.#}, past the stripe's foot at {dock.Bottom:0.#}");
         }
     }
 
@@ -313,6 +383,9 @@ public sealed class UiRulesTests : IDisposable
         window.GetVisualDescendants().OfType<T>().FirstOrDefault(c => c.Name == name) ?? throw new Xunit.Sdk.XunitException($"The window has no {name}");
 
     private static double Off(Point a, Point b) => Math.Abs(a.X - b.X) + Math.Abs(a.Y - b.Y);
+
+    private static Rect Placed(Visual window, Visual control) =>
+        new(control.TranslatePoint(default, window)!.Value, control.Bounds.Size);
 
     private MainWindow Open(double width, double height)
     {

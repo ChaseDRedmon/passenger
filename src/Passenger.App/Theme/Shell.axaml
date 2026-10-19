@@ -1,5 +1,6 @@
 <Styles xmlns="https://github.com/avaloniaui"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:app="using:Passenger.App">
     <!-- The shell's controls over the Fluent theme. Fluent paints a button's hover and press on its
          content presenter, so each state is restyled there. A later style wins over an earlier one, so the base
          styles come first and a class's style after them says only how it differs. -->
@@ -75,6 +76,10 @@
         <Setter Property="CornerRadius" Value="{DynamicResource Passenger.ControlRadius}" />
         <Setter Property="MinHeight" Value="{DynamicResource Passenger.RowHeight}" />
         <Setter Property="Padding" Value="10,3,10,4" />
+    </Style>
+    <!-- A long name ends in an ellipsis rather than cut at the menu's edge (a branch's). -->
+    <Style Selector="MenuItem /template/ ContentPresenter#PART_HeaderPresenter AccessText">
+        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
     </Style>
     <!-- The value in force (MenuChoice) is checked with Rider's tick, a radio item's too, where Fluent drew a dot. -->
     <Style Selector="MenuItem:checked:radio /template/ ContentControl#PART_ToggleIconPresenter">
@@ -224,6 +229,10 @@
 
     <Style Selector="TextBlock.muted">
         <Setter Property="Foreground" Value="{DynamicResource Passenger.TextMuted}" />
+    </Style>
+    <!-- Words in a row that gives way when narrow (a list's row, the toolbar) end in an ellipsis, never cut mid-letter. -->
+    <Style Selector="app|ShrinkingRow > TextBlock">
+        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
     </Style>
     <Style Selector="TextBlock.paneTitle">
         <Setter Property="FontSize" Value="13" />

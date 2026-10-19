@@ -482,14 +482,14 @@ public sealed class DebugView : DockPanel
             VerticalAlignment = VerticalAlignment.Center,
         };
         where.Bind(TextBlock.ForegroundProperty, where.GetResourceObservable("Passenger.TextMuted"));
-        return new StackPanel
+        // Its place gives way first, then its name, each ending in an ellipsis, as Rider's frames list narrows.
+        return new ShrinkingRow
         {
-            Orientation = Orientation.Horizontal,
             Height = 24,
             Opacity = frame.PresentationHint == "subtle" ? 0.55 : 1,
             Children =
             {
-                new TextBlock { Text = name, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 520 },
+                new TextBlock { Text = name, VerticalAlignment = VerticalAlignment.Center },
                 where,
             },
         };

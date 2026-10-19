@@ -50,33 +50,9 @@
                     </Button>
                 </StackPanel>
 
-                <StackPanel Name="ToolbarStart" DockPanel.Dock="Left" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center"
-                            WindowDecorationProperties.ElementRole="User">
-                    <!-- Rider's main menu behind a button, where the system has no menu bar of its own. -->
-                    <Button Name="MenuButton" Classes="tool" ToolTip.Tip="Main menu" Click="OnMenuClicked">
-                        <PathIcon Data="{StaticResource Icon.Menu}" />
-                    </Button>
-                    <Button Name="ProjectButton" Classes="widget" ToolTip.Tip="Open a solution, project or folder" Click="OnProjectClicked">
-                        <StackPanel Orientation="Horizontal" Spacing="7">
-                            <Border Name="ProjectBadge" IsVisible="False" Width="20" Height="20" CornerRadius="4"
-                                    Background="{DynamicResource Passenger.Badge}">
-                                <TextBlock Name="ProjectBadgeText" FontSize="10" FontWeight="Bold"
-                                           Foreground="{DynamicResource Passenger.AccentText}"
-                                           HorizontalAlignment="Center" VerticalAlignment="Center" />
-                            </Border>
-                            <TextBlock Name="ProjectName" Text="No solution" FontWeight="SemiBold" VerticalAlignment="Center" />
-                            <PathIcon Classes="chevron" Data="{StaticResource Icon.ChevronDown}" />
-                        </StackPanel>
-                    </Button>
-                    <Button Name="BranchButton" Classes="widget" ToolTip.Tip="Version control" Click="OnBranchClicked">
-                        <StackPanel Orientation="Horizontal" Spacing="6">
-                            <PathIcon Data="{StaticResource Icon.Branch}" />
-                            <TextBlock Name="BranchName" Text="Version control" VerticalAlignment="Center" />
-                            <PathIcon Classes="chevron" Data="{StaticResource Icon.ChevronDown}" />
-                        </StackPanel>
-                    </Button>
-                </StackPanel>
-
+                <!-- The run widget and the icons at the right keep their room as the window narrows, as Rider's main toolbar
+                     does: the project's and branch's names give way first, ending in an ellipsis (the end group is laid
+                     out before the start one). -->
                 <StackPanel Name="ToolbarEnd" DockPanel.Dock="Right" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center"
                             WindowDecorationProperties.ElementRole="User">
                     <Button Name="BuildButton" Classes="tool" ToolTip.Tip="Build solution" Click="OnBuildClicked">
@@ -84,7 +60,8 @@
                     </Button>
                     <Button Name="RunConfigButton" Classes="widget" ToolTip.Tip="Run configuration" Click="OnRunConfigClicked">
                         <StackPanel Orientation="Horizontal" Spacing="6">
-                            <TextBlock Name="RunConfigName" Text="No configurations" VerticalAlignment="Center" />
+                            <TextBlock Name="RunConfigName" Text="No configurations" VerticalAlignment="Center"
+                                       MaxWidth="200" TextTrimming="CharacterEllipsis" />
                             <PathIcon Classes="chevron" Data="{StaticResource Icon.ChevronDown}" />
                         </StackPanel>
                     </Button>
@@ -112,7 +89,33 @@
                     </Button>
                 </StackPanel>
 
-                <Panel />
+                <app:ShrinkingRow Name="ToolbarStart" DockPanel.Dock="Left" HorizontalAlignment="Left" VerticalAlignment="Center"
+                           WindowDecorationProperties.ElementRole="User">
+                    <!-- Rider's main menu behind a button, where the system has no menu bar of its own. -->
+                    <Button Name="MenuButton" Classes="tool" Margin="0,0,2,0" ToolTip.Tip="Main menu" Click="OnMenuClicked">
+                        <PathIcon Data="{StaticResource Icon.Menu}" />
+                    </Button>
+                    <Button Name="ProjectButton" Classes="widget" Margin="0,0,2,0" MinWidth="60" ToolTip.Tip="Open a solution, project or folder" Click="OnProjectClicked">
+                        <DockPanel>
+                            <Border Name="ProjectBadge" DockPanel.Dock="Left" Margin="0,0,7,0" IsVisible="False" Width="20" Height="20" CornerRadius="4"
+                                    Background="{DynamicResource Passenger.Badge}">
+                                <TextBlock Name="ProjectBadgeText" FontSize="10" FontWeight="Bold"
+                                           Foreground="{DynamicResource Passenger.AccentText}"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                            <PathIcon DockPanel.Dock="Right" Margin="7,0,0,0" Classes="chevron" Data="{StaticResource Icon.ChevronDown}" />
+                            <TextBlock Name="ProjectName" Text="No solution" FontWeight="SemiBold" VerticalAlignment="Center"
+                                       MaxWidth="240" TextTrimming="CharacterEllipsis" />
+                        </DockPanel>
+                    </Button>
+                    <Button Name="BranchButton" Classes="widget" MinWidth="54" ToolTip.Tip="Version control" Click="OnBranchClicked">
+                        <DockPanel>
+                            <PathIcon DockPanel.Dock="Left" Margin="0,0,6,0" Data="{StaticResource Icon.Branch}" />
+                            <PathIcon DockPanel.Dock="Right" Margin="6,0,0,0" Classes="chevron" Data="{StaticResource Icon.ChevronDown}" />
+                            <TextBlock Name="BranchName" Text="Version control" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                        </DockPanel>
+                    </Button>
+                </app:ShrinkingRow>
             </DockPanel>
         </Border>
 

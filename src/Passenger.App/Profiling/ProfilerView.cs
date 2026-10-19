@@ -310,9 +310,8 @@ public sealed class ProfilerView : DockPanel
         size.FontSize = 12;
         // Named for its program and when it ran, which the row says already.
         string program = System.Text.RegularExpressions.Regex.Replace(file.Name, @"-\d{8}-\d{6}(-\d+)?$", string.Empty);
-        return new StackPanel
+        return new ShrinkingRow
         {
-            Orientation = Orientation.Horizontal,
             Height = 22,
             Margin = new Thickness(6, 0),
             Children = { when, size, new TextBlock { Text = program, VerticalAlignment = VerticalAlignment.Center, FontWeight = FontWeight.SemiBold } },
@@ -509,9 +508,8 @@ public sealed class ProfilerView : DockPanel
         TextBlock size = Muted($"{(whole > 0 ? 100.0 * type.Bytes / whole : 0),5:0.0}%  {type.Bytes / 1048576.0,8:N1} MB", 170);
         size.FontFamily = CSharp.Fonts.Mono;
         size.FontSize = 12;
-        return new StackPanel
+        return new ShrinkingRow
         {
-            Orientation = Orientation.Horizontal,
             Height = 22,
             Margin = new Thickness(6, 0),
             Children = { size, new TextBlock { Text = type.Name, VerticalAlignment = VerticalAlignment.Center, FontWeight = FontWeight.SemiBold } },
@@ -524,7 +522,7 @@ public sealed class ProfilerView : DockPanel
         TextBlock when = Muted($"at {gc.AtMs:N0} ms", 110);
         TextBlock pause = Muted($"paused {gc.PauseMs:0.00} ms", 140);
         TextBlock why = Muted(gc.Reason, double.NaN);
-        return new StackPanel { Orientation = Orientation.Horizontal, Height = 22, Margin = new Thickness(6, 0), Children = { what, when, pause, why } };
+        return new ShrinkingRow { Height = 22, Margin = new Thickness(6, 0), Children = { what, when, pause, why } };
     }
 
     public void Toggle(TreeRow row)
@@ -641,9 +639,8 @@ public sealed class ProfilerView : DockPanel
         TextBlock share = Muted($"{percent}  {row.Node.Total * row.Scale,7:N0} {row.Unit}", 170);
         share.FontFamily = CSharp.Fonts.Mono;
         share.FontSize = 12;
-        return new StackPanel
+        return new ShrinkingRow
         {
-            Orientation = Orientation.Horizontal,
             Height = 22,
             Margin = new Thickness(row.Depth * 14, 0, 0, 0),
             Children = { toggle, share, MethodName(row.Node.Name, row.Depth == 0) },
@@ -658,7 +655,7 @@ public sealed class ProfilerView : DockPanel
         own.FontSize = 12;
         TextBlock total = Muted($"{spot.Total * sampleMs,7:N0} ms in all", 110);
         total.FontSize = 12;
-        return new StackPanel { Orientation = Orientation.Horizontal, Height = 22, Margin = new Thickness(6, 0), Children = { own, total, MethodName(spot.Name, false) } };
+        return new ShrinkingRow { Height = 22, Margin = new Thickness(6, 0), Children = { own, total, MethodName(spot.Name, false) } };
     }
 
     /// <summary>A method as dotTrace writes it: its own name strong, its type's and namespace's muted before it.</summary>
@@ -673,9 +670,8 @@ public sealed class ProfilerView : DockPanel
         string owner = dot > 0 ? bare[..(dot + 1)] : string.Empty;
         string method = name[owner.Length..];
         TextBlock before = Muted(owner, double.NaN);
-        return new StackPanel
+        return new ShrinkingRow
         {
-            Orientation = Orientation.Horizontal,
             Children = { before, new TextBlock { Text = method, VerticalAlignment = VerticalAlignment.Center, FontWeight = FontWeight.SemiBold } },
         };
     }

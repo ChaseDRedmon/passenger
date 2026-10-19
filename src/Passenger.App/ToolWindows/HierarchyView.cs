@@ -95,6 +95,8 @@ public sealed class HierarchyView : DockPanel
     public Task ShowAsync(string heading, HierarchyNode top, HierarchyDirection one, HierarchyDirection other)
     {
         title.Text = heading;
+        // Narrowed beside the toggles it ends in an ellipsis, as a header of Rider's does; the whole heading is its tip.
+        ToolTip.SetTip(title, heading);
         root = top;
         directions = (one, other);
         first.Content = one.Label;

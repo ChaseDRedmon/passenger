@@ -22,8 +22,10 @@ namespace Passenger.App;
 public partial class MainWindow : Window
 {
     /// <summary>The window's least width and height (its MinWidth and MinHeight), which a screenshot's <c>--size</c> is
-    /// held to: Avalonia would widen a smaller window to them without a word.</summary>
-    public const double SmallestWidth = 800;
+    /// held to: Avalonia would widen a smaller window to them without a word. Narrow enough to tile beside another on half
+    /// a 1280-wide screen (Windows' snap halves, GNOME's Super+Left), as Rider's window tiles: the toolbar's names give way,
+    /// a stripe puts what it has no room for behind More, and the side tool windows keep the editor its share.</summary>
+    public const double SmallestWidth = 640;
 
     public const double SmallestHeight = 500;
 

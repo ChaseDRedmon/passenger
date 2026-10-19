@@ -68,7 +68,7 @@ public sealed class NuGetView : DockPanel
     {
         this.projects = projects;
         this.root = root;
-        search = new TextBox { Classes = { "search" }, PlaceholderText = "Search packages", Width = 260, Margin = new Thickness(8, 0) };
+        search = new TextBox { Classes = { "search" }, PlaceholderText = "Search packages", Margin = new Thickness(8, 0) };
         chooser = new ComboBox { Classes = { "compact" }, MinWidth = 130, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0) };
         ToolTip.SetTip(chooser, "The feeds searched");
         chooser.SelectionChanged += (_, _) =>
@@ -88,12 +88,22 @@ public sealed class NuGetView : DockPanel
         typing = new Debounce(Pause, RefreshAsync);
         search.TextChanged += (_, _) => typing.Restart();
         prerelease.IsCheckedChanged += (_, _) => _ = RefreshAsync();
+        // In a narrow window the search field and the count give way, the count ending in an ellipsis, so the feed chooser,
+        // Prerelease and Refresh keep their room.
+        Grid row = new() { ColumnDefinitions = new ColumnDefinitions("3*,Auto,Auto,Auto,2*"), VerticalAlignment = VerticalAlignment.Center };
+        row.ColumnDefinitions[0].MaxWidth = 276;
+        Control[] parts = [search, chooser, prerelease, refresh, status];
+        for (int i = 0; i < parts.Length; i++)
+        {
+            Grid.SetColumn(parts[i], i);
+            row.Children.Add(parts[i]);
+        }
         Border top = new()
         {
             [DockProperty] = Dock.Top,
             Height = 36,
             BorderThickness = new Thickness(0, 0, 0, 1),
-            Child = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, Children = { search, chooser, prerelease, refresh, status } },
+            Child = row,
         };
         top.Bind(Border.BorderBrushProperty, top.GetResourceObservable("Passenger.Divider"));
 
