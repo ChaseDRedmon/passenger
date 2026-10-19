@@ -1247,7 +1247,8 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
     }
 
     /// <summary>A program started outside Passenger, as a terminal starts one, waiting for a line: Attach to Process lists it,
-    /// its process id typed narrows the list to it and Enter attaches; Detach lets it go still waiting, and Reattach to
+    /// its process id typed narrows the list to the programs that show it (its own, and any whose id or command line has it
+    /// inside, as Rider's search finds text), its row chosen and Enter attaches; Detach lets it go still waiting, and Reattach to
     /// Process takes hold of it again; then the line it reads brings it to the breakpoint, and Detach leaves it running on
     /// past the breakpoint to its end, reading and writing as it would have undebugged.</summary>
     [AvaloniaFact]
@@ -1277,9 +1278,7 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
             Assert.Equal(OperatingSystem.IsWindows() ? "ReadsInputConsoleApp.exe" : "ReadsInputConsoleApp", listed.Name);
             Assert.Contains("ReadsInputConsoleApp", listed.CommandLine, StringComparison.Ordinal);
             Assert.True(listed.IsMine && listed.User.Length > 0, $"The program the person started was listed as {(listed.IsMine ? "theirs" : "another user's")}, user '{listed.User}'");
-            dialog.KeyTextInput(program.Id.ToString(System.Globalization.CultureInfo.InvariantCulture));
-            Ui.Settle();
-            Assert.Equal([program.Id], dialog.Shown.Select(p => p.Id));
+            ChooseById(dialog, program.Id);
             dialog.KeyPress(Key.Enter, RawInputModifiers.None, PhysicalKey.None, null);
             Ui.WaitFor(() => window.Debugger.Session is { State: DebugState.Running }, "the debugger to attach to the program");
             Assert.Empty(window.OwnedWindows.OfType<AttachToProcessDialog>());
@@ -1349,10 +1348,17 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
             Assert.DoesNotContain(dialog.Shown, p => p.Id == other.Id);
             Assert.DoesNotContain(dialog.Shown, p => p.Id == Environment.ProcessId);
 
+            // Its id finds no row of its own; other programs may show it (an id or a command line with it inside), so what the
+            // search says of none is asked with words no program shows.
             dialog.KeyTextInput(other.Id.ToString(System.Globalization.CultureInfo.InvariantCulture));
             Ui.Settle();
+            Assert.DoesNotContain(dialog.Shown, p => p.Id == other.Id);
+            string nothing = $"no-program-{Guid.NewGuid():N}";
+            dialog.Search.SelectAll();
+            dialog.KeyTextInput(nothing);
+            Ui.Settle();
             Assert.Empty(dialog.Shown);
-            Assert.Equal($"No .NET process matches '{other.Id}'", dialog.Placeholder);
+            Assert.Equal($"No .NET process matches '{nothing}'", dialog.Placeholder);
             dialog.KeyPress(Key.Escape, RawInputModifiers.None, PhysicalKey.None, null);
             Ui.Settle();
             Assert.Empty(window.OwnedWindows.OfType<AttachToProcessDialog>());
@@ -1415,8 +1421,7 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         {
             Ui.WaitFor(() => DotnetProcesses.List().Any(p => p.Id == program.Id), $"{debuggee}'s runtime to start");
             AttachToProcessDialog dialog = OpenAttachToProcess(window);
-            dialog.KeyTextInput(program.Id.ToString(System.Globalization.CultureInfo.InvariantCulture));
-            Ui.Settle();
+            ChooseById(dialog, program.Id);
             dialog.KeyPress(Key.Enter, RawInputModifiers.None, PhysicalKey.None, null);
             Ui.WaitFor(() => window.Debugger.Session is { State: DebugState.Running }, $"the debugger to attach to {debuggee}");
             program.StandardInput.WriteLine("hello");
@@ -1432,6 +1437,18 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         {
             Processes.Kill(program.Id);
         }
+    }
+
+    /// <summary>A program's process id typed into Attach to Process's search, as a person finds it: the rows left are those
+    /// that show it, its own among them and any other whose id or command line has it inside (10328 for 328), so its own is
+    /// chosen by its id, as a person clicks it.</summary>
+    private static void ChooseById(AttachToProcessDialog dialog, int processId)
+    {
+        dialog.KeyTextInput(processId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        Ui.Settle();
+        Assert.Contains(processId, dialog.Shown.Select(p => p.Id));
+        dialog.Choose(processId);
+        Assert.Equal(processId, dialog.Chosen?.Id);
     }
 
     private static AttachToProcessDialog OpenAttachToProcess(MainWindow window)
