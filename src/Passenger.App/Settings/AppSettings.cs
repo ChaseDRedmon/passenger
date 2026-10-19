@@ -24,7 +24,15 @@ public sealed record AppSettings : IStateDocument<AppSettings>
     /// <summary>Rider's own soft wrap masks.</summary>
     public const string DefaultSoftWrapFiles = "*.md; *.txt; *.rst; *.adoc";
 
+    /// <summary>Dark or light, or as the system is.</summary>
     public ThemeChoice Theme { get; init; } = ThemeChoice.System;
+
+    /// <summary>The theme, Passenger's own or Harbour, each in the dark or light <see cref="Theme"/> says.</summary>
+    public Look Look { get; init; } = Look.Passenger;
+
+    /// <summary>The code's colours: the theme's own scheme, or Rider's for a person who keeps Rider's colours under either
+    /// theme (its Dark or Light as the theme is; the editor keeps the theme's ground, so the areas stay told apart).</summary>
+    public ColourScheme ColourScheme { get; init; } = ColourScheme.Theme;
 
     /// <summary>Rider's "Merge main menu with window title", which Linux alone offers: the toolbar is the window's title bar
     /// (its window buttons at its right) rather than a strip under the system's. On at first, as Rider's is: its frame,
@@ -285,6 +293,8 @@ public sealed record AppSettings : IStateDocument<AppSettings>
         return this with
         {
             Theme = Enum.IsDefined(Theme) ? Theme : defaults.Theme,
+            Look = Enum.IsDefined(Look) ? Look : defaults.Look,
+            ColourScheme = Enum.IsDefined(ColourScheme) ? ColourScheme : defaults.ColourScheme,
             ShowBuildResults = Enum.IsDefined(ShowBuildResults) ? ShowBuildResults : defaults.ShowBuildResults,
             DiffHighlighting = Enum.IsDefined(DiffHighlighting) ? DiffHighlighting : defaults.DiffHighlighting,
             DiscordShows = Enum.IsDefined(DiscordShows) ? DiscordShows : defaults.DiscordShows,

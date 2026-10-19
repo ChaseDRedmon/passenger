@@ -31,7 +31,6 @@ internal static class Program
             _ = Updates.ReleaseFeed.Default;
             _ = Discord.DiscordIpc.Default;
             Web.JsonSchemas.CheckVariable();
-            _ = Directions.Chosen();
         }
         catch (FormatException error)
         {
@@ -53,7 +52,7 @@ internal static class Program
             return Apart(() => Screenshot.Run(options, screenshot));
         }
         int code = BuildAvaloniaApp()
-            .AfterSetup(builder => ApplyTheme(builder.Instance!, options.Theme))
+            .AfterSetup(builder => ApplyTheme(builder.Instance!, options))
             .StartWithClassicDesktopLifetime(args);
         // What the windows ended (debuggers, Roslyn's servers) has a moment; then an update made ready installs, last of all.
         PassengerApp.End();
@@ -95,6 +94,13 @@ internal static class Program
                 }
             }
         }
+    }
+
+    /// <summary>The theme, its dark or light and the code's colours the command line names, over those in force.</summary>
+    public static void ApplyTheme(Application app, LaunchOptions options)
+    {
+        ApplyTheme(app, options.Theme);
+        Themes.Apply(app, options.Look, options.Scheme);
     }
 
     public static void ApplyTheme(Application app, ThemeChoice? theme)

@@ -79,9 +79,9 @@ public sealed class DiffView : DockPanel
                 count,
             },
         };
-        Border bar = new() { [DockProperty] = Dock.Top, Height = 34, BorderThickness = new Thickness(0, 0, 0, 1), Child = new DockPanel { Children = { settings, tools } } };
-        bar.Bind(Border.BackgroundProperty, bar.GetResourceObservable("Passenger.Chrome"));
-        bar.Bind(Border.BorderBrushProperty, bar.GetResourceObservable("Passenger.Divider"));
+        // A tool window's ground over the editors', told apart by shade.
+        Border bar = new() { [DockProperty] = Dock.Top, Height = 34, Child = new DockPanel { Children = { settings, tools } } };
+        bar.Bind(Border.BackgroundProperty, bar.GetResourceObservable("Passenger.Panel"));
         Children.Add(bar);
         Children.Add(sides);
 

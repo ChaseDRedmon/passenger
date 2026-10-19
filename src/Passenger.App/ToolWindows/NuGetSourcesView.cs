@@ -40,7 +40,7 @@ public sealed class NuGetSourcesView : Grid
                 Draw();
             }
         };
-        problem.Bind(TextBlock.ForegroundProperty, problem.GetResourceObservable("Passenger.Editor.Error"));
+        problem.Bind(TextBlock.ForegroundProperty, problem.GetResourceObservable("Passenger.Error"));
         DockPanel right = new();
         DockPanel.SetDock(problem, Dock.Bottom);
         problem.Margin = new Thickness(14, 0, 14, 8);
@@ -312,7 +312,7 @@ public sealed class NuGetSourcesView : Grid
     private static TextBlock Error(string text)
     {
         TextBlock error = new() { Text = text, TextWrapping = TextWrapping.Wrap };
-        error.Bind(TextBlock.ForegroundProperty, error.GetResourceObservable("Passenger.Editor.Error"));
+        error.Bind(TextBlock.ForegroundProperty, error.GetResourceObservable("Passenger.Error"));
         return error;
     }
 

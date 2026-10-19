@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
+using Avalonia.Media;
 using Avalonia.VisualTree;
 using Passenger.App;
 using Passenger.App.Settings;
@@ -151,6 +152,45 @@ public sealed class SettingsTests : IDisposable
         Assert.False(again.Settings.OpenBuildWindowOnBuild);
         Assert.Equal(BuildResultsMode.Never, again.Settings.ShowBuildResults);
         again.Close();
+    }
+
+    /// <summary>Appearance's Theme: Passenger's own or Harbour, each in the dark or light the next row says, the window
+    /// dressed in the one chosen the moment it is applied; Editor's Colour scheme: the theme's own or Rider's.</summary>
+    [AvaloniaFact]
+    public void Harbour_chosen_as_the_theme_dresses_the_window_at_once_beside_passengers_own()
+    {
+        MainWindow window = Open();
+        try
+        {
+            SettingsDialog dialog = window.ShowSettings();
+            Ui.Settle();
+            Assert.Equal(["Theme", "Dark or light"], dialog.Shown.Take(2));
+            ComboBox theme = Editor<ComboBox>(dialog, "Theme");
+            Assert.Equal(["Passenger", "Harbour"], theme.Items.Cast<string>());
+            Assert.Equal("Passenger", theme.SelectedItem);
+            Assert.Equal(["System", "Dark", "Light"], Editor<ComboBox>(dialog, "Dark or light").Items.Cast<string>());
+            Border stripe = window.GetVisualDescendants().OfType<Border>().First(b => b.Classes.Contains("stripeBar") && b.IsEffectivelyVisible);
+            Point bare = stripe.TranslatePoint(new Point(stripe.Bounds.Width / 2, stripe.Bounds.Height * 0.45), window)!.Value;
+            Color passenger = Ui.Pixel(window, bare);
+
+            theme.SelectedIndex = 1;
+            dialog.Apply();
+            Ui.Settle();
+            Color harbour = Ui.Pixel(window, bare);
+            Assert.True(window.TryFindResource("Passenger.Frame", window.ActualThemeVariant, out object? frame) && frame is ISolidColorBrush desk && desk.Color == harbour && harbour != passenger,
+                $"With Harbour applied the window's frame is {harbour}, where it was {passenger} under Passenger's own: Harbour's desk did not take its place");
+
+            dialog.Page = SettingsDialog.EditorPage;
+            Ui.Settle();
+            Assert.Equal(["Same as theme", "Rider"], Editor<ComboBox>(dialog, "Colour scheme").Items.Cast<string>());
+            dialog.Close();
+        }
+        finally
+        {
+            // The theme in force is the process's; the next test starts on Passenger's own.
+            window.ApplySettings(new AppSettings());
+            window.Close();
+        }
     }
 
     /// <summary>What edits an option, beside its label in the page shown.</summary>

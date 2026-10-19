@@ -6,14 +6,8 @@
          styles come first and a class's style after them says only how it differs. -->
 
     <Styles.Resources>
-        <!-- Rider's new UI rounds a button, a text field and a combo box alike (Button.arc and Component.arc 8, a 4 px
-             radius), a toolbar's buttons and tabs more, and a popup's frame most. -->
-        <CornerRadius x:Key="Passenger.ControlRadius">4</CornerRadius>
-        <CornerRadius x:Key="Passenger.ToolRadius">6</CornerRadius>
-        <CornerRadius x:Key="Passenger.PopupRadius">8</CornerRadius>
-        <!-- Fluent's controls Passenger leaves as they are (check boxes, number boxes, menus) read Fluent's radii. -->
-        <StaticResource x:Key="ControlCornerRadius" ResourceKey="Passenger.ControlRadius" />
-        <StaticResource x:Key="OverlayCornerRadius" ResourceKey="Passenger.PopupRadius" />
+        <!-- The radii and the other shapes a theme draws its own way are the theme's (Tokens.axaml, Harbour.axaml): a
+             button, a text field and a combo box alike, a toolbar's buttons and tabs more, a popup's frame most. -->
         <!-- A button, a field and a drop-down are one height, Rider's 28, so a row of them shares its edges. -->
         <x:Double x:Key="Passenger.ControlHeight">28</x:Double>
         <!-- A check box's row as tall as a field's, so a page's rows are evenly spaced (Fluent's is 32, its box placed in
@@ -130,72 +124,74 @@
     <Style Selector="StackPanel.footer > Button">
         <Setter Property="MinWidth" Value="80" />
     </Style>
-    <!-- The bar a dialog's footer stands in under its page, on the chrome as Settings' is, a divider above it. -->
+    <!-- The bar a dialog's footer stands in under its page: on the frame's ground, told from the page by shade, with no
+         rule between them. -->
     <Style Selector="Border.footerBar">
-        <Setter Property="Background" Value="{DynamicResource Passenger.Chrome}" />
-        <Setter Property="BorderBrush" Value="{DynamicResource Passenger.Divider}" />
-        <Setter Property="BorderThickness" Value="0,1,0,0" />
+        <Setter Property="Background" Value="{DynamicResource Passenger.Frame}" />
+        <Setter Property="BorderThickness" Value="0" />
         <Setter Property="Padding" Value="16,10" />
     </Style>
-    <!-- Every window's ground is the chrome, as every page of Rider's dialogs is: a dialog is its page, never an editor's
-         background. A window that shows an editor (a diff, a merge) says so itself. -->
+    <!-- Every window's ground is a tool window's, as every page of Rider's dialogs is its panel's: a dialog is its page,
+         never an editor's background. A window that shows an editor (a diff, a merge) says so itself. -->
     <Style Selector="Window">
-        <Setter Property="Background" Value="{DynamicResource Passenger.Chrome}" />
+        <Setter Property="Background" Value="{DynamicResource Passenger.Panel}" />
     </Style>
-    <!-- The window's frame round the editors, each surface named once so the theme (or a direction, #223) says how it
-         looks: the toolbar that is the title bar, the stripes down the edges, a tool window's pane and header, the
-         editor tabs' strip and the status bar. -->
+    <!-- The window's frame round the editors, each surface named once: the toolbar that is the title bar, the stripes
+         down the edges, a tool window's pane and header, the editor tabs' strip and the status bar. The areas are told
+         apart by shade, never by a rule: the frame (the stripes, the tabs' strip, the status bar) deepest, the tool
+         windows a step lighter, the editor the page; a divider stands only where two panes of one ground meet (DockHost,
+         EditorArea). -->
     <Style Selector="Border.titleBar">
-        <Setter Property="Background" Value="{DynamicResource Passenger.Chrome}" />
-        <Setter Property="BorderBrush" Value="{DynamicResource Passenger.Divider}" />
-        <Setter Property="BorderThickness" Value="0,0,0,1" />
+        <Setter Property="Background" Value="{DynamicResource Passenger.TitleBar}" />
+        <Setter Property="BorderThickness" Value="0" />
     </Style>
     <Style Selector="Border.toolbarRule">
         <Setter Property="Width" Value="1" />
         <Setter Property="Height" Value="18" />
         <Setter Property="Margin" Value="6,0" />
-        <Setter Property="Background" Value="{DynamicResource Passenger.Hover}" />
+        <Setter Property="Background" Value="{DynamicResource Passenger.TitleBar.Rule}" />
     </Style>
-    <!-- The project widget's initials, on a badge as Rider's are. -->
+    <!-- The project widget's initials on a badge: the icon's amber dot in Passenger's theme. -->
     <Style Selector="Border.projectBadge">
-        <Setter Property="CornerRadius" Value="4" />
-        <Setter Property="Background" Value="{DynamicResource Passenger.Badge}" />
+        <Setter Property="CornerRadius" Value="{DynamicResource Passenger.BadgeRadius}" />
+        <Setter Property="Background" Value="{DynamicResource Passenger.TitleBar.Badge}" />
     </Style>
     <Style Selector="TextBlock.projectBadgeText">
         <Setter Property="FontSize" Value="10" />
         <Setter Property="FontWeight" Value="Bold" />
-        <Setter Property="Foreground" Value="{DynamicResource Passenger.AccentText}" />
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.TitleBar.BadgeText}" />
     </Style>
     <Style Selector="TextBlock.projectName">
         <Setter Property="FontWeight" Value="SemiBold" />
     </Style>
     <Style Selector="Border.stripeBar">
-        <Setter Property="Background" Value="{DynamicResource Passenger.Chrome}" />
-        <Setter Property="BorderBrush" Value="{DynamicResource Passenger.Divider}" />
+        <Setter Property="Background" Value="{DynamicResource Passenger.Frame}" />
+        <Setter Property="BorderThickness" Value="0" />
     </Style>
     <Style Selector="DockPanel.toolPane">
-        <Setter Property="Background" Value="{DynamicResource Passenger.Chrome}" />
+        <Setter Property="Background" Value="{DynamicResource Passenger.Panel}" />
     </Style>
-    <!-- Clear rather than empty, so the header takes the press that drags its window. -->
+    <!-- Clear rather than empty, so the header takes the press that drags its window; taller than a toolbar's row and its
+         title larger than the window's words, so a tool window reads as a place of its own. -->
     <Style Selector="Border.toolHeader">
-        <Setter Property="Height" Value="32" />
+        <Setter Property="Height" Value="38" />
         <Setter Property="Background" Value="Transparent" />
     </Style>
     <Style Selector="TextBlock.toolTitle">
+        <Setter Property="FontSize" Value="14" />
         <Setter Property="FontWeight" Value="SemiBold" />
-        <Setter Property="Margin" Value="12,0,0,0" />
+        <Setter Property="Margin" Value="14,0,0,0" />
     </Style>
     <Style Selector="Border.tabStrip">
-        <Setter Property="Height" Value="36" />
-        <Setter Property="Background" Value="{DynamicResource Passenger.Chrome}" />
-        <Setter Property="BorderBrush" Value="{DynamicResource Passenger.Divider}" />
-        <Setter Property="BorderThickness" Value="0,0,0,1" />
+        <Setter Property="Height" Value="{DynamicResource Passenger.TabStripHeight}" />
+        <Setter Property="Padding" Value="6,0,0,0" />
+        <Setter Property="Background" Value="{DynamicResource Passenger.Frame}" />
+        <Setter Property="BorderThickness" Value="0" />
     </Style>
     <Style Selector="Border.statusBar">
         <Setter Property="Height" Value="26" />
-        <Setter Property="Background" Value="{DynamicResource Passenger.Chrome}" />
-        <Setter Property="BorderBrush" Value="{DynamicResource Passenger.Divider}" />
-        <Setter Property="BorderThickness" Value="0,1,0,0" />
+        <Setter Property="Background" Value="{DynamicResource Passenger.Frame}" />
+        <Setter Property="BorderThickness" Value="0" />
     </Style>
 
     <!-- A list, table or text in a page, framed as a field is, on Rider's list ground (white in light, the page's in
@@ -210,7 +206,7 @@
          black text in light. -->
     <Style Selector="TextBox">
         <Setter Property="CornerRadius" Value="{DynamicResource Passenger.ControlRadius}" />
-        <Setter Property="SelectionBrush" Value="{DynamicResource Passenger.Editor.Selection}" />
+        <Setter Property="SelectionBrush" Value="{DynamicResource Passenger.TextSelection}" />
         <Setter Property="SelectionForegroundBrush" Value="{DynamicResource Passenger.Text}" />
     </Style>
     <!-- A drop-down framed as a field and as tall, its text inset as a field's (Fluent's is taller and its frame
@@ -330,7 +326,7 @@
         <Setter Property="Foreground" Value="{DynamicResource Passenger.HotReload}" />
     </Style>
     <Style Selector="PathIcon.toolbarStop">
-        <Setter Property="Foreground" Value="{DynamicResource Passenger.Editor.Error}" />
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.Error}" />
     </Style>
 
     <!-- A test's mark in the Unit Tests window, as Rider's: grey ring not run, blue dot running, green tick passed, red
@@ -434,8 +430,12 @@
     <Style Selector="ToggleButton.stripe:pointerover /template/ ContentPresenter#PART_ContentPresenter">
         <Setter Property="Background" Value="{DynamicResource Passenger.Hover}" />
     </Style>
+    <!-- The open window's button on a chip of the accent's, its icon in the accent. -->
     <Style Selector="ToggleButton.stripe:checked /template/ ContentPresenter#PART_ContentPresenter">
-        <Setter Property="Background" Value="{DynamicResource Passenger.Selected}" />
+        <Setter Property="Background" Value="{DynamicResource Passenger.Stripe.Selected}" />
+    </Style>
+    <Style Selector="ToggleButton.stripe:checked PathIcon">
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.Stripe.SelectedIcon}" />
     </Style>
     <Style Selector="ToggleButton.stripe:pressed /template/ ContentPresenter#PART_ContentPresenter">
         <Setter Property="Background" Value="{DynamicResource Passenger.Selected}" />
@@ -505,8 +505,49 @@
     <Style Selector="Button.windowButton.close:pressed /template/ ContentPresenter#PART_ContentPresenter">
         <Setter Property="Background" Value="{DynamicResource Passenger.WindowButton.ClosePressed}" />
     </Style>
-    <Style Selector="Button.windowButton.close:pointerover Path">
+    <!-- The title bar's own words, icons and hover, after every widget's, tool's and icon's so they win there: white on
+         Passenger's blue-to-teal, the window's own on Harbour's desk. -->
+    <Style Selector="Border.titleBar PathIcon">
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.TitleBar.Icon}" />
+    </Style>
+    <Style Selector="Border.titleBar PathIcon.toolbarRun">
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.TitleBar.Run}" />
+    </Style>
+    <Style Selector="Border.titleBar PathIcon.toolbarStop">
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.TitleBar.Stop}" />
+    </Style>
+    <Style Selector="Border.titleBar PathIcon.toolbarHotReload">
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.TitleBar.HotReload}" />
+    </Style>
+    <Style Selector="Border.titleBar Button.widget">
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.TitleBar.Text}" />
+    </Style>
+    <Style Selector="Border.titleBar Button.widget:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource Passenger.TitleBar.Hover}" />
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.TitleBar.Text}" />
+    </Style>
+    <Style Selector="Border.titleBar Button.tool:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource Passenger.TitleBar.Hover}" />
+    </Style>
+    <Style Selector="Border.titleBar Button.widget:pressed /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource Passenger.TitleBar.Pressed}" />
+    </Style>
+    <Style Selector="Border.titleBar Button.tool:pressed /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource Passenger.TitleBar.Pressed}" />
+    </Style>
+    <Style Selector="Border.titleBar Button.windowButton Path">
+        <Setter Property="Stroke" Value="{DynamicResource Passenger.TitleBar.Icon}" />
+    </Style>
+    <Style Selector="Border.titleBar Button.windowButton.close:pointerover Path">
         <Setter Property="Stroke" Value="{DynamicResource Passenger.WindowButton.CloseGlyph}" />
+    </Style>
+    <!-- The ring round what has the keys on the bar, in a colour that stands out on the bar's own. -->
+    <Style Selector="Border.titleBar Button">
+        <Setter Property="FocusAdorner">
+            <FocusAdornerTemplate>
+                <app:FocusRing Brush="{DynamicResource Passenger.TitleBar.Focus}" />
+            </FocusAdornerTemplate>
+        </Setter>
     </Style>
     <!-- A toolbar toggle (Mute Breakpoints): a tool button that stays pressed while it is on. -->
     <Style Selector="ToggleButton.tool">
@@ -579,7 +620,7 @@
         <Setter Property="MinHeight" Value="{x:Static app:ListRow.Height}" />
         <!-- A row's words midway down its band, where Fluent would leave a line shorter than the row at its top. -->
         <Setter Property="VerticalContentAlignment" Value="Center" />
-        <Setter Property="CornerRadius" Value="4" />
+        <Setter Property="CornerRadius" Value="{DynamicResource Passenger.ControlRadius}" />
         <Setter Property="Foreground" Value="{DynamicResource Passenger.Text}" />
     </Style>
     <Style Selector="ListBox.tree ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
@@ -604,30 +645,40 @@
         <Setter Property="Padding" Value="4" />
     </Style>
 
-    <!-- An editor tab: the active one underlined in the accent, a modified one with a dot that turns
-         into the close button under the pointer. -->
+    <!-- An editor tab on the frame: the open one filled (a pill on its strip in Passenger's theme, a card of the editor's
+         own colour joined to it in Harbour's, as the theme's shapes say), the one under the pointer lit, a modified one
+         with a dot that turns into the close button under the pointer. -->
     <Style Selector="Border.tab">
-        <Setter Property="Padding" Value="12,0,8,0" />
+        <Setter Property="Margin" Value="{DynamicResource Passenger.TabMargin}" />
+        <Setter Property="Padding" Value="{DynamicResource Passenger.TabPadding}" />
+        <Setter Property="CornerRadius" Value="{DynamicResource Passenger.TabRadius}" />
         <Setter Property="Background" Value="Transparent" />
-        <Setter Property="BorderBrush" Value="Transparent" />
-        <Setter Property="BorderThickness" Value="0,0,0,2" />
+        <Setter Property="BorderThickness" Value="0" />
         <Setter Property="Cursor" Value="Hand" />
     </Style>
     <Style Selector="Border.tab:pointerover">
         <Setter Property="Background" Value="{DynamicResource Passenger.Hover}" />
     </Style>
     <Style Selector="Border.tab.active">
-        <Setter Property="BorderBrush" Value="{DynamicResource Passenger.Accent}" />
+        <Setter Property="Background" Value="{DynamicResource Passenger.Tab.Active}" />
+        <Setter Property="BoxShadow" Value="{DynamicResource Passenger.TabShadow}" />
+    </Style>
+    <Style Selector="Border.tab.active:pointerover">
+        <Setter Property="Background" Value="{DynamicResource Passenger.Tab.Active}" />
     </Style>
     <Style Selector="Border.tab TextBlock.tabName">
         <Setter Property="Foreground" Value="{DynamicResource Passenger.TextMuted}" />
     </Style>
     <Style Selector="Border.tab.active TextBlock.tabName">
-        <Setter Property="Foreground" Value="{DynamicResource Passenger.Text}" />
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.Tab.ActiveText}" />
     </Style>
-    <!-- A split the person is not working in marks its file quieter, so the strong mark is where the keys go. -->
+    <!-- A split the person is not working in fills its open tab plainly, so the strong one is where the keys go. -->
     <Style Selector="Border.tab.active.elsewhere">
-        <Setter Property="BorderBrush" Value="{DynamicResource Passenger.TextMuted}" />
+        <Setter Property="Background" Value="{DynamicResource Passenger.Selected}" />
+        <Setter Property="BoxShadow" Value="0 0 0 0 #00000000" />
+    </Style>
+    <Style Selector="Border.tab.active.elsewhere TextBlock.tabName">
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.Text}" />
     </Style>
     <Style Selector="Ellipse.modified">
         <Setter Property="Fill" Value="{DynamicResource Passenger.Modified}" />
@@ -803,11 +854,12 @@
         <Setter Property="Background" Value="Transparent" />
     </Style>
 
-    <!-- A popup over the window (Go to File, Go to Line): Rider's popup ground, edge and shadow, as its menus have. -->
+    <!-- A popup over the window (Go to File, Search Everywhere, the code assist popups): the popup's ground and shadow, as
+         the menus have, and its edge, crowned in Passenger's theme with the title bar's blue-to-teal line. -->
     <Style Selector="Border.popup">
         <Setter Property="Background" Value="{DynamicResource Passenger.Popup}" />
-        <Setter Property="BorderBrush" Value="{DynamicResource Passenger.PopupBorder}" />
-        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Passenger.Popup.Edge}" />
+        <Setter Property="BorderThickness" Value="{DynamicResource Passenger.PopupEdge}" />
         <Setter Property="CornerRadius" Value="{DynamicResource Passenger.PopupRadius}" />
         <Setter Property="BoxShadow" Value="{DynamicResource Passenger.PopupShadow}" />
     </Style>
@@ -961,21 +1013,21 @@
         <Setter Property="Foreground" Value="{DynamicResource Passenger.Text}" />
     </Style>
     <Style Selector="DockPanel.welcomePage">
-        <Setter Property="MaxWidth" Value="820" />
+        <Setter Property="MaxWidth" Value="920" />
         <Setter Property="Margin" Value="32,48,32,24" />
     </Style>
     <Style Selector="Grid.welcomeHero">
-        <Setter Property="Margin" Value="0,0,0,24" />
+        <Setter Property="Margin" Value="0,0,0,32" />
     </Style>
     <Style Selector="Image.welcomeMark">
-        <Setter Property="Width" Value="56" />
-        <Setter Property="Height" Value="56" />
-        <Setter Property="Margin" Value="0,0,16,0" />
+        <Setter Property="Width" Value="64" />
+        <Setter Property="Height" Value="64" />
+        <Setter Property="Margin" Value="0,0,20,0" />
         <Setter Property="VerticalAlignment" Value="Center" />
     </Style>
     <Style Selector="TextBlock.welcomeTitle">
-        <Setter Property="FontSize" Value="24" />
-        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="FontSize" Value="30" />
+        <Setter Property="FontWeight" Value="Bold" />
         <Setter Property="Margin" Value="0,0,0,4" />
     </Style>
     <Style Selector="TextBlock.welcomeSubtitle">
@@ -986,25 +1038,33 @@
         <Setter Property="LineSpacing" Value="12" />
         <Setter Property="Margin" Value="0,0,0,28" />
     </Style>
-    <!-- An action's tile: a button laid out as a card, its icon in the accent, its words at its left. -->
+    <!-- An action's tile: a button laid out as a card, its icon on a chip, its words at its left. -->
     <Style Selector="Button.welcomeAction">
-        <Setter Property="MinHeight" Value="64" />
+        <Setter Property="MinHeight" Value="76" />
         <Setter Property="Padding" Value="14,12" />
         <Setter Property="HorizontalAlignment" Value="Stretch" />
         <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-        <Setter Property="CornerRadius" Value="{DynamicResource Passenger.ToolRadius}" />
+        <Setter Property="CornerRadius" Value="{DynamicResource Passenger.CardRadius}" />
+        <Setter Property="Background" Value="{DynamicResource Passenger.Welcome.Tile}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Passenger.Welcome.TileBorder}" />
+    </Style>
+    <Style Selector="Button.welcomeAction /template/ ContentPresenter#PART_ContentPresenter">
+        <Setter Property="BoxShadow" Value="{DynamicResource Passenger.Welcome.TileShadow}" />
     </Style>
     <Style Selector="Button.welcomeAction:pointerover /template/ ContentPresenter#PART_ContentPresenter">
-        <Setter Property="Background" Value="{DynamicResource Passenger.Hover}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Passenger.Accent}" />
     </Style>
-    <!-- The icon's own ground, none until a theme gives it one. -->
     <Style Selector="Border.welcomeActionChip">
+        <Setter Property="Width" Value="40" />
+        <Setter Property="Height" Value="40" />
         <Setter Property="Margin" Value="0,0,12,0" />
+        <Setter Property="CornerRadius" Value="{DynamicResource Passenger.ChipRadius}" />
+        <Setter Property="Background" Value="{DynamicResource Passenger.Welcome.Chip}" />
     </Style>
     <Style Selector="PathIcon.welcomeActionIcon">
         <Setter Property="Width" Value="20" />
         <Setter Property="Height" Value="20" />
-        <Setter Property="Foreground" Value="{DynamicResource Passenger.Accent}" />
+        <Setter Property="Foreground" Value="{DynamicResource Passenger.Welcome.ChipIcon}" />
     </Style>
     <Style Selector="TextBlock.welcomeActionTitle">
         <Setter Property="FontWeight" Value="SemiBold" />
@@ -1035,9 +1095,9 @@
     <Style Selector="Border.welcomeBadge">
         <Setter Property="Width" Value="28" />
         <Setter Property="Height" Value="28" />
-        <Setter Property="CornerRadius" Value="6" />
+        <Setter Property="CornerRadius" Value="{DynamicResource Passenger.BadgeRadius}" />
         <Setter Property="Margin" Value="0,0,10,0" />
-        <Setter Property="Background" Value="{DynamicResource Passenger.Badge}" />
+        <Setter Property="Background" Value="{DynamicResource Passenger.Welcome.Badge}" />
     </Style>
     <Style Selector="Border.welcomeBadge.missing">
         <Setter Property="Background" Value="{DynamicResource Passenger.Hover}" />
@@ -1058,9 +1118,9 @@
     </Style>
     <!-- What a recent one opens as, a tag at the row's right. -->
     <Style Selector="Border.welcomeKind">
-        <Setter Property="Padding" Value="6,1" />
+        <Setter Property="Padding" Value="7,1" />
         <Setter Property="Margin" Value="10,0,4,0" />
-        <Setter Property="CornerRadius" Value="4" />
+        <Setter Property="CornerRadius" Value="{DynamicResource Passenger.BadgeRadius}" />
         <Setter Property="Background" Value="{DynamicResource Passenger.Hover}" />
     </Style>
     <Style Selector="TextBlock.welcomeKindText">

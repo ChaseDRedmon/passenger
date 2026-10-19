@@ -17,9 +17,7 @@ public partial class App : Application
     public override void Initialize()
     {
         AvaloniaXamlLoader.Load(this);
-        // Before Fluent takes its accent from the tokens, which a direction changes.
-        Directions.Apply(this);
-        TakeAccentFromTokens();
+        Themes.TakeAccentFromTokens(this);
         MenuShadow.Install();
         // Every in-window menu writes its keys as the keymap, Find Action and a chord's item do (Keystroke.Display: ⇧⌘R
         // on macOS), where Fluent wrote a KeyGesture its own way ("Shift+Cmd+R") beside them.
@@ -30,21 +28,6 @@ public partial class App : Application
                 shown.Text = new Passenger.Editor.Keystroke(keys.Key, keys.KeyModifiers).Display();
             }
         });
-    }
-
-    /// <summary>Fluent's own accented parts (a ticked box, a chosen radio button, a focused drop-down) in each theme's
-    /// Passenger.Accent, as Rider's are in its own blue: Fluent takes the system's accent otherwise (the user's on macOS,
-    /// #0078D4 headless), unlike the default buttons beside them.</summary>
-    private void TakeAccentFromTokens()
-    {
-        FluentTheme fluent = Styles.OfType<FluentTheme>().Single();
-        foreach (ThemeVariant variant in (ThemeVariant[])[ThemeVariant.Dark, ThemeVariant.Light])
-        {
-            if (TryGetResource("Passenger.Accent", variant, out object? found) && found is ISolidColorBrush accent)
-            {
-                fluent.Palettes[variant] = new ColorPaletteResources { Accent = accent.Color };
-            }
-        }
     }
 
     public override void OnFrameworkInitializationCompleted()
@@ -61,7 +44,7 @@ public partial class App : Application
             window.KeepLayout();
             window.KeepSettings();
             // A theme named on the command line is the run's, over the one kept.
-            Program.ApplyTheme(this, Program.Options.Theme);
+            Program.ApplyTheme(this, Program.Options);
             window.Opened += (_, _) =>
             {
                 // The first of a start's phases in the log, as Rider's idea.log begins with its build and runtime.

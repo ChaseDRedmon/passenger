@@ -37,8 +37,8 @@ public sealed class BreakpointProperties : UserControl
         Grid.SetColumn(hitCountProblem, 1);
         fields.Children.Add(hitCountProblem);
         AddRow(fields, 3, "Log message:", log);
-        hitCountProblem.Bind(TextBlock.ForegroundProperty, hitCountProblem.GetResourceObservable("Passenger.Editor.Error"));
-        inactive.Bind(TextBlock.ForegroundProperty, inactive.GetResourceObservable("Passenger.Editor.Error"));
+        hitCountProblem.Bind(TextBlock.ForegroundProperty, hitCountProblem.GetResourceObservable("Passenger.Error"));
+        inactive.Bind(TextBlock.ForegroundProperty, inactive.GetResourceObservable("Passenger.Error"));
         hitCount.TextChanged += (_, _) => CheckHitCount();
 
         // Rider's "Suspend If" panel, in its words: the exception breakpoint stops when one of each row holds.

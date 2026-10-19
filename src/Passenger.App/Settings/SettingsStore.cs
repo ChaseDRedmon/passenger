@@ -129,13 +129,17 @@ public sealed class SettingsStore : IDisposable
         Changed?.Invoke(this, new SettingsChange(before, after));
     }
 
-    /// <summary>What belongs to the process, put in force once for every window: the theme only when its setting
-    /// changes, so one named on the command line stands until then.</summary>
+    /// <summary>What belongs to the process, put in force once for every window: the theme, its dark or light and the
+    /// code's colours only when their settings change, so one named on the command line stands until then.</summary>
     private static void InForce(AppSettings? before, AppSettings after)
     {
         if (Avalonia.Application.Current is { } app && (before is null || before.Theme != after.Theme))
         {
             Program.ApplyTheme(app, after.Theme);
+        }
+        if (Avalonia.Application.Current is { } current && (before is null || before.Look != after.Look || before.ColourScheme != after.ColourScheme))
+        {
+            Themes.Apply(current, after.Look, after.ColourScheme);
         }
         if (before is null || !SameShortcuts(before.Shortcuts, after.Shortcuts))
         {

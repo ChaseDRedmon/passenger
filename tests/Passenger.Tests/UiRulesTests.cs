@@ -8,6 +8,7 @@ using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.LogicalTree;
 using Avalonia.Media;
+using Avalonia.Styling;
 using Avalonia.VisualTree;
 using Passenger.App;
 
@@ -36,9 +37,12 @@ public sealed class UiRulesTests : IDisposable
 
     public void Dispose() => TestFolders.Delete(folder);
 
-    [AvaloniaFact]
-    public void A_menus_current_value_is_checked_with_Rider_s_tick_and_can_still_be_chosen()
+    [AvaloniaTheory]
+    [InlineData(Look.Passenger)]
+    [InlineData(Look.Harbour)]
+    public void A_menus_current_value_is_checked_with_Rider_s_tick_and_can_still_be_chosen(Look look)
     {
+        using IDisposable worn = Wearing(look);
         MainWindow window = Open(1200, 800);
         try
         {
@@ -57,9 +61,12 @@ public sealed class UiRulesTests : IDisposable
         }
     }
 
-    [AvaloniaFact]
-    public void The_open_editor_tab_shows_its_close_button_as_Rider_s_does_and_the_others_only_under_the_pointer()
+    [AvaloniaTheory]
+    [InlineData(Look.Passenger)]
+    [InlineData(Look.Harbour)]
+    public void The_open_editor_tab_shows_its_close_button_as_Rider_s_does_and_the_others_only_under_the_pointer(Look look)
     {
+        using IDisposable worn = Wearing(look);
         MainWindow window = Open(1200, 800);
         try
         {
@@ -82,9 +89,12 @@ public sealed class UiRulesTests : IDisposable
         }
     }
 
-    [AvaloniaFact]
-    public void Every_tool_windows_tabs_have_one_look_the_open_one_underlined()
+    [AvaloniaTheory]
+    [InlineData(Look.Passenger)]
+    [InlineData(Look.Harbour)]
+    public void Every_tool_windows_tabs_have_one_look_the_open_one_underlined_under_a_larger_title(Look look)
     {
+        using IDisposable worn = Wearing(look);
         MainWindow window = Open(1200, 800);
         try
         {
@@ -104,6 +114,14 @@ public sealed class UiRulesTests : IDisposable
                 }
                 Assert.False(ToolWindowParts(window).OfType<Border>().Any(b => b.Classes.Contains("tab")),
                     $"{action}'s window has an editor tab's look among its tabs, where every tool window's tab is a panelTab");
+                // Its title larger than every word in it (14 over the window's 13), under a header of one height.
+                foreach (TextBlock title in ToolWindowParts(window).OfType<TextBlock>().Where(t => t.Classes.Contains("toolTitle")))
+                {
+                    Control header = title.GetVisualAncestors().OfType<Border>().First(b => b.Classes.Contains("toolHeader"));
+                    Assert.True(title.FontSize == 14 && title.FontWeight == FontWeight.SemiBold && Math.Abs(header.Bounds.Height - 38) < 0.5,
+                        $"{action}'s window has its title '{title.Text}' in {title.FontSize} pt {title.FontWeight} under a header {header.Bounds.Height:0.#} tall, "
+                        + "where every tool window's title is 14 pt semibold under a header 38 tall");
+                }
                 // Every row a person picks from is one height, as Rider's lists and trees are.
                 foreach (ListBoxItem row in ToolWindowParts(window).OfType<ListBoxItem>().Where(r => r.Bounds.Height > 0))
                 {
@@ -136,9 +154,12 @@ public sealed class UiRulesTests : IDisposable
         }
     }
 
-    [AvaloniaFact]
-    public void Every_popup_takes_a_width_of_the_scale_one_title_size_and_rows_of_one_height()
+    [AvaloniaTheory]
+    [InlineData(Look.Passenger)]
+    [InlineData(Look.Harbour)]
+    public void Every_popup_takes_a_width_of_the_scale_one_title_size_and_rows_of_one_height(Look look)
     {
+        using IDisposable worn = Wearing(look);
         MainWindow window = Open(1400, 900);
         try
         {
@@ -181,9 +202,12 @@ public sealed class UiRulesTests : IDisposable
         }
     }
 
-    [AvaloniaFact]
-    public void Every_scrollbar_is_Rider_s_thin_and_arrowless_and_a_sideways_one_shows_only_for_what_is_wider()
+    [AvaloniaTheory]
+    [InlineData(Look.Passenger)]
+    [InlineData(Look.Harbour)]
+    public void Every_scrollbar_is_Rider_s_thin_and_arrowless_and_a_sideways_one_shows_only_for_what_is_wider(Look look)
     {
+        using IDisposable worn = Wearing(look);
         MainWindow window = Open(1200, 800);
         try
         {
@@ -214,9 +238,12 @@ public sealed class UiRulesTests : IDisposable
         }
     }
 
-    [AvaloniaFact]
-    public void At_half_a_1366_wide_screen_the_window_cuts_nothing_and_a_stripe_too_short_puts_the_rest_behind_More()
+    [AvaloniaTheory]
+    [InlineData(Look.Passenger)]
+    [InlineData(Look.Harbour)]
+    public void At_half_a_1366_wide_screen_the_window_cuts_nothing_and_a_stripe_too_short_puts_the_rest_behind_More(Look look)
     {
+        using IDisposable worn = Wearing(look);
         MainWindow window = Open(683, 768);
         try
         {
@@ -326,9 +353,12 @@ public sealed class UiRulesTests : IDisposable
         return seen;
     }
 
-    [AvaloniaFact]
-    public void Focus_is_Rider_s_rounded_ring_centred_on_what_has_the_keys_a_check_box_s_round_its_box_alone()
+    [AvaloniaTheory]
+    [InlineData(Look.Passenger)]
+    [InlineData(Look.Harbour)]
+    public void Focus_is_Rider_s_rounded_ring_centred_on_what_has_the_keys_a_check_box_s_round_its_box_alone(Look look)
     {
+        using IDisposable worn = Wearing(look);
         string other = TestFolders.Create("ui-rules-other-");
         MainWindow window = Open(1200, 800);
         try
@@ -374,6 +404,308 @@ public sealed class UiRulesTests : IDisposable
             window.Close();
             TestFolders.Delete(other);
         }
+    }
+
+    [AvaloniaTheory]
+    [InlineData(Look.Passenger)]
+    [InlineData(Look.Harbour)]
+    public void The_windows_areas_are_told_apart_by_shade_with_a_line_only_where_two_tool_windows_meet(Look look)
+    {
+        using IDisposable worn = Wearing(look);
+        MainWindow window = Open(1200, 800);
+        try
+        {
+            window.OpenFile(Path.Combine(folder, "Notes.txt"));
+            Assert.True(window.Perform(AppActions.ShowProblems), "Problems did not show");
+            Assert.True(window.Perform(AppActions.ShowStructure), "Structure did not show");
+            Ui.Settle();
+            Color frame = Brush(window, "Passenger.Frame");
+            Color panel = Brush(window, "Passenger.Panel");
+            Color editor = Brush(window, "Passenger.Editor.Background");
+            Color line = Brush(window, "Passenger.Divider");
+
+            // The frame round the edges is one ground with no rule round it; the tool windows a step lighter; the editor
+            // a step from both, each step one a person sees.
+            foreach (Border part in window.GetVisualDescendants().OfType<Border>().Where(b => b.IsEffectivelyVisible
+                && b.Classes.Any(c => c is "titleBar" or "stripeBar" or "tabStrip" or "statusBar")))
+            {
+                string what = part.Classes.First(c => c is "titleBar" or "stripeBar" or "tabStrip" or "statusBar");
+                Assert.True(part.BorderThickness == default, $"The {what} has a rule of {part.BorderThickness} along it, where the window's areas are told apart by shade");
+                Assert.True(what == "titleBar" || (part.Background is ISolidColorBrush ground && ground.Color == frame),
+                    $"The {what} is drawn on {(part.Background as ISolidColorBrush)?.Color}, not the frame's ground {frame}, as the stripes, the tabs' strip and the status bar are");
+            }
+            // The title bar's words and icons in its own colours (white on Passenger's blue), whatever the window's are.
+            Border bar = Named<Border>(window, "Toolbar");
+            Color[] own = [.. ((string[])["Text", "Icon", "Run", "Stop", "HotReload", "BadgeText"]).Select(k => Brush(window, $"Passenger.TitleBar.{k}"))];
+            foreach (TextBlock words in bar.GetVisualDescendants().OfType<TextBlock>().Where(t => t.IsEffectivelyVisible && !string.IsNullOrEmpty(t.Text)))
+            {
+                Assert.True(words.Foreground is ISolidColorBrush ink && own.Contains(ink.Color),
+                    $"The title bar's '{words.Text}' is drawn {(words.Foreground as ISolidColorBrush)?.Color}, not in the title bar's own colours");
+            }
+            foreach (PathIcon icon in bar.GetVisualDescendants().OfType<PathIcon>().Where(i => i.IsEffectivelyVisible))
+            {
+                string where = icon.FindAncestorOfType<Button>() is { } button ? ToolTip.GetTip(button) as string ?? button.Name ?? "a button" : "the bar";
+                Assert.True(icon.Foreground is ISolidColorBrush ink && own.Contains(ink.Color),
+                    $"An icon on the title bar ({where}) is drawn {(icon.Foreground as ISolidColorBrush)?.Color}, not in the title bar's own colours");
+            }
+            Assert.True(Step(frame, panel) >= MinimumStep && Step(panel, editor) >= MinimumStep && Step(frame, editor) >= MinimumStep,
+                $"The frame ({frame}), the tool windows ({panel}) and the editor ({editor}) are {Step(frame, panel):0.#}, {Step(panel, editor):0.#} and "
+                + $"{Step(frame, editor):0.#} apart in lightness, where each must be at least {MinimumStep} apart for a person to tell the areas apart without a rule");
+
+            Rect explorer = Placed(window, Pane(window.ExplorerView));
+            Rect structure = Placed(window, Pane(window.DockHost.GetVisualDescendants().OfType<Passenger.App.ToolWindows.StructureView>().First(v => v.IsEffectivelyVisible)));
+            Rect problems = Placed(window, Pane(window.DockHost.GetVisualDescendants().OfType<Passenger.App.ToolWindows.ProblemsView>().First(v => v.IsEffectivelyVisible)));
+            Rect code = Placed(window, window.EditorArea.CodeEditor);
+            Rect status = Placed(window, window.GetVisualDescendants().OfType<Border>().First(b => b.Classes.Contains("statusBar")));
+            using Picture picture = new(window);
+            // Where two grounds meet, nothing but the two: the stripe and a tool window, a tool window and the editor, the
+            // tabs' strip and the editor, the editor and the bottom tool window, a tool window and the status bar.
+            picture.Meets("the left stripe and the Explorer", new Point(explorer.Left, explorer.Top + (explorer.Height * 0.8)), across: true, frame, panel);
+            picture.Meets("the Explorer and the editor", new Point(explorer.Right, code.Top + (code.Height * 0.7)), across: true, panel, editor);
+            // The caret's line, the file's first, lit across the editor.
+            picture.Meets("the tabs' strip and the editor", new Point(code.Right - 60, code.Top), across: false, frame, Brush(window, "Passenger.Editor.CurrentLine"));
+            picture.Meets("the editor and Problems", new Point(code.Left + 6, problems.Top), across: false, editor, panel);
+            picture.Meets("Problems and the status bar", new Point(problems.Left + (problems.Width * 0.6), status.Top), across: false, panel, frame);
+            // Where two tool windows meet, one ground, a line shows the edge: the Explorer over Structure, Structure over
+            // Problems.
+            picture.Seam("the Explorer and Structure", new Point(explorer.Left + (explorer.Width / 2), structure.Top), panel, line);
+            picture.Seam("Structure and Problems", new Point(structure.Left + (structure.Width / 2), problems.Top), panel, line);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaTheory]
+    [InlineData(Look.Passenger)]
+    [InlineData(Look.Harbour)]
+    public void Text_icons_and_focus_rings_meet_WCAG_AA_on_what_they_are_drawn_on_dark_and_light(Look look)
+    {
+        using IDisposable worn = Wearing(look);
+        List<string> below = [];
+        foreach (ThemeVariant variant in (ThemeVariant[])[ThemeVariant.Dark, ThemeVariant.Light])
+        {
+            foreach ((string fore, string ground, double least) in ContrastPairs)
+            {
+                // A see-through ground is drawn over what it stands on: the title bar's hover over the bar, a row's over a tool window.
+                Color[] under = Colours(ground.StartsWith("Passenger.TitleBar.", StringComparison.Ordinal) ? "Passenger.TitleBar" : ground == "Passenger.HoverOnFrame" ? "Passenger.Frame" : "Passenger.Panel", variant);
+                Color[] grounds = Colours(ground == "Passenger.HoverOnFrame" ? "Passenger.Hover" : ground, variant);
+                double worst = (from f in Colours(fore, variant) from g in grounds from u in under select Ratio(f, Over(g, u))).Min();
+                if (worst < least)
+                {
+                    below.Add($"{variant}: {fore} on {ground} is {worst:0.00}:1, under {least}:1");
+                }
+            }
+        }
+        Assert.True(below.Count == 0, $"In {look}, {below.Count} pairs fall below WCAG AA (text 4.5:1, icons, focus rings and the caret 3:1):\n" + string.Join("\n", below));
+    }
+
+    [AvaloniaFact]
+    public void Every_theme_gives_every_colour_in_Dark_and_Light_and_Rider_s_scheme_only_the_codes()
+    {
+        ResourceDictionary passenger = Dictionary("Tokens.axaml");
+        ResourceDictionary harbour = Dictionary("Harbour.axaml");
+        ResourceDictionary rider = Dictionary("RiderScheme.axaml");
+        string[] keys = Keys(passenger, ThemeVariant.Dark);
+        Assert.Equal(keys, Keys(passenger, ThemeVariant.Light));
+        Assert.Equal(keys, Keys(harbour, ThemeVariant.Dark));
+        Assert.Equal(keys, Keys(harbour, ThemeVariant.Light));
+        Assert.Equal([.. passenger.Keys.Select(k => k.ToString()!).Order(StringComparer.Ordinal)], [.. harbour.Keys.Select(k => k.ToString()!).Order(StringComparer.Ordinal)]);
+        // The code's colours, which Rider's scheme gives in its place; the editor's ground, gutter and cards stay the theme's.
+        string[] scheme = [.. keys.Where(k => (k.StartsWith("Passenger.Editor.", StringComparison.Ordinal) && k is not ("Passenger.Editor.Background" or "Passenger.Editor.Gutter" or "Passenger.Editor.PopupBorder"))
+            || k.StartsWith("Passenger.Syntax.", StringComparison.Ordinal) || k.StartsWith("Passenger.SyntaxStyle.", StringComparison.Ordinal) || k.StartsWith("Passenger.Diff.", StringComparison.Ordinal))];
+        Assert.Equal(scheme, Keys(rider, ThemeVariant.Dark));
+        Assert.Equal(scheme, Keys(rider, ThemeVariant.Light));
+    }
+
+    /// <summary>Wears a theme for a test, Passenger's own put back after it, pass or fail.</summary>
+    public static IDisposable Wearing(Look look)
+    {
+        Themes.Apply(Application.Current!, look, ColourScheme.Theme);
+        return new Worn();
+    }
+
+    private sealed class Worn : IDisposable
+    {
+        public void Dispose() => Themes.Apply(Application.Current!, Look.Passenger, ColourScheme.Theme);
+    }
+
+    /// <summary>The least step in lightness (CIELAB's L*) between two grounds side by side that tells them apart.</summary>
+    private const double MinimumStep = 2;
+
+    private static double Step(Color one, Color other) => Math.Abs(Lightness(one) - Lightness(other));
+
+    private static double Lightness(Color colour)
+    {
+        double y = Luminance(colour);
+        return y > 216.0 / 24389 ? (116 * Math.Cbrt(y)) - 16 : y * 24389 / 27;
+    }
+
+    private static double Luminance(Color colour)
+    {
+        static double Channel(byte value) => value / 255.0 <= 0.04045 ? value / 255.0 / 12.92 : Math.Pow(((value / 255.0) + 0.055) / 1.055, 2.4);
+        return (0.2126 * Channel(colour.R)) + (0.7152 * Channel(colour.G)) + (0.0722 * Channel(colour.B));
+    }
+
+    private static double Ratio(Color fore, Color ground)
+    {
+        double a = Luminance(Over(fore, ground));
+        double b = Luminance(ground);
+        return (Math.Max(a, b) + 0.05) / (Math.Min(a, b) + 0.05);
+    }
+
+    private static Color Over(Color fore, Color ground)
+    {
+        double a = fore.A / 255.0;
+        byte Mix(byte f, byte g) => (byte)Math.Round((f * a) + (g * (1 - a)));
+        return Color.FromRgb(Mix(fore.R, ground.R), Mix(fore.G, ground.G), Mix(fore.B, ground.B));
+    }
+
+    /// <summary>A token's colours in a theme variant, its opacity in their alpha: one, or a gradient's every stop.</summary>
+    private static Color[] Colours(string key, ThemeVariant variant)
+    {
+        if (!Application.Current!.TryGetResource(key, variant, out object? found))
+        {
+            throw new Xunit.Sdk.XunitException($"The theme has no {key} in {variant}");
+        }
+        return found switch
+        {
+            ISolidColorBrush solid => [Color.FromArgb((byte)Math.Round(solid.Color.A * solid.Opacity), solid.Color.R, solid.Color.G, solid.Color.B)],
+            IGradientBrush gradient => [.. gradient.GradientStops.Select(s => s.Color)],
+            _ => throw new Xunit.Sdk.XunitException($"{key} is a {found?.GetType().Name}, not a brush"),
+        };
+    }
+
+    /// <summary>What the window draws, word or mark, on what ground, and the least contrast WCAG AA asks of it: text 4.5:1,
+    /// an icon, a focus ring or the caret 3:1. Disabled text is exempt, as WCAG's inactive components are.</summary>
+    private static readonly (string Fore, string Ground, double Least)[] ContrastPairs = BuildPairs();
+
+    private static (string, string, double)[] BuildPairs()
+    {
+        const double Text = 4.5;
+        const double Mark = 3;
+        List<(string, string, double)> pairs = [];
+        foreach (string ground in (string[])["Passenger.Panel", "Passenger.Frame", "Passenger.Field", "Passenger.Popup", "Passenger.List", "Passenger.Hover", "Passenger.HoverOnFrame",
+            "Passenger.Selected", "Passenger.RowSelected", "Passenger.Editor.Background", "Passenger.Banner", "Passenger.Button", "Passenger.Welcome.Tile"])
+        {
+            pairs.Add(("Passenger.Text", ground, Text));
+            pairs.Add(("Passenger.TextMuted", ground, Text));
+        }
+        foreach (string ground in (string[])["Passenger.Panel", "Passenger.Frame", "Passenger.Popup", "Passenger.Editor.Background"])
+        {
+            pairs.Add(("Passenger.Link", ground, Text));
+            pairs.Add(("Passenger.Error", ground, Text));
+            pairs.Add(("Passenger.Warning", ground, Text));
+            pairs.Add(("Passenger.Focus", ground, Mark));
+            pairs.Add(("Passenger.Icon", ground, Mark));
+        }
+        pairs.Add(("Passenger.Focus", "Passenger.Field", Mark));
+        pairs.Add(("Passenger.LinkHover", "Passenger.Panel", Text));
+        pairs.Add(("Passenger.Accent", "Passenger.Panel", Mark));
+        pairs.Add(("Passenger.AccentText", "Passenger.Accent", Text));
+        pairs.Add(("Passenger.AccentText", "Passenger.AccentHover", Text));
+        pairs.Add(("Passenger.AccentText", "Passenger.Welcome.Badge", Text));
+        pairs.Add(("Passenger.Menu.SelectedText", "Passenger.Menu.Selected", Text));
+        pairs.Add(("Passenger.Tab.ActiveText", "Passenger.Tab.Active", Text));
+        pairs.Add(("Passenger.Stripe.SelectedIcon", "Passenger.Stripe.Selected", Mark));
+        pairs.Add(("Passenger.Welcome.ChipIcon", "Passenger.Welcome.Chip", Mark));
+        foreach (string file in (string[])["Modified", "Added", "Unversioned", "Conflicted"])
+        {
+            pairs.Add(($"Passenger.Vcs.File.{file}", "Passenger.Panel", Text));
+            pairs.Add(($"Passenger.Vcs.File.{file}", "Passenger.RowSelected", Text));
+        }
+        foreach (string ground in (string[])["Passenger.TitleBar", "Passenger.TitleBar.Hover", "Passenger.TitleBar.Pressed"])
+        {
+            pairs.Add(("Passenger.TitleBar.Text", ground, Text));
+            pairs.Add(("Passenger.TitleBar.Focus", ground, Mark));
+        }
+        foreach (string mark in (string[])["Icon", "Run", "Stop", "HotReload"])
+        {
+            pairs.Add(($"Passenger.TitleBar.{mark}", "Passenger.TitleBar", Mark));
+        }
+        pairs.Add(("Passenger.TitleBar.BadgeText", "Passenger.TitleBar.Badge", Text));
+        pairs.Add(("Passenger.Terminal.Foreground", "Passenger.Terminal.Background", Text));
+        foreach (string ground in (string[])["Passenger.Editor.Background", "Passenger.Editor.CurrentLine", "Passenger.Editor.Selection", "Passenger.Editor.ExecutionLine"])
+        {
+            pairs.Add(("Passenger.Editor.Text", ground, Text));
+        }
+        pairs.Add(("Passenger.Editor.LineNumber", "Passenger.Editor.Gutter", Text));
+        pairs.Add(("Passenger.Editor.LineNumberCurrent", "Passenger.Editor.Gutter", Text));
+        pairs.Add(("Passenger.Editor.InlineValue", "Passenger.Editor.Background", Text));
+        pairs.Add(("Passenger.Editor.InlineValue", "Passenger.Editor.ExecutionLine", Text));
+        pairs.Add(("Passenger.Editor.InlayHint", "Passenger.Editor.InlayHintBack", Text));
+        pairs.Add(("Passenger.Editor.Caret", "Passenger.Editor.Background", Mark));
+        pairs.Add(("Passenger.Editor.Caret", "Passenger.Editor.CurrentLine", Mark));
+        foreach (string kind in (string[])["Keyword", "ControlKeyword", "Comment", "DocComment", "String", "StringEscape", "Number", "Preprocessor", "Class", "Interface",
+            "Struct", "Enum", "Delegate", "TypeParameter", "Method", "Property", "Event", "Field", "Constant", "EnumMember", "ErrorOutput", "UserInput", "Link",
+            "Brace1", "Brace2", "Brace3", "Tag", "AttributeName", "AttributeValue", "Entity", "JsonKey", "YamlKey", "Heading", "Code", "Quote", "LinkDestination"])
+        {
+            pairs.Add(($"Passenger.Syntax.{kind}", "Passenger.Editor.Background", Text));
+            pairs.Add(($"Passenger.Syntax.{kind}", "Passenger.Editor.CurrentLine", Text));
+        }
+        return [.. pairs];
+    }
+
+    private static ResourceDictionary Dictionary(string file) =>
+        (ResourceDictionary)Avalonia.Markup.Xaml.AvaloniaXamlLoader.Load(new Uri($"avares://Passenger/Theme/{file}"));
+
+    private static string[] Keys(ResourceDictionary dictionary, ThemeVariant variant) =>
+        [.. ((ResourceDictionary)dictionary.ThemeDictionaries[variant]).Keys.Select(k => k.ToString()!).Where(k => k.StartsWith("Passenger.", StringComparison.Ordinal)).Order(StringComparer.Ordinal)];
+
+    /// <summary>The tool window's pane a view is shown in.</summary>
+    private static Control Pane(Control view) => view.GetVisualAncestors().OfType<Control>().First(a => a.Classes.Contains("toolPane"));
+
+    /// <summary>The window as the compositor last drew it, read pixel by pixel.</summary>
+    private sealed class Picture : IDisposable
+    {
+        private readonly Avalonia.Media.Imaging.WriteableBitmap frame;
+        private readonly double scale;
+
+        public Picture(TopLevel window)
+        {
+            frame = window.CaptureRenderedFrame() ?? throw new InvalidOperationException("The window has drawn no frame.");
+            scale = window.RenderScaling;
+        }
+
+        public void Dispose() => frame.Dispose();
+
+        public Color At(Point at)
+        {
+            byte[] pixel = new byte[4];
+            System.Runtime.InteropServices.GCHandle pinned = System.Runtime.InteropServices.GCHandle.Alloc(pixel, System.Runtime.InteropServices.GCHandleType.Pinned);
+            try
+            {
+                PixelPoint point = PixelPoint.FromPoint(at, scale);
+                frame.CopyPixels(new PixelRect(point.X, point.Y, 1, 1), pinned.AddrOfPinnedObject(), 4, 4);
+            }
+            finally
+            {
+                pinned.Free();
+            }
+            return frame.Format == Avalonia.Platform.PixelFormat.Rgba8888 ? Color.FromRgb(pixel[0], pixel[1], pixel[2]) : Color.FromRgb(pixel[2], pixel[1], pixel[0]);
+        }
+
+        /// <summary>Two grounds meet at an edge, read across it (left to right, or top to bottom): the first before it, the
+        /// second after it, and nothing else between, no rule.</summary>
+        public void Meets(string what, Point edge, bool across, Color before, Color after)
+        {
+            Point Off(double by) => across ? edge + new Point(by, 0) : edge + new Point(0, by);
+            Color[] seen = [.. Enumerable.Range(-4, 9).Select(by => At(Off(by)))];
+            Assert.True(Near(seen[0], before) && Near(seen[^1], after) && seen.All(c => Near(c, before) || Near(c, after)),
+                $"Where {what} meet, the window draws {string.Join(" ", seen)} across the edge, where it would draw {before} then {after} and no rule between");
+        }
+
+        /// <summary>Two panes of one ground meet at an edge, read top to bottom: the ground, a line of the divider's colour,
+        /// the ground again.</summary>
+        public void Seam(string what, Point edge, Color ground, Color line)
+        {
+            Color[] seen = [.. Enumerable.Range(-4, 9).Select(by => At(edge + new Point(0, by)))];
+            Assert.True(Near(seen[0], ground) && Near(seen[^1], ground) && seen.Any(c => Near(c, line)),
+                $"Where {what} meet, both on {ground}, the window draws {string.Join(" ", seen)} across the edge, where a line of {line} would show it");
+        }
+
+        private static bool Near(Color one, Color other) => Math.Abs(one.R - other.R) <= 3 && Math.Abs(one.G - other.G) <= 3 && Math.Abs(one.B - other.B) <= 3;
     }
 
     /// <summary>Each stripe button shown lies wholly inside its stripe, above the status bar.</summary>

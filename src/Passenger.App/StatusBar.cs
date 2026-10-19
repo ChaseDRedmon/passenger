@@ -70,7 +70,7 @@ public sealed class StatusBar
         }
         bool error = kind == ProblemSeverity.Error;
         icon.Bind(PathIcon.DataProperty, icon.GetResourceObservable(error ? "Icon.Error" : "Icon.Problems"));
-        icon.Bind(PathIcon.ForegroundProperty, icon.GetResourceObservable(error ? "Passenger.Editor.Error" : "Passenger.Editor.Warning"));
+        icon.Bind(PathIcon.ForegroundProperty, icon.GetResourceObservable(error ? "Passenger.Error" : "Passenger.Warning"));
         icon.Tag = kind;
         icon.IsVisible = true;
     }

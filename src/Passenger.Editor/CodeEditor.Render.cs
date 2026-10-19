@@ -951,6 +951,9 @@ public sealed partial class CodeEditor
         private readonly Dictionary<TokenKind, IBrush> syntax = [];
         private readonly Dictionary<TokenKind, SyntaxStyle> styles = [];
 
+        /// <summary>Every resource the palette was read from, in order, to tell a theme's change from none.</summary>
+        private List<object?> found = [];
+
         public static Palette Default { get; } = new();
 
         public IBrush Background { get; private init; } = Brush("#1E1F22");
@@ -1018,79 +1021,92 @@ public sealed partial class CodeEditor
         public static Palette From(Control control)
         {
             Palette defaults = Default;
+            List<object?> found = [];
+            IBrush? F(string key)
+            {
+                IBrush? brush = Find(control, key);
+                found.Add(brush);
+                return brush;
+            }
             Palette palette = new()
             {
-                Background = Find(control, "Passenger.Editor.Background") ?? defaults.Background,
-                Gutter = Find(control, "Passenger.Editor.Gutter") ?? defaults.Gutter,
-                Text = Find(control, "Passenger.Editor.Text") ?? defaults.Text,
-                LineNumber = Find(control, "Passenger.Editor.LineNumber") ?? defaults.LineNumber,
-                LineNumberCurrent = Find(control, "Passenger.Editor.LineNumberCurrent") ?? defaults.LineNumberCurrent,
-                CurrentLine = Find(control, "Passenger.Editor.CurrentLine") ?? defaults.CurrentLine,
-                Selection = Find(control, "Passenger.Editor.Selection") ?? defaults.Selection,
-                SelectionInactive = Find(control, "Passenger.Editor.SelectionInactive") ?? defaults.SelectionInactive,
-                Caret = Find(control, "Passenger.Editor.Caret") ?? defaults.Caret,
-                Preedit = Find(control, "Passenger.Editor.Text") ?? defaults.Preedit,
-                SearchMatch = Find(control, "Passenger.Editor.SearchMatch") ?? defaults.SearchMatch,
-                Error = Find(control, "Passenger.Editor.Error") ?? defaults.Error,
-                Warning = Find(control, "Passenger.Editor.Warning") ?? defaults.Warning,
-                Info = Find(control, "Passenger.Editor.Info") ?? defaults.Info,
-                Faded = Fade(Find(control, "Passenger.Editor.Background")) ?? defaults.Faded,
-                SearchCurrent = Find(control, "Passenger.Editor.SearchCurrent") ?? defaults.SearchCurrent,
-                Breakpoint = Find(control, "Passenger.Editor.Breakpoint") ?? defaults.Breakpoint,
-                BreakpointLine = Find(control, "Passenger.Editor.BreakpointLine") ?? defaults.BreakpointLine,
-                ExecutionLine = Find(control, "Passenger.Editor.ExecutionLine") ?? defaults.ExecutionLine,
-                ExecutionPoint = Find(control, "Passenger.Editor.ExecutionPoint") ?? defaults.ExecutionPoint,
-                InlineValue = Find(control, "Passenger.Editor.InlineValue") ?? defaults.InlineValue,
-                Tracepoint = Find(control, "Passenger.Editor.Tracepoint") ?? defaults.Tracepoint,
-                BreakpointMuted = Find(control, "Passenger.Editor.BreakpointMuted") ?? defaults.BreakpointMuted,
-                TestPassed = Find(control, "Passenger.Test.Passed") ?? defaults.TestPassed,
-                Bookmark = Find(control, "Passenger.Editor.Bookmark") ?? defaults.Bookmark,
-                DiffAdded = Find(control, "Passenger.Diff.Added") ?? defaults.DiffAdded,
-                DiffModified = Find(control, "Passenger.Diff.Modified") ?? defaults.DiffModified,
-                DiffDeleted = Find(control, "Passenger.Diff.Deleted") ?? defaults.DiffDeleted,
-                DiffConflict = Find(control, "Passenger.Diff.Conflict") ?? defaults.DiffConflict,
-                WordAdded = Find(control, "Passenger.Diff.AddedWord") ?? defaults.WordAdded,
-                WordModified = Find(control, "Passenger.Diff.ModifiedWord") ?? defaults.WordModified,
-                WordDeleted = Find(control, "Passenger.Diff.DeletedWord") ?? defaults.WordDeleted,
-                WordConflict = Find(control, "Passenger.Diff.ConflictWord") ?? defaults.WordConflict,
-                ChangeAdded = Find(control, "Passenger.Vcs.Added") ?? defaults.ChangeAdded,
-                ChangeModified = Find(control, "Passenger.Vcs.Modified") ?? defaults.ChangeModified,
-                ChangeDeleted = Find(control, "Passenger.Vcs.Deleted") ?? defaults.ChangeDeleted,
-                ChangeConflict = Find(control, "Passenger.Vcs.Conflict") ?? defaults.ChangeConflict,
-                TestNotRun = Find(control, "Passenger.Run") ?? defaults.TestNotRun,
-                ExceptionBack = Find(control, "Passenger.Editor.ExceptionBack") ?? defaults.ExceptionBack,
-                InlayHint = Find(control, "Passenger.Editor.InlayHint") ?? defaults.InlayHint,
-                InlayHintBack = Find(control, "Passenger.Editor.InlayHintBack") ?? defaults.InlayHintBack,
-                UsageRead = Find(control, "Passenger.Editor.UsageRead") ?? defaults.UsageRead,
-                UsageWrite = Find(control, "Passenger.Editor.UsageWrite") ?? defaults.UsageWrite,
-                UsageReadMark = Find(control, "Passenger.Editor.UsageReadMark") ?? defaults.UsageReadMark,
-                UsageWriteMark = Find(control, "Passenger.Editor.UsageWriteMark") ?? defaults.UsageWriteMark,
-                MatchedBrace = Find(control, "Passenger.Editor.MatchedBrace") ?? defaults.MatchedBrace,
-                Whitespace = Find(control, "Passenger.Editor.Whitespace") ?? defaults.Whitespace,
-                SoftWrapSign = Find(control, "Passenger.Editor.SoftWrapSign") ?? defaults.SoftWrapSign,
-                LinkUnderline = Find(control, "Passenger.Editor.LinkUnderline") ?? defaults.LinkUnderline,
-                PopupBorder = Find(control, "Passenger.Editor.PopupBorder") ?? defaults.PopupBorder,
-                SmartStepTarget = Find(control, "Passenger.Editor.SmartStepTarget") ?? defaults.SmartStepTarget,
-                SmartStepChosen = Find(control, "Passenger.Editor.SmartStepChosen") ?? defaults.SmartStepChosen,
-                SmartStepBorder = Find(control, "Passenger.Editor.SmartStepBorder") ?? defaults.SmartStepBorder,
+                Background = F("Passenger.Editor.Background") ?? defaults.Background,
+                Gutter = F("Passenger.Editor.Gutter") ?? defaults.Gutter,
+                Text = F("Passenger.Editor.Text") ?? defaults.Text,
+                LineNumber = F("Passenger.Editor.LineNumber") ?? defaults.LineNumber,
+                LineNumberCurrent = F("Passenger.Editor.LineNumberCurrent") ?? defaults.LineNumberCurrent,
+                CurrentLine = F("Passenger.Editor.CurrentLine") ?? defaults.CurrentLine,
+                Selection = F("Passenger.Editor.Selection") ?? defaults.Selection,
+                SelectionInactive = F("Passenger.Editor.SelectionInactive") ?? defaults.SelectionInactive,
+                Caret = F("Passenger.Editor.Caret") ?? defaults.Caret,
+                Preedit = F("Passenger.Editor.Text") ?? defaults.Preedit,
+                SearchMatch = F("Passenger.Editor.SearchMatch") ?? defaults.SearchMatch,
+                Error = F("Passenger.Editor.Error") ?? defaults.Error,
+                Warning = F("Passenger.Editor.Warning") ?? defaults.Warning,
+                Info = F("Passenger.Editor.Info") ?? defaults.Info,
+                Faded = Fade(F("Passenger.Editor.Background")) ?? defaults.Faded,
+                SearchCurrent = F("Passenger.Editor.SearchCurrent") ?? defaults.SearchCurrent,
+                Breakpoint = F("Passenger.Editor.Breakpoint") ?? defaults.Breakpoint,
+                BreakpointLine = F("Passenger.Editor.BreakpointLine") ?? defaults.BreakpointLine,
+                ExecutionLine = F("Passenger.Editor.ExecutionLine") ?? defaults.ExecutionLine,
+                ExecutionPoint = F("Passenger.Editor.ExecutionPoint") ?? defaults.ExecutionPoint,
+                InlineValue = F("Passenger.Editor.InlineValue") ?? defaults.InlineValue,
+                Tracepoint = F("Passenger.Editor.Tracepoint") ?? defaults.Tracepoint,
+                BreakpointMuted = F("Passenger.Editor.BreakpointMuted") ?? defaults.BreakpointMuted,
+                TestPassed = F("Passenger.Test.Passed") ?? defaults.TestPassed,
+                Bookmark = F("Passenger.Editor.Bookmark") ?? defaults.Bookmark,
+                DiffAdded = F("Passenger.Diff.Added") ?? defaults.DiffAdded,
+                DiffModified = F("Passenger.Diff.Modified") ?? defaults.DiffModified,
+                DiffDeleted = F("Passenger.Diff.Deleted") ?? defaults.DiffDeleted,
+                DiffConflict = F("Passenger.Diff.Conflict") ?? defaults.DiffConflict,
+                WordAdded = F("Passenger.Diff.AddedWord") ?? defaults.WordAdded,
+                WordModified = F("Passenger.Diff.ModifiedWord") ?? defaults.WordModified,
+                WordDeleted = F("Passenger.Diff.DeletedWord") ?? defaults.WordDeleted,
+                WordConflict = F("Passenger.Diff.ConflictWord") ?? defaults.WordConflict,
+                ChangeAdded = F("Passenger.Vcs.Added") ?? defaults.ChangeAdded,
+                ChangeModified = F("Passenger.Vcs.Modified") ?? defaults.ChangeModified,
+                ChangeDeleted = F("Passenger.Vcs.Deleted") ?? defaults.ChangeDeleted,
+                ChangeConflict = F("Passenger.Vcs.Conflict") ?? defaults.ChangeConflict,
+                TestNotRun = F("Passenger.Run") ?? defaults.TestNotRun,
+                ExceptionBack = F("Passenger.Editor.ExceptionBack") ?? defaults.ExceptionBack,
+                InlayHint = F("Passenger.Editor.InlayHint") ?? defaults.InlayHint,
+                InlayHintBack = F("Passenger.Editor.InlayHintBack") ?? defaults.InlayHintBack,
+                UsageRead = F("Passenger.Editor.UsageRead") ?? defaults.UsageRead,
+                UsageWrite = F("Passenger.Editor.UsageWrite") ?? defaults.UsageWrite,
+                UsageReadMark = F("Passenger.Editor.UsageReadMark") ?? defaults.UsageReadMark,
+                UsageWriteMark = F("Passenger.Editor.UsageWriteMark") ?? defaults.UsageWriteMark,
+                MatchedBrace = F("Passenger.Editor.MatchedBrace") ?? defaults.MatchedBrace,
+                Whitespace = F("Passenger.Editor.Whitespace") ?? defaults.Whitespace,
+                SoftWrapSign = F("Passenger.Editor.SoftWrapSign") ?? defaults.SoftWrapSign,
+                LinkUnderline = F("Passenger.Editor.LinkUnderline") ?? defaults.LinkUnderline,
+                PopupBorder = F("Passenger.Editor.PopupBorder") ?? defaults.PopupBorder,
+                SmartStepTarget = F("Passenger.Editor.SmartStepTarget") ?? defaults.SmartStepTarget,
+                SmartStepChosen = F("Passenger.Editor.SmartStepChosen") ?? defaults.SmartStepChosen,
+                SmartStepBorder = F("Passenger.Editor.SmartStepBorder") ?? defaults.SmartStepBorder,
                 ErrorIcon = Icon(control, "Icon.Error"),
                 WarningIcon = Icon(control, "Icon.Problems"),
                 PassedIcon = Icon(control, "Icon.Check"),
             };
             foreach (TokenKind kind in Enum.GetValues<TokenKind>())
             {
-                if (Find(control, $"Passenger.Syntax.{kind}") is { } brush)
+                if (F($"Passenger.Syntax.{kind}") is { } brush)
                 {
                     palette.syntax[kind] = brush;
                 }
-                if (control.TryFindResource($"Passenger.SyntaxStyle.{kind}", control.ActualThemeVariant, out object? set) && set is string named)
+                object? set = control.TryFindResource($"Passenger.SyntaxStyle.{kind}", control.ActualThemeVariant, out object? style) ? style : null;
+                found.Add(set);
+                if (set is string named)
                 {
                     palette.styles[kind] = (named.Contains("Bold", StringComparison.Ordinal) ? SyntaxStyle.Bold : 0)
                         | (named.Contains("Italic", StringComparison.Ordinal) ? SyntaxStyle.Italic : 0);
                 }
             }
+            palette.found = found;
             return palette;
         }
+
+        /// <summary>Whether another palette was read from the very resources this one was, so nothing need be drawn again.</summary>
+        public bool SameAs(Palette other) => found.SequenceEqual(other.found, ReferenceEqualityComparer.Instance);
 
         private static IBrush? Fade(IBrush? background) =>
             background is ISolidColorBrush solid ? new SolidColorBrush(solid.Color, 0.5).ToImmutable() : null;

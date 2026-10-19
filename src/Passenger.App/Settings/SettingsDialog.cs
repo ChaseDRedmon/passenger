@@ -40,6 +40,12 @@ public sealed partial class SettingsDialog : Window
     public static readonly (OpenProjectIn Choice, string Name)[] OpenProjectChoices =
         [(OpenProjectIn.NewWindow, "New window"), (OpenProjectIn.CurrentWindow, "Current window"), (OpenProjectIn.Ask, "Ask")];
 
+    /// <summary>The themes, in the order Settings offers them.</summary>
+    public static readonly (Look Look, string Name)[] LookChoices = [(Look.Passenger, "Passenger"), (Look.Harbour, "Harbour")];
+
+    /// <summary>The code's colour schemes, in the order Settings offers them.</summary>
+    public static readonly (ColourScheme Scheme, string Name)[] ColourSchemeChoices = [(ColourScheme.Theme, "Same as theme"), (ColourScheme.Rider, "Rider")];
+
     /// <summary>The names of <see cref="DiscordShown"/>'s choices, in its order.</summary>
     public static readonly string[] DiscordChoices = ["Passenger only", "The solution", "The solution and the file"];
 
@@ -206,9 +212,13 @@ public sealed partial class SettingsDialog : Window
 
     private void AddOptions(Keymap keymap)
     {
+        // Each theme has a Dark and a Light, which the next row chooses between, or the system does, as Rider's Sync with OS.
+        ComboBox look = new() { ItemsSource = LookChoices.Select(c => c.Name).ToArray(), SelectedIndex = Array.FindIndex(LookChoices, c => c.Look == Working.Look), Classes = { "form" } };
+        look.SelectionChanged += (_, _) => Change(s => s with { Look = LookChoices[Math.Max(0, look.SelectedIndex)].Look });
+        Add(Appearance, "Theme", look, "colour color theme look passenger harbour blue warm palette");
         ComboBox theme = new() { ItemsSource = new[] { "System", "Dark", "Light" }, SelectedIndex = Working.Theme switch { ThemeChoice.Dark => 1, ThemeChoice.Light => 2, _ => 0 }, Classes = { "form" } };
         theme.SelectionChanged += (_, _) => Change(s => s with { Theme = theme.SelectedIndex switch { 1 => ThemeChoice.Dark, 2 => ThemeChoice.Light, _ => ThemeChoice.System } });
-        Add(Appearance, "Theme", theme, "colour color dark light");
+        Add(Appearance, "Dark or light", theme, "colour color theme dark light system sync os appearance mode");
         if (TitleBars.Offered)
         {
             // Rider's UI Options checkbox; where this desktop keeps the system's title bar it says why, greyed, as Rider's.
@@ -258,6 +268,10 @@ public sealed partial class SettingsDialog : Window
             + "copy built from source says in the status bar that it is out. Nothing is sent but the requests, which name "
             + "Passenger and its version.");
 
+        ComboBox scheme = new() { ItemsSource = ColourSchemeChoices.Select(c => c.Name).ToArray(), SelectedIndex = Array.FindIndex(ColourSchemeChoices, c => c.Scheme == Working.ColourScheme), Classes = { "form" } };
+        scheme.SelectionChanged += (_, _) => Change(s => s with { ColourScheme = ColourSchemeChoices[Math.Max(0, scheme.SelectedIndex)].Scheme });
+        Add(EditorPage, "Colour scheme", scheme, "colour color scheme syntax highlighting code colours rider keywords strings comments",
+            "The colours the code is drawn in: the theme's own, or Rider's, Dark or Light as the theme is. The editor keeps the theme's background.");
         Add(EditorPage, "Font size", Number(Working.EditorFontSize, AppSettings.MinFontSize, AppSettings.MaxFontSize, 1, v => Change(s => s with { EditorFontSize = v })), "font size text");
         Add(EditorPage, "Line spacing", Number(Working.EditorLineSpacing, AppSettings.MinLineSpacing, AppSettings.MaxLineSpacing, 0.1, v => Change(s => s with { EditorLineSpacing = v })), "font line height");
         Add(EditorPage, "Enable ligatures", Check(Working.Ligatures, v => Change(s => s with { Ligatures = v })), "font arrows");

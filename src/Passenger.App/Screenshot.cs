@@ -27,7 +27,7 @@ public static class Screenshot
             .UseHarfBuzz()
             .WithInterFont()
             .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false })
-            .AfterSetup(builder => Program.ApplyTheme(builder.Instance!, launch.Theme))
+            .AfterSetup(builder => Program.ApplyTheme(builder.Instance!, launch))
             .SetupWithoutStarting();
 
         MainWindow window = new() { Width = options.Size.Width, Height = options.Size.Height, Autosaves = false };

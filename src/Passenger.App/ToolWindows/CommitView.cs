@@ -581,7 +581,7 @@ public sealed class CommitView : DockPanel
         return line;
     }
 
-    /// <summary>Rider's colours for a changed file: blue modified, green added, grey deleted, red new, as the
+    /// <summary>A changed file's colour by how it changed (modified, added, deleted, new), as Rider tells them apart and the
     /// Explorer shows them too.</summary>
     internal static string KindToken(ChangeKind kind) => kind switch
     {

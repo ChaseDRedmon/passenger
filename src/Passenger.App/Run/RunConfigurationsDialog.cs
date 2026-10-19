@@ -97,7 +97,7 @@ public sealed class RunConfigurationsDialog : Window
         OkButton.Click += (_, _) => Ok();
         cancel.Click += (_, _) => Close(false);
         applyButton.Click += (_, _) => Apply();
-        problem.Bind(TextBlock.ForegroundProperty, problem.GetResourceObservable("Passenger.Editor.Error"));
+        problem.Bind(TextBlock.ForegroundProperty, problem.GetResourceObservable("Passenger.Error"));
 
         StackPanel tools = new() { Orientation = Orientation.Horizontal, Spacing = 2, Margin = new Thickness(8, 6), Children = { AddButton, RemoveButton, CopyButton } };
         DockPanel left = new() { Width = 270 };

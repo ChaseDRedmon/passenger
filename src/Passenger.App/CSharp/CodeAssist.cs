@@ -885,8 +885,8 @@ public sealed partial class CodeAssist
         {
             hoverCard.AddText(marker.Message, marker.Kind switch
             {
-                MarkerKind.Error => InfoCard.Brush("Passenger.Editor.Error"),
-                MarkerKind.Warning => InfoCard.Brush("Passenger.Editor.Warning"),
+                MarkerKind.Error => InfoCard.Brush("Passenger.Error"),
+                MarkerKind.Warning => InfoCard.Brush("Passenger.Warning"),
                 _ => null,
             });
         }
@@ -899,7 +899,7 @@ public sealed partial class CodeAssist
         {
             if (debuggerValue.Problem is { } problem)
             {
-                hoverCard.AddText(problem, InfoCard.Brush("Passenger.Editor.Error"));
+                hoverCard.AddText(problem, InfoCard.Brush("Passenger.Error"));
             }
             if (debuggerValue.Code.Length > 0)
             {

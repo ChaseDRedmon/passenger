@@ -2,8 +2,8 @@ using Passenger.Editor;
 
 namespace Passenger.Languages.TextMate;
 
-/// <summary>Rider's colour scheme by TextMate scope: which kind of token each grammar's scopes are, as Rider Dark and Rider
-/// Light colour the same constructs (XML_TAG, JSON.PROPERTY_KEY, YAML_SCALAR_KEY, MARKDOWN_HEADER_LEVEL_1 and so on). A
+/// <summary>Which kind of token each grammar's scopes are, as Rider tells the same constructs apart (XML_TAG,
+/// JSON.PROPERTY_KEY, YAML_SCALAR_KEY, MARKDOWN_HEADER_LEVEL_1 and so on); the colour scheme in force colours each kind. A
 /// selector names a scope and every scope under it ("string" is "string.quoted.double.json" too), the longest that names
 /// a token's innermost scope wins, and a scope no rule names takes its parent's kind. A selector never names a scope's
 /// ancestors (TextMateSharp's theme never matches those), so a language's exceptions name its own scopes in full.</summary>

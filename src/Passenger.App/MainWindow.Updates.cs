@@ -416,7 +416,7 @@ public partial class MainWindow
     private void ShowRefused(LatestRelease release, string why)
     {
         UpdateShown = release with { Link = release.Page };
-        Notice(UpdateNotice.Refused, "Icon.Error", "Passenger.Editor.Warning", $"Passenger {release.Version} not installed",
+        Notice(UpdateNotice.Refused, "Icon.Error", "Passenger.Warning", $"Passenger {release.Version} not installed",
             $"{why}\nOpen the release page of {release.Tag}\n{release.Page}");
     }
 

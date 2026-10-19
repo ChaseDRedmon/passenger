@@ -42,7 +42,7 @@ public sealed class KeyboardShortcutDialog : Window
         // Rider's warning beside "Already assigned to:" and the actions under it, shown only while there are any.
         PathIcon warning = new() { VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 1, 8, 0) };
         warning.Bind(PathIcon.DataProperty, warning.GetResourceObservable("Icon.Problems"));
-        warning.Bind(PathIcon.ForegroundProperty, warning.GetResourceObservable("Passenger.Editor.Warning"));
+        warning.Bind(PathIcon.ForegroundProperty, warning.GetResourceObservable("Passenger.Warning"));
         DockPanel conflicts = new() { IsVisible = false, Margin = new Thickness(0, 4, 0, 0) };
         DockPanel.SetDock(warning, Dock.Left);
         conflicts.Children.Add(warning);

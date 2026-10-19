@@ -29,7 +29,7 @@ internal sealed class Stripe : Border
     /// <summary>The keymap the tips' shortcuts were read from: once the person's shortcuts change, they are read again.</summary>
     private Keymap? tipsFrom;
 
-    public Stripe(DockHost host, ToolAnchor upper, ToolAnchor lower, ToolAnchor bottom, Thickness border)
+    public Stripe(DockHost host, ToolAnchor upper, ToolAnchor lower, ToolAnchor bottom)
     {
         this.host = host;
         this.upper = upper;
@@ -56,7 +56,6 @@ internal sealed class Stripe : Border
         groups[bottom][DockPanel.DockProperty] = Dock.Bottom;
         Child = new DockPanel { Margin = new Thickness(0, 6), Children = { sides, groups[bottom] } };
         SizeChanged += (_, _) => FitButtons();
-        BorderThickness = border;
         Classes.Add("stripeBar");
     }
 

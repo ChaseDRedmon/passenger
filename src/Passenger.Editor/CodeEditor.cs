@@ -79,6 +79,14 @@ public sealed partial class CodeEditor : Control
         });
         document.Changed += OnDocumentChanged;
         ActualThemeVariantChanged += (_, _) => RefreshStyle();
+        // A theme or a colour scheme laid over the application's resources (Settings) changes the brushes, not the variant.
+        ResourcesChanged += (_, _) =>
+        {
+            if (palette is not { } shown || !Palette.From(this).SameAs(shown))
+            {
+                RefreshStyle();
+            }
+        };
         AddHandler(TextInputMethodClientRequestedEvent, (_, e) => e.Client = InputMethod);
         metrics = Metrics.Measure(Typeface, FontSize, LineSpacing);
         palette = Palette.Default;

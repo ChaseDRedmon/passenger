@@ -644,7 +644,7 @@ public sealed class NuGetView : DockPanel
     {
         PathIcon warning = new() { Width = 14, Height = 14, Margin = new Thickness(0, 1, 8, 0), VerticalAlignment = VerticalAlignment.Top, [DockProperty] = Dock.Left };
         warning.Bind(PathIcon.DataProperty, warning.GetResourceObservable("Icon.Problems"));
-        warning.Bind(PathIcon.ForegroundProperty, warning.GetResourceObservable("Passenger.Editor.Warning"));
+        warning.Bind(PathIcon.ForegroundProperty, warning.GetResourceObservable("Passenger.Warning"));
         StackPanel said = new() { Spacing = 4 };
         said.Children.Add(new TextBlock
         {
@@ -692,7 +692,7 @@ public sealed class NuGetView : DockPanel
             bool has = row.Installed.TryGetValue(project.Path, out string? at);
             IReadOnlyList<Advisory> affecting = at is null ? [] : Known.Of(row.Id, at);
             TextBlock version = new() { Text = has ? at ?? "installed" : string.Empty, Width = 110, VerticalAlignment = VerticalAlignment.Center };
-            version.Bind(TextBlock.ForegroundProperty, version.GetResourceObservable(affecting.Count > 0 ? "Passenger.Editor.Warning" : "Passenger.TextMuted"));
+            version.Bind(TextBlock.ForegroundProperty, version.GetResourceObservable(affecting.Count > 0 ? "Passenger.Warning" : "Passenger.TextMuted"));
             // A slot of its own, so the buttons stand in one column whichever lines have the mark.
             Panel mark = new() { Width = 14, VerticalAlignment = VerticalAlignment.Center };
             if (affecting.Count > 0)
@@ -758,7 +758,7 @@ public sealed class NuGetView : DockPanel
     {
         PathIcon warning = new() { Width = 12, Height = 12, VerticalAlignment = VerticalAlignment.Center };
         warning.Bind(PathIcon.DataProperty, warning.GetResourceObservable("Icon.Problems"));
-        warning.Bind(PathIcon.ForegroundProperty, warning.GetResourceObservable("Passenger.Editor.Warning"));
+        warning.Bind(PathIcon.ForegroundProperty, warning.GetResourceObservable("Passenger.Warning"));
         ToolTip.SetTip(warning, tip);
         return warning;
     }

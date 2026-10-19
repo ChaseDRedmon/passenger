@@ -33,7 +33,6 @@ public sealed class XamlPreviewPane : DockPanel
             [DockProperty] = Dock.Top,
             Height = 28,
             Padding = new Thickness(10, 0),
-            BorderThickness = new Thickness(0, 0, 0, 1),
             Child = new DockPanel
             {
                 Children =
@@ -43,13 +42,12 @@ public sealed class XamlPreviewPane : DockPanel
                 },
             },
         };
-        header.Bind(Border.BackgroundProperty, header.GetResourceObservable("Passenger.Chrome"));
-        header.Bind(Border.BorderBrushProperty, header.GetResourceObservable("Passenger.Divider"));
+        // A tool window's ground over the preview's, told apart by shade, as the bar of the error under it is by its tint.
+        header.Bind(Border.BackgroundProperty, header.GetResourceObservable("Passenger.Panel"));
         error = new TextBlock { FontSize = 12, TextWrapping = TextWrapping.Wrap };
-        error.Bind(TextBlock.ForegroundProperty, error.GetResourceObservable("Passenger.Editor.Error"));
-        errorBar = new Border { [DockProperty] = Dock.Top, Padding = new Thickness(10, 6), IsVisible = false, Child = error, BorderThickness = new Thickness(0, 0, 0, 1) };
+        error.Bind(TextBlock.ForegroundProperty, error.GetResourceObservable("Passenger.Error"));
+        errorBar = new Border { [DockProperty] = Dock.Top, Padding = new Thickness(10, 6), IsVisible = false, Child = error };
         errorBar.Bind(Border.BackgroundProperty, errorBar.GetResourceObservable("Passenger.Banner"));
-        errorBar.Bind(Border.BorderBrushProperty, errorBar.GetResourceObservable("Passenger.Divider"));
         image = new Image { Stretch = Stretch.Fill };
         // The element at the caret, drawn over the frame in the frame's own units, so it shrinks with it.
         outline = new Border { BorderThickness = new Thickness(OutlineWidth), IsVisible = false, IsHitTestVisible = false };

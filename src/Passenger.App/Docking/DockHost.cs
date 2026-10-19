@@ -26,6 +26,8 @@ public sealed class DockHost : Grid
     private readonly HairlineDivider leftDivider;
     private readonly HairlineDivider rightDivider;
     private readonly HairlineDivider bottomDivider;
+    private readonly Border leftSeam = new() { IsHitTestVisible = false, ZIndex = 1, IsVisible = false };
+    private readonly Border rightSeam = new() { IsHitTestVisible = false, ZIndex = 1, IsVisible = false };
     private double leftWidth = DefaultLeft;
     private double rightWidth = DefaultRight;
     private double bottomHeight = DefaultBottom;
@@ -53,8 +55,8 @@ public sealed class DockHost : Grid
     {
         ColumnDefinitions = new ColumnDefinitions($"{StripeWidth},0,0,*,0,0,{StripeWidth}");
         RowDefinitions = new RowDefinitions("*,0,0");
-        leftStripe = new Stripe(this, ToolAnchor.LeftTop, ToolAnchor.LeftBottom, ToolAnchor.BottomLeft, new Thickness(0, 0, 1, 0));
-        rightStripe = new Stripe(this, ToolAnchor.RightTop, ToolAnchor.RightBottom, ToolAnchor.BottomRight, new Thickness(1, 0, 0, 0));
+        leftStripe = new Stripe(this, ToolAnchor.LeftTop, ToolAnchor.LeftBottom, ToolAnchor.BottomLeft);
+        rightStripe = new Stripe(this, ToolAnchor.RightTop, ToolAnchor.RightBottom, ToolAnchor.BottomRight);
         Place(leftStripe, 0, 0, rowSpan: 3);
         Place(rightStripe, 0, 6, rowSpan: 3);
         leftDivider = Divider(GridResizeDirection.Columns);
@@ -67,6 +69,14 @@ public sealed class DockHost : Grid
         Place(rightArea, 0, 5);
         Place(bottomDivider, 1, 1, columnSpan: 5);
         Place(bottomArea, 2, 1, columnSpan: 5);
+        // Under a side area the bottom one meets a tool window of its own ground, so a seam shows the edge there; under the
+        // editor the shades do.
+        Place(leftSeam, 1, 1);
+        Place(rightSeam, 1, 5);
+        foreach (Border seam in (Border[])[leftSeam, rightSeam])
+        {
+            seam.Bind(Border.BackgroundProperty, seam.GetResourceObservable("Passenger.Divider"));
+        }
         foreach (ToolAnchor anchor in Enum.GetValues<ToolAnchor>())
         {
             ToolPane pane = new(this);
@@ -515,6 +525,8 @@ public sealed class DockHost : Grid
         leftDivider.IsVisible = leftOpen;
         rightDivider.IsVisible = rightOpen;
         bottomDivider.IsVisible = bottomOpen;
+        leftSeam.IsVisible = leftOpen && bottomOpen;
+        rightSeam.IsVisible = rightOpen && bottomOpen;
         given = (left, right, bottom);
     }
 
@@ -589,9 +601,10 @@ public sealed class DockHost : Grid
         Children.Add(control);
     }
 
+    /// <summary>An area's divider: a tool window's ground beside the editor's, told apart by shade, so no line.</summary>
     private HairlineDivider Divider(GridResizeDirection direction)
     {
-        HairlineDivider divider = new(direction);
+        HairlineDivider divider = new(direction, drawn: false);
         divider.Splitter.DragCompleted += (_, _) =>
         {
             Remember();

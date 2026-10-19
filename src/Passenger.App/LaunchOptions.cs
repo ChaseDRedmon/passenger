@@ -7,7 +7,7 @@ using Passenger.Text;
 
 namespace Passenger.App;
 
-/// <summary>The command line: <c>passenger [PATH] [--file F]... [--caret L:C] [--theme T]</c>, PATH a folder, a file, or a
+/// <summary>The command line: <c>passenger [PATH] [--file F]... [--caret L:C] [--theme T] [--look L] [--scheme S]</c>, PATH a folder, a file, or a
 /// solution or project opened as the workspace; a screenshot with the steps before it; or the Model Context Protocol
 /// server: <c>--mcp [PATH]</c> (an IDE with no window, on standard input and output), <c>--mcp-attach [PID] [FOLDER]</c>
 /// (a window's, the one over the folder first), and <c>--no-mcp</c> (a window that never lets agents in). A flag it does
@@ -37,6 +37,12 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
     /// own folder.</summary>
     public string? Workspace { get; init; }
 
+    /// <summary>The theme <c>--look</c> names over the one kept, or null for that one.</summary>
+    public Look? Look { get; init; }
+
+    /// <summary>The code's colours <c>--scheme</c> names over the ones kept, or null for those.</summary>
+    public ColourScheme? Scheme { get; init; }
+
     public static LaunchOptions Empty { get; } = new(null, [], null, null, null);
 
     /// <summary>The options the arguments ask for, the files among them full paths that exist; anything malformed,
@@ -50,6 +56,8 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
         List<string> named = [];
         TextPosition? caret = null;
         ThemeChoice? theme = null;
+        global::Passenger.App.Look? look = null;
+        ColourScheme? scheme = null;
         string? shot = null;
         LogicalSize size = new(1600, 1000);
         double scale = 2;
@@ -103,6 +111,24 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
                     break;
                 case "--theme":
                     theme = ParseTheme(Value(args, ref i, flag));
+                    break;
+                case "--look":
+                    string lookText = Value(args, ref i, flag);
+                    look = lookText switch
+                    {
+                        "passenger" => global::Passenger.App.Look.Passenger,
+                        "harbour" => global::Passenger.App.Look.Harbour,
+                        _ => throw new FormatException($"--look takes passenger or harbour, not '{lookText}'"),
+                    };
+                    break;
+                case "--scheme":
+                    string schemeText = Value(args, ref i, flag);
+                    scheme = schemeText switch
+                    {
+                        "theme" => ColourScheme.Theme,
+                        "rider" => ColourScheme.Rider,
+                        _ => throw new FormatException($"--scheme takes theme or rider, not '{schemeText}'"),
+                    };
                     break;
                 case "--screenshot":
                     shot = Value(args, ref i, flag);
@@ -187,12 +213,12 @@ public sealed record LaunchOptions(string? Folder, IReadOnlyList<string> Files, 
             throw new FormatException("--caret needs a file to put the caret in, the PATH or a --file");
         }
         ScreenshotOptions? screenshot = shot is null ? null : Checked(new ScreenshotOptions(shot, size, scale, steps, crop), cropText, points);
-        return new LaunchOptions(folder, files, caret, theme, screenshot) { Workspace = workspace, Mcp = mcp, AttachTo = attachTo, ListenForAgents = listen };
+        return new LaunchOptions(folder, files, caret, theme, screenshot) { Workspace = workspace, Mcp = mcp, AttachTo = attachTo, ListenForAgents = listen, Look = look, Scheme = scheme };
     }
 
     /// <summary>Refuses the first flag the chosen mode does not take: a window takes all but a screenshot's, a screenshot
-    /// all but <c>--no-mcp</c>, <c>--mcp</c> a path, files, a caret and a theme, and <c>--mcp-attach</c> only a process
-    /// id and a folder.</summary>
+    /// all but <c>--no-mcp</c>, <c>--mcp</c> a path, files, a caret and a theme (its look and scheme too), and
+    /// <c>--mcp-attach</c> only a process id and a folder.</summary>
     private static void CheckMode(List<string> given, McpMode mcp, bool screenshot, bool listen)
     {
         if (given.Contains("--mcp") && given.Contains("--mcp-attach"))

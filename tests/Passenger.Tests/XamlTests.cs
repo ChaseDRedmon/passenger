@@ -147,7 +147,7 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
         CodeEditor editor = window.EditorArea.CodeEditor;
         PlaceAfter(editor, "Background=\"{DynamicResource Passenger.");
         Ui.Run(window, AppActions.Complete);
-        Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Passenger.Chrome"), "Tokens.axaml's keys, which App.axaml merges in");
+        Ui.WaitFor(() => window.Assist.CompletionLabels.Contains("Passenger.Panel"), "Tokens.axaml's keys, which App.axaml merges in");
         Assert.Contains("Passenger.Editor.Background", window.Assist.CompletionLabels);
         Ui.Press(window, "ESCAPE");
         PlaceAfter(editor, "<PathIcon Data=\"{StaticResource Icon.");

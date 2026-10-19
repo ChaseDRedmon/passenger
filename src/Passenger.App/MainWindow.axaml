@@ -141,8 +141,8 @@
                     <Button Name="ErrorsButton" Classes="statusItem" IsVisible="False" Click="OnErrorsClicked"
                             ToolTip.Tip="IDE Internal Errors: Passenger caught these and kept running">
                         <StackPanel Orientation="Horizontal" Spacing="4">
-                            <PathIcon Data="{DynamicResource Icon.Error}" Foreground="{DynamicResource Passenger.Editor.Error}" Width="14" Height="14" />
-                            <TextBlock Name="ErrorsCount" Classes="status" Foreground="{DynamicResource Passenger.Editor.Error}" />
+                            <PathIcon Data="{DynamicResource Icon.Error}" Foreground="{DynamicResource Passenger.Error}" Width="14" Height="14" />
+                            <TextBlock Name="ErrorsCount" Classes="status" Foreground="{DynamicResource Passenger.Error}" />
                         </StackPanel>
                     </Button>
                     <TextBlock Name="AgentText" Classes="status" IsVisible="False"

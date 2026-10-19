@@ -32,9 +32,12 @@ public sealed class DialogButtonsTests : IDisposable
         TestFolders.Delete(other);
     }
 
-    [AvaloniaFact]
-    public void Every_dialog_has_its_buttons_words_centred_and_its_text_buttons_alike_with_the_default_where_Rider_puts_it()
+    [AvaloniaTheory]
+    [InlineData(Look.Passenger)]
+    [InlineData(Look.Harbour)]
+    public void Every_dialog_has_its_buttons_words_centred_and_its_text_buttons_alike_with_the_default_where_Rider_puts_it(Look look)
     {
+        using IDisposable worn = UiRulesTests.Wearing(look);
         MainWindow window = new() { Width = 1200, Height = 800 };
         window.Show();
         window.OpenFolder(folder);
@@ -143,10 +146,16 @@ public sealed class DialogButtonsTests : IDisposable
                 $"In {title}, {Name(idle)} cannot be used now yet keeps the default button's accent, where Rider's looks disabled");
         }
 
-        // The page is the chrome, as every page of Rider's dialogs is, never an editor's ground; a list or table framed in
-        // it stands on Rider's list ground (Border.framed), white in light as the editor is.
-        Assert.True(dialog.Background is ISolidColorBrush page && page.Color == Token(dialog, "Passenger.Chrome"),
-            $"{title}'s page is not the chrome, as every dialog's page is");
+        // The page is a tool window's ground, as every page of Rider's dialogs is its panel's, never an editor's; a list or
+        // table framed in it stands on the list's ground (Border.framed), white in light as the editor is.
+        Assert.True(dialog.Background is ISolidColorBrush page && page.Color == Token(dialog, "Passenger.Panel"),
+            $"{title}'s page is not a tool window's ground, as every dialog's page is");
+        // The footer stands on the frame's ground, told from the page by shade, with no rule between them.
+        foreach (Border bar in dialog.GetVisualDescendants().OfType<Border>().Where(b => b.Classes.Contains("footerBar") && b.IsEffectivelyVisible))
+        {
+            Assert.True(bar.BorderThickness == default && bar.Background is ISolidColorBrush ground && ground.Color == Token(dialog, "Passenger.Frame"),
+                $"{title}'s footer is drawn on {(bar.Background as ISolidColorBrush)?.Color} with a rule of {bar.BorderThickness}, where a footer is the frame's ground and no rule");
+        }
         Color editor = Token(dialog, "Passenger.Editor.Background");
         double area = dialog.Bounds.Width * dialog.Bounds.Height;
         foreach (Border pane in dialog.GetVisualDescendants().OfType<Border>().Where(b => b.IsEffectivelyVisible && b.Background is ISolidColorBrush ground && ground.Color == editor

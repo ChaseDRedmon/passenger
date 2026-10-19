@@ -616,8 +616,9 @@ public sealed class DebugController : IDisposable
     }
 
     /// <summary>Rider's Smart Step Into: the calls of the line the program is paused at, in the order they run, offered in
-    /// its editor (each filled, the chosen one boxed, Rider's colours) to step straight into: the arrow keys or Tab move the
-    /// choice, Enter or a click takes it, Escape leaves it. One call is stepped into at once; with none, it is Step Into.</summary>
+    /// its editor (each filled, the chosen one boxed, in the colour scheme's colours) to step straight into: the arrow keys
+    /// or Tab move the choice, Enter or a click takes it, Escape leaves it. One call is stepped into at once; with none, it
+    /// is Step Into.</summary>
     private async Task SmartStepIntoAsync()
     {
         UiThread.Check();

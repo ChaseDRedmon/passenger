@@ -104,11 +104,10 @@ public sealed class EditorGroup : DockPanel
             [DockProperty] = Dock.Top,
             Height = 28,
             IsVisible = false,
-            BorderThickness = new Thickness(0, 0, 0, 1),
             Child = new DockPanel { Children = { bannerLink, bannerText } },
         };
+        // Its own tint tells it from the editor under it, with no rule between.
         banner.Bind(Border.BackgroundProperty, banner.GetResourceObservable("Passenger.Banner"));
-        banner.Bind(Border.BorderBrushProperty, banner.GetResourceObservable("Passenger.Divider"));
         Children.Add(tabBar);
         Children.Add(banner);
         Children.Add(Find);

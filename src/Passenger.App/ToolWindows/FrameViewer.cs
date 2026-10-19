@@ -76,7 +76,7 @@ public sealed class FrameViewer : Window
         sizeText.HorizontalAlignment = HorizontalAlignment.Right;
         Border top = new() { [DockPanel.DockProperty] = Avalonia.Controls.Dock.Top, Height = 34, BorderThickness = new Thickness(0, 0, 0, 1), Child = bar };
         top.Bind(Border.BorderBrushProperty, top.GetResourceObservable("Passenger.Divider"));
-        top.Bind(Border.BackgroundProperty, top.GetResourceObservable("Passenger.Chrome"));
+        top.Bind(Border.BackgroundProperty, top.GetResourceObservable("Passenger.Panel"));
         Content = new DockPanel { Children = { top, scroller } };
 
         KeyDown += OnKey;

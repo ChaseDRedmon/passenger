@@ -2,7 +2,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:explorer="using:Passenger.App.Explorer"
              x:Class="Passenger.App.Explorer.ExplorerView">
-    <DockPanel Background="{DynamicResource Passenger.Chrome}">
+    <DockPanel Background="{DynamicResource Passenger.Panel}">
         <DockPanel Name="OwnHeader" DockPanel.Dock="Top" Margin="12,6,8,2">
             <!-- Rider's view switch: the solution's projects, or the folder as it is on disk. -->
             <Button Name="ViewSwitch" DockPanel.Dock="Right" Classes="widget" IsVisible="False" Click="OnViewSwitchClicked"

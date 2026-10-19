@@ -72,7 +72,7 @@ public static class McpHost
             .UseHarfBuzz()
             .WithInterFont()
             .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false })
-            .AfterSetup(builder => Program.ApplyTheme(builder.Instance!, launch.Theme))
+            .AfterSetup(builder => Program.ApplyTheme(builder.Instance!, launch))
             .SetupWithoutStarting();
 
         MainWindow window = new() { Width = 1600, Height = 1000 };

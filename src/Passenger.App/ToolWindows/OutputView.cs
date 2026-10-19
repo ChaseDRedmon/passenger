@@ -65,7 +65,6 @@ public sealed class OutputView : DockPanel
         {
             [DockProperty] = Dock.Left,
             Width = 36,
-            BorderThickness = new Thickness(0, 0, 1, 0),
             Child = new StackPanel
             {
                 Spacing = 2,
@@ -74,7 +73,6 @@ public sealed class OutputView : DockPanel
                 Children = { rerun, stop, hotReload, clear, new Border { Height = 8 }, Overlays },
             },
         };
-        tools.Bind(Border.BorderBrushProperty, tools.GetResourceObservable("Passenger.Divider"));
         if (toolbar)
         {
             Children.Add(tools);

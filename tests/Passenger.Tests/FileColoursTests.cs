@@ -233,6 +233,41 @@ public sealed class FileColoursTests : IDisposable
         window.Close();
     }
 
+    /// <summary>Settings' Colour scheme: Rider's colours for the code under either theme, at once, the editor keeping the
+    /// theme's ground; the theme's own scheme back again.</summary>
+    [AvaloniaFact]
+    public void Riders_colour_scheme_draws_the_code_in_riders_colours_on_the_themes_ground_under_either_theme()
+    {
+        MainWindow window = Window();
+        try
+        {
+            CodeEditor editor = Open(window, "Shapes.csproj", Project);
+            int tag = Project.IndexOf("PropertyGroup", StringComparison.Ordinal);
+            ThemeVariant theme = window.ActualThemeVariant;
+            foreach (Look look in (Look[])[Look.Passenger, Look.Harbour])
+            {
+                window.ApplySettings(window.Settings with { Look = look, ColourScheme = ColourScheme.Theme });
+                Color own = Token(theme, "Passenger.Syntax.Tag");
+                Color ground = Token(theme, "Passenger.Editor.Background");
+                Assert.True(Distance(Ink(window, editor, tag, "PropertyGroup".Length), own) < 90, $"Under {look}'s own scheme a tag is not drawn in its {own}");
+
+                window.ApplySettings(window.Settings with { ColourScheme = ColourScheme.Rider });
+                Color rider = Token(theme, "Passenger.Syntax.Tag");
+                Color ink = Ink(window, editor, tag, "PropertyGroup".Length);
+                Assert.True(Distance(ink, rider) < Distance(ink, own) && Distance(ink, rider) < 90,
+                    $"Under {look} with Rider's colour scheme a tag is drawn {ink}, not Rider's {rider} (the theme's own is {own})");
+                Assert.True(Token(theme, "Passenger.Editor.Background") == ground && Ui.Pixel(window, editor.TranslatePoint(new Point(editor.Bounds.Width - 40, editor.Bounds.Height - 20), window)!.Value) == ground,
+                    $"Under {look} with Rider's colour scheme the editor is not on the theme's ground {ground}");
+            }
+        }
+        finally
+        {
+            // The theme and scheme in force are the process's; the next test starts on Passenger's own.
+            window.ApplySettings(new Passenger.App.Settings.AppSettings());
+            window.Close();
+        }
+    }
+
     [AvaloniaFact]
     public void Typing_keeps_colours_right_after_an_XML_comment_and_a_Markdown_code_fence_open_and_close()
     {

@@ -29,7 +29,7 @@ public abstract class RefactoringDialog : Window
         Button cancel = new() { Content = "Cancel", IsCancel = true };
         NextButton.Click += (_, _) => _ = Next();
         cancel.Click += (_, _) => Close(false);
-        problem.Bind(TextBlock.ForegroundProperty, problem.GetResourceObservable("Passenger.Editor.Error"));
+        problem.Bind(TextBlock.ForegroundProperty, problem.GetResourceObservable("Passenger.Error"));
 
         StackPanel header = new()
         {

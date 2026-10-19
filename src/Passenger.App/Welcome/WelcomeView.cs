@@ -69,7 +69,7 @@ public sealed class WelcomeView : UserControl
         Grid bar = new() { Classes = { "welcomeRecentBar" }, ColumnDefinitions = new ColumnDefinitions("Auto,*"), Children = { recent, search } };
 
         notice = new TextBlock { TextWrapping = TextWrapping.Wrap, IsVisible = false, Margin = new Thickness(4, 0, 4, 10) };
-        notice.Bind(TextBlock.ForegroundProperty, notice.GetResourceObservable("Passenger.Editor.Warning"));
+        notice.Bind(TextBlock.ForegroundProperty, notice.GetResourceObservable("Passenger.Warning"));
         list = new ListBox
         {
             Classes = { "tree", "welcomeList" },
@@ -279,7 +279,7 @@ public sealed class WelcomeView : UserControl
         if (row.Missing)
         {
             TextBlock gone = new() { Text = "Missing", FontSize = 12, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 4, 0) };
-            gone.Bind(TextBlock.ForegroundProperty, gone.GetResourceObservable("Passenger.Editor.Warning"));
+            gone.Bind(TextBlock.ForegroundProperty, gone.GetResourceObservable("Passenger.Warning"));
             DockPanel.SetDock(gone, Dock.Right);
             line.Children.Add(gone);
         }

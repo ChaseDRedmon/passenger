@@ -58,6 +58,14 @@ public sealed class TerminalView : Control
         Cursor = new Cursor(StandardCursorType.Ibeam);
         ActualThemeVariantChanged += (_, _) => Refresh();
         AttachedToVisualTree += (_, _) => Refresh();
+        // A theme laid over the application's resources (Settings) changes the brushes, not the variant.
+        ResourcesChanged += (_, _) =>
+        {
+            if (Find("Passenger.Terminal.Background") != background || Find("Passenger.Terminal.Foreground") != foreground)
+            {
+                Refresh();
+            }
+        };
         ContextMenu = Menu();
     }
 

@@ -531,7 +531,7 @@ public sealed class DebugView : DockPanel
         TextBlock value = new() { Text = node.Value, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 900 };
         if (node.Role == VariableRole.Error)
         {
-            value.Bind(TextBlock.ForegroundProperty, value.GetResourceObservable("Passenger.Editor.Error"));
+            value.Bind(TextBlock.ForegroundProperty, value.GetResourceObservable("Passenger.Error"));
         }
         ToolTip.SetTip(value, node.Value);
         TextBox editor = new() { Classes = { "search" }, MinHeight = 22, Height = 22, MinWidth = 240, Padding = new Thickness(6, 0), IsVisible = false, VerticalAlignment = VerticalAlignment.Center };

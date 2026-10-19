@@ -193,7 +193,7 @@ public sealed class NewProjectDialog : Window
         };
         Border rightPane = new() { Child = new ScrollViewer { Content = right } };
 
-        problem.Bind(TextBlock.ForegroundProperty, problem.GetResourceObservable("Passenger.Editor.Error"));
+        problem.Bind(TextBlock.ForegroundProperty, problem.GetResourceObservable("Passenger.Error"));
         working = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, IsVisible = false, Children = { bar, progress } };
         Button cancel = new() { Content = "Cancel", IsCancel = true };
         cancel.Click += (_, _) => Cancel();

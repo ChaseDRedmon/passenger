@@ -135,7 +135,7 @@ public partial class MainWindow
             ? ("Icon.Problems", "Passenger.TextMuted", string.Empty, "Solution-wide analysis is off: click to analyse every file of the solution")
             : found is null || errors == 0
                 ? ("Icon.Check", "Passenger.Test.Passed", string.Empty, "Solution-wide analysis: no errors. Click to turn it off")
-                : ("Icon.Error", "Passenger.Editor.Error", errors.ToString(), $"Solution-wide analysis: {errors} error{(errors == 1 ? "" : "s")}; Problems lists them. Click to turn it off");
+                : ("Icon.Error", "Passenger.Error", errors.ToString(), $"Solution-wide analysis: {errors} error{(errors == 1 ? "" : "s")}; Problems lists them. Click to turn it off");
         AnalysisIcon.Bind(PathIcon.DataProperty, AnalysisIcon.GetResourceObservable(icon));
         AnalysisIcon.Bind(PathIcon.ForegroundProperty, AnalysisIcon.GetResourceObservable(brush));
         AnalysisText.Text = text;
