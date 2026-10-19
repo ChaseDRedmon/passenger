@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using Passenger.Debugger.ExpressionEvaluator.Compiler;
 using Passenger.Debugger.Interop;
 
@@ -28,7 +29,11 @@ internal sealed class CilExpressionEvaluator(RuntimeAssemblyPrimitiveTypeClasses
                 ICorDebugHandleValue handle = handles.CreateOwnedHandle(returned);
                 return new EvaluationResult { Value = handle, OwnedResultHandle = handles.DetachIfOwned(handle) };
             }
-            CompiledEvaluationMethod? compiled = _compiler.TryCompile(expression, context, out string? error);
+            CompiledEvaluationMethod? compiled = _compiler.TryCompile(expression, context, out string? error, out ImmutableArray<string> missing);
+            if (compiled is null && missing.Length > 0 && await LoadAsync(missing, context))
+            {
+                compiled = _compiler.TryCompile(expression, context, out error, out _);
+            }
             if (compiled is null)
             {
                 return new EvaluationResult { Error = $"error: {error}" };
@@ -42,6 +47,22 @@ internal sealed class CilExpressionEvaluator(RuntimeAssemblyPrimitiveTypeClasses
         {
             return new EvaluationResult { Error = $"error: {ex.Message}" };
         }
+    }
+
+    /// <summary>Loads into the program the assemblies an expression needs and it has not loaded, as Visual Studio's debugger
+    /// does: a program that has called no LINQ method has no System.Linq, so a watch's Where was "not a definition".
+    /// Whether each loaded, the runtime's module load having added it to what the next compile reads.</summary>
+    private async Task<bool> LoadAsync(ImmutableArray<string> assemblies, CompiledExpressionEvaluationContext context)
+    {
+        foreach (string assembly in assemblies.Distinct(StringComparer.Ordinal))
+        {
+            using EvaluationResult loaded = await Evaluate($"System.Reflection.Assembly.Load(\"{assembly.Replace("\"", "\\\"", StringComparison.Ordinal)}\")", context);
+            if (loaded.Error is not null)
+            {
+                return false;
+            }
+        }
+        return true;
     }
 }
 

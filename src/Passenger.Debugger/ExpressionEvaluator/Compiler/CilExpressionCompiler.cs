@@ -107,9 +107,16 @@ internal sealed class CilExpressionCompiler(ManagedDebugger debugger)
     private DelegateMaterializerAssembly? _delegateMaterializer;
     private int _cachedModuleVersion = -1;
 
-    public CompiledEvaluationMethod? TryCompile(string expression, CompiledExpressionEvaluationContext context, out string? errorMessage)
+    public CompiledEvaluationMethod? TryCompile(string expression, CompiledExpressionEvaluationContext context, out string? errorMessage) =>
+        TryCompile(expression, context, out errorMessage, out _);
+
+    /// <summary>Compiles an expression in the frame or type context, or says why not and which assemblies it needs that the
+    /// program has not loaded (System.Linq, for a LINQ method on a list where the program has used none yet), as Visual
+    /// Studio's expression compiler names them for its debugger to load and compile again.</summary>
+    public CompiledEvaluationMethod? TryCompile(string expression, CompiledExpressionEvaluationContext context, out string? errorMessage, out ImmutableArray<string> missingAssemblies)
     {
         errorMessage = null;
+        missingAssemblies = [];
         if (context.RootValue is not null)
         {
             ExpressionSyntax syntax = SyntaxFactory.ParseExpression(expression);
@@ -150,6 +157,9 @@ internal sealed class CilExpressionCompiler(ManagedDebugger debugger)
                 errorMessage = string.Join("; ", diagnostics.AsEnumerable()
                     .Where(d => d.Severity == DiagnosticSeverity.Error)
                     .Select(d => d.GetMessage()));
+                evaluationContext.GetErrorMessageAndMissingAssemblyIdentities(diagnostics, DebuggerDiagnosticFormatter.Instance, preferredUICulture: null,
+                    EvaluationContextBase.SystemLinqIdentity, out _, out ImmutableArray<AssemblyIdentity> missing);
+                missingAssemblies = [.. missing.Select(identity => identity.Name)];
                 return null;
             }
 

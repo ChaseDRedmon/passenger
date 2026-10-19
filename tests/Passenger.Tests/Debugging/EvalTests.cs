@@ -529,6 +529,26 @@ public class EvalTests(ITestOutputHelper testOutputHelper)
     }
 
     [Fact]
+    public async Task A_LINQ_watch_evaluates_in_a_program_that_has_called_no_LINQ_method_yet()
+    {
+        // Stopped at the entry of a program with implicit usings that has loaded no System.Linq: Visual Studio's debugger,
+        // and now Passenger's, loads it for the expression rather than saying int[] has no Where.
+        using DebugSession host = DebugSession.ForLaunch(testOutputHelper);
+        await host
+            .WithInitializeRequest()
+            .WithLaunchRequest(Debuggees.Program("TopLevelStatementsConsoleApp"), stopAtEntry: true, justMyCode: true)
+            .WaitForInitializedEvent();
+        host.WithConfigurationDoneRequest();
+        StoppedEvent stoppedEvent = await host.WaitForStoppedEvent();
+        DapStackFrame topFrame = host.GetTopStackFrame(stoppedEvent.ThreadId!.Value);
+
+        host.WithEvaluateRequest(topFrame.Id, "new[] { test, 7 }.Where(x => x > 3).Count()", out EvaluateResponse? linq);
+        Assert.Equal("1", linq.Result);
+        host.WithEvaluateRequest(topFrame.Id, "System.Linq.Enumerable.Range(1, 3).Sum()", out EvaluateResponse? named);
+        Assert.Equal("6", named.Result);
+    }
+
+    [Fact]
     public async Task SharpDbgCli_EvaluationRequest_StaticClassMethod_EvaluatesCorrectFieldValue()
     {
         bool startSuspended = true;
