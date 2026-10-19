@@ -259,6 +259,65 @@ public sealed class IndentationTests : IDisposable
         window.Close();
     }
 
+    /// <summary>An li, p or td whose end tag is left out ends where HTML's parser ends it (at the next li, a block, the
+    /// next cell, its list's end tag), so Enter after it indents as beside it, not inside it.</summary>
+    [AvaloniaFact]
+    public void Enter_in_html_after_an_element_whose_end_tag_is_left_out_indents_beside_it()
+    {
+        Write("list.html", "<ul>\n    <li>One\n    <li>Two</li>\n    <li>Four</ul>\n<section>\n    <p>Intro\n    <div>Block</div>\n</section>\n");
+        MainWindow window = Open("list.html");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+
+        // One ended at Two, so after Two's end tag the next item goes beside it.
+        PlaceAfter(editor, "<li>Two</li>");
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("<li>Three</li>");
+        Assert.True(Text(editor).Contains("    <li>Two</li>\n    <li>Three</li>\n", StringComparison.Ordinal),
+            $"Enter after an li that follows one with its end tag left out went inside that one:\n{Text(editor)}");
+
+        // The list's end tag after Four ends Four too, so it goes to the list's own indentation.
+        PlaceAfter(editor, "<li>Four");
+        Ui.Press(window, "ENTER");
+        Assert.True(Text(editor).Contains("    <li>Four\n</ul>\n", StringComparison.Ordinal),
+            $"Enter before </ul> after an li with its end tag left out put </ul> at the li's indentation:\n{Text(editor)}");
+
+        // A div ends the p before it, so the next line is the section's, beside both.
+        PlaceAfter(editor, "<div>Block</div>");
+        Ui.Press(window, "ENTER");
+        window.KeyTextInput("<hr>");
+        Assert.True(Text(editor).Contains("    <div>Block</div>\n    <hr>\n</section>", StringComparison.Ordinal),
+            $"Enter after a div that follows a p with its end tag left out went inside the p:\n{Text(editor)}");
+        window.Close();
+    }
+
+    /// <summary>Enter in a large XAML file reads back from the caret as far as the elements that hold it, not the whole
+    /// file before it, so a key there costs what an Enter in a small one does.</summary>
+    [AvaloniaFact]
+    public void Enter_near_the_end_of_a_large_xaml_file_reads_only_the_elements_around_the_caret()
+    {
+        StringBuilder large = new("<ResourceDictionary xmlns=\"https://github.com/avaloniaui\">\n");
+        for (int i = 0; i < 20_000; i++)
+        {
+            large.Append("    <SolidColorBrush x:Key=\"Brush").Append(i).Append("\" Color=\"#FF").Append((i % 256).ToString("X2", System.Globalization.CultureInfo.InvariantCulture)).Append("0000\" />\n");
+        }
+        Write("Large.axaml", large.Append("    <StackPanel x:Key=\"Last\">\n        <Border />\n    </StackPanel>\n</ResourceDictionary>\n").ToString());
+        MainWindow window = Open("Large.axaml");
+        CodeEditor editor = window.EditorArea.CodeEditor;
+        Ui.Settle();
+        PlaceAfter(editor, "        <Border />");
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        window.KeyPress(Avalonia.Input.Key.Enter, Avalonia.Input.RawInputModifiers.None, Avalonia.Input.PhysicalKey.Enter, null);
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        window.KeyRelease(Avalonia.Input.Key.Enter, Avalonia.Input.RawInputModifiers.None, Avalonia.Input.PhysicalKey.Enter, null);
+        Ui.Settle();
+        window.KeyTextInput("<Separator />");
+        Assert.True(Text(editor).Contains("        <Border />\n        <Separator />\n    </StackPanel>", StringComparison.Ordinal),
+            $"Enter after the last element in the large file's StackPanel did not indent beside it:\n{Text(editor)[^200..]}");
+        // The 20,000 brushes before the caret are 1.2 million characters, which a read of all of them copies whole (5 MB).
+        Assert.True(allocated < 1_000_000, $"Enter near the end of a {editor.Document.Snapshot.Length:N0}-character XAML file allocated {allocated:N0} bytes, as a read of all of it does");
+        window.Close();
+    }
+
     private void Write(string name, string text)
     {
         string path = Path.Combine(folder, name);
