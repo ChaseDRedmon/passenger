@@ -628,9 +628,12 @@ window or takes the focus; it shows everything but the system's own window chrom
   this executable by its real path, in a `CodeBlock` (`Border.code`) with Copy. `McpHost.Instructions` tell an agent to
   begin with `workspace`, find its way by `find_symbol`/`outline` and `refactor`'s describe, and what a person's window
   asks; every answer is written by `McpHost.ToolCreateOptions` (relaxed escaping: code reads as written, its quotes and
-  angle brackets never unicode escapes). `edit` replaces text in one file as the editor does (found once as written, else refused saying where it is; one Undo
-  step, saved, the changed lines said back). `run` returns once an inspected app's UI is up; `build` gives MSBuild's
-  output tail only when it failed; `tests_list` takes `filter`, `state` and `limit`; `find_symbol` puts the name asked
+  angle brackets never unicode escapes). `edit` replaces text in one file as the editor does (found once as written,
+  else refused saying where it is; one Undo step, saved, the changed lines said back); a tool naming an open file the
+  editor has not changed takes the disk's text first (`PassengerTools.Document`), since an agent's own file tools write
+  there and ask at once. `run`, `debug_start` and `hot_reload`'s restart return once an inspected app's UI is up
+  (`AfterLaunch`, which watches 2 s more for a stop in its first layout); each run of a stop's frames outside the
+  folder's code is one line of their modules (`Frames`); `build` gives MSBuild's output tail only when it failed; `tests_list` takes `filter`, `state` and `limit`; `find_symbol` puts the name asked
   for first. Usability pass (#236): an agent's `--mcp-attach` with no window open starts the person's Passenger in a
   window they see, so a pass drives `--mcp FOLDER` (or `--mcp-attach` with `PASSENGER_START=headless` and a state
   folder short enough for its socket, as `TestRun` sets).
