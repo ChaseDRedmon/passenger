@@ -3,6 +3,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Templates;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Passenger.App.Vcs;
@@ -172,15 +173,16 @@ public sealed class CommitView : DockPanel
             VerticalContentAlignment = VerticalAlignment.Top,
         };
         message.TextChanged += (_, _) => UpdateButtons();
-        message.KeyDown += (_, e) =>
+        // Ctrl+Enter (Cmd+Enter on the Mac) commits from the message, as in Rider: seen as it tunnels, since the box takes
+        // any Enter as a new line before a handler of its bubbling KeyDown hears of it.
+        message.AddHandler(KeyDownEvent, (_, e) =>
         {
-            // Ctrl+Enter (Cmd+Enter on the Mac) commits from the message, as in Rider.
             if (e.Key == Key.Enter && e.KeyModifiers == (OperatingSystem.IsMacOS() ? KeyModifiers.Meta : KeyModifiers.Control))
             {
                 _ = CommitAsync(push: false);
                 e.Handled = true;
             }
-        };
+        }, RoutingStrategies.Tunnel);
         commit = new Button { Content = "Commit", Classes = { "primary" } };
         commit.Click += (_, _) => _ = CommitAsync(push: false);
         commitAndPush = new Button { Content = "Commit and Push..." };

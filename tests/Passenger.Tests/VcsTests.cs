@@ -63,6 +63,24 @@ public sealed class VcsTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void Cmd_enter_in_the_commit_message_commits_rather_than_starting_a_new_line()
+    {
+        MainWindow window = Open();
+        window.EditorArea.CodeEditor.GoTo(new TextPosition(2, 4));
+        window.KeyTextInput("long ");
+        CommitView commit = window.CommitView;
+        window.Perform(AppActions.Commit);
+        Ui.Landed(() => commit.Chosen.Any(c => c.Name == "Shop.cs"), "Shop.cs listed as changed");
+        Ui.Landed(() => window.FocusManager?.GetFocusedElement() is TextBox, "the commit message to have the keys");
+        window.KeyTextInput("Count with a long");
+        Ui.Press(window, OperatingSystem.IsMacOS() ? "meta Enter" : "control Enter");
+        Ui.Landed(() => Git("log", "-1", "--format=%s").Trim() == "Count with a long",
+            $"Committing from the message's own key: the log's last commit is '{Git("log", "-1", "--format=%s").Trim()}' and the message reads '{commit.Message}'");
+        Assert.Empty(commit.Message);
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void A_renamed_file_keeps_its_change_bars_against_what_the_last_commit_has_where_it_was()
     {
         MainWindow window = Open();
