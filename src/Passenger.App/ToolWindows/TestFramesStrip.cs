@@ -28,13 +28,18 @@ public sealed class TestFramesStrip : Border
         IsVisible = false;
         BorderThickness = new Thickness(0, 0, 0, 1);
         this.Bind(BorderBrushProperty, this.GetResourceObservable("Passenger.Divider"));
+        // Held to half the room above the details (Fit), the thumbnails draw smaller rather than leaving the details a line.
         Child = new ScrollViewer
         {
             HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
             VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
-            Content = thumbnails,
+            Content = new Viewbox { Stretch = Stretch.Uniform, StretchDirection = StretchDirection.DownOnly, Child = thumbnails },
         };
     }
+
+    /// <summary>Gives the details under the strip at least half of the room the two share, as a short Unit Tests window
+    /// leaves little: the strip is held to the other half and its thumbnails shrink to it.</summary>
+    public void Fit(double shared) => MaxHeight = Math.Max(ThumbnailHeight / 2, shared / 2);
 
     /// <summary>The frames shown now, in order, once their pictures are read.</summary>
     public IReadOnlyList<ShownFrame> Frames { get; private set; } = [];

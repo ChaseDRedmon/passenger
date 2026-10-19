@@ -103,7 +103,9 @@ public sealed class DebugView : DockPanel
         ListMenus.Attach(threads, ThreadsMenu);
         DockPanel variablesPane = new() { Children = { evaluate, variables } };
 
-        Grid split = new() { ColumnDefinitions = new ColumnDefinitions("320,1,*") };
+        // The frames a third of the window and the variables the rest, so a narrow window narrows both: the frames' fixed
+        // 320 left the variables nothing and cut the frames at the window's edge.
+        Grid split = new() { ColumnDefinitions = new ColumnDefinitions("*,1,2*") };
         Grid.SetColumn(framesPane, 0);
         HairlineDivider divider = new(GridResizeDirection.Columns) { [Grid.ColumnProperty] = 1 };
         Grid.SetColumn(variablesPane, 2);

@@ -234,6 +234,10 @@ public sealed class TestFramesTests(HeadlessTestsFolder project) : IClassFixture
         ShownFrame shown = Assert.Single(tests.Frames.Frames);
         Assert.Equal(new PixelSize(400, 300), shown.Picture!.PixelSize);
         Assert.Single(Thumbnails(tests));
+        // The details keep about half the room they share with the strip, its thumbnail drawn smaller in a short window.
+        Ui.Settle();
+        Assert.True(tests.Details.Bounds.Height >= (tests.Details.Bounds.Height + tests.Frames.Bounds.Height) * 0.4,
+            $"The failed test's details are {tests.Details.Bounds.Height:0.#} px tall under a frame strip of {tests.Frames.Bounds.Height:0.#}: the strip leaves them cramped");
         // A test with no frame shows none.
         tests.Choose(Methods(window, "Passes_whatever_it_caught")[0]);
         Ui.Settle();

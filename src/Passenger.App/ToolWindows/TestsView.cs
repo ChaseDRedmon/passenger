@@ -122,6 +122,7 @@ public sealed class TestsView : DockPanel
         HairlineDivider divider = new(GridResizeDirection.Columns) { [Grid.ColumnProperty] = 1 };
         DockPanel.SetDock(Frames, Dock.Top);
         DockPanel result = new() { [Grid.ColumnProperty] = 2, Children = { Frames, details } };
+        result.SizeChanged += (_, e) => Frames.Fit(e.NewSize.Height);
         split.Children.Add(new Panel { Children = { tree, placeholder } });
         split.Children.Add(divider);
         split.Children.Add(result);

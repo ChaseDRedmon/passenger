@@ -56,6 +56,23 @@ public sealed class DebuggerTests : IClassFixture<RestoredFolders>, IDisposable
         DapStackFrame top = window.BottomPanel.Debug.Frames[0];
         Assert.Contains("<Main>$", top.Name, StringComparison.Ordinal);
         Assert.Equal(4, top.Line);
+
+        // Narrowed in a side pane, the frames and the variables share the Debug window, neither cut off at its edge.
+        Passenger.App.Docking.DockHost dock = window.DockHost;
+        dock.Move(dock["debug"]!, Passenger.App.Docking.ToolAnchor.RightTop);
+        Ui.Settle();
+        Passenger.App.ToolWindows.DebugView debug = window.BottomPanel.Debug;
+        Point origin = debug.TranslatePoint(default, window)!.Value;
+        ListBox[] lists = [.. debug.GetVisualDescendants().OfType<ListBox>().Where(l => l.IsEffectivelyVisible)];
+        Assert.Equal(2, lists.Length);
+        foreach (ListBox list in lists)
+        {
+            Point at = list.TranslatePoint(default, window)!.Value;
+            Assert.True(list.Bounds.Width >= debug.Bounds.Width / 4 && at.X + list.Bounds.Width <= origin.X + debug.Bounds.Width + 0.5,
+                $"A list of the {debug.Bounds.Width:0.#} px Debug window is {list.Bounds.Width:0.#} px wide, ending at {at.X + list.Bounds.Width:0.#} where the window ends at {origin.X + debug.Bounds.Width:0.#}");
+        }
+        dock.Move(dock["debug"]!, Passenger.App.Docking.ToolAnchor.BottomLeft);
+        Ui.Settle();
         // Each line of the method down to the stop shows the values it names, as Rider's inline values do.
         Assert.Contains(new LineAnnotation(0, "total: 0", LineAnnotationKind.InlineValue), editor.LineAnnotations);
         Assert.Contains(new LineAnnotation(1, "i: 1", LineAnnotationKind.InlineValue), editor.LineAnnotations);
