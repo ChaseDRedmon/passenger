@@ -133,7 +133,9 @@ public abstract class SharedProject : IDisposable
         return now;
     }
 
-    /// <summary>Whether a path is the project's own, not under what a restore or a build writes.</summary>
+    /// <summary>Whether a path is the project's own, not under what a restore or a build writes, nor a repository's .git,
+    /// which git writes as a window only reads it (status refreshing the index): a class whose tests change the repository
+    /// puts it back itself.</summary>
     private bool Own(string path) =>
-        !Path.GetRelativePath(Folder, path).Split(Path.DirectorySeparatorChar).Any(part => part is "bin" or "obj");
+        !Path.GetRelativePath(Folder, path).Split(Path.DirectorySeparatorChar).Any(part => part is "bin" or "obj" or ".git");
 }
