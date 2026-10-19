@@ -881,7 +881,9 @@ public sealed class VcsController : IDisposable
     }
 
     /// <summary>A conflicted file's three versions as the merge window lays them out: the one both sides came from, and
-    /// yours on the left and theirs on the right (empty where a side deleted it), with the words for each.</summary>
+    /// yours on the left and theirs on the right (empty where a side deleted it), with the words for each. Each is read
+    /// as checking it out would write it, in the file's encoding (<see cref="InConflict"/>), so a Windows-1252 letter is
+    /// itself on every side rather than a replacement character UTF-8 makes of it.</summary>
     public async Task<MergeTexts?> MergeTextsAsync(string path)
     {
         UiThread.Check();
@@ -890,12 +892,29 @@ public sealed class VcsController : IDisposable
             return null;
         }
         ConflictSides sides = Sides;
-        (string? common, string? ours, string? theirs) = await repository.StagesAsync(path);
-        return new MergeTexts(path, common ?? string.Empty, (sides.Swapped ? theirs : ours) ?? string.Empty, (sides.Swapped ? ours : theirs) ?? string.Empty, sides);
+        System.Text.Encoding? encoding = InConflict(path)?.Encoding;
+        (byte[]? common, byte[]? ours, byte[]? theirs) = await repository.StagesAsync(path);
+        string Read(byte[]? bytes) => bytes is null ? string.Empty : FileText.FromBytes(bytes, encoding, () => EditorConfig.For(path).Charset)?.Text ?? string.Empty;
+        return new MergeTexts(path, Read(common), Read(sides.Swapped ? theirs : ours), Read(sides.Swapped ? ours : theirs), sides);
     }
 
-    /// <summary>The merge window's Apply: the result written to the file, in the encoding it had, and the file marked
-    /// resolved; the open files show it.</summary>
+    /// <summary>The conflicted file as git left it in the working tree, read as its editor reads it (in the encoding the
+    /// open file has, when that reads it): the encoding, byte order mark and line breaks the merge's result is written in.</summary>
+    private FileText? InConflict(string path)
+    {
+        try
+        {
+            return File.Exists(path) ? FileText.Load(path, documents.Keys.FirstOrDefault(d => d.Path == path)?.Encoding) : null;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>The merge window's Apply: the result written to the file in the encoding, byte order mark and line breaks
+    /// the working tree has it in (CRLF under core.autocrlf, as git checked it out), and the file marked resolved; the open
+    /// files show it.</summary>
     public async Task<VcsOutcome> ResolveAsync(string path, string text)
     {
         if (git is not { } repository)
@@ -907,8 +926,10 @@ public sealed class VcsController : IDisposable
             SaveFirst?.Invoke();
             try
             {
-                FileText? before = File.Exists(path) ? FileText.Load(path) : null;
-                FileText.Save(path, text, before?.Encoding ?? new System.Text.UTF8Encoding(false), before?.HasBom ?? false);
+                FileText? before = InConflict(path);
+                // A CR file's breaks are held as '\n', and written as '\r'.
+                string eol = before is null || before.CrBreaks ? "\n" : TextDocument.DetectLineEnding(before.Text);
+                FileText.Save(path, LineEndings.In(text, eol), before?.Encoding ?? new System.Text.UTF8Encoding(false), before?.HasBom ?? false, before?.CrBreaks ?? false);
             }
             catch (Exception refused) when (refused is IOException or UnauthorizedAccessException)
             {

@@ -341,14 +341,50 @@ public sealed class Git
 
     private static string? Short(string? hash) => hash is null ? null : hash[..Math.Min(8, hash.Length)];
 
-    /// <summary>A conflicted file's three versions as git keeps them while it is in conflict: the one both sides came
-    /// from, ours and theirs, each null where that side has none.</summary>
-    public async Task<(string? Base, string? Ours, string? Theirs)> StagesAsync(string path)
+    /// <summary>A conflicted file's three versions as git keeps them while it is in conflict, each as its bytes would be
+    /// checked out (the working tree's filters and line breaks, CRLF under core.autocrlf): the one both sides came from,
+    /// ours and theirs, each null where that side has none. The bytes are the caller's to read in the file's encoding.</summary>
+    public async Task<(byte[]? Base, byte[]? Ours, byte[]? Theirs)> StagesAsync(string path)
     {
-        Task<string?> common = TextAtAsync(":1", path);
-        Task<string?> ours = TextAtAsync(":2", path);
-        Task<string?> theirs = TextAtAsync(":3", path);
+        Task<byte[]?> common = StageAsync(1, path);
+        Task<byte[]?> ours = StageAsync(2, path);
+        Task<byte[]?> theirs = StageAsync(3, path);
         return (await common, await ours, await theirs);
+    }
+
+    /// <summary>One stage of a conflicted file as checking it out would write it, or as git keeps it when a filter it names
+    /// cannot run here (git-lfs not installed); null when the stage has none.</summary>
+    private async Task<byte[]?> StageAsync(int stage, string path)
+    {
+        string name = $":{stage}:{Relative(path)}";
+        return await BytesAsync(Root, ["cat-file", "--filters", name]) ?? await BytesAsync(Root, ["cat-file", "blob", name]);
+    }
+
+    /// <summary>What a git command writes, as bytes, or null when it fails (128 for something not there, its answer).</summary>
+    private static async Task<byte[]?> BytesAsync(string folder, IReadOnlyList<string> arguments)
+    {
+        using IDisposable held = BackgroundWork.Scope();
+        if (Start(folder, arguments) is not { } start)
+        {
+            return null;
+        }
+        start.RedirectStandardOutput = true;
+        start.RedirectStandardError = true;
+        try
+        {
+            using Process process = ChildProcesses.Start(start);
+            using MemoryStream output = new();
+            Task copied = process.StandardOutput.BaseStream.CopyToAsync(output);
+            Task<string> error = process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+            await copied;
+            await error;
+            return process.ExitCode == 0 ? output.ToArray() : null;
+        }
+        catch (Exception failed) when (failed is System.ComponentModel.Win32Exception or IOException)
+        {
+            return null;
+        }
     }
 
     /// <summary>Accept Yours or Accept Theirs over conflicted files: each takes that side's version (ours, or theirs with

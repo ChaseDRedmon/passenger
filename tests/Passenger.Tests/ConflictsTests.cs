@@ -123,6 +123,50 @@ public sealed class ConflictsTests : IDisposable
     }
 
     [AvaloniaFact]
+    public void A_Windows_1252_file_merged_under_core_autocrlf_shows_each_sides_letters_and_is_written_in_1252_with_CRLF()
+    {
+        // Git keeps the file with LF and checks it out with CRLF; its letters are Windows-1252's, € and “ ” among them.
+        System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+        System.Text.Encoding cp1252 = System.Text.Encoding.GetEncoding(1252);
+        const string Menu = "Café: 5 €\r\nTea: 2 €\r\nCake: 3 €\r\n";
+        string mine = Menu.Replace("Café: 5", "Café “noir”: 6", StringComparison.Ordinal);
+        string theirs = Menu.Replace("Café: 5", "Café – au lait: 7", StringComparison.Ordinal).Replace("Cake: 3", "Cake: 4", StringComparison.Ordinal);
+        string menu = Path.Combine(folder, "Menu.txt");
+        Git("config", "core.autocrlf", "true");
+        File.WriteAllBytes(menu, cp1252.GetBytes(Menu));
+        Git("add", "Menu.txt");
+        Git("commit", "-q", "-m", "Menu");
+        Git("switch", "-q", "-c", "feature");
+        File.WriteAllBytes(menu, cp1252.GetBytes(theirs));
+        Git("commit", "-q", "-am", "Feature menu");
+        Git("switch", "-q", "main");
+        File.WriteAllBytes(menu, cp1252.GetBytes(mine));
+        Git("commit", "-q", "-am", "Main menu");
+        Conflicting("merge", "feature");
+
+        MainWindow window = Open();
+        Ui.Landed(() => window.Vcs.Conflicts.Any(c => c.Path == PathNames.Canonical(menu)), "Menu.txt in conflict");
+        Task<bool> merging = window.MergeAsync(PathNames.Canonical(menu));
+        Ui.Landed(() => window.Frontmost is MergeWindow, "the merge window");
+        MergeWindow merge = (MergeWindow)window.Frontmost;
+        MergeView view = merge.View;
+        Assert.Equal((mine, Menu, theirs), (view.Texts.Left, view.ResultText, view.Texts.Right));
+
+        // Theirs' Cake, mine's Café: written as git checks the file out, every letter Windows-1252's.
+        Press(merge, "Apply All Non-Conflicting Changes");
+        Click(merge, view, view.IconAt(0, MergeSide.Left, ignore: false));
+        Click(merge, view, view.IconAt(0, MergeSide.Right, ignore: true));
+        Press(merge, "Apply Changes");
+        Ui.Landed(() => merging.IsCompleted, "the merge window closed");
+        Assert.True(merging.Result, window.Status);
+        string merged = mine.Replace("Cake: 3", "Cake: 4", StringComparison.Ordinal);
+        Assert.True(File.ReadAllBytes(menu).AsSpan().SequenceEqual(cp1252.GetBytes(merged)),
+            $"The merge's result was not written in Windows-1252 with CRLF: {Convert.ToHexString(File.ReadAllBytes(menu))}");
+        Assert.Empty(Unmerged());
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public void Resolve_simple_conflicts_merges_a_lines_different_words_undo_takes_it_back_and_the_keys_take_a_side()
     {
         // One line, changed by each side in a different word.
