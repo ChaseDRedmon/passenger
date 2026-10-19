@@ -35,7 +35,7 @@
     <div class="wrap">
         <a class="brand" href="/"><img src="/favicon.svg" alt="" width="28" height="28">Passenger</a>
         <nav>
-            <a class="wide" href="/#features">Features</a>
+            <a class="wide" href="/#tour">Tour</a>
             <a href="/#download">Download</a>
             <a href="https://github.com/Zaneris/passenger">GitHub</a>
         </nav>
@@ -44,8 +44,10 @@
 
 <main class="wrap page">
     <h1>Passenger on Linux</h1>
-    <p>Passenger is made for Windows and macOS first. Its Linux builds come from the same code and are newer and less
-        tested, so please <a href="https://github.com/Zaneris/passenger/issues">report</a> anything that goes wrong.</p>
+    <p>Passenger is made for Windows and macOS first. Its Linux builds come from the same code, and every change runs
+        the tests on Ubuntu, then installs the archive there, debugs a program with it and uninstalls it, but fewer people
+        use them yet, so
+        please <a href="https://github.com/Zaneris/passenger/issues">report</a> anything that goes wrong.</p>
     <p class="status" id="linux-status"></p>
 
     <h2>1. What it needs</h2>
@@ -56,6 +58,9 @@
             folder). Passenger builds and runs your projects with it, and Roslyn's language server runs on it.</li>
         <li><strong>Git</strong>, and the X11 and fontconfig libraries most desktops already have. On a Wayland desktop,
             Passenger runs through XWayland.</li>
+        <li><strong>Node.js</strong>, only for JavaScript, TypeScript, HTML, CSS and JSON (22.22.2 or later for
+            TypeScript). Your distribution's package may be older; <a href="https://nodejs.org/en/download">nodejs.org</a>
+            has current ones, and Settings &rsaquo; Node.js can name the one to use.</li>
     </ul>
 <pre><span class="comment"># Ubuntu, Debian</span>
 sudo apt install git libx11-6 libice6 libsm6 libfontconfig1
@@ -83,8 +88,12 @@ tar -xzf Passenger-linux-$arch.tar.gz</pre>
     <p>Then open a folder or a solution from the menu, or from a shell:</p>
 <pre>passenger ~/src/MySolution</pre>
 
+    <p>The toolbar is the window's title bar, as on Windows and macOS, with the window's buttons at its right. To have
+        your window manager's own title bar instead, turn off Settings &rsaquo; Appearance &rsaquo; Merge main menu with
+        window title. Under WSL and tiling window managers, the window manager's stays.</p>
+
     <h2>Updating</h2>
-    <p>Passenger says when a newer release is out (Help | Check for Updates asks at once), and its notice links the
+    <p>Passenger says when a newer release is out (Help &rsaquo; Check for Updates asks at once), and its notice links the
         archive for your machine. It does not install updates itself on Linux: unpack the newer archive and run its
         <code>install.sh</code> as before (with <code>sudo</code> and <code>--system</code> if that is how you installed
         it). It replaces the old files and keeps your settings.</p>
@@ -101,6 +110,8 @@ sudo /opt/passenger/install.sh --uninstall --system</pre>
             libraries in step 1; <code>install.sh</code> names any of them it finds missing.</li>
         <li><strong>C# has colour but no completion or errors:</strong> Passenger could not start Roslyn's language server.
             Check that <code>dotnet --list-sdks</code> shows a version 10 or later SDK.</li>
+        <li><strong>A TypeScript or other web file has colour but no help:</strong> the banner over it says why, most often
+            that no Node.js was found or that it is too old for the language server.</li>
         <li><strong>Started from the applications menu, Passenger finds no <code>dotnet</code> or <code>git</code>:</strong>
             it takes the PATH your login shell sets, as a terminal would, so add their folders to it in your shell's
             profile (<code>~/.profile</code>, <code>~/.bashrc</code> or <code>~/.zshrc</code>), or set
@@ -110,7 +121,7 @@ sudo /opt/passenger/install.sh --uninstall --system</pre>
         <li><strong>Attach to Process is refused:</strong> most distributions only let a debugger attach to its own child
             processes. Debugging a program Passenger starts works as it is; to attach to one it did not start, allow it
             until the next restart with <code>sudo sysctl kernel.yama.ptrace_scope=0</code>.</li>
-        <li><strong>To report a problem,</strong> Help | Show Log in File Manager opens Passenger's logs, in
+        <li><strong>To report a problem,</strong> Help &rsaquo; Show Log in File Manager opens Passenger's logs, in
             <code>~/.local/share/Passenger/logs</code>; <code>passenger.log</code> there says what went wrong.</li>
     </ul>
 </main>

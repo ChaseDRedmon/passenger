@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Passenger: an IDE for C# and .NET</title>
-    <meta name="description" content="A Rider-inspired IDE for C# and .NET, written in C#: its own editor over Roslyn, debugger and profiler, with tests, Git, NuGet, a terminal, and all of it open to your coding agent.">
+    <meta name="description" content="An IDE for C# and .NET, written in C# and inspired by Rider: its own editor over Roslyn, debugger and profiler, Avalonia's and WPF's XAML, and an MCP server your coding agent uses it through.">
     <link rel="canonical" href="https://passenger-ide.net/">
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
@@ -14,7 +14,7 @@
     <meta property="og:locale" content="en_US">
     <meta property="og:url" content="https://passenger-ide.net/">
     <meta property="og:title" content="Passenger: an IDE for C# and .NET, written in C#">
-    <meta property="og:description" content="Its own editor over Roslyn, debugger and profiler, with unit tests, Git, NuGet and a terminal, all of it open to your coding agent. Open source, for Windows, macOS and Linux.">
+    <meta property="og:description" content="An IDE your coding agent can drive, the Avalonia developer's IDE, and Rider's ways for C# and .NET: its own editor, debugger and profiler. Open source, for Windows, macOS and Linux.">
     <meta property="og:image" content="https://passenger-ide.net/images/social.png">
     <meta property="og:image:type" content="image/png">
     <meta property="og:image:width" content="1200">
@@ -22,18 +22,18 @@
     <meta property="og:image:alt" content="Passenger's editor beside the words: an IDE for C# and .NET, written in C#">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="Passenger: an IDE for C# and .NET, written in C#">
-    <meta name="twitter:description" content="Its own editor over Roslyn, debugger and profiler, with unit tests, Git, NuGet and a terminal, all of it open to your coding agent. Open source, for Windows, macOS and Linux.">
+    <meta name="twitter:description" content="An IDE your coding agent can drive, the Avalonia developer's IDE, and Rider's ways for C# and .NET: its own editor, debugger and profiler. Open source, for Windows, macOS and Linux.">
     <meta name="twitter:image" content="https://passenger-ide.net/images/social.png">
     <meta name="twitter:image:alt" content="Passenger's editor beside the words: an IDE for C# and .NET, written in C#">
-    <meta name="theme-color" content="#1E1F22" media="(prefers-color-scheme: dark)">
+    <meta name="theme-color" content="#0F131C" media="(prefers-color-scheme: dark)">
     <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
-    <meta name="theme-color" content="#3D7BF5">
+    <meta name="theme-color" content="#2F6BF2">
     <script type="application/ld+json">
 {
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
     "name": "Passenger",
-    "description": "A Rider-inspired IDE for C# and .NET, written in C#: its own editor over Roslyn, debugger and profiler, with tests, Git, NuGet, a terminal, and all of it open to your coding agent.",
+    "description": "An IDE for C# and .NET, written in C# and inspired by Rider: its own editor over Roslyn, debugger and profiler, Avalonia's and WPF's XAML, and an MCP server your coding agent uses it through.",
     "url": "https://passenger-ide.net/",
     "applicationCategory": "DeveloperApplication",
     "operatingSystem": "Windows, macOS, Linux",
@@ -44,7 +44,7 @@
     },
     "license": "https://opensource.org/licenses/MIT",
     "image": "https://passenger-ide.net/images/social.png",
-    "screenshot": "https://passenger-ide.net/images/editor.webp",
+    "screenshot": "https://passenger-ide.net/images/editor-dark.webp",
     "sameAs": [
         "https://github.com/Zaneris/passenger"
     ]
@@ -58,8 +58,9 @@
     <div class="wrap">
         <a class="brand" href="/"><img src="/favicon.svg" alt="" width="28" height="28">Passenger</a>
         <nav>
-            <a class="wide" href="#features">Features</a>
-            <a class="wide" href="#agents">For agents</a>
+            <a class="wide" href="#agents">Agents</a>
+            <a class="wide" href="#avalonia">Avalonia</a>
+            <a class="wide" href="#tour">Tour</a>
             <a href="#download">Download</a>
             <a href="https://github.com/Zaneris/passenger">GitHub</a>
         </nav>
@@ -68,141 +69,137 @@
 
 <main>
     <div class="wrap hero">
-        <p class="eyebrow">Early development · Open source, MIT</p>
+        <p class="eyebrow">Open source, MIT · Windows, macOS, Linux</p>
         <h1><span class="lead">An IDE for C# and .NET,</span> written in C#.</h1>
-        <p class="lede">Inspired by Rider: an editor of its own over Roslyn, a debugger and a profiler of its own, unit tests,
-            Git, NuGet and a terminal. And your coding agent can use all of it too: debugging, profiling and testing in
-            the same IDE you do.</p>
+        <p class="lede">Passenger edits, builds, runs, tests, debugs and profiles C# and modern .NET, with an editor, a debugger and a
+            profiler of its own. It works the way JetBrains Rider does and looks like itself. It knows Avalonia's XAML as well as
+            it knows C#, and your coding agent can use all of it, as you do.</p>
         <div class="actions">
             <a class="button primary" id="primary-download" href="#download">Download</a>
             <a class="button" href="https://github.com/Zaneris/passenger">Source on GitHub</a>
         </div>
         <p class="under" id="primary-note">For Windows and macOS, with builds for Linux.</p>
         <figure class="shot">
-            <img src="/images/editor.webp" width="2400" height="1500" fetchpriority="high"
-                 alt="Passenger's editor: completion open after a dot, parameter name hints before literal arguments, and the change bars of uncommitted lines">
+            <picture>
+                <source media="(prefers-color-scheme: light)" srcset="/images/editor-light.webp" width="2400" height="1500">
+                <img src="/images/editor-dark.webp" width="2400" height="1500" fetchpriority="high"
+                     alt="Passenger's editor: a C# file with completion open after a dot, inlay hints, and the change bars of uncommitted lines">
+            </picture>
         </figure>
     </div>
 
-    <section id="features">
+    <section id="why">
         <div class="wrap">
-            <h2>A whole IDE, in one language</h2>
-            <p class="intro">Everything in Passenger is .NET, from the window to the debugger, built on the libraries a C# IDE
-                needs: Roslyn, MSBuild, ICorDebug, EventPipe and VSTest.</p>
-            <div class="grid">
+            <h2>What sets it apart</h2>
+            <p class="intro">Beside everything an IDE for C# does, three things set Passenger apart.</p>
+            <div class="why">
                 <div class="card">
-                    <h3>The editor</h3>
-                    <p>A text control of its own over an immutable rope: multiple carets, code folding, Extend Selection, live and
-                        postfix templates, and Rider's Visual Studio keymaps with their chords. It keeps up with every keystroke in a
-                        50,000-line file.</p>
-                </div>
-                <div class="card">
-                    <h3>C# from Roslyn</h3>
-                    <p>Colours, diagnostics, completion, hovers and signature help, quick fixes and refactorings, rename, Go to
-                        Declaration and Implementation, Find Usages, call and type hierarchies, and decompiled library sources.</p>
+                    <h3>An IDE your agent can drive</h3>
+                    <p>Passenger is an MCP server. A coding agent asks it about the code, builds, tests, debugs and profiles
+                        through it, and tries out the app it is building. In your own window it asks you first.</p>
+                    <a class="more" href="#agents">How agents use it</a>
                 </div>
                 <div class="card">
-                    <h3>Build and run</h3>
-                    <p>A Solution view of your projects, builds with their errors in Problems, run configurations from your launch
-                        profiles, and Hot Reload under <code>dotnet watch</code>.</p>
+                    <h3>The Avalonia developer's IDE</h3>
+                    <p>XAML completion, checks and a preview as you type. While the app runs: its Live Visual Tree, binding
+                        errors and values, and breakpoints in the XAML. WPF's XAML too.</p>
+                    <a class="more" href="#avalonia">What it does for XAML</a>
                 </div>
                 <div class="card">
-                    <h3>Unit tests</h3>
-                    <p>xUnit, NUnit and MSTest found and run through VSTest, run marks in the gutter, results by project, class and
-                        method, failures rerun, and any test debugged.</p>
+                    <h3>Rider's ways for C# and .NET</h3>
+                    <p>Rider's Visual Studio keymaps, its actions under their names, and its behaviours where they matter, so
+                        your hands already know it. The look is Passenger's own.</p>
+                    <a class="more" href="#rider">Rider's ways, its own look</a>
                 </div>
-                <div class="card">
-                    <h3>NuGet</h3>
-                    <p>Search nuget.org, then install, update and remove packages for each project, with central package
-                        management.</p>
-                </div>
-                <div class="card">
-                    <h3>Terminal</h3>
-                    <p>A terminal emulator of its own with a shell per tab, where vim, less and htop run full-screen.</p>
-                </div>
-            </div>
-
-            <div class="feature">
-                <div class="text">
-                    <h3>A debugger of its own</h3>
-                    <p>Over the runtime's ICorDebug: breakpoints with conditions, hit counts and log messages, stepping through async
-                        code, Run to Cursor and Set Next Statement, the call stack and threads, variables you can open and set,
-                        watches and evaluation, and the values each line used drawn after it. Attach to a .NET program
-                        already running, on a Mac too with nothing to set up.</p>
-                </div>
-                <figure class="shot">
-                    <img src="/images/debugger.webp" width="2400" height="1500" loading="lazy"
-                         alt="Stopped at a breakpoint: the line's values after its code, and the Debug window's frames and variables">
-                </figure>
-            </div>
-
-            <div class="feature flip">
-                <div class="text">
-                    <h3>A profiler too</h3>
-                    <p>Sampling over EventPipe, from a program's first instruction: its call tree, hot spots, flame graph,
-                        allocations and garbage collections, narrowed to any stretch of the timeline. A memory snapshot counts a
-                        running program's heap by type.</p>
-                </div>
-                <figure class="shot">
-                    <img src="/images/profiler.webp" width="2400" height="1500" loading="lazy"
-                         alt="A profile of a sample program: the timeline above the call tree, its hot path opened">
-                </figure>
-            </div>
-
-            <div class="feature">
-                <div class="text">
-                    <h3>Git</h3>
-                    <p>The Commit window with its changes, the log with its branch graph, side-by-side diffs, blame, change bars in
-                        the gutter that roll a change back, branches, stashes, push, pull and fetch.</p>
-                </div>
-                <figure class="shot">
-                    <img src="/images/git.webp" width="2400" height="1500" loading="lazy"
-                         alt="The Commit window beside the editor, and the Git log with a commit's details">
-                </figure>
-            </div>
-
-            <div class="feature flip">
-                <div class="text">
-                    <h3>Find anything</h3>
-                    <p>Search Everywhere, Go to File, Go to Symbol and Find Action, Find and Replace in Files with a preview, Recent
-                        Files, bookmarks and File Structure.</p>
-                </div>
-                <figure class="shot">
-                    <img src="/images/find-in-files.webp" width="2400" height="1500" loading="lazy"
-                         alt="Find in Files: every match with its file and line, the chosen one previewed below">
-                </figure>
             </div>
         </div>
     </section>
 
     <section id="agents">
-        <div class="wrap agents">
-            <div>
-                <h2>Your coding agent, using the IDE as you do</h2>
-                <p>Connect a coding agent such as Claude Code to Passenger and it works through the IDE, not just your files.
-                    It finds where things are declared and used, reads the compiler's warnings, and renames and fixes code as
-                    the IDE does. It builds, runs and tests. It sets breakpoints, steps through the program, reads and changes
-                    its variables, and profiles a run to find what is slow. It commits, adds packages, types into the terminal,
-                    and takes a screenshot to see what you see.</p>
-                <p>Connect it to the window you have open and watch it work: its breakpoints and stops show in your editor,
-                    its runs in your Run window. Or give it a Passenger of its own with no window, for work it does alone.
-                    A window lets agents in only once you turn on Settings &rsaquo; MCP Server &rsaquo; Enable MCP Server, through a
-                    connection only you can reach, and asks you the first time an agent wants to change anything.</p>
+        <div class="wrap">
+            <h2>An IDE your agent can drive</h2>
+            <p class="intro">Passenger serves the Model Context Protocol, the standard coding agents use to reach their tools.
+                Through it an agent works in the IDE, not only in your files: it asks the language server instead of guessing
+                from the text, and checks what it changed by building, testing and running it.</p>
+
+            <div class="feature">
+                <div class="text">
+                    <h3>It works as you do</h3>
+                    <p>It finds where things are declared and used, reads the warnings, renames, fixes and formats code as the
+                        IDE does. It builds, runs and tests. It sets breakpoints, steps, reads and changes variables, applies Hot
+                        Reload and profiles a run. It searches and replaces across files, commits, resolves conflicts, adds
+                        packages, types into the terminal and looks at the window.</p>
+                    <h3>It tries the app it builds</h3>
+                    <p>When the program is an Avalonia app, or a WPF app on Windows, the agent sees it as a person testing it
+                        would: a picture of each window, the tree of its controls with their text and state, and clicks, typing,
+                        keys and scrolling sent to the window, which never takes the focus or moves your pointer. It reads the
+                        app's binding errors and can break on a property's change.</p>
+                </div>
+                <figure class="shot">
+                    <picture>
+                        <source media="(prefers-color-scheme: light)" srcset="/images/agent-light.webp" width="2400" height="1500">
+                        <img src="/images/agent-dark.webp" width="2400" height="1500" loading="lazy" decoding="async"
+                             alt="An agent driving the Avalonia app it is building, through Passenger">
+                    </picture>
+                </figure>
             </div>
-            <div>
-                <p>Tell your agent to start Passenger with <code>--mcp-attach</code>, and it joins the window you have open.
-                    Passenger is <code>/Applications/Passenger.app/Contents/MacOS/Passenger</code> on a Mac and
-                    <code>%LOCALAPPDATA%\PassengerIDE\current\Passenger.exe</code> on Windows. For a Passenger of the agent's own,
-                    with no window, use <code>--mcp</code> and the folder or solution instead.</p>
-                <details class="client" open>
-                    <summary>Claude Code</summary>
+
+            <dl class="tools">
+                <div>
+                    <dt>Code</dt>
+                    <dd>Diagnostics, hovers, declarations, usages, hierarchies, rename, code actions and formatting, each file
+                        through its own language: C#, Razor, XAML, the web languages and project files.</dd>
+                </div>
+                <div>
+                    <dt>Build, run and test</dt>
+                    <dd>Builds with their errors, what Problems lists, runs and their output, Hot Reload, and the unit tests
+                        listed and run.</dd>
+                </div>
+                <div>
+                    <dt>Debug and profile</dt>
+                    <dd>Breakpoints, launch or attach, steps, Run to Cursor, Set Next Statement, evaluation, variables set, the
+                        program's console, and a profile's hot spots and hot path.</dd>
+                </div>
+                <div>
+                    <dt>The app</dt>
+                    <dd>Its windows, controls and their details, pictures, clicks, typing, keys, scrolling and binding
+                        errors.</dd>
+                </div>
+                <div>
+                    <dt>Files, Git and NuGet</dt>
+                    <dd>Find and Replace in Files, Local History, status, diffs, the log, commits, checkout, stashes, conflicts,
+                        and packages searched, installed and removed.</dd>
+                </div>
+                <div>
+                    <dt>The IDE</dt>
+                    <dd>The window's picture, any action by its name, the settings, and the terminal.</dd>
+                </div>
+            </dl>
+
+            <div class="agents">
+                <div>
+                    <h3>Your window, or one of its own</h3>
+                    <p>With <code>--mcp-attach</code>, the agent joins the Passenger window you have open over the folder it
+                        works in. Its breakpoints and stops show in your editor, its runs in your Run window, and the status bar
+                        names what it is doing. A window lets agents in only once you turn on Settings &rsaquo; MCP Server
+                        &rsaquo; Enable MCP Server, through a socket in your own user's folder, and the first time an agent uses a
+                        tool that changes anything, Passenger asks you.</p>
+                    <p>With <code>--mcp</code> and a folder or solution, the agent starts a Passenger of its own with no window,
+                        for work it does alone.</p>
+                    <p>The agent starts Passenger from where it is installed:</p>
+                    <ul class="paths">
+                        <li><span>macOS</span><code>/Applications/Passenger.app/Contents/MacOS/Passenger</code></li>
+                        <li><span>Windows</span><code>%LOCALAPPDATA%\PassengerIDE\current\Passenger.exe</code></li>
+                        <li><span>Linux</span><code>~/.local/bin/passenger</code></li>
+                    </ul>
+                </div>
+                <div>
+                    <details class="client" open>
+                        <summary>Claude Code</summary>
 <pre>claude mcp add passenger -- \
     /Applications/Passenger.app/Contents/MacOS/Passenger \
     --mcp-attach</pre>
-                </details>
-                <details class="client">
-                    <summary>Claude Desktop</summary>
-                    <p>In Settings &rsaquo; Developer, choose Edit Config, add Passenger, then restart Claude:</p>
+                        <p>Or for everyone working in a repository, in its <code>.mcp.json</code>:</p>
 <pre>{
   "mcpServers": {
     "passenger": {
@@ -211,26 +208,309 @@
     }
   }
 }</pre>
-                    <p>On Windows the command is Passenger.exe's full path, each <code>\</code> written <code>\\</code>.</p>
-                </details>
-                <details class="client">
-                    <summary>Codex CLI</summary>
+                    </details>
+                    <details class="client">
+                        <summary>Claude Desktop</summary>
+                        <p>In Settings &rsaquo; Developer, choose Edit Config, add Passenger, then restart Claude:</p>
+<pre>{
+  "mcpServers": {
+    "passenger": {
+      "command": "/Applications/Passenger.app/Contents/MacOS/Passenger",
+      "args": ["--mcp-attach"]
+    }
+  }
+}</pre>
+                        <p>On Windows the command is Passenger.exe's full path, each <code>\</code> written <code>\\</code>.</p>
+                    </details>
+                    <details class="client">
+                        <summary>Codex CLI</summary>
 <pre>codex mcp add passenger -- \
     /Applications/Passenger.app/Contents/MacOS/Passenger \
     --mcp-attach</pre>
-                    <p>Or in <code>~/.codex/config.toml</code>:</p>
+                        <p>Or in <code>~/.codex/config.toml</code>:</p>
 <pre>[mcp_servers.passenger]
 command = "/Applications/Passenger.app/Contents/MacOS/Passenger"
 args = ["--mcp-attach"]</pre>
-                </details>
-                <details class="client">
-                    <summary>Codex desktop app</summary>
-                    <p>In Settings &rsaquo; MCP servers, choose Add server, name it <code>passenger</code>, choose STDIO, give
-                        Passenger's path as the command and <code>--mcp-attach</code> as its argument, then save and choose
-                        Restart. The app and the Codex CLI share their settings, so adding it in one adds it to both.</p>
-                </details>
-                <p>Passenger connects through MCP, the standard most coding agents use to reach their tools, so any other agent
-                    that can add an MCP server connects the same way.</p>
+                    </details>
+                    <details class="client">
+                        <summary>Codex desktop app</summary>
+                        <p>In Settings &rsaquo; MCP servers, choose Add server, name it <code>passenger</code>, choose STDIO, give
+                            Passenger's path as the command and <code>--mcp-attach</code> as its argument, then save and choose
+                            Restart. The app and the Codex CLI share their settings, so adding it in one adds it to both.</p>
+                    </details>
+                    <p>Any other agent that can add an MCP server connects the same way.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="avalonia">
+        <div class="wrap">
+            <h2>The Avalonia developer's IDE</h2>
+            <p class="intro">Passenger is built with Avalonia, and it gives <code>.axaml</code> files the help C# gets, from the
+                project's own assemblies and Avalonia's own compiler and previewer. None of it needs an Avalonia Accelerate
+                licence.</p>
+
+            <div class="feature">
+                <div class="text">
+                    <h3>XAML as you type</h3>
+                    <p>Completion of controls, properties, attached properties, values, resources, selectors and binding paths
+                        checked against <code>x:DataType</code>. The XAML compiler's errors on their lines. Go to Declaration into
+                        C#, rename of <code>x:Name</code>, Reformat Code, Extract Resource and Extract Style, and a missing
+                        property, command or converter made from where it is used.</p>
+                    <p>XAML Preview draws the file beside it with the project's own Avalonia, following each edit.</p>
+                </div>
+                <figure class="shot">
+                    <picture>
+                        <source media="(prefers-color-scheme: light)" srcset="/images/xaml-light.webp" width="2400" height="1500">
+                        <img src="/images/xaml-dark.webp" width="2400" height="1500" loading="lazy" decoding="async"
+                             alt="An Avalonia .axaml file with XAML completion open, and XAML Preview drawing it beside the editor">
+                    </picture>
+                </figure>
+            </div>
+
+            <div class="feature flip">
+                <div class="text">
+                    <h3>The running app, from its XAML</h3>
+                    <p>Debug an Avalonia app and the Live Visual Tree shows its controls as they are, each property with where
+                        its value came from and each style with why it applies or not. The XAML shows each binding's value after
+                        its line.</p>
+                    <p>A binding that fails is a line in the Run or Debug console linked to its XAML, a row in Problems with a
+                        fix where there is one, and, if you choose, a stop like an exception's. Breakpoints go on an element, on
+                        one of its attributes, or on a property's next change.</p>
+                </div>
+                <figure class="shot">
+                    <picture>
+                        <source media="(prefers-color-scheme: light)" srcset="/images/live-tree-light.webp" width="2400" height="1500">
+                        <img src="/images/live-tree-dark.webp" width="2400" height="1500" loading="lazy" decoding="async"
+                             alt="Debugging an Avalonia app: the Live Visual Tree with an element's details, and binding values after the XAML's lines">
+                    </picture>
+                </figure>
+            </div>
+
+            <div class="grid two">
+                <div class="card">
+                    <h3>Frames in the profiler</h3>
+                    <p>Profile an Avalonia app and its frames are charted with what each cost, and their layout listed by
+                        control type and then by control, each row opening its XAML. Avalonia's debug overlays are a toggle in
+                        the Run and Debug windows.</p>
+                </div>
+                <div class="card">
+                    <h3>Failed tests pictured</h3>
+                    <p>When an Avalonia.Headless test with xUnit v3 fails, its result carries a picture of each window as it
+                        was, popups drawn in.</p>
+                </div>
+                <div class="card">
+                    <h3>New projects</h3>
+                    <p>New Solution and New Project offer Avalonia's templates, and install them when they are missing.</p>
+                </div>
+                <div class="card">
+                    <h3>WPF's XAML too</h3>
+                    <p>WPF projects get the same XAML help on every system: completion, checks, navigation, formatting and the
+                        refactorings. On Windows, XAML Preview draws WPF files, and the Live Visual Tree and binding errors work
+                        while a WPF app is debugged. Elsewhere a WPF project builds for its code help and says it runs only on
+                        Windows.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="rider">
+        <div class="wrap">
+            <h2>Rider's ways, its own look</h2>
+            <p class="intro">If you know Rider, you know where things are in Passenger. It is still its own IDE, written in
+                C#, and it looks like itself.</p>
+            <div class="pair">
+                <div>
+                    <h3>Your hands already know it</h3>
+                    <p>Its keys are Rider's Visual Studio keymap, or on a Mac its Visual Studio OSX keymap, chords included, and
+                        Settings &rsaquo; Keymap changes any of them. Its actions have Rider's names: Search Everywhere, Show
+                        Context Actions, Extend Selection, Surround With, Complete Current Statement, Run to Cursor.</p>
+                    <p>It behaves as Rider does where that matters: tool windows in IntelliJ's six places, files saved as you
+                        go, Local History, a rename across files undone as one step, Rider's file nesting in the Solution view,
+                        and Rider's XML formatting for XAML. The toolbar is the window's title bar, as Rider's is, on Windows,
+                        macOS and most Linux desktops.</p>
+                </div>
+                <div>
+                    <h3>Two looks of its own</h3>
+                    <p><strong>Passenger</strong>, the default, takes the app icon's blue: a blue-to-teal title bar, the
+                        window's areas told apart by shade rather than lines, and an amber mark wherever the window says where
+                        you are.</p>
+                    <p><strong>Harbour</strong> is warmer and rounder: the icon's teal on linen by day and a warm charcoal by
+                        night.</p>
+                    <p>Each comes in dark and light, following your system or your choice, and Rider's colours for the code
+                        are a choice under either.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="tour">
+        <div class="wrap">
+            <h2>The tour</h2>
+            <p class="intro">Everything in Passenger is .NET, from the window to the debugger, over the libraries a C# IDE
+                needs: Roslyn, MSBuild, ICorDebug, EventPipe, VSTest and Microsoft.Testing.Platform.</p>
+
+            <div class="grid two">
+                <div class="card">
+                    <h3>The editor</h3>
+                    <p>A text control of its own over an immutable rope: multiple carets, folding, soft wrap, Extend Selection,
+                        live, postfix and surround templates, inlay hints, the symbol at the caret lit through the file, and
+                        splits, with tabs in windows of their own. A key costs what it changed, not the file's size: tests hold
+                        it in twenty thousand lines and on a line of a million characters.</p>
+                </div>
+                <div class="card">
+                    <h3>C# from Roslyn</h3>
+                    <p>Colours as you type, then the language server's: diagnostics, completion, hovers, signature help,
+                        quick fixes and refactorings such as Change Signature, Extract Interface, Move and Safe Delete, a rename
+                        that renames the type's file, Go to Declaration, Implementation and Base Symbols, Find Usages, call and
+                        type hierarchies, and decompiled library sources. Problems lists the whole solution's without a
+                        build.</p>
+                </div>
+            </div>
+
+            <div class="feature">
+                <div class="text">
+                    <h3>A debugger of its own</h3>
+                    <p>Over the runtime's ICorDebug: breakpoints with conditions, hit counts and log messages, exception
+                        breakpoints, stepping through async code, Smart Step Into, the values methods returned, Run to Cursor and
+                        Set Next Statement, threads and frames, variables you can open and set, watches, and the values each line
+                        used drawn after it.</p>
+                    <p>Edit the code while debugging and Hot Reload puts it in the program, paused or running. A frame in a
+                        library without symbols shows its code, decompiled. Attach to a .NET program already running, on a Mac too with nothing to set up. Data breakpoints
+                        on Windows x64.</p>
+                </div>
+                <figure class="shot">
+                    <picture>
+                        <source media="(prefers-color-scheme: light)" srcset="/images/debugger-light.webp" width="2400" height="1500">
+                        <img src="/images/debugger-dark.webp" width="2400" height="1500" loading="lazy" decoding="async"
+                             alt="Stopped at a breakpoint: the values after the lines, and the Debug window's frames and variables">
+                    </picture>
+                </figure>
+            </div>
+
+            <div class="feature flip">
+                <div class="text">
+                    <h3>A profiler too</h3>
+                    <p>Sampling over EventPipe, from a program's first instruction or attached to one already running: its
+                        call tree, hot spots, flame graph, allocations and garbage collections, narrowed to any stretch of the
+                        timeline.</p>
+                    <p>A memory snapshot counts the heap by type and shows what keeps an object alive and how much it holds.
+                        Two snapshots compared say which objects are new, which died and which survived.</p>
+                </div>
+                <figure class="shot">
+                    <picture>
+                        <source media="(prefers-color-scheme: light)" srcset="/images/profiler-light.webp" width="2400" height="1500">
+                        <img src="/images/profiler-dark.webp" width="2400" height="1500" loading="lazy" decoding="async"
+                             alt="A profile of a run: its timeline above the call tree">
+                    </picture>
+                </figure>
+            </div>
+
+            <div class="feature">
+                <div class="text">
+                    <h3>Git</h3>
+                    <p>The Commit window with its changes, the log with its branch graph and branches, side-by-side diffs with
+                        the changed words marked, blame, change bars in the gutter that roll a change back, the history of a
+                        file, a folder or a selection, stashes, push, pull and fetch, and conflicts resolved in a three-way
+                        merge.</p>
+                </div>
+                <figure class="shot">
+                    <picture>
+                        <source media="(prefers-color-scheme: light)" srcset="/images/git-light.webp" width="2400" height="1500">
+                        <img src="/images/git-dark.webp" width="2400" height="1500" loading="lazy" decoding="async"
+                             alt="The Git window's log with its branch graph and a commit's details">
+                    </picture>
+                </figure>
+            </div>
+
+            <div class="feature flip">
+                <div class="text">
+                    <h3>Find anything</h3>
+                    <p>Search Everywhere, Go to File, Go to Symbol and Find Action. Find and Replace in Files across the
+                        solution, a project, a folder or a scope, with a file mask and a preview. Find Usages in a window of its
+                        own, Recent Files and Recent Locations, bookmarks and File Structure.</p>
+                </div>
+                <figure class="shot">
+                    <picture>
+                        <source media="(prefers-color-scheme: light)" srcset="/images/find-in-files-light.webp" width="2400" height="1500">
+                        <img src="/images/find-in-files-dark.webp" width="2400" height="1500" loading="lazy" decoding="async"
+                             alt="Find in Files: every match with its file and line, the chosen one previewed below">
+                    </picture>
+                </figure>
+            </div>
+
+            <div class="feature">
+                <div class="text">
+                    <h3>Project files</h3>
+                    <p>In a <code>.csproj</code>, <code>.props</code> or <code>.targets</code>: completion of elements,
+                        properties, items and their values, and of package ids and versions from your feeds, the version going to
+                        <code>Directory.Packages.props</code> under central package management. A property's hover shows its
+                        evaluated value and where it was set. Go to Declaration reaches the SDK's own files, and the
+                        evaluation's errors sit on their lines.</p>
+                </div>
+                <figure class="shot">
+                    <picture>
+                        <source media="(prefers-color-scheme: light)" srcset="/images/project-files-light.webp" width="2400" height="1500">
+                        <img src="/images/project-files-dark.webp" width="2400" height="1500" loading="lazy" decoding="async"
+                             alt="A project file with MSBuild help: a property's evaluated value and where it is set">
+                    </picture>
+                </figure>
+            </div>
+
+            <div class="feature flip">
+                <div class="text">
+                    <h3>The web languages</h3>
+                    <p>JavaScript, TypeScript, HTML, CSS, SCSS, Less and JSON through their language servers: completion,
+                        checks, navigation and formatting, TypeScript on the project's own version and JSON against its schema.
+                        ESLint's problems show as you type with its fixes, and the project's own Prettier formats on Reformat
+                        Code and on save. Razor and Blazor files get C# and HTML help together.</p>
+                </div>
+                <figure class="shot">
+                    <picture>
+                        <source media="(prefers-color-scheme: light)" srcset="/images/web-light.webp" width="2400" height="1500">
+                        <img src="/images/web-dark.webp" width="2400" height="1500" loading="lazy" decoding="async"
+                             alt="A TypeScript file with its language server's help">
+                    </picture>
+                </figure>
+            </div>
+
+            <div class="grid">
+                <div class="card">
+                    <h3>Build and run</h3>
+                    <p>A Solution view of the solution and its projects as MSBuild evaluates them, builds with their errors in
+                        Problems, run configurations from your launch profiles, consoles whose stack frames and compiler messages
+                        link to their lines, the browser opened for a web project, and Hot Reload under
+                        <code>dotnet watch</code>.</p>
+                </div>
+                <div class="card">
+                    <h3>Unit tests</h3>
+                    <p>xUnit, NUnit, MSTest and TUnit, through VSTest or Microsoft.Testing.Platform: tests found from the code
+                        before any build, run marks in the gutter, results grouped and filtered, failures rerun, a run until one
+                        fails, and any test debugged.</p>
+                </div>
+                <div class="card">
+                    <h3>NuGet</h3>
+                    <p>Search the feeds your <code>nuget.config</code> names, then install, update and remove packages for
+                        each project, with central package management. A version with a known vulnerability is marked, with the
+                        lowest one that fixes it.</p>
+                </div>
+                <div class="card">
+                    <h3>Terminal</h3>
+                    <p>A terminal emulator of its own with a shell per tab, where vim, less and htop run full-screen. A console
+                        program can run and be debugged in it.</p>
+                </div>
+                <div class="card">
+                    <h3>Local History</h3>
+                    <p>Every version of your files Passenger has seen, for five days of work, whatever Git knows: compared,
+                        labelled and put back.</p>
+                </div>
+                <div class="card">
+                    <h3>Windows and layout</h3>
+                    <p>Tool windows docked or floating, editor tabs split or in windows of their own, a window for each
+                        solution, and each solution's layout kept. New Solution starts from any template
+                        <code>dotnet new</code> has.</p>
+                </div>
             </div>
         </div>
     </section>
@@ -246,6 +526,8 @@ args = ["--mcp-attach"]</pre>
                         <li><a data-asset="Passenger-macos-arm64.dmg" href="https://github.com/Zaneris/passenger/releases/latest/download/Passenger-macos-arm64.dmg">Apple Silicon <span class="kind">.dmg</span></a></li>
                         <li><a data-asset="Passenger-macos-x64.dmg" href="https://github.com/Zaneris/passenger/releases/latest/download/Passenger-macos-x64.dmg">Intel <span class="kind">.dmg</span></a></li>
                     </ul>
+                    <p class="note">Drag Passenger onto Applications. Each new release downloads in the background and
+                        installs as Passenger closes.</p>
                 </div>
                 <div class="platform">
                     <h3>Windows</h3>
@@ -253,6 +535,8 @@ args = ["--mcp-attach"]</pre>
                         <li><a data-asset="Passenger-windows-x64.exe" href="https://github.com/Zaneris/passenger/releases/latest/download/Passenger-windows-x64.exe">x64 <span class="kind">installer</span></a></li>
                         <li><a data-asset="Passenger-windows-arm64.exe" href="https://github.com/Zaneris/passenger/releases/latest/download/Passenger-windows-arm64.exe">Arm64 <span class="kind">installer</span></a></li>
                     </ul>
+                    <p class="note">Installs for you alone, with no administrator. Each new release downloads in the
+                        background and installs as Passenger closes.</p>
                 </div>
                 <div class="platform">
                     <h3>Linux</h3>
@@ -260,13 +544,24 @@ args = ["--mcp-attach"]</pre>
                         <li><a data-asset="Passenger-linux-x64.tar.gz" href="https://github.com/Zaneris/passenger/releases/latest/download/Passenger-linux-x64.tar.gz">x64 <span class="kind">.tar.gz</span></a></li>
                         <li><a data-asset="Passenger-linux-arm64.tar.gz" href="https://github.com/Zaneris/passenger/releases/latest/download/Passenger-linux-arm64.tar.gz">Arm64 <span class="kind">.tar.gz</span></a></li>
                     </ul>
+                    <p class="note">Unpack it and run its <code>install.sh</code>, for you alone or for everyone. Passenger
+                        says when a new release is out.</p>
                     <a class="more" href="/linux">How to install on Linux</a>
                 </div>
             </div>
-            <p class="needs">Passenger needs a <a href="https://dotnet.microsoft.com/download">.NET SDK</a>, version 10 or later: it
-                builds and runs your projects with it, and Roslyn's language server runs on it. Version control needs
-                <a href="https://git-scm.com/downloads">Git</a>. Every release, with its notes and checksums, is on
-                <a href="https://github.com/Zaneris/passenger/releases">GitHub</a>.</p>
+            <div class="needs">
+                <p>Passenger needs:</p>
+                <ul>
+                    <li><strong>A <a href="https://dotnet.microsoft.com/download">.NET SDK</a>, version 10 or later.</strong> It
+                        builds and runs your projects with it, and its language server, project host and debugger run on
+                        it.</li>
+                    <li><strong><a href="https://git-scm.com/downloads">Git</a></strong>, for version control.</li>
+                    <li><strong><a href="https://nodejs.org/">Node.js</a></strong>, for JavaScript, TypeScript, HTML, CSS and
+                        JSON: 22.22.2 or later for TypeScript. C# and XAML do without it.</li>
+                </ul>
+                <p>Every release, with its notes and its <code>SHA256SUMS</code>, is on
+                    <a href="https://github.com/Zaneris/passenger/releases">GitHub</a>.</p>
+            </div>
         </div>
     </section>
 </main>

@@ -1,34 +1,41 @@
-/* Passenger's own tokens (src/Passenger.App/Theme/Tokens.axaml), light first, dark when the system asks. */
+/* Passenger's own theme (src/Passenger.App/Theme/Tokens.axaml): the editor's ground as the page, a tool window's as a
+   card's, the icon's blue for actions, its amber where the page says "here". Light first, dark when the system asks. */
 :root {
     --bg: #FFFFFF;
-    --surface: #F7F8FA;
+    --surface: #F2F5FA;
     --raised: #FFFFFF;
-    --text: #1E1F22;
-    --muted: #6C707E;
-    --border: #DFE1E5;
-    --accent: #3D7BF5;
-    --accent-hover: #2F6AE0;
+    --text: #141B2B;
+    --muted: #556074;
+    --border: #D6DDE9;
+    --link: #1F55D6;
+    --accent: #2F6BF2;
+    --accent-hover: #2459D6;
     --accent-text: #FFFFFF;
-    --code-bg: #F2F3F5;
-    --seat: #E59A1F;
-    --shadow: 0 1px 2px rgb(0 0 0 / 0.06), 0 12px 40px rgb(30 31 34 / 0.12);
+    --code-bg: #F2F5FA;
+    --seat: #B86A00;
+    --lead-from: #2C62E6;
+    --lead-to: #0E7F86;
+    --shadow: 0 1px 2px rgb(11 30 74 / 0.06), 0 12px 40px rgb(11 30 74 / 0.12);
     color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
     :root {
-        --bg: #1E1F22;
-        --surface: #2B2D30;
-        --raised: #2B2D30;
-        --text: #DFE1E5;
-        --muted: #868A91;
-        --border: #393B40;
-        --accent: #3D7BF5;
-        --accent-hover: #5A8FF7;
+        --bg: #0F131C;
+        --surface: #171C28;
+        --raised: #1D2434;
+        --text: #E4E9F2;
+        --muted: #9AA5BA;
+        --border: #2F384B;
+        --link: #80A8FF;
+        --accent: #2F6BF2;
+        --accent-hover: #2A5FD9;
         --accent-text: #FFFFFF;
-        --code-bg: #2B2D30;
+        --code-bg: #171C28;
         --seat: #FFB547;
-        --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 16px 48px rgb(0 0 0 / 0.45);
+        --lead-from: #3D78F5;
+        --lead-to: #1FB5A5;
+        --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 16px 48px rgb(0 0 0 / 0.5);
         color-scheme: dark;
     }
 }
@@ -47,7 +54,7 @@ body {
 
 img { max-width: 100%; height: auto; display: block; }
 
-a { color: var(--accent); text-decoration: none; }
+a { color: var(--link); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
 code, pre { font-family: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.875em; }
@@ -84,10 +91,11 @@ pre .comment { color: var(--muted); }
 .top nav { margin-left: auto; display: flex; gap: 22px; font-size: 15px; }
 .top nav a { color: var(--muted); }
 .top nav a:hover { color: var(--text); text-decoration: none; }
-@media (max-width: 640px) { .top nav .wide { display: none; } }
+@media (max-width: 720px) { .top nav .wide { display: none; } }
 
 /* The opening. */
-.hero { padding: 72px 0 40px; text-align: center; }
+/* Top and bottom only: the sides are the wrap's gutter. */
+.hero { padding-top: 72px; padding-bottom: 40px; text-align: center; }
 .eyebrow {
     display: inline-flex;
     align-items: center;
@@ -99,7 +107,7 @@ pre .comment { color: var(--muted); }
     color: var(--muted);
     font-size: 14px;
 }
-.eyebrow::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--seat); }
+.eyebrow::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--seat); }
 h1 {
     margin: 0 auto 18px;
     max-width: 15em;
@@ -110,7 +118,7 @@ h1 {
 }
 h1 .lead {
     display: block;
-    background: linear-gradient(100deg, #2F6BF2, #14B8A6);
+    background: linear-gradient(100deg, var(--lead-from), var(--lead-to));
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
@@ -137,40 +145,61 @@ h1 .lead {
 .button small { font-weight: 400; opacity: 0.85; }
 .under { margin: 14px 0 0; color: var(--muted); font-size: 14px; }
 
+/* A picture of the window. Each is a block of its own: without one, what stood beside it takes the whole width. */
 .shot {
     margin: 48px 0 0;
     border: 1px solid var(--border);
     border-radius: 12px;
     overflow: hidden;
     box-shadow: var(--shadow);
-    background: #1E1F22;
+    background: var(--surface);
 }
+.shot picture { display: block; }
 .shot img { width: 100%; aspect-ratio: 16 / 10; }
 figcaption { color: var(--muted); font-size: 14px; margin-top: 12px; text-align: center; }
 
 /* Sections. */
-section { padding: 72px 0; }
+section { padding: 72px 0; scroll-margin-top: 60px; }
 section + section { border-top: 1px solid var(--border); }
 h2 { margin: 0 0 12px; font-size: clamp(28px, 4vw, 38px); line-height: 1.15; letter-spacing: -0.02em; font-weight: 720; }
 h3 { margin: 0 0 8px; font-size: 19px; line-height: 1.3; font-weight: 650; }
 .intro { margin: 0 0 40px; max-width: 42em; color: var(--muted); font-size: 18px; }
+.kicker { margin: 0 0 8px; color: var(--muted); font-size: 14px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
 
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+@media (min-width: 720px) { .grid.two { grid-template-columns: 1fr 1fr; } }
+.grid + .feature, .feature + .grid { margin-top: 64px; }
 .card { padding: 22px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
 .card p { margin: 0; color: var(--muted); }
+.card .more { display: inline-block; margin-top: 12px; font-weight: 600; }
+
+/* The three things that set Passenger apart, each leading to its section. */
+.why { display: grid; gap: 16px; }
+@media (min-width: 900px) { .why { grid-template-columns: repeat(3, 1fr); } }
+.why .card { border-top: 3px solid var(--accent); }
 
 .feature { display: grid; gap: 28px; align-items: center; margin-top: 64px; }
-.feature p { margin: 0; color: var(--muted); font-size: 17px; }
+.feature:first-child { margin-top: 0; }
+.feature p { margin: 0 0 12px; color: var(--muted); font-size: 17px; }
+.feature p:last-child { margin-bottom: 0; }
+.feature h3 + p { margin-top: 0; }
+.feature .text h3:not(:first-child) { margin-top: 24px; }
 .feature .shot { margin: 0; }
 @media (min-width: 900px) {
-    .feature { grid-template-columns: 1fr 1.9fr; gap: 48px; }
-    .feature.flip { grid-template-columns: 1.9fr 1fr; }
+    .feature:has(> .shot) { grid-template-columns: 1fr 1.9fr; gap: 48px; }
+    .feature.flip:has(> .shot) { grid-template-columns: 1.9fr 1fr; }
     .feature.flip .text { order: 2; }
+    .feature:not(:has(> .shot)) .text { max-width: 46em; }
 }
 
-.agents { display: grid; gap: 32px; }
+/* Two columns of words side by side. */
+.pair { display: grid; gap: 32px; margin-top: 48px; }
+@media (min-width: 900px) { .pair { grid-template-columns: 1fr 1fr; gap: 48px; } }
+.pair p { margin: 0 0 16px; color: var(--muted); }
+
+.agents { display: grid; gap: 32px; margin-top: 64px; }
 /* A grid item grows to its widest line unless told otherwise, and a long command would widen the page. */
-.agents > *, .feature > * { min-width: 0; }
+.agents > *, .feature > *, .pair > * { min-width: 0; }
 @media (min-width: 900px) { .agents { grid-template-columns: 1fr 1.4fr; gap: 48px; align-items: start; } }
 .agents p { color: var(--muted); margin: 0 0 16px; }
 /* Each agent's setup, one open at a time as the reader chooses. */
@@ -178,9 +207,22 @@ h3 { margin: 0 0 8px; font-size: 19px; line-height: 1.3; font-weight: 650; }
 .client summary { cursor: pointer; padding: 10px 14px; font-weight: 600; color: var(--text); }
 .client[open] summary { border-bottom: 1px solid var(--border); }
 .client > p, .client > pre { margin: 12px 14px; }
-.client pre { font-size: 0.8em; }
+.client pre { font-size: 0.75em; }
+/* Where Passenger is on each system: a path to a line, scrolled sideways on a phone rather than broken. */
+.paths { margin: 0 0 16px; padding: 0; list-style: none; border: 1px solid var(--border); border-radius: 8px; background: var(--code-bg); }
+.paths li { display: grid; gap: 2px; padding: 10px 14px; overflow-x: auto; }
+.paths li + li { border-top: 1px solid var(--border); }
+.paths span { color: var(--muted); font-size: 13px; }
+.paths code { font-size: 0.8em; white-space: nowrap; }
+.paths :not(pre) > code { background: none; border: 0; padding: 0; }
 /* A path in a sentence breaks where it must on a phone rather than widening the page. */
-.agents :not(pre) > code { overflow-wrap: anywhere; }
+.agents :not(pre) > code, .tools code { overflow-wrap: anywhere; }
+
+/* The agent's tools, by what they are for. */
+.tools { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px 24px; margin: 40px 0 0; }
+.tools div { padding: 14px 0 0; border-top: 1px solid var(--border); }
+.tools dt { font-weight: 650; margin: 0 0 4px; }
+.tools dd { margin: 0; color: var(--muted); font-size: 15px; }
 
 /* Downloads. */
 .downloads { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-top: 28px; }
@@ -201,6 +243,7 @@ h3 { margin: 0 0 8px; font-size: 19px; line-height: 1.3; font-weight: 650; }
 .platform li > a:hover { text-decoration: none; border-color: var(--accent); }
 .platform li .kind { color: var(--muted); font-size: 14px; }
 .platform li [aria-disabled="true"] { color: var(--muted); }
+.platform .note { margin: 12px 0 0; color: var(--muted); font-size: 14px; }
 .platform .more { display: inline-block; margin-top: 12px; font-size: 15px; }
 .status {
     margin: 0 0 8px;
@@ -213,9 +256,12 @@ h3 { margin: 0 0 8px; font-size: 19px; line-height: 1.3; font-weight: 650; }
 }
 .status:empty { display: none; }
 .needs { margin-top: 28px; color: var(--muted); max-width: 52em; }
+.needs ul { margin: 8px 0 16px; padding-left: 1.3em; }
+.needs li { margin: 4px 0; }
+.needs strong { color: var(--text); }
 
 /* The Linux page. */
-.page { padding: 56px 0 72px; max-width: 760px; }
+.page { padding-top: 56px; padding-bottom: 72px; max-width: 760px; }
 .page h1 { margin: 0 0 16px; text-align: left; max-width: none; font-size: clamp(32px, 5vw, 44px); }
 .page h2 { font-size: 24px; margin-top: 44px; }
 .page p, .page li { color: var(--muted); }
