@@ -301,12 +301,13 @@ public sealed class FolderWatchTests : IDisposable
         Ui.Landed(() => window.Vcs.Branch == "main", "the branch");
 
         string[] watched = Watched(window);
-        foreach (string kept in new[] { ".", ".git", ".git/refs", ".git/refs/heads", "src", "src/App", "src/App/obj" })
+        foreach (string kept in new[] { ".", ".git", ".git/refs", ".git/refs/heads", "src", "src/App", "src/App/obj", "artifacts" })
         {
             Assert.True(watched.Contains(kept), $"{kept} is not watched, so what other programs change in it goes unseen");
         }
-        // Of build output only a project's obj itself, where its restore writes the assets its XAML is read from.
-        Assert.All(watched, path => Assert.True(path is "." or ".git" or "src" or "src/App" or "src/App/obj" || path.StartsWith(".git/refs", StringComparison.Ordinal),
+        // Of build output only a project's obj itself, where its restore writes the assets its XAML is read from, and
+        // artifacts itself, where UseArtifactsOutput's restore makes artifacts/obj/Project for them.
+        Assert.All(watched, path => Assert.True(path is "." or ".git" or "src" or "src/App" or "src/App/obj" or "artifacts" || path.StartsWith(".git/refs", StringComparison.Ordinal),
             $"{path} is watched, spending one of the user's inotify watches on a folder nothing in the IDE looks at"));
 
         // Each kept folder's own watch is what hears of its files, Git's HEAD among them.
@@ -325,6 +326,17 @@ public sealed class FolderWatchTests : IDisposable
         Assert.DoesNotContain(deep, window.FileIndex.Files);
         Write("src/Feature/Deep/Deep.cs", "class Deep { }\n");
         Ui.WaitFor(() => window.FileIndex.Files.Contains(deep), "the file made in the new folder in Go to File, which only that folder's watch hears of");
+
+        // A restore into artifacts/obj made later is heard of, its folders watched, though nothing else in build output is.
+        List<string> restored = [];
+        window.FolderWatcher!.Changed += (_, changes) => restored.AddRange(changes.Restored);
+        Write("artifacts/obj/Late/project.assets.json", "{}\n");
+        Write("artifacts/obj/Late/Late.csproj.nuget.g.props", "<Project />\n");
+        Ui.WaitFor(() => restored.Contains(Path.Combine(PathNames.Canonical(folder), "artifacts", "obj", "Late", "project.assets.json")), "the restore made in artifacts/obj/Late");
+        Assert.Contains("artifacts/obj/Late", Watched(window));
+        File.WriteAllText(Path.Combine(folder, "artifacts", "obj", "Late", "project.assets.json"), "{ }\n");
+        restored.Clear();
+        Ui.WaitFor(() => restored.Count > 0, "the restore written again in artifacts/obj/Late");
 
         // Windows moves or deletes a watched folder only once its watch lets go; there one watch covers the tree anyway.
         if (!OperatingSystem.IsWindows())

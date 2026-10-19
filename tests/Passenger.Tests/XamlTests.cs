@@ -322,6 +322,60 @@ public sealed class XamlTests : IClassFixture<XamlTests.Gallery>
         }
     }
 
+    /// <summary>The same where the solution keeps its build output in artifacts/ (UseArtifactsOutput), its project in a folder
+    /// below: the restore writes artifacts/obj/Fresh/project.assets.json, under no project's folder, on either way of
+    /// watching (each folder on its own, as on Linux, or the whole tree).</summary>
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void A_package_restored_into_artifacts_while_its_xaml_is_open_has_its_types_read_once_the_restore_lands(bool eachFolder)
+    {
+        string folder = PathNames.Canonical(TestFolders.Create("xaml-artifacts-"));
+        string app = Path.Combine(folder, "src", "Fresh");
+        const string Artifacts = "<Project>\n  <PropertyGroup>\n    <UseArtifactsOutput>true</UseArtifactsOutput>\n  </PropertyGroup>\n";
+        try
+        {
+            TestFolders.Prepare(() =>
+            {
+                AvaloniaApp.Create(app, "Fresh");
+                File.WriteAllText(Path.Combine(folder, "Directory.Build.props"), Artifacts + "</Project>\n");
+                File.WriteAllText(Path.Combine(app, "MainWindow.axaml"), """
+                    <Window xmlns="https://github.com/avaloniaui"
+                            xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                            xmlns:h="using:Avalonia.Headless"
+                            x:Class="Fresh.MainWindow"
+                            Title="Fresh">
+                        <Window.Resources>
+                            <h:AvaloniaHeadlessPlatformOptions x:Key="Headless" />
+                        </Window.Resources>
+                        <TextBlock Text="Welcome" />
+                    </Window>
+
+                    """);
+                Restore.Run(app);
+            }, folder);
+            Assert.True(File.Exists(Path.Combine(folder, "artifacts", "obj", "Fresh", "project.assets.json")), "The restore wrote its assets somewhere other than artifacts/obj/Fresh");
+            MainWindow window = new() { Width = 1200, Height = 800, Autosaves = false, Watching = eachFolder ? FolderWatching.Inotify : FolderWatching.WholeTree };
+            window.Show();
+            window.OpenFolder(folder);
+            window.OpenFile(Path.Combine(app, "MainWindow.axaml"));
+            OpenDocument document = window.EditorArea.Active!;
+            Ui.WaitFor(() => document.Markers.Any(m => m.Message.Contains("AvaloniaHeadlessPlatformOptions", StringComparison.Ordinal)),
+                "the type of a package the app does not reference marked");
+
+            File.WriteAllText(Path.Combine(folder, "Directory.Build.props"),
+                $"{Artifacts}  <ItemGroup>\n    <PackageReference Include=\"Avalonia.Headless\" Version=\"{AvaloniaApp.Version}\" />\n  </ItemGroup>\n</Project>\n");
+            Ui.Settle();
+            Restore.Run(app);
+            Ui.WaitFor(() => document.Markers.Count == 0, "the package's type resolved once its restore landed in artifacts/", TimeSpan.FromSeconds(30));
+            window.Close();
+        }
+        finally
+        {
+            TestFolders.Delete(folder);
+        }
+    }
+
     [AvaloniaFact]
     public void An_x_class_no_csharp_declares_is_marked_as_avalonias_compiler_refuses_it()
     {

@@ -163,10 +163,10 @@ public sealed class FolderWatcher : IDisposable
             Follow(() =>
             {
                 WatchFrom(path);
-                // A restore that made obj may have written its assets before obj was watched.
-                if (Path.GetFileName(path) == "obj" && File.Exists(Path.Combine(path, Assets)))
+                // A restore that made obj (or artifacts) may have written its assets before the folder was watched.
+                foreach (string assets in AssetsIn(path))
                 {
-                    Note(Path.Combine(path, Assets), created: true);
+                    Note(assets, created: true);
                 }
             });
         }
@@ -323,13 +323,57 @@ public sealed class FolderWatcher : IDisposable
 
     /// <summary>Whether a folder is watched where each is watched on its own: the open folder and the kept folders under
     /// it, of Git's store only its top and refs, whose files say a commit or checkout happened, and of build output only
-    /// each project's obj itself, where its restore writes its assets.</summary>
+    /// the folders a restore writes its assets in (<see cref="HoldsRestores"/>).</summary>
     private bool Kept(string path)
     {
         string[]? parts = Parts(path);
         return parts is null ? path == folder
             : parts[0] == ".git" ? parts.Length == 1 || parts[1] == "refs"
-            : !parts.Any(IgnoredFolders.Contains) || parts[^1] == "obj" && !parts[..^1].Any(IgnoredFolders.Contains);
+            : !parts.Any(IgnoredFolders.Contains) || HoldsRestores(parts);
+    }
+
+    /// <summary>Whether a folder of build output is where a restore writes its assets, or above it to see that made: a
+    /// project's obj itself, and UseArtifactsOutput's artifacts, artifacts/obj and artifacts/obj/Project.</summary>
+    private static bool HoldsRestores(string[] parts)
+    {
+        int output = parts switch
+        {
+            [.., "artifacts", "obj", _] => 3,
+            [.., "artifacts", "obj"] => 2,
+            [.., "artifacts"] or [.., "obj"] => 1,
+            _ => 0,
+        };
+        return output > 0 && !parts[..^output].Any(IgnoredFolders.Contains);
+    }
+
+    /// <summary>The restore assets in a folder just made, or in the build output folders that hold them under it.</summary>
+    private List<string> AssetsIn(string top)
+    {
+        List<string> found = [];
+        Stack<string> folders = new([top]);
+        while (folders.Count > 0)
+        {
+            string at = folders.Pop();
+            string assets = Path.Combine(at, Assets);
+            if (Parts(assets) is { } named && IsRestore(named) && File.Exists(assets))
+            {
+                found.Add(assets);
+            }
+            try
+            {
+                foreach (DirectoryInfo child in new DirectoryInfo(at).EnumerateDirectories())
+                {
+                    if (child.LinkTarget is null && Parts(child.FullName) is { } parts && HoldsRestores(parts))
+                    {
+                        folders.Push(child.FullName);
+                    }
+                }
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+            }
+        }
+        return found;
     }
 
     /// <summary>Whether a path is a restore's assets, which the rest of build output's files are not.</summary>

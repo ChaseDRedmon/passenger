@@ -117,7 +117,7 @@ public sealed class XamlService : IDisposable
     public void FilesChanged(IEnumerable<string> paths)
     {
         UiThread.Check();
-        foreach (IGrouping<XamlLoading, string> changed in paths.Select(p => (Path: p, Owner: Loaded(p))).Where(p => p.Owner is not null)
+        foreach (IGrouping<XamlLoading, string> changed in paths.Select(p => (Path: p, Owner: RestoredFor(p) ?? Loaded(p))).Where(p => p.Owner is not null)
             .GroupBy(p => p.Owner!, p => p.Path))
         {
             XamlLoading loading = changed.Key;
@@ -244,6 +244,22 @@ public sealed class XamlService : IDisposable
     /// <summary>The project already loading or loaded that a file belongs to.</summary>
     private XamlLoading? Loaded(string path) =>
         projects.Values.Where(l => Paths.IsUnder(path, l.Folder)).OrderByDescending(l => l.Folder.Length).FirstOrDefault();
+
+    /// <summary>The project a restore's assets under an artifacts folder are of (UseArtifactsOutput's
+    /// artifacts/obj/Project/project.assets.json, which ProjectInputs reads), under no project's folder: the project of that
+    /// name below the folder holding artifacts.</summary>
+    private XamlLoading? RestoredFor(string path)
+    {
+        if (Path.GetFileName(path) != "project.assets.json" || Path.GetDirectoryName(path) is not { } named || Path.GetDirectoryName(named) is not { } obj
+            || Path.GetFileName(obj) != "obj" || Path.GetDirectoryName(obj) is not { } artifacts || Path.GetFileName(artifacts) != "artifacts"
+            || Path.GetDirectoryName(artifacts) is not { } root)
+        {
+            return null;
+        }
+        string name = Path.GetFileName(named);
+        return projects.Values.Where(l => Path.GetFileNameWithoutExtension(l.ProjectPath) == name && Paths.IsUnder(l.ProjectPath, root))
+            .OrderByDescending(l => l.Folder.Length).FirstOrDefault();
+    }
 
     private void Reload(XamlLoading loading)
     {
